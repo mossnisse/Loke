@@ -1321,19 +1321,14 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		walk_flow_expr(graph, v.callee)
 	}
 	report_argument_copies(graph, v, -1)
-	for argument in v.bound {
-		if argument != nil {
-			walk_flow_expr(graph, argument)
+	// Arguments in evaluation order, so a use after an earlier-evaluated move is seen.
+	for step in 0 ..< len(v.bound) {
+		index := call_slot_at(v, step)
+		if v.is_variadic && index == v.variadic_slot && !v.variadic_forwards {
+			walk_variadic_pack(graph, v)
+		} else if v.bound[index] != nil {
+			walk_flow_expr(graph, v.bound[index])
 		}
-	}
-	// A packed variadic parameter leaves `bound[variadic_slot]` nil and keeps the
-	// arguments themselves in the two lists, so the loop above walked past them.
-	// Each one is still an ordinary use of whatever it names.
-	for element in v.variadic_elements {
-		walk_flow_expr(graph, element)
-	}
-	for spread in v.variadic_spreads {
-		walk_flow_expr(graph, spread)
 	}
 	if len(v.bound) == 0 {
 		for argument in v.args {
@@ -1344,6 +1339,26 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	return nil
 }
 
+// Every operand of an unforwarded variadic pack, in written order. The pack is
+// compiler-owned stack storage, so its loans are the union of its operands'.
+@(private)
+walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+	joined: []int
+	next_element, next_spread := 0, 0
+	for is_spread in v.variadic_order {
+		operand: Expr
+		if is_spread {
+			operand = v.variadic_spreads[next_spread]
+			next_spread += 1
+		} else {
+			operand = v.variadic_elements[next_element]
+			next_element += 1
+		}
+		joined = prov_join(graph, joined, walk_flow_expr(graph, operand))
+	}
+	return joined
+}
+
 // Whether this call resets an allocator region: `free_all`, or a call handing an
 // argument to an `@(allocator_reset)` parameter. One predicate, so the liveness
 // pass and the provenance pass cannot disagree about which calls are resets.
@@ -1351,12 +1366,7 @@ call_is_reset :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Free_All {
 		return true
 	}
-	proc_type := INVALID_TYPE
-	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil {
-		proc_type = sym.proc_type
-	} else if v.callee != nil {
-		proc_type = expr_base(v.callee).type
-	}
+	proc_type := call_proc_type(c, v)
 	if proc_type == INVALID_TYPE {
 		return false
 	}

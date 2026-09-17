@@ -1,0 +1,9 @@
+package main;
+
+// Named arguments run in written order: `others` is moved before it is read.
+take :: proc(count: int, owner: move [dynamic]int) {}
+
+main :: proc() {
+    others: [dynamic]int = {};
+    take(owner = move(others), count = others.len());
+}

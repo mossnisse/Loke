@@ -1441,10 +1441,7 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	operands := make([]string, len(v.bound), context.temp_allocator)
 	operands[0] = data
 	for step in 1 ..< len(v.bound) {
-		index := step
-		if step < len(v.bound_order) {
-			index = v.bound_order[step]
-		}
+		index := call_slot_at(v, step)
 		if param_mode_is_pointer(signature.param_modes[index]) {
 			operands[index] = emit_address(e, v.bound[index])
 		} else {

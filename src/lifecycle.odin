@@ -130,7 +130,7 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 	// A static-duration binding is always live once initialized; `move`/`drop`
 	// on it (or a subplace of it) is forbidden, or one procedure could make it
 	// dead while another still accessed it (design.md).
-	if (sym.decl != nil && sym.decl.top_level) || sym.duration != .None {
+	if symbol_outlives_bodies(sym) {
 		errorf(
 			k.c,
 			expr_span(e),

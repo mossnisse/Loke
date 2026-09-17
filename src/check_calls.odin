@@ -5,6 +5,11 @@ package lokec
 
 // ------------------------------------------------------- calls and casts --
 
+// design.md "Evaluation order": the parameter slot a call evaluates at `step`.
+call_slot_at :: proc(v: ^Expr_Call, step: int) -> int {
+	return step < len(v.bound_order) ? v.bound_order[step] : step
+}
+
 @(private)
 check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	defer materialize_call_receiver(k, v)

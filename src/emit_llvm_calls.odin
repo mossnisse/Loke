@@ -1036,10 +1036,7 @@ emit_bound_call :: proc(
 	// are staged into their matched slots; omitted defaults follow in parameter
 	// order. Only the final operand list is parameter-ordered.
 	for step in 0 ..< len(bound) {
-		index := step
-		if call_node != nil && step < len(call_node.bound_order) {
-			index = call_node.bound_order[step]
-		}
+		index := call_node != nil ? call_slot_at(call_node, step) : step
 		argument := bound[index]
 		if index == pack {
 			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index])

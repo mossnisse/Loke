@@ -1,0 +1,10 @@
+package main;
+
+// Named arguments run in written order: the slice is taken before `grow` may relocate.
+grow :: proc(values: inout [dynamic]int) -> int { values.append(1); return 0; }
+use :: proc(count: int, view: []int) {}
+
+main :: proc() {
+    items: [dynamic]int = {};
+    use(view = items[:], count = grow(inout items));
+}
