@@ -1391,3 +1391,31 @@ ownership_worklist_converges_past_sixty_four_back_edges :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, found, "deep ownership flow stopped before reporting the moved-value use")
 }
+
+// Catches a driver enum rename silently changing a language-level member name.
+@(test)
+build_config_constants_follow_the_driver :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	source := `package main;
+static_assert(LOKE_OPTIMIZATION_MODE == .Speed);
+static_assert(LOKE_BUILD_MODE == .Obj);
+static_assert(LOKE_LOG_LEVEL == .Warning);
+static_assert(LOKE_VENDOR == .Loke);
+static_assert(LOKE_VERSION == "0.7.0");
+static_assert(LOKE_OPTIMIZATION_MODE == .None);
+main :: proc() {}`
+	p.c = test_compiler(source)
+	p.c.opt_mode, p.c.build_mode, p.c.log_level = .Speed, .Obj, .Warning
+	p.tokens = lex(&p.c, 0)
+	p.f = parse(&p.c, 0, p.tokens)
+	p.pkg = new_package(&p.c, p.f.package_name)
+	add_package_file(&p.c, p.pkg, &p.f)
+	check_one_package(&p.c, p.pkg)
+	// Only the deliberately false last assertion fails.
+	false_assert := u32(strings.index(source, "static_assert(LOKE_OPTIMIZATION_MODE == .None"))
+	ok := p.c.error_count == 1 && p.c.diagnostics[0].span.lo >= false_assert
+	if !testing.expect(t, ok, "build config constants disagree with the driver") {
+		report(&p.c)
+	}
+}

@@ -5599,7 +5599,7 @@ The compiler provides a small set of constants in every compilation:
 | `LOKE_DEBUG` | Build-provided debug flag. |
 | `LOKE_OPTIMIZATION_MODE` | Selected optimization mode: `.None`, `.Minimal`, `.Size`, `.Speed`, `.Aggressive`. |
 | `LOKE_LOG_LEVEL` | The [compiled log level](#compiled-log-level); `core:log` suppresses everything below it. |
-| `LOKE_VENDOR` | Compiler implementation identifier; the official compiler uses `"loke"`. |
+| `LOKE_VENDOR` | Compiler implementation identifier; the official compiler uses `.Loke`. |
 | `LOKE_VERSION` | Compiler version string. |
 
 Additional project values are supplied by the build system and read with `build_config`.

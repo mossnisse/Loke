@@ -856,10 +856,7 @@ Symbol :: struct {
 	// declaration name storage outside the frame, so the backend gives it a
 	// global rather than an `alloca`.
 	duration:         Duration,
-	// design.md "Build configuration": which `LOKE_*` enum this predeclared
-	// constant belongs to, or `.None`. Its enum type is allocated lazily on first
-	// use so a program that never reads build config keeps identical type
-	// numbering.
+	// Which `LOKE_*` enum this predeclared constant belongs to, or `.None`.
 	build_config_enum: Build_Config_Enum,
 	// design.md "`@(deprecated=<string>)`": the warning message printed at each
 	// use of this procedure, or "" if it is not deprecated.
