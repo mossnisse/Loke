@@ -1,0 +1,9 @@
+L0370
+@9:20
+a C-variadic argument is passed by value, so it cannot be `inout`
+L0370
+@10:12
+this parameter is not `inout`
+L0619
+@11:20
+a C-variadic argument needs a concrete type, found `untyped nil`

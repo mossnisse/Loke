@@ -1,0 +1,12 @@
+package main;
+
+// A C variadic is passed by value and needs a concrete type.
+foreign import libc "system:legacy_stdio_definitions.lib";
+foreign libc { printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---; }
+
+main :: proc() {
+    x: i32 = 4;
+    printf("%d\n", inout x);
+    printf(inout "hi\n");
+    printf("%p\n", nil);
+}

@@ -3,7 +3,7 @@ L0315
 unknown name `b`
 L0322
 @17:14
-this procedure takes 2 arguments, found 1
+missing an argument for `b`
 L0322
 @18:14
 this procedure takes 2 arguments, found 3

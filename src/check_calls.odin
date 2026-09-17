@@ -15,8 +15,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	defer materialize_call_receiver(k, v)
 	v.value_category = .Value
 
-	// A built-in is not a value, so it is recognised before the callee is
-	// checked as one.
+	// A built-in, spelled plainly or as `pkg.builtin`, is not a value.
 	if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
 		symbol_id := lookup_symbol(k.scope, identifier_of(k.c, ident))
 		if sym := symbol_of(k.c, symbol_id); sym != nil && sym.kind == .Builtin {
@@ -24,16 +23,13 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 			return
 		}
 	}
-	// The same built-in reached through the standard package that publishes it —
-	// `mem.default_allocator()`. The qualified spelling names the identical
-	// symbol, so it collapses to the identical call rather than to a wrapper.
 	if symbol_id := callee_package_builtin(k, v.callee); symbol_id != INVALID_SYMBOL {
 		check_builtin_call(k, v, qualify_builtin_callee(k, v), symbol_id, expected)
 		return
 	}
 
-	// Nor is a procedure group: it stands for several procedures, so it goes to
-	// the overload engine before anything asks it for a single procedure type.
+	// Nor is a group or a generic procedure: overloads rank before any single
+	// procedure type exists.
 	if group := callee_group(k, v.callee); group != INVALID_SYMBOL {
 		check_group_call(k, v, group, expected)
 		return
@@ -42,66 +38,38 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		check_group_call(k, v, group, expected)
 		return
 	}
-	// Nor is a generic procedure: `$T` has no type until the call's own arguments
-	// bind it, so it is never checked as a value.
 	if template := callee_generic_procedure(k, v.callee); template != INVALID_SYMBOL {
 		check_group_call(k, v, template, expected)
 		return
 	}
+	callee_symbol := named_callee_symbol(k, v.callee)
 	// An interface application is a compile-time boolean, not a conversion.
-	if info := interface_info_for(k, named_callee_symbol(k, v.callee)); info != nil {
+	if info := interface_info_for(k, callee_symbol); info != nil {
 		v.operation = Call_Compile_Time{}
 		check_interface_application(k, v, info)
 		return
 	}
-	// design.md "Shared ownership": one name means two things. `shared(Node)` is
-	// the type and `shared(node)` takes ownership of a value, and nothing but the
-	// operand tells them apart — so the call settles it, and everything that is
-	// not a type goes to the constructor group.
-	if k.c.shared_symbol != INVALID_SYMBOL &&
-	   named_callee_symbol(k, v.callee) == k.c.shared_symbol &&
-	   !callee_argument_denotes_type(k, v) {
+	// design.md "Shared ownership": `shared(Node)` is the type, and anything that
+	// is not a type goes to the constructor group.
+	if k.c.shared_symbol != INVALID_SYMBOL && callee_symbol == k.c.shared_symbol && !callee_argument_denotes_type(k, v) {
 		check_group_call(k, v, k.c.shared_construct_symbol, expected)
 		return
 	}
-	// `Simd(f32, 4)` and `Range(int)` denote a type wherever they appear too,
-	// which is what makes `Simd(i32, 4)(v)` an ordinary written conversion.
-	if simd_callee(k, v.callee) || range_callee(k, v.callee) {
-		denoted := INVALID_TYPE
-		if range_callee(k, v.callee) {
-			denoted = resolve_range_application(k, v)
-		} else {
-			denoted = resolve_simd_application(k, v)
-		}
-		if denoted == INVALID_TYPE {
-			v.type = INVALID_TYPE
-			return
-		}
-		v.operation = Call_Compile_Time{}
-		v.type = TYPE_TYPE
-		v.value_category = .Type
-		v.is_const = true
-		v.const_value = type_const(denoted)
+	// `Simd(f32, 4)`, `Range(int)`, and generic record applications denote types.
+	if range_callee(k, v.callee) {
+		set_type_call(v, resolve_range_application(k, v))
 		return
 	}
-	// A generic record application denotes a type wherever it appears, which is
-	// what makes `Iterator :: Stack_Iterator(T, N);` an associated type.
+	if simd_callee(k, v.callee) {
+		set_type_call(v, resolve_simd_application(k, v))
+		return
+	}
 	if generic_template_of_callee(k, v.callee, .Record) != nil {
-		denoted := resolve_type_syntax(k, v)
-		if denoted == INVALID_TYPE {
-			v.type = INVALID_TYPE
-			return
-		}
-		v.operation = Call_Compile_Time{}
-		v.type = TYPE_TYPE
-		v.value_category = .Type
-		v.is_const = true
-		v.const_value = type_const(denoted)
+		set_type_call(v, resolve_type_syntax(k, v))
 		return
 	}
-	// A slot called through a `dyn` view: an indirect call through the witness,
-	// not an ordinary method lookup on a concrete type.
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
+		// A `dyn` slot call dispatches through the witness.
 		if operand := dyn_operand_type(k, sel.operand); operand != INVALID_TYPE {
 			if check_dyn_slot_call(k, v, sel, operand) {
 				note_nil_use(k, sel.operand, "dispatch")
@@ -111,38 +79,26 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 			v.type = INVALID_TYPE
 			return
 		}
-	}
-	// `field.get(value)` / `field.pointer(value)`: compiler-defined operations on
-	// a descriptor constant, whose result type follows that descriptor. Only a
-	// name bound to one qualifies, which is what a `$field` binding is, so no
-	// other callee is checked twice looking for it.
-	// `text.byte_len()`, `text.bytes()`, `string.from_runes(...)`, and
-	// `union.active_typeid()`: compiler-defined operations on built-in carriers.
-	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
-		if check_union_extract(k, v, sel) {
+		// Compiler-defined operations on unions, text, and enums.
+		if check_union_extract(k, v, sel) ||
+		   check_text_operation(k, v, sel) ||
+		   check_enum_values(k, v, sel) ||
+		   check_enum_from_int(k, v, sel) {
 			return
 		}
-		if check_text_operation(k, v, sel) {
-			return
-		}
-		if check_enum_values(k, v, sel) {
-			return
-		}
-		if check_enum_from_int(k, v, sel) {
-			return
-		}
-	}
-	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && callee_is_descriptor(k, sel.operand) {
-		check_single_expr(k, sel.operand)
-		if check_descriptor_operation(k, v, sel) {
-			return
+		// `field.get(value)` / `field.pointer(value)` on a descriptor constant. The
+		// operand is a plain name, so checking it again below is harmless.
+		if callee_is_descriptor(k, sel.operand) {
+			check_single_expr(k, sel.operand)
+			if check_descriptor_operation(k, v, sel) {
+				return
+			}
 		}
 	}
 
 	outer_callee := k.in_callee
 	k.in_callee = true
-	// A bare `.name(payload)` callee takes its union from the expected type, the
-	// same way the implicit enum selector takes its enum from one.
+	// A bare `.name(payload)` takes its union from the expected type.
 	callee_expected := INVALID_TYPE
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand == nil {
 		callee_expected = expected
@@ -154,14 +110,11 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// A method selector is not a value: the receiver becomes argument zero, which
-	// the selector alone cannot do.
+	// The receiver becomes argument zero.
 	if callee_base.resolution.kind == .Method {
 		check_method_call(k, v, v.callee.(^Expr_Selector), expected)
 		return
 	}
-	// `U.name(payload)` / `.name(payload)`: the selector named the variant, and
-	// the argument supplies its payload.
 	if callee_base.resolution.kind == .Union_Variant {
 		check_union_construct(k, v, v.callee.(^Expr_Selector))
 		return
@@ -171,8 +124,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 	if callee_base.value_category == .Type {
-		// `(dyn Drawable)(&circle)`: an ordinary explicit conversion, but one that
-		// checks satisfaction and requests a witness rather than reinterpreting.
+		// `(dyn Drawable)(&circle)` checks satisfaction and requests a witness.
 		if type_is_dyn(k.c, callee_base.denoted_type) {
 			check_dyn_conversion(k, v, callee_base.denoted_type)
 			return
@@ -183,10 +135,8 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 
 	info := underlying_info(k.c, callee_type)
 	if info == nil || info.kind != .Proc {
-		// A payloadless variant is complete on its own, so the call is the
-		// mistake rather than the selector.
-		if sel, is_sel := v.callee.(^Expr_Selector);
-		   is_sel && sel.variant_union != INVALID_TYPE &&
+		sel, is_sel := v.callee.(^Expr_Selector)
+		if is_sel && sel.variant_union != INVALID_TYPE &&
 		   union_variant_payload(k.c, sel.variant_union, sel.variant_index) == TYPE_VOID {
 			errorf(
 				k.c, v.span, "L0425",
@@ -200,14 +150,11 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// A call through a local procedure *value*. A directly named procedure is a
-	// `.Proc` symbol and is not tracked, so this asks only about the indirect
-	// form, which is the one that can be nil.
+	// Only a procedure value can be nil.
 	note_nil_use(k, v.callee, "call")
 
-	// Only a directly named procedure may use defaults or named arguments; a
-	// call through a procedure value supplies every parameter positionally.
-	// `pkg.f` names one just as plainly as `f` does.
+	// Only a directly named procedure (`f` or `pkg.f`) has defaults and named
+	// parameters.
 	declaration := INVALID_SYMBOL
 	if named := callee_base.resolution.symbol; callee_base.resolution.kind == .Value {
 		if sym := symbol_of(k.c, named); sym != nil && sym.kind == .Proc {
@@ -232,11 +179,8 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	)
 }
 
-// A procedure that wrote a result which did not resolve. `Symbol.result` holds
-// INVALID_TYPE for that and for a procedure with no result alike, and
-// `signature_error` does not separate them either: when the written type was
-// already reported elsewhere, resolving this signature adds no error of its own
-// and the flag stays clear. The syntax is what still knows.
+// Whether a procedure wrote a result that did not resolve. `Symbol.result` is
+// INVALID_TYPE for that and for no result alike; only the syntax tells them apart.
 @(private = "file")
 result_written_but_unresolved :: proc(sym: ^Symbol) -> bool {
 	if sym == nil || sym.result != INVALID_TYPE {
@@ -246,19 +190,28 @@ result_written_but_unresolved :: proc(sym: ^Symbol) -> bool {
 	if literal == nil && sym.decl != nil {
 		literal = decl_proc_literal(sym.decl)
 	}
-	return literal != nil && literal.signature.result != nil
+	return literal != nil && literal.signature != nil && literal.signature.result != nil
 }
 
-// design.md "Parameter semantics and ABI lowering": an `inout` result returns a
-// place, so the call is one — addressable and assignable. Every call spelling
-// settles its result here, because which one reached the procedure does not
-// change what the procedure returns.
+// A call that denotes a type, such as `Simd(f32, 4)`.
+@(private = "file")
+set_type_call :: proc(v: ^Expr_Call, denoted: Type_Id) {
+	if denoted == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	v.operation = Call_Compile_Time{}
+	v.type = TYPE_TYPE
+	v.value_category = .Type
+	v.is_const = true
+	v.const_value = type_const(denoted)
+}
+
+// Every call spelling settles its result here. An `inout` result is a place
+// (design.md "Parameter semantics and ABI lowering"); an unresolved one was
+// already reported, so the call is invalid rather than void.
 set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool, result_unresolved := false) {
 	if result == INVALID_TYPE {
-		// `result` is INVALID_TYPE both for a procedure with no result and for one
-		// whose written result did not resolve. Answering `TYPE_VOID` for the
-		// second makes every use of the call say the expression produces no value,
-		// blaming the call for a mistake already reported at the declaration.
 		v.type = result_unresolved ? INVALID_TYPE : TYPE_VOID
 		return
 	}
@@ -270,10 +223,8 @@ set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool, resu
 	}
 }
 
-// design.md "@(require_results)": a bare call statement discards its results.
-// The policy comes from the selected declaration or, after overload selection,
-// from the procedure group the call went through. An explicit
-// `_ = call()` is an assignment, not this statement, so it is never reached.
+// design.md "@(require_results)": a bare call statement discards its results;
+// `_ = call()` is an assignment and never reaches this.
 report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 	call, is_call := expr.(^Expr_Call)
 	if !is_call || call.type == TYPE_VOID || call.type == INVALID_TYPE {
@@ -295,10 +246,8 @@ report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 	}
 }
 
-// Whether a call's result must be handled, and the declaration that says so —
-// an empty name means the requirement came from the result *type* rather than a
-// declaration. Shared with the binding check, so a bound result and a bare call
-// answer to the same policy.
+// Whether a call's result must be handled, and the declaration or group that
+// says so; an empty name means the result type requires it.
 required_result_of_call :: proc(k: ^Checker, call: ^Expr_Call) -> (name: string, required: bool) {
 	if selected := symbol_of(k.c, call.resolution.chosen_overload); selected != nil && selected.require_results {
 		return identifier_text(k.c, selected.name), true
@@ -306,15 +255,10 @@ required_result_of_call :: proc(k: ^Checker, call: ^Expr_Call) -> (name: string,
 	if group := symbol_of(k.c, callee_group(k, call.callee)); group != nil && group.require_results {
 		return identifier_text(k.c, group.name), true
 	}
-	// design.md "@(require_results)": the attribute is a *type* attribute as
-	// well, so a result whose type requires handling is required whoever
-	// declared the procedure. `Result` is the one that matters in practice.
 	return "", type_requires_results(k.c, call.type)
 }
 
-// The procedure group a callee names, or INVALID_SYMBOL. `pkg.group` names one
-// as plainly as `group` does — `named_callee_symbol` already walks the package
-// alias and requires the member to be public.
+// The procedure group a callee (`group` or `pkg.group`) names, or INVALID_SYMBOL.
 @(private = "file")
 callee_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	id := named_callee_symbol(k, callee)
@@ -323,8 +267,6 @@ callee_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 }
 
 // A `pkg.name` callee naming a public built-in of `pkg`, or INVALID_SYMBOL.
-// Only the qualified spelling: `qualify_builtin_callee` rewrites a selector,
-// and a plain identifier is already the form the built-in checkers expect.
 @(private = "file")
 callee_package_builtin :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	if _, is_selector := callee.(^Expr_Selector); !is_selector {
@@ -335,9 +277,7 @@ callee_package_builtin :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	return sym != nil && sym.kind == .Builtin ? id : INVALID_SYMBOL
 }
 
-// Rewrites `pkg.builtin(...)` to the identifier form the built-in checkers and
-// the backend already understand, keeping the original span so diagnostics still
-// point at what was written.
+// Rewrites `pkg.builtin(...)` to the identifier form, keeping the written span.
 @(private = "file")
 qualify_builtin_callee :: proc(k: ^Checker, v: ^Expr_Call) -> ^Expr_Ident {
 	selector := v.callee.(^Expr_Selector)
@@ -345,14 +285,11 @@ qualify_builtin_callee :: proc(k: ^Checker, v: ^Expr_Call) -> ^Expr_Ident {
 	ident.span = selector.span
 	ident.name = selector.name.text
 	ident.name_id = intern_identifier(k.c, selector.name.text)
-	ident.symbol = INVALID_SYMBOL
 	v.callee = ident
 	return ident
 }
 
-// The `dyn` type of a call's receiver, or INVALID_TYPE. Checked before the
-// operand is used as anything else, so a slot call never falls through to
-// ordinary method lookup.
+// The `dyn` type of a named receiver, or INVALID_TYPE.
 @(private = "file")
 dyn_operand_type :: proc(k: ^Checker, operand: Expr) -> Type_Id {
 	ident, is_ident := operand.(^Expr_Ident)
@@ -385,9 +322,8 @@ callee_generic_procedure :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	return template == nil ? INVALID_SYMBOL : template.symbol
 }
 
-// `Type.group(...)` and `pkg.Type.group(...)`: an associated group named through
-// the type. Resolving the operand as a type is silent when it is not one, so a
-// value receiver falls straight through to the method path.
+// `Type.group(...)` or `pkg.Type.group(...)`. A value receiver is not type
+// syntax, so it falls through to the method path silently.
 @(private = "file")
 associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	sel, is_selector := callee.(^Expr_Selector)
@@ -405,9 +341,9 @@ associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	return INVALID_SYMBOL
 }
 
-// `value.method(args)`. The receiver is argument zero. An `inout` receiver
-// carries its mode implicitly; a consuming one is written `move(value).method()`
-// (design.md "Receiver forms").
+// `value.method(args)`, with the receiver as argument zero. An `inout` receiver
+// is implicit; a consuming one is written `move(value).method()` (design.md
+// "Receiver forms").
 @(private = "file")
 check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expected: Type_Id) {
 	receiver := sel.operand
@@ -418,9 +354,8 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		v.type = INVALID_TYPE
 		return
 	}
-	// Every candidate consumes a receiver that is a place, and the transfer is not
-	// written: say so here rather than through a no-overload-matches report of the
-	// same fact. A temporary receiver already owns its value, so it needs no marker.
+	// A place receiver that every candidate consumes needs `move`; say so directly
+	// rather than as a failed overload match.
 	if !expression_is_owned_argument(receiver) && all_candidates_consume(k, candidates) {
 		errorf(
 			k.c, expr_span(receiver), "L0501",
@@ -446,13 +381,9 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		v.type = INVALID_TYPE
 		return
 	}
-	// An exclusive mutable borrow needs a mutable place. A consuming receiver is
-	// an `^Expr_Move` by the rank filter above, and `check_move` has already held
-	// it to `move`'s storage rule -- no partial move, no static-duration source.
+	// A mutating receiver is passed by address, so it must be an assignable place
+	// and not a packed field, whose address may be misaligned.
 	if chosen.receiver == .Inout {
-		// A mutating receiver is passed by address just like an explicit `&mut`.
-		// Packed fields are writable but deliberately not addressable: silently
-		// accepting one here can hand a misaligned pointer to the method body.
 		if field, packed := packed_field_reached(k, receiver); packed {
 			errorf(
 				k.c, sel.name.span, "L0614",
@@ -476,18 +407,14 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		return
 	}
 	set_call_result(v, chosen.result, chosen.result_inout, result_written_but_unresolved(chosen))
-	// `lookup_value` produces an owned copy of the stored element, so a move-only
-	// element has nothing for it to produce. Reported after the result shape is
-	// settled, so a `v, ok :=` destructuring still knows its arity.
-	// design.md "Zero values": growth fills the new slots with the element's
-	// zero, and a no-zero element has none to fill them with.
+	// Reported after the result shape is settled, so a destructuring keeps its arity.
 	#partial switch chosen.container_op {
 	case .Resize:
+		// design.md "Zero values": growth fills new slots with the element's zero.
 		require_type_has_zero(
 			k, container_element(k.c, chosen.params[0]), v.span, "growing a container",
 		)
-	}
-	if chosen.container_op == .Map_Lookup_Value {
+	case .Map_Lookup_Value:
 		element := container_element(k.c, chosen.params[0])
 		if type_clone_disabled(k.c, element) {
 			errorf(
@@ -496,25 +423,19 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 				type_name(k.c, element),
 			)
 		}
-	}
-	// design.md "Container insertion": an inserted element is taken the way an
-	// initialization takes it, so a borrowed place is copied and a move-only one
-	// has to be written `move(...)`. `append`'s pack applies the same rule when
-	// it is bound.
-	#partial switch chosen.container_op {
 	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
+		// design.md "Container insertion": taken like an initialization, so a
+		// borrowed place is copied and a move-only one needs `move(...)`.
 		element := container_element(k.c, chosen.params[0])
 		if len(v.bound) > 2 {
-			// The cost is asked of every element; only a move-only one turns the copy
-			// into the error `classify_copy` reports.
 			classify_copy_cost(k, v.bound[2], element, .Insertion)
 			if type_clone_disabled(k.c, element) {
 				classify_copy(k, v.bound[2], element, .Insertion)
 			}
 		}
 	case .Append:
-		// A lone spread forwards its slice instead of building a pack, so binding
-		// never saw it; that slice is lent, and `append` would keep its elements.
+		// A lone spread lends its slice instead of building a pack, and `append`
+		// would keep the elements.
 		element := container_element(k.c, chosen.params[0])
 		if type_clone_disabled(k.c, element) && v.variadic_forwards && len(v.bound) > 1 {
 			errorf(
@@ -524,14 +445,12 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 			)
 		}
 	}
-	// A sort needs its element's `<` settled before the backend asks for it.
 	require_sort_order_policy(k, chosen, v.span)
 	fold_standard_customization_call(k, v, chosen)
 }
 
-// A fixed array's and a vector's length are properties of their type, so the
-// call has a constant value. The call itself stays ordinary: the backend still
-// evaluates the receiver exactly once, for its effects.
+// A fixed array's or vector's `len()` is constant, though the receiver is still
+// evaluated once for its effects.
 fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
 	if chosen == nil || chosen.synth != .Standard_Len || len(chosen.params) == 0 {
 		return
@@ -560,9 +479,7 @@ reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -
 	return true
 }
 
-// Whether a one-argument application is naming a type rather than passing a
-// value. `resolve_type_syntax` is a probe: it stays silent on anything that is
-// not a type, which is what lets this ask without reporting.
+// Whether a one-argument application names a type; the probe is silent.
 @(private = "file")
 callee_argument_denotes_type :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
@@ -571,14 +488,11 @@ callee_argument_denotes_type :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 	return resolve_type_syntax(k, v.args[0].value) != INVALID_TYPE
 }
 
-// A call through a group: check every argument once, rank the members, then bind
-// against the one that wins.
+// A call through a group or generic procedure: check the arguments once, rank
+// the members, and bind the winner.
 @(private = "file")
 check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected: Type_Id) {
 	sym := symbol_of(k.c, group)
-	// A generic procedure is one candidate rather than several, but it still has
-	// to be inferred and substituted before it can be ranked, so it takes the
-	// same path.
 	members := sym.kind == .Proc_Group ? sym.members : []Symbol_Id{group}
 	description := concat(k.c, "`", concat(k.c, identifier_text(k.c, sym.name), "`"))
 	args, args_ok := collect_call_arguments(k, v.args, members, live_group = group)
@@ -586,10 +500,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 		v.type = INVALID_TYPE
 		return
 	}
-	// Checking an explicitly typed argument may instantiate a generic subject and
-	// add its public extension procedure to this synthetic group. Read the group
-	// again rather than resolving against the member snapshot from before the
-	// arguments existed.
+	// Checking an argument may instantiate a generic subject and add members.
 	if current := symbol_of(k.c, group); current != nil && current.kind == .Proc_Group {
 		members = current.members
 	}
@@ -614,20 +525,20 @@ materialize_call_receiver :: proc(k: ^Checker, v: ^Expr_Call) {
 	if v.type == INVALID_TYPE || v.is_const || len(v.bound) == 0 || v.bound[0] == nil {
 		return
 	}
+	if type_is_compile_time_only(k.c, expr_base(v.bound[0]).type) {
+		return
+	}
 	chosen := symbol_of(k.c, v.resolution.chosen_overload)
-	if type_is_compile_time_only(k.c, expr_base(v.bound[0]).type) { return }
 	if chosen != nil && chosen.has_receiver && chosen.receiver == .Borrow && expr_base(v.bound[0]).is_const {
 		request_materialization(k, v.bound[0])
 	}
 }
 
-// Rewrites the callee to name the selected overload, so every later phase — the
-// backend included — sees an ordinary call to one procedure.
+// Rewrites the callee to name the selected overload, so later phases see an
+// ordinary call. A sort's element `<` is settled here, as `check_method_call`
+// does for methods.
 annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	sym := symbol_of(k.c, chosen)
-	// A sort needs its element's `<` settled before the backend asks for it, and
-	// this is where every call form — method, group — has arrived at one
-	// declaration.
 	require_sort_order_policy(k, sym, v.span)
 	if base := expr_base(v.callee); base != nil && sym != nil {
 		base.resolution = Resolution{kind = .Value, symbol = chosen}
@@ -641,12 +552,8 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	v.operation = Call_Procedure{}
 }
 
-// One written argument bound against one parameter, returned as the expression
-// to bind.
-// design.md "Parameter semantics and ABI lowering": `inout` is written at both
-// ends, and the argument is a place because the callee writes through it.
-// Shared, so a call with a variadic pack enforces the same contract as one
-// without.
+// One written argument bound against one parameter. design.md "Parameter
+// semantics and ABI lowering": `inout` is written at both ends and needs a place.
 bind_written_argument :: proc(
 	k: ^Checker, arg: Argument, target: Type_Id, expected: Param_Mode, prechecked := false,
 ) -> (Expr, bool) {
@@ -662,9 +569,10 @@ bind_written_argument :: proc(
 	if !passed {
 		return value, false
 	}
-	if expected == .Borrow && !check_borrow_argument(k, value) { return value, false }
+	if expected == .Borrow && !check_borrow_argument(k, value) {
+		return value, false
+	}
 	if arg.mode == .Inout {
-		// The callee writes through it, and this pass cannot read what it writes.
 		note_unknown_nil_write(k, value)
 		if base := expr_base(value); base != nil && !base.assignable {
 			report_not_assignable(k, base, "an `inout` argument")
@@ -675,11 +583,8 @@ bind_written_argument :: proc(
 }
 
 check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id, inout_argument := false) -> (Expr, bool) {
-	// design.md "Indexing and slicing" and "Maps": an `inout` argument is a place
-	// the callee really writes, so it selects an `inout` indexing overload. It
-	// does not insert: `inout m[key]` hands the callee an element that must
-	// already be there. Every path that binds an argument goes through here, so
-	// the rule is stated once.
+	// design.md "Indexing and slicing" and "Maps": an `inout` argument selects an
+	// `inout` indexing overload, which never inserts.
 	k.place_position, k.insert_position = inout_argument, false
 	type := check_single_expr(k, e, target)
 	k.place_position, k.insert_position = false, false
@@ -689,25 +594,16 @@ check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id, inout_argume
 	return e, materialize_value_expr(k, e, target, "pass")
 }
 
-// Binds written arguments to parameters, then fills the omitted ones from the
-// declaration's defaults. `v.bound` is the resolved parameter-order list the
-// backend evaluates.
+// Binds written arguments to parameters in `v.bound`, then fills the omitted
+// ones from the declaration's defaults.
 @(private = "file")
 bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration: Symbol_Id) -> bool {
 	count := len(info.parameters)
-	// design.md "`@(c_vararg)`": a foreign C-variadic call passes each concrete
-	// argument after the fixed ones, with no slice built.
 	if info.c_vararg {
 		return bind_c_vararg_arguments(k, v, info)
 	}
-	// design.md "Variadic parameters": every trailing argument fills one
-	// parameter, so the pack is settled before the ordinary positional binding
-	// runs and the written arguments it consumed are no longer separate.
 	if variadic_parameter_index(info) >= 0 {
 		bound_ok := bind_variadic_arguments(k, v, info, declaration)
-		// A pack changes how the arguments are packed, not whether a `move`
-		// parameter's transfer is written at the call site. A call through a group
-		// asks the same question right after binding the same way.
 		require_argument_ownership(k, v, declaration, info)
 		return bound_ok
 	}
@@ -716,17 +612,11 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	declared := symbol_of(k.c, declaration)
 	ok := true
 	named := false
-	// design.md "Evaluation order": a written argument runs where it is
-	// written, whatever slot its name selects. The order is recorded here, where
-	// the slot for each source element is already known, so neither the backend
-	// nor the evaluator has to rediscover it.
+	// design.md "Evaluation order": arguments run in written order, then defaults.
 	order := make([dynamic]int, 0, count, k.c.semantic_allocator)
 
 	for arg, index in v.args {
 		if arg.mode == .Spread {
-			// design.md "Variadic parameters": a spread fills a variadic pack, and
-			// this callee has none — a permanent answer, not a pending milestone
-			//.
 			errorf(k.c, arg.span, "L0371", "`..` needs a variadic parameter to spread into")
 			ok = false
 			continue
@@ -779,12 +669,20 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 		if filled[index] {
 			continue
 		}
+		// A failed argument's slot is not a second mistake.
 		if !ok {
-			// An argument already failed, so the slot it should have filled is
-			// not a second mistake to report.
 			return false
 		}
 		if declared == nil || index >= len(declared.param_defaults) || declared.param_defaults[index] == nil {
+			if declared != nil && index < len(declared.param_symbols) {
+				if parameter := symbol_of(k.c, declared.param_symbols[index]); parameter != nil {
+					errorf(
+						k.c, v.span, "L0322", "missing an argument for `%s`",
+						identifier_text(k.c, parameter.name),
+					)
+					return false
+				}
+			}
 			errorf(
 				k.c,
 				v.span,
@@ -808,10 +706,8 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	return ok
 }
 
-// design.md "`@(c_vararg)`": the fixed parameters bind normally; every argument
-// after them is a concrete C variadic — inferred, required foreign-ABI-safe
-// after the default promotions, and never spread. `v.bound` keeps all of them
-// so the backend emits one true varargs call.
+// design.md "`@(c_vararg)`": the fixed parameters bind normally, and each later
+// argument is a concrete, foreign-ABI-safe value passed by value.
 @(private = "file")
 bind_c_vararg_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info) -> bool {
 	fixed := len(info.parameters)
@@ -836,24 +732,36 @@ bind_c_vararg_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info) ->
 			continue
 		}
 		if index < fixed {
-			value, passed := check_argument_value(k, arg.value, info.parameters[index])
+			mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+			value, passed := bind_written_argument(k, arg, info.parameters[index], mode)
 			bound[index] = value
-			if !passed {
-				ok = false
-			}
+			ok = ok && passed
 			continue
 		}
 		bound[index] = arg.value
+		if arg.mode == .Inout {
+			errorf(k.c, arg.span, "L0370", "a C-variadic argument is passed by value, so it cannot be `inout`")
+			ok = false
+			continue
+		}
 		type := check_single_expr(k, arg.value)
 		if type == INVALID_TYPE {
 			ok = false
 			continue
 		}
-		// An untyped literal defaults to its concrete type, which is what actually
-		// crosses (and what the C promotions then act on).
+		// An untyped constant crosses at its default type.
 		if type_is_untyped(k.c, type) {
-			type = default_type(k.c, type)
-			check_single_expr(k, arg.value, type)
+			typed := default_type(k.c, type)
+			if typed == INVALID_TYPE {
+				errorf(k.c, arg.span, "L0619", "a C-variadic argument needs a concrete type, found `%s`", type_name(k.c, type))
+				ok = false
+				continue
+			}
+			if !materialize(k, arg.value, typed) {
+				ok = false
+				continue
+			}
+			type = typed
 		}
 		if safe, reason := foreign_abi_safe(k.c, type); !safe {
 			errorf(k.c, arg.span, "L0619", "a C-variadic argument is not ABI-safe: %s", reason)
@@ -877,8 +785,7 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// The operand is checked without the destination as expression context. The
-	// conversion node, not a nested binary operator, owns that destination.
+	// Checked without the target as context: the conversion node owns it.
 	source := check_single_expr(k, v.args[0].value)
 	if source == INVALID_TYPE {
 		v.type = INVALID_TYPE
@@ -890,8 +797,7 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// Without this a refused literal would fall through to the hook search and
-	// report a missing conversion rather than the bytes it actually holds.
+	// Invalid UTF-8 is reported as such, not as a missing conversion.
 	if operand := expr_base(v.args[0].value); operand.is_const &&
 	   constant_is_invalid_text(k.c, operand.const_value, target) {
 		report_invalid_utf8(k, operand.span, target)
@@ -907,14 +813,11 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 }
 
 // The built-in half of `T(v)`, including pointer and `distinct` conversions.
-// Returns false — without reporting — when no built-in conversion reaches the
-// target, which is what lets stage 2 run.
+// Returns false, silently, when only a conversion hook could apply.
 @(private = "file")
 builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) -> bool {
 	base := expr_base(v.args[0].value)
-	// Constant folding must not reintroduce a representation-only conversion
-	// that runtime values do not have. Two distinct identities meet only through
-	// an explicit target hook, even when the operand happens to be constant.
+	// Two distinct types meet only through a hook, even for a constant operand.
 	if type_kind(k.c, source) == .Distinct && type_kind(k.c, target) == .Distinct && source != target {
 		return false
 	}
@@ -935,15 +838,13 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	v.bound[0] = v.args[0].value
 	v.type = target
 	if base.is_const {
-		// The operand keeps its own type; the conversion node carries the result.
 		v.is_const = true
 		v.const_value = converted
 	}
 	return true
 }
 
-// User conversion hooks are inherent to the target, so imports and extension
-// packages cannot alter an existing `T(value)` expression.
+// Conversion hooks are inherent to the target, so imports cannot change `T(value)`.
 @(private = "file")
 check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, args: []Arg_Info, attempted: Type_Id) {
 	usable := hook_candidates(k, target, .Convert)
@@ -957,7 +858,7 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, 
 		return
 	}
 	description := concat(k.c, "conversion to `", concat(k.c, type_name(k.c, target), "`"))
-	cand, resolved := resolve_overload(k, v.span, description, usable[:], args, target)
+	cand, resolved := resolve_overload(k, v.span, description, usable, args, target)
 	if !resolved {
 		v.type = INVALID_TYPE
 		return
@@ -970,9 +871,7 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, 
 	v.type = target
 }
 
-// Whether `move(...)` is the only spelling that can reach any of these. An
-// overload group mixing consuming and borrowing receivers has no such advice to
-// give: the written form simply selects between them.
+// Whether every candidate consumes its receiver, so only `move(...)` reaches one.
 @(private = "file")
 all_candidates_consume :: proc(k: ^Checker, candidates: []Symbol_Id) -> bool {
 	for candidate in candidates {
