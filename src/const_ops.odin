@@ -1,10 +1,5 @@
-// Constant-value operations, shared by the checker and the compile-time
-// evaluator.
-//
-// Nothing here knows about `Checker`: leaf and operator folding stay in
-// `check_expr.odin`, but the *value* semantics — one operator table, one
-// wrapping rule, one comparison order — live here so `eval.odin` cannot
-// develop a second, subtly different arithmetic.
+// Constant-value arithmetic and comparison, shared by the checker and the
+// compile-time evaluator so both fold identically.
 package lokec
 
 import "core:mem"
@@ -23,15 +18,12 @@ fold_arithmetic :: proc(
 	allocator: mem.Allocator = {},
 ) -> (Const_Value, bool) {
 	storage := value_allocator(c, allocator)
-	// design.md "SIMD vectors": every operator applies lane-wise, so a constant
-	// vector folds lane by lane at the element type. Without this the operands
-	// would reach the integer path with no integer in them and fold to zero.
+	// design.md "SIMD vectors": operators apply lane-wise.
 	if info := underlying_info(c, type); info != nil && info.kind == .Simd {
 		return fold_simd_lanes(c, op, op_span, a, b, type, info, allocator)
 	}
 	if a.kind == .String || b.kind == .String {
-		// design.md: `+` joins two compile-time strings, and nothing else applies
-		// to them. Runtime text operations belong to `string`, not to this.
+		// Only `+` applies to compile-time strings.
 		if op != .Plus || a.kind != .String || b.kind != .String {
 			errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
 			return Const_Value{}, false
@@ -64,9 +56,7 @@ fold_arithmetic :: proc(
 		return float_const(result, bits), true
 	}
 
-	// design.md "SIMD vectors": `&`, `|`, `~`, and `&~` apply to `bool` lanes too.
-	// A boolean carries no `integer`, so the integer path below would fold every
-	// mask to `false` instead of computing it.
+	// design.md "SIMD vectors": bitwise operators apply to `bool` lanes too.
 	if a.kind == .Boolean || b.kind == .Boolean {
 		if a.kind != .Boolean || b.kind != .Boolean {
 			errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
@@ -113,12 +103,20 @@ fold_arithmetic :: proc(
 	case .Amp_Tilde:
 		result = bi_and_not(storage, x, y)
 	case .Shl, .Shr:
-		// An exact untyped result past this width would need more storage than the
-		// compiler is willing to spend; every runtime type saturates long before it.
+		// design.md "Integer operators": a shift saturates, so a larger count folds
+		// as the limit. Only an untyped `<<` grows, up to a storage cap.
+		untyped := type_is_untyped(c, type)
+		limit := u64(bi_magnitude_bits(storage, x))
+		if op == .Shl {
+			limit = untyped ? 1 << 20 : u64(type_bits(c, type))
+		}
 		count, fits := bi_to_u64(storage, y)
-		if !fits || count > 1 << 20 {
-			errorf(c, op_span, "L0356", "shift count %s is too large to fold", bi_text(storage, y))
-			return Const_Value{}, false
+		if !fits || count > limit {
+			if op == .Shl && untyped {
+				errorf(c, op_span, "L0356", "shift count %s is too large to fold", bi_text(storage, y))
+				return Const_Value{}, false
+			}
+			count = limit
 		}
 		result = op == .Shl ? bi_shl(storage, x, int(count)) : bi_shr(storage, x, int(count))
 	case:
@@ -128,9 +126,8 @@ fold_arithmetic :: proc(
 	return Const_Value{kind = a.kind, integer = wrap_to_type(c, result, type, storage)}, true
 }
 
-// A typed integer operation is computed exactly, then projected modulo its own
-// width, matching the wrapping arithmetic the backend emits (design.md
-// "Integer overflow"). An untyped operation keeps its exact value.
+// design.md "Integer overflow": a typed result wraps to its width; an untyped
+// one stays exact.
 wrap_to_type :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> Big_Int {
 	if type_is_untyped(c, type) {
 		return value
@@ -150,7 +147,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		if a.kind != .String || b.kind != .String {
 			return false, false
 		}
-		// Byte order, which is what `<` on a compile-time string means.
+		// Byte order.
 		order = strings.compare(a.text, b.text)
 	case a.kind == .Float && b.kind == .Float:
 		// NaN compares false against everything, including itself.
@@ -159,7 +156,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		}
 		order = a.float < b.float ? -1 : (a.float > b.float ? 1 : 0)
 	case a.kind == .Float || b.kind == .Float:
-		// An integer against a float, exactly rather than through a rounding.
+		// Integer against float, compared exactly.
 		float, integer := a, b
 		if b.kind == .Float {
 			float, integer = b, a
@@ -189,9 +186,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		return (a.boolean == b.boolean) == (op == .Eq_Eq), true
 	case a.kind == .Nil && b.kind == .Nil:
 		return op == .Eq_Eq, true
-	// design.md: two `type` values compare during compilation, and equality means
-	// the same Loke type identity after aliases are resolved. A symbolic `typeid`
-	// constant carries the same identity, so both fold here.
+	// Type identity after aliases are resolved.
 	case a.kind == .Type && b.kind == .Type:
 		if op != .Eq_Eq && op != .Not_Eq {
 			return false, false
@@ -229,9 +224,7 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 	if a == nil || b == nil || len(a.elements) != len(b.elements) {
 		return false
 	}
-	// design.md "Unions": two union values are equal only when they hold the
-	// same *variant*. Two variants may share a payload type, so comparing the
-	// payloads alone would make `.left(3)` equal `.right(3)`.
+	// design.md "Unions": equal values hold the same variant.
 	if type_is_union(c, a.type) {
 		if a.variant != b.variant {
 			return false
@@ -240,8 +233,26 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 			return true
 		}
 	}
+	info := underlying_info(c, a.type)
 	for element, index in a.elements {
-		equal, ok := fold_comparison(c, .Eq_Eq, element, b.elements[index], allocator)
+		other := b.elements[index]
+		field := info != nil && info.kind == .Struct ? symbol_of(c, info.fields[index]) : nil
+		// design.md "Uninitialized capacity": only the live prefix has values.
+		if counter := field != nil ? symbol_of(c, field.initialized_by) : nil; counter != nil {
+			live, live_ok := bi_to_i64(allocator, a.elements[counter.index].integer)
+			if !live_ok || live < 0 || element.aggregate == nil || other.aggregate == nil ||
+			   live > i64(min(len(element.aggregate.elements), len(other.aggregate.elements))) {
+				return false
+			}
+			for at in 0 ..< int(live) {
+				equal, ok := fold_comparison(c, .Eq_Eq, element.aggregate.elements[at], other.aggregate.elements[at], allocator)
+				if !ok || !equal {
+					return false
+				}
+			}
+			continue
+		}
+		equal, ok := fold_comparison(c, .Eq_Eq, element, other, allocator)
 		if !ok || !equal {
 			return false
 		}
@@ -249,9 +260,8 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 	return true
 }
 
-// One lane at a time, at the element type. An operand that is not an aggregate
-// is the splatted scalar: `convert_const` normally widens it first, but a fold
-// reached through the evaluator may still see the lane value itself.
+// One lane at a time at the element type. A non-aggregate operand is a
+// splatted scalar.
 @(private = "file")
 fold_simd_lanes :: proc(
 	c: ^Compiler,

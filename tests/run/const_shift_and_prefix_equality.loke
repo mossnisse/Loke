@@ -1,0 +1,30 @@
+package main; import "core:fmt";
+
+// Constant folding agrees with run time: a shift past the width saturates, and
+// two values with an `@(initialized)` field compare only their live prefix.
+
+Buf :: struct {
+	count: int,
+	@(initialized = count) items: [4]int,
+}
+
+shl_at :: proc(x: u8, n: uint) -> u8 { return x << n; }
+shr_at :: proc(x: i8, n: uint) -> i8 { return x >> n; }
+shl_assign :: proc(v: i16, n: uint) -> i16 { x := v; x <<= n; return x; }
+
+A :: shl_at(1, 2000000);
+B :: shr_at(-4, 5000000000);
+C :: shl_assign(3, 17);
+D :: u8(255) << 9000000000;
+E :: i8(100) >> 9000000000;
+F :: -5 >> 9000000000;
+X :: Buf{};
+Y :: Buf{};
+
+main :: proc() {
+	fmt.println(A, B, C, D, E, F);
+	fmt.println(X == Y, X != Y);
+	n: uint = 2000000;
+	x := X;
+	fmt.println(shl_at(1, n), shr_at(-4, n), x == Y);
+}
