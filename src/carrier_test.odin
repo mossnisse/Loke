@@ -1,145 +1,92 @@
-// The structural half of carrier shapes: they ask the shape of a type
-// directly rather than compiling a program, because what has to hold is a
-// property of the type graph — the same answer whichever type is queried
-// first, whichever field order, and a finite answer for a self-containing type.
+// Carrier shapes: the structural queries on the type graph, and the provenance
+// precision they promise to programs.
 package lokec
 
-import "core:fmt"
 import "core:strings"
 import "core:testing"
 
-// Checks one package of source into the caller's compiler and hands back its
-// file, so a test can look types up by written name. The compiler is filled in
-// place — the checker stores `^Compiler` internally, so it must already live
-// at its final address before anything takes its pointer.
 @(private = "file")
-shaped :: proc(c: ^Compiler, text: string) -> ^File {
-	c^ = test_compiler(text)
-	tokens := lex(c, 0)
-	defer delete(tokens)
-	f := new(File)
-	f^ = parse(c, 0, tokens)
-	// Owned by the compilation, as a production parse is.
-	append(&c.parsed_files, f)
-	pkg_id := new_package(c, "main")
-	add_package_file(c, pkg_id, f)
-	check_one_package(c, pkg_id)
-	return f
-}
-
-@(private = "file")
-named_type :: proc(c: ^Compiler, f: ^File, name: string) -> Type_Id {
-	for item in f.items {
+named_type :: proc(t: ^testing.T, p: ^Checked, name: string) -> Type_Id {
+	for item in p.f.items {
 		d, ok := item.(^Decl)
 		if !ok || len(d.symbols) == 0 {
 			continue
 		}
-		sym := symbol_of(c, d.symbols[0])
-		if sym == nil || sym.kind != .Type {
-			continue
-		}
-		if identifier_text(c, sym.name) == name {
+		sym := symbol_of(&p.c, d.symbols[0])
+		if sym != nil && sym.kind == .Type && identifier_text(&p.c, sym.name) == name {
 			return sym.type
 		}
 	}
+	testing.expectf(t, false, "test type `%s` was not found", name)
 	return INVALID_TYPE
-}
-
-// One string per path, so a test can assert on the set of paths without
-// depending on the order fields were written in.
-@(private = "file")
-path_key :: proc(path: Carrier_Path) -> string {
-	key := ""
-	for step in path.steps {
-		switch step.kind {
-		case .Field: key = fmt.tprintf("%s.%d", key, step.lo)
-		case .Range: key = fmt.tprintf("%s:%d", key, step.lo)
-		case .Deref: key = fmt.tprintf("%s^", key)
-		case .Wild:  key = fmt.tprintf("%s*", key)
-		}
-	}
-	if path.truncated {
-		key = fmt.tprintf("%s!", key)
-	}
-	return key
-}
-
-@(private = "file")
-path_keys :: proc(shape: []Carrier_Path) -> map[string]Carrier_Path {
-	out := make(map[string]Carrier_Path, len(shape), context.temp_allocator)
-	for path in shape {
-		out[path_key(path)] = path
-	}
-	return out
 }
 
 @(test)
 a_bare_carrier_is_one_empty_path :: proc(t: ^testing.T) {
-	text := `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 Alias :: distinct []int
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
+main :: proc() { }`)
 
-	shape := carrier_shape(&c, named_type(&c, f, "Alias"))
-	testing.expectf(t, len(shape) == 1, "expected one path, got %d", len(shape))
+	shape := carrier_shape(&p.c, named_type(t, &p, "Alias"))
+	if !testing.expectf(t, len(shape) == 1, "expected one path, got %d", len(shape)) { return }
 	testing.expect(t, len(shape[0].steps) == 0, "a bare carrier's path is the value itself")
 	testing.expect(t, !shape[0].truncated, "a bare carrier is not truncated")
 }
 
 @(test)
 a_scalar_record_has_no_paths :: proc(t: ^testing.T) {
-	text := `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 Plain :: struct { a: int, b: f64, c: bool }
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
+main :: proc() { }`)
 
-	plain := named_type(&c, f, "Plain")
-	testing.expect(t, plain != INVALID_TYPE, "the test type was not found, so the rest is vacuous")
-	testing.expect(t, len(carrier_shape(&c, plain)) == 0, "a scalar record carries nothing")
-	testing.expect(t, !type_carries_borrow(&c, plain).any, "reachability disagrees with the shape")
+	plain := named_type(t, &p, "Plain")
+	testing.expect(t, len(carrier_shape(&p.c, plain)) == 0, "a scalar record carries nothing")
+	testing.expect(t, !type_carries_borrow(&p.c, plain).any, "reachability disagrees with the shape")
 }
 
 @(test)
 record_fields_are_distinct_paths :: proc(t: ^testing.T) {
-	text := `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 Pair :: struct { left: []int, count: int, right: ^mut int }
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
+main :: proc() { }`)
 
-	shape := carrier_shape(&c, named_type(&c, f, "Pair"))
-	testing.expectf(t, len(shape) == 2, "expected two carrier fields, got %d", len(shape))
-	keys := path_keys(shape)
-	left, has_left := keys[".0"]
-	right, has_right := keys[".2"]
+	shape := carrier_shape(&p.c, named_type(t, &p, "Pair"))
+	if !testing.expectf(t, len(shape) == 2, "expected two carrier fields, got %d", len(shape)) { return }
+	has_left, has_right := false, false
+	for path in shape {
+		if !testing.expect(t, len(path.steps) == 1, "a field path should be one step") { continue }
+		switch path.steps[0].lo {
+		case 0:
+			has_left = true
+			testing.expect(t, !path.mutable, "a read-only slice field reported a mutable capability")
+		case 2:
+			has_right = true
+			testing.expect(t, path.mutable, "a `^mut` field reported an immutable capability")
+		}
+	}
 	testing.expect(t, has_left && has_right, "the carrier fields are not at their own field indices")
-	testing.expect(t, has_left && !left.mutable, "a read-only slice field reported a mutable capability")
-	testing.expect(t, has_right && right.mutable, "a `^mut` field reported an immutable capability")
 }
 
 @(test)
 a_scalar_cycle_terminates_without_paths :: proc(t: ^testing.T) {
-	text := `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 Chain :: struct { rest: [dynamic]Chain, value: int }
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
+main :: proc() { }`)
 
-	chain := named_type(&c, f, "Chain")
-	testing.expect(t, chain != INVALID_TYPE, "the test type was not found, so the rest is vacuous")
-	testing.expect(t, !type_carries_borrow(&c, chain).any, "a cycle of scalars invented a carrier")
-	testing.expect(t, len(carrier_shape(&c, chain)) == 0, "a cycle of scalars invented a path")
+	chain := named_type(t, &p, "Chain")
+	testing.expect(t, !type_carries_borrow(&p.c, chain).any, "a cycle of scalars invented a carrier")
+	testing.expect(t, len(carrier_shape(&p.c, chain)) == 0, "a cycle of scalars invented a path")
 }
 
-// `Node` contains a container of itself and a bare borrow. The answer must not
-// depend on field order, nor on whether the recursive edge or the whole type
-// was asked about first.
+// Neither field order nor querying the recursive edge first may change the answer.
 @(test)
 a_recursive_shape_is_finite_and_order_independent :: proc(t: ^testing.T) {
 	forward := `package main;
@@ -149,54 +96,52 @@ main :: proc() { }`
 Node :: struct { labels: []int, children: [dynamic]Node }
 main :: proc() { }`
 
-	shape_of_node :: proc(text: string, inner_first: bool) -> (paths: int, reaches: bool) {
-		c: Compiler
-		defer destroy_compilation(&c)
-		f := shaped(&c, text)
-		node := named_type(&c, f, "Node")
+	shape_of_node :: proc(t: ^testing.T, text: string, inner_first: bool) -> (paths: int, reaches: bool) {
+		p: Checked
+		defer destroy_checked(&p)
+		check_source(&p, text)
+		node := named_type(t, &p, "Node")
 		if inner_first {
-			info := type_of(&c, node)
-			for field in info.fields {
-				if sym := symbol_of(&c, field); sym != nil {
-					_ = carrier_shape(&c, sym.type)
-					_ = type_carries_borrow(&c, sym.type)
+			for field in type_of(&p.c, node).fields {
+				if sym := symbol_of(&p.c, field); sym != nil {
+					_ = carrier_shape(&p.c, sym.type)
+					_ = type_carries_borrow(&p.c, sym.type)
 				}
 			}
 		}
-		return len(carrier_shape(&c, node)), type_carries_borrow(&c, node).any
+		return len(carrier_shape(&p.c, node)), type_carries_borrow(&p.c, node).any
 	}
 
-	a, a_reaches := shape_of_node(forward, false)
-	b, b_reaches := shape_of_node(reversed, false)
-	inner, inner_reaches := shape_of_node(forward, true)
+	a, a_reaches := shape_of_node(t, forward, false)
+	b, b_reaches := shape_of_node(t, reversed, false)
+	inner, inner_reaches := shape_of_node(t, forward, true)
 
 	testing.expectf(t, a == b, "field order changed the shape: %d versus %d", a, b)
 	testing.expectf(t, a == inner, "query order changed the shape: %d versus %d", a, inner)
 	testing.expect(t, a_reaches && b_reaches && inner_reaches, "a recursive carrier was not reachable")
-	testing.expectf(t, a > 0 && a <= CARRIER_DEPTH + 1, "a recursive shape did not stay finite: %d paths", a)
 	testing.expectf(t, a == 3, "the recursive shape changed: %d paths", a)
 }
 
 @(test)
 depth_beyond_the_limit_becomes_one_truncated_path :: proc(t: ^testing.T) {
-	text := `package main;
-Five :: struct { view: []int }
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
+Five :: struct { view: ^mut int }
 Four :: struct { inner: Five }
 Three :: struct { inner: Four }
 Two :: struct { inner: Three }
 One :: struct { inner: Two }
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
+main :: proc() { }`)
 
-	// `Four` reaches its leaf within the limit; `One` is one level deeper.
-	deep := carrier_shape(&c, named_type(&c, f, "Four"))
-	testing.expectf(t, len(deep) == 1 && !deep[0].truncated, "a path inside the limit was cut")
+	// `Two` reaches its leaf exactly at the limit; `One` is one level deeper.
+	deep := carrier_shape(&p.c, named_type(t, &p, "Two"))
+	testing.expect(t, len(deep) == 1 && !deep[0].truncated, "a path at the limit was cut")
 
-	over := carrier_shape(&c, named_type(&c, f, "One"))
-	testing.expectf(t, len(over) == 1, "expected one path past the limit, got %d", len(over))
+	over := carrier_shape(&p.c, named_type(t, &p, "One"))
+	if !testing.expectf(t, len(over) == 1, "expected one path past the limit, got %d", len(over)) { return }
 	testing.expect(t, over[0].truncated, "a path past the depth limit was not marked truncated")
+	testing.expect(t, over[0].mutable, "a truncated path hid a mutable carrier below it")
 	testing.expect(t, .Depth in over[0].precision, "depth cutoff lost its diagnostic reason")
 	testing.expectf(
 		t,
@@ -207,85 +152,58 @@ main :: proc() { }`
 }
 
 @(test)
-a_truncated_path_keeps_the_strongest_capability :: proc(t: ^testing.T) {
-	text := `package main;
-Five :: struct { view: ^mut int }
-Four :: struct { inner: Five }
-Three :: struct { inner: Four }
-Two :: struct { inner: Three }
-One :: struct { inner: Two }
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
-
-	over := carrier_shape(&c, named_type(&c, f, "One"))
-	testing.expect(t, len(over) == 1 && over[0].truncated, "expected one truncated path")
-	testing.expect(t, over[0].mutable, "a truncated path hid a mutable carrier below it")
-}
-
-@(test)
 map_keys_and_values_are_separate_paths :: proc(t: ^testing.T) {
-	text := `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 Held :: struct { view: []int }
-Table :: struct { entries: map[string]Held }
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
+Table :: struct { entries: map[^int]Held }
+main :: proc() { }`)
+	if !testing.expect(t, p.c.error_count == 0, "map fixture should check") { report(&p.c); return }
 
-	// A `string` key carries no borrow, so every path here is a value path — one
-	// per entry, since a constant key gets an entry of its own.
-	shape := carrier_shape(&c, named_type(&c, f, "Table"))
-	testing.expectf(
-		t,
-		len(shape) == MAP_KEY_SLOTS,
-		"expected one value path per entry, got %d",
-		len(shape),
-	)
-	entries := make(map[i64]bool, MAP_KEY_SLOTS, context.temp_allocator)
+	// One key and one value path per constant-key entry.
+	shape := carrier_shape(&p.c, named_type(t, &p, "Table"))
+	if !testing.expectf(t, len(shape) == 2 * MAP_KEY_SLOTS, "expected a key and a value path per entry, got %d", len(shape)) {
+		return
+	}
+	seen := make(map[[2]i64]bool, 2 * MAP_KEY_SLOTS, context.temp_allocator)
 	for path in shape {
 		steps := path.steps
-		testing.expectf(t, len(steps) >= 3, "a map value path is missing its entry steps: %d", len(steps))
-		testing.expect(t, steps[len(steps) - 2].kind == .Field, "a map path does not separate key from value")
-		testing.expectf(
-			t,
-			steps[len(steps) - 2].lo == PROJ_MAP_VALUE,
-			"a value path was recorded under the key step",
-		)
-		entry := steps[len(steps) - 3]
+		// `entries`, then the entry, then the key or value side.
+		if !testing.expectf(t, len(steps) >= 3, "a map path is missing its entry steps: %d", len(steps)) { continue }
+		entry, side := steps[1], steps[2]
+		testing.expect(t, side.kind == .Field, "a map path does not separate key from value")
 		testing.expect(t, entry.kind == .Range, "a keyed map entry is not a constant range")
-		testing.expect(t, !entries[entry.lo], "two entries share one key slot")
-		entries[entry.lo] = true
+		slot := [2]i64{entry.lo, side.lo}
+		testing.expect(t, !seen[slot], "two paths share one entry side")
+		seen[slot] = true
 	}
 }
 
 @(test)
 a_wide_map_value_keeps_one_entry :: proc(t: ^testing.T) {
-	// Replicating the entry costs a copy of the value's paths, so a value with
-	// more than the limit keeps the single wildcard entry instead.
-	text := `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 Wide :: struct { a: []int, b: []int, c: []int }
 Table :: struct { entries: map[string]Wide }
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
+main :: proc() { }`)
 
-	shape := carrier_shape(&c, named_type(&c, f, "Table"))
-	testing.expectf(t, len(shape) == 3, "expected one path per field, got %d", len(shape))
+	// Wider than MAP_KEY_PATH_LIMIT, so one wildcard entry instead of per-key copies.
+	shape := carrier_shape(&p.c, named_type(t, &p, "Table"))
+	if !testing.expectf(t, len(shape) == 3, "expected one path per field, got %d", len(shape)) { return }
 	for path in shape {
-		entry := path.steps[len(path.steps) - 3]
-		testing.expect(t, entry.kind == .Wild, "a wide map value was given keyed entries")
+		if !testing.expect(t, len(path.steps) >= 3, "a map path is missing its entry steps") { continue }
+		testing.expect(t, path.steps[len(path.steps) - 3].kind == .Wild, "a wide map value was given keyed entries")
 		testing.expect(t, .Map_Width in path.precision, "map width cutoff lost its diagnostic reason")
 	}
 }
 
 @(test)
 minimum_carrier_precision_boundaries :: proc(t: ^testing.T) {
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 Eight :: struct { values: [8][]int }
 Nine :: struct { values: [9][]int }
 SixtyFour :: struct { values: [8][8][]int }
@@ -297,21 +215,21 @@ Two :: struct { value: Leaf }
 Three :: struct { value: Two }
 Four :: struct { value: Three }
 main :: proc() {}`)
-	testing.expect(t, c.error_count == 0, "boundary types should check")
-	eight := carrier_shape(&c, named_type(&c, f, "Eight"))
+	testing.expect(t, p.c.error_count == 0, "boundary types should check")
+	eight := carrier_shape(&p.c, named_type(t, &p, "Eight"))
 	testing.expect(t, len(eight) == 8, "eight elements must remain independent")
 	for path in eight { testing.expect(t, path.precision == {}, "exact array reported precision loss") }
-	nine := carrier_shape(&c, named_type(&c, f, "Nine"))
+	nine := carrier_shape(&p.c, named_type(t, &p, "Nine"))
 	testing.expect(t, len(nine) == 1 && .Array_Elements in nine[0].precision, "nine elements must explain their merge")
-	full := carrier_shape(&c, named_type(&c, f, "SixtyFour"))
+	full := carrier_shape(&p.c, named_type(t, &p, "SixtyFour"))
 	testing.expect(t, len(full) == 64, "64 paths must remain independent")
 	for path in full { testing.expect(t, path.precision == {}, "exact width reported precision loss") }
-	over := carrier_shape(&c, named_type(&c, f, "SixtyFive"))
+	over := carrier_shape(&p.c, named_type(t, &p, "SixtyFive"))
 	testing.expect(t, len(over) == 1 && .Width in over[0].precision, "65 paths must explain their merge")
-	pairs := carrier_shape(&c, named_type(&c, f, "MapPairs"))
+	pairs := carrier_shape(&p.c, named_type(t, &p, "MapPairs"))
 	testing.expect(t, len(pairs) == 8, "two-path map entries must distinguish four keys")
 	for path in pairs { testing.expect(t, path.precision == {}, "two-path map entry reported precision loss") }
-	deep := carrier_shape(&c, named_type(&c, f, "Four"))
+	deep := carrier_shape(&p.c, named_type(t, &p, "Four"))
 	testing.expect(t, len(deep) == 1 && len(deep[0].steps) == 4 && deep[0].precision == {}, "four projection steps must stay precise")
 }
 
@@ -379,34 +297,36 @@ bad :: proc(input: []int) -> []int {
     return value.value.value.value.value.wanted;
 }`, "below 4 aggregate projection steps"},
 	}
-	for item in cases {
-		c: Compiler
+	for item, index in cases {
+		p: Checked
 		source := strings.concatenate({"package main;\n", item.body, "\nmain :: proc() {}"})
 		defer delete(source)
-		_ = shaped(&c, source)
-		defer destroy_compilation(&c)
-		if !testing.expectf(t, c.error_count == 0, "precision fixture did not type check: %v", c.diagnostics[:]) { continue }
-		k := Checker{c = &c}
+		check_source(&p, source)
+		defer destroy_checked(&p)
+		if !testing.expectf(t, p.c.error_count == 0, "case %d did not type check: %v", index, p.c.diagnostics[:]) { continue }
+		k := Checker{c = &p.c}
 		analyze_program_provenance(&k)
-		if !testing.expectf(t, c.error_count == 1, "expected one lifetime rejection, got %d", c.error_count) { continue }
+		if !testing.expectf(t, p.c.error_count == 1, "case %d: expected one lifetime rejection, got %d", index, p.c.error_count) {
+			continue
+		}
 		found := false
-		for diagnostic in c.diagnostics {
+		for diagnostic in p.c.diagnostics {
 			for note in diagnostic.notes {
 				if strings.contains(note.message, "provenance precision") {
-					testing.expect(t, item.note != "", "an unrelated or overwritten value added a precision note")
+					testing.expectf(t, item.note != "", "case %d: an unrelated or overwritten value added a precision note", index)
 					found ||= item.note != "" && strings.contains(note.message, item.note)
 				}
 			}
 		}
-		testing.expect(t, found == (item.note != ""), "the affected value lost its precision explanation")
+		testing.expectf(t, found == (item.note != ""), "case %d: the affected value lost its precision explanation", index)
 	}
 }
 
 @(test)
 four_constant_map_keys_preserve_independence :: proc(t: ^testing.T) {
-	c: Compiler
-	defer destroy_compilation(&c)
-	_ = shaped(&c, `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 read :: proc(input: []int) -> []int {
     local := [1]int{2};
     values: map[int][]int = {};
@@ -414,23 +334,22 @@ read :: proc(input: []int) -> []int {
     return values[0];
 }
 main :: proc() {}`)
-	k := Checker{c = &c}
+	k := Checker{c = &p.c}
 	analyze_program_provenance(&k)
-	testing.expectf(t, c.error_count == 0, "four constant keys lost independence: %v", c.diagnostics[:])
+	testing.expectf(t, p.c.error_count == 0, "four constant keys lost independence: %v", p.c.diagnostics[:])
 }
 
 @(test)
 union_alternatives_join_under_one_wildcard :: proc(t: ^testing.T) {
-	text := `package main;
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
 Held :: struct { view: []int }
 Other :: struct { target: ^mut int }
 Choice :: union { held: Held, other: Other, plain: int }
-main :: proc() { }`
-	c: Compiler
-	defer destroy_compilation(&c)
-	f := shaped(&c, text)
+main :: proc() { }`)
 
-	shape := carrier_shape(&c, named_type(&c, f, "Choice"))
+	shape := carrier_shape(&p.c, named_type(t, &p, "Choice"))
 	testing.expectf(t, len(shape) == 2, "expected one path per carrying alternative, got %d", len(shape))
 	for path in shape {
 		testing.expect(t, len(path.steps) > 0 && path.steps[0].kind == .Wild, "an alternative is not behind a wildcard")
