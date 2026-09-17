@@ -1,7 +1,5 @@
-// The checked-program boundary. Validates registered dependencies only — never
-// resolves names, checks bodies, or repairs missing semantic state.
-// Node-specific lowering assertions remain in the emitter as a second line of
-// defence. Deliberately not another AST or a second type checker.
+// The checked-program boundary: validates that every registry the emitter reads
+// was settled during checking. It never resolves, checks, or repairs anything.
 package lokec
 
 emission_contract_error :: proc(c: ^Compiler, message: string) -> bool {
@@ -33,8 +31,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 		ids[id] = true
 	}
 
-	// A committed generic body must be both checked and enrolled for emission.
-	// Signature-only instances are intentionally absent from the emission list.
+	// A committed generic body is checked and enrolled; signature-only ones are not.
 	enrolled := make(map[Symbol_Id]bool, context.temp_allocator)
 	for pkg in c.packages {
 		for instance in pkg.instances {
@@ -55,8 +52,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 		}
 	}
 
-	// Synthesized map bodies use these choices even when no written map call
-	// remains. A consumer cannot silently fall back to a fresh member lookup.
+	// Synthesized map bodies need a settled key policy.
 	for &info in c.types {
 		if info.kind == .Map && .Container in info.contributed &&
 		   resolved_map_key_policy(c, info.key).kind == .Unresolved {
@@ -69,18 +65,13 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 			return emission_contract_error(c, "a resolved map key operation has no checked procedure")
 		}
 	}
-	// A sort's `<` is chosen once per element type and lowered as a direct call
-	// to that symbol, so the comparison thunk never repeats member lookup. A
-	// delegation was already followed through during resolution, which is why the
-	// recorded operation is expected to have a body of its own.
+	// A sort's `<`, already followed through any delegation.
 	for _, policy in c.order_policies {
 		if policy.kind == .Inherent && !emission_procedure_available(c, policy.less) {
 			return emission_contract_error(c, "a resolved ordering operation has no checked procedure")
 		}
 	}
-	// design.md's formatter coherence, likewise: the generated thunk calls the
-	// one discovered `format` rather than searching for the name again. An
-	// absent entry is a compiler-generated formatter, not a missing dependency.
+	// A discovered `format`; INVALID_SYMBOL means a generated formatter.
 	for _, hook in c.formatters {
 		if hook != INVALID_SYMBOL && !emission_procedure_available(c, hook) {
 			return emission_contract_error(c, "a discovered formatter has no checked procedure")
@@ -92,20 +83,14 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 	synthesized := make(map[Symbol_Id]bool, context.temp_allocator)
 	for id in c.synth_procs { synthesized[id] = true }
 	for index in 1 ..< len(c.types) {
-		// A record is keyed by underlying type, so it is validated once at its own
-		// index rather than again through every `distinct` that shares it. A type
-		// whose chain does not settle on itself is either an alias of one already
-		// visited or part of a cycle the finite-size pass has already reported.
+		// Records are keyed by underlying type, so each is validated once.
 		type := Type_Id(index)
 		if type_underlying(c, type) != type { continue }
 		operations, resolved := resolved_lifecycle_operations(c, type)
 		if !resolved {
 			return emission_contract_error(c, "a type has no finalized lifecycle operations")
 		}
-		// Both hook kinds and both copy operations answer the same two questions:
-		// whether the recorded symbol can be emitted, and whether it belongs to the
-		// type whose record names it. A borrowed one would be handed the bytes of
-		// this type rather than of its own.
+		// Each hook and copy operation must be emittable and owned by this type.
 		for target in ([]Symbol_Id{operations.custom_drop, operations.custom_try_clone}) {
 			if target == INVALID_SYMBOL { continue }
 			symbol := symbol_of(c, target)
@@ -124,8 +109,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 			}
 		}
 	}
-	// Check the reverse edge too: removing an operation ID must not make a
-	// contributed wrapper appear to be an unused type with no copy operations.
+	// And every contributed clone must be the one its type records.
 	for id in c.synth_procs {
 		symbol := symbol_of(c, id)
 		if symbol == nil || (symbol.synth != .Clone && symbol.synth != .Try_Clone) { continue }
