@@ -1,0 +1,25 @@
+package main;
+
+// A sort's `<` and a map key's `==` compare two values of the element or key
+// type. A rejected key reports once, not at every place its map is named.
+
+Score :: struct { tag: string_view, v: int }
+impl Score {
+	below :: operator(<) proc(a: Score, b: int) -> bool { return a.v < b; }
+}
+
+Key :: struct { tag: string_view, v: int }
+impl Key {
+	same :: operator(==) proc(a: Key, b: int) -> bool { return a.v == b; }
+	hash :: proc(self, seed: uint) -> uint { return uint(self.v) ~ seed; }
+}
+
+Holder :: struct { m: map[[]int]int }
+
+main :: proc() {
+	xs: [dynamic]Score = {};
+	xs.sort();
+	m: map[Key]int = {};
+	h: Holder;
+	s: []map[[]int]int;
+}

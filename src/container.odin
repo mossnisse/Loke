@@ -1,29 +1,14 @@
-// The two managed containers: `[dynamic]T` and `map[K]V`.
-//
-// design.md "Dynamic arrays" and "Maps". Both are owning values with deep copy
-// semantics, and both are frozen as four words:
+// The managed containers `[dynamic]T` and `map[K]V` (design.md "Dynamic arrays",
+// "Maps"). Both are four-word headers whose all-zero value is empty and usable:
 //
 //   [dynamic]T   { rawptr data,  int len, int cap, Allocator allocator }
 //   map[K]V      { rawptr table, int len, int cap, Allocator allocator }
 //
-// The all-zero value is empty, allocator-unbound, constant, and immediately
-// usable, which is what lets a file-scope, `static`, or `thread_local` container
-// be constant-initialised with no code running before `main`.
-//
-// Like `[]T`, both are compiler-owned struct-shaped types with synthesised
-// fields, so layout, parameter passing, zero constants, and emission reuse the
-// aggregate paths that already exist instead of growing a second mechanism. The
-// fields are not user-visible: field selection is offered for `.Struct` only.
-//
-// Everything behind `data` and `table` — growth, slot control bytes, the seed,
-// checked byte sizes — belongs to the versioned C helpers in
-// `runtime/container.c`. What C cannot know is what one concrete Loke element
-// costs to clone, drop, hash, or compare, so the compiler hands every call one
-// generated operation table (`src/emit_llvm.odin`).
+// The storage behind them lives in `runtime/container.c`; the compiler supplies
+// each element type's clone, drop, hash, and compare operations.
 package lokec
 
-// Both headers share these four positions: `data`/`table`, length, capacity,
-// and the bound provider handle.
+// Header field positions, shared by both containers.
 CONTAINER_STORAGE :: 0
 CONTAINER_LEN     :: 1
 CONTAINER_CAP     :: 2
@@ -57,9 +42,8 @@ map_of :: proc(c: ^Compiler, key: Type_Id, value: Type_Id) -> Type_Id {
 	return type
 }
 
-// Installed on first use rather than at intern time, for the same reason a
-// slice's are: a field is a symbol, and interning runs where making one is not
-// yet safe. Idempotent, so every entry point may ask.
+// Installed on first use, since interning runs where making a symbol is not yet
+// safe. Idempotent.
 ensure_container_fields :: proc(c: ^Compiler, type: Type_Id) {
 	info := type_of(c, type)
 	if info == nil || len(info.fields) > 0 {
@@ -78,9 +62,6 @@ ensure_container_fields :: proc(c: ^Compiler, type: Type_Id) {
 	fields[CONTAINER_STORAGE] = new_field(c, storage, TYPE_RAWPTR, CONTAINER_STORAGE)
 	fields[CONTAINER_LEN] = new_field(c, "len", TYPE_INT, CONTAINER_LEN)
 	fields[CONTAINER_CAP] = new_field(c, "cap", TYPE_INT, CONTAINER_CAP)
-	// design.md "Allocators": the header retains the provider its drop releases
-	// through, which is why a container can be dropped without its declaration in
-	// scope.
 	fields[CONTAINER_ALLOC] = new_field(c, "allocator", TYPE_ALLOCATOR, CONTAINER_ALLOC)
 	// The store may have grown while the field symbols were made.
 	info = type_of(c, type)
@@ -95,9 +76,7 @@ type_is_map :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return underlying_kind(c, id) == .Map
 }
 
-// Either managed container. Both share one header shape, one operation-table
-// shape, and one allocator-binding policy, so most callers want this rather
-// than one of the two above.
+// Either managed container.
 type_is_container :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	info := underlying_info(c, id)
 	if info == nil {
@@ -126,13 +105,8 @@ container_key :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 // ------------------------------------------------------ contributed members --
 
-// Which operation one contributed member is, so the backend writes the right
-// body without matching on its name.
-//
-// design.md "Typed fallibility" spells each mutating operation twice, once
-// panicking on allocation failure and once reporting it. Those are one
-// operation; `symbol.result` says which spelling a call reached, so the pair
-// shares an entry rather than being a second source of truth for it.
+// Which operation a contributed member is. A panicking spelling and its `try_`
+// form share one entry; the member's result type tells them apart.
 Container_Op :: enum {
 	None,
 	Append,
@@ -144,21 +118,13 @@ Container_Op :: enum {
 	Resize,
 	Reserve,
 	Shrink,
-	// design.md "Dynamic array container operations" and "Sorting slices".
-	// Contributed to a mutable slice as well as to a dynamic array, because an
-	// `impl []mut T` written in `core:slice` would be an *extension* visible only
-	// inside that package, and design.md's own `s.sort()` is written in user code.
+	// Also contributed to `[]mut T`: an `impl` in `core:slice` would be an
+	// extension visible only there.
 	Sort,
 	Reverse_Sort,
-	// design.md "Swapping elements". Two elements trade contents, which is the
-	// one rearrangement that installs no new value, so it reaches a move-only or
-	// no-zero element that `exchange` cannot. Contributed to a mutable slice and
-	// to a dynamic array, like `sort`. The two indices are runtime values the
-	// borrow checker cannot prove distinct, which is exactly why this is one
-	// operation rather than two `inout` borrows of the same sequence.
+	// design.md "Swapping elements": one operation, since two `inout` borrows of
+	// the same sequence could not be proven distinct.
 	Swap,
-	// The map half. `find` never inserts and `find_or_insert` always answers a
-	// slot; `m[key] = v` is a place rather than a call, so it is not a member.
 	Map_Find,
 	Map_Find_Or_Insert,
 	Map_Lookup_Value,
@@ -167,24 +133,14 @@ Container_Op :: enum {
 	Map_Clear,
 	Map_Reserve,
 	Map_Shrink,
-	// design.md "Iteration adapters": the three borrowed traversals. Each answers
-	// with an opaque view that allocates nothing and copies no element; the copy
-	// happens per step, inside the view's `next`.
+	// design.md "Iteration adapters": borrowed views.
 	Map_Entries,
 	Map_Keys,
 	Map_Values,
 }
 
-// design.md "Dynamic arrays": the operation set, contributed as real members so
-// `xs.append(1)` is an ordinary method call — not cosmetic, it makes these
-// operations reachable from generic code constrained by the standard
-// catalogue, and reuses overload ranking, `..T` packing, default arguments,
-// and the `inout`-receiver place rule instead of a second call path.
-//
-// The `..T` pack a variadic receives *is* a read-only slice, so `append` clones
-// each element in through its selected allocator — a move-only element can't
-// travel through the variadic form, and `insert` takes one value for the same
-// reason.
+// design.md "Dynamic arrays": the operations are real members, so calls reuse
+// overload ranking, `..T` packing, defaults, and the `inout` receiver rule.
 ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	info := type_of(k.c, type)
 	if info == nil || .Container in info.contributed {
@@ -205,13 +161,11 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	}
 	info.contributed += {.Container}
 	element := info.element
-	// Insertion clones, so the element's own copy entry point has to exist.
+	// Insertion clones.
 	contribute_lifecycle_members(k, element)
 
 	members := make([dynamic]Symbol_Id, 0, 17, k.c.semantic_allocator)
 	none := INVALID_TYPE
-	// design.md "Typed fallibility": a recoverable operation reports through
-	// `Result(Unit, Allocator_Error)`, never a trailing status.
 	fails := result_type(k, k.c.unit_type, TYPE_ALLOCATOR_ERROR)
 
 	pack := slice_of(k.c, element, mutable = false)
@@ -231,11 +185,8 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		k, type, "try_insert", .Insert,
 		[]Type_Id{type, TYPE_INT, element}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
 	))
-	// design.md "Typed fallibility": an empty container yields `.none`. The
-	// removed value's provenance is the element's, not the container's — what
-	// comes back holds what that element held. Written as a summary for the
-	// same reason `lookup_value` has one: a synthesised member has no body for
-	// the fixed point to walk.
+	// A synthesised member has no body, so its result provenance is written as a
+	// summary.
 	pop := container_member(
 		k, type, "pop", .Pop,
 		[]Type_Id{type}, []Param_Mode{.Inout}, option_type(k, element), 0,
@@ -273,9 +224,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		k, type, "try_reserve", .Reserve,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 0,
 	))
-	// design.md spells `shrink` twice, with and without a floor. One signature
-	// with a default of zero is the same two calls: the target is always
-	// `max(len, min_capacity)`, and zero is what "shrink to fit" means.
+	// `shrink()` is `shrink(0)`: the target is `max(len, min_capacity)`.
 	append(&members, container_member(
 		k, type, "shrink", .Shrink,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, none, 1,
@@ -284,16 +233,12 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		k, type, "try_shrink", .Shrink,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
 	))
-	// A sort rearranges the whole container, so its receiver is `inout` like
-	// `append`'s: every outstanding view of it ends at the call.
 	append(&members, container_member(
 		k, type, "sort", .Sort, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
 	))
 	append(&members, container_member(
 		k, type, "reverse_sort", .Reverse_Sort, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
 	))
-	// The same rearrangement over two of the elements, and `inout` for the same
-	// reason.
 	append(&members, container_member(
 		k, type, "swap", .Swap,
 		[]Type_Id{type, TYPE_INT, TYPE_INT}, []Param_Mode{.Inout, .Value, .Value}, none, 0,
@@ -301,16 +246,8 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	add_members(k.c, type, members[:])
 }
 
-// design.md "Sorting slices": the library procedures accept `[]mut T`, and
-// passing a read-only `[]T` is a compile-time error. That rule is the member
-// set — a read-only slice simply has no `sort` to call, so the rejection is the
-// ordinary one for a member a type does not have.
-//
-// The receiver is a *value*: a slice is a borrow, so the header is copied while
-// the elements it names are the caller's. Making it `inout` instead would force
-// `slice.sort(inout s)` at every call and stop `core:slice`'s own free form —
-// which holds its slice in an ordinary immutable parameter — from forwarding to
-// it at all.
+// design.md "Sorting slices": only `[]mut T` has these members. The receiver is a
+// value, since the slice header is a borrow of the caller's elements.
 @(private = "file")
 ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	if !info.mutable {
@@ -333,34 +270,25 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	add_members(k.c, type, members[:])
 }
 
-// design.md "Map container operations": `len`, `cap`, `clear`, `reserve`,
-// `shrink`, the non-inserting `find`, and `find_or_insert`, which is the one
-// call form that creates an entry from a lookup. The only *place* that inserts
-// is the whole-element assignment `m[key] = v`; `try_insert` is the recoverable
-// call form of that.
+// design.md "Map container operations".
 @(private = "file")
 ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	key, value := info.key, info.element
-	// Both halves are cloned on insertion, so both copy entry points must exist.
+	// Insertion clones both halves.
 	contribute_lifecycle_members(k, key)
 	contribute_lifecycle_members(k, value)
 
 	members := make([dynamic]Symbol_Id, 0, 8, k.c.semantic_allocator)
 	none := INVALID_TYPE
 	fails := result_type(k, k.c.unit_type, TYPE_ALLOCATOR_ERROR)
-	// design.md "Maps": an operation that only compares its key takes the
-	// borrowed form of it, so a `map[string]V` is queried with a `string_view`
-	// and an owned `string` converts to one rather than being cloned for the
-	// probe. Insertion keeps the owned key, which it stores.
+	// design.md "Maps": a lookup takes the borrowed key form; insertion stores
+	// the owned key.
 	query := key
 	if key == TYPE_STRING {
 		query = TYPE_STRING_VIEW
 	}
 
-	// `find` returns `Option(^mut V)` over the existing value — it never inserts
-	// (design.md). The receiver is `inout` because the returned pointer grants
-	// mutation of the stored value. Typed fallibility changed only the result
-	// representation; the borrow and invalidation rules did not.
+	// `inout`, because the returned pointer can mutate the stored value.
 	find := container_member(
 		k, type, "find", .Map_Find,
 		[]Type_Id{type, query}, []Param_Mode{.Inout, .Value},
@@ -368,10 +296,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	)
 	set_synth_result_summary(k.c, find, 0)
 	append(&members, find)
-	// design.md "Maps": the same probe through a read-only borrow. A read-only
-	// path has no `inout` to give `find`, and cannot ask `lookup_value` for a
-	// move-only element it must not copy, so it asks this and reads `^V` — the
-	// borrow a lending traversal hands out, answered for one key.
+	// The same probe through a read-only borrow.
 	find_ref := container_member(
 		k, type, "find_ref", .Map_Find,
 		[]Type_Id{type, query}, []Param_Mode{.Value, .Value},
@@ -379,26 +304,15 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	)
 	set_synth_result_summary(k.c, find_ref, 0)
 	append(&members, find_ref)
-	// design.md "Maps": the owning read. Unlike `find` it hands back an
-	// independently owned value rather than a pointer into the table, so its
-	// receiver is immutable and an immutable parameter or a temporary map can be
-	// read through it.
+	// The owning read, so the receiver is immutable.
 	lookup := container_member(
 		k, type, "lookup_value", .Map_Lookup_Value,
 		[]Type_Id{type, query}, []Param_Mode{.Value, .Value},
 		option_type(k, value), 0, .Value,
 	)
-	// A synthesised member has no body, so without a written summary a carrier
-	// payload falls through to `.Unknown` storage, losing the provenance the
-	// map index it replaces already carried. The payload's provenance is
-	// exactly the receiver's: an owned managed value depends on nothing, but a
-	// `map[K]string_view` payload still borrows through the map.
 	set_synth_result_summary(k.c, lookup, 0)
 	append(&members, lookup)
-	// design.md "Maps": the third lookup form. `find` answers `.none` for an
-	// absent key and `m[key]` panics for one; this inserts the element it is
-	// given and answers the slot either way, so the caller names the default it
-	// creates rather than the language manufacturing a zero.
+	// Inserts the given value when the key is absent, and answers the slot.
 	for spelling in ([2]struct{name: string, result: Type_Id}{
 		{"find_or_insert", pointer_to(k.c, value, true)},
 		{"try_find_or_insert", result_type(k, pointer_to(k.c, value, true), TYPE_ALLOCATOR_ERROR)},
@@ -414,8 +328,6 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		k, type, "try_insert", .Map_Try_Insert,
 		[]Type_Id{type, key, value}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
 	))
-	// design.md: removal moves the stored value to the result and answers
-	// `.none` when the key was absent.
 	map_remove := container_member(
 		k, type, "remove", .Map_Remove,
 		[]Type_Id{type, query}, []Param_Mode{.Inout, .Value}, option_type(k, value), 0,
@@ -441,10 +353,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		k, type, "try_shrink", .Map_Shrink,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
 	))
-	// design.md "Iteration adapters": three ordinary methods answering three
-	// ordinary values. Their receiver is immutable — a view reads the table, and
-	// a live one is what stops the map being mutated under it — and the result
-	// borrows through it, which is what the summary records.
+	// design.md "Iteration adapters": the views borrow through the receiver.
 	views := [3]struct{name: string, op: Container_Op, kind: View_Kind}{
 		{"entries", .Map_Entries, .Entries},
 		{"keys", .Map_Keys, .Keys},
@@ -464,14 +373,8 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 
 // -------------------------------------------------------------- ordering --
 
-// How one element type answers `<`. Resolved once per element type during
-// checking and read unchanged by the backend, exactly as a map key's
-// `==`/`hash` pair is: one `[dynamic]T` must sort the same way in every package
-// it travels through, so an extension block in a *caller* never enters the
-// answer.
-// `Unordered` is a *settled* answer, not a missing one: the element has no `<`,
-// it has been reported once, and every later call on that type is answered from
-// here rather than reported again.
+// How an element type answers `<`, settled once during checking so every
+// package sorts it the same way. `Unordered` means already reported.
 Order_Policy_Kind :: enum { Unresolved, Builtin, Inherent, Unordered }
 
 Order_Policy :: struct {
@@ -479,20 +382,13 @@ Order_Policy :: struct {
 	less: Symbol_Id,
 }
 
-// Unlike a map key's policy this follows a *delegated* `operator(<)`: a
-// delegation has no body of its own — it is unwrapped at each call site — so it
-// is followed to whatever it forwards to, which is either the underlying type's
-// own operator or the underlying built-in comparison. There is no second
-// operation for it to stay coherent with, which is why a map key's policy stops
-// at a delegation and this one does not.
+// A delegated `<` has no body, so it is followed to what it forwards to.
 @(private = "file")
 resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Order_Policy, string) {
 	if element == INVALID_TYPE {
 		return Order_Policy{}, "is not a type"
 	}
 	found := inherent_less_operator(c, element)
-	// A chain of `distinct` types each delegating to the next ends either at a
-	// written operator or at the built-in one; the bound is the chain length.
 	for depth := 0; found != INVALID_SYMBOL && depth < 64; depth += 1 {
 		sym := symbol_of(c, found)
 		if sym == nil {
@@ -502,7 +398,6 @@ resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Order_P
 			return Order_Policy{kind = .Inherent, less = found}, ""
 		}
 		if sym.delegate_target == INVALID_SYMBOL {
-			// Delegating to the built-in comparison on the shared representation.
 			return Order_Policy{kind = .Builtin}, ""
 		}
 		found = sym.delegate_target
@@ -520,22 +415,24 @@ inherent_less_operator :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 		return INVALID_SYMBOL
 	}
 	for member in info.members {
-		if sym := symbol_of(c, member); sym != nil && sym.operator == "<" {
+		if sym := symbol_of(c, member); sym != nil && sym.operator == "<" && operator_on_self(sym, type) {
 			return member
 		}
 	}
 	return INVALID_SYMBOL
 }
 
-// A missing choice is a broken phase contract, never permission to repeat
-// member lookup in the backend.
+// A binary operator over two values of `type`, the one a sort or a map key
+// uses; `(a: T, b: int)` is a different operation.
+operator_on_self :: proc(sym: ^Symbol, type: Type_Id) -> bool {
+	return !sym.bound_excluded && len(sym.params) == 2 && sym.params[0] == type && sym.params[1] == type
+}
+
 resolved_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> Order_Policy {
 	return c.order_policies[element]
 }
 
-// The gate on `sort` and `reverse_sort`. It names the container and its element
-// once, rather than letting a monomorphised comparison fail somewhere inside a
-// sort the caller never wrote.
+// The gate on `sort` and `reverse_sort`, reported at the call.
 require_sort_order_policy :: proc(k: ^Checker, chosen: ^Symbol, span: Span) -> bool {
 	if chosen == nil || chosen.synth != .Container_Op {
 		return true
@@ -561,7 +458,9 @@ require_sort_order_policy :: proc(k: ^Checker, chosen: ^Symbol, span: Span) -> b
 		k.c.order_policies[element] = policy
 		return true
 	}
-	k.c.order_policies[element] = Order_Policy{kind = .Unordered}
+	if k.c.speculation_depth == 0 {
+		k.c.order_policies[element] = Order_Policy{kind = .Unordered}
+	}
 	errorf(
 		k.c, span, "L0651",
 		"`%s` cannot be sorted: its element `%s` %s",
@@ -570,19 +469,22 @@ require_sort_order_policy :: proc(k: ^Checker, chosen: ^Symbol, span: Span) -> b
 	return false
 }
 
-// Any type can be a map key if it satisfies `interfaces.Hashable` with a
-// coherent `==` and `value.hash(seed: uint) -> uint` (design.md "Maps"), and
-// a user key's pair must be inherent. Checked where the map type is named
-// rather than at each operation, so one map reports once.
+// design.md "Maps": a key needs a coherent inherent `==` and `hash`. Checked
+// where the map type is named.
 require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	key := container_key(k.c, type)
 	if key == INVALID_TYPE {
 		return true
 	}
-	if resolved_map_key_policy(k.c, key).kind != .Unresolved { return true }
-	// design.md "Maps": a key is copied in on insertion and out by `keys()`, and
-	// a lookup writes another value equal to it — all of which a move-only type
-	// exists to prevent.
+	// A rejection is cached as `.Unresolved`, so each key reports once.
+	if policy, settled := k.c.map_key_policies[key]; settled {
+		return policy.kind != .Unresolved
+	}
+	// A speculative probe's diagnostics are rolled back, so it must not cache one.
+	if k.c.speculation_depth == 0 {
+		k.c.map_key_policies[key] = Key_Policy{}
+	}
+	// Keys are copied in and out.
 	if type_clone_disabled(k.c, key) {
 		errorf(
 			k.c, span, "L0586",
@@ -593,8 +495,6 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	}
 	policy, reason := resolve_map_key_policy(k.c, key)
 	if reason == "" {
-		// Selecting semantic IDs is safe even for a hypothetical signature. It
-		// does not commit bodies, typeids, materializations, or witness globals.
 		k.c.map_key_policies[key] = policy
 		return true
 	}
@@ -610,9 +510,7 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	return false
 }
 
-// A map named through a field, pointer, container element or signature needs
-// the same settled key policy as a directly declared map. Walk after signature
-// resolution (from gate_type), when inherent key operations are available.
+// Settles the key policy of every map nested in `type`.
 require_nested_map_key_policies :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	seen := make(map[Type_Id]bool)
 	defer delete(seen)
@@ -668,11 +566,8 @@ container_member :: proc(
 	defaulted: int,
 	receiver := Param_Mode.Inout,
 ) -> Symbol_Id {
-	// design.md "Receiver forms": a synthesized immutable receiver is the same
-	// borrow a written `self` is, so it carries the same mode — otherwise a
-	// built-in container's `iter` would not compare equal to a user type's.
-	// Callers still spell it `.Value`, which is the shape of the parameter; this
-	// is the one place that becomes the receiver mode.
+	// design.md "Receiver forms": an immutable receiver is a `borrow`, like a
+	// written `self`.
 	signature_modes, receiver_mode := modes, receiver
 	if receiver == .Value && len(modes) > 0 && modes[0] == .Value {
 		adjusted := make([]Param_Mode, len(modes), k.c.semantic_allocator)
@@ -689,7 +584,7 @@ container_member :: proc(
 			sym.param_defaults[defaulted] = zero_int_arg(k.c)
 		}
 	}
-	// Synthesized members participate in ordinary named-argument binding too.
+	// Named `key` for named-argument binding.
 	#partial switch op {
 	case .Map_Find, .Map_Find_Or_Insert, .Map_Lookup_Value, .Map_Try_Insert, .Map_Remove:
 		key_symbol := new_symbol(k.c, Symbol{
@@ -701,8 +596,7 @@ container_member :: proc(
 	return id
 }
 
-// The constant `0` a defaulted `shrink` floor uses. One shared node, exactly as
-// a written default argument is shared by every call site that omits it.
+// The shared constant `0` for a defaulted `shrink` floor.
 @(private = "file")
 zero_int_arg :: proc(c: ^Compiler) -> Expr {
 	if c.zero_int_arg != nil {
@@ -721,27 +615,14 @@ zero_int_arg :: proc(c: ^Compiler) -> Expr {
 
 // ------------------------------------------------------- allocator policy --
 
-// design.md "Allocators": a declaration may select the provider its value is
-// built with by writing `T via expression`, separating two facts: the
-// *policy* belongs to the declaration and survives drop and move, while the
-// *handle* belongs to the current live value and travels with it.
-//
-// So `via` is recorded on the symbol and selects for a later revival, an
-// implicit copy into this destination, and a container literal constructed
-// here — but not for a destination that is already live, since design.md says
-// a live destination keeps the allocator its value was built with.
-//
-// `via` is allowed on lexical allocator-binding owners whose canonical clone
-// accepts a destination allocator, and rejected on everything with no
-// destination allocation to select.
+// design.md "Allocators": `T via expression` records the declaration's allocator
+// policy on its symbols. It selects for revival, copies in, and literals built
+// here; a live destination keeps the allocator its value was built with.
 check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 	if d.via == nil {
 		return true
 	}
-	// Rejected *before* the expression is checked: a runtime allocator call is
-	// not a constant initialiser, so a static-duration declaration could not run
-	// it at all. Such a container begins in the constant, allocator-unbound
-	// zero state (design.md).
+	// Static storage cannot run the allocator expression.
 	if d.top_level || d.duration != .None {
 		storage_kind :=
 			d.duration == .Thread_Local ? "`thread_local` storage" :
@@ -758,10 +639,7 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 	if declared == INVALID_TYPE {
 		return false // the written type already said why
 	}
-	// design.md "Shared ownership": "The control block stores the allocator, so a
-	// `shared(T)` declaration cannot use `via`". The generic rejection below
-	// would say the type has no destination allocation to select, which is the
-	// opposite of the truth — it has one, chosen where the value was made.
+	// design.md "Shared ownership": the control block stores the allocator.
 	if type_is_shared_handle(k.c, declared) {
 		errorf(
 			k.c,
@@ -806,8 +684,7 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 		)
 		return false
 	}
-	// The clone entry point a copy into this destination calls has to exist by
-	// emission, exactly as it does for an ordinary implicit copy.
+	// A copy into this destination clones.
 	contribute_lifecycle_members(k, declared)
 	for symbol_id in d.symbols {
 		if sym := symbol_of(k.c, symbol_id); sym != nil {
@@ -838,11 +715,8 @@ type_accepts_via :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return true
 }
 
-// Allocator binding: "A container literal initializing or replacing a known
-// destination constructs directly with that destination's selected allocator
-// rather than allocating a default-backed temporary first." So a literal
-// whose destination has a written policy carries that policy, and
-// the backend writes it into the header before the first reservation.
+// A container literal built into a destination with a `via` policy uses that
+// allocator directly.
 bind_literal_allocator :: proc(c: ^Compiler, value: Expr, destination: Symbol_Id) {
 	written := symbol_via_allocator(c, destination)
 	if written == nil {
@@ -855,10 +729,7 @@ bind_literal_allocator :: proc(c: ^Compiler, value: Expr, destination: Symbol_Id
 	literal.via = written
 }
 
-// The provider a construction into this destination selects: the declaration's
-// written `via`, or nil for the lazy default binding. Kept as one lookup so the
-// checker and the backend cannot develop separate ideas of which handle a
-// destination uses.
+// The destination's written `via`, or nil for the lazy default binding.
 symbol_via_allocator :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> Expr {
 	sym := symbol_of(c, symbol_id)
 	return sym == nil ? nil : sym.via

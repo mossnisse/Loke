@@ -130,7 +130,7 @@ inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string
 		// A delegated operator is the underlying type's own operation wrapped, so
 		// it announces no policy of its own: the underlying type's hash is already
 		// its coherent partner (design.md "Delegating operators").
-		if sym != nil && sym.operator == symbol_text && !sym.delegated {
+		if sym != nil && sym.operator == symbol_text && !sym.delegated && operator_on_self(sym, type) {
 			return member
 		}
 	}
