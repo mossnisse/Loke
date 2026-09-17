@@ -1,0 +1,14 @@
+package main; import "core:fmt";
+
+// A method on a folded conversion stores the converted constant as its receiver.
+
+impl string_view {
+	twice :: proc(self) -> int { return self.len() * 2; }
+}
+
+main :: proc() {
+	small: u8 = 3;
+	half: f32 = 1.5;
+	fmt.println(u8(3).hash(7) == small.hash(7), f32(1.5).hash(7) == half.hash(7));
+	fmt.println(string_view("abc").len(), string_view("abcd").twice());
+}

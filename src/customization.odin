@@ -1,14 +1,8 @@
-// The canonical receiver members the language expects a type to supply.
-//
-// `value.f(args)` is the only spelling: there is no free `len(value)` or
-// `hash(value, seed)`, so a reader's implicit receiver borrow is as visible as a
-// mutator's. Ordinary free procedures keep ordinary lexical lookup and never
-// perform receiver lookup, whatever they are named.
+// design.md "Standard customization procedures": the built-in `len`, `cap`, and
+// `hash` receiver members. There is no free `len(x)` or `hash(x, seed)`.
 package lokec
 
-// Built-in operations must satisfy the same receiver-form interface
-// requirements as user types: install their canonical `len`, `cap`, and `hash`
-// members lazily, alongside the existing iteration and lifecycle contributors.
+// Installed lazily, so built-in types meet interface requirements as user types do.
 ensure_standard_customization_members :: proc(k: ^Checker, type: Type_Id) {
 	under := type_underlying(k.c, type)
 	info := type_of(k.c, under)
@@ -36,9 +30,7 @@ ensure_standard_customization_members :: proc(k: ^Checker, type: Type_Id) {
 @(private = "file")
 standard_len_type :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch underlying_kind(c, type) {
-	// A vector's `len` is its lane count, folded from the type like a fixed
-	// array's. It stays out of `Sequence` regardless: that also wants iteration
-	// and a runtime index, and a vector has neither (design.md "SIMD vectors").
+	// A vector's `len` is its lane count.
 	case .Array, .Slice, .Dynamic_Array, .Map, .String, .String_View, .Simd:
 		return true
 	}
@@ -47,8 +39,7 @@ standard_len_type :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 @(private = "file")
 standard_hash_type :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	// Untyped constants materialize before a free `hash` call and have no stable
-	// receiver type on which a method could live.
+	// An untyped type has no receiver for a member to live on.
 	if type_is_untyped(c, type) {
 		return false
 	}
@@ -65,9 +56,7 @@ standard_receiver_member :: proc(
 	result: Type_Id,
 ) -> Symbol_Id {
 	modes := make([]Param_Mode, len(params), c.semantic_allocator)
-	// design.md "Receiver forms": the immutable receiver is a borrow of the
-	// caller's value, so it carries `.Borrow` here exactly as a written `self`
-	// does. The remaining parameters keep the zero value, `.Value`.
+	// design.md "Receiver forms": an immutable receiver is a borrow.
 	if len(modes) > 0 { modes[0] = .Borrow }
 	id := synth_proc(c, name, kind, owner, params, modes, result)
 	if sym := symbol_of(c, id); sym != nil {

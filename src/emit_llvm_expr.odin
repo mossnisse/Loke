@@ -520,10 +520,10 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			// A single `inout` result is already the address of the returned place.
 			return emit_call(e, v, as_type)
 		}
-		// An ordinary aggregate result selected immediately by a field still needs
-		// addressable temporary storage for that selection.
+		// A value result, such as a receiver, needs temporary storage. A folded
+		// conversion like `u8(3)` stores its constant, not its unconverted operand.
 		slot := alloca(e, llvm_type(e, as_type))
-		store(e, as_type, emit_call(e, v, as_type), slot)
+		store(e, as_type, emit_expr_at(e, expr, as_type), slot)
 		hold_addressed_temporary(e, expr, as_type, slot)
 		return slot
 	}
