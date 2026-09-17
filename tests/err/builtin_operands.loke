@@ -1,0 +1,13 @@
+package main;
+
+// An untyped constant is measured at its default type.
+static_assert(size_of(1) == size_of(int));
+static_assert(align_of(1.0) == align_of(f64));
+
+untyped_nil :: proc() { n := size_of(nil); }
+new_value :: proc() { x := 5; p := new(x) or_else nil; }
+make_value :: proc() { xs: [dynamic]int = {}; ys := make(xs) or_else {}; }
+free_all_unknown :: proc() { free_all(nope); }
+named_argument :: proc() { static_assert(condition = true); }
+
+main :: proc() {}

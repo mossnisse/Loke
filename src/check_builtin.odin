@@ -1,16 +1,6 @@
-// Built-in call checking.
-//
-// Every predeclared and `core:`-contributed built-in whose rules are the
-// compiler's own: `assert`/`panic`, `static_assert`, the build-configuration
-// and layout queries, allocation, `make`, `unsafe.transmute`, and the standard
-// aliases. Split from `check_expr.odin` for the same reason `simd.odin`,
-// `atomics.odin`, `format.odin`, and `reflect.odin` are separate — a built-in
-// family owns its own argument rules, and ordinary expression checking should
-// not have to be read past them.
-//
-// Everything here still resolves through the ordinary checker: a built-in call
-// is an `Expr_Call` whose callee names a `.Builtin` symbol, and the result is
-// recorded on the same annotations any other call writes.
+// Checking for the built-ins whose argument rules are the compiler's own. A
+// built-in call is an ordinary `Expr_Call` whose callee names a `.Builtin`
+// symbol, annotated like any other call.
 package lokec
 
 check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbol_id: Symbol_Id, expected: Type_Id) {
@@ -21,76 +11,53 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	v.resolution = Resolution{kind = .Call, symbol = symbol_id, chosen_overload = symbol_id}
 	v.operation = Call_Builtin{}
 
-	// Exhaustive on purpose: a built-in with no arm here would fall through to
-	// the ordinary parameter path and be called as if it were declared there.
+	// Exhaustive, so a new built-in cannot go unchecked.
 	switch sym.builtin {
 	case .Assert, .Panic:
 		check_assert_or_panic(k, v, ident, sym.builtin)
-		return
 	case .Static_Assert:
 		check_static_assert(k, v)
-		return
 	case .Build_Config:
 		check_config(k, v)
-		return
 	case .Source_Location:
 		check_location(k, v, ident)
-		return
 	case .Caller_Location:
 		check_caller_location(k, v, ident)
-		return
 	case .Size_Of, .Align_Of, .Offset_Of:
-		check_layout_builtin(k, v, ident, sym.builtin, expected)
-		return
+		check_layout_builtin(k, v, ident, sym.builtin)
 	case .Is_Copyable:
 		check_is_copyable_builtin(k, v, ident)
-		return
 	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		check_reflection_builtin(k, v, ident, sym.builtin)
-		return
 	case .Make:
-		check_make_builtin(k, v, ident)
-		return
+		check_make_builtin(k, v)
 	case .Simd_Cast, .Simd_Select, .Simd_Reduce:
 		check_simd_builtin(k, v, ident, sym.builtin)
-		return
 	case .New, .New_Clone, .Free, .Unsafe_Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
-		return
 	case .Drop:
 		check_drop_builtin(k, v, ident)
-		return
 	case .Exchange:
 		check_exchange_builtin(k, v, ident)
-		return
 	case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
 		check_unsafe_builtin(k, v, ident, sym.builtin)
-		return
 	case .Unsafe_Forget:
 		check_forget_builtin(k, v, ident)
-		return
 	case .Unsafe_Take, .Unsafe_Write:
 		check_capacity_builtin(k, v, sym.builtin)
-		return
 	case .Unsafe_Transmute:
 		check_transmute_builtin(k, v, ident)
-		return
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
-		return
 	case .Strings_Allocate:
 		check_strings_allocate(k, v, ident)
-		return
 	case .Slice_Sort_By:
 		check_slice_sort_by(k, v, ident)
-		return
 	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		check_atomic_builtin(k, v, ident, sym.builtin)
-		return
 	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
 		check_fmt_builtin(k, v, ident, sym.builtin)
-		return
 	case .Default_Allocator:
 		if len(v.args) != 0 {
 			errorf(k.c, v.span, "L0490", "`default_allocator` takes no arguments")
@@ -99,52 +66,24 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		}
 		v.bound = nil
 		v.type = TYPE_ALLOCATOR
-		return
 	case .None:
 		unsupported_construct(k, v.span)
 		v.type = INVALID_TYPE
-		return
 	}
-
-	if len(v.args) != len(sym.params) {
-		errorf(
-			k.c,
-			v.span,
-			"L0322",
-			"`%s` takes %d argument%s, found %d",
-			ident.name,
-			len(sym.params),
-			len(sym.params) == 1 ? "" : "s",
-			len(v.args),
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	bound := make([]Expr, len(sym.params), k.c.semantic_allocator)
-	for arg, index in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
-			reject_builtin_argument_shape(k, arg)
-			continue
-		}
-		bound[index] = arg.value
-		check_value_expr(k, arg.value, sym.params[index], "pass")
-	}
-	v.bound = bound
-	v.type = sym.type
 }
 
-// `core:slice.sort_by_intrinsic(values, &comparator)`. The public generic
-// wrapper has already required `slice.Comparator(C, T)`; this check records the
-// exact inherent/slot-visible method for lowering and independently protects
-// the compiler-owned boundary from a malformed replacement standard package.
+// `core:slice.sort_by_intrinsic(values, &comparator)`. The public wrapper already
+// requires `slice.Comparator(C, T)`; this records the exact `call` method for
+// lowering and guards against a malformed replacement standard package.
 @(private = "file")
 check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
+	v.type = INVALID_TYPE
 	if len(v.args) != 2 {
-		errorf(
-			k.c, v.span, "L0322", "`%s` takes 2 arguments, found %d", ident.name, len(v.args),
-		)
-		v.type = INVALID_TYPE
+		errorf(k.c, v.span, "L0322", "`%s` takes 2 arguments, found %d", ident.name, len(v.args))
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
 		return
 	}
 
@@ -153,9 +92,8 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	if values_info == nil || values_info.kind != .Slice || !values_info.mutable {
 		errorf(
 			k.c, expr_span(v.args[0].value), "L0651",
-			"`sort_by_intrinsic` needs a mutable slice, found `%s`", type_name(k.c, values),
+			"`%s` needs a mutable slice, found `%s`", ident.name, type_name(k.c, values),
 		)
-		v.type = INVALID_TYPE
 		return
 	}
 
@@ -164,9 +102,8 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	if context_info == nil || context_info.kind != .Pointer {
 		errorf(
 			k.c, expr_span(v.args[1].value), "L0651",
-			"`sort_by_intrinsic` needs a pointer to its comparator, found `%s`", type_name(k.c, ctx),
+			"`%s` needs a pointer to its comparator, found `%s`", ident.name, type_name(k.c, ctx),
 		)
-		v.type = INVALID_TYPE
 		return
 	}
 
@@ -193,7 +130,6 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 			"`%s` must provide exactly one `call(self, left: %s, right: %s) -> bool` method for sorting",
 			type_name(k.c, comparator), type_name(k.c, element), type_name(k.c, element),
 		)
-		v.type = INVALID_TYPE
 		return
 	}
 
@@ -204,10 +140,8 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.type = TYPE_VOID
 }
 
-// A built-in takes positional value arguments and nothing else: it has no
-// declaration to name a parameter, and no `inout`/`move`/spread position to
-// fill. Both are permanent properties rather than an unimplemented milestone
-//.
+// A built-in has no declaration to name a parameter and no `inout`/`move`/spread
+// position to fill.
 reject_builtin_argument_shape :: proc(k: ^Checker, arg: Argument) {
 	if arg.name.text != "" {
 		errorf(k.c, arg.span, "L0371", "a built-in takes positional arguments only")
@@ -216,13 +150,23 @@ reject_builtin_argument_shape :: proc(k: ^Checker, arg: Argument) {
 	errorf(k.c, arg.span, "L0370", "a built-in takes value arguments only")
 }
 
-// `assert(condition[, message])` and `panic([message])`. Both produce no value
-// and both are legal in either phase, so neither is folded here: the evaluator
-// diagnoses the compile-time occurrence and the backend lowers the runtime one
-// to the trap seam.
+// Whether every argument is a positional value, reporting the first that isn't.
+@(private = "file")
+builtin_arguments_ok :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
+	for arg in v.args {
+		if arg.name.text != "" || arg.mode != .Value {
+			reject_builtin_argument_shape(k, arg)
+			return false
+		}
+	}
+	return true
+}
+
+// `assert(condition[, message])` and `panic([message])`. Neither folds: the
+// evaluator diagnoses a compile-time occurrence and the backend lowers the rest.
 @(private = "file")
 check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	v.type = TYPE_VOID
+	v.type = INVALID_TYPE
 	first := kind == .Assert ? 1 : 0
 	if len(v.args) < first || len(v.args) > first + 1 {
 		errorf(
@@ -234,37 +178,37 @@ check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, ki
 			kind == .Assert ? "a condition and an optional message" : "an optional message",
 			len(v.args),
 		)
-		v.type = INVALID_TYPE
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
 		return
 	}
 	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
 	for arg, index in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
-			reject_builtin_argument_shape(k, arg)
-			continue
-		}
 		bound[index] = arg.value
 		if kind == .Assert && index == 0 {
 			check_condition(k, arg.value)
-			continue
+		} else {
+			check_message_arg(k, arg.value)
 		}
-		check_message_arg(k, arg.value)
 	}
 	v.bound = bound
+	v.type = TYPE_VOID
 }
 
-// `static_assert(condition[, message])`. It requires its condition at compile
-// time whatever phase surrounds it, so it answers here and leaves nothing for
-// the backend.
+// `static_assert(condition[, message])` answers here, whatever phase surrounds it.
 @(private = "file")
 check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
-	v.type = TYPE_VOID
+	v.type = INVALID_TYPE
 	v.value_category = .Value
 	if len(v.args) < 1 || len(v.args) > 2 {
 		errorf(k.c, v.span, "L0387", "`static_assert` takes a condition and an optional message")
-		v.type = INVALID_TYPE
 		return
 	}
+	if !builtin_arguments_ok(k, v) {
+		return
+	}
+	v.type = TYPE_VOID
 	check_condition(k, v.args[0].value)
 	message := ""
 	if len(v.args) == 2 {
@@ -279,10 +223,8 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 		return
 	}
 	if folded.kind == .Boolean && !folded.boolean {
-		// design.md: a positively required interface application must name the
-		// requirement that failed, never a bare "static assertion failed". A
-		// negated or otherwise combined condition is not a bare application, so
-		// the adapter declines it and the assertion reports itself.
+		// design.md: a failed interface application names the requirement, not a
+		// bare "static assertion failed".
 		if report_failed_interface_bound(k, v.args[0].value, v.span) {
 			if message != "" {
 				add_notef(k.c, v.span, "%s", message)
@@ -299,36 +241,35 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 }
 
-// `build_config(NAME, default)`: the name is a token, not a lexical value, and
-// the default fixes both the result's type and what an override may say.
+// `build_config(NAME, default)`: the name is a token, and the default fixes the
+// result's type and what an override may say.
 @(private = "file")
 check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.value_category = .Value
+	v.type = INVALID_TYPE
 	if len(v.args) != 2 {
 		errorf(k.c, v.span, "L0388", "`build_config` takes a name and a default value")
-		v.type = INVALID_TYPE
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
 		return
 	}
 	name, is_ident := v.args[0].value.(^Expr_Ident)
 	if !is_ident {
 		errorf(k.c, expr_span(v.args[0].value), "L0388", "`build_config` needs a name")
-		v.type = INVALID_TYPE
 		return
 	}
 	if check_single_expr(k, v.args[1].value) == INVALID_TYPE {
-		v.type = INVALID_TYPE
 		return
 	}
 	fallback, evaluated := require_const(k, v.args[1].value, "a `build_config` default", "L0388")
 	if !evaluated {
-		v.type = INVALID_TYPE
 		return
 	}
 	#partial switch fallback.kind {
 	case .Boolean, .Integer, .String:
 	case:
 		errorf(k.c, expr_span(v.args[1].value), "L0388", "a `build_config` default must be a boolean, an integer, or a string")
-		v.type = INVALID_TYPE
 		return
 	}
 
@@ -368,6 +309,7 @@ check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.const_value = override
 }
 
+@(private = "file")
 const_kind_name :: proc(kind: Const_Kind) -> string {
 	#partial switch kind {
 	case .Boolean:
@@ -380,13 +322,11 @@ const_kind_name :: proc(kind: Const_Kind) -> string {
 	return "a value"
 }
 
-// `size_of`, `align_of`, `offset_of`, and `len`. Every one of these inspects
-// static type or declaration information, so nothing here is evaluated: the
-// operand is resolved and type-checked, never read, and never required to be
-// live.
+// `size_of`, `align_of`, and `offset_of` inspect their operand's type and fold;
+// the operand is never evaluated.
 @(private = "file")
-check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind, expected: Type_Id) {
-	v.type = TYPE_INT
+check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	v.type = INVALID_TYPE
 	arity := kind == .Offset_Of ? 2 : 1
 	if len(v.args) != arity {
 		errorf(
@@ -399,158 +339,113 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 			arity == 1 ? "" : "s",
 			len(v.args),
 		)
-		v.type = INVALID_TYPE
 		return
 	}
-	for arg in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
-			reject_builtin_argument_shape(k, arg)
-			v.type = INVALID_TYPE
-			return
-		}
+	if !builtin_arguments_ok(k, v) {
+		return
 	}
-	// The call is folded, so nothing here reaches the backend; binding the
-	// operand would only invite it to be emitted.
+	// Folded, so nothing is bound for the backend to emit.
 	v.bound = nil
 
-	operand := layout_operand_type(k, v.args[0].value, kind)
-	if operand == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	if !gate_type(k, operand, expr_span(v.args[0].value)) {
-		v.type = INVALID_TYPE
+	operand := operand_type(k, v.args[0].value, ident.name, true)
+	if operand == INVALID_TYPE || !gate_type(k, operand, expr_span(v.args[0].value)) {
 		return
 	}
 
 	result := u64(0)
-	switch kind {
+	#partial switch kind {
 	case .Size_Of:
 		result = type_size(k.c, operand)
 	case .Align_Of:
 		result = type_align(k.c, operand)
 	case .Offset_Of:
-		// The second operand is a member name, not a lexical value expression:
-		// resolving it as one would find an unrelated variable of the same name.
+		// A member name, not a value: resolving it would find a same-named variable.
 		name, is_ident := v.args[1].value.(^Expr_Ident)
 		if !is_ident {
 			errorf(k.c, expr_span(v.args[1].value), "L0386", "`offset_of` needs a field name")
-			v.type = INVALID_TYPE
 			return
 		}
 		field := struct_field(k.c, operand, intern_identifier(k.c, name.name))
 		if field == INVALID_SYMBOL {
 			errorf(k.c, name.span, "L0363", "`%s` has no field `%s`", type_name(k.c, operand), name.name)
-			v.type = INVALID_TYPE
 			return
 		}
 		if !require_visible_field(k, name.span, operand, field, "L0472", "measured with `offset_of`") {
-			v.type = INVALID_TYPE
 			return
 		}
-		symbol := symbol_of(k.c, field)
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
-		result = type_field_offset(k.c, operand, int(symbol.index))
-	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-	     .New, .New_Clone, .Free, .Unsafe_Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
-	     .Simd_Cast, .Simd_Select, .Simd_Reduce,
-	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
-	     .Unsafe_Take, .Unsafe_Write,
-	     .Unsafe_Transmute, .Type_Info_Of,
-	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .Slice_Sort_By, .None, .Assert, .Panic, .Is_Copyable,
-	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of,
-	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
-	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
-		return
+		result = type_field_offset(k.c, operand, int(symbol_of(k.c, field).index))
 	}
+	v.type = TYPE_INT
 	v.is_const = true
 	v.const_value = int_const(k.c, i64(result))
 }
 
-// design.md "Built-in procedures": `is_copyable(T)` folds to `false` exactly
-// when `T` is move-only, structurally included -- the same question the
-// move-only diagnostics ask, so a `where` bound and the error it avoids cannot
-// disagree. Its operand is inspected, not evaluated, like the layout queries.
+// design.md "Built-in procedures": `is_copyable(T)` is false exactly when `T` is
+// move-only, the same question the move-only diagnostics ask.
 @(private = "file")
 check_is_copyable_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
-	v.type = TYPE_BOOL
+	v.type = INVALID_TYPE
 	if len(v.args) != 1 {
 		errorf(k.c, v.span, "L0322", "`%s` takes 1 argument, found %d", ident.name, len(v.args))
-		v.type = INVALID_TYPE
 		return
 	}
-	if v.args[0].name.text != "" || v.args[0].mode != .Value {
-		reject_builtin_argument_shape(k, v.args[0])
-		v.type = INVALID_TYPE
+	if !builtin_arguments_ok(k, v) {
 		return
 	}
-	operand := layout_operand_type(k, v.args[0].value, .Is_Copyable)
-	if operand == INVALID_TYPE {
-		v.type = INVALID_TYPE
+	operand := operand_type(k, v.args[0].value, ident.name, true)
+	if operand == INVALID_TYPE || !gate_type(k, operand, expr_span(v.args[0].value)) {
 		return
 	}
-	if !gate_type(k, operand, expr_span(v.args[0].value)) {
-		v.type = INVALID_TYPE
-		return
-	}
+	v.type = TYPE_BOOL
 	v.is_const = true
 	v.const_value = bool_const(!type_clone_disabled(k.c, operand))
 }
 
-// The type a layout operand denotes: a written type, or the type of an
-// expression that is checked exactly once and never evaluated. `len` keeps an
-// untyped string as itself, because the length is in the value.
+// The type an operand denotes, checked once and never evaluated. Only
+// `accepts_value` built-ins take a value's type, defaulting an untyped constant
+// as a declaration would.
 @(private = "file")
-layout_operand_type :: proc(k: ^Checker, e: Expr, kind: Builtin_Kind) -> Type_Id {
+operand_type :: proc(k: ^Checker, e: Expr, builtin: string, accepts_value: bool) -> Type_Id {
 	if e == nil {
 		return INVALID_TYPE
 	}
-	// Types and expressions share one node domain, so which reading applies is not
-	// a question the syntax answers: the type reading is tried first and the value
-	// reading is the fallback. `resolve_type_syntax` stays silent for a node that
-	// simply is not type syntax, so a complaint means it *was* type syntax and was
-	// broken -- and reading the same node again as a value would find the same
-	// thing and say it twice. `size_of([BAD]i32)` reported the unknown length
-	// once per reading, because the array case checks the length expression.
+	// The type reading comes first. It is silent for non-type syntax, so an
+	// error means broken type syntax, which the value reading would report again.
 	before := k.c.error_count
 	if denoted := resolve_type_syntax(k, e); denoted != INVALID_TYPE {
 		return denoted
 	}
-	if k.c.error_count != before {
-		return INVALID_TYPE
-	}
-	if check_single_expr(k, e) == INVALID_TYPE {
+	if k.c.error_count != before || check_single_expr(k, e) == INVALID_TYPE {
 		return INVALID_TYPE
 	}
 	base := expr_base(e)
 	if base.value_category == .Type {
 		return base.denoted_type
 	}
-	return base.type
+	if !accepts_value {
+		errorf(k.c, expr_span(e), "L0386", "`%s` needs a type, found a value of type `%s`", builtin, type_name(k.c, base.type))
+		return INVALID_TYPE
+	}
+	if !type_is_untyped(k.c, base.type) {
+		return base.type
+	}
+	typed := default_type(k.c, base.type)
+	if typed == INVALID_TYPE {
+		errorf(k.c, expr_span(e), "L0386", "`%s` needs a typed value, found `%s`", builtin, type_name(k.c, base.type))
+		return INVALID_TYPE
+	}
+	return materialize(k, e, typed) ? typed : INVALID_TYPE
 }
 
-// design.md "Allocators" and "Allocation failure". `new` and `new_clone` are
-// explicitly fallible and always return their error rather than invoking a
-// failure policy; `free` returns no status.
-//
-//   new(T)             -> (^T, Allocator_Error)
-//   new(T, allocator)  -> (^T, Allocator_Error)
-//   new_clone(value)   -> (^T, Allocator_Error)
-//   free(pointer)
-//   free(pointer, allocator)
-//   free_all(allocator)
-//
-// An omitted allocator argument is the default provider: the same symbol
-// `mem.default_allocator()` names.
+// design.md "Allocators": `new(T[, allocator])` and `new_clone(value[, allocator])`
+// return their `Allocator_Error`; `free(pointer[, allocator])` and
+// `free_all(allocator)` return nothing. An omitted allocator is the default.
 @(private = "file")
 check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	arity_low, arity_high := 1, 2
-	if kind == .Free_All {
-		arity_high = 1
-	}
-	if len(v.args) < arity_low || len(v.args) > arity_high {
+	arity_high := kind == .Free_All ? 1 : 2
+	if len(v.args) < 1 || len(v.args) > arity_high {
 		errorf(
 			k.c,
 			v.span,
@@ -562,20 +457,15 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.type = INVALID_TYPE
 		return
 	}
-	for arg in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
-			reject_builtin_argument_shape(k, arg)
-			v.type = INVALID_TYPE
-			return
-		}
+	if !builtin_arguments_ok(k, v) {
+		v.type = INVALID_TYPE
+		return
 	}
 
 	bound := make([dynamic]Expr, 0, 2, k.c.semantic_allocator)
-	switch kind {
+	#partial switch kind {
 	case .New:
-		// The operand is a type, inspected rather than evaluated, exactly as the
-		// layout built-ins treat theirs.
-		element := layout_operand_type(k, v.args[0].value, kind)
+		element := operand_type(k, v.args[0].value, ident.name, false)
 		if element == INVALID_TYPE || !gate_type(k, element, expr_span(v.args[0].value)) {
 			v.type = INVALID_TYPE
 			return
@@ -590,8 +480,6 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			return
 		}
 		v.operation = Call_Allocation{type = element}
-		// A fresh allocation is the caller's to write and to free, so `new` and
-		// `new_clone` hand back `^mut T`.
 		set_allocation_results(k, v, pointer_to(k.c, element, true))
 
 	case .New_Clone:
@@ -600,9 +488,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			v.type = INVALID_TYPE
 			return
 		}
-		// An untyped constant operand has no representation to allocate for, so it
-		// takes its default type first. Without this the allocation is sized from
-		// the untyped type and comes out zero.
+		// An untyped constant is allocated at its default type.
 		if type_is_untyped(k.c, value) {
 			value = default_type(k.c, value)
 			if value == INVALID_TYPE || !materialize(k, v.args[0].value, value) {
@@ -612,13 +498,9 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		}
 		append(&bound, v.args[0].value)
 		v.operation = Call_Allocation{type = value}
-		// `new_clone` creates a new allocation root containing a clone of the
-		// value (design.md), so the operand's own copy hook has to exist by
-		// emission.
 		contribute_lifecycle_members(k, value)
-		// The result shape is settled before the copyability complaint, so a
-		// `p, err := new_clone(x)` destructuring still knows its arity and the
-		// failure is reported once.
+		// The result shape is settled first, so a destructuring still knows its
+		// arity and the move-only failure is reported once.
 		set_allocation_results(k, v, pointer_to(k.c, value, true))
 		if type_clone_disabled(k.c, value) {
 			errorf(
@@ -632,11 +514,8 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 
 	case .Free, .Unsafe_Free:
 		pointer := check_single_expr(k, v.args[0].value)
-		if pointer == INVALID_TYPE {
-			v.type = INVALID_TYPE
-			return
-		}
-		if !check_free_operand(k, v.args[0].value, pointer, kind == .Unsafe_Free ? "unsafe.free" : "free") {
+		if pointer == INVALID_TYPE ||
+		   !check_free_operand(k, v.args[0].value, pointer, kind == .Unsafe_Free ? "unsafe.free" : "free") {
 			v.type = INVALID_TYPE
 			return
 		}
@@ -644,37 +523,22 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.type = TYPE_VOID
 
 	case .Free_All:
+		// Whether the reset is allowed is region provenance (`src/borrow.odin`).
 		allocator := check_single_expr(k, v.args[0].value, TYPE_ALLOCATOR)
-		if allocator == INVALID_TYPE || type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+		if allocator == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		if type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
 			errorf(k.c, expr_span(v.args[0].value), "L0490", "`free_all` names the allocator being reset, found `%s`", type_name(k.c, allocator))
 			v.type = INVALID_TYPE
 			return
 		}
-		// The compiler rejects `free_all`, or any call with the same
-		// allocator-reset effect, while a live owning value or
-		// borrow still refers to storage from that allocator (design.md). That is
-		// region provenance, in `src/borrow.odin`; what is left here is the shape.
 		append(&bound, v.args[0].value)
-		v.bound = bound[:]
 		v.type = TYPE_VOID
-		return
-
-	case .Simd_Cast, .Simd_Select, .Simd_Reduce,
-	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Make,
-	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Default_Allocator, .Drop,
-	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
-	     .Unsafe_Take, .Unsafe_Write,
-	     .Unsafe_Transmute, .Type_Info_Of,
-	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .Slice_Sort_By,
-	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
-	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
-		return
 	}
 
-	// The allocator argument, written or supplied. Keeping it bound means the
-	// backend never has to re-derive which provider a call selected.
+	// The allocator stays bound, so the backend never re-derives it.
 	if len(v.args) == 2 {
 		allocator := check_single_expr(k, v.args[1].value, TYPE_ALLOCATOR)
 		if allocator != INVALID_TYPE && type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
@@ -693,40 +557,26 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	v.bound = bound[:]
 }
 
-// design.md "Dynamic arrays" and "Maps": `make` creates a container bound to the
-// selected allocator.
+// design.md "Dynamic arrays" and "Maps":
 //
 //   make([dynamic]T, len: int = 0, cap: int = len, allocator = default)
-//       -> ([dynamic]T, Allocator_Error)
 //   make(map[K]V, reservation: int = 0, allocator = default)
-//       -> (map[K]V, Allocator_Error)
 //
-// The result is bound to its allocator even when empty, so `make` is also how
-// a program chooses a provider for a container it then fills. The counts are
-// ordinary runtime `int` expressions; `len > cap` and a negative count are
-// program faults, not allocation failures, checked where the allocation is made.
-//
-// The trailing allocator is recognised by its type rather than by position:
-// `Allocator` is a distinct nominal type, so no count can be mistaken for one
-// and `make([dynamic]int, arena.allocator())` needs no written parameter name.
+// both returning `(container, Allocator_Error)`. `Allocator` is a distinct type,
+// so the trailing allocator is recognised by its type rather than its position.
 @(private = "file")
-check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.value_category = .Value
+	v.type = INVALID_TYPE
 	if len(v.args) == 0 {
 		errorf(k.c, v.span, "L0579", "`make` names the container type to create")
-		v.type = INVALID_TYPE
 		return
 	}
-	for arg in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
-			reject_builtin_argument_shape(k, arg)
-			v.type = INVALID_TYPE
-			return
-		}
+	if !builtin_arguments_ok(k, v) {
+		return
 	}
-	container := layout_operand_type(k, v.args[0].value, .Make)
+	container := operand_type(k, v.args[0].value, "make", false)
 	if container == INVALID_TYPE || !gate_type(k, container, expr_span(v.args[0].value)) {
-		v.type = INVALID_TYPE
 		return
 	}
 	if !type_is_container(k.c, container) {
@@ -737,11 +587,9 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 			"`make` creates a `[dynamic]T` or a `map[K]V`, found `%s`",
 			type_name(k.c, container),
 		)
-		v.type = INVALID_TYPE
 		return
 	}
-	// A container of a move-only element has no clone, but it can still be
-	// created: what `make` produces is empty or zero-filled, never a copy.
+	// A move-only element has no clone, but `make` never copies one.
 	contribute_lifecycle_members(k, container)
 
 	is_map := type_is_map(k.c, container)
@@ -750,14 +598,14 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	allocator: Expr
 	for index in 1 ..< len(v.args) {
 		argument := v.args[index].value
-		if check_single_expr(k, argument, allocator_hint(k, index, len(v.args))) == INVALID_TYPE {
-			v.type = INVALID_TYPE
+		// Only the last argument may be the allocator, so the others expect `int`.
+		hint := index == len(v.args) - 1 ? INVALID_TYPE : TYPE_INT
+		if check_single_expr(k, argument, hint) == INVALID_TYPE {
 			return
 		}
 		if type_underlying(k.c, expr_base(argument).type) == TYPE_ALLOCATOR {
 			if index != len(v.args) - 1 {
 				errorf(k.c, expr_span(argument), "L0579", "the allocator is `make`'s last argument")
-				v.type = INVALID_TYPE
 				return
 			}
 			allocator = argument
@@ -767,7 +615,6 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 			shape := is_map ? "a map, an optional reservation, and an optional allocator" :
 				"a dynamic array type, an optional length and capacity, and an optional allocator"
 			errorf(k.c, expr_span(argument), "L0579", "`make` takes %s", shape)
-			v.type = INVALID_TYPE
 			return
 		}
 		if !materialize(k, argument, TYPE_INT) || type_underlying(k.c, expr_base(argument).type) != TYPE_INT {
@@ -779,14 +626,12 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 				is_map ? "reservation" : "length or capacity",
 				type_name(k.c, expr_base(argument).type),
 			)
-			v.type = INVALID_TYPE
 			return
 		}
 		append(&counts, argument)
 	}
 
-	// Bound in a fixed shape the backend never has to re-derive: the counts in
-	// written order, then the allocator, which is nil when it was omitted.
+	// Fixed shape: the counts in written order, then the allocator or nil.
 	bound := make([]Expr, max_counts + 1, k.c.semantic_allocator)
 	for count, index in counts {
 		bound[index] = count
@@ -794,15 +639,12 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	bound[max_counts] = allocator
 	v.bound = bound
 	v.operation = Call_Allocation{type = container}
-	// design.md "Zero values": a written *length* fills that many slots with the
-	// element's zero. A capacity or a map reservation is raw storage and fills
-	// nothing, and neither does a length written as the constant `0` — which is
-	// how `make(T, 0, capacity)` reserves storage for a no-zero element.
-	if !is_map && len(counts) > 0 && !is_constant_zero(k, counts[0]) {
+	// design.md "Zero values": only a length fills slots with zeroes, and a
+	// constant `0` fills none.
+	if !is_map && len(counts) > 0 && !is_constant_zero(counts[0]) {
 		if !require_type_has_zero(
 			k, container_element(k.c, container), expr_span(counts[0]), "a `make` length",
 		) {
-			v.type = INVALID_TYPE
 			return
 		}
 	}
@@ -810,11 +652,8 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.type = result_type(k, container, TYPE_ALLOCATOR_ERROR)
 }
 
-// design.md "`unsafe.transmute`": `unsafe.transmute(T, value)` reads the
-// storage of `value` as a `T`. It is a `core:unsafe` built-in rather than a
-// predeclared one because reinterpreting bits is not a universally valid
-// conversion — only the equal size and the trivial lifecycle are checked, and
-// what the resulting representation *means* is the caller's obligation.
+// design.md "`unsafe.transmute`": reads `value`'s storage as a `T`. Only equal
+// size and trivial lifecycles are checked; the meaning is the caller's.
 @(private = "file")
 check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
@@ -827,15 +666,10 @@ check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) 
 		)
 		return
 	}
-	for arg in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
-			reject_builtin_argument_shape(k, arg)
-			return
-		}
+	if !builtin_arguments_ok(k, v) {
+		return
 	}
-	// The destination is a written type, never an expression whose type is taken:
-	// `unsafe.transmute(x, y)` naming a variable is a mistake worth reporting as
-	// one, not a silent `type_of(x)`.
+	// A written type only: a variable here is a mistake, not `type_of(x)`.
 	target := resolve_type_syntax(k, v.args[0].value)
 	if target == INVALID_TYPE {
 		errorf(
@@ -848,10 +682,7 @@ check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) 
 		return
 	}
 	source := check_single_expr(k, v.args[1].value)
-	if source == INVALID_TYPE {
-		return
-	}
-	if !materialize(k, v.args[1].value, default_type(k.c, source)) {
+	if source == INVALID_TYPE || !materialize(k, v.args[1].value, default_type(k.c, source)) {
 		return
 	}
 	source = expr_base(v.args[1].value).type
@@ -865,9 +696,9 @@ check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) 
 	if type_size(k.c, source) != type_size(k.c, target) {
 		errorf(
 			k.c, v.span, "L0688",
-			"`unsafe.transmute` needs equal sizes: `%s` is %d byte%s and `%s` is %d",
+			"`unsafe.transmute` needs equal sizes: `%s` is %d byte%s and `%s` is %d byte%s",
 			type_name(k.c, source), type_size(k.c, source), type_size(k.c, source) == 1 ? "" : "s",
-			type_name(k.c, target), type_size(k.c, target),
+			type_name(k.c, target), type_size(k.c, target), type_size(k.c, target) == 1 ? "" : "s",
 		)
 		return
 	}
@@ -878,13 +709,8 @@ check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) 
 	fold_transmute(k, v, source, target)
 }
 
-// Both sides of a bit cast. A managed value would let the cast duplicate an
-// owning representation or manufacture one whose cleanup invariant was never
-// established; a borrow carrier — `^T`, a slice, a view, a `dyn` — would hand
-// back a reference the borrow analysis never saw loaned. `rawptr` and `[^]T`
-// carry neither, which is why they are the pointer shapes a bit cast may name;
-// dereferencing the result is valid only when the bits already describe
-// suitably aligned, live storage.
+// A managed side could duplicate or forge an owner, and a borrow carrier a loan
+// the analysis never saw. `rawptr` and `[^]T` carry neither.
 @(private = "file")
 transmute_side_ok :: proc(k: ^Checker, type: Type_Id, span: Span, side: string) -> bool {
 	reason := ""
@@ -907,10 +733,8 @@ transmute_side_ok :: proc(k: ^Checker, type: Type_Id, span: Span, side: string) 
 	return false
 }
 
-// A scalar bit cast of a constant answers at compile time, which is what lets
-// `core:math` build an infinity or a NaN — neither of which has a literal
-// spelling — as a constant rather than a runtime call. An aggregate or a wider
-// value is left to the backend.
+// A scalar bit cast of a constant folds, which is how `core:math` spells an
+// infinity or a NaN as a constant.
 @(private = "file")
 fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 	base := expr_base(v.args[1].value)
@@ -924,17 +748,14 @@ fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 	folded, status := const_from_pattern(k.c, raw, target)
 	switch status {
 	case .Unfoldable:
-		return // a pointer or an aggregate: still a valid cast, just not a constant
+		return
 	case .Invalid:
-		// A `bool` outside {0, 1}, or an enum with no member for the pattern: the
-		// value would be invalid the moment anything read it, and unlike a runtime
-		// result there is nothing left to be the caller's obligation.
+		// A `bool` outside {0, 1}, a non-rune, or an enum with no such member.
 		errorf(
 			k.c, v.span, "L0688",
 			"this bit pattern is not a valid `%s`", type_name(k.c, target),
 		)
 		v.type = INVALID_TYPE
-		return
 	case .Folded:
 		v.is_const = true
 		v.const_value = folded
@@ -942,16 +763,15 @@ fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 	}
 }
 
-// Whether a pattern became a constant of the destination type, could not be one
-// at all, or simply has no constant spelling there.
 Const_Pattern :: enum {
 	Folded,
+	// Not a value of the type at all.
 	Invalid,
+	// Valid, but with no constant spelling (a pointer or an aggregate).
 	Unfoldable,
 }
 
-// A scalar constant's storage bits, and whether it has any: an aggregate, a
-// string, or a `nil` does not answer here.
+// A scalar constant's storage bits, if it has any.
 const_scalar_pattern :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> (u64, bool) {
 	info := underlying_info(c, type)
 	if info == nil {
@@ -980,8 +800,7 @@ const_scalar_pattern :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) ->
 	return 0, false
 }
 
-// The inverse: the constant a pattern denotes in `type`, or `false` when the
-// pattern is not a value of that type at all.
+// The constant a bit pattern denotes in `type`.
 const_from_pattern :: proc(c: ^Compiler, raw: u64, type: Type_Id) -> (Const_Value, Const_Pattern) {
 	info := underlying_info(c, type)
 	if info == nil {
@@ -999,8 +818,7 @@ const_from_pattern :: proc(c: ^Compiler, raw: u64, type: Type_Id) -> (Const_Valu
 		return integer_const(c, bi_wrap(c, bi_from_u64(c, raw), int(info.bits), info.signed)), .Folded
 	case .Rune:
 		wrapped := bi_wrap(c, bi_from_u64(c, raw), 32, true)
-		// design.md: a `rune` is a scalar Unicode value, so the surrogate range and
-		// anything above U+10FFFF are not runes however the bits were produced.
+		// design.md: a `rune` excludes surrogates and anything above U+10FFFF.
 		if point, fits := bi_to_i64(c, wrapped); !fits || point < 0 || point > 0x10ffff ||
 		   (point >= 0xd800 && point <= 0xdfff) {
 			return {}, .Invalid
@@ -1014,28 +832,13 @@ const_from_pattern :: proc(c: ^Compiler, raw: u64, type: Type_Id) -> (Const_Valu
 		}
 		return candidate, .Folded
 	}
-	// A pointer, an aggregate, or anything else with no constant spelling: the
-	// cast is still valid, it simply does not fold.
 	return {}, .Unfoldable
 }
 
-// Whether an expression is the folded constant `0`. A length the compiler can
-// see is zero initialises nothing, whatever the element type is.
 @(private = "file")
-is_constant_zero :: proc(k: ^Checker, e: Expr) -> bool {
+is_constant_zero :: proc(e: Expr) -> bool {
 	base := expr_base(e)
-	if base == nil || !base.is_const || base.const_value.kind != .Integer {
-		return false
-	}
-	return bi_is_zero(base.const_value.integer)
-}
-
-// An argument that could be the trailing allocator is checked with `Allocator`
-// as its context, so `mem.default_allocator()` resolves the same way it does in
-// any other allocator position. Everything before it wants `int`.
-@(private = "file")
-allocator_hint :: proc(k: ^Checker, index: int, count: int) -> Type_Id {
-	return index == count - 1 ? INVALID_TYPE : TYPE_INT
+	return base != nil && base.is_const && base.const_value.kind == .Integer && bi_is_zero(base.const_value.integer)
 }
 
 @(private = "file")
@@ -1044,24 +847,15 @@ set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id) {
 	v.value_category = .Value
 }
 
-// `free` ends the allocation root designated by a checked base pointer from
-// `new` or `new_clone` (design.md). The syntax check is only that the operand
-// is a checked pointer; whether its value really is that allocation base, and
-// whether it has already been released, is root provenance (`src/borrow.odin`).
-//
-// `unsafe.free` shares the shape and reports under its own name, because it is
-// the one a `rawptr` reaches first (design.md "The `unsafe` package"). The
-// release is sized, so the pointee type is cast back on before the call rather
-// than checked away here.
+// `free` needs a `^mut T`; whether it is really an allocation base, and not yet
+// released, is root provenance (`src/borrow.odin`). `unsafe.free` shares the
+// shape under its own name.
 @(private = "file")
 check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id, form: string) -> bool {
 	if underlying_kind(k.c, pointer) != .Pointer {
 		errorf(k.c, expr_span(e), "L0493", "`%s` takes an allocation pointer, found `%s`", form, type_name(k.c, pointer))
 		return false
 	}
-	// Releasing storage is the strongest write there is, so it needs the write
-	// capability. A `^T` weakened from an allocation still reads the allocation;
-	// it does not get to end it.
 	if !pointer_is_mutable(k.c, pointer) {
 		errorf(
 			k.c, expr_span(e), "L0639",
@@ -1072,8 +866,7 @@ check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id, form: string)
 	return true
 }
 
-// design.md: an `assert`/`panic` message is a compile-time string in M3; M6
-// turns it into a runtime panic message.
+// An `assert`/`panic` message is a compile-time string.
 @(private = "file")
 check_message_arg :: proc(k: ^Checker, e: Expr) {
 	if check_single_expr(k, e) == INVALID_TYPE {
