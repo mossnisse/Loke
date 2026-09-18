@@ -183,6 +183,14 @@ declare_impl_member :: proc(
 			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
+		if type_is_enum(k.c, item.subject) && enum_builtin_member(name.text) {
+			errorf(
+				k.c, name.span, "L0409",
+				"`%s` already has a built-in member `%s`", type_name(k.c, item.subject), name.text,
+			)
+			append(&symbols, INVALID_SYMBOL)
+			continue
+		}
 		sym := Symbol {
 			name       = name_id,
 			span       = name.span,

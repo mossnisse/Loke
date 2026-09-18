@@ -405,40 +405,6 @@ fold_static_slice :: proc(k: ^Checker, written: ^Expr_Slice, type: Type_Id) -> (
 	return out, underlying_info(k.c, type).element, true
 }
 
-// design.md "Iterating an enumeration": `Enum.values()` is the declaration-ordered
-// fixed array of its members, and the only way to iterate an enumeration. It is a
-// constant, so it serves a runtime loop, a static expansion, and a `$` argument
-// through the ordinary array paths rather than a `foreach` special case.
-check_enum_values :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
-	if sel.name.text != "values" {
-		return false
-	}
-	subject := resolve_type_syntax(k, sel.operand)
-	if subject == INVALID_TYPE || !type_is_enum(k.c, subject) {
-		return false
-	}
-	v.value_category = .Value
-	v.resolution = Resolution{kind = .Builtin_Operator}
-	if len(v.args) != 0 {
-		errorf(k.c, v.span, "L0460", "`%s.values` takes no arguments", type_name(k.c, subject))
-		v.type = INVALID_TYPE
-		return true
-	}
-	members, ok := enum_member_constants(k, subject)
-	if !ok {
-		v.type = INVALID_TYPE
-		return true
-	}
-	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
-	aggregate.type = array_of(k.c, subject, u64(len(members)))
-	aggregate.elements = members
-	v.type = aggregate.type
-	v.is_const = true
-	v.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
-	v.immutable = .Constant
-	return true
-}
-
 enum_member_constants :: proc(k: ^Checker, enum_type: Type_Id) -> ([]Const_Value, bool) {
 	info := underlying_info(k.c, enum_type)
 	if info == nil {

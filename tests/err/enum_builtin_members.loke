@@ -1,0 +1,9 @@
+package main;
+// `from_int` and `values` are compiler-defined; a declaration would be unreachable.
+Color :: enum u8 { red = 1, blue = 4 }
+impl Color {
+    from_int :: proc(n: int) -> int { return n; }
+    values :: proc() -> int { return 0; }
+    name :: proc(self) -> int { return 1; }
+}
+main :: proc() { _ = Color.from_int(4); }
