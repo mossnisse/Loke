@@ -1,0 +1,25 @@
+package main; import "core:fmt";
+
+// A managed temporary erased to an `any_view` is dropped once its full
+// expression ends.
+
+drops: int;
+Value :: struct { id: int }
+impl Value {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
+		return .ok(Value{self.id});
+	}
+	release :: hook(drop) proc(self: inout Value) { if (self.id != 0) { drops += 1; } }
+}
+
+make :: proc() -> Value { return Value{7}; }
+show :: proc(v: any_view) {}
+
+main :: proc() {
+	show(make());
+	fmt.println(drops);
+	{
+		x: any_view = make();
+	}
+	fmt.println(drops);
+}

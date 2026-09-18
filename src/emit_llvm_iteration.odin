@@ -7,8 +7,7 @@ import "core:fmt"
 
 // ============================================================== iteration ==
 
-// design.md "Iteration protocol": `next` yields `Option(Element)`. These two
-// helpers name the parts of that instance so no synthesized body re-derives it.
+// design.md "Iteration protocol": `next` yields `Option(Element)`.
 @(private)
 option_payload :: proc(c: ^Compiler, option_type: Type_Id) -> Type_Id {
 	return union_variant_payload(c, option_type, union_index_of(c, option_type, "some"))
@@ -19,30 +18,23 @@ emit_option_some :: proc(e: ^Emitter, option_type: Type_Id, payload: string) -> 
 	return emit_union_value(e, option_type, union_index_of(e.c, option_type, "some"), payload)
 }
 
-// `a ..< b` and `a ..= b` as a stored value: the endpoints plus the closed flag,
-// so a range keeps its kind after being assigned or passed to a generic
-// procedure.
+// A stored `a ..< b` or `a ..= b`: the endpoints plus the closed flag.
 @(private)
 emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range, as_type: Type_Id) -> string {
-	info := type_of(e.c, as_type)
-	element := info.element
+	element := llvm_type(e, type_of(e.c, as_type).element)
 	low := emit_expr(e, v.lo)
 	high := emit_expr(e, v.hi)
 	closed := v.op == .Range_Incl ? "true" : "false"
 	storage := llvm_type(e, as_type)
-	step1 := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", step1, storage, llvm_type(e, element), low, RANGE_LOW)
-	step2 := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, %s %s, %d", step2, storage, step1, llvm_type(e, element), high, RANGE_HIGH)
-	out := insert(e, storage, step2, "i1", closed, RANGE_CLOSED)
-	return out
+	step1 := insert(e, storage, "undef", element, low, RANGE_LOW)
+	step2 := insert(e, storage, step1, element, high, RANGE_HIGH)
+	return insert(e, storage, step2, "i1", closed, RANGE_CLOSED)
 }
 
 @(private)
 emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	if s.kind == .Static {
-		// An expansion is not a loop: its checked copies run in iterable order,
-		// and an empty iterable emits nothing.
+		// An expansion is not a loop: its checked copies run in iterable order.
 		for copy_block in s.expansion {
 			emit_block_statements(e, copy_block)
 		}
@@ -57,33 +49,65 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	}
 	push_scope(e, nil)
 	defer pop_scope(e)
-	// `break` lands inside the loop scope; its common exit disposes of the
-	// iterator once. Only iteration-local values are unwound by the branch.
+	// `break` lands in the loop scope, whose exit disposes of the iterator once.
 	e.break_depth = len(e.cleanups)
 
-	if s.kind == .Protocol {
+	#partial switch s.kind {
+	case .Protocol:
 		emit_protocol_foreach(e, s)
-		return
-	}
-	if s.kind == .Text {
+	case .Text:
 		emit_text_foreach(e, s)
-		return
-	}
-	if s.kind == .Map {
+	case .Map:
 		emit_map_foreach(e, s)
-		return
+	case:
+		emit_indexed_foreach(e, s)
 	}
-	emit_indexed_foreach(e, s)
 }
 
-// One source of a bound name: a place to read from, a value already in hand, or
-// a place the binding *is* (`&value` in a by-reference loop).
-//
-// `stored` says the source is still the container's own storage, so a managed
-// value has to be *cloned* out of it rather than loaded: the loop owns its copy
-// for the length of one step and drops it at the end (design.md "Element
-// bindings"). A value an iterator's `next` already handed over is owned
-// already, and moving it costs nothing.
+@(private = "file")
+Loop_Labels :: struct {
+	head, body, post, done: string,
+}
+
+// The labels every loop shape uses, with `break` and `continue` aimed at them.
+@(private = "file")
+open_loop :: proc(e: ^Emitter) -> Loop_Labels {
+	loop := Loop_Labels{
+		new_label(e, "foreach.head"), new_label(e, "foreach.body"),
+		new_label(e, "foreach.post"), new_label(e, "foreach.done"),
+	}
+	e.break_label, e.continue_label = loop.done, loop.post
+	e.continue_depth = len(e.cleanups)
+	return loop
+}
+
+// Each step has its own cleanup scope at the depth `continue` unwinds to, so a
+// value the step owns is disposed of once per step on every exit path.
+@(private = "file")
+begin_step :: proc(e: ^Emitter, loop: Loop_Labels) {
+	place_label(e, loop.body)
+	push_scope(e, nil)
+}
+
+// Runs the body, closes the step, and opens the `post` block.
+@(private = "file")
+finish_step :: proc(e: ^Emitter, s: ^Stmt_Foreach, loop: Loop_Labels) {
+	emit_scoped_block(e, s.body)
+	pop_scope(e)
+	branch(e, loop.post)
+	place_label(e, loop.post)
+}
+
+@(private = "file")
+close_loop :: proc(e: ^Emitter, loop: Loop_Labels) {
+	branch(e, loop.head)
+	place_label(e, loop.done)
+}
+
+// One source of a bound name: a place to read, a value in hand, or a place the
+// binding *is* (`&value`). `stored` means the source is the container's own
+// storage, so a managed value is cloned out for the step rather than loaded
+// (design.md "Element bindings").
 @(private = "file")
 Foreach_Field :: struct {
 	type:    Type_Id,
@@ -94,8 +118,6 @@ Foreach_Field :: struct {
 	children: []Foreach_Field,
 }
 
-// The owned value one step yields for this field, cloning when the source is
-// the container's own storage.
 @(private = "file")
 owned_field_value :: proc(e: ^Emitter, field: Foreach_Field) -> string {
 	value := field_value(e, field)
@@ -105,25 +127,8 @@ owned_field_value :: proc(e: ^Emitter, field: Foreach_Field) -> string {
 	return value
 }
 
-// One step's own cleanup scope. It sits directly above the loop's, at the depth
-// `continue` unwinds to, so a value the step owns is disposed of at the end of
-// that step rather than at the end of the loop. Registering an owned place in it
-// is what makes falling out, `continue`, `break`, a `return`, a propagated
-// error, and a panic each replay that disposal exactly once.
-@(private = "file")
-begin_iteration :: proc(e: ^Emitter) {
-	push_scope(e, nil)
-}
-
-@(private = "file")
-end_iteration :: proc(e: ^Emitter) {
-	pop_scope(e)
-}
-
-// design.md "Element bindings": one binding names the whole `Element`; N
-// bindings name its fields positionally. Sources come from what the lowering
-// already has, so a destructuring loop never materializes the record it takes
-// apart — only a one-name loop over a synthesized element pays to build it.
+// One binding names the whole `Element`; N bindings name its fields. A
+// destructuring loop never builds the record it takes apart.
 @(private = "file")
 bind_foreach_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field) {
 	source := Foreach_Field{type = s.element_type, children = fields}
@@ -233,14 +238,12 @@ materialize_foreach_record :: proc(
 
 @(private = "file")
 bind_foreach_field :: proc(e: ^Emitter, symbol: Symbol_Id, field: Foreach_Field) {
+	// A by-reference binding names the container's slot and owns nothing.
 	if field.place {
-		// A by-reference binding names the container's own slot; the loop owns
-		// nothing and there is nothing to dispose of.
 		bind_foreach_place(e, symbol, field.address)
 		return
 	}
-	// By default each iterated value is a copy, and assignment to the copy does
-	// not modify the source. An ignored field is still produced and disposed of.
+	// Otherwise the binding is the step's own copy, disposed of even if ignored.
 	slot := alloca(e, llvm_type(e, field.type))
 	store(e, field.type, owned_field_value(e, field), slot)
 	register_scope_place(e, field.type, slot)
@@ -255,9 +258,8 @@ bind_foreach_place :: proc(e: ^Emitter, symbol: Symbol_Id, address: string) {
 	bind_local(e, symbol, address)
 }
 
-// `indexed()` numbers whatever traversal it wraps: the wrapped element becomes
-// one field again (built here when the traversal produced several), with the
-// counter following it.
+// `indexed()` pairs the wrapped element (one field again, even if the
+// traversal produced several) with the counter.
 @(private = "file")
 with_index :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field, counter: string) -> []Foreach_Field {
 	if !s.indexed {
@@ -265,10 +267,7 @@ with_index :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field, count
 	}
 	inner := fields[0]
 	if len(fields) > 1 {
-		// Preserve the wrapped traversal as a subtree. Recursive binding decides
-		// whether to destructure it or materialize its projected pointer record.
-		wrapped := foreach_yielded_type(e, s)
-		inner = Foreach_Field{type = wrapped, children = fields}
+		inner = Foreach_Field{type = foreach_yielded_type(e, s), children = fields}
 	}
 	out := make([dynamic]Foreach_Field, 0, 2, context.temp_allocator)
 	append(&out, inner)
@@ -276,9 +275,7 @@ with_index :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field, count
 	return out[:]
 }
 
-// The value this loop yields, before `indexed()` numbers it. A place header
-// binds the element itself and keeps the counter beside it rather than in a
-// pair, so its `element_type` is already what it yields.
+// What the loop yields before `indexed()` numbers it.
 @(private = "file")
 foreach_yielded_type :: proc(e: ^Emitter, s: ^Stmt_Foreach) -> Type_Id {
 	if !s.indexed {
@@ -295,9 +292,38 @@ field_value :: proc(e: ^Emitter, field: Foreach_Field) -> string {
 	return load(e, llvm_type(e, field.type), field.address)
 }
 
-// The loop yields decoded code points: a byte offset (where the yielded code
-// point begins, advancing 1 to 4 per step) comes from `rune_offsets()`, and a
-// rune ordinal from `indexed()` (design.md "String iteration").
+// Decodes the code point at `offset` into `decoded`, answering the bytes it
+// spans. Text is valid UTF-8 by construction, so a zero means that broke.
+@(private = "file")
+emit_decode_rune :: proc(e: ^Emitter, data, length, offset, decoded: string) -> string {
+	used := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)",
+		used, data, length, offset, decoded,
+	)
+	stalled := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", stalled, used)
+	panic_if(e, stalled, "text.invalid", "invalid UTF-8 in a string")
+	return used
+}
+
+// Whether a range cursor is still in range: `<`/`<=` forward, `>`/`>=` in
+// reverse, chosen by the run-time `closed` flag.
+@(private = "file")
+emit_range_live :: proc(e: ^Emitter, signed, reverse: bool, type, current, limit, closed: string) -> string {
+	open_op, closed_op := signed ? "slt" : "ult", signed ? "sle" : "ule"
+	if reverse {
+		open_op, closed_op = signed ? "sgt" : "ugt", signed ? "sge" : "uge"
+	}
+	open_test, closed_test, live := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", open_test, open_op, type, current, limit)
+	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", closed_test, closed_op, type, current, limit)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", live, closed, closed_test, open_test)
+	return live
+}
+
+// Decoded code points; `rune_offsets()` adds the byte offset and `indexed()`
+// the rune ordinal (design.md "String iteration").
 @(private = "file")
 emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	type := type_underlying(e.c, expr_base(s.iterable).type)
@@ -310,65 +336,37 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", offset)
 	alloca_named(e, decoded, "i32")
 
-	// `indexed()` counts the runes it yields, so its counter lives across
-	// iterations rather than being rebuilt per step.
 	ordinal := ""
 	if s.indexed {
 		ordinal = alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", ordinal)
 	}
 
-	head := new_label(e, "foreach.head")
-	body := new_label(e, "foreach.body")
-	post := new_label(e, "foreach.post")
-	done := new_label(e, "foreach.done")
-	e.break_label, e.continue_label = done, post
-	e.continue_depth = len(e.cleanups)
-
-	place_label(e, head)
+	loop := open_loop(e)
+	place_label(e, loop.head)
 	current := load(e, "i64", offset)
 	at_end := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp sge i64 %s, %s", at_end, current, length)
-	branch_if(e, at_end, done, body)
+	branch_if(e, at_end, loop.done, loop.body)
 
-	place_label(e, body)
-	begin_iteration(e)
-	used := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)",
-		used, data, length, current, decoded,
-	)
-	// A `string` is valid UTF-8 by construction, and every borrowed view is
-	// checked where it's created — a zero here means that invariant already broke.
-	stalled := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", stalled, used)
-	panic_if(e, stalled, "text.invalid", "invalid UTF-8 in a string")
-
+	begin_step(e, loop)
+	used := emit_decode_rune(e, data, length, current, decoded)
 	fields := []Foreach_Field{{type = TYPE_RUNE, address = decoded}}
 	counter := ordinal == "" ? "" : load(e, "i64", ordinal)
 	bind_foreach_fields(e, s, with_index(e, s, fields, counter))
-	emit_scoped_block(e, s.body)
-	end_iteration(e)
-	branch(e, post)
+	finish_step(e, s, loop)
 
-	place_label(e, post)
 	advanced := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, current, used)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, offset)
 	if ordinal != "" {
 		step_counter(e, ordinal, "i64")
 	}
-	branch(e, head)
-	place_label(e, done)
+	close_loop(e, loop)
 }
 
-// A slot walk over a map; iteration order is unspecified (design.md "Maps").
-// The cursor is one integer the runtime hands back — the table's controls,
-// seed, and slot count stay entirely inside `runtime/container.c`.
-//
-// One name binds the whole `{key, value}` entry and two destructure it; `keys()`
-// and `values()` name the single-field traversals. A value binding written `&` is
-// a place loop, naming the stored slot rather than a copy.
+// A slot walk over a map in unspecified order (design.md "Maps"), with the
+// runtime's slot position as the only cursor.
 @(private = "file")
 emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	container := expr_base(s.iterable).type
@@ -385,14 +383,8 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
 	}
 
-	head := new_label(e, "foreach.head")
-	body := new_label(e, "foreach.body")
-	post := new_label(e, "foreach.post")
-	done := new_label(e, "foreach.done")
-	e.break_label, e.continue_label = done, post
-	e.continue_depth = len(e.cleanups)
-
-	place_label(e, head)
+	loop := open_loop(e)
+	place_label(e, loop.head)
 	current := load(e, "i64", cursor)
 	next := temp(e)
 	fmt.sbprintfln(
@@ -402,32 +394,27 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
 	finished := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", finished, next)
-	branch_if(e, finished, done, body)
+	branch_if(e, finished, loop.done, loop.body)
 
-	place_label(e, body)
-	begin_iteration(e)
+	begin_step(e, loop)
 	if foreach_is_place_loop(s) {
-		// The place forms, unchanged: `&value`, or `key, &value`.
+		// `&value` or `key, &value`: the value names the stored slot, and the
+		// immutable key borrows the stored key, so neither is cloned.
 		key_binding, value_binding := -1, 0
 		if len(s.bindings) == 2 {
 			key_binding, value_binding = 0, 1
 		}
 		if key_binding >= 0 {
-			// The key binding is immutable, so it borrows the stored key in place: no
-			// per-iteration clone, and therefore no per-iteration drop either.
 			bind_foreach_field(e, s.bindings[key_binding].symbol, Foreach_Field{
 				type = container_key(e.c, container), address = load(e, "ptr", key_out), place = true,
 			})
 		}
-		// `&value` names the stored slot, so a write reaches the table.
 		bind_foreach_field(e, s.bindings[value_binding].symbol, Foreach_Field{
 			type = container_element(e.c, container), address = load(e, "ptr", value_out), place = true,
 		})
 	} else {
-		// design.md "Borrowing iteration": a header naming both halves binds them
-		// where the table holds them. One name asks for the `{key, value}` entry
-		// instead, which the table does not store, so that record is built and both
-		// halves are copied into it -- as `m.entries()` does through the protocol.
+		// Two names bind the halves where they are stored; one name gets a built
+		// `{key, value}` entry with both halves copied in.
 		fields := []Foreach_Field{
 			{type = container_key(e.c, container), address = load(e, "ptr", key_out),
 			 place = s.borrows, stored = true},
@@ -437,150 +424,109 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		numbered := counter == "" ? "" : load(e, "i64", counter)
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	}
-	emit_scoped_block(e, s.body)
-	end_iteration(e)
-	branch(e, post)
-	place_label(e, post)
+	finish_step(e, s, loop)
 	if counter != "" {
 		step_counter(e, counter, "i64")
 	}
-	branch(e, head)
-	place_label(e, done)
+	close_loop(e, loop)
 }
 
-// A range or a fixed array: an index loop, with no iterator object at all.
+// A range or a sequence: an index loop, with no iterator object at all.
 @(private = "file")
 emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	yielded := foreach_yielded_type(e, s)
 	element := llvm_type(e, yielded)
 	cursor := temp(e)
-	limit := ""
-	closed := ""
-	array_slot := ""
-	floor := ""
+	limit, closed, array_slot, floor := "", "", "", ""
 	counter_type := element
+	is_range := s.kind == .Range || s.kind == .Stored_Range
 
 	switch s.kind {
 	case .Range:
 		written := s.iterable.(^Expr_Range)
-		low := emit_expr(e, written.lo)
-		high := emit_expr(e, written.hi)
-		alloca_named(e, cursor, element)
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, low, cursor)
-		limit = high
-		floor = low
+		floor = emit_expr(e, written.lo)
+		limit = emit_expr(e, written.hi)
 		closed = written.op == .Range_Incl ? "true" : "false"
 
 	case .Stored_Range:
 		range_type := llvm_type(e, expr_base(s.iterable).type)
 		value := emit_expr(e, s.iterable)
-		low := extract(e, range_type, value, RANGE_LOW)
-		high := extract(e, range_type, value, RANGE_HIGH)
-		flag := extract(e, range_type, value, RANGE_CLOSED)
-		alloca_named(e, cursor, element)
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, low, cursor)
-		limit = high
-		floor = low
-		closed = flag
+		floor = extract(e, range_type, value, RANGE_LOW)
+		limit = extract(e, range_type, value, RANGE_HIGH)
+		closed = extract(e, range_type, value, RANGE_CLOSED)
 
 	case .Array:
-		// `&value` names the element in place, so the array must be a place
-		// rather than a copy.
+		// A place, so `&value` names the element itself rather than a copy.
 		array_slot = spill_foreach_iterable(e, s.iterable)
-		counter_type = "i64"
-		alloca_named(e, cursor, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 		limit = fmt.aprintf("%d", s.count)
 
 	case .Slice:
-		// The slice is evaluated once; the loop walks its root through the data
-		// word, so `&value` reaches the root, not a copy.
+		// Evaluated once; the loop walks the root through the data word.
 		slice_type := llvm_type(e, expr_base(s.iterable).type)
 		value := emit_expr(e, s.iterable)
-		array_slot = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", array_slot, slice_type, value, SLICE_DATA)
-		length := extract(e, slice_type, value, SLICE_LEN)
-		counter_type = "i64"
-		alloca_named(e, cursor, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
-		limit = length
+		array_slot = extract(e, slice_type, value, SLICE_DATA)
+		limit = extract(e, slice_type, value, SLICE_LEN)
 
 	case .Dynamic:
-		// design.md "Dynamic arrays": the loop views the *current* allocation,
-		// stopping at the length, never the capacity — kept true for the loop's
-		// duration by the whole-container loan it holds.
+		// The current allocation up to `len`, kept current by the loop's loan.
 		header := spill_foreach_iterable(e, s.iterable)
-		array_slot = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", array_slot, header)
-		length_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
-		length := load(e, "i64", length_slot)
-		counter_type = "i64"
-		alloca_named(e, cursor, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
-		limit = length
+		array_slot = load(e, "ptr", header)
+		limit = load(e, "i64", gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN))
 
 	case .Unresolved, .Static, .Protocol, .Text, .Map:
 		backend_fail(e, "an unresolved `foreach` reached emission")
 		return
 	}
+	if is_range {
+		alloca_named(e, cursor, element)
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, floor, cursor)
+	} else {
+		counter_type = "i64"
+		alloca_named(e, cursor, "i64")
+		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	}
 
-	head := new_label(e, "foreach.head")
-	body := new_label(e, "foreach.body")
-	post := new_label(e, "foreach.post")
-	done := new_label(e, "foreach.done")
-	e.break_label, e.continue_label = done, post
-	e.continue_depth = len(e.cleanups)
+	loop := open_loop(e)
 
-	// A sequence's cursor is already the index `indexed()` wants; a range's
-	// cursor is its *value*, so numbering it needs a counter of its own.
+	// A range's cursor is its value, so `indexed()` needs a counter of its own.
 	counter := ""
-	if s.indexed && (s.kind == .Range || s.kind == .Stored_Range) {
+	if s.indexed && is_range {
 		counter = alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
 	}
 
-	place_label(e, head)
+	place_label(e, loop.head)
 	current := load(e, counter_type, cursor)
-	test := temp(e)
-	if s.kind == .Array || s.kind == .Slice || s.kind == .Dynamic {
-		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", test, current, limit)
-	} else {
-		// `..<` stops before the high endpoint and `..=` includes it; a stored
-		// range carries which at run time.
+	test := ""
+	if is_range {
 		signed := type_signed(e.c, yielded) || type_is_rune(e.c, yielded)
-		open_test, closed_test := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", open_test, signed ? "slt" : "ult", counter_type, current, limit)
-		fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", closed_test, signed ? "sle" : "ule", counter_type, current, limit)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", test, closed, closed_test, open_test)
+		test = emit_range_live(e, signed, false, counter_type, current, limit, closed)
+	} else {
+		test = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", test, current, limit)
 	}
-	branch_if(e, test, body, done)
+	branch_if(e, test, loop.body, loop.done)
 
-	place_label(e, body)
-	begin_iteration(e)
+	begin_step(e, loop)
 	numbered := counter == "" ? current : load(e, "i64", counter)
 	bind_indexed_value(e, s, current, array_slot, element, limit, floor, closed, numbered)
-	emit_scoped_block(e, s.body)
-	end_iteration(e)
-	branch(e, post)
+	finish_step(e, s, loop)
 
-	place_label(e, post)
-	if s.kind != .Array && s.kind != .Slice && s.kind != .Dynamic {
-		// An inclusive range whose high endpoint is the integer maximum cannot
-		// represent high+1. Finish directly after yielding high instead.
+	if is_range {
+		// A closed range ending at the type's maximum cannot represent high+1, so
+		// it finishes right after yielding high.
 		at_high, finished := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", at_high, counter_type, current, limit)
 		fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", finished, closed, at_high)
 		step := new_label(e, "foreach.step")
-		branch_if(e, finished, done, step)
+		branch_if(e, finished, loop.done, step)
 		place_label(e, step)
 	}
 	step_counter(e, cursor, counter_type)
 	if counter != "" {
 		step_counter(e, counter, "i64")
 	}
-	branch(e, head)
-
-	place_label(e, done)
+	close_loop(e, loop)
 }
 
 @(private = "file")
@@ -600,13 +546,12 @@ bind_indexed_value :: proc(
 	numbered: string,
 ) {
 	yielded := foreach_yielded_type(e, s)
-	fields := make([dynamic]Foreach_Field, 0, 2, context.temp_allocator)
-	if s.kind != .Array && s.kind != .Slice && s.kind != .Dynamic {
+	field: Foreach_Field
+	if s.kind == .Range || s.kind == .Stored_Range {
 		at := current
 		if s.adapter == .Reversed {
-			// The cursor still counts up from the low endpoint; only the value it names
-			// is mirrored, so `low + high' - current` walks it backwards without a
-			// second loop shape (`high'` is the last value the forward loop would yield).
+			// The cursor still counts up; the value is mirrored as
+			// `low + last - current`, where `last` is the final forward value.
 			last, mirrored := temp(e), temp(e)
 			open_high := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", open_high, element, limit)
@@ -616,11 +561,10 @@ bind_indexed_value :: proc(
 			fmt.sbprintfln(&e.b, "  %s = sub %s %s, %s", mirrored, element, sum, current)
 			at = mirrored
 		}
-		append(&fields, Foreach_Field{type = yielded, value = at})
+		field = Foreach_Field{type = yielded, value = at}
 	} else {
-		// `reversed()` walks the same cursor and flips only the element it reaches,
-		// so an `indexed()` over it still counts from zero (design.md "Reverse
-		// iteration").
+		// `reversed()` flips only the element reached, so `indexed()` still counts
+		// from zero (design.md "Reverse iteration").
 		at := current
 		if s.adapter == .Reversed {
 			last, flipped := temp(e), temp(e)
@@ -630,8 +574,6 @@ bind_indexed_value :: proc(
 		}
 		address := temp(e)
 		if s.kind == .Slice || s.kind == .Dynamic {
-			// `array_slot` is the slice's data pointer, so the element index walks it
-			// directly rather than indexing into an inline array.
 			fmt.sbprintfln(
 				&e.b,
 				"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
@@ -644,26 +586,21 @@ bind_indexed_value :: proc(
 				address, s.count, element, array_slot, at,
 			)
 		}
-		// `&value` is the element itself, so the binding is its address and a store
-		// through it reaches the array. A lending traversal binds that same address
-		// read-only (design.md "Borrowing iteration"); only a copying one loads the
-		// element out and owns what it copied for the step.
-		append(&fields, Foreach_Field{
+		// `&value` and a lending traversal bind the element's address; only a
+		// copying loop owns a clone for the step (design.md "Borrowing iteration").
+		field = Foreach_Field{
 			type = yielded, address = address, place = foreach_is_place_loop(s) || s.borrows, stored = true,
-		})
+		}
 	}
-	bind_foreach_fields(e, s, with_index(e, s, fields[:], numbered))
+	bind_foreach_fields(e, s, with_index(e, s, []Foreach_Field{field}, numbered))
 }
 
-// A user iterable: `it := x.iter()`, then `next(&it)` per step. `indexed()` adds
-// its counter around the yielded Element.
+// A user iterable: `it := x.iter()`, then `next(&it)` per step.
 @(private = "file")
 emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	iter_sym := symbol_of(e.c, s.iter_symbol)
-	// design.md "Receiver forms": `iter` takes an immutable receiver, so the
-	// source is handed over as the address of the caller's storage rather than
-	// copied. A temporary source moves into the loop scope, which keeps it alive
-	// for the complete statement the borrow is bounded by.
+	// An immutable `iter` receiver takes the source's address; a temporary
+	// source moves into the loop scope for the statement's duration.
 	subject_by_ptr := param_mode_is_pointer(symbol_param_mode(e.c, iter_sym, 0))
 	subject := subject_by_ptr ? spill_foreach_iterable_at(e, s.iterable, iter_sym.params[0]) : emit_expr(e, s.iterable)
 	subject_type := subject_by_ptr ? "ptr" : llvm_type(e, iter_sym.params[0])
@@ -684,14 +621,8 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
 	}
 
-	head := new_label(e, "foreach.head")
-	body := new_label(e, "foreach.body")
-	post := new_label(e, "foreach.post")
-	done := new_label(e, "foreach.done")
-	e.break_label, e.continue_label = done, post
-	e.continue_depth = len(e.cleanups)
-
-	place_label(e, head)
+	loop := open_loop(e)
+	place_label(e, loop.head)
 	yielded := foreach_yielded_type(e, s)
 	option := symbol_of(e.c, s.next_symbol).result
 	option_llvm := llvm_type(e, option)
@@ -705,52 +636,39 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		ok, shape.tag_bytes * 8, tag, union_index_of(e.c, option, "some"),
 	)
 	slot := emit_union_spill(e, option, produced)
-	branch_if(e, ok, body, done)
+	branch_if(e, ok, loop.body, loop.done)
 
-	place_label(e, body)
-	begin_iteration(e)
-	// `next` handed over an owned `Element`, so nothing here is a copy: the loop
-	// takes what it was given and disposes of it at the end of the step.
+	begin_step(e, loop)
+	numbered := counter == "" ? "" : load(e, "i64", counter)
+	// `next` hands over an owned `Element`, so the step takes it without a copy.
 	if foreach_is_place_loop(s) {
 		logical := s.indexed ? foreach_yielded_type(e, s) : s.element_type
 		address := emit_union_payload(e, option, pointer_to(e.c, logical, true), slot)
 		fields := []Foreach_Field{{type = logical, address = address, place = true, stored = true}}
-		numbered := counter == "" ? "" : load(e, "i64", counter)
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	} else if payload := option_payload(e.c, option); s.borrows && !type_is_pointer(e.c, payload) {
-		// design.md "Iteration protocol": a record `Yield` hands back a record of
-		// pointers -- one per part the iterator lends -- so each binding is a place
-		// at its own address, and one name over the whole receives the record.
+		// A record `Yield` is a record of pointers, one per lent part.
 		bind_foreach_fields(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload))
 	} else if s.borrows {
-		// design.md "Borrowing iteration": the payload is a pointer into the
-		// source, so the binding is that address and the loop owns nothing.
+		// The payload points into the source, and the loop owns nothing. It is
+		// `stored` because one name over an `indexed()` pair copies it into a record.
 		address := emit_union_payload(e, option, pointer_to(e.c, yielded, false), slot)
-		// `stored` for the one case that still builds a value of its own: one name
-		// over an `indexed()` pair materializes the record, and the element it
-		// copies in is the container's, so it is cloned rather than aliased.
 		fields := []Foreach_Field{{type = yielded, address = address, place = true, stored = true}}
-		numbered := counter == "" ? "" : load(e, "i64", counter)
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	} else {
 		value := emit_union_payload(e, option, yielded, slot)
 		fields := []Foreach_Field{{type = yielded, value = value}}
-		numbered := counter == "" ? "" : load(e, "i64", counter)
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	}
-	emit_scoped_block(e, s.body)
-	end_iteration(e)
-	branch(e, post)
-
-	place_label(e, post)
+	finish_step(e, s, loop)
 	if counter != "" {
 		step_counter(e, counter, "i64")
 	}
-	branch(e, head)
-
-	place_label(e, done)
+	close_loop(e, loop)
 }
 
+// Addressable storage for `expr` at `as_type`. A non-addressable value gets a
+// slot, and an owned temporary is dropped when its full expression ends.
 @(private)
 spill_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
@@ -760,17 +678,19 @@ spill_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	value := emit_expr_at(e, expr, as_type)
 	slot := alloca(e, llvm_type(e, as_type))
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, as_type), value, slot)
+	if !base.is_const {
+		hold_addressed_temporary(e, expr, as_type, slot)
+	}
 	return slot
 }
 
-// A foreach borrows its source for the complete statement. A place already has
-// an owner; a produced value moves into the loop scope and is disposed of when
-// the loop exits, including through break, return, or panic.
 @(private = "file")
 spill_foreach_iterable :: proc(e: ^Emitter, expr: Expr) -> string {
 	return spill_foreach_iterable_at(e, expr, expr_base(expr).type)
 }
 
+// A foreach borrows its source for the whole statement: a place has its owner,
+// and a produced value moves into the loop scope.
 @(private = "file")
 spill_foreach_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
@@ -799,63 +719,46 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		e, "define %s%s %s(%s %%arg0)",
 		llvm_linkage(name), iterator, name, synth_param_llvm(e, symbol, 0),
 	)
-	// Every shape below reads the receiver's words as a value; an immutable
-	// receiver arrives as a pointer to the caller's storage, so it is loaded once.
 	self := synth_receiver_value(e, symbol)
-	if symbol.synth == .Array_Iter || symbol.synth == .Array_Iter_Reverse {
-		// Iteration is by value, so the iterator owns the array/slice view. A
-		// reverse cursor starts one past the last element and decrements before use.
-		index := "0"
-		if reversed {
-			source_info := underlying_info(e.c, symbol.params[0])
-			if source_info.kind == .Array {
-				index = fmt.aprintf("%d", source_info.count)
-			} else {
-				index = extract(e, source, self, SLICE_LEN)
-			}
-		}
-		first := temp(e)
-		held_type, held := source, self
-		if source_info := underlying_info(e.c, symbol.params[0]); source_info.kind == .Array && !type_is_compile_time_only(e.c, source_info.element) {
-			held_type = llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.result).fields[ITER_ARRAY_DATA]).type)
-			held = emit_ptr_len(e, held_type, "%arg0", fmt.aprintf("%d", source_info.count))
-		}
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", first, iterator, held_type, held, ITER_ARRAY_DATA)
-		second := insert(e, iterator, first, "i64", index, ITER_ARRAY_INDEX)
-		out := insert(e, iterator, second, "i1", reversed ? "true" : "false", ITER_ARRAY_REVERSED)
-		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
-		fmt.sbprintln(&e.b, "}")
-		return
-	}
-	if symbol.synth == .Dynamic_Iter || symbol.synth == .Dynamic_Iter_Reverse {
-		// `{ {storage, len}, 0 }`: the current allocation, viewed as a slice.
-		// Capacity and allocator stay behind, keeping the iterator a borrow, not a
-		// second header.
+	out := ""
+	#partial switch symbol.synth {
+	case .Array_Iter, .Array_Iter_Reverse, .Dynamic_Iter, .Dynamic_Iter_Reverse:
+		// `{ view, index, reversed }`. A reverse cursor starts one past the end and
+		// decrements before use.
 		view_type := llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.result).fields[ITER_ARRAY_DATA]).type)
-		storage := extract(e, source, self, CONTAINER_STORAGE)
-		length := extract(e, source, self, CONTAINER_LEN)
-		filled := emit_ptr_len(e, view_type, storage, length)
-		index := reversed ? length : "0"
-		first := insert(e, iterator, "undef", view_type, filled, ITER_ARRAY_DATA)
-		second := insert(e, iterator, first, "i64", index, ITER_ARRAY_INDEX)
-		out := insert(e, iterator, second, "i1", reversed ? "true" : "false", ITER_ARRAY_REVERSED)
-		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
-		fmt.sbprintln(&e.b, "}")
-		return
-	}
-	if symbol.synth == .Map_View_Iter {
-		// A view already *is* the table pointer, so its `iter` only pairs it with a
-		// fresh cursor. Every `iter()` starts a new traversal.
-		table := extract(e, source, self, VIEW_SOURCE)
-		first := insert(e, iterator, "undef", "ptr", table, ITER_MAP_TABLE)
-		out := insert(e, iterator, first, "i64", "0", ITER_MAP_CURSOR)
-		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
-		fmt.sbprintln(&e.b, "}")
-		return
-	}
-	if symbol.synth == .Text_Iter {
-		// A `string`, a `string_view`, and the rune-offset view all reach the same
-		// borrowed `{ data, len }`; only where it sits in the receiver differs.
+		view, index := self, "0"
+		source_info := underlying_info(e.c, symbol.params[0])
+		switch {
+		case symbol.synth == .Dynamic_Iter || symbol.synth == .Dynamic_Iter_Reverse:
+			// The current allocation as a slice; capacity and allocator stay behind.
+			length := extract(e, source, self, CONTAINER_LEN)
+			view = emit_ptr_len(e, view_type, extract(e, source, self, CONTAINER_STORAGE), length)
+			index = length
+		case source_info.kind == .Array:
+			count := fmt.aprintf("%d", source_info.count)
+			if !type_is_compile_time_only(e.c, source_info.element) {
+				view = emit_ptr_len(e, view_type, "%arg0", count)
+			} else {
+				view_type = source
+			}
+			index = count
+		case:
+			view_type = source
+			index = extract(e, source, self, SLICE_LEN)
+		}
+		first := insert(e, iterator, "undef", view_type, view, ITER_ARRAY_DATA)
+		second := insert(e, iterator, first, "i64", reversed ? index : "0", ITER_ARRAY_INDEX)
+		out = insert(e, iterator, second, "i1", reversed ? "true" : "false", ITER_ARRAY_REVERSED)
+
+	case .Map_Iter, .Map_View_Iter:
+		// `{ table, 0 }`. A view already is the table pointer; a null table is the
+		// empty map, which the runtime's scan finishes at once.
+		field := symbol.synth == .Map_View_Iter ? VIEW_SOURCE : CONTAINER_STORAGE
+		first := insert(e, iterator, "undef", "ptr", extract(e, source, self, field), ITER_MAP_TABLE)
+		out = insert(e, iterator, first, "i64", "0", ITER_MAP_CURSOR)
+
+	case .Text_Iter:
+		// A `string`, a `string_view` and the rune-offset view all hold `{ data, len }`.
 		view := ""
 		if underlying_info(e.c, symbol.params[0]).kind == .Struct {
 			view = extract(e, source, self, VIEW_SOURCE)
@@ -865,30 +768,19 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			view = emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 		}
 		first := insert(e, iterator, "undef", STRING_VIEW_TYPE, view, ITER_TEXT_VIEW)
-		out := insert(e, iterator, first, "i64", "0", ITER_TEXT_OFFSET)
-		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
-		fmt.sbprintln(&e.b, "}")
-		return
+		out = insert(e, iterator, first, "i64", "0", ITER_TEXT_OFFSET)
+
+	case:
+		element := llvm_type(e, type_of(e.c, symbol.params[0]).element)
+		low := extract(e, source, self, RANGE_LOW)
+		high := extract(e, source, self, RANGE_HIGH)
+		closed := extract(e, source, self, RANGE_CLOSED)
+		current, bound := reversed ? high : low, reversed ? low : high
+		step1 := insert(e, iterator, "undef", element, current, ITER_RANGE_CURRENT)
+		step2 := insert(e, iterator, step1, element, bound, ITER_RANGE_HIGH)
+		step3 := insert(e, iterator, step2, "i1", closed, ITER_RANGE_CLOSED)
+		out = insert(e, iterator, step3, "i1", reversed ? "true" : "false", ITER_RANGE_REVERSED)
 	}
-	if symbol.synth == .Map_Iter {
-		// `{ table, 0 }`. A null table is the empty map, and the runtime's scan
-		// answers "finished" for it without touching anything.
-		table := extract(e, source, self, CONTAINER_STORAGE)
-		first := insert(e, iterator, "undef", "ptr", table, ITER_MAP_TABLE)
-		out := insert(e, iterator, first, "i64", "0", ITER_MAP_CURSOR)
-		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
-		fmt.sbprintln(&e.b, "}")
-		return
-	}
-	element := llvm_type(e, type_of(e.c, symbol.params[0]).element)
-	low := extract(e, source, self, RANGE_LOW)
-	high := extract(e, source, self, RANGE_HIGH)
-	closed := extract(e, source, self, RANGE_CLOSED)
-	current, bound := reversed ? high : low, reversed ? low : high
-	step1 := insert(e, iterator, "undef", element, current, ITER_RANGE_CURRENT)
-	step2 := insert(e, iterator, step1, element, bound, ITER_RANGE_HIGH)
-	step3 := insert(e, iterator, step2, "i1", closed, ITER_RANGE_CLOSED)
-	out := insert(e, iterator, step3, "i1", reversed ? "true" : "false", ITER_RANGE_REVERSED)
 	fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
 	fmt.sbprintln(&e.b, "}")
 }
@@ -918,13 +810,11 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", reversed, reverse_label, forward_label)
 
 	fmt.sbprintfln(&e.b, "%s:", forward_label)
-	open_test, closed_test, live := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", open_test, signed ? "slt" : "ult", element, current, high)
-	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", closed_test, signed ? "sle" : "ule", element, current, high)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", live, closed, closed_test, open_test)
+	live := emit_range_live(e, signed, false, element, current, high, closed)
 	yield_label := new_label(e, "next.forward.yield")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", live, yield_label, stop_label)
 
+	// Yielding a closed range's high clears `closed` instead of stepping past it.
 	fmt.sbprintfln(&e.b, "%s:", yield_label)
 	stepped, at_high, last := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add %s %s, 1", stepped, element, current)
@@ -938,10 +828,7 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, current))
 
 	fmt.sbprintfln(&e.b, "%s:", reverse_label)
-	reverse_open, reverse_closed, reverse_live := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", reverse_open, signed ? "sgt" : "ugt", element, current, high)
-	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", reverse_closed, signed ? "sge" : "uge", element, current, high)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", reverse_live, closed, reverse_closed, reverse_open)
+	reverse_live := emit_range_live(e, signed, true, element, current, high, closed)
 	reverse_yield := new_label(e, "next.reverse.yield")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", reverse_live, reverse_yield, stop_label)
 
@@ -953,17 +840,14 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", closed_ptr)
 	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, yielded))
 
-	// design.md "Typed fallibility": exhaustion is `.none`, which is `Option`'s
-	// designated zero and therefore the all-zero representation.
+	// Exhaustion is `.none`, `Option`'s all-zero designated zero.
 	fmt.sbprintfln(&e.b, "%s:", stop_label)
 	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
 	fmt.sbprintln(&e.b, "}")
 }
 
-// `next` for an array or a slice. One cursor — `{ data, index, reversed }` —
-// and one forward/reverse step serve both; only the bound and the way an
-// element address is formed differ, which is the whole of the `slice` branch
-// below. They were two 48-line copies that agreed on the other 40.
+// `next` for an array or a slice over one `{ data, index, reversed }` cursor;
+// only the bound and the element address differ.
 @(private)
 emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slice: bool) {
 	function := begin_function_emission(e)
@@ -983,9 +867,7 @@ emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slic
 	index := load(e, "i64", index_ptr)
 	reversed_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_REVERSED)
 	reversed := load(e, "i1", reversed_ptr)
-	// A slice carries its own length, so the header is loaded once here and the
-	// data pointer is read back out of it in the yield block. A fixed array's
-	// bound is a constant and its storage is the iterator field itself.
+	// A slice's bound is its length; a fixed array's is a constant.
 	slice_value: string
 	bound: string
 	if slice {
@@ -1018,8 +900,7 @@ emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slic
 		slot = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %s", slot, stored_llvm, base, at)
 	}
-	// The element is still the container's, so a managed one is cloned out of it:
-	// what `next` hands back is owned, exactly as a by-value loop's copy is.
+	// What `next` hands back is owned, so a managed element is cloned out.
 	value := by_ref ? slot : load(e, element, slot)
 	if !by_ref && emit_lifecycle(e, payload).managed {
 		value = emit_clone_value(e, payload, value)
@@ -1035,13 +916,8 @@ emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slic
 	fmt.sbprintln(&e.b, "}")
 }
 
-// The map half of `next`, serving the whole-entry walk and the two half walks
-// `keys()` and `values()` name. Iteration order is unspecified (design.md
-// "Maps"). The cursor is the runtime's own slot position, so the walk is the
-// same one a direct `foreach` performs.
-//
-// What it yields is *owned*: a managed half is cloned out of the slot, exactly
-// as a by-value loop over the map copies it, so the two agree by construction.
+// `next` for a map's entries, `keys()` and `values()`, in the same slot order a
+// direct `foreach` walks.
 @(private)
 emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
@@ -1080,9 +956,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	case .Map_Values_Next:
 		out = load(e, "ptr", value_out)
 	case:
-		// design.md "Iteration adapters": a map's `Element` is its `{key, value}`
-		// entry, and the table stores the two halves rather than the record, so
-		// what this hands back is a record of their addresses.
+		// The table stores the two halves, so an entry is a record of their addresses.
 		built := insert(e, element, "undef", "ptr", load(e, "ptr", key_out), ELEMENT_FIRST)
 		out = insert(e, element, built, "ptr", load(e, "ptr", value_out), ELEMENT_SECOND)
 	}
@@ -1093,9 +967,8 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// One `Foreach_Field` per part of a record `Yield`'s payload: a lent part is the
-// place its pointer names, an owned one is the value itself. The `Element` says
-// what each part is; the payload's own fields say which of them were lent.
+// One field per part of a record `Yield`: a lent part is the place its pointer
+// names, an owned one the value itself.
 @(private = "file")
 lent_record_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, record: string, payload: Type_Id) -> []Foreach_Field {
 	root := lent_yield_field(e, foreach_yielded_type(e, s), payload, record)
@@ -1124,9 +997,7 @@ lent_yield_field :: proc(e: ^Emitter, logical, payload: Type_Id, value: string) 
 	return Foreach_Field{type = logical, children = children}
 }
 
-// design.md "String iteration": one decoded code point per step, advancing the
-// cursor by the 1 to 4 bytes it spanned. `rune_offsets()` yields the byte offset
-// the code point began at beside it; the plain rune walk yields the value alone.
+// One decoded code point per step; `rune_offsets()` also yields its byte offset.
 @(private)
 emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
@@ -1149,16 +1020,7 @@ emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	fmt.sbprintfln(&e.b, "%s:", yield_label)
 	decoded := alloca(e, "i32")
-	used := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)",
-		used, data, length, offset, decoded,
-	)
-	// A `string` is valid UTF-8 by construction, and every borrowed view is
-	// checked where it is created — a zero here means that invariant already broke.
-	stalled := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", stalled, used)
-	panic_if(e, stalled, "text.invalid", "invalid UTF-8 in a string")
+	used := emit_decode_rune(e, data, length, offset, decoded)
 	advanced := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, offset, used)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, offset_ptr)
