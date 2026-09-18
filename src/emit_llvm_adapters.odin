@@ -53,10 +53,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		place_label(e, yielded)
 		payload_type := option_payload(e.c, inner_option)
 		payload := emit_union_payload(e, inner_option, payload_type, emit_union_spill(e, inner_option, produced))
-		// design.md "Iteration adapters": what `next` hands back is the pair the
-		// iterator's own `Yield` describes. A half that pair lends takes the
-		// pointer the source lent, unchanged; a half it owns is read out of the
-		// source's storage and owned from here.
+		// Preserve the source iterator's ownership inside the indexed pair.
 		pair_id := option_payload(e.c, symbol.result)
 		wrapped := symbol_of(e.c, type_of(e.c, type_underlying(e.c, pair_id)).fields[ELEMENT_FIRST]).type
 		payload = own_yielded(e, payload, payload_type, wrapped)
@@ -69,7 +66,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", stepped, counter)
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_some(e, symbol.result, pair))
-		place_label(e, stopped)
+		fmt.sbprintfln(&e.b, "%s:", stopped)
 		fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", result)
 	case .Copied_Next:
 		target := symbol_of(e.c, symbol.iteration_target)
@@ -89,16 +86,13 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		payload := emit_union_payload(e, inner_option, handed, emit_union_spill(e, inner_option, produced))
 		owned := own_yielded(e, payload, handed, option_payload(e.c, symbol.result))
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_some(e, symbol.result, owned))
-		place_label(e, stopped)
+		fmt.sbprintfln(&e.b, "%s:", stopped)
 		fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", result)
 	}
 	fmt.sbprintln(&e.b, "}")
 }
 
-// design.md "Iteration adapters": an owned value of `wanted`, from whatever the
-// source handed over. A lent leaf is read through its pointer; a record `Yield`
-// hands over one part per field, each owned the same way. Already-owned parts
-// pass through untouched.
+// Copy borrowed leaves and preserve already-owned ones.
 @(private = "file")
 own_yielded :: proc(e: ^Emitter, payload: string, handed, wanted: Type_Id) -> string {
 	if handed == wanted {
