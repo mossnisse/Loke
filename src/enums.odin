@@ -80,3 +80,17 @@ check_enum_values :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bo
 	v.immutable = .Constant
 	return true
 }
+
+enum_member_constants :: proc(k: ^Checker, enum_type: Type_Id) -> ([]Const_Value, bool) {
+	info := underlying_info(k.c, enum_type)
+	if info == nil {
+		return nil, false
+	}
+	out := make([]Const_Value, len(info.fields), k.c.semantic_allocator)
+	for member, index in info.fields {
+		if sym := symbol_of(k.c, member); sym != nil {
+			out[index] = sym.const_value
+		}
+	}
+	return out, true
+}

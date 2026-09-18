@@ -1,27 +1,19 @@
-// Static `foreach` expansion (design.md "Static `foreach` expansion").
-//
-// This is expansion, not a loop: the iterable is folded to a compile-time value,
-// one copy of the body is cloned and checked per element, and the copies run in
-// order. Sharing the cloning facility with generic instantiation is what lets
-// `field.get(value)` have a different static result type in each copy.
+// design.md "Static `foreach` expansion": the iterable folds to constants and
+// one clone of the body is checked per element, so each copy may have its own
+// static types.
 package lokec
 
 import "core:fmt"
 
-// An empty iterable expands to nothing, just as an unselected `when` branch has
-// no checked contents.
 check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if len(s.bindings) == 0 {
 		errorf(k.c, s.span, "L0454", "a `foreach` binds at least one name")
 		return FLOWS
 	}
-	// design.md: mixing a runtime and a compile-time binding in one header is an
-	// error, and a static binding is immutable, so `&` cannot apply to one.
 	if !check_static_pattern_markers(k, s.bindings) { return FLOWS }
 
-	// design.md: `break` and `continue` cannot target a static expansion. Checked
-	// on the written body once, so a rejected branch is not reported per copy.
-	if expansion_has_branch(k, s.body) {
+	// Checked once on the written body, not per copy.
+	if block_has_branch(k, s.body) {
 		return FLOWS
 	}
 
@@ -65,8 +57,6 @@ expand_one_element :: proc(
 		return copy_block, FLOWS, false
 	}
 
-	// A diagnostic inside an expansion must show the element and its source
-	// descriptor or index (design.md).
 	before := len(k.c.diagnostics)
 	outer_loop := k.loop_depth
 	k.loop_depth = 0
@@ -84,9 +74,6 @@ expand_one_element :: proc(
 	return copy_block, flow, true
 }
 
-// design.md "Element bindings": one binding names the whole element and several
-// name its fields, in an expansion exactly as in a loop. The only difference is
-// that every value here is a constant.
 @(private = "file")
 bind_static_element :: proc(
 	k: ^Checker,
@@ -95,19 +82,22 @@ bind_static_element :: proc(
 	element_type: Type_Id,
 	index: int,
 ) -> bool {
-	effective_value := element
-	effective_type := element_type
 	if s.indexed {
-		aggregate := new(Const_Aggregate, k.c.semantic_allocator)
-		aggregate.type = indexed_element_type(k.c, element_type)
-		aggregate.elements = make([]Const_Value, 2, k.c.semantic_allocator)
-		aggregate.elements[ELEMENT_FIRST] = element
-		aggregate.elements[ELEMENT_SECOND] = int_const(k.c, i64(index))
-		effective_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
-		effective_type = aggregate.type
+		pair_type := indexed_element_type(k.c, element_type)
+		return bind_static_pattern(k, s.bindings, indexed_pair(k.c, pair_type, element, index), pair_type)
 	}
+	return bind_static_pattern(k, s.bindings, element, element_type)
+}
 
-	return bind_static_pattern(k, s.bindings, effective_value, effective_type)
+// The `(element, index)` constant of an `.indexed()` iteration.
+@(private = "file")
+indexed_pair :: proc(c: ^Compiler, pair_type: Type_Id, element: Const_Value, index: int) -> Const_Value {
+	pair := new(Const_Aggregate, c.semantic_allocator)
+	pair.type = pair_type
+	pair.elements = make([]Const_Value, 2, c.semantic_allocator)
+	pair.elements[ELEMENT_FIRST] = element
+	pair.elements[ELEMENT_SECOND] = int_const(c, i64(index))
+	return Const_Value{kind = .Aggregate, aggregate = pair}
 }
 
 @(private = "file")
@@ -144,7 +134,6 @@ bind_static_pattern :: proc(
 		bind_static(k, bindings[0], value, type)
 		return true
 	}
-	// Several names over one record element.
 	info := underlying_info(k.c, type)
 	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
 		count := info != nil && info.kind == .Struct ? len(info.fields) : 0
@@ -157,7 +146,7 @@ bind_static_pattern :: proc(
 	}
 	for binding, slot in bindings {
 		field := symbol_of(k.c, info.fields[slot])
-		if !require_visible_field(k, binding.name.span, type, info.fields[slot], "L0454", "bound by a `foreach`") {
+		if field == nil || !require_visible_field(k, binding.name.span, type, info.fields[slot], "L0454", "bound by a `foreach`") {
 			return false
 		}
 		part: Const_Value
@@ -191,7 +180,6 @@ bind_static :: proc(k: ^Checker, binding: Foreach_Binding, value: Const_Value, t
 	})
 }
 
-// A descriptor prints as its name; anything else prints as its value.
 @(private = "file")
 static_element_text :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> string {
 	if type_is_descriptor(c, type) && value.aggregate != nil && len(value.aggregate.elements) > 0 {
@@ -216,52 +204,51 @@ const_display_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 	return "<value>"
 }
 
-// design.md: `break` and `continue` cannot target a static expansion. Ordinary
-// runtime loops inside its body may use them normally, so this only walks the
-// statements the expansion itself owns.
+// design.md: `break` and `continue` cannot target a static expansion. Loops in
+// the body own their branches, so they are not walked.
 @(private = "file")
-expansion_has_branch :: proc(k: ^Checker, block: ^Block) -> bool {
-	if block == nil {
-		return false
-	}
+block_has_branch :: proc(k: ^Checker, block: ^Block) -> bool {
+	return block != nil && stmts_have_branch(k, block.stmts)
+}
+
+@(private = "file")
+stmts_have_branch :: proc(k: ^Checker, stmts: []Stmt) -> bool {
 	found := false
-	for stmt in block.stmts {
-		#partial switch v in stmt {
-		case ^Stmt_Branch:
-			errorf(
-				k.c,
-				v.span,
-				"L0455",
-				"`%s` cannot target a static expansion; it is not a loop",
-				v.kind == .Break ? "break" : "continue",
-			)
-			found = true
-		case ^Block:
-			found = expansion_has_branch(k, v) || found
-		case ^Stmt_If:
-			found = expansion_has_branch(k, v.then) || found
-			if otherwise, is_block := v.otherwise.(^Block); is_block {
-				found = expansion_has_branch(k, otherwise) || found
-			}
-		case ^Stmt_When:
-			found = expansion_has_branch(k, v.then) || found
-			if otherwise, is_block := v.otherwise.(^Block); is_block {
-				found = expansion_has_branch(k, otherwise) || found
-			}
-		}
+	for stmt in stmts {
+		found = stmt_has_branch(k, stmt) || found
 	}
 	return found
 }
 
-// ---------------------------------------------------------- the iterable --
+@(private = "file")
+stmt_has_branch :: proc(k: ^Checker, stmt: Stmt) -> bool {
+	#partial switch v in stmt {
+	case ^Stmt_Branch:
+		errorf(
+			k.c, v.span, "L0455", "`%s` cannot target a static expansion; it is not a loop",
+			v.kind == .Break ? "break" : "continue",
+		)
+		return true
+	case ^Block:
+		return block_has_branch(k, v)
+	case ^Stmt_If:
+		found := block_has_branch(k, v.then)
+		return v.otherwise != nil && stmt_has_branch(k, v.otherwise) || found
+	case ^Stmt_When:
+		found := block_has_branch(k, v.then)
+		return v.otherwise != nil && stmt_has_branch(k, v.otherwise) || found
+	case ^Stmt_Switch:
+		found := false
+		for arm in v.cases {
+			found = stmts_have_branch(k, arm.stmts) || found
+		}
+		return found
+	}
+	return false
+}
 
-// The iterable must be compile-time known, finite, and produce compile-time
-// values; fixed arrays, evaluator-owned dynamic arrays, `Enum.values()`, ranges,
-// and reflection descriptor arrays qualify (design.md).
 @(private = "file")
 fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Type_Id, bool) {
-	// design.md: a *type* is never an iterable. An enumeration's members are a
-	// value, `Enum.values()`, which folds to an ordinary constant array.
 	if named := resolve_type_syntax(k, iterable); named != INVALID_TYPE {
 		errorf(
 			k.c,
@@ -289,12 +276,7 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 				if kind == .Reversed {
 					out[len(elements) - 1 - index] = element
 				} else {
-					pair := new(Const_Aggregate, k.c.semantic_allocator)
-					pair.type = element_type
-					pair.elements = make([]Const_Value, 2, k.c.semantic_allocator)
-					pair.elements[0] = element
-					pair.elements[1] = int_const(k.c, i64(index))
-					out[index] = Const_Value{kind = .Aggregate, aggregate = pair}
+					out[index] = indexed_pair(k.c, element_type, element, index)
 				}
 			}
 			return out, element_type, true
@@ -315,13 +297,12 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 	if !evaluated {
 		return nil, INVALID_TYPE, false
 	}
-	info = underlying_info(k.c, type)
 	if info == nil || info.kind != .Array {
 		errorf(
 			k.c,
 			expr_span(iterable),
 			"L0454",
-			"a static `foreach` needs a compile-time array or slice, `Enum.values()`, range, or descriptor array, found `%s`",
+			"a static `foreach` needs a compile-time array, subrange, `Enum.values()`, range, or descriptor array, found `%s`",
 			type_name(k.c, type),
 		)
 		return nil, INVALID_TYPE, false
@@ -373,28 +354,10 @@ fold_static_slice :: proc(k: ^Checker, written: ^Expr_Slice, type: Type_Id) -> (
 	if !folded {
 		return nil, INVALID_TYPE, false
 	}
-	lo, hi := i64(0), i64(len(elements))
-	if written.lo != nil {
-		value, ok := require_const(k, written.lo, "a static `foreach` slice endpoint", "L0454")
-		if !ok {
-			return nil, INVALID_TYPE, false
-		}
-		lo, ok = bi_to_i64(k.c, value.integer)
-		if !ok {
-			errorf(k.c, expr_span(written.lo), "L0454", "a static `foreach` slice endpoint does not fit in `int`")
-			return nil, INVALID_TYPE, false
-		}
-	}
-	if written.hi != nil {
-		value, ok := require_const(k, written.hi, "a static `foreach` slice endpoint", "L0454")
-		if !ok {
-			return nil, INVALID_TYPE, false
-		}
-		hi, ok = bi_to_i64(k.c, value.integer)
-		if !ok {
-			errorf(k.c, expr_span(written.hi), "L0454", "a static `foreach` slice endpoint does not fit in `int`")
-			return nil, INVALID_TYPE, false
-		}
+	lo, lo_ok := static_slice_endpoint(k, written.lo, 0)
+	hi, hi_ok := static_slice_endpoint(k, written.hi, i64(len(elements)))
+	if !lo_ok || !hi_ok {
+		return nil, INVALID_TYPE, false
 	}
 	if lo < 0 || hi < lo || hi > i64(len(elements)) {
 		errorf(k.c, written.span, "L0454", "a static `foreach` slice is out of bounds")
@@ -405,16 +368,19 @@ fold_static_slice :: proc(k: ^Checker, written: ^Expr_Slice, type: Type_Id) -> (
 	return out, underlying_info(k.c, type).element, true
 }
 
-enum_member_constants :: proc(k: ^Checker, enum_type: Type_Id) -> ([]Const_Value, bool) {
-	info := underlying_info(k.c, enum_type)
-	if info == nil {
-		return nil, false
+// A written subrange endpoint, or `missing` when it is omitted.
+@(private = "file")
+static_slice_endpoint :: proc(k: ^Checker, endpoint: Expr, missing: i64) -> (i64, bool) {
+	if endpoint == nil {
+		return missing, true
 	}
-	out := make([]Const_Value, len(info.fields), k.c.semantic_allocator)
-	for member, index in info.fields {
-		if sym := symbol_of(k.c, member); sym != nil {
-			out[index] = sym.const_value
-		}
+	value, ok := require_const(k, endpoint, "a static `foreach` slice endpoint", "L0454")
+	if !ok {
+		return 0, false
 	}
-	return out, true
+	n, fits := bi_to_i64(k.c, value.integer)
+	if !fits {
+		errorf(k.c, expr_span(endpoint), "L0454", "a static `foreach` slice endpoint does not fit in `int`")
+	}
+	return n, fits
 }
