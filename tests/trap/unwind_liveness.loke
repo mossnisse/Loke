@@ -1,0 +1,21 @@
+package main; import "core:fmt";
+
+// A panic replays a local's drop only while it holds a value: never before its
+// first assignment, and again after an assignment revives a dropped one.
+
+Res :: struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }
+}
+
+main :: proc() {
+	revived := Res{1};
+	drop(revived);
+	revived = Res{2};
+	deferred := Res{3};
+	defer drop(deferred);
+	unset: Res;
+	panic("unwind");
+	unset = Res{4};
+}

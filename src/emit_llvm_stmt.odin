@@ -324,6 +324,7 @@ emit_destructure_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		}
 		emit_replace_place(e, s, index, addresses[index])
 		store(e, field.type, values[index], addresses[index])
+		revive_place(e, s.lhs[index])
 		finish_temporary_drop(e, guards[index])
 	}
 	emit_destructure_discards(e, plan, guards)
@@ -404,6 +405,7 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		}
 		emit_replace_place(e, s, index, addresses[index])
 		store(e, expr_base(target).type, values[index], addresses[index])
+		revive_place(e, target)
 	}
 }
 

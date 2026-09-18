@@ -7,29 +7,22 @@ import "core:fmt"
 import "core:strings"
 
 @(private)
-// One registered cleanup action. design.md gives explicit `defer` and a managed
-// local's implicit drop one reverse registration order, so they share one entry
-// and one stack instead of a second, parallel-list mechanism.
-//
-// `flag` is empty when the CFG proved the slot reached unconditionally: a
-// definite state needs no flag.
+// One registered cleanup action: a written `defer`, or a managed local's
+// implicit drop. Both share one reverse registration order (design.md).
+// `flag` is empty when the CFG proved the slot reached unconditionally.
 Deferred :: struct {
 	flag: string,
 	// A written `defer`, or nil for an implicit drop of `place`.
 	stmt:  Stmt,
 	place: string,
-	// A compiler-owned temporary has no lexical symbol. Its address is published
-	// directly through `place_env` so panic replay can still destroy it while it
-	// is only partially built.
+	// A compiler-owned temporary has no symbol; its address is published at
+	// `place_env` so panic replay can reach it.
 	temporary_place: bool,
 	place_env:       int,
-	// The local whose storage `place` is. A cleanup thunk reaches it through the
-	// env rather than by name, so the symbol travels with the entry.
-	place_symbol: Symbol_Id,
+	place_symbol:    Symbol_Id,
 	type:  Type_Id,
-	// A compiler-owned variadic buffer uses one cleanup action with per-element
-	// flags. The three env indices let the unwind thunk reach its dynamic buffer,
-	// flag array, and runtime count; the direct names serve normal cleanup.
+	// A compiler-owned variadic buffer with per-element flags. The env indices
+	// serve the unwind thunk; the direct names serve normal cleanup.
 	array_cleanup:  bool,
 	array_buffer:   string,
 	array_flags:    string,
@@ -37,52 +30,34 @@ Deferred :: struct {
 	array_buffer_env: int,
 	array_flags_env:  int,
 	array_count_env:  int,
-	// This action's index in the procedure's runtime registration state, or -1
-	// when the procedure registers no frame at all (`-panic=abort`).
+	// Index in the procedure's registration state, or -1 under `-panic=abort`.
 	slot: int,
 }
 
-// One procedure's runtime-visible cleanup registration.
-//
-// design.md: a panic has no way to resume, so the runtime never unwinds the
-// native stack — it calls back into each still-live frame through a generated
-// thunk. The thunk needs the frame's *state* (which actions are registered, and
-// where their storage is), so a procedure with a cleanup carries two arrays and
-// pushes a `{previous, thunk, context}` record. The arrays are separate allocas,
-// not record fields, because their lengths are known only once the whole body is
-// emitted, and `getelementptr` over `i8`/`ptr` needs no length in its type.
 Unwind_Env_Binding :: struct {
 	symbol: Symbol_Id,
 	index:  int,
 }
 
+// One procedure's runtime-visible cleanup registration. A panic never unwinds
+// the native stack: the runtime calls each live frame's generated thunk, which
+// reads which actions are registered (`live`) and where their storage is (`env`).
 Unwind_State :: struct {
-	// `[live x i1]`: whether action `i` is registered right now. Set only after
-	// the action is fully registered, cleared before normal control flow runs it.
-	live: string,
-	// `[env x ptr]`: the storage each replayed action addresses. A cleanup thunk
-	// is a separate function, so it cannot name the parent's allocas directly.
-	env:   string,
+	live:  string, // `[n x i1]`: action `i` is registered right now
+	env:   string, // `[n x ptr]`: the storage each replayed action addresses
 	frame: string, // the `{previous, cleanup, context}` record this frame pushes
 	ctx:   string, // `[2 x ptr]` = {live, env}, the thunk's one argument
 	thunk: string,
-	// Every action, in source order. A live action's registration point always
-	// precedes any later live one lexically (an inner scope's actions clear on
-	// exit), so descending-index replay is reverse registration order.
-	actions: [dynamic]Deferred,
-	// Env index per local symbol whose address a cleanup may need.
-	env_index: map[Symbol_Id]int,
-	// Symbol bindings in assignment order. Non-symbol env slots may be
-	// interleaved, so each entry retains its actual slot index.
+	// Every action in source order, so descending-index replay is reverse
+	// registration order.
+	actions:      [dynamic]Deferred,
+	env_index:    map[Symbol_Id]int,
 	env_bindings: [dynamic]Unwind_Env_Binding,
-	env_count: int,
-	// The registration slot of a managed local's implicit drop, and of a written
-	// `defer`, so `move`/`drop` and a re-entered scope can clear the same
-	// registration the drop flags clear.
+	env_count:    int,
+	// Registration slots, so `move`/`drop` and a re-entered scope can clear them.
 	slot_by_symbol: map[Symbol_Id]int,
 	slot_by_defer:  map[int]int,
-	// True while the thunk itself is being emitted, so replayed code does not
-	// register a second time into the state it is replaying.
+	// True while the thunk is emitted, so replayed code registers nothing.
 	replaying: bool,
 }
 
@@ -91,13 +66,9 @@ Cleanup_Scope :: struct {
 	entries: [dynamic]Deferred,
 }
 
-// Deep-copy the value at `src` into the storage at `out`, answering an `i1` that
-// is true on success. This is the one place that knows how the three kinds of
-// managed part differ: a container clones through its C helper, a fallible hook
-// returns its own error, and everything else has a clone that cannot fail.
-//
-// On failure `out` is left untouched, which is what lets the caller destroy
-// exactly the prefix it did build.
+// Deep-copies `src` into `out`, answering an `i1` that is true on success. On
+// failure `out` is left untouched, so the caller can destroy exactly the prefix
+// it did build.
 @(private)
 emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: string) -> string {
 	operations := emit_lifecycle(e, type)
@@ -127,34 +98,27 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 	cloned, broke := emit_clone_call(e, hook, type, value, allocator)
 	ok := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", ok, broke)
-	// The hook already cleaned its own temporary on the failing path, and a
-	// failed clone returns the zero value, so publishing it unconditionally would
-	// leave an inert value the caller must not count as initialised. Store it
-	// only where it is real.
+	// A failed clone returns an inert zero the caller must not count as
+	// initialised, so the value is stored only on success.
 	store_label, done_label := new_label(e, "clone.store"), new_label(e, "clone.done")
 	branch_if(e, ok, store_label, done_label)
 	place_label(e, store_label)
 	store(e, type, cloned, out)
 	branch(e, done_label)
 	place_label(e, done_label)
-	e.terminated = false
 	return ok
 }
 
 // ---------------------------------------------------------- panic unwind --
 
-// Whether this procedure body registers a runtime-visible frame at all. Under
-// `-panic=abort` design.md guarantees no cleanup, so nothing is registered and
-// no thunk is generated: the strategy is the difference between the two, not a
-// runtime flag the frames carry.
+// Under `-panic=abort` nothing is registered and no thunk is generated.
 @(private = "file")
 unwind_enabled :: proc(e: ^Emitter) -> bool {
 	return e.c.panic_unwind && !e.unwind.replaying
 }
 
-// Fresh registration state for one procedure. The names are chosen before the
-// body is emitted, because the body refers to storage whose size — and therefore
-// whose defining instruction — is only settled afterwards.
+// Fresh registration state for one procedure. The names are chosen up front
+// because the array sizes are only known once the body is emitted.
 @(private)
 begin_unwind_frame :: proc(e: ^Emitter, llvm_name: string) {
 	e.unwind = Unwind_State {
@@ -175,8 +139,6 @@ begin_unwind_frame :: proc(e: ^Emitter, llvm_name: string) {
 	e.unwind.thunk = fmt.aprintf("@loke.u%d.%s", id, strings.trim_prefix(llvm_name, "@"))
 }
 
-// Reserves this action's registration slot. Called where the existing cleanup
-// entry is built, so the two orders cannot drift apart.
 @(private)
 unwind_reserve :: proc(e: ^Emitter, entry: ^Deferred) {
 	entry.slot = -1
@@ -187,9 +149,6 @@ unwind_reserve :: proc(e: ^Emitter, entry: ^Deferred) {
 	append(&e.unwind.actions, entry^)
 }
 
-// The env index of a local, assigning one on first use. A cleanup thunk is a
-// separate function, so the only way it can reach the parent's storage is
-// through a pointer the parent wrote here.
 @(private = "file")
 unwind_env_slot :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> int {
 	if index, found := e.unwind.env_index[symbol_id]; found {
@@ -217,12 +176,10 @@ unwind_publish_env :: proc(e: ^Emitter, index: int, address: string) {
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, unwind_env_address(e, index))
 }
 
-// Names a local and, when the procedure carries a frame, publishes its address
-// into the env so a replayed `defer` can reach it.
+// Names a local and publishes its address into the env for the thunk.
 //
-// ponytail: every local is published, not just the ones a cleanup names. Picking
-// the smaller set means a free-variable walk over every deferred statement; one
-// extra store per local is cheaper than that pass and cannot be wrong about it.
+// ponytail: every local is published, not just the ones a cleanup names;
+// narrowing it needs a free-variable walk over every deferred statement.
 @(private)
 bind_local :: proc(e: ^Emitter, symbol_id: Symbol_Id, name: string) {
 	e.names[symbol_id] = name
@@ -249,10 +206,15 @@ unwind_env_address :: proc(e: ^Emitter, index: int) -> string {
 	return out
 }
 
-// Publishes an action as registered. design.md: the flag is set only once the
-// action is *fully* registered, so a panic between "this storage exists" and
-// "this value is complete" replays nothing for it. The action's storage is
-// already published — `bind_local` did that when the local was named.
+@(private = "file")
+unwind_env_load :: proc(e: ^Emitter, env: string, index: int) -> string {
+	address, value := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", address, env, index)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
+	return value
+}
+
+// Marks an action registered, only once it is *fully* registered (design.md).
 @(private)
 unwind_register :: proc(e: ^Emitter, entry: Deferred) {
 	if entry.slot < 0 || !unwind_enabled(e) {
@@ -261,23 +223,25 @@ unwind_register :: proc(e: ^Emitter, entry: Deferred) {
 	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", unwind_live_address(e, entry.slot))
 }
 
-// Clears a registration. Called before the action's own code runs on the normal
-// path, so a panic raised *by* a cleanup cannot ask for that cleanup again.
+// Clears a registration before the action's own code runs, so a panic raised
+// by a cleanup cannot ask for it again. It also runs inside the thunk, where
+// `e.unwind.live` names the thunk's own view of the array, so a replayed
+// `drop(x)` stops x's implicit drop from replaying too.
 @(private)
 unwind_clear :: proc(e: ^Emitter, slot: int) {
-	if slot < 0 || !unwind_enabled(e) {
+	if slot < 0 || !e.c.panic_unwind {
 		return
 	}
 	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", unwind_live_address(e, slot))
 }
 
-// The frame prologue, written once the body is emitted and the two array
-// lengths are finally known.
+// The frame prologue, written once the body is emitted and the array lengths
+// are known.
 @(private)
 emit_unwind_prologue :: proc(e: ^Emitter) {
 	u := &e.unwind
 	if u.frame == "" {
-		return // `-panic=abort`: design.md guarantees no cleanup, so none is tracked
+		return
 	}
 	// `{` is a directive to core:fmt, so the record type is written literally.
 	FRAME :: "{ ptr, ptr, ptr }"
@@ -287,13 +251,9 @@ emit_unwind_prologue :: proc(e: ^Emitter) {
 	fmt.sbprint(&e.b, " zeroinitializer, ptr ")
 	fmt.sbprintln(&e.b, u.frame)
 	if len(u.actions) == 0 && u.env_count == 0 {
-		// Nothing to replay and nothing published, so nothing is pushed. The zeroed
-		// record still makes the epilogue's pop a no-op rather than a special case.
+		// Nothing is pushed; the zeroed record makes the epilogue's pop a no-op.
 		return
 	}
-	// A procedure with locals but no cleanup still published their addresses, so
-	// the env exists even where the live array would be empty. LLVM drops both
-	// when nothing reads them.
 	alloca_named(e, u.live, fmt.aprintf("[%d x i1]", max(len(u.actions), 1)))
 	fmt.sbprintfln(
 		&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)",
@@ -314,8 +274,6 @@ emit_unwind_prologue :: proc(e: ^Emitter) {
 	)
 }
 
-// Leaving the frame normally. Passing the record rather than popping blindly is
-// what lets a procedure that registered nothing share this one path.
 @(private)
 emit_unwind_pop :: proc(e: ^Emitter) {
 	if !unwind_enabled(e) || e.unwind.frame == "" {
@@ -332,12 +290,11 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	if len(u.actions) == 0 {
 		return
 	}
-	// The one nested function that does not go through `begin_function_emission`:
-	// it replays *this* frame's actions and re-emits the parent's own `defer`
-	// statements, so it needs the enclosing procedure's unwind state and result
-	// slot rather than a cleared set. Only the three it really owns are swapped.
+	// Unlike `begin_function_emission`, this keeps the parent's unwind state and
+	// result slot: it replays the parent's own actions.
 	saved_body, saved_terminated := e.b, e.terminated
 	saved_cleanups, saved_prologue := e.cleanups, e.prologue
+	saved_live := u.live
 	e.b = strings.builder_make()
 	e.terminated = false
 	e.cleanups = make([dynamic]Cleanup_Scope)
@@ -345,31 +302,20 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	u.replaying = true
 
 	open_function(e, "define private void %s(ptr %%ctx)", u.thunk)
-	live := load(e, "ptr", "%ctx")
-	env_slot, env := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %%ctx, i64 1", env_slot)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", env, env_slot)
+	u.live = load(e, "ptr", "%ctx")
+	env := unwind_env_load(e, "%ctx", 1)
 
-	// The parent's allocas are unreachable from here, so every local a replayed
-	// action names is rebound to its address in the env. A backend name always
-	// starts with `%` or `@`, so the empty string stands for "had none" — putting
-	// one back verbatim would turn an unbound symbol into one bound to nothing,
-	// which is exactly the state `symbol_name` exists to catch.
+	// Rebind every published local to its address in the env. An empty saved
+	// name means "had none", and is deleted rather than restored.
 	saved_names := make([dynamic]string, 0, len(u.env_bindings))
 	for binding in u.env_bindings {
 		append(&saved_names, e.names[binding.symbol])
-		address, value := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", address, env, binding.index)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
-		e.names[binding.symbol] = value
+		e.names[binding.symbol] = unwind_env_load(e, env, binding.index)
 	}
 
-	// The `%deferN` flags are parent allocas too, and nothing binds them into the
-	// env. A replayed action that touches one — `defer drop(x)` on a
-	// conditionally live local clears x's — would otherwise name storage this
-	// function cannot reach. Each gets a local stand-in seeded `true`: an action
-	// runs only where its `%ulive` byte already says the place is live, and the
-	// writes a replay makes stay visible to the rest of the replay.
+	// The `%deferN` flags are parent allocas the thunk cannot reach. Each gets a
+	// local stand-in seeded `true`: an action only runs where its live byte
+	// already says so.
 	saved_flags := e.defer_flags
 	e.defer_flags = make([]string, len(saved_flags))
 	for index in 0 ..< len(saved_flags) {
@@ -381,31 +327,21 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 
 	for index := len(u.actions) - 1; index >= 0; index -= 1 {
 		entry := u.actions[index]
-		flag, address := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = getelementptr i8, ptr %s, i64 %d", address, live, index)
-		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", flag, address)
+		address := unwind_live_address(e, index)
+		flag := load(e, "i1", address)
 		run, skip := new_label(e, "unwind.run"), new_label(e, "unwind.skip")
 		branch_if(e, flag, run, skip)
 		place_label(e, run)
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", address)
 		if entry.array_cleanup {
-			load_env := proc(e: ^Emitter, env: string, index: int) -> string {
-				slot, value := temp(e), temp(e)
-				fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", slot, env, index)
-				fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, slot)
-				return value
-			}
-			buffer := load_env(e, env, entry.array_buffer_env)
-			flags := load_env(e, env, entry.array_flags_env)
-			count := load_env(e, env, entry.array_count_env)
+			buffer := unwind_env_load(e, env, entry.array_buffer_env)
+			flags := unwind_env_load(e, env, entry.array_flags_env)
+			count := unwind_env_load(e, env, entry.array_count_env)
 			emit_drop_flagged_array(e, entry.type, buffer, flags, count)
 		} else if entry.stmt != nil {
 			emit_stmt(e, entry.stmt)
 		} else if entry.temporary_place {
-			slot, place := temp(e), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", slot, env, entry.place_env)
-			fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", place, slot)
-			emit_drop_place(e, entry.type, place)
+			emit_drop_place(e, entry.type, unwind_env_load(e, env, entry.place_env))
 		} else if place, bound := e.names[entry.place_symbol]; bound {
 			emit_drop_place(e, entry.type, place)
 		}
@@ -425,13 +361,13 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	}
 	append(&e.pending, splice_prologue(e, strings.to_string(e.b), e.prologue[:]))
 	u.replaying = false
+	u.live = saved_live
 	e.b, e.terminated, e.cleanups = saved_body, saved_terminated, saved_cleanups
 	e.prologue, e.defer_flags = saved_prologue, saved_flags
 }
 
-// Registers a partially constructed compiler-owned value for panic replay. It
-// never enters the lexical cleanup stack: the builder clears it once complete,
-// at which point ordinary destination ownership takes over.
+// Registers a partially constructed compiler-owned value for panic replay only;
+// the builder clears it once complete.
 @(private)
 begin_temporary_drop :: proc(e: ^Emitter, type: Type_Id, place: string) -> Deferred {
 	entry := Deferred{type = type, place = place, temporary_place = true, slot = -1, place_env = -1}
@@ -449,8 +385,8 @@ finish_temporary_drop :: proc(e: ^Emitter, entry: Deferred) {
 	unwind_clear(e, entry.slot)
 }
 
-// A completed owned value can be borrowed by an operation without transferring
-// its cleanup responsibility. Register it before evaluating later arguments.
+// A completed owned value borrowed by an operation. Register it before
+// evaluating later arguments.
 @(private)
 hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> Deferred {
 	if !emit_lifecycle(e, type).managed { return Deferred{slot = -1} }
@@ -459,22 +395,14 @@ hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> Defer
 	return begin_temporary_drop(e, type, place)
 }
 
-// A variant switch owns its subject: every case binding only borrows the
-// payload, so the drop belongs to the switch's own scope, where falling out,
-// `break`, `return` and a panic each replay it exactly once.
+// A place whose drop belongs to the innermost lexical scope, such as a variant
+// switch's subject, which its case bindings only borrow.
 @(private)
 register_scope_place :: proc(e: ^Emitter, type: Type_Id, place: string) {
 	if !emit_lifecycle(e, type).managed || len(e.cleanups) == 0 {
 		return
 	}
-	entry := Deferred{type = type, place = place, temporary_place = true, slot = -1, place_env = -1}
-	if unwind_enabled(e) {
-		entry.place_env = unwind_reserve_env(e)
-	}
-	unwind_reserve(e, &entry)
-	unwind_publish_env(e, entry.place_env, place)
-	unwind_register(e, entry)
-	append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
+	append(&e.cleanups[len(e.cleanups) - 1].entries, begin_temporary_drop(e, type, place))
 }
 
 @(private)
@@ -487,22 +415,15 @@ drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
 
 // ------------------------------------------------ full-expression frames --
 
-// design.md "Borrows and lifetimes": a borrow of an owned temporary "may be used
-// during that expression, including by a called procedure, but cannot escape
-// it". The checker enforces the escape; these frames are the emitter half — the
-// boundary at which a temporary something *borrowed from* is destroyed.
-//
-// The boundary has to be the complete expression rather than the enclosing
-// scope: the storage is a hoisted alloca, so a loop reuses one slot and a
-// scope-registered drop would run once on the last value and leak every earlier
-// iteration. Every construct that evaluates an expression therefore declares its
-// own frame, which is why this is a mechanism and not a flag.
+// design.md "Borrows and lifetimes": a borrowed owned temporary lives until the
+// end of its complete expression. The storage is a hoisted alloca, so a
+// scope-registered drop inside a loop would leak every earlier iteration;
+// every construct that evaluates an expression declares its own frame instead.
 @(private)
 push_temporaries :: proc(e: ^Emitter) {
 	append(&e.temporaries, make([dynamic]Deferred))
 }
 
-// Destroys what the frame still owns, in reverse completed-initialization order.
 @(private)
 pop_temporaries :: proc(e: ^Emitter) {
 	if len(e.temporaries) == 0 {
@@ -516,9 +437,8 @@ pop_temporaries :: proc(e: ^Emitter) {
 	pop(&e.temporaries)
 }
 
-// The frames above `down_to`, innermost first, without closing them: an exit
-// that branches away owes their drops on *its* path, while the frame stays open
-// for the fall-through path that will pop it.
+// Drops the frames above `down_to`, innermost first, without closing them: an
+// exit that branches away owes their drops, while the fall-through path pops.
 @(private)
 drain_temporaries :: proc(e: ^Emitter, down_to: int) {
 	for depth := len(e.temporaries) - 1; depth >= down_to; depth -= 1 {
@@ -529,11 +449,9 @@ drain_temporaries :: proc(e: ^Emitter, down_to: int) {
 	}
 }
 
-// An owned temporary that a larger expression borrows from. It belongs to the
-// innermost open frame; with none open the enclosing lexical scope is the only
-// boundary there is, which is exactly the extended lifetime design.md gives a
-// `foreach` iterable, a `switch` subject, and an initial statement — those
-// survive until their complete *statement* ends.
+// With no frame open the enclosing scope is the boundary, which is the extended
+// lifetime design.md gives a `foreach` iterable, a `switch` subject, and an
+// initial statement.
 @(private)
 register_temporary_place :: proc(e: ^Emitter, type: Type_Id, place: string) {
 	if !emit_lifecycle(e, type).managed {
@@ -557,14 +475,11 @@ push_scope :: proc(e: ^Emitter, b: ^Block) {
 @(private)
 push_scope_stmts :: proc(e: ^Emitter, stmts: []Stmt) {
 	append(&e.cleanups, Cleanup_Scope{entries = make([dynamic]Deferred)})
-	// Reset the flag of every defer written directly in this scope: the storage
-	// is reused across loop iterations, so a stale `true` would run a
-	// registration that never happened this time round.
 	reset_defer_flags(e, stmts)
 }
 
-// A `defer` written inside a selected `when` belongs to the surrounding scope,
-// so its flag is reset with that scope's own.
+// Flag storage is reused across loop iterations, so every flag written directly
+// in a scope (including inside a selected `when`) is reset on entry.
 @(private = "file")
 reset_defer_flags :: proc(e: ^Emitter, stmts: []Stmt) {
 	for stmt in stmts {
@@ -577,8 +492,6 @@ reset_defer_flags :: proc(e: ^Emitter, stmts: []Stmt) {
 				unwind_clear(e, slot)
 			}
 		case ^Decl:
-			// A managed local's hidden flag reuses the same storage across loop
-			// iterations, so it needs the same reset a written `defer` gets.
 			for symbol_id in s.symbols {
 				if flag := drop_flag_of(e, symbol_id); flag != "" {
 					fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
@@ -606,8 +519,8 @@ pop_scope :: proc(e: ^Emitter) {
 	pop(&e.cleanups)
 }
 
-// Runs the deferred statements of every scope above `down_to`, innermost first
-// and in reverse registration order within each.
+// Runs every scope above `down_to`, innermost first and in reverse registration
+// order within each.
 @(private)
 run_cleanups :: proc(e: ^Emitter, down_to: int) {
 	for depth := len(e.cleanups) - 1; depth >= down_to; depth -= 1 {
@@ -632,9 +545,6 @@ run_cleanups :: proc(e: ^Emitter, down_to: int) {
 
 @(private = "file")
 run_one_cleanup :: proc(e: ^Emitter, entry: Deferred) {
-	// design.md "Panic during unwinding": clearing the registration first is what
-	// keeps a panic raised *by* this cleanup from asking for the same cleanup
-	// again on the way down.
 	unwind_clear(e, entry.slot)
 	if entry.stmt != nil {
 		emit_stmt(e, entry.stmt)
@@ -643,20 +553,16 @@ run_one_cleanup :: proc(e: ^Emitter, entry: Deferred) {
 	emit_drop_place(e, entry.type, entry.place)
 }
 
-// A managed local declaration places an implicit conditional
-// `defer drop(value)` at the declaration point (design.md). Registration is
-// what fixes its position in the one reverse order every exit replays.
-// `live` is false for a declaration that completes no initialization: the
-// cleanup is still registered, because a later full assignment can make the
-// place live before the scope ends, but the place holds nothing yet.
+// A managed local's implicit conditional `defer drop(value)` (design.md).
+// `live` is false for a declaration with no initializer: the cleanup is still
+// registered, since a later assignment can make the place live, but a panic
+// must not replay it until `revive_place` says so.
 @(private)
 register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id, live := true) {
 	sym := symbol_of(e.c, symbol_id)
 	if sym == nil {
 		return
 	}
-	// The flag says "this place holds a value", which an assignment's drop reads
-	// as well as cleanup, so it is set whenever one exists.
 	flag := drop_flag_of(e, symbol_id)
 	if flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 %v, ptr %s", live, flag)
@@ -667,12 +573,27 @@ register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id, live := true) 
 	entry := Deferred{flag = flag, place = symbol_name(e, symbol_id), place_symbol = symbol_id, type = sym.type}
 	unwind_reserve(e, &entry)
 	e.unwind.slot_by_symbol[symbol_id] = entry.slot
-	unwind_register(e, entry)
+	if live {
+		unwind_register(e, entry)
+	}
 	append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
 }
 
-// The hidden `i1` of a conditionally live local, or "" when the CFG left its
-// state definite at every cleanup point.
+// A whole-local assignment makes the place hold a value again, so its implicit
+// drop is registered for panic replay once more.
+@(private)
+revive_place :: proc(e: ^Emitter, target: Expr) {
+	ident, is_ident := target.(^Expr_Ident)
+	if !is_ident {
+		return
+	}
+	if slot, registered := e.unwind.slot_by_symbol[ident.symbol]; registered {
+		unwind_register(e, Deferred{slot = slot})
+	}
+}
+
+// The hidden `i1` of a conditionally live local, or "" when its state is
+// definite at every cleanup point.
 @(private)
 drop_flag_of :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 	sym := symbol_of(e.c, symbol_id)
@@ -682,9 +603,8 @@ drop_flag_of :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 	return e.defer_flags[sym.cleanup_slot]
 }
 
-// `move(x)` and `drop(x)` both leave the source dead: the inert zero
-// representation is written, and a conditional slot records that its cleanup
-// must not run again.
+// `move(x)` and `drop(x)` leave the source dead: the inert zero is written and
+// neither the flag nor a panic will run its cleanup again.
 @(private)
 kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	sym := symbol_of(e.c, symbol_id)
@@ -697,15 +617,13 @@ kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	if flag := drop_flag_of(e, symbol_id); flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
 	}
-	// The same fact the drop flag records, made visible to a panic: this place no
-	// longer holds a value, so its registered cleanup must not be replayed.
 	if slot, registered := e.unwind.slot_by_symbol[symbol_id]; registered {
 		unwind_clear(e, slot)
 	}
 }
 
-// `drop(value)` runs the cleanup operation, writes the inert zero
-// representation, and marks the variable dead (design.md "Storage modifiers").
+// `drop(value)` runs the cleanup operation, writes the inert zero, and marks the
+// variable dead (design.md "Storage modifiers").
 @(private)
 emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
 	ident, is_ident := v.bound[0].(^Expr_Ident)
@@ -721,21 +639,17 @@ emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
 	kill_place(e, ident.symbol)
 }
 
-// design.md: an owning temporary nothing binds is still a completed
-// initialization, so it is cleaned up exactly once.
+// An owning temporary nothing binds is still cleaned up exactly once.
 //
-// ponytail: dropped at its full-expression boundary rather than registered in
-// the surrounding scope's reverse order. Nothing can name it, so the only
-// observable difference is ordering against other cleanups — and registering it
-// would drop one value per emitted statement rather than one per loop iteration.
+// ponytail: dropped at its full-expression boundary rather than in the scope's
+// reverse order; nothing can name it, so only ordering against other cleanups
+// differs.
 @(private)
 emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 	base := expr_base(expr)
 	if base == nil || !emit_lifecycle(e, base.type).managed {
 		return
 	}
-	// A place names storage someone else owns; only an owned temporary is ours
-	// to clean up.
 	if expression_is_borrowed_place(e.c, expr) {
 		return
 	}
@@ -744,28 +658,17 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 	emit_drop_place(e, base.type, slot)
 }
 
-// design.md: an implicit copy — a binding, an assignment, or the return of a
-// borrowed managed owner — goes through `clone`, the policy-following entry
-// point. It calls `try_clone` once and applies the allocator's failure policy,
-// so a failure never reaches a half-written destination.
-//
-// `allocator` is the destination's selected provider: its written `via`, or the
-// default when the declaration has no policy.
-// An empty `allocator` means the build-selected default, which is a call
-// rather than a symbol and so cannot be a parameter default.
+// An implicit copy goes through `clone`, which calls `try_clone` once and
+// applies the allocator's failure policy (design.md). An empty `allocator`
+// means the build-selected default.
 @(private)
 emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator := "") -> string {
 	entry := emit_lifecycle(e, type)
-	// Resolved once here rather than per branch: every path below that allocates
-	// needs it, and the paths that do not are `return`s above the first use.
 	provider := allocator
 	if provider == "" && (entry.container || entry.clone != INVALID_SYMBOL ||
 	   underlying_kind(e.c, type) == .Array) {
 		provider = emit_default_allocator(e)
 	}
-	// design.md "Dynamic arrays"/"Maps": a container's copy is a deep clone, so
-	// an implicit copy duplicates the storage through the C helper and applies
-	// the allocator's failure policy — there is nowhere here to return an error.
 	if entry.container {
 		source := alloca(e, CONTAINER_TYPE)
 		destination := alloca(e, CONTAINER_TYPE)
@@ -775,24 +678,18 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		branch_if(e, ok, done_label, fail_label)
 		place_label(e, fail_label)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
-		branch(e, done_label)
+		fmt.sbprintln(&e.b, "  unreachable")
+		e.terminated = true
 		place_label(e, done_label)
-		e.terminated = false
-		out := load(e, CONTAINER_TYPE, destination)
-		return out
+		return load(e, CONTAINER_TYPE, destination)
 	}
-	// A string copy is cheap and its immutable backing storage may be shared
-	// (design.md "string type"). An implicit copy of a string retains a handle;
-	// only `.copy()` allocates, and that is a written call, not this path.
+	// A string copy retains a shared handle; only `.copy()` allocates.
 	if entry.intrinsic {
 		owner := extract(e, STRING_TYPE, value, STRING_OWNER)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_retain(i64 %s)", owner)
 		return value
 	}
-	// Fixed arrays have a generated `try_clone`, but no public `clone` member.
-	// Use its field-wise copy and the same policy as a record's clone wrapper.
-	// In particular, an empty array copies successfully without visiting an
-	// element, regardless of the element type's lifecycle.
+	// Fixed arrays have a generated `try_clone` but no public `clone` member.
 	if info := underlying_info(e.c, type); info != nil && info.kind == .Array {
 		return emit_clone_with_policy(e, type, value, provider)
 	}
@@ -843,9 +740,8 @@ register_variadic_cleanup :: proc(
 
 // ------------------------------------------------------- lifecycle bodies --
 
-// design.md "Typed fallibility": `try_clone` returns `Result(T, Allocator_Error)`.
-// The clone machinery keeps working in `(value, failed)` pairs internally and
-// converts only at the two boundaries - the call and the return.
+// `try_clone` returns `Result(T, Allocator_Error)`; internally the clone
+// machinery works in `(value, failed)` pairs.
 @(private)
 clone_result_of :: proc(e: ^Emitter, hook: Symbol_Id) -> Type_Id {
 	sym := symbol_of(e.c, hook)
@@ -856,8 +752,7 @@ clone_result_of :: proc(e: ^Emitter, hook: Symbol_Id) -> Type_Id {
 	return sym.result
 }
 
-// Calls one `try_clone` and unpacks its result into the internal pair. The
-// cloned value is only meaningful where `failed` is false.
+// Calls one `try_clone`. `cloned` is only meaningful where `failed` is false.
 @(private)
 emit_clone_call :: proc(
 	e: ^Emitter, hook: Symbol_Id, subject: Type_Id, value, allocator: string,
@@ -875,13 +770,8 @@ emit_clone_call :: proc(
 	return
 }
 
-// Compiler-generated field-wise cloning calls `try_clone` recursively for every
-// owning field, destroys a partially completed temporary on failure, and
-// returns zero plus the error (design.md).
-//
-// A type no part of which reaches a custom hook cannot fail, so its generated
-// body is the copy the representation already is. The branchy shape below exists
-// only where a real hook can return an error.
+// Generated field-wise `try_clone`: clones every owning part, destroys the
+// partial result on failure, and returns zero plus the error (design.md).
 @(private)
 emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
@@ -896,13 +786,9 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		llvm_linkage(name), pair, name, synth_param_llvm(e, symbol, 0),
 	)
 	e.terminated = false
-	// The body below works with the receiver as a value; an immutable receiver
-	// arrives as its address (design.md "Receiver forms"), so it is loaded once.
 	subject_value := synth_receiver_value(e, symbol)
 
-	// A user `hook(copy)` is the fallible primitive. The public generated
-	// `try_clone` member is a stable wrapper around it. Both take the same
-	// receiver mode, so the address is forwarded rather than round-tripped.
+	// A user `hook(copy)` is the primitive; forward the receiver in its own mode.
 	if hook := operations.custom_try_clone; hook != INVALID_SYMBOL {
 		hook_type, hook_receiver := value_type, subject_value
 		if hook_sym := symbol_of(e.c, hook);
@@ -915,10 +801,8 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 
-	// A trivial value is its own clone. Copy fallibility is the wrong
-	// question here: a `string` part clones infallibly but still has to retain its
-	// handle, so asking about failure alone would hand back a second owner of one
-	// allocation with the count still at 1.
+	// An unmanaged value is its own clone. (A `string` part is infallible but
+	// managed: it still needs a retain.)
 	if !operations.managed {
 		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", subject_value))
 		fmt.sbprintln(&e.b, "}")
@@ -930,15 +814,11 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 
-	// design.md "Standard interface catalogue": the copyable owning built-ins
-	// satisfy `Cloneable`, so `string`, `[dynamic]T` and `map[K]V` carry the same
-	// `try_clone` member a record does. Its body is the one intrinsic copy the
-	// implicit paths already use — a retain, or the versioned container helper.
+	// `string`, `[dynamic]T` and `map[K]V` carry a `try_clone` whose body is the
+	// same intrinsic copy the implicit paths use.
 	if operations.intrinsic {
 		self, built := alloca(e, value_type), alloca(e, value_type)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", value_type, subject_value, self)
-		// A failed container clone leaves the destination untouched, so the zero
-		// value is what travels back beside the error.
 		fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", value_type, built)
 		ok := emit_try_clone_into(e, subject, built, self, "%arg1")
 		value := load(e, value_type, built)
@@ -949,14 +829,12 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 
-	// Both sides are addressed rather than kept in registers: a failure path has
-	// to drop what the destination already holds, and a drop hook takes a place.
+	// Both sides live in memory: a failure path drops what the destination holds,
+	// and it starts zeroed so every hook sees the inert value, never garbage.
 	self := alloca(e, value_type)
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", value_type, subject_value, self)
 	alloca_named(e, out, value_type)
-	// Every hook must handle the inert zero value (design.md), and a cleanup that
-	// runs before a part is written must see that zero rather than garbage.
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", value_type, out)
 
 	for index in 0 ..< clone_part_count(e.c, subject) {
@@ -964,10 +842,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		part_operations := emit_lifecycle(e, part)
 		source := element_address(e, subject, self, index)
 		destination := element_address(e, subject, out, index)
-		// design.md "Uninitialized capacity": the live prefix is copied element by
-		// element and the capacity behind it is not copied at all. An unmanaged
-		// element needs none of that -- the whole field travels as bytes, capacity
-		// included, because none of those bytes owns anything.
+		// An unmanaged `@(initialized)` field is copied whole as bytes below.
 		if field, counter, prefixed := record_prefix_part(e, subject, index); prefixed &&
 		   part_operations.managed {
 			emit_clone_prefix(e, subject, self, out, field, counter, index, result, pair)
@@ -978,8 +853,6 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			store(e, part, loaded, destination)
 			continue
 		}
-		// Managed but infallible — a `string` handle, or a record of them. There is
-		// no error to branch on, but there is real copy work to do.
 		if !part_operations.clone_fallible {
 			loaded := load(e, llvm_type(e, part), source)
 			store(e, part, emit_clone_value(e, part, loaded, "%arg1"), destination)
@@ -989,17 +862,15 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		unwind, ok := new_label(e, "clone.unwind"), new_label(e, "clone.ok")
 		branch_if(e, failed, unwind, ok)
 
-		// The partially built temporary, cleaned in reverse part order. Everything
-		// past `index` is still the inert zero this block never wrote.
+		// Drop the parts already built, in reverse; later ones are still zero.
 		place_label(e, unwind)
 		for done := index - 1; done >= 0; done -= 1 {
 			emit_drop_record_part(e, subject, out, done)
 		}
 		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "true"))
 		e.terminated = true
-		// Only a successful part is published, so a hook that breaks its contract
-		// and hands back a live value beside an error cannot leave one in the
-		// temporary that cleanup would never reach.
+		// Only a successful part is published, so a hook that returns a live value
+		// beside an error cannot leak it into the temporary.
 		place_label(e, ok)
 		store(e, part, cloned, destination)
 	}
@@ -1009,10 +880,9 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// design.md "Uninitialized capacity": `@(initialized = count)` says that only
-// the first `count` elements of a fixed array field are values. Everything the
-// generated lifecycle does to that field is bounded by the count it names, and
-// the capacity behind it is never read as a value.
+// design.md "Uninitialized capacity": `@(initialized = count)` makes only the
+// first `count` elements of a fixed array field values; the capacity behind
+// them is never read as one.
 @(private = "file")
 record_prefix_part :: proc(
 	e: ^Emitter, record: Type_Id, index: int,
@@ -1029,16 +899,13 @@ record_prefix_part :: proc(
 	return field, counter, counter != nil
 }
 
-// The live count, widened to the index type the element addressing uses.
 @(private = "file")
 emit_prefix_count :: proc(e: ^Emitter, record: Type_Id, base: string, counter: ^Symbol) -> string {
 	address := element_address(e, record, base, int(counter.index))
 	return widen_to_i64(e, load(e, llvm_type(e, counter.type), address), counter.type)
 }
 
-// Drops the live prefix, last element first, which is the order the unrolled
-// walk over a fixed array's elements uses. The capacity behind it held no
-// value and has nothing to release.
+// Drops the live prefix, last element first.
 @(private = "file")
 emit_drop_prefix_elements :: proc(e: ^Emitter, element: Type_Id, items, count: string) {
 	cursor := alloca(e, "i64")
@@ -1071,7 +938,6 @@ emit_drop_prefix :: proc(e: ^Emitter, record: Type_Id, base: string, field, coun
 	emit_drop_prefix_elements(e, element, items, count)
 }
 
-// One part of a record, dropped the way that part is owned.
 @(private = "file")
 emit_drop_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) {
 	part := clone_part(e.c, record, index)
@@ -1085,10 +951,10 @@ emit_drop_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index:
 	emit_drop_place(e, part, element_address(e, record, base, index))
 }
 
-// Clones the live prefix of an `@(initialized)` field one element at a time.
-// The complete destination count is published before the field, so a failure
-// anywhere later can clean every completed prefix sharing it. A failure inside
-// this field instead drops the exact progress held by the local cursor.
+// Clones the live prefix of an `@(initialized)` field element by element. The
+// full destination count is published first, so a later failure can clean
+// every completed prefix sharing it; a failure inside this field drops exactly
+// the progress the cursor holds.
 @(private = "file")
 emit_clone_prefix :: proc(
 	e: ^Emitter,
@@ -1146,7 +1012,7 @@ emit_clone_prefix :: proc(
 	place_label(e, done)
 }
 
-// The address of part `index`, which is a struct field or an array element.
+// The address of part `index`: a struct field or an array element.
 @(private = "file")
 element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -> string {
 	info := underlying_info(e.c, owner)
@@ -1165,14 +1031,11 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 	return out
 }
 
-// Clones one part through its own `try_clone` — custom or generated, both real
-// members. Returns the cloned value and the error word; the caller publishes the
-// value only on the success path.
+// Clones one part through its own `try_clone`. Returns the value and the error
+// flag; the caller publishes the value only on success.
 @(private = "file")
 emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, string) {
 	operations := emit_lifecycle(e, part)
-	// A container part uses the versioned C helper directly, driven by this
-	// type's generated operation table.
 	if operations.container {
 		destination := alloca(e, CONTAINER_TYPE)
 		ok := emit_try_clone_into(e, part, destination, source, "%arg1")
@@ -1183,8 +1046,6 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 	}
 	hook := operations.try_clone
 	if hook == INVALID_SYMBOL {
-		// The checked facts say this part reaches a custom hook, so the
-		// contribution pass owed it one.
 		backend_fail(e, "a fallible clone part has no `try_clone` member")
 		return "0", "true"
 	}
@@ -1193,9 +1054,8 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 }
 
 // Drops every initialized element of a compiler-owned variadic buffer in
-// reverse order. A flag is cleared before its hook runs, so a panic raised by
-// that hook cannot replay the same element; remaining flags stay visible to the
-// frame's unwind action.
+// reverse. Each flag is cleared before its hook runs, so a panic from that hook
+// cannot replay the same element.
 @(private)
 emit_drop_flagged_array :: proc(e: ^Emitter, element: Type_Id, buffer, flags, count_address: string) {
 	count := load(e, "i64", count_address)
@@ -1227,8 +1087,7 @@ emit_drop_flagged_array :: proc(e: ^Emitter, element: Type_Id, buffer, flags, co
 	place_label(e, done)
 }
 
-// `clone` calls `try_clone` once and, on failure, invokes the supplied
-// allocator's failure policy (design.md).
+// `clone` calls `try_clone` once and applies the allocator's failure policy.
 @(private)
 emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
@@ -1246,8 +1105,8 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// Shared by public record wrappers and implicit array copies. The fallible
-// operation owns partial-copy cleanup; only a complete result is published.
+// An implicit copy has nowhere to return an error, so the runtime applies the
+// allocator's own policy (design.md "Allocation failure").
 @(private = "file")
 emit_clone_with_policy :: proc(e: ^Emitter, subject: Type_Id, value, allocator: string) -> string {
 	hook := emit_lifecycle(e, subject).try_clone
@@ -1256,10 +1115,6 @@ emit_clone_with_policy :: proc(e: ^Emitter, subject: Type_Id, value, allocator: 
 		return "0"
 	}
 	cloned, failed := emit_clone_call(e, hook, subject, value, allocator)
-	// design.md "Allocation failure": an implicit copy has nowhere to return an
-	// error, so the *allocator's* policy decides — `.Panic` follows the program
-	// strategy and `.Trap` terminates immediately under either. The runtime reads
-	// that policy off the handle the clone was given.
 	fail, ok := new_label(e, "clone.failed"), new_label(e, "ok")
 	branch_if(e, failed, fail, ok)
 	place_label(e, fail)
@@ -1270,8 +1125,7 @@ emit_clone_with_policy :: proc(e: ^Emitter, subject: Type_Id, value, allocator: 
 	return cloned
 }
 
-// All lifecycle decisions come from the completed semantic snapshot. Returning
-// an inert value after failure lets lowering unwind without repairing the cache.
+// Lifecycle decisions come from the completed semantic snapshot.
 @(private)
 emit_lifecycle :: proc(e: ^Emitter, type: Type_Id) -> Lifecycle_Operations {
 	if type == INVALID_TYPE { return Lifecycle_Operations{} }
@@ -1283,36 +1137,26 @@ emit_lifecycle :: proc(e: ^Emitter, type: Type_Id) -> Lifecycle_Operations {
 	return operations
 }
 
-// `drop(value)` invokes the user hook when present, and fields are dropped in
-// reverse declaration order after the containing type's drop hook returns
-// (design.md). Used by partial-clone cleanup now; step 4's scope-exit cleanup is
-// the same walk from a different caller.
+// `drop(value)` runs the user hook, then drops fields in reverse declaration
+// order (design.md).
 emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	operations := emit_lifecycle(e, type)
 	if !operations.managed {
 		return
 	}
-	// design.md "Dynamic arrays"/"Maps": container drop destroys every live
-	// element exactly once, releases the raw storage through the bound provider,
-	// and writes the inert all-zero representation. The all-zero value has no
-	// storage and no provider, so dropping one is already a no-op in the helper.
+	// The container helper leaves the inert zero, and dropping zero is a no-op.
 	if operations.container {
 		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_drop" : "loke_rt_v1_dyn_drop"
 		fmt.sbprintfln(&e.b, "  call void @%s(ptr %s, ptr %s)", helper, address, container_ops_global(e, type))
 		return
 	}
-	// design.md "Allocators": ending a local region releases every block it
-	// handed out. The zero (or moved-from) control pointer drops to nothing,
-	// which is what makes a moved-out provider safe to leave behind.
+	// Ending a local region releases every block it handed out.
 	if operations.provider {
 		control := load(e, "ptr", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_arena_drop(ptr %s)", control)
 		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", address)
 		return
 	}
-	// design.md "string type": the drop releases one handle, and the last one
-	// deallocates through the allocator the string was created with. A static
-	// literal and the empty value are both no-ops the runtime recognises.
 	if operations.intrinsic {
 		value := load(e, STRING_TYPE, address)
 		owner := extract(e, STRING_TYPE, value, STRING_OWNER)
@@ -1322,8 +1166,6 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	if hook := operations.custom_drop; hook != INVALID_SYMBOL {
 		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", symbol_name(e, hook), address)
 	}
-	// design.md "Unions": a union owns exactly one payload, so its drop reads the
-	// tag and destroys that variant alone. No inactive payload is loaded.
 	if info := underlying_info(e.c, type); info != nil && info.kind == .Union {
 		emit_union_drop(e, type, info, address)
 		return
@@ -1333,8 +1175,8 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	}
 }
 
-// The tag-aware half of `emit_drop_place`. Only a variant whose payload is
-// managed gets a block; every other tag falls straight through to `done`.
+// Drops the active variant's payload only, then leaves the union inert so a
+// second drop is a no-op.
 @(private = "file")
 emit_union_drop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, address: string) {
 	shape := union_layout(e.c, type)
@@ -1356,15 +1198,11 @@ emit_union_drop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, address: s
 	}
 	branch(e, done)
 	place_label(e, done)
-	// A dropped union is left inert, so a second drop on an unwind path is a
-	// no-op rather than a second release of the same payload.
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm_type(e, type), address)
 }
 
-// The tag-aware half of `emit_synth_try_clone`. Each managed variant clones its
-// own payload and rebuilds the union at that variant; a partial failure has
-// nothing to unwind, because a union holds one payload and it is either cloned
-// whole or not at all.
+// Each managed variant clones its one payload and rebuilds the union; there is
+// no partial result to unwind.
 @(private = "file")
 emit_union_try_clone_body :: proc(
 	e: ^Emitter, subject: Type_Id, info: ^Type_Info, result: Type_Id, pair, value_type: string,
