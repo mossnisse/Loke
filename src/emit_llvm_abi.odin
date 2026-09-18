@@ -6,27 +6,25 @@ package lokec
 import "core:fmt"
 import "core:strings"
 
-// The external symbol a foreign declaration binds: `@<link_name>`, with no
-// package mangling, so the linker resolves it against the imported library.
+// Preserve an external symbol byte-for-byte; LLVM quotes names with punctuation.
 @(private)
-foreign_llvm_name :: proc(sym: ^Symbol) -> string {
-	return fmt.aprintf("@%s", sym.link_name)
+llvm_external_name :: proc(name: string) -> string {
+	plain := llvm_plain_name(name) && !(name[0] >= '0' && name[0] <= '9')
+	return plain ? fmt.aprintf("@%s", name) : fmt.aprintf("@\"%s\"", llvm_escape(name))
 }
 
-// One `declare` per foreign procedure and one `external global` per foreign
-// variable, deduplicated by symbol name. The classified
-// signature matches the C library's definition under the Windows x64 ABI.
+@(private)
+foreign_llvm_name :: proc(sym: ^Symbol) -> string {
+	return llvm_external_name(sym.link_name)
+}
+
+// Emit each foreign symbol once unless this module defines the same name.
 @(private)
 emit_foreign_declarations :: proc(e: ^Emitter) {
 	seen := make(map[string]bool, context.temp_allocator)
-	// A `declare` for a name this module also defines is a redefinition to LLVM's
-	// own parser, not a forward declaration. That happens whenever source names a
-	// symbol the compiler itself writes into the module — the generated
-	// `loke_rt_v1_program_init` is the reachable case — or an `@(export)` whose
-	// link name a foreign block also declares. The definition wins; a call to the
-	// name still resolves to it.
 	for symbol_id, name in e.names {
-		if sym := symbol_of(e.c, symbol_id); sym != nil && !sym.is_foreign && sym.kind == .Proc {
+		if sym := symbol_of(e.c, symbol_id);
+		   sym != nil && !sym.is_foreign && (sym.kind == .Proc || sym.kind == .Var) {
 			seen[name] = true
 		}
 	}
@@ -218,14 +216,7 @@ struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
 
 	b := strings.builder_make()
 	if packed && over_aligned {
-		// Tight packing (needs an LLVM packed body) and a raised alignment (a
-		// packed body can't report) at once: each field becomes a byte array, so a
-		// non-packed body neither re-pads nor drops the alignment, and a trailing
-		// zero-length aligned member forces the record's alignment and size. Byte
-		// members make whole-value `extractvalue` ill-typed, so equality reads each
-		// field through its address instead (`emit_byte_member_struct_equal`).
-		// GEP indices stay unchanged, so ordinary access, reflection, and
-		// formatting are unaffected.
+		// Byte members keep packed offsets; the zero-length tail raises alignment.
 		strings.write_string(&b, "{")
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
@@ -234,11 +225,13 @@ struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
 			}
 			fmt.sbprintf(&b, " [%d x i8]", type_size(e.c, symbol.type))
 		}
-		fmt.sbprintf(&b, ", [0 x i%d] }", info.align * 8)
+		if len(info.fields) > 0 {
+			strings.write_string(&b, ",")
+		}
+		fmt.sbprintf(&b, " [0 x i%d] }", info.align * 8)
 		return strings.to_string(b)
 	}
 	if packed {
-		// Tight packing, natural alignment 1: an LLVM packed body matches exactly.
 		strings.write_string(&b, "<{")
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
@@ -250,8 +243,6 @@ struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
 		strings.write_string(&b, " }>")
 		return strings.to_string(b)
 	}
-	// `@(align=N)` only: natural field offsets, so a plain body already agrees; a
-	// trailing zero-length aligned member raises the alignment and tail padding.
 	strings.write_string(&b, "{")
 	for field, index in info.fields {
 		symbol := symbol_of(e.c, field)
@@ -260,7 +251,10 @@ struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
 		}
 		fmt.sbprintf(&b, " %s", llvm_type(e, symbol.type))
 	}
-	fmt.sbprintf(&b, ", [0 x i%d] }", info.align * 8)
+	if len(info.fields) > 0 {
+		strings.write_string(&b, ",")
+	}
+	fmt.sbprintf(&b, " [0 x i%d] }", info.align * 8)
 	return strings.to_string(b)
 }
 
@@ -807,7 +801,7 @@ foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) 
 			case .Reg_Int:
 				ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result))
 			case .Bool_I1:
-				ret = "i1"
+				ret = "zeroext i1"
 			case .Direct:
 				ret = llvm_type(e, result)
 			}

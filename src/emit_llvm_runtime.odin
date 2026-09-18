@@ -274,18 +274,13 @@ emit_thread_local_teardown :: proc(e: ^Emitter) {
 
 // File-scope variables need constant initialisers (design.md "Values that
 // outlive every scope"), so folding has already produced the value.
-emit_global :: proc(e: ^Emitter, pkg: ^Package, d: ^Decl) {
+emit_global :: proc(e: ^Emitter, d: ^Decl) {
 	for symbol_id, i in d.symbols {
 		sym := symbol_of(e.c, symbol_id)
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		// design.md "@(export)": an exported global emits under its written or
-		// `@(link_name)` symbol, not the mangled one.
-		name := sym.exported \
-			? fmt.aprintf("@%s", sym.link_name) \
-			: llvm_global_name(pkg, identifier_text(e.c, sym.name))
-		e.names[symbol_id] = name
+		name := symbol_name(e, symbol_id)
 		value := ""
 		if i < len(d.values) && d.values[i] != nil && is_const_expr(d.values[i]) {
 			value = llvm_const(e, const_value_of(d.values[i]), sym.type)
@@ -322,9 +317,7 @@ message_global :: proc(e: ^Emitter, text: string) -> string {
 	return name
 }
 
-// Only printable ASCII reaches here — every message is a compiler-owned literal
-// — so the one thing that must be escaped is the quote LLVM's own syntax uses.
-@(private = "file")
+@(private)
 llvm_escape :: proc(text: string) -> string {
 	b := strings.builder_make()
 	for index in 0 ..< len(text) {

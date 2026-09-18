@@ -149,8 +149,6 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		if info.kind == .Slice && value.aggregate != nil {
 			return slice_literal_constant(e, value, info)
 		}
-		// A `@(packed)`/`@(align=N)` struct's constant must match the byte-exact
-		// body `struct_body` emits.
 		packed := info.kind == .Struct && info.packed
 		over_aligned := info.kind == .Struct && info.align > record_natural_align(e.c, info)
 		byte_array := packed && over_aligned
@@ -172,7 +170,10 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			}
 		}
 		if over_aligned {
-			fmt.sbprintf(&b, ", [0 x i%d] zeroinitializer", info.align * 8)
+			if len(info.fields) > 0 {
+				strings.write_string(&b, ",")
+			}
+			fmt.sbprintf(&b, " [0 x i%d] zeroinitializer", info.align * 8)
 		}
 		strings.write_string(&b, byte_array ? " }" : (packed ? " }>" : " }"))
 		return strings.to_string(b)

@@ -328,6 +328,13 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
+				for symbol_id in v.symbols {
+					if sym := symbol_of(e.c, symbol_id); sym != nil && sym.kind == .Var && !sym.is_foreign {
+						e.names[symbol_id] = sym.exported \
+							? llvm_external_name(sym.link_name) \
+							: llvm_global_name(pkg, identifier_text(e.c, sym.name))
+					}
+				}
 				// A template has no signature and no body of its own; only its
 				// instances are named and emitted.
 				if decl_proc_literal(v) != nil && len(v.symbols) > 0 && !symbol_is_template(e.c, v.symbols[0]) {
@@ -335,7 +342,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 					// its definition under the written/`@(link_name)` symbol so a C
 					// consumer can link to it, in place of the mangled name.
 					if sym := symbol_of(e.c, v.symbols[0]); sym != nil && sym.exported {
-						e.names[v.symbols[0]] = fmt.aprintf("@%s", sym.link_name)
+						e.names[v.symbols[0]] = llvm_external_name(sym.link_name)
 					} else {
 						e.names[v.symbols[0]] = llvm_proc_name(pkg, v.names[0].text)
 					}
@@ -447,7 +454,7 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 	for file in pkg.files {
 		for item in file.active_items {
 			if d, ok := item.(^Decl); ok && decl_proc_literal(d) == nil {
-				emit_global(e, pkg, d)
+				emit_global(e, d)
 			}
 		}
 	}

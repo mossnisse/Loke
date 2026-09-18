@@ -6,11 +6,16 @@ package main; import "core:fmt";
 Packed :: struct @(packed) { x: u8, y: i32 }
 Over :: struct @(align=16) { b: bool, n: i32 }
 Both :: struct @(packed, align=8) { x: u8, y: i32 }
+Empty_Over :: struct @(align=8) { }
+Empty_Both :: struct @(packed, align=8) { }
 
 main :: proc() {
 	p := Packed{ x = 1, y = 2 };
 	p.y = 3;
 	o := Over{ b = true, n = 4 };
 	b := Both{ x = 5, y = 6 };
+	eo := Empty_Over{};
+	eb := Empty_Both{};
+	_ = eo; _ = eb;
 	fmt.println(p.y, o.n, b.y);
 }
