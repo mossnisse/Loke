@@ -324,3 +324,18 @@ apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 		}
 	}
 }
+
+// The string value of a named attribute in a list, decoded from its literal.
+attribute_string_value :: proc(c: ^Compiler, attributes: []Attribute, name: string) -> (string, bool) {
+	for attribute in attributes {
+		if len(attribute.path) != 1 || attribute.path[0].text != name {
+			continue
+		}
+		if lit, ok := attribute.value.(^Expr_Literal); ok && (lit.kind == .String || lit.kind == .Raw_String) {
+			if text, decoded := decode_string_literal(c, lit.text, lit.kind == .Raw_String); decoded {
+				return text, true
+			}
+		}
+	}
+	return "", false
+}

@@ -327,10 +327,11 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	}
 }
 
-// design.md "@(export)": a whole-program pass, so two declarations exporting
-// one name are reported with locations rather than failing at link time.
+// design.md "@(export)": a whole-program pass, so clashing external symbols are
+// reported with locations rather than failing at link time.
 check_exports :: proc(c: ^Compiler) {
 	claimed := make(map[string]Span, 16, context.temp_allocator)
+	linked := make(map[string]Symbol_Id, 16, context.temp_allocator)
 	for id in package_order(c) {
 		pkg := package_of(c, id)
 		if pkg == nil {
@@ -347,6 +348,8 @@ check_exports :: proc(c: ^Compiler) {
 							check_export_decl(c, d, &claimed)
 						}
 					}
+				case ^Item_Foreign_Block:
+					check_foreign_links(c, v, &linked)
 				}
 			}
 		}
@@ -364,10 +367,7 @@ check_export_decl :: proc(c: ^Compiler, d: ^Decl, claimed: ^map[string]Span) {
 		if sym == nil || sym.is_foreign {
 			continue
 		}
-		name, has := attribute_string_value(c, d.attributes, "link_name")
-		if !has {
-			name = identifier_text(c, sym.name)
-		}
+		name := link_name_of(c, d, sym)
 		if strings.has_prefix(name, "loke_rt_") {
 			errorf(c, sym.span, "L0635", "an exported symbol cannot use the reserved `loke_rt_` runtime prefix: `%s`", name)
 			continue

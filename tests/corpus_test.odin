@@ -399,11 +399,9 @@ UNPINNED :: []string {
 	"L0311",
 	"L0325",
 	"L0340",
-	// Backend and parser invariants: an emission contract violation, a foreign
-	// member that `parse_member_list` cannot produce, and `unsupported_construct`
+	// Backend invariants: an emission contract violation and `unsupported_construct`
 	// — every arm that used to reach it was given an honest diagnostic in M7.
 	"L0405",
-	"L0622",
 	"L0350",
 	// Need a replaced `base:runtime` — a copy of the whole runtime in the test
 	// tree to change one declaration in it.

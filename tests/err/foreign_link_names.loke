@@ -1,0 +1,15 @@
+package main;
+
+// Foreign members sharing a link name share one declaration, so they must agree
+// on kind and type; an identical redeclaration is fine.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	abs :: proc "c" (n: i32) -> i32 ---;
+	@(link_name = "abs") same_abs :: proc "c" (n: i32) -> i32 ---;
+	@(link_name = "abs") float_abs :: proc "c" (n: f64) -> f64 ---;
+	@(link_name = "abs") abs_global: i32;
+}
+
+main :: proc() { }

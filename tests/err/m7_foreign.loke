@@ -20,6 +20,7 @@ foreign libc {
 	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
 	moved :: proc "c" (v: move Res) ---;
 	generic_one :: proc "c" ($T: type, v: T) -> T ---;
+	typed_va :: proc "c" (@(c_vararg) a: ..int) ---;
 }
 
 not_foreign :: proc(@(by_ptr) x: i32) { }

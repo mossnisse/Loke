@@ -18,10 +18,14 @@ L0624
 a generic declaration has no ABI and cannot appear in a foreign block
 @22:2
 
+L0627
+`@(c_vararg)` marks a variadic parameter
+@23:24
+
 L0626
 `@(by_ptr)` is only allowed on a foreign procedure parameter
-@25:21
+@26:21
 
 L0628
 a C-variadic call cannot spread; pass each concrete argument
-@29:15
+@30:15
