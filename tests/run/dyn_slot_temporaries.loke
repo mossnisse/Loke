@@ -1,0 +1,36 @@
+package main; import "core:fmt";
+
+// A managed temporary passed through a `dyn` slot is dropped once, like a
+// direct call's; a `move` argument is dropped by the callee alone.
+
+drops: int;
+Value :: struct { id: int }
+impl Value {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
+		return .ok(Value{self.id});
+	}
+	release :: hook(drop) proc(self: inout Value) { if (self.id != 0) { drops += 1; } }
+}
+
+Reader :: interface($Self: type) {
+	slot read: proc(self, v: Value) -> int;
+	slot take: proc(self, v: move Value) -> int;
+}
+
+Box :: struct {}
+impl Box {
+	read :: proc(self, v: Value) -> int { return v.id; }
+	take :: proc(self, v: move Value) -> int { return v.id; }
+}
+
+make :: proc() -> Value { return Value{7}; }
+
+main :: proc() {
+	box := Box{};
+	view := (dyn Reader)(&box);
+	fmt.println(box.read(make()), drops);
+	fmt.println(view.read(make()), drops);
+	fmt.println(view.take(make()), drops);
+	kept := make();
+	fmt.println(view.read(kept), drops);
+}

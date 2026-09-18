@@ -1,6 +1,4 @@
 // Runtime declarations, globals, formatting, metadata, and erased witnesses.
-//
-// Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
 
 import "core:fmt"
@@ -10,27 +8,15 @@ import "core:strings"
 emit_preamble :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, e.c.target.triple)
 	fmt.sbprintln(&e.b, "")
-	// Every defined runtime failure — division by zero, out-of-range index, nil
-	// dereference or nil indirect call — reaches the seed runtime's panic or abort
-	// entry, not LLVM poison, a hardware exception, or the `llvm.trap` that stood in
-	// for both before M6a.
 	emit_runtime_declarations(e)
 	fmt.sbprintln(&e.b, "")
 }
 
-// The seed runtime's allocator surface. An `Allocator` value is a pointer to a
-// `loke_rt_allocator_v1` record and nothing else, so copying a handle preserves
-// the provider's state, region identity, and failure policy with no per-copy tag.
-//
-// The record's own fields are never loaded here — dispatch goes through the
-// runtime helpers, keeping the layout to one reader and letting the record grow
-// behind its version/size prefix.
+// An `Allocator` is a pointer to a `loke_rt_allocator_v1` record, dispatched
+// only through the runtime helpers.
 RT_DEFAULT_ALLOCATOR :: "@loke_rt_v1_default_allocator"
 
-// design.md "Build-selected providers": what a default allocation actually
-// uses. It is the fallback record above until an allocator factory publishes
-// one, so an unselected build behaves exactly as it did before — through one
-// more call, which is deliberate rather than an accident of refactoring.
+// The published build-selected allocator, or the fallback record above.
 emit_default_allocator :: proc(e: ^Emitter) -> string {
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_selected_allocator()", out)
@@ -56,9 +42,6 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
-	// design.md "Program entry and exit": the generated `wmain` converts the
-	// argument vector once; `core:os` reads it through its own foreign block, so
-	// only the initializer is declared here.
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_args_init(i32, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
@@ -80,9 +63,8 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	emit_atomic_declarations(e)
 }
 
-// design.md "string type" and "string type conversions". The two frozen
-// carriers: an owning `string` is data, byte length, and owner flags; a
-// borrowed `string_view` is data and byte length, with no allocator or ownership.
+// design.md "string type": `string` is data, length, and owner flags;
+// `string_view` is data and length.
 STRING_TYPE :: "%loke.string"
 
 STRING_VIEW_TYPE :: "%loke.string_view"
@@ -97,13 +79,13 @@ VIEW_DATA :: 0
 
 VIEW_LEN :: 1
 
-// `owner_flags` of a literal. Zero is the empty value; anything else is the
-// address of a runtime buffer's header.
+#assert(SLICE_DATA == VIEW_DATA && SLICE_LEN == VIEW_LEN)
+
+// `owner_flags` of a literal; zero is the empty value.
 STRING_STATIC :: 1
 
-// One zero-terminated static constant per distinct literal. A string literal
-// uses static storage (design.md), and its bytes are already zero-terminated,
-// which is what lets the same global initialize a `cstring_view`.
+// One zero-terminated constant per distinct literal, so it also initializes a
+// `cstring_view`.
 @(private)
 text_literal_global :: proc(e: ^Emitter, text: string) -> string {
 	if existing, found := e.literals[text]; found {
@@ -118,20 +100,12 @@ text_literal_global :: proc(e: ^Emitter, text: string) -> string {
 	return name
 }
 
-// The static storage behind a file-scope slice literal: design.md "Slice
-// literals" makes the hidden backing array an owner in the surrounding scope,
-// and at file scope that scope is the module, so the array is a global and the
-// slice is `{ ptr, len }` naming it.
-//
-// One global per literal, never shared. Two `[]mut T` literals with equal
-// elements are two arrays, and a write through one must not show up in the
-// other -- which is also why the mutable form is `global` rather than the
-// `unnamed_addr constant` a read-only literal can be merged into.
+// The global backing array of a file-scope slice literal. Never shared: a
+// write through one `[]mut T` literal must not show up in another.
 @(private)
 slice_literal_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
 	count := len(value.aggregate.elements)
 	if count == 0 {
-		// A slice of nothing points nowhere, which is the nil slice.
 		return "zeroinitializer"
 	}
 	element := llvm_type(e, info.element)
@@ -146,23 +120,19 @@ slice_literal_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info
 		"%s = private %s %s\n",
 		name, info.mutable ? "global" : "unnamed_addr constant", strings.to_string(b),
 	))
-	// Built rather than formatted: Odin's `fmt` reads `{` as a verb.
-	out := strings.builder_make()
-	strings.write_string(&out, "{ ptr ")
-	strings.write_string(&out, name)
-	fmt.sbprintf(&out, ", i64 %d ", count)
-	strings.write_string(&out, "}")
-	return strings.to_string(out)
+	return slice_constant(name, count)
 }
 
-// A literal `string` or `string_view` value. A literal costs no allocation and
-// no handle accounting: its owner flags say "static", which is exactly what a
-// retain and a release both ignore.
+// `{ ptr name, i64 count }`, concatenated because `{` is a core:fmt directive.
+@(private = "file")
+slice_constant :: proc(name: string, count: int) -> string {
+	return strings.concatenate({"{ ptr ", name, ", i64 ", fmt.aprintf("%d", count), " }"})
+}
+
+// A literal `string` or `string_view`: static owner flags, no allocation.
 @(private)
 text_constant :: proc(e: ^Emitter, value: Const_Value, owning: bool) -> string {
 	if value.kind != .String || value.text == "" {
-		// The empty value is all zero (design.md), and a nil view has length 0 and
-		// points at no storage.
 		return "zeroinitializer"
 	}
 	b := strings.builder_make()
@@ -176,11 +146,7 @@ text_constant :: proc(e: ^Emitter, value: Const_Value, owning: bool) -> string {
 	return strings.to_string(b)
 }
 
-// The named carrier shapes every module needs, whether or not it emits a body:
-// a struct with a `string` or a container field mentions them, so the layout
-// probe has to define them exactly as the real module does.
-//
-// `{` is a directive to core:fmt, so the record shapes are written literally.
+// Carrier shapes every module needs, so the layout probe defines them too.
 emit_carrier_types :: proc(e: ^Emitter) {
 	fmt.sbprint(&e.b, STRING_TYPE)
 	fmt.sbprintln(&e.b, " = type { ptr, i64, i64 }")
@@ -214,10 +180,7 @@ emit_text_declarations :: proc(e: ^Emitter) {
 
 // ---------------------------------------------------------------- globals --
 
-// A `static` local has one instance for the process's whole life, a
-// `thread_local` one per thread (design.md "Storage modifiers") — neither lives
-// in the frame. The checker's declaration order is also design.md's
-// thread-local teardown order.
+// `static` and `thread_local` locals, in design.md's teardown order.
 @(private)
 emit_static_locals :: proc(e: ^Emitter) {
 	for symbol_id, index in e.c.static_locals {
@@ -247,9 +210,8 @@ emit_static_locals :: proc(e: ^Emitter) {
 	}
 }
 
-// The fixed callback the runtime invokes from `thread_detach`. It addresses
-// LLVM thread-local globals, so the same function drops the values belonging to
-// whichever initial, runtime-created, or foreign-attached thread is detaching.
+// Called by the runtime from `thread_detach` to drop the detaching thread's
+// thread-local values.
 @(private)
 emit_thread_local_teardown :: proc(e: ^Emitter) {
 	function := begin_function_emission(e)
@@ -272,8 +234,6 @@ emit_thread_local_teardown :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "")
 }
 
-// File-scope variables need constant initialisers (design.md "Values that
-// outlive every scope"), so folding has already produced the value.
 emit_global :: proc(e: ^Emitter, d: ^Decl) {
 	for symbol_id, i in d.symbols {
 		sym := symbol_of(e.c, symbol_id)
@@ -299,8 +259,7 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 
 // ------------------------------------------------------ runtime failures --
 
-// One zero-terminated message constant per distinct text, so the same failure
-// reported from twenty places is one global.
+// One message constant per distinct text.
 @(private = "file")
 message_global :: proc(e: ^Emitter, text: string) -> string {
 	if existing, found := e.messages[text]; found {
@@ -308,8 +267,6 @@ message_global :: proc(e: ^Emitter, text: string) -> string {
 	}
 	name := fmt.aprintf("@.msg.%d", len(e.messages))
 	e.messages[text] = name
-	// Module scope, appended at the end: a message is first needed while a
-	// function body is being written, and a global cannot be defined inside one.
 	append(&e.globals, fmt.aprintf(
 		"%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"\n",
 		name, len(text) + 1, llvm_escape(text),
@@ -331,9 +288,7 @@ llvm_escape :: proc(text: string) -> string {
 	return strings.to_string(b)
 }
 
-// The compile-time string a `panic`/`assert` was written with. design.md makes
-// it a constant, so the runtime message is a module global rather than anything
-// the program has to build.
+// The constant message a `panic`/`assert` was written with.
 @(private)
 panic_message_text :: proc(e: ^Emitter, v: ^Expr_Call, index: int, fallback: string) -> string {
 	if index < len(v.bound) && v.bound[index] != nil {
@@ -344,10 +299,8 @@ panic_message_text :: proc(e: ^Emitter, v: ^Expr_Call, index: int, fallback: str
 	return fallback
 }
 
-// design.md "Panics and unwinding" enumerates exactly which runtime faults are
-// panics, and they take the program's panic strategy: under `unwind` the
-// runtime replays each active frame's cleanup first; under `abort` no frames
-// were ever registered, so the same call terminates at the fault.
+// design.md "Panics and unwinding": under `unwind` the runtime replays each
+// frame's cleanup first; under `abort` it terminates here.
 @(private)
 emit_panic :: proc(e: ^Emitter, message: string) {
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_panic(ptr %s)", message_global(e, message))
@@ -355,10 +308,8 @@ emit_panic :: proc(e: ^Emitter, message: string) {
 	e.terminated = true
 }
 
-// A synthesized member body that copies a move-only value is dead: the checker
-// rejected every call to it (L0491). The copy aborts instead of failing the
-// build, and is a plain call, not a terminator, so the caller's block goes on.
-// Anywhere else a move-only copy is a compiler bug, and still reported as one.
+// A synthesized body copying a move-only value is dead (L0491), so it aborts
+// instead of failing the build. Anywhere else it is a compiler bug.
 @(private)
 emit_dead_move_only_copy :: proc(e: ^Emitter, type: Type_Id) -> bool {
 	if !e.synth_bodies || !emit_lifecycle(e, type).clone_disabled {
@@ -395,9 +346,8 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	}
 	count := len(e.c.typeid_order)
 	entries := make([]string, count + 1)
-	entries[0] = "null"
-	for index in 1 ..< len(entries) {
-		entries[index] = "null"
+	for &entry in entries {
+		entry = "null"
 	}
 	for type in e.c.typeid_order {
 		id := typeid_value(e.c, type)
@@ -408,13 +358,8 @@ emit_format_thunks :: proc(e: ^Emitter) {
 		entries[id] = fmt_thunk_name(e, type)
 	}
 
-	// The names a `typeid` prints as — the same text `runtime.Type_Info` carries,
-	// but a private table so printing doesn't oblige a program to import
-	// `base:runtime` for a public record it never names.
+	// Private `typeid` names, so printing needs no `base:runtime` import.
 	names := make([]string, count + 1)
-	for index in 0 ..< len(names) {
-		names[index] = ""
-	}
 	for type in e.c.typeid_order {
 		id := typeid_value(e.c, type)
 		if id != 0 && int(id) <= count {
@@ -432,8 +377,6 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	}
 	strings.write_string(&b, " ]\n")
 	fmt.sbprintf(&b, "%s = private unnamed_addr constant i64 %d\n", FMT_THUNK_COUNT, count)
-	// Built with the same `{ptr, len}` shape a `string_view` has, so the formatter
-	// reads it with the loads it already emits for one.
 	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x %s] [", TYPE_NAMES, count + 1, STRING_VIEW_TYPE)
 	for name, index in names {
 		if index > 0 {
@@ -443,7 +386,6 @@ emit_format_thunks :: proc(e: ^Emitter) {
 			fmt.sbprintf(&b, " %s zeroinitializer", STRING_VIEW_TYPE)
 			continue
 		}
-		// `{` is a core:fmt format directive, so this row is concatenated.
 		strings.write_string(&b, strings.concatenate({
 			" ", STRING_VIEW_TYPE, " { ptr ", text_literal_global(e, name),
 			", i64 ", fmt.aprintf("%d", len(name)), " }",
@@ -453,9 +395,8 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	append(&e.globals, strings.to_string(b))
 }
 
-// design.md gives no spelling for an aggregate, so these follow the library's
-// own examples: elements between brackets, fields named inside braces, an enum
-// by the member's own name.
+// Aggregates print as `[elements]`, `Name{field = value}`, and enum members
+// by name.
 @(private = "file")
 emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	frame := begin_function_emission(e)
@@ -468,8 +409,6 @@ emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	fmt.sbprintln(&e.b, "")
 }
 
-// A literal separator: `[`, `, `, ` = ` and friends all go through the same
-// static storage the string literals already use.
 @(private = "file")
 emit_format_literal :: proc(e: ^Emitter, text: string) {
 	global := text_literal_global(e, text)
@@ -487,12 +426,8 @@ emit_format_call :: proc(e: ^Emitter, type: Type_Id, address: string) {
 
 @(private = "file")
 emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
-	// design.md's coherence rule: a `format` declared in the value type's own
-	// package *is* the formatter for that type, so the thunk is a call to it.
+	// A `format` declared in the type's own package is its formatter.
 	if hook := e.c.formatters[type]; hook != INVALID_SYMBOL {
-		// design.md "Receiver forms": `format` takes an immutable receiver, which
-		// crosses as the address of the value. The thunk already holds that
-		// address, so nothing is loaded or copied to make the call.
 		receiver_type, receiver := "ptr", address
 		if hook_sym := symbol_of(e.c, hook);
 		   hook_sym == nil || !param_mode_is_pointer(symbol_param_mode(e.c, hook_sym, 0)) {
@@ -510,8 +445,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		)
 		return
 	}
-	// A `distinct` type prints as the shape it wraps: it has a fresh identity,
-	// not a fresh representation.
+	// A `distinct` type prints as the shape it wraps.
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
 	if info == nil {
@@ -569,11 +503,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_ptr(ptr %%w, ptr %s)", value)
 
 	case .String, .String_View:
-		value, data, length := temp(e), temp(e), temp(e)
-		storage := llvm_type(e, under)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, STRING_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, STRING_LEN)
+		data, length := load_pair(e, llvm_type(e, under), address, STRING_DATA, STRING_LEN)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %s)", data, length)
 
 	case .CString_View:
@@ -586,27 +516,15 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		emit_format_enum(e, under, address)
 
 	case .Array, .Simd:
-		// A vector's lanes are contiguous elements in memory exactly as an array's
-		// are, so it prints through the same walk and reads `[1, 2, 3, 4]`.
-		emit_format_sequence(e, info.element, address, fmt.aprintf("%d", info.count), inline_array = true)
+		emit_format_sequence(e, info.element, address, fmt.aprintf("%d", info.count))
 
 	case .Slice:
-		value, data, length := temp(e), temp(e), temp(e)
-		storage := llvm_type(e, under)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, SLICE_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, SLICE_LEN)
-		emit_format_sequence(e, info.element, data, length, inline_array = false)
+		data, length := load_pair(e, llvm_type(e, under), address, SLICE_DATA, SLICE_LEN)
+		emit_format_sequence(e, info.element, data, length)
 
 	case .Dynamic_Array:
-		// The current allocation up to the length word, which is the same thing a
-		// slice of it prints. Nesting is free: the element's own thunk runs.
-		value, data, length := temp(e), temp(e), temp(e)
-		storage := llvm_type(e, under)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, CONTAINER_STORAGE)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, CONTAINER_LEN)
-		emit_format_sequence(e, info.element, data, length, inline_array = false)
+		data, length := load_pair(e, llvm_type(e, under), address, CONTAINER_STORAGE, CONTAINER_LEN)
+		emit_format_sequence(e, info.element, data, length)
 
 	case .Map:
 		emit_format_map(e, under, address)
@@ -615,31 +533,19 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		emit_format_struct(e, type, under, address)
 
 	case .Any_View:
-		// design.md: the erased view is a pointer plus a `typeid`, which is exactly
-		// what the dispatch needs — so a nested `any_view` formats its subject.
-		value, data, id := temp(e), temp(e), temp(e)
-		storage := llvm_type(e, under)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, ANY_VIEW_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", id, storage, value, ANY_VIEW_ID)
-		// The thunk's own `%w`/`%o` parameters are the records to write into.
+		data, id := load_pair(e, llvm_type(e, under), address, ANY_VIEW_DATA, ANY_VIEW_ID)
 		emit_format_dispatch_at(e, data, id, "%w", "%o")
 
 	case .Union:
 		emit_format_union(e, under, address)
 
 	case:
-		// A `dyn` view, and anything else whose spelling design.md does not fix,
-		// prints as its type name, which is still coherent.
+		// A `dyn` view and anything else without a fixed spelling prints its type name.
 		emit_format_literal(e, type_name(e.c, type))
 	}
 }
 
-// A union prints as `.name` for a payloadless variant, `.name(payload)` for a
-// payload one — the variant identity a type switch would see, not the payload
-// type's own spelling, since variants may share a payload type. Chained over
-// variants like the enum case, since the tag isn't an addressable index; only
-// the active variant's payload is ever loaded or formatted.
+// `.name` or `.name(payload)` for the active variant, chained like enums.
 @(private = "file")
 emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -665,31 +571,18 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 		branch(e, done)
 		place_label(e, next)
 	}
-	// A union always holds a variant, so this is unreachable; emitting nothing
-	// keeps the block well-formed.
 	branch(e, done)
 	place_label(e, done)
 }
 
-// `type_info_of` returns runtime metadata for a `typeid` (design.md), and that
-// metadata carries the type's name — so a `typeid` prints as the name of what
-// it identifies. An id with no entry (nil or forged) has nothing to print and
-// falls back to its numeric identity.
+// A `typeid` prints its type's name, or its number when it has none.
 @(private = "file")
 emit_format_type_name :: proc(e: ^Emitter, id: string) {
-	limit := load(e, "i64", FMT_THUNK_COUNT)
-	zero, past, bad := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
-	safe := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
+	safe, _ := typeid_index(e, id, FMT_THUNK_COUNT)
 	view := gep_at(e, STRING_VIEW_TYPE, TYPE_NAMES, safe)
 	data := load(e, "ptr", view)
 	stride := gep_field(e, STRING_VIEW_TYPE, view, STRING_LEN)
 	length := load(e, "i64", stride)
-	// An id with no name — the nil one, a forged one, or a type this program
-	// never requested — has nothing to spell, so it prints its numeric identity.
 	missing := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", missing, length)
 	numeric, named, done := new_label(e, "fmt.typeid.number"), new_label(e, "fmt.typeid.named"), new_label(e, "fmt.typeid.done")
@@ -705,8 +598,7 @@ emit_format_type_name :: proc(e: ^Emitter, id: string) {
 	place_label(e, done)
 }
 
-// An enum's members are named constants that need not be contiguous
-// (design.md), so the spelling is a chain of comparisons rather than an index.
+// Enum members need not be contiguous, so this is a chain of comparisons.
 @(private = "file")
 emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -730,8 +622,7 @@ emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
 		branch(e, done)
 		place_label(e, next)
 	}
-	// A value no member names is still a value: print the number rather than
-	// nothing.
+	// An unnamed value prints as its number.
 	widened := widen_to_i64(e, value, under)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_i64(ptr %%w, i64 %s, ptr %%o)", widened)
 	branch(e, done)
@@ -739,7 +630,7 @@ emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
 }
 
 @(private = "file")
-emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string, inline_array: bool) {
+emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string) {
 	emit_format_literal(e, "[")
 	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
@@ -768,10 +659,7 @@ emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string,
 	emit_format_literal(e, "]")
 }
 
-// Map iteration order is unspecified (design.md "Maps"), so a printed map is
-// `[key = value, ...]` in whatever order the slot walk finds — the same walk
-// `foreach` performs. Both halves go through their own thunks, so a map of
-// maps prints.
+// `[key = value, ...]` in slot-walk order.
 @(private = "file")
 emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -806,11 +694,9 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	branch(e, entry)
 	place_label(e, entry)
 	key_slot := load(e, "ptr", key_out)
-	value_slot := temp(e)
 	emit_format_call(e, info.key, key_slot)
 	emit_format_literal(e, " = ")
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value_slot, value_out)
-	emit_format_call(e, info.element, value_slot)
+	emit_format_call(e, info.element, load(e, "ptr", value_out))
 	branch(e, head)
 
 	place_label(e, done)
@@ -835,16 +721,14 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 		emit_format_literal(e, identifier_text(e.c, sym.name))
 		emit_format_literal(e, " = ")
 		slot := gep_field(e, llvm_type(e, under), address, index)
-		// design.md "Uninitialized capacity": the storage behind the live prefix
-		// holds no value, so printing it would read what a retired element left
-		// there. The prefix prints as the sequence it is.
+		// Only the live prefix of an `@(initialized)` array holds values.
 		if counter := symbol_of(e.c, sym.initialized_by); counter != nil {
 			count := load(
 				e, llvm_type(e, counter.type),
 				gep_field(e, llvm_type(e, under), address, int(counter.index)),
 			)
 			element := underlying_info(e.c, sym.type).element
-			emit_format_sequence(e, element, slot, count, inline_array = true)
+			emit_format_sequence(e, element, slot, count)
 			continue
 		}
 		emit_format_call(e, sym.type, slot)
@@ -878,8 +762,6 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 		storage := llvm_type(e, TYPE_ANY_VIEW)
 		data := extract(e, storage, view, ANY_VIEW_DATA)
 		id := extract(e, storage, view, ANY_VIEW_ID)
-		// The thunks name `%w` and `%o`, so the two records are spilled to storage
-		// the call can address.
 		writer := spill_value(e, e.c.runtime_types["Writer"], emit_expr(e, v.bound[1]))
 		options := spill_value(e, e.c.runtime_types["Options"], emit_expr(e, v.bound[2]))
 		saved_w, saved_o := e.fmt_writer, e.fmt_options
@@ -891,20 +773,11 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 	return "0"
 }
 
-// The dispatch, written at a call site rather than inside a thunk, so the two
-// records are named operands instead of the thunk's own parameters.
+// Dispatches an erased value to its thunk, printing `<nil>` for no thunk.
 @(private = "file")
 emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) {
-	limit := load(e, "i64", FMT_THUNK_COUNT)
-	zero, past, bad := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
-	safe := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
-	slot, thunk := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %s", slot, FMT_THUNKS, safe)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, slot)
+	safe, _ := typeid_index(e, id, FMT_THUNK_COUNT)
+	thunk := load(e, "ptr", gep_at(e, "ptr", FMT_THUNKS, safe))
 	missing := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, thunk)
 	none, call, done := new_label(e, "fmt.none"), new_label(e, "fmt.call"), new_label(e, "fmt.done")
@@ -920,6 +793,12 @@ emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) 
 }
 
 @(private = "file")
+load_pair :: proc(e: ^Emitter, storage, address: string, first, second: int) -> (string, string) {
+	value := load(e, storage, address)
+	return extract(e, storage, value, first), extract(e, storage, value, second)
+}
+
+@(private = "file")
 spill_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	slot := alloca(e, llvm_type(e, type))
 	store(e, type, value, slot)
@@ -928,13 +807,8 @@ spill_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 
 // ==================================================== runtime metadata ==
 
-// design.md "`type` and `typeid`": one dense entry per requested runtime type,
-// keyed by the frozen `typeid`, plus a zero entry at index 0 so the nil id
-// resolves to nothing. `base:runtime` owns the layouts; this fills them.
-//
-// Emitted only for a program that asked for it. Every entry is a type that
-// already requested a `typeid` — `close_type_info_requests` extends this to
-// everything the public metadata names, so a member type is always resolvable.
+// design.md "`type` and `typeid`": one entry per requested `typeid`, indexed
+// by id, with an empty entry 0.
 TYPE_INFO_TABLE :: "@.loke.type_info"
 
 TYPE_INFO_COUNT :: "@.loke.type_info.count"
@@ -950,7 +824,6 @@ emit_type_info_tables :: proc(e: ^Emitter) {
 		backend_fail(e, "`type_info_of` was checked without the `base:runtime` layouts")
 		return
 	}
-	// Frozen ids are 1..N and dense, so the table is indexed directly.
 	count := len(e.c.typeid_order)
 	entries := make([]string, count + 1)
 	entries[0] = "zeroinitializer"
@@ -1001,10 +874,7 @@ type_info_entry :: proc(e: ^Emitter, record, member, type: Type_Id) -> string {
 	return named_field_constant(e, record, values)
 }
 
-// The public `Type_Kind` a compiler kind maps to. Order is frozen by
-// `base/runtime`'s declaration — adding a member there needs a runtime ABI
-// version bump. Untyped kinds never reach here: a `typeid` is only requested
-// for a concrete runtime type.
+// The public `Type_Kind`, whose order is frozen by `base/runtime`.
 @(private = "file")
 public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 	PUBLIC_KINDS :: []string {
@@ -1014,8 +884,6 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 		"Typeid", "Any_View", "Dyn", "Distinct", "Simd", "Allocator", "Allocator_Error",
 	}
 	wanted := "Invalid"
-	// A `distinct` type is its own public kind: it has a fresh identity, and the
-	// shape it wraps stays reachable through `element`.
 	under := type_underlying(c, type)
 	if type_kind(c, type) == .Distinct {
 		wanted = "Distinct"
@@ -1056,9 +924,7 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 	return 0
 }
 
-// The `[]Member_Info` of one aggregate — a struct's public fields, an enum's
-// members, a union's variants, or a procedure's parameters and results — in
-// declaration order.
+// The `[]Member_Info` of a struct, enum, union, or procedure.
 @(private = "file")
 type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 	shape := underlying_info(e.c, type)
@@ -1101,8 +967,7 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 		for variant, index in shape.variants {
 			values := make(map[string]string)
 			defer delete(values)
-			// The variant's *name* is its identity; a payloadless one reports
-			// `Unit` so every entry names a real type.
+			// A payloadless variant reports `Unit`.
 			payload := variant == TYPE_VOID ? e.c.unit_type : variant
 			values["kind"] = "2" // Union_Variant
 			values["name"] = text_constant(
@@ -1142,22 +1007,10 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 	}
 	strings.write_string(&b, " ]\n")
 	append(&e.globals, strings.to_string(b))
-	// `{` is a directive to core:fmt, so the slice constant is built rather than
-	// formatted.
-	slice := strings.builder_make()
-	strings.write_string(&slice, "{ ptr ")
-	strings.write_string(&slice, name)
-	fmt.sbprintf(&slice, ", i64 %d ", len(entries))
-	strings.write_string(&slice, "}")
-	return strings.to_string(slice)
+	return slice_constant(name, len(entries))
 }
 
-// Enum values use the two raw words without narrowing signed or unsigned
-// 128-bit values (design.md).
-//
-// The low word carries bits 0..63 and the high word bits 64..127, including a
-// signed representation's sign extension. Narrower enum backings therefore
-// have an all-zero or all-one high word as their representation requires.
+// An enum value's low and high 64-bit words, unnarrowed.
 @(private = "file")
 enum_raw_words :: proc(c: ^Compiler, value: Const_Value) -> (low: string, high: string) {
 	if value.kind != .Integer {
@@ -1174,9 +1027,7 @@ enum_raw_words :: proc(c: ^Compiler, value: Const_Value) -> (low: string, high: 
 	return fmt.aprintf("%d", low_value), fmt.aprintf("%d", high_value)
 }
 
-// One aggregate constant, filled by *name* against the record's declared
-// fields. design.md's layouts are the ABI authority, so a reordered or renamed
-// field produces a differently ordered constant, not a silently wrong table.
+// A record constant filled by field name, so the layout stays authoritative.
 @(private = "file")
 named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]string) -> string {
 	info := underlying_info(e.c, record)
@@ -1206,36 +1057,33 @@ named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]st
 	return strings.to_string(b)
 }
 
-// design.md: `type_info_of(0)` and an out-of-range or forged id return nil. The
-// builtin lowers to a checked table address, not a runtime call.
+// design.md: a nil, out-of-range, or forged id gives nil.
 @(private)
 emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
-	id := emit_expr(e, v.bound[0])
-	limit := load(e, "i64", TYPE_INFO_COUNT)
-	zero, past := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
-	bad := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
-	record := e.c.runtime_types["Type_Info"]
-	address := gep_at(e, struct_name(e, record), TYPE_INFO_TABLE, id)
+	safe, bad := typeid_index(e, emit_expr(e, v.bound[0]), TYPE_INFO_COUNT)
+	address := gep_at(e, struct_name(e, e.c.runtime_types["Type_Info"]), TYPE_INFO_TABLE, safe)
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr null, ptr %s", out, bad, address)
 	return out
 }
 
-// ------------------------------------------------------------------- text --
-
-// A `{ptr, i64}` view value, built field by field. A slice and a `string_view`
-// are the same shape, so one builder serves both; `storage` is the LLVM type
-// text and `length` an already-spelled operand.
-#assert(SLICE_DATA == VIEW_DATA && SLICE_LEN == VIEW_LEN)
+// `id` clamped into a table of `count` entries: a nil or out-of-range id maps to
+// the empty entry 0, and `bad` says so.
+@(private = "file")
+typeid_index :: proc(e: ^Emitter, id, count: string) -> (safe, bad: string) {
+	limit := load(e, "i64", count)
+	zero, past := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
+	bad, safe = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
+	return
+}
 
 // ------------------------------------------- compiler-contributed procedures --
 
-// design.md: built-ins satisfy the same static interface a user type does, so
-// their `iter` and `next` are real procedures, not a checker fiction. Emitted
-// once for the whole compilation, after every package's items.
+// Compiler-provided members of built-in types, emitted once after all packages.
 @(private)
 emit_synth_procs :: proc(e: ^Emitter) {
 	e.synth_bodies = true
@@ -1299,8 +1147,6 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 	#partial switch symbol.synth {
 	case .Standard_Len:
 		info := underlying_info(e.c, symbol.params[0])
-		// A fixed array's and a vector's length are properties of the type, so
-		// neither reads its receiver. Every other carrier stores the count.
 		if info.kind == .Array || info.kind == .Simd {
 			fmt.sbprintfln(&e.b, "  ret %s %d", result, info.count)
 		} else {
@@ -1327,8 +1173,7 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 
 // ============================================================ erased views ==
 
-// `{ ptr data, typeid id }`. The conversion never allocates: it pairs the
-// source's address with its frozen `typeid`.
+// `{ ptr data, typeid id }`, pairing the source's address with its `typeid`.
 @(private)
 emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> string {
 	storage := llvm_type(e, TYPE_ANY_VIEW)
@@ -1338,9 +1183,7 @@ emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> 
 	return out
 }
 
-// A checked extraction from an `any_view`: compare the stored `typeid`, then
-// read the data pointer as the requested type. `.(T)` traps on a mismatch;
-// `.as(T)` yields `Option(T)`.
+// `.(T)` traps on a `typeid` mismatch; `.as(T)` yields `Option(T)`.
 @(private)
 emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Type_Id) -> []string {
 	single := make([]string, 1)
@@ -1365,9 +1208,6 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 		return single
 	}
 
-	// design.md "Typed fallibility": `.as(T)` produces `Option(T)`, so the miss
-	// is `.none` rather than a zeroed payload paired with `false`. Nothing is
-	// read through the data pointer unless the `typeid` matched.
 	option := as_type
 	info := underlying_info(e.c, option)
 	if info == nil || info.kind != .Union || !info.failure_designated ||
@@ -1397,8 +1237,7 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 	return single
 }
 
-// `(dyn I)(&value)`: the data pointer plus the coherent witness for the erased
-// type. A nil concrete pointer produces the nil view and retains no witness.
+// `(dyn I)(&value)`: the data pointer plus the witness; nil gives the nil view.
 @(private)
 emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	storage := llvm_type(e, as_type)
@@ -1411,64 +1250,27 @@ emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	return out
 }
 
-// A slot call: load the thunk from the witness table and call it indirectly,
-// trapping first if the view is nil.
+// A slot call: load the thunk from the witness table, trapping first if the
+// view is nil, and call it with the view's data pointer as the receiver.
 @(private)
 emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	view := emit_expr(e, v.bound[0])
 	storage := llvm_type(e, expr_base(v.bound[0]).type)
 	data := extract(e, storage, view, DYN_DATA)
-	witness := extract(e, storage, view, DYN_WITNESS)
+	thunk := emit_witness_slot(e, extract(e, storage, view, DYN_WITNESS), v.operation.(Call_Dyn_Slot).index)
+	signature := type_of(e.c, expr_base(v.callee).type)
+	return emit_bound_call(e, INVALID_SYMBOL, thunk, signature, v.bound, v, receiver = data)
+}
 
-	// design.md: calling a slot on nil panics.
+@(private = "file")
+emit_witness_slot :: proc(e: ^Emitter, witness: string, index: int) -> string {
 	is_nil := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, witness)
 	panic_if(e, is_nil, "dyn.nil", "call through a nil dyn view")
-
-	entry, thunk := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %d", entry, witness, v.operation.(Call_Dyn_Slot).index)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, entry)
-
-	signature := type_of(e.c, expr_base(v.callee).type)
-	result_type := llvm_result_type(e, signature.result, signature.result_inout)
-	operands := make([]string, len(v.bound), context.temp_allocator)
-	operands[0] = data
-	for step in 1 ..< len(v.bound) {
-		index := call_slot_at(v, step)
-		if param_mode_is_pointer(signature.param_modes[index]) {
-			operands[index] = emit_address(e, v.bound[index])
-		} else {
-			operands[index] = emit_expr(e, v.bound[index])
-		}
-	}
-
-	call := ""
-	if signature.result != INVALID_TYPE {
-		call = temp(e)
-		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, thunk)
-	} else {
-		fmt.sbprintf(&e.b, "  call void %s(", thunk)
-	}
-	for operand, index in operands {
-		if index > 0 {
-			fmt.sbprint(&e.b, ", ")
-		}
-		type := index == 0 || param_mode_is_pointer(signature.param_modes[index]) ? "ptr" : llvm_type(e, signature.parameters[index])
-		fmt.sbprintf(&e.b, "%s %s", type, operand)
-	}
-	fmt.sbprintln(&e.b, ")")
-
-	if signature.result == INVALID_TYPE {
-		return nil
-	}
-	single := make([]string, 1)
-	single[0] = call
-	return single
+	return load(e, "ptr", gep_at(e, "ptr", witness, fmt.aprintf("%d", index)))
 }
 
-// One private immutable global per materialised constant, in registration
-// order (design.md "Materialization"). A constant used only at constant
-// indices never registered one, so it occupies no space in the program.
+// One private constant global per materialised constant.
 @(private)
 emit_materialized_constants :: proc(e: ^Emitter) {
 	if len(e.c.materialized_order) == 0 {
@@ -1484,9 +1286,8 @@ emit_materialized_constants :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "")
 }
 
-// One private immutable global per `(Interface, Concrete, arguments)`, holding
-// a compiler-generated thunk per slot. A thunk takes the erased receiver
-// pointer and re-types it for the concrete implementation.
+// One witness table per `(Interface, Concrete, arguments)`, holding a thunk per
+// slot that re-types the erased receiver.
 @(private)
 emit_witnesses :: proc(e: ^Emitter) {
 	for witness in e.c.witness_order {
@@ -1521,56 +1322,24 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	e.terminated = false
-	name := witness_thunk_name(e, witness, index)
 	signature := type_of(e.c, target.proc_type)
 	result_type := llvm_result_type(e, target.result, signature.result_inout)
-
-	fmt.sbprintf(&e.b, "define private %s %s(ptr %%arg0", result_type, name)
-	for position in 1 ..< len(target.params) {
-		mode := signature.param_modes[position]
-		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, target.params[position])
-		fmt.sbprintf(&e.b, ", %s %%arg%d", type, position)
-	}
+	fmt.sbprintf(&e.b, "define private %s %s(ptr %%arg0", result_type, witness_thunk_name(e, witness, index))
+	write_forwarded_params(e, target.params, signature.param_modes)
 	open_function(e, ")")
 
-	// The receiver arrives erased as a pointer to the referent, which is what
-	// both receiver modes now want (design.md "Receiver forms"): an immutable
-	// `self` is a borrow of the caller's storage, not a copy of it, so nothing
-	// is loaded here. A `move self` slot still takes its value.
-	receiver := "%arg0"
+	// The receiver arrives as a pointer; only a `move self` slot takes a value.
+	receiver_type, receiver := "ptr", "%arg0"
 	if !param_mode_is_pointer(slot.mode) {
-		loaded := load(e, llvm_type(e, target.params[0]), "%arg0")
-		receiver = loaded
+		receiver_type = llvm_type(e, target.params[0])
+		receiver = load(e, receiver_type, "%arg0")
 	}
-
-	call := ""
-	if target.result != INVALID_TYPE {
-		call = temp(e)
-		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, symbol_name(e, slot.target))
-	} else {
-		fmt.sbprintf(&e.b, "  call void %s(", symbol_name(e, slot.target))
-	}
-	receiver_type := param_mode_is_pointer(slot.mode) ? "ptr" : llvm_type(e, target.params[0])
-	fmt.sbprintf(&e.b, "%s %s", receiver_type, receiver)
-	for position in 1 ..< len(target.params) {
-		mode := signature.param_modes[position]
-		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, target.params[position])
-		fmt.sbprintf(&e.b, ", %s %%arg%d", type, position)
-	}
-	fmt.sbprintln(&e.b, ")")
-
-	if target.result == INVALID_TYPE {
-		fmt.sbprintln(&e.b, "  ret void")
-	} else {
-		fmt.sbprintfln(&e.b, "  ret %s %s", result_type, call)
-	}
-	fmt.sbprintln(&e.b, "}")
+	emit_forwarding_call(e, target, signature, symbol_name(e, slot.target), receiver_type, receiver)
 	fmt.sbprintln(&e.b, "")
 }
 
-// design.md: `dyn I` satisfies `I` through compiler-provided forwarding slots.
-// The forwarder takes the view by value, traps on a nil witness, and calls
-// the slot's thunk with the view's own data pointer.
+// `dyn I` satisfies `I` through forwarding slots that take the view, trap on a
+// nil witness, and call the slot's thunk with the view's data pointer.
 @(private = "file")
 emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
@@ -1578,48 +1347,43 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	signature := type_of(e.c, symbol.proc_type)
 	result_type := llvm_result_type(e, symbol.result, signature.result_inout)
 	view_type := llvm_type(e, symbol.params[0])
-
-	// The view itself is the receiver here. Both borrowing modes hand it over as
-	// a pointer, so the forwarder loads it before reading its halves.
 	receiver_by_ptr := len(signature.param_modes) > 0 && param_mode_is_pointer(signature.param_modes[0])
-	receiver_type := receiver_by_ptr ? "ptr" : view_type
-	fmt.sbprintf(&e.b, "define %s%s %s(%s %%arg0", llvm_linkage(name), result_type, name, receiver_type)
-	for position in 1 ..< len(symbol.params) {
-		mode := signature.param_modes[position]
-		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, symbol.params[position])
-		fmt.sbprintf(&e.b, ", %s %%arg%d", type, position)
-	}
+	fmt.sbprintf(
+		&e.b, "define %s%s %s(%s %%arg0", llvm_linkage(name), result_type, name, receiver_by_ptr ? "ptr" : view_type,
+	)
+	write_forwarded_params(e, symbol.params, signature.param_modes)
 	open_function(e, ")")
 
-	view := "%arg0"
-	if receiver_by_ptr {
-		view = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%arg0", view, view_type)
+	view := receiver_by_ptr ? load(e, view_type, "%arg0") : "%arg0"
+	thunk := emit_witness_slot(e, extract(e, view_type, view, DYN_WITNESS), int(symbol.index))
+	emit_forwarding_call(e, symbol, signature, thunk, "ptr", extract(e, view_type, view, DYN_DATA))
+}
+
+// `, T %argN` for every parameter after the receiver.
+@(private = "file")
+write_forwarded_params :: proc(e: ^Emitter, params: []Type_Id, modes: []Param_Mode) {
+	for position in 1 ..< len(params) {
+		type := param_mode_is_pointer(modes[position]) ? "ptr" : llvm_type(e, params[position])
+		fmt.sbprintf(&e.b, ", %s %%arg%d", type, position)
 	}
-	data := extract(e, view_type, view, DYN_DATA)
-	witness := extract(e, view_type, view, DYN_WITNESS)
-	is_nil := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, witness)
-	panic_if(e, is_nil, "dyn.nil", "call through a nil dyn view")
+}
 
-	entry, thunk := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %d", entry, witness, symbol.index)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, entry)
-
+// Calls `callee` with the receiver and the forwarded parameters, returns its
+// result, and closes the function.
+@(private = "file")
+emit_forwarding_call :: proc(
+	e: ^Emitter, symbol: ^Symbol, signature: ^Type_Info, callee, receiver_type, receiver: string,
+) {
+	result_type := llvm_result_type(e, symbol.result, signature.result_inout)
 	call := ""
 	if symbol.result != INVALID_TYPE {
 		call = temp(e)
-		fmt.sbprintf(&e.b, "  %s = call %s %s(ptr %s", call, result_type, thunk, data)
+		fmt.sbprintf(&e.b, "  %s = call %s %s(%s %s", call, result_type, callee, receiver_type, receiver)
 	} else {
-		fmt.sbprintf(&e.b, "  call void %s(ptr %s", thunk, data)
+		fmt.sbprintf(&e.b, "  call void %s(%s %s", callee, receiver_type, receiver)
 	}
-	for position in 1 ..< len(symbol.params) {
-		mode := signature.param_modes[position]
-		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, symbol.params[position])
-		fmt.sbprintf(&e.b, ", %s %%arg%d", type, position)
-	}
+	write_forwarded_params(e, symbol.params, signature.param_modes)
 	fmt.sbprintln(&e.b, ")")
-
 	if symbol.result == INVALID_TYPE {
 		fmt.sbprintln(&e.b, "  ret void")
 	} else {

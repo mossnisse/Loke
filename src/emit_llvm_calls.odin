@@ -907,8 +907,9 @@ consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol) -> int {
 	return slot
 }
 
-// Binds operands left to right and emits one call.
-@(private = "file")
+// Binds operands left to right and emits one call. A non-empty `receiver` is
+// an already-evaluated pointer passed in slot 0.
+@(private)
 emit_bound_call :: proc(
 	e: ^Emitter,
 	symbol_id: Symbol_Id,
@@ -916,6 +917,7 @@ emit_bound_call :: proc(
 	callee_type: ^Type_Info,
 	bound: []Expr,
 	call_node: ^Expr_Call = nil,
+	receiver := "",
 ) -> []string {
 	symbol := symbol_of(e.c, symbol_id)
 	if callee_type == nil {
@@ -943,6 +945,10 @@ emit_bound_call :: proc(
 	for step in 0 ..< len(bound) {
 		index := call_node != nil ? call_slot_at(call_node, step) : step
 		argument := bound[index]
+		if index == 0 && receiver != "" {
+			operands[0] = receiver
+			continue
+		}
 		if index == pack {
 			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index])
 			operands[index] = packed.value
@@ -1007,7 +1013,8 @@ emit_bound_call :: proc(
 			fmt.sbprint(&e.b, ", ")
 		}
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, callee_type.parameters[index])
+		pointer := param_mode_is_pointer(mode) || (index == 0 && receiver != "")
+		type := pointer ? "ptr" : llvm_type(e, callee_type.parameters[index])
 		fmt.sbprintf(&e.b, "%s %s", type, operand)
 	}
 	fmt.sbprintln(&e.b, ")")
