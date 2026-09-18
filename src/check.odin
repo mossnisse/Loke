@@ -1309,6 +1309,10 @@ reject_reserved_name :: proc(k: ^Checker, name_id: Identifier_Id, span: Span) ->
 	return true
 }
 
+name_identifier :: proc(c: ^Compiler, name: Name) -> Identifier_Id {
+	return name.id != INVALID_IDENTIFIER ? name.id : intern_identifier(c, name.text)
+}
+
 identifier_of :: proc(c: ^Compiler, v: ^Expr_Ident) -> Identifier_Id {
 	if v.name_id == INVALID_IDENTIFIER {
 		v.name_id = intern_identifier(c, v.name)

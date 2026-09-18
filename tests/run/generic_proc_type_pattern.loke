@@ -1,0 +1,11 @@
+package main; import "core:fmt";
+
+// A `$` name inside a procedure type binds from the argument's signature.
+
+apply :: proc(f: proc(x: $T) -> T, v: T) -> T { return f(v); }
+inc :: proc(x: int) -> int { return x + 1; }
+half :: proc(x: f64) -> f64 { return x / 2.0; }
+
+main :: proc() {
+	fmt.println(apply(inc, 1), apply(half, 3.0));
+}

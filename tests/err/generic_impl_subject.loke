@@ -1,0 +1,17 @@
+package main;
+
+// A generic `impl` subject that could never match an instance is reported at
+// the block, and a string generic argument prints quoted.
+
+Table :: struct($K: type, $V: type) { k: K, v: V }
+impl Table(strng, $V) { a :: proc(self) -> int { return 1; } }
+impl Table($K) { b :: proc(self) -> int { return 2; } }
+
+Arr :: struct($N: int, $T: type) { v: [N]T }
+impl Arr(M, $T) { c :: proc(self) -> int { return 3; } }
+
+Tag :: struct($S: string) { v: int }
+
+main :: proc() {
+	t: Tag("a, b") = 5;
+}

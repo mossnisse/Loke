@@ -292,6 +292,7 @@ resolve_impl_signatures :: proc(k: ^Checker, item: ^Item_Impl) {
 	// is a real diagnostic rather than a pending one.
 	declare_impl_block(k, item, quiet = false)
 	if item.subject == INVALID_TYPE {
+		check_generic_impl_subject(k, item)
 		return
 	}
 	outer := k.impl_type

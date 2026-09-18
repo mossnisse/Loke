@@ -1,24 +1,12 @@
-// Generics: templates, inference, specialization, `where`, and the
-// monomorphization cache.
-//
-// Decision A2 is monomorphization: every distinct argument vector gets its own
-// instance, symbol, and emitted body. Type annotations live on AST nodes
-// (decision A1), so an instance needs its own syntax too — supplied by
-// `ast_clone.odin`.
-//
-// Substitution is not a rewrite: a clone keeps `$T` exactly as written, and the
-// instance's scope binds `T` to the argument; `resolve_type_syntax` then
-// resolves the clone's parameter, field, and result types to concrete ones. The
-// clone's scope parent is the *declaration's* lexical scope, never the caller's,
-// so the same instantiation means the same thing everywhere.
+// Generics: templates, inference, `where`, and the monomorphization cache.
+// Each argument vector gets a cloned declaration whose scope binds the `$`
+// names and hangs off the declaration's own scope, never the caller's.
 package lokec
 
 import "core:fmt"
 import "core:strings"
 
-// design.md: recursive generic instantiation does not terminate in general, and
-// M3's rule is that resource exhaustion is a diagnostic, never a silent
-// fallback.
+// Recursive instantiation need not terminate; running out is a diagnostic.
 MAX_INSTANTIATION_DEPTH :: 64
 MAX_INSTANTIATIONS :: 4096
 
@@ -101,13 +89,11 @@ Instance :: struct {
 	// diagnostics use.
 	mangled:      string,
 	signature_ok: bool,
-	body_checked: bool,
 	// Deferred so an unselected overload never has its body diagnosed.
+	body_checked: bool,
 	span:         Span,
-	// Why a silent probe rejected this instance. Rejections are cached, and the
-	// probe that made one is the only attempt that ever computes its reason, so
-	// a probe that must not report still has to leave the reason behind for a
-	// request that is not a probe.
+	// Why a silent probe rejected this cached instance, for a later request that
+	// reports.
 	rejection:    Instance_Rejection,
 }
 
@@ -148,9 +134,8 @@ Instance_Decl :: struct {
 
 // ------------------------------------------------------------- templates --
 
-// The template a symbol denotes, or nil. Registration is lazy: a generic
-// declaration may be named from another package long before its own signature
-// phase runs.
+// The template a symbol denotes, or nil. Registered lazily, since another
+// package may name it before its own signature phase.
 generic_template_for :: proc(k: ^Checker, symbol_id: Symbol_Id) -> ^Generic_Template {
 	if symbol_id == INVALID_SYMBOL {
 		return nil
@@ -186,10 +171,7 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 	}
 	literal := decl_proc_literal(d)
 	if literal != nil && literal.signature != nil && literal.signature.convention != "" {
-		// A foreign block's member inherited its convention rather than writing one;
-		// `check_foreign_block` already rejects it as L0624, the diagnostic that
-		// names the real mistake. Flagging it here too would double-report one error
-		//.
+		// A foreign member inherited its convention; L0624 already reports it.
 		if len(d.symbols) > 0 {
 			if sym := symbol_of(k.c, d.symbols[0]); sym != nil && sym.is_foreign {
 				return
@@ -232,37 +214,65 @@ proc_signature_is_generic :: proc(literal: ^Expr_Proc) -> bool {
 }
 
 type_syntax_has_poly :: proc(e: Expr) -> bool {
+	_, poly := pattern_shape(e)
+	return poly
+}
+
+// design.md tie-breaker 4: a structural specialization beats an unspecialized
+// parameter. A `$T` pins nothing down; every written layer of structure counts.
+pattern_specificity :: proc(e: Expr) -> int {
+	specificity, _ := pattern_shape(e)
+	return specificity
+}
+
+@(private = "file")
+pattern_shape :: proc(e: Expr) -> (specificity: int, has_poly: bool) {
 	if e == nil {
-		return false
+		return 0, false
 	}
+	parts: [dynamic]Expr
+	parts.allocator = context.temp_allocator
 	#partial switch v in e {
 	case ^Type_Poly:
-		return true
+		return 0, true
 	case ^Type_Pointer:
-		return type_syntax_has_poly(v.elem)
+		append(&parts, v.elem)
 	case ^Type_C_Pointer:
-		return type_syntax_has_poly(v.elem)
+		append(&parts, v.elem)
 	case ^Type_Slice:
-		return type_syntax_has_poly(v.elem)
+		append(&parts, v.elem)
 	case ^Type_Dynamic_Array:
-		return type_syntax_has_poly(v.elem)
+		append(&parts, v.elem)
 	case ^Type_Distinct:
-		return type_syntax_has_poly(v.elem)
+		append(&parts, v.elem)
 	case ^Type_Dyn:
-		return type_syntax_has_poly(v.interface_expr)
+		append(&parts, v.interface_expr)
 	case ^Type_Array:
-		return type_syntax_has_poly(v.length) || type_syntax_has_poly(v.elem)
+		append(&parts, v.length, v.elem)
 	case ^Type_Map:
-		return type_syntax_has_poly(v.key) || type_syntax_has_poly(v.value)
+		append(&parts, v.key, v.value)
+	case ^Type_Proc:
+		for parameter in v.params {
+			append(&parts, parameter.type)
+		}
+		if v.result != nil {
+			append(&parts, v.result.type)
+		}
 	case ^Expr_Call:
 		for arg in v.args {
-			if type_syntax_has_poly(arg.value) {
-				return true
-			}
+			append(&parts, arg.value)
 		}
-		return type_syntax_has_poly(v.callee)
+		_, has_poly = pattern_shape(v.callee)
+	case:
+		return 1, false
 	}
-	return false
+	specificity = 1
+	for part in parts {
+		part_specificity, part_poly := pattern_shape(part)
+		specificity += part_specificity
+		has_poly ||= part_poly
+	}
+	return specificity, has_poly
 }
 
 @(private = "file")
@@ -291,11 +301,7 @@ register_generic_template :: proc(k: ^Checker, symbol_id: Symbol_Id, d: ^Decl, k
 		params := make([dynamic]Generic_Param_Decl, 0, 4, k.c.semantic_allocator)
 		for group in record.generic_params {
 			for name in group.names {
-				id := name.id
-				if id == INVALID_IDENTIFIER {
-					id = intern_identifier(k.c, name.text)
-				}
-				append(&params, Generic_Param_Decl{name = id, span = name.span, type_syntax = group.type})
+				append(&params, Generic_Param_Decl{name = name_identifier(k.c, name), span = name.span, type_syntax = group.type})
 			}
 		}
 		template.params = params[:]
@@ -351,11 +357,7 @@ generic_template_of_callee :: proc(k: ^Checker, callee: Expr, kind: Generic_Kind
 
 // The constant a `[$N]E` length is bound to inside an instance.
 poly_array_length :: proc(k: ^Checker, poly: ^Type_Poly) -> (u64, bool) {
-	name := poly.name.id
-	if name == INVALID_IDENTIFIER {
-		name = intern_identifier(k.c, poly.name.text)
-	}
-	sym := symbol_of(k.c, lookup_symbol(k.scope, name))
+	sym := symbol_of(k.c, lookup_symbol(k.scope, name_identifier(k.c, poly.name)))
 	if sym == nil || sym.kind != .Const || sym.const_value.kind != .Integer {
 		return 0, false
 	}
@@ -364,41 +366,6 @@ poly_array_length :: proc(k: ^Checker, poly: ^Type_Poly) -> (u64, bool) {
 		return 0, false
 	}
 	return u64(length), true
-}
-
-// design.md tie-breaker 4: a structural specialization beats an unspecialized
-// parameter. A `$T` pins nothing down; every written layer of structure counts.
-pattern_specificity :: proc(e: Expr) -> int {
-	if e == nil {
-		return 0
-	}
-	#partial switch v in e {
-	case ^Type_Poly:
-		return 0
-	case ^Type_Pointer:
-		return 1 + pattern_specificity(v.elem)
-	case ^Type_C_Pointer:
-		return 1 + pattern_specificity(v.elem)
-	case ^Type_Slice:
-		return 1 + pattern_specificity(v.elem)
-	case ^Type_Dynamic_Array:
-		return 1 + pattern_specificity(v.elem)
-	case ^Type_Distinct:
-		return 1 + pattern_specificity(v.elem)
-	case ^Type_Dyn:
-		return 1 + pattern_specificity(v.interface_expr)
-	case ^Type_Array:
-		return 1 + pattern_specificity(v.length) + pattern_specificity(v.elem)
-	case ^Type_Map:
-		return 1 + pattern_specificity(v.key) + pattern_specificity(v.value)
-	case ^Expr_Call:
-		total := 1
-		for arg in v.args {
-			total += pattern_specificity(arg.value)
-		}
-		return total
-	}
-	return 1
 }
 
 // -------------------------------------------------------------- cache key --
@@ -412,9 +379,7 @@ instance_key :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Bind
 		if binding.arg.is_type {
 			fmt.sbprintf(&b, "T%d", u32(binding.arg.type))
 		} else {
-			// Length-prefixed: a string argument may contain the `|` and `V<id>:`
-			// this composes with, and without a prefix-free encoding two different
-			// argument vectors share one key — and one instance.
+			// Length-prefixed, since a string may contain `|`.
 			text := const_key_text(c, binding.arg.value)
 			fmt.sbprintf(&b, "V%d:%d:%s", u32(binding.arg.value_type), len(text), text)
 		}
@@ -437,22 +402,14 @@ const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 	case .Nil:
 		return "nil"
 	case .Aggregate:
-		// A struct, array, union, or vector argument is its parts. Without them
-		// every aggregate answered the same text, and since this text *is* a
-		// value argument's identity, two different argument vectors shared one
-		// key — and one instance, one type, and one emitted body.
 		if value.aggregate == nil {
 			return "{}"
 		}
 		b := strings.builder_make(c.semantic_allocator)
-		// The variant leads because two variants of one union hold their payloads
-		// in the same slot: `.ok(1)` and `.err(1)` are the same elements.
+		// The variant leads: `.ok(1)` and `.err(1)` have the same elements.
 		fmt.sbprintf(&b, "{{%d", value.aggregate.variant)
 		for element in value.aggregate.elements {
-			// Length-prefixed for the reason `instance_key` length-prefixes this
-			// whole string: a `string` element may contain the `,` and `}` the
-			// parts are composed with, and `{"a,b", "c"}` and `{"a", "b,c"}` are
-			// not the same argument.
+			// Length-prefixed, like `instance_key`.
 			text := const_key_text(c, element)
 			fmt.sbprintf(&b, ",%d:%s", len(text), text)
 		}
@@ -466,9 +423,6 @@ const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	if sym := symbol_of(c, template); sym != nil {
-		// The owner is part of a generic method's identity, so it is part of the
-		// name a diagnostic prints too — spelled the way source spells it, not the
-		// way the backend mangles it.
 		if sym.owner_type != INVALID_TYPE {
 			strings.write_string(&b, type_name(c, sym.owner_type))
 			strings.write_string(&b, ".")
@@ -484,6 +438,8 @@ generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gen
 		}
 		if binding.arg.is_type {
 			strings.write_string(&b, type_name(c, binding.arg.type))
+		} else if binding.arg.value.kind == .String {
+			strings.write_quoted_string(&b, binding.arg.value.text)
 		} else {
 			strings.write_string(&b, const_key_text(c, binding.arg.value))
 		}
@@ -492,17 +448,12 @@ generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gen
 	return strings.to_string(b)
 }
 
-// The same identity as a backend symbol: `Table.int.i32` rather than
-// `Table(int, i32)`, so the emitted name stays readable instead of dissolving
-// into escapes. Distinct argument vectors still produce distinct names since
-// each part is separately escaped.
+// The same identity as a backend symbol, `Table.int.i32`; each part is escaped
+// on its own, so distinct vectors stay distinct.
 generic_mangled_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	if sym := symbol_of(c, template); sym != nil {
-		// A *generic method* has one template per instantiated `impl` block, and
-		// those share a name: `Atomic(int).load` and `Atomic(bool).load` are two
-		// templates called `load`. The owner is part of the identity, exactly as it
-		// is for an ordinary member.
+		// `Atomic(int).load` and `Atomic(bool).load` are two templates named `load`.
 		if sym.owner_type != INVALID_TYPE {
 			owner := llvm_safe(qualified_member_name(c, sym, context.temp_allocator))
 			strings.write_string(&b, owner)
@@ -511,9 +462,6 @@ generic_mangled_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gene
 			strings.write_string(&b, identifier_text(c, sym.name))
 		}
 	}
-	// `.` separates the parts, so it cannot survive inside one: a package-qualified
-	// type name has one, and so may a string argument. The owner prefix keeps its
-	// own dots, which are structural.
 	for binding in bindings {
 		strings.write_string(&b, ".")
 		part := binding.arg.is_type ? type_name(c, binding.arg.type) : const_key_text(c, binding.arg.value)
@@ -638,22 +586,7 @@ match_type_pattern :: proc(
 		if named_callee_symbol(k, callee) != info.dyn_interface || len(args) != len(info.dyn_args) {
 			return false
 		}
-		for arg, index in args {
-			bound := info.dyn_args[index]
-			if poly, is_poly := arg.value.(^Type_Poly); is_poly {
-				if !bind_pattern_name(k, poly.name, bound, scope, out) {
-					return false
-				}
-				continue
-			}
-			if !type_syntax_has_poly(arg.value) {
-				continue // a written argument; equality is checked by ranking
-			}
-			if !bound.is_type || !match_type_pattern(k, arg.value, bound.type, scope, out) {
-				return false
-			}
-		}
-		return true
+		return match_generic_args(k, args, info.dyn_args, scope, out)
 
 	case ^Type_Map:
 		if info.kind != .Map {
@@ -703,37 +636,53 @@ match_type_pattern :: proc(
 			}
 			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
 		}
-		// `^Table($K, $V)`: the argument must be an instance of that same template,
-		// and its own bound arguments supply the parts. `pkg.Table($K, $V)` names
-		// the template as plainly as the bare spelling does, which is why this asks
-		// `named_callee_symbol` rather than insisting on a lone identifier.
-		if info.instance_of == INVALID_SYMBOL {
+		// `Table($K, $V)`: an instance of that template supplies the parts.
+		if info.instance_of == INVALID_SYMBOL || named_callee_symbol(k, v.callee) != info.instance_of ||
+		   len(v.args) != len(info.instance_args) {
 			return false
 		}
-		if named_callee_symbol(k, v.callee) != info.instance_of {
+		return match_generic_args(k, v.args, info.instance_args, scope, out)
+
+	case ^Type_Proc:
+		if info.kind != .Proc {
 			return false
 		}
-		if len(v.args) != len(info.instance_args) {
-			return false
-		}
-		for arg, index in v.args {
-			bound := info.instance_args[index]
-			if poly, is_poly := arg.value.(^Type_Poly); is_poly {
-				if !bind_pattern_name(k, poly.name, bound, scope, out) {
+		index := 0
+		for parameter in v.params {
+			for _ in 0 ..< max(len(parameter.names), 1) {
+				if index >= len(info.parameters) ||
+				   !match_type_pattern(k, parameter.type, info.parameters[index], scope, out) {
 					return false
 				}
-				continue
+				index += 1
 			}
-			if !type_syntax_has_poly(arg.value) {
-				continue // a written argument; equality is checked by ranking
+		}
+		if index != len(info.parameters) || (v.result == nil) != (info.result == INVALID_TYPE) {
+			return false
+		}
+		return v.result == nil || match_type_pattern(k, v.result.type, info.result, scope, out)
+	}
+	return false
+}
+
+// Written arguments of `Name(...)` against an instance's bound ones: a `$` name
+// binds, and a written argument is left to ranking.
+@(private = "file")
+match_generic_args :: proc(
+	k: ^Checker, args: []Argument, bound: []Generic_Arg, scope: ^Scope, out: ^[dynamic]Generic_Binding,
+) -> bool {
+	for arg, index in args {
+		if poly, is_poly := arg.value.(^Type_Poly); is_poly {
+			if !bind_pattern_name(k, poly.name, bound[index], scope, out) {
+				return false
 			}
-			if !bound.is_type || !match_type_pattern(k, arg.value, bound.type, scope, out) {
+		} else if type_syntax_has_poly(arg.value) {
+			if !bound[index].is_type || !match_type_pattern(k, arg.value, bound[index].type, scope, out) {
 				return false
 			}
 		}
-		return true
 	}
-	return false
+	return true
 }
 
 @(private = "file")
@@ -744,10 +693,7 @@ bind_pattern_name :: proc(
 	scope: ^Scope,
 	out: ^[dynamic]Generic_Binding,
 ) -> bool {
-	id := name.id
-	if id == INVALID_IDENTIFIER {
-		id = intern_identifier(k.c, name.text)
-	}
+	id := name_identifier(k.c, name)
 	for existing in out {
 		if existing.name != id {
 			continue
@@ -800,14 +746,10 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	runtime := make([dynamic]Arg_Info, 0, len(args), k.c.semantic_allocator)
 	result.scope = scope
 
-	// Inference resolves the template's own written types, so it runs positioned
-	// at the template exactly as instantiation does.
 	saved := enter_instance(k, template, scope)
 	defer restore_checker_location(k, saved)
 
-	// This is a property of the written call, before `$` arguments disappear
-	// from an instantiated signature. Delaying it until `build_candidate` would
-	// accept a positional argument after a named compile-time argument.
+	// Checked on the written call, before `$` arguments leave the signature.
 	named := false
 	for arg in args {
 		if arg.name != INVALID_IDENTIFIER {
@@ -818,10 +760,6 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		}
 	}
 
-	// Inference binds `$` names; ranking against the substituted signature is
-	// `build_candidate`'s job. A named argument goes to its own parameter, an
-	// omitted one with a default is simply not bound here (the instance's own
-	// signature carries the default), and everything else fills a variadic pack.
 	claimed := make([]bool, len(args), k.c.semantic_allocator)
 	compile_time := make([]bool, len(args), k.c.semantic_allocator)
 	compile_targets := make([]Type_Id, len(args), k.c.semantic_allocator)
@@ -864,10 +802,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 					result.reason = "it needs more arguments than were supplied"
 					return result
 				}
-				// An omitted *runtime* parameter is simply not bound here: the
-				// instance's own signature carries the default. An omitted `$` one
-				// has to be bound, because its value is what the instance is *of* —
-				// `atomic.load()` is one instance and `atomic.load(.Relaxed)` another.
+				// An omitted `$` default is bound, since it selects the instance.
 				if !entry.is_poly {
 					continue
 				}
@@ -929,9 +864,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			return result
 		}
 	}
-	// The runtime arguments keep their *written* order, because that is the order
-	// `build_candidate` ranks them in: an unnamed argument fills the slot at its
-	// own index, and a named one finds its parameter by name.
+	// Runtime arguments keep their written order for `build_candidate`.
 	for arg, index in args {
 		if !compile_time[index] {
 			append(&runtime, arg)
@@ -1045,23 +978,13 @@ bind_compile_time_argument :: proc(
 		return "a `$` parameter needs a compile-time constant argument", false
 	}
 	value := arg.const_value
-	value_type := arg.type
+	value_type := default_type(k.c, arg.type)
 	if wanted != INVALID_TYPE {
-		if type_is_enum(k.c, wanted) && !assignable(k.c, value_type, wanted) {
-			return "an enum generic argument must be a variant of the parameter's enum type", false
-		}
-		converted, fits := convert_const(k.c, value, wanted, false)
-		if !fits {
-			return fmt.aprintf(
-				"`%s` is not representable by the generic parameter's type `%s`",
-				const_key_text(k.c, value),
-				type_name(k.c, wanted),
-				allocator = k.c.semantic_allocator,
-			), false
+		converted, problem := convert_generic_value(k, value, arg.type, wanted)
+		if problem != "" {
+			return problem, false
 		}
 		value, value_type = converted, wanted
-	} else {
-		value_type = default_type(k.c, value_type)
 	}
 	arg_value := Generic_Arg{value = value, value_type = value_type}
 	if !bind_pattern_name(k, name, arg_value, scope, out) {
@@ -1099,10 +1022,7 @@ instantiate_generic :: proc(
 
 	if len(k.c.instantiation_stack) >= MAX_INSTANTIATION_DEPTH ||
 	   k.c.instantiation_count >= MAX_INSTANTIATIONS {
-		// Once the ceiling is reached the program is not going to compile, and
-		// letting the traversal continue would report the same runaway thousands
-		// of times over. A silent overload probe must not consume the one
-		// diagnostic or poison a later direct request for the same instance.
+		// Reported once, and never by a silent probe.
 		if report && !k.c.instantiation_limit_hit {
 			k.c.instantiation_limit_hit = true
 			errorf(
@@ -1126,10 +1046,8 @@ instantiate_generic :: proc(
 	instance.provisional = true
 	instance.span = span
 	k.c.instances[key] = instance
-	// Reserved before resolving the signature, since resolution can recursively
-	// instantiate other declarations and reserving keeps nested work under the
-	// global ceiling while unwinding. A rejected entry stays negatively cached,
-	// so repeated probes cost no further slots.
+	// Reserved before resolution, which may instantiate recursively. A rejected
+	// entry stays cached, so repeated probes cost no further slots.
 	k.c.instantiation_count += 1
 
 	name := generic_instance_name(k.c, template.symbol, bindings)
@@ -1149,11 +1067,8 @@ instantiate_generic :: proc(
 		instance.signature_ok = instantiate_procedure_signature(k, template, instance, name, report)
 	case .None:
 	}
-	// A silent probe asks whether a candidate applies. `check_where_clauses`
-	// already keeps its own bounds quiet, but a substituted signature that does
-	// not resolve reported anyway, so an overload nothing selects could fail the
-	// compilation on its own. Contain it, and keep its head: a rejection is
-	// cached, and nothing recomputes one.
+	// A silent probe must not fail the compilation over a signature that does not
+	// resolve; keep the head diagnostic for a later request that reports.
 	if !report && !instance.signature_ok && len(k.c.diagnostics) > mark {
 		head := k.c.diagnostics[mark]
 		instance.rejection = Instance_Rejection {
@@ -1164,9 +1079,6 @@ instantiate_generic :: proc(
 		truncate_diagnostics(k.c, mark)
 		k.c.error_count = errors
 	}
-	// Failed bounds are negative cache entries. Reusing them avoids cloning a
-	// declaration and allocating semantic artifacts on every overload probe;
-	// `report_rejected_instance` can still replay the bound diagnostically.
 	return instance, instance.signature_ok
 }
 
@@ -1181,10 +1093,7 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 
 	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span})
 	defer pop(&k.c.instantiation_stack)
-	// A rejection a probe contained, re-reported for a request that is not one.
-	// The caret goes on this request, because the substitution is what failed
-	// and this is where it was asked for; the note keeps the written line the
-	// probe's own diagnostic pointed at.
+	// A contained rejection: the caret on this request, a note at the original.
 	if instance.rejection.code != "" {
 		errorf(k.c, span, instance.rejection.code, "%s", instance.rejection.message)
 		add_notef(k.c, instance.rejection.span, "in the signature of `%s`", name)
@@ -1219,14 +1128,11 @@ report_instantiation_cycle :: proc(k: ^Checker, span: Span, template: ^Generic_T
 	note_instantiation_stack(k)
 }
 
-// A runaway instantiation stack is thousands of frames deep and reading all of
-// them helps nobody: the innermost few name the recursion, and the count says
-// how far it ran.
+// The innermost frames name a recursion; the rest are counted.
 NOTED_INSTANTIATION_FRAMES :: 4
 
 note_instantiation_stack :: proc(k: ^Checker) {
-	// Unwinding a deep instantiation passes every level, and each one sees the
-	// same new diagnostic. The stack belongs to it once.
+	// Every unwinding level sees the same diagnostic; note the stack once.
 	if len(k.c.diagnostics) == 0 || k.c.last_noted_diagnostic == len(k.c.diagnostics) {
 		return
 	}
@@ -1248,22 +1154,29 @@ note_instantiation_stack :: proc(k: ^Checker) {
 	}
 }
 
-// The checker state an instance displaces while `body` runs positioned at it:
-// its own scope, the definition's package for method/operator/extension
-// lookup, and its file for visibility defaults.
+// Positions the checker at an instance's definition: its scope, package, and
+// file. Restored with `restore_checker_location`.
 @(private = "file")
-enter_instance :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) -> Checker_Location {
+enter_generic_location :: proc(
+	k: ^Checker, scope: ^Scope, pkg, lookup_pkg: Package_Id, impl_type: Type_Id, file: u32, file_node: ^File,
+) -> Checker_Location {
 	saved := save_checker_location(k)
 	k.scope = scope
-	k.pkg = template.pkg
-	k.lookup_pkg = template.lookup_pkg
-	k.impl_type = template.impl_type
+	k.pkg, k.lookup_pkg = pkg, lookup_pkg
+	k.impl_type = impl_type
 	k.proc_literal = nil
 	k.generic_depth += 1
-	if template.file_node != nil {
-		k.file, k.file_node = template.file, template.file_node
+	if file_node != nil {
+		k.file, k.file_node = file, file_node
 	}
 	return saved
+}
+
+@(private = "file")
+enter_instance :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) -> Checker_Location {
+	return enter_generic_location(
+		k, scope, template.pkg, template.lookup_pkg, template.impl_type, template.file, template.file_node,
+	)
 }
 
 // ------------------------------------------------------- record instances --
@@ -1306,11 +1219,7 @@ instantiate_record_body :: proc(
 	saved := enter_instance(k, template, instance.scope)
 	defer restore_checker_location(k, saved)
 
-	// The bounds come first because they are what makes a field type well formed
-	// in the first place: `struct($N: int) where N > 0 { items: [N]int }` is
-	// written that way so `[N]int` never has to face a negative length. Resolving
-	// fields first reports that fallout as a second, independent error, against
-	// the declaration rather than the argument that caused it.
+	// Bounds first: `where N > 0` is what makes `[N]int` well formed.
 	if !check_where_clauses(k, record.where_clauses, instance.span, name, report) {
 		return false
 	}
@@ -1320,8 +1229,6 @@ instantiate_record_body :: proc(
 	} else {
 		resolve_union_variants(k, type, record)
 	}
-	// design.md "@(require_results)": the property is declared once and every
-	// instance carries it, so `Result(int, Error)` is checked like `Result` is.
 	apply_type_metadata(k, clone, type)
 	if report && len(k.c.diagnostics) > before {
 		note_instantiation_stack(k)
@@ -1330,9 +1237,7 @@ instantiate_record_body :: proc(
 	path := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
 	check_finite_size(k, type, template.decl.span, &path)
 
-	// The type, its fields, and its bounds are settled now, so a method that
-	// names its own instantiation — `proc(self: inout Table(Key, Value))`, which
-	// design.md writes out — is an ordinary cache hit rather than recursion.
+	// Settled, so a method naming its own instantiation is a cache hit.
 	instance.provisional = false
 	instance.signature_ok = true
 	append(&template.instances, instance)
@@ -1352,16 +1257,7 @@ generic_args_of :: proc(c: ^Compiler, bindings: []Generic_Binding) -> []Generic_
 instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic_Template, report: bool) -> Type_Id {
 	if len(v.args) != len(template.params) {
 		if report {
-			errorf(
-				k.c,
-				v.span,
-				"L0431",
-				"`%s` takes %d generic argument%s, found %d",
-				identifier_text(k.c, symbol_of(k.c, template.symbol).name),
-				len(template.params),
-				len(template.params) == 1 ? "" : "s",
-				len(v.args),
-			)
+			report_generic_arity(k, v.span, template, len(v.args))
 		}
 		return INVALID_TYPE
 	}
@@ -1397,10 +1293,17 @@ instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Ge
 	return instance.type
 }
 
-// The bootstrap path into the same instance cache an ordinary `Option(int)`
-// application uses — types in, an instance out, no syntax in between — so
-// built-ins, container members, generated hooks, and iteration all reach the
-// *source-declared* `Option`/`Result` rather than a compiler-owned second copy.
+@(private = "file")
+report_generic_arity :: proc(k: ^Checker, span: Span, template: ^Generic_Template, found: int) {
+	errorf(
+		k.c, span, "L0431", "`%s` takes %d generic argument%s, found %d",
+		identifier_text(k.c, symbol_of(k.c, template.symbol).name),
+		len(template.params), len(template.params) == 1 ? "" : "s", found,
+	)
+}
+
+// `Option(int)` from type ids, for compiler-built uses of source-declared
+// templates.
 instantiate_record_types :: proc(k: ^Checker, symbol: Symbol_Id, args: []Type_Id, span: Span) -> Type_Id {
 	template := generic_template_for(k, symbol)
 	if template == nil || len(template.params) != len(args) {
@@ -1449,22 +1352,30 @@ bind_record_argument :: proc(
 	if !evaluated {
 		return "", false
 	}
-	if type_is_enum(k.c, wanted) && !assignable(k.c, expr_base(arg.value).type, wanted) {
-		return "an enum generic argument must be a variant of the parameter's enum type", false
-	}
-	converted, fits := convert_const(k.c, folded, wanted, false)
-	if !fits {
-		return fmt.aprintf(
-			"`%s` is not representable by the generic parameter's type `%s`",
-			const_key_text(k.c, folded),
-			type_name(k.c, wanted),
-			allocator = k.c.semantic_allocator,
-		), false
+	converted, problem := convert_generic_value(k, folded, expr_base(arg.value).type, wanted)
+	if problem != "" {
+		return problem, false
 	}
 	if !bind_pattern_name(k, name, Generic_Arg{value = converted, value_type = wanted}, scope, out) {
 		return "this generic argument disagrees with an earlier one", false
 	}
 	return "", true
+}
+
+// A constant generic argument converted to its parameter's type, or why not.
+@(private = "file")
+convert_generic_value :: proc(k: ^Checker, value: Const_Value, value_type, wanted: Type_Id) -> (Const_Value, string) {
+	if type_is_enum(k.c, wanted) && !assignable(k.c, value_type, wanted) {
+		return {}, "an enum generic argument must be a variant of the parameter's enum type"
+	}
+	converted, fits := convert_const(k.c, value, wanted, false)
+	if !fits {
+		return {}, fmt.aprintf(
+			"`%s` is not representable by the generic parameter's type `%s`",
+			const_key_text(k.c, value), type_name(k.c, wanted), allocator = k.c.semantic_allocator,
+		)
+	}
+	return converted, ""
 }
 
 // ---------------------------------------------------- procedure instances --
@@ -1527,9 +1438,7 @@ instantiate_procedure_signature :: proc(
 // Checks a selected instance's body exactly once, and queues it for emission
 // with its defining package's items.
 promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
-	// An interface requirement asks whether the call is well-typed, not whether
-	// its body executes. Committing here would cache a body whose dependencies
-	// were suppressed by the speculative registry gates.
+	// Speculation must not commit a body whose dependencies it suppressed.
 	if k.c.speculation_depth > 0 || instance == nil || instance.body_checked || !instance.signature_ok {
 		return
 	}
@@ -1546,9 +1455,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	saved := enter_instance(k, template, instance.scope)
 	defer restore_checker_location(k, saved)
 
-	// A body is diagnosed against the call that wanted it, which is the selection
-	// promoting it here. The instance's own span is a poor substitute: a silent
-	// overload probe created most instances, and a probe has no call to name.
+	// Diagnosed against the selecting call; a probe-created instance has none.
 	append(&k.c.instantiation_stack, Instantiation_Frame {
 		description = identifier_text(k.c, symbol_of(k.c, instance.symbol).name),
 		span        = span.file == NO_FILE ? instance.span : span,
@@ -1573,15 +1480,9 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 
 // ------------------------------------------------------------ where clauses --
 
-// design.md "where clauses": every bound is a compile-time boolean evaluated
-// while the declaration is instantiated. A failed bound removes an overload
-// candidate silently and is a hard error at a direct instantiation.
-//
-// A bound that is not a compile-time boolean *at all* — an unresolved name, a
-// non-boolean value — is a third case: the declaration is malformed rather than
-// a poor fit for these arguments. `report_malformed` reports that much even
-// where a bound failing on its merits stays silent, so a caller whose silence
-// deletes something cannot delete it over a typo.
+// design.md "where clauses": a failed bound silently drops a candidate, or is an
+// error when `report` is set. `report_malformed` still reports a bound that is
+// not a compile-time boolean at all.
 check_where_clauses :: proc(
 	k: ^Checker, clauses: []Expr, span: Span, what: string, report: bool,
 	report_malformed := false,
@@ -1617,10 +1518,7 @@ check_where_clauses :: proc(
 		}
 		truncate_diagnostics(k.c, mark)
 		k.c.error_count = errors
-		// design.md: an interface bound must name the requirement that failed and
-		// the concrete type that failed it, never a bare "constraint not
-		// satisfied". A value predicate has no requirement to name, so it reports
-		// the bound as written.
+		// An interface bound names the failed requirement; a predicate, itself.
 		if report_failed_interface_bound(k, clause, span) {
 			note_instantiation_stack(k)
 			return false
@@ -1648,10 +1546,8 @@ where_bound_text :: proc(c: ^Compiler, clause: Expr) -> string {
 
 // ------------------------------------------------- generic `impl` blocks --
 
-// An `impl` block whose subject is a generic application is kept until
-// an instantiation of that type exists. Both `impl Table($K, $V)` and
-// `impl Table(string, int)` are registered here; the second simply matches
-// fewer instances.
+// `impl Table($K, $V)` or `impl Table(string, int)`, kept until an instance
+// exists to install it on.
 register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id, args: []Argument) -> bool {
 	blocks, found := &k.c.generic_impls[template]
 	if !found {
@@ -1663,10 +1559,7 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 			return true // an earlier discovery round already registered it
 		}
 	}
-	// The same rule an ordinary block follows in `declare_impl_block`, decided
-	// here because a generic subject is registered before it resolves to a type:
-	// the template's own package makes the block inherent, anywhere else makes it
-	// an extension.
+	// Inherent in the template's own package, an extension elsewhere.
 	owner := symbol_of(k.c, template)
 	item.kind = owner != nil && owner.pkg == k.pkg ? .Impl : .Extend
 
@@ -1687,8 +1580,7 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 	register_generic_extension_groups(k, block)
 	append(blocks, block)
 	item.declared = true
-	// A block declared after an instance already exists still applies to it, so
-	// registration order between packages cannot decide what a type has.
+	// A late block still applies to instances that already exist.
 	if existing := k.c.generic_templates[template]; existing != nil {
 		for instance in existing.instances {
 			install_one_generic_impl(k, existing, instance, block)
@@ -1697,11 +1589,42 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 	return true
 }
 
-// A public procedure on a generic extension has a stable package name before
-// any concrete subject exists. Calls resolve this empty group first; checking an
-// explicitly typed argument instantiates the subject and fills the same group
-// before overload selection. Without the placeholder, callee lookup necessarily
-// ran too early to see the first instance.
+// A generic `impl` subject with the wrong argument count, or a written argument
+// that does not resolve, would silently match no instance.
+check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
+	call, is_call := item.type.(^Expr_Call)
+	if !is_call {
+		return
+	}
+	template := generic_template_of_callee(k, call.callee, .Record)
+	if template == nil {
+		return
+	}
+	if len(call.args) != len(template.params) {
+		report_generic_arity(k, expr_span(item.type), template, len(call.args))
+		return
+	}
+	for arg, index in call.args {
+		if type_syntax_has_poly(arg.value) {
+			continue
+		}
+		parameter := template.params[index]
+		mark, errors := len(k.c.diagnostics), k.c.error_count
+		wanted := resolve_type_syntax(k, parameter.type_syntax)
+		truncate_diagnostics(k.c, mark)
+		k.c.error_count = errors
+		if wanted == TYPE_TYPE || wanted == INVALID_TYPE {
+			if resolve_type_syntax(k, arg.value) == INVALID_TYPE && k.c.error_count == errors {
+				report_unresolved_type(k, arg.value)
+			}
+		} else if check_single_expr(k, arg.value, wanted) != INVALID_TYPE {
+			require_const(k, arg.value, "a generic argument", "L0432")
+		}
+	}
+}
+
+// A public procedure on a generic extension gets its package name as an empty
+// group before any instance exists; instances fill it.
 @(private = "file")
 register_generic_extension_groups :: proc(k: ^Checker, block: ^Generic_Impl) {
 	if block.item.kind != .Extend {
@@ -1720,17 +1643,9 @@ register_generic_extension_groups :: proc(k: ^Checker, block: ^Generic_Impl) {
 			if name.text == "_" {
 				continue
 			}
-			name_id := name.id
-			if name_id == INVALID_IDENTIFIER {
-				name_id = intern_identifier(k.c, name.text)
-			}
-			if existing, taken := pkg.scope.names[name_id]; taken {
-				sym := symbol_of(k.c, existing)
-				if sym != nil && sym.kind == .Proc_Group && sym.instance_of == block.template {
-					continue
-				}
-				// The qualified spelling is a convenience and does not displace an
-				// ordinary declaration that already owns this package name.
+			name_id := name_identifier(k.c, name)
+			// Never displaces a name the package already owns.
+			if _, taken := pkg.scope.names[name_id]; taken {
 				continue
 			}
 			pkg.scope.names[name_id] = new_symbol(k.c, Symbol {
@@ -1749,10 +1664,8 @@ register_generic_extension_groups :: proc(k: ^Checker, block: ^Generic_Impl) {
 	}
 }
 
-// Installs every matching block's members on a fresh instance, most specialized
-// first. A less specialized block does not re-declare a name the specialized one
-// already supplied, which is tie-breaker 4 applied where monomorphization puts
-// it: both blocks resolve to the same concrete type.
+// Installs every matching block on a fresh instance, most specialized first, so
+// a specialized member wins (tie-breaker 4).
 @(private = "file")
 install_generic_impls :: proc(k: ^Checker, template: ^Generic_Template, instance: ^Instance) {
 	blocks, found := k.c.generic_impls[template.symbol]
@@ -1782,25 +1695,15 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		return
 	}
 	scope := new_scope(k.c, block.scope, .Local)
-	saved := save_checker_location(k)
+	saved := enter_generic_location(k, scope, block.pkg, block.pkg, INVALID_TYPE, block.file, block.file_node)
 	defer restore_checker_location(k, saved)
-	k.scope = scope
-	k.pkg = block.pkg
-	k.lookup_pkg = block.pkg
-	k.generic_depth += 1
-	if block.file_node != nil {
-		k.file, k.file_node = block.file, block.file_node
-	}
 
-	// Match the block's written arguments against this instance's bound ones.
+	// A written argument that differs from the bound one skips this instance;
+	// `check_generic_impl_subject` reports one that could never match.
 	for written, index in block.args {
 		bound := instance.bindings[index].arg
 		if poly, is_poly := written.(^Type_Poly); is_poly {
-			name := poly.name
-			if name.id == INVALID_IDENTIFIER {
-				name.id = intern_identifier(k.c, name.text)
-			}
-			bind_generic_name(k, scope, Generic_Binding{name = name.id, span = name.span, arg = bound})
+			bind_generic_name(k, scope, Generic_Binding{name = name_identifier(k.c, poly.name), span = poly.name.span, arg = bound})
 			continue
 		}
 		if bound.is_type {
@@ -1836,9 +1739,7 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	clone.declared = true
 	k.impl_type = instance.type
 	declare_instance_impl_members(k, clone, instance.type, block)
-	// Signatures are resolved here, where the block's own scope and subject are
-	// in place: an ordinary call site would otherwise resolve them against
-	// whatever scope happened to reach the member first.
+	// Resolved here, in the block's own scope.
 	for member in clone.members {
 		if d, is_decl := member.(^Decl); is_decl {
 			resolve_declaration_signature(k, d)
@@ -1853,16 +1754,9 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	append(&k.c.pending_impl_instances, Pending_Impl{item = clone, scope = scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type})
 }
 
-// design.md "where clauses": a method of an instantiated block whose bound does
-// not hold is excluded from that instantiation rather than reported. It is what
-// lets one generic container serve element types that cannot do everything the
-// container offers -- `Small_Array(T, N)` keeps the methods that copy an element
-// for a copyable `T` and drops them for a move-only one, instead of failing the
-// moment such an instance exists.
-//
-// The bound is evaluated here, beside the signature, rather than with the
-// deferred body: a call can resolve long before the body is checked, and the
-// lookup that has to skip this method runs in between.
+// design.md "where clauses": a method whose bound fails is dropped from that
+// instance, as `Small_Array` drops copying methods for a move-only `T`.
+// Evaluated beside the signature, since calls resolve before bodies.
 @(private = "file")
 exclude_member_on_failed_bound :: proc(k: ^Checker, d: ^Decl) {
 	literal := decl_proc_literal(d)
@@ -1877,16 +1771,8 @@ exclude_member_on_failed_bound :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	name := identifier_text(k.c, symbol.name)
-	// Silence here does not reject a candidate, it removes a member. A bound that
-	// cannot be evaluated at all would remove one over a typo or a missing import,
-	// and the call site would then report a member that is written right there, so
-	// a malformed bound is reported rather than obeyed.
-	//
-	// Only the malformed path reports, so a diagnostic is how that case is told
-	// from a bound that simply did not hold. A reported bound is a broken
-	// declaration rather than an instantiation this method is not part of, and
-	// leaving the member in place is what keeps the one true error from trailing a
-	// second, untrue one at the call.
+	// A malformed bound is reported and keeps the member, rather than removing it
+	// over a typo.
 	errors := k.c.error_count
 	ok := check_where_clauses(
 		k, literal.where_clauses, literal.span, name, report = false, report_malformed = true,
@@ -1909,14 +1795,11 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 		symbols := make([dynamic]Symbol_Id, 0, len(d.names), k.c.semantic_allocator)
 		d.top_level = true
 		for name in d.names {
-			name_id := name.id
 			if name.text == "_" {
 				append(&symbols, INVALID_SYMBOL)
 				continue
 			}
-			if name_id == INVALID_IDENTIFIER {
-				name_id = intern_identifier(k.c, name.text)
-			}
+			name_id := name_identifier(k.c, name)
 			if member_named(k.c, impl_member_table(k, item.kind, subject, block.pkg), name_id) !=
 			   INVALID_SYMBOL {
 				append(&symbols, INVALID_SYMBOL) // a more specialized block supplied it
@@ -1971,13 +1854,9 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 	install_impl_members(k, item.kind, subject, added[:], block.pkg)
 }
 
-// The package-qualified spelling of a public member of an instantiated `extend`
-// block (design.md "Methods and implementation blocks"). A generic subject has
-// one instance per argument vector, so that one spelling names one procedure per
-// instance: they collect into an ordinary procedure group, and the call's own
-// arguments pick the instance exactly as method syntax already does. A name that
-// already means something else keeps its meaning — the qualified spelling is a
-// convenience, never a claim on the package's namespace.
+// The package-qualified name of a public instantiated `extend` member. Each
+// instance adds its procedure to one group; a name the package already uses for
+// something else keeps its meaning.
 @(private = "file")
 register_instance_extension_name :: proc(
 	k: ^Checker, block: ^Generic_Impl, name: Identifier_Id, member: Symbol_Id, span: Span,
@@ -1995,8 +1874,6 @@ register_instance_extension_name :: proc(
 	if sym == nil {
 		return
 	}
-	// The stable group registered with the generic block: the new instance joins
-	// it without changing what the package-qualified callee denotes.
 	if sym.kind == .Proc_Group && sym.instance_of == block.template {
 		for existing_member in sym.members {
 			if existing_member == member {
@@ -2009,8 +1886,8 @@ register_instance_extension_name :: proc(
 		sym.members = members
 		return
 	}
-	// The first instance's own member: the two become the group. `sym` must not
-	// be read past `new_symbol`, which may move the symbol store.
+	// The first instance's member: the two become a group. `new_symbol` may move
+	// the store, so `sym` is not read after it.
 	if sym.kind != .Proc || instance_template_of(k.c, sym.owner_type) != block.template {
 		return
 	}
@@ -2046,14 +1923,9 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 		}
 		k.c.pending_impl_instances[index].checked = true
 
-		saved := save_checker_location(k)
-		k.scope = pending.scope
-		k.pkg, k.lookup_pkg = pending.pkg, pending.pkg
-		k.impl_type = pending.subject
-		k.generic_depth += 1
-		if pending.file_node != nil {
-			k.file, k.file_node = pending.file, pending.file_node
-		}
+		saved := enter_generic_location(
+			k, pending.scope, pending.pkg, pending.pkg, pending.subject, pending.file, pending.file_node,
+		)
 
 		for member in pending.item.members {
 			if d, is_decl := member.(^Decl); is_decl {
