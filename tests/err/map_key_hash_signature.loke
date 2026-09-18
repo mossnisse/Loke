@@ -1,0 +1,14 @@
+package main;
+
+// An inherent `hash` is called with the key's storage and a seed, so it must
+// have the protocol's exact signature.
+
+K :: struct { v: int }
+impl K {
+	hash :: proc(self) -> string { return "x"; }
+	equal :: operator(==) proc(a, b: K) -> bool { return a.v == b.v; }
+}
+
+main :: proc() {
+	m := map[K]int{ K{1} = 5 };
+}

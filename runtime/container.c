@@ -1029,17 +1029,15 @@ int64_t loke_rt_v1_map_scan(
 
 /* ---------------------------------------------------------------- hash -- */
 
-/* design.md's standard catalogue promises `string` and `string_view` satisfy
- * `Hashable`, and two equal texts must hash equally however they were built. The
- * mix is the same 64-bit FNV-1a step the compiler folds over a scalar, applied
- * once per byte, so the compile-time and runtime paths agree exactly. */
+/* The compiler's FNV-1a step per byte, then over the length, matching
+ * `hash_const` so compile-time and runtime hashes agree. */
 uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed) {
 	uint64_t h = seed;
 	int64_t i;
 	for (i = 0; i < len; i += 1) {
 		h = (h ^ (uint64_t)data[i]) * 1099511628211u;
 	}
-	return h;
+	return (h ^ (uint64_t)len) * 1099511628211u;
 }
 
 /* --------------------------------------------------------------- faults -- */

@@ -1,0 +1,3 @@
+L0586
+@13:7
+which must be written `proc(self, seed: uint) -> uint`

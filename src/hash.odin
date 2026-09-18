@@ -1,15 +1,6 @@
-// The compiler-contributed `hash` operation.
-//
-// design.md's standard catalogue promises `Hashable` for booleans, integers,
-// floats, runes, pointers, enums, `typeid`, and recursively hashable fixed
-// arrays. `Hashable` is ordinary Loke source needing an ordinary
-// `value.hash(seed) -> uint`, so the compiler supplies a receiver member for
-// those types rather than special-casing the interface.
-//
-// The mix is 64-bit FNV-1a's step, applied once per scalar and folded over an
-// aggregate's elements. Not a cryptographic hash, no stability promise across
-// compiler versions; it must only agree between the compile-time and runtime
-// paths, hence both spell the same two steps.
+// The compiler-contributed `hash` for design.md's `Hashable` catalogue, and map
+// key policies. The mix is 64-bit FNV-1a's step per scalar, folded over arrays;
+// the compile-time and runtime paths must agree exactly.
 //
 // ponytail: one non-seeded mixing constant. The per-table seed threaded through
 // `hash` varies the result between tables; a per-*process* seed, which a
@@ -21,8 +12,8 @@ import "core:mem"
 // The 64-bit FNV prime.
 HASH_MULTIPLIER :: u64(1099511628211)
 
-// design.md: `bool`, integers, floats, runes, pointers including `rawptr` and
-// C pointers, enums, `typeid`, and recursively hashable fixed arrays.
+// design.md: `bool`, integers, floats, runes, `string`, `string_view`,
+// pointers, enums, `typeid`, and fixed arrays of hashable elements.
 type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	under := type_underlying(c, id)
 	info := type_of(c, under)
@@ -31,12 +22,9 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	}
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Enum, .Typeid,
-	     .Raw_Pointer, .Pointer, .C_Pointer, .Proc,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune:
-		return true
-	case .String, .String_View, .Untyped_String:
-		// design.md's catalogue lists both text carriers. Their `==` is already
-		// byte-wise, so a byte-wise hash is the coherent partner.
+	     .Raw_Pointer, .Pointer, .C_Pointer,
+	     .String, .String_View,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_String:
 		return true
 	case .Array:
 		return type_is_hashable(c, info.element)
@@ -44,18 +32,11 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return false
 }
 
-// A map key needs a coherent `==` and `value.hash(seed: uint) -> uint`; for a
-// user-defined key, both must be inherent to the key type — a caller-local
-// extension doesn't qualify even when an ordinary interface check there would
-// pass (design.md "Maps").
-//
-// So this asks only two questions: does the compiler supply the pair, or does
-// the key type's own package declare both? An extension block never enters the
-// answer, so one `map[K]V` uses one policy in every package it travels through.
+// design.md "Maps": the compiler supplies a key's `==`/`hash` pair, or the key
+// type declares both inherently; extensions never count.
 Key_Policy_Kind :: enum { Unresolved, Builtin, Inherent }
 
-// A checked operation choice, shared by CTFE and every backend. This record
-// contains semantic IDs only; no lookup or code generation happens when read.
+// Chosen during checking and read by CTFE and the backend.
 Key_Policy :: struct {
 	kind:      Key_Policy_Kind,
 	hash:      Symbol_Id,
@@ -70,11 +51,8 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 	}
 	hash := inherent_member_named(c, key, "hash")
 	equal := inherent_operator_named(c, key, "==")
-	// design.md "Maps": a different policy wraps the key in a local `distinct`
-	// type with its own inherent operations. A key declaring either half means
-	// that policy, so the catalogue answers only when neither is declared —
-	// checking it first would resolve a `distinct` scalar to its underlying type
-	// and pair that hash with the key's own `==`, the incoherence this prevents.
+	// Declaring either half opts out of the catalogue, so a `distinct` scalar
+	// never pairs its own `==` with its underlying type's hash.
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
 		if type_is_hashable(c, key) {
 			return Key_Policy{kind = .Builtin}, ""
@@ -90,18 +68,14 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 	return Key_Policy{kind = .Inherent, hash = hash, equal = equal}, ""
 }
 
-// A missing choice is a broken phase contract, never permission to repeat
-// overload/member lookup or silently substitute structural equality.
-resolved_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> Key_Policy {
-	return c.map_key_policies[key]
+// An inherent `hash` is called with the map's own key storage and a seed, so it
+// borrows its receiver and has exactly the protocol's shape.
+key_hash_signature_ok :: proc(sym: ^Symbol, key: Type_Id) -> bool {
+	return sym.has_receiver && sym.receiver == .Borrow && sym.result == TYPE_UINT &&
+		len(sym.params) == 2 && sym.params[0] == key && sym.params[1] == TYPE_UINT
 }
 
-// An inherent member of the type's own package — never an extension, and never
-// compiler-contributed (a synthesized `hash` is the built-in policy itself, so
-// finding it here would make every scalar key look user-defined). `members` is
-// exactly the inherent set (extensions live in the extending package per
-// `src/impl.odin`), read from the key type itself since `distinct` types don't
-// inherit the underlying type's operations (design.md "Distinct types").
+// The key type's own non-synthesized member; a `distinct` type inherits none.
 @(private = "file")
 inherent_member_named :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
 	info := type_of(c, type)
@@ -127,9 +101,7 @@ inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string
 	}
 	for member in info.members {
 		sym := symbol_of(c, member)
-		// A delegated operator is the underlying type's own operation wrapped, so
-		// it announces no policy of its own: the underlying type's hash is already
-		// its coherent partner (design.md "Delegating operators").
+		// A delegated `==` keeps the underlying type's policy.
 		if sym != nil && sym.operator == symbol_text && !sym.delegated && operator_on_self(sym, type) {
 			return member
 		}
@@ -155,11 +127,9 @@ hash_scalar_bits :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, alloca
 		if info != nil && info.bits != 0 {
 			bits = info.bits
 		}
-		// A bit-constructed constant may carry a signalling NaN whose exact
-		// representation cannot round-trip through the evaluator's f64 view.
-		// Hash the retained source-width pattern, exactly as runtime lowering does.
+		// The retained source-width pattern, as runtime lowering hashes it.
 		return const_float_pattern(value, bits)
-	case .Raw_Pointer, .Pointer, .C_Pointer, .Proc:
+	case .Raw_Pointer, .Pointer, .C_Pointer:
 		return 0 // the only compile-time pointer constant is nil
 	}
 	storage := value_allocator(c, allocator)
@@ -173,12 +143,13 @@ hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64, a
 	info := type_of(c, under)
 	#partial switch type_kind(c, under) {
 	case .String, .String_View, .Untyped_String:
-		// Byte-wise, exactly as `loke_rt_v1_hash_bytes` does it at run time.
+		// As `loke_rt_v1_hash_bytes`: the bytes, then the length, so the elements
+		// of `{"ab", ""}` and `{"a", "b"}` do not hash alike.
 		result := seed
 		for index in 0 ..< len(value.text) {
 			result = (result ~ u64(value.text[index])) * HASH_MULTIPLIER
 		}
-		return result
+		return (result ~ u64(len(value.text))) * HASH_MULTIPLIER
 	}
 	if info != nil && info.kind == .Array {
 		result := seed

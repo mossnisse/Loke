@@ -494,6 +494,12 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		return false
 	}
 	policy, reason := resolve_map_key_policy(k.c, key)
+	if reason == "" && policy.kind == .Inherent {
+		resolve_symbol_signature_in_place(k, policy.hash)
+		if sym := symbol_of(k.c, policy.hash); sym == nil || !key_hash_signature_ok(sym, key) {
+			reason = "has an inherent `hash`, which must be written `proc(self, seed: uint) -> uint`"
+		}
+	}
 	if reason == "" {
 		k.c.map_key_policies[key] = policy
 		return true

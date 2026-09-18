@@ -394,7 +394,7 @@ container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 // compiler supplies the pair.
 @(private = "file")
 key_policy_member :: proc(e: ^Emitter, key: Type_Id, want_equal: bool) -> Symbol_Id {
-	policy := resolved_map_key_policy(e.c, key)
+	policy := e.c.map_key_policies[key]
 	if policy.kind == .Unresolved {
 		backend_fail(e, "a map key operation was not resolved during checking")
 	}

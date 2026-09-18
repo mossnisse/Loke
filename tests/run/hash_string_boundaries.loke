@@ -1,0 +1,12 @@
+package main; import "core:fmt";
+
+// A string's hash covers its length, so shifted element boundaries differ, and
+// the folded and runtime hashes still agree.
+
+FOLDED :: [2]string{"ab", ""}.hash(3);
+
+main :: proc() {
+	s := [2]string{"ab", ""};
+	t := [2]string{"a", "b"};
+	fmt.println(s.hash(3) == t.hash(3), s.hash(3) == FOLDED);
+}

@@ -181,7 +181,7 @@ emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
 	#partial switch info.kind {
 	case .Bool:
 		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out, value)
-	case .Raw_Pointer, .Pointer, .C_Pointer, .Proc:
+	case .Raw_Pointer, .Pointer, .C_Pointer:
 		fmt.sbprintfln(&e.b, "  %s = ptrtoint ptr %s to i64", out, value)
 	case .Float:
 		// design.md: `+0` and `-0` hash identically because they compare equal.
