@@ -1,30 +1,45 @@
 package lokec
 
+import "core:mem/virtual"
 import "core:strings"
 import "core:testing"
 
-// Emission consumes a fully checked program. The general front-end helper only
-// checks the hand-built package's bodies because most semantic tests need the
-// bootstrap's signatures, not its implementation. LLVM tests need both.
+// `check_source`, plus the bootstrap's bodies and entry validation.
 @(private = "file")
-check_emission_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
-	k := Checker{c = c}
+check_for_emission :: proc(p: ^Checked, source: string, key := "", mode := Build_Mode.Exe) {
+	p.c = test_compiler(source)
+	p.c.build_mode = mode
+	p.tokens = lex(&p.c, 0)
+	p.f = parse(&p.c, 0, p.tokens)
+	p.pkg = new_package(&p.c, p.f.package_name, key)
+	p.c.root_package = p.pkg
+	add_package_file(&p.c, p.pkg, &p.f)
+	k := Checker{c = &p.c}
+	defer delete(k.nil_uses)
 	ensure_runtime_bootstrap(&k)
-	rebuild_active_items(c, package_of(c, pkg_id))
-	prepare_package(&k, pkg_id)
-	for id in package_order(c) {
-		if id == pkg_id { continue }
+	rebuild_active_items(&p.c, package_of(&p.c, p.pkg))
+	prepare_package(&k, p.pkg)
+	for id in package_order(&p.c) {
+		if id == p.pkg { continue }
 		check_package_bodies(&k, id)
 		check_pending_impl_instances(&k)
 	}
-	check_package_bodies(&k, pkg_id)
+	check_package_bodies(&k, p.pkg)
 	check_pending_impl_instances(&k)
-	if c.build_mode == .Exe && c.error_count == 0 { validate_executable(c, pkg_id) }
+	if p.c.build_mode == .Exe && p.c.error_count == 0 { validate_executable(&p.c, p.pkg) }
+}
+
+@(private = "file")
+expect_rejection :: proc(t: ^testing.T, c: ^Compiler, message: string, loc := #caller_location) {
+	last := len(c.diagnostics) > 0 ? c.diagnostics[len(c.diagnostics) - 1].message : ""
+	testing.expectf(t, c.error_count == 1 && strings.contains(last, message),
+	                "expected only %q, got %d errors ending in %q", message, c.error_count, last, loc = loc)
 }
 
 @(test)
 checked_call_operations_are_cleared_by_syntax_cloning :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 Color :: enum { red, blue }
 Value :: union { number: int }
 identity :: proc(value: int) -> int { return value; }
@@ -40,16 +55,9 @@ main :: proc() {
     extracted := view.as(int);
 }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	body := decl_proc(f.items[len(f.items) - 1].(^Decl)).body
 	calls: [dynamic]^Expr_Call
 	defer delete(calls)
@@ -69,28 +77,29 @@ main :: proc() {
 	extraction, extracted := calls[5].operation.(Call_Extract)
 	testing.expect(t, ordinary && conversion && wrapped && text_call && enum_call && extracted)
 	testing.expect(t, construction.index == 0 && !construction.clone)
-	testing.expect(t, text.op == .Byte_Len && type_is_enum(&c, enum_conversion.type))
+	testing.expect(t, text.op == .Byte_Len && type_is_enum(c, enum_conversion.type))
 	testing.expect(t, extraction.node != nil && extraction.node.type == calls[5].type)
 	testing.expect(t, len(calls[0].bound_order) == 1 && calls[0].bound_order[0] == 0)
 	for call in calls {
-		clone := clone_expr(&c, call).(^Expr_Call)
+		clone := clone_expr(c, call).(^Expr_Call)
 		testing.expect(t, clone.operation == nil && clone.bound == nil && clone.bound_order == nil,
 		               "syntax cloning retained a checked call operation or argument binding")
 		testing.expect(t, len(clone.args) == len(call.args))
 	}
-	finalize_semantics(&c)
-	_, emitted := emit_llvm_module(&c)
-	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
+	finalize_semantics(c)
+	_, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
 	// Symbol resolution alone cannot stand in for an unchecked operation.
 	calls[0].operation = nil
-	module, unchecked := emit_llvm_module(&c)
-	testing.expect(t, !unchecked && module == "" && c.error_count > 0,
-	               "an unchecked call was emitted using its resolved symbol")
+	module, unchecked := emit_llvm_module(c)
+	testing.expect(t, !unchecked && module == "", "an unchecked call was emitted using its resolved symbol")
+	expect_rejection(t, c, "an unchecked or compile-time call reached emission")
 }
 
 @(test)
 composite_consumers_use_checked_field_indices :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 Pair :: struct { first, second: int }
 value :: proc() -> int {
     number := 7;
@@ -99,140 +108,121 @@ value :: proc() -> int {
 }
 main :: proc() { assert(value() == 78); }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	value_decl := f.items[1].(^Decl)
 	body := decl_proc(value_decl).body
 	literal := body.stmts[1].(^Decl).values[0].(^Expr_Composite)
 	if !testing.expect(t, len(literal.field_indices) == 2) { return }
 	testing.expect(t, literal.field_indices[0] == 1 && literal.field_indices[1] == 0)
-	cloned := clone_expr(&c, literal).(^Expr_Composite)
+	cloned := clone_expr(c, literal).(^Expr_Composite)
 	testing.expect(t, len(cloned.field_indices) == 0, "a syntax clone retained checked field indices")
-	finalize_semantics(&c)
-	before, emitted := emit_llvm_module(&c)
-	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
+	finalize_semantics(c)
+	before, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
 
-	// Change only the written keys after checking. Both consumers must still
-	// use the original field slots, in the original evaluation order.
+	// Swap the written keys; both consumers must keep the checked slots.
 	literal.elements[0].key.(^Expr_Ident).name = "first"
 	literal.elements[1].key.(^Expr_Ident).name = "second"
 	call: Expr_Call
 	call.type = TYPE_INT
 	call.resolution = Resolution{kind = .Call, symbol = value_decl.symbols[0]}
 	call.operation = Call_Procedure{}
-	checker := Checker{c = &c}
+	checker := Checker{c = c}
 	value, evaluated := require_const(&checker, &call, "test result")
-	testing.expect(t, evaluated && bi_eq_i64(&c, value.integer, 78), "CTFE repeated field lookup")
-	after, emitted_again := emit_llvm_module(&c)
+	testing.expect(t, evaluated && bi_eq_i64(c, value.integer, 78), "CTFE repeated field lookup")
+	after, emitted_again := emit_llvm_module(c)
 	if !testing.expect(t, emitted_again && c.error_count == 0 && before == after,
-	                   "LLVM repeated field lookup") { report(&c); return }
+	                   "LLVM repeated field lookup") { report(c); return }
 	literal.field_indices = nil
-	module, missing := emit_llvm_module(&c)
-	testing.expect(t, !missing && module == "" && c.error_count == 1,
-	               "missing field indices did not reject the module")
+	module, missing := emit_llvm_module(c)
+	testing.expect(t, !missing && module == "", "missing field indices did not reject the module")
+	expect_rejection(t, c, "a struct literal element has no resolved field index")
 }
 
 @(test)
 optional_extraction_uses_checked_variant_metadata :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 main :: proc() {
     view: any_view = 42;
     extracted := view.as(int);
 }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	body := decl_proc(f.items[0].(^Decl)).body
 	call := body.stmts[1].(^Decl).values[0].(^Expr_Call)
 	extraction := call.operation.(Call_Extract).node
 	if !testing.expect(t, extraction != nil) { return }
-	finalize_semantics(&c)
-	// Compare extraction instructions, since reflection tables legitimately
-	// retain variant names even though this lowering no longer reads them.
+	finalize_semantics(c)
+	// Only the extraction, since reflection tables do read variant names.
 	previous := ""
 	for pass in 0 ..< 2 {
-		// Emitter storage normally lives in the emission arena.
-		context.allocator = context.temp_allocator
-		e := make_emitter(&c)
+		context.allocator = virtual.arena_allocator(&c.emission_arena)
+		e := make_emitter(c)
 		e.names[body.stmts[0].(^Decl).symbols[0]] = "%view"
 		emit_expr(&e, call)
 		ir := strings.to_string(e.b)
-		if !testing.expect(t, !e.failed && c.error_count == 0) { report(&c); return }
+		if !testing.expect(t, !e.failed && c.error_count == 0) { report(c); return }
 		if pass > 0 {
 			testing.expect(t, ir == previous, "LLVM repeated the optional success variant lookup")
 		}
 		previous = ir
-		info := type_of(&c, extraction.type)
+		info := type_of(c, extraction.type)
 		info.variant_names[0], info.variant_names[1] = info.variant_names[1], info.variant_names[0]
 	}
-	type_of(&c, extraction.type).failure_designated = false
-	module, missing := emit_llvm_module(&c)
-	testing.expect(t, !missing && module == "" && c.error_count == 1,
-	               "missing failure metadata did not reject the module")
+	type_of(c, extraction.type).failure_designated = false
+	module, missing := emit_llvm_module(c)
+	testing.expect(t, !missing && module == "", "missing failure metadata did not reject the module")
+	expect_rejection(t, c, "an optional extraction has no checked failure variant")
 }
 
 @(test)
 entry_emission_requires_validated_symbol :: proc(t: ^testing.T) {
 	for scenario in ([]string{"lookup_removed", "missing_symbol", "missing_name", "object"}) {
-		text := scenario == "object" ? "package utility; helper :: proc() { }" : "package main; main :: proc() { }"
-		c := test_compiler(text)
-		if scenario == "object" { c.build_mode = .Obj }
-		tokens := lex(&c, 0)
-		f := parse(&c, 0, tokens)
+		object := scenario == "object"
+		p: Checked
 		// A nonempty package key makes a hardcoded entry-name fallback observable.
-		id := new_package(&c, f.package_name, "entry_check")
-		c.root_package = id
-		add_package_file(&c, id, &f)
-		check_emission_package(&c, id)
-		finalize_semantics(&c)
-		before, emitted := emit_llvm_module(&c)
+		check_for_emission(&p, object ? "package utility; helper :: proc() { }" : "package main; main :: proc() { }",
+		                   "entry_check", object ? .Obj : .Exe)
+		defer destroy_checked(&p)
+		c := &p.c
+		finalize_semantics(c)
+		before, emitted := emit_llvm_module(c)
 		if !testing.expectf(t, emitted && c.error_count == 0, "%s setup failed", scenario) {
-			report(&c)
-		} else if scenario == "object" {
+			report(c)
+			continue
+		}
+		if object {
 			testing.expect(t, c.entry_point == INVALID_SYMBOL && !strings.contains(before, "define i32 @wmain"),
 			               "an object build required or emitted an entry point")
-		} else {
-			testing.expect(t, c.entry_point == f.items[0].(^Decl).symbols[0], "validation lost the entry symbol")
-			switch scenario {
-			case "lookup_removed":
-				delete_key(&package_of(&c, id).scope.names, symbol_of(&c, c.entry_point).name)
-			case "missing_symbol": c.entry_point = INVALID_SYMBOL
-			case "missing_name": f.active_items = nil
-			}
-			after, emitted_again := emit_llvm_module(&c)
-			if scenario == "lookup_removed" {
-				testing.expect(t, emitted_again && c.error_count == 0 && before == after,
-				               "LLVM repeated the entry lookup or used a hardcoded name")
-			} else {
-				testing.expectf(t, !emitted_again && after == "" && c.error_count == 1,
-				                "%s did not reject the module", scenario)
-			}
+			continue
 		}
-		destroy_ast(&f)
-		delete(tokens)
-		destroy_compilation(&c)
+		testing.expect(t, c.entry_point == p.f.items[0].(^Decl).symbols[0], "validation lost the entry symbol")
+		switch scenario {
+		case "lookup_removed":
+			delete_key(&package_of(c, p.pkg).scope.names, symbol_of(c, c.entry_point).name)
+		case "missing_symbol": c.entry_point = INVALID_SYMBOL
+		case "missing_name": p.f.active_items = nil
+		}
+		after, emitted_again := emit_llvm_module(c)
+		if scenario == "lookup_removed" {
+			testing.expect(t, emitted_again && c.error_count == 0 && before == after,
+			               "LLVM repeated the entry lookup or used a hardcoded name")
+		} else {
+			testing.expect(t, !emitted_again && after == "")
+			expect_rejection(t, c, scenario == "missing_name" ? "entry procedure has no emitted name" : "no validated entry procedure")
+		}
 	}
 }
 
 @(test)
 coercion_emission_preserves_checked_annotations :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 main :: proc() {
     number := 7;
     text: string = "hello";
@@ -242,17 +232,10 @@ main :: proc() {
     vector: Simd(int, 4) = -number;
 }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	if !testing.expect(t, c.error_count == 0) { report(&c); return }
-	finalize_semantics(&c)
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	finalize_semantics(c)
 
 	body := decl_proc(f.items[0].(^Decl)).body
 	number := body.stmts[0].(^Decl).symbols[0]
@@ -270,12 +253,10 @@ main :: proc() {
 	testing.expect(t, saved[1].erased_from == TYPE_INT && !saved[1].addressable)
 	testing.expect(t, saved[2].view_from == TYPE_STRING && saved[3].splat_from == TYPE_INT)
 
-	// A source-type request must skip this node's conversion without clearing
-	// its annotations, while its children still use their checked types.
+	// A source-type request skips only this node's conversion.
 	for expr, index in expressions {
-		// Emitter storage normally lives in the emission arena.
-		context.allocator = context.temp_allocator
-		e := make_emitter(&c)
+		context.allocator = virtual.arena_allocator(&c.emission_arena)
+		e := make_emitter(c)
 		e.names[number] = "%number"
 		e.names[text] = "%text"
 		emit_expr_at(&e, expr, sources[index])
@@ -287,12 +268,10 @@ main :: proc() {
 		               "source emission reapplied the node's conversion")
 	}
 
-	// Independent emitters must see the same checked program and produce the
-	// same module after both source-type and ordinary conversion emission.
 	previous := ""
 	for pass in 0 ..< 2 {
-		module, emitted := emit_llvm_module(&c)
-		if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
+		module, emitted := emit_llvm_module(c)
+		if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
 		if pass > 0 { testing.expect(t, module == previous, "repeated emission changed the LLVM module") }
 		previous = module
 		for expr, index in expressions {
@@ -307,35 +286,29 @@ main :: proc() {
 
 @(test)
 unreferenced_generic_templates_are_not_emitted :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 unused :: proc(value: $T) -> T { return value; }
 main :: proc() { }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	if !testing.expect(t, c.error_count == 0) { report(&c); return }
-	// Model a declaration whose signature was never forced by package checking:
-	// the emitter must still recognize the template from its syntax.
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	// A template whose signature was never forced is still recognized by syntax.
 	for &symbol in c.symbols {
-		if symbol.kind == .Proc && identifier_text(&c, symbol.name) == "unused" {
+		if symbol.kind == .Proc && identifier_text(c, symbol.name) == "unused" {
 			symbol.generic = false
 		}
 	}
-	finalize_semantics(&c)
-	_, valid := emit_llvm_module(&c)
-	if !testing.expect(t, valid && c.error_count == 0, "an unreferenced generic template reached LLVM emission") { report(&c) }
+	finalize_semantics(c)
+	_, valid := emit_llvm_module(c)
+	if !testing.expect(t, valid && c.error_count == 0, "an unreferenced generic template reached LLVM emission") { report(c) }
 }
 
 @(test)
 maps_declared_only_in_fields_have_key_policies :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 Key :: struct { id: int }
 impl Key {
     hash :: proc(self, seed: uint) -> uint { return seed; }
@@ -350,48 +323,50 @@ main :: proc() {
     n := g.nested[0].lookup_value(key = {1});
 }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	if !testing.expect(t, c.error_count == 0) { report(&c); return }
-	finalize_semantics(&c)
-	_, valid := emit_llvm_module(&c)
-	if !testing.expect(t, valid && c.error_count == 0, "field-only map types must reach emission with resolved key policies") { report(&c) }
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	finalize_semantics(c)
+	_, valid := emit_llvm_module(c)
+	if !testing.expect(t, valid && c.error_count == 0, "field-only map types must reach emission with resolved key policies") { report(c) }
 }
 
 @(test)
 unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
-	c := test_compiler("package main; main :: proc() { zero: typeid; id := typeid_of(int); }")
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	finalize_semantics(&c)
-	_, valid := emit_llvm_module(&c)
+	p: Checked
+	check_for_emission(&p, "package main; main :: proc() { zero: typeid; id := typeid_of(int); }")
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	finalize_semantics(c)
+	_, valid := emit_llvm_module(c)
 	testing.expect(t, valid && c.error_count == 0, "registered and nil typeids must both emit")
 	delete_key(&c.typeid_values, TYPE_INT)
-	module, missing := emit_llvm_module(&c)
-	testing.expect(t, !missing && module == "" && c.error_count == 1, "a missing dependency silently became the nil typeid")
+	module, missing := emit_llvm_module(c)
+	testing.expect(t, !missing && module == "", "a missing dependency silently became the nil typeid")
+	expect_rejection(t, c, "typeid registry is incomplete")
 }
 
 @(test)
 emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
-	cases := []string{"unfrozen", "speculative", "typeid", "typeid_range", "map", "order", "formatter",
-	                   "instance", "witness", "constant",
-	                   "lifecycle_unready", "lifecycle_missing", "lifecycle_incomplete", "lifecycle_hook",
-	                   "lifecycle_hook_owner"}
-	for broken in cases {
+	cases := [][2]string{
+		{"unfrozen", "typeids must be frozen"},
+		{"speculative", "during speculative checking"},
+		{"typeid", "typeid registry is incomplete"},
+		{"typeid_range", "no unique frozen typeid"},
+		{"map", "map key operation was not resolved"},
+		{"order", "ordering operation has no checked procedure"},
+		{"formatter", "formatter has no checked procedure"},
+		{"instance", "generic body is missing from its package"},
+		{"witness", "witness has no concrete type"},
+		{"constant", "materialized constant has no registered definition"},
+		{"lifecycle_unready", "must be finalized before emission"},
+		{"lifecycle_missing", "no finalized lifecycle operations"},
+		{"lifecycle_incomplete", "no finalized lifecycle operations"},
+		{"lifecycle_hook", "lifecycle hook has no checked procedure"},
+		{"lifecycle_hook_owner", "lifecycle hook has no checked procedure"},
+	}
+	for entry in cases {
+		broken, message := entry[0], entry[1]
 		c: Compiler
 		c.build_mode = .Obj
 		init_semantic_stores(&c)
@@ -426,15 +401,14 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 			operations.custom_drop = Symbol_Id(len(c.symbols) + 1)
 			c.lifecycle_operations[TYPE_INT] = operations
 		case "lifecycle_hook_owner":
-			// Emittable, but declared on another type: it would be called with the
-			// bytes of this one.
+			// Emittable, but owned by another type.
 			append(&c.symbols, Symbol{kind = .Proc, is_foreign = true, proc_type = TYPE_INT, owner_type = TYPE_BOOL})
 			operations := c.lifecycle_operations[TYPE_INT]
 			operations.custom_drop = Symbol_Id(len(c.symbols) - 1)
 			c.lifecycle_operations[TYPE_INT] = operations
 		}
-		testing.expectf(t, !validate_emission_dependencies(&c) && c.error_count == 1,
-		                "%s registry was accepted at the emission boundary", broken)
+		testing.expectf(t, !validate_emission_dependencies(&c), "%s registry was accepted at the emission boundary", broken)
+		expect_rejection(t, &c, message)
 		destroy_compilation(&c)
 	}
 }
@@ -455,7 +429,8 @@ frozen_typeids_reject_new_dependencies :: proc(t: ^testing.T) {
 
 @(test)
 map_consumers_use_the_checked_operation_ids :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 Key :: struct { id, annotation: int }
 impl Key {
     hash :: proc(self, seed: uint) -> uint { return seed; }
@@ -467,29 +442,21 @@ lookup :: proc() -> int {
 }
 main :: proc() { assert(lookup() == 7); }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	for key, policy in c.map_key_policies {
 		if !testing.expect(t, policy.kind == .Inherent) { return }
-		// Remove the lookup input while retaining the checked declarations. CTFE
-		// and LLVM must still use the exact IDs selected by the checker.
+		// CTFE and LLVM must use the checked IDs, not a member lookup.
 		members := make([dynamic]Symbol_Id, c.semantic_allocator)
-		for member in type_of(&c, key).members {
+		for member in type_of(c, key).members {
 			if member != policy.hash && member != policy.equal { append(&members, member) }
 		}
-		type_of(&c, key).members = members[:]
+		type_of(c, key).members = members[:]
 	}
 	lookup: Symbol_Id
 	for symbol, index in c.symbols {
-		if symbol.kind == .Proc && identifier_text(&c, symbol.name) == "lookup" {
+		if symbol.kind == .Proc && identifier_text(c, symbol.name) == "lookup" {
 			lookup = Symbol_Id(index)
 		}
 	}
@@ -497,17 +464,18 @@ main :: proc() { assert(lookup() == 7); }
 	call.type = TYPE_INT
 	call.resolution = Resolution{kind = .Call, symbol = lookup}
 	call.operation = Call_Procedure{}
-	checker := Checker{c = &c}
+	checker := Checker{c = c}
 	value, evaluated := require_const(&checker, &call, "test result")
-	testing.expect(t, evaluated && bi_eq_i64(&c, value.integer, 7), "CTFE repeated member lookup")
-	finalize_semantics(&c)
-	_, emitted := emit_llvm_module(&c)
-	if !testing.expect(t, emitted && c.error_count == 0, "LLVM repeated member lookup") { report(&c) }
+	testing.expect(t, evaluated && bi_eq_i64(c, value.integer, 7), "CTFE repeated member lookup")
+	finalize_semantics(c)
+	_, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0, "LLVM repeated member lookup") { report(c) }
 }
 
 @(test)
 lifecycle_consumers_use_finalized_operations :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 Resource :: struct { value: int }
 impl Resource {
     copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Resource, Allocator_Error) {
@@ -517,8 +485,6 @@ impl Resource {
 }
 Nested :: struct { parts: [2]Resource, empty: [0]Resource, text: string }
 Empty :: struct { parts: [0]Resource }
-// A union and a managed map key: the tag-aware clone and the map write are the
-// lowering paths that used to ask the checker's cache instead of the snapshot.
 Shape :: union { two: int, one: Resource }
 main :: proc() {
     x: Nested = {};
@@ -531,36 +497,28 @@ main :: proc() {
     keys["one"] = 1;
 }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	freeze_typeids(&c)
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	freeze_typeids(c)
 	types_before, symbols_before, procs_before := len(c.types), len(c.symbols), len(c.synth_procs)
-	if !testing.expect(t, finalize_lifecycle_operations(&c)) { report(&c); return }
+	if !testing.expect(t, finalize_lifecycle_operations(c)) { report(c); return }
 	testing.expect(t, len(c.types) == types_before && len(c.symbols) == symbols_before && len(c.synth_procs) == procs_before,
 	               "finalizing lifecycle facts created semantic dependencies")
 	for index in 1 ..< len(c.types) {
 		type := Type_Id(index)
-		operations, resolved := resolved_lifecycle_operations(&c, type)
-		testing.expect(t, resolved && operations.managed == type_is_managed(&c, type) &&
-		               operations.clone_fallible == type_clone_is_fallible(&c, type) &&
-		               operations.clone_disabled == type_clone_disabled(&c, type),
+		operations, resolved := resolved_lifecycle_operations(c, type)
+		testing.expect(t, resolved && operations.managed == type_is_managed(c, type) &&
+		               operations.clone_fallible == type_clone_is_fallible(c, type) &&
+		               operations.clone_disabled == type_clone_disabled(c, type),
 		               "the snapshot changed lifecycle semantics")
 	}
-	before, emitted := emit_llvm_module(&c)
-	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
-	// Discard both sources of lazy lifecycle decisions. Checked symbols and the
-	// final value records survive, so lowering must produce exactly the same IR.
+	before, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	// Without the lazy lifecycle sources the IR must not change.
 	for &info in c.types {
 		members := make([dynamic]Symbol_Id, c.semantic_allocator)
 		for member in info.members {
-			symbol := symbol_of(&c, member)
+			symbol := symbol_of(c, member)
 			if symbol.synth != .Clone && symbol.synth != .Try_Clone && symbol.hook != .Copy && symbol.hook != .Drop {
 				append(&members, member)
 			}
@@ -568,7 +526,7 @@ main :: proc() {
 		info.members = members[:]
 	}
 	clear(&c.lifecycles)
-	after, emitted_again := emit_llvm_module(&c)
+	after, emitted_again := emit_llvm_module(c)
 	testing.expect(t, emitted_again && c.error_count == 0 && before == after,
 	               "LLVM repeated lifecycle member lookup or classification")
 	testing.expect(t, len(c.lifecycles) == 0, "LLVM repopulated the checker's lifecycle cache")
@@ -576,24 +534,28 @@ main :: proc() {
 
 @(test)
 lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
-	for broken in ([]string{"missing_operation", "wrong_operation", "missing_body", "late_contribution"}) {
-		c := test_compiler("package main; Record :: struct { value: int } main :: proc() { x: Record = {}; y := x.clone(); }")
-		tokens := lex(&c, 0)
-		f := parse(&c, 0, tokens)
-		id := new_package(&c, f.package_name)
-		c.root_package = id
-		add_package_file(&c, id, &f)
-		check_emission_package(&c, id)
-		finalize_semantics(&c)
-		testing.expect(t, validate_emission_dependencies(&c), "invalid lifecycle test setup")
+	cases := [][2]string{
+		{"missing_operation", "no recorded operation"},
+		{"wrong_operation", "copy operation has no registered procedure"},
+		{"missing_body", "copy operation has no registered procedure"},
+		{"late_contribution", "requested after finalization"},
+	}
+	for entry in cases {
+		broken := entry[0]
+		p: Checked
+		check_for_emission(&p, "package main; Record :: struct { value: int } main :: proc() { x: Record = {}; y := x.clone(); }")
+		defer destroy_checked(&p)
+		c := &p.c
+		finalize_semantics(c)
+		if !testing.expect(t, validate_emission_dependencies(c) && c.error_count == 0) { report(c); return }
 		target: Type_Id
 		for type, operations in c.lifecycle_operations {
-			if operations.clone != INVALID_SYMBOL && underlying_info(&c, type).kind == .Struct {
+			if operations.clone != INVALID_SYMBOL && underlying_info(c, type).kind == .Struct {
 				target = type
 				break
 			}
 		}
-		testing.expect(t, target != INVALID_TYPE)
+		if !testing.expect(t, target != INVALID_TYPE, "Record has no clone operation") { return }
 		switch broken {
 		case "missing_operation", "wrong_operation":
 			operations := c.lifecycle_operations[target]
@@ -601,29 +563,26 @@ lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 			c.lifecycle_operations[target] = operations
 		case "missing_body": clear(&c.synth_procs)
 		case "late_contribution":
-			// Removing the contribution marker models a late request, not a new
-			// compilation. The closed phase must reject it without changing state.
-			info := type_of(&c, target)
+			// Clearing the marker models a late request; it must not change state.
+			info := type_of(c, target)
 			info.contributed -= {.Lifecycle}
 			symbols_before, procs_before, members_before := len(c.symbols), len(c.synth_procs), len(info.members)
-			checker := Checker{c = &c}
+			checker := Checker{c = c}
 			contribute_lifecycle_members(&checker, target)
 			testing.expect(t, .Lifecycle not_in info.contributed && len(c.symbols) == symbols_before &&
 			               len(c.synth_procs) == procs_before && len(info.members) == members_before,
 			               "a late lifecycle request mutated semantic state")
 		}
-		module, emitted := emit_llvm_module(&c)
-		testing.expectf(t, !emitted && module == "" && c.error_count == 1,
-		                "%s lifecycle dependency was accepted", broken)
-		destroy_ast(&f)
-		delete(tokens)
-		destroy_compilation(&c)
+		module, emitted := emit_llvm_module(c)
+		testing.expectf(t, !emitted && module == "", "%s lifecycle dependency was accepted", broken)
+		expect_rejection(t, c, entry[1])
 	}
 }
 
 @(test)
 converted_string_temporary_is_cleaned_up :: proc(t: ^testing.T) {
-	c := test_compiler(`package main;
+	p: Checked
+	check_for_emission(&p, `package main;
 make_key :: proc() -> string { return "x" + ""; }
 main :: proc() {
     m: map[string]int = {};
@@ -631,19 +590,12 @@ main :: proc() {
     _ = m.find_ref(make_key());
 }
 `)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	c.root_package = id
-	add_package_file(&c, id, &f)
-	check_emission_package(&c, id)
-	if !testing.expect(t, c.error_count == 0) { report(&c); return }
-	finalize_semantics(&c)
-	module, emitted := emit_llvm_module(&c)
-	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
+	defer destroy_checked(&p)
+	c, f := &p.c, &p.f
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
 	main_at := strings.index(module, "define internal void @loke.p.main()")
 	if !testing.expect(t, main_at >= 0) { return }
 	main_tail := module[main_at:]
@@ -675,8 +627,7 @@ assembly_temporaries_include_the_source_identity :: proc(t: ^testing.T) {
 	testing.expectf(t, first == again, "one Windows source path produced %q and %q", first, again)
 }
 
-// A fixed-size `alloca` reaches the entry block however deep in the body it was
-// asked for; a runtime-sized pack stays where its element count exists.
+// Fixed-size allocas move to the entry block; runtime-sized ones stay put.
 @(test)
 fixed_allocas_reach_the_entry_block :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
@@ -704,12 +655,10 @@ fixed_allocas_reach_the_entry_block :: proc(t: ^testing.T) {
 	actual := splice_prologue(&e, body, {"  %pair = alloca { i64, i64 }", "  %byte = alloca i8"})
 	testing.expectf(t, actual == expected, "unexpected prologue splice:\n%s", actual)
 
-	// Nothing to place, and nowhere to place it, both leave the text alone.
 	testing.expect(t, splice_prologue(&e, body, nil) == body)
 	testing.expect(t, !e.failed && c.error_count == 0, "an ordinary splice reported a failure")
 
-	// Storage with no entry block to hold it leaves the text for LLVM to describe,
-	// but the module must not be handed back as though it were whole.
+	// No entry block leaves the text alone but fails the module.
 	orphan := "declare void @outside()\n"
 	testing.expect(t, splice_prologue(&e, orphan, {"  %x = alloca i8"}) == orphan)
 	testing.expect(t, e.failed && c.error_count == 1, "a dropped prologue was not reported")
