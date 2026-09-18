@@ -429,6 +429,10 @@ place_root_symbol :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 	case ^Expr_Selector:
 		return place_root_symbol(c, v.operand)
 	case ^Expr_Index:
+		// A value-returning `operator([])` produces a temporary, not a place.
+		if v.resolution.kind == .User_Operator && v.value_category != .Place {
+			return INVALID_SYMBOL
+		}
 		return place_root_symbol(c, v.operand)
 	}
 	return INVALID_SYMBOL

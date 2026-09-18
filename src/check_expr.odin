@@ -2174,7 +2174,7 @@ check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 	}
 	v.backing = array_of(k.c, info.element, u64(len(v.elements)))
 	ok := true
-	for element in v.elements {
+	for element, index in v.elements {
 		if element.key != nil {
 			errorf(k.c, element.span, "L0479", "a slice literal has no keyed elements")
 			ok = false
@@ -2182,7 +2182,10 @@ check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 		}
 		if !check_value_expr(k, element.value, info.element, "initialise") {
 			ok = false
+			continue
 		}
+		// The hidden array owns its elements, so a borrowed one is cloned.
+		classify_composite_element(k, v, index, info.element)
 	}
 	if !ok {
 		v.type = INVALID_TYPE

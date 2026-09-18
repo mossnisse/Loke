@@ -8,10 +8,8 @@ import "core:strings"
 
 // -------------------------------------------------------------- constants --
 
-// design.md "Zero values": a union constant is a payload written into the
-// storage type's alignment-carrying head plus the variant's tag, serialized to
-// the same little-endian byte image as packed/aligned records and split across
-// the integer head and byte-array tail.
+// design.md "Zero values": a union constant is the payload's little-endian byte
+// image, split across the integer head and byte-array tail, plus the tag.
 @(private = "file")
 union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Type_Info) -> string {
 	shape := union_layout(e.c, type)
@@ -22,8 +20,7 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Ty
 	payload_type := union_variant_payload(e.c, type, index)
 	head := "0"
 	payload_bytes := make([]u8, int(shape.payload_size), context.temp_allocator)
-	// A zero-sized payload — `Unit`, or any empty record — contributes no bits,
-	// so the zeroed head already *is* the whole value.
+	// A zero-sized payload contributes no bits.
 	if payload_type != TYPE_VOID && type_size(e.c, payload_type) != 0 {
 		payload_size := int(type_size(e.c, payload_type))
 		if payload_size > len(payload_bytes) ||
@@ -75,16 +72,14 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	if info == nil {
 		return "0"
 	}
-	// An invalid constant inside `@(initialized)` capacity is not a value of the
-	// element type. It still has the inert all-zero representation the enclosing
-	// record's zero value writes without inspecting the element.
+	// An invalid constant inside `@(initialized)` capacity is not a value, but
+	// still has the inert all-zero representation.
 	if value.kind == .Invalid {
 		return "zeroinitializer"
 	}
 	#partial switch info.kind {
 	case .Typeid:
-		// Symbolic during checking, numeric here: `freeze_typeids` has assigned a
-		// deterministic value to every requested type before any body is emitted.
+		// `freeze_typeids` has numbered every requested type before emission.
 		id := typeid_value(e.c, value.type_value)
 		if value.type_value != INVALID_TYPE && id == 0 {
 			backend_fail(e, "a typeid constant was not registered before freezing")
@@ -104,8 +99,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator:
 		return "null"
 	case .CString_View:
-		// A string literal can initialize a `cstring_view` because its
-		// zero-terminated bytes have static lifetime (design.md).
+		// A string literal's zero-terminated bytes have static lifetime.
 		return value.kind == .String ? text_literal_global(e, value.text) : "null"
 	case .String, .String_View:
 		return text_constant(e, value, info.kind == .String)
@@ -115,9 +109,8 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	case .Union:
 		return union_constant(e, value, under, info)
 	case .Array, .Simd:
-		// A vector constant is LLVM's `<...>` over the same lane values an array
-		// constant writes between brackets; a `Simd(bool, N)` lane is `i8` in
-		// memory, which `simd_lane_llvm_type` answers for both.
+		// A vector constant is `<...>` over the same lanes; a `Simd(bool, N)` lane
+		// is `i8` in memory.
 		vector := info.kind == .Simd
 		lane := simd_lane_llvm_type(e, info)
 		b := strings.builder_make()
@@ -132,8 +125,6 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			}
 			value := llvm_const(e, element, info.element)
 			if vector && lane == "i8" {
-				// A mask lane is a byte, so `true`/`false` — an `i1`'s spelling — is a
-				// type mismatch in the constant rather than a narrowing.
 				value = value == "true" ? "1" : "0"
 			}
 			fmt.sbprintf(&b, " %s %s", lane, value)
@@ -144,8 +135,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		if value.kind == .Nil {
 			return "zeroinitializer"
 		}
-		// A slice constant is not a pair of fields to fill in: it points at
-		// storage, and only the module can hold storage that outlives every frame.
+		// A slice constant points at storage only the module can hold.
 		if info.kind == .Slice && value.aggregate != nil {
 			return slice_literal_constant(e, value, info)
 		}
@@ -164,7 +154,8 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 				element = value.aggregate.elements[index]
 			}
 			if byte_array {
-				fmt.sbprintf(&b, " [%d x i8] %s", type_size(e.c, symbol.type), field_byte_const(e, element, symbol.type))
+				strings.write_string(&b, " ")
+				write_field_bytes(e, &b, element, symbol.type)
 			} else {
 				fmt.sbprintf(&b, " %s %s", llvm_type(e, symbol.type), llvm_const(e, element, symbol.type))
 			}
@@ -181,31 +172,22 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	return "0"
 }
 
-// The `[size x i8]` constant of one field inside a combined `@(packed, align=N)`
-// struct: byte arrays keep a non-packed LLVM record from re-padding or dropping
-// the raised alignment. Serializes the complete little-endian value, including
-// nested padding, rather than zeroing unsupported fields.
+// One field of a combined `@(packed, align=N)` struct, whose LLVM members are
+// byte arrays: the field's complete little-endian image, padding included.
 @(private = "file")
-field_byte_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
-	size := int(type_size(e.c, type))
-	bytes := make([]u8, size, context.temp_allocator)
+write_field_bytes :: proc(e: ^Emitter, b: ^strings.Builder, value: Const_Value, type: Type_Id) {
+	bytes := make([]u8, int(type_size(e.c, type)), context.temp_allocator)
 	if !write_const_bytes(e, bytes, value, type) {
 		backend_fail(e, "a combined packed/aligned constant has a value that cannot be represented as bytes")
-		return "zeroinitializer"
+		fmt.sbprintf(b, "[%d x i8] zeroinitializer", len(bytes))
+		return
 	}
-	b := strings.builder_make()
-	strings.write_string(&b, "c\"")
-	for byte in bytes {
-		fmt.sbprintf(&b, "\\%02X", byte)
-	}
-	strings.write_string(&b, "\"")
-	return strings.to_string(b)
+	write_byte_array_constant(b, bytes)
 }
 
+// Missing elements and nil values are all-zero, which `out` already is.
 @(private = "file")
 write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type_Id) -> bool {
-	// Missing aggregate elements and nil values are their type's all-zero value;
-	// `make` already initialized the destination accordingly.
 	if value.kind == .Invalid || value.kind == .Nil {
 		return true
 	}
@@ -312,25 +294,21 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 		}
 		return true
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .CString_View:
-		// Their only byte-serializable compile-time value is nil, handled above.
+		// Their only byte-serializable value is nil, handled above.
 		return false
 	}
 	return false
 }
 
-// LLVM's decimal float syntax only round-trips exactly for some values, so
-// every float constant is spelled as its bit pattern: `half` uses the 16-bit
-// form, `float` the double pattern (exact, since the value was already rounded
-// to single precision).
+// Every float constant is spelled as its bit pattern, since LLVM's decimal
+// syntax only round-trips some values exactly.
 llvm_float :: proc(pattern: u64, bits: u16) -> string {
 	if bits == 16 {
 		return fmt.aprintf("0xH%04X", u16(pattern))
 	}
 	if bits == 32 {
-		// LLVM has no 32-bit hex float literal: a `float` constant is written as
-		// the `double` pattern of the same value. The widening is done on the bits
-		// rather than by a hardware conversion, so a signalling NaN's payload
-		// survives — `f64(f32_snan)` would quiet it.
+		// LLVM writes a `float` constant as the `double` pattern of the same value.
+		// Widening the bits, not the value, keeps a signalling NaN's payload.
 		return fmt.aprintf("0x%016X", f32_pattern_as_f64(u32(pattern)))
 	}
 	return fmt.aprintf("0x%016X", pattern)
@@ -345,8 +323,7 @@ f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
 	case 0xff:
 		return sign | 0x7ff0_0000_0000_0000 | mantissa // infinity, or a NaN payload
 	case 0:
-		// Zero, or an f32 subnormal, which is an ordinary normal f64: the
-		// hardware conversion is exact and has no NaN to quiet.
+		// Zero or a subnormal: the hardware conversion is exact here.
 		return transmute(u64)f64(transmute(f32)pattern)
 	}
 	return sign | (u64(exponent) - 127 + 1023) << 52 | mantissa
@@ -354,11 +331,8 @@ f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
 
 // ------------------------------------------------------------------ places --
 
-// The read half of `store`, and the only load that can be under-aligned: it
-// takes the `Type_Id` because that is what `align_suffix` needs. `load` remains
-// the right call for a compiler-owned slot, whose alignment is natural by
-// construction; this one is for a written place, which may be reached through a
-// packed field.
+// A load from a written place, which may be under-aligned through a packed
+// field. `load` stays right for compiler-owned slots.
 @(private)
 load_place :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
 	out := temp(e)
@@ -374,8 +348,6 @@ store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s%s", llvm_type(e, type), value, address, align_suffix(e, address, type))
 }
 
-// The guaranteed alignment of a place, defaulting to the pointee's natural
-// alignment when nothing lower was recorded.
 @(private = "file")
 place_align_of :: proc(e: ^Emitter, address: string, type: Type_Id) -> u64 {
 	if a, ok := e.place_align[address]; ok {
@@ -384,9 +356,7 @@ place_align_of :: proc(e: ^Emitter, address: string, type: Type_Id) -> u64 {
 	return type_align(e.c, type)
 }
 
-// `, align N` when a place is known less aligned than its pointee wants — what
-// reaching through a packed field produces. Empty otherwise, so ordinary access
-// keeps its unchanged IR.
+// `, align N` for a place known to be less aligned than its pointee.
 @(private = "file")
 align_suffix :: proc(e: ^Emitter, address: string, type: Type_Id) -> string {
 	if a, ok := e.place_align[address]; ok && a < type_align(e.c, type) {
@@ -395,9 +365,8 @@ align_suffix :: proc(e: ^Emitter, address: string, type: Type_Id) -> string {
 	return ""
 }
 
-// Records the effective alignment of the address of `field` reached from a base
-// place, lowering it to 1 through a packed struct so nested access stays
-// unaligned.
+// Records a field address's effective alignment, which is 1 through a packed
+// struct, so nested access stays unaligned.
 @(private = "file")
 record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_address: string, field_type: Type_Id) {
 	base_info := underlying_info(e.c, base_type)
@@ -408,8 +377,8 @@ record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_
 	}
 }
 
-// The address of a place. Composite literals get temporary storage here, which
-// is what makes `&Point{1, 2}` work.
+// The address of a place; a value gets temporary storage, so `&Point{1, 2}`
+// works.
 @(private)
 emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 	if expression_converts_storage(expr) {
@@ -425,8 +394,7 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 // The storage type can precede an implicit conversion on the same node.
 @(private)
 emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
-	// design.md "Materialization": every runtime use of one constant shares one
-	// read-only object, so the address is the global the checker registered.
+	// design.md "Materialization": every use of one constant shares one global.
 	if entry := materialization_of(e.c, expr); entry != nil {
 		return entry.name
 	}
@@ -444,9 +412,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return pointer
 
 	case ^Expr_Selector:
-		// `pkg.name` naming another package's global is a whole symbol, not a field
-		// of its operand — the operand is a package alias with no storage, so its
-		// own name is the address.
+		// `pkg.name` is another package's global, not a field of the alias.
 		if v.resolution.kind == .Value {
 			if name, ok := e.names[v.resolution.symbol]; ok {
 				return name
@@ -461,43 +427,35 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return out
 
 	case ^Expr_Index:
-		// design.md "Indexing and slicing": an `operator([])` returning `inout T`
-		// hands back the address itself, and only that overload denotes a place. A
-		// value-returning one produces a value, which needs temporary storage like
-		// any other — asking for its address is what an immutable receiver does.
+		operand_type := expr_base(v.operand).type
+		// An `inout` `operator([])` result is the address itself; a value result
+		// is a temporary that needs storage like any other.
 		if v.resolution.kind == .User_Operator {
 			if sym := symbol_of(e.c, v.resolution.symbol); sym != nil && sym.result_inout {
 				return emit_operator_call(e, v.resolution.symbol, v.bound)
 			}
 			slot := alloca(e, llvm_type(e, as_type))
 			store(e, as_type, emit_operator_call(e, v.resolution.symbol, v.bound), slot)
+			hold_addressed_temporary(e, expr, as_type, slot)
 			return slot
 		}
-		// A slice element lives in the root, reached through the data word, and its
-		// bound is the runtime length rather than a static count.
-		if type_is_slice(e.c, expr_base(v.operand).type) {
+		if type_is_slice(e.c, operand_type) {
 			return emit_slice_element_address(e, v)
 		}
-		// A dynamic array's element lives behind its data word, bounded by its
-		// length word: the same two loads, read out of the container header.
-		if type_is_dynamic_array(e.c, expr_base(v.operand).type) {
+		if type_is_dynamic_array(e.c, operand_type) {
 			return emit_dynamic_element_address(e, v)
 		}
-		if type_is_map(e.c, expr_base(v.operand).type) {
-			// design.md "Maps": every index but the whole-element assignment names
-			// an element that must already be there, and that one never asks for an
-			// address — `src/emit_llvm_stmt.odin` commits its value into the slot.
+		// Whole-element map assignment never asks for an address; every other
+		// map index names an element that must already exist (design.md "Maps").
+		if type_is_map(e.c, operand_type) {
 			return emit_map_element_address(e, v)
 		}
-		// A C pointer indexes without bounds checking (design.md
-		// "C pointers"). There is no length to check against, which is exactly
-		// what the type says.
-		if operand_info := underlying_info(e.c, expr_base(v.operand).type);
+		// A C pointer indexes without bounds checking (design.md "C pointers").
+		if operand_info := underlying_info(e.c, operand_type);
 		   operand_info != nil && operand_info.kind == .C_Pointer {
 			data := emit_expr(e, v.operand)
 			index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
-			out := gep_at(e, llvm_type(e, operand_info.element), data, index)
-			return out
+			return gep_at(e, llvm_type(e, operand_info.element), data, index)
 		}
 		base_type, base_address := emit_base_address(e, v.operand)
 		info := underlying_info(e.c, base_type)
@@ -517,32 +475,23 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return slot
 
 	case ^Expr_Call:
+		// A single `inout` result is already the address of the returned place.
 		if expr_base(expr).value_category == .Place {
-			// A single `inout` result is already the address of the returned place.
 			return emit_call(e, v, as_type)
 		}
-		// A value result, such as a receiver, needs temporary storage. A folded
-		// conversion like `u8(3)` stores its constant, not its unconverted operand.
-		slot := alloca(e, llvm_type(e, as_type))
-		store(e, as_type, emit_expr_at(e, expr, as_type), slot)
-		hold_addressed_temporary(e, expr, as_type, slot)
-		return slot
 	}
-	// Any other addressable expression is materialised into a temporary.
+	// Any other value is materialised into a temporary. A folded conversion like
+	// `u8(3)` stores its constant, not its unconverted operand.
 	slot := alloca(e, llvm_type(e, as_type))
 	store(e, as_type, emit_expr_at(e, expr, as_type), slot)
 	hold_addressed_temporary(e, expr, as_type, slot)
 	return slot
 }
 
-// The two branches above are where an owned value becomes addressable storage,
-// which is the one thing every borrowing form has in common: slicing, indexing,
-// field selection, a conversion, an operator, and an immutable receiver all
-// reach their operand through here. Registering the owner once, here, is what
-// gives `takes(build()[:])` a boundary — the borrow is the caller's to keep
-// alive, and the storage is nobody's to name.
-//
-// A place names storage someone else owns, and is not ours to destroy.
+// Where an owned value becomes addressable storage for a borrow — slicing,
+// indexing, a field, a conversion, an operator, an immutable receiver — the
+// temporary is registered once, so `takes(build()[:])` has a boundary. A place
+// is someone else's to destroy.
 @(private)
 hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: string) {
 	if expression_is_borrowed_place(e.c, expr) {
@@ -551,54 +500,55 @@ hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: 
 	register_temporary_place(e, type, place)
 }
 
-// `xs[i]`: the element's address inside the container's current allocation,
-// bounds-checked against the header's length word. Indexing and slicing produce
-// views into the current allocation (design.md), so this address is exactly as
-// long-lived as that allocation — enforced by the M5b invalidation events every
-// relocating operation registers.
+// An operand read by value that its operation never owns, such as a comparison
+// side or a text operation's receiver. An owned managed temporary lives until
+// its full expression ends, so a view into it stays valid that long.
+@(private = "file")
+emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
+	value := emit_expr(e, expr)
+	base := expr_base(expr)
+	if base.is_const || !emit_lifecycle(e, base.type).managed || expression_is_borrowed_place(e.c, expr) {
+		return value
+	}
+	slot := alloca(e, llvm_type(e, base.type))
+	store(e, base.type, value, slot)
+	register_temporary_place(e, base.type, slot)
+	return value
+}
+
+// The checked i64 index of `v`, which must be below the runtime `length`.
+// Unsigned, so a negative index fails the same comparison as an oversized one.
+@(private = "file")
+emit_index_below :: proc(e: ^Emitter, v: ^Expr_Index, length: string) -> string {
+	index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
+	out_of_range := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
+	panic_if(e, out_of_range, "bounds", "index out of range")
+	return index
+}
+
+// `xs[i]`: an address in the current allocation, valid only as long as it is
+// (the M5b invalidation events enforce that).
 @(private = "file")
 emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	operand_type := expr_base(v.operand).type
 	header := emit_address(e, v.operand)
-	data := load(e, "ptr", header)
-	length := temp(e)
-	length_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", length, length_slot)
-
-	index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
-	// Unsigned, so a negative index is caught by the same comparison as an
-	// oversized one.
-	out_of_range := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
-	panic_if(e, out_of_range, "bounds", "index out of range")
-
-	out := gep_at(e, llvm_type(e, container_element(e.c, operand_type)), data, index)
-	return out
+	data := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_STORAGE))
+	length := load(e, "i64", gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN))
+	index := emit_index_below(e, v, length)
+	return gep_at(e, llvm_type(e, container_element(e.c, operand_type)), data, index)
 }
 
-// `s[i]`: the element's address inside the slice's root, bounds-checked against
-// the runtime length word.
+// `s[i]`: an address in the slice's root.
 @(private = "file")
 emit_slice_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	operand_type := expr_base(v.operand).type
-	slice := emit_expr(e, v.operand)
-	llvm := llvm_type(e, operand_type)
-	data := extract(e, llvm, slice, SLICE_DATA)
-	length := extract(e, llvm, slice, SLICE_LEN)
-
-	index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
-	// Unsigned, so a negative index is caught by the same comparison as an
-	// oversized one.
-	out_of_range := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
-	panic_if(e, out_of_range, "bounds", "index out of range")
-
-	out := gep_at(e, llvm_type(e, slice_element(e.c, operand_type)), data, index)
-	return out
+	data, length := emit_byte_slice_parts(e, v.operand)
+	index := emit_index_below(e, v, length)
+	return gep_at(e, llvm_type(e, slice_element(e.c, operand_type)), data, index)
 }
 
-// `p.x` and `p[i]` accept one pointer hop, in which case the pointer value
-// itself is the base address.
+// `p.x` and `p[i]` accept one pointer hop, whose value is the base address.
 @(private = "file")
 emit_base_address :: proc(e: ^Emitter, operand: Expr) -> (Type_Id, string) {
 	type := expr_base(operand).type
@@ -618,80 +568,15 @@ emit_nil_check :: proc(e: ^Emitter, pointer: string) {
 	panic_if(e, is_nil, "nil.deref", "nil pointer dereference")
 }
 
-// A built-in slice expression: `base[lo:hi]` over a fixed array or another
-// slice. The base and both bounds are each evaluated once, in written order,
-// then checked as `0 <= lo <= hi <= len` before any address is formed.
+// `lo` and `hi`, each evaluated once in order, checked as
+// `0 <= lo <= hi <= length` in one trap seam before any address is formed.
 @(private = "file")
-emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> string {
-	operand_type := expr_base(v.operand).type
-	info := underlying_info(e.c, operand_type)
-	element := info.element
-
-	data, length := "", ""
-	#partial switch info.kind {
-	case .String, .String_View:
-		return emit_text_subrange(e, v)
-	case .C_Pointer:
-		return emit_c_pointer_slice(e, v, as_type)
-	}
-	if info.kind == .Slice {
-		value := emit_expr(e, v.operand)
-		llvm := llvm_type(e, operand_type)
-		data, length = temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, llvm, value, SLICE_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, llvm, value, SLICE_LEN)
-	} else if info.kind == .Dynamic_Array {
-		// The view is over the *current* allocation and stops at `len`, never at
-		// the capacity: the slots past the length hold no initialized element.
-		value := emit_expr(e, v.operand)
-		data, length = temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, CONTAINER_TYPE, value, CONTAINER_STORAGE)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, CONTAINER_TYPE, value, CONTAINER_LEN)
-	} else {
-		data = emit_address(e, v.operand)
-		length = fmt.aprintf("%d", info.count)
-	}
-
-	low := "0"
+emit_slice_bounds :: proc(e: ^Emitter, v: ^Expr_Slice, length, message: string) -> (low, high: string) {
+	low = "0"
 	if v.lo != nil {
 		low = widen_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
 	}
-	high := length
-	if v.hi != nil {
-		high = widen_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
-	}
-
-	// One trap seam for the whole range, so a reversed or oversized pair cannot
-	// produce a slice with a negative or out-of-root length.
-	reversed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", reversed, low, high)
-	past_end := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past_end, high, length)
-	bad := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, reversed, past_end)
-	panic_if(e, bad, "slice.bounds", "slice bounds out of range")
-
-	// The result's data pointer is the low bound's address in the root, so
-	// reslicing composes without a second base.
-	start := gep_at(e, llvm_type(e, element), data, low)
-	count := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
-
-	return emit_slice_value(e, as_type, start, count)
-}
-
-// design.md "string type conversions": `st[low:high]` is a subrange *view*. The bounds
-// are byte offsets, and a range that split a code point would hand out a
-// `string_view` that is not valid UTF-8 — so the encoding is checked with the
-// range, not merely the length.
-@(private = "file")
-emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
-	data, length := emit_text_parts(e, v.operand)
-	low := "0"
-	if v.lo != nil {
-		low = widen_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
-	}
-	high := length
+	high = length
 	if v.hi != nil {
 		high = widen_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
 	}
@@ -699,8 +584,47 @@ emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", reversed, low, high)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past_end, high, length)
 	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, reversed, past_end)
-	panic_if(e, bad, "slice.bounds", "string slice bounds out of range")
+	panic_if(e, bad, "slice.bounds", message)
+	return
+}
 
+// `base[lo:hi]` over a fixed array, a slice, or a dynamic array's current
+// allocation up to `len`.
+@(private = "file")
+emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> string {
+	operand_type := expr_base(v.operand).type
+	info := underlying_info(e.c, operand_type)
+
+	data, length := "", ""
+	#partial switch info.kind {
+	case .String, .String_View:
+		return emit_text_subrange(e, v)
+	case .C_Pointer:
+		return emit_c_pointer_slice(e, v, as_type)
+	case .Slice:
+		data, length = emit_byte_slice_parts(e, v.operand)
+	case .Dynamic_Array:
+		value := emit_expr(e, v.operand)
+		data = extract(e, CONTAINER_TYPE, value, CONTAINER_STORAGE)
+		length = extract(e, CONTAINER_TYPE, value, CONTAINER_LEN)
+	case:
+		data = emit_address(e, v.operand)
+		length = fmt.aprintf("%d", info.count)
+	}
+
+	low, high := emit_slice_bounds(e, v, length, "slice bounds out of range")
+	start := gep_at(e, llvm_type(e, info.element), data, low)
+	count := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
+	return emit_slice_value(e, as_type, start, count)
+}
+
+// `st[low:high]` is a view over byte offsets, so a range that splits a code
+// point is rejected along with an out-of-range one.
+@(private = "file")
+emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
+	data, length := emit_text_parts(e, v.operand)
+	low, high := emit_slice_bounds(e, v, length, "string slice bounds out of range")
 	start, count := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds i8, ptr %s, i64 %s", start, data, low)
 	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
@@ -708,13 +632,11 @@ emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, start, count)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", split, valid)
 	panic_if(e, split, "slice.utf8", "string slice bounds split a code point")
-
 	return emit_ptr_len(e, STRING_VIEW_TYPE, start, count)
 }
 
-// design.md "C pointers": `x[:]`/`x[i:]` stay C pointers and carry no
-// bounds; `x[:n]`/`x[i:n]` produce a `[]T` and are checked, because only then is
-// there a length to check against.
+// design.md "C pointers": `x[:]`/`x[i:]` stay unbounded C pointers; `x[:n]` and
+// `x[i:n]` make a checked `[]T`.
 @(private = "file")
 emit_c_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> string {
 	element := underlying_info(e.c, expr_base(v.operand).type).element
@@ -736,15 +658,20 @@ emit_c_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> s
 	return emit_slice_value(e, as_type, start, count)
 }
 
+// An unsigned comparison catches a negative index and an oversized one at once.
+// It runs at i64, so a count wider than a narrow index type is not truncated;
+// only a wider-than-64-bit index is compared before it is truncated.
 @(private = "file")
 emit_bounds_check :: proc(e: ^Emitter, index: string, index_type: Type_Id, count: u64) -> string {
-	// An unsigned comparison catches a negative index and an oversized one at
-	// once: a negative value becomes a very large unsigned one. Compare before
-	// truncating a 128-bit index, then use the checked i64 value for the GEP.
+	wide := type_bits(e.c, index_type) > 64
+	compared := wide ? index : widen_to_i64(e, index, index_type)
 	out_of_range := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp uge %s %s, %d", out_of_range, llvm_type(e, index_type), index, count)
+	fmt.sbprintfln(
+		&e.b, "  %s = icmp uge %s %s, %d",
+		out_of_range, wide ? llvm_type(e, index_type) : "i64", compared, count,
+	)
 	panic_if(e, out_of_range, "bounds", "index out of range")
-	return widen_to_i64(e, index, index_type)
+	return wide ? widen_to_i64(e, index, index_type) : compared
 }
 
 @(private)
@@ -773,21 +700,18 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	return emit_expr_at(e, expr, expr_base(expr).type)
 }
 
-// Emit the checked result type, or a source type recorded by an implicit
-// conversion. Only this node uses the override: children keep their own checked
-// types. Helpers receive it explicitly so checker annotations stay unchanged.
+// Emits `expr` at `as_type`: its checked type, or the source type an implicit
+// conversion recorded on this node. Children keep their own checked types.
 @(private)
 emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
-	// A concrete value becoming an `any_view`: its address plus the frozen
-	// `typeid`. A non-addressable source gets compiler-owned temporary storage.
+	// A value becoming an `any_view`: its address plus the frozen `typeid`.
 	if from := base.erased_from; from != INVALID_TYPE && as_type == TYPE_ANY_VIEW {
 		address := spill_iterable_at(e, expr, from)
 		return emit_any_view_value(e, address, from)
 	}
-	// design.md: a `string` borrowed as a `string_view` — the same pointer and
-	// byte length, with the owning word dropped. Addressing the source keeps an
-	// owned temporary alive through the full expression; a place remains borrowed.
+	// A `string` borrowed as a `string_view`: the owning word is dropped, and
+	// addressing the source keeps an owned temporary alive.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .String_View {
 		value := load(e, STRING_TYPE, emit_address_at(e, expr, from))
 		data := extract(e, STRING_TYPE, value, STRING_DATA)
@@ -839,32 +763,28 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			results := emit_producer_value(e, expr, as_type)
 			return len(results) == 0 ? "0" : results[0]
 		}
-		address := emit_address_at(e, expr, as_type)
-		out := load(e, llvm_type(e, as_type), address)
-		return out
+		return load(e, llvm_type(e, as_type), emit_address_at(e, expr, as_type))
 
 	case ^Expr_Selector, ^Expr_Index:
-		// A read does not insert and panics for a missing key (design.md "Maps").
-		if index, is_index := expr.(^Expr_Index); is_index && !index.map_inserts &&
-		   index.operand != nil && type_is_map(e.c, expr_base(index.operand).type) {
-			return emit_map_lookup(e, index)
-		}
-		// A user `operator([])`. A value overload produces the element; an `inout`
-		// overload produces its address, which is then read through.
-		if index, is_index := expr.(^Expr_Index); is_index && base.resolution.kind == .User_Operator {
-			result := emit_operator_call(e, index.resolution.symbol, index.bound)
-			if base.value_category != .Place {
-				return result
+		if index, is_index := expr.(^Expr_Index); is_index {
+			// A read does not insert and panics for a missing key (design.md "Maps").
+			if !index.map_inserts && index.operand != nil && type_is_map(e.c, expr_base(index.operand).type) {
+				return emit_map_lookup(e, index)
 			}
-			out := load(e, llvm_type(e, as_type), result)
-			return out
+			// A value `operator([])` produces the element; an `inout` one its address.
+			if base.resolution.kind == .User_Operator {
+				result := emit_operator_call(e, index.resolution.symbol, index.bound)
+				if base.value_category != .Place {
+					return result
+				}
+				return load(e, llvm_type(e, as_type), result)
+			}
 		}
 		// `pkg.f` as a value is the procedure itself, not storage holding one.
 		if symbol := symbol_of(e.c, base.resolution.symbol); symbol != nil && symbol.kind == .Proc {
 			return symbol_name(e, base.resolution.symbol)
 		}
-		address := emit_address_at(e, expr, as_type)
-		return load_place(e, as_type, address)
+		return load_place(e, as_type, emit_address_at(e, expr, as_type))
 
 	case ^Expr_Unary:
 		return emit_unary(e, v, as_type)
@@ -880,8 +800,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		if base.value_category != .Place {
 			return result
 		}
-		out := load(e, llvm_type(e, as_type), result)
-		return out
+		return load(e, llvm_type(e, as_type), result)
 
 	case ^Expr_Checked_Extract, ^Expr_Or_Else:
 		return emit_producer_value(e, expr, as_type)[0]
@@ -890,14 +809,10 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		if v.backing != INVALID_TYPE {
 			return emit_slice_literal(e, v, as_type)
 		}
-		slot := emit_address_at(e, expr, as_type)
-		out := load(e, llvm_type(e, as_type), slot)
-		return out
+		return load(e, llvm_type(e, as_type), emit_address_at(e, expr, as_type))
 
 	case ^Expr_Proc:
-		// Every literal a body can reach is hoisted and named before any body is
-		// emitted. A `null` here would assemble and link, and only fail as a call
-		// through a null pointer at run time.
+		// Every reachable literal is hoisted and named before any body is emitted.
 		return symbol_name(e, v.symbol)
 
 	case ^Expr_Range:
@@ -911,15 +826,12 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 	}
-	// Same gate as `emit_stmt`: returning `0` here would compile silently and
-	// produce the wrong answer.
 	backend_fail(e, "an unresolved expression reached emission")
 	return "0"
 }
 
-// The backing array of a slice literal is a hidden fixed-array owner in the
-// surrounding lexical scope, so the slice stays valid until that scope exits
-// (design.md "Slice literals"). The hidden root is filled, then viewed whole.
+// A slice literal views a hidden fixed array owned by the enclosing scope
+// (design.md "Slice literals"), which drops its elements like a named `[N]T`.
 @(private = "file")
 emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) -> string {
 	backing := v.backing
@@ -933,13 +845,12 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 			"  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %d",
 			slot, llvm_type(e, backing), root, index,
 		)
-		store(e, info.element, emit_expr(e, element.value), slot)
+		value := emit_expr(e, element.value)
+		if index < len(v.element_clones) && v.element_clones[index] {
+			value = emit_clone_value(e, info.element, value)
+		}
+		store(e, info.element, value, slot)
 	}
-
-	// "An ordinary frame owner in the surrounding lexical scope" is the whole
-	// claim, and a managed element makes the difference visible: without this the
-	// hidden array is filled and then abandoned, so `[]mut T{...}` would leak
-	// every element a named `[N]T` of the same elements drops.
 	register_scope_place(e, backing, root)
 	return emit_slice_value(e, as_type, root, fmt.aprintf("%d", len(v.elements)))
 }
@@ -1031,8 +942,7 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, result)
 		return out
 	}
-	// design.md "SIMD vectors": lane-wise, including the comparison whose result
-	// is a mask rather than a `bool`, so it never reaches `emit_compare`.
+	// SIMD is lane-wise, and its comparisons produce a mask, not a `bool`.
 	if type_is_simd(e.c, expr_base(v.lhs).type) || type_is_simd(e.c, expr_base(v.rhs).type) {
 		return emit_simd_binary(e, v)
 	}
@@ -1043,8 +953,8 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 		return emit_map_membership(e, v)
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		operand_type := expr_base(v.lhs).type
-		lhs := emit_expr(e, v.lhs)
-		rhs := emit_expr(e, v.rhs)
+		lhs := emit_borrowed_operand(e, v.lhs)
+		rhs := emit_borrowed_operand(e, v.rhs)
 		return emit_compare(e, v.op, operand_type, lhs, rhs)
 	}
 	if v.op == .Plus && type_is_utf8_text(e.c, expr_base(v.lhs).type) {
@@ -1055,26 +965,25 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 	return emit_binary_op(e, v.op, as_type, expr_base(v.rhs).type, lhs, rhs)
 }
 
-// Concatenation allocates from `mem.default_allocator()` and follows its
-// failure policy (design.md "Arithmetic operators"). Both operands are already
-// valid UTF-8, so the result needs no validation.
+// Concatenation allocates from the default allocator and follows its failure
+// policy. Both operands are valid UTF-8, so the result is too.
 @(private = "file")
 emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	left_data, left_len := emit_text_parts(e, v.lhs)
 	right_data, right_len := emit_text_parts(e, v.rhs)
+	provider := emit_default_allocator(e)
 	return emit_text_allocating_call(
 		e, "loke_rt_v1_string_concat",
 		fmt.aprintf(
 			"ptr %s, i64 %s, ptr %s, i64 %s, ptr %s",
-			left_data, left_len, right_data, right_len, emit_default_allocator(e),
+			left_data, left_len, right_data, right_len, provider,
 		),
-		fail_is_panic = true,
+		provider,
 	)
 }
 
-// The LLVM instruction each arithmetic operator lowers to. An empty column is a
-// combination that never arrives: integer `/` and `%` route through
-// `emit_divrem` before this is consulted, and a float has no bitwise operators.
+// The LLVM instruction each arithmetic operator lowers to. Integer `/` and `%`
+// go through `emit_divrem`, and a float has no bitwise operators.
 @(private = "file")
 Arith_Mnemonic :: struct {
 	integer, float: string,
@@ -1121,8 +1030,7 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 	return out
 }
 
-// Division and remainder need two guards. Zero takes the explicit trap seam;
-// `MIN / -1` has the wrapping result design.md requires and must not reach LLVM
+// Zero takes the trap seam; `MIN / -1` wraps (design.md) instead of reaching
 // `sdiv`/`srem`, where it would be poison.
 @(private = "file")
 emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lhs, rhs: string) -> string {
@@ -1171,9 +1079,8 @@ emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lh
 	return out
 }
 
-// design.md: a shift count at or beyond the operand's width is defined — zero,
-// or the replicated sign bit for an arithmetic right shift. No out-of-range
-// count reaches an LLVM shift instruction, where it would be poison.
+// design.md: a shift count at or beyond the width is defined (zero, or the sign
+// bit for an arithmetic right shift), so none reaches an LLVM shift as poison.
 @(private = "file")
 emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, count_type: Type_Id, lhs, rhs: string) -> string {
 	llvm := llvm_type(e, type)
@@ -1181,8 +1088,7 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 	count_llvm := llvm_type(e, count_type)
 	count_bits := type_bits(e.c, count_type)
 
-	// The comparison happens in the count's own width, before any truncation
-	// could hide how large it was.
+	// Compared in the count's own width, before truncation could hide its size.
 	oversized := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp uge %s %s, %d", oversized, count_llvm, rhs, bits)
 
@@ -1195,7 +1101,6 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 	}
 
 	if op == .Shr && signed {
-		// Clamping to width-1 is the limit of the repeated one-bit shift.
 		clamped := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %d, %s %s", clamped, oversized, llvm, bits - 1, llvm, count)
 		out := temp(e)
@@ -1212,9 +1117,8 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 	return out
 }
 
-// The LLVM predicate each comparison lowers to, per operand class. The float
-// column is ordered, so a NaN operand compares false — except `!=`, which is
-// `une` and so is true whenever the operands are unordered.
+// The LLVM predicate per comparison and operand class. The float column is
+// ordered, except `!=`, which is true for unordered operands.
 Compare_Predicate :: struct {
 	signed, unsigned, float: string,
 }
@@ -1232,8 +1136,7 @@ compare_predicate :: proc(op: Token_Kind) -> Compare_Predicate {
 }
 
 emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
-	// `string` and `string_view` values are comparable and ordered, lexically
-	// byte-wise (design.md). One runtime call answers all six operators.
+	// Text is ordered byte-wise; one runtime call answers all six operators.
 	if type_is_utf8_text(e.c, type) {
 		storage := llvm_type(e, type_underlying(e.c, type))
 		left_data := extract(e, storage, lhs, STRING_DATA)
@@ -1245,7 +1148,6 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 			&e.b, "  %s = call i32 @loke_rt_v1_bytes_compare(ptr %s, i64 %s, ptr %s, i64 %s)",
 			order, left_data, left_len, right_data, right_len,
 		)
-		// The runtime hands back a signed i32 ordering, so this is the signed column.
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp %s i32 %s, 0", out, compare_predicate(op).signed, order)
 		return out
@@ -1272,13 +1174,11 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 	return out
 }
 
-// LLVM has no aggregate `icmp`, so structural equality is generated: each
-// operand is evaluated once, and the leaf comparisons are combined.
+// Structural equality, since LLVM has no aggregate `icmp`.
 //
-// ponytail: one flat `and` chain rather than short-circuiting blocks. Every leaf
-// is a pure `extractvalue` plus `icmp`/`fcmp`, so skipping them is unobservable,
-// and a chain of N blocks would be worse IR than N ands. Revisit if a measured
-// comparison of a very large array shows up.
+// ponytail: one flat `and` chain rather than short-circuiting blocks; every
+// leaf is a pure extract plus compare. Revisit if a very large array comparison
+// shows up in a profile.
 @(private)
 emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	under := type_underlying(e.c, type)
@@ -1290,9 +1190,7 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	case .Union:
 		return emit_union_equal(e, under, lhs, rhs)
 	case .Dyn, .Any_View:
-		// design.md: dynamic interface values are comparable only with `nil`, and
-		// nil is the zero view. Comparing the second word — the witness, or the
-		// `typeid` — is what distinguishes a live view from the nil one.
+		// Comparable only with `nil`, the zero view, so the second word decides.
 		llvm := llvm_type(e, under)
 		left := extract(e, llvm, lhs, 1)
 		right := extract(e, llvm, rhs, 1)
@@ -1301,8 +1199,7 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", out, operand, left, right)
 		return out
 	case .Slice:
-		// The checker admits only `slice == nil`, and a nil slice is the one with a
-		// null data pointer, so the first word decides it.
+		// Only `slice == nil` is admitted, and nil has a null data pointer.
 		llvm := llvm_type(e, under)
 		left := extract(e, llvm, lhs, SLICE_DATA)
 		right := extract(e, llvm, rhs, SLICE_DATA)
@@ -1319,10 +1216,6 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		}
 		return result
 	case .Struct:
-		// A combined `@(packed, align=N)` record's LLVM members are byte arrays, so
-		// `extractvalue` yields `[k x i8]` where the field's own type is wanted.
-		// Reading each field through its address instead is the same GEP an ordinary
-		// field access already uses.
 		if record_uses_byte_members(e, under, info) {
 			return emit_byte_member_struct_equal(e, under, info, lhs, rhs)
 		}
@@ -1344,12 +1237,9 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	return emit_compare(e, .Eq_Eq, type, lhs, rhs)
 }
 
-// design.md "Uninitialized capacity": only the live prefix of the field holds
-// values, so only the prefix is compared. Two records whose counts differ are
-// already unequal through the count field itself, and the loop stops at the
-// shorter of the two so neither side's capacity is ever read -- which for an
-// element that compares through a pointer is the difference between an answer
-// and a use of storage that was released.
+// design.md "Uninitialized capacity": only the live prefix is compared. Unequal
+// counts already differ through the count field, and the loop stops at the
+// shorter one, so neither side's capacity is ever read.
 @(private = "file")
 emit_prefix_equal :: proc(
 	e: ^Emitter, record: Type_Id, counter: ^Symbol, array: Type_Id, lhs, rhs, left, right: string,
@@ -1367,8 +1257,7 @@ emit_prefix_equal :: proc(
 		&e.b, "  %s = select i1 %s, i64 %s, i64 %s", total, shorter, count_left, count_right,
 	)
 
-	// Both operands are values here, and an element is reached by index, so each
-	// side is spilled to storage the loop can walk.
+	// Both sides are spilled so the loop can index them.
 	left_slot, right_slot := alloca(e, array_llvm), alloca(e, array_llvm)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", array_llvm, left, left_slot)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", array_llvm, right, right_slot)
@@ -1400,8 +1289,7 @@ emit_prefix_equal :: proc(
 	return load(e, "i1", same)
 }
 
-// An erased view is an aggregate the ordinary struct path cannot compare, so it
-// takes the same route a union does.
+// An erased view takes the same comparison route a union does.
 @(private = "file")
 type_is_erased_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch underlying_kind(c, type) {
@@ -1411,14 +1299,8 @@ type_is_erased_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
-// Two unions are equal when their tags match and the active variant's payload
-// matches (a payloadless variant is settled by the tag alone).
-//
-// Only the active variant's comparison runs. Computing every variant's and
-// selecting afterward would be smaller IR, but a payload whose equality is a
-// runtime call over a pointer and length — `string`, `string_view`, or any
-// aggregate holding one — would then read arbitrary memory from another
-// variant's bytes.
+// Equal tags, then the active variant's payload. Only that variant's comparison
+// runs: another variant's bytes read as a `string` would be arbitrary memory.
 @(private = "file")
 emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> string {
 	info := type_of(e.c, union_type)
@@ -1433,9 +1315,7 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	left_slot := emit_union_spill(e, union_type, lhs)
 	right_slot := emit_union_spill(e, union_type, rhs)
 
-	// Differing tags settle it, and so does a matching payloadless variant. A
-	// payload comparison below overrides this answer when its tag is the active
-	// one.
+	// The tag comparison is the answer unless an active payload overrides it.
 	answer := alloca(e, "i1")
 	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", same_tag, answer)
 
@@ -1455,8 +1335,7 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 		place_label(e, hit)
 		left := emit_union_payload(e, union_type, variant, left_slot)
 		right := emit_union_payload(e, union_type, variant, right_slot)
-		// The comparison may open blocks of its own, so the store belongs
-		// wherever it left off rather than in `hit`.
+		// The comparison may open blocks, so the store goes wherever it ends.
 		equal := emit_equal(e, variant, left, right)
 		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", equal, answer)
 		branch(e, done)
@@ -1467,10 +1346,8 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	return load(e, "i1", answer)
 }
 
-// Whether this record's LLVM members are byte arrays rather than the fields'
-// own types — the combined `@(packed, align=N)` body from `struct_body`: tight
-// packing needs a packed LLVM body, a raised alignment can't be spelled on one,
-// and byte members satisfy both at once.
+// Whether this record is the combined `@(packed, align=N)` body from
+// `struct_body`, whose LLVM members are byte arrays.
 @(private = "file")
 record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> bool {
 	if !info.packed || len(info.fields) == 0 {
@@ -1481,10 +1358,8 @@ record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -
 	return current != nil && current.align > record_natural_align(e.c, current)
 }
 
-// Field-wise equality read through addresses. The value is spilled once and
-// each field is loaded at its own type from the GEP the byte member occupies,
-// so the comparison is the ordinary one and only the way the operands are
-// reached differs.
+// Field-wise equality with each field loaded at its own type through the GEP
+// its byte member occupies.
 @(private = "file")
 emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
 	llvm := llvm_type(e, type)
@@ -1526,8 +1401,8 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	done_label := new_label(e, "sc.done")
 	entry_label := new_label(e, "sc.entry")
 
-	// The incoming edge needs a name of its own for the phi, and the left
-	// operand may itself have created blocks.
+	// The phi needs a named incoming edge, and the left operand may have opened
+	// blocks of its own.
 	branch(e, entry_label)
 	place_label(e, entry_label)
 	if v.op == .And_And {
@@ -1599,16 +1474,14 @@ emit_slice_value :: proc(e: ^Emitter, slice_type: Type_Id, data, length: string)
 	return emit_ptr_len(e, llvm_type(e, slice_type), data, length)
 }
 
-// The data pointer and byte length of a `string` or `string_view` value, which
-// is all every text operation needs: the two carriers differ only in whether a
-// third word owns the storage.
+// The data pointer and byte length of a text operand, which is all every text
+// operation needs.
 @(private)
 emit_text_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: string) {
 	type := type_underlying(e.c, expr_base(operand).type)
-	value := emit_expr(e, operand)
+	value := emit_borrowed_operand(e, operand)
 	if type_kind(e.c, type) == .CString_View {
-		// design.md "C string views": terminated, not measured, so its length is a
-		// scan rather than a field.
+		// A C string view is terminated, not measured.
 		length = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, value)
 		return value, length
@@ -1629,8 +1502,6 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 		backend_fail(e, "a text call has no operation")
 
 	case .Byte_Len:
-		// `len(text)` is shorthand for `text.byte_len()` so that it stays a
-		// constant-time operation (design.md).
 		_, length := emit_text_parts(e, v.bound[0])
 		out[0] = length
 
@@ -1640,45 +1511,39 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_rune_count(ptr %s, i64 %s)", out[0], data, length)
 
 	case .Bytes:
-		// A read-only `[]u8` over the same storage: the borrow costs nothing and
-		// cannot be widened to `[]mut u8`.
+		// A read-only `[]u8` over the same storage.
 		data, length := emit_text_parts(e, v.bound[0])
 		out[0] = emit_slice_value(e, as_type, data, length)
 
 	case .Runes:
-		// design.md "String iteration": the rune traversal is the string's own, so
-		// this is the same borrow `bytes()` takes, viewed as text rather than bytes.
+		// The same borrow as `bytes()`, viewed as text (design.md "String iteration").
 		data, length := emit_text_parts(e, v.bound[0])
 		out[0] = emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 
 	case .Rune_Offsets:
-		// The view holds the borrowed bytes and nothing else; the cursor belongs to
-		// the iterator its `iter` makes.
+		// The view holds the bytes; the cursor belongs to its iterator.
 		data, length := emit_text_parts(e, v.bound[0])
 		view := emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 		out[0] = insert(e, llvm_type(e, as_type), "undef", STRING_VIEW_TYPE, view, VIEW_SOURCE)
 
 	case .Copy:
 		data, length := emit_text_parts(e, v.bound[0])
+		provider := emit_default_allocator(e)
 		out[0] = emit_text_allocating_call(
 			e, "loke_rt_v1_string_clone",
-			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, emit_default_allocator(e)),
-			fail_is_panic = true,
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, provider),
+			provider,
 		)
 
 	case .To_C_View:
-		// ponytail: every `string` buffer is allocated with room for a terminator
-		// and a literal already carries one, so the "add a terminator only when
-		// necessary" case of design.md's rule never arises and no call-scoped
-		// temporary is created. A representation that could hand out an
-		// unterminated `string` would need the allocating branch back.
+		// ponytail: every `string` buffer and literal already carries a terminator,
+		// so no terminated temporary is ever needed. A representation that could
+		// hand out an unterminated `string` would need that branch back.
 		data, _ := emit_text_parts(e, v.bound[0])
 		out[0] = data
 
 	case .To_Runes:
-		// An implicit allocation: design.md's "Allocation failure" gives it nowhere
-		// to report, so failure follows the provider's policy. The helper releases
-		// its partial buffer first, so the panic path leaks nothing.
+		// The helper releases its partial buffer before the policy applies.
 		data, length := emit_text_parts(e, v.bound[0])
 		ops := container_ops_global(e, as_type)
 		slot := alloca(e, CONTAINER_TYPE)
@@ -1688,23 +1553,11 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 			&e.b, "  %s = call i32 @loke_rt_v1_string_to_runes(ptr %s, ptr %s, ptr %s, i64 %s, ptr %s)",
 			ok, slot, ops, data, length, provider,
 		)
-		failed := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
-		fail, done := new_label(e, "runes.failed"), new_label(e, "ok")
-		branch_if(e, failed, fail, done)
-		place_label(e, fail)
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
-		fmt.sbprintln(&e.b, "  unreachable")
-		e.terminated = true
-		place_label(e, done)
-		value := load(e, CONTAINER_TYPE, slot)
-		out[0] = value
+		emit_alloc_check(e, ok, provider)
+		out[0] = load(e, CONTAINER_TYPE, slot)
 
 	case .From_Runes:
-		slice := emit_expr(e, v.bound[0])
-		storage := llvm_type(e, expr_base(v.bound[0]).type)
-		data := extract(e, storage, slice, SLICE_DATA)
-		count := extract(e, storage, slice, SLICE_LEN)
+		data, count := emit_byte_slice_parts(e, v.bound[0])
 		return emit_text_optional_ok(
 			e, as_type, "loke_rt_v1_string_from_runes",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, emit_default_allocator(e)),
@@ -1713,9 +1566,24 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	return out
 }
 
+// An implicit allocation has nowhere to report failure, so a zero `status`
+// applies the provider's own policy (design.md "Allocation failure").
+@(private = "file")
+emit_alloc_check :: proc(e: ^Emitter, status, provider: string) {
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
+	fail, done := new_label(e, "text.failed"), new_label(e, "ok")
+	branch_if(e, failed, fail, done)
+	place_label(e, fail)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
+	place_label(e, done)
+}
+
 // A runtime call that fills a `string` out-parameter and answers 1 on success.
-// The out-pointer form keeps the ABI to pointers and integers, so the C and
-// LLVM sides cannot disagree about how a 24-byte aggregate is returned.
+// Pointers and integers only, so C and LLVM cannot disagree on returning a
+// 24-byte aggregate.
 @(private = "file")
 emit_text_call_slot :: proc(e: ^Emitter, callee: string, arguments: string) -> (slot: string, ok: string) {
 	slot = temp(e)
@@ -1725,29 +1593,14 @@ emit_text_call_slot :: proc(e: ^Emitter, callee: string, arguments: string) -> (
 	return slot, ok
 }
 
-// design.md "Allocation failure": an implicit allocation — a clone, a
-// concatenation — has nowhere to return an error, so failure follows the
-// allocator's own policy.
 @(private = "file")
-emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments: string, fail_is_panic: bool) -> string {
+emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments, provider: string) -> string {
 	slot, ok := emit_text_call_slot(e, callee, arguments)
-	if fail_is_panic {
-		failed := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
-		fail, done := new_label(e, "text.failed"), new_label(e, "ok")
-		branch_if(e, failed, fail, done)
-		place_label(e, fail)
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", emit_default_allocator(e))
-		fmt.sbprintln(&e.b, "  unreachable")
-		e.terminated = true
-		place_label(e, done)
-	}
-	out := load(e, STRING_TYPE, slot)
-	return out
+	emit_alloc_check(e, ok, provider)
+	return load(e, STRING_TYPE, slot)
 }
 
-// design.md "string type conversions": the value is the zero value on failure,
-// which the runtime has already published into the slot.
+// On failure the runtime has already published the zero value into the slot.
 @(private = "file")
 emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: string) -> []string {
 	slot, ok := emit_text_call_slot(e, callee, arguments)
@@ -1759,12 +1612,25 @@ emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: s
 	return out
 }
 
-// `strings.allocate_string(text, allocator)`: like `.copy()`, but into storage
-// from the caller's allocator, reporting failure instead of following that
-// allocator's policy. The `string_view` bytes are already valid UTF-8, so
-// `loke_rt_v1_string_clone` copies without re-validating and records the
-// allocator in the string header so release returns the block to the same
-// provider.
+// `Option(string_view)` over bytes that are borrowed, not copied: `.some` only
+// when they are valid UTF-8.
+@(private = "file")
+emit_checked_view :: proc(e: ^Emitter, option: Type_Id, data, length: string) -> []string {
+	valid, ok := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, data, length)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, valid)
+	kept_data, kept_len := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
+	view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
+	out := make([]string, 1)
+	out[0] = emit_option_value(e, option, ok, view)
+	return out
+}
+
+// `strings.allocate_string(text, allocator)`: `.copy()` into the caller's
+// allocator, reporting failure instead of applying its policy. The header
+// records the allocator, so release returns the block to it.
 @(private)
 emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	data, length := emit_text_parts(e, v.bound[0])
@@ -1780,8 +1646,7 @@ emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> [
 	return out
 }
 
-// design.md "string type conversions": each named constructor validates and
-// returns Option(T), with .none for invalid input.
+// design.md "string type conversions": each validates and returns `Option(T)`.
 @(private)
 emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	switch v.operation.(Call_Text_Conversion).op {
@@ -1796,24 +1661,11 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []
 		)
 
 	case .View_From_Bytes:
-		// This conversion validates and borrows (design.md "string type conversions"). No
-		// allocation and no copy — the view points into the slice's own root, and `src/borrow.odin`
-		// is what keeps it from outliving that root.
+		// A borrow of the slice's root, which `src/borrow.odin` keeps alive.
 		data, length := emit_byte_slice_parts(e, v.bound[0])
-		valid, ok := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, data, length)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, valid)
-		kept_data, kept_len := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
-		view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
-		out := make([]string, 1)
-		out[0] = emit_option_value(e, as_type, ok, view)
-		return out
+		return emit_checked_view(e, as_type, data, length)
 
 	case .String_From_C_View:
-		// Converting a C string view to `string` scans for the terminator,
-		// validates UTF-8, and copies into owned storage (design.md "C string views").
 		pointer := emit_expr(e, v.bound[0])
 		length := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, pointer)
@@ -1828,6 +1680,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []
 	return out
 }
 
+// The data pointer and length of a slice value.
 @(private = "file")
 emit_byte_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: string) {
 	storage := llvm_type(e, expr_base(operand).type)
@@ -1838,22 +1691,14 @@ emit_byte_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, leng
 	return data, length
 }
 
-// A C pointer carries neither a length nor a read-only capability, and its
-// lifetime is no longer checked after conversion (design.md "unsafe.raw_data
-// procedure") — so each of these is just an address extraction, except
-// `unsafe.transmute(T, value)`: the same bits, read as a `T`. The checker has
-// already settled equal size and a trivial lifecycle on both sides, so the only
-// question left is which LLVM spelling reinterprets these two representations —
-// a register-level cast where one exists, and a stack round trip otherwise,
-// which every optimization level above `none` folds away.
+// `unsafe.transmute(T, value)`: the same bits read as a `T`. The checker has
+// settled equal size and trivial lifecycles, so only the LLVM spelling is left:
+// a register cast where one exists, a stack round trip otherwise.
 @(private)
 emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	source := expr_base(v.bound[0]).type
 	value := emit_expr(e, v.bound[0])
-	// A `bool` is `i1` in the backend and one byte of storage, so it is the one
-	// type whose register width is not the width its size promises. Widening to
-	// `i8` at the edges keeps every other case a plain same-width operation, and
-	// keeps the aggregate path storing whole bytes.
+	// A `bool` is `i1` in registers but a byte in memory, so it crosses as `i8`.
 	from := llvm_type(e, source)
 	if underlying_kind(e.c, source) == .Bool {
 		widened := temp(e)
@@ -1864,9 +1709,7 @@ emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	to := to_bool ? "i8" : llvm_type(e, as_type)
 	result := reinterpret_bits(e, source, as_type, from, to, value)
 	if to_bool {
-		// Bit 0 is the `bool`, and producing a pattern that is one is the caller's
-		// obligation — the checker has already rejected the constant case it can
-		// see, and there is nothing to check at run time.
+		// Bit 0 is the `bool`; a valid pattern is the caller's obligation.
 		narrowed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = trunc i8 %s to i1", narrowed, result)
 		return narrowed
@@ -1892,11 +1735,7 @@ reinterpret_bits :: proc(e: ^Emitter, source, target: Type_Id, from, to, value: 
 	case bitcastable(e.c, source) && bitcastable(e.c, target):
 		fmt.sbprintfln(&e.b, "  %s = bitcast %s %s to %s", out, from, value, to)
 	case:
-		// An aggregate on either side. `bitcast` does not accept one, so the bits
-		// travel through equally sized storage — the pointer cast design.md names
-		// as the operation this is akin to, written out. The slot takes whichever
-		// type is more strictly aligned, since both are the same size and each
-		// access wants its own natural alignment satisfied.
+		// An aggregate: through equally sized storage aligned for the stricter side.
 		slot := alloca(e, type_align(e.c, target) > type_align(e.c, source) ? to : from)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", from, value, slot)
 		return load(e, to, slot)
@@ -1913,10 +1752,7 @@ pointer_shaped :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
-// Which types LLVM's `bitcast` accepts: first-class, non-aggregate, and not a
-// pointer (those have their own two instructions). A `bool` has already been
-// widened to `i8` by the time this is asked, so its `i1` register width never
-// reaches the instruction.
+// First-class, non-aggregate, non-pointer types, which `bitcast` accepts.
 @(private = "file")
 bitcastable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch underlying_kind(c, type) {
@@ -1926,8 +1762,8 @@ bitcastable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
-// `unsafe.string_view`, which still validates since the type it produces
-// promises valid UTF-8.
+// `unsafe.raw_data`, `unsafe.cstring_view` and `unsafe.string_view`; the last
+// still validates, since `string_view` promises UTF-8.
 @(private)
 emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> []string {
 	out := make([]string, 1)
@@ -1943,13 +1779,10 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 			data, _ := emit_text_parts(e, v.bound[0])
 			out[0] = data
 		case .Dynamic_Array:
-			// The *current* allocation's first element. Nothing keeps it current.
-			value, data := emit_expr(e, v.bound[0]), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, CONTAINER_TYPE, value, CONTAINER_STORAGE)
-			out[0] = data
+			// The current allocation's first element; nothing keeps it current.
+			out[0] = extract(e, CONTAINER_TYPE, emit_expr(e, v.bound[0]), CONTAINER_STORAGE)
 		case:
-			// A pointer to a fixed array, or a `cstring_view`: the value is already
-			// the address of the first element.
+			// A pointer to a fixed array, or a `cstring_view`, is already the address.
 			out[0] = emit_expr(e, v.bound[0])
 		}
 
@@ -1959,24 +1792,13 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 	case .Unsafe_String_View:
 		data := emit_expr(e, v.bound[0])
 		length := widen_to_i64(e, emit_expr(e, v.bound[1]), expr_base(v.bound[1]).type)
-		valid, ok := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, data, length)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, valid)
-		kept_data, kept_len := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
-		view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
-		single := make([]string, 1)
-		single[0] = emit_option_value(e, as_type, ok, view)
-		return single
+		return emit_checked_view(e, as_type, data, length)
 	}
 	return out
 }
 
-// design.md "Standard customization procedures": a fixed array's and a vector's
-// length come from the type, so the call folds to a constant — but it is still
-// an ordinary method call, so its receiver is evaluated exactly once. Only a
-// bare name has nothing to run.
+// A fixed array's or vector's `len()` folds to a constant, but its receiver is
+// still evaluated once (and a bare name has nothing to run).
 @(private = "file")
 emit_const_len_receiver :: proc(e: ^Emitter, expr: Expr) {
 	call, is_call := expr.(^Expr_Call)
