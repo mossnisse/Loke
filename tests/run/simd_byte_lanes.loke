@@ -1,0 +1,13 @@
+package main; import "core:fmt"; import "core:simd";
+
+// Constant vectors of 8-bit integer lanes keep their values; only a mask lane
+// spells `true`/`false` as `1`/`0`.
+
+main :: proc() {
+	u: Simd(u8, 4) = {200, 3, 255, 9};
+	fmt.println(u, simd.reduce_min(u), simd.reduce_max(u), simd.reduce_add(u));
+	i: Simd(i8, 4) = {-128, 5, -3, 9};
+	fmt.println(i / -1, i % -1, i + 1);
+	m: Simd(bool, 4) = {true, false, true, false};
+	fmt.println(m, ~m, m ~ true);
+}

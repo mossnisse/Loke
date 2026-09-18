@@ -109,10 +109,10 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	case .Union:
 		return union_constant(e, value, under, info)
 	case .Array, .Simd:
-		// A vector constant is `<...>` over the same lanes; a `Simd(bool, N)` lane
-		// is `i8` in memory.
+		// A vector constant is `<...>`; a `Simd(bool, N)` lane is `i8` in memory.
 		vector := info.kind == .Simd
 		lane := simd_lane_llvm_type(e, info)
+		mask := vector && type_kind(e.c, type_underlying(e.c, info.element)) == .Bool
 		b := strings.builder_make()
 		strings.write_string(&b, vector ? "<" : "[")
 		for index in 0 ..< int(info.count) {
@@ -124,7 +124,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 				element = value.aggregate.elements[index]
 			}
 			value := llvm_const(e, element, info.element)
-			if vector && lane == "i8" {
+			if mask {
 				value = value == "true" ? "1" : "0"
 			}
 			fmt.sbprintf(&b, " %s %s", lane, value)
