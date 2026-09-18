@@ -306,16 +306,7 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 		return 0, false
 	}
 
-	starts := make([dynamic]u32)
-	append(&starts, 0)
-	for i := 0; i < len(text); i += 1 {
-		if text[i] == '\n' {
-			append(&starts, u32(i + 1))
-		}
-	}
-
-	index = u32(len(c.sources))
-	append(&c.sources, Source{path = path, text = text, owned_text = data, line_starts = starts[:]})
+	index = add_source(c, path, text, data)
 	if valid, bad_offset := valid_utf8(text); !valid {
 		errorf(
 			c,
@@ -326,6 +317,19 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 		return index, false
 	}
 	return index, true
+}
+
+// Registers source text; `owned` is freed with the compilation.
+add_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> u32 {
+	starts := make([dynamic]u32)
+	append(&starts, 0)
+	for i := 0; i < len(text); i += 1 {
+		if text[i] == '\n' {
+			append(&starts, u32(i + 1))
+		}
+	}
+	append(&c.sources, Source{path = path, text = text, owned_text = owned, line_starts = starts[:]})
+	return u32(len(c.sources) - 1)
 }
 
 valid_utf8 :: proc(text: string) -> (valid: bool, bad_offset: u32) {

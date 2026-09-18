@@ -10,10 +10,8 @@ import "core:testing"
 // `check_source`, plus the bootstrap's bodies and entry validation.
 @(private = "file")
 check_for_emission :: proc(p: ^Checked, source: string, key := "", mode := Build_Mode.Exe) {
-	p.c = test_compiler(source)
+	parse_source(p, source)
 	p.c.build_mode = mode
-	p.tokens = lex(&p.c, 0)
-	p.f = parse(&p.c, 0, p.tokens)
 	p.pkg = new_package(&p.c, p.f.package_name, key)
 	p.c.root_package = p.pkg
 	add_package_file(&p.c, p.pkg, &p.f)
@@ -295,7 +293,7 @@ unused :: proc(value: $T) -> T { return value; }
 main :: proc() { }
 `)
 	defer destroy_checked(&p)
-	c, f := &p.c, &p.f
+	c := &p.c
 	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	// A template whose signature was never forced is still recognized by syntax.
 	for &symbol in c.symbols {
@@ -327,7 +325,7 @@ main :: proc() {
 }
 `)
 	defer destroy_checked(&p)
-	c, f := &p.c, &p.f
+	c := &p.c
 	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	finalize_semantics(c)
 	_, valid := emit_llvm_module(c)
@@ -339,7 +337,7 @@ unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
 	p: Checked
 	check_for_emission(&p, "package main; main :: proc() { zero: typeid; id := typeid_of(int); }")
 	defer destroy_checked(&p)
-	c, f := &p.c, &p.f
+	c := &p.c
 	finalize_semantics(c)
 	_, valid := emit_llvm_module(c)
 	testing.expect(t, valid && c.error_count == 0, "registered and nil typeids must both emit")
@@ -446,7 +444,7 @@ lookup :: proc() -> int {
 main :: proc() { assert(lookup() == 7); }
 `)
 	defer destroy_checked(&p)
-	c, f := &p.c, &p.f
+	c := &p.c
 	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	for key, policy in c.map_key_policies {
 		if !testing.expect(t, policy.kind == .Inherent) { return }
@@ -501,7 +499,7 @@ main :: proc() {
 }
 `)
 	defer destroy_checked(&p)
-	c, f := &p.c, &p.f
+	c := &p.c
 	freeze_typeids(c)
 	types_before, symbols_before, procs_before := len(c.types), len(c.symbols), len(c.synth_procs)
 	if !testing.expect(t, finalize_lifecycle_operations(c)) { report(c); return }
@@ -594,7 +592,7 @@ main :: proc() {
 }
 `)
 	defer destroy_checked(&p)
-	c, f := &p.c, &p.f
+	c := &p.c
 	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	finalize_semantics(c)
 	module, emitted := emit_llvm_module(c)

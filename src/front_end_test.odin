@@ -11,7 +11,7 @@ import "core:testing"
 @(private = "file")
 main_body :: proc(f: ^File) -> ^Block {
 	for item in f.items {
-		if d, ok := item.(^Decl); ok {
+		if d, ok := item.(^Decl); ok && len(d.names) == 1 && d.names[0].text == "main" {
 			if literal := decl_proc(d); literal != nil {
 				return literal.body
 			}
@@ -20,13 +20,10 @@ main_body :: proc(f: ^File) -> ^Block {
 	return nil
 }
 
-// The single-package half of `compile_program`, for packages these tests load
-// by hand — none uses `when`, so no discovery round is needed.
-// design.md "Typed fallibility": the bootstrap instantiates
-// `Result(Unit, Allocator_Error)`, so a test counting generic instances counts
-// this one too.
+// The bootstrap instantiates `Result(Unit, Allocator_Error)`.
 BOOTSTRAP_INSTANCES :: 1
 
+// The single-package half of `compile_program`, without `when` discovery.
 check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	k := Checker{c = c}
 	defer delete(k.nil_uses)
@@ -36,10 +33,7 @@ check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	check_package_bodies(&k, pkg_id)
 }
 
-// One parsed, registered, checked single-file program. The `File` lives in the
-// caller's frame because `add_package_file` stores a pointer to it, so this is
-// filled in place rather than returned — which is what collapses the three
-// `defer`s every such test used to spell out into one.
+// A single-file program, filled in place because packages keep `&f`.
 Checked :: struct {
 	c:      Compiler,
 	f:      File,
@@ -47,13 +41,21 @@ Checked :: struct {
 	pkg:    Package_Id,
 }
 
-check_source :: proc(p: ^Checked, source: string, name := "") {
+parse_source :: proc(p: ^Checked, source: string) {
 	p.c = test_compiler(source)
 	p.tokens = lex(&p.c, 0)
 	p.f = parse(&p.c, 0, p.tokens)
+}
+
+check_parsed :: proc(p: ^Checked, name := "") {
 	p.pkg = new_package(&p.c, name != "" ? name : p.f.package_name)
 	add_package_file(&p.c, p.pkg, &p.f)
 	check_one_package(&p.c, p.pkg)
+}
+
+check_source :: proc(p: ^Checked, source: string, name := "") {
+	parse_source(p, source)
+	check_parsed(p, name)
 }
 
 destroy_checked :: proc(p: ^Checked) {
@@ -64,14 +66,7 @@ destroy_checked :: proc(p: ^Checked) {
 
 test_compiler :: proc(text: string) -> Compiler {
 	c: Compiler
-	starts := make([dynamic]u32)
-	append(&starts, 0)
-	for ch, i in text {
-		if ch == '\n' {
-			append(&starts, u32(i + 1))
-		}
-	}
-	append(&c.sources, Source{path = "<test>", text = text, line_starts = starts[:]})
+	add_source(&c, "<test>", text)
 	return c
 }
 
@@ -117,10 +112,7 @@ deep_typeids_are_request_order_independent :: proc(t: ^testing.T) {
 	testing.expect(t, right_first == right_reverse, "deep right typeid depends on request order")
 }
 
-// Two instances of one template whose arguments merely *print* the same:
-// `Box(a.Token)` and `Box(b.Token)` share the readable name `Box(Token)`, so a
-// key taken from that name would tie and leave the sort to fall back on request
-// order. Same story for `dyn` over two packages' unrelated `Drawable`.
+// `Box(a.Token)` and `Box(b.Token)` print alike; their sort keys must not.
 @(test)
 applied_typeids_do_not_key_on_display_names :: proc(t: ^testing.T) {
 	c: Compiler
@@ -313,9 +305,7 @@ Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 `
 	p: Checked
 	defer destroy_checked(&p)
-	p.c = test_compiler(source)
-	p.tokens = lex(&p.c, 0)
-	p.f = parse(&p.c, 0, p.tokens)
+	parse_source(&p, source)
 	k := Checker{c = &p.c}
 	ensure_runtime_bootstrap(&k)
 	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
@@ -362,7 +352,7 @@ use_dependencies :: proc(value: ^Record, erased: any_view, writer: Writer, optio
     info := type_info_of(typeid_of(Record));
     format_any(erased, writer, options);
 }`
-	file_id := append_test_source(&p.c, "<real-use>", real_source)
+	file_id := add_source(&p.c, "<real-use>", real_source)
 	tokens := lex(&p.c, file_id)
 	defer delete(tokens)
 	f := parse(&p.c, file_id, tokens)
@@ -398,20 +388,6 @@ foreign_abi_walk_defers_by_value_cycles_to_size_check :: proc(t: ^testing.T) {
 	testing.expect(t, safe, "ABI traversal diagnosed or recursed before finite-size checking")
 }
 
-@(private = "file")
-append_test_source :: proc(c: ^Compiler, path, text: string) -> u32 {
-	starts := make([dynamic]u32)
-	append(&starts, 0)
-	for ch, i in text {
-		if ch == '\n' {
-			append(&starts, u32(i + 1))
-		}
-	}
-	index := u32(len(c.sources))
-	append(&c.sources, Source{path = path, text = text, line_starts = starts[:]})
-	return index
-}
-
 @(test)
 semantic_ids_survive_phases :: proc(t: ^testing.T) {
 	text := `package main;
@@ -422,16 +398,11 @@ main :: proc() {
 	sink(x);
 }
 sink :: proc(value: int) {}`
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	pkg_id := new_package(&c, f.package_name)
-	add_package_file(&c, pkg_id, &f)
-	check_one_package(&c, pkg_id)
-	validate_executable(&c, pkg_id)
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, text)
+	c, f, pkg_id := &p.c, &p.f, p.pkg
+	validate_executable(c, pkg_id)
 	if !testing.expectf(t, c.error_count == 0, "semantic phases produced %d diagnostics", c.error_count) {
 		return
 	}
@@ -453,7 +424,7 @@ sink :: proc(value: int) {}`
 	testing.expect(t, argument.symbol == local.symbols[0], "local use did not retain its binding ID")
 	testing.expect(t, call.resolution.kind == .Call, "call was not classified during resolution")
 	testing.expect(t, call.resolution.chosen_overload != INVALID_SYMBOL, "direct call has no selected target")
-	main_symbol := symbol_of(&c, main_decl.symbols[0])
+	main_symbol := symbol_of(c, main_decl.symbols[0])
 	testing.expect(t, main_symbol != nil && main_symbol.proc_type != INVALID_TYPE, "procedure signature has no canonical type")
 }
 
@@ -466,7 +437,7 @@ sink :: proc(value: int) {}`
 N :: 7;`
 	c := test_compiler(first_text)
 	defer destroy_compilation(&c)
-	second_index := append_test_source(&c, "second.loke", second_text)
+	second_index := add_source(&c, "second.loke", second_text)
 	first_tokens := lex(&c, 0)
 	defer delete(first_tokens)
 	first := parse(&c, 0, first_tokens)
@@ -497,26 +468,19 @@ nominal_shells_precede_recursive_field_resolution :: proc(t: ^testing.T) {
 	text := `package main;
 Node :: struct { next: ^Node, other: ^Node, value: int }
 main :: proc() { }`
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	pkg_id := new_package(&c, "main")
-	add_package_file(&c, pkg_id, &f)
-	check_one_package(&c, pkg_id)
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, text)
+	c, f := &p.c, &p.f
 
-	// M2 compiles a pointer-recursive struct, so this now checks clean; the
-	// semantic foundation underneath it is the same one M1 established.
 	testing.expectf(t, c.error_count == 0, "expected no diagnostics, got %d", c.error_count)
 	node_decl := f.items[0].(^Decl)
-	node_symbol := symbol_of(&c, node_decl.symbols[0])
+	node_symbol := symbol_of(c, node_decl.symbols[0])
 	record := node_decl.values[0].(^Type_Record)
 	testing.expect(t, node_symbol != nil && node_symbol.kind == .Type, "record has no nominal symbol")
 	testing.expect(t, record.denoted_type == node_symbol.type, "record shell and syntax disagree")
-	first_field := symbol_of(&c, record.fields[0].symbols[0])
-	second_field := symbol_of(&c, record.fields[1].symbols[0])
+	first_field := symbol_of(c, record.fields[0].symbols[0])
+	second_field := symbol_of(c, record.fields[1].symbols[0])
 	testing.expect(t, first_field != nil && first_field.type != INVALID_TYPE, "recursive field type was not resolved")
 	testing.expect(t, second_field != nil && second_field.type == first_field.type, "equal pointer types were not interned")
 }
@@ -525,18 +489,13 @@ main :: proc() { }`
 library_check_is_separate_from_executable_validation :: proc(t: ^testing.T) {
 	text := `package utility;
 helper :: proc() { }`
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	pkg_id := new_package(&c, "utility")
-	add_package_file(&c, pkg_id, &f)
-	check_one_package(&c, pkg_id)
-	testing.expectf(t, c.error_count == 0, "library package was treated as an executable")
-	validate_executable(&c, pkg_id)
-	testing.expectf(t, c.error_count == 2, "executable validation did not enforce package name and entry point")
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, text)
+	c, pkg_id := &p.c, p.pkg
+	testing.expect(t, c.error_count == 0, "library package was treated as an executable")
+	validate_executable(c, pkg_id)
+	testing.expect(t, c.error_count == 2, "executable validation did not enforce package name and entry point")
 	testing.expect(t, c.entry_point == INVALID_SYMBOL, "failed validation recorded an entry point")
 }
 
@@ -620,9 +579,8 @@ static self slot using delegate thread_local manual
 	}
 }
 
-// grammar.md promises longest match, but `operator` scans `OPERATORS` in order
-// and takes the first entry that matches. Nothing else fails if a new operator
-// is appended after one that is a prefix of it — it simply never lexes.
+// `operator` takes the first match in `OPERATORS`, so longer operators must
+// come first to honour grammar.md's longest match.
 @(test)
 operator_table_is_ordered_longest_first :: proc(t: ^testing.T) {
 	table := OPERATORS
@@ -708,8 +666,7 @@ a_string_missing_its_quote_stops_at_the_line_end :: proc(t: ^testing.T) {
 	// must not report it a second time.
 	testing.expectf(t, c.error_count == 1, "expected one diagnostic, got %d", c.error_count)
 
-	// The same shape at end of input, which is what the early return in
-	// `string_literal` was written for in the first place.
+	// The same shape at end of input.
 	eof := test_compiler("bad := \"abc\\")
 	defer destroy_compilation(&eof)
 	eof_tokens := lex(&eof, 0)
@@ -720,12 +677,10 @@ a_string_missing_its_quote_stops_at_the_line_end :: proc(t: ^testing.T) {
 @(test)
 malformed_escape_stays_in_bounds :: proc(t: ^testing.T) {
 	text := `package main; main :: proc() { bad := "abc\`
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, tokens := &p.c, p.tokens
 	testing.expect(t, c.error_count > 0, "malformed escape produced no diagnostic")
 	for token in tokens {
 		testing.expectf(t, int(token.hi) <= len(text), "error token extends beyond source: %d > %d", token.hi, len(text))
@@ -740,12 +695,10 @@ main :: proc() {
 	x := 1 + ;
 	sink(2);
 }`
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, f := &p.c, &p.f
 
 	testing.expectf(t, c.error_count == 2, "expected two diagnostics, got %d", c.error_count)
 	if !testing.expectf(t, len(f.items) == 2, "expected the import and main declaration, got %d items", len(f.items)) {
@@ -758,7 +711,7 @@ main :: proc() {
 	if !testing.expect(t, second_is_decl, "recovery did not reach the following main declaration") {
 		return
 	}
-	body := main_body(&f)
+	body := main_body(f)
 	if !testing.expectf(t, body != nil && len(body.stmts) == 2, "expected the declaration plus the following call") {
 		return
 	}
@@ -795,15 +748,13 @@ main :: proc() {
 	sink(2);
 }
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, f := &p.c, &p.f
 
 	testing.expectf(t, c.error_count == 1, "expected one diagnostic, got %d", c.error_count)
-	body := main_body(&f)
+	body := main_body(f)
 	if !testing.expectf(
 		t,
 		body != nil && len(body.stmts) == 2,
@@ -829,12 +780,10 @@ constants_bind_one_plain_name :: proc(t: ^testing.T) {
 A, B :: 1;
 bad: static int : 2;
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c := &p.c
 
 	if !testing.expectf(t, c.error_count == 2, "expected two diagnostics, got %d", c.error_count) {
 		return
@@ -853,19 +802,17 @@ main :: proc() {
 	sink(4);
 }
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, f := &p.c, &p.f
 
 	if !testing.expectf(t, c.error_count == 1, "expected one diagnostic, got %d", c.error_count) {
 		return
 	}
 	testing.expectf(t, c.diagnostics[0].code == "L0223", "unexpected code %s", c.diagnostics[0].code)
 
-	body := main_body(&f)
+	body := main_body(f)
 	if !testing.expectf(
 		t,
 		body != nil && len(body.stmts) == 2,
@@ -877,10 +824,7 @@ main :: proc() {
 	testing.expect(t, sentinel_survived, "the statement after the bad range did not survive recovery")
 }
 
-// Two shapes reach the same place: nested parentheses recurse in the parser;
-// a long operator chain doesn't, but builds just as deep a tree for the dump
-// and checker to walk. Both produce one diagnostic then panic mode — not one
-// per frame unwound, and not a stack overflow later.
+// Deep parentheses, operator chains, and prefix runs each give one L0222.
 @(test)
 parser_depth_is_bounded :: proc(t: ^testing.T) {
 	sources := []string {
@@ -980,12 +924,10 @@ worker :: proc() @(cold) {
 	when (ready) @(hot) { } else @(cold) when (other) @(hot) { } else @(cold) { }
 }
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c := &p.c
 	testing.expectf(t, c.error_count == 0, "attributed blocks produced %d diagnostics", c.error_count)
 }
 
@@ -999,19 +941,17 @@ main :: proc() {
 	sink(3);
 }
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, f := &p.c, &p.f
 
 	if testing.expectf(t, c.error_count == 2, "expected two diagnostics, got %d", c.error_count) {
 		for diagnostic in c.diagnostics {
 			testing.expectf(t, diagnostic.code == "L0253", "unexpected code %s", diagnostic.code)
 		}
 	}
-	body := main_body(&f)
+	body := main_body(f)
 	testing.expectf(
 		t,
 		body != nil && len(body.stmts) == 3,
@@ -1032,19 +972,17 @@ main :: proc() {
 	sink(4);
 }
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, f := &p.c, &p.f
 
 	if testing.expectf(t, c.error_count == 2, "expected two diagnostics, got %d", c.error_count) {
 		testing.expectf(t, c.diagnostics[0].code == "L0249", "unexpected code %s", c.diagnostics[0].code)
 		// A missing separator, like every other delimited list.
 		testing.expectf(t, c.diagnostics[1].code == "L0253", "unexpected code %s", c.diagnostics[1].code)
 	}
-	body := main_body(&f)
+	body := main_body(f)
 	testing.expectf(
 		t,
 		body != nil && len(body.stmts) == 4,
@@ -1058,12 +996,10 @@ where_recovery_does_not_consume_the_body :: proc(t: ^testing.T) {
 Bad :: struct($T: type) where { }
 sentinel :: proc() { }
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, f := &p.c, &p.f
 
 	testing.expectf(t, c.error_count == 1, "expected one diagnostic, got %d", c.error_count)
 	if !testing.expectf(t, len(f.items) == 2, "recovery lost the sentinel declaration") {
@@ -1076,12 +1012,8 @@ sentinel :: proc() { }
 	}
 }
 
-// `no_composite` belongs to a `where` clause's own top level, which is all
-// grammar.md restricts. A block bounds its statements the way brackets bound an
-// expression, so the flag lifts inside one — and restoring it on the way out is
-// also what stops a control-flow header's `close_header` from clearing it for
-// the rest of the clause, which used to hand the declaration's `{` to a
-// composite literal.
+// grammar.md bars composite literals only at a `where` clause's top level, not
+// inside a nested block.
 @(test)
 a_where_clause_restricts_only_its_own_top_level :: proc(t: ^testing.T) {
 	text := `package main;
@@ -1090,12 +1022,10 @@ nested :: proc() -> int where proc() { c := Cfg{a = 1}; } { return 1; }
 header :: proc() -> int where proc() { if (a) { } } == Cfg { return 1; }
 top_level :: proc() -> int where Cfg { return 1; }
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, f := &p.c, &p.f
 
 	testing.expectf(
 		t,
@@ -1104,16 +1034,11 @@ top_level :: proc() -> int where Cfg { return 1; }
 		c.error_count,
 		c.error_count > 0 ? c.diagnostics[0].message : "",
 	)
-	// `top_level` is the case the flag exists for: its `{` is the body, so the
-	// declaration is complete and nothing spills past it.
 	testing.expectf(t, len(f.items) == 4, "the clause swallowed a declaration: %d items", len(f.items))
 }
 
-// One bad element used to stop a member list where it stood: a missing comma
-// became "expected `}` to close the body" plus a spurious file-scope "expected a
-// declaration", and a junk element cost five diagnostics on the same token. Each
-// list now names the missing separator, resumes at the next element, and leaves
-// the declaration after it alone.
+// A bad element costs one diagnostic; the list resumes at the next element and
+// the following declaration survives.
 @(test)
 member_lists_recover_at_the_next_element :: proc(t: ^testing.T) {
 	cases := []struct {
@@ -1165,9 +1090,7 @@ member_lists_recover_at_the_next_element :: proc(t: ^testing.T) {
 		) {
 			continue
 		}
-		// Resynchronising skips whatever sat between the elements, so the list is
-		// short a member. A node that says it is clean would have a later phase
-		// walk it and diagnose the absence as if the author had written it.
+		// The list is short a member, so the node must carry the error.
 		d, is_decl := f.items[0].(^Decl)
 		if !testing.expectf(t, is_decl && len(d.values) == 1, "%s: no declared value", k.body) {
 			continue
@@ -1181,11 +1104,8 @@ member_lists_recover_at_the_next_element :: proc(t: ^testing.T) {
 	}
 }
 
-// The value ended at its own `}` is not the same question as "was the last token
-// consumed a `}`" — after a nested `struct { ... }` it always is, whether or not
-// the outer body was ever closed. Guessing from the token skipped the
-// resynchronisation and left the stray `)` to be reported a second time at file
-// scope.
+// A nested body's `}` does not close the outer one, so the stray `)` is
+// reported once.
 @(test)
 an_unclosed_body_still_resynchronises :: proc(t: ^testing.T) {
 	cases := []string{
@@ -1216,9 +1136,7 @@ an_unclosed_body_still_resynchronises :: proc(t: ^testing.T) {
 	}
 }
 
-// `resync_list` counted a stray `}` down past zero, and every later outer-level
-// test then failed: the `,` that ends the element was never found, so the rest
-// of the list was swallowed without a word about the brace.
+// A stray `}` inside a list must not swallow the rest of it.
 @(test)
 list_recovery_survives_a_stray_brace :: proc(t: ^testing.T) {
 	text := `package main;
@@ -1226,16 +1144,14 @@ main :: proc() {
 	a := f(1 g(}) , 4);
 }
 `
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, text)
+	c, f := &p.c, &p.f
 
 	testing.expectf(t, c.error_count == 1, "expected one diagnostic, got %d", c.error_count)
 
-	body := main_body(&f)
+	body := main_body(f)
 	if !testing.expect(t, body != nil && len(body.stmts) == 1, "the statement did not survive") {
 		return
 	}
@@ -1251,14 +1167,7 @@ main :: proc() {
 	testing.expectf(t, len(call.args) == 2, "recovered %d arguments, expected 2", len(call.args))
 }
 
-// Two properties the semantic arena must have, both of which a previous
-// allocator broke silently: Odin's map panics unless its allocation is
-// cache-line aligned, so the arena must honour the alignment an allocation
-// asks for. And it must serve an allocation of *any* size: `mem.Dynamic_Arena`
-// refused anything past its 64 KiB block with `.Invalid_Argument`, which
-// `append` and `make` swallow — the symbol store crossing that threshold
-// silently kept its old length while `new_symbol` kept handing out IDs for
-// elements that were never stored.
+// Rejected candidates are cached, so a repeated call costs no new instance.
 @(test)
 rejected_generic_candidates_are_negative_cached :: proc(t: ^testing.T) {
 	text := `package main;
@@ -1314,6 +1223,8 @@ compilation_destruction_releases_owned_front_end_state :: proc(t: ^testing.T) {
 	destroy_compilation(&c)
 }
 
+// Odin maps need cache-line-aligned allocations, and `append`/`make` swallow a
+// refused oversized block, so the arena must honour alignment and any size.
 @(test)
 semantic_arena_serves_maps_and_large_blocks :: proc(t: ^testing.T) {
 	c: Compiler
@@ -1343,10 +1254,11 @@ semantic_arena_serves_maps_and_large_blocks :: proc(t: ^testing.T) {
 
 	// The stores themselves: growth is what reallocates, so push well past the
 	// initial capacity rather than trusting a single insert.
+	before := len(c.identifier_names)
 	for i in 0 ..< 4096 {
 		intern_identifier(&c, fmt.tprintf("name%d", i))
 	}
-	testing.expect(t, len(c.identifier_names) == 4097, "identifier interning lost entries")
+	testing.expect(t, len(c.identifier_names) == before + 4096, "identifier interning lost entries")
 	for i in 0 ..< 4096 {
 		id := new_symbol(&c, Symbol{name = intern_identifier(&c, fmt.tprintf("sym%d", i))})
 		testing.expectf(t, symbol_of(&c, id) != nil, "symbol %d was given an ID it was never stored under", i)
@@ -1405,13 +1317,9 @@ static_assert(LOKE_VENDOR == .Loke);
 static_assert(LOKE_VERSION == "0.7.0");
 static_assert(LOKE_OPTIMIZATION_MODE == .None);
 main :: proc() {}`
-	p.c = test_compiler(source)
+	parse_source(&p, source)
 	p.c.opt_mode, p.c.build_mode, p.c.log_level = .Speed, .Obj, .Warning
-	p.tokens = lex(&p.c, 0)
-	p.f = parse(&p.c, 0, p.tokens)
-	p.pkg = new_package(&p.c, p.f.package_name)
-	add_package_file(&p.c, p.pkg, &p.f)
-	check_one_package(&p.c, p.pkg)
+	check_parsed(&p)
 	// Only the deliberately false last assertion fails.
 	false_assert := u32(strings.index(source, "static_assert(LOKE_OPTIMIZATION_MODE == .None"))
 	ok := p.c.error_count == 1 && p.c.diagnostics[0].span.lo >= false_assert
