@@ -1259,7 +1259,7 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	data := extract(e, storage, view, DYN_DATA)
 	thunk := emit_witness_slot(e, extract(e, storage, view, DYN_WITNESS), v.operation.(Call_Dyn_Slot).index)
 	signature := type_of(e.c, expr_base(v.callee).type)
-	return emit_bound_call(e, INVALID_SYMBOL, thunk, signature, v.bound, v, receiver = data)
+	return emit_bound_call(e, INVALID_SYMBOL, thunk, signature, v.bound, v, receiver = data, receiver_type = "ptr")
 }
 
 @(private = "file")

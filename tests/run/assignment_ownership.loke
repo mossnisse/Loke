@@ -1,0 +1,38 @@
+package main; import "core:fmt";
+
+// A conditionally assigned local is dropped, and a compound assignment through
+// `operator(+)` evaluates its destination once and drops the value it replaces.
+
+drops: int;
+calls: int;
+Value :: struct { id: int }
+impl Value {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
+		return .ok(Value{self.id});
+	}
+	release :: hook(drop) proc(self: inout Value) { if (self.id != 0) { drops += 1; } }
+	add :: operator(+) proc(a, b: Value) -> Value { return Value{a.id + b.id}; }
+}
+
+next :: proc() -> int { calls += 1; return 0; }
+
+main :: proc() {
+	cond := drops == 0;
+	{
+		x: Value;
+		if (cond) { x = Value{1}; }
+	}
+	fmt.println(drops);
+	{
+		v := Value{1};
+		v += Value{2};
+		fmt.println(v.id, drops);
+	}
+	fmt.println(drops);
+	{
+		arr := [2]Value{Value{1}, Value{2}};
+		arr[next()] += Value{5};
+		fmt.println(arr[0].id, calls, drops);
+	}
+	fmt.println(drops);
+}

@@ -216,26 +216,31 @@ emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
 	return out
 }
 
-// An operator, index, or slice call.
+// An operator, index, or slice call. A non-empty `left_place` is the address
+// of an already-evaluated left operand.
 @(private)
-emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr) -> string {
+emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr, left_place := "") -> string {
 	symbol := symbol_of(e.c, symbol_id)
 	if symbol == nil {
 		return "0"
 	}
 	if symbol.delegated {
-		return emit_delegated(e, symbol, bound)
+		return emit_delegated(e, symbol, bound, left_place)
 	}
 	info := type_of(e.c, symbol.proc_type)
-	results := emit_bound_call(e, symbol_id, symbol_name(e, symbol_id), info, bound)
+	receiver := left_place
+	if left_place != "" && !param_mode_is_pointer(info.param_modes[0]) {
+		receiver = load(e, llvm_type(e, info.parameters[0]), left_place)
+	}
+	results := emit_bound_call(e, symbol_id, symbol_name(e, symbol_id), info, bound, receiver = receiver)
 	return len(results) == 0 ? "0" : results[0]
 }
 
 // A `distinct` newtype's forwarding overload.
 @(private = "file")
-emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
+emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: string) -> string {
 	if symbol.delegate_target != INVALID_SYMBOL {
-		return emit_operator_call(e, symbol.delegate_target, bound)
+		return emit_operator_call(e, symbol.delegate_target, bound, left_place)
 	}
 	op := operator_token(symbol.operator)
 	underlying := symbol.delegate_underlying
@@ -244,7 +249,7 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, emit_expr(e, bound[0]))
 		return out
 	}
-	lhs := emit_expr(e, bound[0])
+	lhs := left_place != "" ? load(e, llvm_type(e, underlying), left_place) : emit_expr(e, bound[0])
 	rhs := emit_expr(e, bound[1])
 	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
@@ -908,7 +913,7 @@ consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol) -> int {
 }
 
 // Binds operands left to right and emits one call. A non-empty `receiver` is
-// an already-evaluated pointer passed in slot 0.
+// slot 0's already-evaluated operand, typed `receiver_type` when that is set.
 @(private)
 emit_bound_call :: proc(
 	e: ^Emitter,
@@ -918,6 +923,7 @@ emit_bound_call :: proc(
 	bound: []Expr,
 	call_node: ^Expr_Call = nil,
 	receiver := "",
+	receiver_type := "",
 ) -> []string {
 	symbol := symbol_of(e.c, symbol_id)
 	if callee_type == nil {
@@ -947,6 +953,9 @@ emit_bound_call :: proc(
 		argument := bound[index]
 		if index == 0 && receiver != "" {
 			operands[0] = receiver
+			if symbol != nil && len(symbol.param_symbols) > 0 && symbol.param_symbols[0] != INVALID_SYMBOL {
+				e.param_values[symbol.param_symbols[0]] = receiver
+			}
 			continue
 		}
 		if index == pack {
@@ -1013,8 +1022,10 @@ emit_bound_call :: proc(
 			fmt.sbprint(&e.b, ", ")
 		}
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		pointer := param_mode_is_pointer(mode) || (index == 0 && receiver != "")
-		type := pointer ? "ptr" : llvm_type(e, callee_type.parameters[index])
+		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, callee_type.parameters[index])
+		if index == 0 && receiver_type != "" {
+			type = receiver_type
+		}
 		fmt.sbprintf(&e.b, "%s %s", type, operand)
 	}
 	fmt.sbprintln(&e.b, ")")
