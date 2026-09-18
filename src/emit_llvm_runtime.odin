@@ -421,6 +421,12 @@ emit_format_literal :: proc(e: ^Emitter, text: string) {
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %d)", global, len(text))
 }
 
+// A compile-time-only type has no runtime value to print.
+@(private = "file")
+type_is_printable :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type != INVALID_TYPE && type_is_supported(c, type) && !type_is_compile_time_only(c, type)
+}
+
 @(private = "file")
 emit_format_call :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	if !type_is_printable(e.c, type) || typeid_value(e.c, type) == 0 {

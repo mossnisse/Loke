@@ -10,3 +10,9 @@ L0572
 L0572
 @31:2
 `format` on `Near_Miss` is what erased printing calls
+L0572
+@37:2
+`format` on `Unprinted` is what erased printing calls
+L0572
+@42:2
+`format` on `Generic(int)` is what erased printing calls

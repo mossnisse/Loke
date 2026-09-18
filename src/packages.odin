@@ -88,9 +88,7 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	return root, c.error_count == 0
 }
 
-// The step from a checked program to an emission-ready one. Ordering is the
-// reason this is one procedure: `discover_formatters` reads `c.typeid_order`,
-// which `freeze_typeids` is what closes and sorts. Every step is guarded by its
+// The step from a checked program to an emission-ready one. Every step is guarded by its
 // own ready flag, so calling this twice, or after a direct call to one of the
 // three, costs nothing.
 //
@@ -101,9 +99,6 @@ finalize_semantics :: proc(c: ^Compiler) -> bool {
 	// Every requested concrete type gets its deterministic `typeid` before any
 	// body is emitted, so traversal order cannot change an observable ID.
 	freeze_typeids(c)
-	// design.md's formatter coherence is decided once the type set is closed, so
-	// "one formatter per concrete type" is a whole-program answer, not a
-	// per-call-site one.
 	discover_formatters(c)
 	// Copy/drop lowering consumes a closed snapshot after all checked helpers
 	// have had the opportunity to contribute their lifecycle dependencies.

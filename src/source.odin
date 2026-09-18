@@ -209,9 +209,9 @@ Compiler :: struct {
 	// Whether the erased formatter table is needed. `core:fmt` asks for it by
 	// naming its dispatch intrinsic; nothing else can.
 	format_requested:    bool,
-	// design.md's coherence rule: at most one `format` per concrete type, and only
-	// from the type's own package. Resolved once, after the typeid set is closed.
+	// Each type's own `format`, set once by `discover_formatters`.
 	formatters:          map[Type_Id]Symbol_Id,
+	formatters_ready:    bool,
 	// The `base:runtime` types the compiler needs to build that table, resolved
 	// through the import that made them nameable so there is one identity.
 	runtime_types:       map[string]Type_Id,

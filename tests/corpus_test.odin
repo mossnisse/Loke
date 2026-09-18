@@ -402,6 +402,8 @@ UNPINNED :: []string {
 	// Backend invariants: an emission contract violation and `unsupported_construct`
 	// — every arm that used to reach it was given an honest diagnostic in M7.
 	"L0405",
+	// `core:fmt` without its own `Writer`/`Options`.
+	"L0601",
 	"L0350",
 	// Need a replaced `base:runtime` — a copy of the whole runtime in the test
 	// tree to change one declaration in it.

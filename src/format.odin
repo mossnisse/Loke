@@ -1,45 +1,30 @@
-// Coherent runtime formatting (design.md "String format printing").
-//
-// design.md makes formatting a library protocol: a value type provides a
-// `value.format(writer, options)` method. The compiler owns the *erased* half: `fmt.println(a, b, c)`
-// receives `..any_view`, and an `any_view` carries only a pointer and a
-// `typeid`, so a callee cannot recover a call-site-specific visible overload.
-// Runtime formatting therefore has one formatter per concrete `typeid`:
-//
-//   - a built-in type gets a compiler-generated formatter;
-//   - a user type gets its own `format` when that method is declared in the
-//     type's owning package, and a compiler-generated field-wise one otherwise;
-//   - a caller-local extension's `format` stays callable explicitly and never
-//     changes what `print` does.
-//
-// The dispatch table is private and parallel to the type-info table. The
-// public `Type_Info` layout deliberately exposes no code pointers, which also
-// keeps `base:runtime` from having to know `core:fmt` exists.
+// design.md "String format printing": an `any_view` carries only a pointer and a
+// `typeid`, so erased printing has one formatter per concrete type — the type's
+// own `format` from its owning package, or a compiler-generated one.
 package lokec
 
-// The formatter a concrete type answers to, or INVALID_SYMBOL when the compiler
-// generates one. design.md's coherence rule in one predicate: only the package
-// that owns the type may supply it.
-formatter_of :: proc(c: ^Compiler, type, writer, options: Type_Id) -> Symbol_Id {
-	// Formatting is coherent per *concrete identity*. In particular a distinct
-	// type owns different inherent members from the representation it wraps.
+// A type's inherent `format`, or INVALID_SYMBOL when the compiler generates one.
+@(private = "file")
+formatter_of :: proc(c: ^Compiler, type, writer, options: Type_Id, reported: ^map[Span]bool) -> Symbol_Id {
 	info := type_of(c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
 	for member in info.members {
 		sym := symbol_of(c, member)
-		if sym == nil || sym.synth != .None || identifier_text(c, sym.name) != "format" {
+		if sym == nil || sym.synth != .None || sym.generic || identifier_text(c, sym.name) != "format" {
 			continue
 		}
 		if formatter_signature_ok(sym, type, writer, options) {
 			return member
 		}
-		// A type holds at most one inherent `format` — L0409 rejects a second at
-		// declaration — and design.md gives that name to the protocol. So a member
-		// spelling it that cannot serve it is a mistake rather than an unrelated
-		// procedure this collides with, and printing field-wise anyway would answer
-		// a written formatter with silence.
+		// design.md gives the name to the protocol, so a `format` that cannot
+		// serve it is a mistake, not an unrelated procedure. Reported once per
+		// written declaration, not per generic instance.
+		if reported[sym.span] {
+			return INVALID_SYMBOL
+		}
+		reported[sym.span] = true
 		errorf(
 			c, sym.span, "L0572",
 			"`format` on `%s` is what erased printing calls, so it is written `proc(self, w: fmt.Writer, o: fmt.Options)`",
@@ -50,37 +35,30 @@ formatter_of :: proc(c: ^Compiler, type, writer, options: Type_Id) -> Symbol_Id 
 	return INVALID_SYMBOL
 }
 
-// design.md's coherence rule, resolved once for the whole program: an `impl`
-// block in the type's own package supplies its formatter, a caller-local
-// extension never does — an `any_view` carries only a pointer and a `typeid`,
-// so a callee has no way to see a call-site-specific overload. Extension
-// members live in `Package.extensions`, which nothing here reads.
+// Checks every type's `format`, printed or not, so a wrong one is an error in
+// every program that sees it. Extension members are never formatters.
 discover_formatters :: proc(c: ^Compiler) {
-	if !c.format_requested {
+	if c.formatters_ready {
 		return
 	}
-	// `format_requested` is set by checking `format_any`, which is also what
-	// records these, so their absence is a checker that never ran rather than a
-	// signature to report on.
+	c.formatters_ready = true
+	// Recorded when `core:fmt` is checked; without it no formatter can be spelled.
 	writer, has_writer := c.runtime_types["Writer"]
 	options, has_options := c.runtime_types["Options"]
 	if !has_writer || !has_options {
 		return
 	}
-	for type in c.typeid_order {
-		c.formatters[type] = formatter_of(c, type, writer, options)
+	reported := make(map[Span]bool, context.temp_allocator)
+	for index in 0 ..< len(c.types) {
+		type := Type_Id(index)
+		if hook := formatter_of(c, type, writer, options, &reported); hook != INVALID_SYMBOL {
+			c.formatters[type] = hook
+		}
 	}
 }
 
-// `format(self, writer: Writer, options: Options)`: a borrowed receiver of the
-// type itself, and nothing given back. The two library types are resolved
-// through the importing package, exactly as `Source_Code_Location` is, so there
-// is one identity for each.
-//
-// The receiver form is half the signature. The thunk hands a formatter the
-// caller's own storage, so a mutating receiver would make printing a write and a
-// consuming one would drop a value its owner still holds; a receiver of another
-// type would be called with the bytes of this one.
+// The thunk passes the caller's own storage, so the receiver must be a borrow
+// of the type itself, and nothing is given back.
 @(private = "file")
 formatter_signature_ok :: proc(sym: ^Symbol, subject, writer, options: Type_Id) -> bool {
 	if !sym.has_receiver || sym.receiver != .Borrow {
@@ -90,16 +68,7 @@ formatter_signature_ok :: proc(sym: ^Symbol, subject, writer, options: Type_Id) 
 		sym.params[0] == subject && sym.params[1] == writer && sym.params[2] == options
 }
 
-// Whether a concrete type can be formatted at all. design.md's erased printing
-// covers every runtime value; a compile-time-only type has none to print.
-type_is_printable :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type != INVALID_TYPE &&
-		type_is_supported(c, type) &&
-		!type_is_compile_time_only(c, type)
-}
-
-// The compiler-owned half of `core:fmt`, checked here so `core:fmt`'s own
-// source can be ordinary Loke.
+// The compiler-owned half of `core:fmt`, reachable only from inside it:
 //
 //   stdout_writer() -> Writer
 //   stderr_writer() -> Writer
@@ -110,7 +79,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	writer, has_writer := local_type_named(k, "Writer")
 	options, has_options := local_type_named(k, "Options")
 	if !has_writer || !has_options {
-		errorf(k.c, v.span, "L0572", "`%s` needs `core:fmt`'s own `Writer` and `Options`", ident.name)
+		errorf(k.c, v.span, "L0601", "`%s` needs `core:fmt`'s own `Writer` and `Options`", ident.name)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -118,30 +87,16 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 
 	wanted: []Type_Id
 	result := TYPE_VOID
-	switch kind {
+	#partial switch kind {
 	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer:
 		result = writer
 	case .Fmt_Write_Bytes:
 		wanted = []Type_Id{writer, TYPE_STRING_VIEW}
 	case .Fmt_Format_Any:
-		// design.md: formatting is coherent per concrete `typeid`, so the erased
-		// value is all the dispatch has and all it needs.
 		wanted = []Type_Id{TYPE_ANY_VIEW, writer, options}
 		if k.c.speculation_depth == 0 {
 			k.c.format_requested = true
 		}
-	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable,
-	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .New, .New_Clone, .Make, .Free,
-	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
-	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget, .Unsafe_Free,
-	     .Unsafe_Take, .Unsafe_Write,
-	     .Unsafe_Transmute, .Simd_Cast, .Simd_Select, .Simd_Reduce,
-	     .Strings_Allocate, .Slice_Sort_By,
-	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
-	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
-		v.type = INVALID_TYPE
-		return
 	}
 
 	if len(v.args) != len(wanted) {
@@ -155,7 +110,13 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	}
 	bound := make([]Expr, len(wanted), k.c.semantic_allocator)
 	for target, index in wanted {
-		value, passed := check_argument_value(k, v.args[index].value, target)
+		arg := v.args[index]
+		if arg.name.text != "" || arg.mode != .Value {
+			errorf(k.c, arg.span, "L0371", "`%s` takes plain positional arguments only", ident.name)
+			v.type = INVALID_TYPE
+			return
+		}
+		value, passed := check_argument_value(k, arg.value, target)
 		bound[index] = value
 		if !passed {
 			v.type = INVALID_TYPE
@@ -166,8 +127,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	v.type = result
 }
 
-// A type declared by the package being checked. `core:fmt` owns `Writer` and
-// `Options`, and these builtins are only reachable from inside it.
+// A type declared by the package being checked, which is `core:fmt` here.
 @(private = "file")
 local_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
 	pkg := package_of(k.c, k.pkg)

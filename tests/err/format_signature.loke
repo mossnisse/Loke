@@ -31,7 +31,20 @@ impl Near_Miss {
 	format :: proc(self, w: fmt.Writer, o: fmt.Options) -> int { return 0; }
 }
 
+// Checked whether or not the type is ever printed, once per declaration.
+Unprinted :: struct { @(public) v: int }
+impl Unprinted {
+	format :: proc(self, w: fmt.Writer) {}
+}
+
+Generic :: struct($T: type) { v: T }
+impl Generic($T) {
+	format :: proc(self, w: fmt.Writer) {}
+}
+
 main :: proc() {
+	g1 := Generic(int){v = 1};
+	g2 := Generic(f64){v = 2.0};
 	fmt.println(Consuming{v = 1});
 	fmt.println(Mutating{v = 2});
 	fmt.println(Foreign_Receiver{v = 3});
