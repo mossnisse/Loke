@@ -1,0 +1,5 @@
+package util;
+v2 :: struct { x: int }
+impl v2 { f :: proc(self) -> int { return 1; } }
+@(public)
+call :: proc() -> int { value := v2{0}; return value.f(); }

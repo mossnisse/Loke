@@ -6,6 +6,10 @@ package lokec
 import "core:fmt"
 import "core:strings"
 
+// One header serves both containers; `runtime/container.c` owns the storage.
+CONTAINER_TYPE :: "%loke.container"
+CONTAINER_OPS_TYPE :: "%loke.container_ops"
+
 @(private)
 emit_container_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_reserve(ptr, ptr, i64)")

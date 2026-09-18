@@ -1,0 +1,3 @@
+package v2;
+@(public)
+f :: proc() -> int { return 2; }

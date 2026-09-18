@@ -1,0 +1,7 @@
+package main;
+import "core:fmt";
+import "util";
+import w "util.v2";
+
+// `util.v2.f` and `util`'s `v2.f` must get distinct LLVM names.
+main :: proc() { fmt.println(util.call(), w.f()); }

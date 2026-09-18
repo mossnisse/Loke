@@ -4,6 +4,12 @@ package lokec
 import "core:fmt"
 import "core:strings"
 
+// design.md "String format printing": formatter thunks per `typeid`, kept out of
+// the public `Type_Info` so `base:runtime` needs no `core:fmt`.
+FMT_THUNKS :: "@.loke.fmt_thunks"
+FMT_THUNK_COUNT :: "@.loke.fmt_thunks.count"
+TYPE_NAMES :: "@.loke.type_names"
+
 @(private)
 emit_preamble :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, e.c.target.triple)
