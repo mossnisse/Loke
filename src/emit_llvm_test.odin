@@ -1,6 +1,9 @@
 package lokec
 
+import "core:fmt"
 import "core:mem/virtual"
+import os2 "core:os/os2"
+import "core:path/filepath"
 import "core:strings"
 import "core:testing"
 
@@ -662,4 +665,18 @@ fixed_allocas_reach_the_entry_block :: proc(t: ^testing.T) {
 	orphan := "declare void @outside()\n"
 	testing.expect(t, splice_prologue(&e, orphan, {"  %x = alloca i8"}) == orphan)
 	testing.expect(t, e.failed && c.error_count == 1, "a dropped prologue was not reported")
+}
+
+@(test)
+toolchain_discovery_picks_the_newest_complete_version :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	root := fmt.tprintf("loke-sdk-test-%d", os2.get_pid())
+	defer os2.remove_all(root)
+	// Every version holds `ucrt` except the newest, which must be skipped.
+	for version in ([]string{"10.0.19041.0", "10.0.22621.0", "10.0.26100.0"}) {
+		dir := filepath.join({root, version})
+		os2.make_directory_all(version == "10.0.26100.0" ? dir : filepath.join({dir, "ucrt"}))
+	}
+	found := newest_containing({filepath.join({root, "*"})}, "ucrt")
+	testing.expectf(t, filepath.base(found) == "10.0.22621.0", "picked %q", found)
 }
