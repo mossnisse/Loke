@@ -10,6 +10,17 @@ Handle :: move_only struct {
 }
 
 released: int;
+order: int;
+
+ordered_value :: proc() -> int {
+	order = order * 10 + 1;
+	return 8;
+}
+
+ordered_allocator :: proc() -> Allocator {
+	order = order * 10 + 2;
+	return mem.default_allocator();
+}
 
 impl Handle {
 	release :: hook(drop) proc(self: inout Handle) {
@@ -73,6 +84,11 @@ main :: proc() {
 	if (q != nil) {
 		fmt.println(q^);
 		free(q);
+	}
+	ordered := new_clone(ordered_value(), ordered_allocator()) or_else nil;
+	if (ordered != nil) {
+		fmt.println(order);
+		free(ordered);
 	}
 
 	// An explicit allocator argument selects the same default provider in M5a.

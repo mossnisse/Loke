@@ -1,0 +1,24 @@
+package main; import "core:fmt";
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	copy_tracked :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		return .ok(Tracked{self.id + 100});
+	}
+
+	release :: hook(drop) proc(self: inout Tracked) {
+		id := self.id;
+		self.id = 0;
+		fmt.println(id);
+		if (id == 2) { panic("pack drop failed"); }
+	}
+}
+
+produce :: proc(values: ..Tracked) -> Tracked { return Tracked{9}; }
+
+main :: proc() {
+	original := Tracked{1};
+	result := produce(original, Tracked{2});
+	fmt.println(result.id);
+}

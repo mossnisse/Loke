@@ -1,6 +1,4 @@
 // Resolved calls, argument packing, conversions, and allocation builtins.
-//
-// Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
 
 import "core:fmt"
@@ -48,7 +46,6 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		results := emit_direct_call(e, v)
 		return len(results) == 0 ? "0" : results[0]
 	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Sort_By, Call_Simd_Reduce:
-		// These intrinsic families retain their exact operation's symbol.
 	case nil, Call_Compile_Time:
 		backend_fail(e, "an unchecked or compile-time call reached emission")
 		return "0"
@@ -57,9 +54,6 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if symbol != nil && symbol.kind == .Builtin {
 		switch symbol.builtin {
 		case .Assert:
-			// The runtime half of a phase-neutral built-in. design.md makes the
-			// message a compile-time string, so it is a module global here and the
-			// failure takes the program's panic strategy like every other one.
 			cond := emit_expr(e, v.bound[0])
 			failed := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, cond)
@@ -69,9 +63,6 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			emit_panic(e, panic_message_text(e, v, 0, "explicit panic"))
 			return "0"
 		case .Default_Allocator:
-			// design.md "Build-selected providers": the handle the build selected —
-			// the runtime's fallback record until a factory publishes another, and
-			// that factory's own handle afterwards.
 			return emit_default_allocator(e)
 		case .New, .New_Clone:
 			return emit_allocation_pair(e, v, symbol.builtin, as_type)[0]
@@ -87,13 +78,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Unsafe_Transmute:
 			return emit_transmute(e, v, as_type)
 		case .Unsafe_Take:
-			// The value leaves; the storage keeps the bits nobody may read again.
 			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:
-			// A store and nothing else: the storage held no value, so there is
-			// nothing there to drop first. The value still arrives the way any
-			// initialization takes it -- a place keeps its own value and the storage
-			// receives a clone, a temporary or a `move` hands ownership over.
 			written := expr_base(v.bound[0]).type
 			address := emit_address(e, v.bound[0])
 			value := emit_expr(e, v.bound[1])
@@ -132,8 +118,6 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .None, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable,
 		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
-			// These fold to a constant in every reachable case; arriving here
-			// would mean emitting a runtime call for a layout query.
 			backend_fail(e, "an unfrozen compile-time built-in reached emission")
 			return "0"
 		}
@@ -142,9 +126,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	return "0"
 }
 
-// `field.get(value)` and `field.pointer(value)`. The descriptor selected one
-// field at check time, so both are an ordinary member address, plus a load for
-// `get`.
+// `field.get(value)` and `field.pointer(value)`.
 @(private = "file")
 emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	checked := v.operation.(Call_Reflect)
@@ -234,10 +216,7 @@ emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
 	return out
 }
 
-// An operator, index, or slice call. Operator lookup has already chosen one
-// named procedure, so this is an ordinary direct call — except for a `delegate`
-// overload, which has no body and applies the underlying type's operation to the
-// unwrapped operands instead.
+// An operator, index, or slice call.
 @(private)
 emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr) -> string {
 	symbol := symbol_of(e.c, symbol_id)
@@ -252,14 +231,9 @@ emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr) -> 
 	return len(results) == 0 ? "0" : results[0]
 }
 
-// A `distinct` newtype's forwarding overload: unwrap, apply the underlying
-// operation, and let the wrap back into the distinct type be the no-op it is —
-// the two share a representation.
+// A `distinct` newtype's forwarding overload.
 @(private = "file")
 emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
-	// The underlying type's own overload takes the operands as they stand: a
-	// distinct type and what it wraps lower to one LLVM type, so unwrapping is
-	// the no-op the representation already makes it.
 	if symbol.delegate_target != INVALID_SYMBOL {
 		return emit_operator_call(e, symbol.delegate_target, bound)
 	}
@@ -279,10 +253,7 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
 	return emit_binary_op(e, op, underlying, underlying, lhs, rhs)
 }
 
-// The value of a producer whose lowering is not the ordinary `emit_expr` one:
-// an extraction, a slot call, an allocation, a container `make`, a text
-// operation, an `or_else`, or an `or_return`. Each of those has its own
-// sequence; this is the one place that picks between them.
+// Lowers calls that produce values outside the ordinary expression path.
 @(private)
 emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []string {
 	#partial switch v in expr {
@@ -335,24 +306,21 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 	}
 }
 
-// `new` and `new_clone` always return an error instead of invoking the allocator
-// failure policy (design.md "Allocation failure"), so there is no policy branch
-// here — the caller gets a null pointer and a non-nil error and decides.
+// `new` and `new_clone` report allocation failure to the caller.
 @(private = "file")
 emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> []string {
 	checked := v.operation.(Call_Allocation)
-	// `new_clone` creates a new allocation root containing a clone of the value
-	// (design.md), so a record whose clone can fail goes through its hook rather
-	// than through a shallow store of the representation.
 	if kind == .New_Clone && emit_lifecycle(e, checked.type).clone_fallible {
 		return emit_new_clone_hook(e, v, as_type)
 	}
-	// `new(T)` binds only an allocator; `new_clone(v)` binds the value first.
+	value := ""
+	if kind == .New_Clone {
+		value = emit_expr(e, v.bound[0])
+	}
 	allocator := emit_allocator_operand(e, v, kind == .New ? 0 : 1)
 	size, align := type_size(e.c, checked.type), type_align(e.c, checked.type)
 	pointer := temp(e)
 	if kind == .New {
-		// design.md: `new` zero-initialises.
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_alloc_zeroed(ptr %s, i64 %d, i64 %d)",
 			pointer, allocator, size, align,
@@ -367,13 +335,13 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, pointer)
 
 	if kind == .New_Clone {
-		// A failed allocation has nothing to clone into, so the copy is guarded. This
-		// arm only runs for a value whose clone is the copy its representation
-		// already is, so nothing is left partially built on that path.
 		store_label, done_label := new_label(e, "newclone.store"), new_label(e, "newclone.done")
 		fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", failed, done_label, store_label)
 		place_label(e, store_label)
-		store(e, checked.type, emit_expr(e, v.bound[0]), pointer)
+		if emit_lifecycle(e, checked.type).managed {
+			value = emit_clone_value(e, checked.type, value, allocator)
+		}
+		store(e, checked.type, value, pointer)
 		branch(e, done_label)
 		place_label(e, done_label)
 		e.terminated = false
@@ -384,11 +352,7 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_
 	return out
 }
 
-// The clone-through-a-hook half of `new_clone`, and the only path with a
-// partially cloned allocation to destroy: the hook already cleaned its own
-// temporary, leaving only the block it was going to be published into. The
-// result travels through storage rather than phi nodes, so the three exits
-// need no predecessor-label tracking.
+// The fallible-clone half of `new_clone`.
 @(private = "file")
 emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	checked := v.operation.(Call_Allocation)
@@ -401,18 +365,6 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", pointer_slot)
 	fmt.sbprintfln(&e.b, "  store i64 1, ptr %s", error_slot)
 
-	pointer := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
-		pointer, allocator, size, align,
-	)
-	no_memory := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, pointer)
-	clone_label := new_label(e, "newclone.clone")
-	done_label := new_label(e, "newclone.done")
-	branch_if(e, no_memory, done_label, clone_label)
-
-	place_label(e, clone_label)
 	hook := emit_lifecycle(e, checked.type).try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a fallible `new_clone` has no `try_clone` member")
@@ -430,19 +382,28 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	clone_slot := emit_union_spill(e, clone_result, returned)
 	failed := emit_union_failed(e, clone_result, returned)
 	cloned := emit_union_payload(e, clone_result, checked.type, clone_slot)
+	allocate_label, done_label := new_label(e, "newclone.allocate"), new_label(e, "newclone.done")
+	branch_if(e, failed, done_label, allocate_label)
+
+	place_label(e, allocate_label)
+	guard := hold_temporary_value(e, checked.type, cloned)
+	pointer := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
+		pointer, allocator, size, align,
+	)
+	no_memory := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, pointer)
 	release_label, publish_label := new_label(e, "newclone.release"), new_label(e, "newclone.publish")
-	branch_if(e, failed, release_label, publish_label)
+	branch_if(e, no_memory, release_label, publish_label)
 
 	place_label(e, release_label)
-	fmt.sbprintfln(
-		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
-		allocator, pointer, size, align,
-	)
-	fmt.sbprintfln(&e.b, "  store i64 1, ptr %s", error_slot)
+	drop_temporary_value(e, guard)
 	branch(e, done_label)
 
 	place_label(e, publish_label)
 	store(e, checked.type, cloned, pointer)
+	finish_temporary_drop(e, guard)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", pointer, pointer_slot)
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", error_slot)
 	branch(e, done_label)
@@ -458,13 +419,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	return out
 }
 
-// `make(T, counts..., allocator)`. The checker bound the counts in written
-// order followed by the allocator, so this only has to run them.
-//
-// The header is built in storage and published complete: the provider handle is
-// written first because the reserve below allocates *through* it, so a failed
-// reserve leaves an empty container bound to that provider rather than
-// something half-built.
+// `make(T, counts..., allocator)` receives checker-bound operands in order.
 @(private = "file")
 emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	checked := v.operation.(Call_Allocation)
@@ -506,9 +461,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	fill_label, done_label := new_label(e, "make.fill"), new_label(e, "make.done")
 	branch_if(e, failed, done_label, fill_label)
 
-	// A dynamic array's initial length is `len` zero values. Every Loke zero
-	// value is all-zero bits, so this is one memset rather than a per-element
-	// loop, and dropping those zeros is the no-op every hook must already handle.
+	// Dynamic-array zero values are all-zero bits.
 	place_label(e, fill_label)
 	if !is_map {
 		element := container_element(e.c, checked.type)
@@ -530,14 +483,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	return out
 }
 
-// Deallocation operations such as `free` and `drop` return no status (design.md).
-// The checker restricts the operand to a binding holding a fresh allocation
-// base, so the pointee type supplies the size and alignment given at `new`.
-//
-// The allocator is the written one, or the default provider when it was
-// omitted; design.md makes matching the creating allocator the program's
-// obligation either way. An arena allocation is normally released by that
-// region's reset instead.
+// Releases a checked allocation root with its original layout.
 @(private = "file")
 emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	pointer := emit_expr(e, v.bound[0])
@@ -567,11 +513,7 @@ emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> st
 	return out
 }
 
-// The checker accepts the same implicit assignment conversions for propagated
-// failures as for an ordinary destination. Most preserve the LLVM
-// representation; the two erased/view conversions need explicit construction
-// because `or_return` has an extracted SSA value, not an expression node for
-// `materialize` to annotate.
+// Applies the explicit representations needed by propagated failures.
 @(private = "file")
 emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id, source_address := "") -> string {
 	if from == into || value == "" {
@@ -596,8 +538,7 @@ emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id,
 	return value
 }
 
-// design.md "or_else expression": the fallback is evaluated only when the
-// operand holds its failure variant, which is why it lives in its own block.
+// The fallback is evaluated only for the failure variant.
 @(private = "file")
 emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	operand_type := type_underlying(e.c, expr_base(v.value).type)
@@ -617,11 +558,8 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	failed := emit_union_failed(e, operand_type, value)
 	branch_if(e, failed, fallback_label, success_label)
 
-	// The success payload is read only on the path where it is the active one.
 	place_label(e, success_label)
 	taken := emit_union_payload(e, operand_type, payload_type, slot)
-	// A place keeps owning what it holds, so what leaves is a copy of it. A
-	// trivially copied payload is already its own copy.
 	if v.borrows && emit_lifecycle(e, payload_type).managed {
 		taken = emit_clone_value(e, payload_type, taken)
 	}
@@ -658,10 +596,7 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	return out
 }
 
-// design.md "or_return operator": on failure the operand's error payload is
-// rewrapped as the enclosing procedure's failure variant and control leaves
-// through the ordinary epilogue, so `defer` ordering stays in one
-// implementation.
+// Rewraps a failure and exits through the ordinary epilogue.
 @(private = "file")
 emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	operand_type := type_underlying(e.c, expr_base(v.operand).type)
@@ -689,12 +624,9 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	if e.result_slot != "" {
 		target := type_underlying(e.c, e.result_type)
 		target_info := type_of(e.c, target)
-		// `or_return` constructs the enclosing error directly: the operand's error
-		// payload is moved into the new variant without a second clone.
 		error := ""
 		if failure_type := info.variants[info.failure_variant]; failure_type != TYPE_VOID {
 			error = emit_union_payload(e, operand_type, failure_type, slot)
-			// A place keeps its value, so the error the caller sees is a copy.
 			failure_into := target_info.variants[target_info.failure_variant]
 			if v.borrows && emit_lifecycle(e, failure_type).managed &&
 			   !failure_assignment_borrows(e.c, failure_type, failure_into) {
@@ -714,7 +646,6 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	place_label(e, ok_label)
 	out := make([]string, 1)
 	if info.variants[success] == TYPE_VOID {
-		// A payloadless success yields `Unit`, which is zero-sized.
 		out[0] = "zeroinitializer"
 		return out
 	}
@@ -746,12 +677,7 @@ emit_direct_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	return emit_bound_call(e, v.resolution.symbol, callee, callee_type, v.bound, v)
 }
 
-// design.md "Variadic parameters": the callee always receives one read-only
-// slice, so the caller either forwards a compatible spread as-is or builds
-// compiler-owned contiguous storage and hands over a slice of it. That storage
-// is a stack buffer — fixed-size when the element count is static, a checked
-// dynamic `alloca` when a spread makes it runtime-sized. A pack is a borrow of
-// that buffer, so it never involves a dynamic array.
+// A variadic pack is a read-only slice over compiler-owned stack storage.
 @(private = "file")
 Variadic_Pack :: struct {
 	value:   string,
@@ -773,8 +699,6 @@ checked_variadic_total :: proc(e: ^Emitter, total, added: string) -> string {
 
 @(private = "file")
 emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Variadic_Pack {
-	// A sole compatible spread forwards its slice directly, which is what makes
-	// `println(..args)` inside a variadic procedure cost nothing.
 	if v.variadic_forwards {
 		return Variadic_Pack{value = emit_expr(e, v.bound[v.variadic_slot])}
 	}
@@ -782,15 +706,11 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 	element_llvm := llvm_type(e, element)
 	static_count := len(v.variadic_elements)
 	if len(v.variadic_spreads) == 0 && static_count == 0 {
-		// design.md's `sum()` case: an empty pack is a nil slice, which has length
-		// 0 and points at no storage.
 		return Variadic_Pack{value = "zeroinitializer"}
 	}
 	managed := emit_lifecycle(e, element).managed
 
-	// Managed explicit operands first enter fixed staging storage. That storage
-	// is already registered while later operands are evaluated, so a panic cannot
-	// strand an owned temporary before the runtime-sized final buffer exists.
+	// Staging protects managed operands while later operands are evaluated.
 	staging, staging_flags, staging_count := "", "", ""
 	staging_cleanup := Deferred{slot = -1}
 	if managed && static_count > 0 {
@@ -806,8 +726,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 		staging_cleanup = register_variadic_cleanup(e, element, staging, staging_flags, staging_count)
 	}
 
-	// Every operand is evaluated once, in written order, before any storage is
-	// formed: a spread's length is part of the size the buffer needs.
+	// Spread lengths are collected while evaluating operands in written order.
 	elements := make([]string, static_count)
 	spreads := make([]string, len(v.variadic_spreads))
 	spread_data := make([]string, len(v.variadic_spreads))
@@ -828,8 +747,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 		}
 		expr := v.variadic_elements[next_element]
 		value := emit_expr(e, expr)
-		// A borrowed owner is cloned; a temporary or move already owns the value
-		// transferred into staging.
+		// Temporaries transfer into staging; borrowed owners are cloned.
 		if managed && expression_is_borrowed_place(e.c, expr) {
 			value = emit_clone_value(e, element, value)
 		}
@@ -957,10 +875,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 	return Variadic_Pack{value = emit_slice_value(e, pack_type, buffer, total), cleanup = cleanup}
 }
 
-// The call side of the Windows x64 classification. Operands are already
-// evaluated; this materializes each into its ABI register or caller-owned
-// temporary, emits the call, and reconstructs the aggregate result the loke
-// caller consumes. `loke`-convention calls never reach here.
+// Materializes the Windows x64 call-side ABI.
 @(private)
 param_is_by_ptr :: proc(info: ^Type_Info, index: int) -> bool {
 	return info != nil && index < len(info.param_by_ptr) && info.param_by_ptr[index]
@@ -971,9 +886,7 @@ proc_result_is_inout :: proc(info: ^Type_Info) -> bool {
 	return info != nil && info.result_inout
 }
 
-// design.md "Container insertion": the argument through which a container
-// insertion takes a move-only element, or -1. Such an element is handed over
-// rather than lent, so the caller registers no cleanup for it.
+// Returns the move-only container element slot, or -1.
 @(private = "file")
 consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol) -> int {
 	if symbol == nil || len(symbol.params) == 0 {
@@ -994,8 +907,7 @@ consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol) -> int {
 	return slot
 }
 
-// The shared call sequence: bind the operands left to right, emit the call, and
-// hand back one operand per result.
+// Binds operands left to right and emits one call.
 @(private = "file")
 emit_bound_call :: proc(
 	e: ^Emitter,
@@ -1009,8 +921,7 @@ emit_bound_call :: proc(
 	if callee_type == nil {
 		return nil
 	}
-	// Arguments are bound left to right. A default that names a parameter to its
-	// left reads the value bound a moment ago, which is why this map exists.
+	// Defaults can read parameters already bound to their left.
 	outer_params := e.param_values
 	e.param_values = make(map[Symbol_Id]string)
 	defer {
@@ -1019,9 +930,6 @@ emit_bound_call :: proc(
 	}
 
 	operands := make([]string, len(bound))
-	// design.md "Variadic parameters": the pack is materialised where it appears
-	// in the argument order, so the explicit arguments and the spreads are
-	// evaluated exactly once, left to right, together with the fixed ones.
 	pack := -1
 	if call_node != nil && call_node.is_variadic {
 		pack = call_node.variadic_slot
@@ -1032,9 +940,6 @@ emit_bound_call :: proc(
 	defer delete(argument_cleanups)
 	handoff_cleanups := make([dynamic]Deferred)
 	defer delete(handoff_cleanups)
-	// design.md "Evaluation order": supplied operands run in source order and
-	// are staged into their matched slots; omitted defaults follow in parameter
-	// order. Only the final operand list is parameter-ordered.
 	for step in 0 ..< len(bound) {
 		index := call_node != nil ? call_slot_at(call_node, step) : step
 		argument := bound[index]
@@ -1048,24 +953,15 @@ emit_bound_call :: proc(
 		if param_mode_is_pointer(mode) {
 			operands[index] = emit_address(e, argument)
 			if _, composite := argument.(^Expr_Composite); mode == .Borrow && composite {
-				// A composite borrowed directly by this call is owned by the
-				// complete expression. Ordinary composite construction transfers
-				// into its destination and must not register this extra cleanup.
+				// A directly borrowed composite belongs to the complete expression.
 				hold_addressed_temporary(e, argument, callee_type.parameters[index], operands[index])
 			}
 		} else {
 			operands[index] = emit_expr(e, argument)
 		}
-		// design.md "Parameter semantics and ABI lowering": an ordinary `value: T`
-		// parameter is a non-owning borrow, so the callee never cleans one up
-		// (`move` is a different, excluded mode). When the argument is an owned
-		// temporary rather than somebody else's place, that cleanup belongs to the
-		// caller — only the caller can tell the two apart. A C-variadic call passes
-		// arguments past the declared parameter list, which have no parameter type
-		// to clean up against.
+		// The caller cleans temporaries passed through non-owning value parameters.
 		if mode == .Move && index < len(callee_type.parameters) {
-			// The callee owns this value only once the call begins. Until then a
-			// later argument can panic, so keep the completed handoff live for unwind.
+			// Keep a move handoff live until the call begins.
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&handoff_cleanups, entry) }
 		} else if mode == .Value && index < len(callee_type.parameters) && index != consumed &&
@@ -1073,16 +969,7 @@ emit_bound_call :: proc(
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&argument_cleanups, entry) }
 		}
-		// design.md "Receiver forms": an immutable receiver is a borrow of the
-		// caller's storage, not a copy of it, so a temporary one is still the
-		// caller's to clean up. `emit_address` gave it a slot and registered it in
-		// the full-expression frame, which outlives the call whether or not the
-		// result borrows it — so the split between a delayed scope drop and a
-		// call-local one is gone, and with it the case that dropped a receiver
-		// before its enclosing expression finished.
-		// design.md: method-call syntax supplies the receiver's `move` marker
-		// implicitly, so the source is read and then killed here rather than by an
-		// `Expr_Move` the caller wrote.
+		// Method syntax supplies a move receiver's marker implicitly.
 		if index == 0 && symbol != nil && symbol.receiver == .Move {
 			if ident, is_ident := argument.(^Expr_Ident); is_ident {
 				kill_place(e, ident.symbol)
@@ -1093,14 +980,12 @@ emit_bound_call :: proc(
 		}
 	}
 
-	// A move-only pack is handed over at the call: from here the callee owns it,
-	// and drops whatever it could not store.
+	// A consumed pack transfers to the callee.
 	if consumed >= 0 && consumed == pack && pack_cleanup.array_cleanup {
 		unwind_clear(e, pack_cleanup.slot)
 		pack_cleanup = Deferred{slot = -1}
 	}
-	// Argument evaluation completed, so ownership now crosses the call boundary.
-	// A panic in the callee drops its own `move` parameters, not these guards.
+	// Ownership now crosses the call boundary.
 	for entry in handoff_cleanups {
 		finish_temporary_drop(e, entry)
 	}
@@ -1126,6 +1011,16 @@ emit_bound_call :: proc(
 		fmt.sbprintf(&e.b, "%s %s", type, operand)
 	}
 	fmt.sbprintln(&e.b, ")")
+	results: []string
+	if callee_type.result != INVALID_TYPE {
+		results = make([]string, 1)
+		results[0] = call
+	}
+	guard := Deferred{slot = -1}
+	if len(results) == 1 && !callee_type.result_inout &&
+	   (pack_cleanup.array_cleanup || len(argument_cleanups) > 0) {
+		guard = hold_temporary_value(e, callee_type.result, results[0])
+	}
 	if pack_cleanup.array_cleanup {
 		emit_drop_flagged_array(
 			e, pack_cleanup.type, pack_cleanup.array_buffer,
@@ -1134,23 +1029,12 @@ emit_bound_call :: proc(
 		unwind_clear(e, pack_cleanup.slot)
 	}
 
-	results: []string
-	if callee_type.result != INVALID_TYPE {
-		results = make([]string, 1)
-		results[0] = call
-	}
 	if len(argument_cleanups) > 0 {
-		// A drop hook can panic after the call has produced an owned result.
-		// Protect that result until all borrowed argument temporaries are gone.
-		guard: Deferred
-		if len(results) == 1 {
-			guard = hold_temporary_value(e, callee_type.result, results[0])
-		}
 		for index := len(argument_cleanups) - 1; index >= 0; index -= 1 {
 			drop_temporary_value(e, argument_cleanups[index])
 		}
-		if guard.place != "" { finish_temporary_drop(e, guard) }
 	}
+	if guard.place != "" { finish_temporary_drop(e, guard) }
 	return results
 }
 
@@ -1167,9 +1051,7 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 		return value
 	}
 
-	// design.md "SIMD vectors": a lane-wise conversion, which is the same LLVM
-	// cast instruction over a vector operand — so only the types it reads about
-	// come from the lanes.
+	// SIMD conversions use the same instruction over lane types.
 	from_lane, to_lane := from, to
 	if type_is_simd(e.c, from) && type_is_simd(e.c, to) {
 		from_lane = type_underlying(e.c, type_of(e.c, from).element)
@@ -1202,13 +1084,7 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 	return out
 }
 
-// design.md "Type conversion": a float converts to an integer type only when the
-// value is in that type's range. LLVM's `fptosi`/`fptoui` yield poison for every
-// other input -- a NaN, an infinity, or a magnitude that does not fit -- which
-// is not a value this language has, so the range is tested first and an invalid
-// conversion panics (design.md "Panics and unwinding"). Both tests are unordered
-// so a NaN trips them, and the upper bound is exclusive because it is the first
-// power of two past the destination's maximum.
+// Guard LLVM float-to-integer casts from poison on invalid inputs.
 @(private = "file")
 guard_float_to_int :: proc(e: ^Emitter, value: string, from, from_lane, to_lane: Type_Id) {
 	width := u16(type_bits(e.c, from_lane))

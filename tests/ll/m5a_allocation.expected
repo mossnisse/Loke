@@ -8,7 +8,7 @@ call ptr @loke_rt_v1_alloc_zeroed(ptr %t*, i64 8, i64 8)
 call ptr @loke_rt_v1_alloc(ptr %t*, i64 8, i64 8)
 call void @loke_rt_v1_free(ptr %t*, ptr
 newclone.store.
-newclone.clone.
+newclone.allocate.
 newclone.release.
 newclone.publish.
 @loke.i.Res.try_clone(ptr %t*, ptr %t*)

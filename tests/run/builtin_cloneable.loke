@@ -1,4 +1,4 @@
-package main; import "core:fmt"; import "core:mem"; import "base:interfaces";
+package main; import "core:fmt"; import "core:mem"; import "core:unsafe"; import "base:interfaces";
 
 // design.md "Standard interface catalogue": "copyable owning built-ins such as
 // `string`, dynamic arrays, maps ... satisfy `Cloneable`". They carry the same
@@ -48,6 +48,17 @@ main :: proc() {
 	shared_text := original.clone();
 	fmt.println(shared_text);
 	fmt.println(original.copy());
+	{
+		source := original.copy();
+		switch (root in new_clone(source)) {
+		case .ok:
+			taken := unsafe.take(root^);
+			free(root);
+			drop(source);
+			fmt.println(taken);
+		case .err: assert(false);
+		}
+	}
 
 	// A record with a string field clones ownership-recursively: the record is
 	// independent, the string handle is retained. Both drop at scope exit, so a

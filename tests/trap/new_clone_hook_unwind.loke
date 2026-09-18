@@ -1,0 +1,25 @@
+package main; import "core:fmt"; import "core:mem";
+
+Payload :: struct { bytes: [128]u8 }
+
+impl Payload {
+	copy_payload :: hook(copy) proc(self, allocator: Allocator) -> Result(Payload, Allocator_Error) {
+		panic("copy failed");
+		return .ok(Payload{});
+	}
+}
+
+main :: proc() {
+	room: [320]u8 = {};
+	arena := mem.Arena.from_buffer(room[:]);
+	defer {
+		probe := new(Payload, arena.allocator()) or_else nil;
+		fmt.println(probe != nil);
+		if (probe != nil) { free(probe, arena.allocator()); }
+	}
+	value: Payload = {};
+	switch (_ in new_clone(value, arena.allocator())) {
+	case .ok:
+	case .err:
+	}
+}
