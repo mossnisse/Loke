@@ -80,7 +80,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 			return
 		}
 		// Compiler-defined operations on unions, text, and enums.
-		if check_union_extract(k, v, sel) ||
+		if check_any_view_as(k, v, sel) ||
 		   check_text_operation(k, v, sel) ||
 		   check_enum_values(k, v, sel) ||
 		   check_enum_from_int(k, v, sel) {

@@ -1,20 +1,11 @@
-// Erased views: `any_view` and `dyn Interface`.
-//
-// Both are two-word non-owning views, and both are compiler-owned struct types
-// so they reuse the existing layout, parameter-passing, and emission paths:
+// Erased views, both compiler-owned two-word structs:
 //
 //   any_view       { ptr data, typeid id }
 //   dyn Interface  { ptr data, ptr witness }
 //
-// `any_view`'s position rules are enforced on the *resolved* type rather than on
-// the written syntax, so an alias or a generic substitution cannot smuggle one
-// into a field, a result, or a global.
-//
-// A witness is a mechanism, not a value: one immutable private global per
-// `(Interface, Concrete, arguments)`, named from those parts. Slot selection
-// always uses inherent members plus extensions in the slot's declaring
-// interface package — the key is compilation-global, so its lookup policy must
-// be too, or the same key could denote different behavior in two packages.
+// A witness is one private global per `(Interface, Concrete, arguments)`. Its
+// slots come from inherent members plus extensions in the slot's declaring
+// package, so one key means one behavior everywhere.
 package lokec
 
 import "core:fmt"
@@ -26,10 +17,7 @@ ANY_VIEW_ID :: 1
 DYN_DATA :: 0
 DYN_WITNESS :: 1
 
-// ----------------------------------------------------------- any_view --
-
-// `any_view` is predeclared, so its two members are installed on first use
-// rather than in the predeclared table, which runs before any symbol exists.
+// Installed on first use: the predeclared table runs before any symbol exists.
 ensure_any_view_fields :: proc(c: ^Compiler) {
 	info := type_of(c, TYPE_ANY_VIEW)
 	if info == nil || len(info.fields) > 0 {
@@ -43,10 +31,8 @@ ensure_any_view_fields :: proc(c: ^Compiler) {
 	info.mangled = "any_view"
 }
 
-// design.md: `any_view` may be a local variable or parameter, but not a result
-// type, global, struct or union field, container element, or captured value.
-// Asking the resolved type is what makes an alias or a generic substitution
-// unable to bypass the rule.
+// design.md: `any_view` may only be a local or a parameter. The resolved type is
+// asked, so an alias or a generic substitution cannot bypass the rule.
 type_mentions_any_view :: proc(c: ^Compiler, id: Type_Id, allow_top := false) -> bool {
 	if id == INVALID_TYPE {
 		return false
@@ -54,14 +40,16 @@ type_mentions_any_view :: proc(c: ^Compiler, id: Type_Id, allow_top := false) ->
 	if id == TYPE_ANY_VIEW {
 		return !allow_top
 	}
-	return type_contains_any_view(c, id, 0)
+	seen := make(map[Type_Id]bool, context.temp_allocator)
+	return type_contains_any_view(c, id, &seen)
 }
 
 @(private = "file")
-type_contains_any_view :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
-	if depth > 32 {
+type_contains_any_view :: proc(c: ^Compiler, id: Type_Id, seen: ^map[Type_Id]bool) -> bool {
+	if seen[id] {
 		return false
 	}
+	seen[id] = true
 	info := type_of(c, id)
 	if info == nil {
 		return false
@@ -70,38 +58,36 @@ type_contains_any_view :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	case .Any_View:
 		return true
 	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Array, .Distinct:
-		return type_contains_any_view(c, info.element, depth + 1)
+		return type_contains_any_view(c, info.element, seen)
 	case .Map:
-		return type_contains_any_view(c, info.key, depth + 1) ||
-		       type_contains_any_view(c, info.element, depth + 1)
+		return type_contains_any_view(c, info.key, seen) ||
+		       type_contains_any_view(c, info.element, seen)
 	case .Union:
 		for variant in info.variants {
-			if type_contains_any_view(c, variant, depth + 1) {
+			if type_contains_any_view(c, variant, seen) {
 				return true
 			}
 		}
 	case .Struct:
 		for field in info.fields {
 			sym := symbol_of(c, field)
-			if sym != nil && type_contains_any_view(c, sym.type, depth + 1) {
+			if sym != nil && type_contains_any_view(c, sym.type, seen) {
 				return true
 			}
 		}
 	case .Proc:
 		for parameter in info.parameters {
-			if type_contains_any_view(c, parameter, depth + 1) {
+			if type_contains_any_view(c, parameter, seen) {
 				return true
 			}
 		}
-		if info.result != INVALID_TYPE && type_contains_any_view(c, info.result, depth + 1) {
+		if info.result != INVALID_TYPE && type_contains_any_view(c, info.result, seen) {
 			return true
 		}
 	}
 	return false
 }
 
-// One diagnostic per forbidden position, naming the position rather than the
-// milestone.
 reject_any_view_position :: proc(k: ^Checker, type: Type_Id, span: Span, what: string) -> bool {
 	if !type_mentions_any_view(k.c, type) {
 		return false
@@ -134,10 +120,7 @@ any_view_source_type :: proc(c: ^Compiler, from: Type_Id) -> Type_Id {
 	return type_is_untyped(c, from) ? default_type(c, from) : from
 }
 
-// ---------------------------------------------------------------- dyn --
-
-// `dyn Interface(args...)`: the data pointer plus the coherent witness for the
-// erased type. The subject argument is omitted because it is what is erased.
+// `dyn Interface(args...)`, whose arguments omit the erased subject.
 dyn_type :: proc(
 	k: ^Checker,
 	info: ^Interface_Info,
@@ -163,12 +146,7 @@ dyn_type :: proc(
 	if existing, found := k.c.dyn_types[key]; found {
 		return existing
 	}
-	full := make([]Generic_Arg, len(info.params), k.c.semantic_allocator)
-	full[0] = Generic_Arg{is_type = true, type = TYPE_RAWPTR}
-	for index in 1 ..< len(full) {
-		full[index] = index - 1 < len(args) ? args[index - 1] : Generic_Arg{}
-	}
-	if failure, holds := interface_predicates_check(k, info, full); !holds {
+	if failure, holds := interface_predicates_check(k, info, interface_application(k.c, info, TYPE_RAWPTR, args)); !holds {
 		if report {
 			errorf(
 				k.c,
@@ -181,8 +159,7 @@ dyn_type :: proc(
 		}
 		return INVALID_TYPE
 	}
-	// The read-only variant always exists, because it is the ABI type both
-	// capabilities share (`dyn_abi_type`), exactly as `[]T` is for slices.
+	// The read-only variant is the ABI type both capabilities share.
 	if mutable {
 		dyn_type(k, info, args, span, false, report)
 	}
@@ -206,46 +183,22 @@ dyn_type :: proc(
 	return type
 }
 
-// `dyn I` satisfies `I` itself, through compiler-provided forwarding slots —
-// the bridge between static and runtime polymorphism (design.md). Each
-// forwarder is an ordinary method on the view whose body calls through the
-// view's own witness, so `Drawable(dyn Drawable)` holds and generic code
-// constrained by `I` accepts a `dyn I`.
+// design.md: `dyn I` satisfies `I` through forwarding methods that call
+// through the view's own witness.
 @(private = "file")
 install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, dyn: Type_Id) {
-	full := make([]Generic_Arg, len(info.params), k.c.semantic_allocator)
-	full[0] = Generic_Arg{is_type = true, type = dyn}
-	for index in 1 ..< len(full) {
-		full[index] = index - 1 < len(args) ? args[index - 1] : Generic_Arg{}
-	}
 	flattened := make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
-	interface_slots(k, info, full, &flattened)
+	interface_slots(k, info, interface_application(k.c, info, dyn, args), &flattened)
 
 	dyn_mutable := dyn_is_mutable(k.c, dyn)
 	members := make([]Symbol_Id, len(flattened), k.c.semantic_allocator)
-	saved_scope := k.scope
 	for entry, index in flattened {
-		owner := interface_info_for(k, entry.owner)
-		scope := new_scope(k.c, owner.scope == nil ? build_universe(k.c) : owner.scope, .Local)
-		for parameter, position in owner.params {
-			if position < len(entry.args) {
-				bind_generic_name(k, scope, Generic_Binding {
-					name = parameter.name,
-					span = parameter.span,
-					arg  = entry.args[position],
-				})
-			}
-		}
-		k.scope = scope
-		params, modes, result_type, result_inout, ok := slot_signature(k, entry.type, dyn)
-		k.scope = saved_scope
+		params, modes, result_type, result_inout, ok := slot_signature_for(k, interface_info_for(k, entry.owner), entry, dyn)
 		if !ok {
 			continue
 		}
-		// A `dyn I` exposes only the slots an immutable `self` reaches. The
-		// witness still carries every slot — what the view type decides is which
-		// of them this capability may call, so the hole here is what makes the
-		// mutable-slot call a capability error rather than a missing member.
+		// A read-only view leaves a hole for an `inout` slot, so calling it is a
+		// capability error (L0643) rather than a missing member.
 		if !dyn_mutable && len(modes) > 0 && modes[0] == .Inout {
 			continue
 		}
@@ -274,17 +227,47 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 	}
 }
 
+// `subject` followed by the non-subject `rest`: a full interface application.
+@(private = "file")
+interface_application :: proc(c: ^Compiler, info: ^Interface_Info, subject: Type_Id, rest: []Generic_Arg) -> []Generic_Arg {
+	full := make([]Generic_Arg, len(info.params), c.semantic_allocator)
+	if len(full) > 0 {
+		full[0] = Generic_Arg{is_type = true, type = subject}
+	}
+	for index in 1 ..< len(full) {
+		full[index] = index - 1 < len(rest) ? rest[index - 1] : Generic_Arg{}
+	}
+	return full
+}
+
+// A scope binding the interface's parameters to one application's arguments.
+@(private = "file")
+interface_scope :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> ^Scope {
+	scope := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
+	for parameter, index in info.params {
+		if index < len(args) {
+			bind_generic_name(k, scope, Generic_Binding{name = parameter.name, span = parameter.span, arg = args[index]})
+		}
+	}
+	return scope
+}
+
+@(private = "file")
+write_arg_keys :: proc(c: ^Compiler, b: ^strings.Builder, args: []Generic_Arg) {
+	for arg in args {
+		if arg.is_type {
+			fmt.sbprintf(b, "|T%d", u32(arg.type))
+		} else {
+			text := const_key_text(c, arg.value)
+			fmt.sbprintf(b, "|V%d:%d:%s", u32(arg.value_type), len(text), text)
+		}
+	}
+}
+
 dyn_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, args: []Generic_Arg, mutable: bool) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	fmt.sbprintf(&b, "%d%s", u32(interface_symbol), mutable ? "m" : "")
-	for arg in args {
-		if arg.is_type {
-			fmt.sbprintf(&b, "|T%d", u32(arg.type))
-		} else {
-			text := const_key_text(c, arg.value)
-			fmt.sbprintf(&b, "|V%d:%d:%s", u32(arg.value_type), len(text), text)
-		}
-	}
+	write_arg_keys(c, &b, args)
 	return strings.to_string(b)
 }
 
@@ -315,9 +298,7 @@ dyn_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return info != nil && info.kind == .Dyn && info.mutable
 }
 
-// A mutable and a read-only dyn view share one runtime representation — the
-// same data pointer and the same witness — so the backend gives both one LLVM
-// type and weakening emits no cast and no copy.
+// Both capabilities share one representation, so weakening is free.
 dyn_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	under := type_underlying(c, id)
 	info := type_of(c, under)
@@ -328,8 +309,7 @@ dyn_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	return found ? readonly : under
 }
 
-// The same interface applied to the same arguments, whatever the capability:
-// what `dyn mut I(T)` and `dyn I(T)` have in common and `dyn I(U)` does not.
+// The same interface and arguments, whatever the capability.
 dyn_same_application :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
 	if a.dyn_interface != b.dyn_interface || len(a.dyn_args) != len(b.dyn_args) {
 		return false
@@ -356,10 +336,7 @@ dyn_same_application :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
 	return true
 }
 
-// --------------------------------------------------- dyn compatibility --
-
-// design.md's five rules. They are properties of the declaration, not of the use
-// site, so the answer and the rule that disqualified it are computed once.
+// design.md's five rules, computed once per declaration.
 dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 	if info.dyn_computed {
 		return info.dyn_ok
@@ -405,14 +382,12 @@ dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 			}
 			continue
 		}
-		// Composition is the one free-form requirement a dyn interface may have,
-		// and the composed interface must itself be dyn-compatible on the same
-		// subject.
+		// Only composition of a dyn-compatible interface on the same subject.
 		composed := composed_interface_of(k, requirement)
 		if composed == nil {
 			info.dyn_reason = fmt.aprintf(
 				"the requirement on line %d is a free expression; every runtime operation must be a named `slot`",
-				requirement_line(k.c, requirement),
+				span_line(k.c, requirement.span),
 				allocator = k.c.semantic_allocator,
 			)
 			return false
@@ -456,11 +431,6 @@ dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 }
 
 @(private = "file")
-requirement_line :: proc(c: ^Compiler, requirement: Requirement) -> int {
-	return span_line(c, requirement.span)
-}
-
-@(private = "file")
 span_line :: proc(c: ^Compiler, span: Span) -> int {
 	if span.file == NO_FILE || int(span.file) >= len(c.sources) {
 		return 0
@@ -501,12 +471,10 @@ dyn_slot_is_compatible :: proc(k: ^Checker, requirement: Requirement, subject: I
 		if parameter.default != nil {
 			return fmt.aprintf("slot `%s` has a default argument", name, allocator = k.c.semantic_allocator), false
 		}
-		// `proc(self, canvas: inout Canvas)` is the receiver plus one typed
-		// parameter, so the written type belongs to the parameter, not to `self`.
+		// In `proc(self, canvas: inout Canvas)` the type belongs to `canvas`.
 		split := parameter_splits_receiver(parameter, position)
 		if position == 0 && !split {
-			// The receiver: immutable `self` (inferred or written) or
-			// `self: inout Subject`. A consuming `move self` cannot be erased.
+			// A borrowed view cannot supply `move self`.
 			if parameter.mode == .Move {
 				return fmt.aprintf(
 					"slot `%s` consumes its receiver, which a borrowed view cannot supply",
@@ -541,9 +509,7 @@ dyn_slot_is_compatible :: proc(k: ^Checker, requirement: Requirement, subject: I
 	return "", true
 }
 
-// Does this syntax mention `name` anywhere? Purely syntactic, because dyn
-// compatibility is a property of the declaration and no arguments are bound.
-// The same walk serves slot types and interface-local value predicates.
+// Whether the syntax mentions `name`; no arguments are bound yet.
 @(private = "file")
 type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 	if e == nil {
@@ -640,23 +606,17 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 		}
 		return false
 	case ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
-		// These forms may contain executable bodies or declarations. They are not
-		// useful erasure-invariant predicates, so keep the dyn verdict conservative.
-		return true
+		return true // conservatively
 	}
 	return false
 }
 
-// ------------------------------------------------------------ witnesses --
-
-// The evidence that one concrete type satisfies one interface application, as
-// one immutable private global per key.
+// Evidence that one concrete type satisfies one interface application.
 Witness :: struct {
 	interface_symbol: Symbol_Id,
 	concrete:         Type_Id,
 	args:             []Generic_Arg,
-	// One entry per slot, in the flattened declaration order the dyn type's
-	// call sites index by.
+	// In the flattened order slot calls index by.
 	slots:            []Witness_Slot,
 	name:             string,
 }
@@ -664,26 +624,16 @@ Witness :: struct {
 Witness_Slot :: struct {
 	name:   Identifier_Id,
 	target: Symbol_Id,
-	// The receiver mode the thunk has to re-type the erased pointer for.
 	mode:   Param_Mode,
 	params: []Type_Id,
 	result: Type_Id,
 }
 
-// The flattened slots of an interface application, composition included, each
-// remembering the package that declares it.
+// The flattened slots of an interface application, composition included.
 interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, out: ^[dynamic]Interface_Slot) {
-	// Resolve composed applications in the declaring interface's lexical scope,
-	// with this application's complete argument vector bound to its parameters.
-	scope := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
-	for parameter, index in info.params {
-		if index < len(args) {
-			bind_generic_name(k, scope, Generic_Binding{name = parameter.name, span = parameter.span, arg = args[index]})
-		}
-	}
 	saved := save_checker_location(k)
 	defer restore_checker_location(k, saved)
-	k.scope, k.pkg, k.lookup_pkg = scope, info.pkg, info.pkg
+	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
 	if info.file_node != nil {
 		k.file, k.file_node = info.file, info.file_node
 	}
@@ -711,8 +661,7 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 		if composed == nil {
 			continue
 		}
-		// Clone before annotating: one interface declaration can be flattened for
-		// many applications with different arguments.
+		// Clone before annotating: one declaration serves many applications.
 		one := make([]Requirement, 1, k.c.semantic_allocator)
 		one[0] = requirement
 		clone := clone_requirements(k.c, one)[0]
@@ -733,24 +682,15 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 	}
 }
 
-// Materializes, or reuses, the witness for one key. Slot selection always uses
-// inherent members plus extensions in each slot's declaring-interface package,
-// never the conversion site's.
+// Materializes, or reuses, the witness for one key.
 request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, args: []Generic_Arg, span: Span) -> ^Witness {
 	key := witness_key(k.c, info.symbol, concrete, args)
 	if existing, found := k.c.witnesses[key]; found {
 		return existing
 	}
 
-	// The subject is the first argument; the rest are the dyn type's own.
-	full := make([]Generic_Arg, len(info.params), k.c.semantic_allocator)
-	full[0] = Generic_Arg{is_type = true, type = concrete}
-	for index in 1 ..< len(full) {
-		full[index] = index - 1 < len(args) ? args[index - 1] : Generic_Arg{}
-	}
-
 	flattened := make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
-	interface_slots(k, info, full, &flattened)
+	interface_slots(k, info, interface_application(k.c, info, concrete, args), &flattened)
 
 	witness := new(Witness, k.c.semantic_allocator)
 	witness.interface_symbol = info.symbol
@@ -762,10 +702,8 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	saved := save_checker_location(k)
 	for entry, index in flattened {
 		owner := interface_info_for(k, entry.owner)
-		// The coherent rule, applied per slot: the package that declares the slot
-		// decides which extensions may supply it.
+		// The slot's declaring package decides which extensions may supply it.
 		k.pkg, k.lookup_pkg = owner.pkg, owner.pkg
-		k.scope = owner.scope == nil ? build_universe(k.c) : owner.scope
 		params, modes, result_type, _, shape_ok := slot_signature_for(k, owner, entry, concrete)
 		target := INVALID_SYMBOL
 		if shape_ok {
@@ -782,6 +720,11 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	restore_checker_location(k, saved)
 	witness.slots = slots
 	if k.c.speculation_depth == 0 {
+		// The readable name need not be unique: two packages may both have a `Shape`.
+		if k.c.witness_names[witness.name] {
+			witness.name = fmt.aprintf("%s.%d", witness.name, len(k.c.witness_order), allocator = k.c.semantic_allocator)
+		}
+		k.c.witness_names[witness.name] = true
 		k.c.witnesses[key] = witness
 		append(&k.c.witness_order, witness)
 	}
@@ -792,22 +735,11 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 witness_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id, args: []Generic_Arg) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	fmt.sbprintf(&b, "%d|%d", u32(interface_symbol), u32(concrete))
-	for arg in args {
-		if arg.is_type {
-			fmt.sbprintf(&b, "|T%d", u32(arg.type))
-		} else {
-			text := const_key_text(c, arg.value)
-			fmt.sbprintf(&b, "|V%d:%d:%s", u32(arg.value_type), len(text), text)
-		}
-	}
+	write_arg_keys(c, &b, args)
 	return strings.to_string(b)
 }
 
-// The backend spelling of a witness: names, not symbol/type ids, since an id
-// shifts whenever anything earlier in the universe or type store grows, which
-// churned every emitted witness name — and the goldens pinning them — on
-// unrelated changes. Uniqueness still comes from `witness_key`, the witness
-// map's real key; this only has to be stable and readable.
+// Spelled from names rather than ids, which shift on unrelated changes.
 @(private = "file")
 witness_llvm_name :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id, args: []Generic_Arg) -> string {
 	b := strings.builder_make(c.semantic_allocator)
@@ -830,25 +762,18 @@ witness_llvm_name :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: T
 	return strings.to_string(b)
 }
 
-// Resolves one slot's written signature with the owning interface's parameters
-// bound to this application's arguments.
+// One slot's signature for `receiver`, with its interface's parameters bound.
 @(private = "file")
 slot_signature_for :: proc(
 	k: ^Checker,
 	owner: ^Interface_Info,
 	entry: Interface_Slot,
-	concrete: Type_Id,
+	receiver: Type_Id,
 ) -> ([]Type_Id, []Param_Mode, Type_Id, bool, bool) {
-	scope := new_scope(k.c, k.scope, .Local)
-	for parameter, index in owner.params {
-		if index < len(entry.args) {
-			bind_generic_name(k, scope, Generic_Binding{name = parameter.name, span = parameter.span, arg = entry.args[index]})
-		}
-	}
 	saved := k.scope
-	k.scope = scope
+	k.scope = interface_scope(k, owner, entry.args)
 	defer k.scope = saved
-	return slot_signature(k, entry.type, concrete)
+	return slot_signature(k, entry.type, receiver)
 }
 
 @(private = "file")
@@ -883,15 +808,8 @@ dyn_slot_index :: proc(k: ^Checker, dyn: Type_Id, name: Identifier_Id) -> (int, 
 	if owner == nil {
 		return 0, Interface_Slot{}, false
 	}
-	full := make([]Generic_Arg, len(owner.params), k.c.semantic_allocator)
-	if len(full) > 0 {
-		full[0] = Generic_Arg{is_type = true, type = dyn}
-	}
-	for index in 1 ..< len(full) {
-		full[index] = index - 1 < len(info.dyn_args) ? info.dyn_args[index - 1] : Generic_Arg{}
-	}
-	flattened := make([dynamic]Interface_Slot, 0, 4, k.c.semantic_allocator)
-	interface_slots(k, owner, full, &flattened)
+	flattened := make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
+	interface_slots(k, owner, interface_application(k.c, owner, dyn, info.dyn_args), &flattened)
 	for entry, index in flattened {
 		if entry.name == name {
 			return index, entry, true
@@ -900,15 +818,11 @@ dyn_slot_index :: proc(k: ^Checker, dyn: Type_Id, name: Identifier_Id) -> (int, 
 	return 0, Interface_Slot{}, false
 }
 
-// ------------------------------------------------------- type resolution --
-
-// `dyn Interface(args...)`. Forming the type validates the interface, its
-// non-subject arguments, and dyn compatibility; it cannot evaluate satisfaction
-// because the erased subject is absent.
+// `dyn Interface(args...)`. Satisfaction waits for a concrete subject.
 resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 	callee := v.interface_expr
 	args: []Argument
-    if call, is_call := callee.(^Expr_Call); is_call {
+	if call, is_call := callee.(^Expr_Call); is_call {
 		args = call.args
 		callee = call.callee
 	}
@@ -920,7 +834,6 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 	if !dyn_compatible(k, info) {
 		return dyn_type(k, info, nil, v.span, v.mutable, report = true)
 	}
-	// The subject is erased, so the application supplies every *other* parameter.
 	if len(args) != len(info.params) - 1 {
 		errorf(
 			k.c,
@@ -946,9 +859,8 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 	return dyn_type(k, info, bound, v.span, v.mutable, report = true)
 }
 
-// design.md: conversion is an ordinary explicit conversion from a pointer to the
-// concrete subject. It checks `Interface(Concrete, args...)` using the coherent
-// dyn lookup rule and then requests the witness.
+// design.md: `(dyn I)(&concrete)` checks `I(Concrete, args...)` and requests
+// the witness.
 check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	v.value_category = .Value
 	v.type = target
@@ -968,8 +880,7 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	v.operation = Call_Dyn_Conversion{}
 	v.resolution = {}
 
-	// Converting a nil concrete pointer produces the nil dynamic view and does
-	// not retain a witness for the absent value.
+	// `nil` gives the nil view, with no witness.
 	if source == TYPE_UNTYPED_NIL {
 		materialize(k, v.args[0].value, TYPE_RAWPTR)
 		return
@@ -986,9 +897,7 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// A mutable view may only be built from a mutable pointer: the view's
-	// capability is the referent's, and the conversion is where it is claimed.
-	// The other direction is ordinary weakening and needs nothing.
+	// A mutable view needs a mutable pointer.
 	if dyn_is_mutable(k.c, target) && !pointer.mutable {
 		errorf(
 			k.c,
@@ -1009,12 +918,7 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		return
 	}
 
-	full := make([]Generic_Arg, len(info.params), k.c.semantic_allocator)
-	full[0] = Generic_Arg{is_type = true, type = concrete}
-	for index in 1 ..< len(full) {
-		full[index] = index - 1 < len(dyn.dyn_args) ? dyn.dyn_args[index - 1] : Generic_Arg{}
-	}
-	if !interface_satisfied(k, info, full, v.span, report = true) {
+	if !interface_satisfied(k, info, interface_application(k.c, info, concrete, dyn.dyn_args), v.span, report = true) {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -1038,19 +942,10 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	v.operation = Call_Dyn_Conversion{witness = witness}
 }
 
-// ---------------------------------------- any_view checked extractions --
-
-// design.md "any_view type": `any_view` supports the same two spellings
-// a union has — trapping `.(T)` and optional `.as(T)` — on one
-// `Expr_Checked_Extract` node. `.as(T)` uses selector/call syntax but is not a
-// call: it resolves to the same node `.(T)` produces, so the flow graph, the
-// evaluator, and the emitter keep one extraction path rather than two.
-//
-// `as` is a name users choose, so the receiver's *type* decides which meaning
-// applies: an `any_view` takes the built-in, every other type keeps its
-// declared member. Resolving the receiver first is what makes that true for
-// `f().as(T)`, `a.b.as(T)`, and `xs[0].as(T)`, not just a plain name.
-check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+// design.md "any_view type": `view.as(T)` becomes the same checked extraction
+// node as `view.(T)`. Only an `any_view` receiver takes it; any other type keeps
+// its own `as` member.
+check_any_view_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 	if sel.name.text != "as" {
 		return false
 	}
@@ -1071,7 +966,6 @@ check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> 
 	bound[0] = sel.operand
 	v.bound = bound
 
-	// Exactly one positional type argument, which is the extraction's target.
 	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value ||
 	   v.args[0].value == nil {
 		errorf(
@@ -1095,15 +989,6 @@ check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> 
 	return true
 }
 
-// `.as(T)` produces `Option(T)`; `.(T)` produces `T` and traps on a mismatch.
-@(private = "file")
-set_extract_results :: proc(k: ^Checker, v: ^Expr_Checked_Extract, target: Type_Id) {
-	if v.mode != .Optional {
-		return
-	}
-	v.type = option_type(k, target, v.span)
-}
-
 check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 	target := resolve_type_syntax(k, v.target)
 	if target == INVALID_TYPE {
@@ -1122,9 +1007,9 @@ check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 		v.type = INVALID_TYPE
 		return
 	}
-	v.type = target
+	// `.as(T)` gives `Option(T)`; `.(T)` traps on a mismatch.
 	v.payload = target
-	set_extract_results(k, v, target)
+	v.type = v.mode == .Optional ? option_type(k, target, v.span) : target
 	if type_clone_disabled(k.c, target) {
 		errorf(k.c, v.span, "L0503", "`%s` is move-only, so a checked extraction cannot copy it from an `any_view`", type_name(k.c, target))
 		return
@@ -1133,10 +1018,7 @@ check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 	request_typeid(k.c, target)
 }
 
-// --------------------------------------------------------- slot calls --
-
-// `view.draw(inout canvas)`: an indirect call through the witness, with a
-// nil-witness trap. The slot was selected by name at check time.
+// `view.draw(inout canvas)`: an indirect call through the witness.
 check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn: Type_Id) -> bool {
 	name := intern_identifier(k.c, sel.name.text)
 	index, entry, found := dyn_slot_index(k, dyn, name)
@@ -1144,30 +1026,12 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 		return false
 	}
 	owner := interface_info_for(k, entry.owner)
-	scope := new_scope(k.c, owner.scope == nil ? build_universe(k.c) : owner.scope, .Local)
-	saved := k.scope
-	k.scope = scope
-	for parameter, position in owner.params {
-		if position < len(entry.args) && entry.args[position].is_type {
-			bind_generic_name(k, scope, Generic_Binding {
-				name = parameter.name,
-				span = parameter.span,
-				arg  = entry.args[position],
-			})
-		}
-	}
-	// The receiver's own type is the erased view, and every other parameter is
-	// resolved from the interface application.
-	params, modes, result_type, result_inout, ok := slot_signature(k, entry.type, dyn)
-	k.scope = saved
+	params, modes, result_type, result_inout, ok := slot_signature_for(k, owner, entry, dyn)
 	if !ok {
 		errorf(k.c, v.span, "L0467", "`%s`'s signature does not resolve here", sel.name.text)
 		v.type = INVALID_TYPE
 		return true
 	}
-	// The slot exists on the witness whatever the view's capability, so calling a
-	// mutating one through a read-only view is a capability error and must not be
-	// reported as a missing member (design.md).
 	if !dyn_is_mutable(k.c, dyn) && len(modes) > 0 && modes[0] == .Inout {
 		errorf(
 			k.c,
@@ -1259,8 +1123,6 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 		v.bound_order = order[:]
 	}
 	v.operation = Call_Dyn_Slot{index = index}
-	// The slot's `inout` result travels with the signature: the witness returns a
-	// pointer, so a call through the view has to be typed — and lowered — as one.
 	sel.type = intern_proc_type(k.c, params, modes, result_type, result_inout, "")
 	set_call_result(v, result_type, result_inout)
 	return true

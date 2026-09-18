@@ -1,0 +1,3 @@
+package beta;
+@(public)
+Shape :: interface($Self: type) { slot area: proc(self) -> int; }

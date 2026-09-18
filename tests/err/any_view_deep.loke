@@ -1,0 +1,4 @@
+package main;
+// The position rule has no depth limit.
+g: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^any_view;
+main :: proc() { }

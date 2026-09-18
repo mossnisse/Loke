@@ -1,0 +1,14 @@
+package main;
+import "core:fmt";
+import "alpha";
+import "beta";
+
+// Two packages' `Shape` witnesses for one `Circle` need distinct LLVM names.
+Circle :: struct { r: int }
+impl Circle { area :: proc(self) -> int { return self.r; } }
+main :: proc() {
+    c := Circle{3};
+    a := (dyn alpha.Shape)(&c);
+    b := (dyn beta.Shape)(&c);
+    fmt.println(a.area(), b.area());
+}
