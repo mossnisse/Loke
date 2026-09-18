@@ -1,0 +1,12 @@
+L0488
+@8:2
+a `move_only` type cannot also declare `hook(copy)`
+L0488
+@15:2
+`hook(drop)` cannot be declared on `distinct` `D`, which shares the lifecycle of `S`
+L0363
+@19:7
+`[dynamic]Res` has no field or member `clone`
+L0363
+@21:7
+`map[int]Res` has no field or member `try_clone`

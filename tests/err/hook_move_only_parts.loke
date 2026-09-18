@@ -1,0 +1,22 @@
+package main;
+
+// A container of move-only elements has no copy, and a record holding a
+// move-only field cannot opt back in with `hook(copy)`.
+Res :: move_only struct { id: int }
+Box :: struct { r: Res }
+impl Box {
+	copy_box :: hook(copy) proc(self, allocator: Allocator) -> Result(Box, Allocator_Error) {
+		return .ok(Box{ r = Res{ id = self.r.id } });
+	}
+}
+S :: struct { id: int }
+D :: distinct S;
+impl D {
+	release :: hook(drop) proc(self: inout D) {}
+}
+main :: proc() {
+	d := [dynamic]Res{ Res{ id = 5 } };
+	e := d.clone();
+	m := map[int]Res{ 1 = Res{ id = 7 } };
+	n := m.try_clone();
+}
