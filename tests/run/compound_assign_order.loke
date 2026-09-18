@@ -1,0 +1,8 @@
+package main; import "core:fmt";
+
+// design.md: a compound assignment reads its destination after the right
+// operand, at compile time and at run time alike.
+bump :: proc(p: ^mut int) -> int { p^ = 100; return 1; }
+f :: proc() -> int { x := 5; p := &mut x; x += bump(p); return x; }
+C :: f();
+main :: proc() { fmt.println(C, f()); }

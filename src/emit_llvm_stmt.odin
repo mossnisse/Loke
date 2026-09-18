@@ -402,9 +402,10 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		store(e, type, value, address)
 		return
 	}
+	// design.md: the destination is read after the right operand.
 	address := emit_address(e, target)
-	current := load(e, llvm_type(e, type), address)
 	rhs := emit_expr(e, s.rhs[0])
+	current := load(e, llvm_type(e, type), address)
 	op := compound_operator(s.op)
 	result: string
 	if type_is_simd(e.c, type) {
