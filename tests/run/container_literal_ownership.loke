@@ -1,0 +1,39 @@
+package main; import "core:fmt";
+
+// A container literal copies a borrowed key or element exactly once, and never
+// drops the place it borrowed from.
+
+key_copies, key_drops, value_copies, value_drops: int;
+Key :: struct { id: int }
+Value :: struct { id: int }
+impl Key {
+	hash :: proc(self, seed: uint) -> uint { return self.id.hash(seed); }
+	equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Key, Allocator_Error) {
+		key_copies += 1;
+		return .ok(Key{self.id});
+	}
+	release :: hook(drop) proc(self: inout Key) { if (self.id != 0) { key_drops += 1; } }
+}
+impl Value {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
+		value_copies += 1;
+		return .ok(Value{self.id});
+	}
+	release :: hook(drop) proc(self: inout Value) { if (self.id != 0) { value_drops += 1; } }
+}
+
+main :: proc() {
+	{
+		key := Key{1};
+		m := map[Key]int{ key = 1, Key{2} = 2 };
+		fmt.println(key_copies, key_drops);
+	}
+	fmt.println(key_copies, key_drops);
+	{
+		value := Value{1};
+		xs := [dynamic]Value{ value, Value{2} };
+		fmt.println(value_copies, value_drops);
+	}
+	fmt.println(value_copies, value_drops);
+}
