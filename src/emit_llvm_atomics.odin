@@ -1,23 +1,9 @@
-// Lowering the atomic intrinsics (design.md "Concurrency and the memory
-// model").
-//
-// Two paths, chosen by width. A width the target has a native instruction for
-// becomes `load atomic`, `store atomic`, `atomicrmw`, or `cmpxchg` with the
-// ordering the checker settled. A width it does not — 128 bits on Windows x64 —
-// calls a versioned helper in `runtime/atomic.c`, because LLVM's own 128-bit
-// atomic lowering emits `__atomic_*_16` calls that this link does not supply.
-// Emitting valid IR is not the same as implementing the promised type set.
-//
-// *Every* operation on a fallback width takes the fallback path, loads and
-// stores included: mixing a locked read-modify-write with an unlocked wide load
-// would lose the atomicity the lock is there to provide.
+// LLVM handles 8-64-bit atomics; runtime/atomic.c serializes every 128-bit operation.
 package lokec
 
 import "core:fmt"
 
-// The widths Windows x64 has native atomics for. 128-bit `cmpxchg16b` exists,
-// but reaching it through LLVM requires the `__atomic_*_16` library this link
-// does not have, so 128 bits goes to the runtime.
+// LLVM's Windows x64 lowering needs unavailable `__atomic_*_16` helpers.
 @(private = "file")
 atomic_width_is_native :: proc(bits: int) -> bool {
 	switch bits {
@@ -39,7 +25,6 @@ llvm_ordering :: proc(order: Memory_Order) -> string {
 	return "seq_cst"
 }
 
-// The `atomicrmw` opcode, or "" for an operation that is not one.
 @(private = "file")
 atomic_rmw_opcode :: proc(kind: Builtin_Kind) -> string {
 	#partial switch kind {
@@ -53,8 +38,6 @@ atomic_rmw_opcode :: proc(kind: Builtin_Kind) -> string {
 	return ""
 }
 
-// The runtime helper suffix for the fallback path, which names the operation
-// rather than the opcode so `runtime/atomic.c` reads as a list of operations.
 @(private = "file")
 atomic_helper_name :: proc(kind: Builtin_Kind) -> string {
 	#partial switch kind {
@@ -88,9 +71,7 @@ emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 	checked := v.operation.(Call_Atomic)
 	order := Memory_Order(checked.order)
 	if kind == .Atomic_Fence {
-		// A fence has no operand and no width, so both paths agree: LLVM emits the
-		// barrier natively, and the runtime helper exists only so the fallback
-		// widths order against the same one.
+		// Fences have no width-specific lowering.
 		fmt.sbprintfln(&e.b, "  fence %s", llvm_ordering(order))
 		return "0"
 	}
@@ -103,9 +84,7 @@ emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 	return emit_fallback_atomic(e, v, kind, address, order, as_type)
 }
 
-// The storage type one operation runs at. A `bool` is `i1` in a register and
-// one byte in memory, and an atomic operation is on the byte — design.md's
-// "byte-sized storage for atomic booleans", with the conversions below.
+// Booleans occupy one byte in memory; pointers use their integer representation.
 @(private = "file")
 atomic_storage_type :: proc(e: ^Emitter, type: Type_Id, bits: int) -> string {
 	if underlying_kind(e.c, type) == .Bool {
@@ -113,15 +92,11 @@ atomic_storage_type :: proc(e: ^Emitter, type: Type_Id, bits: int) -> string {
 	}
 	if underlying_kind(e.c, type) == .Pointer || underlying_kind(e.c, type) == .C_Pointer ||
 	   underlying_kind(e.c, type) == .Raw_Pointer {
-		// A pointer is atomically an integer of its own width: `atomicrmw` has no
-		// pointer form, and `cmpxchg` on `ptr` needs no conversion but is simpler
-		// kept on one path with the rest.
 		return fmt.aprintf("i%d", bits)
 	}
 	return llvm_type(e, type)
 }
 
-// A Loke value in its atomic storage form.
 @(private = "file")
 atomic_to_storage :: proc(e: ^Emitter, type: Type_Id, storage: string, value: string) -> string {
 	kind := underlying_kind(e.c, type)
@@ -138,7 +113,6 @@ atomic_to_storage :: proc(e: ^Emitter, type: Type_Id, storage: string, value: st
 	return value
 }
 
-// And back.
 @(private = "file")
 atomic_from_storage :: proc(e: ^Emitter, type: Type_Id, storage: string, value: string) -> string {
 	kind := underlying_kind(e.c, type)
@@ -213,8 +187,7 @@ emit_native_atomic :: proc(
 	return atomic_from_storage(e, checked.type, storage, previous)
 }
 
-// The runtime path. Every operand travels by address, because the helper is one
-// C function per operation rather than one per width and type.
+// Pass 128-bit operands by address to the C helpers.
 @(private = "file")
 emit_fallback_atomic :: proc(
 	e: ^Emitter,
@@ -254,8 +227,7 @@ emit_fallback_atomic :: proc(
 		store(e, checked.type, emit_expr(e, v.bound[1]), expected)
 		store(e, checked.type, emit_expr(e, v.bound[2]), desired)
 		status, swapped := temp(e), temp(e)
-		// The helper writes the observed value back into `expected`, which is what
-		// a failed compare-exchange has to report.
+		// Failure writes the observed value back into `expected`.
 		fmt.sbprintfln(
 			&e.b,
 			"  %s = call i32 @loke_rt_v1_atomic128_compare_exchange(ptr %s, ptr %s, ptr %s, i32 %d, i32 %d)",
@@ -276,9 +248,7 @@ emit_fallback_atomic :: proc(
 	return result
 }
 
-// design.md: the compare-exchange answers `.none` when it swapped and
-// `.some(observed)` when it did not, so a caller cannot read an observed value
-// on a path where there was none.
+// `.none` means swapped; `.some(observed)` means failed.
 @(private = "file")
 emit_atomic_exchange_result :: proc(
 	e: ^Emitter,
