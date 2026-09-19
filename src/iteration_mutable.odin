@@ -57,7 +57,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 	iter := iteration_member(k, subject, "iter_mut")
 	if element == INVALID_TYPE || iterator == INVALID_TYPE ||
 	   !iteration_proc_matches(k, symbol_of(k.c, iter), subject, .Inout, iterator) {
-		errorf(k.c, s.bindings[0].name.span, "L0457", "`%s` cannot be iterated by reference: it needs `Element`, `Mut_Iterator`, and `iter_mut :: proc(self: inout %s) -> Mut_Iterator`", type_name(k.c, subject), type_name(k.c, subject))
+		errorf(k.c, ref_span(s), "L0457", "`%s` cannot be iterated by reference: it needs `Element`, `Mut_Iterator`, and `iter_mut :: proc(self: inout %s) -> Mut_Iterator`", type_name(k.c, subject), type_name(k.c, subject))
 		return FLOWS
 	}
 	root := mutable_foreach_root(k.c, s)
@@ -90,7 +90,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 	if !gate_type(k, element, s.span) { return FLOWS }
 	s.kind, s.element_type, s.iterator_type = .Protocol, s.indexed ? indexed_element_type(k.c, element) : element, iterator
 	s.iter_symbol, s.next_symbol = iter, next
-	if !check_mutable_foreach_pattern(k, s, s.bindings, s.element_type, true) { return FLOWS }
+	if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE) { return FLOWS }
 	return check_foreach_block(k, s)
 }
 

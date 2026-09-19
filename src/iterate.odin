@@ -665,7 +665,29 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 // design.md "By-reference iteration": a `&` anywhere in the header makes this
 // a place loop over the container's own storage.
 foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
-	return pattern_has_ref(s.bindings)
+	return first_ref_binding(s.bindings) != nil
+}
+
+// The first `&` leaf in a pattern, or nil.
+@(private = "file")
+first_ref_binding :: proc(bindings: []Foreach_Binding) -> ^Foreach_Binding {
+	for &binding in bindings {
+		if binding.is_ref {
+			return &binding
+		}
+		if found := first_ref_binding(binding.group); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// Where a by-reference loop that cannot be one is reported: at its `&`.
+ref_span :: proc(s: ^Stmt_Foreach) -> Span {
+	if ref := first_ref_binding(s.bindings); ref != nil {
+		return ref.name.span
+	}
+	return s.bindings[0].name.span
 }
 
 // design.md "Borrowing iteration": a container lends its stored elements. Text
@@ -704,16 +726,6 @@ foreach_record_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
 @(private = "file")
 foreach_builds_lent_record :: proc(s: ^Stmt_Foreach) -> bool {
 	return s.borrows && (s.indexed || s.kind == .Map)
-}
-
-@(private)
-pattern_has_ref :: proc(bindings: []Foreach_Binding) -> bool {
-	for binding in bindings {
-		if binding.is_ref || pattern_has_ref(binding.group) {
-			return true
-		}
-	}
-	return false
 }
 
 // The `Element` this loop yields, after the header's adapter.
@@ -758,7 +770,7 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 		if !info.mutable {
 			errorf(
 				k.c,
-				s.bindings[0].name.span,
+				ref_span(s),
 				"L0480",
 				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s` for mutation, or drop the `&` to read them",
 				type_name(k.c, subject),
@@ -767,11 +779,11 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 			return FLOWS
 		}
 	case .Range, .Stored_Range:
-		errorf(k.c, s.bindings[0].name.span, "L0457", "a range produces values, so it cannot be iterated by reference")
+		errorf(k.c, ref_span(s), "L0457", "a range produces values, so it cannot be iterated by reference")
 		return FLOWS
 	case .Text:
 		errorf(
-			k.c, s.bindings[0].name.span, "L0564",
+			k.c, ref_span(s), "L0564",
 			"a string yields decoded code points, so it cannot be iterated by reference",
 		)
 		return FLOWS
@@ -788,53 +800,8 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 		return FLOWS
 	}
 	s.element_type = s.indexed ? indexed_element_type(k.c, s.element_type) : s.element_type
-	if !check_mutable_foreach_pattern(k, s, s.bindings, s.element_type, true) { return FLOWS }
+	if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE) { return FLOWS }
 	return check_foreach_block(k, s)
-}
-
-// `&` leaves are writable, plain leaves are read-only views, and an `indexed()`
-// counter can never be `&`.
-check_mutable_foreach_pattern :: proc(
-	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical: Type_Id, refs_allowed: bool,
-) -> bool {
-	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		return check_mutable_foreach_pattern(k, s, bindings[0].group, logical, refs_allowed)
-	}
-	if len(bindings) == 1 && len(bindings[0].group) == 0 {
-		binding := &bindings[0]
-		if binding.is_ref && !refs_allowed {
-			errorf(k.c, binding.name.span, "L0457", "this generated iteration field cannot be taken by reference")
-			return false
-		}
-		if !gate_type(k, logical, expr_span(s.iterable)) { return false }
-		binding.symbol = bind_loop_name(k, binding^, logical, binding.is_ref, true)
-		return true
-	}
-	info := underlying_info(k.c, logical)
-	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
-		report_pattern_arity(k, bindings, logical, info)
-		return false
-	}
-	fields, eligible := destructure_fields(
-		k, logical, len(bindings), bindings[0].name.span, "L0459", "bound by a `foreach`",
-	)
-	if !eligible { return false }
-	for &binding, index in bindings {
-		field := symbol_of(k.c, fields[index])
-		if field == nil { return false }
-		field_refs := refs_allowed && !(s.indexed && logical == s.element_type && index == ELEMENT_SECOND)
-		if len(binding.group) > 0 {
-			if !check_mutable_foreach_pattern(k, s, binding.group, field.type, field_refs) { return false }
-			continue
-		}
-		if binding.is_ref && !field_refs {
-			errorf(k.c, binding.name.span, "L0457", "the iteration index is a counter and cannot be taken by reference")
-			return false
-		}
-		if !gate_type(k, field.type, expr_span(s.iterable)) { return false }
-		binding.symbol = bind_loop_name(k, binding, field.type, binding.is_ref, true)
-	}
-	return true
 }
 
 @(private = "file")
@@ -848,7 +815,7 @@ check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range,
 		return FLOWS
 	}
 	if foreach_is_place_loop(s) {
-		errorf(k.c, s.bindings[0].name.span, "L0457", "a range produces values, so it cannot be iterated by reference")
+		errorf(k.c, ref_span(s), "L0457", "a range produces values, so it cannot be iterated by reference")
 		return FLOWS
 	}
 	endpoint := underlying_info(k.c, element).element
@@ -975,32 +942,22 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	return check_foreach_block(k, s)
 }
 
-// `item` is the iterator's projected form: a scalar pointer binds the logical
-// type as a place, while a record of pointers binds as a value.
-@(private = "file")
+// Binds one recursive pattern, for value and place loops alike (only a place
+// loop has `&` leaves). `item` is a value loop's projected form, where a record
+// of lent pointers binds whole; a place loop passes INVALID_TYPE. An
+// `indexed()` counter can never be `&`.
 check_foreach_pattern :: proc(
-	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical, item: Type_Id,
+	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical, item: Type_Id, refs_allowed := true,
 ) -> bool {
 	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		return check_foreach_pattern(k, s, bindings[0].group, logical, item)
+		return check_foreach_pattern(k, s, bindings[0].group, logical, item, refs_allowed)
 	}
-	if len(bindings) == 1 && len(bindings[0].group) == 0 {
-		binding := &bindings[0]
-		if binding.is_ref {
-			errorf(k.c, binding.name.span, "L0457", "a value binding cannot take `&`; the `&` belongs to mutable traversal")
+	if len(bindings) == 1 {
+		if bindings[0].is_ref && !refs_allowed {
+			errorf(k.c, bindings[0].name.span, "L0457", "this generated iteration field cannot be taken by reference")
 			return false
 		}
-		bound := logical
-		if item != INVALID_TYPE && item != logical {
-			item_info := underlying_info(k.c, item)
-			logical_info := underlying_info(k.c, logical)
-			if item_info != nil && logical_info != nil && item_info.kind == .Struct && logical_info.kind == .Struct {
-				bound = item
-			}
-		}
-		if !gate_type(k, bound, expr_span(s.iterable)) { return false }
-		binding.symbol = bind_loop_name(k, binding^, bound, false, s.borrows)
-		return true
+		return bind_pattern_leaf(k, s, &bindings[0], logical, item)
 	}
 	info := underlying_info(k.c, logical)
 	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
@@ -1021,24 +978,35 @@ check_foreach_pattern :: proc(
 				projected = projected_field.type
 			}
 		}
+		field_refs := refs_allowed && !(s.indexed && logical == s.element_type && index == ELEMENT_SECOND)
 		if len(binding.group) > 0 {
-			if !check_foreach_pattern(k, s, binding.group, field.type, projected) { return false }
+			if !check_foreach_pattern(k, s, binding.group, field.type, projected, field_refs) { return false }
 			continue
 		}
-		if binding.is_ref {
-			errorf(k.c, binding.name.span, "L0457", "a value binding cannot take `&`; the `&` belongs to mutable traversal")
+		if binding.is_ref && !field_refs {
+			errorf(k.c, binding.name.span, "L0457", "the iteration index is a counter and cannot be taken by reference")
 			return false
 		}
-		bound := field.type
-		logical_info := underlying_info(k.c, field.type)
-		projected_info := underlying_info(k.c, projected)
-		if projected != INVALID_TYPE && projected != field.type && logical_info != nil && projected_info != nil &&
-		   logical_info.kind == .Struct && projected_info.kind == .Struct {
-			bound = projected
-		}
-		if !gate_type(k, bound, expr_span(s.iterable)) { return false }
-		binding.symbol = bind_loop_name(k, binding, bound, false, s.borrows)
+		if !bind_pattern_leaf(k, s, &binding, field.type, projected) { return false }
 	}
+	return true
+}
+
+// A leaf binds its logical type, or the projected record of pointers when both
+// are records. A place loop's leaves, like a lending loop's, name storage the
+// source still owns.
+@(private = "file")
+bind_pattern_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Binding, logical, item: Type_Id) -> bool {
+	bound := logical
+	if item != INVALID_TYPE && item != logical {
+		item_info := underlying_info(k.c, item)
+		logical_info := underlying_info(k.c, logical)
+		if item_info != nil && logical_info != nil && item_info.kind == .Struct && logical_info.kind == .Struct {
+			bound = item
+		}
+	}
+	if !gate_type(k, bound, expr_span(s.iterable)) { return false }
+	binding.symbol = bind_loop_name(k, binding^, bound, binding.is_ref, s.borrows || foreach_is_place_loop(s))
 	return true
 }
 

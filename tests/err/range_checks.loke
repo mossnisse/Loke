@@ -6,7 +6,7 @@ too_wide :: proc() {
 	_ = r;
 }
 
-// A `&` anywhere in a range loop's header is the range error, not a pattern one.
+// A `&` anywhere in a range loop's header is the range error, reported at the `&`.
 nested_ref :: proc() {
 	foreach (v, &i in (0 ..< 3).indexed()) { _ = v; }
 }

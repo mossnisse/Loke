@@ -1955,12 +1955,12 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 @(private)
 prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> []int {
 	iterable := s.iterable
-	if foreach_is_place_loop(s) { iterable = mutable_foreach_root(graph.k.c, s) }
+	mutable := foreach_is_place_loop(s)
+	if mutable { iterable = mutable_foreach_root(graph.k.c, s) }
 	root, path, ok := prov_place_of(graph, iterable)
 	if !ok {
 		return iterated
 	}
-	mutable := pattern_has_ref(s.bindings)
 	span := expr_span(s.iterable)
 	prov_access(graph, root, path, mutable ? .Write : .Read, span)
 	return prov_join(graph, iterated, prov_borrow(graph, root, path, mutable, span, "iterator"))
