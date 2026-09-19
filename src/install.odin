@@ -1,54 +1,41 @@
-// Installation-relative discovery.
-//
-// The seed runtime and the bundled `base`/`core` roots ship beside the
-// compiler, so they resolve from the canonical `lokec.exe` path rather than
-// the current directory: a compiler invoked from anywhere — test harness,
-// installed copy — finds the same files.
+// The runtime and the `base`/`core` roots ship beside the compiler, so they
+// resolve from its own path rather than the working directory.
 package lokec
 
-import "core:os"
 import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:slice"
+import "core:strings"
 
-// The directory holding the running compiler, or "" when the platform cannot
-// say. Callers treat "" as "no bundled component", which is diagnosed at the
-// point something actually needs one.
-install_dir :: proc() -> string {
-	// The result is allocated by the caller's context allocator. Caching it in
-	// process-wide storage would let one compiler instance retain another
-	// instance's allocation and would make initialization race between tests.
-	if dir, err := os2.get_executable_directory(context.allocator); err == nil {
-		return dir
-	}
-	return ""
-}
-
-// A component bundled beside the compiler: `runtime`, `base`, `core`.
+// A component bundled beside the compiler (`runtime`, `base`, `core`), or ""
+// when the platform cannot say where the compiler is.
 install_component :: proc(name: string) -> string {
-	dir := install_dir()
-	if dir == "" {
+	dir, err := os2.get_executable_directory(context.allocator)
+	if err != nil {
 		return ""
 	}
-	// `install_dir` allocates, and only the joined path outlives this call.
 	defer delete(dir)
 	return filepath.join({dir, name})
 }
 
-// Every `*.c` input of the seed runtime, sorted, so one directory always
-// produces one command. An empty result means no sources — the caller reports
-// that with the resolved path, since a wrong `-runtime` and a missing
-// installation look the same from inside the linker.
+// Every `*.c` file in `dir`, sorted so one directory always gives one command.
+// Listed rather than globbed: a `[` in the path would be read as glob syntax.
 runtime_sources :: proc(dir: string) -> []string {
 	if dir == "" {
 		return nil
 	}
-	matches, err := filepath.glob(filepath.join({dir, "*.c"}))
+	entries, err := os2.read_all_directory_by_path(dir, context.temp_allocator)
 	if err != nil {
 		return nil
 	}
-	slice.sort(matches)
-	return matches
+	sources := make([dynamic]string, 0, len(entries))
+	for entry in entries {
+		if strings.has_suffix(entry.name, ".c") {
+			append(&sources, filepath.join({dir, entry.name}))
+		}
+	}
+	slice.sort(sources[:])
+	return sources[:]
 }
 
 // `-runtime=<dir>` replaces the bundled directory outright.
@@ -57,10 +44,4 @@ resolved_runtime_dir :: proc(opts: Options) -> string {
 		return opts.runtime_dir
 	}
 	return install_component("runtime")
-}
-
-// Whether a directory exists at all, which separates "you pointed `-runtime` at
-// nothing" from "the installation has no C sources in it".
-dir_exists :: proc(path: string) -> bool {
-	return path != "" && os.is_dir(path)
 }

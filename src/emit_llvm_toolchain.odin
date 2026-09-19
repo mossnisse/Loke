@@ -343,7 +343,7 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 			"L0551",
 			"no seed runtime sources in `%s`: %s",
 			runtime_dir == "" ? "<unknown>" : runtime_dir,
-			dir_exists(runtime_dir) \
+			is_directory(runtime_dir) \
 				? "the directory holds no `.c` files" \
 				: "the directory does not exist; pass `-runtime=<dir>`",
 		)

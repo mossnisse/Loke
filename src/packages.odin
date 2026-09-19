@@ -610,7 +610,6 @@ visit_for_order :: proc(c: ^Compiler, id: Package_Id, visited: []bool, order: ^[
 
 // ------------------------------------------------------------------- paths --
 
-@(private = "file")
 is_directory :: proc(path: string) -> bool {
 	info, err := os.stat(path, context.temp_allocator)
 	return err == nil && info.is_dir
