@@ -13,7 +13,7 @@ check_borrow_argument :: proc(k: ^Checker, value: Expr) -> bool {
 		errorf(k.c, expr_span(value), "L0614", "cannot borrow `%s`: it is reached through a packed struct", field)
 		return false
 	}
-	if root, id := constant_root_of(k.c, value); id != INVALID_SYMBOL { request_materialization(k, root) }
+	request_materialization(k, value)
 	return true
 }
 

@@ -3,6 +3,8 @@ package main; import "core:fmt";
 // design.md "Slices" and "Materialization" (m5a-plan step 2).
 
 NUMBERS :: [3]int{7, 42, 628};
+Table :: struct { values: [2]int }
+NESTED :: Table{values = [2]int{11, 22}};
 
 // design.md "Slice literals": the hidden backing array is an owner in the
 // surrounding lexical scope, and at file scope that scope is the module -- so
@@ -96,6 +98,7 @@ main :: proc() {
 	fmt.println(NUMBERS[0]);
 	index := runtime_index();
 	fmt.println(NUMBERS[index]);
+	fmt.println(NESTED.values[index]);
 	table := NUMBERS[:];
 	fmt.println(table.len());
 	fmt.println(table[2]);

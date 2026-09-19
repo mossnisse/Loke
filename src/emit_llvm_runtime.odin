@@ -1291,7 +1291,7 @@ emit_materialized_constants :: proc(e: ^Emitter) {
 	for entry in e.c.materialized_order {
 		fmt.sbprintfln(
 			&e.b,
-			"%s = private unnamed_addr constant %s %s",
+			"%s = private constant %s %s",
 			entry.name, llvm_type(e, entry.type), llvm_const(e, entry.value, entry.type),
 		)
 	}

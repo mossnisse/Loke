@@ -1406,12 +1406,8 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		}
 		// A named constant gets read-only storage (design.md "Materialization"),
 		// so `&mut` is then rejected as a constant.
-		if !operand_base.addressable {
-			if root, symbol := constant_root_of(k.c, v.operand); symbol != INVALID_SYMBOL {
-				if request_materialization(k, root) {
-					operand_base.addressable = true
-				}
-			}
+		if !operand_base.addressable && request_materialization(k, v.operand) {
+			operand_base.addressable = true
 		}
 		if !operand_base.addressable {
 			errorf(k.c, v.op_span, "L0357", "`%s` needs an addressable operand", v.mutable ? "&mut" : "&")

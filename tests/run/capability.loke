@@ -10,6 +10,8 @@ impl Point {
 }
 
 TABLE :: [4]int{10, 20, 30, 40};
+FIRST :: [1]int{7};
+SECOND :: [1]int{7};
 ORIGIN :: Point{7, 8};
 
 reads :: proc(p: ^int) -> int { return p^; }
@@ -64,6 +66,7 @@ main :: proc() {
 	fmt.println(reads(&ORIGIN.y));
 	again := &TABLE;
 	fmt.println(1 if whole == again else 0);
+	fmt.println(1 if &FIRST == &SECOND else 0);
 
 	// `new` hands back `^mut T`; `free` needs that capability.
 	allocated := new(int) or_else nil;
