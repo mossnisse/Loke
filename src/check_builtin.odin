@@ -355,9 +355,9 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	result := u64(0)
 	#partial switch kind {
 	case .Size_Of:
-		result = type_size(k.c, operand)
+		result = type_size(k.c, operand, expr_span(v.args[0].value))
 	case .Align_Of:
-		result = type_align(k.c, operand)
+		result = type_align(k.c, operand, expr_span(v.args[0].value))
 	case .Offset_Of:
 		// A member name, not a value: resolving it would find a same-named variable.
 		name, is_ident := v.args[1].value.(^Expr_Ident)
@@ -375,7 +375,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		}
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
-		result = type_field_offset(k.c, operand, int(symbol_of(k.c, field).index))
+		result = type_field_offset(k.c, operand, int(symbol_of(k.c, field).index), name.span)
 	}
 	v.type = TYPE_INT
 	v.is_const = true

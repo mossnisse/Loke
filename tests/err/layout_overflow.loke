@@ -1,0 +1,9 @@
+package main;
+
+Product :: [9223372036854775807]i128;
+Padding :: struct { bytes: [9223372036854775807]u8, tail: u16 }
+
+product_size :: size_of(Product);
+padding_size :: size_of(Padding);
+
+main :: proc() {}

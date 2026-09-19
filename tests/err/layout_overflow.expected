@@ -1,0 +1,6 @@
+L0364
+@6:25
+the layout of `[9223372036854775807]i128` exceeds the maximum supported size of 9223372036854775807 bytes
+L0364
+@7:25
+the layout of `Padding` exceeds the maximum supported size of 9223372036854775807 bytes

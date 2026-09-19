@@ -225,15 +225,15 @@ Union_Layout :: struct {
 	size:          u64,
 }
 
-union_layout :: proc(c: ^Compiler, type: Type_Id) -> Union_Layout {
+union_layout :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) -> Union_Layout {
 	info := type_of(c, type)
 	if info == nil || info.kind != .Union {
 		return Union_Layout{align = 1, tag_bytes = 1, size = 1}
 	}
 	out := Union_Layout{align = 1}
 	for variant in info.variants {
-		out.payload_size = max(out.payload_size, type_size(c, variant))
-		out.align = max(out.align, type_align(c, variant))
+		out.payload_size = max(out.payload_size, type_size(c, variant, span))
+		out.align = max(out.align, type_align(c, variant, span))
 	}
 	// `resolve_union_variants` parks a validated `@(align=N)` here, and it may
 	// only raise the alignment.
@@ -260,13 +260,6 @@ union_tag_bytes :: proc(variants: int) -> u64 {
 		return 2
 	}
 	return 4
-}
-
-align_to :: proc(value, alignment: u64) -> u64 {
-	if alignment <= 1 {
-		return value
-	}
-	return (value + alignment - 1) / alignment * alignment
 }
 
 // A variant's declaration index, which is also its tag. -1 when the union has

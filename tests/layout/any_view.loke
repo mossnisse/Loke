@@ -1,0 +1,6 @@
+package main;
+
+static_assert(size_of(any_view) == 16);
+static_assert(align_of(any_view) == 8);
+
+main :: proc() {}
