@@ -620,6 +620,7 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 		{"1einvalid", "L0112"}, // the bad exponent takes the whole word, like `123abc`
 		{"1e_5", "L0112"},
 		{"''", "L0107"}, // terminated, just empty
+		{`'\q'`, "L0105"},
 
 		{`"\ud800"`, "L0114"}, // a surrogate half
 		{`"\U00110000"`, "L0114"}, // past the last code point

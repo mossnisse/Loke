@@ -1,13 +1,5 @@
-// Lexer, complete against grammar.md "Lexical structure".
-//
-// Two rules that a hand-written scanner gets wrong by reflex:
-//   * `::` and `:=` are TOKEN PAIRS, not tokens. `x := 1` is `x` `:` `=` `1`.
-//     That is what makes `x: int = 1`, `x: = 1` and `x := 1` one declaration.
-//   * Longest match, so `&~=`, `..=`, `..<`, `<<=`, `>>=` and `---` each lex as
-//     a single token.
-//
-// A bad character produces an Error token and lexing continues; the parser must
-// still be able to say something useful.
+// Lexer for grammar.md "Lexical structure". Invalid input becomes an Error
+// token so parsing can continue.
 package lokec
 
 import "core:strings"
@@ -176,7 +168,6 @@ is_hex :: proc(ch: u8) -> bool {
 	return is_digit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
 }
 
-// Only ever called on a character `is_hex` accepted.
 @(private = "file")
 hex_value :: proc(ch: u8) -> u32 {
 	switch {
@@ -198,8 +189,6 @@ is_ident_part :: proc(ch: u8) -> bool {
 	return is_ident_start(ch) || is_digit(ch)
 }
 
-// A quoted string or character literal reaches here unclosed: it ends at the
-// line, whatever it was in the middle of.
 @(private = "file")
 at_literal_end :: proc(l: ^Lexer) -> bool {
 	return at_end(l) || peek(l) == '\n' || peek(l) == '\r'
@@ -305,10 +294,7 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
 	skip_ident_tail(l)
 
-	// Contextual keywords (`static`, `self`, `slot`, `using`, `delegate`,
-	// `thread_local`) and the predeclared, shadowable names (`nil`, `true`,
-	// `false`, the built-ins) stay ordinary identifiers here; position is the
-	// parser's problem.
+	// Contextual keywords and shadowable predeclared names remain identifiers.
 	kind: Token_Kind = .Ident
 	switch l.src[lo:l.pos] {
 	case "break":
@@ -444,9 +430,7 @@ number :: proc(l: ^Lexer) -> Token {
 			offset = 2
 		}
 		if !is_digit(peek(l, offset)) {
-			// Same rule as `number_end`: take the whole bad word, so `1einvalid`
-			// is one diagnostic covering all of it rather than `1e` plus a
-			// stray name.
+			// Take a bad exponent as one token, like other malformed numbers.
 			l.pos += offset
 			skip_ident_tail(l)
 			errorf(l.c, span_from(l, lo), "L0112", "an exponent needs at least one digit")
@@ -476,7 +460,6 @@ number_end :: proc(l: ^Lexer, lo: u32, kind: Token_Kind) -> Token {
 	return Token{kind = .Error, lo = lo, hi = l.pos}
 }
 
-// Validates one escape sequence, `l.pos` sitting on the backslash.
 @(private = "file")
 escape :: proc(l: ^Lexer) -> bool {
 	lo := l.pos
@@ -561,8 +544,7 @@ string_literal :: proc(l: ^Lexer) -> Token {
 		case '\\':
 			escape_ok := escape(l)
 			valid = escape_ok && valid
-			// The escape failed *because* the literal ended, and has said so
-			// already. Looping back would report that same ending again.
+			// The escape already diagnosed the literal ending.
 			if !escape_ok && at_literal_end(l) {
 				return Token{kind = .Error, lo = lo, hi = l.pos}
 			}
@@ -577,7 +559,7 @@ raw_string_literal :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
 	l.pos += 1
 	for !at_end(l) && peek(l) != '`' {
-		l.pos += 1 // no escapes, and it may span lines
+		l.pos += 1
 	}
 	if at_end(l) {
 		errorf(
@@ -606,19 +588,16 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 		return Token{kind = .Error, lo = lo, hi = l.pos}
 	}
 
-	// `''` is terminated, just empty. Without this the branch below reads the
-	// closing quote as the character and the recovery scan runs on to the end
-	// of the line, dropping whatever else was written there.
+	// Consume a closed but empty literal without scanning past it.
 	if peek(l) == '\'' {
 		l.pos += 1
 		errorf(l.c, span_from(l, lo), "L0107", "a character literal holds exactly one character")
 		return Token{kind = .Error, lo = lo, hi = l.pos}
 	}
 
+	valid := true
 	if peek(l) == '\\' {
-		if !escape(l) {
-			return Token{kind = .Error, lo = lo, hi = l.pos}
-		}
+		valid = escape(l)
 	} else {
 		// One Unicode scalar: step over a whole UTF-8 sequence.
 		l.pos += 1
@@ -628,18 +607,20 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 	}
 
 	if peek(l) != '\'' {
-		for !at_end(l) && peek(l) != '\'' && peek(l) != '\n' {
+		for !at_literal_end(l) && peek(l) != '\'' {
 			l.pos += 1
 		}
 		if peek(l) == '\'' {
 			l.pos += 1
-			errorf(
-				l.c,
-				span_from(l, lo),
-				"L0107",
-				"a character literal holds exactly one character",
-			)
-		} else {
+			if valid {
+				errorf(
+					l.c,
+					span_from(l, lo),
+					"L0107",
+					"a character literal holds exactly one character",
+				)
+			}
+		} else if valid {
 			errorf(
 				l.c,
 				Span{file = l.file, lo = lo, hi = lo + 1},
@@ -650,15 +631,11 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 		return Token{kind = .Error, lo = lo, hi = l.pos}
 	}
 	l.pos += 1
-	return Token{kind = .Rune, lo = lo, hi = l.pos}
+	return Token{kind = valid ? .Rune : .Error, lo = lo, hi = l.pos}
 }
 
-// Longest match wins. `:` is never combined with anything: `::` and `:=` are
-// token pairs by design.
-//
-// `operator` takes the first entry that matches, so longest match is a property
-// of this order, not of the code: an entry must never precede one it is a
-// prefix of. `operator_table_is_ordered_longest_first` is what holds that.
+// First match wins, so longer operators must precede their prefixes. `:` stays
+// separate because `::` and `:=` are token pairs.
 OPERATORS :: [?]struct {
 	text: string,
 	kind: Token_Kind,
@@ -716,10 +693,6 @@ OPERATORS :: [?]struct {
 	{"}", .Rbrace},
 }
 
-// The canonical text a punctuation operator is written with, and "" for every
-// kind the table has no spelling for (the keyword operators `in`, `or_else`
-// included). `OPERATORS` stays the one place a spelling is written down, so a
-// new operator cannot lex and then print as something else.
 operator_spelling :: proc(kind: Token_Kind) -> string {
 	for op in OPERATORS {
 		if op.kind == kind {
