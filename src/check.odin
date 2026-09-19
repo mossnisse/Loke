@@ -1728,7 +1728,7 @@ resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
 		return INVALID_TYPE
 	}
 	if sym.kind == .Const && sym.decl != nil && sym.decl.check_state == .Unchecked {
-		check_member_decl_in_place(k, member, subject)
+		check_symbol_decl_in_place(k, member, subject)
 		sym = symbol_of(k.c, member)
 	}
 	denoted := INVALID_TYPE
@@ -2274,9 +2274,8 @@ check_scoped_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 	return check_block(k, b)
 }
 
-// The backend emits only file-level procedures, so a local one is hoisted like
-// a literal.
-@(private = "file")
+// The backend emits only file-level procedures, so a local one (or a local
+// `impl` method) is hoisted like a literal.
 hoist_body_local_proc :: proc(k: ^Checker, d: ^Decl) {
 	literal := decl_proc_literal(d)
 	if literal == nil || k.c.speculation_depth != 0 || len(d.symbols) == 0 {

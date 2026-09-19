@@ -1,28 +1,21 @@
 // `impl` blocks, methods, associated members, and semantic hooks.
 //
-// Storage: an `impl` block in the subject's own package writes inherent
-// members onto the nominal `Type_Info`; one elsewhere writes into its own
-// package's extension table, and the two never merge. Extension visibility
-// is package-scoped by design — an unused import must not change or make
-// ambiguous an existing expression.
+// A block in the subject's own package writes inherent members onto the
+// `Type_Info`; one elsewhere writes into its own package's extension table, so
+// an unused import cannot change what an expression means.
 package lokec
 
 import "core:fmt"
 
 // ------------------------------------------------------------- declaration --
 
-// Resolves the subject type and creates one symbol per member. Runs in the
-// discovery fixed point, so it must be idempotent and must tolerate a subject
-// whose own package is not prepared yet.
+// Runs in the discovery fixed point, so it must be idempotent and tolerate a
+// subject whose package is not loaded yet (`quiet` defers that failure).
 declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	if item.declared {
 		return
 	}
-	// During discovery the subject's own package may not be loaded yet, so a
-	// failure is pending, not wrong: reported only once no round can supply more.
-	// A block written against a generic type — `impl Table($K, $V)` or the
-	// specialized `impl Table(string, int)` — is kept until an instantiation
-	// exists to install it on, rather than resolving a subject that has none yet.
+	// A block on a generic type waits for an instantiation to install it on.
 	if call, is_call := item.type.(^Expr_Call); is_call {
 		if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
 			register_generic_impl(k, item, template.symbol, call.args)
@@ -48,11 +41,7 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	item.declared = true
 	item.subject = subject
 
-	// Inherent vs. extension isn't written; it follows from where the subject is
-	// declared. A block in the subject's own package contributes inherent members
-	// to the nominal type; one anywhere else — including a built-in or foreign
-	// subject, which no package declares — is an extension confined to the
-	// package that writes it.
+	// Built-in and foreign subjects have no owning package, so they are extended.
 	info := type_of(k.c, subject)
 	owner := info == nil ? nil : symbol_of(k.c, info.symbol)
 	own_package := owner != nil && owner.pkg == k.pkg
@@ -70,16 +59,10 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	install_impl_members(k, item.kind, subject, members[:], k.pkg)
 }
 
-// design.md "Methods and implementation blocks": a body-local `impl` gives a
-// type declared in the same body its methods, so a one-off callable record — the
-// explicit form of a small callback — sits beside the call that takes it. The
-// three package phases run here in order, because a statement is visited once
-// and has no later phase to be reached by.
-//
-// The subject has to be declared in this body. An `impl` on any other type would
-// be a caller-local extension, which definition-site lookup exists to rule out:
-// a generic instantiation must mean the same thing in every caller. A local type
-// cannot be named from anywhere else, so a block on one adds no such reach.
+// A body-local `impl`, which may only give members to a type declared in the same
+// body: on any other type it would be a caller-local extension, which
+// definition-site lookup rules out. A statement is visited once, so the package
+// phases all run here.
 check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 	if _, generic := item.type.(^Expr_Call); generic {
 		errorf(
@@ -90,7 +73,7 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 	}
 	subject := resolve_type_syntax(k, item.type)
 	if subject == INVALID_TYPE {
-		return // `resolve_type_syntax` said what is wrong with the subject
+		return
 	}
 	if !type_declared_in_this_body(k, subject) {
 		errorf(
@@ -100,20 +83,11 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 		)
 		return
 	}
-	declare_impl_block(k, item, quiet = false)
 	resolve_impl_signatures(k, item)
 	validate_impl_attributes(k, item)
-	// A method is an ordinary module function. Nothing walks a body looking for
-	// one, so each is hoisted exactly as a procedure declared in the body is.
-	if pkg := package_of(k.c, k.pkg); pkg != nil && k.c.speculation_depth == 0 {
-		for member in item.members {
-			d, is_decl := member.(^Decl)
-			if !is_decl || len(d.symbols) == 0 || d.symbols[0] == INVALID_SYMBOL {
-				continue
-			}
-			if literal := decl_proc_literal(d); literal != nil && !symbol_is_generic(k, d.symbols[0]) {
-				append(&pkg.hoisted_procs, literal)
-			}
+	for member in item.members {
+		if d, is_decl := member.(^Decl); is_decl {
+			hoist_body_local_proc(k, d)
 		}
 	}
 	check_impl_block(k, item)
@@ -171,10 +145,7 @@ declare_impl_member :: proc(
 			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
-		// A member sharing a field's name is unreachable rather than ambiguous:
-		// `c.v` is the field, and `c.v()` is "`int` is not callable", so the block
-		// would declare a procedure nothing can call. The subject's fields are
-		// resolved by now -- resolving the subject is what this block just did.
+		// `c.v` selects the field, so a member of that name could never be reached.
 		if subject_field_named(k, item.subject, name_id) != INVALID_SYMBOL {
 			errorf(
 				k.c, name.span, "L0409",
@@ -211,9 +182,7 @@ declare_impl_member :: proc(
 		id := new_symbol(k.c, sym)
 		append(&symbols, id)
 		append(out, id)
-		// A public extension procedure has an ordinary package-qualified spelling,
-		// `adapter.member(value)`. Inherent members remain under their owning type,
-		// `vendor.Type.member(value)`, and never consume a package-level name.
+		// A public extension is also reachable as `adapter.member(value)`.
 		if item.kind == .Extend && sym.public {
 			bind_member_in_package(k, name, name_id, id)
 		}
@@ -230,11 +199,8 @@ bind_member_in_package :: proc(k: ^Checker, name: Name, name_id: Identifier_Id, 
 	k.scope.names[name_id] = id
 }
 
-// The member table an `impl`/`extend` block writes into: the type's own
-// inherent members, or one package's extension list. `in_pkg` is the checker's
-// current package for a written block, and the instance's defining package for
-// one `src/generic.odin` materialises — that is the only difference between the
-// two, so there is one table lookup rather than two.
+// The type's inherent members, or `in_pkg`'s extensions of it. `in_pkg` is the
+// instance's defining package when `src/generic.odin` materialises a block.
 impl_member_table :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, in_pkg: Package_Id) -> []Symbol_Id {
 	if kind == .Impl {
 		info := type_of(k.c, subject)
@@ -267,15 +233,13 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 	}
 }
 
-// The one member-by-name loop. Takes the `^Compiler` rather than the `^Checker`
-// so `src/generic.odin` reaches the same one from an instance's own package.
-// The subject's own fields, which share the namespace its members are
-// declared into.
+// Fields share the namespace members are declared into.
 subject_field_named :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	info := type_of(k.c, type_underlying(k.c, subject))
 	return info == nil ? INVALID_SYMBOL : member_named(k.c, info.fields, name)
 }
 
+// Takes the `^Compiler` so `src/generic.odin` can use it from an instance's package.
 member_named :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {
 	for member in members {
 		if sym := symbol_of(c, member); sym != nil && sym.name == name {
@@ -288,8 +252,7 @@ member_named :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) ->
 // ---------------------------------------------------------- later phases --
 
 resolve_impl_signatures :: proc(k: ^Checker, item: ^Item_Impl) {
-	// Selection and the import graph are stable by now, so an unresolved subject
-	// is a real diagnostic rather than a pending one.
+	// Nothing can load any more, so an unresolved subject is now an error.
 	declare_impl_block(k, item, quiet = false)
 	if item.subject == INVALID_TYPE {
 		check_generic_impl_subject(k, item)
@@ -303,8 +266,7 @@ resolve_impl_signatures :: proc(k: ^Checker, item: ^Item_Impl) {
 			resolve_declaration_signature(k, d)
 		}
 	}
-	// Delegation reads the operators already declared for the subject, and adds
-	// forwarding overloads every body checked afterwards can see.
+	// After the signatures: delegation forwards operators already declared.
 	for member in item.members {
 		if delegate, is_delegate := member.(^Item_Delegate); is_delegate {
 			check_delegate(k, delegate, item.subject)
@@ -325,15 +287,13 @@ check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 			check_decl(k, v)
 			check_associated_member(k, item, v)
 		case ^Item_Delegate, ^Item_Error:
-			// `delegate` was resolved with the signatures, above.
+			// Resolved with the signatures.
 		case:
 			unsupported_construct(k, item_span(member))
 		}
 	}
 }
 
-// The rules that need the member's resolved signature: receiver ownership and
-// the closed semantic-hook shapes.
 @(private = "file")
 check_associated_member :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl) {
 	for symbol_id in d.symbols {
@@ -347,43 +307,28 @@ check_associated_member :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl) {
 
 // ---------------------------------------------------------------- lookup --
 
-// The package whose extension table the declaration being checked may use. It is
-// the checker's current package except where a declaration froze its own.
+// The package whose extensions are visible: the current one unless a declaration
+// froze its own.
 lookup_package :: proc(k: ^Checker) -> Package_Id {
 	return k.lookup_pkg == INVALID_PACKAGE ? k.pkg : k.lookup_pkg
 }
 
-// Everything the compiler contributes to `type` on demand, so a lookup sees
-// exactly what a hand-written `impl` would have declared. One list: a member
-// set contributed for `member_candidates` but not for `find_member` would make
-// the same name resolve differently depending on which asked.
+// Members the compiler contributes on demand, as if a hand-written `impl` had
+// declared them. Shared by `member_candidates` and `find_member` so both see the
+// same set.
 @(private = "file")
 ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
-	// Built-in query and hashing operations are real receiver members, which is
-	// what `x.len()` and `x.hash(seed)` select on a built-in type.
 	ensure_standard_customization_members(k, type)
-	// A built-in iterable's associated members and `iter` are contributed on
-	// demand, so interface checking and generic code see exactly what a user type
-	// declares by hand (design.md "Iteration protocol").
 	ensure_iteration_members(k, type)
 	ensure_mutable_iteration_members(k, type)
-	// `Item` names what this type's own `next` hands back, for any iterator
-	// (design.md "Iteration protocol").
 	ensure_item_member(k, type)
-	// The generated `try_clone`/`clone` are contributed the same way, so a record
-	// without a hand-written hook still has both copy entry points.
 	ensure_lifecycle_members(k, type, name)
-	// A container's operation set, so `xs.append(1)` is an ordinary method call
-	// and generic code finds the same members (design.md "Dynamic arrays").
 	ensure_container_members(k, type)
-	// And a local region provider's constructor and `allocator`, for the same
-	// reason: it is a compiler-owned type whose members no source file declares.
 	ensure_provider_members(k, type)
 }
 
-// Every member of `type` named `name` that this package may use: the type's own
-// inherent members, plus the extensions the lookup package declares. Groups are
-// expanded, so the overload engine sees one flat candidate set.
+// Every visible member of `type` named `name`, with groups expanded for the
+// overload engine.
 member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
 	ensure_contributed_members(k, type, name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
@@ -396,8 +341,7 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 		}
 	}
 	if len(out) == 0 {
-		// An interface bound on the enclosing declaration reaches implementations
-		// the caller's own visibility hides; nothing else does.
+		// A `where` bound reaches implementations ordinary visibility hides.
 		if required := required_slot_candidates(k, type, name); len(required) > 0 {
 			return required
 		}
@@ -408,9 +352,7 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	return out[:]
 }
 
-// A member a failed `where` bound removed from this instantiation. Lookup hides
-// it, so a "no such member" report can say the name exists and why it is not
-// here, instead of leaving the caller to hunt for a typo.
+// A member a failed `where` bound removed, so "no such member" can say why.
 excluded_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> ^Symbol {
 	info := type_of(k.c, type)
 	if info == nil {
@@ -425,30 +367,20 @@ excluded_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> ^Sym
 	return nil
 }
 
-// The one symbol-visibility predicate (design.md "Exported names"). Methods,
-// operators, associated members, struct fields, and reflection all ask this, so
-// no path can expose a declaration another path would hide. The observer is the
-// lookup package rather than the package being compiled, which is what lets a
-// generic body instantiated elsewhere still see its own definition site.
+// The one visibility predicate, asked by every lookup path. The observer is the
+// lookup package, so a generic body instantiated elsewhere sees its definition site.
 member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 	if sym == nil {
 		return false
 	}
-	// design.md "where clauses": a method of an instantiated generic `impl` whose
-	// bound does not hold is not part of that instantiation. Hiding it here rather
-	// than at each lookup is what keeps method calls, operators, interface
-	// satisfaction, and reflection agreeing on which members that instance has.
+	// A member whose `where` bound failed is not part of this instantiation.
 	if sym.bound_excluded {
 		return false
 	}
 	return sym.pkg == lookup_package(k) || sym.public
 }
 
-// The declaring package may read, write, and initialize package-visible
-// fields; importing packages may do so only for public fields (design.md
-// "Exported names"). Ordinary selection, `offset_of`, and both aggregate
-// literal forms route through here so they agree with each other and with
-// reflection.
+// Every field access path routes through here so they agree with reflection.
 require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: Symbol_Id, code: string, action: string) -> bool {
 	sym := symbol_of(k.c, field)
 	if member_is_visible(k, sym) {
@@ -488,8 +420,7 @@ expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_
 	}
 }
 
-// One named member, without expanding a group: what an associated constant, an
-// associated type, or a directly named procedure resolves to.
+// One named member, without expanding a group: `Type.member`.
 find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	ensure_contributed_members(k, type, name)
 	if info := type_of(k.c, type); info != nil {
@@ -504,6 +435,12 @@ find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_I
 			}
 		}
 	}
+	// Same `where`-bound fallback as `member_candidates`, so `T.m(x)` finds what
+	// `x.m()` does.
+	// ponytail: a bound-reached overload group resolves only when it has one member.
+	if required := required_slot_candidates(k, type, name); len(required) == 1 {
+		return required[0]
+	}
 	return iteration_adapter_member(k, type, name)
 }
 
@@ -514,16 +451,13 @@ visible_member_named :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 	return member_is_visible(k, sym) ? member : INVALID_SYMBOL
 }
 
-// Does this type have any member named `name`? Used before reporting "no field",
-// so the diagnostic can name the real problem.
 has_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> bool {
 	return find_member(k, type, name) != INVALID_SYMBOL
 }
 
 // ------------------------------------------------------ semantic hooks --
 
-// Every inherent hook of one role. Hook labels are not lookup names: conversion
-// overloads with different descriptive names form one candidate set by role.
+// Every inherent hook of one role, matched by role rather than name.
 hook_candidates :: proc(k: ^Checker, target: Type_Id, role: Hook_Kind) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	info := type_of(k.c, target)
@@ -545,28 +479,12 @@ hook_candidates :: proc(k: ^Checker, target: Type_Id, role: Hook_Kind) -> []Symb
 
 // ------------------------------------------------------------- backend name --
 
-// `Type.member`, which is what the backend mangles a method or associated
-// procedure under. Two impl blocks cannot give one type the same member name, so
-// this is unique within a package.
+// The backend name of a method, unique within a package.
 qualified_member_name :: proc(c: ^Compiler, sym: ^Symbol, allocator := context.allocator) -> string {
 	owner := type_name(c, sym.owner_type)
-	// An instantiation carries its own backend spelling, so a member of
-	// `Pair(int)` is emitted under `Pair.int.member` rather than through escapes.
+	// An instantiation's own spelling: `Pair.int.member`.
 	if info := type_of(c, sym.owner_type); info != nil && info.mangled != "" {
 		owner = info.mangled
 	}
 	return fmt.aprintf("%s.%s", owner, identifier_text(c, sym.name), allocator = allocator)
-}
-
-// An `impl` member reached on demand — an associated type asked for by an
-// interface requirement, say — is checked in its *own* declaration scope. Inside
-// an instantiated block that scope binds the block's generic arguments, which is
-// what makes `Iterator :: Stack_Iterator(T, N)` resolve wherever it is asked
-// for.
-check_member_decl_in_place :: proc(k: ^Checker, member: Symbol_Id, subject: Type_Id) {
-	sym := symbol_of(k.c, member)
-	if sym == nil || sym.decl == nil {
-		return
-	}
-	check_symbol_decl_in_place(k, member, subject)
 }

@@ -666,7 +666,7 @@ associated_type_of :: proc(k: ^Checker, type: Type_Id, name: string) -> Type_Id 
 	}
 	if sym.kind == .Const {
 		if sym.decl != nil && sym.decl.check_state == .Unchecked {
-			check_member_decl_in_place(k, member, type)
+			check_symbol_decl_in_place(k, member, type)
 			sym = symbol_of(k.c, member)
 		}
 		if sym.const_value.kind == .Type {

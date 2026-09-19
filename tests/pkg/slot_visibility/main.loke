@@ -15,6 +15,11 @@ describe :: proc(w: $T) -> int where iface.Described(T) {
 	return w.read() + w.label();
 }
 
+// Through the type name, which must reach what `w.read()` does.
+via_type :: proc(w: $T) -> int where iface.Readable(T) {
+	return T.read(w);
+}
+
 // The erased path, which already used the satisfying lookup.
 observe :: proc(v: dyn iface.Readable) -> int { return v.read(); }
 
@@ -23,6 +28,7 @@ main :: proc() {
 
 	// A private inherent method, reached through the bound.
 	fmt.println(use(w));
+	fmt.println(via_type(w));
 	fmt.println(observe((dyn iface.Readable)(&w)));
 
 	// Private extensions in the interface's own package, one of them supplying

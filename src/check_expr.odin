@@ -816,7 +816,7 @@ select_associated_member :: proc(
 	defer k.impl_type = outer
 	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Const && sym.decl != nil {
 		if sym.decl.check_state == .Unchecked {
-			check_member_decl_in_place(k, member, subject)
+			check_symbol_decl_in_place(k, member, subject)
 		}
 	}
 	annotate_symbol_use(k, &v.base, member, v.name.text)
