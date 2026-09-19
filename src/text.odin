@@ -607,6 +607,9 @@ bind_variadic_arguments :: proc(
 	if receiver != nil {
 		bound[0] = receiver
 		append(&slot_order, 0)
+		if len(info.param_modes) > 0 && info.param_modes[0] == .Inout {
+			note_unknown_nil_write(k, receiver)
+		}
 		first = 1
 	}
 	fixed := 0

@@ -1980,6 +1980,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 					if symbol := symbol_of(k.c, symbol_id); symbol != nil && field != nil {
 						symbol.type = field.type
 					}
+					note_nil_write_to(k, symbol_id, d.values[0])
 				}
 			}
 			return

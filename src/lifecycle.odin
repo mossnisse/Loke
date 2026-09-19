@@ -196,6 +196,7 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 		v.type = INVALID_TYPE
 		return
 	}
+	note_nil_write(k, v.args[0].value, v.args[1].value)
 
 	bound := make([]Expr, 2, k.c.semantic_allocator)
 	bound[0] = v.args[0].value

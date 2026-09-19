@@ -33,6 +33,10 @@ reported :: proc() {
 	fmt.println(empty.size());
 }
 
+Pair :: struct { pointer: ^int, other: int }
+set_float :: proc(slot: inout ^f64, @(escape=stored) target: ^f64) { slot = target; }
+set_either :: proc{set_it, set_float};
+
 silent :: proc(x: int) {
 	value := x;
 
@@ -57,6 +61,18 @@ silent :: proc(x: int) {
 	escape_hatch := &mut exposed;
 	escape_hatch^ = &value;
 	fmt.println(exposed^);
+
+	destructured, other := Pair{pointer = &value, other = 0};
+	destructured = nil;
+	fmt.println(destructured^);
+
+	exchanged: ^int = nil;
+	old := exchange(inout exchanged, &value);
+	fmt.println(exchanged^);
+
+	grouped: ^int = nil;
+	set_either(inout grouped, &value);
+	fmt.println(grouped^);
 }
 
 main :: proc() {

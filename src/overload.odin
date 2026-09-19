@@ -886,6 +886,10 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 			ok = false
 			continue
 		}
+		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
+		if mode == .Inout {
+			note_unknown_nil_write(k, value)
+		}
 		if arg.mode == .Inout {
 			if base := expr_base(value); base != nil && !base.assignable {
 				report_not_assignable(k, base, "an `inout` argument")
@@ -893,7 +897,7 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 			}
 		}
 		bound[slot] = value
-		if proc_parameter_mode(k.c, sym.proc_type, slot) == .Borrow && !check_borrow_argument(k, value) { ok = false }
+		if mode == .Borrow && !check_borrow_argument(k, value) { ok = false }
 	}
 	for slot in 0 ..< count {
 		if !cand.filled[slot] && slot < len(sym.param_defaults) {
