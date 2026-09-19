@@ -152,6 +152,7 @@ Compiler :: struct {
 	// three of them.
 	view_types:         map[View_Key]Type_Id,
 	adapter_members:    map[Adapter_Key]Symbol_Id,
+	item_states:        map[Item_Key]Item_State,
 	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,

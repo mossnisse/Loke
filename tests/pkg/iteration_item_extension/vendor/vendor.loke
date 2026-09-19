@@ -1,0 +1,9 @@
+@(public)
+package vendor;
+
+Cursor :: struct { @(public) at: int }
+Source :: struct {}
+
+impl Cursor {
+	ping :: proc(self) -> int { return self.at; }
+}

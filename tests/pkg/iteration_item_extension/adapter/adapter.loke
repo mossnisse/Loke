@@ -1,0 +1,28 @@
+@(public)
+package adapter;
+
+import "../observer";
+import "../vendor";
+
+impl vendor.Source {
+	Element :: int;
+	Iterator :: vendor.Cursor;
+	iter :: proc(self) -> vendor.Cursor { return {}; }
+}
+
+impl vendor.Cursor {
+	next :: proc(self: inout vendor.Cursor) -> Option(int) {
+		if (self.at > 0) { return .none; }
+		self.at += 1;
+		return .some(3);
+	}
+}
+
+Cursor :: vendor.Cursor;
+as_item :: proc(value: Cursor.Item) -> int { return value; }
+
+run :: proc() -> int {
+	total := observer.touch();
+	foreach (value in vendor.Source{}) { total += as_item(value); }
+	return total;
+}

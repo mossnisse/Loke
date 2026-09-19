@@ -131,11 +131,6 @@ Type_Kind :: enum {
 Contribution :: enum u8 {
 	Mutable_Iteration,
 	Iteration,
-	// design.md "Iteration protocol": `Item`, what an iterator's `next` hands
-	// back. Contributed to any type that has a `next`, including a user one, so
-	// `Self.Iterator.Item` names something on an iterator written before `Yield`
-	// existed. Separate from `Iteration`, which is about the *iterable*.
-	Iteration_Item,
 	Lifecycle,
 	// The compiler-owned canonical receiver members: `len`, `cap`, and `hash` on
 	// the built-in types that provide them.
@@ -1013,6 +1008,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.view_types = make(map[View_Key]Type_Id, c.semantic_allocator)
 	c.adapter_members = make(map[Adapter_Key]Symbol_Id, c.semantic_allocator)
+	c.item_states = make(map[Item_Key]Item_State, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)

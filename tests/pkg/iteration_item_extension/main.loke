@@ -1,0 +1,8 @@
+package main;
+
+import "core:fmt";
+import "./adapter";
+
+main :: proc() {
+	fmt.println(adapter.run());
+}
