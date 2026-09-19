@@ -1,5 +1,4 @@
-// Ordinary borrowed iterable adapters. Lookup supplies these only when the
-// source has no visible member of its own with the requested name.
+// Fallback iterable adapters used when the source has no matching member.
 package lokec
 
 import "core:fmt"
@@ -7,8 +6,7 @@ import "core:fmt"
 Adapter_Kind :: enum { None, Indexed, Reversed, Copied }
 Adapter_Key :: struct { source: Type_Id, kind: Adapter_Kind, pkg: Package_Id }
 
-// Preserve the existing direct loop lowering only after ordinary member
-// resolution has proved this is a contributed adapter chain.
+// Peel contributed adapters so foreach can use direct loop lowering.
 peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 	source := s.iterable
 	indexed, reversed := false, false
@@ -36,10 +34,7 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 	return reported
 }
 
-// design.md "Iteration adapters": whether `indexed()` hands back the pointer its
-// source lent, so that the pair names the source's storage rather than the
-// iterator's own. The record `Yield` is what made the value half a pointer where
-// the `Element` holds the value itself, and that difference is the fact.
+// Whether indexed() preserves a pointer lent by its source.
 indexed_next_lends :: proc(c: ^Compiler, callee: ^Symbol) -> bool {
 	if callee.synth != .Indexed_Next || len(callee.params) == 0 {
 		return false
@@ -69,8 +64,6 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	if !iteration_proc_matches(k, symbol_of(k.c, iter), source, .Borrow, iterator) ||
 	   element == INVALID_TYPE || iterator == INVALID_TYPE { return INVALID_SYMBOL }
 	next := iteration_member(k, iterator, "next")
-	// design.md "Borrowing iteration": a lending source hands back a pointer, so
-	// what `next` returns is the iterator's `Item`, not its `Element`.
 	source_yield, described := iterator_yield(k, iterator, no_span(), report = false)
 	if !described {
 		return INVALID_SYMBOL
@@ -80,9 +73,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	   !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
 		return INVALID_SYMBOL
 	}
-	// `indexed()` preserves the complete descriptor of the value it wraps and
-	// owns only the counter. This is recursive: indexing a map entry produces a
-	// record descriptor inside the outer pair rather than copying that entry.
+	// indexed() preserves the source yield and owns only its counter.
 	lends := kind == .Indexed && !yield_is_owned(source_yield)
 	if kind == .Copied && !yield_borrowed_parts_copyable(k.c, element, source_yield) {
 		return INVALID_SYMBOL
@@ -106,8 +97,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		kind = .Struct, name = intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, source), allocator = c.semantic_allocator)),
 		key = source, element = element, is_view = true, adapter_kind = kind,
 	})
-	// A view of another view owns its small descriptor. This makes chains like
-	// `xs.reversed().indexed()` independent of intermediate temporary storage.
+	// Nested views own their small source descriptor.
 	source_info := underlying_info(c, source)
 	by_value := source_info.is_view || source_info.is_range || source_info.kind == .Slice || source_info.kind == .String_View
 	held := by_value ? source : TYPE_RAWPTR
@@ -193,8 +183,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	return member
 }
 
-// copied() only needs clone support for leaves the source lends. Owned leaves
-// already belong to the adapter and pass through unchanged.
+// copied() clones lent leaves and passes owned leaves through.
 yield_borrowed_parts_copyable :: proc(c: ^Compiler, element: Type_Id, desc: Yield_Desc) -> bool {
 	switch desc.kind {
 	case .Owned:
