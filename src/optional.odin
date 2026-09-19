@@ -168,7 +168,7 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 	}
 	classify_copy_cost(k, v.fallback, payload, .Or_Else_Fallback)
 	v.fallback_clone = classify_copy(k, v.fallback, payload, .Or_Else_Fallback)
-	if type_clone_disabled(k.c, payload) && expression_is_borrowed_place(k.c, v.fallback) {
+	if type_clone_disabled(k.c, payload) && expression_is_borrowed_place(v.fallback) {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -352,7 +352,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	erased := subject == TYPE_ANY_VIEW
 	// design.md "Unions": a switch over a place borrows it, and a switch over a
 	// temporary consumes it.
-	borrows := erased || expression_is_borrowed_place(k.c, s.subject)
+	borrows := erased || expression_is_borrowed_place(s.subject)
 	if !erased && !type_is_union(k.c, subject) {
 		errorf(
 			k.c,

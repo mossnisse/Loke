@@ -1,16 +1,4 @@
-// Ownership: `move`, explicit `drop`, and the liveness that decides where the
-// compiler drops a managed local, per the dataflow rules in design.md
-// "Managed values and storage".
-//
-// `move` and `drop` are compiler special forms over a storage location, not
-// ordinary calls, so they are checked as syntax; classification itself runs
-// once per concrete body over the `src/cfg.odin` view, after the body is
-// checked and every node has its type.
-//
-// The analysis writes two facts back onto each local's symbol: whether scope
-// exit drops it at all, and whether it reaches its scope exits in the same
-// state on every path. Only the second case needs a runtime flag — what keeps
-// "no source or ABI rule requires a flag" true for the ordinary local.
+// Ownership checking, copy classification, and local liveness.
 package lokec
 
 import "core:fmt"
@@ -18,8 +6,6 @@ import "core:mem"
 
 // ------------------------------------------------------ the special forms --
 
-// `move(value)` transfers ownership without a copy, zeroing the source and
-// marking it dead (design.md "Assignment statements").
 check_move :: proc(k: ^Checker, v: ^Expr_Move) {
 	v.value_category = .Value
 	operand := check_single_expr(k, v.value)
@@ -33,9 +19,7 @@ check_move :: proc(k: ^Checker, v: ^Expr_Move) {
 	}
 }
 
-// `drop(value)` runs the cleanup operation, zeroes the value, and marks the
-// variable dead (design.md "Storage modifiers").
-check_drop_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+check_drop_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.type = TYPE_VOID
 	v.value_category = .Value
 	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
@@ -56,11 +40,8 @@ check_drop_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.bound = bound
 }
 
-// `unsafe.forget(value)` consumes an owning operand, marks it dead, and runs
-// no cleanup hook — for it or anything it owns transitively (design.md
-// "Forgotten owners"). Not a lifetime extension: a borrow of the operand is
-// invalidated here exactly as it would be at a `drop`.
-check_forget_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+// `unsafe.forget` consumes without cleanup; it does not extend borrows.
+check_forget_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.type = TYPE_VOID
 	v.value_category = .Value
 	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
@@ -69,19 +50,13 @@ check_forget_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		return
 	}
 	operand := v.args[0].value
-	// Checked once, whichever form it takes: an `Expr_Move` goes through
-	// `check_move`, which applies the lexical-owner and static-duration rules
-	// every other transfer obeys.
 	type := check_single_expr(k, operand)
 	if type == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
 	}
-	// A place still belongs to whoever declared it, so consuming it is written
-	// out — the same rule a `move` parameter and a consuming receiver follow. A
-	// value temporary is already owned, which permits
-	// `unsafe.forget(exchange(inout tls_value, {}))`.
-	if expression_is_borrowed_place(k.c, operand) {
+	// A place must spell its transfer; a temporary is already owned.
+	if expression_is_borrowed_place(operand) {
 		errorf(
 			k.c,
 			expr_span(operand),
@@ -91,9 +66,7 @@ check_forget_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// A managed value is accepted even with checked borrows inside it: forgetting
-	// it leaks what it owns and ends those loans. An unmanaged value owns
-	// nothing but provenance, and forgetting a bare borrow means nothing.
+	// Forgetting a non-owner must not discard borrow provenance.
 	if !type_is_managed(k.c, type) && type_carries_borrow(k.c, type).any {
 		errorf(
 			k.c,
@@ -110,9 +83,7 @@ check_forget_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.bound = bound
 }
 
-// `move` and `drop` both operate on a lexical storage location — never a
-// field, element, or map entry, nor file-scope/`static`/`thread_local`
-// storage or a subplace of it (design.md, `drop`'s operand rules).
+// `move` and `drop` require an owned lexical variable.
 require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 	ident, is_ident := e.(^Expr_Ident)
 	sym := is_ident ? symbol_of(k.c, ident.symbol) : nil
@@ -127,9 +98,7 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		)
 		return false
 	}
-	// A static-duration binding is always live once initialized; `move`/`drop`
-	// on it (or a subplace of it) is forbidden, or one procedure could make it
-	// dead while another still accessed it (design.md).
+	// Static-duration storage is always live.
 	if symbol_outlives_bodies(sym) {
 		errorf(
 			k.c,
@@ -143,12 +112,7 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		add_notef(k.c, sym.span, "declared here; `exchange` replaces a static-duration value instead")
 		return false
 	}
-	// A binding that views storage its source still owns has no owner to hand
-	// over: consuming the view leaves the source live, and the source's own
-	// cleanup then releases storage the transfer already took -- silently, at
-	// scope exit, as a second free. A switch over a place lends its payload
-	// (design.md "Unions") and a `&` loop binding lends one element (design.md
-	// "By-reference iteration"); the remedy differs, the reason does not.
+	// Borrowed switch and iteration bindings do not own their values.
 	if sym.borrowed_binding != .None {
 		if sym.borrowed_binding == .Switch_Payload {
 			errorf(
@@ -171,12 +135,8 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		add_notef(k.c, sym.span, "bound here")
 		return false
 	}
-	// An ordinary `value: T` parameter is a non-owning immutable borrow (design.md
-	// "Parameter semantics and ABI lowering"); consuming it is the caller's `move`
-	// at the call site, not this body's. A `move` parameter is the exception:
-	// design.md says an owner received through one "may be used locally or
-	// returned", and moving it onward is how it is stored.
-	if sym.kind == .Parameter && sym.mode == .Value {
+	// Only a `move` parameter is owned by the callee.
+	if sym.kind == .Parameter && sym.mode != .Move {
 		errorf(
 			k.c,
 			expr_span(e),
@@ -192,18 +152,14 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 }
 
 
-// `exchange(inout destination, replacement)` replaces a definitely live value
-// and returns its previous value without cloning (design.md "Exchange"). The
-// destination's type supplies the context, which is why the built-in has no
-// written signature.
-check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+// `exchange` replaces a live value and returns the old one without cloning.
+check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.value_category = .Value
 	if len(v.args) != 2 {
 		errorf(k.c, v.span, "L0505", "`exchange` takes a destination place and its replacement")
 		v.type = INVALID_TYPE
 		return
 	}
-	// "Like any `inout` operation", the marker is written at the call site.
 	if v.args[0].mode != .Inout {
 		errorf(
 			k.c,
@@ -214,9 +170,6 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// `exchange` is a built-in with no written signature, so it has no parameter
-	// name to address and no second modal position — permanently, not pending a
-	// milestone.
 	if v.args[0].name.text != "" || v.args[1].name.text != "" {
 		errorf(k.c, v.span, "L0505", "`exchange` takes positional arguments only")
 		v.type = INVALID_TYPE
@@ -239,7 +192,6 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// The destination's type supplies the context, so `{}` means its zero value.
 	if !check_value_expr(k, v.args[1].value, destination, "exchange into") {
 		v.type = INVALID_TYPE
 		return
@@ -250,21 +202,10 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	bound[1] = v.args[1].value
 	v.bound = bound
 	v.type = destination
-	// The replacement is installed as one lifecycle operation with the old value's
-	// move out, so a hook may have to exist for the destination's type.
 	contribute_lifecycle_members(k, destination)
 }
 
-// design.md "Uninitialized capacity": `unsafe.take(place)` reads the owner out
-// of storage without running cleanup for what stays behind, and
-// `unsafe.write(place, value)` installs one without dropping what was there.
-// Between them they move a value into and out of capacity -- storage the
-// compiler has been told holds no value, and whose accuracy is the container
-// author's promise.
-//
-// Both refuse a bare variable. A whole variable's liveness *is* tracked, so
-// `move` takes it out and an ordinary assignment puts one back; reaching past
-// that with an unchecked operation would only break what the compiler knows.
+// Move values across container capacity whose liveness the compiler cannot track.
 check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 	taking := kind == .Unsafe_Take
 	name := taking ? "unsafe.take" : "unsafe.write"
@@ -314,8 +255,6 @@ check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 			v.type = INVALID_TYPE
 			return
 		}
-		// The storage takes the value the way an initialization does, so a borrowed
-		// place is cloned into it and a move-only one has to be written `move(...)`.
 		classify_copy_cost(k, v.args[1].value, place, .Write)
 		classify_copy(k, v.args[1].value, place, .Write)
 		bound[1] = v.args[1].value
@@ -323,21 +262,13 @@ check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 	v.bound = bound
 	if taking {
 		v.type = place
-		// The value handed back is owned like any other, so whatever it needs to be
-		// copied or released has to exist.
 		contribute_lifecycle_members(k, place)
 	}
 }
 
 // ------------------------------------------------- ownership at the call --
 
-// A place passed by `move` must be marked at the call site too, not just at the
-// declaration; an owning temporary needs no marker (design.md "Parameter
-// semantics and ABI lowering"). Method-call
-// syntax supplies an `inout` receiver's marker implicitly, since that borrow
-// ends with the call and leaves the source usable; a consuming receiver leaves
-// the source dead, so it's written `move(value).method()` like any other
-// transfer.
+// A place passed to a `move` parameter must spell the transfer.
 require_argument_ownership :: proc(
 	k: ^Checker, v: ^Expr_Call, declaration: Symbol_Id, signature: ^Type_Info = nil,
 ) {
@@ -361,11 +292,6 @@ require_argument_ownership :: proc(
 		if argument == nil {
 			continue
 		}
-		// A place still belongs to whoever declared it, so giving it away is written
-		// out. A temporary owns its value already and has no lexical owner to leave
-		// dead, so it transfers directly — the same rule `unsafe.forget` follows, and
-		// what lets a library insertion take `values.append(open_file(path))` exactly
-		// as built-in insertion does.
 		if expression_is_owned_argument(argument) {
 			continue
 		}
@@ -385,25 +311,29 @@ require_argument_ownership :: proc(
 	}
 }
 
-// Returning a borrowed managed parameter by value performs a logical clone,
-// since the callee owns nothing it could move out; a managed local, named
-// result, temporary, or `move` parameter transfers ownership into result
-// storage instead (design.md).
+// Only ordinary lexical locals and `move` parameters own their named values.
+@(private = "file")
+symbol_is_owned_here :: proc(sym: ^Symbol) -> bool {
+	return sym != nil && sym.borrowed_binding == .None &&
+		((sym.kind == .Var && sym.decl != nil && !symbol_outlives_bodies(sym)) ||
+		 (sym.kind == .Parameter && sym.mode == .Move))
+}
+
+// Borrowed managed results clone; owned values transfer.
 classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id) {
 	if value.is_inout || !type_is_managed(k.c, result) {
 		return
 	}
-	root := place_root_symbol(k.c, value.expr)
+	root := place_root_symbol(value.expr)
 	sym := symbol_of(k.c, root)
-	if sym == nil {
+	base := expr_base(value.expr)
+	if sym == nil && base != nil && base.value_category != .Place {
 		return // a temporary: already owned, nothing to clone
 	}
-	// An owned source transfers. Everything else the callee can name is borrowed.
-	if sym.kind == .Var && sym.decl != nil && !sym.decl.top_level {
-		return
-	}
-	if sym.kind == .Parameter && sym.mode == .Move {
-		return
+	if _, is_ident := value.expr.(^Expr_Ident); is_ident && sym != nil {
+		if symbol_is_owned_here(sym) {
+			return
+		}
 	}
 	if type_clone_disabled(k.c, result) {
 		errorf(
@@ -416,57 +346,43 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 		return
 	}
 	value.clone_on_return = true
-	// The generated entry point has to exist by emission.
 	contribute_lifecycle_members(k, result)
 }
 
 // The variable a place expression is rooted in, or INVALID_SYMBOL for a
 // temporary. Field and element selection do not change the root.
-place_root_symbol :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
+place_root_symbol :: proc(e: Expr) -> Symbol_Id {
 	#partial switch v in e {
 	case ^Expr_Ident:
 		return v.symbol
 	case ^Expr_Selector:
-		return place_root_symbol(c, v.operand)
+		return place_root_symbol(v.operand)
 	case ^Expr_Index:
 		// A value-returning `operator([])` produces a temporary, not a place.
 		if v.resolution.kind == .User_Operator && v.value_category != .Place {
 			return INVALID_SYMBOL
 		}
-		return place_root_symbol(c, v.operand)
+		return place_root_symbol(v.operand)
 	}
 	return INVALID_SYMBOL
 }
 
 // -------------------------------------------------------------- copy sites --
 
-// Assignment has value semantics: it creates an independent value, never a
-// hidden alias to the same allocation (design.md "Assignment statements"). So
-// the question at a binding or an assignment is only whether the source
-// already owns what it produces: a call result, a literal, a conversion, and
-// `move(x)` all hand over something owned and transfer it, while a place names
-// storage someone else still owns, and consuming it is a copy.
-expression_is_borrowed_place :: proc(c: ^Compiler, e: Expr) -> bool {
-	if _, is_move := e.(^Expr_Move); is_move {
-		return false
-	}
-	return place_root_symbol(c, e) != INVALID_SYMBOL
+// Places copy; values and explicit moves transfer.
+expression_is_borrowed_place :: proc(e: Expr) -> bool {
+	base := expr_base(e)
+	return base != nil && base.value_category == .Place
 }
 
-// A `move` parameter may take a value that already owns its representation.
-// Checked expressions say that directly: temporaries and `move(...)` are values,
-// while dereferences, projections, indexing, and `inout` results are places even
-// when they have no lexical root for `place_root_symbol` to find.
+// Value category covers indirect places that have no lexical root.
 expression_is_owned_argument :: proc(e: Expr) -> bool {
 	base := expr_base(e)
 	return base != nil && base.value_category == .Value
 }
 
-// The compiler never silently moves a dynamic array, map, runtime string,
-// `shared(T)`, or type with a custom copy hook — including at the source's
-// last use (design.md).
 classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
-	if value == nil || !type_is_managed(k.c, type) || !expression_is_borrowed_place(k.c, value) {
+	if value == nil || !type_is_managed(k.c, type) || !expression_is_borrowed_place(value) {
 		return false
 	}
 	if type_clone_disabled(k.c, type) {
@@ -484,20 +400,12 @@ classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) 
 	return true
 }
 
-// Report what a copy costs at a site checked in the ordinary pass, where the
-// enclosing loop depth is still `k`'s. Separate from `classify_copy` because the
-// two ask different questions: an unmanaged aggregate has no lifecycle clone to
-// contribute and is still expensive to copy by the byte.
+// Copy cost also applies to large unmanaged aggregates.
 classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) {
-	if value == nil || !expression_is_borrowed_place(k.c, value) {
+	if value == nil || !expression_is_borrowed_place(value) {
 		return
 	}
-	// A destination built by *converting* the operand is not a duplicate of it,
-	// whatever it costs: `fmt.println(count)` erases an `int` into a 16-byte
-	// `any_view` that borrows it, and reporting that as a copy of `count` would
-	// name a duplication the program never makes. The erasure rewrites the node
-	// to the destination type, so the conversion is what has to be asked about,
-	// not the type it produced.
+	// A conversion builds a different value rather than copying its operand.
 	base := expr_base(value)
 	if base == nil || base.type != type || base.erased_from != INVALID_TYPE {
 		return
@@ -505,9 +413,7 @@ classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_S
 	report_copy_cost(k, site, expr_span(value), value, type, k.loop_depth > 0)
 }
 
-// Aggregate construction has a binding's value semantics: a place continues to
-// own its value, so the field/element receives a clone; a temporary or `move`
-// hands ownership to the aggregate.
+// Aggregate elements follow ordinary copy/transfer rules.
 classify_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, type: Type_Id) {
 	classify_copy_cost(k, v.elements[index].value, type, .Literal)
 	if !classify_copy(k, v.elements[index].value, type, .Literal) {
@@ -533,7 +439,7 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		if value != nil && expression_is_borrowed_place(k.c, value) {
+		if value != nil && expression_is_borrowed_place(value) {
 			report_copy_cost(k, .Binding, expr_span(value), value, sym.type, in_loop)
 		}
 		if !classify_copy(k, value, sym.type, .Binding) {
@@ -551,25 +457,15 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 	if s.op != .Assign {
 		return // a compound assignment reads and writes one place, and copies nothing
 	}
-	if s.destructure.active {
-		if s.destination_live == nil && len(s.lhs) > 0 {
-			s.destination_live = make([]Liveness, len(s.lhs), k.c.semantic_allocator)
-			for index in 0 ..< len(s.lhs) {
-				s.destination_live[index] = .Live
-			}
-		}
-		classify_destructure(k, &s.destructure, s.rhs[0], in_loop)
-		return
-	}
-	// The destination state is recorded per target whether or not the source is a
-	// copy: a transfer still replaces a value that has to be dropped first.
 	if s.destination_live == nil && len(s.lhs) > 0 {
 		s.destination_live = make([]Liveness, len(s.lhs), k.c.semantic_allocator)
 		for index in 0 ..< len(s.lhs) {
-			// A place the analysis does not track is a field or element of a live
-			// aggregate, so its previous value is there to be dropped.
 			s.destination_live[index] = .Live
 		}
+	}
+	if s.destructure.active {
+		classify_destructure(k, &s.destructure, s.rhs[0], in_loop)
+		return
 	}
 	if len(s.rhs) != len(s.lhs) {
 		return
@@ -580,15 +476,13 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 		if base == nil {
 			continue
 		}
-		// A container literal replacing a destination with a written policy is
-		// built with that policy's provider, not with a default-backed temporary.
-		bind_literal_allocator(k.c, value, place_root_symbol(k.c, s.lhs[index]))
+		bind_literal_allocator(k.c, value, place_root_symbol(s.lhs[index]))
 		// `_ = place` takes nothing, so there is no copy to make: a clone here
 		// allocates a value the discard has no destination for and never drops.
 		if is_discard(s.lhs[index]) {
 			continue
 		}
-		if expression_is_borrowed_place(k.c, value) {
+		if expression_is_borrowed_place(value) {
 			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, in_loop)
 		}
 		if !classify_copy(k, value, base.type, .Assignment) {
@@ -602,12 +496,7 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 	s.rhs_clones = clones
 }
 
-// design.md "Destructuring": the operand's category decides for the whole
-// form, then each retained field is classified on its own. `classify_copy` is
-// unreachable through `classify_declaration_copies`/`classify_assignment_copies`
-// here — both return when value and target counts differ — so this drives it
-// directly, field by field, reporting the copy cost per cloned field rather
-// than once for the whole record.
+// A place destructure clones each retained managed field.
 @(private = "file")
 classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr, in_loop: bool) {
 	if !plan.from_place {
@@ -642,10 +531,7 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr, in_
 
 // --------------------------------------------------------- storage duration --
 
-// File-scope, `static`, and `thread_local` declarations use constant
-// initialization: the initializer must be a compile-time constant, or the
-// zero value is used (design.md "Storage modifiers"). A local with either
-// duration also needs module-level storage — recorded here.
+// Static-duration locals use constant initialization and module storage.
 record_static_local :: proc(k: ^Checker, d: ^Decl) {
 	for symbol_id, index in d.symbols {
 		sym := symbol_of(k.c, symbol_id)
@@ -740,12 +626,10 @@ report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr,
 	// A binding that only views its source has no ownership to hand over, so the
 	// `move` advice below would name something `move` is not allowed to take.
 	transferable := false
-	if root := symbol_of(k.c, place_root_symbol(k.c, source)); root != nil {
+	if root := symbol_of(k.c, place_root_symbol(source)); root != nil {
 		name = identifier_text(k.c, root.name)
-		// A materialized constant is storage the program shares, not a value anyone
-		// owns, so the copy is real but `move` names nothing that could give it up.
-		transferable = root.borrowed_binding == .None &&
-			(root.kind == .Var || root.kind == .Parameter)
+		_, is_ident := source.(^Expr_Ident)
+		transferable = is_ident && symbol_is_owned_here(root)
 	}
 	source_text := name == "" ? fmt.aprintf("a `%s`", type_name(k.c, type), allocator = k.c.semantic_allocator) :
 		fmt.aprintf("`%s`", name, allocator = k.c.semantic_allocator)
@@ -859,7 +743,7 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 			}
 		}
 		copy(block.entry_state, state)
-		run_events(graph, block, state)
+		run_events(block, state)
 		if block.visited && states_equal(block.exit_state, state) {
 			continue
 		}
@@ -897,7 +781,7 @@ states_equal :: proc(a, b: []Liveness) -> bool {
 }
 
 @(private = "file")
-run_events :: proc(graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness) {
+run_events :: proc(block: ^Flow_Block, state: []Liveness) {
 	for event in block.events {
 		#partial switch event.kind {
 		case .Init, .Assign:

@@ -494,7 +494,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 // is someone else's to destroy.
 @(private)
 hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: string) {
-	if expression_is_borrowed_place(e.c, expr) {
+	if expression_is_borrowed_place(expr) {
 		return
 	}
 	register_temporary_place(e, type, place)
@@ -507,7 +507,7 @@ hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: 
 emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 	value := emit_expr(e, expr)
 	base := expr_base(expr)
-	if base.is_const || !emit_lifecycle(e, base.type).managed || expression_is_borrowed_place(e.c, expr) {
+	if base.is_const || !emit_lifecycle(e, base.type).managed || expression_is_borrowed_place(expr) {
 		return value
 	}
 	slot := alloca(e, llvm_type(e, base.type))

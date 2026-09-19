@@ -36,13 +36,13 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .New, .New_Clone, .Free, .Unsafe_Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
 	case .Drop:
-		check_drop_builtin(k, v, ident)
+		check_drop_builtin(k, v)
 	case .Exchange:
-		check_exchange_builtin(k, v, ident)
+		check_exchange_builtin(k, v)
 	case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
 		check_unsafe_builtin(k, v, ident, sym.builtin)
 	case .Unsafe_Forget:
-		check_forget_builtin(k, v, ident)
+		check_forget_builtin(k, v)
 	case .Unsafe_Take, .Unsafe_Write:
 		check_capacity_builtin(k, v, sym.builtin)
 	case .Unsafe_Transmute:

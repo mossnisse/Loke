@@ -1,0 +1,25 @@
+package main;
+
+Only :: move_only struct { id: int }
+Holder :: struct { item: Only }
+
+copy_through_pointer :: proc(pointer: ^Only) {
+	copy := pointer^;
+	_ = copy;
+}
+
+return_static :: proc() -> Only {
+	value: static Only;
+	return value;
+}
+
+return_field :: proc() -> Only {
+	holder := Holder{};
+	return holder.item;
+}
+
+reject_borrowed_parameter :: proc(value: borrow Only) {
+	drop(value);
+}
+
+main :: proc() {}

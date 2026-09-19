@@ -239,7 +239,7 @@ emit_destructure_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	plan := &s.destructure
 	destinations := make([]Symbol_Id, len(plan.fields))
 	for target, index in s.lhs {
-		destinations[index] = place_root_symbol(e.c, target)
+		destinations[index] = place_root_symbol(target)
 	}
 	values, guards := emit_destructure_fields(e, plan, s.rhs[0], destinations)
 	addresses := make([]string, len(s.lhs))
@@ -313,7 +313,7 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		if index < len(s.rhs_clones) && s.rhs_clones[index] {
 			values[index] = emit_clone_value(
 				e, expr_base(s.lhs[index]).type, values[index],
-				emit_destination_allocator(e, place_root_symbol(e.c, s.lhs[index])),
+				emit_destination_allocator(e, place_root_symbol(s.lhs[index])),
 			)
 		}
 		if index < len(s.lhs) && inserting_map_index(s.lhs[index]) != nil {
@@ -621,7 +621,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		slot = emit_union_spill(e, union_type, value)
 		tag = emit_union_tag(e, union_type, value)
 		// A produced subject is the switch's to drop; a named place is borrowed.
-		consumes = !expression_is_borrowed_place(e.c, s.subject)
+		consumes = !expression_is_borrowed_place(s.subject)
 	}
 	done := new_label(e, "typeswitch.done")
 	bodies, tests, order, fallback := switch_labels(e, s, "typecase", done)

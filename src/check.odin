@@ -885,7 +885,7 @@ plan_destructure :: proc(
 		active     = true,
 		record     = record,
 		fields     = fields,
-		from_place = expression_is_borrowed_place(k.c, operand),
+		from_place = expression_is_borrowed_place(operand),
 		retained   = retained,
 	}
 	if !plan.from_place {

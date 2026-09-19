@@ -1556,7 +1556,7 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
 	}
 	// Assigning a place clones it with the destination's allocator (design.md), so
 	// only a move, a call result, or a literal carries a region in.
-	if type_is_managed(graph.k.c, expr_base(value).type) && expression_is_borrowed_place(graph.k.c, value) {
+	if type_is_managed(graph.k.c, expr_base(value).type) && expression_is_borrowed_place(value) {
 		return
 	}
 	set := prov_result_region(graph, value)

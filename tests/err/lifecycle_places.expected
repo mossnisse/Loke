@@ -1,0 +1,12 @@
+L0503
+@7:10
+`Only` is move-only, so this binding cannot copy it; write `move(...)` to transfer ownership instead
+L0502
+@13:9
+`Only` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
+L0502
+@18:9
+`Only` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
+L0499
+@22:7
+`drop` borrows `value`, so this body does not own it; `move` at the call site is what transfers ownership

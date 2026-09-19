@@ -2159,7 +2159,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 				return Eval_Value{}, false
 			}
 			value = computed
-			if expression_is_borrowed_place(ev.k.c, v.bound[1]) {
+			if expression_is_borrowed_place(v.bound[1]) {
 				value, computed_ok = copy_value(ev, computed)
 				if !computed_ok {
 					return Eval_Value{}, false

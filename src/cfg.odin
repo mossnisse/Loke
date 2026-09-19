@@ -600,7 +600,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		}
 		// A clone allocates through the destination's `via`, evaluated here.
 		if index < len(s.rhs_clones) && s.rhs_clones[index] && index < len(s.lhs) {
-			walk_flow_expr(graph, symbol_via_allocator(graph.k.c, place_root_symbol(graph.k.c, s.lhs[index])))
+			walk_flow_expr(graph, symbol_via_allocator(graph.k.c, place_root_symbol(s.lhs[index])))
 		}
 	}
 	if graph.mode != .Lifecycle {
@@ -786,7 +786,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	// place borrows it.
 	consumes := s.kind != .Value && s.subject != nil &&
 		expr_base(s.subject).type != TYPE_ANY_VIEW &&
-		!expression_is_borrowed_place(graph.k.c, s.subject)
+		!expression_is_borrowed_place(s.subject)
 	merge := new_flow_block(graph)
 	bodies := make([]Block_Id, len(s.cases), graph.alloc)
 	for _, index in s.cases {
@@ -1129,7 +1129,7 @@ report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		if mode != .Value || type_is_managed(graph.k.c, type) || !type_is_aggregate(graph.k.c, type) {
 			continue
 		}
-		if expression_is_borrowed_place(graph.k.c, argument) {
+		if expression_is_borrowed_place(argument) {
 			report_copy_cost(graph.k, .Argument, expr_span(argument), argument, type, graph.loop_depth > 0)
 		}
 	}

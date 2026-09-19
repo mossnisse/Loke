@@ -83,7 +83,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			written := expr_base(v.bound[0]).type
 			address := emit_address(e, v.bound[0])
 			value := emit_expr(e, v.bound[1])
-			if emit_lifecycle(e, written).managed && expression_is_borrowed_place(e.c, v.bound[1]) {
+			if emit_lifecycle(e, written).managed && expression_is_borrowed_place(v.bound[1]) {
 				value = emit_clone_value(e, written, value)
 			}
 			store(e, written, value, address)
@@ -753,7 +753,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 		expr := v.variadic_elements[next_element]
 		value := emit_expr(e, expr)
 		// Temporaries transfer into staging; borrowed owners are cloned.
-		if managed && expression_is_borrowed_place(e.c, expr) {
+		if managed && expression_is_borrowed_place(expr) {
 			value = emit_clone_value(e, element, value)
 		}
 		elements[next_element] = value
@@ -980,7 +980,7 @@ emit_bound_call :: proc(
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&handoff_cleanups, entry) }
 		} else if mode == .Value && index < len(callee_type.parameters) && index != consumed &&
-		   !expression_is_borrowed_place(e.c, argument) {
+		   !expression_is_borrowed_place(argument) {
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&argument_cleanups, entry) }
 		}

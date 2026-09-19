@@ -650,7 +650,7 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 	if base == nil || !emit_lifecycle(e, base.type).managed {
 		return
 	}
-	if expression_is_borrowed_place(e.c, expr) {
+	if expression_is_borrowed_place(expr) {
 		return
 	}
 	slot := alloca(e, llvm_type(e, base.type))

@@ -1098,7 +1098,7 @@ prepare_map_assignment :: proc(e: ^Emitter, v: ^Expr_Index, snapshot_key: bool) 
 	key := container_key(e.c, container)
 	// An earlier destination of a multiple assignment may overwrite the variable
 	// supplying this key, so it is snapshotted.
-	if snapshot_key && emit_lifecycle(e, key).managed && expression_is_borrowed_place(e.c, v.indices[0]) {
+	if snapshot_key && emit_lifecycle(e, key).managed && expression_is_borrowed_place(v.indices[0]) {
 		value := emit_clone_value(e, key, load(e, llvm_type(e, key), key_slot))
 		store(e, key, value, key_slot)
 		cleanup = begin_temporary_drop(e, key, key_slot)
@@ -1168,7 +1168,7 @@ emit_map_key_slot :: proc(e: ^Emitter, index: Expr, container: Type_Id) -> (stri
 	slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, slot)
 	cleanup := Deferred{slot = -1}
-	if emit_lifecycle(e, key).managed && !expression_is_borrowed_place(e.c, index) {
+	if emit_lifecycle(e, key).managed && !expression_is_borrowed_place(index) {
 		cleanup = begin_temporary_drop(e, key, slot)
 	}
 	return slot, cleanup

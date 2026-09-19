@@ -721,7 +721,7 @@ bind_variadic_arguments :: proc(
 		// Asked of every element, managed or not: a pack copies what it is given,
 		// and a large unmanaged one costs by the byte without a clone to report.
 		classify_copy_cost(k, value, element, .Variadic)
-		needs_element_clone ||= expression_is_borrowed_place(k.c, value)
+		needs_element_clone ||= expression_is_borrowed_place(value)
 		ok = ok && passed
 	}
 	if type_is_managed(k.c, element) && needs_element_clone && !lifecycle_of(k.c, element).intrinsic {
