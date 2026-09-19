@@ -46,8 +46,6 @@ Generic_Template :: struct {
 	file_node:  ^File,
 	// Record templates only, in declaration order.
 	params:     []Generic_Param_Decl,
-	// Tie-breaker 4: how much structure the parameter patterns pin down.
-	specificity: int,
 	// Record templates only: every instance made so far, so a block registered
 	// after one exists still reaches it.
 	instances:   [dynamic]^Instance,
@@ -226,6 +224,158 @@ pattern_specificity :: proc(e: Expr) -> int {
 }
 
 @(private = "file")
+Pattern_Relation :: enum {
+	Equal,
+	Left,
+	Right,
+	Crossed,
+}
+
+@(private = "file")
+merge_pattern_relation :: proc(a, b: Pattern_Relation) -> Pattern_Relation {
+	if a == .Crossed || b == .Crossed {
+		return .Crossed
+	}
+	if a == .Equal {
+		return b
+	}
+	if b == .Equal || a == b {
+		return a
+	}
+	return .Crossed
+}
+
+@(private = "file")
+capability_relation :: proc(left, right: bool) -> Pattern_Relation {
+	if left == right {
+		return .Equal
+	}
+	return left ? .Left : .Right
+}
+
+@(private = "file")
+pattern_relation :: proc(a, b: Expr) -> Pattern_Relation {
+	if a == nil || b == nil {
+		return a == b ? .Equal : .Crossed
+	}
+	a_poly := type_syntax_has_poly(a)
+	b_poly := type_syntax_has_poly(b)
+	if !a_poly || !b_poly {
+		switch {
+		case a_poly: return .Right
+		case b_poly: return .Left
+		case:        return .Equal
+		}
+	}
+	_, a_is_poly := a.(^Type_Poly)
+	_, b_is_poly := b.(^Type_Poly)
+	if a_is_poly || b_is_poly {
+		switch {
+		case a_is_poly && b_is_poly: return .Equal
+		case a_is_poly:              return .Right
+		case:                        return .Left
+		}
+	}
+
+	#partial switch left in a {
+	case ^Type_Pointer:
+		right, ok := b.(^Type_Pointer)
+		if !ok { return .Crossed }
+		return merge_pattern_relation(capability_relation(left.mutable, right.mutable), pattern_relation(left.elem, right.elem))
+	case ^Type_C_Pointer:
+		right, ok := b.(^Type_C_Pointer)
+		return ok ? pattern_relation(left.elem, right.elem) : .Crossed
+	case ^Type_Slice:
+		right, ok := b.(^Type_Slice)
+		if !ok { return .Crossed }
+		return merge_pattern_relation(capability_relation(left.mutable, right.mutable), pattern_relation(left.elem, right.elem))
+	case ^Type_Dynamic_Array:
+		right, ok := b.(^Type_Dynamic_Array)
+		return ok ? pattern_relation(left.elem, right.elem) : .Crossed
+	case ^Type_Distinct:
+		right, ok := b.(^Type_Distinct)
+		return ok ? pattern_relation(left.elem, right.elem) : .Crossed
+	case ^Type_Dyn:
+		right, ok := b.(^Type_Dyn)
+		if !ok { return .Crossed }
+		return merge_pattern_relation(capability_relation(left.mutable, right.mutable), pattern_relation(left.interface_expr, right.interface_expr))
+	case ^Type_Array:
+		right, ok := b.(^Type_Array)
+		if !ok { return .Crossed }
+		return merge_pattern_relation(pattern_relation(left.length, right.length), pattern_relation(left.elem, right.elem))
+	case ^Type_Map:
+		right, ok := b.(^Type_Map)
+		if !ok { return .Crossed }
+		return merge_pattern_relation(pattern_relation(left.key, right.key), pattern_relation(left.value, right.value))
+	case ^Expr_Call:
+		right, ok := b.(^Expr_Call)
+		if !ok || len(left.args) != len(right.args) { return .Crossed }
+		relation := Pattern_Relation.Equal
+		for arg, index in left.args {
+			relation = merge_pattern_relation(relation, pattern_relation(arg.value, right.args[index].value))
+		}
+		return relation
+	case ^Type_Proc:
+		right, ok := b.(^Type_Proc)
+		if !ok || (left.result == nil) != (right.result == nil) {
+			return .Crossed
+		}
+		left_params := make([dynamic]Expr, context.temp_allocator)
+		right_params := make([dynamic]Expr, context.temp_allocator)
+		for parameter in left.params {
+			for _ in 0 ..< max(len(parameter.names), 1) { append(&left_params, parameter.type) }
+		}
+		for parameter in right.params {
+			for _ in 0 ..< max(len(parameter.names), 1) { append(&right_params, parameter.type) }
+		}
+		if len(left_params) != len(right_params) {
+			return .Crossed
+		}
+		relation := Pattern_Relation.Equal
+		for parameter, index in left_params {
+			relation = merge_pattern_relation(relation, pattern_relation(parameter, right_params[index]))
+		}
+		if left.result != nil {
+			relation = merge_pattern_relation(relation, pattern_relation(left.result.type, right.result.type))
+		}
+		return relation
+	}
+	return .Equal
+}
+
+compare_generic_specificity :: proc(a, b: ^Generic_Template) -> int {
+	if a == nil || b == nil {
+		return 0
+	}
+	left := decl_proc_literal(a.decl)
+	right := decl_proc_literal(b.decl)
+	if left == nil || right == nil || left.signature == nil || right.signature == nil {
+		return 0
+	}
+	left_patterns := make([dynamic]Expr, context.temp_allocator)
+	right_patterns := make([dynamic]Expr, context.temp_allocator)
+	for parameter in left.signature.params {
+		for _ in 0 ..< max(len(parameter.names), 1) { append(&left_patterns, parameter.type) }
+	}
+	for parameter in right.signature.params {
+		for _ in 0 ..< max(len(parameter.names), 1) { append(&right_patterns, parameter.type) }
+	}
+	if len(left_patterns) != len(right_patterns) {
+		return 0
+	}
+	relation := Pattern_Relation.Equal
+	for pattern, index in left_patterns {
+		relation = merge_pattern_relation(relation, pattern_relation(pattern, right_patterns[index]))
+	}
+	switch relation {
+	case .Left:  return -1
+	case .Right: return 1
+	case .Equal, .Crossed:
+	}
+	return 0
+}
+
+@(private = "file")
 pattern_shape :: proc(e: Expr) -> (specificity: int, has_poly: bool) {
 	if e == nil {
 		return 0, false
@@ -306,10 +456,6 @@ register_generic_template :: proc(k: ^Checker, symbol_id: Symbol_Id, d: ^Decl, k
 		}
 		template.params = params[:]
 	case .Procedure:
-		literal := decl_proc_literal(d)
-		for parameter in literal.signature.params {
-			template.specificity += pattern_specificity(parameter.type)
-		}
 	case .None:
 	}
 
@@ -724,6 +870,7 @@ Inference :: struct {
 	// though they don't survive into the runtime signature.
 	compile_time:    []bool,
 	compile_targets: []Type_Id,
+	compile_omitted: int,
 	scope:        ^Scope,
 	reason:       string,
 	ok:           bool,
@@ -806,6 +953,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 				if !entry.is_poly {
 					continue
 				}
+				result.compile_omitted += 1
 				wanted := resolve_type_syntax(k, parameter.type)
 				bound, bound_ok := bind_default_compile_time_argument(
 					k, entry.name, parameter.default, wanted, scope, &bindings,

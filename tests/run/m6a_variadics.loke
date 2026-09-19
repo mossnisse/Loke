@@ -47,6 +47,12 @@ hand_over :: proc(value: move Res, counts: ..int) {
 	fmt.println(value.id + counts.len());
 }
 
+sum_as :: proc($T: type, values: ..T) -> T {
+	total: T = 0;
+	foreach (value in values) { total = total + value; }
+	return total;
+}
+
 // design.md "Named arguments": a name reaches a fixed parameter — there is no
 // way to name a pack element, so a name means the pack is empty. The written
 // order is still the evaluation order.
@@ -104,5 +110,6 @@ main :: proc() {
 	fmt.println(either(a = 2.0));
 	counter := Res{20};
 	fmt.println(counter.tally(a = 3));
+	fmt.println(sum_as(int, 1, 2, 3));
 	drop(counter);
 }

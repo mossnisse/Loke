@@ -1334,7 +1334,7 @@ index_arguments :: proc(
 	candidates: []Symbol_Id = nil,
 ) -> ([]Arg_Info, bool) {
 	args := make([]Arg_Info, len(indices) + 1, k.c.semantic_allocator)
-	args[0] = arg_from_expr(k, receiver)
+	args[0] = arg_from_expr(receiver)
 	args[0].is_receiver = true
 	ok := true
 	for index, position in indices {
@@ -1343,7 +1343,7 @@ index_arguments :: proc(
 			ok = false
 			continue
 		}
-		args[position + 1] = arg_from_expr(k, index)
+		args[position + 1] = arg_from_expr(index)
 	}
 	return args, ok
 }
@@ -1522,7 +1522,7 @@ check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id, expected
 		return false
 	}
 	args := make([]Arg_Info, 1, k.c.semantic_allocator)
-	args[0] = arg_from_expr(k, v.operand)
+	args[0] = arg_from_expr(v.operand)
 	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args, expected)
 	if chosen == INVALID_SYMBOL {
 		v.type = INVALID_TYPE
@@ -1542,8 +1542,8 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id, expec
 	symbol := operator_text(v.op)
 	operands := []Type_Id{lhs, rhs}
 	args := make([]Arg_Info, 2, k.c.semantic_allocator)
-	args[0] = arg_from_expr(k, v.lhs)
-	args[1] = arg_from_expr(k, v.rhs)
+	args[0] = arg_from_expr(v.lhs)
+	args[1] = arg_from_expr(v.rhs)
 	negate := false
 	if !operator_viable(k, symbol, operands, args) {
 		if v.op != .Not_Eq || !operator_viable(k, "==", operands, args) {

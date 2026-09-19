@@ -21,6 +21,10 @@ describe :: proc(b: $T) -> int { return 0; }
 describe_box :: proc(b: Box($E)) -> int { return 1; }
 describe_group :: proc{describe, describe_box};
 
+with_default :: proc($N: int = 1, value: $T) -> int { return 1; }
+without_default :: proc(value: $T) -> int { return 2; }
+default_group :: proc{with_default, without_default};
+
 // a where clause on a record
 Limited :: struct($T: type, $N: int) where N > 1 {
 	items: [N]T,
@@ -35,6 +39,7 @@ main :: proc() {
 	b: Box(int) = {5};
 	fmt.println(describe_group(b));
 	fmt.println(describe_group(7));
+	fmt.println(default_group(value = 5));
 
 	l: Limited(int, 3) = {[3]int{1,2,3}};
 	fmt.println(l.items[2]);

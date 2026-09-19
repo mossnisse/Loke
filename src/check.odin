@@ -2534,7 +2534,7 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 @(private = "file")
 index_and_value_arguments :: proc(k: ^Checker, target: ^Expr_Index, value: Expr) -> ([]Arg_Info, bool) {
 	args := make([]Arg_Info, len(target.indices) + 2, k.c.semantic_allocator)
-	args[0] = arg_from_expr(k, target.operand)
+	args[0] = arg_from_expr(target.operand)
 	args[0].is_receiver = true
 	ok := true
 	for index, position in target.indices {
@@ -2542,12 +2542,12 @@ index_and_value_arguments :: proc(k: ^Checker, target: ^Expr_Index, value: Expr)
 			ok = false
 			continue
 		}
-		args[position + 1] = arg_from_expr(k, index)
+		args[position + 1] = arg_from_expr(index)
 	}
 	if check_single_expr(k, value) == INVALID_TYPE {
 		ok = false
 	} else {
-		args[len(args) - 1] = arg_from_expr(k, value)
+		args[len(args) - 1] = arg_from_expr(value)
 	}
 	return args, ok
 }
@@ -2640,8 +2640,8 @@ check_user_compound :: proc(
 
 	compound := operator_spelling(s.op)
 	direct_args := make([]Arg_Info, 2, k.c.semantic_allocator)
-	direct_args[0] = arg_from_expr(k, s.lhs[0], .Inout)
-	direct_args[1] = arg_from_expr(k, s.rhs[0])
+	direct_args[0] = arg_from_expr(s.lhs[0], .Inout)
+	direct_args[1] = arg_from_expr(s.rhs[0])
 	if operator_viable(k, compound, operands, direct_args) {
 		chosen, bound := resolve_operator(k, s.op_span, compound, operands, direct_args)
 		if chosen == INVALID_SYMBOL {
@@ -2654,8 +2654,8 @@ check_user_compound :: proc(
 
 	binary := operator_text(op)
 	args := make([]Arg_Info, 2, k.c.semantic_allocator)
-	args[0] = arg_from_expr(k, s.lhs[0])
-	args[1] = arg_from_expr(k, s.rhs[0])
+	args[0] = arg_from_expr(s.lhs[0])
+	args[1] = arg_from_expr(s.rhs[0])
 	if !operator_viable(k, binary, operands, args) {
 		if operator_exists(k, compound, operands) {
 			resolve_operator(k, s.op_span, compound, operands, direct_args)

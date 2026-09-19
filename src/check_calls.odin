@@ -366,7 +366,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		return
 	}
 	args := make([]Arg_Info, len(written) + 1, k.c.semantic_allocator)
-	args[0] = arg_from_expr(k, receiver)
+	args[0] = arg_from_expr(receiver)
 	args[0].is_receiver = true
 	copy(args[1:], written)
 
@@ -402,7 +402,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	sel.type = chosen.proc_type
 	v.resolution = Resolution{kind = .Call, symbol = cand.symbol, chosen_overload = cand.symbol}
 	v.operation = Call_Procedure{}
-	if !bind_chosen_call(k, v, cand, args) {
+	if !bind_chosen_call(k, v, cand) {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -510,7 +510,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 		return
 	}
 	annotate_chosen_callee(k, v, cand.symbol)
-	if !bind_chosen_call(k, v, cand, args) {
+	if !bind_chosen_call(k, v, cand) {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -609,7 +609,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 		return bind_c_vararg_arguments(k, v, info)
 	}
 	if variadic_parameter_index(info) >= 0 {
-		bound_ok := bind_variadic_arguments(k, v, info, declaration)
+		bound_ok := bind_variadic_arguments(k, v, info, declaration, v.args)
 		require_argument_ownership(k, v, declaration, info)
 		return bound_ok
 	}
@@ -814,7 +814,7 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		return
 	}
 	args := make([]Arg_Info, 1, k.c.semantic_allocator)
-	args[0] = arg_from_expr(k, v.args[0].value)
+	args[0] = arg_from_expr(v.args[0].value)
 	check_conversion_hook_call(k, v, target, args, source)
 }
 
@@ -870,7 +870,7 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, 
 		return
 	}
 	annotate_chosen_callee(k, v, cand.symbol)
-	if !bind_chosen_call(k, v, cand, args) {
+	if !bind_chosen_call(k, v, cand) {
 		v.type = INVALID_TYPE
 		return
 	}

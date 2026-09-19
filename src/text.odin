@@ -588,6 +588,7 @@ bind_variadic_arguments :: proc(
 	v: ^Expr_Call,
 	info: ^Type_Info,
 	declaration: Symbol_Id,
+	args: []Argument,
 	prechecked := false,
 	receiver: Expr = nil,
 ) -> bool {
@@ -614,8 +615,8 @@ bind_variadic_arguments :: proc(
 		first = 1
 	}
 	fixed := 0
-	for first + fixed < pack && fixed < len(v.args) {
-		arg := v.args[fixed]
+	for first + fixed < pack && fixed < len(args) {
+		arg := args[fixed]
 		if arg.name.text != "" || arg.mode == .Spread {
 			break
 		}
@@ -633,8 +634,8 @@ bind_variadic_arguments :: proc(
 	// can't skip a fixed slot either: positional arguments ahead of it already
 	// filled the slots to its left.
 	named := 0
-	for fixed + named < len(v.args) && v.args[fixed + named].name.text != "" {
-		arg := v.args[fixed + named]
+	for fixed + named < len(args) && args[fixed + named].name.text != "" {
+		arg := args[fixed + named]
 		named += 1
 		if declared == nil {
 			errorf(k.c, arg.span, "L0371", "a call through a procedure value cannot use named arguments")
@@ -660,8 +661,8 @@ bind_variadic_arguments :: proc(
 		append(&slot_order, slot)
 		ok = ok && passed
 	}
-	if named > 0 && fixed + named < len(v.args) {
-		errorf(k.c, v.args[fixed + named].span, "L0372", "a positional argument cannot follow a named one")
+	if named > 0 && fixed + named < len(args) {
+		errorf(k.c, args[fixed + named].span, "L0372", "a positional argument cannot follow a named one")
 		return false
 	}
 	append(&slot_order, pack)
@@ -678,7 +679,7 @@ bind_variadic_arguments :: proc(
 			errorf(
 				k.c, v.span, "L0322",
 				"this procedure takes at least %d argument%s, found %d",
-				pack - first, pack - first == 1 ? "" : "s", len(v.args),
+				pack - first, pack - first == 1 ? "" : "s", len(args),
 			)
 			return false
 		}
@@ -689,7 +690,7 @@ bind_variadic_arguments :: proc(
 		v.bound_order = slot_order[:]
 	}
 
-	rest := v.args[fixed + named:]
+	rest := args[fixed + named:]
 	// One spread and nothing else: forward the slice itself.
 	if len(rest) == 1 && rest[0].mode == .Spread {
 		spread, passed := check_spread_argument(k, rest[0], info.parameters[pack], prechecked)

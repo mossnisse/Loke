@@ -1,0 +1,20 @@
+package main;
+
+Pair :: struct($A, $B: type) { left: A, right: B }
+
+left_shape :: proc(value: Pair([]$A, $B)) -> int { return 1; }
+right_shape :: proc(value: Pair($A, ^[]$B)) -> int { return 2; }
+shapes :: proc{left_shape, right_shape};
+
+outside :: proc(value: int) -> int { return value; }
+Box :: struct {}
+
+impl Box {
+	aliased :: proc{outside};
+}
+
+main :: proc() {
+	items := []bool{true};
+	value: Pair([]int, ^[]bool) = {[]int{1}, &items};
+	_ = shapes(value);
+}
