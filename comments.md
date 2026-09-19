@@ -118,6 +118,10 @@ The current [memory model](design.md#concurrency-and-the-memory-model) defines d
 
 The cost of keeping immutable `string` safe to copy and drop across threads is treated separately under [Thread-affine strings](#thread-affine-strings).
 
+high level concurrency constructs
+Should we have some monady thing for concurency like futures?
+Should we have some language help for reactivity, like procedures that automatically get called when an variable is changed?
+
 ## Implementation blocks
 
 Should `self` be an implicit parameter? The current version requires it to be
@@ -203,10 +207,6 @@ Encapsulation and abstractions must still be important so they can work on an pa
 ## garbage collection
 
 add an garbage collected allocator as an alternative?
-
-## shorten dynamic array syntax
-
-change [dynamic] to [dyn] or [+] [*]
 
 # Differences from Odin and design motivations
 
