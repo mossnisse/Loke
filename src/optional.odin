@@ -1,28 +1,16 @@
-// Checked extractions, the variant switch, and the typed failure protocol.
-//
-// design.md gives `any_view` extraction two spellings with one result shape
-// each: `v.(T)` traps and produces `T`, `v.as(T)` never traps and produces
-// `Option(T)`. The mode belongs to the spelling, never the destination.
-//
-// A union is never extracted this way: its variants are matched by name,
-// since two variants may share a payload type.
+// Checked extractions, variant switches, and the typed failure protocol.
 package lokec
 
 import "core:slice"
 
 // -------------------------------------------------- checked extractions --
 
-// The shared half, entered with the operand already resolved. `.as(T)` resolves
-// its receiver first — that is what decides whether it is the built-in at all —
-// so it must not be checked a second time here.
 check_extract_of :: proc(k: ^Checker, v: ^Expr_Checked_Extract, operand: Type_Id) {
 	v.value_category = .Value
 	if operand == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
 	}
-	// design.md: a dynamic interface is a borrowed view and supports no type
-	// checked extraction; add a slot for required behavior, or pass an `any_view`.
 	if type_is_dyn(k.c, operand) {
 		errorf(
 			k.c,
@@ -34,15 +22,10 @@ check_extract_of :: proc(k: ^Checker, v: ^Expr_Checked_Extract, operand: Type_Id
 		v.type = INVALID_TYPE
 		return
 	}
-	// design.md "any_view type": it supports runtime checked extractions and type
-	// switches. One construct, two result shapes, exactly as for a union.
 	if operand == TYPE_ANY_VIEW {
 		check_any_view_extract(k, v)
 		return
 	}
-	// design.md "Unions": a union is inspected by `switch (p in u)`, whose cases
-	// are variant identities. A payload type cannot name a variant, because two
-	// variants may share one.
 	if type_is_union(k.c, operand) {
 		errorf(
 			k.c,
@@ -66,10 +49,6 @@ check_extract_of :: proc(k: ^Checker, v: ^Expr_Checked_Extract, operand: Type_Id
 
 // ---------------------------------------------------------- optional-ok --
 
-// design.md "The failure protocol and `@(failure=)`": `or_else` and `or_return`
-// accept any two-variant union whose declaration designates one variant as the
-// failure. No declaration is privileged by name, so `Parse :: union
-// @(failure=bad) {...}` works exactly like `Result`.
 Fallible :: struct {
 	union_type: Type_Id,
 	info:       ^Type_Info,
@@ -77,13 +56,8 @@ Fallible :: struct {
 	success:    int,
 }
 
-// The implicit assignments that change an owning value into a borrowed view.
-// `or_return` accepts them like any other destination, but provenance must
-// prove the source outlives the view, and lowering must not manufacture an
-// owner with nowhere for the target to retain it.
 failure_assignment_borrows :: proc(c: ^Compiler, from, into: Type_Id) -> bool {
-	return (underlying_kind(c, from) == .String && underlying_kind(c, into) == .String_View) ||
-	       (into == TYPE_ANY_VIEW && from != TYPE_ANY_VIEW)
+	return underlying_kind(c, from) == .String && underlying_kind(c, into) == .String_View
 }
 
 fallible_of :: proc(k: ^Checker, type: Type_Id) -> (Fallible, bool) {
@@ -99,8 +73,6 @@ fallible_of :: proc(k: ^Checker, type: Type_Id) -> (Fallible, bool) {
 	}, true
 }
 
-// The producers that used to grow a second result from their destination.
-// A use that wanted the optional shape is told which operation now spells it.
 note_optional_replacement :: proc(k: ^Checker, e: Expr) {
 	#partial switch v in e {
 	case ^Expr_Checked_Extract:
@@ -114,9 +86,7 @@ note_optional_replacement :: proc(k: ^Checker, e: Expr) {
 	}
 }
 
-// design.md "or_else expression": the result is the success payload, and the
-// fallback is evaluated only when the operand holds its failure variant.
-check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
+check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else) {
 	v.value_category = .Value
 	if check_expr(k, v.value) == INVALID_TYPE {
 		v.type = INVALID_TYPE
@@ -147,8 +117,6 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// design.md: a place operand copies the selected payload, so it must be
-	// copyable; a temporary or `move(x)` transfers it.
 	v.borrows = expr_base(v.value).value_category == .Place
 	if v.borrows && type_clone_disabled(k.c, payload) {
 		errorf(
@@ -173,14 +141,10 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 		return
 	}
 	v.type = payload
-	_ = expected
 }
 
 // ----------------------------------------------------------- or_return --
 
-// design.md "or_return operator": the operand is evaluated once; on success the
-// final status is removed and the preceding values are yielded; on failure
-// control returns from the innermost enclosing procedure.
 check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 	v.value_category = .Value
 	if k.proc_literal == nil {
@@ -214,8 +178,6 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// design.md: a place operand copies the selected payload and leaves the
-	// source live, so both payloads must be copyable.
 	v.borrows = base.value_category == .Place
 	if v.borrows {
 		for candidate in ([2]Type_Id{shape.info.variants[shape.success], shape.info.variants[shape.failure]}) {
@@ -235,13 +197,10 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		}
 	}
 
-	// A payloadless success yields `Unit`, so `or_return` is an expression in
-	// every case and no second spelling is needed for the no-value one.
 	success := shape.info.variants[shape.success]
 	v.type = success == TYPE_VOID ? k.c.unit_type : success
 }
 
-// The enclosing procedure's side of the contract.
 @(private = "file")
 check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -> bool {
 	if k.result_type == INVALID_TYPE {
@@ -259,8 +218,6 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 		)
 		return false
 	}
-	// The operand's failure payload is assignable to the enclosing one, or both
-	// are payloadless.
 	from := shape.info.variants[shape.failure]
 	into := target.info.variants[target.failure]
 	if from != into && !(from != TYPE_VOID && into != TYPE_VOID && assignable(k.c, from, into)) {
@@ -274,19 +231,12 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 		)
 		return false
 	}
-	if into == TYPE_ANY_VIEW && from != TYPE_VOID && from != TYPE_ANY_VIEW {
-		request_typeid(k.c, any_view_source_type(k.c, from))
-	}
 	return true
 }
 
-
 // ---------------------------------------------------------- type switch --
 
-// design.md "Inspecting a union": in a switch over a union, a singleton case
-// `.name(binding)` binds that variant's payload in its arm alone. The shape is
-// deliberately narrow, and only a union subject reads it as a pattern; over any
-// other subject it stays an ordinary call.
+// A union subject turns `.name(binding)` calls into branch patterns.
 adopt_branch_patterns :: proc(s: ^Stmt_Switch) {
 	s.kind = .Pattern
 	for &entry in s.cases {
@@ -317,8 +267,6 @@ branch_variant_pattern :: proc(value: Expr) -> (Expr, Name, bool) {
 	return selector, binding, true
 }
 
-// design.md "switch statement": the cases are types, and for a union the
-// only case types allowed are its own variants.
 check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
@@ -334,11 +282,7 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	return check_variant_cases(k, s, subject)
 }
 
-// The cases of a switch whose subject is already checked: a type switch, or a
-// value switch that `check_switch` found to be over a union.
 check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> Flow_Info {
-	// design.md: a dynamic interface is a borrowed view and supports no type
-	// switch in version 1.
 	if type_is_dyn(k.c, subject) {
 		errorf(
 			k.c,
@@ -350,8 +294,6 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		return Flow_Info{}
 	}
 	erased := subject == TYPE_ANY_VIEW
-	// design.md "Unions": a switch over a place borrows it, and a switch over a
-	// temporary consumes it.
 	borrows := erased || expression_is_borrowed_place(s.subject)
 	if !erased && !type_is_union(k.c, subject) {
 		errorf(
@@ -379,8 +321,6 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		}
 		indices := make([dynamic]int, 0, len(entry.values), k.c.semantic_allocator)
 		for value in entry.values {
-			// An `any_view` case names any concrete type the view could hold; a
-			// union case names one of its variants by name.
 			if erased {
 				variant := resolve_type_syntax(k, value)
 				if variant == INVALID_TYPE || !any_view_accepts(k.c, variant) {
@@ -429,9 +369,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 			append(&seen_variants, index)
 		}
 		entry.variant_indices = indices[:]
-		// A case naming several variants cannot know which one is active, so the
-		// binding keeps the union type. A single case binds its payload, and a
-		// payloadless variant binds `Unit`.
+		// Grouped cases bind the union; singleton cases bind their payload.
 		if erased {
 			if len(entry.values) == 1 {
 				if variant := expr_base(entry.values[0]).denoted_type; variant != INVALID_TYPE {
@@ -459,13 +397,9 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		}
 		if binding.text != "" && binding.text != "_" {
 			name := intern_identifier(k.c, binding.text)
-			// The shadowing rule every declaration follows: without it, a case that
-			// names an existing local would silently bind rather than refer to it.
-			if s.kind == .Pattern {
-				outer, owner := lookup_symbol_with_scope(case_scope, name)
-				if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
-					errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
-				}
+			outer, owner := lookup_symbol_with_scope(case_scope, name)
+			if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
+				errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
 			}
 			reject_reserved_name(k, name, binding.span)
 			entry.binding_symbol = new_symbol(k.c, Symbol {
@@ -475,12 +409,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 				type       = binding_type,
 				pkg        = k.pkg,
 				owner_proc = k.proc_literal,
-				// A place subject keeps owning its value, so its binding is a
-				// non-owning view of the payload. A temporary hands the payload
-				// over, and the binding owns it like any other managed local.
 				immutable  = borrows,
-				// `move`/`drop` on the binding would take an owner the subject
-				// still has, leaving its cleanup to release transferred storage.
 				borrowed_binding = borrows ? .Switch_Payload : .None,
 			})
 			k.scope.names[name] = entry.binding_symbol
@@ -494,9 +423,6 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		any_case_falls ||= case_flow.can_fall_through
 	}
 
-	// design.md "Unions": a variant switch covering every variant is exhaustive,
-	// so no path falls off the end — letting an exhaustive switch be the last
-	// statement of a value-returning procedure.
 	exhaustive := has_default
 	if !has_default {
 		if erased {
@@ -508,8 +434,6 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 			report_uncovered_variants(k, s, subject, seen_variants[:])
 		}
 	}
-	// The flow graph needs the same answer: without it, the entry block reaches
-	// the merge past every case and a local each case assigns looks conditional.
 	s.exhaustive = exhaustive
 	return Flow_Info {
 		can_fall_through = !exhaustive || any_case_falls || len(s.cases) == 0,
@@ -519,9 +443,6 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	}
 }
 
-// A union case is a variant name, `.name`, written as a bare implicit
-// selector. Nothing resolves it as a type: two variants may share a payload
-// type, so only the name identifies the arm.
 @(private = "file")
 case_variant_index :: proc(k: ^Checker, subject: Type_Id, value: Expr) -> int {
 	sel, is_selector := value.(^Expr_Selector)

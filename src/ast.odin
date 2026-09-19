@@ -843,7 +843,6 @@ Stmt_Switch :: struct {
 	kind:       Switch_Kind,
 	init:       Stmt,
 	binding:    Name, // the traditional type switch's header `Binding_Name`
-	binding_symbol: Symbol_Id,
 	subject:    Expr,
 	cases:      []Switch_Case,
 	// Every path enters a case: all variants covered, or a default.

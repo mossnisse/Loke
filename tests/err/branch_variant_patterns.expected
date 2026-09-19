@@ -10,3 +10,6 @@ L0305
 L0320
 @28:7
 `Colour` is not callable
+L0305
+@35:10
+`number` shadows an outer declaration

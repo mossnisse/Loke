@@ -29,3 +29,11 @@ not_a_union :: proc(c: Colour) {
 	case:
 	}
 }
+
+header_binding_shadow :: proc(opt: Option(int)) {
+	number := 5;
+	switch (number in opt) {
+	case .some:
+	case .none:
+	}
+}

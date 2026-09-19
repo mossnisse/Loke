@@ -56,7 +56,7 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_extract_of(k, v, check_single_expr(k, v.operand))
 
 	case ^Expr_Or_Else:
-		check_or_else(k, v, expected)
+		check_or_else(k, v)
 
 	case ^Expr_Call:
 		check_call(k, v, expected)
