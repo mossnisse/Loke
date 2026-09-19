@@ -1,0 +1,14 @@
+package main;
+
+// Untyped endpoints are range-checked like any constant, rather than wrapping.
+too_wide :: proc() {
+	r := 0 ..< 100000000000000000000;
+	_ = r;
+}
+
+// A `&` anywhere in a range loop's header is the range error, not a pattern one.
+nested_ref :: proc() {
+	foreach (v, &i in (0 ..< 3).indexed()) { _ = v; }
+}
+
+main :: proc() {}

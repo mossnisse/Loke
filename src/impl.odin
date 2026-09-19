@@ -218,16 +218,14 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 	if len(added) == 0 {
 		return
 	}
+	if kind == .Impl {
+		add_members(k.c, subject, added)
+		return
+	}
 	previous := impl_member_table(k, kind, subject, in_pkg)
 	merged := make([]Symbol_Id, len(previous) + len(added), k.c.semantic_allocator)
 	copy(merged, previous)
 	copy(merged[len(previous):], added)
-	if kind == .Impl {
-		if info := type_of(k.c, subject); info != nil {
-			info.members = merged
-		}
-		return
-	}
 	if pkg := package_of(k.c, in_pkg); pkg != nil {
 		pkg.extensions[subject] = merged
 	}
