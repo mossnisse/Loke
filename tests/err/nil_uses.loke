@@ -36,6 +36,11 @@ reported :: proc() {
 Pair :: struct { pointer: ^int, other: int }
 set_float :: proc(slot: inout ^f64, @(escape=stored) target: ^f64) { slot = target; }
 set_either :: proc{set_it, set_float};
+operator_storage: int;
+touch_pointer :: operator([:]) proc(pointer: inout ^int, lo, hi: int) -> int {
+	pointer = &operator_storage;
+	return lo + hi;
+}
 
 silent :: proc(x: int) {
 	value := x;
@@ -73,6 +78,10 @@ silent :: proc(x: int) {
 	grouped: ^int = nil;
 	set_either(inout grouped, &value);
 	fmt.println(grouped^);
+
+	through_operator: ^int = nil;
+	_ = through_operator[0:0];
+	fmt.println(through_operator^);
 }
 
 main :: proc() {

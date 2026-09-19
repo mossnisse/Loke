@@ -552,8 +552,21 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	v.operation = Call_Procedure{}
 }
 
-// One written argument bound against one parameter. design.md "Parameter
-// semantics and ABI lowering": `inout` is written at both ends and needs a place.
+check_bound_argument_mode :: proc(k: ^Checker, value: Expr, mode: Param_Mode, subject: string) -> bool {
+	if mode == .Borrow {
+		return check_borrow_argument(k, value)
+	}
+	if mode != .Inout {
+		return true
+	}
+	note_unknown_nil_write(k, value)
+	if base := expr_base(value); base != nil && !base.assignable {
+		report_not_assignable(k, base, subject)
+		return false
+	}
+	return true
+}
+
 bind_written_argument :: proc(
 	k: ^Checker, arg: Argument, target: Type_Id, expected: Param_Mode, prechecked := false,
 ) -> (Expr, bool) {
@@ -569,15 +582,8 @@ bind_written_argument :: proc(
 	if !passed {
 		return value, false
 	}
-	if expected == .Borrow && !check_borrow_argument(k, value) {
+	if !check_bound_argument_mode(k, value, expected, "an `inout` argument") {
 		return value, false
-	}
-	if arg.mode == .Inout {
-		note_unknown_nil_write(k, value)
-		if base := expr_base(value); base != nil && !base.assignable {
-			report_not_assignable(k, base, "an `inout` argument")
-			return value, false
-		}
 	}
 	return value, true
 }

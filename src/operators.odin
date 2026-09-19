@@ -1,13 +1,5 @@
-// User operator declarations, lookup, and `delegate`.
-//
-// Ranking lives in `src/overload.odin` (design.md ranks operator overloads with
-// the same algorithm as named procedure overloads), so this file only forms
-// candidates.
-//
-// The unshadowable built-in rule lives in `builtin_binary_defined` and its unary
-// sibling: if every operand is a built-in type *and* the built-in table defines
-// the operator for them, that operation wins before any lookup happens. A
-// `distinct` type is deliberately not built-in for this purpose.
+// User operator declarations, lookup, and delegation. Ranking is shared with
+// named overloads in overload.odin.
 package lokec
 
 import "core:slice"
@@ -15,8 +7,7 @@ import "core:fmt"
 
 // ------------------------------------------------------------ declarations --
 
-// What each overloadable symbol accepts. `min`/`max` are parameter counts;
-// `results` is -1 where the count is not fixed.
+// Parameter and result counts for each overloadable symbol.
 @(private = "file")
 Operator_Shape :: struct {
 	min, max: int,
@@ -116,6 +107,11 @@ validate_operator_shape :: proc(k: ^Checker, value: ^Expr_Operator, shape: Opera
 		)
 		return
 	}
+	info := type_of(k.c, sym.proc_type)
+	if variadic_parameter_index(info) >= 0 {
+		errorf(k.c, value.symbol_span, "L0416", "`operator(%s)` cannot have a variadic parameter", value.symbol)
+		return
+	}
 	if shape.results >= 0 && (sym.result == INVALID_TYPE ? 0 : 1) != shape.results {
 		errorf(
 			k.c,
@@ -133,7 +129,6 @@ validate_operator_shape :: proc(k: ^Checker, value: ^Expr_Operator, shape: Opera
 		return
 	}
 	if shape.assign {
-		info := type_of(k.c, sym.proc_type)
 		if info == nil || len(info.param_modes) == 0 || info.param_modes[0] != .Inout {
 			errorf(k.c, value.symbol_span, "L0416", "`operator(%s)` takes its destination as `inout`", value.symbol)
 		}
@@ -153,9 +148,7 @@ arity_text :: proc(shape: Operator_Shape) -> string {
 
 // ------------------------------------------------------------------ lookup --
 
-// Every overload of `symbol` this expression may use: the inherent operators of
-// each operand type, plus the lookup package's operator set (this package's own
-// file-scope and extension-block declarations — nothing an import brought in).
+// Inherent operators plus file-scope and extension operators in this package.
 operator_candidates :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	for operand in operands {
@@ -208,16 +201,7 @@ operator_candidates_for_receiver :: proc(k: ^Checker, symbol: string, receiver: 
 	return out[:]
 }
 
-// An operator that would apply to these operands, declared inherent on one of
-// them, and filtered out of the candidate set by `add_operator_members` for not
-// being `@(public)` (design.md "Exported names").
-//
-// Worth naming in a diagnostic, because "`<` does not order `Card`" is
-// otherwise indistinguishable from "`Card` has no `<`", and the recourse --
-// exporting the operator -- is not one a caller guesses. The parameters must
-// match exactly: a report that a hidden operator is in the way has to be about
-// one that would otherwise have been chosen, or it rejects a comparison the
-// built-in table answers perfectly well.
+// Finds an exact inherent overload hidden by package visibility.
 hidden_inherent_operator :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> bool {
 	for operand in operands {
 		info := type_of(k.c, operand)
@@ -259,11 +243,7 @@ append_unique :: proc(out: ^[dynamic]Symbol_Id, id: Symbol_Id) {
 
 // -------------------------------------------------- the built-in priority --
 
-// design.md: built-in operations cannot be shadowed — if every operand of an
-// expression is a built-in type and a built-in operation is defined for that
-// operator on those operands, the built-in operation always wins.
-//
-// A `distinct` type is not built-in for this rule, even when what it wraps is.
+// A distinct type never participates in unshadowable built-in operations.
 operand_is_builtin :: proc(k: ^Checker, type: Type_Id) -> bool {
 	#partial switch type_kind(k.c, type) {
 	case .Distinct, .Struct, .Union, .Interface, .Dyn, .Invalid:
@@ -297,9 +277,14 @@ builtin_binary_defined :: proc(k: ^Checker, op: Token_Kind, lhs, rhs: Type_Id) -
 	if !operand_is_builtin(k, lhs) || !operand_is_builtin(k, rhs) {
 		return false
 	}
-	// A shift does not unify its operands: the count has its own type.
 	if op == .Shl || op == .Shr {
-		return type_is_integer(k.c, lhs) || type_is_rune(k.c, lhs)
+		if !type_is_integer(k.c, lhs) && !type_is_rune(k.c, lhs) {
+			return false
+		}
+		if type_is_untyped(k.c, rhs) {
+			return type_is_integer(k.c, rhs) || type_is_rune(k.c, rhs)
+		}
+		return type_is_integer(k.c, rhs) && !type_signed(k.c, rhs)
 	}
 	unified, ok := unified_builtin_type(k, lhs, rhs)
 	if !ok {
@@ -331,10 +316,7 @@ builtin_unary_defined :: proc(k: ^Checker, op: Token_Kind, operand: Type_Id) -> 
 
 // ------------------------------------------------------------- resolution --
 
-// Resolves one operator expression against its candidate set, binds the
-// operands, and checks their modes. Returns INVALID_SYMBOL when there are no
-// candidates at all — letting the built-in path report instead — and also when
-// resolution, binding, or an `inout` operand failed, having reported that.
+// Resolves and binds one operator expression.
 resolve_operator :: proc(
 	k: ^Checker,
 	span: Span,
@@ -362,16 +344,7 @@ resolve_operator :: proc(
 	return cand.symbol, bound
 }
 
-// Is there a candidate this expression is actually about? Asked only to decide
-// whether a failure to resolve is worth reporting, so the answer has to hold to
-// the same principle as `operator_viable` below: an overload declared for an
-// unrelated type elsewhere in the package must not change this expression.
-// `Plain{1} == Plain{1}` is answered by the generated field-wise equality
-// however many other types the package gives an `==`.
-//
-// A generic candidate counts without matching, because its parameters are not
-// the types it will accept once instantiated -- losing a diagnostic is the only
-// thing at stake here, never a resolution.
+// Whether a related candidate exists, used only to choose a diagnostic path.
 operator_exists :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> bool {
 	for candidate in operator_candidates(k, symbol, operands) {
 		sym := symbol_of(k.c, candidate)
@@ -390,9 +363,7 @@ operator_exists :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> boo
 	return false
 }
 
-// A fallback is suppressed only by an overload that actually applies to these
-// operands — declaring the same operator for an unrelated type elsewhere in the
-// package must not change this expression.
+// An unrelated overload must not suppress a built-in fallback.
 operator_viable :: proc(
 	k: ^Checker,
 	symbol: string,
@@ -402,8 +373,6 @@ operator_viable :: proc(
 	return overload_has_viable(k, operator_candidates(k, symbol, operands), args)
 }
 
-// The operand list in parameter order, with every untyped constant materialised.
-// Operator forms have no defaults, so every slot comes from a written operand.
 @(private = "file")
 bind_operator_operands :: proc(k: ^Checker, cand: Candidate, args: []Arg_Info) -> ([]Expr, bool) {
 	sym := symbol_of(k.c, cand.symbol)
@@ -442,12 +411,10 @@ check_operator_modes :: proc(k: ^Checker, symbol_id: Symbol_Id, bound: []Expr) -
 	}
 	ok := true
 	for mode, index in info.param_modes {
-		if mode != .Inout || index >= len(bound) || bound[index] == nil {
+		if index >= len(bound) || bound[index] == nil {
 			continue
 		}
-		base := expr_base(bound[index])
-		if base != nil && !base.assignable {
-			report_not_assignable(k, base, "an `inout` operand")
+		if !check_bound_argument_mode(k, bound[index], mode, "an `inout` operand") {
 			ok = false
 		}
 	}

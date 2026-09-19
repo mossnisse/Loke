@@ -1076,6 +1076,14 @@ check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 		return
 	}
 	if !type_is_map(k.c, container) {
+		element := check_single_expr(k, v.lhs)
+		if element == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		if check_user_binary(k, v, element, container, TYPE_BOOL) {
+			return
+		}
 		errorf(
 			k.c, v.op_span, "L0587",
 			"`in` tests a `map[K]V` for a key, found `%s`", type_name(k.c, container),
@@ -3004,8 +3012,10 @@ const_value_of :: proc(e: Expr) -> Const_Value {
 	return base == nil ? Const_Value{} : base.const_value
 }
 
-// An operator as a diagnostic spells it.
 operator_text :: proc(op: Token_Kind) -> string {
+	if op == .In {
+		return "in"
+	}
 	text := operator_spelling(op)
 	return text != "" ? text : "?"
 }

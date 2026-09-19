@@ -1,0 +1,11 @@
+package main; import "core:fmt";
+
+Bag :: struct { value: int }
+
+contains :: operator(in) proc(needle: int, bag: Bag) -> bool { return needle == bag.value; }
+shift_text :: operator(<<) proc(value: int, suffix: string_view) -> int { return value + suffix.len(); }
+
+main :: proc() {
+	fmt.println(1 if 7 in Bag{7} else 0);
+	fmt.println(3 << "abcd");
+}

@@ -1,0 +1,13 @@
+package main;
+
+Bucket :: struct { value: int }
+variadic_index :: operator([]) proc(self: Bucket, indices: ..int) -> int { return self.value; }
+
+Item :: struct { value: int }
+Packed :: struct @(packed) { tag: u8, item: Item }
+borrow_item :: operator(!) proc(item: borrow Item) -> bool { return item.value == 0; }
+
+main :: proc() {
+	packed: Packed = {};
+	_ = !packed.item;
+}

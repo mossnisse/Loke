@@ -1,0 +1,6 @@
+L0416
+@4:28
+`operator([])` cannot have a variadic parameter
+L0614
+@12:7
+cannot borrow `item`: it is reached through a packed struct
