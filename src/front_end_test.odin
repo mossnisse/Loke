@@ -527,6 +527,12 @@ default_output_resolves_a_dot_directory :: proc(t: ^testing.T) {
 	}
 }
 
+@(test)
+default_output_requires_a_name_for_a_root_directory :: proc(t: ^testing.T) {
+	actual := default_output_path(`C:\`, .Exe)
+	testing.expectf(t, actual == "", "drive root defaulted to %q", actual)
+}
+
 // The two properties the cross-volume package key leans on: one directory's
 // name is not its identity, and Windows spellings of one path are.
 @(test)

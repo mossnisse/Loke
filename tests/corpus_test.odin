@@ -148,6 +148,42 @@ front_end_modes :: proc(t: ^testing.T) {
 	)
 }
 
+@(test)
+driver_rejects_invalid_modes :: proc(t: ^testing.T) {
+	toolchain, toolchain_stdout, toolchain_stderr, toolchain_err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain", "-unknown"}},
+		context.allocator,
+	)
+	testing.expect(t, toolchain_err == nil, "cannot run malformed toolchain command")
+	testing.expect(t, toolchain.exit_code == 1, "malformed toolchain command succeeded")
+	testing.expect(t, strings.contains(string(toolchain_stderr), "unknown option"), "missing option diagnostic")
+	testing.expect(t, !strings.contains(string(toolchain_stdout), "clang="), "toolchain probe still ran")
+
+	directory, _, directory_stderr, directory_err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler_path(), "examples", "-parse-only"}},
+		context.allocator,
+	)
+	testing.expect(t, directory_err == nil, "cannot run directory parse command")
+	testing.expect(t, directory.exit_code == 1, "directory parse command succeeded")
+	testing.expect(
+		t,
+		strings.contains(string(directory_stderr), "needs a file input"),
+		"missing directory diagnostic",
+	)
+
+	for collection in ([]string{"-collection:foo=", "-collection:foo:bar=tests"}) {
+		state, _, stderr, err := os2.process_exec(
+			os2.Process_Desc {
+				command = []string{compiler_path(), "examples/hello.loke", "-parse-only", collection},
+			},
+			context.allocator,
+		)
+		testing.expectf(t, err == nil, "cannot validate %s", collection)
+		testing.expectf(t, state.exit_code == 1, "%s succeeded", collection)
+		testing.expectf(t, strings.contains(string(stderr), "error[L0333]"), "%s was not rejected", collection)
+	}
+}
+
 // The seed runtime is found beside the compiler, not beside the caller
 // (m6a-plan decision "Runtime language and discovery"): compiling from an
 // unrelated working directory must still link, and an explicit `-runtime`

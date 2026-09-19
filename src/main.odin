@@ -28,8 +28,9 @@ options:
     -o <path>     output executable (default: input name with .exe)
     -emit-ll      write the LLVM IR next to the output and stop
     -keep-temps   keep the generated .ll after linking
-    -parse-only   stop after lexing and parsing
+    -parse-only   stop after lexing and parsing (file inputs only)
     -dump-ast     print a deterministic syntax tree and stop after parsing
+                  (file inputs only)
     -check-layout compare every folded size/alignment/offset with LLVM's own
     -collection name=path
     -collection:name=path
@@ -59,8 +60,6 @@ options:
 `
 
 Options :: struct {
-	// `-h`/`--help`, `-version`, and `-print-toolchain` stop before anything is
-	// compiled.
 	help:       bool,
 	version:    bool,
 	print_toolchain: bool,
@@ -71,27 +70,17 @@ Options :: struct {
 	parse_only: bool,
 	dump_ast:   bool,
 	check_layout: bool,
-	// `-define:NAME=VALUE`, in the order written, so a duplicate can name both.
 	defines:    [dynamic]string,
-	// `-collection name=path`, repeatable.
 	collections: [dynamic]string,
-	// `-copy-cost=N` in bytes, or disabled.
 	copy_cost:         u64,
 	copy_cost_enabled: bool,
-	// `-runtime=<dir>`, replacing the directory bundled beside the compiler.
 	runtime_dir: string,
-	// `-panic=unwind|abort`, the whole program's panic strategy.
 	panic_unwind: bool,
-	// `-opt=none|minimal|size|speed|aggressive` and `-build-mode=exe|obj`
-	//.
 	opt_mode:   Opt_Mode,
 	build_mode: Build_Mode,
-	// `-log-level=<level>`, the compiled `LOKE_LOG_LEVEL`.
 	log_level:  Log_Level,
 }
 
-// design.md "Panic strategy": `unwind` is the default on hosted targets, and
-// Windows x64 is the only v1 target.
 DEFAULT_PANIC_UNWIND :: true
 
 // `-define:LOKE_TRACK_MEMORY=true` reports every allocation `run` did not free,
@@ -125,8 +114,6 @@ run :: proc() -> int {
 		delete(opts.defines)
 		delete(opts.collections)
 	}
-	// Asking for help is a successful run, so the text goes to stdout; a usage
-	// error prints the same text on stderr and fails.
 	if opts.help {
 		fmt.print(USAGE)
 		return 0
@@ -135,13 +122,12 @@ run :: proc() -> int {
 		fmt.printfln("lokec %s", LOKE_VERSION_STRING)
 		return 0
 	}
-	// Reports the host, so it needs no input and must not require one.
-	if opts.print_toolchain {
-		return print_toolchain()
-	}
 	if !args_ok {
 		fmt.eprint(USAGE)
 		return 1
+	}
+	if opts.print_toolchain {
+		return print_toolchain()
 	}
 
 	c: Compiler
@@ -150,8 +136,6 @@ run :: proc() -> int {
 	c.panic_unwind = opts.panic_unwind
 	c.opt_mode, c.build_mode = opts.opt_mode, opts.build_mode
 	c.log_level = opts.log_level
-	// Configuration is project-wide and immutable, and must be in place before
-	// the first condition is evaluated.
 	if !seed_defines(&c, opts.defines[:]) {
 		report(&c)
 		return 1
@@ -160,9 +144,12 @@ run :: proc() -> int {
 		report(&c)
 		return 1
 	}
-	// The parse-only modes stop before discovery, so they still describe exactly
-	// one file's syntax.
 	if opts.parse_only || opts.dump_ast {
+		if is_directory(opts.input) {
+			mode := opts.dump_ast ? "-dump-ast" : "-parse-only"
+			fmt.eprintfln("error: %s needs a file input", mode)
+			return 1
+		}
 		file, loaded := load_source(&c, opts.input)
 		if !loaded {
 			report(&c)
@@ -327,26 +314,32 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 		}
 	}
 
+	if opts.print_toolchain {
+		return opts, true
+	}
 	if opts.input == "" {
 		return opts, false
 	}
 	if opts.output == "" {
 		opts.output = default_output_path(opts.input, opts.build_mode)
+		if opts.output == "" {
+			fmt.eprintln("error: a root directory input needs -o")
+			return opts, false
+		}
 	}
 	return opts, true
 }
 
-// A directory keeps its complete final component, dots included; only a file
-// sheds its extension. Either host separator is trimmed from a directory so
-// `package\` and `package/` both produce the sibling `package.exe`.
-//
-// A directory ending in `.` or `..` is resolved first, because those spell no
-// component of their own: `lokec .` names the directory it runs in and must not
-// produce a file called `..exe`. Every other spelling is kept as written.
+// Directories keep their final component; files shed their extension.
 default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 	stem := input
 	if info, err := os.stat(input, context.temp_allocator); err == nil && info.is_dir {
 		trimmed := strings.trim_right(input, "/\\")
+		volume := filepath.volume_name(input)
+		if (trimmed == "" && input != "") ||
+		   (trimmed == volume && (len(input) > len(volume) || len(volume) > 2)) {
+			return ""
+		}
 		if base := filepath.base(trimmed); base == "." || base == ".." {
 			if absolute, ok := filepath.abs(trimmed, context.temp_allocator); ok {
 				trimmed = filepath.clean(absolute, context.temp_allocator)
@@ -358,12 +351,9 @@ default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 	} else {
 		stem = strings.trim_suffix(input, filepath.ext(input))
 	}
-	// An object build defaults to `.obj`, an executable to `.exe`.
 	return strings.concatenate({stem, mode == .Obj ? ".obj" : ".exe"}, context.temp_allocator)
 }
 
-// `-define:NAME=VALUE`. The value is a boolean, an integer, or — failing both —
-// a string, which is what `build_config` then requires its default to match.
 @(private = "file")
 seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
 	init_semantic_stores(c)
@@ -412,15 +402,7 @@ is_config_name :: proc(name: string) -> bool {
 	return len(name) > 0
 }
 
-// `-collection name=path`, over the `base:` and `core:` roots bundled beside the
-// compiler.
-//
-// Seeds go in first, and an explicit entry replaces one outright, letting a
-// project substitute its own standard tree. Duplicate *explicit* entries are
-// still an error; replacing a seed is not. A seed names the bundled directory
-// without checking that it is there: whether one is missing is a question for
-// whoever loads a package under it, and `base:runtime` — which every program
-// loads — is the one that always asks.
+// Explicit entries replace bundled `base:` and `core:` roots.
 @(private = "file")
 register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 	init_semantic_stores(c)
@@ -442,12 +424,21 @@ register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 			continue
 		}
 		name := entry[:split]
+		root := entry[split + 1:]
+		if strings.index_byte(name, ':') >= 0 {
+			errorf(c, no_span(), "L0333", "collection name `%s` cannot contain `:`", name)
+			continue
+		}
+		if root == "" {
+			errorf(c, no_span(), "L0333", "collection `%s` needs a path", name)
+			continue
+		}
 		if explicit[name] {
 			errorf(c, no_span(), "L0333", "collection `%s` is registered more than once", name)
 			continue
 		}
 		explicit[name] = true
-		c.collections[name] = strings.clone(entry[split + 1:], c.semantic_allocator)
+		c.collections[name] = strings.clone(root, c.semantic_allocator)
 	}
 	return c.error_count == 0
 }
