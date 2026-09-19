@@ -1,0 +1,8 @@
+package main;
+
+main :: proc() {
+	table: map[int]int = {};
+	table[1] = 1;
+	view := table.values();
+	foreach (&value in view) { value += 1; }
+}

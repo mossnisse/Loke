@@ -51,9 +51,6 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 	add_members(c, subject, []Symbol_Id{new_associated_type(c, "Mut_Iterator", iterator, subject), iter, reverse})
 }
 
-// A mutable iterator lends one element until its next call. `foreach` confines
-// that loan to the body of the current iteration and borrows the source for
-// the whole traversal.
 check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
 	element := associated_type_of(k, subject, "Element")
 	iterator := associated_type_of(k, subject, "Mut_Iterator")
@@ -64,6 +61,15 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 		return FLOWS
 	}
 	root := mutable_foreach_root(k.c, s)
+	if info := underlying_info(k.c, subject); info != nil && info.view_kind == .Values {
+		if _, direct := direct_mutable_map_values_root(k.c, s); !direct {
+			errorf(
+				k.c, expr_span(s.iterable), "L0457",
+				"a stored map values view cannot be iterated by reference; iterate `map.values()` directly",
+			)
+			return FLOWS
+		}
+	}
 	if !expr_base(root).assignable {
 		report_not_assignable(k, expr_base(root), "a by-reference `foreach`")
 		return FLOWS
@@ -88,14 +94,15 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 	return check_foreach_block(k, s)
 }
 
-// Built-in map views carry their root through a tiny value. Mutable traversal
-// checks and borrows that root, not the temporary view header.
 mutable_foreach_root :: proc(c: ^Compiler, s: ^Stmt_Foreach) -> Expr {
-	if call, ok := s.iterable.(^Expr_Call); ok && len(call.bound) > 0 {
-		info := underlying_info(c, expr_base(s.iterable).type)
-		if info != nil && info.view_kind == .Values {
-			return call.bound[0]
-		}
-	}
+	if root, direct := direct_mutable_map_values_root(c, s); direct { return root }
 	return s.iterable
+}
+
+direct_mutable_map_values_root :: proc(c: ^Compiler, s: ^Stmt_Foreach) -> (Expr, bool) {
+	call, ok := s.iterable.(^Expr_Call)
+	if !ok || len(call.bound) == 0 { return nil, false }
+	sym := symbol_of(c, call.resolution.chosen_overload)
+	if sym == nil || sym.container_op != .Map_Values { return nil, false }
+	return call.bound[0], true
 }
