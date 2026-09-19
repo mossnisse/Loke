@@ -1,0 +1,24 @@
+package main;
+
+// design.md "Interface bodies": slot names are unique across everything an
+// interface composes. A diamond reaches one slot twice and is not a clash.
+A :: interface($Self: type) { slot read: proc(self) -> int; }
+B :: interface($Self: type) { slot read: proc(self) -> bool; }
+Both :: interface($Self: type) { A(Self); B(Self); }
+
+Left :: interface($Self: type) { A(Self); }
+Right :: interface($Self: type) { A(Self); }
+Diamond :: interface($Self: type) { Left(Self); Right(Self); }
+
+// A bound `$N` that does not fit the parameter type is reported, not left for
+// the backend.
+Small :: interface($Self: type, $Limit: u8) {}
+
+fits :: proc(x: $T, $N: int) -> bool {
+	return Small(T, $N);
+}
+
+main :: proc() {
+	_ = fits(1, 3);
+	_ = fits(1, 300);
+}

@@ -241,7 +241,6 @@ interface_application :: proc(c: ^Compiler, info: ^Interface_Info, subject: Type
 }
 
 // A scope binding the interface's parameters to one application's arguments.
-@(private = "file")
 interface_scope :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> ^Scope {
 	scope := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
 	for parameter, index in info.params {
@@ -439,7 +438,6 @@ span_line :: proc(c: ^Compiler, span: Span) -> int {
 	return line
 }
 
-@(private = "file")
 composed_interface_of :: proc(k: ^Checker, requirement: Requirement) -> ^Interface_Info {
 	if requirement.result != nil || len(requirement.bindings) > 0 {
 		return nil
@@ -644,12 +642,8 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 			if !is_proc {
 				continue
 			}
-			name := requirement.name.id
-			if name == INVALID_IDENTIFIER {
-				name = intern_identifier(k.c, requirement.name.text)
-			}
 			append(out, Interface_Slot {
-				name  = name,
+				name  = name_identifier(k.c, requirement.name),
 				span  = requirement.span,
 				type  = signature,
 				owner = info.symbol,
@@ -662,19 +656,11 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 			continue
 		}
 		// Clone before annotating: one declaration serves many applications.
-		one := make([]Requirement, 1, k.c.semantic_allocator)
-		one[0] = requirement
-		clone := clone_requirements(k.c, one)[0]
-		call, is_call := clone.expr.(^Expr_Call)
-		if !is_call || len(call.args) != len(composed.params) {
+		call, is_call := clone_requirement_syntax(k.c, requirement).expr.(^Expr_Call)
+		if !is_call {
 			continue
 		}
-		composed_args := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
-		valid: bool
-		composed_args, valid = interface_arguments_for(
-			k, call.args, composed, 0, INVALID_TYPE,
-			"L0443", "an interface argument", false, composed_args,
-		)
+		composed_args, valid := bound_arguments(k, call, composed)
 		if !valid {
 			continue
 		}

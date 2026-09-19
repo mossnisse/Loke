@@ -1,0 +1,6 @@
+L0442
+@7:43
+`read` is a slot of both `A` and `B`
+L0443
+@18:18
+`300` is not representable by the interface parameter's type `u8`

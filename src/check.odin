@@ -701,7 +701,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		public := field_is_public(k, field.attributes)
 		reject_any_view_position(k, field_type, field.span, "a record field")
 		for name in field.names {
-			if name.text != "_" && member_named(k.c, members[:], identifier_id_of(k.c, name)) != INVALID_SYMBOL {
+			if name.text != "_" && member_named(k.c, members[:], name_identifier(k.c, name)) != INVALID_SYMBOL {
 				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
 				append(&bindings, INVALID_SYMBOL)
 				continue
@@ -811,7 +811,7 @@ resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 		}
 		reject_any_view_position(k, field_type, field.span, "a record field")
 		for name in field.names {
-			name_id := identifier_id_of(k.c, name)
+			name_id := name_identifier(k.c, name)
 			if name.text != "_" && identifier_list_contains(names[:], name_id) {
 				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
 				continue
@@ -1127,7 +1127,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		bindings := make([dynamic]Symbol_Id, 0, len(parameter.names), k.c.semantic_allocator)
 		for parameter_name, name_index in parameter.names {
 			// Written names, so a removed `$` parameter still takes its name.
-			name_id := identifier_id_of(k.c, parameter_name.name)
+			name_id := name_identifier(k.c, parameter_name.name)
 			if parameter_name.name.text != "_" {
 				if identifier_list_contains(param_names[:], name_id) {
 					errorf(
@@ -1265,11 +1265,6 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 		}
 		install_symbols(k.scope, k.c, parameter.symbols)
 	}
-}
-
-// A written name's interned id.
-identifier_id_of :: proc(c: ^Compiler, name: Name) -> Identifier_Id {
-	return name.id == INVALID_IDENTIFIER ? intern_identifier(c, name.text) : name.id
 }
 
 @(private = "file")

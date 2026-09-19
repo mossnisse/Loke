@@ -1,34 +1,23 @@
 // Interfaces and requirement checking.
 //
-// An interface is compile-time metadata: a list of structural requirements over
-// its generic parameters. A type satisfies it implicitly, and an application
-// such as `Additive(int)` is a compile-time boolean, not a value.
-//
-// Requirements are checked by substituting the interface's arguments and then
-// checking each written requirement as ordinary code in a scratch checker whose
-// diagnostics are captured rather than emitted. Failure is reported as the
-// specific requirement line plus the concrete type that failed it — design.md
-// calls a bare "constraint not satisfied" a defect.
-//
-// Lookup context is per requirement, and deliberately not uniform: a free
-// expression or validity requirement uses the *application's* lookup package,
-// while a named slot is matched only by an inherent method or an extension in
-// the package that declares the slot's owning interface. One undifferentiated
-// package would either admit caller-local slots or hide legitimate ones.
+// An application such as `Additive(int)` is a compile-time boolean. Each
+// requirement is checked as ordinary code in a scratch checker whose diagnostics
+// become the failure reason. Free requirements use the application's lookup
+// package; a slot is matched by an inherent method or an extension in the
+// package of the interface that declares it.
 package lokec
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 
-// A flattened slot, remembering which interface declared it: composition keeps
-// each slot's own coherent lookup package.
+// A flattened slot, with the interface that declared it and that interface's
+// arguments, so its signature resolves in its own package.
 Interface_Slot :: struct {
 	name:  Identifier_Id,
 	span:  Span,
 	type:  ^Type_Proc,
 	owner: Symbol_Id,
-	// Argument vector of the interface that declares this slot, so its parameter
-	// names resolve when the slot is matched.
 	args:  []Generic_Arg,
 }
 
@@ -42,8 +31,7 @@ Interface_Info :: struct {
 	params:    []Generic_Param_Decl,
 	type:      Type_Id,
 	checked:   bool,
-	// Dyn compatibility is a property of the declaration, so it is computed once
-	// and carries the rule that disqualified it.
+	// Computed once per declaration, with the rule that disqualified it.
 	dyn_computed: bool,
 	dyn_ok:       bool,
 	dyn_reason:   string,
@@ -82,11 +70,7 @@ interface_info_for :: proc(k: ^Checker, symbol_id: Symbol_Id) -> ^Interface_Info
 	params := make([dynamic]Generic_Param_Decl, 0, 4, k.c.semantic_allocator)
 	for group in node.generic_params {
 		for name in group.names {
-			id := name.id
-			if id == INVALID_IDENTIFIER {
-				id = intern_identifier(k.c, name.text)
-			}
-			append(&params, Generic_Param_Decl{name = id, span = name.span, type_syntax = group.type})
+			append(&params, Generic_Param_Decl{name = name_identifier(k.c, name), span = name.span, type_syntax = group.type})
 		}
 	}
 	info.params = params[:]
@@ -94,8 +78,7 @@ interface_info_for :: proc(k: ^Checker, symbol_id: Symbol_Id) -> ^Interface_Info
 	return info
 }
 
-// An interface application in type position — `dyn I(...)` aside — is not a
-// type. This is what tells a value position that it named one.
+// Whether a type position named an interface rather than a type.
 type_is_interface :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_kind(c, id) == .Interface
 }
@@ -131,19 +114,10 @@ check_interface_declaration :: proc(k: ^Checker, symbol_id: Symbol_Id) {
 		if requirement.kind != .Slot {
 			continue
 		}
-		name := requirement.name.id
-		if name == INVALID_IDENTIFIER {
-			name = intern_identifier(k.c, requirement.name.text)
-		}
-		duplicate := false
-		for existing in seen {
-			if existing == name {
-				errorf(k.c, requirement.span, "L0442", "`%s` is already a slot of this interface", requirement.name.text)
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate {
+		name := name_identifier(k.c, requirement.name)
+		if slice.contains(seen[:], name) {
+			errorf(k.c, requirement.span, "L0442", "`%s` is already a slot of this interface", requirement.name.text)
+		} else {
 			append(&seen, name)
 		}
 		signature, is_proc := requirement.slot_type.(^Type_Proc)
@@ -161,16 +135,64 @@ check_interface_declaration :: proc(k: ^Checker, symbol_id: Symbol_Id) {
 			)
 		}
 	}
-	// Slot names must also be unique across every composed interface; that is
-	// only knowable once composition resolves, so it is checked when the
-	// composed interface is applied.
+	check_composed_slot_names(k, info)
+}
+
+// design.md "Interface bodies": slot names are unique across everything an
+// interface composes. Names do not depend on arguments, so this is syntactic.
+@(private = "file")
+check_composed_slot_names :: proc(k: ^Checker, info: ^Interface_Info) {
+	owners := make(map[Identifier_Id]Symbol_Id, 8, context.temp_allocator)
+	visited := make(map[Symbol_Id]bool, 8, context.temp_allocator)
+	visited[info.symbol] = true
+	for requirement in info.node.requirements {
+		add_slot_owners(k, info, requirement, requirement.span, &owners, &visited)
+	}
+}
+
+// Records the slots `requirement` brings in, reporting any name an earlier one
+// already brought from a different interface.
+@(private = "file")
+add_slot_owners :: proc(
+	k: ^Checker,
+	owner: ^Interface_Info,
+	requirement: Requirement,
+	at: Span,
+	owners: ^map[Identifier_Id]Symbol_Id,
+	visited: ^map[Symbol_Id]bool,
+) {
+	if requirement.kind == .Slot {
+		name := name_identifier(k.c, requirement.name)
+		previous, found := owners[name]
+		if !found {
+			owners[name] = owner.symbol
+		} else if previous != owner.symbol {
+			errorf(
+				k.c, at, "L0442", "`%s` is a slot of both `%s` and `%s`",
+				requirement.name.text,
+				identifier_text(k.c, symbol_of(k.c, previous).name),
+				identifier_text(k.c, symbol_of(k.c, owner.symbol).name),
+			)
+		}
+		return
+	}
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
+	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, owner, nil), owner.pkg, owner.pkg
+	composed := composed_interface_of(k, requirement)
+	if composed == nil || visited[composed.symbol] {
+		return
+	}
+	visited[composed.symbol] = true
+	for nested in composed.node.requirements {
+		add_slot_owners(k, composed, nested, at, owners, visited)
+	}
 }
 
 // ------------------------------------------------------------ application --
 
-// `Additive(int)` in expression position: a compile-time boolean. Reports only
-// the argument mistakes; an unsatisfied interface is `false`, not an error, so
-// `where` and composition can both use the same construct.
+// `Additive(int)` as an expression. Only argument mistakes are errors; an
+// unsatisfied interface is just `false`.
 check_interface_application :: proc(k: ^Checker, v: ^Expr_Call, info: ^Interface_Info) {
 	v.value_category = .Value
 	v.type = TYPE_BOOL
@@ -204,11 +226,9 @@ interface_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Interface_Info) -
 	return interface_arguments_for(k, v.args, info, 0, INVALID_TYPE, "L0443", "an interface argument", true, out)
 }
 
-// One argument path for direct applications, composition, constrained slot
-// lookup, and `dyn`. Parameter types resolve in the interface's lexical scope
-// with earlier parameters bound; argument expressions resolve at the use site.
-// Value arguments are converted to the declared parameter type before they
-// become identity, so equivalent spellings share witnesses and dynamic types.
+// The one argument path. Parameter types resolve in the interface's scope with
+// earlier parameters bound; arguments resolve at the use site. Values are
+// converted to the parameter type, so equivalent spellings share witnesses.
 interface_arguments_for :: proc(
 	k: ^Checker,
 	written: []Argument,
@@ -264,14 +284,14 @@ interface_arguments_for :: proc(
 		} else {
 			bound_poly := false
 			if poly, is_poly := arg.value.(^Type_Poly); is_poly {
-				name := poly.name.id
-				if name == INVALID_IDENTIFIER {
-					name = intern_identifier(k.c, poly.name.text)
-				}
+				name := name_identifier(k.c, poly.name)
 				if symbol := symbol_of(k.c, lookup_symbol(k.scope, name)); symbol != nil && symbol.kind == .Const {
 					converted, fits := convert_const(k.c, symbol.const_value, wanted, false)
 					fits &&= !type_is_enum(k.c, wanted) || assignable(k.c, symbol.type, wanted)
 					if !fits {
+						if report {
+							report_unrepresentable_argument(k, arg.span, code, symbol.const_value, wanted)
+						}
 						return nil, false
 					}
 					value = Generic_Arg{value = converted, value_type = wanted}
@@ -304,14 +324,7 @@ interface_arguments_for :: proc(
 				fits &&= !type_is_enum(k.c, wanted) || assignable(k.c, expr_base(arg.value).type, wanted)
 				if !fits {
 					if report {
-						errorf(
-							k.c,
-							arg.span,
-							code,
-							"`%s` is not representable by the interface parameter's type `%s`",
-							const_key_text(k.c, folded),
-							type_name(k.c, wanted),
-						)
+						report_unrepresentable_argument(k, arg.span, code, folded, wanted)
 					}
 					return nil, false
 				}
@@ -328,6 +341,26 @@ interface_arguments_for :: proc(
 	return out, true
 }
 
+@(private = "file")
+report_unrepresentable_argument :: proc(k: ^Checker, span: Span, code: string, value: Const_Value, wanted: Type_Id) {
+	errorf(
+		k.c, span, code,
+		"`%s` is not representable by the interface parameter's type `%s`",
+		const_key_text(k.c, value),
+		type_name(k.c, wanted),
+	)
+}
+
+// The arguments of an application written as `I(...)`: a composition, a `where`
+// bound, or a slot's composed interface.
+bound_arguments :: proc(k: ^Checker, call: ^Expr_Call, info: ^Interface_Info) -> ([]Generic_Arg, bool) {
+	if len(call.args) != len(info.params) {
+		return nil, false
+	}
+	out := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
+	return interface_arguments_for(k, call.args, info, 0, INVALID_TYPE, "L0443", "an interface argument", false, out)
+}
+
 // ------------------------------------------------------- satisfaction --
 
 Requirement_Failure :: struct {
@@ -336,9 +369,8 @@ Requirement_Failure :: struct {
 	subject: Type_Id,
 }
 
-// Does `info` hold for these arguments? Silent by default — an application is
-// a predicate; only a `where` bound or a `dyn` conversion turns a `false` into
-// a diagnostic, reported by `report_interface_failure`.
+// Does `info` hold for these arguments? Only a `where` bound or a `dyn`
+// conversion asks for the failure to be reported.
 interface_satisfied :: proc(
 	k: ^Checker,
 	info: ^Interface_Info,
@@ -384,12 +416,10 @@ report_failed_interface_bound :: proc(k: ^Checker, clause: Expr, span: Span) -> 
 		return false
 	}
 	info := interface_info_for(k, named_callee_symbol(k, call.callee))
-	if info == nil || len(call.args) != len(info.params) {
+	if info == nil {
 		return false
 	}
-	args := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
-	ok: bool
-	args, ok = interface_arguments_for(k, call.args, info, 0, INVALID_TYPE, "L0443", "an interface argument", false, args)
+	args, ok := bound_arguments(k, call, info)
 	if !ok {
 		return false
 	}
@@ -421,9 +451,7 @@ interface_argument_text :: proc(c: ^Compiler, arg: Generic_Arg) -> string {
 	return const_display_text(c, arg.value)
 }
 
-// Guards against an interface whose composition names itself: requirement
-// checking is deliberately non-recursive over types that don't exist yet, but
-// a cyclic *declaration* would still spin.
+// Stops an interface whose composition names itself.
 MAX_INTERFACE_DEPTH :: 32
 
 @(private = "file")
@@ -445,22 +473,10 @@ interface_check :: proc(
 	if failure, ok := interface_predicates_check(k, info, args); !ok {
 		return failure, false
 	}
-	// Requirements are hypothetical programs, deliberately checked with the real
-	// checker on cloned syntax; registry gates keep rejected probes from changing
-	// typeids or adding backend-only globals and witness tables.
+	// Speculation keeps a rejected probe from registering typeids or witnesses.
 	k.c.speculation_depth += 1
 	defer k.c.speculation_depth -= 1
-
-	// The scratch scope: the interface's own parameters bound to the arguments,
-	// hanging off the interface declaration's lexical scope.
-	scope := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
-	for parameter, index in info.params {
-		bind_generic_name(k, scope, Generic_Binding {
-			name = parameter.name,
-			span = parameter.span,
-			arg  = args[index],
-		})
-	}
+	scope := interface_scope(k, info, args)
 
 	saved := save_checker_location(k)
 	saved_result, saved_place := k.result_type, k.place_position
@@ -473,13 +489,9 @@ interface_check :: proc(
 	k.proc_literal = nil
 	k.result_type = INVALID_TYPE
 
-	// The application site's own lookup package serves free expression and
-	// validity requirements; each slot switches to its declaring interface's.
 	application_pkg := lookup_package(k)
-
 	for requirement in info.node.requirements {
-		// A requirement is checked on a fresh clone: its syntax is annotated, and
-		// the same interface is applied to many types.
+		// Checking annotates syntax, and one interface is applied to many types.
 		clone := clone_requirement_syntax(k.c, requirement)
 		body := new_scope(k.c, scope, .Local)
 		k.scope = body
@@ -497,11 +509,9 @@ interface_check :: proc(
 	return Requirement_Failure{}, true
 }
 
-// Interface-local `where` clauses are truth predicates, unlike a body's
-// validity requirement. They are evaluated for every application before any
-// structural requirement is checked. This entry point is also used when a dyn
-// type is formed: dyn compatibility guarantees those predicates do not inspect
-// the erased subject, so a harmless placeholder may stand in for it there.
+// An interface's own `where` clauses, which must be true before any requirement
+// is checked. `dyn` calls this with a placeholder subject, which dyn
+// compatibility guarantees the predicates never inspect.
 interface_predicates_check :: proc(
 	k: ^Checker,
 	info: ^Interface_Info,
@@ -517,20 +527,11 @@ interface_predicates_check :: proc(
 		return Requirement_Failure{span = info.node.span, reason = "this interface predicate is recursive"}, false
 	}
 
-	scope := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
-	for parameter, index in info.params {
-		bind_generic_name(k, scope, Generic_Binding {
-			name = parameter.name,
-			span = parameter.span,
-			arg  = args[index],
-		})
-	}
-
 	saved := save_checker_location(k)
 	saved_result, saved_place := k.result_type, k.place_position
 	k.c.speculation_depth += 1
 	k.interface_depth += 1
-	k.scope, k.pkg, k.lookup_pkg = scope, info.pkg, info.pkg
+	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
 	k.proc_literal = nil
 	k.result_type = INVALID_TYPE
 	k.place_position = false
@@ -574,7 +575,6 @@ interface_predicates_check :: proc(
 	return Requirement_Failure{}, true
 }
 
-@(private = "file")
 clone_requirement_syntax :: proc(c: ^Compiler, requirement: Requirement) -> Requirement {
 	one := make([]Requirement, 1, c.semantic_allocator)
 	one[0] = requirement
@@ -598,7 +598,7 @@ check_one_requirement :: proc(
 	// Composition: a bare interface application must hold, not merely compile.
 	if call, is_call := requirement.expr.(^Expr_Call); is_call && requirement.result == nil {
 		if composed := interface_info_for(k, named_callee_symbol(k, call.callee)); composed != nil {
-			composed_args, ok := composed_arguments(k, call, composed)
+			composed_args, ok := bound_arguments(k, call, composed)
 			if !ok {
 				return Requirement_Failure{span = requirement.span, reason = "its interface arguments do not resolve"}, false
 			}
@@ -610,18 +610,14 @@ check_one_requirement :: proc(
 		}
 	}
 
-	// The binding list introduces names standing for values, or hypothetical
-	// exclusive mutable places — the compiler never constructs either.
+	// Bindings name hypothetical values or places; nothing ever constructs them.
 	for group in requirement.bindings {
 		bound := resolve_type_syntax(k, group.type)
 		if bound == INVALID_TYPE {
 			return Requirement_Failure{span = group.span, reason = "a binding's type does not resolve"}, false
 		}
 		for name in group.names {
-			id := name.id
-			if id == INVALID_IDENTIFIER {
-				id = intern_identifier(k.c, name.text)
-			}
+			id := name_identifier(k.c, name)
 			scope.names[id] = new_symbol(k.c, Symbol {
 				name      = id,
 				span      = name.span,
@@ -635,17 +631,13 @@ check_one_requirement :: proc(
 
 	mark := len(k.c.diagnostics)
 	errors := k.c.error_count
-	// `-> inout T` asks for a place, so the expression is checked in a place
-	// position — otherwise a user `operator([])` with both overloads answers with
-	// its value one and no user type could ever satisfy `Mutable_Sequence`
-	// (design.md "Indexing and slicing": the `inout` overload is selected only in
-	// a place position).
+	// `-> inout T` asks for a place, which selects an `inout` `operator([])`
+	// (design.md "Indexing and slicing").
 	k.place_position = requirement.result_inout
 	type := check_expr(k, requirement.expr)
 	k.place_position = false
 	captured := k.c.error_count > errors
-	// The scratch checker's own diagnostic says exactly what did not compile, so
-	// it becomes the reason rather than being thrown away for a generic phrase.
+	// The captured diagnostic says exactly what did not compile.
 	reason := "this expression does not compile for these arguments"
 	if mark < len(k.c.diagnostics) {
 		reason = strings.clone(k.c.diagnostics[mark].message, k.c.semantic_allocator)
@@ -655,8 +647,7 @@ check_one_requirement :: proc(
 	if type == INVALID_TYPE || captured {
 		return Requirement_Failure{span = requirement.span, reason = reason}, false
 	}
-	// design.md "Interface bodies": a bare requirement is a truth condition, the
-	// same rule composition above follows, so `false;` never holds.
+	// design.md "Interface bodies": a bare requirement must be true, not just compile.
 	if requirement.result == nil {
 		mark = len(k.c.diagnostics)
 		errors = k.c.error_count
@@ -681,16 +672,14 @@ check_one_requirement :: proc(
 		}
 		return Requirement_Failure{}, true
 	}
-	// `-> _`: compiling is the whole requirement, and the result is not inspected.
+	// `-> _`: compiling is the whole requirement.
 	if any, is_ident := requirement.result.(^Expr_Ident); is_ident && any.name == "_" {
 		return Requirement_Failure{}, true
 	}
 
 	base := expr_base(requirement.expr)
-	// `T.Element -> type;` requires the member to evaluate to a compile-time type,
-	// which makes it an associated type usable by later requirements.
-	if written, is_type_keyword := requirement.result.(^Type_Type); is_type_keyword {
-		_ = written
+	// `T.Element -> type;`: an associated type later requirements can use.
+	if _, is_type_keyword := requirement.result.(^Type_Type); is_type_keyword {
 		if base.denoted_type == INVALID_TYPE && base.const_value.kind != .Type {
 			return Requirement_Failure{span = requirement.span, reason = "this member is not a compile-time type"}, false
 		}
@@ -701,8 +690,7 @@ check_one_requirement :: proc(
 	if wanted == INVALID_TYPE {
 		return Requirement_Failure{span = requirement.span, reason = "its result type does not resolve"}, false
 	}
-	// `-> inout T` requires an assignable place of exactly `T`: ordinary result
-	// conversions deliberately do not apply.
+	// `-> inout T`: an assignable place of exactly `T`, with no conversions.
 	if requirement.result_inout {
 		if !base.assignable || base.type != wanted {
 			return Requirement_Failure {
@@ -730,18 +718,8 @@ check_one_requirement :: proc(
 	return Requirement_Failure{}, true
 }
 
-@(private = "file")
-composed_arguments :: proc(k: ^Checker, call: ^Expr_Call, composed: ^Interface_Info) -> ([]Generic_Arg, bool) {
-	if len(call.args) != len(composed.params) {
-		return nil, false
-	}
-	out := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
-	return interface_arguments_for(k, call.args, composed, 0, INVALID_TYPE, "L0443", "an interface argument", false, out)
-}
-
-// Requirement checking selects one matching inherent method or an extension
-// method from the interface's own package, matching parameter modes, results,
-// calling convention, and type-level effects exactly (design.md).
+// A slot holds when an inherent method, or an extension from the interface's
+// package, matches its signature exactly.
 @(private = "file")
 check_slot_requirement :: proc(
 	k: ^Checker,
@@ -759,15 +737,9 @@ check_slot_requirement :: proc(
 		return Requirement_Failure{span = requirement.span, reason = "its slot has no procedure type"}, false
 	}
 
-	name := requirement.name.id
-	if name == INVALID_IDENTIFIER {
-		name = intern_identifier(k.c, requirement.name.text)
-	}
-	// The slot's *candidates* are the interface package's business, but a
-	// `Self.Assoc` in its signature names the subject's own inherent member,
-	// whose visibility answers to the application site — so the signature
-	// resolves there, or `Iterable` would demand every iterable publish its
-	// `Iterator`.
+	name := name_identifier(k.c, requirement.name)
+	// The signature resolves at the application site: a `Self.Assoc` in it is the
+	// subject's own member, which need not be public.
 	slot_pkg := k.lookup_pkg
 	k.lookup_pkg = application_pkg
 	wanted_params, wanted_modes, wanted_results, wanted_inout, shape_ok := slot_signature(k, signature, subject)
@@ -796,12 +768,9 @@ check_slot_requirement :: proc(
 	}, false
 }
 
-// design.md: a named slot is matched by an inherent method, or by an extension
-// from the package that declares the slot's owning interface — never the
-// package that happens to apply the interface. An inherent method belongs to
-// the type itself, so its own visibility doesn't matter; only the extension
-// half is package-scoped. Shared with runtime witness construction, which must
-// select the same implementation satisfaction promised.
+// A slot's candidates: inherent methods whatever their visibility, plus
+// extensions from `owner_pkg`, the slot's interface package. Shared with witness
+// construction so `dyn` selects what satisfaction promised.
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
 	ensure_iteration_members(k, subject)
 	ensure_item_member(k, subject)
@@ -825,12 +794,7 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 		if sym == nil || sym.name != name {
 			continue
 		}
-		// design.md "where clauses": a method an instantiation's failed bound
-		// removed is not one of that instantiation's members. `member_is_visible`
-		// hides it from every ordinary lookup; satisfaction bypasses that predicate
-		// for the *visibility* half alone, so exclusion has to be repeated here.
-		// Accepting one promises a slot whose body was never checked and never
-		// emitted, which reaches the backend as a missing name.
+		// This bypasses `member_is_visible`, so it repeats its `where` exclusion.
 		if sym.bound_excluded {
 			continue
 		}
@@ -838,8 +802,7 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 			resolve_declaration_signature(k, sym.decl)
 			sym = symbol_of(k.c, member)
 		}
-		// Runtime witness members are never overload groups (design.md), so a
-		// group's members are the candidates rather than the group itself.
+		// A witness member is never a group, so the group's members are candidates.
 		if sym.kind == .Proc_Group {
 			for nested in sym.members {
 				append(out, nested)
@@ -850,18 +813,9 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 	}
 }
 
-// design.md "Interfaces as reusable constraints": a `where I(T)` bound promises
-// that `T` has I's slots, and satisfaction accepted an implementation under the
-// *interface's* visibility rather than the instantiating caller's — an inherent
-// method's own visibility does not matter (`slot_candidates`). Ordinary lookup in
-// the instantiated body asks the caller's package instead, so it would reject
-// exactly what the bound guaranteed. A required slot falls back here.
-//
-// Only a bare top-level application is a requirement. A negated bound, or one
-// arm of a disjunction, promises nothing and so grants nothing; neither reaches
-// this shape. Nilling `proc_literal` for the walk is also the recursion guard —
-// resolving a slot signature can select members, and a nested lookup finds no
-// clauses to expand.
+// design.md "Interfaces as reusable constraints": a bare `where I(T)` bound
+// grants `T`'s slots of `I` under the interface's visibility, which ordinary
+// lookup in the body would reject. Nilling `proc_literal` guards recursion.
 required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
 	literal := k.proc_literal
 	if literal == nil || len(literal.where_clauses) == 0 {
@@ -876,14 +830,10 @@ required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 			continue
 		}
 		info := interface_info_for(k, named_callee_symbol(k, call.callee))
-		if info == nil || len(call.args) != len(info.params) || len(call.args) == 0 {
+		if info == nil || len(call.args) == 0 {
 			continue
 		}
-		args := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
-		bound: bool
-		args, bound = interface_arguments_for(k, call.args, info, 0, INVALID_TYPE, "L0443", "an interface argument", false, args)
-		// The subject is the first argument; a bound over some other type says
-		// nothing about this one.
+		args, bound := bound_arguments(k, call, info)
 		if !bound || !args[0].is_type || args[0].type != type {
 			continue
 		}
@@ -941,10 +891,8 @@ slot_signature :: proc(
 	return params[:], modes[:], result_type, result_inout, true
 }
 
-// One candidate's signature against a slot's written one. `result_inout` is
-// `nil` for a runtime witness, which pairs a concrete member with a slot whose
-// result place-ness the `dyn` header does not carry; an interface requirement
-// passes the value it demands.
+// One candidate against a slot's signature. `result_inout` is `nil` for a
+// runtime witness, whose `dyn` header does not carry it.
 slot_matches :: proc(
 	k: ^Checker,
 	sym: ^Symbol,
