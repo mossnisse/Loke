@@ -63,9 +63,9 @@ ensure_container_fields :: proc(c: ^Compiler, type: Type_Id) {
 	fields[CONTAINER_LEN] = new_field(c, "len", TYPE_INT, CONTAINER_LEN)
 	fields[CONTAINER_CAP] = new_field(c, "cap", TYPE_INT, CONTAINER_CAP)
 	fields[CONTAINER_ALLOC] = new_field(c, "allocator", TYPE_ALLOCATOR, CONTAINER_ALLOC)
-	// The store may have grown while the field symbols were made.
-	info = type_of(c, type)
-	info.fields = fields
+	// A `^Type_Info` points into the growing type store, so it is never held
+	// across the field symbols being made.
+	type_of(c, type).fields = fields
 }
 
 type_is_dynamic_array :: proc(c: ^Compiler, id: Type_Id) -> bool {

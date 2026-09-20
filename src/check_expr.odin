@@ -923,14 +923,17 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		return
 	}
 
-	base_type := type_underlying(k.c, operand)
+	// Nominal: a `distinct` type inherits none of the underlying type's
+	// operations (design.md "Distinct types"), so it reaches `check_user_index`
+	// below with its own kind rather than the built-in table for free.
+	base_type := operand
 	operand_base := expr_base(v.operand)
 	through_pointer := false
 	pointer_mutable := false
 	pointee := INVALID_TYPE
 	if info := type_of(k.c, base_type); info != nil && info.kind == .Pointer {
 		pointee = info.element
-		base_type = type_underlying(k.c, info.element)
+		base_type = info.element
 		through_pointer = true
 		pointer_mutable = info.mutable
 	}
@@ -1230,7 +1233,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	v.type = sym.result
 	// A `[]mut T` needs an exclusive receiver (design.md "Capabilities and the
 	// one rule").
-	if type_is_slice(k.c, v.type) && slice_is_mutable(k.c, v.type) && sym.receiver != .Inout {
+	if slice_is_mutable(k.c, v.type) && sym.receiver != .Inout {
 		errorf(
 			k.c,
 			v.span,
@@ -1248,7 +1251,9 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 // 0 and an omitted high bound is the length.
 @(private = "file")
 check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bool {
-	info := underlying_info(k.c, operand)
+	// Nominal, like `check_index`: a `distinct []T` leaves this to the user
+	// `operator([:])` its declaration has to bring over.
+	info := type_of(k.c, operand)
 	if info == nil {
 		return false
 	}

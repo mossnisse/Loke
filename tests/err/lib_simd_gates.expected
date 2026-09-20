@@ -100,6 +100,9 @@ mismatched operand types `Vector` and `Other`
 L0686
 @98:8
 `+` applies lane-wise to one vector type; `Vector` and `Simd(f32, 4)` are different vector types
+L0362
+@99:6
+`Vector` cannot be indexed
 L0686
 @107:14
 `&&` short-circuits, so it does not apply lane-wise; use `&` on the masks

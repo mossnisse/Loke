@@ -26,3 +26,12 @@ main :: proc() {
 	take_reader(c);
 	take_raw(c);
 }
+
+// design.md "Distinct types": a distinct carrier does not inherit the underlying
+// type's operations either, so the built-in index, slice, and `foreach` forms
+// stop at its name and wait for a declaration to bring them over.
+operations :: proc(h: Handle, o: Other) {
+	_ = h[0];
+	_ = o[1:2];
+	foreach (value in h) { _ = value; }
+}

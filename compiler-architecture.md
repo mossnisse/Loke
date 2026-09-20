@@ -311,7 +311,7 @@ be file-private.
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and canonical standard operation aliases. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Closed enum validation, tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
-| `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | Built-in slice, managed-container, text, SIMD, and atomic semantics. |
+| `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
 | `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Borrowed iterable adapters, mutable element lending over arrays, dynamic arrays, and mutable slices, and the `Yield` descriptors that decide whether a loop binding owns or borrows its element. |
 

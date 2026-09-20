@@ -10,3 +10,12 @@ cannot pass `Reader` with `Cursor`
 L0310
 @27:11
 cannot pass `^int` with `Cursor`
+L0362
+@34:6
+`Handle` cannot be indexed
+L0362
+@35:6
+`Other` cannot be sliced; a user type needs an `operator([:])` overload
+L0456
+@36:20
+`Handle` is not iterable

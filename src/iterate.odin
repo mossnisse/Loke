@@ -624,8 +624,10 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if subject == INVALID_TYPE {
 		return FLOWS
 	}
-	under := type_underlying(k.c, subject)
-	info := type_of(k.c, under)
+	// Nominal, like indexing and slicing: a `distinct` carrier falls to
+	// `check_protocol_foreach`, which asks for the iterator its own type
+	// declares (design.md "Distinct types").
+	info := type_of(k.c, subject)
 	if info == nil {
 		return FLOWS
 	}
@@ -658,7 +660,7 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if foreach_is_place_loop(s) {
 		return check_place_foreach(k, s, subject, info)
 	}
-	s.element_type = foreach_element_type(k, s, under, info)
+	s.element_type = foreach_element_type(k, s, subject, info)
 	return check_foreach_body(k, s)
 }
 

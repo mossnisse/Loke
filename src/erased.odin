@@ -26,6 +26,8 @@ ensure_any_view_fields :: proc(c: ^Compiler) {
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
 	fields[ANY_VIEW_DATA] = new_field(c, "data", TYPE_RAWPTR, ANY_VIEW_DATA)
 	fields[ANY_VIEW_ID] = new_field(c, "id", TYPE_TYPEID, ANY_VIEW_ID)
+	// A `^Type_Info` points into the growing type store, so it is never held
+	// across the field symbols being made.
 	info = type_of(c, TYPE_ANY_VIEW)
 	info.fields = fields
 	info.mangled = "any_view"
