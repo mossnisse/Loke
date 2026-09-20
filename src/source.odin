@@ -32,9 +32,8 @@ no_span :: proc() -> Span {
 Source :: struct {
 	path:        string,
 	text:        string,
-	// Non-empty only when `load_source` allocated the text — tests may register
-	// string literals directly, and keeping owned bytes separate keeps the
-	// compilation destructor correct for both cases.
+	// Non-empty only when `load_source` allocated the text; tests register string
+	// literals directly, and the destructor has to be correct for both.
 	owned_text:  []u8,
 	line_starts: []u32, // byte offset of the first character of each line
 }
@@ -73,7 +72,6 @@ Compiler :: struct {
 	// the ordinary checker, but must not enroll backend artifacts in the final
 	// module. Nested checks share this counter so every registry has one gate.
 	speculation_depth: int,
-
 
 	// The widths `int`, `uint`, `uintptr` and every pointer take. Checker and
 	// emitter read this one record so they cannot disagree.
@@ -168,10 +166,9 @@ Compiler :: struct {
 	witness_order: [dynamic]^Witness,
 	witness_names: map[string]bool,
 
-	// Materialised constants (`src/materialize.odin`). One read-only global per
-	// constant that runtime indexing/slicing needs storage for, keyed by the
-	// resolved constant symbol (M4b's declaration cloning makes that distinct
-	// per generic instance).
+	// Materialised constants (`src/materialize.odin`): one read-only global per
+	// constant that runtime indexing or slicing needs storage for, keyed by the
+	// resolved symbol, which declaration cloning makes distinct per instance.
 	materialized:       map[Symbol_Id]^Materialized,
 	materialized_order: [dynamic]^Materialized,
 
@@ -185,10 +182,9 @@ Compiler :: struct {
 	// member selection is allowed through this interface.
 	lifecycle_operations:       map[Type_Id]Lifecycle_Operations,
 	lifecycle_operations_ready: bool,
-	// Target-specific, not part of the language semantics (design.md "Copy-cost
-	// diagnostics"), so it's an option rather than a rule. A copy site reports
-	// when it duplicates at least this many inline bytes, or when its lifecycle
-	// clone may allocate.
+	// An option rather than a rule, because it is target-specific and not part of
+	// the language (design.md "Copy-cost diagnostics"). A copy site reports when it
+	// duplicates at least this many inline bytes, or when its clone may allocate.
 	copy_cost_threshold: u64,
 	copy_cost_enabled:   bool,
 	// design.md "Panic strategy": `-panic=unwind` registers one logical frame per
@@ -217,14 +213,13 @@ Compiler :: struct {
 	// through the import that made them nameable so there is one identity.
 	runtime_types:       map[string]Type_Id,
 
-	// Every concrete procedure body that finished checking, in checking order.
-	// design.md's two provenance analyses run after the whole program settles, so
-	// a forward or mutually recursive callee already has its result summary.
+	// Every concrete procedure body that finished checking, in checking order. The
+	// two provenance analyses run after the program settles, so a forward or
+	// mutually recursive callee already has its result summary.
 	checked_bodies: [dynamic]Checked_Body,
-	// Compile-time declaration metadata, emitted for cross-package checking; does
-	// not change the runtime ABI (design.md "Temporaries and procedure
-	// boundaries"). Keyed per concrete declaration or generic instance, so two
-	// instances may differ.
+	// Compile-time declaration metadata for cross-package checking; it does not
+	// change the runtime ABI (design.md "Temporaries and procedure boundaries").
+	// Keyed per declaration or instance, so two instances may differ.
 	result_summaries: map[Symbol_Id]^Proc_Summary,
 	proc_contract_checks: [dynamic]Proc_Contract_Check,
 	// Direct summary dependencies, discovered while building each body's first
@@ -260,9 +255,8 @@ Compiler :: struct {
 	// The constant `0` a defaulted container `shrink` floor uses.
 	zero_int_arg:             Expr,
 	// An explicitly dropped owner is dead and no longer blocks reset (design.md).
-	// M5a's liveness answers that one pass and one graph earlier than the reset
-	// check, so the definitely-dead owners at each call or cleanup are recorded here
-	// (`src/lifecycle.odin`, `src/cfg.odin`).
+	// Liveness answers that a pass earlier than the reset check, so the dead owners
+	// at each call or cleanup are recorded here (`src/lifecycle.odin`, `src/cfg.odin`).
 	reset_dead:               map[^Expr_Call][]Symbol_Id,
 	cleanup_reset_dead:       map[Cleanup_Reset_Key][]Symbol_Id,
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
@@ -273,9 +267,8 @@ Compiler :: struct {
 	// each body. Nothing built in it outlives `analyze_ownership`.
 	analysis_arena:       virtual.Arena,
 	analysis_allocator:   mem.Allocator,
-	// Everything LLVM emission and the toolchain allocate, kept until the
-	// compilation is destroyed: the backend builds its module from many
-	// short-lived strings and frees none of them individually.
+	// Everything LLVM emission and the toolchain allocate: the backend builds its
+	// module from many short-lived strings and frees none of them individually.
 	emission_arena:       virtual.Arena,
 	identifier_names:     [dynamic]string,
 	identifier_by_name:   map[string]Identifier_Id,
@@ -289,8 +282,7 @@ Compiler :: struct {
 	packages:             [dynamic]Package,
 }
 
-// Loads a file and registers it. Reports and returns false on failure, so the
-// caller never has to invent its own error text.
+// Loads a file and registers it, reporting the failure itself.
 load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 	init_semantic_stores(c)
 	data, read_ok := os.read_entire_file(path)
@@ -344,9 +336,8 @@ valid_utf8 :: proc(text: string) -> (valid: bool, bad_offset: u32) {
 	return true, 0
 }
 
-// 1-based line and column of a byte offset. Column counts bytes, which is
-// correct for Loke: everything outside strings, comments and rune literals is
-// ASCII by definition.
+// 1-based line and column of a byte offset. The column counts bytes, which is
+// exact for Loke: everything outside literals and comments is ASCII.
 line_col :: proc(src: ^Source, offset: u32) -> (line: int, col: int) {
 	i, found := slice.binary_search(src.line_starts, offset)
 	if !found {
@@ -355,6 +346,7 @@ line_col :: proc(src: ^Source, offset: u32) -> (line: int, col: int) {
 	return i + 1, int(offset-src.line_starts[i]) + 1
 }
 
+@(private = "file")
 line_text :: proc(src: ^Source, line: int) -> string {
 	start := src.line_starts[line - 1]
 	end := u32(len(src.text))
@@ -364,10 +356,9 @@ line_text :: proc(src: ^Source, line: int) -> string {
 	return strings.trim_right(src.text[start:end], "\r\n")
 }
 
-// Diagnostics are created during every phase, including emission, whose
-// context allocator is an arena. Each diagnostic's storage therefore comes from
-// the one allocator the list itself was first grown with, so destroying them
-// never frees memory with an allocator that did not hand it out.
+// Diagnostics are raised in every phase, including emission, whose context
+// allocator is an arena. Pinning one allocator — the list's own — keeps a
+// diagnostic from being freed with an allocator that did not hand it out.
 diagnostic_allocator :: proc(c: ^Compiler) -> mem.Allocator {
 	if c.diagnostics.allocator.procedure == nil {
 		c.diagnostics.allocator = context.allocator
@@ -375,17 +366,29 @@ diagnostic_allocator :: proc(c: ^Compiler) -> mem.Allocator {
 	return c.diagnostics.allocator
 }
 
-errorf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..any) {
+@(private = "file")
+append_diagnostic :: proc(
+	c: ^Compiler,
+	severity: Severity,
+	span: Span,
+	code: string,
+	format: string,
+	args: ..any,
+) {
 	context.allocator = diagnostic_allocator(c)
 	append(
 		&c.diagnostics,
 		Diagnostic {
-			severity = .Error,
+			severity = severity,
 			code = code,
 			span = span,
 			message = fmt.aprintf(format, ..args),
 		},
 	)
+}
+
+errorf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..any) {
+	append_diagnostic(c, .Error, span, code, format, ..args)
 	c.error_count += 1
 }
 
@@ -393,16 +396,7 @@ errorf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..a
 // type correctness — size is never a type error — so the copy-cost report is a
 // warning and leaves `error_count` alone.
 warnf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..any) {
-	context.allocator = diagnostic_allocator(c)
-	append(
-		&c.diagnostics,
-		Diagnostic {
-			severity = .Warning,
-			code = code,
-			span = span,
-			message = fmt.aprintf(format, ..args),
-		},
-	)
+	append_diagnostic(c, .Warning, span, code, format, ..args)
 }
 
 // Same as `errorf` but with a short label printed under the caret.
@@ -415,8 +409,7 @@ error_labelf :: proc(
 	args: ..any,
 ) {
 	errorf(c, span, code, format, ..args)
-	// Labels arrive as either source-backed text or temporary formatted strings.
-	// Clone them so every diagnostic component has one uniform owner.
+	// A label is either source-backed or a temporary, so clone it for one owner.
 	c.diagnostics[len(c.diagnostics) - 1].label = strings.clone(label, diagnostic_allocator(c))
 }
 
@@ -431,9 +424,8 @@ add_notef :: proc(c: ^Compiler, span: Span, format: string, args: ..any) {
 	append(&diagnostic.notes, Note{span = span, message = fmt.aprintf(format, ..args)})
 }
 
-// Frees diagnostics removed by a speculative parse/check as well as those
-// retained until the end of the compilation. Resizing a dynamic array alone
-// would lose the owned strings and note arrays beyond the new length.
+// Resizing the list alone would lose the owned strings and note arrays past the
+// new length, so a dropped diagnostic is freed through here.
 destroy_diagnostic :: proc(c: ^Compiler, d: ^Diagnostic) {
 	context.allocator = diagnostic_allocator(c)
 	delete(d.message)
@@ -447,26 +439,26 @@ destroy_diagnostic :: proc(c: ^Compiler, d: ^Diagnostic) {
 	d^ = {}
 }
 
+// Rolls the list back to `length`, undoing the `error_count` the dropped errors
+// raised: a speculative check that reports and then rolls back must leave the
+// compilation exactly as it found it.
 truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 	wanted := clamp(length, 0, len(c.diagnostics))
 	for index := wanted; index < len(c.diagnostics); index += 1 {
+		if c.diagnostics[index].severity == .Error {
+			c.error_count -= 1
+		}
 		destroy_diagnostic(c, &c.diagnostics[index])
 	}
 	resize(&c.diagnostics, wanted)
-	// An instantiation stack is attached to whichever diagnostic is last, and
-	// remembered by this length so the unwind cannot attach it again. Dropping
-	// past that point makes the memory a claim about a diagnostic that no longer
-	// exists, and the next one to land at the same index would be refused its
-	// own frames — the only thing naming the call that caused it.
+	// An instantiation stack is remembered by the length that attached it, so a
+	// rollback past that point must let the next diagnostic claim its own frames.
 	c.last_noted_diagnostic = min(c.last_noted_diagnostic, wanted)
 }
 
-// Renders every accumulated diagnostic to stderr, in source order per file.
-//
-// Most passes report in source order already, but the two provenance analyses
-// run over the whole program after checking, so their diagnostics arrive last.
-// A stable sort by position restores one reading order without disturbing
-// same-position ordering.
+// Renders every accumulated diagnostic to stderr. The two provenance analyses
+// run after the whole program is checked, so their diagnostics arrive last; a
+// stable sort by position restores one reading order.
 report :: proc(c: ^Compiler) {
 	slice.stable_sort_by(c.diagnostics[:], proc(a, b: Diagnostic) -> bool {
 		if a.span.file != b.span.file {
@@ -476,11 +468,9 @@ report :: proc(c: ^Compiler) {
 	})
 	previous: ^Diagnostic
 	for &d in c.diagnostics {
-		// One mistake reported twice is one diagnostic. Two blocks left open by
-		// the same missing brace both run out of input at the end of the file, so
-		// they arrive with the same code, span and message; sorting has already
-		// made them adjacent. A repeat that carries a note is still rendered,
-		// since that note is something the first one did not say.
+		// One mistake reported twice is one diagnostic: two blocks left open by the
+		// same missing brace both run out of input at the same span. A repeat that
+		// carries a note still renders, since the note is something new.
 		if previous != nil && len(d.notes) == 0 && same_diagnostic(previous^, d) {
 			continue
 		}
@@ -503,19 +493,20 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 	severity := d.severity == .Error ? "error" : "warning"
 	fmt.eprintf("%s[%s]: %s\n", severity, d.code, d.message)
 
-	if d.span.file != NO_FILE {
+	if d.span.file != NO_FILE && int(d.span.file) < len(c.sources) {
 		src := &c.sources[d.span.file]
 		line, col := line_col(src, d.span.lo)
 		text := line_text(src, line)
 		gutter := len(fmt.tprintf("%d", line))
 
-		// Carets never run past the end of the line: a span may cover a
-		// multi-line construct, but the snippet shows only where it starts.
+		// The snippet drops the line ending, so a span pointing into it lands past
+		// the text; a multi-line span only marks where it starts. Both stay inside.
+		col = min(col, len(text) + 1)
 		width := max(int(d.span.hi) - int(d.span.lo), 1)
 		width = min(width, max(len(text)-col+1, 1))
 
-		// The caret line copies any tabs from the source prefix, so the marker
-		// stays under the right column whatever the reader's tab width is.
+		// The caret line keeps the prefix's tabs, so the marker stays under the
+		// right column whatever the reader's tab width is.
 		indent := strings.clone(text[:col - 1], context.temp_allocator)
 		for i in 0 ..< len(indent) {
 			if indent[i] != '\t' {

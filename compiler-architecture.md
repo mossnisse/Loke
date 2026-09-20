@@ -297,7 +297,7 @@ be file-private.
 | --- | --- |
 | `main.odin`, `build_config.odin`, `providers.odin` | CLI options, build constants, provider selection, top-level phase order, and exit codes. |
 | `install.odin`, `packages.odin`, `select.odin` | Installation-relative roots, package loading/import graph, dependency order, and `when` selection. |
-| `source.odin` | `Compiler`, source buffers, spans, diagnostics, arenas, and compilation destruction. Start here when locating global state. |
+| `source.odin` | `Compiler`, source buffers, spans, and the diagnostics engine. Start here when locating global state; `destroy_compilation` is `semantic.odin`'s. |
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
 | `semantic.odin`, `universe.odin` | Stable IDs, symbols, types, scopes, packages, type interning, and predeclared names. |

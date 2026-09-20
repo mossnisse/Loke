@@ -2037,7 +2037,6 @@ parse_argument_value :: proc(p: ^Parser) -> Expr {
 	suppress := p.suppress
 	depth_reported := p.depth_reported
 	diagnostic_count := len(p.c.diagnostics)
-	error_count := p.c.error_count
 
 	candidate := parse_type(p)
 	_, proc_literal := candidate.(^Expr_Proc)
@@ -2062,7 +2061,6 @@ parse_argument_value :: proc(p: ^Parser) -> Expr {
 	p.suppress = suppress
 	p.depth_reported = depth_reported
 	truncate_diagnostics(p.c, diagnostic_count)
-	p.c.error_count = error_count
 	return parse_expr(p)
 }
 

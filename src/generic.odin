@@ -1074,12 +1074,10 @@ bind_default_compile_time_argument :: proc(
 	out: ^[dynamic]Generic_Binding,
 ) -> (string, bool) {
 	mark := len(k.c.diagnostics)
-	errors := k.c.error_count
 	type := check_expr(k, default, wanted)
 	// A failed default is reported at the call as an inapplicable candidate, not
 	// twice; the declaration itself is checked where it is written.
 	truncate_diagnostics(k.c, mark)
-	k.c.error_count = errors
 	if type == INVALID_TYPE {
 		return "its omitted `$` argument's default does not check", false
 	}
@@ -1207,7 +1205,6 @@ instantiate_generic :: proc(
 	}
 
 	mark := len(k.c.diagnostics)
-	errors := k.c.error_count
 	switch template.kind {
 	case .Record:
 		instance.signature_ok = instantiate_record_body(k, template, instance, name, report)
@@ -1225,7 +1222,6 @@ instantiate_generic :: proc(
 			span    = head.span,
 		}
 		truncate_diagnostics(k.c, mark)
-		k.c.error_count = errors
 	}
 	return instance, instance.signature_ok
 }
@@ -1649,12 +1645,10 @@ check_where_clauses :: proc(
 		failed := type == INVALID_TYPE || !evaluated || folded.kind != .Boolean
 		if !failed && folded.boolean {
 			truncate_diagnostics(k.c, mark)
-			k.c.error_count = errors
 			continue
 		}
 		if !report && !(failed && report_malformed) {
 			truncate_diagnostics(k.c, mark)
-			k.c.error_count = errors
 			return false
 		}
 		if failed {
@@ -1665,7 +1659,6 @@ check_where_clauses :: proc(
 			return false
 		}
 		truncate_diagnostics(k.c, mark)
-		k.c.error_count = errors
 		// An interface bound names the failed requirement; a predicate, itself.
 		if report_failed_interface_bound(k, clause, span) {
 			note_instantiation_stack(k)
@@ -1760,7 +1753,6 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 		mark, errors := len(k.c.diagnostics), k.c.error_count
 		wanted := resolve_type_syntax(k, parameter.type_syntax)
 		truncate_diagnostics(k.c, mark)
-		k.c.error_count = errors
 		if wanted == TYPE_TYPE || wanted == INVALID_TYPE {
 			if resolve_type_syntax(k, arg.value) == INVALID_TYPE && k.c.error_count == errors {
 				report_unresolved_type(k, arg.value)
@@ -1856,23 +1848,19 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		}
 		if bound.is_type {
 			mark := len(k.c.diagnostics)
-			errors := k.c.error_count
 			resolved := resolve_type_syntax(k, written)
 			truncate_diagnostics(k.c, mark)
-			k.c.error_count = errors
 			if resolved != bound.type {
 				return
 			}
 			continue
 		}
 		mark := len(k.c.diagnostics)
-		errors := k.c.error_count
 		folded, evaluated := Const_Value{}, false
 		if check_single_expr(k, written, bound.value_type) != INVALID_TYPE {
 			folded, evaluated = require_const(k, written, "a generic argument", "L0432")
 		}
 		truncate_diagnostics(k.c, mark)
-		k.c.error_count = errors
 		if !evaluated {
 			return
 		}

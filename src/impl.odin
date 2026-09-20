@@ -29,7 +29,6 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	if subject == INVALID_TYPE {
 		if quiet {
 			truncate_diagnostics(k.c, mark)
-			k.c.error_count = errors
 			return
 		}
 		item.declared = true

@@ -1355,6 +1355,29 @@ compilation_destruction_releases_owned_front_end_state :: proc(t: ^testing.T) {
 	destroy_compilation(&c)
 }
 
+// A speculative check reports, rolls back, and must leave the compilation
+// exactly as it found it — including `error_count`, which decides the exit code.
+@(test)
+truncating_diagnostics_restores_the_error_count :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	errorf(&c, no_span(), "L9999", "kept")
+	mark := len(c.diagnostics)
+	errorf(&c, no_span(), "L9998", "speculative")
+	warnf(&c, no_span(), "L9997", "speculative warning")
+	add_notef(&c, no_span(), "speculative note")
+
+	truncate_diagnostics(&c, mark)
+	testing.expectf(t, len(c.diagnostics) == 1, "expected one diagnostic, got %d", len(c.diagnostics))
+	testing.expectf(t, c.error_count == 1, "the rollback left the error count at %d", c.error_count)
+
+	// A warning never raised the count, so dropping it must not lower it.
+	mark = len(c.diagnostics)
+	warnf(&c, no_span(), "L9997", "only a warning")
+	truncate_diagnostics(&c, mark)
+	testing.expectf(t, c.error_count == 1, "dropping a warning changed the error count to %d", c.error_count)
+}
+
 // Odin maps need cache-line-aligned allocations, and `append`/`make` swallow a
 // refused oversized block, so the arena must honour alignment and any size.
 @(test)

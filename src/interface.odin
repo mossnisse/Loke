@@ -557,7 +557,6 @@ interface_predicates_check :: proc(
 			reason = strings.clone(k.c.diagnostics[mark].message, k.c.semantic_allocator)
 		}
 		truncate_diagnostics(k.c, mark)
-		k.c.error_count = errors
 		if type == INVALID_TYPE || captured || !evaluated || folded.kind != .Boolean {
 			return Requirement_Failure{span = expr_span(clause), reason = reason}, false
 		}
@@ -643,17 +642,14 @@ check_one_requirement :: proc(
 		reason = strings.clone(k.c.diagnostics[mark].message, k.c.semantic_allocator)
 	}
 	truncate_diagnostics(k.c, mark)
-	k.c.error_count = errors
 	if type == INVALID_TYPE || captured {
 		return Requirement_Failure{span = requirement.span, reason = reason}, false
 	}
 	// design.md "Interface bodies": a bare requirement must be true, not just compile.
 	if requirement.result == nil {
 		mark = len(k.c.diagnostics)
-		errors = k.c.error_count
 		folded, evaluated := require_const(k, requirement.expr, "an interface requirement", "L0444")
 		truncate_diagnostics(k.c, mark)
-		k.c.error_count = errors
 		if !evaluated || folded.kind != .Boolean {
 			return Requirement_Failure {
 				span   = requirement.span,
