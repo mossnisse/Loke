@@ -1643,7 +1643,7 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 	case .Array:
 		return fmt.aprintf("[%d]%s", info.count, type_name(c, info.element), allocator = c.semantic_allocator)
 	case .Simd:
-		return simd_type_name(c, info)
+		return fmt.aprintf("Simd(%s, %d)", type_name(c, info.element), info.count, allocator = c.semantic_allocator)
 	case .Slice:
 		return fmt.aprintf("[]%s%s", info.mutable ? "mut " : "", type_name(c, info.element), allocator = c.semantic_allocator)
 	case .Dynamic_Array:

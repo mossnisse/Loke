@@ -989,7 +989,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 			return
 		case .Simd:
 			// A lane index must be a constant (design.md "SIMD vectors").
-			check_simd_index(k, v, info, base_type, through_pointer, pointer_mutable)
+			check_simd_index(k, v, info, base_type, operand_base, through_pointer, pointer_mutable)
 			return
 		}
 	}
@@ -1452,7 +1452,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			return
 		}
 	}
-	if type_is_simd(k.c, operand) {
+	if simd_operand(k.c, operand) {
 		check_simd_unary(k, v, operand)
 		return
 	}
@@ -1655,7 +1655,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	// design.md "SIMD vectors": lane-wise, with its own operator table.
-	if type_is_simd(k.c, lhs) || type_is_simd(k.c, rhs) {
+	if simd_operand(k.c, lhs) || simd_operand(k.c, rhs) {
 		check_simd_binary(k, v, lhs, rhs)
 		return
 	}

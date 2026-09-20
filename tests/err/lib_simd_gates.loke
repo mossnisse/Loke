@@ -2,9 +2,8 @@ package main;
 
 import "core:simd";
 
-// Every rule design.md's "SIMD vectors" section states as a rejection
-//. The claims that produce a value are in
-// `tests/run/lib_simd.loke`.
+// Every rule design.md's "SIMD vectors" section states as a rejection. The
+// claims that produce a value are in `tests/run/lib_simd.loke`.
 
 Colour :: enum u8 { Red, Green };
 
@@ -81,6 +80,25 @@ operators :: proc() {
 	_ = +a;
 }
 
+// design.md "Distinct types": a `distinct` type "does not inherit the
+// underlying type's operations", and that holds for a vector's lane-wise ones
+// too. `+=` and `= +` must agree, so both are written here.
+distinct_vectors :: proc() {
+	Vector :: distinct Simd(f32, 4);
+	Other  :: distinct Simd(f32, 4);
+	a: Vector = {};
+	b: Vector = {};
+	other: Other = {};
+	plain: Simd(f32, 4) = {};
+
+	_ = a + b;
+	a += b;
+	_ = -a;
+	_ = a + other;
+	_ = a + plain;
+	_ = a[0];
+}
+
 // "`&&` and `||` are rejected: they short-circuit, and there is nothing
 // lane-wise for a short circuit to mean."
 short_circuit :: proc() {
@@ -141,6 +159,7 @@ main :: proc() {
 	lanes(0);
 	not_a_sequence();
 	operators();
+	distinct_vectors();
 	short_circuit();
 	conditions();
 	conversions();
