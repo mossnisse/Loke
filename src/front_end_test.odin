@@ -800,6 +800,51 @@ main :: proc() {
 }
 
 @(test)
+empty_defer_is_rejected_without_reaching_the_checker_as_nil :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
+main :: proc() {
+	defer ;
+	x := 1;
+}`)
+	if !testing.expectf(t, p.c.error_count == 1, "expected one diagnostic, got %d", p.c.error_count) {
+		report(&p.c)
+		return
+	}
+	testing.expect(t, p.c.diagnostics[0].code == "L0216", "empty defer produced the wrong diagnostic")
+	body := main_body(&p.f)
+	if !testing.expect(t, body != nil && len(body.stmts) == 2, "empty defer swallowed the following statement") {
+		return
+	}
+	deferred, ok := body.stmts[0].(^Stmt_Defer)
+	testing.expect(t, ok && deferred.has_error && deferred.stmt != nil, "empty defer was retained as a clean nil statement")
+}
+
+@(test)
+delimiter_failures_mark_retained_nodes :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, `package main;
+zero: int
+A :: [^int;
+B :: [dynamic int;
+C :: [?int;
+sentinel :: 1;
+`)
+	if !testing.expectf(t, p.c.error_count == 4, "expected four diagnostics, got %d", p.c.error_count) {
+		return
+	}
+	if !testing.expectf(t, len(p.f.items) == 5, "recovery retained %d declarations", len(p.f.items)) {
+		return
+	}
+	for item, index in p.f.items[:4] {
+		decl, ok := item.(^Decl)
+		testing.expectf(t, ok && decl.has_error, "malformed declaration %d was not marked", index)
+	}
+}
+
+@(test)
 source_utf8_validation :: proc(t: ^testing.T) {
 	invalid_bytes := []u8{0xf0, 0x28, 0x8c, 0x28}
 	invalid := transmute(string)invalid_bytes
@@ -915,6 +960,16 @@ parser_depth_is_bounded :: proc(t: ^testing.T) {
 		),
 		strings.concatenate(
 			{"package main;\n\nmain :: proc() {\n\tx := ", strings.repeat("!", 10_000, context.temp_allocator), "true;\n}\n"},
+			context.temp_allocator,
+		),
+		strings.concatenate(
+			{
+				"package main;\n\nmain :: proc() {\n\tforeach (",
+				strings.repeat("(", 10_000, context.temp_allocator),
+				"value",
+				strings.repeat(")", 10_000, context.temp_allocator),
+				" in values) { }\n}\n",
+			},
 			context.temp_allocator,
 		),
 	}

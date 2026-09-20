@@ -13,9 +13,6 @@ expected `(` after `move`
 L0229
 @11:11
 expected `[` after `map`
-L0220
-@12:7
-parenthesise a type used as a conversion, or pass it as an argument
 L0231
 @12:9
 expected `]` after `[^`

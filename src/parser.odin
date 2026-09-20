@@ -1,10 +1,6 @@
-// Parser: recursive descent over grammar.md.
+// Recursive-descent parser for grammar.md.
 //
-// M1 slice 1 covers the whole expression and type grammar. Declarations,
-// statements and top-level items keep their M0 shape until slices 2-4; the
-// constructs those still owe are named rather than met with "unexpected token".
-//
-// Two invariants this file exists to keep:
+// Two invariants:
 //   * A node's span ends at the last token actually *consumed*, never at the
 //     token an `expect` tripped over.
 //   * Nothing recurses without a depth guard. Recursive descent plus a fuzzer
@@ -12,6 +8,7 @@
 package lokec
 
 import "core:mem"
+import "core:strings"
 
 // The limit is on *node* nesting, not just parser recursion, because every
 // later phase walks the tree recursively — a flat parse of `1 + 1 + 1 + ...`
@@ -32,19 +29,11 @@ Parser :: struct {
 	last:           Token, // last token consumed; every node's span ends here
 	depth:          int,
 	depth_reported: bool,
-	// Set for the top level of a `where` expression, where the next `{` opens
-	// the declaration's body rather than a composite literal.
+	// The next `{` opens a `where` declaration body, not a composite literal.
 	no_composite:   bool,
-	// Set for a constant's value, where a written type *is* the value:
-	// `My_Int :: int` and `Meters :: distinct int` are type aliases
-	// (design.md "Type alias"). One `parse_postfix` consumes it, so it does
-	// not leak into the operands of a larger expression.
+	// Lets the first written type be a constant value; `parse_postfix` consumes it.
 	type_value:     bool,
-	// Panic mode, entered only by the depth guard and cleared at the next
-	// statement or item: past `MAX_NEST` the frames unwinding behind the limit
-	// would each report their own missing delimiter. Ordinary failures do not set
-	// it — they resynchronise where they stand, and `next_element` is what keeps
-	// them to one diagnostic.
+	// Silences diagnostics while frames unwind from the depth limit.
 	suppress:       bool,
 	allocator:      mem.Allocator,
 }
@@ -66,7 +55,6 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token) -> File {
 	return result
 }
 
-// `Top_Level_Item*`, shared by the file and by a `Top_Level_Block`.
 @(private = "file")
 parse_items :: proc(p: ^Parser, stop_at_rbrace: bool) -> []Item {
 	items := make([dynamic]Item, 0, 0, p.allocator)
@@ -79,7 +67,7 @@ parse_items :: proc(p: ^Parser, stop_at_rbrace: bool) -> []Item {
 			append(&items, item)
 		}
 		if p.index == before {
-			// Recovery made no progress; force it so this cannot spin.
+			// Recovery must always make progress.
 			advance(p)
 		}
 	}
@@ -91,9 +79,7 @@ ast_new :: proc(p: ^Parser, $T: typeid) -> ^T {
 	return new(T, p.allocator)
 }
 
-// Builds a node spanning `lo` through the last consumed token. Call it *after*
-// the children are parsed; that is what makes the span rule hold on the
-// recovery path too.
+// Call after parsing children so the span ends at the last consumed token.
 @(private = "file")
 new_expr :: proc(p: ^Parser, $T: typeid, lo: u32) -> ^T {
 	n := new(T, p.allocator)
@@ -121,7 +107,6 @@ error_stmt :: proc(p: ^Parser, span: Span) -> Stmt {
 	return stmt
 }
 
-// The statement mirror of `new_expr`: spans end at the last consumed token.
 @(private = "file")
 new_stmt :: proc(p: ^Parser, $T: typeid, start: Token) -> ^T {
 	n := new(T, p.allocator)
@@ -176,7 +161,6 @@ span_of :: proc(p: ^Parser, t: Token) -> Span {
 	return Span{file = p.file, lo = t.lo, hi = t.hi}
 }
 
-// A span from `start` through whatever was last consumed.
 @(private = "file")
 span_to_here :: proc(p: ^Parser, start: Token) -> Span {
 	return Span{file = p.file, lo = start.lo, hi = max(p.last.hi, start.hi)}
@@ -187,8 +171,7 @@ text_of :: proc(p: ^Parser, t: Token) -> string {
 	return p.c.sources[p.file].text[t.lo:t.hi]
 }
 
-// The lexer hands back contextual keywords as ordinary identifiers, so the
-// parser matches them on text plus position.
+// Contextual keywords arrive as identifiers.
 @(private = "file")
 is_contextual :: proc(p: ^Parser, word: string) -> bool {
 	return at(p, .Ident) && text_of(p, current(p)) == word
@@ -200,8 +183,7 @@ name_of :: proc(p: ^Parser, t: Token) -> Name {
 	return Name{text = text, span = span_of(p, t), id = intern_identifier(p.c, text)}
 }
 
-// Every parser diagnostic goes through here so panic mode can silence the
-// unwind without silencing the phase.
+// Panic mode suppresses diagnostics while deep recursion unwinds.
 @(private = "file")
 parse_error :: proc(
 	p: ^Parser,
@@ -217,11 +199,7 @@ parse_error :: proc(
 	error_labelf(p.c, span, code, label, format, ..args)
 }
 
-// A member name: a field, an enum member, or the name after `.`. design.md
-// spells one of them `type` — `field.type` on a reflection descriptor, and
-// `Member_Info.type` in the runtime metadata — and a name in this position can
-// never start a type expression, so the keyword is accepted here and nowhere
-// else.
+// `type` is legal as a field, enum member, or selector name.
 @(private = "file")
 expect_member_name :: proc(p: ^Parser, code: string, what: string) -> (Token, bool) {
 	if at(p, .Type) {
@@ -245,29 +223,10 @@ fmt_found :: proc(p: ^Parser, t: Token) -> string {
 	if t.kind == .EOF {
 		return "end of file"
 	}
-	// `error_labelf` clones the label into diagnostic-owned storage. Build this
-	// transient spelling in the temporary arena so there is no second owner to
-	// release after the call.
-	return concat_temp("found `", text_of(p, t), "`")
+	return strings.concatenate({"found `", text_of(p, t), "`"}, context.temp_allocator)
 }
 
-@(private = "file")
-concat_temp :: proc(parts: ..string) -> string {
-	total := 0
-	for s in parts {
-		total += len(s)
-	}
-	buf := make([]u8, total, context.temp_allocator)
-	i := 0
-	for s in parts {
-		copy(buf[i:], s)
-		i += len(s)
-	}
-	return string(buf)
-}
-
-// One diagnostic per file, then panic mode: the 256 frames unwinding behind
-// this would otherwise each report their own missing delimiter.
+// Report the depth limit once, then silence the unwind.
 @(private = "file")
 depth_exceeded :: proc(p: ^Parser) -> Expr {
 	t := current(p)
@@ -290,11 +249,7 @@ sync_to_item :: proc(p: ^Parser) {
 	sync_to_boundary(p, .Item, true)
 }
 
-// A `,` and the list's own closing delimiter bound one element, so a malformed
-// element is resynchronised here instead of abandoning the list. Breaking out
-// early leaves the close for an enclosing construct to trip over, which is how
-// one bad element used to swallow the enclosing block's `}`. Returns true when a
-// `,` was consumed and another element follows.
+// Resynchronises one malformed list element without consuming its close.
 @(private = "file")
 resync_list :: proc(p: ^Parser, close: Token_Kind) -> bool {
 	paren, bracket, brace := 0, 0, 0
@@ -327,11 +282,7 @@ resync_list :: proc(p: ^Parser, close: Token_Kind) -> bool {
 		case .Lbrace:
 			brace += 1
 		case .Rbrace:
-			// Only reachable inside a nested group — at the outer level the check
-			// above already returned. There the brace is noise to skip, not a
-			// boundary, and `sync_to_boundary` clamps for the same reason: letting
-			// the count go negative disables the outer-level test for the rest of
-			// the scan, so the `,` that ends this element is never found.
+			// Clamp a stray nested brace so the outer separator stays visible.
 			brace = max(brace - 1, 0)
 		}
 		advance(p)
@@ -339,16 +290,8 @@ resync_list :: proc(p: ^Parser, close: Token_Kind) -> bool {
 	return false
 }
 
-// The separator step every comma-separated list ends an element with: take the
-// `,`, stop at the list's own close or at a boundary an enclosing construct
-// owns, or say what is missing and resynchronise to the next element. `bad` says
-// the element already reported something, in which case a second diagnostic here
-// describes nothing new.
-//
-// `more` is true when another element may follow. `separated` is false when this
-// had to resynchronise: whatever the elements themselves looked like, tokens
-// between them were skipped, so the node the caller builds is not clean and must
-// say so — otherwise a later phase walks a list that silently lost a member.
+// Consumes a list separator or resynchronises. `separated` reports skipped
+// tokens so the caller can mark the enclosing node.
 @(private = "file")
 next_element :: proc(
 	p: ^Parser,
@@ -379,11 +322,7 @@ next_element :: proc(
 	return resync_list(p, close), false
 }
 
-// Recovery has nothing to skip when the parser already stands where the next
-// declaration, item, or enclosing boundary begins — scanning on from there
-// consumes it. Asking this beats guessing from the last token consumed, which
-// after a nested `struct { ... }` is that inner body's `}` and says nothing
-// about whether the value's own brace was ever reached.
+// True when recovery already stands at the next construct or boundary.
 @(private = "file")
 at_construct_start :: proc(p: ^Parser) -> bool {
 	#partial switch current(p).kind {
@@ -404,9 +343,7 @@ Sync_Context :: enum {
 	Statement,
 }
 
-// Recovery observes delimiter nesting. A semicolon inside a for header or a
-// closing brace inside a composite literal is not a boundary for the outer
-// construct. An unmatched `}` is left for the enclosing block parser.
+// Nested delimiters are skipped; an unmatched `}` belongs to the outer block.
 @(private = "file")
 sync_to_boundary :: proc(p: ^Parser, mode: Sync_Context, stop_after_brace: bool) {
 	paren_depth, bracket_depth, brace_depth := 0, 0, 0
@@ -458,9 +395,7 @@ sync_to_boundary :: proc(p: ^Parser, mode: Sync_Context, stop_after_brace: bool)
 	}
 }
 
-// `Attribute_Group+`. The groups are flattened: which attribute is valid where
-// is a semantic rule (grammar.md "Attributes"), and nothing downstream needs to
-// know which `@(...)` an attribute came from.
+// Attribute groups flatten into one list.
 @(private = "file")
 parse_attributes :: proc(p: ^Parser) -> []Attribute {
 	if !at(p, .At) {
@@ -500,15 +435,12 @@ parse_attributes :: proc(p: ^Parser) -> []Attribute {
 				attribute.value = parse_expr(p)
 			}
 			attribute.span = span_to_here(p, start)
-			// Nothing was named, so there is no attribute to record.
 			named := len(attribute.path) > 0
 			if named {
 				append(&list, attribute)
 			}
 
 			bad := !named || expr_has_error(attribute.value)
-			// An attribute group carries no error flag of its own; the diagnostic
-			// this reports is the whole record of a malformed one.
 			more, _ := next_element(p, .Rparen, bad, "`,` or `)` after the attribute")
 			if !more {
 				break
@@ -564,10 +496,7 @@ parse_top_level_item :: proc(p: ^Parser) -> (Item, bool) {
 		return error_item(p, span_of(p, t)), true
 	}
 
-	// design.md: `static_assert` is available at file scope so a type author can
-	// require an interface beside the type. It is the ordinary predeclared
-	// built-in recognized contextually here, not a new keyword or directive, and
-	// no other expression statement is admitted at item position.
+	// `static_assert` is the only expression admitted at file scope.
 	if is_contextual(p, "static_assert") && peek_token(p, 1).kind == .Lparen {
 		return parse_top_level_static_assert(p, attributes, start), true
 	}
@@ -584,18 +513,12 @@ parse_top_level_item :: proc(p: ^Parser) -> (Item, bool) {
 	return decl, true
 }
 
-// `Top_Level_Static_Assert`. The call is parsed as an ordinary expression so
-// that its callee, arity, and condition are the checker's business, exactly as
-// in statement position.
 @(private = "file")
 parse_top_level_static_assert :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
 	item := ast_new(p, Item_Static_Assert)
 	item.attributes = attributes
 	item.call = parse_expr(p)
-	// `static_assert` is contextual only for this one exact call form. Parsing an
-	// expression first gives its arguments the ordinary expression grammar, but
-	// no selector, second call, operator, range, or conditional may wrap it and
-	// become a different kind of file-scope expression statement.
+	// Reject expressions merely beginning with `static_assert(...)`.
 	call, is_call := item.call.(^Expr_Call)
 	exact_call := false
 	if is_call {
@@ -618,7 +541,6 @@ parse_top_level_static_assert :: proc(p: ^Parser, attributes: []Attribute, start
 	return item
 }
 
-// `Import_Decl`
 @(private = "file")
 parse_import :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
 	advance(p) // `import`
@@ -639,8 +561,7 @@ parse_import :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item 
 	return item
 }
 
-// `Foreign_Import_Decl` and `Foreign_Block`, told apart by the token after
-// `foreign`.
+// The token after `foreign` distinguishes imports from blocks.
 @(private = "file")
 parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
 	advance(p) // `foreign`
@@ -654,8 +575,7 @@ parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item
 		}
 		path, has_path := expect(p, .String, "L0250", "the library path, as a string literal")
 		if has_path {
-			// The token text keeps its quotes; a library path has no escapes worth
-			// decoding, so slicing them off is the whole unquote.
+			// Library paths are quoted bare words, so slicing is sufficient.
 			raw := text_of(p, path)
 			item.path = len(raw) >= 2 ? raw[1:len(raw) - 1] : raw
 		}
@@ -681,10 +601,9 @@ parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item
 	return item
 }
 
-// `Impl_Block`. Whether the block is inherent or an extension is not written:
-// `declare_impl_block` derives it from the subject's declaring package.
+// The checker derives inherent versus extension from the subject package.
 @(private = "file")
-parse_impl :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
+parse_impl :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> ^Item_Impl {
 	advance(p) // `impl`
 
 	item := ast_new(p, Item_Impl)
@@ -705,12 +624,7 @@ Member_Context :: enum {
 	Impl,
 }
 
-// `Foreign_Decl` and `Impl_Member` are both declarations, `;`, and — inside an
-// `impl` or `extend` — a delegation. grammar.md spells `Foreign_Decl` with an
-// unconditional trailing `;`, which would contradict the brace-bodied constant
-// rule; parsing it as an ordinary declaration keeps one rule instead. "A
-// foreign procedure has no body" becomes a semantic check, since valid code
-// cannot tell the difference.
+// Foreign and impl members share declaration parsing; impls also allow delegates.
 @(private = "file")
 parse_member_list :: proc(p: ^Parser, kind: Member_Context) -> []Item {
 	members := make([dynamic]Item, 0, 0, p.allocator)
@@ -724,8 +638,7 @@ parse_member_list :: proc(p: ^Parser, kind: Member_Context) -> []Item {
 		attributes := parse_attributes(p)
 
 		switch {
-		// `delegate` is the contextual keyword only when followed by `(`; otherwise
-		// it is an ordinary identifier that may begin a declaration.
+		// `delegate` remains an identifier unless followed by `(`.
 		case kind == .Impl && is_contextual(p, "delegate") && peek_token(p, 1).kind == .Lparen:
 			append(&members, parse_delegate(p, attributes, start))
 		case starts_declaration(p):
@@ -772,7 +685,6 @@ parse_delegate :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Ite
 	return item
 }
 
-// `Top_Level_When`, whose branches are blocks of top-level items.
 @(private = "file")
 parse_top_level_when :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
 	p.depth += 1
@@ -827,15 +739,12 @@ parse_top_level_block :: proc(
 	return block
 }
 
-// grammar.md's bounded scan: a comma-separated identifier list followed by `:`
-// is a declaration. Everything else at this position is a statement.
+// An identifier list followed by `:` begins a declaration.
 @(private = "file")
 starts_declaration :: proc(p: ^Parser) -> bool {
 	return scans_name_list_colon(p, 0)
 }
 
-// `Ident ("," Ident)* ":"` from `offset`. The bounded scan a declaration, a
-// result item, and an anonymous record field group all ask for.
 @(private = "file")
 scans_name_list_colon :: proc(p: ^Parser, offset: int) -> bool {
 	offset := offset
@@ -855,9 +764,7 @@ scans_name_list_colon :: proc(p: ^Parser, offset: int) -> bool {
 	}
 }
 
-// A parenthesised type is a record iff its first group is labelled. `(T)` in
-// expression position stays grouping, so this looks one field group past the
-// `(` and no further.
+// A labelled first group distinguishes a record type from `(expression)`.
 @(private = "file")
 starts_anon_record_type :: proc(p: ^Parser) -> bool {
 	return at(p, .Lparen) && scans_name_list_colon(p, 1)
@@ -868,9 +775,7 @@ parse_declaration :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> 
 	d := ast_new(p, Decl)
 	d.attributes = attributes
 
-	// Every call site scans `Ident ("," Ident)* ":"` with `starts_declaration`
-	// before entering, so the name and the `:` below are invariant guards rather
-	// than reachable diagnostics: a declaration that got here has both.
+	// Callers have already recognized the name list and colon.
 	names := make([dynamic]Name, 0, 0, p.allocator)
 	for {
 		name, ok := expect(p, .Ident, "L0207", "a name")
@@ -890,18 +795,13 @@ parse_declaration :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> 
 		return nil, false
 	}
 
-	// `::` and `:=` are token pairs, so the second `:` or the `=` is simply the
-	// next token here.
 	switch {
 	case allow(p, .Colon):
 		return finish_constant(p, d, start)
 	case allow(p, .Assign):
-		// `x := e;`
 		return finish_variable(p, d, start)
 	}
 
-	// `Declared_Type = Storage_Modifiers Type ("via" Unary_Expression)?`, and
-	// the modifiers are also legal with the type left inferred.
 	parse_storage_modifiers(p, d)
 	if allow(p, .Assign) {
 		return finish_variable(p, d, start)
@@ -924,17 +824,14 @@ parse_declaration :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> 
 		return finish_variable(p, d, start)
 	}
 
-	// `x: int;` — the zero value.
-	expect(p, .Semicolon, "L0209", "`;` after the declaration")
+	_, terminated := expect(p, .Semicolon, "L0209", "`;` after the declaration")
 	d.kind = .Var
 	d.span = span_to_here(p, start)
+	d.has_error = !terminated
 	return d, true
 }
 
-// grammar.md: after the first `:`, `static` and `thread_local` are storage
-// modifiers only when followed by another modifier, a type-start token, or `=`.
-// Otherwise they are ordinary type names. Duration is the only axis, so the
-// loop runs at most twice — once for the modifier, once to reject a repeat.
+// `static` and `thread_local` remain type names unless a type or `=` follows.
 @(private = "file")
 parse_storage_modifiers :: proc(p: ^Parser, d: ^Decl) {
 	for at(p, .Ident) {
@@ -968,12 +865,11 @@ parse_storage_modifiers :: proc(p: ^Parser, d: ^Decl) {
 	}
 }
 
-// `Constant_Decl`, after its second `:`.
 @(private = "file")
 finish_constant :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	d.kind = .Const
 
-	// `Constant_Decl` binds one name and has no `Storage_Modifiers` or `via`.
+	// Constants bind one name and have no storage modifiers or `via`.
 	if len(d.names) > 1 {
 		parse_error(
 			p,
@@ -998,11 +894,7 @@ finish_constant :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	values[0] = value
 	d.values = values
 
-	// A malformed value is not also asked for its `;` — that second diagnostic
-	// describes nothing new. Resynchronise and keep the node instead, unless the
-	// parser already stands where the next construct begins: a value that
-	// recovered inside its own body has ended there, and scanning on from it
-	// swallows whatever follows.
+	// Do not compound a malformed value with a missing-`;` diagnostic.
 	if expr_has_error(value) {
 		if !at_construct_start(p) {
 			sync_to_item(p)
@@ -1022,7 +914,6 @@ finish_constant :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	return d, true
 }
 
-// `Variable_Initializer_List`, after the `=`.
 @(private = "file")
 finish_variable :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	d.kind = .Var
@@ -1032,8 +923,7 @@ finish_variable :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	for {
 		if at(p, .Uninit) {
 			marker := advance(p)
-			// `---` is not an expression, so the inferred `x := ...` spelling
-			// cannot use it.
+			// `---` needs a written type.
 			if d.declared_type == nil {
 				parse_error(
 					p,
@@ -1056,7 +946,6 @@ finish_variable :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	}
 	d.values = values[:]
 	if invalid {
-		// As above: a malformed initialiser is not also asked for its `;`.
 		sync_to_statement(p)
 		d.has_error = true
 		d.span = span_to_here(p, start)
@@ -1069,7 +958,6 @@ finish_variable :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	return d, true
 }
 
-// `Constant_Initializer`.
 @(private = "file")
 parse_constant_value :: proc(p: ^Parser) -> Expr {
 	#partial switch current(p).kind {
@@ -1080,14 +968,13 @@ parse_constant_value :: proc(p: ^Parser) -> Expr {
 	case .Hook:
 		return parse_hook(p)
 	}
-	// Sets `type_value` (see the field doc) so `My_Int :: int` parses as a value.
+	// Allow `My_Int :: int` to use a type as its value.
 	p.type_value = true
 	defer p.type_value = false
 	return parse_expr(p)
 }
 
-// grammar.md's brace-bodied constant rule: a value terminated by its own outer
-// `}` is not followed by `;`. A trailing composite literal is not one of them.
+// Brace-bodied declarations omit `;`; composite literals do not.
 @(private = "file")
 ends_with_brace :: proc(e: Expr) -> bool {
 	#partial switch v in e {
@@ -1110,11 +997,7 @@ parse_block :: proc(p: ^Parser) -> (^Block, bool) {
 		return nil, false
 	}
 
-	// Braces bound the statements the same way brackets and an argument list's
-	// parentheses bound an expression, so a `where` clause's restriction lifts
-	// here too — it belongs to that clause's own top level. Restoring it on the
-	// way out is also what undoes `close_header`'s write, which is otherwise the
-	// clause's last word on the flag.
+	// Composite literals are allowed inside a nested block of a `where` clause.
 	outer := p.no_composite
 	p.no_composite = false
 	defer p.no_composite = outer
@@ -1159,8 +1042,7 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 		advance(p)
 		return nil, false // empty statement
 	case .Lbrace:
-		// `{` at statement position opens a block, which is why a composite
-		// literal with no type cannot begin an expression statement.
+		// A leading `{` is a block, not a context-inferred composite literal.
 		if b, ok := parse_block(p); ok {
 			return with_attributes(b, attributes), true
 		}
@@ -1176,16 +1058,7 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 	case .When:
 		return with_attributes(parse_when(p), attributes), true
 	case .Impl:
-		// design.md "Methods and implementation blocks": a body-local `impl` gives
-		// a type declared in that body its methods, so a one-off callable record
-		// sits beside the call that takes it. The checker is what limits the
-		// subject.
-		item := parse_impl(p, attributes, start)
-		block, is_impl := item.(^Item_Impl)
-		if !is_impl {
-			return error_stmt(p, item_span(item)), true
-		}
-		return block, true
+		return parse_impl(p, attributes, start), true
 	case .Defer:
 		return with_attributes(parse_defer(p), attributes), true
 	case .Return:
@@ -1215,7 +1088,6 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 	return with_attributes(simple, attributes), true
 }
 
-// Attributes precede their statement, so they also extend its span.
 @(private = "file")
 with_attributes :: proc(s: Stmt, attributes: []Attribute) -> Stmt {
 	base := stmt_base(s)
@@ -1227,8 +1099,7 @@ with_attributes :: proc(s: Stmt, attributes: []Attribute) -> Stmt {
 	return s
 }
 
-// `Simple_Statement = Assignment | Expression_List`, with no trailing `;` —
-// the header forms need it without one.
+// Headers reuse simple statements before their trailing separator.
 @(private = "file")
 parse_simple_statement :: proc(p: ^Parser) -> Stmt {
 	start := current(p)
@@ -1236,8 +1107,7 @@ parse_simple_statement :: proc(p: ^Parser) -> Stmt {
 
 	if at(p, .Assign) || is_compound_assign(current(p).kind) {
 		op := advance(p)
-		// `Expression_List "=" Expression_List`, but the compound form takes
-		// exactly one expression on each side.
+		// Compound assignment takes one expression on each side.
 		rhs: []Expr
 		if op.kind == .Assign {
 			rhs = parse_expression_list(p)
@@ -1281,8 +1151,7 @@ parse_expression_list :: proc(p: ^Parser) -> []Expr {
 	return exprs[:]
 }
 
-// A control-flow header's subject is an `Expression`; an assignment or a list
-// in that position is a syntax error.
+// A control-flow subject is one expression, never an assignment or list.
 @(private = "file")
 expr_of_simple :: proc(p: ^Parser, s: Stmt) -> Expr {
 	if simple, ok := s.(^Stmt_Expr); ok && len(simple.exprs) == 1 {
@@ -1298,10 +1167,7 @@ expr_of_simple :: proc(p: ^Parser, s: Stmt) -> Expr {
 	return error_expr(p, stmt_span(s))
 }
 
-// `(` opens every control-flow header. Without it the header expression abuts
-// the body brace exactly as a `where` clause does, so the same flag stops
-// `switch value { ... }` from taking the body for a composite literal — which
-// swallows the enclosing block's `}` and spills recovery out to file scope.
+// Without `(`, prevent the body brace from becoming a composite literal.
 @(private = "file")
 open_header :: proc(p: ^Parser, message: string) -> bool {
 	if _, ok := expect(p, .Lparen, "L0245", message); ok {
@@ -1311,10 +1177,7 @@ open_header :: proc(p: ^Parser, message: string) -> bool {
 	return false
 }
 
-// One missing brace is one diagnostic, for the same reason as `close_header`:
-// with no `{` consumed there is no `}` to ask for. Asking anyway consumes the
-// *enclosing* block's brace, which reads every statement after this body as part
-// of it — one mistyped header then swallows the rest of the file.
+// Never consume an enclosing `}` when this body never opened.
 @(private = "file")
 close_body :: proc(p: ^Parser, opened: bool, code: string, message: string) -> bool {
 	if !opened {
@@ -1324,8 +1187,7 @@ close_body :: proc(p: ^Parser, opened: bool, code: string, message: string) -> b
 	return ok
 }
 
-// One missing parenthesis is one diagnostic: with no `(` consumed there is no
-// `)` to ask for.
+// A header that never opened has no closing parenthesis to consume.
 @(private = "file")
 close_header :: proc(p: ^Parser, opened: bool, message: string) -> bool {
 	p.no_composite = false
@@ -1350,8 +1212,7 @@ parse_if :: proc(p: ^Parser) -> Stmt {
 	start := advance(p) // `if`
 	opened := open_header(p, "`(` to open the `if` header")
 
-	// `Init_Statement?` then the condition. A `Variable_Decl` carries its own
-	// `;`; a `Simple_Statement` is the init only when a `;` follows it.
+	// A simple statement is the initializer only when `;` follows it.
 	init: Stmt
 	cond: Expr
 	if starts_declaration(p) {
@@ -1425,8 +1286,7 @@ parse_when :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
-// `For_Header` is either the three-part form or a bare condition; the first `;`
-// tells them apart.
+// The first `;` distinguishes a three-part loop from a condition-only loop.
 @(private = "file")
 parse_for :: proc(p: ^Parser) -> Stmt {
 	start := advance(p) // `for`
@@ -1439,7 +1299,6 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 
 	switch {
 	case allow(p, .Semicolon):
-	// `for (; cond; post)` — an empty init
 	case starts_declaration(p):
 		if d, ok := parse_declaration(p, nil, current(p)); ok {
 			init = d
@@ -1480,11 +1339,18 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
-// One binding, which is a leaf or a parenthesised group of bindings that
-// descends into a record field (grammar.md `Binding`). A group takes no `$` or
-// `&` of its own: those mark a leaf, and a group's leaves carry their own.
+// A binding is a leaf or a parenthesized group; `$` and `&` apply to leaves.
 @(private = "file")
 parse_foreach_binding :: proc(p: ^Parser) -> (Foreach_Binding, bool) {
+	p.depth += 1
+	defer p.depth -= 1
+	if p.depth > MAX_NEST {
+		t := current(p)
+		depth_exceeded(p)
+		sync_to_statement(p, true)
+		return Foreach_Binding{name = Name{span = span_of(p, t)}}, false
+	}
+
 	binding: Foreach_Binding
 	if at(p, .Lparen) {
 		start := current(p)
@@ -1502,8 +1368,7 @@ parse_foreach_binding :: proc(p: ^Parser) -> (Foreach_Binding, bool) {
 		if _, closed := expect(p, .Rparen, "L0247", "`)` to close the binding group"); !closed {
 			ok = false
 		}
-		// A group has no name of its own, so it carries the span instead: a
-		// diagnostic about the group still has somewhere to point.
+		// Store the group span in its otherwise empty name.
 		binding.name = Name{span = span_to_here(p, start)}
 		binding.group = group[:]
 		return binding, ok
@@ -1534,10 +1399,6 @@ parse_foreach :: proc(p: ^Parser) -> Stmt {
 			break
 		}
 	}
-	// A binding list has any length: it names the fields of the element the
-	// iterable yields, so its arity is a property of that element's type
-	// (design.md "Element bindings") rather than a syntactic limit.
-
 	_, has_in := expect(p, .In, "L0247", "`in` and the iterable")
 	iterable := parse_expr(p)
 	closed := close_header(p, opened, "`)` to close the `foreach` header")
@@ -1556,13 +1417,16 @@ parse_foreach :: proc(p: ^Parser) -> Stmt {
 @(private = "file")
 parse_defer :: proc(p: ^Parser) -> Stmt {
 	start := advance(p) // `defer`
+	inner_start := current(p)
 	inner, got := parse_statement(p)
+	if !got {
+		parse_error(p, span_of(p, inner_start), "L0216", "empty statement", "expected a statement after `defer`")
+		inner = error_stmt(p, span_of(p, inner_start))
+	}
 
 	s := new_stmt(p, Stmt_Defer, start)
-	if got {
-		s.stmt = inner
-	}
-	s.has_error = got && stmt_has_error(inner)
+	s.stmt = inner
+	s.has_error = !got || stmt_has_error(inner)
 	return s
 }
 
@@ -1573,8 +1437,7 @@ parse_return :: proc(p: ^Parser) -> Stmt {
 	bad := false
 	value: Return_Value
 	has_value := false
-	// A missing `;` is one diagnostic, so a `}` here means "no value"; asking for
-	// an expression first would describe the same typo twice.
+	// Treat `}` as a missing `;`, not as a missing return expression too.
 	if !at(p, .Semicolon) && !at(p, .Rbrace) {
 		value_start := current(p)
 		value.is_inout = allow(p, .Inout)
@@ -1582,8 +1445,7 @@ parse_return :: proc(p: ^Parser) -> Stmt {
 		value.span = span_to_here(p, value_start)
 		bad = expr_has_error(value.expr)
 		has_value = true
-		// design.md: a procedure returns at most one value. A record result is
-		// written as one record value, not as a comma-separated list.
+		// Multiple values require one record value.
 		if at(p, .Comma) {
 			parse_error(
 				p, span_of(p, current(p)), "L0215", "found `,`",
@@ -1617,9 +1479,7 @@ parse_branch :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
-// `switch (name in expr)` is a type switch, and the decision point is *after*
-// the optional `Init_Statement` — a position only reached once that statement
-// is parsed. A value switch over membership is written `switch ((x in y))`.
+// `switch (name in expr)` is a type switch; `switch ((x in y))` tests membership.
 @(private = "file")
 parse_switch :: proc(p: ^Parser) -> Stmt {
 	start := advance(p) // `switch`
@@ -1676,8 +1536,7 @@ at_type_switch_binding :: proc(p: ^Parser) -> bool {
 	return at(p, .Ident) && peek_token(p, 1).kind == .In
 }
 
-// `Value_Case` and `Type_Case`: a list, or nothing for the default case. The
-// statements run to the next `case` or the body's `}`.
+// A case runs until the next `case` or the switch body's `}`.
 @(private = "file")
 parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
 	start := advance(p) // `case`
@@ -1686,9 +1545,7 @@ parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
 	values := make([dynamic]Expr, 0, 0, p.allocator)
 	if !at(p, .Colon) {
 		for {
-			// A type-switch case is a type for an `any_view` subject and the
-			// implicit selector `.name` for a union variant. Both are parsed here;
-			// the checker settles which one the subject calls for.
+			// The checker distinguishes a type from an implicit union selector.
 			append(&values, kind == .Type && !at(p, .Period) ? parse_type(p) : parse_expr(p))
 			if !allow(p, .Comma) {
 				break
@@ -1732,12 +1589,9 @@ is_compound_assign :: proc(kind: Token_Kind) -> bool {
 	return false
 }
 
-// ---------------------------------------------------------------------------
-// Expressions. Levels are grammar.md's; level 1 binds loosest.
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------------- expressions --
 
-// Level 1: `or_else` and the conditional, both right-associative, so
-// `a if c else b if d else e` groups as `a if c else (b if d else e)`.
+// `or_else` and conditionals are right-associative.
 @(private = "file")
 parse_expr :: proc(p: ^Parser) -> Expr {
 	p.depth += 1
@@ -1780,7 +1634,7 @@ parse_expr :: proc(p: ^Parser) -> Expr {
 	return lhs
 }
 
-// Level 2: ranges, non-associative — a range takes exactly two endpoints.
+// Ranges are non-associative.
 @(private = "file")
 parse_level_2 :: proc(p: ^Parser) -> Expr {
 	lo := current(p).lo
@@ -1824,8 +1678,7 @@ is_range_op :: proc(kind: Token_Kind) -> bool {
 	return kind == .Range_Incl || kind == .Range_Excl
 }
 
-// Levels 3-7, all left-associative. 0 means "not a binary operator", which is
-// what stops the climb.
+// Binary levels 3-7 are left-associative; zero is not an operator.
 @(private = "file")
 binary_level :: proc(kind: Token_Kind) -> int {
 	#partial switch kind {
@@ -1843,9 +1696,7 @@ binary_level :: proc(kind: Token_Kind) -> int {
 	return 0
 }
 
-// The operator loop is iterative but its tree is not: each turn wraps the
-// left-hand side one node deeper. That spine counts against the same budget, so
-// a 10,000-term chain cannot outrun the walkers that recurse over it later.
+// Count the left-associated AST spine against the recursion budget.
 @(private = "file")
 parse_binary :: proc(p: ^Parser, min_level: int) -> Expr {
 	lo := current(p).lo
@@ -1892,8 +1743,7 @@ parse_unary :: proc(p: ^Parser) -> Expr {
 			return depth_exceeded(p)
 		}
 		advance(p)
-		// `&mut place` only: `mut` after any other unary operator is not a form,
-		// and `mut` in the binary `&` position falls through to "expected a type".
+		// Only address-of accepts `mut`.
 		mutable := t.kind == .Amp && allow(p, .Mut)
 		operand := parse_unary(p)
 		e := new_expr(p, Expr_Unary, t.lo)
@@ -1918,8 +1768,7 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 		direct_type_is_expression = true
 	}
 
-	// Suffixes nest the same way an operator chain does, and panic mode must
-	// stop building rather than pile more nodes onto a failed expression.
+	// Count the postfix AST spine against the recursion budget.
 	spine := 0
 	defer p.depth -= spine
 
@@ -1981,9 +1830,7 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 			e = n
 
 		case .Lbrace:
-			// `Composite_Type "{"` — only the forms grammar.md lists as a
-			// composite type take a brace, so `f(x){...}` is not a literal.
-			// Inside a `where` clause this brace opens the body instead.
+			// Calls are composite types only when their callee names a type.
 			if p.no_composite || !is_composite_type(e) {
 				return finish_postfix(p, e, started_as_type, direct_type_is_expression)
 			}
@@ -2016,12 +1863,10 @@ finish_postfix :: proc(
 	return e
 }
 
-// `Index_Or_Slice`: `[a]`, the user-defined comma form `[a, b]`, or a slice
-// with either endpoint omitted.
+// Parses indexing, multi-indexing, and slices with optional endpoints.
 @(private = "file")
 parse_index_or_slice :: proc(p: ^Parser, operand: Expr, lo: u32) -> Expr {
 	advance(p) // `[`
-	// Brackets bound the expression, so a `where` clause's restriction lifts.
 	outer := p.no_composite
 	p.no_composite = false
 	defer p.no_composite = outer
@@ -2072,7 +1917,7 @@ is_composite_type :: proc(e: Expr) -> bool {
 	case ^Expr_Ident, ^Expr_Selector, ^Type_Slice, ^Type_Array, ^Type_Dynamic_Array, ^Type_Map:
 		return true
 	case ^Expr_Call:
-		// `Matrix(f32, 4){...}`: a generic application, not a call result.
+		// `Matrix(f32, 4){...}` is a generic application.
 		if _, is_ident := v.callee.(^Expr_Ident); is_ident {
 			return true
 		}
@@ -2122,8 +1967,7 @@ parse_composite_body :: proc(p: ^Parser, type_expr: Expr, lo: u32) -> Expr {
 	return c
 }
 
-// `Argument_List`, also used for `Type_Arguments` — the two are the same token
-// shape, and a named argument in a generic application is M2's to reject.
+// Calls and generic applications share argument syntax.
 @(private = "file")
 parse_argument_list :: proc(p: ^Parser) -> ([]Argument, bool) {
 	advance(p) // `(`
@@ -2154,8 +1998,7 @@ parse_argument :: proc(p: ^Parser) -> Argument {
 	start := current(p)
 	a: Argument
 
-	// `name = value`. `=` and `==` are distinct tokens, so one token of
-	// lookahead settles it.
+	// One-token lookahead distinguishes `name = value`.
 	if at(p, .Ident) && peek_token(p, 1).kind == .Assign {
 		a.name = name_of(p, advance(p))
 		advance(p) // `=`
@@ -2166,7 +2009,7 @@ parse_argument :: proc(p: ^Parser) -> Argument {
 		advance(p)
 		a.mode = .Inout
 	case .Range:
-		// `..expr` spreads a variadic; the grammar does not let it be named.
+		// A spread cannot be named.
 		if a.name.text == "" {
 			advance(p)
 			a.mode = .Spread
@@ -2182,10 +2025,7 @@ parse_argument :: proc(p: ^Parser) -> Argument {
 	return a
 }
 
-// `Argument_Value = Expression | Type`. A distinctive type prefix commits to
-// `Type`, except when the parse turns out to be a proc literal or a composite
-// type followed by its literal body — both get reparsed through the ordinary
-// precedence parser so suffixes and operators remain available.
+// Proc and composite literals are reparsed as expressions after a type probe.
 @(private = "file")
 parse_argument_value :: proc(p: ^Parser) -> Expr {
 	if !starts_type(current(p).kind) {
@@ -2216,9 +2056,7 @@ parse_argument_value :: proc(p: ^Parser) -> Expr {
 		return candidate
 	}
 
-	// The speculative type parse was diagnostic-free on these valid shapes.
-	// Restore parser state and discard any defensive diagnostics before parsing
-	// the complete expression, including its suffixes and binary operators.
+	// Roll back the type probe before parsing the complete expression.
 	p.index = index
 	p.last = last
 	p.suppress = suppress
@@ -2252,7 +2090,7 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 		return e
 
 	case .Period:
-		// The implicit selector `.Member`; its operand comes from context.
+		// `.Member` takes its operand from context.
 		advance(p)
 		name, ok := expect_member_name(p, "L0225", "a name after `.`")
 		e := new_expr(p, Expr_Selector, t.lo)
@@ -2276,7 +2114,7 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 		return e
 
 	case .Lbrace:
-		// A composite literal taking its type from context.
+		// A composite literal whose type comes from context.
 		if p.no_composite {
 			parse_error(p, span_of(p, t), "L0220", fmt_found(p, t), "expected an expression")
 			return error_expr(p, span_of(p, t))
@@ -2284,9 +2122,7 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 		return parse_composite_body(p, nil, t.lo)
 
 	case .Lparen:
-		// A labelled group is a type, not a parenthesised expression. Test before
-		// consuming the opener so `parse_type` sees the whole spelling; that also
-		// covers the constant path `Entry :: (key: string_view, value: int);`.
+		// A labelled group is an anonymous record type.
 		if starts_anon_record_type(p) {
 			return parse_type(p)
 		}
@@ -2298,9 +2134,7 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 		if starts_type(kind) && kind != .Lbracket && kind != .Map {
 			inner = parse_type(p)
 		} else {
-			// A bracket or map type may be a composite literal's, so it is parsed
-			// as an expression — `([]int{1, 2}).len()` — that is still allowed to
-			// stop at the bare type a conversion names, `([]int)(x)`.
+			// Bracket and map types may continue into literals or conversions.
 			p.type_value = kind == .Lbracket || kind == .Map
 			inner = parse_expr(p)
 		}
@@ -2340,11 +2174,7 @@ literal_kind :: proc(kind: Token_Kind) -> Literal_Kind {
 	return .Int
 }
 
-// ---------------------------------------------------------------------------
-// Types. `parse_type` is a restricted entry point into the expression node
-// domain: the distinctive forms are handled here and everything else must be a
-// type name, so `x: 1 + 2;` is still a parse error.
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------------------- types --
 
 @(private = "file")
 starts_type :: proc(kind: Token_Kind) -> bool {
@@ -2352,7 +2182,6 @@ starts_type :: proc(kind: Token_Kind) -> bool {
 	case .Caret, .Lbracket, .Map, .Distinct, .Dyn, .Type, .Dollar, .Move_Only:
 		return true
 	case .Proc, .Struct, .Enum, .Union, .Interface:
-		// Parsed in slice 2; recognised here so they get a real message.
 		return true
 	}
 	return false
@@ -2470,10 +2299,7 @@ parse_type :: proc(p: ^Parser) -> Expr {
 	return error_expr(p, span_of(p, t))
 }
 
-// `(name: Type, ...)`. Its own grammar rather than `parse_parameter_list`: an
-// anonymous record field is a name list, a `:`, and a type, and nothing else.
-// Every parameter-only spelling is a syntax error naming the declared struct
-// that carries it.
+// Anonymous record fields deliberately exclude parameter-only syntax.
 @(private = "file")
 parse_anon_record_type :: proc(p: ^Parser) -> Expr {
 	open := advance(p) // `(`
@@ -2509,7 +2335,7 @@ parse_anon_record_field :: proc(p: ^Parser) -> (Field, bool) {
 			p, span_of(p, start), "L0254", fmt_found(p, start),
 			"a record field is `name: Type`; every field of a record type is named",
 		)
-		// Consume to the next separator so one bad field does not cascade.
+		// Resume at the next field.
 		for !at(p, .Comma) && !at(p, .Rparen) && !at(p, .EOF) {
 			advance(p)
 		}
@@ -2565,7 +2391,6 @@ anon_record_excluded_spelling :: proc(p: ^Parser) -> string {
 	return ""
 }
 
-// Everything the grammar spells with a leading `[`.
 @(private = "file")
 parse_bracket_type :: proc(p: ^Parser) -> Expr {
 	open := advance(p) // `[`
@@ -2574,11 +2399,11 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 	#partial switch current(p).kind {
 	case .Caret:
 		advance(p)
-		expect(p, .Rbracket, "L0231", "`]` after `[^`")
+		_, closed := expect(p, .Rbracket, "L0231", "`]` after `[^`")
 		elem := parse_type(p)
 		n := new_expr(p, Type_C_Pointer, lo)
 		n.elem = elem
-		n.has_error = expr_has_error(elem)
+		n.has_error = !closed || expr_has_error(elem)
 		return n
 
 	case .Rbracket:
@@ -2593,27 +2418,25 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 
 	case .Dynamic:
 		advance(p)
-		expect(p, .Rbracket, "L0231", "`]` after `[dynamic`")
+		_, closed := expect(p, .Rbracket, "L0231", "`]` after `[dynamic`")
 		elem := parse_type(p)
 		n := new_expr(p, Type_Dynamic_Array, lo)
 		n.elem = elem
-		n.has_error = expr_has_error(elem)
+		n.has_error = !closed || expr_has_error(elem)
 		return n
 
 	case .Question:
 		advance(p)
-		expect(p, .Rbracket, "L0231", "`]` after `[?`")
+		_, closed := expect(p, .Rbracket, "L0231", "`]` after `[?`")
 		elem := parse_type(p)
 		n := new_expr(p, Type_Array, lo)
 		n.inferred = true
 		n.elem = elem
-		n.has_error = expr_has_error(elem)
+		n.has_error = !closed || expr_has_error(elem)
 		return n
 	}
 
-	// `[$N]E` binds the length as a generic parameter. `$Name` is a `Type` in
-	// grammar.md, not an expression, so the array length position accepts it
-	// directly rather than through the expression grammar.
+	// `[$N]E` uses a type-level generic parameter as the length.
 	length: Expr
 	if at(p, .Dollar) {
 		length = parse_type(p)
@@ -2632,8 +2455,7 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 	return n
 }
 
-// `Type_Name Type_Arguments?`: one optional selector — package-qualified or an
-// associated type — and an optional generic application.
+// A type name may have one selector and generic arguments.
 @(private = "file")
 parse_type_name :: proc(p: ^Parser) -> Expr {
 	start := current(p)
@@ -2659,8 +2481,7 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 
 	if at(p, .Lparen) {
 		if scans_name_list_colon(p, 1) {
-			// `Foo(x: int)`: labelled fields after a type name. Say so here rather
-			// than letting generic-argument recovery guess at it.
+			// Diagnose `Foo(x: int)` as a misplaced record type.
 			parse_error(
 				p, span_of(p, current(p)), "L0254", "found a labelled field list",
 				"a record type is written on its own, `(x: int)`, not applied to a name",
@@ -2681,14 +2502,9 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 	return e
 }
 
-// ---------------------------------------------------------------------------
-// Procedures, records and interfaces: the brace-bodied forms, all reached
-// through `parse_type` so they work in every position the grammar allows.
-// ---------------------------------------------------------------------------
+// ------------------------------------------ procedures, records, interfaces --
 
-// `proc` opens four productions: a group, a bare `Proc_Type`, a definition and
-// a `---` declaration. The token after `proc`, and whether a body follows,
-// separate them.
+// `proc` begins a group, type, definition, or `---` declaration.
 @(private = "file")
 parse_proc :: proc(p: ^Parser) -> Expr {
 	start := advance(p) // `proc`
@@ -2700,8 +2516,7 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 
 	convention := ""
 	if at(p, .String) {
-		// The token text includes its quotes; a calling convention is a bare word
-		// with no escapes, so slicing them off is the whole unquote.
+		// Calling conventions are quoted bare words.
 		raw := text_of(p, advance(p))
 		convention = len(raw) >= 2 ? raw[1:len(raw) - 1] : raw
 	}
@@ -2754,7 +2569,6 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 	return e
 }
 
-// `Proc_Group`: `proc { a, b }`
 @(private = "file")
 parse_proc_group :: proc(p: ^Parser, lo: u32) -> Expr {
 	advance(p) // `{`
@@ -2791,8 +2605,7 @@ parse_parameter_list :: proc(p: ^Parser) -> ([]Parameter, bool) {
 	bad := false
 	for !at(p, .Rparen) && !at(p, .EOF) {
 		param, ok := parse_parameter(p)
-		// Nothing was recognised, so there is no parameter to record — only the
-		// receiver `self` is legitimately nameless.
+		// Only a recognized parameter or nameless receiver is retained.
 		if ok || len(param.names) > 0 {
 			append(&params, param)
 		}
@@ -2807,8 +2620,7 @@ parse_parameter_list :: proc(p: ^Parser) -> ([]Parameter, bool) {
 	return params[:], closed && !bad
 }
 
-// `Parameter`. A parameter with no type at all is the receiver `self`, whose
-// type comes from the enclosing block.
+// An untyped parameter is the enclosing impl's `self` receiver.
 @(private = "file")
 parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 	start := current(p)
@@ -2838,14 +2650,10 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 		return param, named
 	}
 
-	// design.md "Receiver forms": `self: borrow` writes out the mode a plain
-	// `self` already has, so the receiver's mode can be read off the signature
-	// like every other one. Only the receiver may omit the type, which is what
-	// keeps `value: borrow` meaning a parameter of a type named `borrow`.
+	// Only `self: borrow` may omit its type.
 	self_borrow := len(param.names) == 1 && param.names[0].name.text == "self" &&
 		(peek_token(p, 1).kind == .Comma || peek_token(p, 1).kind == .Rparen)
-	// `borrow` is contextual here, so an ordinary type or procedure named
-	// `borrow` remains usable elsewhere (and `value: borrow` is still a type).
+	// `borrow` remains usable as an ordinary type name.
 	if is_contextual(p, "borrow") && (starts_type(peek_token(p, 1).kind) ||
 	   peek_token(p, 1).kind == .Ident || peek_token(p, 1).kind == .Lparen || self_borrow) {
 		advance(p)
@@ -2857,8 +2665,7 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 		return param, named && !expr_has_error(param.type)
 	}
 
-	// design.md "Receiver forms": `self: inout` and `self: move` may leave the
-	// type to the enclosing block, as a plain `self` does.
+	// `self: inout` and `self: move` may omit the receiver type.
 	receiver_type_omitted := peek_token(p, 1).kind == .Comma || peek_token(p, 1).kind == .Rparen
 	#partial switch current(p).kind {
 	case .Inout:
@@ -2886,10 +2693,7 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 	return param, named && !expr_has_error(param.type) && !expr_has_error(param.default)
 }
 
-// `Results = Result_Type`. design.md: a procedure returns at most one value, so
-// this is one type and never a list. A parenthesised labelled group is that one
-// type — an anonymous record — and `parse_type` reads it; an unlabelled `(T, U)`
-// is the deleted multi-result spelling and says so.
+// A procedure returns one type; a labelled group is one anonymous record type.
 @(private = "file")
 parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 	if !allow(p, .Arrow) {
@@ -2903,7 +2707,7 @@ parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 			p, span_of(p, start), "L0238", "found an unlabelled `(`",
 			"a procedure returns at most one value; write `(name: Type, ...)` to return a record",
 		)
-		// Consume the group so one deleted signature does not cascade.
+		// Consume the obsolete result list to avoid cascading.
 		depth := 0
 		for !at(p, .EOF) {
 			if at(p, .Lparen) {
@@ -2928,9 +2732,7 @@ parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 	return item, !expr_has_error(item.type)
 }
 
-// `Where_Clause`. Its expressions may not have a composite literal at the top
-// level: the `{` that follows opens the declaration's body. This is the only
-// place in the grammar where an expression abuts a body brace.
+// A top-level `where` expression stops before the declaration body.
 @(private = "file")
 parse_where_clause :: proc(p: ^Parser) -> []Expr {
 	if !at(p, .Where) {
@@ -2952,8 +2754,7 @@ parse_where_clause :: proc(p: ^Parser) -> []Expr {
 	return clauses[:]
 }
 
-// `Generic_Parameters`: `($T, $U: type, $N: int)`. Commas separate names inside
-// a group until its `:`, and groups from each other after the type.
+// Generic parameters may group names before one type.
 @(private = "file")
 parse_generic_params :: proc(p: ^Parser) -> ([]Generic_Param, bool) {
 	if !at(p, .Lparen) {
@@ -2981,8 +2782,7 @@ parse_generic_params :: proc(p: ^Parser) -> ([]Generic_Param, bool) {
 				break
 			}
 		}
-		// No name was recognised, so the `:` and the type would be asked for at
-		// the same token the name was.
+		// Avoid follow-up errors when no name was recognized.
 		if !named {
 			bad = true
 			more, _ := next_element(p, .Rparen, true, "")
@@ -3009,7 +2809,7 @@ parse_generic_params :: proc(p: ^Parser) -> ([]Generic_Param, bool) {
 	return params[:], closed && !bad
 }
 
-// `Struct_Type` and `Union_Type`: one node, since they differ only in body.
+// Structs and unions share one node shape.
 @(private = "file")
 parse_record :: proc(p: ^Parser) -> Expr {
 	keyword := advance(p) // `struct` or `union`
@@ -3040,8 +2840,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 			}
 			entry.name = name_of(p, name)
 			_, typed := expect(p, .Colon, "L0239", "`:` after the variant name")
-			// A payloadless variant is written `name:` — nothing follows the colon
-			// but the separator or the closing brace.
+			// `name:` is a payloadless variant.
 			if !at(p, .Comma) && !at(p, .Rbrace) && !at(p, .EOF) {
 				entry.type = parse_type(p)
 			}
@@ -3073,7 +2872,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	return e
 }
 
-// `Field_List`. `using` is contextual here: a field may also be named `using`.
+// `using` remains a valid field name when not followed by another identifier.
 @(private = "file")
 parse_field_list :: proc(p: ^Parser) -> ([]Field, bool) {
 	fields := make([dynamic]Field, 0, 0, p.allocator)
@@ -3088,8 +2887,7 @@ parse_field_list :: proc(p: ^Parser) -> ([]Field, bool) {
 			field.is_using = true
 		}
 
-		// Something that cannot begin a field is one diagnostic, not three: asking
-		// for the `:` and the type at the same token describes nothing new.
+		// One error is enough when no field can begin here.
 		if !at(p, .Ident) && !at(p, .Type) {
 			expect_member_name(p, "L0241", "a field name")
 			bad = true
@@ -3128,8 +2926,7 @@ parse_field_list :: proc(p: ^Parser) -> ([]Field, bool) {
 	return fields[:], !bad
 }
 
-// `Enum_Type`. A backing type may precede the body; a `Type` never starts with
-// `{`, so one token settles it.
+// An enum backing type is present when `{` is not next.
 @(private = "file")
 parse_enum :: proc(p: ^Parser) -> Expr {
 	keyword := advance(p) // `enum`
@@ -3213,12 +3010,7 @@ parse_interface :: proc(p: ^Parser) -> Expr {
 	return e
 }
 
-// `Requirement`. `slot` is contextual: only with `Identifier`, `:`, `proc`
-// behind it. An opening `(` begins `Bindings` only when an identifier then `,`
-// or `:` follows — neither can appear that early in an expression, so the test
-// is exact, which is what makes grammar.md's advice to "wrap the expression in
-// a second pair of parentheses" actually work. Committing to bindings on any
-// bare `(` would leave `((a + b).c() -> T;)` with no spelling at all.
+// Lookahead distinguishes contextual `slot` and binding lists from expressions.
 @(private = "file")
 parse_requirement :: proc(p: ^Parser) -> (Requirement, bool) {
 	start := current(p)
@@ -3257,8 +3049,6 @@ parse_requirement :: proc(p: ^Parser) -> (Requirement, bool) {
 		sync_to_statement(p) // to the next `;`, or the body's `}`
 	}
 	requirement.span = span_to_here(p, start)
-	// design.md "Interface bodies": a bare requirement is a truth condition, and
-	// bound names are hypothetical values that are never constant.
 	result_ok := true
 	if len(requirement.bindings) > 0 && requirement.result == nil && bindings_ok {
 		parse_error(
@@ -3276,7 +3066,6 @@ parse_requirement :: proc(p: ^Parser) -> (Requirement, bool) {
 	return requirement, ok
 }
 
-// `Bindings`: `(a, b: T, c: inout U)`
 @(private = "file")
 parse_bindings :: proc(p: ^Parser) -> ([]Binding_Group, bool) {
 	advance(p) // `(`
@@ -3300,8 +3089,7 @@ parse_bindings :: proc(p: ^Parser) -> ([]Binding_Group, bool) {
 				break
 			}
 		}
-		// As in a generic parameter group: with no name recognised, the `:` and
-		// the type would be asked for at the same token the name was.
+		// Avoid follow-up errors when no name was recognized.
 		if !named {
 			bad = true
 			more, _ := next_element(p, .Rparen, true, "")
@@ -3329,7 +3117,6 @@ parse_bindings :: proc(p: ^Parser) -> ([]Binding_Group, bool) {
 	return groups[:], closed && !bad
 }
 
-// `Operator_Decl`: `operator(+) proc ...`, definition or `---` declaration.
 @(private = "file")
 parse_operator :: proc(p: ^Parser) -> Expr {
 	keyword := advance(p) // `operator`
@@ -3362,9 +3149,7 @@ parse_operator :: proc(p: ^Parser) -> Expr {
 	return e
 }
 
-// `hook(convert|copy|drop) proc ...`. Hooks deliberately accept one procedure,
-// not a procedure group: conversion overloads are collected by role, while the
-// two lifecycle roles are coherent singletons.
+// Hooks accept one procedure, not a procedure group.
 @(private = "file")
 parse_hook :: proc(p: ^Parser) -> Expr {
 	keyword := advance(p) // `hook`
@@ -3404,8 +3189,7 @@ parse_hook :: proc(p: ^Parser) -> Expr {
 	return e
 }
 
-// `Operator_Symbol`. The index forms are several tokens, so the symbol is
-// recorded as canonical text.
+// Multi-token index operators are stored in canonical form.
 @(private = "file")
 parse_operator_symbol :: proc(p: ^Parser) -> (string, Span) {
 	start := current(p)
