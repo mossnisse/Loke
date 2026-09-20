@@ -1,4 +1,3 @@
-// Compile-time result contracts on ordinary procedure values.
 package lokec
 
 Proc_Contract_Check :: struct { from, to: Type_Id, span: Span }
@@ -48,9 +47,6 @@ record_proc_contract_check :: proc(c: ^Compiler, from, to: Type_Id, span: Span) 
 	for check in c.proc_contract_checks {
 		if check.from == from && check.to == to && check.span == span { return }
 	}
-	if c.proc_contract_checks.allocator.procedure == nil {
-		c.proc_contract_checks = make([dynamic]Proc_Contract_Check, 0, 8, c.semantic_allocator)
-	}
 	append(&c.proc_contract_checks, Proc_Contract_Check{from, to, span})
 }
 
@@ -72,6 +68,7 @@ check_proc_contracts :: proc(k: ^Checker) {
 dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 	if (a.static && !b.static) || (a.thread && !b.thread) || (a.fresh && !b.fresh) ||
 	   (a.local && !b.local) || (a.unknown && !b.unknown) { return false }
+	if a.fresh && !region_contract_within(a.fresh_region, b.fresh_region) { return false }
 	for wanted, index in a.params {
 		if !wanted { continue }
 		if index >= len(b.params) || !b.params[index] { return false }
@@ -118,8 +115,7 @@ result_contract_within :: proc(a, b: Result_Provenance) -> bool {
 	return true
 }
 
-// Calls through contract-bearing values use precisely the same substitution
-// and fixed-point dependency as a direct call. This does not devirtualize them.
+// Contract-bearing indirect calls use direct-call substitution.
 call_contract_declaration :: proc(c: ^Compiler, call: ^Expr_Call) -> Symbol_Id {
 	id := call.resolution.chosen_overload
 	if id == INVALID_SYMBOL { id = call.resolution.symbol }

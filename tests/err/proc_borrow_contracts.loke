@@ -63,3 +63,7 @@ converted_temporary :: proc() {
 choose_region :: proc(first, second: Allocator) -> Allocator { return first; }
 other_region :: proc(first, second: Allocator) -> Allocator { return second; }
 wrong_region :: proc() { f := choose_region; f = other_region; }
+
+allocate_first :: proc(first, second: Allocator) -> ^mut int { return new(int, first) or_else nil; }
+allocate_second :: proc(first, second: Allocator) -> ^mut int { return new(int, second) or_else nil; }
+wrong_allocation_region :: proc() { f := allocate_first; f = allocate_second; }

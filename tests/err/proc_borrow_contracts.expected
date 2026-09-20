@@ -43,3 +43,6 @@ this temporary has ended
 L0645
 @65:50
 inferred contract of `choose_region`
+L0645
+@69:62
+inferred contract of `allocate_first`
