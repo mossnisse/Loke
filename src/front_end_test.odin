@@ -1355,6 +1355,28 @@ compilation_destruction_releases_owned_front_end_state :: proc(t: ^testing.T) {
 	destroy_compilation(&c)
 }
 
+// `core:sync` names the `Memory_Order` that `base:runtime` declares. When that
+// declaration is missing or malformed the type never arrives, and binding the
+// name to `<invalid>` anyway would report every use as a broken member of a type
+// that exists.
+@(test)
+an_unresolved_contributed_type_binds_nothing :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	k := Checker{c = &c}
+	id := new_package(&c, "sync", STD_SYNC)
+	pkg := package_of(&c, id)
+	pkg.scope = new_scope(&c, build_universe(&c), .Package)
+
+	// No `base:runtime` was prepared, so `memory_order_type` cannot answer.
+	contribute_standard_members(&k, pkg)
+	_, bound := pkg.scope.names[intern_identifier(&c, "Memory_Order")]
+	testing.expect(t, !bound, "an unresolved `Memory_Order` was bound anyway")
+	// The rest of the arm still lands: one missing type is not a failed package.
+	_, atomics := pkg.scope.names[intern_identifier(&c, "atomic_load")]
+	testing.expect(t, atomics, "the atomic intrinsics were skipped with it")
+}
+
 // A speculative check reports, rolls back, and must leave the compilation
 // exactly as it found it — including `error_count`, which decides the exit code.
 @(test)
