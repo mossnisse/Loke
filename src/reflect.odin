@@ -3,8 +3,7 @@
 // `meta.Field` and `meta.Enum_Value` are compiler-owned nominal struct types
 // whose values are ordinary `Const_Aggregate`s, reusing the existing constant
 // representation instead of inventing a third one. A descriptor is kept out of
-// runtime storage by the `descriptor` marker on its type, which
-// `type_is_supported` reads.
+// runtime storage by the `descriptor` marker on its type.
 //
 // `typeid` is symbolic during checking — a `typeid_of(T)` constant carries the
 // canonical `Type_Id` — and numeric only after `freeze_typeids`. This keeps
@@ -18,7 +17,6 @@ import "core:strings"
 
 // ------------------------------------------------------- descriptor types --
 
-// `meta.Field`: name, declared type, and declaration index.
 meta_field_type :: proc(c: ^Compiler) -> Type_Id {
 	if c.meta_field_type != INVALID_TYPE {
 		return c.meta_field_type
@@ -51,6 +49,7 @@ META_ENUM_NAME :: 0
 META_ENUM_VALUE :: 1
 META_ENUM_INDEX :: 2
 
+@(private = "file")
 Descriptor_Field :: struct {
 	name: string,
 	type: Type_Id,
@@ -95,16 +94,63 @@ type_is_compile_time_only :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return false
 }
 
+// `type_is_supported` rejects a whole shape when a compile-time-only type sits
+// anywhere inside it, so `proc(f: meta.Field)` has no name of its own to blame.
+// This finds the component to blame, or INVALID_TYPE. Driven off the recorded
+// components rather than an exhaustive kind switch: a kind this misses falls
+// back to the generic gate, which is where it already was.
+compile_time_only_component :: proc(c: ^Compiler, id: Type_Id, depth := 0) -> Type_Id {
+	if id == INVALID_TYPE || depth > 32 {
+		return INVALID_TYPE // a recursive nominal type; its own declaration is checked once
+	}
+	if type_is_compile_time_only(c, id) {
+		return id
+	}
+	info := underlying_info(c, id)
+	if info == nil {
+		return INVALID_TYPE
+	}
+	components := [?]Type_Id{info.element, info.key, info.result}
+	for component in components {
+		if found := compile_time_only_component(c, component, depth + 1); found != INVALID_TYPE {
+			return found
+		}
+	}
+	for parameter in info.parameters {
+		if found := compile_time_only_component(c, parameter, depth + 1); found != INVALID_TYPE {
+			return found
+		}
+	}
+	for variant in info.variants {
+		if found := compile_time_only_component(c, variant, depth + 1); found != INVALID_TYPE {
+			return found
+		}
+	}
+	if info.kind == .Struct {
+		for field in info.fields {
+			sym := symbol_of(c, field)
+			if sym == nil {
+				continue
+			}
+			if found := compile_time_only_component(c, sym.type, depth + 1); found != INVALID_TYPE {
+				return found
+			}
+		}
+	}
+	return INVALID_TYPE
+}
+
 // ---------------------------------------------------------- descriptors --
 
+@(private = "file")
 string_view_const :: proc(text: string) -> Const_Value {
 	return Const_Value{kind = .String, text = text}
 }
 
-// The `[N]meta.Field` a `fields_of(T)` call folds to. Declaration order comes
-// from the resolved nominal type. Visibility is judged at the reflection
-// lookup package, so a descriptor array formed inside the declaring package
-// cannot leak members an importer may not name.
+// The `[N]meta.Field` a `fields_of(T)` call folds to. design.md: reflection
+// observes only what is visible from the lookup package, so an array formed
+// inside the declaring package cannot leak fields an importer may not name.
+@(private = "file")
 fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Const_Value, bool) {
 	info := underlying_info(k.c, subject)
 	if info == nil || info.kind != .Struct || info.descriptor {
@@ -121,14 +167,18 @@ fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Cons
 		values[META_FIELD_NAME] = string_view_const(identifier_text(k.c, sym.name))
 		values[META_FIELD_TYPE] = type_const(sym.type)
 		// A filtered descriptor still addresses the field's physical slot in the
-		// original record; its position in this compact descriptor array is not a
-		// storage index.
+		// original record; its position in this compact array is not a storage index.
 		values[META_FIELD_INDEX] = int_const(k.c, i64(sym.index))
 		append(&elements, aggregate_const(k.c, descriptor, values))
 	}
 	return descriptor_array(k.c, descriptor, elements[:])
 }
 
+// Enum members carry no visibility of their own: the grammar has no
+// `@(private)` on one, and an importer that can name the enum can name `.Red`.
+// Filtering them would disagree with both name lookup and the runtime
+// `type_info_of` table, which lists every member.
+@(private = "file")
 enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Const_Value, bool) {
 	info := underlying_info(k.c, subject)
 	if info == nil || info.kind != .Enum {
@@ -138,13 +188,13 @@ enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id,
 	elements := make([dynamic]Const_Value, 0, len(info.fields), k.c.semantic_allocator)
 	for member in info.fields {
 		sym := symbol_of(k.c, member)
-		if sym == nil || !member_is_visible(k, sym) {
+		if sym == nil {
 			continue
 		}
 		values := make([]Const_Value, 3, k.c.semantic_allocator)
 		values[META_ENUM_NAME] = string_view_const(identifier_text(k.c, sym.name))
 		values[META_ENUM_VALUE] = sym.const_value
-		values[META_ENUM_INDEX] = int_const(k.c, i64(len(elements)))
+		values[META_ENUM_INDEX] = int_const(k.c, i64(sym.index))
 		append(&elements, aggregate_const(k.c, descriptor, values))
 	}
 	return descriptor_array(k.c, descriptor, elements[:])
@@ -156,6 +206,7 @@ descriptor_array :: proc(c: ^Compiler, element: Type_Id, elements: []Const_Value
 	return type, aggregate_const(c, type, elements), true
 }
 
+@(private = "file")
 aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) -> Const_Value {
 	aggregate := new(Const_Aggregate, c.semantic_allocator)
 	aggregate.type = type
@@ -165,8 +216,7 @@ aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) ->
 
 // ------------------------------------------------------------- typeid --
 
-// A `typeid_of(T)` constant carries the canonical `Type_Id` symbolically, so
-// equality and compile-time evaluation do not depend on allocation order.
+@(private = "file")
 typeid_const :: proc(type: Type_Id) -> Const_Value {
 	return Const_Value{kind = .Type, type_value = type}
 }
@@ -228,9 +278,6 @@ freeze_typeids :: proc(c: ^Compiler) {
 // terminates on the already-requested check.
 @(private = "file")
 request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
-	if type_of(c, type) == nil {
-		return
-	}
 	consider :: proc(c: ^Compiler, referenced: Type_Id) {
 		if referenced == INVALID_TYPE || !type_is_supported(c, referenced) {
 			return
@@ -250,9 +297,11 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 	}
 	consider(c, under.element)
 	consider(c, under.key)
-	for field in under.fields {
-		if sym := symbol_of(c, field); sym != nil && under.kind == .Struct {
-			consider(c, sym.type)
+	if under.kind == .Struct {
+		for field in under.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				consider(c, sym.type)
+			}
 		}
 	}
 	for variant in under.variants {
@@ -261,9 +310,7 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 	for parameter in under.parameters {
 		consider(c, parameter)
 	}
-	if under.result != INVALID_TYPE {
-		consider(c, under.result)
-	}
+	consider(c, under.result)
 }
 
 // A symbol's package-qualified identity. A bare identifier is not one: two
@@ -284,8 +331,6 @@ symbol_key :: proc(c: ^Compiler, id: Symbol_Id) -> string {
 	)
 }
 
-// Generic and `dyn` arguments, each named by its own stable key rather than by
-// the display spelling the applied type's `name` was built from.
 @(private = "file")
 write_applied_args :: proc(
 	c: ^Compiler,
@@ -304,28 +349,31 @@ write_applied_args :: proc(
 }
 
 // A canonical identity independent of both request order and the internal
-// Type_Id allocation order. Nominal types use their package-qualified symbol;
-// an applied type — a generic instance or a `dyn` view — names what it was
-// applied to plus each argument's own key, since its readable `name` is a
-// display spelling two unrelated types can share; structural types recursively
-// name their complete shape.
+// Type_Id allocation order. A readable `name` is never an identity — `Token`,
+// `Box(Token)` and `dyn Drawable` are each a spelling two unrelated types can
+// share — so a nominal type keys on its package-qualified symbol, an applied
+// type on what it was applied to plus each argument's own key, and a structural
+// type on its complete recursive shape.
 typeid_sort_key :: proc(c: ^Compiler, type: Type_Id) -> string {
-	memo := make(map[Type_Id]string, c.semantic_allocator)
-	visiting := make(map[Type_Id]bool, c.semantic_allocator)
+	// Scratch: only the keys themselves live in the semantic arena.
+	memo := make(map[Type_Id]string, context.temp_allocator)
+	visiting := make(map[Type_Id]bool, context.temp_allocator)
 	return typeid_sort_key_walk(c, type, &memo, &visiting)
 }
 
 // Memoization makes the key proportional to the type graph rather than its
 // expanded tree. `visiting` is an explicit cycle detector: valid recursive
-// types cross a pointer and never recur structurally; malformed by-value
-// cycles get one stable sentinel until the finite-size pass rejects them.
+// types cross a nominal name and never recur structurally; malformed by-value
+// cycles get one stable sentinel until the finite-size pass rejects them. The
+// memo is per top-level call, which keeps that sentinel out of an unrelated
+// type's key.
 @(private = "file")
 typeid_sort_key_walk :: proc(
 	c: ^Compiler,
 	type: Type_Id,
 	memo: ^map[Type_Id]string,
 	visiting: ^map[Type_Id]bool,
-) -> string {
+) -> (result: string) {
 	if key, found := memo^[type]; found {
 		return key
 	}
@@ -333,32 +381,22 @@ typeid_sort_key_walk :: proc(
 		return "000:<invalid-recursive-type>"
 	}
 	visiting^[type] = true
-	defer visiting^[type] = false
+	defer {
+		visiting^[type] = false
+		memo^[type] = result
+	}
 
-	result := ""
 	// The predeclared table holds distinct language identities with identical
 	// shapes (e.g. `int` and `i64` on a 64-bit target). Catalogue position is
 	// fixed by the language, but the readable name keeps the key independent of
 	// both that internal position and request order.
 	if type < FIRST_DYNAMIC_TYPE {
-		result = fmt.aprintf(
-			"predeclared:%s", type_name(c, type),
-			allocator = c.semantic_allocator,
-		)
-		memo^[type] = result
-		return result
+		return fmt.aprintf("predeclared:%s", type_name(c, type), allocator = c.semantic_allocator)
 	}
 	info := type_of(c, type)
 	if info == nil {
-		result = "000:<invalid>"
-		memo^[type] = result
-		return result
+		return "000:<invalid>"
 	}
-	// An instance's `name` is the readable `Box(Token)`, assembled from display
-	// names — and a display name is not an identity, so `Box(a.Token)` and
-	// `Box(b.Token)` spell the same thing. Equal keys leave the sort to fall back
-	// on request order, which is the one thing this pass promises ids do not
-	// depend on. Key on the template and each argument's own key instead.
 	if info.instance_of != INVALID_SYMBOL {
 		b := strings.builder_make(c.semantic_allocator)
 		fmt.sbprintf(&b, "instance:%s", symbol_key(c, info.instance_of))
@@ -369,24 +407,13 @@ typeid_sort_key_walk :: proc(
 			fmt.sbprintf(&b, ":o{%s}", typeid_sort_key_walk(c, template.owner_type, memo, visiting))
 		}
 		write_applied_args(c, &b, info.instance_args, memo, visiting)
-		result = strings.to_string(b)
-		memo^[type] = result
-		return result
+		return strings.to_string(b)
 	}
-	if info.symbol != INVALID_SYMBOL {
-		if symbol_of(c, info.symbol) != nil {
-			result = fmt.aprintf(
-				"nominal:%s", symbol_key(c, info.symbol),
-				allocator = c.semantic_allocator,
-			)
-			memo^[type] = result
-			return result
-		}
+	if info.symbol != INVALID_SYMBOL && symbol_of(c, info.symbol) != nil {
+		return fmt.aprintf("nominal:%s", symbol_key(c, info.symbol), allocator = c.semantic_allocator)
 	}
-	// An anonymous record's `name` is a readable spelling, never an identity: two
-	// packages' unrelated `Token` types both print as `Token`. Its key is instead
-	// the ordered field names plus each field type's own stable key — the same
-	// vector `anon_record_type` interns on.
+	// The ordered field names plus each field type's own key — the same vector
+	// `anon_record_type` interns on.
 	if info.anonymous_record {
 		b := strings.builder_make(c.semantic_allocator)
 		strings.write_string(&b, "anon-record")
@@ -400,29 +427,22 @@ typeid_sort_key_walk :: proc(
 				typeid_sort_key_walk(c, member.type, memo, visiting),
 			)
 		}
-		result = strings.to_string(b)
-		memo^[type] = result
-		return result
+		return strings.to_string(b)
 	}
-	// A `dyn` type carries no symbol, so it would otherwise fall to the display
-	// name below — and `dyn Drawable` names whichever `Drawable` was in scope.
-	// The erased interface and its arguments are the identity.
+	// A `dyn` type carries no symbol of its own; the erased interface and its
+	// arguments are the identity.
 	if info.dyn_interface != INVALID_SYMBOL {
 		b := strings.builder_make(c.semantic_allocator)
 		fmt.sbprintf(&b, "dyn:%t:%s", info.mutable, symbol_key(c, info.dyn_interface))
 		write_applied_args(c, &b, info.dyn_args, memo, visiting)
-		result = strings.to_string(b)
-		memo^[type] = result
-		return result
+		return strings.to_string(b)
 	}
 	// Predeclared and compiler-owned named identities are unique compilation-wide.
 	if info.name != INVALID_IDENTIFIER {
-		result = fmt.aprintf(
+		return fmt.aprintf(
 			"named:%d:%s", int(info.kind), identifier_text(c, info.name),
 			allocator = c.semantic_allocator,
 		)
-		memo^[type] = result
-		return result
 	}
 	b := strings.builder_make(c.semantic_allocator)
 	fmt.sbprintf(
@@ -464,9 +484,7 @@ typeid_sort_key_walk :: proc(
 		path := int(sym.span.file) < len(c.sources) ? c.sources[sym.span.file].path : ""
 		fmt.sbprintf(&b, ":contract{%s:%s:%s:%d}", pkg == nil ? "" : pkg.key, path, identifier_text(c, sym.name), sym.span.lo)
 	}
-	result = strings.to_string(b)
-	memo^[type] = result
-	return result
+	return strings.to_string(b)
 }
 
 typeid_value :: proc(c: ^Compiler, type: Type_Id) -> u64 {
@@ -521,22 +539,20 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		return
 	}
 
-	switch kind {
+	#partial switch kind {
 	case .Typeid_Of:
-		if !gate_type(k, subject, expr_span(operand)) {
-			v.type = INVALID_TYPE
-			return
-		}
-		// A `typeid` names a runtime type. `request_referenced_typeids` already
-		// declines to register a compile-time-only one it reaches through the
-		// metadata; asking for one directly gets the same answer, said out loud
-		// rather than as a table entry describing a value that cannot exist.
+		// A `typeid` names a runtime type. Answered ahead of `gate_type` so the
+		// diagnostic names the real reason rather than the generic storage one.
 		if type_is_compile_time_only(k.c, subject) {
 			errorf(
 				k.c, expr_span(operand), "L0451",
 				"`%s` exists only during compilation, so it has no `typeid`",
 				type_name(k.c, subject),
 			)
+			v.type = INVALID_TYPE
+			return
+		}
+		if !gate_type(k, subject, expr_span(operand)) {
 			v.type = INVALID_TYPE
 			return
 		}
@@ -566,19 +582,6 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.type = type
 		v.is_const = true
 		v.const_value = value
-
-	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-	     .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
-	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget, .Unsafe_Free,
-	     .Unsafe_Take, .Unsafe_Write,
-	     .Unsafe_Transmute, .Type_Info_Of,
-	     .Simd_Cast, .Simd_Select, .Simd_Reduce,
-	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .Slice_Sort_By,
-	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
-	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence,
-	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Type_Of:
-		unreachable()
 	}
 }
 
@@ -592,7 +595,9 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	if base == nil || !base.is_const || base.const_value.kind != .Aggregate {
 		return false
 	}
-	if !type_is_descriptor(k.c, base.type) || base.type != k.c.meta_field_type {
+	// `meta_field_type` stays INVALID_TYPE until something names `meta.Field`, and
+	// so does `base.type` after an earlier error: never let those two match.
+	if k.c.meta_field_type == INVALID_TYPE || base.type != k.c.meta_field_type {
 		return false
 	}
 	op := Reflect_Op.None
@@ -633,11 +638,12 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 		v.type = INVALID_TYPE
 		return true
 	}
-	// The descriptor and the value must describe the same type; a descriptor from
-	// another type would read at the wrong offset.
+	// The subject must carry a field of this name and type in this slot. The
+	// access is then emitted against the subject's own symbol, so it reads at the
+	// subject's offset rather than the descriptor's.
 	owner := underlying_info(k.c, pointee.element)
 	field := INVALID_SYMBOL
-	if owner != nil && int(field_index) < len(owner.fields) {
+	if owner != nil && field_index >= 0 && int(field_index) < len(owner.fields) {
 		field = owner.fields[field_index]
 	}
 	sym := symbol_of(k.c, field)
@@ -665,7 +671,6 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 		// subject's capability through: a `^mut T` yields a writable field
 		// pointer, a `^T` a read-only one.
 		v.type = pointer_to(k.c, field_type, pointee.mutable)
-		v.value_category = .Value
 	}
 	return true
 }
@@ -683,7 +688,7 @@ report_compile_time_only :: proc(k: ^Checker, type: Type_Id, span: Span) {
 		k.c,
 		span,
 		"L0453",
-		"`%s` exists only during compilation and cannot be stored in a variable",
+		"`%s` exists only during compilation and cannot be stored at run time",
 		type_name(k.c, type),
 	)
 }

@@ -182,8 +182,12 @@ bind_static :: proc(k: ^Checker, binding: Foreach_Binding, value: Const_Value, t
 
 @(private = "file")
 static_element_text :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> string {
-	if type_is_descriptor(c, type) && value.aggregate != nil && len(value.aggregate.elements) > 0 {
-		return fmt.aprintf("`%s`", value.aggregate.elements[0].text, allocator = c.semantic_allocator)
+	// Both descriptors put the name first.
+	if type_is_descriptor(c, type) && value.aggregate != nil && len(value.aggregate.elements) > META_FIELD_NAME {
+		return fmt.aprintf(
+			"`%s`", value.aggregate.elements[META_FIELD_NAME].text,
+			allocator = c.semantic_allocator,
+		)
 	}
 	return fmt.aprintf("`%s`", const_display_text(c, value), allocator = c.semantic_allocator)
 }

@@ -19,4 +19,11 @@ main :: proc() {
 	foreach ($field in fields_of(models.Mixed)) {
 		fmt.println(field.get(&mixed));
 	}
+	// An imported enum reflects the same members either side of the boundary,
+	// each keeping its declaration index.
+	fmt.println(models.colours_here());
+	foreach ($member in enum_values_of(models.Colour)) {
+		fmt.println(int(member.index));
+		fmt.println(int(member.value));
+	}
 }

@@ -1773,7 +1773,13 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	}
 	if !type_is_supported(k.c, type) {
 		// A component that never resolved was already reported.
-		if !type_mentions_invalid(k.c, type) {
+		if type_mentions_invalid(k.c, type) {
+			return false
+		}
+		// A descriptor is unsupported on purpose, not by omission, so say which.
+		if offender := compile_time_only_component(k.c, type); offender != INVALID_TYPE {
+			report_compile_time_only(k, offender, span)
+		} else {
 			unsupported_construct(k, span)
 		}
 		return false

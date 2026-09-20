@@ -1,8 +1,14 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "base:meta";
 
 Alias :: u32;
 
+// A descriptor named in a declared position is rejected for what it is, not
+// reported as a construct the checker forgot.
+takes :: proc(x: meta.Field) { }
+
 main :: proc() {
 	t: type = Alias;
+	f: meta.Field;
+	s: []meta.Enum_Value;
 	fmt.println(1);
 }

@@ -1,3 +1,11 @@
+L0453
+@7:10
+`meta.Field` exists only during compilation
 L0378
-@6:2
+@10:2
 `type` is compile-time only and cannot be stored in a variable
+L0453
+@11:2
+L0453
+@12:2
+`meta.Enum_Value` exists only during compilation

@@ -25,10 +25,23 @@ make_mixed :: proc(hidden: int, shown: int) -> Mixed {
 	return Mixed{hidden, shown};
 }
 
+// An enum member has no visibility of its own, so an importer reflects the
+// whole set — the same one `.Red` is nameable from.
+Colour :: enum { Red, Green = 5, Blue }
+
 @(public)
 count_here :: proc() -> int {
 	total := 0;
 	foreach ($field in fields_of(Record)) {
+		total += 1;
+	}
+	return total;
+}
+
+@(public)
+colours_here :: proc() -> int {
+	total := 0;
+	foreach ($member in enum_values_of(Colour)) {
 		total += 1;
 	}
 	return total;
