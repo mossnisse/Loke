@@ -14,11 +14,24 @@ when (DEBUG) {
 
 // The same dependency, reached through type syntax rather than named directly.
 // `Row` is only declared once the branch above is selected, so this condition is
-// pending until then — exactly as `size_of(Row)` would be.
+// pending until then — exactly as `size_of(Row)` would be. Every composable form
+// must wait the same way; evaluating one a round early sees no `Row` at all.
 when (size_of([2]Row) == 8) {
 	WIDTH :: 44;
 } else {
 	WIDTH :: 55;
+}
+
+when (size_of(proc(r: Row) -> Row) > 0) {
+	SIGNATURE :: 66;
+} else {
+	SIGNATURE :: 77;
+}
+
+when ([2]Row{{1}, {2}}[1].a == 2) {
+	LITERAL :: 88;
+} else {
+	LITERAL :: 99;
 }
 
 // A condition that needs a declaration the selected branch above supplied.
@@ -35,6 +48,8 @@ main :: proc() {
 	fmt.println(LEVEL);
 	fmt.println(NAME);
 	fmt.println(WIDTH);
+	fmt.println(SIGNATURE);
+	fmt.println(LITERAL);
 	fmt.println(extra());
 
 	// Procedure-scope `when`: no new scope, and it contributes flow and defer.

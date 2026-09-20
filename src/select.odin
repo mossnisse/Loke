@@ -11,13 +11,19 @@
 // surrounding position, and every semantic consumer iterates that.
 package lokec
 
+import "core:slice"
+
 // Rebuilds each file's selected view, in original source order. Parser-owned
-// item lists are never mutated.
+// item lists are never mutated. Every round of the activation fixed point calls
+// this, so an unchanged view keeps its array rather than arena-allocating a copy.
 rebuild_active_items :: proc(c: ^Compiler, pkg: ^Package) {
 	for file in pkg.files {
 		out := make([dynamic]Item, 0, len(file.items), context.temp_allocator)
 		for item in file.items {
 			flatten_item(item, &out)
+		}
+		if slice.equal(file.active_items, out[:]) {
+			continue
 		}
 		view := make([]Item, len(out), c.semantic_allocator)
 		copy(view, out[:])
@@ -50,39 +56,46 @@ flatten_item :: proc(item: Item, out: ^[dynamic]Item) {
 }
 
 // Every file-scope `when` that is reachable — at top level, inside an active
-// block, or inside a taken branch — and has not chosen a branch yet.
-collect_pending_whens :: proc(items: []Item, out: ^[dynamic]^Item_When) {
+// block, or inside a taken branch — and has not chosen a branch yet. Reports
+// whether it found any; a nil `out` asks only that, and stops at the first.
+@(private = "file")
+collect_pending_whens :: proc(items: []Item, out: ^[dynamic]^Item_When) -> (found: bool) {
 	for item in items {
 		#partial switch v in item {
 		case ^Item_Block:
-			collect_pending_whens(v.items, out)
+			found |= collect_pending_whens(v.items, out)
 		case ^Item_When:
 			if !v.resolved {
 				// A condition already reported as unanswerable is not pending; it has
 				// no answer to wait for, and neither branch is selected.
-				if !v.stalled {
+				if v.stalled {
+					continue
+				}
+				if out != nil {
 					append(out, v)
 				}
-				continue
-			}
-			if v.taken {
-				collect_pending_whens(v.then.items, out)
+				found = true
+			} else if v.taken {
+				found |= collect_pending_whens(v.then.items, out)
 			} else if v.otherwise != nil {
 				branch := [1]Item{v.otherwise}
-				collect_pending_whens(branch[:], out)
+				found |= collect_pending_whens(branch[:], out)
 			}
 		}
+		if found && out == nil {
+			return true
+		}
 	}
+	return found
 }
 
 // Whether any file-scope `when` in this package is still waiting for an answer.
 // A stalled one is not: it has settled on selecting neither branch, so nothing
 // is owed to whoever is waiting for the package to stop changing shape.
+@(private = "file")
 package_has_pending_whens :: proc(pkg: ^Package) -> bool {
 	for file in pkg.files {
-		pending := make([dynamic]^Item_When, 0, 4, context.temp_allocator)
-		collect_pending_whens(file.items, &pending)
-		if len(pending) > 0 {
+		if collect_pending_whens(file.items, nil) {
 			return true
 		}
 	}
@@ -281,9 +294,10 @@ callee_is_builtin :: proc(k: ^Checker, callee: Expr, kind: Builtin_Kind) -> bool
 // Type syntax is walked for the same reason expression syntax is: `size_of(^T)`
 // depends on `T` exactly as `size_of(T)` does, and answering "" for it would
 // evaluate the condition a round before the branch that supplies `T` is
-// selected. The forms covered are the composable ones, matching
-// `type_syntax_has_poly`; a record, enum, or interface written inside a `when`
-// condition declares its own members rather than naming an outer one.
+// selected. The forms covered are the composable ones `pattern_shape` walks; a
+// record, enum, or interface written inside a `when` condition declares its own
+// members rather than naming an outer one.
+@(private = "file")
 first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 	if e == nil {
 		return ""
@@ -311,6 +325,24 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 			return missing
 		}
 		return first_unresolved_name(k, v.value)
+	case ^Type_Proc:
+		for parameter in v.params {
+			if missing := first_unresolved_name(k, parameter.type); missing != "" {
+				return missing
+			}
+		}
+		if v.result != nil {
+			return first_unresolved_name(k, v.result.type)
+		}
+	case ^Expr_Composite:
+		if missing := first_unresolved_name(k, v.type_expr); missing != "" {
+			return missing
+		}
+		for element in v.elements {
+			if missing := first_unresolved_name(k, element.value); missing != "" {
+				return missing
+			}
+		}
 	case ^Expr_Ident:
 		if lookup_symbol(k.scope, identifier_of(k.c, v)) == INVALID_SYMBOL {
 			return v.name
