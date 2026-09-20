@@ -139,6 +139,8 @@ Contribution :: enum u8 {
 	// contributes to a container type, so `xs.append(1)` is an ordinary method
 	// call and generic code finds the same members.
 	Container,
+	// The constructors and handle of a local region provider (`src/region.odin`).
+	Provider,
 }
 
 Type_Info :: struct {

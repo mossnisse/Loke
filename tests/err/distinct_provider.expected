@@ -1,0 +1,9 @@
+L0408
+@11:7
+`MyArena` has no member `init`
+L0408
+@13:7
+`MyScratch` has no member `init`
+L0408
+@15:7
+`MyArena` has no member `from_buffer`

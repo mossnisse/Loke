@@ -19,19 +19,17 @@
 // disabled in `lifecycle_of` rather than generated and then trapped.
 package lokec
 
-// The single field: the control-block pointer. Not user-visible, for the same
-// reason a container's four words are not.
+// The single field: the control-block pointer, no more user-visible than a
+// container's four words.
 PROVIDER_CONTROL :: 0
 
-// Which contributed operation one provider member is.
 Provider_Op :: enum {
 	None,
-	// Provider-backed `mem.Arena.init(parent)` and `mem.Scratch.init(parent)`.
+	// `mem.Arena.init(parent)` and `mem.Scratch.init(parent)`.
 	Open,
-	// `mem.Arena.from_buffer(buffer)`, whose storage and control block live in the buffer.
+	// `mem.Arena.from_buffer(buffer)`: storage and control block in the buffer.
 	Open_Fixed,
-	// Fallible package procedures `mem.try_arena(parent)` and
-	// `mem.try_scratch(parent)`.
+	// `mem.try_arena(parent)` and `mem.try_scratch(parent)`.
 	Try_Open,
 	// `arena.allocator()`: the handle. Its region is this provider's.
 	Handle,
@@ -69,28 +67,29 @@ new_provider_type :: proc(c: ^Compiler, name: string) -> Type_Id {
 	return type
 }
 
-// Whether this type is one of the two local region providers. Asked by the
-// lifecycle classifier, the region lattice, and the backend's drop path.
+// Whether this type is one of the two local region providers, through a
+// `distinct` wrapper too: the region lattice follows storage, not names.
 type_is_region_provider :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	info := underlying_info(c, id)
 	return info != nil && info.provider
 }
 
-// design.md writes both constructors as calls on the type name, the ordinary
-// `init` path. Provider-backed construction accepts an explicit parent
-// allocator and defaults to the program provider; `Arena(buffer)` remains the
-// fixed-storage overload.
+// design.md writes both constructors as calls on the type name: `init` takes a
+// parent allocator and defaults to the program provider, and `from_buffer` lays
+// an `Arena` over a caller's storage.
+//
+// The provider's own info, never the underlying one: `add_members` installs on
+// the type as given, so guarding on anything else would let a `distinct` alias
+// take the members, which design.md "Distinct types" says it does not inherit.
 ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
-	info := underlying_info(k.c, type)
-	if info == nil || !info.provider || .Container in info.contributed {
+	info := type_of(k.c, type)
+	if info == nil || !info.provider || .Provider in info.contributed {
 		return
 	}
-	info.contributed += {.Container}
+	info.contributed += {.Provider}
 
-	// design.md "Allocators":
-	// `arena := mem.Arena.from_buffer(buffer[:])` puts a dynamic array's backing
-	// storage in the current stack frame. The buffer is written into, so it is
-	// `[]mut u8`. `mem.Scratch` is always provider-backed.
+	// The buffer is written into, so it is `[]mut u8`. `mem.Scratch` is always
+	// provider-backed.
 	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
 	if type == k.c.arena_type {
 		buffer := slice_of(k.c, TYPE_U8, mutable = true)
@@ -138,9 +137,9 @@ provider_member :: proc(
 	return id
 }
 
-// A package-level fallible constructor. It is synthesized eagerly when
-// `core:mem` is loaded because, unlike an associated member, package lookup has
-// no type from which to trigger lazy contribution.
+// A package-level fallible constructor, synthesized eagerly when `core:mem` is
+// loaded: unlike an associated member, package lookup has no type from which to
+// trigger lazy contribution.
 provider_try_proc :: proc(k: ^Checker, owner: Type_Id, name: string) -> Symbol_Id {
 	c := k.c
 	id := provider_member(
@@ -155,8 +154,8 @@ provider_try_proc :: proc(k: ^Checker, owner: Type_Id, name: string) -> Symbol_I
 	return id
 }
 
-// The provider a `Provider_Op` member belongs to, or `.None` for anything else.
-// One lookup, so the checker and the backend agree about what a call is.
+// Which provider operation this call resolved to, or `.None`. One lookup, so
+// the checker and the backend agree about what a call is.
 call_provider_op :: proc(c: ^Compiler, v: ^Expr_Call) -> Provider_Op {
 	sym := symbol_of(c, v.resolution.chosen_overload)
 	if sym == nil || sym.synth != .Provider_Op {

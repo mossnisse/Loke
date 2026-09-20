@@ -1,0 +1,32 @@
+package main; import "core:mem"; import "core:fmt";
+
+// design.md "Distinct types": a distinct type does not inherit the underlying
+// type's operations, and the contributed provider members are no exception.
+// Whichever of the two is reached first, the members belong to `mem.Arena` and
+// `mem.Scratch` alone.
+MyArena :: distinct mem.Arena;
+MyScratch :: distinct mem.Scratch;
+
+alias_first :: proc() {
+	a := MyArena.init();
+	drop(a);
+	b := MyScratch.init();
+	drop(b);
+	c := MyArena.from_buffer(0);
+	drop(c);
+}
+
+// The underlying types keep every member in the same compilation.
+underlying_still_works :: proc() {
+	a := mem.Arena.init();
+	defer drop(a);
+	h := a.allocator();
+	s := mem.Scratch.init();
+	defer drop(s);
+	fmt.println(1);
+}
+
+main :: proc() {
+	alias_first();
+	underlying_still_works();
+}
