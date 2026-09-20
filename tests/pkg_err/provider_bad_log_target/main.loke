@@ -1,0 +1,6 @@
+@(default_logger = "./provider:logger_factory")
+package main;
+
+import "core:log";
+
+main :: proc() { }

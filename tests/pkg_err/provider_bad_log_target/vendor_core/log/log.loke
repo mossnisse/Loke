@@ -1,0 +1,10 @@
+@(public)
+package log;
+
+Logger :: struct {
+	@(public) first: rawptr,
+	@(public) second: rawptr,
+}
+
+@(private)
+selected: int = 0;

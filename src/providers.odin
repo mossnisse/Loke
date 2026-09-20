@@ -1,14 +1,4 @@
-// Build-selected providers (design.md "Build-selected providers").
-//
-// The final build selects at most one default-allocator provider and one
-// logging provider. The root package names them on its package clause. Each
-// selection names a *factory*: a public, non-generic procedure taking nothing
-// and returning the slot's handle type. Naming one makes its package a build
-// dependency even where no source imports it.
-//
-// Nothing here changes what an unselected build does. The runtime's fallback
-// record is still the answer `mem.default_allocator()` gives; what changes is
-// that the answer now arrives through an accessor the initializer can move.
+// Source-selected allocator and logger providers.
 package lokec
 
 import "core:strings"
@@ -19,17 +9,15 @@ Provider_Slot :: enum {
 }
 
 Provider_Selection :: struct {
-	// The written `path:name`, kept verbatim for diagnostics.
 	written:     string,
 	path:        string,
 	name:        string,
 	selected:    bool,
-	// The file carrying the package clause, so an unprefixed provider path
-	// resolves relative to it just like an import.
 	from_file:   ^File,
 	span:        Span,
 	pkg:         Package_Id,
 	factory:     Symbol_Id,
+	destination: Symbol_Id,
 }
 
 provider_slot_name :: proc(slot: Provider_Slot) -> string {
@@ -40,8 +28,6 @@ provider_slot_name :: proc(slot: Provider_Slot) -> string {
 	return "?"
 }
 
-// Does this build select anything at all? An unselected build emits no
-// initializer and keeps M7's startup exactly.
 any_provider_selected :: proc(c: ^Compiler) -> bool {
 	for slot in Provider_Slot {
 		if c.providers[slot].selected {
@@ -51,17 +37,7 @@ any_provider_selected :: proc(c: ^Compiler) -> bool {
 	return false
 }
 
-// Selections use package-clause attributes so they necessarily precede imports
-// and remain visible even when their provider package is not imported:
-//
-//     @(default_allocator="./providers:allocator")
-//     package main;
-//
-// Only the root package may select: a library changing an application's
-// process-wide policy by being imported is exactly what this excludes.
-//
-// One file may supply each slot. The per-file duplicate is already diagnosed by
-// the ordinary attribute validator; this pass reports the package-wide case.
+// Reads provider attributes from the root package before import discovery.
 collect_source_provider_defaults :: proc(c: ^Compiler, root: Package_Id) {
 	pkg := package_of(c, root)
 	if pkg == nil {
@@ -126,9 +102,8 @@ install_provider_selection :: proc(
 	target: string,
 	span: Span,
 	from_file: ^File,
-) -> bool {
-	// The *last* colon separates the declaration from the import path, because an
-	// import path can contain one of its own: `core:log:standard_logger`.
+) {
+	// Import paths may contain a colon, so the declaration follows the last one.
 	split := strings.last_index_byte(target, ':')
 	if split <= 0 || split == len(target) - 1 {
 		errorf(
@@ -136,31 +111,29 @@ install_provider_selection :: proc(
 			"the %s provider `%s` needs the form <package>:<name>",
 			provider_slot_name(slot), target,
 		)
-		return false
+		return
 	}
 	c.providers[slot] = Provider_Selection {
-		written   = target,
-		path      = target[:split],
-		name      = target[split + 1:],
-		selected  = true,
-		from_file = from_file,
-		span      = span,
-		pkg       = INVALID_PACKAGE,
-		factory   = INVALID_SYMBOL,
+		written     = target,
+		path        = target[:split],
+		name        = target[split + 1:],
+		selected    = true,
+		from_file   = from_file,
+		span        = span,
+		pkg         = INVALID_PACKAGE,
+		factory     = INVALID_SYMBOL,
+		destination = INVALID_SYMBOL,
 	}
-	return true
 }
 
-// A selected provider's package is a build dependency whether or not anything
-// imports it, so it is loaded beside the root before discovery begins.
+// Selected provider packages are build dependencies even without imports.
 load_provider_packages :: proc(c: ^Compiler) {
 	for slot in Provider_Slot {
 		selection := &c.providers[slot]
 		if !selection.selected {
 			continue
 		}
-		// An unprefixed path resolves against the file containing the package
-		// clause, exactly as an import written there would.
+		// Match the resolution base of an import in the package-clause file.
 		dir, why := resolve_import_path(c, selection.from_file, selection.path)
 		switch why {
 		case .No_Collection:
@@ -187,9 +160,7 @@ load_provider_packages :: proc(c: ^Compiler) {
 	}
 }
 
-// Resolves each selection to one factory symbol and checks its shape. Run once
-// the whole program is checked, so a factory declared in a `when` branch has
-// been selected and its signature resolved.
+// Runs after checking so conditional factory declarations have been selected.
 resolve_provider_factories :: proc(k: ^Checker) {
 	c := k.c
 	for slot in Provider_Slot {
@@ -224,6 +195,9 @@ resolve_provider_factories :: proc(k: ^Checker) {
 			continue
 		}
 		selection.factory = symbol_id
+		if slot == .Logger {
+			selection.destination = provider_logger_destination(k, wanted, selection.span)
+		}
 	}
 }
 
@@ -232,16 +206,17 @@ provider_factory_shape :: proc(c: ^Compiler, sym: ^Symbol, wanted: Type_Id) -> b
 	if sym.kind != .Proc || sym.generic || sym.has_receiver || sym.is_foreign {
 		return false
 	}
+	info := type_of(c, sym.proc_type)
+	if info == nil || info.convention != "" {
+		return false
+	}
 	if len(sym.params) != 0 || sym.result_inout {
 		return false
 	}
 	return wanted != INVALID_TYPE && sym.result == wanted
 }
 
-// The handle a slot's factory returns: the universe's `Allocator`, and
-// `core:log`'s own `Logger`. The second is looked up by name rather than owned
-// by the compiler, because a logger is an ordinary library service handle with
-// no compiler-known behavior at all.
+// Logger remains an ordinary library type rather than a compiler-owned type.
 @(private = "file")
 provider_handle_type :: proc(k: ^Checker, slot: Provider_Slot) -> Type_Id {
 	if slot == .Allocator {
@@ -266,17 +241,25 @@ provider_handle_type :: proc(k: ^Checker, slot: Provider_Slot) -> Type_Id {
 	return INVALID_TYPE
 }
 
-// Where the generated initializer publishes the logger: `core:log`'s own
-// file-scope handle. The library reads it on every call and falls back to the
-// standard sink while it is the zero value, so nothing here has to run for an
-// unselected build.
-log_current_logger_symbol :: proc(c: ^Compiler) -> Symbol_Id {
-	for index in 1 ..< len(c.packages) {
-		pkg := &c.packages[index]
+@(private = "file")
+provider_logger_destination :: proc(k: ^Checker, wanted: Type_Id, span: Span) -> Symbol_Id {
+	for index in 1 ..< len(k.c.packages) {
+		pkg := &k.c.packages[index]
 		if pkg.key != STD_LOG || pkg.scope == nil {
 			continue
 		}
-		return pkg.scope.names[intern_identifier(c, "selected")] or_else INVALID_SYMBOL
+		symbol_id := pkg.scope.names[intern_identifier(k.c, "selected")] or_else INVALID_SYMBOL
+		resolve_symbol_signature_in_place(k, symbol_id)
+		sym := symbol_of(k.c, symbol_id)
+		if sym != nil && sym.kind == .Var && !sym.immutable && sym.type == wanted {
+			return symbol_id
+		}
+		break
 	}
+	errorf(
+		k.c, span, "L0660",
+		"selecting a logging provider needs `%s.selected` to be a writable global of type `%s`",
+		STD_LOG, type_name(k.c, wanted),
+	)
 	return INVALID_SYMBOL
 }

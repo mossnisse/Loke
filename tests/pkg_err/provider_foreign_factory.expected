@@ -1,0 +1,3 @@
+L0659
+@1:3
+the logger provider `./provider:logger_factory` is not a factory: it must be `proc() -> Logger`

@@ -544,7 +544,7 @@ emit_program_init :: proc(e: ^Emitter) {
 	}
 	if logger := e.c.providers[.Logger].factory; logger != INVALID_SYMBOL {
 		factory := symbol_of(e.c, logger)
-		global, found := e.names[log_current_logger_symbol(e.c)]
+		global, found := e.names[e.c.providers[.Logger].destination]
 		if factory == nil || !found {
 			backend_fail(e, "the selected logger has no factory or nowhere to be published")
 		} else {

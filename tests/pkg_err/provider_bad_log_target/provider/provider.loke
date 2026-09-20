@@ -1,0 +1,8 @@
+@(public)
+package provider;
+
+import "core:log";
+
+logger_factory :: proc() -> log.Logger {
+	return {};
+}
