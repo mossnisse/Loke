@@ -61,12 +61,27 @@ import "core:time"
 LOKEC_DEFAULT :: "lokec.exe"
 TMP :: "tests/tmp"
 
+// `os2.process_exec` passes the command line to `CreateProcess` with no explicit
+// application name, so Windows resolves `command[0]` on its own: a bare name, or
+// a relative path spelled with forward slashes, is looked up on `PATH` and not
+// found even when it sits in the working directory. Everything the harness
+// builds and then launches goes through here. A genuine `PATH` tool — `clang`,
+// `nasm`, `nm` — does not, because for those the lookup is the point.
+@(private)
+launch_path :: proc(path: string) -> string {
+	if filepath.is_abs(path) {
+		return path
+	}
+	cwd := os.get_current_directory(context.temp_allocator)
+	return filepath.join({cwd, path}, context.temp_allocator)
+}
+
 @(private)
 compiler_path :: proc() -> string {
 	if configured := os.get_env("LOKEC", context.temp_allocator); configured != "" {
-		return configured
+		return launch_path(configured)
 	}
-	return LOKEC_DEFAULT
+	return launch_path(LOKEC_DEFAULT)
 }
 
 // Extra compiler flags applied to every run/trap compile, from the environment.
@@ -192,7 +207,7 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	cwd := os.get_current_directory(context.temp_allocator)
-	compiler := filepath.join({cwd, compiler_path()}, context.temp_allocator)
+	compiler := compiler_path()
 	source := filepath.join({cwd, "examples", "hello.loke"}, context.temp_allocator)
 	exe := filepath.join({cwd, TMP, "runtime-elsewhere.exe"}, context.temp_allocator)
 	elsewhere := filepath.join({cwd, TMP}, context.temp_allocator)
@@ -601,7 +616,7 @@ programs_trap :: proc(t: ^testing.T) {
 		}
 
 		run_state, stdout, run_stderr, run_err := os2.process_exec(
-			os2.Process_Desc{command = []string{exe}},
+			os2.Process_Desc{command = []string{launch_path(exe)}},
 			context.allocator,
 		)
 		testing.expectf(t, run_err == nil, "%s: cannot run the produced exe", path)
@@ -903,7 +918,7 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 		return
 	}
 	run_state, stdout, _, run_err := os2.process_exec(
-		os2.Process_Desc{command = []string{exe, "alpha", "héllo", "日本"}},
+		os2.Process_Desc{command = []string{launch_path(exe), "alpha", "héllo", "日本"}},
 		context.allocator,
 	)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
@@ -953,7 +968,7 @@ empty_environment_values_are_values :: proc(t: ^testing.T) {
 	append(&block, "LOKE_EMPTY_PROBE=", "LOKE_VALUE_PROBE=fivec")
 
 	run_state, stdout, _, run_err := os2.process_exec(
-		os2.Process_Desc{command = []string{exe}, env = block[:]},
+		os2.Process_Desc{command = []string{launch_path(exe)}, env = block[:]},
 		context.allocator,
 	)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
@@ -1006,7 +1021,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 	if !testing.expectf(t, state.exit_code == 0, "an assembly import failed to link:\n%s", string(stderr)) {
 		return
 	}
-	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
+	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t,
@@ -1168,7 +1183,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 		return
 	}
 
-	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
+	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(t, run_state.exit_code == 0, "the C host got the wrong answer (exit %d)", run_state.exit_code)
 
@@ -1223,7 +1238,7 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 	if !testing.expectf(t, link_state.exit_code == 0, "the concurrency host link failed:\n%s", string(link_stderr)) {
 		return
 	}
-	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
+	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t, run_state.exit_code == 0,
@@ -1295,7 +1310,7 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 	if !testing.expectf(t, link_state.exit_code == 0, "the selected host link failed:\n%s", string(link_stderr)) {
 		return
 	}
-	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
+	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t, run_state.exit_code == 0,
@@ -1468,7 +1483,7 @@ run_one_program :: proc(t: ^testing.T, path, expected_file, exe: string) {
 	}
 
 	run_state, stdout, run_stderr, run_err := os2.process_exec(
-		os2.Process_Desc{command = []string{exe}},
+		os2.Process_Desc{command = []string{launch_path(exe)}},
 		context.allocator,
 	)
 	testing.expectf(t, run_err == nil, "%s: cannot run the produced exe", path)
@@ -1935,7 +1950,7 @@ expect_streaming :: proc(
 	stdout_text, stderr_contains, what: string,
 ) {
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, exe)
+	append(&command, launch_path(exe))
 	for arg in args {
 		append(&command, arg)
 	}
@@ -1995,7 +2010,7 @@ expect_example_output :: proc(
 		return
 	}
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, exe)
+	append(&command, launch_path(exe))
 	for arg in args {
 		append(&command, arg)
 	}
