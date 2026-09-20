@@ -3,6 +3,7 @@ package lokec
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
@@ -461,6 +462,75 @@ N :: 7;`
 	n_use := call.args[0].value.(^Expr_Ident)
 	n_decl := second.items[0].(^Decl)
 	testing.expect(t, n_use.symbol == n_decl.symbols[0], "cross-file name did not bind to the package symbol")
+}
+
+@(test)
+package_loading_handles_literal_paths_and_regular_files :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	root := fmt.tprintf("loke-packages-test-%d-[files]", os2.get_pid())
+	_ = os2.remove_all(root)
+	defer os2.remove_all(root)
+	if !testing.expect(t, os2.make_directory_all(filepath.join({root, "ignored.loke"})) == nil) {
+		return
+	}
+	if !testing.expect(
+		t,
+		os2.write_entire_file(filepath.join({root, "main.LOKE"}), transmute([]u8)string("package fixture;")) == nil,
+	) {
+		return
+	}
+
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	id, loaded := load_package_dir(&c, root, root, no_span())
+	if !testing.expect(t, loaded, "a literal directory path containing glob syntax did not load") {
+		report(&c)
+		return
+	}
+	pkg := package_of(&c, id)
+	testing.expect(t, pkg != nil && len(pkg.files) == 1, "a .loke directory was treated as a source file")
+}
+
+@(test)
+failed_package_loads_are_not_cached :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	root := fmt.tprintf("loke-packages-retry-%d", os2.get_pid())
+	_ = os2.remove_all(root)
+	defer os2.remove_all(root)
+	path := filepath.join({root, "main.loke"})
+	if !testing.expect(t, os2.make_directory_all(root) == nil && os2.write_entire_file(path, []u8{0xff}) == nil) {
+		return
+	}
+
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	before := len(c.packages)
+	id, loaded := load_package_dir(&c, root, root, no_span())
+	testing.expect(t, !loaded && id == INVALID_PACKAGE && len(c.packages) == before, "a failed load created a package")
+
+	if !testing.expect(t, os2.write_entire_file(path, transmute([]u8)string("package retry;")) == nil) {
+		return
+	}
+	id, loaded = load_package_dir(&c, root, root, no_span())
+	testing.expect(t, loaded && id != INVALID_PACKAGE && len(package_of(&c, id).files) == 1, "a corrected package could not be retried")
+}
+
+@(test)
+package_paths_handle_root_collections_and_trailing_slashes :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	root, ok := filepath.abs("/", context.temp_allocator)
+	if !testing.expect(t, ok) {
+		return
+	}
+	c.collections["drive"] = strings.clone(root, c.semantic_allocator)
+	dir, why := resolve_import_path(&c, nil, "drive:tmp/loke")
+	testing.expect(t, why == .Ok && dir != "", "a collection rooted at a volume root rejected its descendant")
+	imported := Item_Import{path = `"core:fmt//"`}
+	testing.expect(t, import_binding_name(&imported) == "fmt", "repeated trailing separators erased the default alias")
 }
 
 @(test)

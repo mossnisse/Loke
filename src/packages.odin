@@ -1,40 +1,25 @@
-// Package discovery and the program-level fixed point.
-//
-// A round alternates discovery, collection, and selection: import the edges
-// that are active now, collect what the newly active items declare, answer the
-// `when` conditions that have become answerable, and repeat while anything
-// changed. Package state is persistent and monotonic, so re-running a round
-// never re-declares what an earlier one already established.
-//
-// There is no built-in `core:` root. A collection prefix resolves only when the
-// driver was given a matching `-collection name=path`.
+// Package discovery and the program-level fixed point. Package state grows
+// monotonically while imports and `when` selections settle.
 package lokec
 
 import "core:fmt"
-import "core:mem"
 import "core:os"
+import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
-// The whole front end for one program: load the root, discover everything it
-// reaches, and check each package in dependency order.
+// Loads, discovers, and checks one program in dependency order.
 compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	init_semantic_stores(c)
-	// design.md "Typed fallibility": `base:runtime` declares `Unit`, `Option`,
-	// and `Result`, which the checker instantiates for built-in producers before
-	// any user signature is resolved. Loading it first also makes it package 1,
-	// so the dependency-first order checks it before everything else.
+	// Runtime types must exist before user signatures are resolved.
 	load_runtime_bootstrap(c)
 	root, loaded := load_root_package(c, input)
 	if !loaded {
 		return INVALID_PACKAGE, false
 	}
 	c.root_package = root
-	// design.md "Build-selected providers": selections live on the root package
-	// clause. A selected provider's package is a build dependency even where no
-	// source imports it, so it is loaded here and then travels the ordinary
-	// discovery, ordering, and checking path.
+	// Selected providers are build dependencies even without source imports.
 	collect_source_provider_defaults(c, root)
 	load_provider_packages(c)
 
@@ -62,54 +47,30 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		}
 	}
 
-	// No rebuild here: the loop only exits after a round that changed nothing, so
-	// the view its top built is still current, and a stalled `when` contributes
-	// nothing to a view either way.
+	// The last unchanged round left every active view current.
 	for index in 1 ..< len(c.packages) {
 		report_stalled_whens(&k, &c.packages[index])
 	}
-	// Ordinary body checking waits until selection and the import graph are
-	// stable, so an unconditional body may name a declaration a selected branch
-	// supplied.
+	// Bodies wait until selections and imports are stable.
 	for id in package_order(c) {
 		check_package_bodies(&k, id)
-		// Methods of a generic instantiation are checked once their requesting
-		// package is finished, so a method body may itself use the instance that
-		// its own signature created.
 		check_pending_impl_instances(&k)
 	}
-	// design.md "Borrows and lifetimes" and "Allocator regions and region
-	// provenance": both analyses run once the whole program is checked, over
-	// disposable read-only rebuilds of the same control-flow view.
 	analyze_program_provenance(&k)
-	// The factories are resolved once the whole program is checked, so a factory
-	// declared inside a selected `when` branch has a resolved signature to check.
 	resolve_provider_factories(&k)
 	return root, c.error_count == 0
 }
 
-// The step from a checked program to an emission-ready one. Every step is guarded by its
-// own ready flag, so calling this twice, or after a direct call to one of the
-// three, costs nothing.
-//
-// A caller that means to observe the half-finished state — a unit test of one
-// step, or one measuring what a later step allocates — calls the steps it wants
-// directly instead.
-finalize_semantics :: proc(c: ^Compiler) -> bool {
-	// Every requested concrete type gets its deterministic `typeid` before any
-	// body is emitted, so traversal order cannot change an observable ID.
+// Makes a checked program ready for emission. Each step is idempotent.
+finalize_semantics :: proc(c: ^Compiler) {
 	freeze_typeids(c)
 	discover_formatters(c)
-	// Copy/drop lowering consumes a closed snapshot after all checked helpers
-	// have had the opportunity to contribute their lifecycle dependencies.
-	return finalize_lifecycle_operations(c)
+	_ = finalize_lifecycle_operations(c)
 }
 
 // ------------------------------------------------------------------ loading --
 
-// The one unconditional package. It is loaded through the ordinary collection
-// machinery, so a program that also imports `base:runtime` by name gets the
-// same package rather than a second copy of it.
+// Uses ordinary collection loading so an explicit import reuses this package.
 load_runtime_bootstrap :: proc(c: ^Compiler) -> (Package_Id, bool) {
 	root, registered := c.collections["base"]
 	if !registered {
@@ -118,10 +79,7 @@ load_runtime_bootstrap :: proc(c: ^Compiler) -> (Package_Id, bool) {
 	return load_package_dir(c, strings.concatenate({root, "/runtime"}, context.temp_allocator), STD_RUNTIME, no_span())
 }
 
-// `compile_program` reaches `base:runtime` through the ordinary dependency
-// order. A caller that checks one package on its own — a unit test, or any
-// other direct entry — asks for the bootstrap here instead, because `Option`
-// and `Result` have to exist before a signature can name them.
+// Bootstraps direct checker entry points that bypass `compile_program`.
 ensure_runtime_bootstrap :: proc(k: ^Checker) {
 	if k.c.bootstrap_ready {
 		return
@@ -131,9 +89,7 @@ ensure_runtime_bootstrap :: proc(k: ^Checker) {
 		if k.c.collections == nil {
 			k.c.collections = make(map[string]string, 2, k.c.semantic_allocator)
 		}
-		// The bundled root is resolved from the running executable. A direct entry
-		// is often *not* the installed compiler — the unit-test binary lives in a
-		// temporary directory — so the working directory is the fallback.
+		// Test binaries need the working-directory fallback.
 		installed := install_component("base")
 		defer delete(installed)
 		root := installed
@@ -151,9 +107,7 @@ ensure_runtime_bootstrap :: proc(k: ^Checker) {
 	k.pkg, k.lookup_pkg, k.scope = saved_pkg, saved_lookup, saved_scope
 }
 
-// A directory argument compiles every `.loke` file directly in it. A file
-// argument keeps the one-file-package behaviour the existing corpus relies on,
-// though its relative imports still resolve from its own directory.
+// Directory roots include their direct `.loke` files; file roots stand alone.
 @(private = "file")
 load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	if is_directory(input) {
@@ -167,15 +121,12 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	}
 	id := new_package(c, file.package_name, "")
 	add_package_file(c, id, file)
-	// A single-file root still occupies its directory's identity, so a sibling
-	// importing `.` finds this package rather than loading the directory twice.
+	// A sibling importing `.` must reuse this package.
 	c.package_by_dir[dir_key(c.root_dir, c.semantic_allocator)] = id
 	return id, true
 }
 
-// `written` is the import path as the source spelled it, used only to name the
-// package in a diagnostic. The identity the package keeps is derived from its
-// directory, by `package_key`.
+// `written` is only for diagnostics; directory identity supplies the key.
 load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -> (Package_Id, bool) {
 	canonical := canonical_dir(dir)
 	if existing, found := c.package_by_dir[dir_key(canonical)]; found {
@@ -185,64 +136,57 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 		errorf(c, at, "L0327", "cannot find package `%s`", written == "" ? dir : written)
 		return INVALID_PACKAGE, false
 	}
-	paths := package_sources(canonical, c.semantic_allocator)
+	paths := package_sources(c, canonical)
 	if len(paths) == 0 {
 		errorf(c, at, "L0327", "`%s` holds no `.loke` files", canonical)
 		return INVALID_PACKAGE, false
 	}
 
-	id := new_package(c, "", package_key(c, canonical))
-	c.package_by_dir[dir_key(canonical, c.semantic_allocator)] = id
-	pkg := package_of(c, id)
+	files := make([dynamic]^File, 0, len(paths), context.temp_allocator)
 	for path in paths {
 		file, ok := parse_file(c, path)
 		if !ok {
 			continue
 		}
-		if len(pkg.files) == 0 {
-			pkg.name = intern_identifier(c, file.package_name)
-		} else if file.package_name != pkg.files[0].package_name {
-			// A directory is one package; files that disagree about its name would
-			// otherwise give it two identities.
+		append(&files, file)
+	}
+	if len(files) == 0 {
+		return INVALID_PACKAGE, false
+	}
+
+	id := new_package(c, files[0].package_name, package_key(c, canonical))
+	c.package_by_dir[dir_key(canonical, c.semantic_allocator)] = id
+	pkg := package_of(c, id)
+	for file in files {
+		if file.package_name != files[0].package_name {
 			errorf(
 				c,
 				file.package_span,
 				"L0328",
 				"package `%s` does not match `%s`",
 				file.package_name,
-				pkg.files[0].package_name,
+				files[0].package_name,
 			)
-			add_notef(c, pkg.files[0].package_span, "the package was established here")
+			add_notef(c, files[0].package_span, "the package was established here")
 		}
 		append(&pkg.files, file)
 	}
-	// The view is built here rather than at the next round's top, so `import`
-	// items are visible to the discovery pass that loaded this package and the
-	// graph stops being walked one level per round. Nothing is checked earlier
-	// than before: `prepare_package` does reach the package a round sooner, but
-	// declaring an `impl` block waits on the package's own `when` items now, and
-	// that is what the round of slack used to stand in for -- badly, since it
-	// never covered the root package, whose blocks always raced its own
-	// selection.
+	// Let the current discovery pass see this package's imports.
 	rebuild_active_items(c, pkg)
-	return id, len(pkg.files) > 0
+	return id, true
 }
 
-// Every `.loke` file directly in one directory, sorted, so one directory always
-// produces one package in one order. The extension is matched
-// case-insensitively: Windows is the only v1 target and its filesystem is too,
-// so a file named `helper.LOKE` must not be silently invisible. The paths are
-// allocated with `allocator`, since each loaded source keeps its own.
+// Direct regular `.loke` files, sorted for deterministic package order.
 @(private = "file")
-package_sources :: proc(dir: string, allocator: mem.Allocator) -> []string {
-	entries, err := filepath.glob(strings.concatenate({dir, "/*"}, context.temp_allocator), context.temp_allocator)
+package_sources :: proc(c: ^Compiler, dir: string) -> []string {
+	entries, err := os2.read_all_directory_by_path(dir, context.temp_allocator)
 	if err != nil {
 		return nil
 	}
-	paths := make([dynamic]string, 0, len(entries), allocator)
+	paths := make([dynamic]string, 0, len(entries), c.semantic_allocator)
 	for entry in entries {
-		if strings.to_lower(filepath.ext(entry), context.temp_allocator) == ".loke" {
-			append(&paths, strings.clone(entry, allocator))
+		if entry.type == .Regular && strings.to_lower(filepath.ext(entry.name), context.temp_allocator) == ".loke" {
+			append(&paths, strings.clone(entry.fullpath, c.semantic_allocator))
 		}
 	}
 	slice.sort(paths[:])
@@ -265,18 +209,11 @@ parse_file :: proc(c: ^Compiler, path: string) -> (^File, bool) {
 
 // ---------------------------------------------------------------- discovery --
 
-// Turns every not-yet-bound active `import` into an edge, loading the target
-// package if this is the first time anything named it. Returns true when the
-// graph grew, which is what keeps the surrounding fixed point going.
+// Binds active imports and reports whether the graph grew.
 @(private = "file")
 discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 	changed := false
-	// `c.packages` grows while this runs — loading a target appends to it, which
-	// reallocates the store. Nothing here retains a `^Package` across a load; the
-	// index walk also picks up the new packages in the same pass.
-	//
-	// A package loaded here already has its selected view, so its own imports are
-	// found before this pass ends rather than one round later.
+	// Loading may reallocate `c.packages`, so retain IDs rather than pointers.
 	for index := 1; index < len(c.packages); index += 1 {
 		id := Package_Id(index)
 		for position := 0; position < len(package_of(c, id).files); position += 1 {
@@ -286,9 +223,6 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 				if !is_import || imported.bound {
 					continue
 				}
-				// Mark the syntax item itself. A later selection round may insert a
-				// new import before this one, so an active-list position is not a
-				// durable discovery identity.
 				imported.bound = true
 				changed = true
 				bind_import_edge(c, id, file, imported)
@@ -333,7 +267,7 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 	if !loaded {
 		return
 	}
-	// `load_package_dir` may have grown the store; reacquire before appending.
+	// Loading may have reallocated the package store.
 	append(&package_of(c, id).imports, Package_Import {
 		target = target,
 		span   = imported.span,
@@ -341,9 +275,7 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 	})
 }
 
-// The name an import binds in its package: the written alias, or by convention
-// the last element of the path. Available before the path is decoded, so the
-// stalled-condition check can ask what a branch's imports would supply.
+// Available before decoding for stalled-condition checks.
 import_binding_name :: proc(imported: ^Item_Import) -> string {
 	if imported.alias.text != "" {
 		return imported.alias.text
@@ -365,7 +297,7 @@ import_alias :: proc(imported: ^Item_Import, path: string) -> string {
 
 @(private = "file")
 path_tail :: proc(path: string) -> string {
-	cleaned := strings.trim_suffix(path, "/")
+	cleaned := strings.trim_right(path, "/")
 	if slash := strings.last_index_byte(cleaned, '/'); slash >= 0 {
 		return cleaned[slash + 1:]
 	}
@@ -375,11 +307,7 @@ path_tail :: proc(path: string) -> string {
 	return cleaned
 }
 
-// An unprefixed path is relative to the importing file; `name:path` resolves
-// under `-collection name=path`. The returned key is the logical identity used
-// for mangling, never the host absolute path.
-// Why a prefixed import could not be resolved. The caller reports it, because an
-// `import` statement and a provider selection name the offender differently.
+// The caller reports resolution failures because imports and providers differ.
 Import_Resolution :: enum {
 	Ok,
 	No_Collection,
@@ -394,9 +322,7 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 		if !registered {
 			return "", .No_Collection
 		}
-		// A prefix selects a collection, so the path behind it names a package
-		// *inside* that collection. Without this, `name:../elsewhere` reaches a
-		// directory the collection does not contain while borrowing its name.
+		// Collection imports may not escape through `..`.
 		collection_root := canonical_dir(root)
 		resolved := canonical_dir(strings.concatenate({root, "/", rest}, context.temp_allocator))
 		if _, under := path_under(collection_root, resolved); !under {
@@ -404,10 +330,6 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 		}
 		return resolved, .Ok
 	}
-	// Without an importing file an unprefixed path has nothing to be relative to.
-	// Answering here rather than leaving the caller to re-test the prefix keeps
-	// the precondition in one place: the caller reports it, because a selection
-	// and an `import` name the offender differently.
 	if file == nil {
 		return "", .No_Collection
 	}
@@ -415,19 +337,8 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 	return canonical_dir(strings.concatenate({source_dir, "/", path}, context.temp_allocator)), .Ok
 }
 
-// A package's identity is a function of its directory, never of the import that
-// happened to reach it first. Two spellings of one directory — `core:log` and a
-// relative `../core/log`, say — resolve to one package, so deriving the key from
-// the spelling would let the discovery order decide the emitted symbol names,
-// and renaming a source file would rename another package's exports.
-//
-// The root package keeps the empty key its fixed entry name depends on. A
-// directory genuinely inside a registered collection is named `collection:path`;
-// the longest matching root wins, so a collection nested in another keeps its
-// own name, and the scan runs over sorted names so map order cannot decide it.
-// Anything else — including a path that escaped its collection with `..` — is
-// named relative to the root package rather than claiming a collection it is
-// not in.
+// Directory-derived identity makes alternate import spellings deterministic.
+// The longest registered collection root wins.
 @(private = "file")
 package_key :: proc(c: ^Compiler, canonical: string) -> string {
 	if c.root_dir != "" && dir_key(canonical) == dir_key(c.root_dir) {
@@ -453,9 +364,7 @@ package_key :: proc(c: ^Compiler, canonical: string) -> string {
 	return root_relative_key(c, canonical)
 }
 
-// `sub` spelled relative to `root`, when `sub` is `root` or lies inside it. Both
-// are canonical, so this is a prefix test on a directory boundary — case-blind,
-// for the same reason `dir_key` is.
+// Returns `sub` relative to canonical `root`, case-insensitively.
 @(private = "file")
 path_under :: proc(root: string, sub: string) -> (rest: string, ok: bool) {
 	if root == "" {
@@ -466,10 +375,17 @@ path_under :: proc(root: string, sub: string) -> (rest: string, ok: bool) {
 	if lower_sub == lower_root {
 		return "", true
 	}
-	if len(sub) > len(root) && strings.has_prefix(lower_sub, lower_root) && sub[len(root)] == '/' {
-		return sub[len(root) + 1:], true
+	if len(sub) <= len(root) || !strings.has_prefix(lower_sub, lower_root) {
+		return "", false
 	}
-	return "", false
+	offset := len(root)
+	if root[len(root) - 1] != '/' {
+		if sub[offset] != '/' {
+			return "", false
+		}
+		offset += 1
+	}
+	return sub[offset:], true
 }
 
 // Also used to name the offending prefix in the provider diagnostics.
@@ -480,18 +396,8 @@ collection_prefix :: proc(path: string) -> string {
 	return path
 }
 
-// The logical identity of a package that belongs to no registered collection:
-// its path relative to the root package. A directory outside the root tree gets
-// a `..`-prefixed spelling and therefore an identity that travels with the
-// project's layout — which is the most a package inside no collection can be
-// given, since its own name is not unique and its absolute path is the host's.
-// A package meant to keep one name wherever it is used is registered as a
-// collection, and `package_key` names it from there.
-//
-// `rel` has no answer across Windows volumes. The directory's own name would
-// not be unique there — two `util` directories on two drives would mangle
-// alike, and LLVM would see one definition twice — so it is qualified by a
-// digest of the path rather than spelling the path out.
+// Unregistered packages use root-relative identity; cross-volume packages add
+// a digest because `filepath.rel` has no answer there.
 @(private = "file")
 root_relative_key :: proc(c: ^Compiler, dir: string) -> string {
 	relative, err := filepath.rel(c.root_dir, dir, context.temp_allocator)
@@ -531,14 +437,7 @@ visit_for_cycle :: proc(c: ^Compiler, id: Package_Id, state: []u8, path: ^[dynam
 		return true
 	}
 	if state[id] == 1 {
-		// `path` is the route from wherever the outer scan started, which may reach
-		// the cycle through edges that are not in it. The cycle is the tail that
-		// leaves `id`, so it begins just after the approach arrives there; listing
-		// the approach as well would blame imports that are perfectly fine.
-		//
-		// The last edge is the arrival that closed the cycle, so it is not the
-		// approach — searching without it also leaves the whole path as the answer
-		// when the scan happened to start on `id` itself.
+		// Drop the acyclic approach and report only the cycle tail.
 		cycle := path[:]
 		for edge, index in cycle[:len(cycle) - 1] {
 			if edge.target == id {
@@ -615,8 +514,7 @@ is_directory :: proc(path: string) -> bool {
 	return err == nil && info.is_dir
 }
 
-// Absolute, `/`-separated, and free of `.`/`..`, so two spellings of one
-// directory are the same package. Temporary: a caller that keeps it clones it.
+// Produces a temporary absolute, cleaned, `/`-separated path.
 @(private = "file")
 canonical_dir :: proc(path: string) -> string {
 	absolute, ok := filepath.abs(path, context.temp_allocator)
@@ -631,10 +529,7 @@ dir_key :: proc(dir: string, allocator := context.temp_allocator) -> string {
 	return strings.to_lower(dir, allocator)
 }
 
-// A digest of a case-folded path, for the two places that need one path to stay
-// distinct from another whose visible name matches it. FNV-1a, not
-// cryptographic and not stable across compiler versions: it only has to be a
-// function of the path within one build.
+// FNV-1a distinguishes otherwise identical visible path names.
 path_digest :: proc(path: string) -> u64 {
 	key := strings.to_lower(path, context.temp_allocator)
 	digest := u64(14695981039346656037) // FNV-1a offset basis
