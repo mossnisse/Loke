@@ -815,7 +815,7 @@ const_from_pattern :: proc(c: ^Compiler, raw: u64, type: Type_Id) -> (Const_Valu
 		}
 		return bool_const(raw == 1), .Folded
 	case .Int:
-		return integer_const(c, bi_wrap(c, bi_from_u64(c, raw), int(info.bits), info.signed)), .Folded
+		return integer_const(bi_wrap(c, bi_from_u64(c, raw), int(info.bits), info.signed)), .Folded
 	case .Rune:
 		wrapped := bi_wrap(c, bi_from_u64(c, raw), 32, true)
 		// design.md: a `rune` excludes surrogates and anything above U+10FFFF.
@@ -823,10 +823,10 @@ const_from_pattern :: proc(c: ^Compiler, raw: u64, type: Type_Id) -> (Const_Valu
 		   (point >= 0xd800 && point <= 0xdfff) {
 			return {}, .Invalid
 		}
-		return rune_const(c, wrapped), .Folded
+		return rune_const(wrapped), .Folded
 	case .Enum:
 		wrapped := bi_wrap(c, bi_from_u64(c, raw), int(info.bits), info.signed)
-		candidate := integer_const(c, wrapped)
+		candidate := integer_const(wrapped)
 		if enum_member_by_value(c, type, candidate) == INVALID_SYMBOL {
 			return {}, .Invalid
 		}

@@ -1,0 +1,28 @@
+package main;
+
+// design.md "Capabilities and the one rule": `^mut T` weakens to `^T` and
+// `[]mut T` to `[]T`, but weakening is nominal. A `distinct` carrier is its own
+// type, so it must not reach the underlying carrier or a sibling distinct type
+// without a written conversion.
+
+Handle :: distinct []mut int;
+Other  :: distinct []int;
+Cursor :: distinct ^mut int;
+Reader :: distinct ^int;
+
+take_other  :: proc(o: Other)  { _ = o; }
+take_plain  :: proc(s: []int)  { _ = s; }
+take_reader :: proc(r: Reader) { _ = r; }
+take_raw    :: proc(p: ^int)   { _ = p; }
+
+main :: proc() {
+	backing := [4]int{1, 2, 3, 4};
+	h := Handle(backing[:]);
+	take_other(h);
+	take_plain(h);
+
+	n := 7;
+	c := Cursor(&mut n);
+	take_reader(c);
+	take_raw(c);
+}

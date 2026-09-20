@@ -381,7 +381,7 @@ seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
 			c.defines[name] = bool_const(false)
 		case:
 			if value, ok := bi_parse_int_literal(c, text); ok {
-				c.defines[name] = integer_const(c, value)
+				c.defines[name] = integer_const(value)
 			} else {
 				c.defines[name] = Const_Value{kind = .String, text = text}
 			}

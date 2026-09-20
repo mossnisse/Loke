@@ -1,0 +1,12 @@
+L0476
+@35:8
+`[]mut int` compares against `nil` and nothing else
+L0476
+@37:8
+`dyn Sized` compares against `nil` and nothing else
+L0355
+@40:23
+`Boxed` is not comparable
+L0355
+@41:23
+`Erased` is not comparable

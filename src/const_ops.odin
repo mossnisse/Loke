@@ -1,9 +1,212 @@
-// Constant-value arithmetic and comparison, shared by the checker and the
-// compile-time evaluator so both fold identically.
+// Constant values and their arithmetic, shared by the checker and the
+// compile-time evaluator so both fold identically. `src/bigint.odin` is the
+// arbitrary-precision integer half.
 package lokec
 
 import "core:mem"
 import "core:strings"
+
+Const_Kind :: enum {
+	Invalid,
+	Integer,
+	Boolean,
+	Float,
+	String,
+	Rune,
+	Nil,
+	Type,
+	Aggregate,
+}
+
+// Struct, array, and union constants. Behind a pointer so `Const_Value` stays a
+// fixed-size value an AST node can embed.
+Const_Aggregate :: struct {
+	type:     Type_Id,
+	elements: []Const_Value,
+	// For a union constant: the variant held, with `elements[0]` its payload (an
+	// `Invalid` value when the variant is payloadless).
+	variant:  int,
+}
+
+// Text is source/compilation backed; `integer` is arena-owned and immutable
+// after publication (see `src/bigint.odin`).
+Const_Value :: struct {
+	kind:       Const_Kind,
+	integer:    Big_Int, // Integer and Rune
+	float:      f64,
+	float_bits: u16,     // the semantic width a Float was last rounded to
+	// The exact encoding at `float_bits`. `float` alone cannot carry it: an f32
+	// signalling NaN round-tripped through the f64 field comes back quiet, so
+	// `unsafe.transmute(u32, x)` would not answer the bits it was handed.
+	float_raw:  u64,
+	boolean:    bool,
+	text:       string,
+	type_value: Type_Id,
+	aggregate:  ^Const_Aggregate,
+}
+
+integer_const :: proc(value: Big_Int) -> Const_Value {
+	return Const_Value{kind = .Integer, integer = value}
+}
+
+int_const :: proc(c: ^Compiler, value: i64) -> Const_Value {
+	return Const_Value{kind = .Integer, integer = bi_from_i64(c, value)}
+}
+
+rune_const :: proc(value: Big_Int) -> Const_Value {
+	return Const_Value{kind = .Rune, integer = value}
+}
+
+bool_const :: proc(value: bool) -> Const_Value {
+	return Const_Value{kind = .Boolean, boolean = value}
+}
+
+nil_const :: proc() -> Const_Value {
+	return Const_Value{kind = .Nil}
+}
+
+type_const :: proc(type: Type_Id) -> Const_Value {
+	return Const_Value{kind = .Type, type_value = type}
+}
+
+float_const :: proc(value: f64, bits: u16) -> Const_Value {
+	rounded := round_float(value, bits)
+	return Const_Value{kind = .Float, float = rounded, float_bits = bits, float_raw = float_pattern(rounded, bits)}
+}
+
+// The `unsafe.transmute` direction: exact bits in, the nearest `f64` view of
+// them alongside for every ordinary constant operation.
+float_bits_const :: proc(raw: u64, bits: u16) -> Const_Value {
+	return Const_Value{kind = .Float, float = float_from_pattern(raw, bits), float_bits = bits, float_raw = raw}
+}
+
+// design.md "Type conversion": the bounds of a float-to-integer conversion are
+// powers of two, so one interval serves every float width — the value is exact
+// in any format that can hold it and an infinity in one that cannot.
+power_of_two :: proc(exponent: int) -> f64 {
+	out := f64(1)
+	for _ in 0 ..< exponent {
+		out *= 2
+	}
+	return out
+}
+
+// A typed float operation rounds to its own width after every step: folding an
+// `f32` expression in `f64` and rounding once at the end can disagree with what
+// the same expression computes at runtime.
+round_float :: proc(value: f64, bits: u16) -> f64 {
+	switch bits {
+	case 16:
+		return f16_bits_to_f64(f64_to_f16_bits(value))
+	case 32:
+		return f64(f32(value))
+	}
+	return value
+}
+
+// The IEEE-754 encoding of a value already rounded to `bits`, and its inverse.
+float_pattern :: proc(value: f64, bits: u16) -> u64 {
+	switch bits {
+	case 16:
+		return u64(f64_to_f16_bits(value))
+	case 32:
+		return u64(transmute(u32)f32(value))
+	}
+	return transmute(u64)value
+}
+
+float_from_pattern :: proc(raw: u64, bits: u16) -> f64 {
+	switch bits {
+	case 16:
+		return f16_bits_to_f64(u16(raw))
+	case 32:
+		return f64(transmute(f32)u32(raw))
+	}
+	return transmute(f64)raw
+}
+
+// A Float carries the exact pattern of the width it was rounded to; any other
+// width re-encodes from the numeric field.
+const_float_pattern :: proc(value: Const_Value, bits: u16) -> u64 {
+	if value.float_bits == bits {
+		return value.float_raw
+	}
+	return float_pattern(value.float, bits)
+}
+
+// IEEE-754 binary16, rounding to nearest with ties to even. Odin's own `f16(x)`
+// rounds halfway cases away from zero — it turns 2049 into 2050 where the
+// hardware `fadd half` LLVM emits produces 2048, which would make a folded
+// `f16` constant disagree with the runtime expression.
+f64_to_f16_bits :: proc(value: f64) -> u16 {
+	pattern := transmute(u64)value
+	sign := u16((pattern >> 48) & 0x8000)
+	exponent := int((pattern >> 52) & 0x7ff)
+	mantissa := pattern & 0x000f_ffff_ffff_ffff
+
+	if exponent == 0x7ff {
+		return mantissa != 0 ? sign | 0x7e00 : sign | 0x7c00 // NaN, or infinity
+	}
+	if exponent == 0 {
+		return sign // zero, or an f64 subnormal, far below f16's range
+	}
+
+	unbiased := exponent - 1023
+	if unbiased > 15 {
+		return sign | 0x7c00 // beyond f16's largest finite value
+	}
+	significand := mantissa | (u64(1) << 52) // 53 bits, implicit bit included
+	target_exponent := unbiased + 15
+	shift := 42 // 52 explicit bits down to f16's 10
+	if target_exponent <= 0 {
+		// An f16 subnormal: the implicit bit moves into the stored mantissa.
+		shift = 43 - target_exponent
+		if shift > 63 {
+			return sign
+		}
+		target_exponent = 0
+	}
+
+	dropped := significand & ((u64(1) << u64(shift)) - 1)
+	result := significand >> u64(shift)
+	halfway := u64(1) << u64(shift - 1)
+	if dropped > halfway || (dropped == halfway && (result & 1) != 0) {
+		result += 1
+	}
+	if target_exponent == 0 {
+		// Rounding may have carried a subnormal up to the smallest normal, whose
+		// encoding is the next value in sequence; no special case is needed.
+		return sign | u16(result)
+	}
+	if result >= (u64(1) << 11) {
+		result >>= 1
+		target_exponent += 1
+		if target_exponent >= 31 {
+			return sign | 0x7c00
+		}
+	}
+	return sign | u16(u64(target_exponent) << 10) | u16(result & 0x3ff)
+}
+
+f16_bits_to_f64 :: proc(bits: u16) -> f64 {
+	sign := u64(bits & 0x8000) << 48
+	exponent := int((bits >> 10) & 0x1f)
+	mantissa := u64(bits & 0x3ff)
+
+	switch {
+	case exponent == 0x1f:
+		pattern := sign | 0x7ff0_0000_0000_0000 | (mantissa != 0 ? u64(0x0008_0000_0000_0000) : 0)
+		return transmute(f64)pattern
+	case exponent == 0 && mantissa == 0:
+		return transmute(f64)sign
+	case exponent == 0:
+		// Subnormal: `mantissa * 2^-24`, exact in f64 both times.
+		magnitude := f64(mantissa) / 16777216.0
+		return sign != 0 ? -magnitude : magnitude
+	}
+	pattern := sign | (u64(exponent - 15 + 1023) << 52) | (mantissa << 42)
+	return transmute(f64)pattern
+}
 
 value_allocator :: proc(c: ^Compiler, requested: mem.Allocator) -> mem.Allocator {
 	return requested.procedure == nil ? c.semantic_allocator : requested

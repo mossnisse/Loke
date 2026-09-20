@@ -1,0 +1,42 @@
+package main;
+
+// design.md "Nil slices": a slice and a dynamic interface value compare against
+// `nil` and nothing else. The rule is about the type, not about the position it
+// is written in, so burying one in a struct field must not make the whole
+// record comparable — a field-wise comparison there would compare addresses.
+
+Sized :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+Counter :: struct { value: int }
+impl Counter {
+	size :: proc(self) -> int { return self.value; }
+}
+
+Boxed :: struct { items: []int };
+Erased :: struct { view: dyn Sized };
+
+main :: proc() {
+	a := [2]int{1, 2};
+	b := [2]int{1, 2};
+
+	// Against `nil` both ways: accepted.
+	p := a[:];
+	if (p == nil) { }
+	if (nil != p) { }
+
+	c := Counter{1};
+	v := (dyn Sized)(&c);
+	if (v == nil) { }
+
+	// Against each other: rejected, for a slice and for a dyn alike.
+	q := b[:];
+	if (p == q) { }
+	w := (dyn Sized)(&c);
+	if (v == w) { }
+
+	// And rejected one level down, where no top-level shape test can see it.
+	if (Boxed{items = p} == Boxed{items = q}) { }
+	if (Erased{view = v} == Erased{view = w}) { }
+}

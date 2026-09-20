@@ -1,0 +1,12 @@
+L0310
+@21:13
+cannot pass `Other` with `Handle`
+L0310
+@22:13
+cannot pass `[]int` with `Handle`
+L0310
+@26:14
+cannot pass `Reader` with `Cursor`
+L0310
+@27:11
+cannot pass `^int` with `Cursor`

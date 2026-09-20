@@ -81,11 +81,11 @@ resolve_operator_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operato
 	pkg := package_of(k.c, k.pkg)
 	set, found := pkg.operators[value.symbol]
 	if !found {
-		set = new(Operator_Set, k.c.semantic_allocator)
-		set.candidates = make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+		set = new([dynamic]Symbol_Id, k.c.semantic_allocator)
+		set^ = make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 		pkg.operators[value.symbol] = set
 	}
-	append(&set.candidates, symbol_id)
+	append(set, symbol_id)
 }
 
 @(private = "file")
@@ -163,7 +163,7 @@ operator_candidates :: proc(k: ^Checker, symbol: string, operands: []Type_Id) ->
 			}
 		}
 		if set, found := pkg.operators[symbol]; found {
-			add_operator_members(k, set.candidates[:], symbol, &out)
+			add_operator_members(k, set[:], symbol, &out)
 		}
 	}
 	return out[:]

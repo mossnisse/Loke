@@ -170,7 +170,7 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 		}
 		v.type = TYPE_UNTYPED_INT
 		v.is_const = true
-		v.const_value = integer_const(k.c, value)
+		v.const_value = integer_const(value)
 
 	case .Float:
 		text, _ := strings.replace_all(v.text, "_", "", k.c.semantic_allocator)
@@ -198,7 +198,7 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 		}
 		v.type = TYPE_UNTYPED_RUNE
 		v.is_const = true
-		v.const_value = rune_const(k.c, bi_from_i64(k.c, i64(value)))
+		v.const_value = rune_const(bi_from_i64(k.c, i64(value)))
 
 	case .String, .Raw_String:
 		text, ok := decode_string_literal(k.c, v.text, v.kind == .Raw_String)
@@ -1670,7 +1670,8 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	// Asked before unification materialises a written `nil`.
-	nil_only := is_comparison && (type_is_slice(k.c, lhs) || type_is_slice(k.c, rhs))
+	nil_only := is_comparison &&
+	            (type_compares_to_nil_only(k.c, lhs) || type_compares_to_nil_only(k.c, rhs))
 	against_nil := lhs == TYPE_UNTYPED_NIL || rhs == TYPE_UNTYPED_NIL
 
 	operand_type, unified := unify_operands(k, v.lhs, v.rhs, v.op_span)
@@ -1680,19 +1681,19 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	if is_comparison {
-		// A slice compares against nil only (design.md "Nil slices").
+		// A slice or dyn value compares against nil only (design.md "Nil slices").
 		if nil_only && !against_nil {
 			errorf(
 				k.c,
 				v.op_span,
 				"L0476",
 				"`%s` compares against `nil` and nothing else",
-				type_name(k.c, type_is_slice(k.c, lhs) ? lhs : rhs),
+				type_name(k.c, type_compares_to_nil_only(k.c, lhs) ? lhs : rhs),
 			)
 			v.type = INVALID_TYPE
 			return
 		}
-		check_comparison(k, v, operand_type)
+		check_comparison(k, v, operand_type, nil_only)
 		return
 	}
 
@@ -1843,7 +1844,9 @@ validate_shift_count :: proc(k: ^Checker, e: Expr, type: Type_Id) -> bool {
 }
 
 @(private = "file")
-check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
+// `nil_only` says the operand type compares against `nil` and nothing else,
+// which `check_binary` has already confirmed is what this comparison does.
+check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id, nil_only := false) {
 	ordered := v.op != .Eq_Eq && v.op != .Not_Eq
 	both := []Type_Id{operand_type, operand_type}
 	if ordered && !type_is_ordered(k.c, operand_type) {
@@ -1861,7 +1864,7 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if !ordered && !type_is_comparable(k.c, operand_type) {
+	if !ordered && !nil_only && !type_is_comparable(k.c, operand_type) {
 		errorf(k.c, v.op_span, "L0355", "`%s` is not comparable", type_name(k.c, operand_type))
 		v.type = INVALID_TYPE
 		return
@@ -2461,7 +2464,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 	case .Int:
 		return int_const(c, 0), true
 	case .Rune:
-		return rune_const(c, bi_from_i64(c, 0)), true
+		return rune_const(bi_from_i64(c, 0)), true
 	case .Float:
 		return float_const(0, info.bits), true
 	case .Enum:
