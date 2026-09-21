@@ -238,6 +238,9 @@ Expr_Call :: struct {
 	// nil when that is parameter order.
 	bound_order: []int,
 	operation: Call_Operation,
+	// The members overload resolution chose among, when there were several; only
+	// diagnostics read it.
+	overload_members: []Symbol_Id,
 	// `variadic_slot` is the packed parameter, or -1. `variadic_forwards` passes
 	// one spread slice through; otherwise elements and spreads are concatenated
 	// in `variadic_order` (true = next spread, false = next element).

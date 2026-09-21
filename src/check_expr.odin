@@ -133,6 +133,36 @@ check_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: string) ->
 	return materialize_value_expr(k, e, target, what)
 }
 
+// A destination never selects an overload, so a call result that does not fit
+// names the member its arguments selected and any member whose result would.
+@(private = "file")
+note_overload_selection :: proc(k: ^Checker, e: Expr, target: Type_Id) {
+	call, is_call := e.(^Expr_Call)
+	if !is_call || len(call.overload_members) < 2 {
+		return
+	}
+	chosen := symbol_of(k.c, call.resolution.chosen_overload)
+	if chosen == nil {
+		return
+	}
+	add_notef(
+		k.c, chosen.span,
+		"the arguments select `%s`, which returns `%s`; a destination type does not choose an overload",
+		identifier_text(k.c, chosen.name), type_name(k.c, chosen.result),
+	)
+	for member in call.overload_members {
+		sym := symbol_of(k.c, member)
+		if sym == nil || sym.name == chosen.name || sym.result == INVALID_TYPE || !assignable(k.c, sym.result, target) {
+			continue
+		}
+		add_notef(
+			k.c, sym.span,
+			"`%s` returns `%s`; call it by name, or pass arguments that select it",
+			identifier_text(k.c, sym.name), type_name(k.c, sym.result),
+		)
+	}
+}
+
 // `check_value_expr` for an expression already checked, as overload selection
 // needs; checking it twice would repeat diagnostics.
 materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: string) -> bool {
@@ -150,6 +180,7 @@ materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: stri
 			type_name(k.c, target),
 			type_name(k.c, final),
 		)
+		note_overload_selection(k, e, target)
 		return false
 	}
 	return true
@@ -1084,7 +1115,7 @@ check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 			v.type = INVALID_TYPE
 			return
 		}
-		if check_user_binary(k, v, element, container, TYPE_BOOL) {
+		if check_user_binary(k, v, element, container) {
 			return
 		}
 		errorf(
@@ -1453,7 +1484,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	operand_base := expr_base(v.operand)
 	// A built-in operation cannot be shadowed by a user overload.
 	if !builtin_unary_defined(k, v.op, operand) {
-		if check_user_unary(k, v, operand, expected) {
+		if check_user_unary(k, v, operand) {
 			return
 		}
 	}
@@ -1520,7 +1551,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 }
 
 @(private = "file")
-check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id, expected: Type_Id) -> bool {
+check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) -> bool {
 	symbol := operator_text(v.op)
 	operands := []Type_Id{operand}
 	if !operator_exists(k, symbol, operands) {
@@ -1528,7 +1559,7 @@ check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id, expected
 	}
 	args := make([]Arg_Info, 1, k.c.semantic_allocator)
 	args[0] = arg_from_expr(v.operand)
-	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args, expected)
+	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args)
 	if chosen == INVALID_SYMBOL {
 		v.type = INVALID_TYPE
 		return true
@@ -1543,7 +1574,7 @@ check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id, expected
 // design.md: `!=` falls back to `!(left == right)` when `==` is available and no
 // more specific `!=` overload exists.
 @(private = "file")
-check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id, expected: Type_Id) -> bool {
+check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bool {
 	symbol := operator_text(v.op)
 	operands := []Type_Id{lhs, rhs}
 	args := make([]Arg_Info, 2, k.c.semantic_allocator)
@@ -1553,7 +1584,7 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id, expec
 	if !operator_viable(k, symbol, operands, args) {
 		if v.op != .Not_Eq || !operator_viable(k, "==", operands, args) {
 			if operator_exists(k, symbol, operands) {
-				resolve_operator(k, v.op_span, symbol, operands, args, expected)
+				resolve_operator(k, v.op_span, symbol, operands, args)
 				v.type = INVALID_TYPE
 				return true
 			}
@@ -1562,7 +1593,7 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id, expec
 		symbol = "=="
 		negate = true
 	}
-	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args, negate ? TYPE_BOOL : expected)
+	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args)
 	if chosen == INVALID_SYMBOL {
 		v.type = INVALID_TYPE
 		return true
@@ -1665,7 +1696,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 	if !builtin_binary_defined(k, v.op, lhs, rhs) {
-		if check_user_binary(k, v, lhs, rhs, expected) {
+		if check_user_binary(k, v, lhs, rhs) {
 			return
 		}
 	}

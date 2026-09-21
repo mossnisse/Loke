@@ -561,14 +561,15 @@ candidate_better :: proc(a, b: ^Candidate) -> bool {
 
 // ------------------------------------------------------------------- entry --
 
-// `description` names the construct in diagnostics.
+// `description` names the construct in diagnostics. Selection reads only the
+// arguments; a destination type checks the chosen result afterwards and never
+// selects (design.md "Operator lookup and overload resolution").
 resolve_overload :: proc(
 	k: ^Checker,
 	span: Span,
 	description: string,
 	members: []Symbol_Id,
 	args: []Arg_Info,
-	expected: Type_Id = INVALID_TYPE,
 	report := true,
 ) -> (Candidate, bool) {
 	if len(members) == 0 {
@@ -590,18 +591,6 @@ resolve_overload :: proc(
 			report_no_match(k, span, description, all[:])
 		}
 		return Candidate{}, false
-	}
-
-	if expected != INVALID_TYPE && len(viable) > 1 {
-		kept := make([dynamic]int, 0, len(viable), context.temp_allocator)
-		for index in viable {
-			if candidate_result_fits(k, all[index].symbol, expected) {
-				append(&kept, index)
-			}
-		}
-		if len(kept) > 0 {
-			viable = kept
-		}
 	}
 
 	maximal := make([dynamic]int, 0, len(viable), context.temp_allocator)
@@ -641,15 +630,6 @@ overload_has_viable :: proc(
 		}
 	}
 	return false
-}
-
-@(private = "file")
-candidate_result_fits :: proc(k: ^Checker, symbol_id: Symbol_Id, expected: Type_Id) -> bool {
-	sym := symbol_of(k.c, symbol_id)
-	if sym == nil || sym.result == INVALID_TYPE {
-		return false
-	}
-	return sym.result == expected || assignable(k.c, sym.result, expected)
 }
 
 // ---------------------------------------------------------------- diagnostics --

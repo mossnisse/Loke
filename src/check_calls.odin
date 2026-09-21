@@ -31,15 +31,15 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	// Nor is a group or a generic procedure: overloads rank before any single
 	// procedure type exists.
 	if group := callee_group(k, v.callee); group != INVALID_SYMBOL {
-		check_group_call(k, v, group, expected)
+		check_group_call(k, v, group)
 		return
 	}
 	if group := associated_group(k, v.callee); group != INVALID_SYMBOL {
-		check_group_call(k, v, group, expected)
+		check_group_call(k, v, group)
 		return
 	}
 	if template := callee_generic_procedure(k, v.callee); template != INVALID_SYMBOL {
-		check_group_call(k, v, template, expected)
+		check_group_call(k, v, template)
 		return
 	}
 	callee_symbol := named_callee_symbol(k, v.callee)
@@ -52,7 +52,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	// design.md "Shared ownership": `shared(Node)` is the type, and anything that
 	// is not a type goes to the constructor group.
 	if k.c.shared_symbol != INVALID_SYMBOL && callee_symbol == k.c.shared_symbol && !callee_argument_denotes_type(k, v) {
-		check_group_call(k, v, k.c.shared_construct_symbol, expected)
+		check_group_call(k, v, k.c.shared_construct_symbol)
 		return
 	}
 	// `Simd(f32, 4)`, `Range(int)`, and generic record applications denote types.
@@ -112,7 +112,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	}
 	// The receiver becomes argument zero.
 	if callee_base.resolution.kind == .Method {
-		check_method_call(k, v, v.callee.(^Expr_Selector), expected)
+		check_method_call(k, v, v.callee.(^Expr_Selector))
 		return
 	}
 	if callee_base.resolution.kind == .Union_Variant {
@@ -345,7 +345,7 @@ associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 // is implicit; a consuming one is written `move(value).method()` (design.md
 // "Receiver forms").
 @(private = "file")
-check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expected: Type_Id) {
+check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	receiver := sel.operand
 	receiver_base := expr_base(receiver)
 	candidates := method_candidates(k, receiver_base.type, intern_identifier(k.c, sel.name.text))
@@ -371,10 +371,13 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	copy(args[1:], written)
 
 	description := concat(k.c, "method `", concat(k.c, sel.name.text, "`"))
-	cand, resolved := resolve_overload(k, v.span, description, candidates, args, expected)
+	cand, resolved := resolve_overload(k, v.span, description, candidates, args)
 	if !resolved {
 		v.type = INVALID_TYPE
 		return
+	}
+	if len(candidates) > 1 {
+		v.overload_members = candidates
 	}
 	chosen := symbol_of(k.c, cand.symbol)
 	if reject_direct_hook_call(k, v.span, cand.symbol) {
@@ -491,7 +494,7 @@ callee_argument_denotes_type :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 // A call through a group or generic procedure: check the arguments once, rank
 // the members, and bind the winner.
 @(private = "file")
-check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected: Type_Id) {
+check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 	sym := symbol_of(k.c, group)
 	members := sym.kind == .Proc_Group ? sym.members : []Symbol_Id{group}
 	description := concat(k.c, "`", concat(k.c, identifier_text(k.c, sym.name), "`"))
@@ -504,10 +507,13 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 	if current := symbol_of(k.c, group); current != nil && current.kind == .Proc_Group {
 		members = current.members
 	}
-	cand, resolved := resolve_overload(k, v.span, description, members, args, expected)
+	cand, resolved := resolve_overload(k, v.span, description, members, args)
 	if !resolved {
 		v.type = INVALID_TYPE
 		return
+	}
+	if len(members) > 1 {
+		v.overload_members = members
 	}
 	annotate_chosen_callee(k, v, cand.symbol)
 	if !bind_chosen_call(k, v, cand) {
@@ -877,7 +883,7 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, 
 		return
 	}
 	description := concat(k.c, "conversion to `", concat(k.c, type_name(k.c, target), "`"))
-	cand, resolved := resolve_overload(k, v.span, description, usable, args, target)
+	cand, resolved := resolve_overload(k, v.span, description, usable, args)
 	if !resolved {
 		v.type = INVALID_TYPE
 		return

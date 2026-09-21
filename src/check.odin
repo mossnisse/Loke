@@ -2718,12 +2718,12 @@ check_user_compound :: proc(
 			return true
 		}
 		if operator_exists(k, binary, operands) {
-			resolve_operator(k, s.op_span, binary, operands, args, type)
+			resolve_operator(k, s.op_span, binary, operands, args)
 			return true
 		}
 		return false
 	}
-	chosen, bound := resolve_operator(k, s.op_span, binary, operands, args, type)
+	chosen, bound := resolve_operator(k, s.op_span, binary, operands, args)
 	if chosen == INVALID_SYMBOL {
 		return true
 	}

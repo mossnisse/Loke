@@ -368,6 +368,83 @@ This removes the reason for API shims whose only purpose is to defeat a higher-r
 
 Do not sum conversion scores, guess numeric widths, or add constraint entailment to compensate. Ambiguity remains a useful, understandable error.
 
+**Follow-up analysis of proposal 2 (21 September 2026)**
+
+The first half is right as written and nearly free. The second half has the right aim, but it moves the case nothing in the tree exercises and keeps the one the library works around. Probes were compiled with a fresh `lokec` at `6bbc752`. To measure migration, a throwaway build of the resolver reported every call whose selection a rule change would alter, over the 534 programs in `tests/` and `examples/`; a second throwaway build implementing the alternative below ran the full test suite. Neither is committed.
+
+*Destination filtering is unused, and inconsistent where it acts.* Removing it changes the selection of no call in the corpus. With `pick` as above:
+
+- `takes_f64(pick(7))` picks `real`. Give `takes_f64` a second overload, making it a group `outer`, and `outer(pick(7))` fails with L0392: only a plain callee passes its parameter type down. Adding an overload breaks calls nested in its arguments.
+- `typed: f64 = pick(7)` gives `2`, but `f64(pick(7))` gives `1`.
+- It implements overloading by return type alone, which the design rules out. This compiles and prints `1 2`:
+
+```odin
+as_int :: proc(s: string_view) -> int { return 1; }
+as_f64 :: proc(s: string_view) -> f64 { return 2.0; }
+parse  :: proc{as_int, as_f64};
+
+a: int = parse("x");
+b: f64 = parse("x");
+```
+
+Removing it deletes `candidate_result_fits` and the `expected` parameter of `resolve_overload` and `resolve_operator`. Compound assignment already has the diagnostic this needs: when the selected `+` does not fit, it reports L0417, "`+` produces `X`, which cannot be assigned back to `Y`". The one addition is a note of that kind on L0310 for a call through a group. `s: string = pick(7)` today says only "cannot initialise `string` with `int`", and without the filter `typed: f64 = pick(7)` would say the same, naming neither `integer` nor the fact that a destination never selects. A declaration-site check for members that differ only in their result is not needed: every call through them is an ambiguity that lists both.
+
+*The mode half fixes the direction nothing uses.* Preferring a consuming candidate for a written `move(x)` ahead of tie-breakers 1–4 changes no selection in the corpus. It does fix the review's example, and this default-argument variant, where `b(move(w))` currently picks `ordinary` because `consuming_d` would omit a default:
+
+```odin
+ordinary    :: proc(x: int) -> int { return 1; }
+consuming_d :: proc(x: move int, y: int = 0) -> int { return 2; }
+b :: proc{ordinary, consuming_d};
+```
+
+The `Small_Array` shim exists for the other direction. Without `append_one_copied`, `values.append(Copied{1})` — a temporary, with no marker — reaches `append_moved` through the variadic tie-breaker, because the ordinary-mode preference comes last. The proposal keeps that preference last for unmarked temporaries, so the shim stays; "removes the reason for API shims" does not hold for the one shim that exists.
+
+Sending unmarked temporaries to the ordinary member has costs of its own:
+
+- `shared(make_res(1))` with a `move_only` `Res` fails inside `base/runtime` with L0363, "`Res` has no field or member `try_clone`": the temporary is sent to `shared_from_clone`. `move(make_res(1))` is rejected with L0497, so the only working spelling binds a local first.
+- With a copyable payload, `shared(Tracked{1})` clones the temporary and then drops the original. `lib_shared` counts that drop.
+- Generic code dispatches by instantiation. In a generic `fill(values: inout Small_Array($T, 4), make: proc() -> T)`, `values.append(make())` reaches the copying member for a copyable `T` and the consuming one for a move-only `T`, whose copying members `where is_copyable(T)` removes from the group. With the `+100` copy hook, one source line stores `101` for one instantiation and `1` for the other.
+
+The design already states the rule that avoids all three. [Container insertion](C:/code/loke/design.md:917): "a temporary or `move(x)` transfers into the container, and a borrowed place is copied." [A `move` parameter](C:/code/loke/design.md:4147): a temporary "owns its value already … so there is nothing for a marker to announce." Only in a group does the marker also select ([line 4155](C:/code/loke/design.md:4155): "only a written `move` reaches a consuming member of a group"), and there its two jobs disagree on exactly the arguments where no marker can be written.
+
+*Alternative: ownership selects, not the marker.* Replace tie-breaker 5 with one rule and apply it after the conversion vector, before tie-breakers 1–4:
+
+> An argument that owns its value — a temporary or `move(x)` — prefers a `move` parameter. A borrowed place cannot reach one.
+
+It stays a preference, so an owned argument still reaches an ordinary parameter when no consuming member is viable, and it stays out of the conversion vector. Receivers follow it too: a consuming receiver given an owned receiver ranks exact, like a plain `self`, instead of one rank below it, so the same step decides.
+
+With both changes in the experimental build, the review's example prints `2`, `b(move(w))` picks `consuming_d`, `shared(make_res(1))` compiles and runs, the generic `fill` stores `1` for both instantiations, and each annotated `pick(7)` reports L0310 instead of selecting `real`. Deleting `append_one_copied` then leaves all 20 tests that use `Small_Array` unchanged, in output and diagnostics.
+
+| Cost | Evidence or consequence |
+| --- | --- |
+| Changed dispatch | 27 calls in the corpus, all temporaries or constants passed to `Small_Array.append`/`insert`, `shared`, or `try_shared`, now move in instead of copying. The full suite fails exactly two programs: `lib_small_array` prints `1` instead of `101` (no clone), and `lib_shared` loses the drop of the cloned-from temporary (`1 1`, `2 0`, `2` become `0 1`, `1 0`, `1`). No `tests/err` fixture changes. |
+| Refactoring | Extracting a temporary argument into a local makes it a place, so the call moves to the copying member. Extraction already turns a transfer into a copy for an initialization or an insertion; here it also changes which member runs. |
+| Receivers | Over `use :: proc{look, take}` with `look(self)` and `take(self: move)`, `make_box().use()` changes from `look` to `take`. No such group exists in the corpus. |
+| Compiler | The counter's definition ([overload.odin:419](C:/code/loke/src/overload.odin:419)), its place in [`tie_break`](C:/code/loke/src/overload.odin:530), and [one receiver rank](C:/code/loke/src/overload.odin:252). The fallback ambiguity note ([line 711](C:/code/loke/src/overload.odin:711)) should again name specialization, as it did before `6bf78d9`. |
+| Library | Delete `append_one_copied` ([small_array.loke:139](C:/code/loke/core/container/small_array.loke:139)) and reword the selection comment above `append_moved`. |
+| Specification | The tie-breaker list, the [`move`-parameter paragraph](C:/code/loke/design.md:4155), [receiver forms](C:/code/loke/design.md:2032), and [shared construction](C:/code/loke/design.md:5531), where "`shared(value)` clones" then holds for a borrowed value only. |
+
+What it gives up: the member no longer follows from the written marker alone. It follows from whether the argument is a place, which is visible in the same expression.
+
+Found on the way, independent of the rule:
+
+- `shared(r)` for a move-only *place* fails with the same L0363 inside the runtime. `shared_from_clone` and `try_shared_from_clone` lack the `where is_copyable(T)` bound that `Small_Array`'s copying members have. Verified on a local replica: with the bound, the call fails at the call site, and the note on the consuming member says to write `move(...)`.
+- Built-in `[dynamic]T` insertion clones where [Container insertion](C:/code/loke/design.md:917) says it transfers. Counting a copy hook, with a fresh array per case: `append` of a temporary clones once, of `move(x)` once, of a place twice (into the variadic pack, then into the array), and `insert` of a temporary or `move(x)` once. A local initialized from a temporary and `m[key] = temporary` clone nothing. The `101` in `lib_small_array` matches the built-in only because both copy.
+
+Sources: [overload resolution](C:/code/loke/src/overload.odin:565), [destination filter](C:/code/loke/src/overload.odin:595), [tie-breakers](C:/code/loke/design.md:2179), [Small_Array groups](C:/code/loke/core/container/small_array.loke:219), [shared construction](C:/code/loke/base/runtime/shared.loke:68).
+
+*Recommendation.*
+
+1. Remove destination filtering as proposed, with the L0310 note for a call through a group.
+2. Instead of moving only the written-`move` preference, replace tie-breaker 5 with the ownership rule, make it the first tie-breaker, apply it to receivers, and delete the `Small_Array` shim.
+3. Separately, since neither is a rule change: add `where is_copyable(T)` to the two `shared` clone members, and fix the extra clone in built-in insertion.
+
+*Decision (21 September 2026).* Adopted as recommended.
+
+1. Selection reads only the arguments. *Done:* `resolve_overload` and `resolve_operator` no longer take a destination type. A call through a group records the members it chose among, and an L0310 on its result notes the member the arguments selected and any member whose result would fit. Nothing in the corpus changed dispatch; `tests/err/overload_destination` pins the new errors.
+2. Ownership replaces tie-breaker 5 and runs first. *Planned.*
+3. The `shared` bound and built-in insertion's extra clone are tracked as separate tasks.
+
 3. **Make callback contracts structural and preserve them through composition.**
 
 Two callbacks with the same signature and dependency bounds should have the same relevant callback contract regardless of which declaration supplied it.

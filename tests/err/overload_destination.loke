@@ -1,0 +1,28 @@
+package main; import "core:fmt";
+
+// design.md "Operator lookup and overload resolution": the arguments select an
+// overload, and a destination type only checks the chosen result afterwards.
+
+integer :: proc(x: int) -> int { return 1; }
+real    :: proc(x: f64) -> f64 { return 2.0; }
+pick    :: proc{integer, real};
+
+takes_f64 :: proc(x: f64) -> f64 { return x; }
+
+// Members that differ only in their result are never told apart.
+as_int :: proc(s: string_view) -> int { return 1; }
+as_f64 :: proc(s: string_view) -> f64 { return 2.0; }
+parse  :: proc{as_int, as_f64};
+
+main :: proc() {
+	// The annotation checks the call; it does not choose `real`.
+	typed: f64 = pick(7);
+	// Nor does a parameter type.
+	fmt.println(takes_f64(pick(7)));
+	// A floating argument, or the member's own name, selects `real`.
+	chosen: f64 = pick(7.0);
+	named: f64 = real(7);
+	fmt.println(typed, chosen, named);
+	a: int = parse("x");
+	fmt.println(a);
+}

@@ -2165,7 +2165,7 @@ impl Meters {
 }
 ```
 
-Candidates are ranked with the same algorithm as named-procedure overloads. Candidate formation first rejects an arity mismatch, an incompatible parameter mode, an unsatisfied constraint, or a result incompatible with a known destination type. Each remaining candidate gets one conversion rank per argument:
+Candidates are ranked with the same algorithm as named-procedure overloads. Candidate formation first rejects an arity mismatch, an incompatible parameter mode, or an unsatisfied constraint. Each remaining candidate gets one conversion rank per argument:
 
 0. Exact type and parameter-mode match.
 1. Borrow, dereference, or mutable-to-read-only adjustment that creates no value.
@@ -2188,7 +2188,7 @@ When conversion vectors are identical, tie-breakers apply in order:
 
 An exact generic match beats a concrete overload that needs conversion unless their ranking vectors tie. Default structural equality and comparison are used only when no viable explicit overload exists.
 
-Return type may filter candidates against a known destination type, but procedures cannot be overloaded by return type alone. If more than one maximal candidate remains, the call is a compile-time ambiguity, and the diagnostic must list every maximal candidate, its conversion vector, and the tie-breaker at which selection failed.
+**Selection reads only the arguments and the call syntax.** A destination type — an annotation, an assignment target, a parameter, a result — then checks the chosen result like any other value, and a mismatch names the member the arguments selected. `typed: f64 = pick(7)` is an error when `pick(7)` selects an `int` member; it never selects a floating one instead. Members that differ only in their result are therefore ambiguous at every call. If more than one maximal candidate remains, the call is a compile-time ambiguity, and the diagnostic must list every maximal candidate, its conversion vector, and the tie-breaker at which selection failed.
 
 ### Indexing and slicing
 

@@ -323,7 +323,6 @@ resolve_operator :: proc(
 	symbol: string,
 	operands: []Type_Id,
 	args: []Arg_Info,
-	expected: Type_Id = INVALID_TYPE,
 	among: []Symbol_Id = nil,
 ) -> (Symbol_Id, []Expr) {
 	// `among` is the already-filtered set an index in place position built; every
@@ -333,7 +332,7 @@ resolve_operator :: proc(
 		return INVALID_SYMBOL, nil
 	}
 	description := fmt.aprintf("operator `%s`", symbol, allocator = k.c.semantic_allocator)
-	cand, resolved := resolve_overload(k, span, description, candidates, args, expected)
+	cand, resolved := resolve_overload(k, span, description, candidates, args)
 	if !resolved {
 		return INVALID_SYMBOL, nil
 	}

@@ -1,0 +1,13 @@
+L0310
+@19:15
+cannot initialise `f64` with `int`
+the arguments select `integer`, which returns `int`; a destination type does not choose an overload
+`real` returns `f64`; call it by name, or pass arguments that select it
+L0310
+@21:24
+cannot pass `f64` with `int`
+L0391
+@26:11
+`parse` is ambiguous here
+candidate `as_int`
+candidate `as_f64`
