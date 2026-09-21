@@ -42,6 +42,37 @@ measure :: proc(shape: dyn Shape) -> int {
 	return view.len() + n;
 }
 
+// Operator syntax reaches the same write effect as a named call.
+Value :: struct { n: int }
+impl Value {
+	add :: operator(+) proc(a, b: Value) -> Value {
+		reset();
+		return {a.n + b.n};
+	}
+	read_then_reset :: operator(+) proc(values: []int, b: Value) -> Value {
+		reset();
+		return b;
+	}
+	add_assign :: operator(+=) proc(a: inout Value, b: Value) {
+		reset();
+		a.n += b.n;
+	}
+}
+across_an_operator :: proc() -> int {
+	view: []int = cache;
+	_ = Value{1} + Value{2};
+	return view[0];
+}
+through_an_operator_argument :: proc() -> int {
+	return (cache + Value{0}).n;
+}
+across_a_compound_operator :: proc() -> int {
+	value := Value{1};
+	view: []int = cache;
+	value += Value{2};
+	return view[0];
+}
+
 main :: proc() {
 	c := Circle{1};
 	fmt.println(apply(clears), measure((dyn Shape)(&c)));

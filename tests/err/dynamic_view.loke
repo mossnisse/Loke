@@ -44,4 +44,18 @@ writable_view :: proc() {
 	view: []mut int = values;
 }
 
+// Distinct types do not inherit the underlying dynamic-array conversion.
+Owned :: distinct [dynamic]int;
+View :: distinct []int;
+
+distinct_source :: proc() {
+	values: Owned = {};
+	view: []int = values;
+}
+
+distinct_destination :: proc() {
+	values: [dynamic]int = {};
+	view: View = values;
+}
+
 main :: proc() {}

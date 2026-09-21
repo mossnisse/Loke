@@ -16,3 +16,12 @@ modified by a procedure this call may reach
 L0512
 @41:7
 modified by a procedure this call may reach
+L0512
+@63:6
+`cache` cannot be modified by `add` here
+L0512
+@67:10
+`cache` cannot be modified by `read_then_reset` here
+L0512
+@72:8
+`cache` cannot be modified by `add_assign` here

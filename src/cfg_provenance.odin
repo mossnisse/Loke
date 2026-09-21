@@ -1927,11 +1927,13 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 		// A selected `operator([:])` result borrows the receiver unless its result
 		// type is owning (design.md).
 		receiver_loans := walk_flow_expr(graph, v.bound[0])
+		borrowed := receiver_loans
 		for index in 1 ..< len(v.bound) {
 			if v.bound[index] != nil {
-				walk_flow_expr(graph, v.bound[index])
+				borrowed = prov_join(graph, borrowed, walk_flow_expr(graph, v.bound[index]))
 			}
 		}
+		prov_operator_effects(graph, v.resolution, v.span, borrowed)
 		if !type_is_carrier(graph.k.c, v.type) {
 			return nil // an owning result carries no borrow edge at all
 		}

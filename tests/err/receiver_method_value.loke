@@ -5,6 +5,7 @@ package main; import "core:fmt";
 // parameter, because the two modes have different ABI and provenance.
 
 Counter :: struct { value: int }
+Counter_Pointer :: distinct ^Counter;
 
 impl Counter {
 	read :: proc(self: ^) -> int { return self.value; }
@@ -16,4 +17,6 @@ main :: proc() {
 	fmt.println(Counter.read(c));
 	stored: proc(self: Counter) -> int = Counter.read;
 	fmt.println(stored);
+	pointer := Counter_Pointer(&c);
+	fmt.println(Counter.read(pointer));
 }

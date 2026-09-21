@@ -19,3 +19,9 @@ a read-only slice of it is still in use
 L0310
 @44:20
 cannot initialise `[]mut int` with `[dynamic]int`
+L0310
+@53:16
+cannot initialise `[]int` with `Owned`
+L0310
+@58:15
+cannot initialise `View` with `[dynamic]int`

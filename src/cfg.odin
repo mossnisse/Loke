@@ -616,6 +616,12 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	}
 	if graph.mode != .Lifecycle {
 		prov_assign(graph, s, value_loans)
+		borrowed: []int
+		for loans in value_loans {
+			borrowed = prov_join(graph, borrowed, loans)
+		}
+		prov_direct_effects(graph, s.operator, s.op_span, borrowed)
+		prov_direct_effects(graph, s.place_setter, s.op_span, borrowed)
 		return
 	}
 	classify_assignment_copies(graph.k, s, graph.loop_depth > 0)
@@ -920,25 +926,29 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return walk_flow_call(graph, v)
 
 	case ^Expr_Binary:
-		walk_flow_expr(graph, v.lhs)
+		borrowed := walk_flow_expr(graph, v.lhs)
 		if v.op == .And_And || v.op == .Or_Or {
 			entry := graph.current
 			merge := new_flow_block(graph)
 			link(graph, entry, merge)
 			graph.current = new_flow_block(graph)
 			link(graph, entry, graph.current)
-			walk_flow_expr(graph, v.rhs)
+			right := walk_flow_expr(graph, v.rhs)
+			if prov { borrowed = prov_join(graph, borrowed, right) }
 			link(graph, graph.current, merge)
 			graph.current = merge
 		} else {
-			walk_flow_expr(graph, v.rhs)
+			right := walk_flow_expr(graph, v.rhs)
+			if prov { borrowed = prov_join(graph, borrowed, right) }
 		}
+		if prov { prov_operator_effects(graph, v.resolution, v.span, borrowed) }
 
 	case ^Expr_Unary:
 		if prov && v.op == .Amp {
 			return prov_address_of(graph, v)
 		}
-		walk_flow_expr(graph, v.operand)
+		borrowed := walk_flow_expr(graph, v.operand)
+		if prov { prov_operator_effects(graph, v.resolution, v.span, borrowed) }
 
 	case ^Expr_Postfix:
 		operand_loans := walk_flow_expr(graph, v.operand)
@@ -1033,6 +1043,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				loans = prov_join(graph, loans, walk_flow_expr(graph, index))
 			}
 			if len(v.bound) > 0 {
+				prov_operator_effects(graph, v.resolution, v.span, loans)
 				return prov_value_content(graph, loans, v.type, v.span)
 			}
 			return prov_project_content(

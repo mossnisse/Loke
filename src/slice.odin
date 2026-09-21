@@ -82,7 +82,7 @@ slice_element :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 // design.md "Dynamic arrays": a `[dynamic]T` reads as a `[]T` of its elements,
 // as a `string` reads as a `string_view`. A writable view stays explicit.
 dynamic_views_as :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
-	source, view := underlying_info(c, from), underlying_info(c, to)
+	source, view := type_of(c, from), type_of(c, to)
 	return source != nil && view != nil && source.kind == .Dynamic_Array && view.kind == .Slice &&
 		!view.mutable && source.element == view.element
 }

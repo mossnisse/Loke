@@ -798,14 +798,14 @@ candidate_arguments :: proc(c: ^Compiler, cand: Candidate) -> []Argument {
 
 // The pointee of a `^T` or `^mut T`, or INVALID_TYPE.
 pointer_to_element :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
-	info := underlying_info(c, type)
+	info := type_of(c, type)
 	return info != nil && info.kind == .Pointer ? info.element : INVALID_TYPE
 }
 
 // `pointer^`, already checked: a borrowing parameter given the address takes
 // the place it names.
 dereference_argument :: proc(k: ^Checker, pointer: Expr) -> Expr {
-	info := underlying_info(k.c, expr_base(pointer).type)
+	info := type_of(k.c, expr_base(pointer).type)
 	deref := new(Expr_Postfix, k.c.semantic_allocator)
 	deref.span, deref.op_span, deref.op, deref.operand = expr_span(pointer), expr_span(pointer), .Caret, pointer
 	deref.type = info.element
