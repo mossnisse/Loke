@@ -395,7 +395,8 @@ Type_Poly :: struct {
 	constraint: Expr,
 }
 
-// `Borrow` is `borrow T` or a plain `self`. It is last because a mode number
+// `Borrow` is a `self: ^` receiver, or a synthesized member's read-only receiver:
+// passed by address, which method syntax takes implicitly. It is last because a mode number
 // reaches the type identity key (`typeid_sort_key_walk`).
 Param_Mode :: enum {
 	Value,

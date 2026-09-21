@@ -2648,24 +2648,16 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 		return param, named
 	}
 
-	// Only `self: borrow` may omit its type.
-	self_borrow := len(param.names) == 1 && param.names[0].name.text == "self" &&
-		(peek_token(p, 1).kind == .Comma || peek_token(p, 1).kind == .Rparen)
-	// `borrow` remains usable as an ordinary type name.
-	if is_contextual(p, "borrow") && (starts_type(peek_token(p, 1).kind) ||
-	   peek_token(p, 1).kind == .Ident || peek_token(p, 1).kind == .Lparen || self_borrow) {
-		advance(p)
-		param.mode = .Borrow
-		if !self_borrow {
-			param.type = parse_type(p)
-		}
-		param.span = span_to_here(p, start)
-		return param, named && !expr_has_error(param.type)
-	}
-
-	// `self: inout` and `self: move` may omit the receiver type.
+	// `self: inout`, `self: move` and `self: ^` may omit the receiver type.
 	receiver_type_omitted := peek_token(p, 1).kind == .Comma || peek_token(p, 1).kind == .Rparen
 	#partial switch current(p).kind {
+	case .Caret:
+		if receiver_type_omitted {
+			advance(p)
+			param.mode = .Borrow
+		} else {
+			param.type = parse_type(p)
+		}
 	case .Inout:
 		advance(p)
 		param.mode = .Inout

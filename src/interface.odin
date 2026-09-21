@@ -909,7 +909,8 @@ slot_matches :: proc(
 			return false
 		}
 		have := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
-		if have != modes[index] {
+		// A `self: ^` slot is met by a value `self` too: the method only lends less.
+		if have != modes[index] && !(index == 0 && modes[index] == .Borrow && have == .Value) {
 			return false
 		}
 	}

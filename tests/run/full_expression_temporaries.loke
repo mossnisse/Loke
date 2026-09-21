@@ -14,7 +14,7 @@ Box :: move_only struct { tag: int, items: [dynamic]int }
 
 impl Box {
 	release :: hook(drop) proc(self: inout Box) { fmt.println("drop", self.tag); }
-	view :: proc(self) -> []int { return self.items[:]; }
+	view :: proc(self: ^) -> []int { return self.items[:]; }
 }
 
 build :: proc(tag: int) -> Box {

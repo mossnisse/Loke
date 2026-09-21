@@ -16,9 +16,9 @@ bad_cast :: proc() { f := First(second); }
 erased :: proc(f: proc(a, b: []int) -> []int) -> First { return f; }
 
 Inline :: struct { items: [2]int }
-impl Inline { view :: proc(self) -> []int { return self.items[:]; } }
+impl Inline { view :: proc(self: ^) -> []int { return self.items[:]; } }
 wrong_mode :: proc() { f: proc(self: Inline) -> []int = Inline.view; }
-write_borrow :: proc(value: borrow Inline) { value.items[0] = 9; }
+write_borrow :: proc(value: ^Inline) { value.items[0] = 9; }
 escape :: proc() -> []int {
 	value: Inline = {};
 	f := Inline.view;
@@ -49,16 +49,9 @@ destructure :: proc() {
 	f, n = Both{second, 1};
 }
 
-false_none :: proc(@(escape=none) value: borrow int) -> ^int { return &value; }
+false_none :: proc(@(escape=none) value: ^int) -> ^int { return value; }
 Second :: type_of(second);
 Both :: struct { callback: Second, count: int }
-
-address_of_view :: proc(value: borrow string_view) -> ^string_view { return &value; }
-converted_temporary :: proc() {
-	text: string = "hello";
-	view := address_of_view(text);
-	fmt.println(view^.len());
-}
 
 choose_region :: proc(first, second: Allocator) -> Allocator { return first; }
 other_region :: proc(first, second: Allocator) -> Allocator { return second; }

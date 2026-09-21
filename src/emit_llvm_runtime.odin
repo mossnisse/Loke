@@ -1340,9 +1340,10 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	write_forwarded_params(e, target.params, signature.param_modes)
 	open_function(e, ")")
 
-	// The receiver arrives as a pointer; only a `move self` slot takes a value.
+	// The receiver arrives as a pointer; a target taking its receiver by value
+	// gets it loaded.
 	receiver_type, receiver := "ptr", "%arg0"
-	if !param_mode_is_pointer(slot.mode) {
+	if !param_mode_is_pointer(symbol_param_mode(e.c, target, 0)) {
 		receiver_type = llvm_type(e, target.params[0])
 		receiver = load(e, receiver_type, "%arg0")
 	}

@@ -47,7 +47,7 @@ Integral :: interface($T: type) {
 // its `impl` block writes, or the field-wise one the compiler generates.
 // `move_only struct` removes the member, so a move-only type fails it.
 Cloneable :: interface($T: type) {
-	slot try_clone: proc(self, allocator: Allocator) -> Result(T, Allocator_Error);
+	slot try_clone: proc(self: ^, allocator: Allocator) -> Result(T, Allocator_Error);
 }
 
 // What `next` hands back is `Item`, which the iterator's `Yield` makes of the
@@ -59,7 +59,7 @@ Iterator :: interface($Self, $Item: type) {
 Iterable :: interface($Self: type) {
 	Self.Element -> type;
 	Self.Iterator -> type;
-	slot iter: proc(self) -> Self.Iterator;
+	slot iter: proc(self: ^) -> Self.Iterator;
 	// What the iterator hands back, which is the element itself unless it lends
 	// one. An iterator declaring no `Yield` has `Item` equal to `Element`, so
 	// this accepts every iterator written before `Yield` existed.
@@ -71,7 +71,7 @@ Iterable :: interface($Self: type) {
 // ordinary adapter value with its own pair.
 Reverse_Iterable :: interface($Self: type) {
 	Iterable(Self);
-	slot iter_reverse: proc(self) -> Self.Iterator;
+	slot iter_reverse: proc(self: ^) -> Self.Iterator;
 }
 
 Mutable_Iterable :: interface($Self: type) {

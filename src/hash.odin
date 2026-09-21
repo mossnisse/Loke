@@ -71,7 +71,7 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 // An inherent `hash` is called with the map's own key storage and a seed, so it
 // borrows its receiver and has exactly the protocol's shape.
 key_hash_signature_ok :: proc(sym: ^Symbol, key: Type_Id) -> bool {
-	return sym.has_receiver && sym.receiver == .Borrow && sym.result == TYPE_UINT &&
+	return sym.has_receiver && (sym.receiver == .Borrow || sym.receiver == .Value) && sym.result == TYPE_UINT &&
 		len(sym.params) == 2 && sym.params[0] == key && sym.params[1] == TYPE_UINT
 }
 

@@ -1230,7 +1230,7 @@ case .none:
 `m.find_ref(key)` is the same probe through a read-only borrow: it answers `Option(^V)` and its receiver is immutable, so an immutable parameter or a temporary map can be read through it. It is what a read-only path asks — `find` would want an `inout` that path does not have, and `lookup_value` would copy the element out, which a [move-only](#lifecycle-hooks-and-resource-types) one forbids:
 
 ```odin
-read :: proc(m: borrow map[string]Token, key: string) -> Option(^Token) {
+read :: proc(m: ^map[string]Token, key: string) -> Option(^Token) {
 	return m.find_ref(key);
 }
 ```
@@ -1956,7 +1956,7 @@ v.length_squared();
 Vector2.length_squared(v);
 ```
 
-A plain `self` is an immutable borrow, `self: inout` a mutable borrow, and `self: move` consumes the receiver. In every mode the type may be written, as in `self: inout Type`; left out, it is the `impl` type. Members without `self` are accessed through the type name.
+A plain `self` is an immutable value, `self: ^` a read-only pointer to the caller's value, `self: inout` a mutable borrow, and `self: move` consumes the receiver. In every mode the type may be written, as in `self: inout Type` or `self: ^Type`; left out, it is the `impl` type. Members without `self` are accessed through the type name.
 
 The same block form adds methods or operators to a type from another package:
 
@@ -2000,30 +2000,35 @@ The subject must be declared in the same body. An `impl` on any other type would
 
 #### Receiver forms
 
-There are three receiver modes:
+There are four receiver modes:
 
 | Receiver | Meaning |
 | --- | --- |
-| `self`, `self: borrow` | Immutable borrow of the value |
+| `self` | Immutable value, as any [`value: T` parameter](#parameter-semantics-and-abi-lowering) |
+| `self: ^` | Read-only pointer to the caller's value |
 | `self: inout` | Exclusive mutable borrow of the caller's variable |
 | `self: move` | Consumes the receiver |
 
-A plain `self` is the abbreviation of `self: borrow`; both spellings are the same mode, and the longer one is there so a receiver that relies on aliasing the caller can say so. Each form may also spell the type, `self: inout Type`; it must be the `impl` type for the parameter to be a receiver.
+Each form may also spell the type, `self: ^Type` or `self: inout Type`; it must be the `impl` type for the parameter to be a receiver.
 
-Both borrowing receivers designate the caller's storage rather than a copy. A borrow they return derives from the caller's root under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). An immutable receiver cannot write through `self`. A temporary receiver lives through the complete expression, and a borrow from it cannot escape that expression.
+A plain `self` is a value: nothing borrowed from it outlives the call. A method that hands out a view of its receiver says so with `self: ^`. In the body `self` is then a `^Type`, reading fields through it as any pointer does, and `self^` is the value. Method syntax takes the address implicitly, so `value.view()` needs no `&`; `Type.view(&value)` writes it out. Where the receiver is a constant or a temporary, it is materialized as for `&`.
 
-The immutable receiver mode is written `borrow T` in a procedure type. Thus `method := Type.method` stores an unbound method, and a callback type can use `proc(self: borrow Type) -> Result`. Calling `method(value)` supplies the receiver without a marker. `inout` and `move` receivers retain those parameter modes.
+The `self: ^` and `self: inout` receivers designate the caller's storage rather than a copy. A borrow they return derives from the caller's root under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). A `self: ^` receiver cannot write through `self`. A temporary receiver lives through the complete expression, and a borrow from it cannot escape that expression.
+
+As a procedure value, a `self: ^` method has type `proc(self: ^Type) -> Result`, so `method := Type.method` stores an unbound method and a callback type spells its receiver as a pointer. Calling the stored `method` accepts either the value or its address. `inout` and `move` receivers retain those parameter modes.
+
+An interface slot written `self: ^` is also met by a method taking a plain `self`, which lends less; the protocol's `iter` is such a slot, so an iterator whose `iter` returns a copy of itself takes a plain `self`.
 
 Immutable and `inout` receivers use `value.method()`; the `inout` borrow is implicit and ends with the call. A consuming receiver takes its receiver the way a [`move` parameter](#temporaries-and-procedure-boundaries) takes an argument: a place is written `move(value).method()`, which leaves the source dead, while a temporary already owns its value and needs no marker, as in `parse(text).map_error(App_Error, to_app)`. The written form also selects the matching receiver overload.
 
-A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot. The immutable receiver may be written `self: Type` when clearer; it is the same mode.
+A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot. A plain receiver may be written `self: Type` when clearer; it is the same mode.
 
 ```odin
 counter.bump();          // `self: inout`, marker implicit
 total := move(counter).consume();  // `self: move`, transfer written
 ```
 
-A first parameter declared `self: ^Type` is **not** a receiver: it is an ordinary pointer parameter with no method-call sugar, called as `Type.method(pointer)`. Mutating methods use `self: inout`, not pointer receivers.
+A `self: ^mut Type` is **not** a receiver: it is an ordinary pointer parameter with no method-call sugar, called as `Type.method(pointer)`. Mutating methods use `self: inout`.
 
 #### Generic types
 
@@ -2238,7 +2243,7 @@ p := &grid[3, 2];   // ERROR: no `inout` overload; `[]=` cannot supply an addres
 
 A compound assignment on such a type reads through `operator([])` and writes back through `operator([]=)`, per the [fallback rule](#operator-declarations).
 
-`operator([:])` defines slicing. It returns either an owning value or a borrow derived from the receiver, treated as a borrow under [Borrows and lifetimes](#borrows-and-lifetimes). A `[]mut T` result requires an `inout` receiver; an immutable receiver returns only `[]T`.
+`operator([:])` defines slicing. It returns either an owning value or a borrow derived from the receiver, treated as a borrow under [Borrows and lifetimes](#borrows-and-lifetimes). A `[]mut T` result requires an `inout` receiver; a `self: ^` receiver returns only `[]T`.
 
 An indexing or slicing overload is responsible for its own bounds checks. A callable object exposes an ordinary method such as `call` or `evaluate`.
 
@@ -2790,7 +2795,7 @@ Integral :: interface($T: type) {
 }
 
 Cloneable :: interface($T: type) {
-	slot try_clone: proc(self, allocator: Allocator) -> Result(T, Allocator_Error);
+	slot try_clone: proc(self: ^, allocator: Allocator) -> Result(T, Allocator_Error);
 }
 
 Iterator :: interface($Self, $Item: type) {
@@ -2800,13 +2805,13 @@ Iterator :: interface($Self, $Item: type) {
 Iterable :: interface($Self: type) {
 	Self.Element -> type;
 	Self.Iterator -> type;
-	slot iter: proc(self) -> Self.Iterator;
+	slot iter: proc(self: ^) -> Self.Iterator;
 	Iterator(Self.Iterator, Self.Iterator.Item);
 }
 
 Reverse_Iterable :: interface($Self: type) {
 	Iterable(Self);
-	slot iter_reverse: proc(self) -> Self.Iterator;
+	slot iter_reverse: proc(self: ^) -> Self.Iterator;
 }
 
 Mutable_Iterable :: interface($Self: type) {
@@ -3013,7 +3018,7 @@ One rule covers every context that takes a value. **A place stays live: it is bo
 | --- | --- | --- |
 | [binding and assignment](#assignment-statements) | cloned | transferred |
 | ordinary parameter `value: T` | borrowed for the call; nothing derived from it outlives the call | borrowed; the temporary is destroyed after the full expression |
-| `borrow T` parameter, and a plain [`self`](#receiver-forms) | aliases the caller's storage | borrowed for the full expression |
+| a [`self: ^`](#receiver-forms) receiver | aliases the caller's storage | borrowed for the full expression |
 | `inout T` parameter | exclusive mutable borrow | not accepted: `inout` names a caller's variable |
 | `move T` parameter | transferred, and written `move(x)` at the call | transferred, with no marker |
 | [result](#parameter-semantics-and-abi-lowering) | a borrowed parameter or place is cloned | a managed local, temporary, or `move` parameter is transferred |
@@ -4079,14 +4084,14 @@ The source-level parameter mode is decided before ABI lowering:
 | `value: T` | Immutable value; no ownership transfer. Nothing borrowed from it outlives the call |
 | `value: []T` | Immutable borrowed view with read-only elements |
 | `value: []mut T` | Immutable borrowed view whose elements may be modified |
-| `value: borrow T` | Immutable alias of the caller's storage |
-| `self` | Immutable borrow of the caller's value (see [Receiver forms](#receiver-forms)) |
+| `value: ^T` | Read-only pointer; the caller writes `&` |
+| `self: ^` | Read-only pointer to the caller's value, addressed implicitly (see [Receiver forms](#receiver-forms)) |
 | `value: inout T` | Exclusive mutable borrow of the caller's variable |
 | `value: move T` | Ownership transfer from caller to callee |
 
 A `value: T` parameter is never made `inout` by its machine representation. It is a value for every `T`: a borrow of it — of its own bytes, or of storage a managed owner holds, such as a `string`'s characters or a dynamic array's elements — ends with the call and cannot be returned or retained. The implementation need not copy it: a managed owner is shared with the caller for the call, cloning nothing and transferring nothing, and the caller's argument stays borrowed until the call returns, so the difference cannot be observed. A result never derives from a `value: T` argument, though a borrow the value *contains*, such as a slice field, keeps its own provenance.
 
-A procedure that hands out a view of its argument says so in its signature: it takes the view (`[]T`, `string_view`), a pointer, or `borrow T`, the mode of an immutable receiver. Whether a borrow can escape therefore never depends on what the argument's type contains.
+A procedure that hands out a view of its argument says so in its signature: it takes the view (`[]T`, `string_view`) or a pointer, `^T` or a `self: ^` receiver. Whether a borrow can escape therefore never depends on what the argument's type contains.
 
 Returning such a borrowed parameter by value performs a logical clone, since the callee owns nothing to move out: a mutable owner clones into `mem.default_allocator()` unless the procedure constructs the result with another allocator, while `string` and `shared(T)` retain their shared allocation. Returning a borrowed value whose clone is disabled is a compile-time error. Returning a managed local, temporary, or `move` parameter instead transfers ownership without cloning. A procedure needing allocator-controlled result storage takes an allocator parameter and constructs against it.
 
@@ -4136,8 +4141,6 @@ files.append(open_file("a.txt"));   // a temporary: no marker
 f := open_file("b.txt");
 files.append(move(f));              // a place: written out, `f` is dead after the call
 ```
-
-`value: borrow T` is an immutable alias of the caller's storage, in any parameter position. Unlike the default value binding, `&value` can be returned subject to the caller's lifetime. It uses the same mode as an immutable receiver, takes no call-site marker, and performs no copy. It can borrow a temporary for the complete expression, but cannot extend that temporary's lifetime. Constants are materialized as for `&`; packed fields cannot supply an aligned borrow. It cannot have a default. `@(escape=...)` may constrain this borrow even when `T` itself contains no pointer or view.
 
 The written form therefore also selects. A candidate whose parameter is `move` is reachable only from an argument that already owns its value — a written `move(expr)` or a temporary — and passing such an argument to an ordinary value parameter is not a mismatch either, since it transfers ownership instead of cloning into it. Both directions are viable, so the written form decides between them by [tie-breaker 5](#operator-lookup-and-overload-resolution): `values.append(move(f))` picks a group's consuming member and `values.append(1)` its ordinary one. A [consuming receiver](#methods-and-abstractions) follows the same rule, so `move(value).method()` and `make_value().method()` both reach one; only a written `move` reaches a consuming member of a group.
 
@@ -4740,7 +4743,7 @@ fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 
 A [slice literal](#slice-literals) behaves differently, and the difference is what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation that nothing keeps alive past the statement.
 
-The default parameter binding itself is a callee-local read-only value, whatever its type. Taking `&parameter`, slicing it, or viewing storage it owns borrows that value and cannot produce a returned borrow. An `inout` or `borrow` parameter aliases the caller's root, so a borrow returned from it is derived from that root, as does an [immutable receiver](#receiver-forms): a plain `self` designates the caller's value, which is what lets `proc(self) -> []T` hand back a view of the receiver's own inline storage. The immutable loan invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result contract below records; a procedure value retains this precision when its type carries that contract.
+The default parameter binding itself is a callee-local read-only value, whatever its type. Taking `&parameter`, slicing it, or viewing storage it owns borrows that value and cannot produce a returned borrow. An `inout` parameter aliases the caller's root, so a borrow returned from it is derived from that root, as is one reached through a `^T` parameter or a [`self: ^` receiver](#receiver-forms): the pointer designates the caller's value, which is what lets `proc(self: ^) -> []T` hand back a view of the receiver's own inline storage. The immutable loan invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result contract below records; a procedure value retains this precision when its type carries that contract.
 
 A checked pointer to an allocation root created by `new` or `new_clone` may be returned because the allocation is not callee-local storage. The pointer's root provenance and the allocation root's region provenance follow the result. This transfers release responsibility by API convention, not by making `^T` an owning type; the compiler does not require every manually allocated root to be freed.
 

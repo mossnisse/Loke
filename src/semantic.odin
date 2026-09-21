@@ -958,8 +958,7 @@ proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if a.convention != b.convention ||
 	   a.c_vararg != b.c_vararg ||
-	   !equal_type_ids(a.parameters, b.parameters) ||
-	   !equal_param_modes(a.param_modes, b.param_modes) ||
+	   !parameters_weaken_to(c, a, b) ||
 	   a.result != b.result ||
 	   a.result_inout != b.result_inout ||
 	   !equal_reset_effects(a.param_resets, b.param_resets) ||
@@ -973,6 +972,30 @@ proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if b.proc_contract != INVALID_SYMBOL && a.proc_contract == INVALID_SYMBOL {
 		return false
+	}
+	return true
+}
+
+// design.md "Receiver forms": a `self: ^Self` method is the same procedure as
+// one taking `^Self`, so a method value stores in a `proc(^T)` variable.
+@(private = "file")
+parameters_weaken_to :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
+	if equal_type_ids(a.parameters, b.parameters) && equal_param_modes(a.param_modes, b.param_modes) {
+		return true
+	}
+	if len(a.parameters) != len(b.parameters) || len(a.param_modes) != len(b.param_modes) {
+		return false
+	}
+	for index in 0 ..< len(a.parameters) {
+		from, to := a.parameters[index], b.parameters[index]
+		from_mode := index < len(a.param_modes) ? a.param_modes[index] : Param_Mode.Value
+		to_mode := index < len(b.param_modes) ? b.param_modes[index] : Param_Mode.Value
+		if from == to && from_mode == to_mode {
+			continue
+		}
+		if from_mode != .Borrow || to_mode != .Value || to != pointer_to(c, from, false) {
+			return false
+		}
 	}
 	return true
 }
@@ -1697,7 +1720,7 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 		if index < len(info.param_modes) {
 			#partial switch info.param_modes[index] {
 			case .Inout:  strings.write_string(&b, "inout ")
-			case .Borrow: strings.write_string(&b, "borrow ")
+			case .Borrow: strings.write_string(&b, "^")
 			case .Move:   strings.write_string(&b, "move ")
 			}
 		}

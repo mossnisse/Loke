@@ -1951,6 +1951,15 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 			access_block, access_index,
 		)
 	}
+	// Storage reached through a pointer or view borrows what that carrier names,
+	// as `&p.items` does.
+	if array {
+		if carriers, _, through := prov_read_through_carrier(graph, v.operand); through {
+			if v.lo != nil { walk_flow_expr(graph, v.lo) }
+			if v.hi != nil { walk_flow_expr(graph, v.hi) }
+			return carriers
+		}
+	}
 	source := walk_flow_expr(graph, v.operand)
 	if v.lo != nil {
 		walk_flow_expr(graph, v.lo)
@@ -2567,6 +2576,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				prov_walk_subscripts(graph, argument)
 				prov_access(graph, root, path, .Read, expr_span(argument))
 				loan = prov_borrow(graph, root, path, false, expr_span(argument), "borrow")
+			} else if carriers, _, through := prov_read_through_carrier(graph, argument); through {
+				loan = carriers // `Type.method(&value)`, or a place behind a pointer
 			} else {
 				loan = prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "borrow")
 			}

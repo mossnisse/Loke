@@ -29,18 +29,6 @@ through_the_package :: proc(values: []int) -> []int {
 	return wrapping.unwrap(wrapping.wrap(values));
 }
 
-// GAP. The invalidated-root half of the first case: the entry pointer is a
-// borrow of the table's storage, and inserting through the same table may move
-// it. The wrapped view outlives that.
-invalidated_root :: proc(table: inout map[string][dynamic]int) -> int {
-	slot := table.find("a") or_else nil;
-	if (slot == nil) { return -1; }
-	holder := wrapping.wrap(slot^[:]);
-	fresh: [dynamic]int = {};
-	table["b"] = move(fresh);
-	return holder.view.len();
-}
-
 // The escaping half moved to tests/pkg_err/m5b_aggregate/ once step 6 made the
 // imported wrapper carry its argument's root across the package boundary.
 

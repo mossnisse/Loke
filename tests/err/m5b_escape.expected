@@ -37,3 +37,9 @@ this string view cannot be returned: `text` ends when this procedure returns
 L0526
 @98:9
 this string view cannot be returned: `text` ends when this procedure returns
+L0526
+@109:9
+`local` ends when this procedure returns
+L0526
+@115:9
+`bag` ends when this procedure returns

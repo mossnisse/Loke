@@ -19,13 +19,13 @@ stored :: proc(input: []int) -> []int {
 
 Inline :: struct { items: [2]int }
 impl Inline {
-	view :: proc(self) -> []int { return self.items[:]; }
+	view :: proc(self: ^) -> []int { return self.items[:]; }
 	sum :: proc(self) -> int { return self.items[0] + self.items[1]; }
 }
-read :: proc(callback: proc(self: borrow Inline) -> []int, value: borrow Inline) -> []int {
+read :: proc(callback: proc(self: ^Inline) -> []int, value: ^Inline) -> []int {
 	return callback(value);
 }
-borrow_two :: proc(unused: int, value: borrow Inline) -> []int { return value.items[:]; }
+borrow_two :: proc(unused: int, value: ^Inline) -> []int { return value.items[:]; }
 
 Pair :: struct { first, second: []int }
 pair :: proc(a, b: []int) -> Pair { return {a, b}; }
@@ -62,8 +62,8 @@ constant_view :: proc() -> []int {
 }
 
 allocate :: proc() -> ^mut int { return new(int) or_else nil; }
-read_erased :: proc(value: borrow any_view) -> int { return value.as(int) or_else 0; }
-view_length :: proc(value: borrow string_view) -> int { return value.len(); }
+read_erased :: proc(value: any_view) -> int { return value.as(int) or_else 0; }
+view_length :: proc(value: string_view) -> int { return value.len(); }
 
 choose_allocator :: proc(first, second: Allocator) -> Allocator { return first; }
 retain_allocator :: proc(input: Allocator) -> Allocator {
@@ -78,9 +78,9 @@ main :: proc() {
 	value := Inline{{3, 4}};
 	callback := Inline.view;
 	fmt.println(callback(value)[0]);
-	fmt.println(read(Inline.view, value)[1]);
-	summer: proc(self: borrow Inline) -> int = Inline.sum;
-	fmt.println(summer(value), borrow_two(0, value)[0]);
+	fmt.println(read(Inline.view, &value)[1]);
+	summer: proc(self: Inline) -> int = Inline.sum;
+	fmt.println(summer(value), borrow_two(0, &value)[0]);
 	assert(field_paths(values[:])[0] == 1);
 	assert(recursive_reader(values[:])[1] == 2);
 	assert(constant_view()[0] == 8);

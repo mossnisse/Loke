@@ -110,7 +110,7 @@ impl String_Builder {
 	// This exists so a caller who only needs to *read* the assembled text does
 	// not have to allocate a `string` to do it: `path.join` hands the view
 	// straight to `path.clean`.
-	view :: proc(self) -> string_view {
+	view :: proc(self: ^) -> string_view {
 		// The same guard `try_copy_string` states: the public surface never admits
 		// a partial rune, so this is unreachable rather than a policy.
 		return string_view.from_utf8(self.data[:]) or_else not_utf8();

@@ -1,2 +1,2 @@
 define internal i64 @loke.p.lambda.0()
-call i64 @loke.p.Runner.run(ptr *, ptr @loke.p.lambda.0)
+call i64 @loke.p.Runner.run(%struct.Runner.* %t*, ptr @loke.p.lambda.0)

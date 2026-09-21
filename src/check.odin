@@ -1049,10 +1049,12 @@ normalize_signature_parameter :: proc(
 		split_receiver = parameter_splits_receiver(parameter, position)
 		if parameter.type == nil || split_receiver { type = receiver }
 		if split_receiver { mode = .Value }
-		// design.md "Receiver forms": a plain `self` of the subject type borrows.
-		if mode == .Value && type == receiver && len(parameter.names) > 0 &&
+		// design.md "Receiver forms": `self: ^Self` is received by address. The
+		// body sees the pointer; callers pass the receiver as for any borrowing
+		// member, so the address is taken implicitly.
+		if mode == .Value && type == pointer_to(c, receiver, false) && len(parameter.names) > 0 &&
 		   parameter.names[0].name.text == "self" {
-			mode = .Borrow
+			type, mode = receiver, .Borrow
 		}
 	}
 	// `..T` is received as `[]T`.
@@ -1090,6 +1092,9 @@ mark_template_receiver :: proc(k: ^Checker, d: ^Decl) {
 	if sym := symbol_of(k.c, d.symbols[0]); sym != nil {
 		sym.has_receiver = true
 		sym.receiver = first.mode
+		if _, pointer := first.type.(^Type_Pointer); pointer && first.mode == .Value {
+			sym.receiver = .Borrow
+		}
 	}
 }
 
@@ -1208,8 +1213,12 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				bound.type = name_type
 				bound.index = u32(len(params))
 				bound.mode = mode
+				// `self: ^Self` binds the pointer itself, an ordinary value.
+				if mode == .Borrow {
+					bound.type, bound.mode = pointer_to(k.c, name_type, false), .Value
+				}
 				// design.md "Parameter semantics and ABI lowering".
-				bound.immutable = mode == .Value || mode == .Borrow
+				bound.immutable = bound.mode == .Value
 				bound.owner_proc = literal
 				bound.allocator_reset = resets
 				bound.escape = escape

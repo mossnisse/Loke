@@ -71,12 +71,12 @@ main :: proc() {
 		// borrow cannot give.
 		m: map[string]Res = {};
 		m["r"] = Res{ id = 14 };
-		fmt.println("read_ref", read_id(m, "r"), read_id(m, "gone"), drops);
+		fmt.println("read_ref", read_id(&m, "r"), read_id(&m, "gone"), drops);
 	}
 	fmt.println("after reading", drops);
 }
 
-read_id :: proc(m: borrow map[string]Res, key: string) -> int {
+read_id :: proc(m: ^map[string]Res, key: string) -> int {
 	switch (found in m.find_ref(key)) {
 	case .some: return found.id;
 	case .none:

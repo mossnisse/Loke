@@ -1,13 +1,13 @@
 package main; import "core:fmt";
 
-// design.md "Receiver forms": an immutable receiver crosses as the address of
-// the caller's value. A stored method needs `borrow Counter`, not a
-// value parameter, because the two modes have different ABI and provenance.
+// design.md "Receiver forms": a `self: ^` receiver crosses as the address of
+// the caller's value. A stored method needs `^Counter`, not a value
+// parameter, because the two modes have different ABI and provenance.
 
 Counter :: struct { value: int }
 
 impl Counter {
-	read :: proc(self) -> int { return self.value; }
+	read :: proc(self: ^) -> int { return self.value; }
 	bump :: proc(self: inout Counter) { self.value += 1; }
 }
 

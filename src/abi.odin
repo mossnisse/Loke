@@ -21,7 +21,7 @@ convention_is_foreign :: proc(convention: string) -> bool {
 }
 
 // design.md "Receiver forms" and "Parameter semantics and ABI lowering": an
-// `inout` parameter and an immutable receiver both designate the caller's
+// `inout` parameter and a `self: ^` receiver both designate the caller's
 // storage, so both cross as one pointer. Every definition, call, thunk, and
 // synthesized member asks here, so no two of them can classify the same
 // parameter differently. Redundant materialization of a small receiver is left

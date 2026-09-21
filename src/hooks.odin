@@ -523,7 +523,7 @@ require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) {
 		ok = ok && sym.receiver == .Inout && len(sym.params) == 1 && sym.result == INVALID_TYPE
 	} else {
 		shape = "proc(self, allocator: Allocator) -> Result(T, Allocator_Error)"
-		ok = ok && sym.receiver == .Borrow && len(sym.params) == 2 && sym.params[1] == TYPE_ALLOCATOR &&
+		ok = ok && (sym.receiver == .Borrow || sym.receiver == .Value) && len(sym.params) == 2 && sym.params[1] == TYPE_ALLOCATOR &&
 		     sym.result == result_type(k, subject, TYPE_ALLOCATOR_ERROR)
 	}
 	if !ok {

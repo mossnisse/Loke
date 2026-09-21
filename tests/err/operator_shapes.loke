@@ -5,7 +5,7 @@ variadic_index :: operator([]) proc(self: Bucket, indices: ..int) -> int { retur
 
 Item :: struct { value: int }
 Packed :: struct @(packed) { tag: u8, item: Item }
-borrow_item :: operator(!) proc(item: borrow Item) -> bool { return item.value == 0; }
+impl Item { borrow_item :: operator(!) proc(self: ^) -> bool { return self.value == 0; } }
 
 main :: proc() {
 	packed: Packed = {};

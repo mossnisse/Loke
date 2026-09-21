@@ -553,7 +553,12 @@ iteration_proc_matches :: proc(
 		return false
 	}
 	info := type_of(k.c, sym.proc_type)
-	if info == nil || info.convention != "" || len(info.param_modes) != 1 || info.param_modes[0] != mode {
+	if info == nil || info.convention != "" || len(info.param_modes) != 1 {
+		return false
+	}
+	// design.md "Receiver forms": a view of the source is `self: ^`; an `iter`
+	// that borrows nothing from it may take a plain value `self`.
+	if info.param_modes[0] != mode && !(mode == .Borrow && info.param_modes[0] == .Value) {
 		return false
 	}
 	return !info.result_inout

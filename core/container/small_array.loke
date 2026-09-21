@@ -91,7 +91,7 @@ impl Small_Array($T, $N) {
 	// The receiver is immutable, so `x[a:b]` reads on any array rather than only
 	// on a mutable one. A writable subrange is `slice()[a:b]`: built-in slicing of
 	// the mutable whole-prefix view, already bounded by the live prefix.
-	span :: operator([:]) proc(self, low: int, high: int) -> []T {
+	span :: operator([:]) proc(self: ^, low: int, high: int) -> []T {
 		self.check_span(low, high);
 		return self.items[low:high];
 	}
@@ -104,20 +104,20 @@ impl Small_Array($T, $N) {
 	// ----------------------------------------------------------- iteration --
 
 	// The whole live prefix as one read-only view. The immutable counterpart of
-	// `slice`: a `self` receiver is a borrow of the caller's value (design.md
-	// "Receiver forms"), so a view of its inline storage is derived from the
-	// caller's root and needs no `inout`.
-	view :: proc(self) -> []T {
+	// `slice`: a `self: ^` receiver is the caller's value (design.md "Receiver
+	// forms"), so a view of its inline storage is derived from the caller's root
+	// and needs no `inout`.
+	view :: proc(self: ^) -> []T {
 		return self.items[0:self.count];
 	}
 
 	// The iterator borrows the live prefix. It allocates nothing, copies no
 	// element, and its size does not depend on `N`.
-	iter :: proc(self) -> Small_Array_Iterator(T) {
+	iter :: proc(self: ^) -> Small_Array_Iterator(T) {
 		return {self.view(), 0, false};
 	}
 
-	iter_reverse :: proc(self) -> Small_Array_Iterator(T) {
+	iter_reverse :: proc(self: ^) -> Small_Array_Iterator(T) {
 		return {self.view(), 0, true};
 	}
 

@@ -18,7 +18,7 @@ return_field :: proc() -> Only {
 	return holder.item;
 }
 
-reject_borrowed_parameter :: proc(value: borrow Only) {
+reject_borrowed_parameter :: proc(value: Only) {
 	drop(value);
 }
 

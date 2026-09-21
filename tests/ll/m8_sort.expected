@@ -8,4 +8,4 @@ define private i32 @loke.cless.13(ptr %a, ptr %b)
 = call i1 @loke.p.Card.before(%struct.Card.* %t
 call void @loke_rt_v1_sort_by(ptr %t
 define private i32 @loke.csortby.*(ptr %state, ptr %a, ptr %b)
-= call i1 @loke.p.By_Tag.call(ptr %state
+= call i1 @loke.p.By_Tag.call(%struct.By_Tag.* %t

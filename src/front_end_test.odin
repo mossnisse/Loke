@@ -189,8 +189,8 @@ impl Sink {
 main :: proc() {
     static_assert(Collects(Sink));
     value := Sink{};
-    // An immutable receiver is a borrow of the caller's value, so the qualified
-    // form is a call spelling rather than a stored method value.
+    // A plain receiver is a value, so the qualified form passes it like any
+    // other argument.
     assert(Sink.append(value, 1, 2) == 2);
     assert(value.append(1, 2) == 2);
     assert(value.show(1, true) == 2);

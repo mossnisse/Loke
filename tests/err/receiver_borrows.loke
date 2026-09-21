@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// The rejections that bound an immutable receiver's borrow (design.md "Receiver
+// The rejections that bound a `self: ^` receiver's borrow (design.md "Receiver
 // forms", "Temporaries and procedure boundaries").
 
 Inline :: struct {
@@ -9,7 +9,7 @@ Inline :: struct {
 }
 
 impl Inline {
-	view :: proc(self) -> []int { return self.items[0:self.count]; }
+	view :: proc(self: ^) -> []int { return self.items[0:self.count]; }
 	sum :: proc(self) -> int { return self.items[0] + self.items[1]; }
 	push :: proc(self: inout Inline, value: int) {
 		self.items[self.count] = value;

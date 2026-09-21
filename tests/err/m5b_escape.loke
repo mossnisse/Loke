@@ -53,15 +53,15 @@ temporary_argument :: proc() -> []int {
 
 // design.md "Parameter semantics and ABI lowering": `value: T` is a value for
 // every `T`, so nothing borrowed from it outlives the call — its inline storage
-// or, for a managed owner, the allocations it shares with the caller. `borrow T`
-// or a receiver is what says otherwise.
+// or, for a managed owner, the allocations it shares with the caller. A `^T`
+// parameter or a `self: ^` receiver is what says otherwise.
 Inline_Pair :: struct { items: [2]int }
 
 returns_a_trivial_parameter_view :: proc(pair: Inline_Pair) -> []int {
 	return pair.items[:];
 }
 
-returns_a_borrowed_parameter_view :: proc(pair: borrow Inline_Pair) -> []int {
+returns_a_borrowed_parameter_view :: proc(pair: ^Inline_Pair) -> []int {
 	return pair.items[:];
 }
 
@@ -88,7 +88,7 @@ returns_a_string_parameter_view :: proc(text: string) -> string_view {
 	return text;
 }
 
-returns_a_borrowed_allocation :: proc(bag: borrow Bag) -> []int {
+returns_a_borrowed_allocation :: proc(bag: ^Bag) -> []int {
 	return bag.items[:];
 }
 
@@ -96,6 +96,23 @@ returns_a_borrowed_allocation :: proc(bag: borrow Bag) -> []int {
 returns_a_local_string_view :: proc() -> string_view {
 	text := string("a") + string("b");
 	return text;
+}
+
+// Storage sliced through a pointer borrows what the pointer names, inline or
+// held by an owner.
+slices_through_a_pointer :: proc(pair: ^Inline_Pair) -> []int {
+	return pair.items[:];
+}
+
+returns_a_view_through_a_parameter :: proc() -> []int {
+	local := Inline_Pair{};
+	return slices_through_a_pointer(&local);
+}
+
+returns_a_view_through_a_local_pointer :: proc() -> []int {
+	bag := Bag{};
+	pointer := &bag;
+	return pointer.items[:];
 }
 
 main :: proc() {

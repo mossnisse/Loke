@@ -48,10 +48,10 @@ impl Enum_Array($E, $T) {
 	Iterator :: Enum_Array_Iterator(E, T);
 
 	// The iterator borrows the slots rather than carrying a copy of the whole
-	// array: a `self` receiver designates the caller's value (design.md
+	// array: a `self: ^` receiver designates the caller's value (design.md
 	// "Receiver forms"), so a view of its inline storage is derived from the
 	// caller's root.
-	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return {self.slots[:], 0}; }
+	iter :: proc(self: ^) -> Enum_Array_Iterator(E, T) { return {self.slots[:], 0}; }
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, "{");

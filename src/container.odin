@@ -572,8 +572,8 @@ container_member :: proc(
 	defaulted: int,
 	receiver := Param_Mode.Inout,
 ) -> Symbol_Id {
-	// design.md "Receiver forms": an immutable receiver is a `borrow`, like a
-	// written `self`.
+	// design.md "Receiver forms": a read-only receiver is taken by address, like a
+	// written `self: ^`.
 	signature_modes, receiver_mode := modes, receiver
 	if receiver == .Value && len(modes) > 0 && modes[0] == .Value {
 		adjusted := make([]Param_Mode, len(modes), k.c.semantic_allocator)

@@ -53,7 +53,7 @@ impl Buffer($T, $N) {
 		return unsafe.take(self.items[self.count]);
 	}
 
-	view :: proc(self) -> []T { return self.items[0:self.count]; }
+	view :: proc(self: ^) -> []T { return self.items[0:self.count]; }
 }
 
 id_of :: proc(value: Sealed) -> int {

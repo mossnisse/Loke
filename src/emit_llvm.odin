@@ -437,6 +437,14 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 			continue
 		}
 		if param_mode_is_pointer(symbol_param_mode(e.c, symbol, index)) {
+			// `self: ^Self` binds the address itself, which needs a slot.
+			if bound := symbol_of(e.c, binding); bound != nil && bound.type != parameter {
+				slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
+				alloca_named(e, slot, "ptr")
+				fmt.sbprintfln(&e.b, "  store ptr %%arg%d, ptr %s", index, slot)
+				bind_local(e, binding, slot)
+				continue
+			}
 			bind_local(e, binding, fmt.aprintf("%%arg%d", index))
 			continue
 		}

@@ -16,7 +16,7 @@ length :: proc(values: []int) -> int { return values.len(); }
 Buf :: struct { data: [4]int }
 
 impl Buf {
-	view :: proc(self) -> []int { return self.data[:]; }
+	view :: proc(self: ^) -> []int { return self.data[:]; }
 }
 
 main :: proc() {

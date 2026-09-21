@@ -518,7 +518,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 	set_call_result(v, chosen.result, chosen.result_inout, result_written_but_unresolved(chosen))
 }
 
-// Every call spelling passes an immutable receiver by address, including
+// Every call spelling passes a `self: ^` receiver by address, including
 // `Type.method(CONSTANT)` and calls resolved through a procedure group.
 @(private = "file")
 materialize_call_receiver :: proc(k: ^Checker, v: ^Expr_Call) {
@@ -578,7 +578,20 @@ bind_written_argument :: proc(
 		}
 		return arg.value, false
 	}
-	value, passed := pass_argument(k, arg.value, target, prechecked, arg.mode == .Inout)
+	value, pre := arg.value, prechecked
+	// design.md "Receiver forms": `Type.method(&value)` names the receiver
+	// `self: ^T` receives.
+	if expected == .Borrow {
+		if !pre && check_single_expr(k, value, target) == INVALID_TYPE {
+			return value, false
+		}
+		pre = true
+		if pointer_to_element(k.c, expr_base(value).type) == target {
+			value = dereference_argument(k, value)
+		}
+	}
+	passed: bool
+	value, passed = pass_argument(k, value, target, pre, arg.mode == .Inout)
 	if !passed {
 		return value, false
 	}

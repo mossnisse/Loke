@@ -3,10 +3,10 @@ package main;
 import "core:fmt";
 import "base:interfaces";
 
-// An immutable receiver is a borrow of the caller's value (design.md "Receiver
+// A `self: ^` receiver is the caller's value by address (design.md "Receiver
 // forms"), so a view of the receiver's own inline storage is derived from the
-// caller's root. Before this rule, `proc(self) -> []T` had no way to exist and
-// a container's `iter` copied its backing array instead.
+// caller's root, and method syntax takes the address implicitly. A container's
+// `iter` therefore borrows its backing array rather than copying it.
 
 Inline :: struct($T: type, $N: int) where N > 0 {
 	items: [N]T,
@@ -19,13 +19,13 @@ impl Inline($T, $N) {
 
 	// The borrow the whole rule is for: a slice of storage that lives inside the
 	// receiver, with no `inout` and no copy.
-	view :: proc(self) -> []T { return self.items[0:self.count]; }
-	first :: proc(self) -> ^T { return &self.items[0]; }
+	view :: proc(self: ^) -> []T { return self.items[0:self.count]; }
+	first :: proc(self: ^) -> ^T { return &self.items[0]; }
 	len :: proc(self) -> int { return self.count; }
 
 	// An iterator that borrows rather than carrying a copy, so its size does not
 	// grow with `N`.
-	iter :: proc(self) -> Inline_Iterator(T) { return {self.view(), 0}; }
+	iter :: proc(self: ^) -> Inline_Iterator(T) { return {self.view(), 0}; }
 
 	push :: proc(self: inout Inline(T, N), value: T) {
 		self.items[self.count] = value;
@@ -67,10 +67,9 @@ impl Cursor {
 	}
 }
 
-// A record whose field is already a borrow. Handing that field back copies the
-// view rather than borrowing the receiver's own storage, but the result still
-// keeps the receiver borrowed for as long as it is used: a borrowed parameter's
-// carrier paths are not separated from its storage.
+// A record whose field is already a borrow. A value receiver hands that field
+// back as a copy of the view, which keeps its own source: the receiver lends
+// nothing past the call.
 Holder :: struct {
 	held: []int,
 }
@@ -80,18 +79,18 @@ impl Holder {
 }
 
 // design.md "Parameter semantics and ABI lowering": the free-procedure spelling
-// of a view accessor takes `borrow T`, the mode a plain receiver has; a
-// `value: T` is a value and lends nothing past the call.
+// of a view accessor takes `^T`; a `value: T` is a value and lends nothing past
+// the call.
 Bag :: struct {
 	items: [dynamic]int,
 }
 
-free_view :: proc(bag: borrow Bag) -> []int { return bag.items[:]; }
+free_view :: proc(bag: ^Bag) -> []int { return bag.items[:]; }
 
 impl Bag {
-	// The plain receiver and the written-out one are the same mode.
-	view :: proc(self) -> []int { return self.items[:]; }
-	spelled_view :: proc(self: borrow) -> []int { return self.items[:]; }
+	// The short receiver and the written-out one are the same mode.
+	view :: proc(self: ^) -> []int { return self.items[:]; }
+	spelled_view :: proc(self: ^Bag) -> []int { return self.items[:]; }
 }
 
 forward :: proc(source: $S) -> int where interfaces.Iterable(S), S.Element == int {
@@ -153,8 +152,8 @@ main :: proc() {
 	second := cursor.next_ref();
 	fmt.println(first^, second^);
 
-	// The same body as a free procedure, as a plain receiver, and as a written
-	// `self: borrow`: one rule, three spellings.
+	// The same body as a free procedure and as both receiver spellings, called
+	// with the address written or implied.
 	bag := Bag{[dynamic]int{1, 2, 3}};
-	fmt.println(free_view(bag).len(), bag.view()[1], bag.spelled_view()[2]);
+	fmt.println(free_view(&bag).len(), bag.view()[1], bag.spelled_view()[2], Bag.view(&bag)[0]);
 }

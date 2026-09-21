@@ -263,6 +263,11 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	if arg.type == param {
 		return adjusted ? RANK_ADJUST : RANK_EXACT
 	}
+	// design.md "Receiver forms": `Type.method(&value)` names the receiver
+	// `self: ^T` receives.
+	if mode == .Borrow && !arg.is_receiver && pointer_to_element(k.c, arg.type) == param {
+		return RANK_ADJUST
+	}
 	if type_is_untyped(k.c, arg.type) {
 		if assignable(k.c, arg.type, param) {
 			if arg.is_const {
@@ -746,11 +751,14 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 	for arg, index in cand.args {
 		slot := cand.slots[index]
 		value := arg.expr
+		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
+		if mode == .Borrow && !arg.is_receiver && pointer_to_element(k.c, arg.type) == sym.params[slot] {
+			value = dereference_argument(k, value)
+		}
 		if !materialize_argument(k, value, sym.params[slot]) {
 			ok = false
 			continue
 		}
-		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
 		if !check_bound_argument_mode(k, value, mode, "an `inout` argument") {
 			ok = false
 		}
@@ -786,6 +794,26 @@ candidate_arguments :: proc(c: ^Compiler, cand: Candidate) -> []Argument {
 		index += 1
 	}
 	return out
+}
+
+// The pointee of a `^T` or `^mut T`, or INVALID_TYPE.
+pointer_to_element :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
+	info := underlying_info(c, type)
+	return info != nil && info.kind == .Pointer ? info.element : INVALID_TYPE
+}
+
+// `pointer^`, already checked: a borrowing parameter given the address takes
+// the place it names.
+dereference_argument :: proc(k: ^Checker, pointer: Expr) -> Expr {
+	info := underlying_info(k.c, expr_base(pointer).type)
+	deref := new(Expr_Postfix, k.c.semantic_allocator)
+	deref.span, deref.op_span, deref.op, deref.operand = expr_span(pointer), expr_span(pointer), .Caret, pointer
+	deref.type = info.element
+	deref.value_category = .Place
+	deref.addressable = true
+	deref.assignable = info.mutable
+	deref.immutable = info.mutable ? .None : .Through_Pointer
+	return deref
 }
 
 materialize_argument :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {

@@ -2013,6 +2013,10 @@ eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Sp
 				}
 			}
 		}
+		// `self: ^Self` binds a pointer to the receiver.
+		if bound := symbol_of(ev.k.c, binding); ok && mode == .Borrow && bound != nil && bound.type != symbol.params[index] {
+			slot, ok = eval_slot(ev, Eval_Value{kind = .Nil, type = bound.type, target = slot})
+		}
 		if !is_default {
 			append(&ev.frames, frame)
 		}

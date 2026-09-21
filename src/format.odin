@@ -61,7 +61,7 @@ discover_formatters :: proc(c: ^Compiler) {
 // of the type itself, and nothing is given back.
 @(private = "file")
 formatter_signature_ok :: proc(sym: ^Symbol, subject, writer, options: Type_Id) -> bool {
-	if !sym.has_receiver || sym.receiver != .Borrow {
+	if !sym.has_receiver || (sym.receiver != .Borrow && sym.receiver != .Value) {
 		return false
 	}
 	return len(sym.params) == 3 && sym.result == INVALID_TYPE &&

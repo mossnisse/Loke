@@ -15,10 +15,10 @@ L0310
 cannot return
 L0310
 @20:57
-proc(borrow Inline)
-L0358
-@21:46
-immutable
+proc(^Inline)
+L0640
+@21:40
+read-only `^T`
 L0526
 @25:9
 `value` ends when this procedure returns
@@ -37,12 +37,9 @@ inferred contract of `first`
 L0644
 @52:35
 `value` is written `@(escape=none)`
-L0513
-@60:14
-this temporary has ended
 L0645
-@65:50
+@58:50
 inferred contract of `choose_region`
 L0645
-@69:62
+@62:62
 inferred contract of `allocate_first`

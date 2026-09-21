@@ -1241,7 +1241,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 			"this `operator([:])` yields `%s`, which is an exclusive borrow, so its `self` parameter must be `inout`",
 			type_name(k.c, v.type),
 		)
-		add_notef(k.c, sym.span, "declared here with an immutable receiver, which can only yield a read-only slice")
+		add_notef(k.c, sym.span, "declared here with a read-only receiver, which can only yield a read-only slice")
 		v.type = INVALID_TYPE
 	}
 }

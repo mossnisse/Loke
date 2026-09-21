@@ -567,7 +567,7 @@ symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mo
 }
 
 // The LLVM type of one parameter of a compiler-synthesized member. design.md
-// "Receiver forms": an immutable receiver arrives as a pointer to the caller's
+// "Receiver forms": a `self: ^` receiver arrives as a pointer to the caller's
 // storage, exactly as an `inout` one does.
 @(private)
 synth_param_llvm :: proc(e: ^Emitter, symbol: ^Symbol, index: int) -> string {
@@ -589,7 +589,7 @@ synth_receiver_value :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 }
 
 // The receiver operand for a direct call to `hook` when the caller holds the
-// receiver as a value. design.md "Receiver forms": an immutable receiver wants
+// receiver as a value. design.md "Receiver forms": a `self: ^` receiver wants
 // the address of the value, so a held one is spilled here — once, and LLVM folds
 // the round trip away. A caller that already has the address passes it straight.
 @(private)
@@ -658,7 +658,7 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 // The LLVM type (with any ABI attribute) one foreign parameter occupies.
 @(private = "file")
 foreign_param_type :: proc(e: ^Emitter, symbol: ^Symbol, parameter: Type_Id, index: int) -> string {
-	// design.md: `borrow T`, `inout T`, and `@(by_ptr) T` cross as a pointer.
+	// design.md: a `self: ^` receiver, `inout T`, and `@(by_ptr) T` cross as a pointer.
 	proc_info := type_of(e.c, symbol.proc_type)
 	if param_mode_is_pointer(symbol_param_mode(e.c, symbol, index)) || param_is_by_ptr(proc_info, index) {
 		return "ptr"

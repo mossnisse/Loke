@@ -23,8 +23,14 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		address := gep_field(e, llvm_type(e, source), "%arg0", 0)
 		if !info.adapter_by_value { address = load(e, "ptr", address) }
 		target := symbol_of(e.c, symbol.iteration_target)
+		// A value `self` takes the source itself.
+		source_type, source_arg := "ptr", address
+		if !param_mode_is_pointer(symbol_param_mode(e.c, target, 0)) {
+			source_type = llvm_type(e, target.params[0])
+			source_arg = load(e, source_type, address)
+		}
 		iterator := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", iterator, llvm_type(e, target.result), symbol_name(e, symbol.iteration_target), address)
+		fmt.sbprintfln(&e.b, "  %s = call %s %s(%s %s)", iterator, llvm_type(e, target.result), symbol_name(e, symbol.iteration_target), source_type, source_arg)
 		value := iterator
 		if info.adapter_kind == .Indexed {
 			value = insert(e, result, "undef", llvm_type(e, target.result), iterator, 0)

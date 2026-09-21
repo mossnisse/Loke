@@ -7,3 +7,6 @@ this slice cannot be returned: `numbers` ends when this procedure returns
 L0647
 @33:2
 this slice borrows `numbers`, which does not outlive `destination`: storage the caller owns
+L0511
+@44:2
+this write of `table` is not compatible with the mutable borrow of it that is still in use

@@ -231,10 +231,16 @@ sort_by_thunk :: proc(e: ^Emitter, element: Type_Id, method: Symbol_Id) -> strin
 	llvm := llvm_type(e, element)
 	left := load(e, llvm, "%a")
 	right := load(e, llvm, "%b")
+	// A value `self` takes the comparator itself.
+	state_type, state := "ptr", "%state"
+	if sym := symbol_of(e.c, method); !param_mode_is_pointer(symbol_param_mode(e.c, sym, 0)) {
+		state_type = llvm_type(e, sym.params[0])
+		state = load(e, state_type, "%state")
+	}
 	before := temp(e)
 	fmt.sbprintfln(
-		&e.b, "  %s = call i1 %s(ptr %%state, %s %s, %s %s)",
-		before, symbol_name(e, method), llvm, left, llvm, right,
+		&e.b, "  %s = call i1 %s(%s %s, %s %s, %s %s)",
+		before, symbol_name(e, method), state_type, state, llvm, left, llvm, right,
 	)
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, before)

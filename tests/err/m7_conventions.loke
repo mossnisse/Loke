@@ -26,9 +26,9 @@ impl Ctx {
 take_ctx :: proc "c" (c: Ctx) { }
 Late :: struct { cb: proc "c" (l: Late), s: string }
 
-// A `borrow` parameter crosses as a pointer wherever the signature is written,
+// A pointer parameter crosses as a pointer wherever the signature is written,
 // so a procedure pointer holding one is as safe inside a record as on its own.
-Holder     :: struct { f: proc "c" (a: borrow [4]i32) }
+Holder     :: struct { f: proc "c" (a: ^[4]i32) }
 use_holder :: proc "c" (h: Holder) { }
 
 // A Loke variadic is a slice; a C variadic is written `@(c_vararg)`.
