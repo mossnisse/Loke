@@ -225,6 +225,11 @@ Compiler :: struct {
 	// Direct summary dependencies, discovered while building each body's first
 	// provenance graph. The solver schedules only callers of a changed callee.
 	result_summary_dependencies: map[Symbol_Id][]Symbol_Id,
+	// design.md "Global write effects": the globals each body may write, and what
+	// an indirect call may reach, settled before provenance runs.
+	global_writes:       map[Symbol_Id][]Symbol_Id,
+	indirect_writes:     map[string][]Symbol_Id,
+	global_writes_ready: bool,
 
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker

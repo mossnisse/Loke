@@ -4842,6 +4842,24 @@ fmt.println(held.view[0]); // ERROR: `numbers` has ended
 
 Writing a value into its own root, as `self.rest = self.rest[n:]` does, is not a retention. A root outlives itself.
 
+#### Global write effects
+
+A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through anything it calls. A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:
+
+```odin
+cache: [dynamic]int;
+
+reset :: proc() { cache.clear(); cache.shrink(); }
+first :: proc(values: []int) -> int { reset(); return values[0]; }
+
+total := first(cache);          // ERROR: `cache` cannot be modified by `first` here
+view: []int = cache;
+reset();                        // ERROR: a read-only slice of `cache` is still in use
+fmt.println(view[0]);
+```
+
+The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A call through a procedure value may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. Effects are whole-program and need no annotation; a procedure's effect is not part of its type.
+
 ### What is not checked
 
 The analysis is local to one procedure body, together with the recorded summary and declared levels of the procedures that body calls. Storing a borrow in a record field, container, global, or callback state is part of what it checks; see [Values that contain borrows](#values-that-contain-borrows) and [Retaining a borrow](#retaining-a-borrow). These cases remain the programmer's responsibility:
@@ -4853,6 +4871,7 @@ The analysis is local to one procedure body, together with the recorded summary 
 - concurrent access to the same storage. A data race is undefined behaviour, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
 - which thread releases the last [`shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`s `drop` and uses the control block's allocator;
 - everything [`unsafe.free`](#the-unsafe-package) releases.
+- a global written through a pointer or view to it that was itself stored in a global, or by foreign code, and one written by a hook the language calls implicitly (`drop`, `copy`, `convert`, or a `format` method run by `core:fmt`) while a borrow of it is live.
 
 If a view has no locally provable lifetime, make an owned copy with `clone`, use `shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.
 

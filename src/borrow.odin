@@ -931,6 +931,7 @@ Checked_Body :: struct {
 // first, over a worklist of direct callers, then each body's diagnostics run.
 // One graph is built and released at a time.
 analyze_program_provenance :: proc(k: ^Checker) {
+	compute_global_writes(k)
 	// Discovery records each body's callees. Source order may put a caller before
 	// its callee, so every body is then visited once more before the worklist.
 	for body in k.c.checked_bodies {

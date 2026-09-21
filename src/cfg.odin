@@ -146,6 +146,14 @@ Flow_Graph :: struct {
 	allocation_region_sources: [dynamic]Prov_Allocation_Region_Source,
 	// Summary mode: the direct callees whose result summaries this body reads.
 	summary_callees: [dynamic]Symbol_Id,
+	// design.md "Global write effects": this body's own writes of globals, and
+	// its calls while the effects are still settling.
+	effect_writes: [dynamic]Symbol_Id,
+	effect_calls:  [dynamic]Effect_Call,
+	// Procedures this body uses as values, and the callee being walked, which is
+	// a call rather than a use.
+	effect_values: [dynamic]Symbol_Id,
+	callee_expr:   Expr,
 	// Temporaries ending with the current statement (design.md).
 	temp_roots:     [dynamic]Root_Id,
 	// design.md "Allocator regions and region provenance".
@@ -211,6 +219,9 @@ build_flow_graph :: proc(
 	graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
 	graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
 	graph.summary_callees = make([dynamic]Symbol_Id, allocator)
+	graph.effect_writes = make([dynamic]Symbol_Id, allocator)
+	graph.effect_calls = make([dynamic]Effect_Call, allocator)
+	graph.effect_values = make([dynamic]Symbol_Id, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
 	graph.region_content = make(map[Symbol_Id][]Prov_Region_Content, 8, allocator)
@@ -870,6 +881,9 @@ track_case_binding :: proc(graph: ^Flow_Graph, entry: Switch_Case, consumes: boo
 @(private)
 walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	prov := graph.mode != .Lifecycle
+	if prov {
+		prov_note_proc_value(graph, e)
+	}
 	// design.md "any_view type": an erased view borrows the place it came from.
 	if prov {
 		if base := expr_base(e); base != nil && base.erased_from != INVALID_TYPE {

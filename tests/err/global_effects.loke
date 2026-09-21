@@ -1,0 +1,48 @@
+package main; import "core:fmt";
+
+// design.md "Global write effects": a call writes whatever globals its callee
+// may write, directly or through its callees, so a borrow of one that is live
+// across the call conflicts.
+
+cache: [dynamic]int;
+
+reset :: proc() { cache.clear(); cache.shrink(); }
+first :: proc(values: []int) -> int { reset(); return values[0]; }
+first_value :: proc(values: [dynamic]int) -> int { reset(); return values[0]; }
+
+Bag :: struct { items: [dynamic]int }
+bag: Bag;
+impl Bag { view :: proc(self: ^) -> []int { return self.items; } }
+empty_bag :: proc() { bag.items.clear(); }
+
+through_a_view_argument :: proc() -> int { return first(cache); }
+through_a_value_argument :: proc() -> int { return first_value(cache); }
+across_a_call :: proc() {
+	view: []int = cache;
+	reset();
+	fmt.println(view[0]);
+}
+across_a_receiver_view :: proc() {
+	view := bag.view();
+	empty_bag();
+	fmt.println(view[0]);
+}
+
+// An indirect call may run any procedure of a compatible type, and a `dyn`
+// call any witness the program builds.
+clears :: proc(values: []int) -> int { reset(); return 0; }
+apply :: proc(f: proc(values: []int) -> int) -> int { return f(cache); }
+
+Shape :: interface($Self: type) { slot area: proc(self) -> int; }
+Circle :: struct { r: int }
+impl Circle { area :: proc(self) -> int { reset(); return self.r; } }
+measure :: proc(shape: dyn Shape) -> int {
+	view: []int = cache;
+	n := shape.area();
+	return view.len() + n;
+}
+
+main :: proc() {
+	c := Circle{1};
+	fmt.println(apply(clears), measure((dyn Shape)(&c)));
+}

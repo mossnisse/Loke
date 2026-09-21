@@ -845,6 +845,9 @@ prov_new_loan :: proc(
 	span: Span,
 	what: string,
 ) -> Loan_Id {
+	if mutable {
+		prov_note_static_write(graph, root)
+	}
 	append(&graph.loans, Prov_Loan{root = root, path = path, mutable = mutable, span = span, what = what})
 	return Loan_Id(len(graph.loans) - 1)
 }
@@ -883,6 +886,9 @@ prov_access :: proc(
 ) -> (block: Block_Id, index: int) {
 	if root == NO_ROOT {
 		return NO_BLOCK, -1
+	}
+	if kind != .Read {
+		prov_note_static_write(graph, root)
 	}
 	prov_emit(graph, Prov_Event {
 		kind   = .Access,
@@ -2447,6 +2453,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	}
 	// The receiver is `bound[0]`; don't walk it again through the callee.
 	if !(has_receiver && len(v.bound) > 0) {
+		graph.callee_expr = v.callee
 		walk_flow_expr(graph, v.callee)
 	}
 	if len(v.bound) == 0 {
@@ -2458,6 +2465,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		}
 		// The reset precedes the boundary use, so the actuals are live at it.
 		prov_call_resets(graph, v)
+		prov_call_effects(graph, v)
 		if len(borrowed) > 0 {
 			prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 		}
@@ -2605,6 +2613,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	prov_call_resets(graph, v)
 	prov_call_retention(graph, v, actuals)
 	prov_container_content(graph, v, container_op, actuals)
+	prov_call_effects(graph, v)
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}

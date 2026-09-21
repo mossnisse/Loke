@@ -1,0 +1,38 @@
+package main; import "core:fmt";
+
+// design.md "Global write effects": a call only conflicts with a borrow of a
+// global its callee may actually write.
+
+cache: [dynamic]int;
+other: [dynamic]int;
+counter: int;
+
+reads :: proc(values: []int) -> int { return values.len() + counter; }
+writes_other :: proc(values: []int) -> int { other.append(1); counter += 1; return values.len(); }
+fill :: proc() { cache.append(1); cache.append(2); }
+countdown :: proc(n: int) -> int { if (n == 0) { return 0; } return countdown(n - 1); }
+apply :: proc(f: proc(values: []int) -> int) -> int { return f(cache); }
+
+// Only the witnesses the program builds are reachable through a `dyn` call.
+Shape :: interface($Self: type) { slot area: proc(self) -> int; }
+Square :: struct { side: int }
+impl Square { area :: proc(self) -> int { counter += 1; return self.side * self.side; } }
+Circle :: struct { r: int }
+impl Circle { area :: proc(self) -> int { cache.clear(); return self.r; } }
+measure :: proc(shape: dyn Shape) -> int {
+	view: []int = cache;
+	n := shape.area();
+	return view.len() + n;
+}
+
+main :: proc() {
+	fill();
+	fmt.println(reads(cache), writes_other(cache), countdown(3));
+	fmt.println(cache);
+	fmt.println(apply(reads));
+	square := Square{2};
+	fmt.println(measure((dyn Shape)(&square)));
+	// Writing the global with no borrow of it live is fine.
+	circle := Circle{1};
+	fmt.println(circle.area(), cache.len());
+}

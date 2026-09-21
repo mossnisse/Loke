@@ -1,0 +1,18 @@
+L0512
+@18:51
+`cache` cannot be modified by `first` here: a read-only slice of it is still in use
+L0512
+@19:52
+`cache` cannot be modified by `first_value` here
+L0512
+@22:2
+`cache` cannot be modified by `reset` here
+L0512
+@27:2
+`bag` cannot be modified by `empty_bag` here
+L0512
+@34:62
+modified by a procedure this call may reach
+L0512
+@41:7
+modified by a procedure this call may reach
