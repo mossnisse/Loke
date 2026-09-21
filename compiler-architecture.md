@@ -410,7 +410,7 @@ Compiler unit tests live beside the implementation:
 - `front_end_test.odin` covers semantic helpers and hand-built packages;
 - `bigint_test.odin` covers exact integer arithmetic;
 - `carrier_test.odin` covers aggregate carrier shapes and provenance;
-- `syntax_corpus_test.odin` runs the valid syntax corpus in process;
+- `syntax_corpus_test.odin` runs the valid syntax corpus, the AST goldens and the parser mutation fuzzer in process;
 - `emit_llvm_test.odin` checks emission contracts and structural backend rules.
 
 The integration harness is `tests/corpus_test.odin`:

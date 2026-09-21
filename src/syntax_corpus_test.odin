@@ -1,15 +1,11 @@
-// The syntax corpora. These run in-process rather than through the CLI because
-// spans and token streams are what they assert, and neither is visible from
-// stdout.
+// The syntax corpora, run in-process because spans and token streams are what
+// they assert, and neither is visible from stdout.
 //
 //   tests/syntax/*.loke             valid syntax: no diagnostics, dumpable
-//   tests/syntax/ambiguity/*.loke   exact dump goldens: the resolved rules, and
-//                                   the expression, declaration, statement and
-//                                   item forms
+//   tests/syntax/ambiguity/*.loke   exact dump goldens for the resolved rules
+//                                   and every expression, declaration,
+//                                   statement and item form
 //   tests/syntax/*.loke, mutated    the fuzzer's input corpus
-//
-// tests/syntax_err/ is checked by the CLI harness in tests/corpus_test.odin,
-// which already compares diagnostics against `.expected` files.
 package lokec
 
 import "core:os"
@@ -22,44 +18,28 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 	paths := corpus(t, "tests/syntax/*.loke")
 	defer delete_corpus(paths)
 	for path in paths {
-		// The text backs the compiler's `Source`, so it outlives the compilation:
-		// registered first, it is released last.
 		data, readable := os.read_entire_file(path)
 		defer delete(data)
 		if !testing.expectf(t, readable, "%s: cannot read", path) {
 			continue
 		}
-		text := string(data)
+		p: Checked
+		parse_source(&p, string(data))
+		defer destroy_checked(&p)
 
-		c := test_compiler(text)
-		defer destroy_compilation(&c)
-		tokens := lex(&c, 0)
-		defer delete(tokens)
-		f := parse(&c, 0, tokens)
-		defer destroy_ast(&f)
+		// Zero diagnostics also means the parser consumed through EOF: anything
+		// left over is reported as a stray item.
+		expect_no_diagnostics(t, &p.c, path)
+		testing.expectf(t, p.tokens[len(p.tokens) - 1].kind == .EOF, "%s: no EOF token", path)
 
-		// Zero diagnostics also asserts "the parser consumed through EOF":
-		// anything left over is reported as a stray item.
-		testing.expectf(
-			t,
-			c.error_count == 0,
-			"%s: %d diagnostics, first: %s",
-			path,
-			c.error_count,
-			c.error_count > 0 ? c.diagnostics[0].message : "",
-		)
-		testing.expectf(t, tokens[len(tokens) - 1].kind == .EOF, "%s: no EOF token", path)
-
-		// ponytail: spans are checked on top-level items, not every node — the only
-		// exhaustive walk is `ast_dump`, and a second one for tests would need
-		// updating with every new node. Running the dump covers every node's
-		// *existence*; widen this if a span bug ever gets past it.
+		// ponytail: spans are checked on top-level items only; walk every node if
+		// a span bug ever gets past the dump.
 		previous: u32 = 0
-		for item in f.items {
+		for item in p.f.items {
 			span := item_span(item)
 			testing.expectf(
 				t,
-				span.lo <= span.hi && int(span.hi) <= len(text),
+				span.lo <= span.hi && int(span.hi) <= len(data),
 				"%s: item span %d..%d is outside the file",
 				path,
 				span.lo,
@@ -68,14 +48,12 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 			testing.expectf(t, span.lo >= previous, "%s: item spans are out of order", path)
 			previous = span.lo
 		}
-		dump := ast_dump(&f)
+		dump := ast_dump(&p.f)
 		defer delete(dump)
 		testing.expectf(t, len(dump) > 0, "%s: the dump did not complete", path)
 	}
 }
 
-// Shape is the assertion for the resolved ambiguities and the parser's form
-// coverage, so these are exact.
 @(test)
 ambiguity_goldens :: proc(t: ^testing.T) {
 	paths := corpus(t, "tests/syntax/ambiguity/*.loke")
@@ -90,31 +68,20 @@ ambiguity_goldens :: proc(t: ^testing.T) {
 		if !testing.expectf(t, readable && has_expected, "%s: missing source or golden", path) {
 			continue
 		}
+		p: Checked
+		parse_source(&p, string(data))
+		defer destroy_checked(&p)
 
-		c := test_compiler(string(data))
-		defer destroy_compilation(&c)
-		tokens := lex(&c, 0)
-		defer delete(tokens)
-		f := parse(&c, 0, tokens)
-		defer destroy_ast(&f)
-
-		testing.expectf(t, c.error_count == 0, "%s: an ambiguity fixture must be valid", path)
-		dump := ast_dump(&f)
+		expect_no_diagnostics(t, &p.c, path)
+		dump := ast_dump(&p.f)
 		defer delete(dump)
-		// `replace_all` hands its input straight back when there is nothing to
-		// replace, so the result is only ours to free when it allocated.
-		want, converted := strings.replace_all(string(expected), "\r\n", "\n")
-		defer if converted {
-			delete(want)
-		}
+		want, _ := strings.replace_all(string(expected), "\r\n", "\n", context.temp_allocator)
 		testing.expectf(t, dump == want, "%s: dump changed:\n%s", path, dump)
 	}
 }
 
-// Deterministic mutation fuzzing. Whatever the token stream looks like, the
-// parser must terminate, keep every diagnostic span inside the file, and leave
-// a tree the dump can walk. The seed is printed on failure, so the run is
-// reproducible from it.
+// Whatever the token stream looks like, the parser must terminate, keep every
+// diagnostic span inside the file, and leave a tree the dump can walk.
 @(test)
 mutation_fuzzing :: proc(t: ^testing.T) {
 	ITERATIONS :: 200
@@ -125,26 +92,26 @@ mutation_fuzzing :: proc(t: ^testing.T) {
 	for path in paths {
 		data, readable := os.read_entire_file(path)
 		defer delete(data)
-		if !readable {
+		if !testing.expectf(t, readable, "%s: cannot read", path) {
 			continue
 		}
 		text := string(data)
-
 		source := test_compiler(text)
 		defer destroy_compilation(&source)
 		base := lex(&source, 0)
 		defer delete(base)
-		if len(base) < 3 {
-			continue
+		if len(base) < 2 {
+			continue // nothing but the EOF to mutate
 		}
 
-		for iteration := 0; iteration < ITERATIONS; iteration += 1 {
+		for _ in 0 ..< ITERATIONS {
 			seed := state
 			mutated := mutate(base, &state)
-
+			defer delete(mutated)
 			c := test_compiler(text)
 			defer destroy_compilation(&c)
 			f := parse(&c, 0, mutated)
+			defer destroy_ast(&f)
 
 			for diagnostic in c.diagnostics {
 				span := diagnostic.span
@@ -159,29 +126,22 @@ mutation_fuzzing :: proc(t: ^testing.T) {
 				)
 			}
 			dump := ast_dump(&f)
-			testing.expectf(
-				t,
-				len(dump) > 0,
-				"seed %d, %s: the dump did not complete",
-				seed,
-				path,
-			)
-
-			// Released here rather than deferred: 200 iterations per file would
-			// otherwise all pile up before the enclosing scope ends.
-			delete(dump)
-			destroy_ast(&f)
-			delete(mutated)
+			defer delete(dump)
+			testing.expectf(t, len(dump) > 0, "seed %d, %s: the dump did not complete", seed, path)
 		}
 	}
 }
 
 @(private = "file")
-delete_corpus :: proc(paths: []string) {
-	for path in paths {
-		delete(path)
-	}
-	delete(paths)
+expect_no_diagnostics :: proc(t: ^testing.T, c: ^Compiler, path: string) {
+	testing.expectf(
+		t,
+		c.error_count == 0,
+		"%s: %d diagnostics, first: %s",
+		path,
+		c.error_count,
+		c.error_count > 0 ? c.diagnostics[0].message : "",
+	)
 }
 
 @(private = "file")
@@ -196,9 +156,16 @@ corpus :: proc(t: ^testing.T, pattern: string) -> []string {
 	return paths
 }
 
-// The kinds a token is rewritten to. Delimiters and separators break the
-// parser's structure; the rest keep a substitution from always being a
-// delimiter. `EOF` truncates the stream mid-construct.
+@(private = "file")
+delete_corpus :: proc(paths: []string) {
+	for path in paths {
+		delete(path)
+	}
+	delete(paths)
+}
+
+// Delimiters and separators break the parser's structure; the rest keep a
+// substitution from always being a delimiter, and `EOF` truncates mid-construct.
 @(private = "file")
 MUTATION_KINDS :: [?]Token_Kind {
 	.Lbrace,
@@ -216,11 +183,11 @@ MUTATION_KINDS :: [?]Token_Kind {
 	.EOF,
 }
 
-// Deletion, duplication and substitution at up to three positions, which
-// together cover delimiter imbalance in both directions.
+// Deletion, duplication or substitution at up to three positions, which together
+// cover delimiter imbalance in both directions. The trailing EOF is never touched.
 @(private = "file")
 mutate :: proc(base: []Token, state: ^u64) -> []Token {
-	last := len(base) - 1 // the trailing EOF is never touched
+	last := len(base) - 1
 	out := make([dynamic]Token, 0, len(base) + 4)
 
 	edits := 1 + int(next_random(state) % 3)
