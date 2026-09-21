@@ -317,6 +317,11 @@ void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v
  * ordinary program fault and does not return at all. */
 int32_t loke_rt_v1_dyn_append(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const void *src, int64_t count);
+/* `dyn_append` where each element `owned` marks moves in and the rest are
+ * cloned. On failure every owned element still belongs to the caller. */
+int32_t loke_rt_v1_dyn_append_owned(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	const void *src, const uint8_t *owned, int64_t count);
 int32_t loke_rt_v1_dyn_insert(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
 	int64_t index, const void *src, int64_t count);

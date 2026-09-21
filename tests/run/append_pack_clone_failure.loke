@@ -1,0 +1,39 @@
+package main;
+
+import "core:fmt";
+
+// design.md: a `try_` form recovers cloning failure and returns the error. A
+// pack lends its borrowed places and spreads to `try_append`, which clones them
+// itself: the third clone fails, the one clone already made is destroyed, the
+// owned temporary is dropped, and nothing is published. Every value is still
+// dropped exactly once.
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+
+drops: static int = 0;
+
+Res :: struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { if (self.id != 0) { drops += 1; } }
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		if (self.id == 3) {
+			p := new(Huge, allocator) or_return;
+			free(p);
+		}
+		return .ok(Res{self.id});
+	}
+}
+
+main :: proc() {
+	items: [dynamic]Res = {};
+	{
+		one := Res{1};
+		three := Res{3};
+		spread := [1]Res{Res{4}};
+		failed := items.try_append(one, Res{2}, three, ..spread[:]) != nil;
+		fmt.println(failed, items.len(), drops);
+	}
+	fmt.println(drops);
+	fmt.println(items.try_append(Res{7}) == nil, items[0].id);
+}

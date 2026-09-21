@@ -270,11 +270,13 @@ static int32_t dyn_src_aliases(
 	return p >= base && p < base + bytes;
 }
 
-/* Fills slots [at, at+count) from `src`, destroying exactly the prefix it built
- * if one element's clone fails. */
+/* Fills slots [at, at+count) from `src`. An element `owned` marks moves in;
+ * every other one is cloned, and if a clone fails exactly the clones already
+ * made are destroyed. A moved element is left to its source, which still holds
+ * it after a failure. */
 static int32_t dyn_fill(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
-	int64_t at, const void *src, int64_t count) {
+	int64_t at, const void *src, const uint8_t *owned, int64_t count) {
 	int64_t i, j;
 	uint64_t bytes;
 	if (ops->elem_clone == 0) {
@@ -288,12 +290,18 @@ static int32_t dyn_fill(
 	}
 	for (i = 0; i < count; i += 1) {
 		const void *from = (const char *)src + (uint64_t)i * ops->elem_size;
+		if (owned != 0 && owned[i]) {
+			memcpy(dyn_at(self, ops, at + i), from, (size_t)ops->elem_size);
+			continue;
+		}
 		if (ops->elem_clone(dyn_at(self, ops, at + i), from, self->allocator)) {
 			continue;
 		}
 		if (ops->elem_drop != 0) {
 			for (j = 0; j < i; j += 1) {
-				ops->elem_drop(dyn_at(self, ops, at + j));
+				if (owned == 0 || !owned[j]) {
+					ops->elem_drop(dyn_at(self, ops, at + j));
+				}
 			}
 		}
 		return 0;
@@ -303,6 +311,12 @@ static int32_t dyn_fill(
 
 int32_t loke_rt_v1_dyn_append(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const void *src, int64_t count) {
+	return loke_rt_v1_dyn_append_owned(self, ops, src, 0, count);
+}
+
+int32_t loke_rt_v1_dyn_append_owned(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	const void *src, const uint8_t *owned, int64_t count) {
 	dyn_grow_undo undo;
 	int64_t need;
 
@@ -321,7 +335,7 @@ int32_t loke_rt_v1_dyn_append(
 	if (!dyn_regrow(self, ops, need, 0, &undo)) {
 		return 0;
 	}
-	if (!dyn_fill(self, ops, self->len, src, count)) {
+	if (!dyn_fill(self, ops, self->len, src, owned, count)) {
 		dyn_regrow_rollback(self, ops, &undo);
 		return 0;
 	}
@@ -362,7 +376,7 @@ int32_t loke_rt_v1_dyn_insert(
 	if (loke_rt_v1_checked_bytes(tail, ops->elem_size, &tail_bytes) && tail_bytes != 0) {
 		memmove(dyn_at(self, ops, index + count), dyn_at(self, ops, index), (size_t)tail_bytes);
 	}
-	if (!dyn_fill(self, ops, index, src, count)) {
+	if (!dyn_fill(self, ops, index, src, 0, count)) {
 		if (tail_bytes != 0) {
 			memmove(dyn_at(self, ops, index), dyn_at(self, ops, index + count), (size_t)tail_bytes);
 		}

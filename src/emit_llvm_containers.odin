@@ -41,6 +41,16 @@ emit_container_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_sort_by(ptr, i64, i64, ptr, ptr)")
 }
 
+// Declared only by a module that calls it, so other modules' IR is unchanged.
+@(private = "file")
+declare_dyn_append_owned :: proc(e: ^Emitter) {
+	if e.container_thunks["dyn_append_owned"] {
+		return
+	}
+	e.container_thunks["dyn_append_owned"] = true
+	append(&e.globals, "declare i32 @loke_rt_v1_dyn_append_owned(ptr, ptr, ptr, ptr, i64)\n")
+}
+
 // The operation table for one concrete container type, made once along with
 // its element and key thunks.
 @(private)
@@ -674,7 +684,10 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	container := symbol.params[0]
 	element := container_element(e.c, container)
 	element_llvm := llvm_type(e, element)
-	ops := container_ops_global(e, container, relocating = consuming)
+	// A consuming `append` of a copyable element takes a pack it partly owns, with
+	// a flag per element, and clones the rest through the ordinary table.
+	masked := consuming && symbol.container_op == .Append && !emit_lifecycle(e, element).clone_disabled
+	ops := container_ops_global(e, container, relocating = consuming && !masked)
 	fallible := symbol.result != INVALID_TYPE && type_is_union(e.c, symbol.result)
 	// A move-only element, or any element of a consuming body, is handed over,
 	// so this body owns it until it is stored.
@@ -687,6 +700,9 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 			fmt.sbprint(&e.b, ", ")
 		}
 		fmt.sbprintf(&e.b, "%s %%arg%d", synth_param_llvm(e, symbol, index), index)
+	}
+	if masked {
+		fmt.sbprint(&e.b, ", ptr %owned")
 	}
 	open_function(e, ")")
 	e.terminated = false
@@ -726,11 +742,25 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg1, %d", data, pack, SLICE_DATA)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg1, %d", count, pack, SLICE_LEN)
 		status = temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %%arg0, ptr %s, ptr %s, i64 %s)",
-			status, ops, data, count,
-		)
-		if moves {
+		if masked {
+			declare_dyn_append_owned(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = call i32 @loke_rt_v1_dyn_append_owned(ptr %%arg0, ptr %s, ptr %s, ptr %%owned, i64 %s)",
+				status, ops, data, count,
+			)
+			// A failed append leaves every owned element with this body.
+			kept := branch_on_failure(e, status)
+			count_slot := alloca(e, "i64")
+			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, count_slot)
+			emit_drop_flagged_array(e, element, data, "%owned", count_slot)
+			rejoin(e, kept)
+		} else {
+			fmt.sbprintfln(
+				&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %%arg0, ptr %s, ptr %s, i64 %s)",
+				status, ops, data, count,
+			)
+		}
+		if moves && !masked {
 			kept := branch_on_failure(e, status)
 			emit_drop_run(e, element, data, count)
 			rejoin(e, kept)

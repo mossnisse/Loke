@@ -703,7 +703,9 @@ checked_variadic_total :: proc(e: ^Emitter, total, added: string) -> string {
 }
 
 @(private = "file")
-emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Variadic_Pack {
+// A lending pack holds a borrowed place or a spread's elements without cloning
+// them, and its flags mark only the elements it owns; the callee clones the rest.
+emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend := false) -> Variadic_Pack {
 	if v.variadic_forwards {
 		return Variadic_Pack{value = emit_expr(e, v.bound[v.variadic_slot])}
 	}
@@ -733,6 +735,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 
 	// Spread lengths are collected while evaluating operands in written order.
 	elements := make([]string, static_count)
+	lent := make([]bool, static_count)
 	spreads := make([]string, len(v.variadic_spreads))
 	spread_data := make([]string, len(v.variadic_spreads))
 	spread_len := make([]string, len(v.variadic_spreads))
@@ -752,8 +755,9 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 		}
 		expr := v.variadic_elements[next_element]
 		value := emit_expr(e, expr)
-		// Temporaries transfer into staging; borrowed owners are cloned.
-		if managed && expression_is_borrowed_place(expr) {
+		// Temporaries transfer into staging; borrowed owners are cloned, or lent.
+		lent[next_element] = managed && lend && expression_is_borrowed_place(expr)
+		if managed && !lend && expression_is_borrowed_place(expr) {
 			value = emit_clone_value(e, element, value)
 		}
 		elements[next_element] = value
@@ -765,7 +769,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 			)
 			store(e, element, value, slot)
 			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %d", flag, staging_flags, next_element)
-			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+			fmt.sbprintfln(&e.b, "  store i1 %v, ptr %s", !lent[next_element], flag)
 		}
 		next_element += 1
 	}
@@ -801,6 +805,23 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 	next_element, next_spread = 0, 0
 	for is_spread in v.variadic_order {
 		if managed {
+			if is_spread && lend {
+				// Lent bitwise, with its flags left clear.
+				position := load(e, "i64", cursor_slot)
+				bytes := temp(e)
+				fmt.sbprintfln(
+					&e.b, "  %s = mul i64 %s, %d", bytes, spread_len[next_spread], type_size(e.c, element),
+				)
+				fmt.sbprintfln(
+					&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %s, i1 false)",
+					gep_at(e, element_llvm, buffer, position), spread_data[next_spread], bytes,
+				)
+				next_position := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", next_position, position, spread_len[next_spread])
+				fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_position, cursor_slot)
+				next_spread += 1
+				continue
+			}
 			if is_spread {
 				index_slot := alloca(e, "i64")
 				fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
@@ -842,7 +863,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 			store(e, element, loaded, destination)
 			final_flag, staging_flag := temp(e), temp(e)
 			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", final_flag, final_flags, position)
-			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", final_flag)
+			fmt.sbprintfln(&e.b, "  store i1 %v, ptr %s", !lent[next_element], final_flag)
 			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %d", staging_flag, staging_flags, next_element)
 			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", staging_flag)
 			next_position := temp(e)
@@ -965,6 +986,7 @@ emit_bound_call :: proc(
 	}
 	pack_cleanup := Deferred{slot = -1}
 	callee := callee
+	owned_flags := ""
 	consumed, consuming_body := consumed_element_slot(e, symbol_id, symbol, call_node)
 	if consuming_body {
 		callee = consuming_op_name(e, symbol_id)
@@ -984,7 +1006,13 @@ emit_bound_call :: proc(
 			continue
 		}
 		if index == pack {
-			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index])
+			// A consuming `append` clones what the pack lends, so a failed clone is its
+			// to report.
+			lends := consuming_body && symbol.container_op == .Append
+			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index], lend = lends)
+			if lends {
+				owned_flags = packed.cleanup.array_cleanup ? packed.cleanup.array_flags : "null"
+			}
 			operands[index] = packed.value
 			pack_cleanup = packed.cleanup
 			continue
@@ -1052,6 +1080,9 @@ emit_bound_call :: proc(
 			type = receiver_type
 		}
 		fmt.sbprintf(&e.b, "%s %s", type, operand)
+	}
+	if owned_flags != "" {
+		fmt.sbprintf(&e.b, ", ptr %s", owned_flags)
 	}
 	fmt.sbprintln(&e.b, ")")
 	results: []string
