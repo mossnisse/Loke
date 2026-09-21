@@ -689,6 +689,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		panic("cannot reserve the compilation's analysis arena")
 	}
 	c.analysis_allocator = virtual.arena_allocator(&c.analysis_arena)
+	c.collections = make(map[string]string, c.semantic_allocator)
 	c.identifier_names = make([dynamic]string, 0, 64, c.semantic_allocator)
 	c.identifier_by_name = make(map[string]Identifier_Id, c.semantic_allocator)
 	c.types = make([dynamic]Type_Info, 0, 64, c.semantic_allocator)

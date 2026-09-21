@@ -406,7 +406,6 @@ is_config_name :: proc(name: string) -> bool {
 @(private = "file")
 register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 	init_semantic_stores(c)
-	c.collections = make(map[string]string, len(entries) + 2, c.semantic_allocator)
 	for name in ([]string{"base", "core"}) {
 		if bundled := install_component(name); bundled != "" {
 			// Cloned like an explicit entry, so the whole map has one owner and

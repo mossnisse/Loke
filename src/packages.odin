@@ -86,9 +86,6 @@ ensure_runtime_bootstrap :: proc(k: ^Checker) {
 	}
 	init_semantic_stores(k.c)
 	if _, seeded := k.c.collections["base"]; !seeded {
-		if k.c.collections == nil {
-			k.c.collections = make(map[string]string, 2, k.c.semantic_allocator)
-		}
 		// Test binaries need the working-directory fallback.
 		installed := install_component("base")
 		defer delete(installed)
