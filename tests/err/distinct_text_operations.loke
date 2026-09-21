@@ -1,0 +1,17 @@
+package main;
+
+// design.md "Distinct types": a distinct text type inherits none of the built-in
+// text operations, and a distinct byte slice reaches `from_utf8` only through a
+// written conversion.
+
+Name  :: distinct string;
+Bytes :: distinct []u8;
+
+main :: proc() {
+	n := Name("abc");
+	_ = n.byte_len();
+	_ = Name.from_runes(nil);
+	_ = Name.from_utf8(nil);
+	s := "abc";
+	_ = string.from_utf8(Bytes(s.bytes()));
+}

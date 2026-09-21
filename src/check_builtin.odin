@@ -19,10 +19,8 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_static_assert(k, v)
 	case .Build_Config:
 		check_config(k, v)
-	case .Source_Location:
-		check_location(k, v, ident)
-	case .Caller_Location:
-		check_caller_location(k, v, ident)
+	case .Source_Location, .Caller_Location:
+		check_location(k, v, ident, sym.builtin)
 	case .Size_Of, .Align_Of, .Offset_Of:
 		check_layout_builtin(k, v, ident, sym.builtin)
 	case .Is_Copyable:
@@ -876,4 +874,176 @@ check_message_arg :: proc(k: ^Checker, e: Expr) {
 	if !base.is_const || base.const_value.kind != .String {
 		errorf(k.c, expr_span(e), "L0345", "this message must be a compile-time string")
 	}
+}
+
+// ------------------------------------------------------- source locations --
+
+// design.md "`source_location() or source_location(<entity>)`" and
+// "`caller_location()`": a constant `runtime.Source_Code_Location` for the call,
+// or for a named entity's declaration. A `caller_location()` default is folded
+// again at every call that omits it, by `substitute_caller_location`.
+check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	v.value_category = .Value
+	type, resolved := runtime_type_named(k, "Source_Code_Location")
+	if !resolved {
+		errorf(
+			k.c, v.span, "L0573",
+			"`%s` produces a `runtime.Source_Code_Location`; add `import \"base:runtime\"` to this file's package",
+			ident.name,
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	span := v.span
+	switch {
+	case len(v.args) == 0:
+	case kind == .Caller_Location:
+		errorf(k.c, v.span, "L0573", "`caller_location` takes no arguments, found %d", len(v.args))
+		v.type = INVALID_TYPE
+		return
+	case len(v.args) > 1:
+		errorf(k.c, v.span, "L0573", "`source_location` takes at most one name, found %d", len(v.args))
+		v.type = INVALID_TYPE
+		return
+	case:
+		declared, found := entity_declaration_span(k, v.args[0].value)
+		if !found {
+			errorf(k.c, expr_span(v.args[0].value), "L0573", "`source_location` takes a declared name")
+			v.type = INVALID_TYPE
+			return
+		}
+		span = declared
+	}
+	v.type = type
+	v.is_const = true
+	v.const_value = source_location_const(k, type, span)
+}
+
+// `{file, procedure: string_view, line, column: int}`, over the type this
+// package's `base:runtime` declares.
+@(private = "file")
+source_location_const :: proc(k: ^Checker, type: Type_Id, span: Span) -> Const_Value {
+	file, line, column := "", 0, 0
+	if span.file != NO_FILE && int(span.file) < len(k.c.sources) {
+		source := &k.c.sources[span.file]
+		file = source.path
+		line, column = line_col(source, span.lo)
+	}
+	elements := make([]Const_Value, 4, k.c.semantic_allocator)
+	elements[0] = Const_Value{kind = .String, text = file}
+	elements[1] = Const_Value{kind = .String, text = enclosing_procedure_name(k)}
+	elements[2] = int_const(k.c, i64(line))
+	elements[3] = int_const(k.c, i64(column))
+	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
+	aggregate.type = type
+	aggregate.elements = elements
+	return Const_Value{kind = .Aggregate, aggregate = aggregate}
+}
+
+@(private = "file")
+enclosing_procedure_name :: proc(k: ^Checker) -> string {
+	if k.proc_literal != nil && k.proc_literal.symbol != INVALID_SYMBOL {
+		if sym := symbol_of(k.c, k.proc_literal.symbol); sym != nil {
+			return identifier_text(k.c, sym.name)
+		}
+	}
+	return ""
+}
+
+@(private = "file")
+entity_declaration_span :: proc(k: ^Checker, e: Expr) -> (Span, bool) {
+	ident, is_ident := e.(^Expr_Ident)
+	if !is_ident {
+		return no_span(), false
+	}
+	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	if sym == nil {
+		return no_span(), false
+	}
+	return sym.span, true
+}
+
+// An omitted argument whose default is `caller_location()`, folded for *this*
+// call. Any other default passes through untouched.
+substitute_caller_location :: proc(k: ^Checker, default: Expr, at: Span) -> Expr {
+	call, is_call := default.(^Expr_Call)
+	if !is_call || call.type == INVALID_TYPE {
+		return default
+	}
+	sym := symbol_of(k.c, call.resolution.symbol)
+	if sym == nil || sym.kind != .Builtin || sym.builtin != .Caller_Location {
+		return default
+	}
+	substituted := new(Expr_Call, k.c.semantic_allocator)
+	substituted^ = call^
+	substituted.span = at
+	substituted.const_value = source_location_const(k, call.type, at)
+	return substituted
+}
+
+// ------------------------------------------------------ runtime metadata --
+
+// design.md "`type` and `typeid`": `type_info_of(id)` maps a runtime `typeid` to
+// a read-only `^runtime.Type_Info` from a shared static table, nil for any id
+// without an entry, since a `typeid` can be forged.
+check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
+	v.value_category = .Value
+	if len(v.args) != 1 {
+		errorf(k.c, v.span, "L0322", "`type_info_of` takes 1 argument, found %d", len(v.args))
+		v.type = INVALID_TYPE
+		return
+	}
+	record, resolved := runtime_type_named(k, "Type_Info")
+	// The table's member record is resolved with it, not on first use.
+	_, members_resolved := runtime_type_named(k, "Member_Info")
+	if !resolved || !members_resolved {
+		errorf(
+			k.c, v.span, "L0575",
+			"`type_info_of` produces a `^runtime.Type_Info`; add `import \"base:runtime\"` to this file's package",
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	operand := check_single_expr(k, v.args[0].value, TYPE_TYPEID)
+	if operand == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	if type_underlying(k.c, operand) != TYPE_TYPEID {
+		errorf(
+			k.c, expr_span(v.args[0].value), "L0575",
+			"`type_info_of` takes a `typeid`, found `%s`", type_name(k.c, operand),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	if k.c.speculation_depth == 0 {
+		k.c.type_info_requested = true
+	}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = v.args[0].value
+	v.bound = bound
+	v.type = pointer_to(k.c, record, false)
+}
+
+// A type declared by a `base:runtime` this package imports, recorded for the
+// emitter's metadata tables.
+@(private = "file")
+runtime_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
+	pkg := package_of(k.c, k.pkg)
+	if pkg == nil {
+		return INVALID_TYPE, false
+	}
+	for edge in pkg.imports {
+		target := package_of(k.c, edge.target)
+		if target == nil || target.key != STD_RUNTIME || target.scope == nil {
+			continue
+		}
+		symbol := symbol_of(k.c, target.scope.names[intern_identifier(k.c, name)])
+		if symbol != nil && symbol.kind == .Type && symbol.type != INVALID_TYPE {
+			k.c.runtime_types[name] = symbol.type
+			return symbol.type, true
+		}
+	}
+	return INVALID_TYPE, false
 }

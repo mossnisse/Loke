@@ -887,3 +887,227 @@ all_candidates_consume :: proc(k: ^Checker, candidates: []Symbol_Id) -> bool {
 	}
 	return len(candidates) > 0
 }
+
+// ------------------------------------------------------------- variadics --
+
+// The index of a procedure type's variadic parameter, always the last, or -1.
+variadic_parameter_index :: proc(info: ^Type_Info) -> int {
+	if info == nil || len(info.param_modes) == 0 {
+		return -1
+	}
+	last := len(info.param_modes) - 1
+	return info.param_modes[last] == .Variadic ? last : -1
+}
+
+// design.md "Variadic parameters": explicit arguments, `..slice` spreads, or
+// both, packed here into the one read-only slice the callee receives. A sole
+// spread forwards its slice unchanged. `receiver` is a method call's parameter
+// 0 (nil for a free call), so a variadic method such as the contributed
+// `append` never ranks its first written argument against its own receiver.
+bind_variadic_arguments :: proc(
+	k: ^Checker,
+	v: ^Expr_Call,
+	info: ^Type_Info,
+	declaration: Symbol_Id,
+	args: []Argument,
+	prechecked := false,
+	receiver: Expr = nil,
+) -> bool {
+	pack := variadic_parameter_index(info)
+	element := slice_element(k.c, info.parameters[pack])
+	bound := make([]Expr, pack + 1, k.c.semantic_allocator)
+	declared := symbol_of(k.c, declaration)
+	ok := true
+
+	// design.md "Evaluation order": kept only when a name reorders the fixed
+	// parameters, the one case where written and slot order disagree.
+	slot_order := make([dynamic]int, 0, pack + 1, k.c.semantic_allocator)
+	first := 0
+	if receiver != nil {
+		bound[0] = receiver
+		append(&slot_order, 0)
+		if len(info.param_modes) > 0 &&
+		   !check_bound_argument_mode(k, receiver, info.param_modes[0], "an `inout` argument") {
+			ok = false
+		}
+		first = 1
+	}
+	fixed := 0
+	for first + fixed < pack && fixed < len(args) {
+		arg := args[fixed]
+		if arg.name.text != "" || arg.mode == .Spread {
+			break
+		}
+		slot := first + fixed
+		expected := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
+		value, passed := bind_written_argument(k, arg, info.parameters[slot], expected, prechecked)
+		bound[slot] = value
+		append(&slot_order, slot)
+		ok = ok && passed
+		fixed += 1
+	}
+	// design.md "Named arguments": positional arguments precede named ones and no
+	// name reaches a pack element, so once a name appears the pack is empty.
+	named := 0
+	for fixed + named < len(args) && args[fixed + named].name.text != "" {
+		arg := args[fixed + named]
+		named += 1
+		if declared == nil {
+			errorf(k.c, arg.span, "L0371", "a call through a procedure value cannot use named arguments")
+			ok = false
+			continue
+		}
+		slot := parameter_slot_named(k.c, declared, intern_identifier(k.c, arg.name.text), pack)
+		if slot < 0 {
+			errorf(k.c, arg.span, "L0371", "no parameter named `%s`", arg.name.text)
+			ok = false
+			continue
+		}
+		if bound[slot] != nil {
+			errorf(k.c, arg.span, "L0371", "`%s` is given twice", arg.name.text)
+			ok = false
+			continue
+		}
+		expected := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
+		value, passed := bind_written_argument(k, arg, info.parameters[slot], expected, prechecked)
+		bound[slot] = value
+		append(&slot_order, slot)
+		ok = ok && passed
+	}
+	if named > 0 && fixed + named < len(args) {
+		errorf(k.c, args[fixed + named].span, "L0372", "a positional argument cannot follow a named one")
+		return false
+	}
+	append(&slot_order, pack)
+	for index in first ..< pack {
+		if bound[index] != nil {
+			continue
+		}
+		if !ok {
+			// The failed argument already explains the empty slot.
+			return false
+		}
+		if declared == nil || index >= len(declared.param_defaults) || declared.param_defaults[index] == nil {
+			errorf(
+				k.c, v.span, "L0322",
+				"this procedure takes at least %d argument%s, found %d",
+				pack - first, pack - first == 1 ? "" : "s", len(args),
+			)
+			return false
+		}
+		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
+		append(&slot_order, index)
+	}
+	if named > 0 {
+		v.bound_order = slot_order[:]
+	}
+
+	rest := args[fixed + named:]
+	// One spread and nothing else: forward the slice itself.
+	if len(rest) == 1 && rest[0].mode == .Spread {
+		spread, passed := check_spread_argument(k, rest[0], info.parameters[pack], prechecked)
+		bound[pack] = spread
+		v.bound = bound
+		v.is_variadic = true
+		v.variadic_slot = pack
+		v.variadic_forwards = true
+		return ok && passed
+	}
+
+	elements := make([dynamic]Expr, 0, len(rest), k.c.semantic_allocator)
+	spreads := make([dynamic]Expr, 0, len(rest), k.c.semantic_allocator)
+	order := make([dynamic]bool, 0, len(rest), k.c.semantic_allocator) // true = spread
+	needs_element_clone := false
+	for arg in rest {
+		if arg.name.text != "" {
+			errorf(k.c, arg.span, "L0371", "a variadic argument cannot be named")
+			ok = false
+			continue
+		}
+		if arg.mode == .Spread {
+			spread, passed := check_spread_argument(k, arg, info.parameters[pack], prechecked)
+			append(&spreads, spread)
+			append(&order, true)
+			needs_element_clone = true
+			ok = ok && passed
+			continue
+		}
+		value, passed := pass_argument(k, arg.value, element, prechecked)
+		append(&elements, value)
+		append(&order, false)
+		// Managed or not: a pack copies what it is given.
+		classify_copy_cost(k, value, element, .Variadic)
+		needs_element_clone ||= expression_is_borrowed_place(value)
+		ok = ok && passed
+	}
+	if type_is_managed(k.c, element) && needs_element_clone && !lifecycle_of(k.c, element).intrinsic {
+		if type_clone_disabled(k.c, element) {
+			// design.md "Container insertion": each borrowed element is reported
+			// where `move(...)` belongs; a spread has no `move` form.
+			for value in elements {
+				classify_copy(k, value, element, .Variadic)
+			}
+			for spread in spreads {
+				errorf(
+					k.c, expr_span(spread), "L0503",
+					"`%s` is move-only, so a `..` spread cannot copy its elements into the pack",
+					type_name(k.c, element),
+				)
+			}
+			ok = false
+		} else {
+			contribute_lifecycle_members(k, element)
+		}
+	}
+	v.is_variadic = true
+	v.variadic_slot = pack
+	v.variadic_elements = elements[:]
+	v.variadic_spreads = spreads[:]
+	v.variadic_order = order[:]
+	v.bound = bound
+	return ok
+}
+
+// design.md "Named arguments": the slot a name reaches, shared by overload
+// resolution and binding so they cannot disagree. `limit` stops short of a
+// variadic pack. -1 when nothing carries the name, including a call through a
+// procedure value, which has no parameter symbols.
+parameter_slot_named :: proc(c: ^Compiler, declared: ^Symbol, name: Identifier_Id, limit := -1) -> int {
+	if declared == nil {
+		return -1
+	}
+	stop := limit < 0 ? len(declared.param_symbols) : min(limit, len(declared.param_symbols))
+	for binding, position in declared.param_symbols[:stop] {
+		if symbol := symbol_of(c, binding); symbol != nil && symbol.name == name {
+			return position
+		}
+	}
+	return -1
+}
+
+// Overload resolution already checked every written argument, so binding the
+// chosen candidate must not check them again.
+pass_argument :: proc(
+	k: ^Checker, e: Expr, target: Type_Id, prechecked: bool, inout_argument := false,
+) -> (Expr, bool) {
+	if !prechecked {
+		return check_argument_value(k, e, target, inout_argument)
+	}
+	return e, materialize_argument(k, e, target)
+}
+
+@(private = "file")
+check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechecked := false) -> (Expr, bool) {
+	type := prechecked ? expr_base(arg.value).type : check_single_expr(k, arg.value, pack)
+	if type == INVALID_TYPE {
+		return arg.value, false
+	}
+	if !assignable(k.c, type, pack) {
+		errorf(
+			k.c, arg.span, "L0574",
+			"`..` spreads a `%s`, found `%s`", type_name(k.c, pack), type_name(k.c, type),
+		)
+		return arg.value, false
+	}
+	return arg.value, true
+}

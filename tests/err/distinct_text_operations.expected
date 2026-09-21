@@ -1,0 +1,12 @@
+L0363
+@12:6
+`Name` has no field or member `byte_len`
+L0408
+@13:6
+`Name` has no member `from_runes`
+L0408
+@14:6
+`Name` has no member `from_utf8`
+L0561
+@16:23
+`string.from_utf8` takes a `[]u8` or `cstring_view`, found `Bytes`
