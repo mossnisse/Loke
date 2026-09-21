@@ -368,9 +368,10 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 			kind = .Static
 		}
 	case .Parameter:
-		// Everything but a trivial `value: T` aliases the caller's root (design.md
-		// "Receiver forms"), which lets `proc(self) -> []T` return a slice of it.
-		if param_borrows_caller_storage(graph.k.c, sym.mode, sym.type) {
+		// A pointer-mode parameter aliases the caller's root (design.md "Receiver
+		// forms"), which lets `proc(self) -> []T` return a slice of it. A
+		// `value: T` is a value: nothing borrowed from it outlives the call.
+		if param_mode_is_pointer(sym.mode) {
 			kind = .Param
 		}
 	case .Const:
@@ -992,6 +993,29 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	}
 	// The hidden storage is a frame slot that follows the lexical scope.
 	return prov_borrow(graph, prov_hidden_root(graph, span, "this erased value"), nil, false, span, "view")
+}
+
+// design.md "string type conversions": a `string` read as a `string_view`
+// borrows the owner it came from, or the temporary that holds it. A constant's
+// storage is static.
+@(private)
+prov_string_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+	base := expr_base(e)
+	saved, saved_type := base.view_from, base.type
+	base.view_from, base.type = INVALID_TYPE, saved
+	loans := walk_flow_expr(graph, e)
+	base.view_from, base.type = saved, saved_type
+	span := expr_span(e)
+	if base.is_const {
+		return loans
+	}
+	if root, path, ok := prov_place_of(graph, e); ok {
+		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "string view"))
+	}
+	if len(loans) > 0 || !prov_expr_is_temporary(e) {
+		return loans
+	}
+	return prov_borrow(graph, prov_temp_root(graph, span), nil, false, span, "string view")
 }
 
 // A compiler-created root ending with its scope.
@@ -2538,17 +2562,21 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				borrowed = prov_join(graph, borrowed, held)
 				continue
 			}
+			loan: []int
 			if root, path, ok := prov_place_of(graph, argument); ok && !expression_converts_storage(argument) {
 				prov_walk_subscripts(graph, argument)
 				prov_access(graph, root, path, .Read, expr_span(argument))
-				held = prov_join(
-					graph, held, prov_borrow(graph, root, path, false, expr_span(argument), "borrow"),
-				)
+				loan = prov_borrow(graph, root, path, false, expr_span(argument), "borrow")
 			} else {
-				held = prov_join(
-					graph, held,
-					prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "borrow"),
-				)
+				loan = prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "borrow")
+			}
+			// A `value: T` callee shares the owner's allocations only for the call
+			// (design.md "Parameter semantics and ABI lowering"): the argument stays
+			// borrowed until it returns, but the result cannot derive from it.
+			if !(index == 0 && has_receiver) && proc_parameter_mode(c, call_proc_type(c, v), index) == .Value {
+				borrowed = prov_join(graph, borrowed, loan)
+			} else {
+				held = prov_join(graph, held, loan)
 			}
 			actuals[index] = held
 		} else {

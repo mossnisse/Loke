@@ -79,15 +79,14 @@ impl Holder {
 	held_view :: proc(self) -> []int { return self.held; }
 }
 
-// design.md "Parameter semantics and ABI lowering": an ordinary `value: T`
-// holding a managed owner is the caller's storage under another name, so the
-// free-procedure spelling of a view accessor behaves like the method spelling.
-// Moving a helper in or out of an `impl` therefore changes nothing.
+// design.md "Parameter semantics and ABI lowering": the free-procedure spelling
+// of a view accessor takes `borrow T`, the mode a plain receiver has; a
+// `value: T` is a value and lends nothing past the call.
 Bag :: struct {
 	items: [dynamic]int,
 }
 
-free_view :: proc(bag: Bag) -> []int { return bag.items[:]; }
+free_view :: proc(bag: borrow Bag) -> []int { return bag.items[:]; }
 
 impl Bag {
 	// The plain receiver and the written-out one are the same mode.

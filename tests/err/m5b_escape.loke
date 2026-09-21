@@ -51,10 +51,10 @@ temporary_argument :: proc() -> []int {
 	return first_half([4]int{1, 2, 3, 4}[:]);
 }
 
-// design.md "Parameter semantics and ABI lowering": a managed owner passed as
-// `value: T` is the caller's storage, so a view of it may be returned — but a
-// trivial value really is a callee-local copy, and a view of its inline storage
-// still ends with the call. `borrow T` or a receiver is what says otherwise.
+// design.md "Parameter semantics and ABI lowering": `value: T` is a value for
+// every `T`, so nothing borrowed from it outlives the call — its inline storage
+// or, for a managed owner, the allocations it shares with the caller. `borrow T`
+// or a receiver is what says otherwise.
 Inline_Pair :: struct { items: [2]int }
 
 returns_a_trivial_parameter_view :: proc(pair: Inline_Pair) -> []int {
@@ -63,6 +63,39 @@ returns_a_trivial_parameter_view :: proc(pair: Inline_Pair) -> []int {
 
 returns_a_borrowed_parameter_view :: proc(pair: borrow Inline_Pair) -> []int {
 	return pair.items[:];
+}
+
+// A managed field does not change the answer: the same field address, which
+// once compiled and pointed into the callee's copy.
+Labelled :: struct { n: int, label: string }
+
+returns_a_managed_parameter_field :: proc(value: Labelled) -> ^int {
+	return &value.n;
+}
+
+returns_a_managed_array_view :: proc(values: [2]string) -> []string {
+	return values[:];
+}
+
+// Nor does storage the owner keeps in its allocation.
+Bag :: struct { items: [dynamic]int }
+
+returns_a_managed_parameter_allocation :: proc(bag: Bag) -> []int {
+	return bag.items[:];
+}
+
+returns_a_string_parameter_view :: proc(text: string) -> string_view {
+	return text;
+}
+
+returns_a_borrowed_allocation :: proc(bag: borrow Bag) -> []int {
+	return bag.items[:];
+}
+
+// An implicit `string` to `string_view` conversion borrows its source too.
+returns_a_local_string_view :: proc() -> string_view {
+	text := string("a") + string("b");
+	return text;
 }
 
 main :: proc() {

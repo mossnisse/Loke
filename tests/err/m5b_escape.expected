@@ -22,3 +22,18 @@ this slice cannot be returned: the slice literal it borrows ends when this proce
 L0526
 @61:9
 this slice cannot be returned: `pair` ends when this procedure returns
+L0526
+@73:9
+this pointer cannot be returned: `value` ends when this procedure returns
+L0526
+@77:9
+this slice cannot be returned: `values` ends when this procedure returns
+L0526
+@84:9
+this slice cannot be returned: `bag` ends when this procedure returns
+L0526
+@88:9
+this string view cannot be returned: `text` ends when this procedure returns
+L0526
+@98:9
+this string view cannot be returned: `text` ends when this procedure returns

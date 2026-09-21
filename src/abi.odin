@@ -31,12 +31,10 @@ param_mode_is_pointer :: proc(mode: Param_Mode) -> bool {
 }
 
 // design.md "Parameter semantics and ABI lowering": an ordinary `value: T`
-// holding a managed owner is "a non-owning immutable borrow for the call",
-// cloning nothing and transferring nothing — the caller's storage, under
-// another name. So for lifetimes it names the caller's root exactly as
-// `borrow T` and a plain `self` do, and a view of it may be returned. Only a
-// trivial value is the callee-local the bare mode suggests, which is the one
-// case where a free procedure and a method still differ.
+// holding a managed owner shares the caller's allocations for the call, cloning
+// nothing and transferring nothing. So at a call the argument is borrowed until
+// the callee returns. It is still a value: no result derives from it, and in
+// the callee nothing borrowed from it outlives the call.
 //
 // This answers about lifetimes, not about the ABI: `param_mode_is_pointer` is
 // still what decides how the parameter crosses.

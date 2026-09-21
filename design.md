@@ -3007,12 +3007,12 @@ A variable holds a value, not a reference to one. Copying an owning value produc
 
 This is a decision, not an omission. A language that transfers by default and writes every duplication needs no copy rule at all, and gets an infallible assignment in exchange. Loke keeps the convenient copy and pays for it twice: copying a mutable owner may allocate, so an assignment is a failure site governed by [allocation failure](#allocation-failure); and a [move-only](#lifecycle-hooks-and-resource-types) value has no copy at all, so a place is written `move(...)` in every context below.
 
-One rule covers every context that takes a value. **A place stays live: it is borrowed wherever a borrow is indistinguishable from a copy, and copied otherwise. A temporary, or `move(x)`, transfers.** Making a borrow indistinguishable from a copy is what [Borrows and lifetimes](#borrows-and-lifetimes) is for — it is why an ordinary parameter can borrow a managed owner without the caller being able to tell.
+One rule covers every context that takes a value. **A place stays live: it is borrowed wherever a borrow is indistinguishable from a copy, and copied otherwise. A temporary, or `move(x)`, transfers.** Making a borrow indistinguishable from a copy is what [Borrows and lifetimes](#borrows-and-lifetimes) is for — it is why an ordinary parameter can share a managed owner for the call without either side being able to tell.
 
 | context | a place | a temporary, or `move(x)` |
 | --- | --- | --- |
 | [binding and assignment](#assignment-statements) | cloned | transferred |
-| ordinary parameter `value: T` | borrowed for the call | borrowed; the temporary is destroyed after the full expression |
+| ordinary parameter `value: T` | borrowed for the call; nothing derived from it outlives the call | borrowed; the temporary is destroyed after the full expression |
 | `borrow T` parameter, and a plain [`self`](#receiver-forms) | aliases the caller's storage | borrowed for the full expression |
 | `inout T` parameter | exclusive mutable borrow | not accepted: `inout` names a caller's variable |
 | `move T` parameter | transferred, and written `move(x)` at the call | transferred, with no marker |
@@ -4076,7 +4076,7 @@ The source-level parameter mode is decided before ABI lowering:
 
 | Parameter form | Source-level meaning |
 | --- | --- |
-| `value: T` | Immutable local binding; no ownership transfer. A managed owner is a borrow of the caller's storage |
+| `value: T` | Immutable value; no ownership transfer. Nothing borrowed from it outlives the call |
 | `value: []T` | Immutable borrowed view with read-only elements |
 | `value: []mut T` | Immutable borrowed view whose elements may be modified |
 | `value: borrow T` | Immutable alias of the caller's storage |
@@ -4084,9 +4084,9 @@ The source-level parameter mode is decided before ABI lowering:
 | `value: inout T` | Exclusive mutable borrow of the caller's variable |
 | `value: move T` | Ownership transfer from caller to callee |
 
-A `value: T` parameter is never made `inout` by its machine representation. A trivial value behaves as an immutable callee-local; a managed owner (including a struct or fixed array with managed fields) is a non-owning immutable borrow for the call, cloning nothing and transferring nothing, with reached storage protected by [Borrows and lifetimes](#borrows-and-lifetimes).
+A `value: T` parameter is never made `inout` by its machine representation. It is a value for every `T`: a borrow of it — of its own bytes, or of storage a managed owner holds, such as a `string`'s characters or a dynamic array's elements — ends with the call and cannot be returned or retained. The implementation need not copy it: a managed owner is shared with the caller for the call, cloning nothing and transferring nothing, and the caller's argument stays borrowed until the call returns, so the difference cannot be observed. A result never derives from a `value: T` argument, though a borrow the value *contains*, such as a slice field, keeps its own provenance.
 
-Because a managed owner passed this way *is* the caller's storage, a borrow of one names the caller's root and may be returned, exactly as `borrow T` and a receiver may. A helper therefore behaves the same whether it is written as a free procedure or as a method. A trivial value is the one case where the two still differ: a copy of it ends with the call, so only `borrow T` or a receiver lets a borrow of its inline storage escape.
+A procedure that hands out a view of its argument says so in its signature: it takes the view (`[]T`, `string_view`), a pointer, or `borrow T`, the mode of an immutable receiver. Whether a borrow can escape therefore never depends on what the argument's type contains.
 
 Returning such a borrowed parameter by value performs a logical clone, since the callee owns nothing to move out: a mutable owner clones into `mem.default_allocator()` unless the procedure constructs the result with another allocator, while `string` and `shared(T)` retain their shared allocation. Returning a borrowed value whose clone is disabled is a compile-time error. Returning a managed local, temporary, or `move` parameter instead transfers ownership without cloning. A procedure needing allocator-controlled result storage takes an allocator parameter and constructs against it.
 
@@ -4096,7 +4096,7 @@ Machine-level argument passing does not grant extra ownership, mutation, or life
 
 Copying a large aggregate or managed owner is valid, but tools may warn wherever [the ownership rule](#value-semantics-and-the-ownership-rule) copies a place rather than borrowing or transferring it: a binding, an assignment, a parameter, a return, a place operand or fallback of [`or_else` or `or_return`](#operator-ownership), an [aggregate literal](#struct-literals) element, a [variant](#unions) payload, a [container insertion](#container-insertion), a variadic pack element, and an explicit `clone` or [`copied()`](#iteration-adapters). Every context in that table is asked, because a copy written as construction is the easiest one to miss.
 
-Building a destination by *converting* the operand is not a copy of it and is not reported: `print(count)` erases an `int` into a borrowing `any_view`, duplicating nothing. An ordinary `value: T` parameter borrows a managed owner and is not a copy site either. Use `move` for ownership transfer and `inout` only when mutation is intended.
+Building a destination by *converting* the operand is not a copy of it and is not reported: `print(count)` erases an `int` into a borrowing `any_view`, duplicating nothing. An ordinary `value: T` parameter shares a managed owner for the call and is not a copy site either. Use `move` for ownership transfer and `inout` only when mutation is intended.
 
 ```odin
 sum :: proc(values: [dynamic]int) -> int {
@@ -4211,7 +4211,7 @@ pointer^ = 99;                      // writes `values[2]`
 
 The returned expression must denote an assignable place of exactly the declared type; there is no result conversion, and a value expression is rejected. A call whose result is `inout T` is itself a place: it may be assigned to, have its address taken, and be passed as an `inout` argument. It is not a first-class reference type — the mode may be written on a result, never on a variable, field, or container element.
 
-An `inout` result is a [borrow carrier](#storage-roots-and-borrow-carriers), and its lifetime follows exactly the rules a returned `^T` follows under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries): it derives root provenance from the procedure's `inout` parameters, `inout` receiver, and other borrowed arguments, or from an allocation or static root. An ordinary `value: T` parameter holding a trivial value is a callee-local binding, so a place projected out of one carries no caller provenance and the result cannot outlive the call expression; one holding a managed owner names the caller's storage and propagates provenance like the other borrowed forms.
+An `inout` result is a [borrow carrier](#storage-roots-and-borrow-carriers), and its lifetime follows exactly the rules a returned `^T` follows under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries): it derives root provenance from the procedure's `inout` parameters, `inout` receiver, and other borrowed arguments, or from an allocation or static root. An ordinary `value: T` parameter is a value, so a place projected out of one carries no caller provenance and the result cannot outlive the call expression.
 
 ```odin
 escape :: proc() -> inout int {
@@ -4740,7 +4740,7 @@ fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 
 A [slice literal](#slice-literals) behaves differently, and the difference is what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation that nothing keeps alive past the statement.
 
-The default parameter binding itself is a callee-local read-only value. Taking `&parameter` borrows that local and cannot produce a returned pointer. An `inout` or `borrow` parameter aliases the caller's root, so a borrow returned from it is derived from that root, as does an [immutable receiver](#receiver-forms): a plain `self` designates the caller's value, which is what lets `proc(self) -> []T` hand back a view of the receiver's own inline storage. The immutable loan invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result contract below records; a procedure value retains this precision when its type carries that contract.
+The default parameter binding itself is a callee-local read-only value, whatever its type. Taking `&parameter`, slicing it, or viewing storage it owns borrows that value and cannot produce a returned borrow. An `inout` or `borrow` parameter aliases the caller's root, so a borrow returned from it is derived from that root, as does an [immutable receiver](#receiver-forms): a plain `self` designates the caller's value, which is what lets `proc(self) -> []T` hand back a view of the receiver's own inline storage. The immutable loan invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result contract below records; a procedure value retains this precision when its type carries that contract.
 
 A checked pointer to an allocation root created by `new` or `new_clone` may be returned because the allocation is not callee-local storage. The pointer's root provenance and the allocation root's region provenance follow the result. This transfers release responsibility by API convention, not by making `^T` an owning type; the compiler does not require every manually allocated root to be freed.
 

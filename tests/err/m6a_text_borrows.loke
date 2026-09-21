@@ -27,7 +27,7 @@ leak_c_view :: proc() -> cstring_view {
 
 // A literal has static lifetime, so borrowing one is not an escape at all.
 kept :: proc() -> string_view {
-	static_text: string = "hej";
+	static_text: string_view = "hej";
 	return static_text;
 }
 
