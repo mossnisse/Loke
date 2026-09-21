@@ -65,7 +65,9 @@ Weak :: struct($T: type) {
 // `shared(value)` and `shared(move(value))`. The compiler routes the call form
 // of the type name here; the group is what makes the two spellings one name.
 @(private)
-shared_from_clone :: proc(value: $T, allocator: Allocator = default_allocator()) -> Shared(T) {
+shared_from_clone :: proc(
+	value: $T, allocator: Allocator = default_allocator(),
+) -> Shared(T) where is_copyable(T) {
 	return try_shared_from_clone(value, allocator) or_else shared_no_block(T, allocator);
 }
 
@@ -81,7 +83,7 @@ shared_construct :: proc{shared_from_clone, shared_from_move};
 @(private)
 try_shared_from_clone :: proc(
 	value: $T, allocator: Allocator = default_allocator(),
-) -> Result(Shared(T), Allocator_Error) {
+) -> Result(Shared(T), Allocator_Error) where is_copyable(T) {
 	copy := value.try_clone(allocator) or_return;
 	return try_shared_from_move(move(copy), allocator);
 }

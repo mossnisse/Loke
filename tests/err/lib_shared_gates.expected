@@ -10,3 +10,6 @@ L0512
 L0363
 @39:9
 `Weak(Node)` has no field or member `get`
+L0392
+@56:10
+no overload of `shared_construct` applies

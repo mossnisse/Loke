@@ -44,4 +44,14 @@ main :: proc() {
 	_ = escapes_its_handle();
 	_ = outlives_its_handle();
 	_ = reaches_through_weak();
+	shares_a_borrowed_token();
+}
+
+// "`shared(value)` clones a borrowed value": a move-only one has no clone, so
+// the call names the member that would take it by `move`.
+Token :: move_only struct { id: int }
+
+shares_a_borrowed_token :: proc() {
+	token := Token{5};
+	held := shared(token);
 }
