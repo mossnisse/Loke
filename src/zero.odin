@@ -1,29 +1,20 @@
 // Zero values and required results.
 //
-// design.md "Zero values": Loke relies on every semantic zero having an
-// all-zero runtime representation — container growth, zero-initialized
-// allocation, map insertion, globals, and generated cleanup all depend on it.
-// A named union earns a zero only through `@(zero=first_variant)`; an enum
-// needs a variant represented by 0. Every zero-manufacturing operation must
-// check this instead of quietly producing an invalid representation.
-//
-// design.md "@(require_results)": `@(require_results)` on a type declaration
-// makes a bare call statement an error whenever a result carries that type,
-// however deeply a value aggregate wraps it.
+// design.md "Zero values": every semantic zero must be all-zero bits, so every
+// operation that manufactures one asks `type_has_zero` first.
+// design.md "@(require_results)": a type carrying it makes every value
+// aggregate containing it require its results too.
 package lokec
 
-// Reads `@(require_results)` off a type declaration onto the type itself.
 apply_type_metadata :: proc(k: ^Checker, d: ^Decl, type: Type_Id) {
-	for attribute in d.attributes {
-		if len(attribute.path) == 1 && attribute.path[0].text == "require_results" {
-			if info := type_of(k.c, type); info != nil {
-				info.requires_results = true
-			}
-		}
+	if !has_attribute(d.attributes, "require_results") {
+		return
+	}
+	if info := type_of(k.c, type); info != nil {
+		info.requires_results = true
 	}
 }
 
-// Does a value of this type start at the all-zero representation?
 type_has_zero :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	seen := make(map[Type_Id]bool, context.temp_allocator)
 	return type_has_zero_walk(c, type, &seen)
@@ -31,51 +22,39 @@ type_has_zero :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 @(private = "file")
 type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool) -> bool {
-	if type == INVALID_TYPE {
+	// A cycle contributes no non-zero leaf.
+	if type == INVALID_TYPE || seen[type] {
 		return true
 	}
-	under := type_underlying(c, type)
-	if seen[under] {
-		// Recursive value graphs contribute no non-zero leaf merely by cycling.
-		return true
-	}
-	seen[under] = true
-	info := type_of(c, under)
+	seen[type] = true
+	info := type_of(c, type)
 	if info == nil {
 		return true
 	}
 	#partial switch info.kind {
+	case .Distinct:
+		return type_has_zero_walk(c, info.element, seen)
 	case .Enum:
-		return enum_member_by_value(c, under, int_const(c, 0)) != INVALID_SYMBOL
+		return enum_member_by_value(c, type, int_const(c, 0)) != INVALID_SYMBOL
 	case .Union:
-		// Tag 0 plus a zero payload is the all-zero representation, so only the
-		// first variant can be the zero, and only if its own payload has one.
-		if !info.zero_designated || len(info.variants) == 0 {
-			return false
-		}
-		return type_has_zero_walk(c, info.variants[0], seen)
+		// A generic instance can bind a zero variant's payload to a type with no zero.
+		return info.zero_designated && len(info.variants) > 0 && type_has_zero_walk(c, info.variants[0], seen)
 	case .Struct:
 		for field in info.fields {
 			symbol := symbol_of(c, field)
+			// design.md "Uninitialized capacity": storage past the live prefix holds
+			// no values.
 			if symbol == nil || symbol.initialized_by != INVALID_SYMBOL {
-				// design.md "Uninitialized capacity": the storage behind the live
-				// prefix holds no values, so the element type needs no zero -- the
-				// same reason a dynamic array's capacity imposes none.
 				continue
 			}
 			if !type_has_zero_walk(c, symbol.type, seen) {
 				return false
 			}
 		}
-		return true
-	case .Array, .Simd:
-		// A zero-length array contains no element, so it has a zero whatever the
-		// element type is. Every SIMD lane type has a zero, so a vector always
-		// does.
+	case .Array:
 		return info.count == 0 || type_has_zero_walk(c, info.element, seen)
 	}
-	// Dynamic arrays and maps keep their empty all-zero header whatever they
-	// hold: capacity is raw storage, not a sequence of initialized values.
+	// Scalars, SIMD vectors, and container headers, whose capacity is raw storage.
 	return true
 }
 
@@ -93,28 +72,20 @@ require_type_has_zero :: proc(k: ^Checker, type: Type_Id, span: Span, what: stri
 	return false
 }
 
-// Does a value of this type have to be handled rather than discarded? Pointers,
-// views, and procedure values don't inherit the property just because the
-// pointee or signature mentions it.
 type_requires_results :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	seen := make(map[Type_Id]bool, context.temp_allocator)
 	return type_requires_results_walk(c, type, &seen)
 }
 
+// Only values held inline: pointers, views, procedure values, and heap
+// containers don't inherit the requirement from what they reach.
 @(private = "file")
 type_requires_results_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool) -> bool {
-	if type == INVALID_TYPE {
+	if type == INVALID_TYPE || seen[type] {
 		return false
 	}
-	if info := type_of(c, type); info != nil && info.requires_results {
-		return true
-	}
-	under := type_underlying(c, type)
-	if seen[under] {
-		return false
-	}
-	seen[under] = true
-	info := type_of(c, under)
+	seen[type] = true
+	info := type_of(c, type)
 	if info == nil {
 		return false
 	}
@@ -122,6 +93,8 @@ type_requires_results_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_
 		return true
 	}
 	#partial switch info.kind {
+	case .Distinct:
+		return type_requires_results_walk(c, info.element, seen)
 	case .Struct:
 		for field in info.fields {
 			symbol := symbol_of(c, field)
