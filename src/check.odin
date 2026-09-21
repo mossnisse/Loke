@@ -542,12 +542,53 @@ in_generic_signature :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 }
 
 has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
+	_, found := find_attribute(attributes, name)
+	return found
+}
+
+find_attribute :: proc(attributes: []Attribute, name: string) -> (Attribute, bool) {
 	for attribute in attributes {
 		if len(attribute.path) == 1 && attribute.path[0].text == name {
-			return true
+			return attribute, true
 		}
 	}
-	return false
+	return {}, false
+}
+
+// design.md "@(align=N)": `union @(align=4) {...}` and `struct @(align=4)
+// {...}`. Only a power of two the target supports is accepted; a written
+// alignment under the natural one raises rather than lowers.
+record_written_alignment :: proc(k: ^Checker, value: ^Type_Record) -> u64 {
+	attribute, written := find_attribute(value.attributes, "align")
+	if !written {
+		return 0
+	}
+	if attribute.value == nil {
+		errorf(k.c, attribute.span, "L0423", "`@(align=N)` needs a value")
+		return 0
+	}
+	if check_single_expr(k, attribute.value, TYPE_INT) == INVALID_TYPE {
+		return 0
+	}
+	folded, evaluated := require_const(k, attribute.value, "an alignment", "L0423")
+	if !evaluated || folded.kind != .Integer {
+		errorf(k.c, attribute.span, "L0423", "`@(align=N)` needs a constant integer")
+		return 0
+	}
+	written_align, fits := bi_to_i64(k.c, folded.integer)
+	if !fits || written_align <= 0 || written_align > i64(k.c.target.max_align) ||
+	   (written_align & (written_align - 1)) != 0 {
+		errorf(
+			k.c,
+			attribute.span,
+			"L0423",
+			"`@(align=%s)` must be a power of two between 1 and %d",
+			bi_text(k.c, folded.integer),
+			k.c.target.max_align,
+		)
+		return 0
+	}
+	return u64(written_align)
 }
 
 // ---------------------------------------------------------- signatures --
@@ -723,7 +764,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	if info := type_of(k.c, type); info != nil {
 		info.fields = members[:]
 		// design.md "Record layout attributes".
-		info.packed = record_is_packed(value)
+		info.packed = has_attribute(value.attributes, "packed")
 		info.written_align = record_written_alignment(k, value)
 	}
 	resolve_uninitialized_fields(k, type, value)

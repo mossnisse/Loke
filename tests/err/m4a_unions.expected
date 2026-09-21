@@ -35,38 +35,41 @@ L0425
 @43:13
 `Value.number` takes exactly one payload argument, found 2
 L0425
-@44:13
+@44:21
+`Value.number` takes its payload as one unnamed value
+L0425
+@45:13
 `Value.flag` carries a payload: write `flag(value)`
 L0352
-@45:13
+@46:13
 1 is not representable by `Value`
 L0425
-@46:17
+@47:17
 `Three_Way.c` carries no payload: write `c` without a call
 L0425
-@49:7
+@50:7
 `Value` is a union: match its variants with a `switch (p in value)` whose cases are `.name`
 L0426
-@53:15
+@54:15
 a type switch needs a union or an `any_view`, found `int`
 L0427
-@59:2
+@60:2
 this type switch over `Value` does not cover .flag, .number
 L0426
-@60:7
+@61:7
 a union case names a variant: `case .name:`
 L0427
-@65:2
+@66:2
 this type switch over `Value` does not cover .flag
 L0427
-@71:2
+@72:2
 this type switch over `Value` does not cover .number
 L0426
-@73:7
+@74:7
 `Value` has no variant `missing`
 L0428
-@77:7
+@78:7
 `or_else` needs a union with a designated failure variant on its left, found `bool`
 L0425
-@80:25
+@81:25
 `Result(i32, bool).ok` carries a payload: write `ok(value)`

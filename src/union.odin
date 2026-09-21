@@ -1,17 +1,8 @@
-// Unions: named variants, layout, variant construction, and the type switch.
+// Unions: named variants, their layout, and variant construction.
 //
-// Representation: a payload region carrying the widest variant's ABI
-// alignment — or the validated `@(align=N)` — followed by an `iN` tag and
-// explicit padding. Variants are numbered in declaration order and the index is
-// the tag, so variant 0 has tag 0 and there is no nil tag.
-//
-// A variant's *identity* is its declaration index, never its payload type: two
-// variants may carry the same payload, which is what makes `Result(int, int)`
-// a legal type rather than a duplicate-variant error.
-//
-// `layout.odin` remains the source of truth for size, alignment, and the tag's
-// offset. The emitter builds a storage type whose LLVM-reported layout matches
-// those cached facts rather than asking LLVM to infer one.
+// A variant's identity is its declaration index, which is also its tag, never
+// its payload type: two variants may carry the same payload, which is what makes
+// `Result(int, int)` a legal type.
 package lokec
 
 import "core:slice"
@@ -29,9 +20,8 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 			)
 			continue
 		}
-		// A payloadless variant carries `void`, which is zero-sized and inert. It
-		// is the one way `void` reaches `variants`, so it also *is* the test for
-		// "payloadless" everywhere downstream.
+		// `void` reaches `variants` only here, so it is the test for "payloadless"
+		// everywhere downstream.
 		payload := TYPE_VOID
 		if variant.type != nil {
 			payload = resolve_type_syntax(k, variant.type)
@@ -59,8 +49,6 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 	info.written_align = record_written_alignment(k, value)
 	resolve_union_zero(k, info, value)
 	resolve_union_failure(k, info, value)
-	// `@(packed)` on a union is rejected by the attribute table (L0607); design.md
-	// applies it to a struct only.
 }
 
 // design.md "Zero values": `@(zero=name)` designates the semantic zero. Only
@@ -68,7 +56,7 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 // all-zero representation every container, global, and allocation depends on.
 @(private = "file")
 resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
-	attribute, written := record_attribute(value, "zero")
+	attribute, written := find_attribute(value.attributes, "zero")
 	if !written {
 		return
 	}
@@ -76,14 +64,8 @@ resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
 	if !ok {
 		return
 	}
-	index := -1
-	for candidate, position in info.variant_names {
-		if candidate == name {
-			index = position
-			break
-		}
-	}
-	if index < 0 {
+	index, found := slice.linear_search(info.variant_names, name)
+	if !found {
 		errorf(
 			k.c, attribute.span, "L0423",
 			"`@(zero=%s)` names no variant of this union", identifier_text(k.c, name),
@@ -98,8 +80,6 @@ resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
 		)
 		return
 	}
-	// Tag 0 alone is not the all-zero representation: the payload beside it has
-	// to be all-zero too, which a no-zero payload is not.
 	if payload := info.variants[0]; payload != TYPE_VOID && !type_has_zero(k.c, payload) {
 		errorf(
 			k.c, attribute.span, "L0423",
@@ -116,7 +96,7 @@ resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
 // `or_else`/`or_return` recognise the shape, never a privileged type name.
 @(private = "file")
 resolve_union_failure :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
-	attribute, written := record_attribute(value, "failure")
+	attribute, written := find_attribute(value.attributes, "failure")
 	if !written {
 		return
 	}
@@ -124,14 +104,8 @@ resolve_union_failure :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record
 	if !ok {
 		return
 	}
-	index := -1
-	for candidate, position in info.variant_names {
-		if candidate == name {
-			index = position
-			break
-		}
-	}
-	if index < 0 {
+	index, found := slice.linear_search(info.variant_names, name)
+	if !found {
 		errorf(
 			k.c, attribute.span, "L0423",
 			"`@(failure=%s)` names no variant of this union", identifier_text(k.c, name),
@@ -150,9 +124,8 @@ resolve_union_failure :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record
 	info.failure_variant = index
 }
 
-// The attribute's value is a bare variant name, so it is read rather than
-// checked as an expression: the name lives in the union's own variant list and
-// resolves against no scope.
+// A bare variant name, read rather than checked: it resolves against the
+// union's own variants, not a scope.
 @(private = "file")
 attribute_variant_name :: proc(k: ^Checker, attribute: Attribute, what: string) -> (Identifier_Id, bool) {
 	ident, is_ident := attribute.value.(^Expr_Ident)
@@ -163,60 +136,8 @@ attribute_variant_name :: proc(k: ^Checker, attribute: Attribute, what: string) 
 	return intern_identifier(k.c, ident.name), true
 }
 
-@(private = "file")
-record_attribute :: proc(value: ^Type_Record, name: string) -> (Attribute, bool) {
-	for attribute in value.attributes {
-		if len(attribute.path) == 1 && attribute.path[0].text == name {
-			return attribute, true
-		}
-	}
-	return Attribute{}, false
-}
-
-// design.md "@(packed)": whether a struct/union literal carries the tag.
-record_is_packed :: proc(value: ^Type_Record) -> bool {
-	_, written := record_attribute(value, "packed")
-	return written
-}
-
-// design.md "@(align=N)": `union @(align=4) {...}` and `struct @(align=4)
-// {...}`. Only a power of two the target supports is accepted; a written
-// alignment under the natural one raises rather than lowers.
-record_written_alignment :: proc(k: ^Checker, value: ^Type_Record) -> u64 {
-	attribute, written := record_attribute(value, "align")
-	if !written {
-		return 0
-	}
-	if attribute.value == nil {
-		errorf(k.c, attribute.span, "L0423", "`@(align=N)` needs a value")
-		return 0
-	}
-	if check_single_expr(k, attribute.value, TYPE_INT) == INVALID_TYPE {
-		return 0
-	}
-	folded, evaluated := require_const(k, attribute.value, "an alignment", "L0423")
-	if !evaluated || folded.kind != .Integer {
-		errorf(k.c, attribute.span, "L0423", "`@(align=N)` needs a constant integer")
-		return 0
-	}
-	written_align, fits := bi_to_i64(k.c, folded.integer)
-	if !fits || written_align <= 0 || written_align > i64(k.c.target.max_align) ||
-	   (written_align & (written_align - 1)) != 0 {
-		errorf(
-			k.c,
-			attribute.span,
-			"L0423",
-			"`@(align=%s)` must be a power of two between 1 and %d",
-			bi_text(k.c, folded.integer),
-			k.c.target.max_align,
-		)
-		return 0
-	}
-	return u64(written_align)
-}
-
-// The layout facts the checker and the emitter share. Computed from the cached
-// per-variant layout, never from LLVM's own idea of a struct.
+// design.md "Unions": the payload region, then the tag, then padding. The
+// emitter builds storage matching these facts rather than asking LLVM.
 Union_Layout :: struct {
 	payload_size:  u64,
 	align:         u64,
@@ -235,23 +156,19 @@ union_layout :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) 
 		out.payload_size = max(out.payload_size, type_size(c, variant, span))
 		out.align = max(out.align, type_align(c, variant, span))
 	}
-	// `resolve_union_variants` parks a validated `@(align=N)` here, and it may
-	// only raise the alignment.
+	// Laying out a variant can grow the type store, so `info` is fetched again.
 	info = type_of(c, type)
-	out.align = max(out.align, info.written_align)
 	out.tag_bytes = union_tag_bytes(len(info.variants))
-	// The tag is a member like any other, so a tag wider than every payload
-	// raises the union's alignment. Only a union of many payloadless or very
-	// narrow variants reaches that.
-	out.align = max(out.align, out.tag_bytes)
+	// A written `@(align=N)` and a tag wider than every payload only raise it.
+	out.align = max(out.align, info.written_align, out.tag_bytes)
 	out.payload_size = align_to(out.payload_size, out.align)
-	out.tag_offset = align_to(out.payload_size, out.tag_bytes)
+	out.tag_offset = out.payload_size
 	out.size = align_to(out.tag_offset + out.tag_bytes, out.align)
 	return out
 }
 
-// The narrowest tag representing `0 ..< variant_count`. 256 variants still fit
-// in one byte; 257 need two. An empty union keeps the minimum one byte.
+// The narrowest tag representing `0 ..< variant_count`, at least one byte.
+@(private = "file")
 union_tag_bytes :: proc(variants: int) -> u64 {
 	switch {
 	case variants <= 256:
@@ -300,12 +217,10 @@ type_is_union :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // ------------------------------------------------------ variant construction --
 
-// `U.name` / `.name` naming a variant of `subject`. A payloadless variant is a
-// complete compile-time constant; a payload variant is only half a value, and
-// `check_union_construct` finishes it from the call's argument.
-//
-// Returns false when `subject` is not a union or has no such variant, so every
-// other selector keeps its ordinary meaning.
+// `U.name` / `.name` naming a variant of `subject`: a payloadless variant is a
+// complete constant, a payload one is finished by `check_union_construct`.
+// False when `subject` has no such variant, so the selector keeps its ordinary
+// meaning.
 check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: Type_Id) -> bool {
 	if subject == INVALID_TYPE || !type_is_union(k.c, type_underlying(k.c, subject)) {
 		return false
@@ -318,8 +233,7 @@ check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: 
 	sel.type = subject
 	sel.variant_union = subject
 	sel.variant_index = index
-	// A `Unit` payload has one value, so outside a call the bare `.ok` is already
-	// complete: payloadless and `Unit`-carrying variants are spelled alike.
+	// A `Unit` payload has one value, so outside a call the bare `.ok` is complete.
 	payload := union_variant_payload(k.c, subject, index)
 	unit_payload := payload == k.c.unit_type && !k.in_callee
 	if payload != TYPE_VOID && !unit_payload {
@@ -343,50 +257,54 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	subject, index := sel.variant_union, sel.variant_index
 	payload := union_variant_payload(k.c, subject, index)
 	v.value_category = .Value
+	// Set before any error: flow analysis walks a failed construction too.
 	v.operation = Call_Union_Construct{index = index}
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.type = subject
+	v.type = INVALID_TYPE
 
-	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value ||
-	   v.args[0].value == nil {
+	if len(v.args) != 1 {
 		errorf(
 			k.c, v.span, "L0425",
 			"`%s.%s` takes exactly one payload argument, found %d",
 			type_name(k.c, subject), sel.name.text, len(v.args),
 		)
-		v.type = INVALID_TYPE
 		return
 	}
-	// Record-field initialization rules: a place argument clones and must be
-	// copyable, a temporary or `move(x)` transfers.
-	if !check_value_expr(k, v.args[0].value, payload, "supply") {
-		v.type = INVALID_TYPE
+	arg := v.args[0]
+	if arg.name.text != "" || arg.mode != .Value || arg.value == nil {
+		errorf(
+			k.c, arg.span, "L0425",
+			"`%s.%s` takes its payload as one unnamed value",
+			type_name(k.c, subject), sel.name.text,
+		)
 		return
 	}
-	bound := make([]Expr, 1, k.c.semantic_allocator)
-	bound[0] = v.args[0].value
-	v.bound = bound
-	// Variant construction is aggregate construction: `.some(x)` where `x` names a
-	// place leaves that place owning its value, so the variant receives a clone.
-	classify_copy_cost(k, v.args[0].value, payload, .Variant)
+	// Aggregate construction: a place argument is cloned and must be copyable, a
+	// temporary or `move(x)` transfers.
+	if !check_value_expr(k, arg.value, payload, "supply") {
+		return
+	}
+	v.type = subject
+	v.bound = make([]Expr, 1, k.c.semantic_allocator)
+	v.bound[0] = arg.value
+	classify_copy_cost(k, arg.value, payload, .Variant)
 	v.operation = Call_Union_Construct{
 		index = index,
-		clone = classify_copy(k, v.args[0].value, payload, .Variant),
+		clone = classify_copy(k, arg.value, payload, .Variant),
 	}
 
 	// design.md "Zero values": explicit constant variant construction is
 	// permitted at static duration when its payload is constant.
-	if inner := expr_base(v.args[0].value); inner != nil && inner.is_const &&
+	if inner := expr_base(arg.value); inner != nil && inner.is_const &&
 	   variant_payload_is_constant(k.c, payload, inner.const_value) {
 		v.is_const = true
 		v.const_value = union_const(k.c, subject, index, inner.const_value)
 	}
 }
 
-// Whether this constant has a complete target byte image. Text values contain
-// relocatable pointers and therefore keep using their ordinary typed LLVM
-// constants; scalars and recursively byte-serializable aggregates can live in
-// a union's inline payload storage.
+// Whether this constant has a complete target byte image to place in a union's
+// payload storage. Text holds relocatable pointers, so it has none.
+@(private = "file")
 variant_payload_is_constant :: proc(c: ^Compiler, payload: Type_Id, value: Const_Value) -> bool {
 	if payload == TYPE_VOID || type_size(c, payload) == 0 || value.kind == .Invalid || value.kind == .Nil {
 		return true
@@ -434,8 +352,7 @@ variant_payload_is_constant :: proc(c: ^Compiler, payload: Type_Id, value: Const
 	return false
 }
 
-// A payloadless variant selector used where a payload one was needed, or the
-// reverse: one diagnostic each, raised where the shape is finally known.
+// A payload variant written bare, reported once the call position is known.
 reject_incomplete_variant :: proc(k: ^Checker, sel: ^Expr_Selector) {
 	errorf(
 		k.c, sel.span, "L0425",
@@ -454,9 +371,8 @@ union_const :: proc(c: ^Compiler, union_type: Type_Id, index: int, payload: Cons
 	return Const_Value{kind = .Aggregate, aggregate = aggregate}
 }
 
-// The declaration index of a variant named in compiler-owned code. The names
-// come from `base:runtime`'s own declarations, so nothing here hard-codes a
-// tag: renaming `some` in the source renames it everywhere.
+// The index of a variant named in compiler-owned code. The names come from
+// `base:runtime`'s declarations, so no tag is hard-coded.
 union_index_of :: proc(c: ^Compiler, union_type: Type_Id, name: string) -> int {
 	return union_variant_index(c, union_type, intern_identifier(c, name))
 }
