@@ -354,6 +354,7 @@ The following list defines the implicit conversions. There are no user-defined o
 - Unfixed booleans -> `bool`
 - Unfixed rune constants -> rune types
 - `string` -> `string_view`; a non-owning borrow subject to [Borrows and lifetimes](#borrows-and-lifetimes)
+- `[dynamic]T` -> `[]T`, a read-only view of the live elements under the same borrow rules; see [Dynamic arrays](#dynamic-arrays)
 - Unfixed strings -> `string`, `string_view`, or `cstring_view` when the destination supplies the required lifetime
 
 ### Unfixed constants
@@ -815,6 +816,15 @@ Dynamic arrays are mutable owning values whose length may change at runtime. The
 ```odin
 x: [dynamic]int = {};
 x.append(10); // the zero value is immediately usable
+```
+
+**A `[dynamic]T` converts implicitly to a `[]T`** of its live elements, as a `string` does to a `string_view`: a zero-cost borrow of the array, which cannot be modified while the view is in use and which the view cannot outlive. A procedure that only reads a sequence therefore takes `[]T` and accepts either. The writable `[]mut T` stays explicit, `x[:]` from a mutable place. A generic `[]$T` parameter accepts a dynamic array the same way, binding `T` to its element.
+
+```odin
+total :: proc(values: []int) -> int { ... }
+
+numbers := [dynamic]int{1, 2, 3};
+n := total(numbers);   // implicit borrow, no copy
 ```
 
 Along with `len`, dynamic arrays provide `cap` to report their current underlying capacity. Assignment creates an independent array by recursively cloning owned elements, while `move` transfers its backing allocation:

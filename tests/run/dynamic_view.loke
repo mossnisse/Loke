@@ -1,0 +1,50 @@
+package main; import "core:fmt";
+
+// design.md "Dynamic arrays": a `[dynamic]T` converts implicitly to a `[]T` of
+// its live elements, as a `string` does to a `string_view`.
+
+drops: int;
+Res :: struct { id: int }
+impl Res { release :: hook(drop) proc(self: inout Res) { drops += 1; } }
+
+total :: proc(xs: []int) -> int { n := 0; foreach (x in xs) { n += x; } return n; }
+head :: proc(xs: []int) -> []int { return xs[0:1]; }
+count :: proc(xs: []Res) -> int { return xs.len(); }
+make_list :: proc() -> [dynamic]Res {
+	list := [dynamic]Res{};
+	list.append(Res{1});
+	list.append(Res{2});
+	return list;
+}
+
+// An exact match still wins over the conversion.
+pick :: proc { pick_slice, pick_dynamic }
+pick_slice :: proc(xs: []int) -> int { return 1; }
+pick_dynamic :: proc(xs: [dynamic]int) -> int { return 2; }
+
+// A `[]$T` pattern binds through the view.
+sum :: proc(xs: []$T) -> T { n: T = {}; foreach (x in xs) { n += x; } return n; }
+
+Bag :: struct { items: [dynamic]int }
+impl Bag { view :: proc(self: ^) -> []int { return self.items; } }
+
+main :: proc() {
+	values := [dynamic]int{1, 2, 3};
+	fmt.println(total(values));
+	v: []int = values;
+	fmt.println(v.len(), v[2]);
+	fmt.println(head(values)[0]);
+
+	// A temporary lives through the call and is then dropped.
+	fmt.println(count(make_list()), drops);
+
+	fmt.println(pick(values), pick(values[:]), sum(values));
+
+	bag := Bag{[dynamic]int{7, 8}};
+	fmt.println(bag.view()[1]);
+	pointer := &bag;
+	fmt.println(total(pointer.items));
+
+	empty: [dynamic]int = {};
+	fmt.println(total(empty));
+}

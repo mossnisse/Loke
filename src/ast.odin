@@ -20,7 +20,8 @@ Expr_Base :: struct {
 	immutable:    Immutable_Reason,
 	// The concrete type erased into the `any_view` that `type` names.
 	erased_from: Type_Id,
-	// A `string` borrowed as a `string_view`: the source type to narrow from.
+	// A `string` borrowed as a `string_view`, or a `[dynamic]T` as a `[]T`: the
+	// source type to narrow from.
 	view_from:   Type_Id,
 	// A scalar widened to a SIMD vector: the lane type to splat from.
 	splat_from:  Type_Id,

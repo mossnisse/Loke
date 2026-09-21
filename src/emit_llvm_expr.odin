@@ -718,6 +718,13 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 	}
+	// A `[dynamic]T` read as a `[]T` of its live elements.
+	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .Slice {
+		value := load(e, CONTAINER_TYPE, emit_address_at(e, expr, from))
+		data := extract(e, CONTAINER_TYPE, value, CONTAINER_STORAGE)
+		length := extract(e, CONTAINER_TYPE, value, CONTAINER_LEN)
+		return emit_slice_value(e, as_type, data, length)
+	}
 	// design.md "SIMD vectors": a scalar widened to every lane.
 	if from := base.splat_from; from != INVALID_TYPE && type_is_simd(e.c, as_type) {
 		value := emit_expr_at(e, expr, from)

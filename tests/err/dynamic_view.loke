@@ -1,0 +1,47 @@
+package main; import "core:fmt";
+
+// design.md "Dynamic arrays": the implicit `[]T` view borrows its array, so it
+// cannot outlive it or survive a change to it, and a writable view stays explicit.
+
+same :: proc(xs: []int) -> []int { return xs; }
+make_list :: proc() -> [dynamic]int { return [dynamic]int{4, 5, 6}; }
+Bag :: struct { items: [dynamic]int }
+
+escapes_a_local :: proc() -> []int {
+	values := [dynamic]int{1};
+	return values;
+}
+
+escapes_through_a_call :: proc() -> []int {
+	values := [dynamic]int{1};
+	return same(values);
+}
+
+escapes_a_value_parameter :: proc(values: [dynamic]int) -> []int {
+	return values;
+}
+
+escapes_through_a_pointer :: proc() -> []int {
+	bag := Bag{};
+	pointer := &bag;
+	return same(pointer.items);
+}
+
+outlives_a_temporary :: proc() {
+	view := same(make_list());
+	fmt.println(view[0]);
+}
+
+modified_while_viewed :: proc() {
+	values := [dynamic]int{1};
+	view: []int = values;
+	values.append(2);
+	fmt.println(view[0]);
+}
+
+writable_view :: proc() {
+	values := [dynamic]int{1};
+	view: []mut int = values;
+}
+
+main :: proc() {}

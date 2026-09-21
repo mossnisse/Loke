@@ -1,0 +1,21 @@
+L0526
+@12:9
+`values` ends when this procedure returns
+L0526
+@17:9
+`values` ends when this procedure returns
+L0526
+@21:9
+`values` ends when this procedure returns
+L0526
+@27:9
+`bag` ends when this procedure returns
+L0513
+@32:14
+this temporary has ended
+L0512
+@38:2
+a read-only slice of it is still in use
+L0310
+@44:20
+cannot initialise `[]mut int` with `[dynamic]int`

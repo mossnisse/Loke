@@ -995,27 +995,33 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	return prov_borrow(graph, prov_hidden_root(graph, span, "this erased value"), nil, false, span, "view")
 }
 
-// design.md "string type conversions": a `string` read as a `string_view`
-// borrows the owner it came from, or the temporary that holds it. A constant's
-// storage is static.
+// design.md "string type conversions" and "Dynamic arrays": a `string` read as
+// a `string_view`, or a `[dynamic]T` as a `[]T`, borrows the owner it came
+// from, or the temporary that holds it. A constant's storage is static.
 @(private)
-prov_string_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	base := expr_base(e)
 	saved, saved_type := base.view_from, base.type
 	base.view_from, base.type = INVALID_TYPE, saved
-	loans := walk_flow_expr(graph, e)
-	base.view_from, base.type = saved, saved_type
+	defer base.view_from, base.type = saved, saved_type
+	noun := underlying_kind(graph.k.c, saved_type) == .Slice ? "slice" : "string view"
 	span := expr_span(e)
-	if base.is_const {
-		return loans
-	}
 	if root, path, ok := prov_place_of(graph, e); ok {
-		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "string view"))
+		loans := walk_flow_expr(graph, e)
+		if base.is_const {
+			return loans
+		}
+		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, noun))
 	}
-	if len(loans) > 0 || !prov_expr_is_temporary(e) {
+	// Reached through a pointer or view: the view borrows what that names.
+	if carriers, _, through := prov_read_through_carrier(graph, e); through {
+		return carriers
+	}
+	loans := walk_flow_expr(graph, e)
+	if base.is_const || len(loans) > 0 || !prov_expr_is_temporary(e) {
 		return loans
 	}
-	return prov_borrow(graph, prov_temp_root(graph, span), nil, false, span, "string view")
+	return prov_borrow(graph, prov_temp_root(graph, span), nil, false, span, noun)
 }
 
 // A compiler-created root ending with its scope.

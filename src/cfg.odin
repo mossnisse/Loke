@@ -876,7 +876,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			return prov_erase(graph, e)
 		}
 		if base := expr_base(e); base != nil && base.view_from != INVALID_TYPE {
-			return prov_string_view(graph, e)
+			return prov_owner_view(graph, e)
 		}
 	}
 	switch v in e {

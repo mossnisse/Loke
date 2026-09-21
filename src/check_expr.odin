@@ -2542,8 +2542,8 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	}
 	// A `string` borrows as a `string_view` with no validation: it is already
 	// valid UTF-8.
-	if underlying_kind(k.c, target) == .String_View &&
-	   underlying_kind(k.c, base.type) == .String {
+	if (underlying_kind(k.c, target) == .String_View && underlying_kind(k.c, base.type) == .String) ||
+	   dynamic_views_as(k.c, base.type, target) {
 		base.view_from = base.type
 		base.type = target
 		return true
@@ -2867,6 +2867,9 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if underlying_kind(c, from) == .String &&
 	   underlying_kind(c, to) == .String_View {
+		return true
+	}
+	if dynamic_views_as(c, from, to) {
 		return true
 	}
 	if type_is_untyped(c, from) {
