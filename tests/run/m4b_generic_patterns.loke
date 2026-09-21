@@ -28,7 +28,7 @@ main :: proc() {
 	fmt.println(s[0]);
 	fmt.println(s[1]);
 
-	// Tie-breaker 4: `^Table($K, $V)` is more specialized than `^$T`.
+	// Tie-breaker 5: `^Table($K, $V)` is more specialized than `^$T`.
 	fmt.println(int(tables(&t, 5)));
 	n := 3;
 	fmt.println(tables(&n));

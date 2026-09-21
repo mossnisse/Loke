@@ -37,8 +37,9 @@ Candidate :: struct {
 	omitted:    int,
 	variadic:   bool,
 	parametric: bool,
-	// Tie-breaker 5: arguments whose written form did not name the chosen mode.
-	mode_adjusted: int,
+	// Tie-breaker 1: owned arguments (temporaries and `move(...)`) the candidate
+	// does not consume.
+	unconsumed: int,
 	instance:   ^Instance,
 	// The originating generic, also used to report a rejected bound.
 	template:   ^Generic_Template,
@@ -249,7 +250,8 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		} else if moved {
 			return RANK_NONE
 		}
-		adjusted = mode != .Value
+		// A consuming receiver takes an owned receiver as it is.
+		adjusted = mode != .Value && mode != .Move
 	} else {
 		want_inout := mode == .Inout
 		if want_inout != (arg.mode == .Inout) {
@@ -416,8 +418,8 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		}
 		cand.ranks[index] = rank
-		if _, transferred := arg.expr.(^Expr_Move); transferred != (mode == .Move) {
-			cand.mode_adjusted += 1
+		if expression_is_owned_argument(arg.expr) && mode != .Move {
+			cand.unconsumed += 1
 		}
 	}
 
@@ -525,9 +527,14 @@ compare_vectors :: proc(a, b: []int) -> int {
 	return 0
 }
 
-// Returns -1 when a wins, 1 when b wins, or 0 when still tied.
+// Returns -1 when a wins, 1 when b wins, or 0 when still tied. Ownership comes
+// first, so a temporary or `move(...)` reaches a consuming member whatever the
+// members' shapes (design.md tie-breaker 1).
 @(private = "file")
 tie_break :: proc(a, b: ^Candidate) -> int {
+	if a.unconsumed != b.unconsumed {
+		return a.unconsumed < b.unconsumed ? -1 : 1
+	}
 	if a.variadic != b.variadic {
 		return a.variadic ? 1 : -1
 	}
@@ -541,9 +548,6 @@ tie_break :: proc(a, b: ^Candidate) -> int {
 		if preference := compare_generic_specificity(a.template, b.template); preference != 0 {
 			return preference
 		}
-	}
-	if a.mode_adjusted != b.mode_adjusted {
-		return a.mode_adjusted < b.mode_adjusted ? -1 : 1
 	}
 	return 0
 }
@@ -688,7 +692,7 @@ failing_tie_breaker :: proc(all: []Candidate, maximal: []int) -> string {
 			}
 		}
 	}
-	return "tie-breaker 5, where no candidate better matches the written parameter modes"
+	return "tie-breaker 5, where no candidate is more structurally specialized"
 }
 
 @(private = "file")

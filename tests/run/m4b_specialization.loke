@@ -14,7 +14,7 @@ small :: proc(x: [$N]int) -> int
 
 size :: proc{big, small};
 
-// tie-breaker 4: a structural specialization beats an unspecialized parameter
+// tie-breaker 5: a structural specialization beats an unspecialized parameter
 Box :: struct($T: type) { value: T }
 
 describe :: proc(b: $T) -> int { return 0; }

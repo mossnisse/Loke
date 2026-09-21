@@ -216,7 +216,7 @@ type_syntax_has_poly :: proc(e: Expr) -> bool {
 	return poly
 }
 
-// design.md tie-breaker 4: a structural specialization beats an unspecialized
+// design.md tie-breaker 5: a structural specialization beats an unspecialized
 // parameter. A `$T` pins nothing down; every written layer of structure counts.
 pattern_specificity :: proc(e: Expr) -> int {
 	specificity, _ := pattern_shape(e)
@@ -1825,7 +1825,7 @@ register_generic_extension_groups :: proc(k: ^Checker, block: ^Generic_Impl) {
 }
 
 // Installs every matching block on a fresh instance, most specialized first, so
-// a specialized member wins (tie-breaker 4).
+// a specialized member wins (tie-breaker 5).
 @(private = "file")
 install_generic_impls :: proc(k: ^Checker, template: ^Generic_Template, instance: ^Instance) {
 	blocks, found := k.c.generic_impls[template.symbol]

@@ -107,11 +107,13 @@ main :: proc() {
 	owned.append(move(source));
 	fmt.println(owned[1]);
 
-	// A one-element unmarked call selects the copying member even though that
-	// group also contains a non-variadic consuming member.
-	copied: container.Small_Array(Copied, 1) = {};
+	// A temporary owns its value, so it selects the consuming member and is never
+	// copied; a borrowed place selects the copying member, whose hook adds 100.
+	copied: container.Small_Array(Copied, 2) = {};
 	copied.append(Copied{1});
-	fmt.println(copied.slice()[0].id);
+	kept := Copied{2};
+	copied.append(kept);
+	fmt.println(copied.slice()[0].id, copied.slice()[1].id);
 
 	// Insertion at each end and in the middle.
 	w: container.Small_Array(int, 4) = {};

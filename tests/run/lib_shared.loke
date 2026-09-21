@@ -32,8 +32,9 @@ impl Tracked {
 }
 
 main :: proc() {
-	// "`shared(value)` clones the value into a new allocation."
-	handle := shared(Node{7, "seven"});
+	// "`shared(value)` clones a borrowed value into shared storage."
+	seven := Node{7, "seven"};
+	handle := shared(seven);
 	fmt.println(handle.get()^.value, handle.get()^.tag, handle.strong_count());
 
 	// "`clone` and ordinary assignment share the control block instead of
@@ -75,7 +76,8 @@ main :: proc() {
 	fmt.println(handle.strong_count());
 
 	// The payload dies with the last strong handle; the block survives while the
-	// weak handle names it, and `upgrade` then answers honestly.
+	// weak handle names it, and `upgrade` then answers honestly. The temporary
+	// moves in rather than being cloned, so the one drop counted is the payload's.
 	tracked := shared(Tracked{1});
 	watching := tracked.downgrade();
 	fmt.println(drops, watching.strong_count());

@@ -528,7 +528,7 @@ types only.
 
 ### Constraint entailment in overload resolution
 
-An earlier draft let [tie-breaker 4](design.md#operator-lookup-and-overload-resolution)
+An earlier draft let [the specialization tie-breaker](design.md#operator-lookup-and-overload-resolution)
 order two structurally identical candidates by constraint strength: the one whose
 normalized constraint set syntactically entailed the other's won. Constraints now
 decide only whether a candidate is *viable*; structure alone decides which viable

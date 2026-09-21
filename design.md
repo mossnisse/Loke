@@ -2029,7 +2029,7 @@ As a procedure value, a `self: ^` method has type `proc(self: ^Type) -> Result`,
 
 An interface slot written `self: ^` is also met by a method taking a plain `self`, which lends less; the protocol's `iter` is such a slot, so an iterator whose `iter` returns a copy of itself takes a plain `self`.
 
-Immutable and `inout` receivers use `value.method()`; the `inout` borrow is implicit and ends with the call. A consuming receiver takes its receiver the way a [`move` parameter](#temporaries-and-procedure-boundaries) takes an argument: a place is written `move(value).method()`, which leaves the source dead, while a temporary already owns its value and needs no marker, as in `parse(text).map_error(App_Error, to_app)`. The written form also selects the matching receiver overload.
+Immutable and `inout` receivers use `value.method()`; the `inout` borrow is implicit and ends with the call. A consuming receiver takes its receiver the way a [`move` parameter](#temporaries-and-procedure-boundaries) takes an argument: a place is written `move(value).method()`, which leaves the source dead, while a temporary already owns its value and needs no marker, as in `parse(text).map_error(App_Error, to_app)`. An owned receiver — a temporary or `move(value)` — also prefers a consuming receiver overload over a borrowing one, by [tie-breaker 1](#operator-lookup-and-overload-resolution).
 
 A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot. A plain receiver may be written `self: Type` when clearer; it is the same mode.
 
@@ -2075,7 +2075,7 @@ case .none:
 
 Where the block's type is written out — a receiver that spells its type, and every non-receiver mention — the bound names are used without `$`, which marks a binding site, not a use.
 
-A block may target one specialization, `impl Table(string, int) { ... }`; when both are visible the more specialized wins by tie-breaker 4 of [overload resolution](#operator-lookup-and-overload-resolution). Constraints use a `where` clause on the procedure, not the block. This is what lets a generic container satisfy an [interface](#interfaces-as-reusable-constraints), whose requirements use method syntax.
+A block may target one specialization, `impl Table(string, int) { ... }`; when both are visible the more specialized wins by tie-breaker 5 of [overload resolution](#operator-lookup-and-overload-resolution). Constraints use a `where` clause on the procedure, not the block. This is what lets a generic container satisfy an [interface](#interfaces-as-reusable-constraints), whose requirements use method syntax.
 
 ### Operator declarations
 
@@ -2178,11 +2178,11 @@ The ranks form a vector; they are not summed and argument order does not break t
 
 When conversion vectors are identical, tie-breakers apply in order:
 
-1. A fixed-arity candidate beats a variadic one.
-2. A candidate needing fewer omitted defaults wins.
-3. A non-parametric candidate beats a parametric one.
-4. Between parametric candidates, a structural specialization beats an unspecialized parameter (`Table(string, int)` beats `Table($K, $V)`); if neither is more specialized, the call is ambiguous.
-5. A candidate reached through the mode its arguments were written in beats one reached through the other: a written `move(expr)` prefers a `move` parameter, and an unmarked argument prefers an ordinary one. A parameter mode is never a conversion rank, so this decides only where nothing above it does; if neither is preferred, the call is ambiguous.
+1. **Ownership.** An argument that owns its value — a temporary or `move(expr)` — prefers a `move` parameter; the candidate that consumes more of them wins. A borrowed place cannot reach a `move` parameter at all, so this never pulls one toward consumption. It is a preference, not a filter: an owned argument still reaches an ordinary parameter when no consuming candidate is viable. A parameter mode is never a conversion rank, so this decides only between candidates whose vectors tie, and it comes before the structural tie-breakers so that a member's shape cannot outvote how its arguments are owned.
+2. A fixed-arity candidate beats a variadic one.
+3. A candidate needing fewer omitted defaults wins.
+4. A non-parametric candidate beats a parametric one.
+5. Between parametric candidates, a structural specialization beats an unspecialized parameter (`Table(string, int)` beats `Table($K, $V)`); if neither is more specialized, the call is ambiguous.
 
 **Constraints decide whether a candidate is viable, never which viable candidate wins.** `interface` applications and `where` clauses are filters; only structure orders what survives. Two candidates of identical shape differing only in constraint strength are an ambiguity error, resolved by naming the intended member or dispatching with `when`. Non-overlapping `where` filters are not ambiguous, since only one candidate is viable.
 
@@ -4152,7 +4152,7 @@ f := open_file("b.txt");
 files.append(move(f));              // a place: written out, `f` is dead after the call
 ```
 
-The written form therefore also selects. A candidate whose parameter is `move` is reachable only from an argument that already owns its value — a written `move(expr)` or a temporary — and passing such an argument to an ordinary value parameter is not a mismatch either, since it transfers ownership instead of cloning into it. Both directions are viable, so the written form decides between them by [tie-breaker 5](#operator-lookup-and-overload-resolution): `values.append(move(f))` picks a group's consuming member and `values.append(1)` its ordinary one. A [consuming receiver](#methods-and-abstractions) follows the same rule, so `move(value).method()` and `make_value().method()` both reach one; only a written `move` reaches a consuming member of a group.
+Ownership therefore also selects. A candidate whose parameter is `move` is reachable only from an argument that already owns its value — a written `move(expr)` or a temporary — and passing such an argument to an ordinary value parameter is not a mismatch either, since it transfers ownership instead of cloning into it. Both directions are viable, so [tie-breaker 1](#operator-lookup-and-overload-resolution) decides for the consuming one: `values.append(move(f))` and `values.append(make_token())` pick a group's consuming member, and `values.append(token)` its ordinary one. The marker's job is to announce that a named place dies; which member runs follows from whether the argument owns its value, as initialization and [built-in insertion](#container-insertion) already do. A [consuming receiver](#methods-and-abstractions) follows the same rule, so `move(value).method()` and `make_value().method()` both prefer a consuming member of a group, and `value.method()` cannot reach one.
 
 `move(x)` is an [expression](#assignment-statements) that transfers `x` and marks it dead. It may be used in assignments, returns, arguments, and consuming method calls such as `move(value).method()`. It cannot target static-duration storage.
 
@@ -4443,7 +4443,7 @@ find :: proc(table: ^Table($Key, $Value), key: Key) -> Option(Value) {
 }
 ```
 
-A parameter written this way is more specific than an unconstrained `$T`, which is what tie-breaker 4 of [overload resolution](#operator-lookup-and-overload-resolution) selects on. Specialization is therefore how a procedure group narrows one of its members to a shape.
+A parameter written this way is more specific than an unconstrained `$T`, which is what tie-breaker 5 of [overload resolution](#operator-lookup-and-overload-resolution) selects on. Specialization is therefore how a procedure group narrows one of its members to a shape.
 
 When the whole aggregate type is also needed, write it explicitly:
 
@@ -5528,8 +5528,8 @@ Threads and retained tasks receive only the arguments explicitly moved or copied
 
 `shared(T)` is a library type for shared ownership of one stable `T` payload. Its zero value is `nil`, and copies use thread-safe handle accounting.
 
-`shared(value)` clones the value into shared storage;
-`shared(move(value))` moves it. `clone` and assignment create another handle,
+`shared(value)` clones a borrowed value into shared storage;
+a temporary, or `shared(move(value))`, moves in. `clone` and assignment create another handle,
 `move` transfers one, and the final `drop` destroys the payload exactly once.
 
 Construction uses `mem.default_allocator()` unless an `allocator` argument selects another. Use `try_shared` to handle failure. The shared allocation retains its allocator, so a `shared(T)` declaration cannot use `via`.

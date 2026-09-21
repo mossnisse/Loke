@@ -442,7 +442,7 @@ Sources: [overload resolution](C:/code/loke/src/overload.odin:565), [destination
 *Decision (21 September 2026).* Adopted as recommended.
 
 1. Selection reads only the arguments. *Done:* `resolve_overload` and `resolve_operator` no longer take a destination type. A call through a group records the members it chose among, and an L0310 on its result notes the member the arguments selected and any member whose result would fit. Nothing in the corpus changed dispatch; `tests/err/overload_destination` pins the new errors.
-2. Ownership replaces tie-breaker 5 and runs first. *Planned.*
+2. Ownership replaces tie-breaker 5 and runs first. *Done:* an argument that owns its value counts against a candidate that does not consume it, compared before arity, defaults, and specialization, which move down to 2–5; a consuming receiver ranks exact for an owned receiver. `tests/run/overload_ownership` pins each case above. The one-element copying member of `Small_Array.append` stays, for a reason the analysis missed: through the variadic `append_copied`, a borrowed place is copied twice, into the pack and then into its slot (`1 202` against `1 102` with the `+100` hook). No test appended a place with a copy hook, so the 20-test comparison could not see it. Its comment now gives that reason instead of the dispatch one, and `lib_small_array` pins both halves: a temporary is not copied, a place is copied once.
 3. The `shared` bound and built-in insertion's extra clone are tracked as separate tasks.
 
 3. **Make callback contracts structural and preserve them through composition.**
