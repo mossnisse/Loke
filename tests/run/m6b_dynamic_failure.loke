@@ -46,9 +46,11 @@ main :: proc() {
 	fmt.println(xs[3]);
 
 	// The third element's clone fails, so the two already cloned into the
-	// container are destroyed and nothing is published.
+	// container are destroyed and nothing is published. A spread lends its
+	// elements, so each is cloned; temporaries would move in instead.
 	items: [dynamic]Res = {};
-	fmt.println(items.try_append(Res{1}, Res{2}, Res{3}) != nil);
+	source := [3]Res{Res{1}, Res{2}, Res{3}};
+	fmt.println(items.try_append(..source[:]) != nil);
 	fmt.println(items.len());
 
 	// And the container still works.

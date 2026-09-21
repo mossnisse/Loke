@@ -44,22 +44,29 @@ emit_container_declarations :: proc(e: ^Emitter) {
 // The operation table for one concrete container type, made once along with
 // its element and key thunks.
 @(private)
-container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
+container_ops_global :: proc(e: ^Emitter, type: Type_Id, relocating := false) -> string {
+	relocating := relocating
 	under := type_underlying(e.c, type)
-	if existing, found := e.container_ops[under]; found {
+	element := container_element(e.c, under)
+	// A move-only element has no clone; every insertion hands it over, which is
+	// the memcpy a NULL clone asks for (design.md "Container insertion"). A
+	// relocating table asks the same for an owned element of any type.
+	clones := element == INVALID_TYPE || !emit_lifecycle(e, element).clone_disabled
+	if !clones {
+		relocating = false
+	}
+	interned := relocating ? &e.container_move_ops : &e.container_ops
+	if existing, found := interned[under]; found {
 		return existing
 	}
-	name := fmt.aprintf("@.loke.ops.%d", int(under))
+	name := fmt.aprintf(relocating ? "@.loke.ops.%d.move" : "@.loke.ops.%d", int(under))
 	// Registered first, so a container of containers does not recurse forever.
-	e.container_ops[under] = name
+	interned[under] = name
 
-	element := container_element(e.c, under)
 	key := container_key(e.c, under)
 	elem_drop := container_drop_thunk(e, element)
-	// A move-only element has no clone; every insertion hands it over, which is
-	// the memcpy a NULL clone asks for (design.md "Container insertion").
 	elem_clone := "null"
-	if element == INVALID_TYPE || !emit_lifecycle(e, element).clone_disabled {
+	if clones && !relocating {
 		elem_clone = container_clone_thunk(e, element)
 	}
 	key_drop, key_clone, key_hash, key_equal := "null", "null", "null", "null"
@@ -472,22 +479,18 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 	emit_container_policy_failure(e, address, reserved)
 	cleanup := begin_temporary_drop(e, as_type, address)
 
-	moves := emit_lifecycle(e, element).clone_disabled
+	// A borrowed element is cloned in; an owned one relocates.
+	relocating := container_ops_global(e, as_type, relocating = true)
 	slot := alloca(e, llvm_type(e, element))
 	for written, index in v.elements {
 		store(e, element, emit_expr(e, written.value), slot)
+		borrowed := index < len(v.element_clones) && v.element_clones[index]
 		status := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %s, ptr %s, ptr %s, i64 1)",
-			status, address, ops, slot,
+			status, address, borrowed ? ops : relocating, slot,
 		)
 		emit_container_policy_failure(e, address, status)
-		// The append cloned the staged value. A borrowed one stays its owner's and
-		// a move-only one was moved; only an owned temporary is still ours.
-		borrowed := index < len(v.element_clones) && v.element_clones[index]
-		if !borrowed && !moves {
-			emit_drop_place(e, element, slot)
-		}
 	}
 	finish_temporary_drop(e, cleanup)
 }
@@ -656,7 +659,7 @@ emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
 // this type's operation table. A `try_` form returns the error; the ordinary
 // form applies the allocator's failure policy (design.md "Allocation failure").
 @(private)
-emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, consuming := false) {
 	// Sort and swap also serve `[]mut T`, which has no operation table.
 	#partial switch symbol.container_op {
 	case .Sort, .Reverse_Sort:
@@ -671,10 +674,11 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	container := symbol.params[0]
 	element := container_element(e.c, container)
 	element_llvm := llvm_type(e, element)
-	ops := container_ops_global(e, container)
+	ops := container_ops_global(e, container, relocating = consuming)
 	fallible := symbol.result != INVALID_TYPE && type_is_union(e.c, symbol.result)
-	// A move-only element is handed over, so this body owns it until it is stored.
-	moves := emit_lifecycle(e, element).clone_disabled
+	// A move-only element, or any element of a consuming body, is handed over,
+	// so this body owns it until it is stored.
+	moves := consuming || emit_lifecycle(e, element).clone_disabled
 
 	result := llvm_result_type(e, symbol.result, symbol.result_inout)
 	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), result, name)

@@ -57,8 +57,10 @@ main :: proc() {
 	fmt.println(m.len());
 	fmt.println(m[Key{6}].id);
 
-	// A failed value clone while replacing a key leaves the old value intact.
-	fmt.println(!succeeded(m.try_insert(Key{1}, Value{99})));
+	// A failed value clone while replacing a key leaves the old value intact. A
+	// temporary would move in, so the value is a borrowed place.
+	failing := Value{99};
+	fmt.println(!succeeded(m.try_insert(Key{1}, failing)));
 	fmt.println(m.len());
 	fmt.println(m[Key{1}].id);
 }

@@ -32,6 +32,11 @@ Emitter :: struct {
 	fmt_options: string,
 	// Interned per type or per name, so each is emitted once.
 	container_ops: map[Type_Id]string,
+	// The same tables with no element clone: an owned element relocates in.
+	container_move_ops: map[Type_Id]string,
+	// Insertion members also called with an owned element, which get a
+	// consuming body besides the cloning one.
+	consuming_ops: map[Symbol_Id]bool,
 	container_thunks: map[string]bool,
 	messages: map[string]string,
 	literals: map[string]string,
@@ -51,6 +56,8 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		pending      = make([dynamic]string),
 		pending_thunks = make([dynamic]string),
 		container_ops = make(map[Type_Id]string),
+		container_move_ops = make(map[Type_Id]string),
+		consuming_ops = make(map[Symbol_Id]bool),
 		container_thunks = make(map[string]bool),
 		messages     = make(map[string]string),
 		literals     = make(map[string]string),

@@ -891,25 +891,46 @@ proc_result_is_inout :: proc(info: ^Type_Info) -> bool {
 	return info != nil && info.result_inout
 }
 
-// Returns the move-only container element slot, or -1.
+// The container insertion slot whose element the callee consumes, or -1.
+// design.md "Container insertion": a move-only element is always handed over,
+// and so is an owned one of any type, through the member's consuming body.
 @(private = "file")
-consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol) -> int {
+consumed_element_slot :: proc(
+	e: ^Emitter, symbol_id: Symbol_Id, symbol: ^Symbol, call_node: ^Expr_Call,
+) -> (slot: int, consuming_body: bool) {
 	if symbol == nil || len(symbol.params) == 0 {
-		return -1
+		return -1, false
 	}
-	slot := -1
 	#partial switch symbol.container_op {
 	case .Append:
 		slot = 1
 	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
 		slot = 2
 	case:
-		return -1
+		return -1, false
 	}
-	if !emit_lifecycle(e, container_element(e.c, symbol.params[0])).clone_disabled {
-		return -1
+	lifecycle := emit_lifecycle(e, container_element(e.c, symbol.params[0]))
+	if lifecycle.clone_disabled {
+		return slot, false
 	}
-	return slot
+	if !lifecycle.managed || call_node == nil || slot >= len(call_node.bound) {
+		return -1, false
+	}
+	// A pack owns every written element (a borrowed one is cloned into it), but
+	// a spread only lends its elements.
+	owned := symbol.container_op == .Append \
+		? call_node.is_variadic && !call_node.variadic_forwards && len(call_node.variadic_spreads) == 0 \
+		: !expression_is_borrowed_place(call_node.bound[slot])
+	if !owned {
+		return -1, false
+	}
+	e.consuming_ops[symbol_id] = true
+	return slot, true
+}
+
+// The name of a container member's consuming body.
+consuming_op_name :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
+	return fmt.aprintf("%s.consume", symbol_name(e, symbol_id))
 }
 
 // Binds operands left to right and emits one call. A non-empty `receiver` is
@@ -943,7 +964,11 @@ emit_bound_call :: proc(
 		pack = call_node.variadic_slot
 	}
 	pack_cleanup := Deferred{slot = -1}
-	consumed := consumed_element_slot(e, symbol)
+	callee := callee
+	consumed, consuming_body := consumed_element_slot(e, symbol_id, symbol, call_node)
+	if consuming_body {
+		callee = consuming_op_name(e, symbol_id)
+	}
 	argument_cleanups := make([dynamic]Deferred)
 	defer delete(argument_cleanups)
 	handoff_cleanups := make([dynamic]Deferred)

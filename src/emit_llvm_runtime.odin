@@ -1136,6 +1136,10 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_dyn_forwarding_slot(e, symbol, name)
 		case .Container_Op:
 			emit_synth_container_op(e, symbol, name)
+			if e.consuming_ops[symbol_id] {
+				fmt.sbprintln(&e.b, "")
+				emit_synth_container_op(e, symbol, consuming_op_name(e, symbol_id), consuming = true)
+			}
 		case .Provider_Op:
 			emit_synth_provider_op(e, symbol, name)
 		case .None:
