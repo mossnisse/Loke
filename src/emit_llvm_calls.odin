@@ -916,10 +916,10 @@ consumed_element_slot :: proc(
 	if !lifecycle.managed || call_node == nil || slot >= len(call_node.bound) {
 		return -1, false
 	}
-	// A pack owns every written element (a borrowed one is cloned into it), but
-	// a spread only lends its elements.
+	// A built pack owns every element, since a borrowed place or a spread is
+	// cloned into it; a lone forwarded spread only lends the caller's slice.
 	owned := symbol.container_op == .Append \
-		? call_node.is_variadic && !call_node.variadic_forwards && len(call_node.variadic_spreads) == 0 \
+		? call_node.is_variadic && !call_node.variadic_forwards \
 		: !expression_is_borrowed_place(call_node.bound[slot])
 	if !owned {
 		return -1, false

@@ -3,6 +3,8 @@ append place 1
 append move 0
 append mixed 1
 append spread 2
+append place and spread 3
+append temporary and spread 1
 insert temporary 0
 insert place 1
 insert move 0
@@ -10,4 +12,4 @@ try_insert temporary 0
 try_insert place 1
 find_or_insert temporary 0
 literal mixed 1
-drops 23
+drops 32

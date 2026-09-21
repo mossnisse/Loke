@@ -5,7 +5,7 @@ import "core:fmt";
 // design.md "Container insertion": a temporary or `move(x)` transfers into the
 // container and a borrowed place is copied once, for a copyable element as for
 // a move-only one. A spread lends its elements, so each is copied. The drop
-// count closes the books: 16 values written here plus 7 clones.
+// count closes the books: 21 values written here plus 11 clones.
 
 clones: static int = 0;
 drops: static int = 0;
@@ -28,6 +28,8 @@ main :: proc() {
 	{ d: [dynamic]Copied = {}; c := Copied{3}; before := clones; d.append(move(c)); fmt.println("append move", clones - before); }
 	{ d: [dynamic]Copied = {}; c := Copied{4}; before := clones; d.append(Copied{4}, c); fmt.println("append mixed", clones - before); }
 	{ d: [dynamic]Copied = {}; c := [2]Copied{Copied{5}, Copied{5}}; before := clones; d.append(..c[:]); fmt.println("append spread", clones - before); }
+	{ d: [dynamic]Copied = {}; c := Copied{13}; s := [2]Copied{Copied{13}, Copied{13}}; before := clones; d.append(c, ..s[:]); fmt.println("append place and spread", clones - before); }
+	{ d: [dynamic]Copied = {}; s := [1]Copied{Copied{14}}; before := clones; d.append(Copied{14}, ..s[:]); fmt.println("append temporary and spread", clones - before); }
 	{ d: [dynamic]Copied = {}; before := clones; d.insert(0, Copied{6}); fmt.println("insert temporary", clones - before); }
 	{ d: [dynamic]Copied = {}; c := Copied{7}; before := clones; d.insert(0, c); fmt.println("insert place", clones - before); }
 	{ d: [dynamic]Copied = {}; c := Copied{8}; before := clones; d.insert(0, move(c)); fmt.println("insert move", clones - before); }
