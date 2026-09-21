@@ -1,5 +1,8 @@
 package lokec
 
+import "core:slice"
+import "core:strings"
+
 Proc_Contract_Check :: struct { from, to: Type_Id, span: Span }
 
 expression_converts_storage :: proc(value: Expr) -> bool {
@@ -41,8 +44,8 @@ erase_proc_contract :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 record_proc_contract_check :: proc(c: ^Compiler, from, to: Type_Id, span: Span) {
 	if from == to { return }
 	a, b := underlying_info(c, from), underlying_info(c, to)
-	if a == nil || b == nil || a.kind != .Proc || b.kind != .Proc ||
-	   b.proc_contract == INVALID_SYMBOL || a.proc_contract == b.proc_contract { return }
+	if a == nil || b == nil || a.kind != .Proc || b.kind != .Proc || a.proc_contract == b.proc_contract { return }
+	if b.proc_contract == INVALID_SYMBOL && discharged_escape(c, from, to) < 0 { return }
 	if !proc_escape_weakens_to(c, type_underlying(c, from), type_underlying(c, to)) { return }
 	for check in c.proc_contract_checks {
 		if check.from == from && check.to == to && check.span == span { return }
@@ -50,17 +53,121 @@ record_proc_contract_check :: proc(c: ^Compiler, from, to: Type_Id, span: Span) 
 	append(&c.proc_contract_checks, Proc_Contract_Check{from, to, span})
 }
 
+// design.md "Escape levels": the first parameter a written `@(escape=none)`
+// asks of an inferred contract that leaves it at `result`, or -1. The summary
+// answers it once inference settles.
+discharged_escape :: proc(c: ^Compiler, from, to: Type_Id, after := -1) -> int {
+	a := underlying_info(c, from)
+	if a == nil || a.kind != .Proc || a.proc_contract == INVALID_SYMBOL { return -1 }
+	for index in after + 1 ..< len(a.parameters) {
+		if proc_param_escape(c, from, index) == .Result && proc_param_escape(c, to, index) == .None { return index }
+	}
+	return -1
+}
+
 check_proc_contracts :: proc(k: ^Checker) {
 	for check in k.c.proc_contract_checks {
 		a, b := underlying_info(k.c, check.from), underlying_info(k.c, check.to)
 		actual, have := result_summary(k.c, a.proc_contract)
-		bound, known := result_summary(k.c, b.proc_contract)
-		if !have || !known || !result_contract_within(actual, bound) {
-			errorf(k.c, check.span, "L0645", "procedure result provenance does not satisfy the inferred contract of `%s`",
-				identifier_text(k.c, symbol_of(k.c, b.proc_contract).name))
-			add_notef(k.c, symbol_of(k.c, b.proc_contract).span, "result contract inferred from this declaration")
-			add_precision_notes(k.c, check.span, actual.precision | bound.precision)
+		if b.proc_contract != INVALID_SYMBOL {
+			bound, known := result_summary(k.c, b.proc_contract)
+			if !have || !known || !result_contract_within(actual, bound) {
+				errorf(k.c, check.span, "L0645", "procedure result provenance does not satisfy the inferred contract of `%s`",
+					contract_name(k.c, b.proc_contract))
+				if have && known {
+					for wanted, index in actual.params {
+						if wanted && (index >= len(bound.params) || !bound.params[index]) {
+							add_notef(k.c, check.span, "the result of `%s` may borrow `%s`, which that contract excludes",
+								contract_name(k.c, a.proc_contract), contract_param_name(k.c, a.proc_contract, index))
+							break
+						}
+					}
+				}
+				add_contract_notes(k.c, b.proc_contract)
+				add_precision_notes(k.c, check.span, actual.precision | bound.precision)
+				continue
+			}
 		}
+		if !have { continue }
+		for index := discharged_escape(k.c, check.from, check.to); index >= 0; index = discharged_escape(k.c, check.from, check.to, index) {
+			if index < len(actual.params) && actual.params[index] {
+				errorf(k.c, check.span, "L0645", "the result of `%s` may borrow `%s`, which `%s` marks `@(escape=none)`",
+					contract_name(k.c, a.proc_contract), contract_param_name(k.c, a.proc_contract, index), type_name(k.c, check.to))
+				add_contract_notes(k.c, a.proc_contract)
+				add_precision_notes(k.c, check.span, actual.precision)
+				break
+			}
+		}
+	}
+}
+
+// design.md "Procedure result contracts": a conditional between two inferred
+// callbacks keeps both contracts. The join is a bodiless contract whose members
+// are the declarations, sorted so either branch order interns the same type.
+join_callback_types :: proc(c: ^Compiler, a, b: Type_Id) -> (Type_Id, bool) {
+	x, y := type_of(c, a), type_of(c, b)
+	if a == b || x == nil || y == nil || x.kind != .Proc || y.kind != .Proc ||
+	   x.proc_contract == INVALID_SYMBOL || y.proc_contract == INVALID_SYMBOL { return INVALID_TYPE, false }
+	plain := erase_proc_contract(c, a)
+	if plain != erase_proc_contract(c, b) { return INVALID_TYPE, false }
+	members := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+	append(&members, ..contract_members(c, x.proc_contract))
+	append(&members, ..contract_members(c, y.proc_contract))
+	slice.sort(members[:])
+	unique := slice.unique(members[:])
+	join := INVALID_SYMBOL
+	for existing in c.contract_joins {
+		if slice.equal(symbol_of(c, existing).members, unique) { join = existing }
+	}
+	if join == INVALID_SYMBOL {
+		stored := make([]Symbol_Id, len(unique), c.semantic_allocator)
+		copy(stored, unique)
+		names := make([]string, len(unique), context.temp_allocator)
+		for member, index in unique { names[index] = identifier_text(c, symbol_of(c, member).name) }
+		first := symbol_of(c, unique[0])
+		join = new_symbol(c, Symbol {
+			kind    = .Proc,
+			name    = intern_identifier(c, strings.join(names, " | ", context.temp_allocator)),
+			span    = first.span,
+			pkg     = first.pkg,
+			members = stored,
+		})
+		append(&c.contract_joins, join)
+	}
+	p := type_of(c, plain)
+	return intern_proc_type(c, p.parameters, p.param_modes, p.result, p.result_inout, p.convention,
+		p.param_resets, p.param_by_ptr, p.c_vararg, p.param_escapes, join), true
+}
+
+is_contract_join :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
+	sym := symbol_of(c, id)
+	return sym != nil && sym.kind == .Proc && len(sym.members) > 0
+}
+
+// The declarations a contract stands for: itself, or a join's members.
+contract_members :: proc(c: ^Compiler, id: Symbol_Id) -> []Symbol_Id {
+	if is_contract_join(c, id) { return symbol_of(c, id).members }
+	single := make([]Symbol_Id, 1, context.temp_allocator)
+	single[0] = id
+	return single
+}
+
+contract_name :: proc(c: ^Compiler, id: Symbol_Id) -> string {
+	return identifier_text(c, symbol_of(c, id).name)
+}
+
+// Members share the signature, so the first one names the parameter.
+@(private = "file")
+contract_param_name :: proc(c: ^Compiler, id: Symbol_Id, index: int) -> string {
+	sym := symbol_of(c, contract_members(c, id)[0])
+	if index < len(sym.param_symbols) { return identifier_text(c, symbol_of(c, sym.param_symbols[index]).name) }
+	return "an argument"
+}
+
+@(private = "file")
+add_contract_notes :: proc(c: ^Compiler, id: Symbol_Id) {
+	for member in contract_members(c, id) {
+		add_notef(c, symbol_of(c, member).span, "result contract inferred from this declaration")
 	}
 }
 

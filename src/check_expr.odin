@@ -2059,6 +2059,10 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 		v.type = expected
 		return
 	}
+	if joined, ok := join_callback_types(k.c, then_type, else_type); ok {
+		v.type = joined
+		return
+	}
 	result, unified := unify_operands(k, v.then, v.otherwise, v.span)
 	if !unified {
 		v.type = INVALID_TYPE

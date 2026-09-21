@@ -222,6 +222,8 @@ Compiler :: struct {
 	// Keyed per declaration or instance, so two instances may differ.
 	result_summaries: map[Symbol_Id]^Proc_Summary,
 	proc_contract_checks: [dynamic]Proc_Contract_Check,
+	// The contracts a conditional between two inferred callbacks joined.
+	contract_joins: [dynamic]Symbol_Id,
 	// Direct summary dependencies, discovered while building each body's first
 	// provenance graph. The solver schedules only callers of a changed callee.
 	result_summary_dependencies: map[Symbol_Id][]Symbol_Id,

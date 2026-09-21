@@ -60,3 +60,22 @@ wrong_region :: proc() { f := choose_region; f = other_region; }
 allocate_first :: proc(first, second: Allocator) -> ^mut int { return new(int, first) or_else nil; }
 allocate_second :: proc(first, second: Allocator) -> ^mut int { return new(int, second) or_else nil; }
 wrong_allocation_region :: proc() { f := allocate_first; f = allocate_second; }
+
+same :: proc(a, b: []int) -> []int { return a; }
+Excluding :: proc(a: []int, @(escape=none) b: []int) -> []int;
+joined_outside :: proc(flag: bool) {
+	f := first if flag else same;
+	f = second;
+}
+joined_local :: proc(flag: bool, input: []int) -> []int {
+	local := [1]int{7};
+	f := first if flag else second;
+	return f(input, local[:]);
+}
+wrong_none :: proc() { f: Excluding = second; }
+wrong_none_argument :: proc(f: Excluding) {}
+bad_none_call :: proc() { wrong_none_argument(first if true else second); }
+plain_local :: proc(f: proc(a, b: []int) -> []int, input: []int) -> []int {
+	local := [1]int{7};
+	return f(input, local[:]);
+}

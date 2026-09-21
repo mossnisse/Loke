@@ -146,6 +146,8 @@ Flow_Graph :: struct {
 	allocation_region_sources: [dynamic]Prov_Allocation_Region_Source,
 	// Summary mode: the direct callees whose result summaries this body reads.
 	summary_callees: [dynamic]Symbol_Id,
+	// Calls through a procedure type with no result contract, for notes.
+	plain_calls: [dynamic]^Expr_Call,
 	// design.md "Global write effects": this body's own writes of globals, and
 	// its calls while the effects are still settling.
 	effect_writes: [dynamic]Symbol_Id,
@@ -219,6 +221,7 @@ build_flow_graph :: proc(
 	graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
 	graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
 	graph.summary_callees = make([dynamic]Symbol_Id, allocator)
+	graph.plain_calls = make([dynamic]^Expr_Call, allocator)
 	graph.effect_writes = make([dynamic]Symbol_Id, allocator)
 	graph.effect_calls = make([dynamic]Effect_Call, allocator)
 	graph.effect_values = make([dynamic]Symbol_Id, allocator)

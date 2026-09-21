@@ -810,11 +810,69 @@ set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: in
 }
 
 result_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> (Result_Provenance, bool) {
+	if is_contract_join(c, declaration) {
+		return joined_result_summary(c, symbol_of(c, declaration).members)
+	}
 	summary, found := c.result_summaries[declaration]
 	if !found {
 		return Result_Provenance{}, false
 	}
 	return summary.result, true
+}
+
+// A join's members share a result type, so their summaries have one shape and
+// the union goes entry by entry. Rebuilt on each request, since members may
+// still be growing toward the fixed point.
+@(private = "file")
+joined_result_summary :: proc(c: ^Compiler, members: []Symbol_Id) -> (Result_Provenance, bool) {
+	out: Result_Provenance
+	for member, index in members {
+		summary, found := result_summary(c, member)
+		if !found {
+			return Result_Provenance{}, false
+		}
+		if index == 0 {
+			out = new_result_provenance(c, len(summary.params), summary.content_type, len(summary.content) > 0)
+		}
+		merge_result_dependencies(c, &out.dependencies, summary.dependencies)
+		merge_region_provenance(&out.region, summary.region)
+		for &content, position in out.content {
+			from := position < len(summary.content) && len(summary.content) == len(out.content) ? summary.content[position].dependencies : summary.dependencies
+			merge_result_dependencies(c, &content.dependencies, from)
+		}
+		for &content, position in out.region_content {
+			from := position < len(summary.region_content) && len(summary.region_content) == len(out.region_content) ? summary.region_content[position].region : summary.region
+			merge_region_provenance(&content.region, from)
+		}
+	}
+	return out, len(members) > 0
+}
+
+@(private = "file")
+merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_Dependencies) {
+	merge_provenance(into, from)
+	merge_precision(&into.precision, from.precision)
+	for wanted, index in from.params {
+		if !wanted || index >= len(into.params) {
+			continue
+		}
+		paths := index < len(from.param_paths) ? from.param_paths[index] : nil
+		if !into.params[index] {
+			into.params[index] = true
+			if paths != nil {
+				into.param_paths[index] = make([]bool, len(paths), c.semantic_allocator)
+				copy(into.param_paths[index], paths)
+			}
+		} else if into.param_paths[index] != nil {
+			if paths == nil || len(paths) != len(into.param_paths[index]) {
+				into.param_paths[index] = nil
+			} else {
+				for used, path in paths {
+					into.param_paths[index][path] ||= used
+				}
+			}
+		}
+	}
 }
 
 // Joins the non-parameter components; returns whether `into` grew.
@@ -1741,6 +1799,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 					add_notef(state.k.c, root.span, "%s is declared here", root_label(root))
 				}
 				add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
+				add_plain_call_note(state, loan)
 				return
 			}
 		}
@@ -1982,6 +2041,27 @@ report_root_outlived :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_L
 		}
 	}
 	add_notef(k.c, loan.span, "the %s is created here", loan.what)
+}
+
+// design.md "Procedure result contracts": a loan created in the arguments of a
+// call through a type with no result contract reached the result only because
+// that type states no bound. Names the innermost such call.
+@(private = "file")
+add_plain_call_note :: proc(state: ^Prov_State, loan: Prov_Loan) {
+	found: ^Expr_Call
+	for call in state.graph.plain_calls {
+		if call.span.file == loan.span.file && call.span.lo <= loan.span.lo && loan.span.hi <= call.span.hi &&
+		   (found == nil || call.span.hi - call.span.lo < found.span.hi - found.span.lo) {
+			found = call
+		}
+	}
+	if found != nil {
+		add_notef(
+			state.k.c, found.span,
+			"a call through `%s` may return a borrow of any argument, because that type states no result bound; `@(escape=none)` on a parameter excludes it",
+			type_name(state.k.c, call_proc_type(state.k.c, found)),
+		)
+	}
 }
 
 // Notes for the root, the borrow's creation, and the later use keeping it live.

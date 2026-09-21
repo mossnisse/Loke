@@ -43,3 +43,17 @@ inferred contract of `choose_region`
 L0645
 @62:62
 inferred contract of `allocate_first`
+L0645
+@68:6
+inferred contract of `first | same`
+the result of `second` may borrow `b`, which that contract excludes
+L0526
+@73:9
+L0645
+@75:39
+the result of `second` may borrow `b`, which `proc([]int, @(escape=none) []int) -> []int` marks `@(escape=none)`
+L0645
+@77:66
+L0526
+@80:9
+a call through `proc([]int, []int) -> []int` may return a borrow of any argument

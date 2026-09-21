@@ -2324,6 +2324,14 @@ prov_parameter_type :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> Ty
 
 @(private = "file")
 prov_has_direct_body :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
+	if is_contract_join(c, id) {
+		for member in symbol_of(c, id).members {
+			if !prov_has_direct_body(c, member) {
+				return false
+			}
+		}
+		return true
+	}
 	sym := symbol_of(c, id)
 	if sym == nil || sym.kind != .Proc {
 		return false
@@ -3036,6 +3044,9 @@ prov_call_result :: proc(
 	} else {
 		// Without a mapping every escaping argument can reach every result path.
 		out = prov_escaping_actuals(graph, v, actuals)
+		if _, is_call := v.operation.(Call_Procedure); is_call && symbol_of(c, callee) == nil {
+			append(&graph.plain_calls, v)
+		}
 		if len(out) == 0 && len(borrowed) == 0 {
 			out = prov_synthetic_borrow(graph, v, .Unknown, result_type)
 		}
@@ -3118,6 +3129,12 @@ prov_substitute_result :: proc(
 @(private = "file")
 prov_note_summary_dependency :: proc(graph: ^Flow_Graph, callee: Symbol_Id, direct: bool) {
 	if graph.mode != .Prov_Summary || !direct || callee == INVALID_SYMBOL {
+		return
+	}
+	if is_contract_join(graph.k.c, callee) {
+		for member in symbol_of(graph.k.c, callee).members {
+			prov_note_summary_dependency(graph, member, direct)
+		}
 		return
 	}
 	for existing in graph.summary_callees {

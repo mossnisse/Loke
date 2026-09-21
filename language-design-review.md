@@ -443,7 +443,7 @@ Sources: [overload resolution](C:/code/loke/src/overload.odin:565), [destination
 
 1. Selection reads only the arguments. *Done:* `resolve_overload` and `resolve_operator` no longer take a destination type. A call through a group records the members it chose among, and an L0310 on its result notes the member the arguments selected and any member whose result would fit. Nothing in the corpus changed dispatch; `tests/err/overload_destination` pins the new errors.
 2. Ownership replaces tie-breaker 5 and runs first. *Done:* an argument that owns its value counts against a candidate that does not consume it, compared before arity, defaults, and specialization, which move down to 2–5; a consuming receiver ranks exact for an owned receiver. `tests/run/overload_ownership` pins each case above. The one-element copying member of `Small_Array.append` stays, for a reason the analysis missed: through the variadic `append_copied`, a borrowed place is copied twice, into the pack and then into its slot (`1 202` against `1 102` with the `+100` hook). No test appended a place with a copy hook, so the 20-test comparison could not see it. Its comment now gives that reason instead of the dispatch one, and `lib_small_array` pins both halves: a temporary is not copied, a place is copied once.
-3. The `shared` bound and built-in insertion's extra clone are tracked as separate tasks.
+3. The `shared` bound and built-in insertion's extra clone. *Done:* `shared_from_clone` and `try_shared_from_clone` require `is_copyable(T)`, so `shared(token)` of a move-only place fails at the call (`tests/err/lib_shared_gates`). Built-in `append`, `insert`, `try_insert`, `find_or_insert`, and dynamic literals move a temporary or `move(x)` in and copy a borrowed place or spread element once (`tests/run/container_insert_ownership`). A failed copy of a pack element makes `try_append` return the error and leave the array unchanged (`tests/run/append_pack_clone_failure`).
 
 3. **Make callback contracts structural and preserve them through composition.**
 
@@ -462,6 +462,65 @@ That states a stable bound independently of an implementation body. Keep richer 
 Diagnostics should display the effective relationship, such as “the result may borrow input only,” and identify where a conversion erased it. A `type_of` alias that exports an inferred implementation contract should make that visible in generated API documentation.
 
 This is significant compiler work, particularly around recursive inference and type interning. It is still a simplification of the language users must reason about, and requires no new lifetime syntax in the first iteration.
+
+**Follow-up analysis of proposal 3 (21 September 2026)**
+
+The diagnosis holds, but the proposal bundles four changes of different worth. The join and the written form are worth doing; structural identity is not. Probes were compiled with a fresh `lokec` at `753a28f`.
+
+*Only the conditional loses a contract.* The review's `choose` still fails with L0526, and `type_of(a) == type_of(b)` is still `false`. Every other composition keeps the destination's contract and checks after inference that the source fits: assignment, arguments, returns, fields, containers, and generic forwarding. `callback := a; callback = b;` compiles, and so does `callback: A = a if flag else b;` with `A :: type_of(a)`. Without an expected type, [`unify_operands`](C:/code/loke/src/check_expr.odin:1942) erases both branches to their plain signature ([design.md](C:/code/loke/design.md:4787)).
+
+*Structural identity should not be adopted.* Loke already has structural compatibility: a declaration substitutes for another whenever its bounds fit. What the proposal adds is structural identity, which has two costs:
+
+- It cannot be decided when identity is used. Contracts are inferred after every body is checked ([`analyze_program_provenance`](C:/code/loke/src/borrow.odin:933)), but identity is used during checking: `static_assert(A != B)` passes, `when (A == B)` selects its `else` branch, generics instantiate per type, and overloads rank by it. Identity would have to wait for an inference that needs the checked program.
+- If it could be decided, identity would depend on bodies. Editing `b` to return `y` would flip `A == B`, change which `when` branch compiles, and split an instantiation. That is the refactoring instability the review sets out to remove.
+
+Nothing needs it either: `type_of` of a procedure appears nowhere in `base`, `core`, or `examples`.
+
+*The join is sound and cheap.* Two bodies with the same result type have summaries of the same shape ([`new_result_provenance`](C:/code/loke/src/borrow.odin:716)), so their union is element-wise with the existing merge helpers. Every call through a contract reads it through [`call_contract_declaration`](C:/code/loke/src/proc_contracts.odin:119) and `result_summary`. A join can therefore be one synthesized contract symbol whose members are the branches' declarations, flattened and sorted so that `b if g else a` has the same type:
+
+- `result_summary` returns the members' union.
+- The fixpoint records each member as a dependency of the caller.
+- The type printer, the typeid key, and L0645 list the members.
+
+A branch with a plain type still gives the plain type.
+
+*The written form does not work today.* `Chooser :: proc(input: []int, @(escape=none) scratch: []int) -> []int` is the body-independent bound the proposal recommends. Passing the unannotated `a` to it fails with L0310, because escape levels only rise under conversion ([design.md](C:/code/loke/design.md:4809)) and `a`'s unwritten `result` is above `none`. Every implementation must repeat the annotation. The conditional then works already, because the plain signature keeps escape levels.
+
+Instead, let an inferred contract discharge a written `none`: a procedure whose summary never names a parameter converts to a type that marks it `@(escape=none)`, checked after inference like L0645. `stored` and `static` stay written-only, since retention is never inferred. Since proposal 1's decision, an owned argument no longer makes a result borrow it: through plain types, `f(i + 1, view)` and `g(string("xy"), view)` both stay usable. Only view and pointer parameters need the annotation, so the concern in proposal 1's "Callback results" row no longer applies.
+
+*Usage.* A throwaway build compiled the 497 programs in `tests` and `examples`, with the `base` and `core` code they import:
+
+- No conditional unifies two different contracts.
+- 11 calls go through a plain procedure type whose result may borrow. All are in tests written for this feature (`m5b_escape_levels`, `m5b_aggregate`, `proc_borrow_contracts`, `m5b_trust_boundary`, `m5b_escape`).
+- No library callback returns a borrow of an argument.
+
+The benefit is prospective, so the change should stay small.
+
+| Cost | Evidence or consequence |
+| --- | --- |
+| Join | A synthesized contract symbol with its members, the union in `result_summary`, member dependencies in [`prov_note_summary_dependency`](C:/code/loke/src/cfg_provenance.odin:3119) and `prov_has_direct_body`, and the members in the type printer, typeid key, and L0645. About 100 lines. |
+| Join semantics | A variable initialized from a conditional has the join type, so a later assignment of a procedure outside it reports L0645, as `callback := a; callback = c;` already does. Today it accepts any procedure of the signature. No corpus program does this. Nobody can write the join type; messages show it as `a \| b`. |
+| Written form | [`proc_escape_weakens_to`](C:/code/loke/src/semantic.odin:953) allows `result` to `none` from a contract-bearing source, [`record_proc_contract_check`](C:/code/loke/src/proc_contracts.odin:41) records it, and `check_proc_contracts` rejects a summary that names the parameter. About 30 lines. Whether an implementation fits a published type then depends on its body, as it already does for a `type_of` contract. A group whose members differ only in a callback parameter's escape levels could become ambiguous; none exists. |
+| Diagnostics | L0645 names the parameter that breaks the bound. An L0526 through a plain type gets a note at the call: its type states no bound, so the result may borrow any argument, and `@(escape=none)` on that parameter would exclude it. Both run after inference, where summaries exist; a type printed during checking cannot show them. |
+| API documentation | There is no documentation generator, so there is nothing to mark. |
+
+*Recommendation.*
+
+1. Keep declaration identity; do not make contract types structural.
+2. Let an inferred contract satisfy a written `@(escape=none)`, and recommend written signatures for public callback types. `type_of` remains for bounds the written form cannot express, such as one field of an argument or an allocator region.
+3. Join contracts at a conditional instead of falling back to the plain signature.
+4. Name the parameter in L0645 and add the plain-call note to L0526. Skip the documentation marker.
+
+Items 2–4 are independent. Item 2 matters most to libraries; item 3 meets the acceptance row "select between callbacks with identical bounds".
+
+*Decision (21 September 2026).* Adopted as recommended.
+
+1. Declaration identity stays: `static_assert(A != B)` still holds for two declarations with equal bounds.
+2. An inferred contract meets a written `none`. *Done:* `proc_escape_weakens_to` lets `result` convert to `none` from a contract-bearing source, and `check_proc_contracts` rejects the conversion with L0645 when the summary may return that parameter ("the result of `second` may borrow `b`, which … marks `@(escape=none)`"). An unannotated `a` now passes as `Chooser`, alone or through `a if flag else b` with `Chooser` expected. `tests/err/m5b_escape_levels` pinned the old rule with `honest`, which never returns `scratch` and now converts; it now pins a plain source (still L0310) and a source that returns `scratch` (L0645).
+3. A conditional joins contracts. *Done:* the join is a synthesized contract whose members are the branches' declarations, flattened and sorted, printed `[result contract: a | b]`. `result_summary` returns the members' union entry by entry, so field paths and allocator regions stay precise, and the fixed point depends on each member. The review's `choose` compiles; a join with a branch that returns `local` still reports L0526, and assigning a procedure outside the join reports L0645.
+4. Diagnostics. *Done:* L0645 notes which parameter the source may return that the contract excludes, and notes every member of a joined contract. An L0526 whose borrow was created in the arguments of a call through a plain type notes that call, its type, and `@(escape=none)`. No documentation marker.
+
+`tests/run/proc_contract_joins` pins the joins (including nested, reordered, forwarded, field-path, and allocator-region cases) and the written form; `tests/err/proc_borrow_contracts` pins the new errors and notes.
 
 4. **Make mutable iteration adapters ordinary values.**
 

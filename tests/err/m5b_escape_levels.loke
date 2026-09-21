@@ -17,14 +17,14 @@ indirect_liar :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
 	return wrap_scratch(scratch);
 }
 
-// A procedure value that promises less than the type its destination requires.
-// The level is part of procedure type identity, so this is a type mismatch.
-honest :: proc(input: []int, scratch: []int) -> []int { return input; }
+// A plain type promises less than a type that marks a parameter `none`, so it
+// does not convert; an inferred contract converts only if its result never borrows it.
+leaky :: proc(input: []int, scratch: []int) -> []int { return scratch; }
 
-assign_a_weaker_callee :: proc() -> int {
-	chooser: proc(input: []int, @(escape=none) scratch: []int) -> []int = honest;
-	numbers := [2]int{1, 2};
-	return chooser(numbers[:], numbers[:])[0];
+assign_a_weaker_callee :: proc(plain: proc(input: []int, scratch: []int) -> []int) -> int {
+	chooser: proc(input: []int, @(escape=none) scratch: []int) -> []int = plain;
+	leaked: proc(input: []int, @(escape=none) scratch: []int) -> []int = leaky;
+	return 0;
 }
 
 // A parameter that carries no borrow cannot escape.

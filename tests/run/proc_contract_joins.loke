@@ -1,0 +1,62 @@
+package main;
+import "core:fmt";
+import "core:mem";
+
+// design.md "Procedure result contracts": a conditional between inferred
+// callbacks keeps both contracts, and an inferred contract meets a written
+// `@(escape=none)`.
+a :: proc(x, y: []int) -> []int { return x; }
+b :: proc(x, y: []int) -> []int { return x[1:]; }
+d :: proc(x, y: []int) -> []int { return x[:1]; }
+Chooser :: proc(input: []int, @(escape=none) scratch: []int) -> []int;
+
+choose :: proc(flag: bool, input: []int) -> []int {
+	local := [1]int{7};
+	callback := a if flag else b;
+	return callback(input, local[:]);
+}
+nested :: proc(flag, other: bool, input: []int) -> []int {
+	local := [1]int{7};
+	callback := (a if flag else b) if other else d;
+	again := d if other else (b if flag else a);
+	again = callback;
+	return forward(again)(input, local[:]);
+}
+forward :: proc(callback: $T) -> T { return callback; }
+written :: proc(flag: bool, input: []int) -> []int {
+	local := [1]int{7};
+	callback: Chooser = a if flag else b;
+	return callback(input, local[:]);
+}
+passed :: proc(callback: Chooser, input: []int) -> []int {
+	local := [1]int{7};
+	return callback(input, local[:]);
+}
+
+Pair :: struct { first, second: []int }
+ordered :: proc(p, q: []int) -> Pair { return {p, q}; }
+same_first :: proc(p, q: []int) -> Pair { return {p, p[:1]}; }
+fields :: proc(flag: bool, input: []int) -> []int {
+	local := [1]int{7};
+	f := ordered if flag else same_first;
+	return f(input, local[:]).first;
+}
+
+choose_region :: proc(first, second: Allocator) -> Allocator { return first; }
+same_region :: proc(first, second: Allocator) -> Allocator { return first; }
+regions :: proc(flag: bool, input: Allocator) -> Allocator {
+	scratch := mem.Arena.init();
+	f := choose_region if flag else same_region;
+	return f(input, scratch.allocator());
+}
+
+main :: proc() {
+	data := [3]int{1, 2, 3};
+	fmt.println(choose(true, data[:]).len(), choose(false, data[:]).len());
+	fmt.println(nested(true, true, data[:]).len(), nested(false, false, data[:]).len());
+	fmt.println(written(false, data[:]).len(), passed(a, data[:]).len(), fields(false, data[:]).len());
+	arena := mem.Arena.init();
+	values: [dynamic]int via regions(true, arena.allocator()) = {};
+	values.append(5);
+	fmt.println(values[0]);
+}

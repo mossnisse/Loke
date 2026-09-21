@@ -736,6 +736,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.checked_bodies = make([dynamic]Checked_Body, 0, 16, c.semantic_allocator)
 	c.result_summaries = make(map[Symbol_Id]^Proc_Summary, c.semantic_allocator)
 	c.proc_contract_checks = make([dynamic]Proc_Contract_Check, 0, 4, c.semantic_allocator)
+	c.contract_joins = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)
 	c.static_locals = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
@@ -966,7 +967,10 @@ proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	for index in 0 ..< len(a.parameters) {
-		if proc_param_escape(c, from, index) > proc_param_escape(c, to, index) {
+		have, want := proc_param_escape(c, from, index), proc_param_escape(c, to, index)
+		// An inferred contract may meet a written `none`; `check_proc_contracts`
+		// checks it once inference settles.
+		if have > want && !(have == .Result && want == .None && a.proc_contract != INVALID_SYMBOL) {
 			return false
 		}
 	}
