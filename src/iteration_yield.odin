@@ -230,7 +230,9 @@ derive_iterator_member :: proc(k: ^Checker, type: Type_Id, member: Derived_Membe
 		return
 	}
 	written := associated_type_of(k, under, associated)
-	if written != INVALID_TYPE && written != start.result {
+	if written == INVALID_TYPE {
+		errorf(k.c, symbol_of(k.c, declared).span, "L0694", "`%s.%s` must name a type", type_name(k.c, under), associated)
+	} else if written != start.result {
 		errorf(
 			k.c, symbol_of(k.c, declared).span, "L0694",
 			"`%s.%s` is `%s`, but `%s` returns `%s`",

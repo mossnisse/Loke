@@ -1894,7 +1894,7 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool) -> (Prov
 	visited := make(map[int]bool, 8, context.temp_allocator)
 	pending := make([dynamic]int, 0, 8, context.temp_allocator)
 	for reborrow in graph.reborrows {
-		if reborrow.source != source || !reborrow_values_overlap(state, reborrow) {
+		if reborrow.source != source {
 			continue
 		}
 		clear(&pending)
@@ -1906,11 +1906,13 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool) -> (Prov
 				continue
 			}
 			visited[slot] = true
-			if live[slot] {
+			// An overwritten intermediate no longer overlaps `source`, but something
+			// derived from its previous value still can.
+			if live[slot] && prov_slots_overlap(state, source, slot) {
 				return reborrow, slot, true
 			}
 			for next in graph.reborrows {
-				if next.source == slot && reborrow_values_overlap(state, next) {
+				if next.source == slot {
 					append(&pending, next.derived)
 				}
 			}
@@ -1922,9 +1924,9 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool) -> (Prov
 // The source is suspended only while both slots' current values share a valid
 // loan, so overwriting either one ends the reborrow.
 @(private = "file")
-reborrow_values_overlap :: proc(state: ^Prov_State, reborrow: Prov_Reborrow) -> bool {
-	source := reach_row(state, state.reach, reborrow.source)
-	derived := reach_row(state, state.reach, reborrow.derived)
+prov_slots_overlap :: proc(state: ^Prov_State, source_slot, derived_slot: int) -> bool {
+	source := reach_row(state, state.reach, source_slot)
+	derived := reach_row(state, state.reach, derived_slot)
 	for index in 0 ..< state.loans {
 		if bit_get(source, index) && bit_get(derived, index) && !state.invalid[index] {
 			return true

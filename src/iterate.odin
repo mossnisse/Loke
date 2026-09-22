@@ -566,7 +566,26 @@ iteration_proc_matches :: proc(
 
 // One protocol member, looked up from the declaration's own package.
 iteration_member :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id {
-	return find_member(k, type, intern_identifier(k.c, name))
+	member := find_member(k, type, intern_identifier(k.c, name))
+	group := symbol_of(k.c, member)
+	if group == nil || group.kind != .Proc_Group {
+		return member
+	}
+	// Protocol calls have only their receiver. Ignore overloads taking more
+	// arguments, and leave multiple receiver-only overloads ambiguous.
+	found := INVALID_SYMBOL
+	for candidate in group.members {
+		sym := symbol_of(k.c, candidate)
+		if sym == nil || sym.kind != .Proc || sym.bound_excluded || !sym.has_receiver ||
+		   len(sym.params) != 1 || sym.params[0] != type {
+			continue
+		}
+		if found != INVALID_SYMBOL {
+			return member
+		}
+		found = candidate
+	}
+	return found != INVALID_SYMBOL ? found : member
 }
 
 // The associated type a member names, or INVALID_TYPE.

@@ -624,8 +624,9 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	begin_step(e, loop)
 	numbered := counter == "" ? "" : load(e, "i64", counter)
+	payload := option_payload(e.c, option)
 	// `next` hands over an owned `Element`, so the step takes it without a copy.
-	if payload := option_payload(e.c, option); foreach_is_place_loop(s) && !type_is_pointer(e.c, payload) {
+	if foreach_is_place_loop(s) && !type_is_pointer(e.c, payload) {
 		// A record `Yield` with a mutable part: each lent part is a place.
 		bind_foreach_fields(e, s, with_index(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload), numbered))
 	} else if foreach_is_place_loop(s) {
@@ -633,7 +634,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		address := emit_union_payload(e, option, pointer_to(e.c, logical, true), slot)
 		fields := []Foreach_Field{{type = logical, address = address, place = true, stored = true}}
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
-	} else if payload := option_payload(e.c, option); s.borrows && !type_is_pointer(e.c, payload) {
+	} else if s.borrows && !type_is_pointer(e.c, payload) {
 		// A record `Yield` is a record of pointers, one per lent part.
 		bind_foreach_fields(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload))
 	} else if s.borrows {

@@ -43,6 +43,16 @@ read_during_traversal :: proc(xs: []mut int) {
 	foreach (&x in xs) { x += xs.len(); }
 }
 
+// Replacing an intermediate cannot sever a reborrow that is still live through
+// something derived from it.
+overwrite_intermediate :: proc(xs, other: []mut int) {
+	first := xs;
+	second := first;
+	first = other;
+	xs[0] = 1;
+	second[0] = 2;
+}
+
 // Still accepted: each reborrow ends before the source is used again.
 sequential :: proc(xs: []mut int) {
 	copy := xs;
@@ -58,6 +68,7 @@ sequential :: proc(xs: []mut int) {
 
 main :: proc() {
 	storage := [4]int{1, 2, 3, 4};
+	other_storage := [4]int{};
 	owners := [dynamic][dynamic]int{};
 	owners.append([dynamic]int{1});
 	siblings();
@@ -65,5 +76,6 @@ main :: proc() {
 	element_pointer(owners[:]);
 	traversal(owners[:]);
 	read_during_traversal(storage[:]);
+	overwrite_intermediate(storage[:], other_storage[:]);
 	sequential(storage[:]);
 }

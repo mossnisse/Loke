@@ -22,7 +22,9 @@ Row_Cursor :: struct { cells: []mut int, at: int }
 impl Row {
 	Element :: int;
 	iter :: proc(self) -> Row_Cursor { return {self.cells, 0}; }
-	iter_mut :: proc(self) -> Row_Cursor { return {self.cells, 0}; }
+	iter_mut_default :: proc(self) -> Row_Cursor { return {self.cells, 0}; }
+	iter_mut_from :: proc(self, at: int) -> Row_Cursor { return {self.cells, at}; }
+	iter_mut :: proc{iter_mut_default, iter_mut_from};
 }
 impl Row_Cursor {
 	next :: proc(self: inout Row_Cursor) -> Option(^mut int) {
@@ -32,10 +34,18 @@ impl Row_Cursor {
 		return .some(value);
 	}
 }
+Grouped :: struct { start: int }
+impl Grouped {
+	Element :: int;
+	iter_default :: proc(self) -> Countdown_Iterator { return {self.start}; }
+	iter_from :: proc(self, start: int) -> Countdown_Iterator { return {start}; }
+	iter :: proc{iter_default, iter_from};
+}
 total :: proc(xs: $S) -> int where interfaces.Iterable(S), S.Element == int { t := 0; foreach (x in xs) { t += x; } return t; }
 main :: proc() {
 	foreach (v in Countdown{3}) { fmt.println(v); }
 	fmt.println(total(Countdown{4}));
+	fmt.println(total(Grouped{4}));
 	storage := [2]int{1, 2};
 	foreach (&c in Row{storage[:]}) { c += 5; }
 	fmt.println(storage);

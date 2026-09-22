@@ -1,6 +1,12 @@
 L0694
-@11:2
+@12:2
 `Countdown.Iterator` is `Other`, but `iter` returns `[1]int`
+L0694
+@18:2
+`Not_A_Type.Iterator` must name a type
 L0456
-@15:32
+@23:16
 `Countdown` is not iterable
+L0456
+@24:16
+`Not_A_Type` is not iterable

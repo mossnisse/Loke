@@ -10,9 +10,9 @@
 // needs no construction.
 //
 // A move-only element is held too. The members that copy one — `get`,
-// `append_copied`, `insert_copied`, the `try_` forms, and by-value iteration —
-// are bound on `is_copyable(T)`, so they are simply not members of such an
-// instance (design.md "where clauses"). `append` and `insert` are procedure
+// `append_copied`, `insert_copied`, and the `try_` forms — are bound on
+// `is_copyable(T)`, so they are simply not members of such an instance
+// (design.md "where clauses"). `append` and `insert` are procedure
 // groups whose other member consumes, so `values.append(move(token))` is the
 // way in, just as it is for a dynamic array, and everything that reaches an
 // element without copying it is unchanged.

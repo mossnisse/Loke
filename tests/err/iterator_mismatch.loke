@@ -5,6 +5,7 @@ package main;
 
 Countdown :: struct { start: int }
 Other :: struct {}
+Not_A_Type :: struct {}
 
 impl Countdown {
 	Element :: int;
@@ -12,4 +13,13 @@ impl Countdown {
 	iter :: proc(self) -> [1]int { return {self.start}; }
 }
 
-main :: proc() { foreach (v in Countdown{3}) { _ = v; } }
+impl Not_A_Type {
+	Element :: int;
+	Iterator :: 7;
+	iter :: proc(self) -> [1]int { return {1}; }
+}
+
+main :: proc() {
+	foreach (v in Countdown{3}) { _ = v; }
+	foreach (v in Not_A_Type{}) { _ = v; }
+}

@@ -172,4 +172,3 @@ report_not_mutably_iterable :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type
 		type_name(k.c, subject),
 	)
 }
-
