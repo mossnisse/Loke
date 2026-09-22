@@ -50,7 +50,7 @@ main :: proc() {
 
 	// `reversed()` carries mutable traversal too, but a `foreach` still never
 	// supplies an index itself.
-	foreach (&v in xs.reversed()) { fmt.println(v); }
+	foreach (&v in xs[:].reversed()) { fmt.println(v); }
 	foreach (&v, i in xs) { fmt.println(v); }
 
 	// A type is not an iterable; an enumeration's members are a value.

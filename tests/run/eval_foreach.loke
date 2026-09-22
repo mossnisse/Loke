@@ -52,10 +52,12 @@ doubled :: proc() -> int {
 	return packed;
 }
 
-// A by-reference loop's second name is its step counter, not a field.
+// A by-reference loop over a place. Compile-time evaluation has no mutable
+// slices, so `cells[:].indexed()` is not available here; the loop counts.
 squares :: proc() -> int {
 	cells := [4]int{0, 0, 0, 0};
-	foreach (&cell, index in cells.indexed()) { cell = index * index; }
+	index := 0;
+	foreach (&cell in cells) { cell = index * index; index += 1; }
 	return cells[0] + cells[1] + cells[2] + cells[3];
 }
 

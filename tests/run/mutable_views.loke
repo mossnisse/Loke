@@ -1,0 +1,102 @@
+package main;
+import "core:container";
+import "core:fmt";
+import "base:interfaces";
+
+// design.md "By-reference iteration": a mutable view is iterated by reference as
+// any value of it, and an adapter over one is a mutable view too. `&` reads the
+// mutable iterator's `Yield`, so a record can lend some parts mutably.
+
+Entry :: (key: int, value: int);
+Table :: struct { keys: []int, values: []mut int }
+Table_Cursor :: struct { keys: []int, values: []mut int, at: int }
+
+impl Table {
+	Element :: Entry;
+	Iterator :: Table_Cursor;
+	Mut_Iterator :: Table_Cursor;
+	iter :: proc(self) -> Table_Cursor { return {self.keys, self.values, 0}; }
+	iter_mut :: proc(self) -> Table_Cursor { return {self.keys, self.values, 0}; }
+}
+
+impl Table_Cursor {
+	Yield :: (key: Yield_Borrowed, value: Yield_Mutable);
+	next :: proc(self: inout Table_Cursor) -> Option((key: ^int, value: ^mut int)) {
+		if (self.at >= self.keys.len()) { return .none; }
+		at := self.at;
+		self.at += 1;
+		return .some({&self.keys[at], &mut self.values[at]});
+	}
+}
+
+// A view: `iter_mut` takes a value, so no place is needed.
+Row :: struct { cells: []mut int }
+Row_Cursor :: struct { cells: []mut int, at: int }
+
+impl Row {
+	Element :: int;
+	Iterator :: Row_Cursor;
+	Mut_Iterator :: Row_Cursor;
+	iter :: proc(self) -> Row_Cursor { return {self.cells, 0}; }
+	iter_mut :: proc(self) -> Row_Cursor { return {self.cells, 0}; }
+}
+
+impl Row_Cursor {
+	Yield :: Yield_Mutable;
+	next :: proc(self: inout Row_Cursor) -> Option(^mut int) {
+		if (self.at >= self.cells.len()) { return .none; }
+		value := &mut self.cells[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+bump_row :: proc(row: Row) { foreach (&c in row) { c += 1; } }
+
+// Generic over mutable traversal, taking the view by value.
+number :: proc(xs: $S) where interfaces.Mutable_Iterable(S) {
+	foreach (&v, i in xs) { v += i * 100; }
+}
+
+main :: proc() {
+	keys := [2]int{1, 2};
+	weights := [2]int{10, 20};
+	table := Table{keys[:], weights[:]};
+	foreach (key, &value in table) { value += key; }
+	fmt.println(weights);
+
+	storage := [3]int{1, 2, 3};
+	bump_row(Row{storage[:]});
+	foreach (&c in Row{storage[:]}) { c += 10; }
+	fmt.println(storage);
+
+	// A stored adapter over a mutable view keeps its capability.
+	values := [dynamic]int{1, 2, 3};
+	view := values[:].indexed();
+	foreach (&value, index in view) { value += index; }
+	back := values[:].reversed();
+	foreach (&value in back) { value *= 2; }
+	foreach (&value, index in values[:].reversed().indexed()) { value += index * 1000; }
+	fmt.println(values);
+	number(values[:].indexed());
+	walker := values[:].indexed().iter_mut();
+	switch (pair in walker.next()) { case .some: pair.value^ = 7; case .none: }
+	fmt.println(values);
+
+	small: container.Small_Array(int, 4) = {};
+	small.append(1, 2);
+	foreach (&v, i in small.slice().indexed()) { v += i; }
+	fmt.println(small);
+
+	row := Row{storage[:]};
+	numbered := row.indexed();
+	foreach (&c, i in numbered) { c += i * 1000; }
+	fmt.println(storage);
+
+	// A map lends its key read-only and its value mutably.
+	counts: map[string]int = {};
+	counts["abc"] = 1;
+	foreach (key, &value in counts) { value += key.len(); }
+	foreach (_, &value in counts) { value *= 10; }
+	fmt.println(counts["abc"]);
+}

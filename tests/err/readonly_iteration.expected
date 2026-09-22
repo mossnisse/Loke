@@ -15,7 +15,7 @@ L0513
 this temporary has ended
 L0641
 @43:2
-a read-only reborrow of it is still in use
+a mutable reborrow of it is still in use
 L0513
 @53:9
 this temporary has ended

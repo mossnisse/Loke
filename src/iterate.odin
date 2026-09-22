@@ -767,11 +767,19 @@ check_adapter_applies :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, n
 check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, info: ^Type_Info) -> Flow_Info {
 	switch s.kind {
 	case .Map:
-		errorf(
-			k.c, s.span, "L0457",
-			"a map entry is not a mutable element; iterate `map.values()` to mutate values",
-		)
-		return FLOWS
+		// Keys stay immutable; `place_loop_yield` lends only the value mutably.
+		if s.indexed {
+			errorf(k.c, ref_span(s), "L0457", "`indexed()` over a map entry is not a mutable traversal; count with a variable")
+			return FLOWS
+		}
+		if !expr_base(s.iterable).assignable {
+			report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
+			return FLOWS
+		}
+		s.element_type = map_entry_type(k.c, subject)
+		if !gate_type(k, s.element_type, expr_span(s.iterable)) { return FLOWS }
+		if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE, place_loop_yield(k, s)) { return FLOWS }
+		return check_foreach_block(k, s)
 	case .Slice:
 		// design.md "Slices": the slice's own `mut`, not its variable's.
 		if !info.mutable {
@@ -807,7 +815,7 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 		return FLOWS
 	}
 	s.element_type = s.indexed ? indexed_element_type(k.c, s.element_type) : s.element_type
-	if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE) { return FLOWS }
+	if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE, place_loop_yield(k, s)) { return FLOWS }
 	return check_foreach_block(k, s)
 }
 
@@ -945,23 +953,25 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if !s.borrows && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
-	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type) { return FLOWS }
+	// A value loop has no `&` leaf to check.
+	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type, Yield_Desc{kind = .Borrowed}) { return FLOWS }
 	return check_foreach_block(k, s)
 }
 
 // Binds one recursive pattern, for value and place loops alike (only a place
-// loop has `&` leaves). `item` is a value loop's projected form, where a record
-// of lent pointers binds whole; a place loop passes INVALID_TYPE. An
-// `indexed()` counter can never be `&`.
+// loop has `&` leaves). `item` is the projected form, where a record of lent
+// pointers binds whole; a direct place loop passes INVALID_TYPE. `desc` says
+// how each part is handed over, and an `&` leaf must land on a mutable one
+// (design.md "Element bindings").
 check_foreach_pattern :: proc(
-	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical, item: Type_Id, refs_allowed := true,
+	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical, item: Type_Id, desc: Yield_Desc,
 ) -> bool {
 	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		return check_foreach_pattern(k, s, bindings[0].group, logical, item, refs_allowed)
+		return check_foreach_pattern(k, s, bindings[0].group, logical, item, desc)
 	}
 	if len(bindings) == 1 {
-		if bindings[0].is_ref && !refs_allowed {
-			errorf(k.c, bindings[0].name.span, "L0457", "this generated iteration field cannot be taken by reference")
+		if bindings[0].is_ref && desc.kind != .Mutable {
+			report_immutable_ref_leaf(k, s, bindings[0], desc)
 			return false
 		}
 		return bind_pattern_leaf(k, s, &bindings[0], logical, item)
@@ -985,18 +995,64 @@ check_foreach_pattern :: proc(
 				projected = projected_field.type
 			}
 		}
-		field_refs := refs_allowed && !(s.indexed && logical == s.element_type && index == ELEMENT_SECOND)
+		// A record descriptor names each part; any other applies to all of them.
+		part := desc
+		if desc.kind == .Record && index < len(desc.fields) {
+			part = desc.fields[index]
+		}
 		if len(binding.group) > 0 {
-			if !check_foreach_pattern(k, s, binding.group, field.type, projected, field_refs) { return false }
+			if !check_foreach_pattern(k, s, binding.group, field.type, projected, part) { return false }
 			continue
 		}
-		if binding.is_ref && !field_refs {
-			errorf(k.c, binding.name.span, "L0457", "the iteration index is a counter and cannot be taken by reference")
+		if binding.is_ref && part.kind != .Mutable {
+			report_immutable_ref_leaf(k, s, binding, part)
 			return false
 		}
 		if !bind_pattern_leaf(k, s, &binding, field.type, projected) { return false }
 	}
 	return true
+}
+
+// An `&` leaf over a part the traversal does not lend mutably.
+@(private = "file")
+report_immutable_ref_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: Foreach_Binding, desc: Yield_Desc) {
+	#partial switch desc.kind {
+	case .Owned:
+		errorf(
+			k.c, binding.name.span, "L0457",
+			"`%s` is made by the traversal, like the `indexed()` counter, so it cannot be taken by reference",
+			binding.name.text,
+		)
+	case .Borrowed:
+		errorf(
+			k.c, binding.name.span, "L0457",
+			"`%s` is lent read-only, so it cannot be taken by reference",
+			binding.name.text,
+		)
+	case:
+		errorf(
+			k.c, binding.name.span, "L0457",
+			"`%s` is a record of parts lent separately; bind its fields, and take the mutable ones by reference",
+			binding.name.text,
+		)
+	}
+}
+
+// How a direct place loop hands over its element: the stored element as a
+// mutable place, a map's key read-only, and `indexed()`'s counter owned.
+place_loop_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
+	element := Yield_Desc{kind = .Mutable}
+	if s.kind == .Map {
+		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
+		fields[0], fields[1] = Yield_Desc{kind = .Borrowed}, element
+		element = Yield_Desc{kind = .Record, fields = fields}
+	}
+	if !s.indexed {
+		return element
+	}
+	fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
+	fields[0], fields[1] = element, Yield_Desc{kind = .Owned}
+	return Yield_Desc{kind = .Record, fields = fields}
 }
 
 // A leaf binds its logical type, or the projected record of pointers when both

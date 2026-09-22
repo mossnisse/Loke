@@ -718,7 +718,7 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 @(private = "file")
 walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	place_loop := foreach_is_place_loop(s)
-	iterable := place_loop ? mutable_foreach_root(graph.k.c, s) : s.iterable
+	iterable := s.iterable
 	iterated := walk_flow_expr(graph, iterable)
 	if graph.mode != .Lifecycle {
 		iterated = prov_reborrow_traversal(graph, iterated, expr_span(s.iterable), place_loop)

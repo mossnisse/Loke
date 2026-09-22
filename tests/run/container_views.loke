@@ -177,13 +177,13 @@ main :: proc() {
 	drop(owning);
 	fmt.println(saved.byte_len());
 
-	// Mutable map traversal is explicit through the value view.
+	// Mutable map traversal lends the value mutably and the key read-only.
 	named: map[string]int = {};
 	named["only"] = 5;
-	foreach (&value in named.values()) { value += 4; }
+	foreach (_, &value in named) { value += 4; }
 	fmt.println(named["only"]);
 	numbers: [dynamic]int = {};
 	numbers.append(1, 2);
-	foreach (&n, i in numbers.indexed()) { n = n*10 + i; }
+	foreach (&n, i in numbers[:].indexed()) { n = n*10 + i; }
 	foreach (n in numbers) { fmt.println(n); }
 }

@@ -74,11 +74,14 @@ Reverse_Iterable :: interface($Self: type) {
 	slot iter_reverse: proc(self: ^) -> Self.Iterator;
 }
 
+// Mutable traversal. A container's `iter_mut` takes `self: inout`; a mutable
+// view's takes a value, so this is a call on a mutable place rather than a slot
+// with one receiver. The iterator's `Yield` says which parts are lent mutably.
 Mutable_Iterable :: interface($Self: type) {
 	Self.Element -> type;
 	Self.Mut_Iterator -> type;
-	slot iter_mut: proc(self: inout Self) -> Self.Mut_Iterator;
-	Iterator(Self.Mut_Iterator, ^mut Self.Element);
+	(value: inout Self) value.iter_mut() -> Self.Mut_Iterator;
+	Iterator(Self.Mut_Iterator, Self.Mut_Iterator.Item);
 }
 
 Sequence :: interface($Self: type) {

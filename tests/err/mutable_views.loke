@@ -1,0 +1,53 @@
+package main;
+
+// design.md "Iteration protocol": `&` asks the iterable for a mutable
+// traversal and never reaches through a call to its root.
+
+// `Yield_Mutable` behind `iter` is read traversal; `&` needs `iter_mut`.
+Lender :: struct { cells: []mut int }
+Lender_Cursor :: struct { cells: []mut int, at: int }
+
+impl Lender {
+	Element :: int;
+	Iterator :: Lender_Cursor;
+	iter :: proc(self) -> Lender_Cursor { return {self.cells, 0}; }
+}
+
+impl Lender_Cursor {
+	Yield :: Yield_Mutable;
+	next :: proc(self: inout Lender_Cursor) -> Option(^mut int) {
+		if (self.at >= self.cells.len()) { return .none; }
+		value := &mut self.cells[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+adapters_over_containers :: proc() {
+	values := [dynamic]int{1, 2, 3};
+	foreach (&v, i in values.indexed()) { v += i; }
+	view := values.indexed();
+	foreach (&v, i in view) { v += i; }
+	table: map[int]int = {};
+	foreach (&v in table.values()) { v += 1; }
+	foreach (&key, value in table) { _ = value; }
+}
+
+only_through_iter :: proc(cells: []mut int) {
+	foreach (&c in Lender{cells}) { c += 1; }
+}
+
+// A stored mutable adapter holds the exclusive loan its source took.
+loans :: proc() {
+	values := [dynamic]int{1, 2, 3};
+	view := values[:].indexed();
+	n := values.len();
+	foreach (&v, i in view) { v += n + i; }
+}
+
+main :: proc() {
+	storage := [2]int{1, 2};
+	adapters_over_containers();
+	only_through_iter(storage[:]);
+	loans();
+}

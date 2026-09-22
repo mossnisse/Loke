@@ -16,6 +16,13 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 		if !ok { break }
 		sym := symbol_of(k.c, call.resolution.chosen_overload)
 		if sym == nil || sym.synth != .Adapter_View || len(call.bound) != 1 { break }
+		// design.md "Iteration protocol": `&` asks the adapter's value, never its
+		// root, so only a mutable view is peeled for a by-reference loop. Text and
+		// ranges still peel, to be refused for producing values.
+		if foreach_is_place_loop(s) && iteration_member(k, call.type, "iter_mut") == INVALID_SYMBOL &&
+		   !adapter_source_produces_values(k.c, call.bound[0]) {
+			break
+		}
 		kind := type_of(k.c, call.type).adapter_kind
 		if kind == .Indexed {
 			if indexed || reversed { return Name{} }
@@ -34,6 +41,13 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 	return reported
 }
 
+@(private = "file")
+adapter_source_produces_values :: proc(c: ^Compiler, source: Expr) -> bool {
+	if _, written := source.(^Expr_Range); written { return true }
+	info := underlying_info(c, expr_base(source).type)
+	return info != nil && (info.is_range || info.kind == .String || info.kind == .String_View)
+}
+
 // Whether indexed() preserves a pointer lent by its source.
 indexed_next_lends :: proc(c: ^Compiler, callee: ^Symbol) -> bool {
 	if callee.synth != .Indexed_Next || len(callee.params) == 0 {
@@ -45,7 +59,8 @@ indexed_next_lends :: proc(c: ^Compiler, callee: ^Symbol) -> bool {
 		return false
 	}
 	lent, held := symbol_of(c, handed.fields[ELEMENT_FIRST]), symbol_of(c, element.fields[ELEMENT_FIRST])
-	return lent != nil && held != nil && lent.type != held.type
+	// A mutable part is lent by the iterator, and ends before it advances.
+	return lent != nil && held != nil && lent.type != held.type && !type_carries_borrow(c, lent.type).mutable
 }
 
 iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_Id) -> Symbol_Id {
@@ -97,9 +112,11 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		kind = .Struct, name = intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, source), allocator = c.semantic_allocator)),
 		key = source, element = element, is_view = true, adapter_kind = kind,
 	})
-	// Nested views own their small source descriptor.
+	// Nested views own their small source descriptor, and so does a mutable
+	// view, whose capability is in the value rather than in a place.
 	source_info := underlying_info(c, source)
-	by_value := source_info.is_view || source_info.is_range || source_info.kind == .Slice || source_info.kind == .String_View
+	by_value := source_info.is_view || source_info.is_range || source_info.kind == .Slice ||
+	            source_info.kind == .String_View || is_mutable_view(k, source)
 	held := by_value ? source : TYPE_RAWPTR
 	fields := make([]Symbol_Id, 1, c.semantic_allocator)
 	fields[0] = new_field(c, "source", held, 0, public = false)
@@ -178,9 +195,82 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	if backward != INVALID_SYMBOL {
 		add_members(c, view, []Symbol_Id{adapter_proc(k, "iter_reverse", .Adapter_Iter, view, .Borrow, result_iterator, backward)})
 	}
+	if by_value && kind != .Copied {
+		add_mutable_adapter_members(k, view, source, kind)
+	}
 	member := adapter_proc(k, identifier_text(c, name), .Adapter_View, source, .Borrow, view)
 	c.adapter_members[key] = member
 	return member
+}
+
+// A type whose `iter_mut` takes no `inout` receiver: any value of it walks
+// mutably (design.md "By-reference iteration").
+is_mutable_view :: proc(k: ^Checker, type: Type_Id) -> bool {
+	iterator := associated_type_of(k, type, "Mut_Iterator")
+	if iterator == INVALID_TYPE { return false }
+	receiver, found := mutable_iteration_receiver(k, iteration_member(k, type, "iter_mut"), type, iterator)
+	return found && receiver != .Inout
+}
+
+// design.md "Iteration adapters": over a mutable view the adapter is a mutable
+// view too, holding its source by value and walking it through the source's own
+// `iter_mut`. Over a container it stays a read view.
+@(private = "file")
+add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Adapter_Kind) {
+	c := k.c
+	element := associated_type_of(k, source, "Element")
+	iterator := associated_type_of(k, source, "Mut_Iterator")
+	iter := iteration_member(k, source, "iter_mut")
+	receiver, found := mutable_iteration_receiver(k, iter, source, iterator)
+	if element == INVALID_TYPE || iterator == INVALID_TYPE || !found || receiver == .Inout {
+		return
+	}
+	yield, described := mutable_iterator_yield(k, iterator, no_span())
+	if !described { return }
+	item := yield_item_type(k, element, yield, no_span(), report = false)
+	next := iteration_member(k, iterator, "next")
+	if item == INVALID_TYPE || !iteration_proc_matches(k, symbol_of(c, next), iterator, .Inout, option_type(k, item)) {
+		return
+	}
+	if kind == .Reversed {
+		reverse := iteration_member(k, source, "iter_mut_reverse")
+		if _, reversible := mutable_iteration_receiver(k, reverse, source, iterator); !reversible { return }
+		add_members(c, view, []Symbol_Id{
+			new_associated_type(c, "Mut_Iterator", iterator, view),
+			adapter_proc(k, "iter_mut", .Adapter_Iter, view, .Borrow, iterator, reverse),
+			adapter_proc(k, "iter_mut_reverse", .Adapter_Iter, view, .Borrow, iterator, iter),
+		})
+		type_of(c, view).mutable = true
+		return
+	}
+	// `indexed()` lends the source's parts as the source does and owns its counter.
+	indexed := indexed_element_type(c, element)
+	parts := make([]Yield_Desc, 2, c.semantic_allocator)
+	parts[0], parts[1] = yield, Yield_Desc{kind = .Owned}
+	numbered := Yield_Desc{kind = .Record, fields = parts}
+	yielded := yield_item_type(k, indexed, numbered, no_span(), report = false)
+	descriptor := yield_desc_type(c, indexed, numbered)
+	if yielded == INVALID_TYPE || descriptor == INVALID_TYPE { return }
+	walker := new_type(c, Type_Info{
+		kind = .Struct, name = intern_identifier(c, fmt.aprintf("Indexed_Iterator(%s)", type_name(c, iterator), allocator = c.semantic_allocator)),
+		key = iterator, element = indexed, adapter_kind = .Indexed,
+	})
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[0] = new_field(c, "iterator", iterator, 0, public = false)
+	fields[1] = new_field(c, "index", TYPE_INT, 1, public = false)
+	walker_info := type_of(c, walker)
+	walker_info.fields = fields
+	walker_info.mangled = fmt.aprintf("Indexed_Mut_Iterator.%d", view, allocator = c.semantic_allocator)
+	walker_info.contributed += {.Iteration}
+	add_members(c, walker, []Symbol_Id{
+		adapter_proc(k, "next", .Indexed_Next, walker, .Inout, option_type(k, yielded), next),
+		new_associated_type(c, "Yield", descriptor, walker),
+	})
+	add_members(c, view, []Symbol_Id{
+		new_associated_type(c, "Mut_Iterator", walker, view),
+		adapter_proc(k, "iter_mut", .Adapter_Iter, view, .Borrow, walker, iter),
+	})
+	type_of(c, view).mutable = true
 }
 
 // copied() clones lent leaves and passes owned leaves through.

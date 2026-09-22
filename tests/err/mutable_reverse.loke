@@ -9,7 +9,9 @@ impl Source {
 	Mut_Iterator :: Cursor;
 	iter :: proc(self) -> Cursor { return {self.values, 0}; }
 	iter_reverse :: proc(self) -> Cursor { return {self.values, 0}; }
-	iter_mut :: proc(self: inout Source) -> Cursor { return {self.values, 0}; }
+	// A value receiver: `Source` is a mutable view, so `reversed()` over it would
+	// be one too, if it could walk backwards.
+	iter_mut :: proc(self) -> Cursor { return {self.values, 0}; }
 }
 
 impl Cursor {

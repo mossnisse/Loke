@@ -2075,7 +2075,6 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> []int {
 	iterable := s.iterable
 	mutable := foreach_is_place_loop(s)
-	if mutable { iterable = mutable_foreach_root(graph.k.c, s) }
 	// A mutable carrier is reborrowed by the traversal instead: the elements live
 	// in what it views, not in the variable.
 	if type := expr_base(iterable).type; carrier_is_mutable(graph.k.c, type) && !type_is_region_provider(graph.k.c, type) {

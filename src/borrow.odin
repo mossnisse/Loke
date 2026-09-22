@@ -240,6 +240,10 @@ carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if info == nil {
 		return false
 	}
+	// An adapter over a mutable view is one (design.md "Iteration adapters").
+	if info.adapter_kind != .None && info.is_view {
+		return info.mutable
+	}
 	#partial switch info.kind {
 	case .Pointer, .Slice, .Dyn:
 		return info.mutable

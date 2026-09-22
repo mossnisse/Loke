@@ -397,33 +397,17 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	branch_if(e, finished, loop.done, loop.body)
 
 	begin_step(e, loop)
-	if foreach_is_place_loop(s) {
-		// `&value` or `key, &value`: the value names the stored slot, and the
-		// immutable key borrows the stored key, so neither is cloned.
-		key_binding, value_binding := -1, 0
-		if len(s.bindings) == 2 {
-			key_binding, value_binding = 0, 1
-		}
-		if key_binding >= 0 {
-			bind_foreach_field(e, s.bindings[key_binding].symbol, Foreach_Field{
-				type = container_key(e.c, container), address = load(e, "ptr", key_out), place = true,
-			})
-		}
-		bind_foreach_field(e, s.bindings[value_binding].symbol, Foreach_Field{
-			type = container_element(e.c, container), address = load(e, "ptr", value_out), place = true,
-		})
-	} else {
-		// Two names bind the halves where they are stored; one name gets a built
-		// `{key, value}` entry with both halves copied in.
-		fields := []Foreach_Field{
-			{type = container_key(e.c, container), address = load(e, "ptr", key_out),
-			 place = s.borrows, stored = true},
-			{type = container_element(e.c, container), address = load(e, "ptr", value_out),
-			 place = s.borrows, stored = true},
-		}
-		numbered := counter == "" ? "" : load(e, "i64", counter)
-		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
+	// The halves bind where the table stores them; `key, &value` makes the value
+	// a place, and the key stays read-only. One name gets a built entry.
+	place := s.borrows || foreach_is_place_loop(s)
+	fields := []Foreach_Field{
+		{type = container_key(e.c, container), address = load(e, "ptr", key_out),
+		 place = place, stored = true},
+		{type = container_element(e.c, container), address = load(e, "ptr", value_out),
+		 place = place, stored = true},
 	}
+	numbered := counter == "" ? "" : load(e, "i64", counter)
+	bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	finish_step(e, s, loop)
 	if counter != "" {
 		step_counter(e, counter, "i64")
@@ -641,7 +625,10 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	begin_step(e, loop)
 	numbered := counter == "" ? "" : load(e, "i64", counter)
 	// `next` hands over an owned `Element`, so the step takes it without a copy.
-	if foreach_is_place_loop(s) {
+	if payload := option_payload(e.c, option); foreach_is_place_loop(s) && !type_is_pointer(e.c, payload) {
+		// A record `Yield` with a mutable part: each lent part is a place.
+		bind_foreach_fields(e, s, with_index(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload), numbered))
+	} else if foreach_is_place_loop(s) {
 		logical := s.indexed ? foreach_yielded_type(e, s) : s.element_type
 		address := emit_union_payload(e, option, pointer_to(e.c, logical, true), slot)
 		fields := []Foreach_Field{{type = logical, address = address, place = true, stored = true}}

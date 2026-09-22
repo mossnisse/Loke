@@ -26,7 +26,7 @@ increment :: proc(xs: inout $S) where interfaces.Mutable_Iterable(S) {
 main :: proc() {
 	xs: Small = {};
 	xs.append(10, 20, 30);
-	foreach (&value, index in xs.indexed()) { value += index; }
+	foreach (&value, index in xs.slice().indexed()) { value += index; }
 	fmt.println(xs);
 	increment(inout xs);
 	fmt.println(xs);
@@ -46,11 +46,11 @@ main :: proc() {
 	grown := [dynamic]int{3, 4};
 	increment(inout grown);
 	fmt.println(grown);
-	foreach (&value in grown.reversed()) { value += 10; }
+	foreach (&value in grown[:].reversed()) { value += 10; }
 	fmt.println(grown);
 	table: map[int]int = {};
 	table[1] = 6;
-	foreach (&value in table.values()) { value += 1; }
+	foreach (_, &value in table) { value += 1; }
 	fmt.println(table[1]);
 	pairs := [1]Pair{{2, 3}};
 	foreach ((&left, right) in pairs) { left += right; }

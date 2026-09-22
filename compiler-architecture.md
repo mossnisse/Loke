@@ -313,7 +313,7 @@ be file-private.
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Closed enum validation, tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
-| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Borrowed iterable adapters, mutable element lending over arrays, dynamic arrays, and mutable slices, and the `Yield` descriptors that decide whether a loop binding owns or borrows its element. |
+| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Iterable adapters, which are mutable views over a mutable view; mutable lending over arrays, dynamic arrays, mutable slices, and maps, and the `iter_mut` protocol check; and the `Yield` descriptors that decide whether a loop binding owns, borrows, or mutably borrows each part. |
 
 ### Generics and compile-time features
 

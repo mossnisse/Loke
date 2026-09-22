@@ -124,9 +124,9 @@ main :: proc() {
 	// Mutable traversal uses the same adapters as borrowing traversal.
 	foreach (&v in nums) { v = v*2; }
 	foreach (v, i in nums.indexed()) { fmt.println(i*100 + v); }
-	foreach (&v, i in nums.indexed()) { v = v + i; }
+	foreach (&v, i in nums[:].indexed()) { v = v + i; }
 	foreach (v in nums) { fmt.println(v); }
-	foreach (&value in named.values()) { value += 1; }
+	foreach (_, &value in named) { value += 1; }
 	fmt.println(named["only"]);
 
 	// A user iterable needs only `Element`, `Iterator`, `iter`, and `next`.

@@ -2,8 +2,8 @@ L0564
 @12:12
 a string yields decoded code points, so it cannot be iterated by reference
 L0457
-@15:2
-a map entry is not a mutable element; iterate `map.values()` to mutate values
+@15:12
+`key` is lent read-only, so it cannot be taken by reference
 L0587
 @18:8
 `in` tests a `map[K]V` for a key, found `[]int`
