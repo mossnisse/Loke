@@ -5282,6 +5282,28 @@ read_setting :: proc(text: string_view) -> Result(int, App_Error) {
 
 This is the only error adaptation the language provides. Inspecting or logging a failure uses the same `switch` and mapping facilities; there is no second, implicit conversion path between error types.
 
+### Streaming a fallible source
+
+A source whose every step can fail answers `Result(Option(T), E)`: a value, the end of the input, or a failure. The three states are distinct — reaching the end is not a failure — so such a source is not an [iterable](#iteration-protocol), because `foreach` has nowhere to put the error. The language adds no second loop form for it. An ordinary loop, `or_return`, and a switch are the whole idiom:
+
+```odin
+count_entries :: proc(directory: string_view) -> Result(int, io.Error) {
+	reader := fs.read_directory(directory) or_return;
+	total := 0;
+	for (;;) {
+		entry := reader.next() or_return;
+		switch (entry) {
+		case .some(found):
+			total += 1;        // finish with `found` before the next step
+		case .none:
+			return .ok(total);
+		}
+	}
+}
+```
+
+Each step propagates its own failure, so the loop belongs in a procedure whose result is a compatible fallible union; a caller that continues afterwards calls a helper like this one. A yielded value that borrows the source — an entry naming the reader's own buffer — is valid only until the next step, and the switch arm is where it is used. A move-only payload is consumed by the switch, written `switch (move(entry))`.
+
 ## Panics and unwinding
 
 A **panic** is an unrecoverable runtime fault. In required compile-time procedure evaluation, it produces a compilation diagnostic with the evaluator call stack. Runtime panics arise from:

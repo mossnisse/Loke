@@ -227,8 +227,7 @@ main :: proc() {
 	fmt.println(fs.read_text(renamed) or_else no_text());
 
 	// The directory reader yields every entry once, and skips `.` and `..`.
-	entries := count_entries(directory);
-	fmt.println(entries);
+	fmt.println(count_entries(directory) or_else -1);
 
 	clean_up(directory);
 	fmt.println(fs.exists(directory) or_else true);
@@ -239,28 +238,27 @@ main :: proc() {
 no_text :: proc() -> string { panic("a file the test just wrote could not be read"); }
 no_file :: proc() -> fs.File { panic("a file the test just created could not be opened"); }
 
-// The reader is move-only and closes its search handle in `drop`, so this
-// collects what it needs and lets the scope end.
-count_entries :: proc(directory: string_view) -> int {
-	reader: fs.Directory_Reader;
-	switch (opened in fs.read_directory(directory)) {
-	case .ok:  reader = move(opened);
-	case .err: return -1;
-	}
+// The documented shape for a fallible source (design.md "Streaming a fallible
+// source"): one `or_return` for the failure, one switch for the end. The reader
+// is move-only and closes its search handle in `drop`, so the scope ending is
+// the close.
+count_entries :: proc(directory: string_view) -> Result(int, io.Error) {
+	reader := fs.read_directory(directory) or_return;
 	total := 0;
 	for (;;) {
-		switch (outcome in reader.next()) {
-		case .ok:
-			switch (outcome) {
-			case .some(entry):
-				if (entry.name.len() == 0) { return -3; }
-				total += 1;
-			case .none: break;
+		entry := reader.next() or_return;
+		switch (entry) {
+		case .some(found):
+			// The name borrows the reader's own buffer, valid until the next step,
+			// so it is read here rather than kept.
+			if (found.name.len() == 0) {
+				return .err(io.make_error(.Other, .Read_Directory));
 			}
-		case .err: return -2;
+			total += 1;
+		case .none:
+			return .ok(total);
 		}
 	}
-	return total;
 }
 
 // Removes every file, then the directories. `remove` on a missing path is not

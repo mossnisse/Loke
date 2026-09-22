@@ -688,6 +688,9 @@ and disposes of its copy — but the reason for streaming is the copy itself, no
 the old rejection.) The reader yields one entry at a time, borrows
 its name into a caller-visible buffer valid until the next `next`, and closes its
 platform search handle in `drop`. A caller wanting an array collects one itself.
+Because `next` reports both the end and a failure, the reader is not a `foreach`
+iterable; the loop that walks it is design.md "Streaming a fallible source", and
+`tests/run/lib_fs` walks a directory with it.
 
 `exists` answers `.ok(false)` only for a definite not-found result; permission
 and I/O failures remain errors. `Metadata` initially exposes kind, byte size, and

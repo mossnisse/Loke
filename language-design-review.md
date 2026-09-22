@@ -753,6 +753,19 @@ This example belongs inside a compatible Result-returning helper. If processing 
 
 Keep `Result(Option(T), E)`: its three states are not accidental type complexity. EOF is different from failure.
 
+*Recommendation.*
+
+1. Adopt the checked numeric conversion. It is the one bullet with no workaround: a written `To(value)` wraps by specification, so validating input has no spelling at all today.
+2. Adopt the streaming loop, as documentation plus one walk written in the idiom. Half of it exists already — `examples/streaming.loke` is the same shape over `file.read` — and the directory reader, the one source that needs it, is described by a comment that is now wrong.
+3. Skip recoverable consuming insertion. Check-then-act already covers it and is exact: `Small_Array` documents `space()`/`is_full()` for this, a dynamic array has `try_reserve`, and `contains` precedes `find_or_insert`. `Rejected(T, E)` buys one call instead of two and puts a new move-only error shape into every insertion API.
+4. Skip `split_at_mut` until a consumer exists. Nothing in `core` or `base` splits mutable storage — sorting is the runtime introsort — and it cannot be written in the library, since `core:unsafe` has no slice-from-a-pointer member. Two sibling mutable views of one root are also exactly what proposal 4 just made an error, so this would be a hole in a rule three commits old.
+5. Skip `Box(T)`. The whole library contains one `new`, inside `shared`. `shared(T)` covers shared ownership and `[dynamic]T` covers arrays, and comments.md's "Owning runtime polymorphism" already holds the question with the list of what a proposal must settle.
+
+*Decision (22 September 2026).* Adopted as recommended: items 1 and 2 built, items 3 to 5 declined with the reasons above.
+
+1. A checked integer conversion. *Done:* `math.to(To, value) -> Option(To)` over `interfaces.Integral` and `interfaces.Ordered`, twelve lines in `core:math` and no compiler change. The check is a round trip plus a sign comparison, because the round trip alone always succeeds between two types of the same width — `i32(-1)` converts to `u32` and back unchanged, and only the sign test rejects it. `Integral` is what excludes floats, whose conversions round rather than wrap; nothing in the body needs its bit operations. design.md's "Type conversion" names it beside the wrapping rule it exists to escape, as the integer twin of `Enum.from_int`, which is the precedent for a validating conversion answering an `Option`. `tests/run/lib_math_bits` pins both same-width rows, both narrowing directions, and the identity case.
+2. The fallible streaming loop, documented and written down once. *Done:* design.md's "Streaming a fallible source" states why a `Result(Option(T), E)` source is not an iterable — `foreach` has nowhere to put the error — and gives the loop: `or_return` for the failure, a switch for the end, a borrowed yield used inside the arm, and `switch (move(entry))` for a move-only payload. No new control-flow syntax. `core:fs`'s directory-reader comment loses the claim that `foreach` over a managed element is rejected, which stopped being true when the loop gained ownership of its copy, and points at the section instead. `tests/run/lib_fs.count_entries` is rewritten in the idiom: it returns `Result(int, io.Error)` rather than the three sentinel integers it used to answer with, and its output is unchanged.
+
 7. **Improve certainty and explanations without demanding proofs of good behavior.**
 
 Use a small forward analysis to diagnose an actually definite nil at a use. Unknown calls and possible writes make the state unknown. Do not reject a pointer merely because it might be nil, and do not add a mandatory nullable/nonnullable type hierarchy for this.

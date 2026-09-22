@@ -283,10 +283,24 @@ remove_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 // A **move-only streaming reader**, not an owning array.
 //
 // This is not a preference. A `[dynamic]Directory_Entry` whose entries own their
-// name cannot be iterated by value today: `foreach` over a managed element is
-// rejected (L0504). An owning array a caller cannot loop over is not the simpler
-// option, so the reader yields one entry at a time, and a caller that wants an
-// array collects one itself.
+// name would retain and release that name at every step, and a walk that only
+// reads each name should not pay for a copy of it. The reader borrows instead,
+// yielding one entry at a time; a caller that wants an array collects one
+// itself.
+//
+// `next` answers `Result(Option(Directory_Entry), io.Error)`, so the reader is
+// not a `foreach` iterable: the end of the directory and a broken enumeration
+// are different answers and `foreach` has nowhere to put the second. The loop
+// to write is design.md "Streaming a fallible source":
+//
+//     reader := fs.read_directory(directory) or_return;
+//     for (;;) {
+//         entry := reader.next() or_return;
+//         switch (entry) {
+//         case .some(found): use(found.name);  // valid until the next step
+//         case .none:        return .ok;
+//         }
+//     }
 read_directory :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(Directory_Reader, io.Error) {
