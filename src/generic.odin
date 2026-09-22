@@ -93,6 +93,9 @@ Instance :: struct {
 	// Why a silent probe rejected this cached instance, for a later request that
 	// reports.
 	rejection:    Instance_Rejection,
+	// The `where` bound a silent probe found false, so an overload note can name
+	// it; a later request that reports re-checks the bounds itself.
+	failed_bound: Expr,
 }
 
 // The head diagnostic of a contained rejection, kept rather than the whole
@@ -1593,7 +1596,7 @@ instantiate_procedure_signature :: proc(
 		}
 		return false
 	}
-	if !check_where_clauses(k, literal.where_clauses, instance.span, name, report) {
+	if !check_where_clauses(k, literal.where_clauses, instance.span, name, report, false_bound = &instance.failed_bound) {
 		return false
 	}
 	return true
@@ -1649,7 +1652,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 // not a compile-time boolean at all.
 check_where_clauses :: proc(
 	k: ^Checker, clauses: []Expr, span: Span, what: string, report: bool,
-	report_malformed := false,
+	report_malformed := false, false_bound: ^Expr = nil,
 ) -> bool {
 	for clause in clauses {
 		mark := len(k.c.diagnostics)
@@ -1669,6 +1672,9 @@ check_where_clauses :: proc(
 		}
 		if !report && !(failed && report_malformed) {
 			truncate_diagnostics(k.c, mark)
+			if !failed && false_bound != nil {
+				false_bound^ = clause
+			}
 			return false
 		}
 		if failed {
@@ -1690,6 +1696,19 @@ check_where_clauses :: proc(
 		return false
 	}
 	return true
+}
+
+// Why a silent probe's `where` bounds rejected `instance`, for an overload note.
+// Read in the instance's scope, as the bound was, and leaves no diagnostic.
+failed_bound_reason :: proc(k: ^Checker, template: ^Generic_Template, instance: ^Instance) -> string {
+	saved := enter_instance(k, template, instance.scope)
+	defer restore_checker_location(k, saved)
+	mark := len(k.c.diagnostics)
+	k.c.speculation_depth += 1
+	text := failed_bound_text(k, instance.failed_bound)
+	k.c.speculation_depth -= 1
+	truncate_diagnostics(k.c, mark)
+	return text
 }
 
 where_bound_text :: proc(c: ^Compiler, clause: Expr) -> string {

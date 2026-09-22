@@ -452,6 +452,8 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		reason := "its `where` bounds are not satisfied by these arguments"
 		if instance != nil && instance.rejection.message != "" {
 			reason = instance.rejection.message
+		} else if instance != nil && instance.failed_bound != nil {
+			reason = failed_bound_reason(k, template, instance)
 		}
 		return Candidate {
 			symbol   = template.symbol,

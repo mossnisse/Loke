@@ -33,10 +33,12 @@ borrowed :: proc(out: inout int) {
 	out = view[0];
 }
 
-// `sort_by` checks the callable shape at the public generic boundary.
+// `sort_by` takes a `Comparator` or a plain procedure, and says why neither
+// fits: the missing `call`, or the procedure's element type.
 bad_comparator :: proc() {
 	values := []mut Opaque{Opaque{2}, Opaque{1}};
 	slice.sort_by(values, No_Comparator{});
+	slice.sort_by(values, proc(left, right: int) -> bool { return left < right; });
 }
 
 main :: proc() {

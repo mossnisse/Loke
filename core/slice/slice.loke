@@ -22,12 +22,30 @@ Comparator :: interface($C, $T: type) {
 	slot call: proc(self, left, right: T) -> bool;
 }
 
-// Sorts in place according to `comparator`. The package-private intrinsic owns
-// only the bridge to the shared byte-relocating runtime introsort: it receives
-// the comparator's address for this call and generates a typed adapter to
-// `C.call`. The public operation and all callback state remain ordinary Loke.
-sort_by :: proc(values: []mut $T, comparator: $C) where Comparator(C, T) {
+// Sorts in place according to `comparator`: a `Comparator` value, or a plain
+// procedure, which is a comparator with no state.
+sort_by :: proc{sort_by_comparator, sort_by_procedure};
+
+// The package-private intrinsic owns only the bridge to the shared
+// byte-relocating runtime introsort: it receives the comparator's address for
+// this call and generates a typed adapter to `C.call`. The public operation and
+// all callback state remain ordinary Loke.
+sort_by_comparator :: proc(values: []mut $T, comparator: $C) where Comparator(C, T) {
 	sort_by_intrinsic(values, &comparator);
+}
+
+// An ordinary record around the procedure, so the procedure path is checked and
+// lowered exactly as a comparator a caller writes by hand.
+sort_by_procedure :: proc(values: []mut $T, less: proc(left, right: T) -> bool) {
+	comparator := Procedure_Comparator(T){less};
+	sort_by_intrinsic(values, &comparator);
+}
+
+@(private)
+Procedure_Comparator :: struct($T: type) { less: proc(left, right: T) -> bool }
+
+impl Procedure_Comparator($T) {
+	call :: proc(self, left, right: T) -> bool { return self.less(left, right); }
 }
 
 // Ascending, in place. No allocation, and no comparator: `Ordered` is the

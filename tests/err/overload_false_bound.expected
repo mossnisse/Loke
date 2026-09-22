@@ -1,0 +1,7 @@
+L0392
+@21:6
+`label` does not apply: `Plain` does not satisfy `Named(Plain)`: `Plain` has no method `name` with this signature
+L0392
+@22:6
+`wide` does not apply: its bound `N > 2` does not hold
+!its `where` bounds are not satisfied

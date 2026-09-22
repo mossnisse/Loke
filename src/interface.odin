@@ -411,19 +411,42 @@ report_interface_failure :: proc(
 // A `where` bound that is a bare interface application reports the requirement
 // that failed. Returns false for any other bound, which reports itself.
 report_failed_interface_bound :: proc(k: ^Checker, clause: Expr, span: Span) -> bool {
+	info, args, ok := bound_interface_application(k, clause)
+	return ok && !interface_satisfied(k, info, args, span, report = true)
+}
+
+// The same failure as text, for a note on a candidate a false bound filtered
+// out: the interface and its failed requirement, or else the bound as written.
+failed_bound_text :: proc(k: ^Checker, clause: Expr) -> string {
+	if info, args, ok := bound_interface_application(k, clause); ok {
+		if failure, held := interface_check(k, info, args, expr_span(clause)); !held {
+			subject := len(args) > 0 && args[0].is_type ? args[0].type : failure.subject
+			text := fmt.aprintf(
+				"`%s` does not satisfy `%s`",
+				type_name(k.c, subject), interface_application_text(k.c, info, args),
+				allocator = k.c.semantic_allocator,
+			)
+			if failure.reason != "" {
+				text = fmt.aprintf("%s: %s", text, failure.reason, allocator = k.c.semantic_allocator)
+			}
+			return text
+		}
+	}
+	return fmt.aprintf("its bound `%s` does not hold", where_bound_text(k.c, clause), allocator = k.c.semantic_allocator)
+}
+
+@(private = "file")
+bound_interface_application :: proc(k: ^Checker, clause: Expr) -> (^Interface_Info, []Generic_Arg, bool) {
 	call, is_call := clause.(^Expr_Call)
 	if !is_call {
-		return false
+		return nil, nil, false
 	}
 	info := interface_info_for(k, named_callee_symbol(k, call.callee))
 	if info == nil {
-		return false
+		return nil, nil, false
 	}
 	args, ok := bound_arguments(k, call, info)
-	if !ok {
-		return false
-	}
-	return !interface_satisfied(k, info, args, span, report = true)
+	return info, args, ok
 }
 
 interface_application_text :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Arg) -> string {

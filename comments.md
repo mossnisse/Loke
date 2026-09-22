@@ -422,8 +422,9 @@ ordinary language facilities while keeping procedure values thin.
 
 `core:slice.sort_by` is the first standard generic callback algorithm built on
 that choice. Its comparator is an ordinary record with an immutable `call` method,
-so configuration and checked borrows remain typed and allocation-free. The
-compiler erases addresses only inside a generated call-scoped adapter to the
+so configuration and checked borrows remain typed and allocation-free. A plain
+procedure is accepted too: the library wraps it in such a record, so it is checked
+and lowered like one written by hand. The compiler erases addresses only inside a generated call-scoped adapter to the
 shared runtime introsort; the runtime neither owns nor retains the comparator.
 This keeps raw relocation and one copy of the introsort below the language
 boundary without making `rawptr` part of the user-facing callback protocol.

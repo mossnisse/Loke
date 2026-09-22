@@ -1,0 +1,23 @@
+package main;
+
+// A group member that a `where` bound filters out says which bound failed and,
+// for an interface, which requirement, not only that its bounds failed.
+
+Named :: interface($T: type) {
+	slot name: proc(self) -> string_view;
+}
+
+Plain :: struct { id: int }
+
+label      :: proc(value: $T) -> string_view where Named(T) { return value.name(); }
+label_pair :: proc(value: $T, other: T) -> string_view { return "pair"; }
+describe   :: proc{label, label_pair};
+
+wide   :: proc(values: [$N]int) -> int where N > 2 { return N; }
+padded :: proc(values: [$N]int, extra: bool) -> int { return 0; }
+count  :: proc{wide, padded};
+
+main :: proc() {
+	_ = describe(Plain{1});
+	_ = count([2]int{1, 2});
+}

@@ -16,6 +16,9 @@ no overload of `swap` applies to these arguments
 L0512
 @32:2
 `numbers` cannot be modified here
-L0444
-@39:2
-`No_Comparator` does not satisfy `Comparator(No_Comparator, Opaque)`
+L0392
+@40:2
+`sort_by_comparator` does not apply: `No_Comparator` does not satisfy `Comparator(No_Comparator, Opaque)`: `No_Comparator` has no method `call` with this signature
+L0392
+@41:2
+`sort_by_procedure(Opaque)` does not apply: argument 2 is `proc(int, int) -> bool` where `proc(Opaque, Opaque) -> bool` is wanted

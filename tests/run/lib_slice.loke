@@ -33,6 +33,9 @@ impl Field_Order {
 	}
 }
 
+// A plain procedure is a comparator with no state.
+by_rank :: proc(left, right: Card) -> bool { return left.rank < right.rank; }
+
 // A comparator that is not a strict weak ordering. Nothing promises the result
 // is sorted, but the runtime introsort must still stay inside the slice and
 // finish: `sort_partition`'s scan away from the pivot is bounded by `low`
@@ -96,6 +99,12 @@ main :: proc() {
 	fmt.println(cards[0].rank, cards[1].rank, cards[2].rank);
 	descending = false;
 	slice.sort_by(cards, Field_Order{false, &descending});
+	fmt.println(cards[0].tag, cards[1].tag, cards[2].tag);
+
+	// The procedure, then a literal: neither needs a record around it.
+	slice.sort_by(cards, by_rank);
+	fmt.println(cards[0].rank, cards[1].rank, cards[2].rank);
+	slice.sort_by(cards, proc(left, right: Card) -> bool { return right.tag < left.tag; });
 	fmt.println(cards[0].tag, cards[1].tag, cards[2].tag);
 
 	// Past `LOKE_RT_SORT_SMALL`, so the quicksort partition runs rather than the

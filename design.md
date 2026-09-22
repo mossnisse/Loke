@@ -779,9 +779,10 @@ Comparator :: interface($C, $T: type) {
 }
 ```
 
-The comparator may be a record containing configuration or checked borrows. It
-is borrowed for the call, retained nowhere, and sorting allocates nothing. Its
-`call` method must define a strict weak ordering. The sort is not stable, so
+The comparator may be a record containing configuration or checked borrows, or
+a plain `proc(left, right: T) -> bool`, which is a comparator with no state. It
+is borrowed for the call, retained nowhere, and sorting allocates nothing. It
+must define a strict weak ordering. The sort is not stable, so
 elements for which neither direction is before the other may appear in either
 order. A comparator that is not a strict weak ordering leaves the elements in an
 unspecified order rather than reaching past them: the sort is still a
@@ -807,6 +808,9 @@ impl By_Tag {
 
 cards := []mut Card{Card{2, 20}, Card{1, 30}};
 slice.sort_by(cards, By_Tag{true});
+
+by_rank :: proc(left, right: Card) -> bool { return left.rank < right.rank; }
+slice.sort_by(cards, by_rank);
 ```
 
 ### Dynamic arrays
