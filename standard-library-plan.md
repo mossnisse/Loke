@@ -1053,11 +1053,6 @@ was enough to make an unrelated corpus program fail.
 - **Slicing a view at an offset that splits a code point is a runtime failure.**
   Search therefore compares bytes and slices only at an offset that has already
   matched — which is a boundary, because UTF-8 is self-synchronising.
-- **An `impl` member must be `@(public)` for a generic in another package to
-  call it.** A type in `main` implementing `io.Reader` must mark its `read`
-  public, or the `where` bound passes and the instantiated body then fails to
-  find the member. That asymmetry is a compiler wart worth its own fix; the
-  library documents the requirement rather than working around it.
 - **A by-value `foreach` over a managed element copies it per step.** The loop
   owns that copy and disposes of it at the end of the step, so the rejection this
   plan was written against is gone; what remains is the cost. It is still why

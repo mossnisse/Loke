@@ -3832,6 +3832,8 @@ switch (x in set) { }     // variant switch: `x` binds the payload of `set`
 switch ((x in set)) { }   // value switch on the boolean `x in set`
 ```
 
+Rejecting such a header because its subject is not a union must say that the header bound a payload and give the second pair of parentheses, since the program the programmer wrote contains no payload.
+
 A union may instead put the payload binding in its individual case. This keeps
 unrelated payload names and types out of the other branches:
 
@@ -4803,7 +4805,7 @@ fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 
 A [slice literal](#slice-literals) behaves differently, and the difference is what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation that nothing keeps alive past the statement.
 
-The default parameter binding itself is a callee-local read-only value, whatever its type. Taking `&parameter`, slicing it, or viewing storage it owns borrows that value and cannot produce a returned borrow. An `inout` parameter aliases the caller's root, so a borrow returned from it is derived from that root, as is one reached through a `^T` parameter or a [`self: ^` receiver](#receiver-forms): the pointer designates the caller's value, which is what lets `proc(self: ^) -> []T` hand back a view of the receiver's own inline storage. The immutable loan invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result contract below records; a procedure value retains this precision when its type carries that contract.
+The default parameter binding itself is a read-only value the callee cannot outlive, whatever its type: storage a managed owner holds stays the caller's, and the callee only borrows it for the call. Taking `&parameter`, slicing it, or viewing storage it owns borrows that value and cannot produce a returned borrow. An `inout` parameter aliases the caller's root, so a borrow returned from it is derived from that root, as is one reached through a `^T` parameter or a [`self: ^` receiver](#receiver-forms): the pointer designates the caller's value, which is what lets `proc(self: ^) -> []T` hand back a view of the receiver's own inline storage. The immutable loan invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result contract below records; a procedure value retains this precision when its type carries that contract.
 
 A checked pointer to an allocation root created by `new` or `new_clone` may be returned because the allocation is not callee-local storage. The pointer's root provenance and the allocation root's region provenance follow the result. This transfers release responsibility by API convention, not by making `^T` an owning type; the compiler does not require every manually allocated root to be freed.
 

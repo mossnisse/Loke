@@ -812,6 +812,21 @@ Do not remove switch header bindings solely because branch-local bindings now ex
 
 Keep compile-time evaluation hermetic. File/network access during compilation, declaration-generating macros, purity effects, and general owning type erasure should each arrive with a concrete program that the current model cannot reasonably express.
 
+*Recommendation.*
+
+1. The six "keep" paragraphs ask for nothing. `defer`, enum syntax, structural interfaces with `static_assert(Interface(T))`, `hook(convert/copy/drop)`, switch header bindings and a hermetic evaluator are all here and none is scheduled for removal. Agreeing costs nothing and builds nothing.
+2. Adopt the membership diagnostic. `switch (key in counts)` over a map answers "a type switch needs a union or an `any_view`, found `map[string]int`" under `counts`, and never says that `key in counts` was read as a payload binding or that the membership test is `switch ((key in counts))`. The parser records the header binding already, so the reading is known where the rejection is written.
+3. Skip the sweep of examples to branch-local payload names. The same paragraph that asks for it argues the header form must stay; rewriting the examples away from it teaches the form nobody would then find.
+4. Of the three documentation contradictions, two are left. The directory-reader comment no longer mentions managed-element iteration. The standard-library record's limits list mostly holds under probe — two names in one `impl` block still collide (L0409), a typeless parameter default is still rejected (L0408), and its `foreach` entry already records that the rejection is gone — but it still says a type in `main` must mark its `read` `@(public)` for `io.read_to_end` to reach it, a "compiler wart worth its own fix" that the fix has since removed: design.md "Interface bodies" reaches a slot through its own lookup, and a probe with a private `read` builds and runs. The other is the procedure-boundary paragraph calling a default parameter binding "callee-local", where the parameter section says a managed owner's storage is the caller's and is shared for the call.
+5. The delivery order and the acceptance table are a summary of proposals 1 to 7, not new asks. Each row restates a decision recorded above.
+
+*Decision (22 September 2026).* Adopted as recommended: item 2 built and item 4's remaining contradictions fixed; items 1, 3 and 5 need no change.
+
+1. A membership header that says what it did. *Done:* the L0426 rejection adds a note at the binding when the header was written `name in expression` — the only way a header binding is spelled — saying that the name binds a payload and that the membership test needs the second pair of parentheses. design.md's `switch statement` section requires the note, beside the existing rule about which meaning the header has. `tests/err/switch_cases` covers it.
+2. Storage a parameter does not own. *Done:* the procedure-boundary paragraph no longer calls the default binding callee-local. It is a read-only value the callee cannot outlive, and storage a managed owner holds stays the caller's, borrowed for the call — which is what the parameter section and the probes both say, and it keeps the consequence the paragraph exists for: no borrow of it can be returned.
+3. A limit that is gone, removed. *Done:* the `@(public)` entry is deleted from the standard-library record's limits. `tests/run/lib_io`'s `Short_Reader` drops its `@(public)` and says why, so the reader the record described is now the regression test for the fix.
+4. Found on the way. *Done:* `strings.init` built its result from a local at its last use and so cloned it, which put an L0507 warning from `core:strings` into every program that made a builder — seven of the library tests. It now moves the buffer in.
+
 **Delivery order and acceptance criteria**
 
 Start with combination A and the semantic inconsistencies: preserve the probe cases as focused regression tests when changes are implemented, settle mutable subview aliasing, improve diagnostic wording, add a stateless callable path, and specify recoverable consuming insertion.

@@ -303,6 +303,16 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 			"a type switch needs a union or an `any_view`, found `%s`",
 			type_name(k.c, subject),
 		)
+		// A header binding is only ever written `name in expression`, which is
+		// always a payload binding (design.md "switch statement"). A membership
+		// test written there arrives here instead, and nothing above says why.
+		if s.binding.text != "" {
+			add_notef(
+				k.c, s.binding.span,
+				"`%s in ...` in a switch header binds a payload; the membership test is `switch ((%s in ...))`",
+				s.binding.text, s.binding.text,
+			)
+		}
 		return Flow_Info{}
 	}
 

@@ -7,3 +7,7 @@ this value is already covered by an earlier case
 L0366
 @24:2
 a switch over `int` needs a default case
+L0426
+@31:17
+a type switch needs a union or an `any_view`
+binds a payload; the membership test is

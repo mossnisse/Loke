@@ -13,7 +13,8 @@ Short_Reader :: struct {
 }
 
 impl Short_Reader {
-	@(public)
+	// Deliberately not `@(public)`: `io.read_to_end` reaches it through the
+	// `Reader` slot, whatever this package exports.
 	read :: proc(self: inout Short_Reader, destination: []mut u8) -> Result(int, io.Error) {
 		if (destination.len() == 0) { return .ok(0); }
 		if (self.at >= self.source.len()) {

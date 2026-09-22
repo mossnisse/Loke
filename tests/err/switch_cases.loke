@@ -27,8 +27,16 @@ open :: proc(n: int) {
 	}
 }
 
+membership :: proc(counts: map[string]int, key: string) {
+	switch (key in counts) {
+	case true:
+	case:
+	}
+}
+
 main :: proc() {
 	partial(Colour.Red);
 	duplicated(1);
 	open(1);
+	membership(map[string]int{}, "a");
 }
