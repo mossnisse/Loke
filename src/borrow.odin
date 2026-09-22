@@ -200,13 +200,14 @@ empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 	}
 }
 
-// Weakening an existing mutable carrier reborrows it read-only: the source is
-// suspended until the reborrow's last use (design.md "Capabilities and the one
-// rule").
+// A carrier derived from an existing mutable carrier reborrows it, read-only or
+// mutably: the source is suspended until the reborrow's last use (design.md
+// "Weakening and reborrows").
 Prov_Reborrow :: struct {
 	source:  int,
 	derived: int,
 	span:    Span,
+	mutable: bool,
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
@@ -1674,6 +1675,9 @@ run_live_event :: proc(event: Prov_Event, live: []bool, uses: []Span) {
 @(private = "file")
 report_provenance :: proc(state: ^Prov_State) {
 	graph := state.graph
+	// One expression gets one borrow diagnostic: a receiver and the call it
+	// starts, or two rules meeting the same mistake, report once.
+	reported := make(map[[2]u32]bool, 8, graph.alloc)
 	for block in graph.blocks {
 		if !block.prov_visited || len(block.prov) == 0 {
 			continue
@@ -1700,7 +1704,16 @@ report_provenance :: proc(state: ^Prov_State) {
 		copy(state.invalid, block.invalid_entry)
 		copy(state.ended, block.ended_entry)
 		for event, index in block.prov {
-			check_prov_event(state, event, live_after[index], use_after[index])
+			// A temporary's end has no span of its own and is never merged.
+			at := [2]u32{event.span.file, event.span.lo}
+			placed := event.span != Span{}
+			if !placed || !reported[at] {
+				before := len(state.k.c.diagnostics)
+				check_prov_event(state, event, live_after[index], use_after[index])
+				if placed && len(state.k.c.diagnostics) > before {
+					reported[at] = true
+				}
+			}
 			run_prov_event(state, event, state.reach, state.invalid, state.ended)
 		}
 	}
@@ -1752,16 +1765,12 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			return
 		}
 	case .Live, .Load:
-		// A read-only reborrow suspends its source until its own last use.
+		// A reborrow suspends its source until its own last use, and the last use
+		// of whatever was reborrowed from it in turn.
 		for source in event.sources {
-			for reborrow in graph.reborrows {
-				if reborrow.source != source ||
-				   !live[reborrow.derived] ||
-				   !reborrow_values_overlap(state, reborrow) {
-					continue
-				}
-				report_suspended_reborrow(state, event, reborrow, uses[reborrow.derived])
-				state.diagnostic_precision |= state.precision[reborrow.derived]
+			if reborrow, derived, found := live_reborrow_of(state, source, live); found {
+				report_suspended_reborrow(state, event, reborrow, uses[derived])
+				state.diagnostic_precision |= state.precision[derived]
 				return
 			}
 		}
@@ -1871,6 +1880,39 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			}
 		}
 	}
+}
+
+// The first reborrow of `source` that a live slot still depends on, directly or
+// through reborrows of the reborrow, and that live slot.
+@(private = "file")
+live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool) -> (Prov_Reborrow, int, bool) {
+	graph := state.graph
+	visited := make(map[int]bool, 8, context.temp_allocator)
+	pending := make([dynamic]int, 0, 8, context.temp_allocator)
+	for reborrow in graph.reborrows {
+		if reborrow.source != source || !reborrow_values_overlap(state, reborrow) {
+			continue
+		}
+		clear(&pending)
+		clear(&visited)
+		append(&pending, reborrow.derived)
+		for len(pending) > 0 {
+			slot := pop(&pending)
+			if visited[slot] {
+				continue
+			}
+			visited[slot] = true
+			if live[slot] {
+				return reborrow, slot, true
+			}
+			for next in graph.reborrows {
+				if next.source == slot && reborrow_values_overlap(state, next) {
+					append(&pending, next.derived)
+				}
+			}
+		}
+	}
+	return {}, -1, false
 }
 
 // The source is suspended only while both slots' current values share a valid
@@ -2028,17 +2070,19 @@ report_suspended_reborrow :: proc(
 	k := state.k
 	source := state.graph.prov_slots[reborrow.source]
 	derived := state.graph.prov_slots[reborrow.derived]
+	capability := reborrow.mutable ? "mutable" : "read-only"
 	errorf(
 		k.c,
 		event.span,
 		"L0641",
-		"`%s` cannot be used here: a read-only reborrow of it is still in use",
+		"`%s` cannot be used here: a %s reborrow of it is still in use",
 		source.name,
+		capability,
 	)
 	if derived.name != "" {
-		add_notef(k.c, reborrow.span, "`%s` reborrows it read-only here", derived.name)
+		add_notef(k.c, reborrow.span, "`%s` reborrows it %s here", derived.name, reborrow.mutable ? "mutably" : "read-only")
 	} else {
-		add_notef(k.c, reborrow.span, "the read-only reborrow is taken here")
+		add_notef(k.c, reborrow.span, "the %s reborrow is taken here", capability)
 	}
 	add_notef(k.c, later, "and is still used here, which keeps the reborrow live")
 }

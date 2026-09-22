@@ -1,0 +1,69 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows": a carrier derived from a mutable carrier
+// -- a copy, a reslice, `&mut xs[i]`, or a traversal -- reborrows it, and the
+// source cannot be used until the reborrow's last use.
+
+siblings :: proc() {
+	values := [4]int{1, 2, 3, 4};
+	source := values[:];
+	left := source[0:3];
+	right := source[1:4];
+	left[1] = 10;
+	right[0] = 20;
+}
+
+copied :: proc(xs: []mut int) {
+	copy := xs;
+	copy[0] = 7;
+	xs[1] = 8;
+	copy[2] = 9;
+}
+
+// Freeing what a view of the element still names was accepted before.
+element_pointer :: proc(xs: []mut [dynamic]int) {
+	x := &mut xs[0];
+	inner := x^[:];
+	xs[0] = {};
+	inner[0] = 99;
+}
+
+traversal :: proc(xs: []mut [dynamic]int) {
+	foreach (&x in xs) {
+		inner := x[:];
+		xs[0] = {};
+		inner[0] = 99;
+		break;
+	}
+}
+
+read_during_traversal :: proc(xs: []mut int) {
+	foreach (&x in xs) { x += xs.len(); }
+}
+
+// Still accepted: each reborrow ends before the source is used again.
+sequential :: proc(xs: []mut int) {
+	copy := xs;
+	copy[0] = 7;
+	xs[1] = 8;
+	foreach (&x in xs) { x += 1; }
+	rest := xs[1:];
+	rest[0] = 3;
+	head := rest[0:1];
+	head[0] = 4;
+	fmt.println(rest.len());
+}
+
+main :: proc() {
+	storage := [4]int{1, 2, 3, 4};
+	owners := [dynamic][dynamic]int{};
+	owners.append([dynamic]int{1});
+	siblings();
+	copied(storage[:]);
+	element_pointer(owners[:]);
+	traversal(owners[:]);
+	read_during_traversal(storage[:]);
+	sequential(storage[:]);
+}

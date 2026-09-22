@@ -743,7 +743,7 @@ prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 	if slot, is_carrier := prov_slot_for_symbol(graph, id); is_carrier {
 		sym := symbol_of(graph.k.c, id)
 		if sym != nil {
-			prov_weaken(graph, sources, sym.type, slot, span)
+			prov_reborrow(graph, sources, sym.type, slot, span)
 		}
 		prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
 		return
@@ -812,7 +812,7 @@ path_has_exact_prefix :: proc(path, prefix: []Proj_Step) -> bool {
 // A mutable borrow published into a read-only field weakens as at a local.
 @(private = "file")
 prov_define_one_content :: proc(graph: ^Flow_Graph, slot: int, sources: []int, span: Span, precision: Precision_Loss = {}) {
-	prov_weaken(graph, sources, graph.prov_slots[slot].content_type, slot, span)
+	prov_reborrow(graph, sources, graph.prov_slots[slot].content_type, slot, span)
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, precision = precision})
 }
 
@@ -822,36 +822,87 @@ prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
 	return len(graph.prov_slots) - 1
 }
 
-// A mutable carrier weakens to read-only at its destination (design.md), which
-// settles both a fresh loan and its access. `into` is -1 for a call argument,
-// whose reborrow cannot outlive the call.
+// A carrier stored into `into` from `slots` (design.md "Weakening and
+// reborrows"). A fresh mutable loan weakens to a read-only destination, which
+// settles both the loan and its access. An existing mutable carrier is instead
+// reborrowed, read-only or mutably, and suspended while `into` is live. `into`
+// is -1 for a call argument, whose reborrow cannot outlive the call.
 @(private = "file")
-prov_weaken :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, into := -1, span := Span{}) {
-	if !type_is_carrier(graph.k.c, destination) || carrier_is_mutable(graph.k.c, destination) {
+prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, into := -1, span := Span{}) {
+	if !type_is_carrier(graph.k.c, destination) {
 		return
 	}
+	weakens := !carrier_is_mutable(graph.k.c, destination)
 	for slot in slots {
 		entry := graph.prov_slots[slot]
 		if entry.fresh_loan != NO_LOAN {
-			graph.loans[int(entry.fresh_loan)].mutable = false
-			if entry.fresh_access_index >= 0 {
-				graph.blocks[entry.fresh_access_block].prov[entry.fresh_access_index].access = .Read
+			if weakens {
+				graph.loans[int(entry.fresh_loan)].mutable = false
+				if entry.fresh_access_index >= 0 {
+					graph.blocks[entry.fresh_access_block].prov[entry.fresh_access_index].access = .Read
+				}
 			}
 			continue
 		}
-		// Otherwise this is a reborrow of an existing carrier.
-		if into < 0 || !prov_slot_is_mutable_carrier(graph, slot) {
+		// Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. A
+		// traversal's reborrow passes on to what is taken from its elements.
+		if into < 0 || into == slot ||
+		   !(prov_slot_is_mutable_carrier(graph, slot) || prov_slot_is_reborrow(graph, slot)) {
 			continue
 		}
-		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = into, span = span})
+		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = into, span = span, mutable = !weakens})
 	}
 }
 
-// Only a named slot has a type to ask; a temporary is left alone.
+// A traversal of a mutable carrier reborrows it for as long as the traversal,
+// or anything taken from an element, is used: the carrier is suspended, as a
+// local source is by its loop loan.
+@(private)
+prov_reborrow_traversal :: proc(graph: ^Flow_Graph, sources: []int, span: Span, mutable: bool) -> []int {
+	out := make([dynamic]int, 0, len(sources), graph.alloc)
+	for slot in sources {
+		if !prov_slot_is_mutable_carrier(graph, slot) {
+			append(&out, slot)
+			continue
+		}
+		derived := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = derived, loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
+		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = derived, span = span, mutable = mutable})
+		append(&out, derived)
+	}
+	return out[:]
+}
+
+// A traversal's unnamed reborrow of a carrier.
+@(private = "file")
+prov_slot_is_reborrow :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+	if graph.prov_slots[slot].symbol != INVALID_SYMBOL {
+		return false
+	}
+	for reborrow in graph.reborrows {
+		if reborrow.derived == slot {
+			return true
+		}
+	}
+	return false
+}
+
+// A named slot, or a field of one, holding a mutable view (`^mut T`, `[]mut T`,
+// `dyn mut I`); a temporary is left alone. A region provider is not one: copies
+// of an allocator share it by design.
 @(private = "file")
 prov_slot_is_mutable_carrier :: proc(graph: ^Flow_Graph, slot: int) -> bool {
-	sym := symbol_of(graph.k.c, graph.prov_slots[slot].symbol)
-	return sym != nil && carrier_is_mutable(graph.k.c, sym.type)
+	entry := graph.prov_slots[slot]
+	type := entry.content_type
+	if type == INVALID_TYPE {
+		sym := symbol_of(graph.k.c, entry.symbol)
+		if sym == nil {
+			return false
+		}
+		type = sym.type
+	}
+	c := graph.k.c
+	return entry.symbol != INVALID_SYMBOL && !type_is_region_provider(c, type) && carrier_is_mutable(c, type)
 }
 
 @(private = "file")
@@ -1774,7 +1825,7 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := fa
 		if !ok {
 			// Reached through a carrier: publish to what it may name.
 			if through := prov_retain_through_carrier(graph, v.operand); len(through) > 0 {
-				prov_weaken(graph, key_sources, info.key)
+				prov_reborrow(graph, key_sources, info.key)
 				prov_emit(graph, Prov_Event {
 					kind = .Publish, span = v.span, sources = key_sources, into = through,
 				})
@@ -2025,6 +2076,11 @@ prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> [
 	iterable := s.iterable
 	mutable := foreach_is_place_loop(s)
 	if mutable { iterable = mutable_foreach_root(graph.k.c, s) }
+	// A mutable carrier is reborrowed by the traversal instead: the elements live
+	// in what it views, not in the variable.
+	if type := expr_base(iterable).type; carrier_is_mutable(graph.k.c, type) && !type_is_region_provider(graph.k.c, type) {
+		return iterated
+	}
 	root, path, ok := prov_place_of(graph, iterable)
 	if !ok {
 		return iterated
@@ -2098,7 +2154,7 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 			prov_define_content(graph, content, sources, sym.span)
 			continue
 		}
-		prov_weaken(graph, sources, sym.type, slot, sym.span)
+		prov_reborrow(graph, sources, sym.type, slot, sym.span)
 		prov_emit(graph, Prov_Event {
 			kind    = .Def,
 			slot    = slot,
@@ -2235,7 +2291,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			prov_retain_escape(graph, target, sources, expr_span(target))
 			prov_invalidate(graph, target, expr_span(target), "assigned")
 			if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
-				prov_weaken(graph, sources, expr_base(target).type, slot, expr_span(target))
+				prov_reborrow(graph, sources, expr_base(target).type, slot, expr_span(target))
 				prov_emit(graph, Prov_Event {
 					kind    = .Def,
 					slot    = slot,
@@ -2253,9 +2309,9 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		if !place_ok && s.op == .Assign {
 			if through := prov_retain_through_carrier(graph, target); len(through) > 0 {
 				prov_walk_subscripts(graph, target, true)
-				// design.md "Weakening and read-only reborrows".
+				// design.md "Weakening and reborrows".
 				if len(sources) > 0 {
-					prov_weaken(graph, sources, expr_base(target).type)
+					prov_reborrow(graph, sources, expr_base(target).type)
 					prov_emit(graph, Prov_Event {
 						kind    = .Publish,
 						span    = expr_span(target),
@@ -2617,9 +2673,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				continue
 			}
 			loan: []int
+			// Walking the argument above already read the place.
 			if root, path, ok := prov_place_of(graph, argument); ok && !expression_converts_storage(argument) {
-				prov_walk_subscripts(graph, argument)
-				prov_access(graph, root, path, .Read, expr_span(argument))
 				loan = prov_borrow(graph, root, path, false, expr_span(argument), "borrow")
 			} else if carriers, _, through := prov_read_through_carrier(graph, argument); through {
 				loan = carriers // `Type.method(&value)`, or a place behind a pointer
@@ -2638,7 +2693,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		} else {
 			actuals[index] = walk_flow_expr(graph, argument)
 		}
-		prov_weaken(graph, actuals[index], prov_parameter_type(graph, v, index))
+		prov_reborrow(graph, actuals[index], prov_parameter_type(graph, v, index))
 		borrowed = prov_join(graph, borrowed, actuals[index])
 	}
 	prov_call_resets(graph, v)

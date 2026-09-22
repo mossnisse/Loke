@@ -4670,7 +4670,7 @@ A mutable borrow permits reads and writes through that borrow. While one is live
 > the root while the borrow is live must be compatible with the borrow's
 > capability.
 
-#### Weakening and read-only reborrows
+#### Weakening and reborrows
 
 A mutable carrier implicitly weakens to the read-only carrier of the same shape. The reverse never happens: a read-only carrier does not strengthen, whatever the storage behind it was declared as.
 
@@ -4688,6 +4688,23 @@ fmt.println(reborrow[1]);    // ... because this keeps the reborrow live
 
 Moving the last use of `reborrow` above the write makes the same program legal. The diagnostic names both ends: where the reborrow was taken, and the later use that keeps it live.
 
+Any carrier derived from an existing mutable carrier is a reborrow of it, mutable or read-only: a copy, a reslice, `&mut xs[i]` or `&xs[i]`, a record field it is stored in, and a `foreach` over it. The carrier is suspended until the last use of the reborrow, and of anything reborrowed from that in turn, so two mutable views reached through one carrier are never usable at once:
+
+```odin
+bump :: proc(xs: []mut int) {
+	copy := xs;
+	copy[0] = 7;
+	xs[1] = 8;         // ERROR: `xs` is suspended here
+	copy[2] = 9;       // ... because this keeps the reborrow live
+
+	foreach (&x in xs) {
+		x += xs.len();  // ERROR: the traversal reborrows `xs`
+	}
+}
+```
+
+Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. An allocator or other region provider is not reborrowed by a copy: its copies share it by design.
+
 #### Places and overlap
 
 Borrow compatibility is decided for **places**, not only for variable names. A place consists of its storage root and a normalized projection path through fields, indices, ranges, and dereferences. Places with different roots do not overlap. Within one root, a path overlaps itself and every prefix or descendant of itself.
@@ -4700,7 +4717,7 @@ A value taken out of a container carries what that element held, not a borrow of
 
 Moving, dropping, freeing, fully assigning, or exchanging a root invalidates borrows of its previous value. Container operations such as `append`, `resize`, `reserve`, `shrink`, `clear`, `remove`, map insertion, and any user operation whose `self` parameter is `inout` also invalidate element and view borrows. Reallocation is a common reason, but changing which logical elements exist is sufficient.
 
-A borrow is live from its creation to its last use within the procedure body. Copies of a borrow extend the same loan to the last use of any copy. A borrow that is never used again stops constraining its root immediately.
+A borrow is live from its creation to its last use within the procedure body. Copies of a read-only borrow extend the same loan to the last use of any copy; a copy of a mutable one is a [reborrow](#weakening-and-reborrows). A borrow that is never used again stops constraining its root immediately.
 
 ```odin
 numbers := [dynamic]int{1, 2, 3};
@@ -6019,7 +6036,7 @@ Where this specification rejects a program, it often also says what the message 
 | An `inout` or `move` marker is missing at a call | the parameter and the mode it needs ([§](#copy-cost-diagnostics)) |
 | A `where`-excluded method is called | the ordinary missing-member error, with a note pointing at the bound that did not hold ([§](#where-clauses)) |
 | An analysis budget forces a rejection | that budget limit ([§](#minimum-provenance-precision)) |
-| A suspended carrier is used during a reborrow | both ends: where the reborrow was taken, and the later use keeping it live ([§](#weakening-and-read-only-reborrows)) |
+| A suspended carrier is used during a reborrow | both ends: where the reborrow was taken, and the later use keeping it live ([§](#weakening-and-reborrows)) |
 | Two borrows conflict | the root, the borrow, the conflicting operation, and the later use keeping the borrow live ([§](#places-and-overlap)) |
 | An owner escapes its allocator region | the escaping owner and its shorter-lived region ([§](#allocator-regions-and-region-provenance)) |
 

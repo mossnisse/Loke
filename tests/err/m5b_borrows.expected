@@ -43,6 +43,9 @@ this allocation has already been released
 L0512
 @130:2
 this allocation cannot be released here: a pointer of it is still in use
+L0641
+@130:7
+`q` cannot be used here: a mutable reborrow of it is still in use
 L0512
 @139:2
 `value` cannot be assigned here: a read-only pointer of it is still in use

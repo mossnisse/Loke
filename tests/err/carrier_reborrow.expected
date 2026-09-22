@@ -1,0 +1,15 @@
+L0641
+@13:11
+`source` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@21:2
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@29:2
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@36:3
+`xs` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@43:28
+`xs` cannot be used here: a mutable reborrow of it is still in use
