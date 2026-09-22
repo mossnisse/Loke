@@ -3715,7 +3715,7 @@ foreach (&value in some_dynamic_array) { value += 1; }   // mutable: the root mu
 foreach (key, &value in some_map) { value += 1; }        // map keys stay immutable
 ```
 
-Evaluating a place or borrow carrier establishes an iterator loan that lasts for the whole statement: immutable for a borrowing traversal, exclusive for a mutable one, so competing access to or invalidation of the iterable from inside the loop is checked by the ordinary one rule. Value-only iteration such as an integer range needs no loan.
+Evaluating a place or borrow carrier establishes an iterator loan, immutable for a borrowing traversal and exclusive for a mutable one. It lasts while the traversal, an element binding, or anything taken from one is still used, so competing access to or invalidation of the iterable from inside the loop is checked by the ordinary one rule, `break` included. Value-only iteration such as an integer range needs no loan.
 
 #### Static `foreach` expansion
 

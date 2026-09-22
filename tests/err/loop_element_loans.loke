@@ -1,0 +1,80 @@
+package main;
+
+import "core:container";
+
+// A loop element, and anything taken from it, keeps the loop's loan of its
+// source live, so a `break` after the source changes cannot leave the element
+// naming storage the change released (design.md "Borrowing iteration" and
+// "By-reference iteration").
+
+Box :: struct { items: [dynamic]int }
+
+impl Box {
+	view :: proc(self: ^) -> []int { return self.items[:]; }
+}
+
+mutable_element :: proc() {
+	values := [dynamic]int{1, 2, 3};
+	foreach (&x in values) {
+		values.append(4, 5, 6);
+		x = 99;
+		break;
+	}
+}
+
+lent_view :: proc() -> int {
+	values := [dynamic][dynamic]int{};
+	values.append([dynamic]int{1, 2, 3});
+	foreach (item in values) {
+		inner := item[:];
+		values.clear();
+		return inner[0];
+	}
+	return 0;
+}
+
+escaping_view :: proc() -> int {
+	boxes := [dynamic]Box{};
+	boxes.append(Box{[dynamic]int{1, 2}});
+	saved: []int = nil;
+	foreach (b in boxes) { saved = b.view(); }
+	boxes.clear();
+	return saved[0];
+}
+
+protocol_element :: proc() {
+	xs: container.Small_Array(int, 4) = {};
+	xs.append(1, 2, 3);
+	foreach (&x in xs) {
+		xs.clear();
+		x = 99;
+		break;
+	}
+}
+
+// Still accepted: the element's last use comes before the change.
+changed_after_last_use :: proc() -> int {
+	values := [dynamic]int{1, 2, 3};
+	total := 0;
+	foreach (&x in values) {
+		x += 1;
+		total += x;
+		if (total > 2) {
+			values.append(total);
+			break;
+		}
+	}
+	saved: ^int = nil;
+	foreach (item in values) { saved = &item; }
+	total += saved^;
+	values.clear();
+	return total;
+}
+
+main :: proc() {
+	mutable_element();
+	_ = lent_view();
+	_ = escaping_view();
+	protocol_element();
+	_ = changed_after_last_use();
+}

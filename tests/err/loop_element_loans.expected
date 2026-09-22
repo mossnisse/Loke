@@ -1,0 +1,12 @@
+L0512
+@19:3
+`values` cannot be modified here: a mutable iterator of it is still in use
+L0512
+@30:3
+`values` cannot be modified here: a read-only iterator of it is still in use
+L0512
+@41:2
+`boxes` cannot be modified here: a read-only iterator of it is still in use
+L0512
+@49:3
+`xs` cannot be modified here: a mutable iterator of it is still in use

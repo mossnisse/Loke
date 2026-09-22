@@ -137,9 +137,12 @@ Flow_Graph :: struct {
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
-	// What a non-owning binding (a `&` loop element, a switch payload over a
-	// place) views, so `&binding` borrows the source.
+	// What a non-owning binding (a loop element, a switch payload over a place)
+	// views: every access and borrow through it also uses the source.
 	view_loans:     map[Symbol_Id][]int,
+	// The view bindings whose own loans end with their step (design.md
+	// "By-reference iteration"), so `&binding` borrows the binding too.
+	step_views:     map[Symbol_Id]bool,
 	// One slot per `carrier_shape` path of a local that holds carriers.
 	content_by_symbol: map[Symbol_Id][]int,
 	// The keyed map-shape entry each constant key uses, first written first.
@@ -219,6 +222,7 @@ build_flow_graph :: proc(
 	graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
 	graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
 	graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
+	graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 	graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 	graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
 	graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
@@ -760,8 +764,9 @@ walk_foreach_binding_provenance :: proc(
 			loans = elements
 		}
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
-		if s.borrows {
-			prov_bind_view(graph, binding.symbol, iterated)
+		// A lent or mutable element is the source's storage, not a copy.
+		if s.borrows || foreach_is_place_loop(s) {
+			prov_bind_view(graph, binding.symbol, iterated, lends = !foreach_is_place_loop(s))
 		}
 	}
 }

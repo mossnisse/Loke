@@ -140,14 +140,32 @@ prov_case_payload :: proc(
 	)
 }
 
-// The loan a binding that views another place holds, so `&binding` names the
-// source rather than the binding's frame slot.
+// The loan a binding that views another place holds. A lending binding's
+// `&binding` names the source rather than the binding's frame slot; one whose
+// loans end with its step names both.
 @(private)
-prov_bind_view :: proc(graph: ^Flow_Graph, id: Symbol_Id, loans: []int) {
+prov_bind_view :: proc(graph: ^Flow_Graph, id: Symbol_Id, loans: []int, lends := true) {
 	if id == INVALID_SYMBOL || len(loans) == 0 {
 		return
 	}
 	graph.view_loans[id] = loans
+	if !lends {
+		graph.step_views[id] = true
+	}
+}
+
+// What a view binding's root stands for: every access through it, and every
+// borrow of it, also uses the source it views (design.md "Borrowing iteration").
+@(private)
+prov_root_view :: proc(graph: ^Flow_Graph, root: Root_Id) -> []int {
+	if root == NO_ROOT {
+		return nil
+	}
+	symbol := graph.roots[int(root)].symbol
+	if symbol == INVALID_SYMBOL {
+		return nil
+	}
+	return graph.view_loans[symbol]
 }
 
 @(private)
@@ -870,7 +888,7 @@ prov_borrow :: proc(
 	graph.prov_slots[slot].fresh_access_block = access_block
 	graph.prov_slots[slot].fresh_access_index = access_index
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = loan, span = span})
-	return prov_one(graph, slot)
+	return prov_join(graph, prov_one(graph, slot), prov_root_view(graph, root))
 }
 
 // Returns where the event landed so weakening can revise it; `index` is -1 when
@@ -889,6 +907,9 @@ prov_access :: proc(
 	}
 	if kind != .Read {
 		prov_note_static_write(graph, root)
+	}
+	if viewed := prov_root_view(graph, root); len(viewed) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = viewed, span = span})
 	}
 	prov_emit(graph, Prov_Event {
 		kind   = .Access,
@@ -1900,7 +1921,7 @@ prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
 	// design.md "Capabilities and the one rule". A binding that views another
 	// owner's storage is not its own root: the pointer names the source.
 	if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
-		if loans, viewed := graph.view_loans[ident.symbol]; viewed {
+		if loans, viewed := graph.view_loans[ident.symbol]; viewed && !graph.step_views[ident.symbol] {
 			return loans
 		}
 	}
