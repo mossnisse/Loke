@@ -1,0 +1,12 @@
+L0512
+@10:35
+`values` cannot be modified here: a read-only pointer of it is still in use
+L0512
+@18:16
+`values` cannot be modified here: a read-only pointer of it is still in use
+L0512
+@25:25
+`values` cannot be assigned here: a read-only pointer of it is still in use
+L0512
+@34:28
+`values` cannot be modified here: a read-only iterator of it is still in use

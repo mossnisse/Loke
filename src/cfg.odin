@@ -71,6 +71,8 @@ Flow_Block :: struct {
 	precision_exit:  []Precision_Loss,
 	invalid_entry:   []bool,
 	invalid_exit:    []bool,
+	ended_entry:     []bool,
+	ended_exit:      []bool,
 	live_entry:      []bool,
 	live_exit:       []bool,
 	use_entry:       []Span,

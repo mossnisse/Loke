@@ -907,7 +907,11 @@ Prov_State :: struct {
 	// words and than unpacked rows on the corpus.
 	row_bytes: int,
 	reach:   []u8,
+	// A loan ended on some path to here, which the carrier rules skip.
 	invalid: []bool,
+	// A loan ended on every path to here. Conflict reports skip only these, so an
+	// invalidation that reaches its own loop head still meets the loan it ends.
+	ended:   []bool,
 	live:    []bool,
 	uses:    []Span,
 	merged:  []u8,
@@ -961,7 +965,7 @@ next_live_loan :: proc(it: ^Live_Loans) -> (slot: int, index: int, ok: bool) {
 		}
 		index = it.index
 		it.index += 1
-		if bit_get(it.row, index) && !it.state.invalid[index] {
+		if bit_get(it.row, index) && !it.state.ended[index] {
 			return it.slots == nil ? it.at : it.slots[it.at], index, true
 		}
 	}
@@ -1115,6 +1119,7 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 		copy(state.reach, block.reach_entry)
 		copy(state.precision, block.precision_entry)
 		copy(state.invalid, block.invalid_entry)
+		copy(state.ended, block.ended_entry)
 		for event in block.prov {
 			if event.kind == .Escape {
 				into := &summary.result
@@ -1153,7 +1158,7 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 					}
 				}
 			}
-			run_prov_event(state, event, state.reach, state.invalid)
+			run_prov_event(state, event, state.reach, state.invalid, state.ended)
 		}
 	}
 	return changed
@@ -1297,6 +1302,8 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 		block.reach_exit = make([]u8, width, graph.alloc)
 		block.invalid_entry = make([]bool, state.loans, graph.alloc)
 		block.invalid_exit = make([]bool, state.loans, graph.alloc)
+		block.ended_entry = make([]bool, state.loans, graph.alloc)
+		block.ended_exit = make([]bool, state.loans, graph.alloc)
 		block.live_entry = make([]bool, max(state.slots, 1), graph.alloc)
 		block.live_exit = make([]bool, max(state.slots, 1), graph.alloc)
 		block.use_entry = make([]Span, max(state.slots, 1), graph.alloc)
@@ -1306,6 +1313,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.reach = make([]u8, width, graph.alloc)
 	state.precision = make([]Precision_Loss, state.slots, graph.alloc)
 	state.invalid = make([]bool, state.loans, graph.alloc)
+	state.ended = make([]bool, state.loans, graph.alloc)
 	state.live = make([]bool, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]u8, max(state.row_bytes, 1), graph.alloc)
@@ -1328,6 +1336,7 @@ solve_reaching :: proc(state: ^Prov_State) {
 		mem.zero_slice(state.reach)
 		mem.zero_slice(state.precision)
 		mem.zero_slice(state.invalid)
+		mem.zero_slice(state.ended)
 		if id != 0 {
 			seen := false
 			for predecessor in block.preds {
@@ -1339,6 +1348,14 @@ solve_reaching :: proc(state: ^Prov_State) {
 				for loss, slot in source.precision_exit { state.precision[slot] |= loss }
 				for value, index in source.invalid_exit {
 					state.invalid[index] ||= value
+				}
+				// A predecessor not visited yet stays out of the meet.
+				if seen {
+					for value, index in source.ended_exit {
+						state.ended[index] &&= value
+					}
+				} else {
+					copy(state.ended, source.ended_exit)
 				}
 				seen = true
 			}
@@ -1355,18 +1372,21 @@ solve_reaching :: proc(state: ^Prov_State) {
 		copy(block.reach_entry, state.reach)
 		copy(block.precision_entry, state.precision)
 		copy(block.invalid_entry, state.invalid)
+		copy(block.ended_entry, state.ended)
 		for event in block.prov {
-			run_prov_event(state, event, state.reach, state.invalid)
+			run_prov_event(state, event, state.reach, state.invalid, state.ended)
 		}
 		if block.prov_visited &&
 		   slice.equal(block.precision_exit, state.precision) &&
 		   slice.equal(block.reach_exit, state.reach) &&
-		   slice.equal(block.invalid_exit, state.invalid) {
+		   slice.equal(block.invalid_exit, state.invalid) &&
+		   slice.equal(block.ended_exit, state.ended) {
 			continue
 		}
 		copy(block.reach_exit, state.reach)
 		copy(block.precision_exit, state.precision)
 		copy(block.invalid_exit, state.invalid)
+		copy(block.ended_exit, state.ended)
 		block.prov_visited = true
 		for successor in block.succs {
 			if !queued[int(successor)] {
@@ -1378,8 +1398,10 @@ solve_reaching :: proc(state: ^Prov_State) {
 }
 
 @(private = "file")
-run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, invalid: []bool) {
+run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, invalid, ended: []bool) {
 	graph := state.graph
+	end_loans(state, event, reach, invalid)
+	end_loans(state, event, reach, ended)
 	#partial switch event.kind {
 	case .Def:
 		mem.zero_slice(state.merged)
@@ -1390,8 +1412,6 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 		}
 		if event.loan != NO_LOAN {
 			loss |= path_precision(graph.loans[int(event.loan)].path)
-			// A creation site that runs again starts a new, valid instance.
-			invalid[int(event.loan)] = false
 			bit_mark(state.merged, int(event.loan))
 		}
 		copy(reach_row(state, reach, event.slot), state.merged)
@@ -1414,6 +1434,20 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 				}
 				publish_into_loan(state, reach, graph.loans[index])
 			}
+		}
+	}
+}
+
+// Which loans an event ends or starts afresh. It runs over the loans ended on
+// some path and over those ended on every path alike.
+@(private = "file")
+end_loans :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, invalid: []bool) {
+	graph := state.graph
+	#partial switch event.kind {
+	case .Def:
+		// A creation site that runs again starts a new, valid instance.
+		if event.loan != NO_LOAN {
+			invalid[int(event.loan)] = false
 		}
 	case .Live:
 		// A loop head re-establishes the loans, so an invalidation inside the body
@@ -1539,13 +1573,14 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 		copy(state.reach, block.reach_entry)
 		copy(state.precision, block.precision_entry)
 		copy(state.invalid, block.invalid_entry)
+		copy(state.ended, block.ended_entry)
 		for &event in block.prov {
 			if event.kind == .Load {
 				reads := make([dynamic]int, 0, 4, state.graph.alloc)
 				load_pointee_content(state, event, state.reach, &reads)
 				event.sources = reads[:]
 			} else {
-				run_prov_event(state, event, state.reach, state.invalid)
+				run_prov_event(state, event, state.reach, state.invalid, state.ended)
 			}
 		}
 	}
@@ -1663,9 +1698,10 @@ report_provenance :: proc(state: ^Prov_State) {
 		copy(state.reach, block.reach_entry)
 		copy(state.precision, block.precision_entry)
 		copy(state.invalid, block.invalid_entry)
+		copy(state.ended, block.ended_entry)
 		for event, index in block.prov {
 			check_prov_event(state, event, live_after[index], use_after[index])
-			run_prov_event(state, event, state.reach, state.invalid)
+			run_prov_event(state, event, state.reach, state.invalid, state.ended)
 		}
 	}
 }

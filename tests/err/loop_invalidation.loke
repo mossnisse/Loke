@@ -1,0 +1,43 @@
+package main;
+
+// An invalidation inside a loop that loops back still meets a borrow used after
+// the loop: reaching the loop head through the back edge does not end the loan
+// on the path that entered the loop.
+
+appended :: proc() -> int {
+	values := [dynamic]int{1, 2, 3};
+	p := &values[0];
+	for (i := 0; i < 1000; i += 1) { values.append(i); }
+	return p^;
+}
+
+cleared :: proc() -> int {
+	values := [dynamic]int{1, 2, 3};
+	p := &values[0];
+	n := 0;
+	for (n < 1) { values.clear(); n += 1; }
+	return p^;
+}
+
+reassigned :: proc() -> int {
+	values := [dynamic]int{1, 2, 3};
+	p := &values[0];
+	foreach (i in 0..<3) { values = [dynamic]int{i}; }
+	return p^;
+}
+
+// design.md "Borrowing iteration": the pointer outlives the loop, not the source.
+kept_element :: proc() -> int {
+	values := [dynamic]int{1, 2, 3};
+	first: ^int = nil;
+	foreach (item in values) { if (first == nil) { first = &item; } }
+	foreach (i in 0..<1000) { values.append(i); }
+	return first^;
+}
+
+main :: proc() {
+	_ = appended();
+	_ = cleared();
+	_ = reassigned();
+	_ = kept_element();
+}

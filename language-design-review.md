@@ -541,6 +541,96 @@ Also reduce duplicated protocol declarations where signatures determine them: a 
 
 I would retain borrowing-by-default and initially retain `Yield`. Replacing all yields with explicit pointer payloads would remove machinery, but it makes normal array/map loops more cumbersome and loses the strongest ergonomic improvement in the current iteration design. Conversely, promising to move all current adapters into ordinary library code is premature: mixed borrowed/owned record yields currently depend on compiler support.
 
+**Follow-up analysis of proposal 4 (22 September 2026)**
+
+The aim holds and follows from the first three decisions. But the operation the proposal introduces already exists, its header rule cannot hold both ways, and the loan it relies on — "the source stays exclusively borrowed for the view's actual lifetime" — is not what the checker enforces today, even in a header. Probes were compiled with a fresh `lokec` at `3a165dc` and run where they compiled. Usage was counted over `tests/`, `examples/`, `base/`, and `core/`, where every `foreach` header fits on one line.
+
+*Iteration loans have holes today.* Each program below compiles, and design.md already rejects it, so these are conformance gaps rather than open rules:
+
+```odin
+values := [dynamic]int{1, 2, 3};
+foreach (&x in values) {
+    values.append(4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20);
+    x = 99;      // writes the freed buffer
+    break;
+}
+fmt.println(values[0], values.len());   // 1 20
+```
+
+- A loop binding is its own root ([cfg.odin:748](C:/code/loke/src/cfg.odin:748)). The source's loan is kept live by the iterator's next step, so without the `break` the append is L0512; with it, nothing keeps the loan live while `x` is used. The lending form has the same gap: `&item` names the source ([cfg_provenance.odin:1903](C:/code/loke/src/cfg_provenance.odin:1903)) but `inner := item[:]` does not, so `values.clear()` before reading `inner[0]` compiles and reads freed memory. `Small_Array` shows it through `iter_mut` too. design.md: the loan "lasts for the whole statement" ([foreach statement](C:/code/loke/design.md:3718)), and the source "cannot be mutated or invalidated while the traversal, or a pointer taken from it, is live" ([Borrowing iteration](C:/code/loke/design.md:2459)).
+- Nothing written through a `[]mut` carrier is checked: [`prov_place_of`](C:/code/loke/src/cfg_provenance.odin:1706) has no place for an index through a slice. In `bump :: proc(xs: []mut [dynamic]int)`, `foreach (&x in xs) { inner := x[:]; xs[0] = {}; inner[0] = 99; }` compiles, and the IR drops the element's buffer before the store through `inner`. Without a loop, `x := &mut xs[0]; inner := x^[:]; xs[0] = {}; inner[0] = 99;` compiles too; over a local it is L0511.
+- Not specific to iteration: an `append`, `clear`, or whole assignment inside a loop that loops is not checked against a borrow used after the loop. `p := &mut values[0]; for (i := 0; i < 1000; i += 1) { values.append(i); } p^ = 99;` compiles and leaves `values[0]` at 1. The invalidation reaches the loop head through the back edge, block entry ORs it in ([borrow.odin:1341](C:/code/loke/src/borrow.odin:1341)), and the live-loan walk then skips the loan at the append itself ([borrow.odin:964](C:/code/loke/src/borrow.odin:964)). A write or an `inout` argument in the same position is caught. This is also what lets design.md's own `first = &item` example read freed memory after a later loop of appends.
+
+A stored mutable view is exactly a loan that has to outlive the iterator's steps, so these repairs come first, as proposal 1's miscompile did. The review's open question — whether sibling mutable views such as `left := source[0:3]; right := source[1:4]`, or `copy := xs`, are separate loans — sits next to the carrier gap and is still open; both forms still compile.
+
+*The mutable view exists; the adapter drops it.* Slicing a mutable place gives `[]mut T` ([design.md](C:/code/loke/design.md:684)), and a `[]mut T` is already iterable by reference as a plain value: from a local, a value parameter, a call's result, or a by-value argument of a generic function bounded by `Mutable_Iterable`. The capability is lost where an adapter wraps it:
+
+```odin
+view := values[:];
+foreach (&v in view) { v += 1; }   // compiles
+back := values[:].reversed();
+foreach (&v in back) { v += 1; }   // L0457: `Reversed([]mut int)` needs `Mut_Iterator` and `iter_mut`
+```
+
+`Reversed([]mut int)` already names the capability, so no `mutable()` operation is needed. The adapter has to keep what its source's type has.
+
+*A user-defined view cannot be a mutable value.* `Row :: struct { cells: []mut int }` implements the protocol as design.md specifies, with `iter_mut :: proc(self: inout Row)`. `foreach (&c in row)` is then L0358 for a value parameter and L0359 for `Row{storage[:]}`, although the capability is in the field's type. `[]mut T` escapes the place requirement only because slices are special-cased ([iterate.odin:775](C:/code/loke/src/iterate.odin:775)).
+
+*Two mechanisms say "mutable", and `&` reads one.* "Element bindings" says an `&` leaf must land on a `Yield_Mutable` location, but the `&` path never reads `Yield`: it asks for `Mut_Iterator`, `iter_mut`, and `next -> Option(^mut Element)` ([iteration_mutable.odin:54](C:/code/loke/src/iteration_mutable.odin:54)). An iterable whose iterator declares `Yield :: Yield_Mutable` can be read, and `&` over it is L0457. An iterator declaring `Yield :: (key: Yield_Borrowed, value: Yield_Mutable)` can be read through `iter`, and `key, &value` through `iter_mut` is L0456, since one `^mut Element` cannot be a record. So `Yield_Mutable` has no effect, and a mutable record yield — which `indexed()` over a mutable traversal is — cannot be written by a user or synthesized by the compiler. A header gets one only by discarding the adapter ([`peel_resolved_adapter`](C:/code/loke/src/iteration_adapters.odin:10)) and binding a counter beside the element.
+
+*The proposed header rule contradicts itself.* In `foreach (&v, i in values.indexed())`, either `values.indexed()` keeps meaning `values[:].indexed()`, and the header grants what `view := values.indexed()` lacks, or the header form stops compiling.
+
+*Usage.* Eleven `&` headers reach through an adapter or view: nine in `tests/run` and two in error fixtures. `examples`, `base`, and `core` contain no `&` header at all. No program stores an adapter over a mutable view, and `Mutable_Iterable` has one user, a test. As with proposal 3, the benefit is prospective.
+
+*Alternative: the capability comes from the source's type, and `&` reads `Yield`.*
+
+1. `&` reads the mutable iterator's `Yield`, and an `&` leaf must land on a `Yield_Mutable` part. An iterator behind `iter_mut` that declares no `Yield` lends its `^mut Element`, so every existing one keeps its meaning, and `Mutable_Iterable` requires `Iterator(Self.Mut_Iterator, Self.Mut_Iterator.Item)`, as `Iterable` does. `indexed()` over a mutable traversal is then its ordinary `{value: <source's>, index: Yield_Owned}` yield.
+2. A type whose `iter_mut` takes a value `self` is a mutable view: `&` accepts any value of it, as it accepts a `[]mut T` now. `self: inout` still means a container, which needs a mutable place. `Mutable_Iterable` states `iter_mut` as a call requirement rather than a slot, so both receivers meet it; relaxing slot matching instead would let a value receiver meet every `inout` slot and silently drop its writes.
+3. `indexed()` and `reversed()` over a mutable view are mutable views, held by value and carrying the source's exclusive loan. Over a container they stay read views. `values[:].reversed()` then stores, passes, and meets `Mutable_Iterable` like `values[:]`.
+4. `&` asks the iterable, and no longer reaches through a call to a root. `foreach (&v, i in values.indexed())` becomes a diagnostic naming `values[:].indexed()`, or `xs.slice().indexed()` for `Small_Array`; proposal 7's suggested wording fits it. A map's values are mutated with `foreach (key, &value in table)` — the form `da18abd` dropped, which ["foreach statement"](C:/code/loke/design.md:3715) still shows — as a record yield of the map's own `iter_mut` under item 1. `table.values()` stays a read view.
+
+The rule is then one sentence: an `&` leaf asks the iterable for mutable traversal; a mutable place gives its container's, and any other value gives one if its type is a mutable view.
+
+*Fit with the earlier decisions.*
+
+- Proposal 1 decided that reference behaviour is written in the type. Items 2 and 3 carry that to views and adapters, and read a value receiver as that decision does: it lends only what the value holds, which for a view is its source. A `mutable()` operation would be a second spelling of what `x[:]` already writes in the type.
+- Proposal 2 decided that selection reads only the arguments. Item 4 is the same for a loop: the header stops changing what `values.indexed()` means, and whether the iterable is a place decides, as whether an argument is a place decides under the ownership rule. Keeping the re-rooting is the loop's version of destination filtering.
+- Proposal 3 made a conditional keep its callbacks' contracts, with the written form as the stable bound. Item 3 makes a local keep its adapter's capability, with `x[:]` as the written form. Its conclusion about prospective benefit applies too, which is why the alternative adds no operation, no stored mutable map view, and no new iterator protocol.
+- The difference in kind: proposals 1–3 relaxed or kept borrow checks, and the repairs above tighten them where design.md already requires it. Their migration is unmeasured.
+
+| Cost | Evidence or consequence |
+| --- | --- |
+| Prerequisites | The three repairs above, and a decision on sibling mutable views. Each rejects programs that compile now. |
+| Checker | `check_mutable_protocol_foreach` reads `Yield` and binds a record item; `check_foreach_pattern` allows `&` by descriptor instead of by the counter special case; [`iteration_adapter_member`](C:/code/loke/src/iteration_adapters.odin:51) adds `iter_mut`, and `iter_mut_reverse` for `reversed()`, when the source's `iter_mut` takes a value; the contributed `[]mut T` `iter_mut` takes a value; `peel_resolved_adapter` peels read loops only. Deleted: `direct_mutable_map_values_root`, the map-values branch of `ensure_mutable_iteration_members`, and the stored map view L0457. |
+| Emitter | `emit_protocol_foreach` binds a record item with mutable leaves as it binds borrowed ones, and its counter branch goes. The `key, &value` branch of [`emit_map_foreach`](C:/code/loke/src/emit_llvm_iteration.odin:400) has been unreachable since `da18abd` and is the lowering item 4's map form needs. |
+| Provenance | An adapter over a mutable view must carry the exclusive loan; today `r := values[:].indexed(); n := values.len();` compiles. A mutable record yield already ends before the next step, because a result carrying a mutable borrow keeps naming the iterator ([cfg_provenance.odin:3180](C:/code/loke/src/cfg_provenance.odin:3180)). |
+| Compile-time evaluation | It cannot slice a local, so `cells[:].indexed()` does not evaluate, and the indexed mutable loop in `tests/run/eval_foreach` needs a hand-written counter. |
+| Migration | The nine `tests/run` headers, and the fixtures `foreach_elements` (a header expected to compile), `mutable_reverse` (L0460), and `mutable_stored_view` (L0457). A user container with only `iter_mut` loses `indexed()` and `reversed()` under `&`; none exists outside tests. |
+| Specification | "Iteration protocol" (the mode rule and the root paragraph), "Iteration adapters" (the stored-adapter paragraph), "Element bindings", "By-reference iteration", and the catalogue's `Mutable_Iterable` and its built-in satisfaction list. |
+
+What it gives up is the short header form. If that costs too much, keep item 4's header form as documented sugar for `values[:].indexed()` and have the stored form's diagnostic name that spelling. Items 1–3 stand without it, compile-time evaluation keeps its loop, and "introduce a local for an adapter" then holds for every spelling except the sugar.
+
+*The declaration half of the proposal.* `Item` is already derived from `next`, and a declared one that disagrees is L0694 ([iteration_yield.odin:156](C:/code/loke/src/iteration_yield.odin:156)). `Iterator` and `Mut_Iterator` could be derived from `iter` and `iter_mut` the same way, saving a line per type and replacing the vague L0456/L0457 a mismatch gets now; that is worth doing only alongside item 1. `Element` should stay written: it is the public element type, and deriving it would tie it to the yield descriptor.
+
+*Found on the way*, independent of the rule:
+
+- design.md says `Small_Array` and `Enum_Array` lend their elements, move-only ones included ([Borrowing iteration](C:/code/loke/design.md:2448), [catalogue](C:/code/loke/design.md:2865)). Both library iterators copy (`next -> Option(T) where is_copyable(T)`), so `foreach` over a move-only `Small_Array` is L0456.
+- A comment above `Enum_Array_Iterator.next` offers `&value` ([enum_array.loke:90](C:/code/loke/core/container/enum_array.loke:90)), but `Enum_Array` has no `iter_mut`.
+- `Small_Array` has no `iter_mut_reverse`, so `foreach (&v in xs.reversed())` is L0460.
+- A read of `values` while a `values[:]` is live reports the same L0511 twice.
+
+*Recommendation.*
+
+1. Repair the three loan gaps first, each as its own change, and settle sibling mutable views with the carrier one. The loop gap is not about iteration and is the most urgent.
+2. Adopt items 1–3 instead of a `mutable()` operation.
+3. Adopt item 4. Keeping the header form as sugar is the fallback if the short spelling matters more than the acceptance row.
+4. Derive `Iterator` and `Mut_Iterator` only together with item 1.
+5. Separately, make `Small_Array` and `Enum_Array` lend, or correct design.md.
+
+*Decision (22 September 2026).* Adopted as recommended, starting with the loan repairs.
+
+1. Invalidation inside a loop. *Done:* the solver now keeps a second set of loans, those ended on every path, merged by intersection, and conflict reports skip only those. An invalidation that reaches its own loop head through the back edge therefore still meets the loan the entry path brings. The set ended on some path still drives the carrier rules and `free`. No corpus program relied on the hole; `tests/err/loop_invalidation` pins `append`, `clear`, and whole assignment in a looping body, and design.md's `first = &item` followed by a loop of appends.
+
 5. **Unify callable APIs before adding general closures.**
 
 First accept ordinary procedures wherever a matching stateless callable is expected. A library overload or wrapper is the smallest initial change; a language-wide synthesized `call` adapter is justified if several APIs need it. Calls and interface matching must respect parameter modes and calling conventions.
