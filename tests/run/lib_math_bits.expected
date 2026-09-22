@@ -43,3 +43,12 @@ true
 4614256656552045848 1078530011
 true true
 true true true
+u16 255 -> u8: 255
+u16 256 -> u8: none
+i32 -1 -> u32: none
+u32 max -> i32: none
+i64 -1 -> i32: -1
+i32 -128 -> i8: -128
+i32 -129 -> i8: none
+u8 7 -> u8: 7
+u64 max -> int: none

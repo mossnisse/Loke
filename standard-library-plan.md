@@ -1103,8 +1103,10 @@ what the `Simd(T, N)` operators cannot spell. M8 also added `core:container`
 
 `core:math` then grew its scalar half: the constants, the bit-level
 classification and sign procedures, the CRT-backed elementary functions over one
-private foreign block into versioned seed-runtime wrappers, and scalar
-`min`/`max`/`clamp`. Each float-specific name has exactly two concrete
+private foreign block into versioned seed-runtime wrappers, scalar
+`min`/`max`/`clamp`, and `to`, the checked integer conversion that answers
+`Option(To)` where a written `To(value)` would wrap (design.md "Type
+conversion"). Each float-specific name has exactly two concrete
 spellings — the unsuffixed `f64` one and an `_f32` twin — rather than a
 procedure group, because design.md's own overload rules leave `f32` vs `f64`
 ambiguous for an untyped literal and `math.sqrt(2.0)` would not compile.

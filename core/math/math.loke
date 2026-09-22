@@ -160,6 +160,28 @@ clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces
 	return value;
 }
 
+// `value` as a `To`, or `.none` when `To` cannot represent it exactly.
+//
+// An ordinary integer conversion keeps the low bits (design.md "Type
+// conversion"), so a `u16` of 256 becomes a `u8` of 0 and an `i32` of -1
+// becomes a large `u32`. That is the right default for bit manipulation and the
+// wrong one for validating input, which is what this is for. It is the scalar
+// twin of `Enum.from_int`: it neither traps nor silently narrows.
+//
+// The check is a round trip plus a sign comparison. The round trip alone is not
+// enough, because between two types of the same width it always succeeds —
+// `i32(-1)` converts to `u32` and back unchanged — and only the sign test
+// catches that. `Integral` is here to exclude floats, whose conversions round
+// rather than wrap; nothing in the body needs its bit operations.
+to :: proc($To: type, value: $From) -> Option(To)
+	where interfaces.Integral(From), interfaces.Ordered(From),
+	      interfaces.Integral(To), interfaces.Ordered(To) {
+	converted := To(value);
+	if (From(converted) != value) { return .none; }
+	if ((value < From(0)) != (converted < To(0))) { return .none; }
+	return .some(converted);
+}
+
 // ------------------------------------------------ platform math bindings --
 //
 // The Windows x64 toolchain links the CRT. Bind each width directly to its

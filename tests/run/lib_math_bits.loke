@@ -1,5 +1,5 @@
-// `core:math` constants, classification, sign, and the scalar comparisons
-// (math-plan step 2). Everything here is exact: bit patterns, predicates, and
+// `core:math` constants, classification, sign, the scalar comparisons
+// (math-plan step 2), and the checked integer conversion. Everything here is exact: bit patterns, predicates, and
 // which argument a tie selects. No transcendental value is printed, and no NaN
 // is printed — the platform C library spells one three different ways depending
 // on the payload, so `is_nan` is printed instead.
@@ -11,6 +11,13 @@ import "core:unsafe";
 
 bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
 bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+report :: proc(label: string_view, outcome: Option($T)) {
+	switch (outcome) {
+	case .some(value): fmt.println(label, value);
+	case .none:        fmt.println(label, "none");
+	}
+}
 
 main :: proc() {
 	// The typed limits are exactly their IEEE-754 patterns.
@@ -89,4 +96,17 @@ main :: proc() {
 	fmt.println(bits64(math.PI), bits32(f32(math.PI)));
 	fmt.println(math.TAU == 2.0*math.PI, math.SQRT_TWO*math.SQRT_TWO > 1.9999999);
 	fmt.println(math.E > 2.718281828, math.LN2 < 0.6931471806, math.LN10 > 2.302585092);
+
+	// `to` answers `.none` for exactly the conversions an ordinary `To(value)`
+	// would silently reinterpret. The two same-width rows are why the round trip
+	// alone is not the whole check: both of them survive it.
+	report("u16 255 -> u8:", math.to(u8, u16(255)));
+	report("u16 256 -> u8:", math.to(u8, u16(256)));
+	report("i32 -1 -> u32:", math.to(u32, i32(-1)));
+	report("u32 max -> i32:", math.to(i32, u32(4294967295)));
+	report("i64 -1 -> i32:", math.to(i32, i64(-1)));
+	report("i32 -128 -> i8:", math.to(i8, i32(-128)));
+	report("i32 -129 -> i8:", math.to(i8, i32(-129)));
+	report("u8 7 -> u8:", math.to(u8, u8(7)));
+	report("u64 max -> int:", math.to(int, u64(18446744073709551615)));
 }
