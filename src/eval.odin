@@ -544,6 +544,10 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 		return eval_ident(ev, v)
 
 	case ^Expr_Selector:
+		// `Type.method` or `U.name` naming a procedure, as a value.
+		if sym := symbol_of(ev.k.c, v.resolution.symbol); v.resolution.kind == .Value && sym != nil && sym.kind == .Proc {
+			return Eval_Value{kind = .Nil, type = v.type, proc_value = v.resolution.symbol}, true
+		}
 		// A value, not a place: `f().field` selects out of a temporary.
 		operand, ok := eval_aggregate_value(ev, v.operand)
 		if !ok {
@@ -1829,6 +1833,14 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	target, target_ok := eval_call_target(ev, v)
 	if !target_ok {
 		return Eval_Value{}, false
+	}
+	// A variant constructor has no body: its payload becomes the variant.
+	if sym := symbol_of(ev.k.c, target); sym != nil && sym.synth == .Variant_Construct && len(v.bound) == 1 {
+		payload, payload_ok := eval_expr(ev, v.bound[0])
+		if !payload_ok {
+			return Eval_Value{}, false
+		}
+		return eval_union(ev, sym.result, union_variant_index(ev.k.c, sym.result, sym.name), payload)
 	}
 
 	result, ok := eval_invoke(ev, target, v.bound, v.span, order = v.bound_order)

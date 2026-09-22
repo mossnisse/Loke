@@ -352,6 +352,23 @@ variant_payload_is_constant :: proc(c: ^Compiler, payload: Type_Id, value: Const
 	return false
 }
 
+Variant_Key :: struct { union_type: Type_Id, index: int }
+
+// design.md "Constructing a variant": `U.name` of a payload variant, outside a
+// call, is a procedure that takes the payload over and returns the variant.
+variant_constructor :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> Symbol_Id {
+	key := Variant_Key{union_type, index}
+	if existing, found := c.variant_constructors[key]; found {
+		return existing
+	}
+	id := synth_proc(
+		c, union_variant_name(c, union_type, index), .Variant_Construct, union_type,
+		[]Type_Id{union_variant_payload(c, union_type, index)}, []Param_Mode{.Move}, union_type,
+	)
+	c.variant_constructors[key] = id
+	return id
+}
+
 // A payload variant written bare, reported once the call position is known.
 reject_incomplete_variant :: proc(k: ^Checker, sel: ^Expr_Selector) {
 	errorf(

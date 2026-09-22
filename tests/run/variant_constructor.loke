@@ -1,0 +1,84 @@
+package main; import "core:fmt";
+
+// design.md "Constructing a variant": outside a call, `U.name` of a payload
+// variant is a procedure that takes the payload over and returns the variant.
+
+Parse_Error :: enum { Bad_Digit, Empty }
+
+// The copy hook adds 100 and the drops print, so a clone, a lost drop, or a
+// doubled one all show.
+Detail :: struct { id: int }
+
+impl Detail {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Detail, Allocator_Error) {
+		return .ok(Detail{self.id + 100});
+	}
+	release :: hook(drop) proc(self: inout Detail) { fmt.println("drop detail", self.id); }
+}
+
+Token :: move_only struct { id: int }
+
+impl Token {
+	release :: hook(drop) proc(self: inout Token) { fmt.println("drop token", self.id); }
+}
+
+Full :: struct { rejected: Token }
+
+App_Error :: union { parse: Parse_Error, detail: Detail, full: Full }
+
+static_assert(type_of(App_Error.parse) == (proc(payload: move Parse_Error) -> App_Error));
+
+parse  :: proc() -> Result(int, Parse_Error) { return .err(.Empty); }
+detail :: proc() -> Result(int, Detail) { return .err(Detail{5}); }
+full   :: proc() -> Result(Unit, Full) { return .err(Full{Token{6}}); }
+
+// design.md "Changing error domains": the constructor is the mapper.
+parsed :: proc() -> Result(int, App_Error) {
+	n := parse().map_error(App_Error.parse) or_return;
+	return .ok(n);
+}
+
+// A managed error moves in: no copy hook runs, and it drops once.
+detailed :: proc() -> Result(int, App_Error) {
+	n := detail().map_error(App_Error.detail) or_return;
+	return .ok(n);
+}
+
+// A move-only error moves in too.
+filled :: proc() -> Result(Unit, App_Error) {
+	full().map_error(App_Error.full) or_return;
+	return .ok;
+}
+
+show :: proc(error: App_Error) {
+	switch (e in error) {
+	case .parse:  fmt.println("parse", e);
+	case .detail: fmt.println("detail", e.id);
+	case .full:   fmt.println("full", e.rejected.id);
+	}
+}
+
+// Compile-time evaluation calls a constructor like any procedure value.
+unwrapped :: proc() -> int {
+	some := Option(int).some;
+	switch (value in some(3)) {
+	case .some: return value;
+	case .none: return 0;
+	}
+}
+
+UNWRAPPED :: unwrapped();
+
+main :: proc() {
+	switch (r in parsed())   { case .ok: fmt.println(r);    case .err: show(r); }
+	switch (r in detailed()) { case .ok: fmt.println(r);    case .err: show(r); }
+	switch (r in filled())   { case .ok: fmt.println("ok"); case .err: show(r); }
+
+	// A stored constructor takes a place as `move(x)`, and a temporary as it is.
+	make := App_Error.parse;
+	error := Parse_Error.Bad_Digit;
+	show(make(move(error)));
+	show(make(.Empty));
+
+	fmt.println(UNWRAPPED);
+}

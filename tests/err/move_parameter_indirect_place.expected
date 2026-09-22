@@ -3,7 +3,7 @@ L0501
 `value` is a `move` parameter, so this argument is written `move(...)`
 L0501
 @17:11
-`this parameter` is a `move` parameter, so this argument is written `move(...)`
+this parameter is a `move` parameter, so this argument is written `move(...)`
 L0501
 @19:7
 `value` is a `move` parameter, so this argument is written `move(...)`

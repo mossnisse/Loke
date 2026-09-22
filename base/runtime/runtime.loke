@@ -125,8 +125,8 @@ Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 
 // design.md "or_return operator": `or_return` rewraps a failure payload only
 // where it is already assignable, so changing error domains is an ordinary
-// operation rather than an implicit conversion. `f` names the target variant —
-// a union constructor is not a callable value, so it is a one-line procedure.
+// operation rather than an implicit conversion. `f` names the target variant,
+// usually as its constructor: `App_Error.parse`.
 //
 // The success payload is relocated, never cloned, so a move-only `T` maps like
 // any other. `f` owns the error it is handed, so it moves a managed or

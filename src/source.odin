@@ -158,6 +158,8 @@ Compiler :: struct {
 	// Whether a map type's shape gives constant keys entries of their own.
 	map_keyed:          map[Type_Id]bool,
 	synth_procs:        [dynamic]Symbol_Id,
+	// One constructor procedure per union variant used as a value.
+	variant_constructors: map[Variant_Key]Symbol_Id,
 
 	// Erased views (`src/erased.odin`). A witness is compilation-global, so it is
 	// keyed and emitted once for the whole program.

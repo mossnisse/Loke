@@ -296,17 +296,18 @@ require_argument_ownership :: proc(
 		if expression_is_owned_argument(argument) {
 			continue
 		}
+		// A call through a procedure value has no declaration to name the parameter.
 		name := "this parameter"
 		if sym != nil && slot < len(sym.param_symbols) {
 			if parameter := symbol_of(k.c, sym.param_symbols[slot]); parameter != nil {
-				name = identifier_text(k.c, parameter.name)
+				name = fmt.aprintf("`%s`", identifier_text(k.c, parameter.name), allocator = k.c.semantic_allocator)
 			}
 		}
 		errorf(
 			k.c,
 			expr_span(argument),
 			"L0501",
-			"`%s` is a `move` parameter, so this argument is written `move(...)`",
+			"%s is a `move` parameter, so this argument is written `move(...)`",
 			name,
 		)
 	}

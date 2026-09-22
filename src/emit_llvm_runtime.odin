@@ -1142,10 +1142,27 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			}
 		case .Provider_Op:
 			emit_synth_provider_op(e, symbol, name)
+		case .Variant_Construct:
+			emit_synth_variant_construct(e, symbol, name)
 		case .None:
 		}
 		fmt.sbprintln(&e.b, "")
 	}
+}
+
+// `U.name` as a value. The payload arrives owned, so it becomes the variant
+// as it is, with nothing cloned and nothing left to drop.
+@(private = "file")
+emit_synth_variant_construct :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	result := llvm_type(e, symbol.result)
+	open_function(e, "define %s%s %s(%s %%arg0)", llvm_linkage(name), result, name, synth_param_llvm(e, symbol, 0))
+	e.terminated = false
+	index := union_variant_index(e.c, symbol.result, symbol.name)
+	variant := emit_union_value(e, symbol.result, index, synth_receiver_value(e, symbol))
+	fmt.sbprintfln(&e.b, "  ret %s %s", result, variant)
+	fmt.sbprintln(&e.b, "}")
 }
 
 @(private = "file")

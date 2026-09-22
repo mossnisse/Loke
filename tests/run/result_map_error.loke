@@ -12,8 +12,9 @@ Parse_Error :: enum { Bad_Digit, Empty }
 
 App_Error :: union { parse: Parse_Error, io: int }
 
-// A union constructor is not a callable value, so the mapper is written out. It
-// owns the error it is handed, and its result is the target `map_error` infers.
+// A hand-written mapper, the shape `App_Error.parse` has (tests/run/
+// variant_constructor): it owns the error it is handed, and its result is the
+// target `map_error` infers.
 to_app :: proc(error: move Parse_Error) -> App_Error { return .parse(error); }
 
 parse :: proc(ok: bool) -> Result(int, Parse_Error) {

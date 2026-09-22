@@ -1,0 +1,8 @@
+parse Empty
+detail 5
+drop detail 5
+full 6
+drop token 6
+parse Bad_Digit
+parse Empty
+3

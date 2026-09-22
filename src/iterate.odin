@@ -85,6 +85,9 @@ Synth_Kind :: enum {
 	Container_Op,
 	// Which operation is `Symbol.provider_op`.
 	Provider_Op,
+	// `U.name` of a payload variant used as a value: the owner type is the
+	// union and the symbol's name the variant.
+	Variant_Construct,
 }
 
 // ---------------------------------------------------------- range values --

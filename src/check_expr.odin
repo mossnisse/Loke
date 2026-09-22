@@ -558,8 +558,16 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		}
 		enum_type := type_underlying(k.c, expected)
 		if !type_is_enum(k.c, enum_type) {
+			wanted := underlying_info(k.c, expected)
 			if type_is_union(k.c, enum_type) {
 				errorf(k.c, v.span, "L0425", "`%s` has no variant `%s`", type_name(k.c, expected), v.name.text)
+			} else if wanted != nil && wanted.kind == .Proc && type_is_union(k.c, type_underlying(k.c, wanted.result)) &&
+			          union_variant_index(k.c, wanted.result, intern_identifier(k.c, v.name.text)) >= 0 {
+				// A constructor value names its union: the destination never picks one.
+				errorf(
+					k.c, v.span, "L0425", "a variant used as a procedure names its union: write `%s.%s`",
+					type_name(k.c, wanted.result), v.name.text,
+				)
 			} else {
 				errorf(k.c, v.span, "L0385", "`.%s` needs an expected enum type here", v.name.text)
 			}
@@ -603,11 +611,12 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 	operand_base := expr_base(v.operand)
 
 	// A named union type selects its own variant: `Option.none`, `Result.ok`.
+	// Outside a call, a payload variant is its constructor procedure.
 	if operand_base.value_category == .Type &&
 	   check_union_variant_selector(k, v, operand_base.denoted_type) {
 		if v.resolution.kind == .Union_Variant && !callee_position {
-			reject_incomplete_variant(k, v)
-			v.type = INVALID_TYPE
+			constructor := variant_constructor(k.c, v.variant_union, v.variant_index)
+			annotate_symbol_use(k, &v.base, constructor, v.name.text)
 		}
 		return
 	}

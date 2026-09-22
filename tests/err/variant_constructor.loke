@@ -1,0 +1,17 @@
+package main;
+
+// design.md "Constructing a variant": a constructor value names its union, and
+// takes its payload over.
+
+Parse_Error :: enum { Bad_Digit, Empty }
+App_Error   :: union { parse: Parse_Error, io: int }
+
+main :: proc() {
+	// The destination does not choose the union.
+	contextual: proc(payload: move Parse_Error) -> App_Error = .parse;
+
+	// A place reaches the constructor's `move` parameter only as `move(x)`.
+	make := App_Error.parse;
+	error := Parse_Error.Empty;
+	_ = make(error);
+}

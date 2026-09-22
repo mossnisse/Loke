@@ -1536,6 +1536,13 @@ return .ok; // in a procedure returning Result(Unit, E)
 
 Record-field initialization rules apply to the payload: a place argument clones it and must be copyable; a temporary or `move(x)` transfers it.
 
+Outside a call, `U.name` of a payload variant is the variant's **constructor**: a procedure value of type `proc(payload: move P) -> U`, where `P` is the payload type. It takes its payload over, so a place is passed to it as `move(x)`, where `U.name(x)` would clone the place. The contextual `.name` is not a constructor, since a destination never chooses the union; a generic union names its instance, as in `Option(int).some`.
+
+```odin
+number := Value.number;   // proc(payload: move i32) -> Value
+v = number(7);
+```
+
 #### Inspecting a union
 
 A union is inspected with a `switch`, whose cases are variant names. A case may
@@ -5263,17 +5270,15 @@ Assignability is the whole rule, so a `Result(T, Parse_Error)` does not propagat
 Parse_Error :: enum { Bad_Digit, Empty }
 App_Error   :: union { parse: Parse_Error, io: io.Error }
 
-// A union constructor is not a callable value, so the mapper is an ordinary
-// procedure — and the place the intended variant is written down.
-to_app :: proc(error: move Parse_Error) -> App_Error { return .parse(error); }
-
 read_setting :: proc(text: string_view) -> Result(int, App_Error) {
-	value := parse(text).map_error(to_app) or_return;
+	// The variant's constructor is the mapper, and the place the intended
+	// variant is written down.
+	value := parse(text).map_error(App_Error.parse) or_return;
 	return .ok(value);
 }
 ```
 
-`map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The mapper owns the error it is handed, since its parameter is a `move` parameter, so it can transfer a managed or move-only error into the new variant with `move(error)` instead of cloning it; `to_app` copies an enum, which needs no marker. The mapper's result is the target error type, [inferred](#specialization) from the argument.
+`map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The mapper owns the error it is handed, since its parameter is a `move` parameter. A [variant constructor](#constructing-a-variant) therefore moves any error, managed or move-only, into its variant without cloning it. Any other mapping is an ordinary procedure of the same shape, which transfers a managed error with `move(error)`. The mapper's result is the target error type, [inferred](#specialization) from the argument.
 
 This is the only error adaptation the language provides. Inspecting or logging a failure uses the same `switch` and mapping facilities; there is no second, implicit conversion path between error types.
 
