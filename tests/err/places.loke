@@ -15,4 +15,13 @@ main :: proc() {
 	Point{1, 2} = Point{3, 4};
 	p := &(1 + 2);
 	immutable(p^);
+	values := [2]int{1, 2};
+	foreach (element in values) { element = 1; }
+	shape := Shape.points([2]int{1, 2});
+	switch (shape) {
+	case .points(held): held[0] = 9;
+	case .empty:
+	}
 }
+
+Shape :: union { points: [2]int, empty: }

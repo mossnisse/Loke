@@ -3,7 +3,6 @@ package lokec
 
 import "core:slice"
 import "core:fmt"
-import "core:strings"
 
 // Conversion ranks (design.md "Operator lookup and overload resolution").
 RANK_EXACT :: 0 // exact type and parameter-mode match
@@ -671,15 +670,22 @@ report_ambiguity :: proc(k: ^Checker, span: Span, description: string, all: []Ca
 		if sym == nil {
 			continue
 		}
+		// The signature, not the rank vector it was scored with, and the reason
+		// in the programmer's terms rather than a tie-breaker's number
+		// (design.md "Operator lookup and overload resolution").
+		if sym.proc_type == INVALID_TYPE {
+			add_notef(k.c, sym.span, "candidate `%s`", identifier_text(k.c, sym.name))
+			continue
+		}
 		add_notef(
 			k.c,
 			sym.span,
-			"candidate `%s` with conversion vector %s",
+			"candidate `%s`: `%s`",
 			identifier_text(k.c, sym.name),
-			vector_text(k.c, candidate_ranks(&all[index])),
+			type_name(k.c, sym.proc_type),
 		)
 	}
-	add_notef(k.c, no_span(), "selection failed at %s", failing_tie_breaker(all, maximal))
+	add_notef(k.c, no_span(), "%s", failing_tie_breaker(all, maximal))
 }
 
 @(private = "file")
@@ -690,25 +696,11 @@ failing_tie_breaker :: proc(all: []Candidate, maximal: []int) -> string {
 				continue
 			}
 			if compare_vectors(candidate_ranks(&all[index]), candidate_ranks(&all[other])) == 2 {
-				return "crossed conversion vectors, which are ambiguous by design"
+				return "each of these converts a different argument better than the others, which is ambiguous by design; call the one you want by name, or give the arguments the types it declares"
 			}
 		}
 	}
-	return "tie-breaker 5, where no candidate is more structurally specialized"
-}
-
-@(private = "file")
-vector_text :: proc(c: ^Compiler, ranks: []int) -> string {
-	b := strings.builder_make(c.semantic_allocator)
-	strings.write_string(&b, "(")
-	for rank, index in ranks {
-		if index > 0 {
-			strings.write_string(&b, ", ")
-		}
-		fmt.sbprintf(&b, "%d", rank)
-	}
-	strings.write_string(&b, ")")
-	return strings.to_string(b)
+	return "no candidate is more specialized than the others; call the one you want by name, or give the arguments the types it declares"
 }
 
 // --------------------------------------------------------------- binding --

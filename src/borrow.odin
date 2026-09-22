@@ -1764,8 +1764,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			if !access_conflicts(loan, event) {
 				continue
 			}
-			report_borrow_conflict(state, event, loan, uses[slot])
 			state.diagnostic_precision |= state.precision[slot]
+			report_borrow_conflict(state, event, loan, uses[slot])
 			return
 		}
 	case .Live, .Load:
@@ -1785,8 +1785,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			if loan.root != event.root {
 				continue
 			}
-			report_root_outlived(state, event, loan, uses[slot])
 			state.diagnostic_precision |= state.precision[slot]
+			report_root_outlived(state, event, loan, uses[slot])
 			return
 		}
 	case .Escape:
@@ -1836,13 +1836,15 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				if root_outlives_body(root.kind) {
 					continue
 				}
+				// The same hedge: with element provenance merged, the compiler
+				// cannot tell that this result does not depend on the local.
+				escaping := "this %s cannot be returned: %s ends when this procedure returns"
+				if state.diagnostic_precision != {} {
+					escaping = "this %s may depend on %s, which ends when this procedure returns"
+				}
 				errorf(
-					state.k.c,
-					event.span,
-					"L0526",
-					"this %s cannot be returned: %s ends when this procedure returns",
-					loan.what,
-					root_phrase(root),
+					state.k.c, event.span, "L0526", escaping,
+					loan.what, root_phrase(root),
 				)
 				if root.symbol != INVALID_SYMBOL && root.span.file != NO_FILE {
 					add_notef(state.k.c, root.span, "%s is declared here", root_label(root))
@@ -2040,12 +2042,23 @@ report_live_dependants :: proc(
 report_borrow_conflict :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_Loan, later: Span) {
 	k := state.k
 	root := state.graph.roots[int(loan.root)]
+	// A merged dependency may be the only reason these two look like one place,
+	// so the message claims no more than the analysis knows (design.md "Minimum
+	// provenance precision"); the notes added after it say which budget merged
+	// them and how to keep the two apart.
+	merged := state.diagnostic_precision != {}
+	invalidated := "%s cannot be %s here: a %s %s of it is still in use"
+	conflicting := "this %s of %s is not compatible with the %s %s of it that is still in use"
+	if merged {
+		invalidated = "%s cannot be %s here: a %s %s of it may still be in use"
+		conflicting = "this %s of %s may overlap the %s %s of it that is still in use"
+	}
 	if event.access == .Invalidate {
 		errorf(
 			k.c,
 			event.span,
 			"L0512",
-			"%s cannot be %s here: a %s %s of it is still in use",
+			invalidated,
 			root_label(root),
 			event.verb == "" ? "invalidated" : event.verb,
 			loan.mutable ? "mutable" : "read-only",
@@ -2056,7 +2069,7 @@ report_borrow_conflict :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov
 			k.c,
 			event.span,
 			"L0511",
-			"this %s of %s is not compatible with the %s %s of it that is still in use",
+			conflicting,
 			event.access == .Write ? "write" : "read",
 			root_label(root),
 			loan.mutable ? "mutable" : "read-only",
@@ -2098,13 +2111,21 @@ report_root_outlived :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_L
 	k := state.k
 	root := state.graph.roots[int(loan.root)]
 	label := root_label(root)
+	// As in `report_borrow_conflict`: a merged dependency may be the only reason
+	// this value looks like a borrow of that storage.
+	anonymous := "this %s is used after %s has ended"
+	named := "this %s is used after %s, the %s it borrows, has ended"
+	if state.diagnostic_precision != {} {
+		anonymous = "this %s may be used after %s has ended"
+		named = "this %s may be used after %s, the %s it borrows, has ended"
+	}
 	// Points at the later use: the storage ends at no written operation.
 	if root.symbol == INVALID_SYMBOL {
 		errorf(
 			k.c,
 			later.file == NO_FILE ? event.span : later,
 			"L0513",
-			"this %s is used after %s has ended",
+			anonymous,
 			loan.what,
 			label,
 		)
@@ -2113,7 +2134,7 @@ report_root_outlived :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_L
 			k.c,
 			later.file == NO_FILE ? event.span : later,
 			"L0513",
-			"this %s is used after %s, the %s it borrows, has ended",
+			named,
 			loan.what,
 			label,
 			root_kind_text(root.kind),

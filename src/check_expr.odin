@@ -371,6 +371,21 @@ decode_rune_literal :: proc(text: string) -> (value: rune, ok: bool) {
 
 // ------------------------------------------------------------ identifiers --
 
+// Which immutable name this is. A `foreach` binding, a `switch` payload and a
+// value parameter share one immutability flag, so the construct the programmer
+// wrote has to be recovered here or the diagnostic calls all three a parameter.
+@(private = "file")
+immutable_name_reason :: proc(sym: ^Symbol) -> Immutable_Reason {
+	switch sym.borrowed_binding {
+	case .Loop_Element:
+		return .Loop_Binding
+	case .Switch_Payload:
+		return .Payload_Binding
+	case .None:
+	}
+	return sym.kind == .Parameter ? .Value_Parameter : .Read_Only_Name
+}
+
 @(private = "file")
 check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 	name_id := v.name_id
@@ -519,7 +534,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.type = sym.type
 		v.addressable = true
 		v.assignable = !sym.immutable
-		v.immutable = sym.immutable ? .Value_Parameter : .None
+		v.immutable = sym.immutable ? immutable_name_reason(sym) : .None
 
 	case .Field:
 		v.resolution = Resolution{kind = .Field, symbol = symbol_id}

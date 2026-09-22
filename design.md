@@ -2199,7 +2199,7 @@ When conversion vectors are identical, tie-breakers apply in order:
 
 An exact generic match beats a concrete overload that needs conversion unless their ranking vectors tie. Default structural equality and comparison are used only when no viable explicit overload exists.
 
-**Selection reads only the arguments and the call syntax.** A destination type — an annotation, an assignment target, a parameter, a result — then checks the chosen result like any other value, and a mismatch names the member the arguments selected. `typed: f64 = pick(7)` is an error when `pick(7)` selects an `int` member; it never selects a floating one instead. Members that differ only in their result are therefore ambiguous at every call. If more than one maximal candidate remains, the call is a compile-time ambiguity, and the diagnostic must list every maximal candidate, its conversion vector, and the tie-breaker at which selection failed.
+**Selection reads only the arguments and the call syntax.** A destination type — an annotation, an assignment target, a parameter, a result — then checks the chosen result like any other value, and a mismatch names the member the arguments selected. `typed: f64 = pick(7)` is an error when `pick(7)` selects an `int` member; it never selects a floating one instead. Members that differ only in their result are therefore ambiguous at every call. If more than one maximal candidate remains, the call is a compile-time ambiguity, and the diagnostic must list every maximal candidate with its signature and say why selection failed in the programmer's terms — that each converts a different argument better, or that none is more specialized — rather than by naming the rank vector or the tie-breaker's number.
 
 ### Indexing and slicing
 
@@ -4674,7 +4674,7 @@ Version 1 guarantees the following carrier-path precision. These are minimum ana
 | Map entry width | Distinguish constant keys when the nonrecursive key and value shapes together contain at most **2 carrier paths**, measured before replicating entries. |
 | Constant map keys | Distinguish at least the first **4 distinct supported constant keys encountered per procedure**, shared across its maps. Supported keys are strings, booleans, runes, and integers representable in signed 64 bits. Key identities are local to the body; result contracts merge map entries across calls while preserving enclosing paths and the key/value distinction. |
 
-Beyond these minimums, an implementation may conservatively merge paths and reject code that a more precise analysis accepts. Unknown indices and keys also overlap every possible element or entry. Lost precision never removes a lifetime or capability check, and a diagnostic caused by a budget must name that limit.
+Beyond these minimums, an implementation may conservatively merge paths and reject code that a more precise analysis accepts. Unknown indices and keys also overlap every possible element or entry. Lost precision never removes a lifetime or capability check, and a diagnostic caused by a budget must name that limit. It must also claim no more than the analysis knows: where a merged path could be the reason for the rejection, the message says the value *may* depend on that storage, rather than stating a dependency the merge only made possible.
 
 A user record contains carriers but is not itself a new carrier. A record of `rawptr` or `[^]T` fields carries no checked provenance; a checked carrier rebuilt from untracked storage has unknown provenance.
 
@@ -6078,7 +6078,7 @@ Where this specification rejects a program, it often also says what the message 
 | --- | --- |
 | A no-zero type is asked for a zero | the operation, and the two ways out: `@(zero=first_variant)`, or explicit construction ([§](#types-with-no-zero-value)) |
 | A variant or enum switch is not exhaustive | the variants it did not cover ([§](#inspecting-a-union)) |
-| An overloaded call stays ambiguous | every maximal candidate, its conversion vector, and the tie-breaker at which selection failed ([§](#operator-lookup-and-overload-resolution)) |
+| An overloaded call stays ambiguous | every maximal candidate with its signature, and why selection failed, in the programmer's terms rather than as a rank vector or a tie-breaker number ([§](#operator-lookup-and-overload-resolution)) |
 | A `foreach` header uses a retired fixed spelling | the adapter or view that replaces it ([§](#element-bindings)) |
 | A required interface application does not hold | the concrete application and the interface-body line that failed — “constraint not satisfied” alone is a defect ([§](#interface-bodies)) |
 | A mutating slot is called through a `dyn I` | `dyn mut I`, as a capability error rather than a missing member ([§](#borrowed-dynamic-interface-values)) |
@@ -6088,7 +6088,7 @@ Where this specification rejects a program, it often also says what the message 
 | An error occurs inside a static `foreach` | the element and its source descriptor or index ([§](#static-foreach-expansion)) |
 | An `inout` or `move` marker is missing at a call | the parameter and the mode it needs ([§](#copy-cost-diagnostics)) |
 | A `where`-excluded method is called | the ordinary missing-member error, with a note pointing at the bound that did not hold ([§](#where-clauses)) |
-| An analysis budget forces a rejection | that budget limit ([§](#minimum-provenance-precision)) |
+| An analysis budget forces a rejection | that budget limit, and the dependency as possible rather than certain ([§](#minimum-provenance-precision)) |
 | A suspended carrier is used during a reborrow | both ends: where the reborrow was taken, and the later use keeping it live ([§](#weakening-and-reborrows)) |
 | Two borrows conflict | the root, the borrow, the conflicting operation, and the later use keeping the borrow live ([§](#places-and-overlap)) |
 | An owner escapes its allocator region | the escaping owner and its shorter-lived region ([§](#allocator-regions-and-region-provenance)) |

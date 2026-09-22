@@ -9,14 +9,14 @@ L0393
 is not a procedure, so it cannot be a group member
 L0391
 @26:14
-candidate `take_i8` with conversion vector (2)
-candidate `take_i16` with conversion vector (2)
-selection failed at tie-breaker 5
+candidate `take_i8`: `proc(i8) -> int`
+candidate `take_i16`: `proc(i16) -> int`
+no candidate is more specialized than the others
 L0391
 @31:14
-candidate `cross_a` with conversion vector (3, 0)
-candidate `cross_b` with conversion vector (0, 3)
-selection failed at crossed conversion vectors
+candidate `cross_a`: `proc(rawptr, ^int) -> int`
+candidate `cross_b`: `proc(^int, rawptr) -> int`
+each of these converts a different argument better than the others, which is ambiguous by design
 L0392
 @34:14
 no overload of `numbers` applies to these arguments

@@ -325,6 +325,14 @@ Immutable_Reason :: enum {
 	// The same, reached by dereferencing or projecting a `^T`. Kept apart from
 	// `Read_Only` only so the diagnostic can name the fix: `^mut`.
 	Through_Pointer,
+	// A `foreach` binding over a traversal that lends its element read-only.
+	Loop_Binding,
+	// A `switch` binding over a payload the subject still owns.
+	Payload_Binding,
+	// Any other immutable name, such as an interface requirement binding. These
+	// share one flag with a value parameter, so the reason is what keeps the
+	// diagnostic from calling every one of them a parameter.
+	Read_Only_Name,
 }
 
 Resolution :: struct {

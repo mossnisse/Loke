@@ -13,3 +13,10 @@ a temporary value cannot be an assignment destination
 L0357
 @16:7
 `&` needs an addressable operand
+L0358
+@19:32
+a `foreach` binding names the element read-only and cannot be an assignment destination
+bind it with `&` for mutable traversal
+L0358
+@22:22
+a `switch` binding names storage the subject still owns and cannot be an assignment destination

@@ -2788,6 +2788,20 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 		errorf(k.c, base.span, "L0358", "a constant cannot be %s", what)
 	case .Value_Parameter:
 		errorf(k.c, base.span, "L0358", "a value parameter is immutable and cannot be %s", what)
+	case .Loop_Binding:
+		errorf(
+			k.c, base.span, "L0358",
+			"a `foreach` binding names the element read-only and cannot be %s; bind it with `&` for mutable traversal",
+			what,
+		)
+	case .Payload_Binding:
+		errorf(
+			k.c, base.span, "L0358",
+			"a `switch` binding names storage the subject still owns and cannot be %s",
+			what,
+		)
+	case .Read_Only_Name:
+		errorf(k.c, base.span, "L0358", "this name is read-only and cannot be %s", what)
 	case .Temporary:
 		errorf(k.c, base.span, "L0359", "a temporary value cannot be %s", what)
 	case .Discard:
