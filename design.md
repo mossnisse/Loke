@@ -2029,7 +2029,7 @@ As a procedure value, a `self: ^` method has type `proc(self: ^Type) -> Result`,
 
 An interface slot written `self: ^` is also met by a method taking a plain `self`, which lends less; the protocol's `iter` is such a slot, so an iterator whose `iter` returns a copy of itself takes a plain `self`.
 
-Immutable and `inout` receivers use `value.method()`; the `inout` borrow is implicit and ends with the call. A consuming receiver takes its receiver the way a [`move` parameter](#temporaries-and-procedure-boundaries) takes an argument: a place is written `move(value).method()`, which leaves the source dead, while a temporary already owns its value and needs no marker, as in `parse(text).map_error(App_Error, to_app)`. An owned receiver — a temporary or `move(value)` — also prefers a consuming receiver overload over a borrowing one, by [tie-breaker 1](#operator-lookup-and-overload-resolution).
+Immutable and `inout` receivers use `value.method()`; the `inout` borrow is implicit and ends with the call. A consuming receiver takes its receiver the way a [`move` parameter](#temporaries-and-procedure-boundaries) takes an argument: a place is written `move(value).method()`, which leaves the source dead, while a temporary already owns its value and needs no marker, as in `parse(text).map_error(to_app)`. An owned receiver — a temporary or `move(value)` — also prefers a consuming receiver overload over a borrowing one, by [tie-breaker 1](#operator-lookup-and-overload-resolution).
 
 A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot. A plain receiver may be written `self: Type` when clearer; it is the same mode.
 
@@ -4452,6 +4452,19 @@ find :: proc(table: ^Table($Key, $Value), key: Key) -> Option(Value) {
 }
 ```
 
+A procedure type is a shape too. Its parameter and result types may bind names, so a callback's result type comes from the procedure passed:
+
+```odin
+apply :: proc(x: $T, f: proc(value: T) -> $U) -> U {
+	return f(x);
+}
+
+halve :: proc(value: int) -> f64 { return f64(value) / 2; }
+half := apply(7, halve);   // U is f64
+```
+
+The pattern binds types only. The argument must still convert to the parameter type it produces, so its parameter modes, calling convention, and effects must match, as for any conversion between [procedure types](#procedure-type).
+
 A parameter written this way is more specific than an unconstrained `$T`, which is what tie-breaker 5 of [overload resolution](#operator-lookup-and-overload-resolution) selects on. Specialization is therefore how a procedure group narrows one of its members to a shape.
 
 When the whole aggregate type is also needed, write it explicitly:
@@ -5248,15 +5261,15 @@ App_Error   :: union { parse: Parse_Error, io: io.Error }
 
 // A union constructor is not a callable value, so the mapper is an ordinary
 // procedure — and the place the intended variant is written down.
-to_app :: proc(error: Parse_Error) -> App_Error { return .parse(error); }
+to_app :: proc(error: move Parse_Error) -> App_Error { return .parse(error); }
 
 read_setting :: proc(text: string_view) -> Result(int, App_Error) {
-	value := parse(text).map_error(App_Error, to_app) or_return;
+	value := parse(text).map_error(to_app) or_return;
 	return .ok(value);
 }
 ```
 
-`map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The target error type is written because a poly parameter inside a nested procedure type is not inferred from the argument.
+`map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The mapper owns the error it is handed, since its parameter is a `move` parameter, so it can transfer a managed or move-only error into the new variant with `move(error)` instead of cloning it; `to_app` copies an enum, which needs no marker. The mapper's result is the target error type, [inferred](#specialization) from the argument.
 
 This is the only error adaptation the language provides. Inspecting or logging a failure uses the same `switch` and mapping facilities; there is no second, implicit conversion path between error types.
 

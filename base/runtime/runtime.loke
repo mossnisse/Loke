@@ -129,13 +129,11 @@ Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 // a union constructor is not a callable value, so it is a one-line procedure.
 //
 // The success payload is relocated, never cloned, so a move-only `T` maps like
-// any other. `$F` is written at the call site because a poly parameter inside a
-// nested procedure type is not inferred from the argument.
-//
-// ponytail: `f` takes its error by value, so a `move_only` error type has no
-// mapper this accepts; add a consuming member to this group if one appears.
+// any other. `f` owns the error it is handed, so it moves a managed or
+// move-only error into the new variant rather than cloning it. `F` is `f`'s
+// result, inferred from the argument (design.md "Specialization").
 impl Result($T, $E) {
-	map_error :: proc(self: move, $F: type, f: proc(error: E) -> F) -> Result(T, F) {
+	map_error :: proc(self: move, f: proc(error: move E) -> $F) -> Result(T, F) {
 		switch (payload in move(self)) {
 		case .ok:  return .ok(move(payload));
 		case .err: return .err(f(move(payload)));

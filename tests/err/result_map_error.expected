@@ -1,0 +1,6 @@
+L0392
+@14:7
+where `proc(move Parse_Error) -> App_Error` is wanted
+L0392
+@23:7
+`type` does not match the shape of parameter 2

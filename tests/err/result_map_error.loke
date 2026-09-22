@@ -1,0 +1,30 @@
+package main;
+
+Parse_Error :: enum { Bad_Digit, Empty }
+
+App_Error :: union { parse: Parse_Error, io: int }
+
+parse :: proc() -> Result(int, Parse_Error) { return .err(.Empty); }
+
+// design.md "Changing error domains": the mapper owns the error it is handed, so
+// one that only borrows it does not fit.
+borrowing :: proc(error: Parse_Error) -> App_Error { return .parse(error); }
+
+borrowed :: proc() -> Result(int, App_Error) {
+	n := parse().map_error(borrowing) or_return;
+	return .ok(n);
+}
+
+// The target error type is inferred from the mapper, so it is no longer an
+// argument.
+consuming :: proc(error: move Parse_Error) -> App_Error { return .parse(error); }
+
+written_target :: proc() -> Result(int, App_Error) {
+	n := parse().map_error(App_Error, consuming) or_return;
+	return .ok(n);
+}
+
+main :: proc() {
+	_ = borrowed();
+	_ = written_target();
+}

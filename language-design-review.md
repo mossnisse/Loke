@@ -655,6 +655,73 @@ Only after that common callable model works should explicit capture syntax be co
 
 This sequence buys useful ergonomics at each step and avoids designing a full closure runtime before simple procedure callbacks work everywhere.
 
+**Follow-up analysis of proposal 5 (22 September 2026)**
+
+The order is right, and the closure lowering it names is the one [comments.md](C:/code/loke/comments.md:431) already chose. But the middle step is already done, and the first needs no language change for the one API that uses it. The proposal also misses two things. After proposal 1's decision, a mapper that wraps its argument has to consume it. And a record can replace a procedure only where the API fixes the callable's result type. Probes were compiled with a fresh `lokec` at `22d26a4` and run where they compiled. A throwaway tree with items 1 and 2 below, without the diagnostic change, ran the full test suite. Usage was counted over `tests/`, `examples/`, `base/`, and `core/`.
+
+*Inference through procedure types already works.* Since `aaa3ff8` (19 September), a `$` name inside a `proc(...)` parameter type binds from the argument ([generic.odin:811](C:/code/loke/src/generic.odin:811), `tests/run/generic_proc_type_pattern`). With `apply :: proc(x: $T, f: proc(value: T) -> $U) -> U`, `apply(21, double)`, `apply(21, label)`, and a procedure literal all infer `U`. `map_error` is older (`4d6ef7a`, 14 September) and still takes `$F: type` ([runtime.loke:138](C:/code/loke/base/runtime/runtime.loke:138)). Its comment and [Changing error domains](C:/code/loke/design.md:5259) both say the nested parameter is not inferred, and section 7's table repeats it. Writing `f: proc(error: E) -> $F` makes `parse(text).map_error(to_app) or_return` compile and run. Modes are still checked once the pattern binds: a `proc(move Tracked) -> int` passed for `proc(value: T) -> $U` is L0392, naming both types.
+
+*The mapper borrows what it wraps.* After proposal 1's decision, a value parameter owns nothing, so `to_app :: proc(error: Detail) -> App_Error { return .detail(error); }` clones its argument. With a `+100` copy hook, `fail().map_error(App_Error, to_app)` delivers `101`, drops `1`, and warns L0507 at the mapper. A `switch` that consumes the result moves `1` through. A move-only error has no mapper at all: a consuming one is rejected on mode (L0392), and a borrowing one cannot build the variant (L0503). The ponytail note on `map_error` records this, and proposal 6's `Rejected(T, E)` is such an error. `map_error` already passes `move(payload)`, so the fix is the mapper's type, `f: proc(error: move E) -> $F`. In the throwaway tree, `wrap :: proc(error: move Detail) -> App_Error { return .detail(move(error)); }` delivers `1` with one drop. A `move_only` token inside `Full { rejected: Token }` maps and drops once. An enum mapper then writes a `move` that changes nothing at run time.
+
+*A variant constructor is a consuming mapper.* The natural type of `App_Error.parse` is `proc(payload: move Parse_Error) -> App_Error`: a temporary or `move(x)` transfers, as in [direct construction](C:/code/loke/design.md:1522). It fits the consuming `map_error`; today's borrowing one would make it clone. Two limits already hold in the compiler, and both follow from proposal 2's decision. A procedure group is not a value (L0396, "can only be called"), and neither is an uninstantiated generic (L0431), so nothing picks a member from the parameter it is passed to. A constructor value therefore names its union, `App_Error.parse` rather than a `.parse` resolved from the destination, and a generic union names its instance, `Option(int).some`. A stored constructor called with a place needs `move(x)` (L0501, even for an enum), where `App_Error.parse(x)` clones; the difference errs toward no copy. Today `App_Error.parse` without a call is L0425 ([union.odin:356](C:/code/loke/src/union.odin:356)).
+
+*One API takes the `call` convention.* `slice.sort_by(values, less)` is L0444, "has no method `call` with this signature", and so is a procedure literal. `sort_by` is the only API that takes a `call` callable ([slice.loke:21](C:/code/loke/core/slice/slice.loke:21)). In the throwaway tree, `sort_by :: proc{sort_by_comparator, sort_by_procedure}` sorts with plain procedures and literals. The procedure member wraps its argument in a private `Procedure_Comparator(T)` record whose `call` forwards to a `proc(left, right: T) -> bool` field. Record comparators and `dyn slice.Comparator(int)` are unchanged. The wrapper is ordinary Loke, so every analysis applies as written: a procedure comparator that appends to the global being sorted gets the same L0512 as a record comparator.
+
+The cost is the diagnostic. A non-comparator becomes L0392, whose note says only "its `where` bounds are not satisfied". A silent probe returns from [`check_where_clauses`](C:/code/loke/src/generic.odin:1650) before the interface failure is reported. Keeping that failure as the instance's rejection message would restore the missing-`call` wording in the note, for any candidate a bound filters out.
+
+The language-wide alternative is a contributed `call` on every procedure type. It keeps `sort_by` one declaration with its L0444, and lets procedures meet every `call` interface, a user's included. It would be a [`Synth_Kind`](C:/code/loke/src/iterate.odin:49) like `Dyn_Forward`. But a forwarder without a body lacks what the wrapper gets for free: a result summary, which would be the procedure type's contract shifted past `self`, and a place in [global write effects](C:/code/loke/src/global_effects.odin:184), which reads bodies, as an indirect call of that type. The library cannot provide it with an `impl`: `impl proc(left, right: $T) -> bool` is L0406, and an `impl` on a concrete alias works but covers one signature.
+
+*What unification still lacks.* Records already cover the uses the proposal reserves for closures. `$C where Comparator(C, T)` is the static form, and `(dyn slice.Comparator(int))(&order)` sorts through an erased borrow. A body-local `By_Weight { weights: []int }` captures a borrowed slice. But `Comparator` fixes its result as `bool`. A generic API can name a callable's result only by matching a `proc(...)` type, which a record does not have. So neither a record nor a closure lowered to one can be a `map_error` mapper. A convention that covers mappers needs a callable's result type derived from its `call`, as proposal 4's decision derives `Iterator` from `iter`. The proposal does not list this, and nothing needs it until closures do.
+
+*Usage.* `sort_by`: six calls in four tests. `map_error`: three calls, all in `result_map_error`. `call` methods: four records, all in tests. `examples`, `base`, and `core` call neither. The third callback shape is `fmt.Writer` and `log.Logger`, which pair a `proc(state: rawptr, ...)` with its `state` so a handle can be stored without a type parameter; `log` keeps the selected one in a global. Neither a generic nor a borrowed `dyn` expresses that. It is the escaping erased ownership that the proposal keeps separate. As with proposals 3 and 4, the benefit is prospective.
+
+*Alternative: settle the convention, build what has a caller.*
+
+1. `map_error :: proc(self: move, f: proc(error: move E) -> $F) -> Result(T, F)`. The target type is inferred, and the mapper owns the error.
+2. `slice.sort_by` accepts a plain procedure through the library member, and the note for a where-filtered candidate names the requirement that failed.
+3. A payload variant written `U.name` without a call is a procedure value of type `proc(payload: move P) -> U`.
+4. Record the convention for closures. A callable is a value with a `call` method. A procedure meets it through a contributed `call`, and a closure is a body-local record. A variable-result callable's result is derived from its only `call`. Item 2's member stays correct after that, since its more specific pattern wins, and can then be deleted.
+
+```odin
+value := parse(text).map_error(to_app) or_return;          // item 1, over a one-line `move` mapper
+value := parse(text).map_error(App_Error.parse) or_return;  // item 3, the proposal's form
+```
+
+*Fit with the earlier decisions.*
+
+- Proposal 1 decided that a value parameter owns nothing and that reference behaviour is written in the type. Item 1 applies that to the mapper: a mapper that keeps its argument says so with `move`. Item 3's constructor gets the consuming type for the same reason. "Ownership must remain the same as direct variant construction" holds for what `map_error` passes. It cannot hold for a stored constructor given a place; that call is rejected instead of cloning.
+- Proposal 2 decided that selection reads only the arguments. Callbacks already agree, since neither a group nor a generic is a value. Item 3 keeps that by requiring the union's name. The `sort_by` group selects by the argument's shape. `map_error` hands an owned payload to a consuming parameter, as the ownership rule prefers.
+- Proposal 3 kept declaration identity and recommended written callback types. A comparator returns `bool`, and such procedures share one plain type (`type_of(less_a) == type_of(less_b)` holds), so neither path multiplies `sort_by` instances. A consuming mapper does carry a contract, the region of what it moves (`[result contract: to_app]` in the L0392 above). `map_error` writes its parameter type, so that contract converts to the plain one, as for any written callback type.
+- Proposal 4 contributed protocol members to built-in types and derived `Iterator` from `iter`. A contributed `call` and a derived callable result are the same two moves for procedure types and callable records. Item 4 records them for when closures need them. Proposal 4's conclusion, no new operation or protocol for a prospective benefit, is why items 1 and 2 stay in the library.
+
+| Cost | Evidence or consequence |
+| --- | --- |
+| Library | `map_error`'s signature and comment. `sort_by` becomes a group with about a dozen lines of private wrapper. No compiler change for items 1–2. |
+| Migration | Two cases in the throwaway suite changed. `result_map_error` fails to compile until its three calls drop `App_Error` and `to_app` takes `move`; its output is then unchanged. `lib_sort_gates` gets L0392 for L0444. The `tests/ll` sort fixture did not move. |
+| Diagnostics | Keep the interface failure as the rejection message, about 20 lines around `instantiate_generic`. Messages about the procedure path name the private member: the L0512 above reads "cannot be modified by `sort_by_procedure(int)`". |
+| Constructor values | A `Synth_Kind`, one symbol per union and variant used as a value, a body that builds the variant, [`set_synth_result_summary`](C:/code/loke/src/borrow.odin:803) on the payload, a compile-time evaluation case, and the value-position path that reports L0425 today. About 100 lines. |
+| Contributed `call` (item 4, not now) | A `Synth_Kind`, an entry in [`ensure_contributed_members`](C:/code/loke/src/impl.odin:317), a forwarding body, the shifted contract, and the indirect-call effect. About 150 lines. |
+| Specification | "Changing error domains" (the example and the inference sentence), "Sorting slices" (a procedure comparator), "Constructing a variant" (item 3), and comments.md's closure paragraph (item 4). |
+
+What it gives up: a mapper spells `move` even for an enum, and until item 4 a record cannot be passed where `map_error` expects a procedure.
+
+*Found on the way*, independent of the rule:
+
+- The stale inference sentence appears in three places: design.md, the `map_error` comment, and section 7's "Infer nested procedure type parameters". The review's revision `d7c0dc8` already contained `aaa3ff8`.
+- "A callable object exposes an ordinary method such as `call` or `evaluate`" ([Indexing and slicing](C:/code/loke/design.md:2258)) leaves the name open. A convention needs `call`.
+- L0507 on a wrapped value parameter advises "take a pointer or `shared(T)`" ([lifecycle.odin:664](C:/code/loke/src/lifecycle.odin:664)). When the cloned place is a value parameter, the useful advice is to take it `move`.
+
+*Recommendation.*
+
+1. Adopt item 1 now, and fix the stale sentence with it. It is a library change, removes the target type, and gives move-only errors a mapper, which proposal 6 will need.
+2. Adopt item 2 with the where-bound note, instead of a contributed `call`.
+3. Adopt item 3 after item 1, as its own change: it is the proposal's example, and the one mapper that never clones. If the language should not grow, item 1 alone already gives `map_error(to_app)`.
+4. Write item 4 into comments.md's closure paragraph rather than building it. The contributed `call` and the derived result type belong to the closure design.
+
+*Decision (22 September 2026).* Adopted as recommended, starting with item 1.
+
+1. `map_error` infers its target and owns the error. *Done:* the signature is `map_error :: proc(self: move, f: proc(error: move E) -> $F) -> Result(T, F)`. A mapper moves a managed or move-only error into the new variant, so the ponytail note on `map_error` is gone. In design.md, "Changing error domains" drops the written target and the sentence saying it cannot be inferred. "Specialization" now documents procedure-type shapes, which `aaa3ff8` implemented without specifying. `tests/run/result_map_error` drops `App_Error` from its three calls and gives `to_app` a `move` parameter, with unchanged output. It adds a managed error that moves through uncloned, and a move-only error whose token reaches the caller. `tests/err/result_map_error` pins what code written for the old signature gets: L0392 naming the missing `move` for a borrowing mapper, and L0392 for a written target type. Section 7 of this review is left as written.
+
 6. **Fill library gaps with operations that encode intent and ownership.**
 
 The most valuable additions are small:

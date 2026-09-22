@@ -12,8 +12,9 @@ Parse_Error :: enum { Bad_Digit, Empty }
 
 App_Error :: union { parse: Parse_Error, io: int }
 
-// A union constructor is not a callable value, so the mapper is written out.
-to_app :: proc(error: Parse_Error) -> App_Error { return .parse(error); }
+// A union constructor is not a callable value, so the mapper is written out. It
+// owns the error it is handed, and its result is the target `map_error` infers.
+to_app :: proc(error: move Parse_Error) -> App_Error { return .parse(error); }
 
 parse :: proc(ok: bool) -> Result(int, Parse_Error) {
 	if (ok) { return .ok(21); }
@@ -22,7 +23,7 @@ parse :: proc(ok: bool) -> Result(int, Parse_Error) {
 
 // The receiver is a temporary, so the transfer needs no marker.
 doubled :: proc(ok: bool) -> Result(int, App_Error) {
-	n := parse(ok).map_error(App_Error, to_app) or_return;
+	n := parse(ok).map_error(to_app) or_return;
 	return .ok(n * 2);
 }
 
@@ -30,7 +31,7 @@ doubled :: proc(ok: bool) -> Result(int, App_Error) {
 // a consuming parameter.
 from_place :: proc() -> Result(int, App_Error) {
 	outcome := parse(false);
-	n := move(outcome).map_error(App_Error, to_app) or_return;
+	n := move(outcome).map_error(to_app) or_return;
 	return .ok(n);
 }
 
@@ -45,7 +46,7 @@ impl Handle {
 open :: proc() -> Result(Handle, Parse_Error) { return .ok(Handle{7}); }
 
 opened :: proc() -> Result(int, App_Error) {
-	handle := open().map_error(App_Error, to_app) or_return;
+	handle := open().map_error(to_app) or_return;
 	return .ok(handle.id);
 }
 
@@ -57,9 +58,73 @@ report :: proc(label: int, outcome: Result(int, App_Error)) {
 	}
 }
 
+// design.md "Changing error domains": the mapper moves a managed error into its
+// new variant. The copy hook adds 100 and the drop prints, so a clone, a lost
+// drop, or a doubled one all show.
+Detail :: struct { id: int }
+
+impl Detail {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Detail, Allocator_Error) {
+		return .ok(Detail{self.id + 100});
+	}
+	release :: hook(drop) proc(self: inout Detail) { fmt.println("drop", self.id); }
+}
+
+Detail_Error :: union { detail: Detail, io: int }
+
+wrap :: proc(error: move Detail) -> Detail_Error { return .detail(move(error)); }
+
+failed :: proc() -> Result(int, Detail) { return .err(Detail{5}); }
+
+detailed :: proc() -> Result(int, Detail_Error) {
+	n := failed().map_error(wrap) or_return;
+	return .ok(n);
+}
+
+// A move-only error maps too, which a mapper that only borrowed it could not do:
+// the token the error holds reaches the caller instead of being dropped.
+Token :: move_only struct { id: int }
+
+impl Token {
+	release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.id); }
+}
+
+Full :: struct { rejected: Token }
+
+Store_Error :: union { full: Full, io: int }
+
+to_store :: proc(error: move Full) -> Store_Error { return .full(move(error)); }
+
+store :: proc(token: move Token) -> Result(Unit, Full) { return .err(Full{move(token)}); }
+
+stored :: proc() -> Result(Unit, Store_Error) {
+	store(Token{6}).map_error(to_store) or_return;
+	return .ok;
+}
+
 main :: proc() {
 	report(1000, doubled(true));
 	report(2000, doubled(false));
 	report(3000, from_place());
 	report(4000, opened());
+
+	fmt.println(5000);
+	switch (outcome in detailed()) {
+	case .ok: fmt.println(outcome);
+	case .err:
+		switch (error in outcome) {
+		case .detail: fmt.println(error.id);
+		case .io:     fmt.println(error);
+		}
+	}
+
+	fmt.println(6000);
+	switch (outcome in stored()) {
+	case .ok: fmt.println("stored");
+	case .err:
+		switch (error in outcome) {
+		case .full: fmt.println(error.rejected.id);
+		case .io:   fmt.println(error);
+		}
+	}
 }
