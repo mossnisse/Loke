@@ -421,17 +421,39 @@ callbacks with explicit generic state provide the useful mechanism using
 ordinary language facilities while keeping procedure values thin.
 
 `core:slice.sort_by` is the first standard generic callback algorithm built on
-that choice. Its comparator is an ordinary record with an immutable `call` method,
-so configuration and checked borrows remain typed and allocation-free. A plain
-procedure is accepted too: the library wraps it in such a record, so it is checked
-and lowered like one written by hand. The compiler erases addresses only inside a generated call-scoped adapter to the
-shared runtime introsort; the runtime neither owns nor retains the comparator.
-This keeps raw relocation and one copy of the introsort below the language
-boundary without making `rawptr` part of the user-facing callback protocol.
+that choice. Its comparator is an ordinary record with an immutable `call`
+method, so configuration and checked borrows remain typed and allocation-free. A
+plain procedure is accepted too: the library wraps it in such a record, so it is
+checked and lowered like one written by hand. The compiler erases addresses only
+inside a generated call-scoped adapter to the shared runtime introsort; the
+runtime neither owns nor retains the comparator. This keeps raw relocation and
+one copy of the introsort below the language boundary without making `rawptr`
+part of the user-facing callback protocol.
 
-Closure syntax remains a possible shorthand for constructing the same kind of
-environment and method. Its capture, mutation, and escape rules should be
-decided only after more generic algorithms have exercised this explicit form.
+That settles the convention this area should follow: **a callable is a value
+with a `call` method.** Three steps complete it, and none of them is worth
+taking before something needs it.
+
+A procedure should meet the convention itself, through a `call` the compiler
+contributes to every procedure type, as it already contributes `iter` to the
+built-in containers. One generic signature would then serve records and
+procedures alike, a user's own included, and `sort_by`'s procedure member could
+go. One standard API takes a `call` callable today, which is why that member is
+a library wrapper rather than a language rule.
+
+An API whose callable's result type varies cannot take a record at all. A
+generic signature can name that type only by matching a procedure type, which is
+why `Result.map_error` takes `proc(error: move E) -> $F`. Deriving a callable's
+result from its only `call`, as an iterator's `Iterator` is derived from `iter`,
+is what such an API would need first.
+
+Closure syntax is then a shorthand for the same record and method, with written
+captures, ordinary lifetime checks, and no implicit allocation. It is what gives
+the other two steps a caller, so its capture, mutation, and escape rules should
+be decided together with them. A callable that outlives the scope it was made in
+stays a separate question: `fmt.Writer` and `log.Logger` pair a procedure with
+`rawptr` state precisely because neither a generic parameter nor a borrowed
+`dyn` view describes a handle kept for the life of the program.
 
 ### Typed fallibility, and the `Option` decision it reverses
 

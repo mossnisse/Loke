@@ -2266,7 +2266,7 @@ A compound assignment on such a type reads through `operator([])` and writes bac
 
 `operator([:])` defines slicing. It returns either an owning value or a borrow derived from the receiver, treated as a borrow under [Borrows and lifetimes](#borrows-and-lifetimes). A `[]mut T` result requires an `inout` receiver; a `self: ^` receiver returns only `[]T`.
 
-An indexing or slicing overload is responsible for its own bounds checks. A callable object exposes an ordinary method such as `call` or `evaluate`.
+An indexing or slicing overload is responsible for its own bounds checks. A callable object exposes an ordinary `call` method, as [`slice.sort_by`'s comparator](#sorting-slices) does.
 
 ### Iteration protocol
 
