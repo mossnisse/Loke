@@ -2278,11 +2278,12 @@ An adapter or container view — `indexed`, `reversed`, `copied`, `keys`, `value
 An iterable type provides:
 
 - an `Element` type;
-- an `Iterator` type;
-- `iter(self) -> Iterator`;
-- `next(self: inout Iterator) -> Option(Item)` on its iterator;
+- `iter(self) -> Iterator`, whose result type is the associated `Iterator`;
+- `next(self: inout Iterator) -> Option(Item)` on its iterator, whose payload is the associated `Item`;
 - optionally a `Yield` descriptor, saying how a binding receives `Item`;
-- for mutable traversal, a `Mut_Iterator` type and `iter_mut`, whose iterator's `Yield` says which parts are lent mutably — `Yield_Mutable` when it declares none.
+- for mutable traversal, `iter_mut`, whose result type is the associated `Mut_Iterator` and whose iterator's `Yield` says which parts are lent mutably — `Yield_Mutable` when it declares none.
+
+`Iterator`, `Mut_Iterator`, and `Item` follow from those signatures, so a type need not declare them; one it does declare must agree, or the declaration is an error. `Element` is always written: it is the element a caller names in `S.Element`.
 
 Each call to `next` answers `.some(item)`, or `.none` to end the loop. See [Typed fallibility](#typed-fallibility).
 

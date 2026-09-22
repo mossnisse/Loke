@@ -1,0 +1,42 @@
+package main;
+// design.md "Iteration protocol": `Iterator` and `Mut_Iterator` are what `iter`
+// and `iter_mut` return, so neither type declares them.
+import "core:fmt";
+import "base:interfaces";
+Countdown :: struct { start: int }
+Countdown_Iterator :: struct { current: int }
+impl Countdown {
+	Element :: int;
+	iter :: proc(self) -> Countdown_Iterator { return {self.start}; }
+}
+impl Countdown_Iterator {
+	next :: proc(self: inout Countdown_Iterator) -> Option(int) {
+		if (self.current <= 0) { return .none; }
+		value := self.current;
+		self.current -= 1;
+		return .some(value);
+	}
+}
+Row :: struct { cells: []mut int }
+Row_Cursor :: struct { cells: []mut int, at: int }
+impl Row {
+	Element :: int;
+	iter :: proc(self) -> Row_Cursor { return {self.cells, 0}; }
+	iter_mut :: proc(self) -> Row_Cursor { return {self.cells, 0}; }
+}
+impl Row_Cursor {
+	next :: proc(self: inout Row_Cursor) -> Option(^mut int) {
+		if (self.at >= self.cells.len()) { return .none; }
+		value := &mut self.cells[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+total :: proc(xs: $S) -> int where interfaces.Iterable(S), S.Element == int { t := 0; foreach (x in xs) { t += x; } return t; }
+main :: proc() {
+	foreach (v in Countdown{3}) { fmt.println(v); }
+	fmt.println(total(Countdown{4}));
+	storage := [2]int{1, 2};
+	foreach (&c in Row{storage[:]}) { c += 5; }
+	fmt.println(storage);
+}

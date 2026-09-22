@@ -1,0 +1,15 @@
+package main;
+
+// A declared `Iterator` must be what `iter` returns (design.md "Iteration
+// protocol").
+
+Countdown :: struct { start: int }
+Other :: struct {}
+
+impl Countdown {
+	Element :: int;
+	Iterator :: Other;
+	iter :: proc(self) -> [1]int { return {self.start}; }
+}
+
+main :: proc() { foreach (v in Countdown{3}) { _ = v; } }

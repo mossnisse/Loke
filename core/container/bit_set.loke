@@ -128,7 +128,6 @@ impl Bit_Set($E) {
 	// -------------------------------------------------------- iteration --
 
 	Element  :: E;
-	Iterator :: Bit_Set_Iterator(E);
 
 	iter :: proc(self) -> Bit_Set_Iterator(E) { return {self, 0}; }
 
@@ -158,7 +157,6 @@ Bit_Set_Iterator :: struct($E: type) {
 
 impl Bit_Set_Iterator($E) {
 	Element  :: E;
-	Iterator :: Bit_Set_Iterator(E);
 
 	iter :: proc(self) -> Bit_Set_Iterator(E) { return self; }
 

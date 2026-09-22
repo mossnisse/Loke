@@ -319,6 +319,7 @@ ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_
 	ensure_iteration_members(k, type)
 	ensure_mutable_iteration_members(k, type)
 	ensure_item_member(k, type)
+	ensure_iterator_members(k, type, name)
 	ensure_lifecycle_members(k, type, name)
 	ensure_container_members(k, type)
 	ensure_provider_members(k, type)

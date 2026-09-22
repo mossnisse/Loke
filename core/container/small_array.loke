@@ -62,8 +62,6 @@ impl Small_Array($T, $N) {
 	// ------------------------------------------------------------ sequence --
 
 	Element  :: T;
-	Iterator :: Small_Array_Iterator(T);
-	Mut_Iterator :: Small_Array_Mut_Iterator(T);
 
 	len :: proc(self) -> int { return self.count; }
 	cap :: proc(self) -> int { return N; }
@@ -333,7 +331,6 @@ impl Small_Array_Mut_Iterator($T) {
 
 impl Small_Array_Iterator($T) {
 	Element  :: T;
-	Iterator :: Small_Array_Iterator(T);
 
 	iter :: proc(self) -> Small_Array_Iterator(T) { return self; }
 

@@ -45,7 +45,6 @@ impl Enum_Array($E, $T) {
 	// `Element` — an enum-keyed container is a keyed container, so a bare value
 	// would lose the half a caller usually wants.
 	Element  :: Enum_Entry(E, T);
-	Iterator :: Enum_Array_Iterator(E, T);
 
 	// The iterator borrows the slots rather than carrying a copy of the whole
 	// array: a `self: ^` receiver designates the caller's value (design.md
@@ -82,7 +81,6 @@ Enum_Array_Iterator :: struct($E: type, $T: type) {
 
 impl Enum_Array_Iterator($E, $T) {
 	Element  :: Enum_Entry(E, T);
-	Iterator :: Enum_Array_Iterator(E, T);
 
 	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return self; }
 

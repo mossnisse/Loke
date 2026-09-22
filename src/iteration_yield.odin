@@ -1,7 +1,10 @@
 // Iterator yield descriptors and their projected item types.
 package lokec
 
-Item_Key :: struct { iterator: Type_Id, pkg: Package_Id }
+// One derived associated type: `Item` from `next`, `Iterator` from `iter`, and
+// `Mut_Iterator` from `iter_mut` (design.md "Iteration protocol").
+Item_Key :: struct { iterator: Type_Id, pkg: Package_Id, member: Derived_Member }
+Derived_Member :: enum u8 { Item, Iterator, Mut_Iterator }
 Item_State :: enum { None, Checking, Complete }
 
 Yield_Kind :: enum {
@@ -157,7 +160,7 @@ ensure_item_member :: proc(k: ^Checker, type: Type_Id) {
 	under := type_underlying(k.c, type)
 	info := type_of(k.c, under)
 	if info == nil { return }
-	key := Item_Key{under, lookup_package(k)}
+	key := Item_Key{under, lookup_package(k), .Item}
 	switch k.c.item_states[key] {
 	case .Checking, .Complete: return
 	case .None:
@@ -192,4 +195,46 @@ ensure_item_member :: proc(k: ^Checker, type: Type_Id) {
 	generated := new_associated_type(k.c, "Item", payload, under)
 	symbol_of(k.c, generated).pkg = key.pkg
 	install_impl_members(k, .Extend, under, []Symbol_Id{generated}, key.pkg)
+}
+
+// `Iterator` and `Mut_Iterator` are what `iter` and `iter_mut` return, so a type
+// need not declare them; one that does must agree.
+ensure_iterator_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
+	switch identifier_text(k.c, name) {
+	case "Iterator":
+		derive_iterator_member(k, type, .Iterator, "Iterator", "iter")
+	case "Mut_Iterator":
+		derive_iterator_member(k, type, .Mut_Iterator, "Mut_Iterator", "iter_mut")
+	}
+}
+
+@(private = "file")
+derive_iterator_member :: proc(k: ^Checker, type: Type_Id, member: Derived_Member, associated, entry: string) {
+	under := type_underlying(k.c, type)
+	if type_of(k.c, under) == nil { return }
+	key := Item_Key{under, lookup_package(k), member}
+	switch k.c.item_states[key] {
+	case .Checking, .Complete: return
+	case .None:
+	}
+	k.c.item_states[key] = .Checking
+	defer k.c.item_states[key] = .Complete
+
+	start := symbol_of(k.c, iteration_member(k, under, entry))
+	if start == nil || start.kind != .Proc || start.result == INVALID_TYPE || !start.has_receiver { return }
+	declared := iteration_member(k, under, associated)
+	if declared == INVALID_SYMBOL {
+		generated := new_associated_type(k.c, associated, start.result, under)
+		symbol_of(k.c, generated).pkg = key.pkg
+		install_impl_members(k, .Extend, under, []Symbol_Id{generated}, key.pkg)
+		return
+	}
+	written := associated_type_of(k, under, associated)
+	if written != INVALID_TYPE && written != start.result {
+		errorf(
+			k.c, symbol_of(k.c, declared).span, "L0694",
+			"`%s.%s` is `%s`, but `%s` returns `%s`",
+			type_name(k.c, under), associated, type_name(k.c, written), entry, type_name(k.c, start.result),
+		)
+	}
 }
