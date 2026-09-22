@@ -3,15 +3,15 @@ L0392
 no overload of method `append` applies to these arguments
 `append_moved` does not apply: it takes argument 2 by `move`, which is written `move(...)`
 L0456
-@21:19
-needs `next :: proc(self: inout Small_Array_Iterator(Token)) -> Option(Token)`
+@22:19
+needs `next :: proc(self: inout Copies_Cursor(Token)) -> Option(Token)`
 `next` is declared with a `where` bound that does not hold for this instantiation
 L0408
-@25:6
+@26:6
 `Enum_Array(Slot, Token)` has no member `filled`
 `filled` is declared with a `where` bound that does not hold for this instantiation
 L0444
-@27:6
+@28:6
 `Holder(Token)` does not satisfy `Sized(Holder(Token), Token)`
 `Holder(Token)` has no method `size` with this signature
 !error[L0502]

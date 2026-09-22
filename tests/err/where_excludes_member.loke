@@ -17,8 +17,9 @@ main :: proc() {
 	token := Token{1};
 	a.append(token);
 
-	// By-value iteration yields a copy, so the iterator has no `next`.
-	foreach (held in a) { _ = held.id; }
+	// An iterator whose `next` copies has none for a move-only element.
+	tokens := [1]Token{Token{4}};
+	foreach (held in Copies(Token){tokens[:]}) { _ = held.id; }
 
 	// `filled` copies one value into every slot.
 	seed := Token{2};
@@ -32,6 +33,22 @@ main :: proc() {
 // a body that was never checked and is never emitted.
 Sized :: interface($C, $T: type) {
 	slot size: proc(self, value: T) -> int;
+}
+
+Copies :: struct($T: type) { items: []T }
+Copies_Cursor :: struct($T: type) { items: []T, at: int }
+
+impl Copies($T) {
+	Element :: T;
+	iter :: proc(self) -> Copies_Cursor(T) { return {self.items, 0}; }
+}
+
+impl Copies_Cursor($T) {
+	next :: proc(self: inout) -> Option(T) where is_copyable(T) {
+		if (self.at >= self.items.len()) { return .none; }
+		self.at += 1;
+		return .some(self.items[self.at - 1]);
+	}
 }
 
 Holder :: struct($T: type) { }

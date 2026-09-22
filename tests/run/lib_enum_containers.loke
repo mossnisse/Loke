@@ -65,7 +65,7 @@ main :: proc() {
 	fmt.println(counts, counts.len(), counts.cap());
 	fmt.println(counts[.North], counts[.East], counts[.West]);
 
-	foreach (entry in counts) { fmt.println(entry.key, entry.value); }
+	foreach (entry in counts) { fmt.println(entry.key, entry.value^); }
 
 	names := container.Enum_Array(Direction, string_view).filled("?");
 	names[.South] = "söder";

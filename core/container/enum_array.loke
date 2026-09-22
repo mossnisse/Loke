@@ -52,6 +52,8 @@ impl Enum_Array($E, $T) {
 	// caller's root.
 	iter :: proc(self: ^) -> Enum_Array_Iterator(E, T) { return {self.slots[:], 0}; }
 
+	iter_mut :: proc(self: inout) -> Enum_Array_Mut_Iterator(E, T) { return {self.slots[:], 0}; }
+
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, "{");
 		foreach (member, index in E.values().indexed()) {
@@ -81,18 +83,36 @@ Enum_Array_Iterator :: struct($E: type, $T: type) {
 
 impl Enum_Array_Iterator($E, $T) {
 	Element  :: Enum_Entry(E, T);
+	// design.md "Borrowing iteration": the key is an enum member, a value made
+	// per step; the value is lent where the array stores it.
+	Yield    :: (key: Yield_Owned, value: Yield_Borrowed);
 
 	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return self; }
 
-	// An entry carries the value by copy, so a move-only `T` gets no by-value
-	// `foreach` here; `slots` is reached through `get_mut` or `&value` instead.
-	next :: proc(
-		self: inout,
-	) -> Option(Enum_Entry(E, T)) where is_copyable(T) {
+	next :: proc(self: inout) -> Option((key: E, value: ^T)) {
 		members := E.values();
 		if (self.at >= members.len()) { return .none; }
 		index := self.at;
 		self.at += 1;
-		return .some(Enum_Entry(E, T){members[index], self.slots[index]});
+		return .some({members[index], &self.slots[index]});
+	}
+}
+
+// `foreach (key, &value in array)`: the key is still made per step, and the
+// value is lent mutably until the next step.
+Enum_Array_Mut_Iterator :: struct($E: type, $T: type) {
+	@(private) slots: []mut T,
+	@(private) at:    int,
+}
+
+impl Enum_Array_Mut_Iterator($E, $T) {
+	Yield :: (key: Yield_Owned, value: Yield_Mutable);
+
+	next :: proc(self: inout) -> Option((key: E, value: ^mut T)) {
+		members := E.values();
+		if (self.at >= members.len()) { return .none; }
+		index := self.at;
+		self.at += 1;
+		return .some({members[index], &mut self.slots[index]});
 	}
 }

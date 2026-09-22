@@ -28,7 +28,7 @@ main :: proc() {
 	foreach (letter, index in letters) { fmt.println(letter, index); }
 	// Calls on temporary view descriptors retain the source, not the descriptor.
 	walker := xs.reversed().indexed().iter();
-	fmt.println(walker.next());
+	switch (pair in walker.next()) { case .some: fmt.println(pair.value^, pair.index); case .none: }
 	// A range is already an independent value and can be stored in an adapter.
 	range := (4 ..< 7).reversed();
 	show(range);

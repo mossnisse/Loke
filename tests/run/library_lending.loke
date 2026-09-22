@@ -1,0 +1,21 @@
+package main;
+// design.md "Borrowing iteration": `Small_Array` and `Enum_Array` lend what they
+// store, so a move-only element is traversed like any other, and an
+// `Enum_Array` value is mutated as `key, &value`.
+import "core:container";
+import "core:fmt";
+Token :: move_only struct { id: int }
+Color :: enum { Red, Green }
+main :: proc() {
+	xs: container.Small_Array(Token, 4) = {};
+	xs.append(Token{1});
+	xs.append(Token{2});
+	total := 0;
+	foreach (t in xs) { total += t.id; }
+	foreach (t, i in xs.indexed()) { total += t.id * i; }
+	fmt.println(total);
+	ea: container.Enum_Array(Color, int) = {};
+	foreach (key, &value in ea) { value += int(key) + 1; }
+	foreach (key, value in ea) { fmt.println(key, value); }
+	fmt.println(ea);
+}

@@ -331,17 +331,16 @@ impl Small_Array_Mut_Iterator($T) {
 
 impl Small_Array_Iterator($T) {
 	Element  :: T;
+	// design.md "Borrowing iteration": each element is lent where the array
+	// stores it, so traversal copies nothing and a move-only `T` is read too.
+	Yield    :: Yield_Borrowed;
 
 	iter :: proc(self) -> Small_Array_Iterator(T) { return self; }
 
-	// Yielding an element by value is a copy, so a move-only `T` gets no `next`
-	// here and therefore no by-value `foreach` — design.md "Element bindings"
-	// sends such an element through a lending traversal instead, which is what
-	// `view()` and `iter_mut` already provide.
-	next :: proc(self: inout) -> Option(T) where is_copyable(T) {
+	next :: proc(self: inout) -> Option(^T) {
 		if (self.at >= self.items.len()) { return .none; }
 		index := self.items.len() - 1 - self.at if self.reverse else self.at;
 		self.at += 1;
-		return .some(self.items[index]);
+		return .some(&self.items[index]);
 	}
 }

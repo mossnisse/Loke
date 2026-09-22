@@ -15,7 +15,7 @@
 3 2
 h 0
 i 1
-.some((value: int, index: int){value = 30, index = 0})
+30 0
 6
 5
 4

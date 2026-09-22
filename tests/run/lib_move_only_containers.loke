@@ -85,5 +85,5 @@ main :: proc() {
 	fmt.println(numbers, numbers[1], numbers[0:2]);
 	counts := container.Enum_Array(Slot, int).filled(5);
 	fmt.println(counts);
-	foreach (entry in counts) { fmt.println(entry.key, entry.value); }
+	foreach (entry in counts) { fmt.println(entry.key, entry.value^); }
 }

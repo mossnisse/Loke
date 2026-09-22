@@ -12,12 +12,14 @@ main :: proc() {
 	xs: container.Small_Array(int, 4) = {};
 	xs.append(10, 20);
 	it := xs.iter();
-	// Mutating the cursor repeatedly is legal while it borrows the source.
-	fmt.println(it.next());
+	// Mutating the cursor repeatedly is legal while it borrows the source, and
+	// what it lends names the element in place.
+	first := it.next() or_else nil;
+	fmt.println(first^);
 	advance(inout it);
-	fmt.println(it.next());
+	fmt.println(it.next() == nil);
 	// An owned result does not extend the source's loan past the final call.
-	back := xs.iter_reverse();
+	back := xs.reversed().copied().iter();
 	last := back.next();
 	xs.append(30);
 	fmt.println(last, xs.len());

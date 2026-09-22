@@ -1,5 +1,5 @@
-.some(10)
-.none
+10
+true
 .some(20) 3
 1
 3
