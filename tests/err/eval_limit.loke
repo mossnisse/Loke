@@ -35,10 +35,9 @@ grow_array :: proc() -> int {
 	return xs.len();
 }
 
-// Recursion is bounded by the *stack* the evaluator runs on, not by a frame
-// count: one evaluated call costs kilobytes of it, so `EVAL_MAX_DEPTH` is out
-// of reach on an ordinary stack and this must still be a diagnostic rather
-// than the process dying.
+// Recursion stops at `EVAL_MAX_DEPTH` calls. A recursion whose frames are fat
+// with nesting runs out of stack first, which `evaluation_runs_out_of_stack_cleanly`
+// covers: the source is too wide to keep here.
 STACK :: grow_stack(1000);
 grow_stack :: proc(n: int) -> int {
 	if (n == 0) { return 0; }

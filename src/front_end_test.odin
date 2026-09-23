@@ -1027,6 +1027,30 @@ parser_depth_is_bounded :: proc(t: ^testing.T) {
 	}
 }
 
+// Every frame of this recursion is fat with nesting, so the stack runs out well
+// before the call-depth limit; that must be a diagnostic, not a dead process.
+@(test)
+evaluation_runs_out_of_stack_cleanly :: proc(t: ^testing.T) {
+	text := strings.concatenate(
+		{
+			"package main;\nDEEP :: fat_frames(250);\nfat_frames :: proc(n: int) -> int {\n\tif (n == 0) { return 0; }\n\treturn ",
+			strings.repeat("1 + (", 500, context.temp_allocator),
+			"fat_frames(n - 1)",
+			strings.repeat(")", 500, context.temp_allocator),
+			";\n}\nmain :: proc() { }\n",
+		},
+		context.temp_allocator,
+	)
+	p: Checked
+	check_source(&p, text)
+	defer destroy_checked(&p)
+	out_of_stack := false
+	for d in p.c.diagnostics {
+		out_of_stack ||= d.code == "L0342" && strings.contains(d.message, "ran out of stack")
+	}
+	testing.expect(t, out_of_stack, "deep evaluation was not stopped by the stack guard")
+}
+
 @(test)
 bare_types_are_not_expressions :: proc(t: ^testing.T) {
 	invalid_text := `package main;

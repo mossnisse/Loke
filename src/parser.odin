@@ -15,11 +15,12 @@ import "core:strings"
 // later phase walks the tree recursively — a flat parse of `1 + 1 + 1 + ...`
 // still builds a left spine one node deep per term.
 //
-// ponytail: 128 is what the checker and the AST dump can walk on a default 1 MB
-// stack, measured — their frames are fat with format-call temporaries. Split
-// those two switches into per-family helpers if a real program ever needs more.
+// Nested calls are the costliest shape measured: about 10 KB of stack per level
+// through checking and emission, crashing near 6500 on `COMPILER_STACK`. A
+// 32 KB budget per level keeps a threefold margin and leaves room for
+// compile-time evaluation beneath the deepest expression.
 @(private = "file")
-MAX_NEST :: 128
+MAX_NEST :: COMPILER_STACK / (32 * 1024)
 
 @(private = "file")
 Parser :: struct {

@@ -15,13 +15,9 @@ EVAL_MAX_DEPTH  :: 256
 EVAL_MAX_MEMORY :: 64 * 1024 * 1024
 
 // Measured rather than counted: the evaluator recurses on the host stack, where
-// one call costs 16-53 KB and deep nesting needs no call at all. Raise it only
-// with the stack the compiler is linked with.
-EVAL_MAX_STACK :: 768 * 1024
-
-// The shallowest frame seen on this thread, the nearest portable stack base.
-@(private = "file", thread_local)
-eval_stack_base: uintptr
+// one call costs 16-53 KB, and it may start deep inside the checker. It stops
+// with this much of `COMPILER_STACK` left, for reporting and unwinding.
+EVAL_STACK_MARGIN :: 1024 * 1024
 
 // `Fail` means a diagnostic was reported and evaluation is over.
 Eval_Flow :: enum {
@@ -227,18 +223,8 @@ eval_proc_name :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> string {
 @(private = "file")
 eval_step :: proc(ev: ^Evaluator, span: Span) -> bool {
 	if ev.failed || !eval_memory_ok(ev) { return false }
-	// The stack grows down; the budget leaves room for reporting.
-	probe: u8
-	here := uintptr(&probe)
-	if eval_stack_base < here {
-		eval_stack_base = here
-	}
-	if eval_stack_base - here > EVAL_MAX_STACK {
-		return eval_fail(
-			ev, span, "L0342",
-			"compile-time evaluation exceeded %d bytes of stack: it recurses or nests too deeply here",
-			EVAL_MAX_STACK,
-		)
+	if stack_remaining() < EVAL_STACK_MARGIN {
+		return eval_fail(ev, span, "L0342", "compile-time evaluation ran out of stack: it recurses or nests too deeply here")
 	}
 	ev.steps += 1
 	if ev.steps > EVAL_MAX_STEPS {

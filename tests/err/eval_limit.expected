@@ -13,5 +13,6 @@ L0342
 @31:10
 in `grow_array`, called here
 L0342
-@42:10
+@41:10
+compile-time evaluation exceeded a call depth of 256
 in `grow_stack`, called here

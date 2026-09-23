@@ -677,3 +677,31 @@ toolchain_discovery_picks_the_newest_complete_version :: proc(t: ^testing.T) {
 	found := newest_containing({filepath.join({root, "*"})}, "ucrt")
 	testing.expectf(t, filepath.base(found) == "10.0.22621.0", "picked %q", found)
 }
+
+// Nesting just under the limit goes through checking and emission. The limit
+// was once 128, so a 140-term `||` chain was rejected; a nested call costs two
+// levels, one for the call and one for its argument.
+@(test)
+nesting_below_the_limit_is_compiled :: proc(t: ^testing.T) {
+	text := strings.concatenate(
+		{
+			"package main;\nid :: proc(v: int) -> int { return v; }\nmain :: proc() {\n\tx := 3;\n\tb := x > 0",
+			strings.repeat(" || x > 1", 2000, context.temp_allocator),
+			";\n\ty := ",
+			strings.repeat("id(", 1000, context.temp_allocator),
+			"x",
+			strings.repeat(")", 1000, context.temp_allocator),
+			";\n}\n",
+		},
+		context.temp_allocator,
+	)
+	p: Checked
+	check_for_emission(&p, text)
+	defer destroy_checked(&p)
+	if !testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count) {
+		return
+	}
+	finalize_semantics(&p.c)
+	_, emitted := emit_llvm_module(&p.c)
+	testing.expect(t, emitted, "deep nesting did not emit")
+}
