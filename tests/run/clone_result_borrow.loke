@@ -1,0 +1,25 @@
+package main; import "core:fmt";
+
+// design.md "Standard customization procedures": a clone is ownership-recursive
+// and does not follow slices, so a generated `clone`/`try_clone` result carries
+// what its receiver carries, not a loan of the receiver. Cloning a value
+// parameter therefore returns as freely as the parameter itself does.
+View :: struct { s: []int }
+
+Hooked :: struct { s: []int }
+
+impl Hooked {
+	copy_hooked :: hook(copy) proc(self, allocator: Allocator) -> Result(Hooked, Allocator_Error) {
+		return .ok(Hooked{self.s});
+	}
+}
+
+record :: proc(value: View) -> View { return value.clone(); }
+fallible :: proc(value: View) -> View { return value.try_clone() or_else View{}; }
+slice :: proc(value: []int) -> []int { return value.clone(); }
+hooked :: proc(value: Hooked) -> Hooked { return value.clone(); }
+
+main :: proc() {
+	xs := []int{1, 2, 3};
+	fmt.println(record(View{xs}).s[0], fallible(View{xs}).s[1], slice(xs)[2], hooked(Hooked{xs}).s[0]);
+}

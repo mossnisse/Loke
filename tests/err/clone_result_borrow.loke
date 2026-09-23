@@ -1,0 +1,32 @@
+package main; import "core:fmt";
+
+// A clone carries its receiver's borrows, so it cannot outlive what they name,
+// and it keeps their source borrowed. A `hook(copy)` taking `self: ^` could
+// return a loan of `self`, so its clone still borrows the receiver.
+View :: struct { s: []int }
+
+Pointer_Hooked :: struct { s: []int }
+
+impl Pointer_Hooked {
+	copy_hooked :: hook(copy) proc(self: ^, allocator: Allocator) -> Result(Pointer_Hooked, Allocator_Error) {
+		return .ok(Pointer_Hooked{self.s});
+	}
+}
+
+escapes :: proc() -> View {
+	local := [3]int{1, 2, 3};
+	v := View{local[:]};
+	return v.clone();
+}
+
+stale :: proc() {
+	xs := [dynamic]int{1, 2};
+	v := View{xs[:]};
+	copied := v.clone();
+	xs.append(3);
+	fmt.println(copied.s[0]);
+}
+
+pointer_hook :: proc(value: Pointer_Hooked) -> Pointer_Hooked { return value.clone(); }
+
+main :: proc() { stale(); }

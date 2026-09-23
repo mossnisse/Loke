@@ -1,0 +1,9 @@
+L0526
+@19:9
+this slice cannot be returned: `local` ends
+L0512
+@26:2
+`xs` cannot be modified here
+L0526
+@30:72
+this borrow cannot be returned: `value` ends

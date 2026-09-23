@@ -2666,7 +2666,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			held := walk_flow_expr(graph, argument)
 			callee := symbol_of(c, v.resolution.chosen_overload)
 			if callee != nil && (callee.synth == .Adapter_Iter || callee.synth == .Iterator_Copy ||
-			   (callee.synth == .Adapter_View && type_of(c, callee.result).adapter_by_value)) {
+			   (callee.synth == .Adapter_View && type_of(c, callee.result).adapter_by_value) ||
+			   clone_copies_receiver(c, callee)) {
 				actuals[index] = held
 				borrowed = prov_join(graph, borrowed, held)
 				continue
@@ -3009,6 +3010,19 @@ prov_text_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		return nil
 	}
 	return source
+}
+
+// design.md "Standard customization procedures": a clone is ownership-recursive,
+// so a generated `try_clone`/`clone` result carries what its receiver carries,
+// never a loan of the receiver's own storage. A `hook(copy)` taking `self: ^`
+// is the exception, since its body could hand one out.
+@(private = "file")
+clone_copies_receiver :: proc(c: ^Compiler, callee: ^Symbol) -> bool {
+	if callee.synth != .Clone && callee.synth != .Try_Clone {
+		return false
+	}
+	hook := symbol_of(c, lifecycle_of(c, callee.owner_type).custom_try_clone)
+	return hook == nil || !param_mode_is_pointer(symbol_param_mode(c, hook, 0))
 }
 
 @(private = "file")
