@@ -2749,9 +2749,9 @@ An associated type is an associated constant whose value has type `type`. For a 
 
 **Named slot form** `slot name: proc(...);` declares a method requirement:
 
-- Its first parameter must be `self` in one of the three [receiver modes](#receiver-forms). A pointer parameter merely named `self` is not a receiver.
-- An interface eligible for runtime use permits only immutable `self` and `self: inout Subject` receivers.
-- After substituting interface arguments, checking selects one matching inherent or same-package extension method. Modes, results, and calling convention must match exactly; default arguments do not participate.
+- Its first parameter must be `self` in one of the four [receiver modes](#receiver-forms). A pointer parameter merely named `self` is not a receiver.
+- An interface eligible for runtime use permits `self`, `self: ^`, and `self: inout Subject` receivers, but not `self: move`.
+- After substituting interface arguments, checking selects one matching inherent or same-package extension method. Results and calling convention must match exactly, and so must receiver and parameter modes, except that a `self: ^` slot is also met by a plain `self` method, which [lends less](#receiver-forms); default arguments do not participate.
 - Slot names must be unique across the interface and everything it composes. Witness members are never overload groups.
 
 A slot is both a static callable requirement and a potential [witness](#runtime-polymorphism) entry. It is available through method syntax in constrained generic code, and reached by the slot's own lookup rather than the caller's: a bound that positively requires the interface calls the implementation satisfaction selected, including one whose ordinary visibility the instantiating package could not see. The capability is exactly the required slot on the required type. An unrelated private member, a member offered only by a negated bound or by one arm of a disjunction, and every ordinary call outside a constrained declaration all keep the [visibility rules](#exported-names); a `static_assert` grants nothing, since it constrains no declaration.
@@ -2920,7 +2920,7 @@ An interface is **dyn-compatible** when it can be erased behind a finite set of 
 - every runtime operation is a named `slot`; any other requirement (beyond interface composition) makes it static-only;
 - every composed interface is dyn-compatible, uses the same subject, and does not derive another explicit argument from that subject;
 - a slot is non-generic, non-variadic, uses the ordinary Loke calling convention, and has no omitted-argument defaults;
-- the subject occurs exactly once in the slot signature, as the first `self` or `self: inout Self` receiver, and nowhere else.
+- the subject occurs exactly once in the slot signature, as the first `self`, `self: ^`, or `self: inout Self` receiver, and nowhere else.
 
 These rules exclude constructors, `Self`-returning methods, consuming methods, generic methods, and binary operations needing another value of the same hidden type. They remain valid static requirements; the restriction applies only when forming a `dyn` type.
 
@@ -2932,7 +2932,7 @@ The `where` rule is what keeps static and runtime satisfaction consistent. A pre
 
 The view's capability is written, not inferred from the interface: `dyn I` is an immutable borrow and `dyn mut I` an exclusive mutable one, subject to the same use-based exclusivity rule as every other borrow. The two are distinct types with distinct names and type identities over one representation — the same data pointer and the same witness — so `dyn mut I` weakens to `dyn I` with no cast and no copy, and `dyn I` never strengthens.
 
-For an interface mixing receiver modes, the capability decides which slots the view exposes. `dyn I` exposes only the slots taking an immutable `self`; `dyn mut I` exposes every slot. Both keep the full witness table, so calling a mutating slot through a `dyn I` is a capability error naming `dyn mut I` — never a missing member. A mutating slot may be called directly on any `dyn mut I` value, however the value itself is held: the capability belongs to the view type and the call mutates the erased referent, not the view header.
+For an interface mixing receiver modes, the capability decides which slots the view exposes. `dyn I` exposes only the slots with a read-only receiver, `self` or `self: ^`; `dyn mut I` exposes every slot. Both keep the full witness table, so calling a mutating slot through a `dyn I` is a capability error naming `dyn mut I` — never a missing member. A mutating slot may be called directly on any `dyn mut I` value, however the value itself is held: the capability belongs to the view type and the call mutates the erased referent, not the view header.
 
 Conversion is an ordinary explicit conversion from a pointer to the concrete subject. `&` builds a read-only view and `&mut` a mutable one; a mutable view requires `^mut Concrete`, while building a `dyn I` from a `^mut Concrete` is ordinary weakening:
 
