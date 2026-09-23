@@ -15,6 +15,11 @@ impl Tracked {
 }
 Tracked_Choice :: union { a: Tracked, b: Tracked }
 
+// An enum with no member represented by zero has no zero value either.
+Priority :: enum{Low = 1, High = 2};
+Slot :: enum{First, Second, Third};
+Nothing :: enum{};
+
 succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
 	switch (_ in outcome) {
 	case .ok:  return true;
@@ -116,5 +121,19 @@ main :: proc() {
 			1 = .a(Tracked{9}),
 		};
 		fmt.println(literal.len());
+	}
+
+	// An `Enum_Array` has no zero value when its element has none, so `filled`
+	// is how one is made, and it builds each slot from the value it is given.
+	priorities := container.Enum_Array(Slot, Priority).filled(.Low);
+	priorities[.Second] = .High;
+	fmt.println(priorities);
+	choices := container.Enum_Array(Slot, Choice).filled(.b(true));
+	choices[.First] = .a(4);
+	fmt.println(choices, choices[.Third]);
+	fmt.println(container.Enum_Array(Nothing, Choice).filled(.a(1)).len());
+	{
+		held := container.Enum_Array(Slot, Tracked_Choice).filled(.a(Tracked{5}));
+		fmt.println(held.len());
 	}
 }

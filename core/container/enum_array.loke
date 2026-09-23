@@ -5,11 +5,14 @@
 // is its declaration position, so an enum with holes costs one slot per member
 // rather than one per representable value.
 //
-// The zero value holds every member's zero value, so no construction is needed.
+// The zero value holds every member's zero value, so no construction is needed
+// when `T` has one. A `T` without a zero value is held too: `filled` builds
+// every slot from the value it is given.
 @(public)
 package container;
 
 import "core:fmt";
+import "core:unsafe";
 
 Enum_Array :: struct($E: type, $T: type) {
 	@(private) slots: [E.values().len()]T,
@@ -17,12 +20,25 @@ Enum_Array :: struct($E: type, $T: type) {
 
 impl Enum_Array($E, $T) {
 	// Every slot set to `value`, which copies it once per member and so is not
-	// part of a move-only instantiation (design.md "where clauses"). The zero
-	// value needs no construction either way.
+	// part of a move-only instantiation (design.md "where clauses").
+	//
+	// Starting from the zero value would demand one `T` has no use for, so the
+	// slots are built in a `Small_Array`, whose storage is capacity rather than
+	// values (design.md "Uninitialized capacity"). A copy that panics partway
+	// leaves it holding what was built, which its drop releases. Once full, its
+	// count goes to zero so that drop releases nothing, and the whole array is
+	// taken out of it.
 	filled :: proc(value: T) -> Enum_Array(E, T) where is_copyable(T) {
-		result: Enum_Array(E, T) = {};
-		foreach (i in 0 ..< result.slots.len()) { result.slots[i] = value; }
-		return result;
+		// No members is no slots, whose zero value exists whatever `T` is, and a
+		// `Small_Array` cannot have a capacity of zero.
+		when (E.values().len() == 0) {
+			return {};
+		} else {
+			building: Small_Array(T, E.values().len()) = {};
+			for (!building.is_full()) { building.append(value); }
+			building.count = 0;
+			return {unsafe.take(building.items)};
+		}
 	}
 
 	// The number of declared members, which is also the number of slots: an

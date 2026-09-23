@@ -1,0 +1,31 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// `filled` builds its slots in raw capacity, so a copy that fails partway
+// releases the slots already built, each once, and never touches the rest.
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+Tracked :: struct { id: int }
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		copies += 1;
+		if (copies == 3) {
+			p := new(Huge, allocator) or_return;
+			free(p);
+		}
+		return .ok(Tracked{copies});
+	}
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+
+copies := 0;
+
+Slot :: enum{A, B, C, D};
+
+main :: proc() {
+	seed := Tracked{0};
+	_ = container.Enum_Array(Slot, Tracked).filled(seed);
+	fmt.println("unreachable");
+}

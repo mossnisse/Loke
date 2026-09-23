@@ -29,3 +29,11 @@ drop 7
 drop 8
 1
 drop 9
+{First = Low, Second = High, Third = Low}
+{First = .a(4), Second = .b(true), Third = .b(true)} .b(true)
+0
+drop 5
+3
+drop 5
+drop 5
+drop 5
