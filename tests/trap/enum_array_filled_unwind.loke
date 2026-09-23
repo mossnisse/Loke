@@ -13,7 +13,7 @@ impl Tracked {
 		copies += 1;
 		if (copies == 3) {
 			p := new(Huge, allocator) or_return;
-			free(p);
+			free(p, allocator);
 		}
 		return .ok(Tracked{copies});
 	}

@@ -10,6 +10,7 @@
 package lokec
 
 import "core:fmt"
+import "core:math/bits"
 import "core:mem"
 import "core:slice"
 
@@ -633,6 +634,22 @@ regions_may_overlap :: proc(a, b: Region_Set) -> bool {
 		return true
 	}
 	return (a.default && b.default) || a.locals & b.locals != 0
+}
+
+// Whether both sets name exactly one region, and the same one.
+regions_are_one :: proc(a, b: Region_Set) -> bool {
+	if a.unknown || b.unknown || a.crowded || b.crowded || a.default != b.default || a.locals != b.locals {
+		return false
+	}
+	count := int(a.default) + int(bits.count_ones(a.locals))
+	for index in 0 ..< max(len(a.params), len(b.params)) {
+		in_a := index < len(a.params) && a.params[index]
+		if in_a != (index < len(b.params) && b.params[index]) {
+			return false
+		}
+		count += int(in_a)
+	}
+	return count == 1
 }
 
 region_is_parameter_backed :: proc(set: Region_Set) -> bool {
@@ -2338,6 +2355,16 @@ check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> ([]Root_
 					"`free` takes the allocation base pointer, not a pointer that may be derived from it",
 				)
 				add_notef(state.k.c, base.span, "this possible pointer is created here")
+				return nil, false
+			}
+			if !regions_are_one(root.region, event.region) {
+				errorf(
+					state.k.c,
+					event.span,
+					"L0514",
+					"`free` must name the allocator this allocation came from; pass the allocator given to `new`, or use `unsafe.free` when the compiler cannot see it",
+				)
+				add_notef(state.k.c, root.span, "the allocation is created here")
 				return nil, false
 			}
 			if state.invalid[index] {

@@ -14,7 +14,7 @@ round_trip :: proc(allocator: Allocator) -> int {
 	}
 	p.b = 7;
 	total := p.b;
-	free(p);
+	free(p, allocator);
 	return total;
 }
 

@@ -83,7 +83,7 @@ Fallible :: struct { id: int }
 impl Fallible {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Fallible, Allocator_Error) {
 		p := new(Huge, allocator) or_return;
-		free(p);
+		free(p, allocator);
 		return .ok(self);
 	}
 	release :: hook(drop) proc(self: inout Fallible) { fmt.println("fallible drop", self.id); }

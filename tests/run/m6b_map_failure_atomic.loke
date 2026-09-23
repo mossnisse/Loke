@@ -12,7 +12,7 @@ impl Key {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Key, Allocator_Error) {
 		if (self.id == 99) {
 			p := new(Huge, allocator) or_return;
-			free(p);
+			free(p, allocator);
 		}
 		return .ok(Key{self.id});
 	}
@@ -27,7 +27,7 @@ impl Value {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
 		if (self.id == 99) {
 			p := new(Huge, allocator) or_return;
-			free(p);
+			free(p, allocator);
 		}
 		return .ok(Value{self.id});
 	}

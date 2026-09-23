@@ -8,7 +8,7 @@ release :: proc(@(allocator_reset) allocator: Allocator) {
 allocate_after_reset :: proc(@(allocator_reset) allocator: Allocator) {
 	release(allocator);
 	switch (pointer in new(int, allocator)) {
-	case .ok:  free(pointer);
+	case .ok:  free(pointer, allocator);
 	case .err:
 	}
 }

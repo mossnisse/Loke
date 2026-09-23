@@ -1,0 +1,15 @@
+L0526
+@8:15
+this `inout` result cannot be returned: `local` ends when this procedure returns
+L0513
+@20:11
+this view is used after this temporary has ended
+L0514
+@27:2
+`free` must name the allocator this allocation came from
+L0514
+@36:2
+`free` must name the allocator this allocation came from
+L0514
+@38:2
+`free` must name the allocator this allocation came from

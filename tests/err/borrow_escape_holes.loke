@@ -1,0 +1,39 @@
+package main;
+import "core:mem";
+
+// design.md "`inout` results": a place in the callee's own frame ends when it
+// returns.
+escape :: proc() -> inout int {
+	local := [4]int{1, 2, 3, 4};
+	return inout local[0];
+}
+
+Guard :: struct { value: int }
+impl Guard {
+	release :: hook(drop) proc(self: inout Guard) { self.value = -1; }
+}
+make_guard :: proc() -> Guard { return {42}; }
+
+// design.md "any_view type": a managed temporary is dropped with its statement.
+erased :: proc() {
+	view: any_view = make_guard();
+	guard := view.as(Guard);
+	_ = guard;
+}
+
+// design.md `free`: the allocator must be the one the allocation came from.
+received :: proc(allocator: Allocator) {
+	p := new(int, allocator) or_else nil;
+	free(p);
+}
+
+main :: proc() {
+	escape() = 1;
+	erased();
+	received(mem.default_allocator());
+	arena := mem.Arena.init();
+	p := new(int, arena.allocator()) or_else nil;
+	free(p);
+	q := new(int) or_else nil;
+	free(q, arena.allocator());
+}

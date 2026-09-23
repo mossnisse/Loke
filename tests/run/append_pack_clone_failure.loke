@@ -19,7 +19,7 @@ impl Res {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
 		if (self.id == 3) {
 			p := new(Huge, allocator) or_return;
-			free(p);
+			free(p, allocator);
 		}
 		return .ok(Res{self.id});
 	}

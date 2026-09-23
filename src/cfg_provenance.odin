@@ -1066,10 +1066,15 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	if root, path, ok := prov_place_of(graph, e); ok {
 		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "view"))
 	}
+	// A managed temporary is dropped when its statement ends (design.md
+	// "Temporaries and procedure boundaries"), so the view ends there too.
+	if base := expr_base(e); !base.is_const && type_is_managed(graph.k.c, base.erased_from) {
+		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root(graph, span), nil, false, span, "view"))
+	}
 	if len(loans) > 0 {
 		return loans
 	}
-	// The hidden storage is a frame slot that follows the lexical scope.
+	// Other hidden storage is a frame slot that follows the lexical scope.
 	return prov_borrow(graph, prov_hidden_root(graph, span, "this erased value"), nil, false, span, "view")
 }
 
@@ -1418,8 +1423,8 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, summary: Regio
 			region_merge(&out, prov_region_of(graph, v.bound[index]))
 		}
 	}
-	out.default = summary.default
-	out.unknown = summary.unknown
+	out.default ||= summary.default
+	out.unknown ||= summary.unknown
 	// Summary-local regions are reported in their own body, not substituted.
 	return out
 }
@@ -1974,28 +1979,33 @@ prov_invalidate :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: strin
 
 @(private)
 prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
+	return prov_borrow_place(graph, v.operand, v.mutable, v.span, "pointer")
+}
+
+// A borrow of `operand` as a place, for `&operand` and `return inout operand`.
+prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span: Span, what: string) -> []int {
 	// design.md "Capabilities and the one rule". A binding that views another
 	// owner's storage is not its own root: the pointer names the source.
-	if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
+	if ident, is_ident := operand.(^Expr_Ident); is_ident {
 		if loans, viewed := graph.view_loans[ident.symbol]; viewed && !graph.step_views[ident.symbol] {
 			return loans
 		}
 	}
-	root, path, ok := prov_place_of(graph, v.operand)
+	root, path, ok := prov_place_of(graph, operand)
 	if !ok {
-		if carriers, _, through := prov_read_through_carrier(graph, v.operand); through {
+		if carriers, _, through := prov_read_through_carrier(graph, operand); through {
 			return carriers
 		}
-		loans := walk_flow_expr(graph, v.operand)
-		if len(loans) > 0 || !prov_expr_is_temporary(v.operand) {
+		loans := walk_flow_expr(graph, operand)
+		if len(loans) > 0 || !prov_expr_is_temporary(operand) {
 			return loans
 		}
 		// A borrow of a temporary cannot escape its expression (design.md).
-		return prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, v.mutable, v.span, "pointer")
+		return prov_borrow(graph, prov_temp_root(graph, expr_span(operand)), nil, mutable, span, what)
 	}
-	prov_walk_subscripts(graph, v.operand)
-	access_block, access_index := prov_access(graph, root, path, v.mutable ? .Write : .Read, v.span)
-	return prov_borrow(graph, root, path, v.mutable, v.span, "pointer", access_block, access_index)
+	prov_walk_subscripts(graph, operand)
+	access_block, access_index := prov_access(graph, root, path, mutable ? .Write : .Read, span)
+	return prov_borrow(graph, root, path, mutable, span, what, access_block, access_index)
 }
 
 @(private)
@@ -2486,7 +2496,14 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				for bound in v.bound[1:] {
 					walk_flow_expr(graph, bound)
 				}
-				prov_emit(graph, Prov_Event{kind = .Free, sources = sources, span = v.span})
+				// design.md `free`: the allocator it releases through, the
+				// default provider's unless one is written.
+				region := prov_empty_region(graph)
+				region.default = true
+				if len(v.bound) > 1 {
+					region = prov_region_of(graph, v.bound[1])
+				}
+				prov_emit(graph, Prov_Event{kind = .Free, sources = sources, span = v.span, region = region})
 			}
 			return nil
 		case .Free_All:

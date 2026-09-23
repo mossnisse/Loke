@@ -447,7 +447,14 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	case ^Stmt_Return:
 		if graph.mode != .Lifecycle {
 			if value := s.value; value != nil {
-				sources := walk_flow_expr(graph, value.expr)
+				// design.md "`inout` results": `return inout place` hands back a
+				// borrow of the place, which must outlive the frame.
+				sources: []int
+				if value.is_inout {
+					sources = prov_borrow_place(graph, value.expr, true, expr_span(value.expr), "`inout` result")
+				} else {
+					sources = walk_flow_expr(graph, value.expr)
+				}
 				escaping := prov_escape_region(graph, value.expr)
 				result_type := expr_base(value.expr).type
 				if sym := symbol_of(graph.k.c, graph.literal.symbol); sym != nil {

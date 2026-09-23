@@ -9,7 +9,7 @@ impl Tracked {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
 		if (self.id == 9) {
 			p := new(Huge, allocator) or_return;
-			free(p);
+			free(p, allocator);
 		}
 		return .ok(Tracked{self.id});
 	}
