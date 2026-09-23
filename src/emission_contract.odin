@@ -53,7 +53,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 	}
 
 	// Synthesized map bodies need a settled key policy.
-	for &info in c.types {
+	for info in c.types {
 		if info.kind == .Map && .Container in info.contributed &&
 		   c.map_key_policies[info.key].kind == .Unresolved {
 			return emission_contract_error(c, "a map key operation was not resolved during checking")

@@ -555,6 +555,34 @@ main :: proc() { }`
 	testing.expect(t, second_field != nil && second_field.type == first_field.type, "equal pointer types were not interned")
 }
 
+// Each member's value interns a new array type while the enum's own type is
+// being filled in. The enum once kept a `^Type_Info` across that loop; when the
+// type store grew, its members went into an abandoned copy and every use said
+// the enum had no such member.
+@(test)
+enum_members_survive_type_store_growth :: proc(t: ^testing.T) {
+	COUNT :: 300
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "package main;\nSizes :: enum {\n")
+	for i in 1 ..= COUNT {
+		strings.write_string(&b, "\tM")
+		strings.write_int(&b, i)
+		strings.write_string(&b, " = size_of([")
+		strings.write_int(&b, i)
+		strings.write_string(&b, "]u8),\n")
+	}
+	strings.write_string(&b, "}\nmain :: proc() { last := Sizes.M300; }\n")
+
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, strings.to_string(b))
+	testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count)
+	sizes := symbol_of(&p.c, p.f.items[0].(^Decl).symbols[0])
+	if testing.expect(t, sizes != nil && sizes.kind == .Type) {
+		testing.expect_value(t, len(type_of(&p.c, sizes.type).fields), COUNT)
+	}
+}
+
 @(test)
 library_check_is_separate_from_executable_validation :: proc(t: ^testing.T) {
 	text := `package utility;

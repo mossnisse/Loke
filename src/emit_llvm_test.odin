@@ -296,7 +296,7 @@ main :: proc() { }
 	c := &p.c
 	if !testing.expect(t, c.error_count == 0) { report(c); return }
 	// A template whose signature was never forced is still recognized by syntax.
-	for &symbol in c.symbols {
+	for symbol in c.symbols {
 		if symbol.kind == .Proc && identifier_text(c, symbol.name) == "unused" {
 			symbol.generic = false
 		}
@@ -403,9 +403,8 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 			c.lifecycle_operations[TYPE_INT] = operations
 		case "lifecycle_hook_owner":
 			// Emittable, but owned by another type.
-			append(&c.symbols, Symbol{kind = .Proc, is_foreign = true, proc_type = TYPE_INT, owner_type = TYPE_BOOL})
 			operations := c.lifecycle_operations[TYPE_INT]
-			operations.custom_drop = Symbol_Id(len(c.symbols) - 1)
+			operations.custom_drop = new_symbol(&c, Symbol{kind = .Proc, is_foreign = true, proc_type = TYPE_INT, owner_type = TYPE_BOOL})
 			c.lifecycle_operations[TYPE_INT] = operations
 		}
 		testing.expectf(t, !validate_emission_dependencies(&c), "%s registry was accepted at the emission boundary", broken)
@@ -516,7 +515,7 @@ main :: proc() {
 	before, emitted := emit_llvm_module(c)
 	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
 	// Without the lazy lifecycle sources the IR must not change.
-	for &info in c.types {
+	for info in c.types {
 		members := make([dynamic]Symbol_Id, c.semantic_allocator)
 		for member in info.members {
 			symbol := symbol_of(c, member)

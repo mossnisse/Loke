@@ -700,10 +700,10 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.collections = make(map[string]string, c.semantic_allocator)
 	c.identifier_names = make([dynamic]string, 0, 64, c.semantic_allocator)
 	c.identifier_by_name = make(map[string]Identifier_Id, c.semantic_allocator)
-	c.types = make([dynamic]Type_Info, 0, 64, c.semantic_allocator)
+	c.types = make([dynamic]^Type_Info, 0, 64, c.semantic_allocator)
 	c.type_by_shape = make(map[Type_Key]Type_Id, c.semantic_allocator)
 	c.anon_record_types = make(map[u64][]Type_Id, c.semantic_allocator)
-	c.symbols = make([dynamic]Symbol, 0, 128, c.semantic_allocator)
+	c.symbols = make([dynamic]^Symbol, 0, 128, c.semantic_allocator)
 	c.packages = make([dynamic]Package, 0, 8, c.semantic_allocator)
 	c.generic_templates = make(map[Symbol_Id]^Generic_Template, c.semantic_allocator)
 	c.generic_impls = make(map[Symbol_Id][dynamic]^Generic_Impl, c.semantic_allocator)
@@ -751,7 +751,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits
 	int_bits := c.target.int_bits
-	append(&c.types,
+	predeclared := [?]Type_Info {
 		Type_Info{kind = .Invalid},
 		Type_Info{kind = .Void},
 		Type_Info{kind = .Bool, bits = 8},
@@ -787,9 +787,12 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		Type_Info{kind = .Allocator, bits = pointer_bits},
 		Type_Info{kind = .Allocator_Error, bits = int_bits},
 		Type_Info{kind = .CString_View, bits = pointer_bits},
-	)
+	}
+	for info in predeclared {
+		new_type(c, info)
+	}
 	assert(Type_Id(len(c.types)) == FIRST_DYNAMIC_TYPE, "predeclared type table is out of step with its IDs")
-	append(&c.symbols, Symbol{})
+	new_symbol(c, Symbol{})
 	append(&c.packages, Package{})
 }
 
@@ -818,7 +821,7 @@ identifier_text :: proc(c: ^Compiler, id: Identifier_Id) -> string {
 new_symbol :: proc(c: ^Compiler, value: Symbol) -> Symbol_Id {
 	init_semantic_stores(c)
 	id := Symbol_Id(len(c.symbols))
-	append(&c.symbols, value)
+	append(&c.symbols, new_clone(value, c.semantic_allocator))
 	return id
 }
 
@@ -841,13 +844,13 @@ symbol_of :: proc(c: ^Compiler, id: Symbol_Id) -> ^Symbol {
 	if index <= 0 || index >= len(c.symbols) {
 		return nil
 	}
-	return &c.symbols[index]
+	return c.symbols[index]
 }
 
 new_type :: proc(c: ^Compiler, value: Type_Info) -> Type_Id {
 	init_semantic_stores(c)
 	id := Type_Id(len(c.types))
-	append(&c.types, value)
+	append(&c.types, new_clone(value, c.semantic_allocator))
 	return id
 }
 
@@ -865,7 +868,7 @@ intern_proc_type :: proc(
 	proc_contract := INVALID_SYMBOL,
 ) -> Type_Id {
 	init_semantic_stores(c)
-	for &info, index in c.types {
+	for info, index in c.types {
 		if info.kind == .Proc &&
 		   info.convention == convention &&
 		   equal_type_ids(info.parameters, parameters) &&
@@ -1119,8 +1122,6 @@ anon_record_type :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> Type_Id {
 			public = true,
 		})
 	}
-	// Both names first: `type_of` points into `c.types`, so anything that
-	// appended a type while the pointer was live would dangle it.
 	display := intern_identifier(c, anon_record_display(c, fields))
 	mangled := anon_record_mangled(c, fields)
 	if info := type_of(c, id); info != nil {
@@ -1259,7 +1260,7 @@ type_of :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
 	if index < 0 || index >= len(c.types) {
 		return nil
 	}
-	return &c.types[index]
+	return c.types[index]
 }
 
 type_kind :: proc(c: ^Compiler, id: Type_Id) -> Type_Kind {

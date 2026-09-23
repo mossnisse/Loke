@@ -287,13 +287,15 @@ Compiler :: struct {
 	emission_arena:       virtual.Arena,
 	identifier_names:     [dynamic]string,
 	identifier_by_name:   map[string]Identifier_Id,
-	types:                [dynamic]Type_Info,
+	// One allocation per entry, so the pointer `type_of` or `symbol_of` returns
+	// stays valid while checking interns more types and symbols.
+	types:                [dynamic]^Type_Info,
 	type_by_shape:        map[Type_Key]Type_Id,
 	// Anonymous record types, bucketed by a hash of their ordered field vector.
 	// The hash only picks a bucket; identity is settled by comparing every
 	// `(name, type)` pair, so a collision costs a walk and never a wrong reuse.
 	anon_record_types:    map[u64][]Type_Id,
-	symbols:              [dynamic]Symbol,
+	symbols:              [dynamic]^Symbol,
 	packages:             [dynamic]Package,
 }
 
