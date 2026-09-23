@@ -13,3 +13,6 @@ L0514
 L0514
 @38:2
 `free` must name the allocator this allocation came from
+L0537
+@48:2
+this reset would end the region backing `numbers`, which is still live here

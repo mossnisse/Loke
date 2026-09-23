@@ -37,3 +37,14 @@ main :: proc() {
 	q := new(int) or_else nil;
 	free(q, arena.allocator());
 }
+
+// A region passed through a call keeps its default-provider bit, so a reset
+// that may name the default provider conflicts with an owner backed by it.
+take :: proc(a: Allocator) -> Allocator { return a; }
+reset :: proc(@(allocator_reset) a: Allocator) {
+	b := take(mem.default_allocator());
+	numbers: [dynamic]int via b = {};
+	numbers.append(1);
+	free_all(a);
+	_ = numbers.len();
+}
