@@ -23,6 +23,11 @@ copyability :: proc() {
 	static_assert(!is_copyable(Token), "a move-only one does not");
 }
 
+// An immutable array cannot copy a move-only slot out, and `at` lends it.
+first_id :: proc(slots: container.Enum_Array(Slot, Token)) -> int {
+	return slots.at(.First).id;
+}
+
 main :: proc() {
 	copyability();
 
@@ -78,6 +83,7 @@ main :: proc() {
 	fmt.println(slots[.First].id, slots[.Second].id);
 	slots[.Second].id = 3;
 	fmt.println(slots[.First].id, slots[.Second].id);
+	fmt.println(first_id(slots));
 
 	// A copyable element still gets everything, in the same package.
 	numbers: container.Small_Array(int, 4) = {};

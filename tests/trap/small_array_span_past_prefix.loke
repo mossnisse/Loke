@@ -5,7 +5,7 @@ import "core:container";
 main :: proc() {
 	values: container.Small_Array(int, 6) = {};
 	values.append(10, 20, 30, 40);
-	// The bound is the live prefix, not `N`: the two trailing zero values are
-	// storage, not elements, and slicing must not reach them.
+	// The bound is the live prefix, not `N`: the two trailing slots are
+	// capacity, not elements, and slicing must not reach them.
 	fmt.println(values[0:5]);
 }

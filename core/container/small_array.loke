@@ -40,10 +40,9 @@ impl Capacity_Error {
 		// One argument per call, spacing written out: `format_to` puts a space
 		// between its own arguments, which is right for `println` and wrong inside
 		// a sentence.
-		fmt.format_to(writer, "capacity ");
-		fmt.format_to(writer, self.capacity);
-		fmt.format_to(writer, " exceeded by ");
 		fmt.format_to(writer, self.requested);
+		fmt.format_to(writer, " elements exceed capacity ");
+		fmt.format_to(writer, self.capacity);
 	}
 }
 
@@ -83,7 +82,7 @@ impl Small_Array($T, $N) {
 	}
 
 	// `x[a:b]` over the live prefix only, which is why this is not the built-in
-	// fixed array's own slicing: the `N - count` trailing zero values are not
+	// fixed array's own slicing: the `N - count` trailing slots are capacity, not
 	// elements.
 	//
 	// The receiver is immutable, so `x[a:b]` reads on any array rather than only
@@ -302,31 +301,16 @@ impl Small_Array($T, $N) {
 	}
 }
 
-// design.md "Iteration protocol": one iterator serving both directions, because
-// they differ only in which end `at` counts from.
 // A borrow of the array's live prefix plus the traversal state. The array it
 // came from cannot be mutated, moved, or dropped while this is live, which is
 // the ordinary borrow rule rather than anything this type arranges.
+//
+// design.md "Iteration protocol": one iterator serves both directions, because
+// they differ only in which end `at` counts from.
 Small_Array_Iterator :: struct($T: type) {
 	@(private) items:   []T,
 	@(private) at:      int,
 	@(private) reverse: bool,
-}
-
-// A mutable traversal borrows the same inline prefix. Each pointer returned by
-// next() is a loan of the iterator and must end before it is advanced again.
-Small_Array_Mut_Iterator :: struct($T: type) {
-	@(private) items: []mut T,
-	@(private) at: int,
-}
-
-impl Small_Array_Mut_Iterator($T) {
-	next :: proc(self: inout) -> Option(^mut T) {
-		if (self.at >= self.items.len()) { return .none; }
-		index := self.at;
-		self.at += 1;
-		return .some(&mut self.items[index]);
-	}
 }
 
 impl Small_Array_Iterator($T) {
@@ -342,5 +326,21 @@ impl Small_Array_Iterator($T) {
 		index := self.items.len() - 1 - self.at if self.reverse else self.at;
 		self.at += 1;
 		return .some(&self.items[index]);
+	}
+}
+
+// A mutable traversal borrows the same inline prefix. Each pointer returned by
+// next() is a loan of the iterator and must end before it is advanced again.
+Small_Array_Mut_Iterator :: struct($T: type) {
+	@(private) items: []mut T,
+	@(private) at: int,
+}
+
+impl Small_Array_Mut_Iterator($T) {
+	next :: proc(self: inout) -> Option(^mut T) {
+		if (self.at >= self.items.len()) { return .none; }
+		index := self.at;
+		self.at += 1;
+		return .some(&mut self.items[index]);
 	}
 }

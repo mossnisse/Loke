@@ -39,6 +39,13 @@ impl Enum_Array($E, $T) {
 		return inout self.slots[position_of(member)];
 	}
 
+	// A slot lent where it is stored, so an immutable array reaches an element
+	// `get` cannot copy: `slots.at(.First).id`. A `self: ^` receiver is the
+	// caller's value (design.md "Receiver forms"), as for `Small_Array.view`.
+	at :: proc(self: ^, member: E) -> ^T {
+		return &self.slots[position_of(member)];
+	}
+
 	// -------------------------------------------------------- iteration --
 
 	// Iteration yields `{key, value}` entries, the shape design.md gives a map's

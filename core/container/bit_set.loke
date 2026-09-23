@@ -31,16 +31,13 @@ impl Bit_Set($E) {
 	// Every declared member.
 	all :: proc() -> Bit_Set(E) {
 		result: Bit_Set(E) = {};
-		foreach (member in E.values()) { result.set(member); }
+		foreach (at in 0 ..< E.values().len()) { result.words[at/64] |= bit(at); }
 		return result;
 	}
 
 	// ----------------------------------------------------------- queries --
 
-	contains :: proc(self, member: E) -> bool {
-		at := position_of(member);
-		return self.words[at/64] & (u64(1) << uint(at % 64)) != 0;
-	}
+	contains :: proc(self, member: E) -> bool { return self.has(position_of(member)); }
 
 	// The number of members present, not the enum's size — `cap` is that.
 	len :: proc(self) -> int {
@@ -56,17 +53,17 @@ impl Bit_Set($E) {
 
 	set :: proc(self: inout, member: E) {
 		at := position_of(member);
-		self.words[at/64] |= u64(1) << uint(at % 64);
+		self.words[at/64] |= bit(at);
 	}
 
 	unset :: proc(self: inout, member: E) {
 		at := position_of(member);
-		self.words[at/64] &~= u64(1) << uint(at % 64);
+		self.words[at/64] &~= bit(at);
 	}
 
 	toggle :: proc(self: inout, member: E) {
 		at := position_of(member);
-		self.words[at/64] ~= u64(1) << uint(at % 64);
+		self.words[at/64] ~= bit(at);
 	}
 
 	clear :: proc(self: inout) {
@@ -136,14 +133,22 @@ impl Bit_Set($E) {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, "{");
 		written := 0;
-		foreach (member in E.values()) {
-			if (!self.contains(member)) { continue; }
+		foreach (member, at in E.values().indexed()) {
+			if (!self.has(at)) { continue; }
 			if (written > 0) { fmt.format_to(writer, ", "); }
 			fmt.format_to(writer, member);
 			written += 1;
 		}
 		fmt.format_to(writer, "}");
 	}
+
+	// ------------------------------------------------------------- guts --
+
+	// Whether the member at declaration position `at` is held. Callers that
+	// already know the position use this rather than `contains`, which would
+	// search for it again.
+	@(private)
+	has :: proc(self, at: int) -> bool { return self.words[at/64] & bit(at) != 0; }
 }
 
 // Iterating a set yields the members it holds, in declaration order. The
@@ -163,9 +168,9 @@ impl Bit_Set_Iterator($E) {
 	next :: proc(self: inout) -> Option(E) {
 		members := E.values();
 		for (self.at < members.len()) {
-			member := members[self.at];
+			at := self.at;
 			self.at += 1;
-			if (self.held.contains(member)) { return .some(member); }
+			if (self.held.has(at)) { return .some(members[at]); }
 		}
 		return .none;
 	}
@@ -183,6 +188,10 @@ position_of :: proc(member: $E) -> int {
 	// defensive check for invalid representations supplied across unsafe boundaries.
 	panic("invalid enum representation");
 }
+
+// Position `at`'s bit within its word.
+@(private)
+bit :: proc(at: int) -> u64 { return u64(1) << uint(at % 64); }
 
 // The classic SWAR population count: five folds, no table, no loop.
 @(private)

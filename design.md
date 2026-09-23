@@ -4991,7 +4991,7 @@ taken := unsafe.take(self.items[last]);            // the value leaves the stora
 
 Both refuse a bare variable. A variable's liveness is tracked, so `move` takes its value out and an ordinary assignment puts one back; reaching past that with an unchecked operation could only contradict what the compiler already knows. They apply to a field, an element, or any other place inside an aggregate.
 
-Neither operation adjusts the count. A container takes its element out and then shortens, or lengthens and then writes, and the order is what keeps the count accurate at every point a panic can unwind from.
+Neither operation adjusts the count. A container writes and then lengthens, because a cloning write can fail, and shortens before it drops what it took, because a drop hook can panic. That order is what keeps the count accurate at every point a panic can unwind from.
 
 Everything in `unsafe` is a promise by the programmer that the compiler cannot verify. It does not make the underlying storage owned or extend its lifetime.
 
