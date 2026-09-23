@@ -1304,7 +1304,7 @@ My_Int :: distinct int;
 static_assert(My_Int != int);
 ```
 
-A distinct type may define its own methods, operators, named constructors, conversion hooks, interfaces, and formatting. It does not inherit the underlying type's operations: `Meters :: distinct f64` supports no arithmetic until it is given some. Operations are brought over either one at a time, with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form. Copy and drop hooks are record lifecycle roles; a resource-bearing distinct type wraps a record that owns the lifecycle.
+A distinct type may define its own methods, operators, named constructors, conversion hooks, interfaces, and formatting. It does not inherit the underlying type's operations: `Meters :: distinct f64` supports no arithmetic until it is given some. Operations are brought over either one at a time, with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form. Copy and drop hooks are record lifecycle roles; a resource-bearing distinct type wraps a record that owns the lifecycle. Copying is not an inherited operation: a copyable distinct type has its own generated `try_clone` and `clone`, typed in the distinct name and copying as its underlying type does, so it satisfies `Cloneable`.
 
 Each named aggregate type (`struct`, `enum`, or `union`) is distinct.
 

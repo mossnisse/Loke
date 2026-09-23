@@ -242,24 +242,58 @@ type_clone_disabled_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Typ
 ensure_lifecycle_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	switch identifier_text(k.c, name) {
 	case "try_clone", "clone":
-		contribute_lifecycle_members(k, type)
+		contribute_lifecycle_members(k, type, requested = true)
 	}
 }
 
-// The public `try_clone`/`clone` of any runtime type, plus those of every
-// managed part its generated bodies call. A plain value such as `int` or a
-// slice is its own clone, so `Cloneable` holds for every copyable type. A
-// `distinct` name shares its underlying type's members.
-contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
+// The public `try_clone`/`clone` of a type, plus those of every managed part
+// its generated bodies call. A plain value such as `int` or a slice is its own
+// clone, so `Cloneable` holds for every copyable type; but it, like a
+// `distinct` name's own pair, is contributed only when `requested` by a lookup
+// of the member itself. An implicit copy of one needs no body, and the many
+// copy sites would otherwise emit a pair for every scalar they touch.
+contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id, requested := false) {
 	type := type_underlying(k.c, written)
+	contribute_underlying_lifecycle_members(k, type, requested)
+	if type != written && requested {
+		contribute_distinct_copy_members(k, written, type)
+	}
+}
+
+// design.md "Distinct types": a `distinct` name inherits no operations, but it
+// is copyable like its underlying type, so it gets its own pair typed in the
+// name. The bodies copy exactly as the underlying type's do, and the lifecycle
+// entry stays the underlying type's.
+@(private = "file")
+contribute_distinct_copy_members :: proc(k: ^Checker, written, under: Type_Id) {
+	info := type_of(k.c, written)
+	under_info := type_of(k.c, under)
+	if info == nil || under_info == nil || .Lifecycle in info.contributed ||
+	   .Lifecycle not_in under_info.contributed || lifecycle_of(k.c, under).clone_disabled {
+		return
+	}
+	info.contributed += {.Lifecycle}
+	members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+	append(&members, generated_hook(k, written, "try_clone", .Try_Clone, true))
+	if under_info.kind != .Array {
+		append(&members, generated_hook(k, written, "clone", .Clone, false))
+	}
+	add_members(k.c, written, members[:])
+}
+
+@(private = "file")
+contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requested: bool) {
 	info := type_of(k.c, type)
 	if info == nil || info.descriptor || .Lifecycle in info.contributed {
 		return
 	}
 	#partial switch info.kind {
+	case .Struct, .Array, .Union, .Dynamic_Array, .Map, .String:
 	case .Invalid, .Void, .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune,
 	     .Untyped_Nil, .Untyped_String, .Interface, .Type:
 		return
+	case:
+		if !requested { return }
 	}
 	if k.c.lifecycle_operations_ready {
 		emission_contract_error(k.c, "lifecycle members were requested after finalization")
@@ -371,8 +405,11 @@ generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kin
 		sym.receiver = .Borrow
 		sym.param_defaults[1] = default_allocator_arg(k.c)
 	}
-	entry := lifecycle_of(k.c, type)
-	if kind == .Try_Clone { entry.try_clone = id } else { entry.clone = id }
+	// A `distinct` name's pair is its own; the entry records the underlying's.
+	if type_underlying(k.c, type) == type {
+		entry := lifecycle_of(k.c, type)
+		if kind == .Try_Clone { entry.try_clone = id } else { entry.clone = id }
+	}
 	return id
 }
 

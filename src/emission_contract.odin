@@ -114,6 +114,13 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 		symbol := symbol_of(c, id)
 		if symbol == nil || (symbol.synth != .Clone && symbol.synth != .Try_Clone) { continue }
 		operations, _ := resolved_lifecycle_operations(c, symbol.owner_type)
+		// A `distinct` name's own pair copies through its underlying `try_clone`.
+		if type_underlying(c, symbol.owner_type) != symbol.owner_type {
+			if operations.try_clone == INVALID_SYMBOL {
+				return emission_contract_error(c, "a contributed lifecycle procedure has no recorded operation")
+			}
+			continue
+		}
 		target := symbol.synth == .Clone ? operations.clone : operations.try_clone
 		if target != id {
 			return emission_contract_error(c, "a contributed lifecycle procedure has no recorded operation")

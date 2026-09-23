@@ -17,6 +17,28 @@ impl Meters {
 
 Opaque :: struct { value: int }
 
+// design.md "Distinct types": a distinct name inherits no operations, but it
+// is copyable, so it answers `clone` typed in itself, and its own methods meet
+// an interface's slots.
+Tagged :: distinct Opaque;
+Owned_Text :: distinct [dynamic]string;
+
+Named :: interface($T: type) {
+	slot name: proc(self) -> string;
+}
+
+impl Opaque {
+	name :: proc(self) -> string { return "opaque"; }
+}
+
+impl Tagged {
+	name :: proc(self) -> string { return "tagged"; }
+}
+
+describe :: proc(value: $T) -> string where Named(T) {
+	return value.name();
+}
+
 // design.md "Lifecycle hooks and resource types": records receive public copy
 // operations by default, while `hook(copy)` replaces their implementation.
 Counted :: struct { n: int }
@@ -65,6 +87,10 @@ main :: proc() {
 	static_assert(interfaces.Cloneable([]int));
 	static_assert(interfaces.Cloneable(string_view));
 	static_assert(interfaces.Cloneable(typeid));
+	static_assert(interfaces.Cloneable(Meters));
+	static_assert(interfaces.Cloneable(Tagged));
+	static_assert(interfaces.Cloneable(Owned_Text));
+	static_assert(Named(Tagged));
 
 	static_assert(!interfaces.Integral(f64));
 	static_assert(!interfaces.Numeric(bool));
@@ -86,4 +112,10 @@ main :: proc() {
 	fmt.println(total(2, 3));
 	fmt.println(int(f64(total(Meters(1.5), Meters(2.5)))));
 	fmt.println(duplicate(6));
+	fmt.println(int(f64(duplicate(Meters(7.5)))));
+	tagged: Tagged = duplicate(Tagged{8});
+	fmt.println(tagged.value);
+	texts := Owned_Text{"a", "b"};
+	copied: Owned_Text = texts.clone();
+	fmt.println(describe(tagged), describe(Opaque{0}));
 }
