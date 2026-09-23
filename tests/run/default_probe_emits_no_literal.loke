@@ -3,8 +3,9 @@ package main; import "core:fmt";
 // Probed and rejected for `apply(1)`, since a procedure literal is not a
 // compile-time constant. The probe checked the literal first; being rolled
 // back, it must not hoist it for emission, where its unreported type error
-// became an internal backend failure.
-apply_generic :: proc(x: $T, $F: proc(v: int) -> int = proc(v: int) -> int { return v + "x"; }) -> int {
+// became an internal backend failure. The literal names `T`, so it is checked
+// per call rather than at the declaration.
+apply_generic :: proc(x: $T, $F: proc(v: T) -> T = proc(v: T) -> T { return v + "x"; }) -> int {
 	return x;
 }
 apply_int :: proc(x: int) -> int { return x; }

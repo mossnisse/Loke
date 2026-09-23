@@ -1,0 +1,18 @@
+package main;
+
+// A `$` default that names no parameter means the same in every instance, so a
+// mistake in it is reported where it is written -- even when nothing calls the
+// procedure, or every call supplies the argument. These were accepted.
+bad_value :: proc(x: $T, $N: int = "text") -> int { return N; }
+bad_type :: proc(x: $T, $K: type = Nowhere) -> int { return 0; }
+too_big :: proc(x: $T, $N: u8 = 300) -> int { return int(N); }
+always_supplied :: proc(x: $T, $N: int = "text") -> int { return N; }
+
+// Naming a parameter defers the check to each call, where `T` is bound.
+dependent :: proc(x: $T, $N: u8 = size_of(T) * 100) -> int { return int(N); }
+// A string that happens to spell a parameter's name is not a reference to it.
+spelled :: proc(x: $T, $N: int = "T") -> int { return N; }
+
+main :: proc() {
+	n := always_supplied(1, 2);
+}

@@ -1,0 +1,23 @@
+package main; import "core:fmt";
+
+// A `$` default is evaluated as a written argument is, so it may call a
+// procedure; that was rejected as "a `$` parameter needs a compile-time
+// constant argument". Each call checks its own copy of the default, so one
+// naming `T` resolves per instance: `twice(size_of(T))` is 16 for `int` and 2
+// for `u8`, not whichever the first call saw.
+Point :: struct { x: int }
+LIMIT :: 8;
+three :: proc() -> int { return 3; }
+twice :: proc(v: $T) -> T { return v + v; }
+
+calls :: proc(x: $T, $N: int = three()) -> int { return N; }
+per_type :: proc(x: $T, $N: int = twice(size_of(T))) -> int { return N; }
+width :: proc(x: $T, $N: int = size_of(T) * 2) -> int { return N; }
+spelled :: proc(x: $T, $S: string = "T and x") -> string { return S; }
+named :: proc(x: $T, $N: int = LIMIT, $K: type = Point) -> int { return N + size_of(K); }
+
+main :: proc() {
+	fmt.println(calls(1), calls(1, 5));
+	fmt.println(per_type(1), per_type(u8(1)), per_type(1));
+	fmt.println(width(1), width(u8(1)), named(1), spelled(1));
+}

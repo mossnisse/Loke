@@ -1309,7 +1309,13 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 	k.result_type = symbol.result
 	k.result_inout = symbol.result_inout
 	for parameter in literal.signature.params {
-		if parameter.default != nil {
+		// A `$` default is checked at its declaration and bound per call
+		// (`bind_default_compile_time_argument`), never in an instance's copy.
+		poly := false
+		for entry in parameter.names {
+			poly ||= entry.is_poly
+		}
+		if parameter.default != nil && !poly {
 			// Only the parameters to its left are in scope.
 			check_value_expr(k, parameter.default, resolve_type_syntax(k, parameter.type), "pass")
 		}

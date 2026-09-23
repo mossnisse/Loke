@@ -1,0 +1,15 @@
+L0310
+@6:36
+this constant is not a value of `int`
+L0306
+@7:36
+unknown type `Nowhere`
+L0352
+@8:33
+300 is not representable by `u8`
+L0310
+@9:42
+this constant is not a value of `int`
+L0310
+@14:34
+this constant is not a value of `int`

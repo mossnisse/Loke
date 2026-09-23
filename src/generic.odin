@@ -182,6 +182,7 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 	literal := decl_proc_literal(d)
 	rejected := false
 	if literal != nil && literal.signature != nil {
+		check_independent_poly_defaults(k, literal.signature.params)
 		for parameter in literal.signature.params {
 			for entry in parameter.names {
 				if entry.is_poly {
@@ -236,6 +237,98 @@ reject_typeid_generic_parameter :: proc(k: ^Checker, name: Name, type_syntax: Ex
 	)
 	add_notef(k.c, name.span, "write `$%s: type`, and `typeid_of(%s)` where the identifier is needed", name.text, name.text)
 	return true
+}
+
+// A `$` default that names no parameter means the same in every instance, so it
+// is checked where it is written: a mistake in it is the declaration's, and it
+// would otherwise surface only as an inapplicable candidate at a call, or not at
+// all when every call supplies the argument. A default that names a parameter,
+// as `$N: int = size_of(T)` does, is checked per call once `T` is bound.
+@(private = "file")
+check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter) {
+	names := make([dynamic]string, 0, 8, context.temp_allocator)
+	for parameter in params {
+		for entry in parameter.names {
+			append(&names, entry.name.text)
+		}
+		scan_source_identifiers(k.c, expr_span(parameter.type), &names, only_poly = true)
+	}
+	for parameter in params {
+		poly := false
+		for entry in parameter.names {
+			poly ||= entry.is_poly
+		}
+		if !poly || parameter.default == nil {
+			continue
+		}
+		mentioned := make([dynamic]string, 0, 8, context.temp_allocator)
+		scan_source_identifiers(k.c, expr_span(parameter.default), &mentioned)
+		dependent := false
+		for name in mentioned {
+			for parameter_name in names {
+				dependent ||= name == parameter_name
+			}
+		}
+		if dependent {
+			continue
+		}
+		// The parameter's type may still name `$T`; then only constness is known.
+		mark := len(k.c.diagnostics)
+		k.c.speculation_depth += 1
+		wanted := resolve_type_syntax(k, parameter.type)
+		k.c.speculation_depth -= 1
+		truncate_diagnostics(k.c, mark)
+		if wanted == TYPE_TYPE {
+			errors := k.c.error_count
+			if resolve_type_syntax(k, parameter.default) == INVALID_TYPE && k.c.error_count == errors {
+				report_unresolved_type(k, parameter.default)
+			}
+			continue
+		}
+		checked := false
+		if wanted == INVALID_TYPE {
+			checked = check_single_expr(k, parameter.default) != INVALID_TYPE
+		} else {
+			checked = check_value_expr(k, parameter.default, wanted, "pass")
+		}
+		if checked {
+			require_const(k, parameter.default, "a `$` parameter's default", "L0432")
+		}
+	}
+}
+
+// Appends the identifiers written in `span`, skipping string, rune and raw
+// string literals; with `only_poly`, just those written after a `$`.
+// ponytail: a lexical scan rather than a syntax walk. It can only over-report a
+// name, which makes a default look dependent and leaves it to the call.
+@(private = "file")
+scan_source_identifiers :: proc(c: ^Compiler, span: Span, out: ^[dynamic]string, only_poly := false) {
+	if span.file == NO_FILE || int(span.file) >= len(c.sources) {
+		return
+	}
+	text := c.sources[span.file].text
+	i, hi := int(span.lo), min(int(span.hi), len(text))
+	for i < hi {
+		ch := text[i]
+		switch {
+		case ch == '"' || ch == '\'' || ch == '`':
+			i += 1
+			for i < hi && text[i] != ch {
+				i += ch != '`' && text[i] == '\\' ? 2 : 1
+			}
+			i += 1
+		case ch == '_' || ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z'):
+			start := i
+			for i < hi && (text[i] == '_' || ('a' <= text[i] && text[i] <= 'z') || ('A' <= text[i] && text[i] <= 'Z') || ('0' <= text[i] && text[i] <= '9')) {
+				i += 1
+			}
+			if !only_poly || (start > 0 && text[start - 1] == '$') {
+				append(out, text[start:i])
+			}
+		case:
+			i += 1
+		}
+	}
 }
 
 // A declaration is a template when its signature binds a `$` name, or when its
@@ -1152,25 +1245,32 @@ bind_default_compile_time_argument :: proc(
 	scope: ^Scope,
 	out: ^[dynamic]Generic_Binding,
 ) -> (string, bool) {
-	// A failed default makes the candidate inapplicable, which the call reports;
-	// its own diagnostics are rolled back. So the check is a speculation: it must
+	// Evaluated as a written argument is, so a default may call a procedure. The
+	// declaration's syntax is shared by every call and checking annotates it, so
+	// each call checks its own copy: `twice(size_of(T))` resolves per `T`. A
+	// failed default makes the candidate inapplicable, which the call reports, and
+	// its own diagnostics are rolled back; so the check is a speculation and must
 	// claim no report-once cache and hoist no literal.
+	per_call := clone_expr(k.c, default)
 	mark := len(k.c.diagnostics)
 	k.c.speculation_depth += 1
-	type := check_expr(k, default, wanted)
+	type := check_expr(k, per_call, wanted)
+	folded, evaluated := Const_Value{}, false
+	if type != INVALID_TYPE && wanted != TYPE_TYPE {
+		folded, evaluated = require_const(k, per_call, "a `$` parameter's default", "L0432")
+	}
 	k.c.speculation_depth -= 1
 	truncate_diagnostics(k.c, mark)
 	if type == INVALID_TYPE {
 		return "its omitted `$` argument's default does not check", false
 	}
-	base := expr_base(default)
 	arg := Arg_Info {
-		expr        = default,
-		span        = expr_span(default),
+		expr        = per_call,
+		span        = expr_span(per_call),
 		name        = INVALID_IDENTIFIER,
 		type        = type,
-		is_const    = base != nil && base.is_const,
-		const_value = base == nil ? Const_Value{} : base.const_value,
+		is_const    = evaluated,
+		const_value = folded,
 	}
 	return bind_compile_time_argument(k, name, arg, wanted, scope, out)
 }

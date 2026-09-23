@@ -4,8 +4,9 @@ Bare :: struct { v: int }
 
 // Probed and rejected for `pick(1)`: its `$` default names a map with a bad
 // key. The probe's diagnostics are rolled back, so it must not also mark the
-// key as reported, or the map in `second` gets no diagnostic at all.
-pick_generic :: proc(x: $T, $N: int = size_of(map[Bare]int)) -> int { return N; }
+// key as reported, or the map in `second` gets no diagnostic at all. The
+// default names `T`, so it is checked per call rather than at the declaration.
+pick_generic :: proc(x: $T, $N: int = size_of(map[Bare]T)) -> int { return N; }
 pick_int :: proc(x: int, y: int = 0) -> int { return x; }
 pick :: proc { pick_generic, pick_int }
 
