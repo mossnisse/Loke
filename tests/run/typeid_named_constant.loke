@@ -1,0 +1,24 @@
+package main; import "core:fmt";
+
+// `typeid_of(T)` folds to the same constant kind as a type, so a constant
+// declared from it was once taken for an alias of `T`: every use as a value was
+// "mismatched operand types `type` and `typeid`". Its type says otherwise.
+Point :: struct { x: int }
+Tag :: distinct typeid;
+
+POINT_ID :: typeid_of(Point);
+TYPED_ID: typeid : typeid_of(Point);
+TAGGED: Tag : Tag(typeid_of(Point));
+Alias :: Point;
+
+show :: proc(id: typeid) -> bool { return id == typeid_of(Point); }
+
+main :: proc() {
+	fmt.println(POINT_ID == typeid_of(Point), TYPED_ID == POINT_ID, POINT_ID == typeid_of(int));
+	fmt.println(show(POINT_ID), typeid(TAGGED) == POINT_ID);
+	when (POINT_ID == typeid_of(Point)) { fmt.println("folded"); }
+	p := Alias{3};
+	fmt.println(p.x, typeid_of(Alias) == POINT_ID);
+	ids := [2]typeid{POINT_ID, typeid_of(int)};
+	fmt.println(ids[0] == POINT_ID, ids[1] == POINT_ID);
+}

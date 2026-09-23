@@ -1494,7 +1494,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				check_symbol_decl_in_place(k, symbol_id)
 				symbol = symbol_of(k.c, symbol_id)
 			}
-			if symbol.const_value.kind == .Type {
+			if const_names_type(k.c, symbol.const_value, symbol.type) {
 				value.symbol = symbol_id
 				value.denoted_type = symbol.const_value.type_value
 				value.resolution = Resolution{kind = .Type, symbol = symbol_id}
@@ -1780,7 +1780,7 @@ resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
 	switch {
 	case sym.kind == .Type:
 		denoted = sym.type
-	case sym.kind == .Const && sym.const_value.kind == .Type:
+	case sym.kind == .Const && const_names_type(k.c, sym.const_value, sym.type):
 		denoted = sym.const_value.type_value
 	}
 	if denoted == INVALID_TYPE {
@@ -1873,8 +1873,14 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 			errorf(k.c, ident.span, "L0681", "`Simd` needs its element type and lane count, as in `Simd(f32, 4)`")
 			return
 		}
-		if symbol_is_generic(k, lookup_symbol(k.scope, identifier_of(k.c, ident))) {
+		named := lookup_symbol(k.scope, identifier_of(k.c, ident))
+		if symbol_is_generic(k, named) {
 			errorf(k.c, ident.span, "L0431", "`%s` is generic and needs its arguments, as in `%s(...)`", ident.name, ident.name)
+			return
+		}
+		// design.md "`type` and `typeid`": a typeid is not usable as a type.
+		if sym := symbol_of(k.c, named); sym != nil && sym.kind == .Const && type_underlying(k.c, sym.type) == TYPE_TYPEID {
+			errorf(k.c, ident.span, "L0306", "`%s` is a `typeid` value, not a type", ident.name)
 			return
 		}
 		errorf(k.c, ident.span, "L0306", "unknown type `%s`", ident.name)
@@ -2122,7 +2128,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 				if evaluated {
 					symbol.const_value = folded
 					// A type-valued constant is an alias, and names a type.
-					if symbol.const_value.kind == .Type {
+					if const_names_type(k.c, symbol.const_value, final) {
 						symbol.type = TYPE_TYPE
 					}
 				}

@@ -1,0 +1,9 @@
+L0306
+@10:5
+`POINT_ID` is a `typeid` value, not a type
+L0451
+@11:24
+`typeid_of` needs a type
+L0310
+@12:15
+cannot initialise `typeid` with `type`

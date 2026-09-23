@@ -522,7 +522,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.const_value = sym.const_value
 		v.immutable = .Constant
 		// design.md "Type alias": a constant whose value is a type denotes it.
-		if sym.const_value.kind == .Type {
+		if const_names_type(k.c, sym.const_value, sym.type) {
 			v.resolution = Resolution{kind = .Type, symbol = symbol_id}
 			v.denoted_type = sym.const_value.type_value
 			v.value_category = .Type
@@ -2829,6 +2829,11 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 	case .Typeid:
 		if value.kind == .Nil {
 			return type_const(INVALID_TYPE), true
+		}
+		// A folded `typeid_of(T)` keeps the type it identifies; the value's own
+		// type, checked before this, is what separates it from a type.
+		if value.kind == .Type {
+			return value, true
 		}
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
 		if value.kind == .Nil {

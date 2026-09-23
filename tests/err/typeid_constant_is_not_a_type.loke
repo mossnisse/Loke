@@ -1,0 +1,13 @@
+package main; import "core:fmt";
+
+// A constant declared from `typeid_of(T)` is a runtime `typeid` value, not an
+// alias of `T`, so it cannot stand where a type is wanted, and a type cannot
+// stand where a `typeid` is wanted.
+Point :: struct { x: int }
+POINT_ID :: typeid_of(Point);
+
+main :: proc() {
+	p: POINT_ID = {};
+	fmt.println(typeid_of(POINT_ID));
+	id: typeid = Point;
+}

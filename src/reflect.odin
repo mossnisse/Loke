@@ -221,6 +221,13 @@ typeid_const :: proc(type: Type_Id) -> Const_Value {
 	return Const_Value{kind = .Type, type_value = type}
 }
 
+// Whether a constant of this value and type names a type, as an alias does.
+// `typeid_of(T)` folds to the same constant kind, but its type says it is a
+// runtime `typeid` value, which is a value and never a type.
+const_names_type :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> bool {
+	return value.kind == .Type && type_underlying(c, type) != TYPE_TYPEID
+}
+
 request_typeid :: proc(c: ^Compiler, type: Type_Id) {
 	if type == INVALID_TYPE || c.speculation_depth > 0 {
 		return
@@ -528,7 +535,7 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	subject := resolve_type_syntax(k, operand)
 	if subject == INVALID_TYPE {
 		if type := check_single_expr(k, operand); type != INVALID_TYPE {
-			if base := expr_base(operand); base != nil && base.const_value.kind == .Type {
+			if base := expr_base(operand); base != nil && const_names_type(k.c, base.const_value, type) {
 				subject = base.const_value.type_value
 			}
 		}

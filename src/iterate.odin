@@ -606,7 +606,7 @@ associated_type_of :: proc(k: ^Checker, type: Type_Id, name: string) -> Type_Id 
 			check_symbol_decl_in_place(k, member, type)
 			sym = symbol_of(k.c, member)
 		}
-		if sym.const_value.kind == .Type {
+		if const_names_type(k.c, sym.const_value, sym.type) {
 			return sym.const_value.type_value
 		}
 	}
