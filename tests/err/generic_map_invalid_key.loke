@@ -1,0 +1,11 @@
+package main; import "core:fmt";
+
+// A map type bound to a `$T: type` parameter is checked where it is named, even
+// when the body only reads its associated members.
+Bare :: struct { id: int }
+
+element_size :: proc($T: type) -> int { return size_of(T.Element); }
+
+main :: proc() {
+	fmt.println(element_size(map[Bare]int));
+}

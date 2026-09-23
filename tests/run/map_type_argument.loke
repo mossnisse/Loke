@@ -1,0 +1,25 @@
+package main; import "core:fmt"; import "base:interfaces";
+
+// design.md "Maps": key policies are settled where the map type is named. A map
+// type named only as an interface or `$T: type` argument still gets members
+// looked up on it, and their bodies need the key's hash and equality; no value
+// of any map type below is ever declared.
+
+Key :: struct { id: int }
+
+impl Key {
+	hash :: proc(self, seed: uint) -> uint { return uint(self.id) ~ seed; }
+	eq :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+}
+
+element_size :: proc($T: type) -> int { return size_of(T.Element); }
+
+static_assert(interfaces.Iterable(map[int]int));
+
+main :: proc() {
+	fmt.println(interfaces.Cloneable(map[string]int));
+	fmt.println(interfaces.Sequence(map[u8]int));
+	fmt.println(interfaces.Cloneable([dynamic]map[i8]int));
+	fmt.println(interfaces.Iterable(map[Key]bool));
+	fmt.println(element_size(map[i32]i64));
+}

@@ -3,8 +3,8 @@
 // These are ordinary Loke declarations, not compiler predicates. The compiler's
 // contribution is to make built-in receiver operations and associated members
 // visible to the same structural checks a user type goes through — `hash` for
-// the built-in `Hashable` types, and the iteration members for ranges and fixed
-// arrays. Standard free spellings resolve to these same receiver members.
+// the built-in `Hashable` types, `len` and indexing for the built-in sequences,
+// and the iteration members for ranges, text, arrays, slices, and maps.
 //
 @(public)
 package interfaces;

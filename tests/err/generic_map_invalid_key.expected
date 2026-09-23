@@ -1,0 +1,6 @@
+L0392
+@10:14
+its type argument names a map with an invalid key
+L0586
+@10:27
+`Bare` cannot be a map key

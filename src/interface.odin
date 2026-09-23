@@ -280,6 +280,12 @@ interface_arguments_for :: proc(
 				}
 				return nil, false
 			}
+			// design.md "Maps": key policies are settled where the map type is
+			// named. Requirement checks on it contribute members whose bodies
+			// need one, even when no value of the type is ever declared.
+			if !require_nested_map_key_policies(k, denoted, arg.span) {
+				return nil, false
+			}
 			value = Generic_Arg{is_type = true, type = denoted}
 		} else {
 			bound_poly := false

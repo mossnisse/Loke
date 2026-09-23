@@ -1306,6 +1306,12 @@ bind_compile_time_argument :: proc(
 		if denoted == INVALID_TYPE {
 			return "a `$` parameter of type `type` needs a type argument", false
 		}
+		// design.md "Maps": settled where the map type is named, as for an
+		// interface argument, since the body may reach its members without ever
+		// declaring a value of it.
+		if !require_nested_map_key_policies(k, denoted, arg.span) {
+			return "its type argument names a map with an invalid key", false
+		}
 		if !bind_pattern_name(k, name, Generic_Arg{is_type = true, type = denoted}, scope, out) {
 			return "its generic arguments do not agree", false
 		}
