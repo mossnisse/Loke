@@ -22,6 +22,16 @@ try {
     & "$repoRoot/check-citations.ps1"
     if ($LASTEXITCODE -ne 0) { throw "design.md citation check failed ($LASTEXITCODE)" }
 
+    # The backend consumes a checked compilation and never reaches back into the
+    # checker; nothing else stops a convenient `^Checker` from creeping in.
+    $layering = Get-ChildItem src/emit_llvm*.odin, src/emission_contract.odin |
+        Where-Object { $_.Name -notlike '*_test.odin' } |
+        Select-String -Pattern '\bChecker\b' -CaseSensitive
+    if ($layering) {
+        $layering | ForEach-Object { Write-Host "$($_.Filename):$($_.LineNumber): $($_.Line.Trim())" }
+        throw "backend files name the checker's ``Checker``"
+    }
+
     & odin test src -define:ODIN_TEST_TRACK_MEMORY=false
     if ($LASTEXITCODE -ne 0) { throw "compiler unit tests failed ($LASTEXITCODE)" }
 

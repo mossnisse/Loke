@@ -366,7 +366,9 @@ be file-private.
 `emit_llvm_module` is a pure artifact boundary: it consumes a checked
 compilation and returns module text in memory. Filesystem and process policy
 belongs in `emit_llvm_toolchain.odin`. Backend names and temporary values belong
-to `Emitter`, never to semantic symbols.
+to `Emitter`, never to semantic symbols. No non-test backend file
+(`emit_llvm*.odin`, `emission_contract.odin`) names `Checker`; `test-all.ps1`
+enforces this.
 
 Implicit conversions use `emit_expr_at` with an explicit effective type; address
 and value helpers carry that type without changing the checker's AST annotations.
