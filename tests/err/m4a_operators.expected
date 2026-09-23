@@ -24,7 +24,10 @@ L0419
 has no `operator([])` returning `inout`, so this is not a place
 L0421
 @48:7
-a user `operator([:])` needs both endpoints written
+an omitted high endpoint is the operand's `len()`, so the operand must be a variable
 L0315
 @51:7
 unknown name `nope`
+L0363
+@53:7
+`Sparse` has no field or member `len`

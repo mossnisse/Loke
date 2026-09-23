@@ -44,9 +44,11 @@ main :: proc() {
 	s: Sparse = {};
 	// `[]=` cannot supply an address.
 	p := &s[1];
-	// A user `[:]` needs both endpoints written.
-	q := s[1:];
+	// An omitted high endpoint reads `len()` from a second copy of the operand.
+	q := Sparse{}[1:];
 	// The right operand of a user compound assignment is checked once, so a
 	// broken one is reported once.
 	a += nope;
+	// ...and `Sparse` has no `len`.
+	r := s[1:];
 }

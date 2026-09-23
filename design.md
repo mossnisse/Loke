@@ -1017,7 +1017,7 @@ Where a container must deliberately outlive its scope uncleaned, [`unsafe.forget
 
 Its inline storage is [capacity](#uninitialized-capacity) rather than `N` values, so `T` needs no zero value: an empty `Small_Array(T, N)` imposes exactly what an empty `[dynamic]T` does. A copy clones the live elements only, and so does a drop.
 
-An invalid insertion index panics in both ordinary and `try_` forms. `pop()` returns and removes the last element, or returns `.none` for an empty array. `x[a:b]` is a read-only `[]T` over the live prefix; `slice()` is the whole prefix as `[]mut T`, and a writable subrange is `slice()[a:b]`.
+An invalid insertion index panics in both ordinary and `try_` forms. `pop()` returns and removes the last element, or returns `.none` for an empty array. `x[a:b]` is a read-only `[]T` over the live prefix, with either endpoint omittable as for [user slicing](#indexing-and-slicing); `slice()` is the whole prefix as `[]mut T`, and a writable subrange is `slice()[a:b]`.
 
 A [move-only](#lifecycle-hooks-and-resource-types) element type is held too. The members that copy an element — `get`, the copying members of `append` and `insert`, and their `try_` forms — are bound on [`is_copyable(T)`](#built-in-procedures) and are therefore not members of such an instance, which is the [`where` exclusion](#where-clauses) rather than anything this type arranges. `append` and `insert` are [procedure groups](#explicit-procedure-overloading) whose other member consumes, so `values.append(move(token))` is the way in, exactly as on a dynamic array: the written `move(...)` [selects](#parameter-semantics-and-abi-lowering) the consuming member, and a temporary reaches it with no marker at all. Those consuming members have no `try_` form, because a capacity failure would arrive having already consumed the value it could not store, so a caller who must not panic asks `space()` or `is_full()` first. Everything that reaches an element without copying it — `get_mut`, `view`, `slice`, `iter_mut`, `pop`, `remove`, `clear` — is unaffected, and so is [`foreach`](#borrowing-iteration), which borrows each element rather than copying it.
 
@@ -2265,6 +2265,8 @@ p := &grid[3, 2];   // ERROR: no `inout` overload; `[]=` cannot supply an addres
 A compound assignment on such a type reads through `operator([])` and writes back through `operator([]=)`, per the [fallback rule](#operator-declarations).
 
 `operator([:])` defines slicing. It returns either an owning value or a borrow derived from the receiver, treated as a borrow under [Borrows and lifetimes](#borrows-and-lifetimes). A `[]mut T` result requires an `inout` receiver; a `self: ^` receiver returns only `[]T`.
+
+An omitted endpoint means what it does for built-in slicing: a missing low endpoint is `0` and a missing high one is `x.len()`, so `x[:]` and `x[1:]` reach the same `operator([:])` as `x[0:x.len()]`. The length is read from the operand a second time, so a missing high endpoint requires an operand whose evaluation runs nothing — a variable, a field path, or a dereference — and a type with a `len` method.
 
 An indexing or slicing overload is responsible for its own bounds checks. A callable object exposes an ordinary `call` method, as [`slice.sort_by`'s comparator](#sorting-slices) does.
 

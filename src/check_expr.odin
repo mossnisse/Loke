@@ -1265,15 +1265,43 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if v.lo == nil || v.hi == nil {
-		errorf(k.c, v.span, "L0421", "a user `operator([:])` needs both endpoints written")
-		v.type = INVALID_TYPE
-		return
+	// design.md "Indexing and slicing": an omitted endpoint means what it means
+	// for built-in slicing, 0 and `x.len()`. The length is read from a second copy
+	// of the operand, so only an operand whose evaluation has no effect qualifies.
+	if v.lo == nil {
+		zero := new(Expr_Literal, k.c.semantic_allocator)
+		zero.span = v.span
+		zero.kind = .Int
+		zero.text = "0"
+		v.lo = zero
+	}
+	length_omitted := false
+	if v.hi == nil {
+		if !is_effect_free_place(v.operand) {
+			errorf(
+				k.c, v.span, "L0421",
+				"an omitted high endpoint is the operand's `len()`, so the operand must be a variable, field, or dereference; write the endpoint",
+			)
+			v.type = INVALID_TYPE
+			return
+		}
+		callee := new(Expr_Selector, k.c.semantic_allocator)
+		callee.span = v.span
+		callee.operand = clone_expr(k.c, v.operand)
+		callee.name = Name{text = "len", span = v.span, id = intern_identifier(k.c, "len")}
+		length := new(Expr_Call, k.c.semantic_allocator)
+		length.span = v.span
+		length.callee = callee
+		v.hi = length
+		length_omitted = true
 	}
 	endpoints := make([]Expr, 2, k.c.semantic_allocator)
 	endpoints[0], endpoints[1] = v.lo, v.hi
 	args, ok := index_arguments(k, v.operand, endpoints)
 	if !ok {
+		if length_omitted && expr_base(v.hi).type == INVALID_TYPE {
+			add_notef(k.c, v.span, "an omitted high endpoint is the operand's `len()`")
+		}
 		v.type = INVALID_TYPE
 		return
 	}
@@ -1299,6 +1327,21 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 		add_notef(k.c, sym.span, "declared here with a read-only receiver, which can only yield a read-only slice")
 		v.type = INVALID_TYPE
 	}
+}
+
+// A variable, a field path, or a dereference: evaluating one twice reads the same
+// place and runs nothing.
+@(private = "file")
+is_effect_free_place :: proc(e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return true
+	case ^Expr_Selector:
+		return is_effect_free_place(v.operand)
+	case ^Expr_Postfix:
+		return v.op == .Caret && is_effect_free_place(v.operand)
+	}
+	return false
 }
 
 // Slicing a built-in carrier (design.md "Slices"). Returns false for any other

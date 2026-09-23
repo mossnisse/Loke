@@ -53,6 +53,8 @@ main :: proc() {
 	// subrange is the mutable whole-prefix view, sliced.
 	fmt.println(middle(x));
 	fmt.println(x.slice()[0:2]);
+	// An omitted endpoint is 0 or `len()`, as for built-in slicing.
+	fmt.println(x[:], x[1:], x[:1]);
 
 	// Iteration, forwards and backwards.
 	foreach (value in x) { fmt.println(value); }
