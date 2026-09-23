@@ -1,0 +1,25 @@
+package main; import "core:fmt";
+
+// design.md "`type` and `typeid`": a `typeid` is a runtime value and does not
+// make a generic declaration. Each `$` parameter of that type is one error at
+// its declaration; the uses below add nothing. They used to be accepted here
+// and fail at every call with an internal key, "`t55` is not representable".
+Point :: struct { x: int }
+Id :: typeid;
+Tag :: distinct typeid;
+
+by_default :: proc(x: $T, $K: typeid = typeid_of(Point)) -> typeid { return K; }
+explicit :: proc($K: typeid) -> typeid { return K; }
+Tagged :: struct($K: typeid) { v: int }
+aliased :: proc($K: Id) -> int { return 0; }
+never_called :: proc($K: Tag) -> int { return 0; }
+
+// The compile-time spelling is still fine.
+fine :: proc($K: type) -> typeid { return typeid_of(K); }
+
+main :: proc() {
+	fmt.println(by_default(1) == typeid_of(Point));
+	fmt.println(explicit(typeid_of(Point)) == fine(Point));
+	t := Tagged(typeid_of(Point)){1};
+	fmt.println(t.v, aliased(typeid_of(Point)));
+}

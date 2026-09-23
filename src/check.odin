@@ -1892,6 +1892,10 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	}
 	// `Name(args)` whose head names nothing.
 	if call, is_call := syntax.(^Expr_Call); is_call {
+		// A generic rejected at its declaration was reported there.
+		if template := generic_template_of_callee(k, call.callee, .Record); template != nil && template.rejected {
+			return
+		}
 		if head, head_is_ident := call.callee.(^Expr_Ident); head_is_ident {
 			errorf(k.c, head.span, "L0306", "unknown type `%s`", head.name)
 			return

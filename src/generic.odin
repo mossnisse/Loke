@@ -49,6 +49,8 @@ Generic_Template :: struct {
 	// Record templates only: every instance made so far, so a block registered
 	// after one exists still reaches it.
 	instances:   [dynamic]^Instance,
+	// Its declaration was rejected and reported; a use reports nothing more.
+	rejected:    bool,
 }
 
 Generic_Param_Decl :: struct {
@@ -155,6 +157,13 @@ generic_template_for :: proc(k: ^Checker, symbol_id: Symbol_Id) -> ^Generic_Temp
 	return register_generic_template(k, symbol_id, sym.decl, kind)
 }
 
+// Whether `template`'s declaration was rejected and reported, settling that
+// declaration first so a use checked before it cannot miss the answer.
+template_rejected :: proc(k: ^Checker, template: ^Generic_Template) -> bool {
+	resolve_symbol_signature_in_place(k, template.symbol, template.impl_type)
+	return template.rejected
+}
+
 symbol_is_generic :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	return generic_template_for(k, symbol_id) != nil
 }
@@ -171,6 +180,28 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 		)
 	}
 	literal := decl_proc_literal(d)
+	rejected := false
+	if literal != nil && literal.signature != nil {
+		for parameter in literal.signature.params {
+			for entry in parameter.names {
+				if entry.is_poly {
+					rejected |= reject_typeid_generic_parameter(k, entry.name, parameter.type)
+				}
+			}
+		}
+	}
+	if record, is_record := d.values[0].(^Type_Record); is_record {
+		for group in record.generic_params {
+			for name in group.names {
+				rejected |= reject_typeid_generic_parameter(k, name, group.type)
+			}
+		}
+	}
+	if rejected && len(d.symbols) > 0 {
+		if template := generic_template_for(k, d.symbols[0]); template != nil {
+			template.rejected = true
+		}
+	}
 	if literal != nil && literal.signature != nil && literal.signature.convention != "" {
 		// A foreign member inherited its convention; L0624 already reports it.
 		if len(d.symbols) > 0 {
@@ -180,6 +211,31 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 		}
 		errorf(k.c, d.span, "L0438", "a generic procedure cannot use a foreign calling convention")
 	}
+}
+
+// design.md "`type` and `typeid`": a `typeid` is a runtime value and does not
+// make a generic declaration, so a `$` parameter of that type is an error here
+// rather than a failure at every call. Resolved as a speculation, since the type
+// may name an earlier `$T` that only an instance binds.
+@(private = "file")
+reject_typeid_generic_parameter :: proc(k: ^Checker, name: Name, type_syntax: Expr) -> bool {
+	if type_syntax == nil {
+		return false
+	}
+	mark := len(k.c.diagnostics)
+	k.c.speculation_depth += 1
+	type := resolve_type_syntax(k, type_syntax)
+	k.c.speculation_depth -= 1
+	truncate_diagnostics(k.c, mark)
+	if type == INVALID_TYPE || type_underlying(k.c, type) != TYPE_TYPEID {
+		return false
+	}
+	errorf(
+		k.c, expr_span(type_syntax), "L0439",
+		"a `$` parameter cannot be a `typeid`: a runtime type identifier does not specialize a declaration",
+	)
+	add_notef(k.c, name.span, "write `$%s: type`, and `typeid_of(%s)` where the identifier is needed", name.text, name.text)
+	return true
 }
 
 // A declaration is a template when its signature binds a `$` name, or when its
@@ -1425,6 +1481,9 @@ generic_args_of :: proc(c: ^Compiler, bindings: []Generic_Binding) -> []Generic_
 
 // A generic type applied in type position: `Table(string, int)`.
 instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Generic_Template, report: bool) -> Type_Id {
+	if template_rejected(k, template) {
+		return INVALID_TYPE
+	}
 	if len(v.args) != len(template.params) {
 		if report {
 			report_generic_arity(k, v.span, template, len(v.args))

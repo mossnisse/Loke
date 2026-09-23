@@ -442,6 +442,9 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 // Instantiates and ranks a generic signature without checking its body.
 @(private = "file")
 build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: []Arg_Info) -> Candidate {
+	if template_rejected(k, template) {
+		return Candidate{symbol = template.symbol, args = args, template = template}
+	}
 	inference := infer_generic_arguments(k, template, args)
 	if !inference.ok {
 		return Candidate{symbol = template.symbol, args = args, reason = inference.reason}
@@ -641,6 +644,12 @@ overload_has_viable :: proc(
 
 @(private = "file")
 report_no_match :: proc(k: ^Checker, span: Span, description: string, all: []Candidate) {
+	// A candidate whose declaration was rejected already explains the call.
+	for cand in all {
+		if cand.template != nil && cand.template.rejected {
+			return
+		}
+	}
 	// A sole rejected generic can report its precise failed bound.
 	if len(all) == 1 && all[0].template != nil {
 		instantiate_generic(k, all[0].template, all[0].bindings, all[0].scope, span, report = true)
