@@ -1,0 +1,15 @@
+package main; import "core:fmt";
+
+// Probed and rejected for `apply(1)`, since a procedure literal is not a
+// compile-time constant. The probe checked the literal first; being rolled
+// back, it must not hoist it for emission, where its unreported type error
+// became an internal backend failure.
+apply_generic :: proc(x: $T, $F: proc(v: int) -> int = proc(v: int) -> int { return v + "x"; }) -> int {
+	return x;
+}
+apply_int :: proc(x: int) -> int { return x; }
+apply :: proc { apply_generic, apply_int }
+
+main :: proc() {
+	fmt.println(apply(1));
+}

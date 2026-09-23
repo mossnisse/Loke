@@ -110,10 +110,10 @@ packages are referenced by `Identifier_Id`, `Symbol_Id`, `Type_Id`, and
 growable arrays. Semantic declarations, interned data, specialization records,
 and frozen constants live in the compilation-lifetime semantic arena.
 
-Do not keep a `^Symbol` or `^Type_Info` across an operation that may append to
-the corresponding dynamic array. Retain its ID and fetch the pointer again. The
-compile-time evaluator and generic checker can grow semantic stores in places
-that look like ordinary expression checks.
+The symbol and type stores hold one allocation per entry, so a `^Symbol` or
+`^Type_Info` from `symbol_of` or `type_of` stays valid while checking appends
+more. `c.packages` is still a plain dynamic array: retain a `Package_Id` across
+anything that may load a package.
 
 ### One annotated AST
 
@@ -206,6 +206,15 @@ Hypothetical interface and overload checks increment `Compiler.speculation_depth
 They may inspect or annotate cloned syntax, but they must not enroll generic
 bodies, witnesses, materialized globals, type IDs, or backend helpers in the
 final program.
+
+Rolling back a check removes only its diagnostics, so **any check whose
+diagnostics may be truncated runs with `speculation_depth` raised**. Report-once
+caches (map-key and sort-order policies, validated attributes) and hoisted
+procedures are gated on it; a rollback outside speculation lets a cache record a
+report that no longer exists. The one sanctioned commit from inside speculation
+is `ensure_proc_typed_for_eval`, which checks a body for compile-time execution
+at depth zero and holds that body's diagnostics aside (`hold_diagnostics`), so a
+later rollback cannot take them.
 
 ### Compile-time execution and generics
 

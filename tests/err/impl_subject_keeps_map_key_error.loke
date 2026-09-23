@@ -1,0 +1,15 @@
+package main; import "core:fmt";
+
+Bare :: struct { v: int }
+
+// Discovery first declares this block quietly and rolls back its diagnostics;
+// that attempt must not mark the key as reported, or the bad key is never
+// named and only "does not name a type" remains.
+impl [size_of(map[Bare]int)]u8 {
+	size :: proc(self) -> int { return 0; }
+}
+
+main :: proc() {
+	m: map[Bare]int = {};
+	fmt.println(m.len());
+}

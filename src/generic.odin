@@ -1096,10 +1096,13 @@ bind_default_compile_time_argument :: proc(
 	scope: ^Scope,
 	out: ^[dynamic]Generic_Binding,
 ) -> (string, bool) {
+	// A failed default makes the candidate inapplicable, which the call reports;
+	// its own diagnostics are rolled back. So the check is a speculation: it must
+	// claim no report-once cache and hoist no literal.
 	mark := len(k.c.diagnostics)
+	k.c.speculation_depth += 1
 	type := check_expr(k, default, wanted)
-	// A failed default is reported at the call as an inapplicable candidate, not
-	// twice; the declaration itself is checked where it is written.
+	k.c.speculation_depth -= 1
 	truncate_diagnostics(k.c, mark)
 	if type == INVALID_TYPE {
 		return "its omitted `$` argument's default does not check", false
@@ -1789,8 +1792,11 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 			continue
 		}
 		parameter := template.params[index]
+		// The template reports its own parameter types; this only reads one.
 		mark, errors := len(k.c.diagnostics), k.c.error_count
+		k.c.speculation_depth += 1
 		wanted := resolve_type_syntax(k, parameter.type_syntax)
+		k.c.speculation_depth -= 1
 		truncate_diagnostics(k.c, mark)
 		if wanted == TYPE_TYPE || wanted == INVALID_TYPE {
 			if resolve_type_syntax(k, arg.value) == INVALID_TYPE && k.c.error_count == errors {
@@ -1878,7 +1884,8 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	defer restore_checker_location(k, saved)
 
 	// A written argument that differs from the bound one skips this instance;
-	// `check_generic_impl_subject` reports one that could never match.
+	// `check_generic_impl_subject` reports one that could never match, so each
+	// comparison here is a speculation whose diagnostics are rolled back.
 	for written, index in block.args {
 		bound := instance.bindings[index].arg
 		if poly, is_poly := written.(^Type_Poly); is_poly {
@@ -1887,7 +1894,9 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		}
 		if bound.is_type {
 			mark := len(k.c.diagnostics)
+			k.c.speculation_depth += 1
 			resolved := resolve_type_syntax(k, written)
+			k.c.speculation_depth -= 1
 			truncate_diagnostics(k.c, mark)
 			if resolved != bound.type {
 				return
@@ -1896,9 +1905,11 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		}
 		mark := len(k.c.diagnostics)
 		folded, evaluated := Const_Value{}, false
+		k.c.speculation_depth += 1
 		if check_single_expr(k, written, bound.value_type) != INVALID_TYPE {
 			folded, evaluated = require_const(k, written, "a generic argument", "L0432")
 		}
+		k.c.speculation_depth -= 1
 		truncate_diagnostics(k.c, mark)
 		if !evaluated {
 			return
