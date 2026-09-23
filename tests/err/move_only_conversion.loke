@@ -1,0 +1,12 @@
+package main; import "core:fmt";
+
+// Converting to or from a distinct type copies a place like any other value
+// use, so a move-only operand must be moved.
+Handle :: move_only struct { id: int }
+Owned :: distinct Handle;
+
+main :: proc() {
+	h := Handle{1};
+	o := Owned(h);
+	fmt.println(o.id);
+}

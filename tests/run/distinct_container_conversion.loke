@@ -1,0 +1,28 @@
+package main; import "core:fmt";
+
+// design.md "Distinct types": a conversion between a distinct type and its
+// underlying type keeps the representation, so a managed operand read from a
+// place is cloned. It used to be copied bitwise, leaving two owners of one
+// allocation that were both dropped.
+Names :: distinct [dynamic]string;
+Nums :: distinct [dynamic]int;
+Tag :: distinct string;
+
+main :: proc() {
+	names := Names{"a", "b"};
+	view := ([dynamic]string)(names);
+	view.append("c");
+	fmt.println(view.len(), ([dynamic]string)(names).len());
+
+	plain := [dynamic]int{1, 2};
+	wrapped := Nums(plain);
+	plain.append(3);
+	fmt.println(plain.len(), ([dynamic]int)(wrapped).len());
+
+	// A transfer moves the allocation instead.
+	moved := ([dynamic]int)(move(wrapped));
+	fmt.println(moved.len());
+
+	text: Tag = Tag("he" + "j");
+	fmt.println(string(text));
+}

@@ -1,0 +1,3 @@
+L0503
+@10:13
+`Handle` is move-only, so this conversion cannot copy it

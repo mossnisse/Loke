@@ -1118,6 +1118,9 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 	source := expr_base(source_expr).type
 	target := as_type
 	value := emit_expr(e, source_expr)
+	if v.operation.(Call_Conversion).clones {
+		value = emit_clone_value(e, source, value)
+	}
 
 	from := type_underlying(e.c, source)
 	to := type_underlying(e.c, target)

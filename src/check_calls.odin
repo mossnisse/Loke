@@ -856,7 +856,14 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	} else if !convertible(k.c, source, target) {
 		return false
 	}
-	v.operation = Call_Conversion{}
+	// design.md "Distinct types": converting a managed value between a distinct
+	// name and its underlying type reinterprets it, so a place must be cloned or
+	// both it and the result would own one allocation.
+	clones := classify_copy(k, v.args[0].value, source, .Conversion)
+	if clones {
+		report_copy_cost(k, .Conversion, expr_span(v.args[0].value), v.args[0].value, source, k.loop_depth > 0)
+	}
+	v.operation = Call_Conversion{clones = clones}
 	v.resolution = {}
 	record_proc_contract_check(k.c, source, target, v.span)
 	v.bound = make([]Expr, 1, k.c.semantic_allocator)

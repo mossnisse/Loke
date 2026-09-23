@@ -209,7 +209,11 @@ Call_Operation :: union {
 Call_Procedure :: struct {}
 Call_Compile_Time :: struct {} // type/interface applications, never runtime calls
 Call_Builtin :: struct {} // intrinsic without additional checked metadata
-Call_Conversion :: struct {} // representation/numeric conversion, no user hook
+// A representation/numeric conversion, no user hook. A managed operand keeps its
+// representation, so one read from a place is cloned like any other copy.
+Call_Conversion :: struct {
+	clones: bool,
+}
 Call_Reflect :: struct { op: Reflect_Op, field: Symbol_Id }
 Call_Text :: struct { op: Text_Op }
 Call_Enum_From_Int :: struct { type: Type_Id }

@@ -580,6 +580,7 @@ Copy_Site :: enum {
 	Write,
 	Variadic,
 	Variant,
+	Conversion,
 	Or_Else_Fallback,
 }
 
@@ -597,6 +598,7 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 	case .Write:            return "write"
 	case .Variadic:         return "variadic argument"
 	case .Variant:          return "variant construction"
+	case .Conversion:       return "conversion"
 	case .Or_Else_Fallback: return "`or_else` fallback"
 	}
 	return "copy"
