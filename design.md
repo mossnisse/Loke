@@ -1866,7 +1866,7 @@ Type_Info :: struct {
 }
 ```
 
-`type_info_of` returns a read-only `^runtime.Type_Info` into shared static storage. Member tables expose public fields only and preserve source order. Unused fields are zero. Enum values use `value_low` and `value_high`; the owning type's `bits` and `signed` fields describe how to interpret them. These record layouts are part of the runtime ABI.
+`type_info_of` returns a read-only `^runtime.Type_Info` into shared static storage. Member tables expose public fields only and preserve source order. Unused fields are zero. Enum values use `value_low` and `value_high`; the owning type's `bits` and `signed` fields describe how to interpret them. A `Distinct` entry fills only `id`, `kind`, `name`, `size`, and `align`, and its `element` is the type it is declared over, whose own entry describes the shape. These record layouts are part of the runtime ABI, and the compiler rejects a `base:runtime` whose declarations differ from them.
 
 ### Compile-time reflection
 
@@ -3190,7 +3190,7 @@ A constant is a value, not a variable, and an ordinary use of one is substituted
 - taking its address with `&`
 - a borrowing traversal, which lends the elements themselves
 
-**A constant used in any of those ways is materialized into read-only storage.** All uses of that constant share one backing object.
+**A constant used in any of those ways is materialized into read-only storage.** All uses of that constant share one backing object. A constant whose type holds an [`Atomic(T)`](#concurrency-and-the-memory-model) is never materialized, because an atomic changes through a `^`; borrowing one is a compile-time error, while an ordinary use still copies it.
 
 ```odin
 NUMBERS :: [?]int{7, 42, 628};
@@ -4693,7 +4693,7 @@ The language has no `const` qualifier. **Capability is in the carrier's type, sp
 
 `string_view` and ordinary read-only parameter access are immutable borrows too. Other read-only storage — a [materialized constant](#materialization) — is read-only by how it was declared.
 
-An immutable borrow permits reads only. While one is live, the root may be read through compatible paths — including through other immutable borrows of the same place, of which any number may be live at once — but it may not be written, moved, dropped, freed, or invalidated.
+An immutable borrow permits reads only. While one is live, the root may be read through compatible paths — including through other immutable borrows of the same place, of which any number may be live at once — but it may not be written, moved, dropped, freed, or invalidated. The one exception is an [`Atomic(T)`](#concurrency-and-the-memory-model) operation, which writes through a read-only receiver: no atomic access conflicts with another.
 
 A mutable borrow permits reads and writes through that borrow. While one is live, the root cannot be accessed through a competing name or overlap another live borrow.
 
@@ -5579,7 +5579,7 @@ Within one thread, evaluations are ordered by the rules under [Evaluation order]
 
 Two accesses conflict when they touch overlapping bytes and at least one is a write. If conflicting non-atomic accesses from different threads are not ordered by happens-before, the program has a data race and its behavior is undefined. Ordinary variables, pointers, container headers, reference counts, and struct fields are not implicitly atomic. This rule permits conventional optimizing compilers while making synchronization requirements explicit.
 
-The `core:sync` package provides `Atomic(T)` for booleans, integers, enums with a supported integer backing type, and pointers. Operations accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or `.Sequentially_Consistent` where meaningful. `core:sync.fence(order)` accepts every ordering except `.Relaxed`. Invalid type, operation, or ordering combinations are compile-time errors. `Atomic(T)` is move-only, because copying one is a non-atomic read that yields a second, unrelated atomic; `Once` holds an `Atomic` and is move-only by the same structural rule.
+The `core:sync` package provides `Atomic(T)` for booleans, integers, enums with a supported integer backing type, and pointers. Operations accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or `.Sequentially_Consistent` where meaningful. `core:sync.fence(order)` accepts every ordering except `.Relaxed`. Invalid type, operation, or ordering combinations are compile-time errors. Every operation, writes included, takes a read-only `self: ^` receiver: no atomic access conflicts with another, so an `Atomic(T)` reached through a `^T`, such as a `shared(T)` payload, still updates. Its plain `value` field keeps the ordinary rules. `Atomic(T)` is move-only, because copying one is a non-atomic read that yields a second, unrelated atomic; `Once` holds an `Atomic` and is move-only by the same structural rule.
 
 Loke adopts the C++20 atomic ordering model, excluding dependency-ordered `consume`, as the normative model for atomics. The relevant rules are restated here so ordinary code does not need another language specification:
 
@@ -5611,7 +5611,7 @@ Construction uses `mem.default_allocator()` unless an `allocator` argument selec
 
 Handle accounting is safe across threads, but destruction may be thread-affine. The thread releasing the final strong handle runs `T.drop` and uses the retained allocator. The programmer must ensure that thread may do both.
 
-Shared ownership does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` that cannot outlive the handle. Conflicting access, including through different handles, still requires synchronization.
+Shared ownership does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` that cannot outlive the handle. Conflicting access, including through different handles, still requires synchronization. State that changes behind a handle is held in `Atomic(T)` or `Once` fields, whose operations work through that `^T`.
 
 Both `shared(T)` and `weak(T)` compare their zero value to `nil` and cannot use `via`. `handle.get()` borrows from the receiver. A handle is never consumed implicitly at its last use; copying always creates another handle.
 

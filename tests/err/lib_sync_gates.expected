@@ -2,8 +2,8 @@ L0614
 @55:11
 cannot take the address of `count`: it is reached through a packed struct
 L0614
-@60:14
-cannot take the address of `count`: it is reached through a packed struct
+@60:2
+cannot borrow `count`: it is reached through a packed struct
 L0392
 @66:2
 a `$` parameter needs a compile-time constant argument

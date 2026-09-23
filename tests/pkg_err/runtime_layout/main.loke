@@ -1,0 +1,12 @@
+package main;
+
+// design.md "`type` and `typeid`": the metadata records are the runtime ABI,
+// written by the compiler field by field. A `base:runtime` whose declarations
+// disagree is reported where it declares them, not miscompiled silently.
+
+import "base:runtime";
+
+main :: proc() {
+	info := type_info_of(typeid_of(int));
+	here := source_location();
+}

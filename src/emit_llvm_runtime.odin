@@ -867,73 +867,64 @@ emit_type_info_tables :: proc(e: ^Emitter) {
 
 @(private = "file")
 type_info_entry :: proc(e: ^Emitter, record, member, type: Type_Id) -> string {
-	shape := underlying_info(e.c, type)
-	members := type_info_members(e, member, type)
-
 	values := make(map[string]string)
 	defer delete(values)
 	values["id"] = fmt.aprintf("%d", typeid_value(e.c, type))
-	values["kind"] = fmt.aprintf("%d", public_type_kind(e.c, type))
+	values["kind"] = fmt.aprintf("%d", int(public_type_kind(e.c, type)))
 	values["name"] = text_constant(e, Const_Value{kind = .String, text = type_name(e.c, type)}, false)
 	values["size"] = fmt.aprintf("%d", type_size(e.c, type))
 	values["align"] = fmt.aprintf("%d", type_align(e.c, type))
+	// design.md: a `distinct` entry's `element` is the type it is declared over,
+	// and the shape is that type's to report.
+	if info := type_of(e.c, type); info != nil && info.kind == .Distinct {
+		values["element"] = fmt.aprintf("%d", typeid_value(e.c, info.element))
+		return named_field_constant(e, record, values)
+	}
+	shape := underlying_info(e.c, type)
+	values["members"] = type_info_members(e, member, type)
 	values["bits"] = fmt.aprintf("%d", shape == nil ? 0 : shape.bits)
 	values["signed"] = shape != nil && shape.signed ? "true" : "false"
 	values["element"] = fmt.aprintf("%d", typeid_value(e.c, shape == nil ? INVALID_TYPE : shape.element))
 	values["key"] = fmt.aprintf("%d", typeid_value(e.c, shape == nil ? INVALID_TYPE : shape.key))
 	values["count"] = fmt.aprintf("%d", shape == nil ? 0 : shape.count)
-	values["members"] = members
 	return named_field_constant(e, record, values)
 }
 
-// The public `Type_Kind`, whose order is frozen by `base/runtime`.
+// The public `Type_Kind`, whose order the checker verified against `base/runtime`.
 @(private = "file")
-public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
-	PUBLIC_KINDS :: []string {
-		"Invalid", "Void", "Bool", "Signed_Int", "Unsigned_Int", "Float", "Rune",
-		"Raw_Pointer", "Pointer", "C_Pointer", "Array", "Slice", "Dynamic_Array", "Map",
-		"Struct", "Enum", "Union", "Proc", "String", "String_View", "CString_View",
-		"Typeid", "Any_View", "Dyn", "Distinct", "Simd", "Allocator", "Allocator_Error",
-	}
-	wanted := "Invalid"
-	under := type_underlying(c, type)
+public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> Runtime_Type_Kind {
 	if type_kind(c, type) == .Distinct {
-		wanted = "Distinct"
-	} else {
-		#partial switch type_kind(c, under) {
-		case .Void:            wanted = "Void"
-		case .Bool:            wanted = "Bool"
-		case .Int:             wanted = type_signed(c, under) ? "Signed_Int" : "Unsigned_Int"
-		case .Float:           wanted = "Float"
-		case .Rune:            wanted = "Rune"
-		case .Raw_Pointer:     wanted = "Raw_Pointer"
-		case .Pointer:         wanted = "Pointer"
-		case .C_Pointer:       wanted = "C_Pointer"
-		case .Array:           wanted = "Array"
-		case .Simd:            wanted = "Simd"
-		case .Slice:           wanted = "Slice"
-		case .Dynamic_Array:   wanted = "Dynamic_Array"
-		case .Map:             wanted = "Map"
-		case .Struct:          wanted = "Struct"
-		case .Enum:            wanted = "Enum"
-		case .Union:           wanted = "Union"
-		case .Proc:            wanted = "Proc"
-		case .String:          wanted = "String"
-		case .String_View:     wanted = "String_View"
-		case .CString_View:    wanted = "CString_View"
-		case .Typeid:          wanted = "Typeid"
-		case .Any_View:        wanted = "Any_View"
-		case .Dyn:             wanted = "Dyn"
-		case .Allocator:       wanted = "Allocator"
-		case .Allocator_Error: wanted = "Allocator_Error"
-		}
+		return .Distinct
 	}
-	for name, index in PUBLIC_KINDS {
-		if name == wanted {
-			return index
-		}
+	under := type_underlying(c, type)
+	#partial switch type_kind(c, under) {
+	case .Void:            return .Void
+	case .Bool:            return .Bool
+	case .Int:             return type_signed(c, under) ? .Signed_Int : .Unsigned_Int
+	case .Float:           return .Float
+	case .Rune:            return .Rune
+	case .Raw_Pointer:     return .Raw_Pointer
+	case .Pointer:         return .Pointer
+	case .C_Pointer:       return .C_Pointer
+	case .Array:           return .Array
+	case .Simd:            return .Simd
+	case .Slice:           return .Slice
+	case .Dynamic_Array:   return .Dynamic_Array
+	case .Map:             return .Map
+	case .Struct:          return .Struct
+	case .Enum:            return .Enum
+	case .Union:           return .Union
+	case .Proc:            return .Proc
+	case .String:          return .String
+	case .String_View:     return .String_View
+	case .CString_View:    return .CString_View
+	case .Typeid:          return .Typeid
+	case .Any_View:        return .Any_View
+	case .Dyn:             return .Dyn
+	case .Allocator:       return .Allocator
+	case .Allocator_Error: return .Allocator_Error
 	}
-	return 0
+	return .Invalid
 }
 
 // The `[]Member_Info` of a struct, enum, union, or procedure.
@@ -953,7 +944,7 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 			}
 			values := make(map[string]string)
 			defer delete(values)
-			values["kind"] = "0" // Field
+			values["kind"] = fmt.aprintf("%d", int(Runtime_Member_Kind.Field))
 			values["name"] = text_constant(e, Const_Value{kind = .String, text = identifier_text(e.c, sym.name)}, false)
 			values["type"] = fmt.aprintf("%d", typeid_value(e.c, sym.type))
 			values["offset"] = fmt.aprintf("%d", type_field_offset(e.c, type, index))
@@ -968,7 +959,7 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 			low, high := enum_raw_words(e.c, sym.const_value)
 			values := make(map[string]string)
 			defer delete(values)
-			values["kind"] = "1" // Enum_Value
+			values["kind"] = fmt.aprintf("%d", int(Runtime_Member_Kind.Enum_Value))
 			values["name"] = text_constant(e, Const_Value{kind = .String, text = identifier_text(e.c, sym.name)}, false)
 			values["type"] = fmt.aprintf("%d", typeid_value(e.c, type))
 			values["value_low"] = low
@@ -981,7 +972,7 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 			defer delete(values)
 			// A payloadless variant reports `Unit`.
 			payload := variant == TYPE_VOID ? e.c.unit_type : variant
-			values["kind"] = "2" // Union_Variant
+			values["kind"] = fmt.aprintf("%d", int(Runtime_Member_Kind.Union_Variant))
 			values["name"] = text_constant(
 				e, Const_Value{kind = .String, text = identifier_text(e.c, shape.variant_names[index])}, false,
 			)
@@ -993,14 +984,14 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 		for parameter in shape.parameters {
 			values := make(map[string]string)
 			defer delete(values)
-			values["kind"] = "3" // Parameter
+			values["kind"] = fmt.aprintf("%d", int(Runtime_Member_Kind.Parameter))
 			values["type"] = fmt.aprintf("%d", typeid_value(e.c, parameter))
 			append(&entries, named_field_constant(e, member, values))
 		}
 		if shape.result != INVALID_TYPE {
 			values := make(map[string]string)
 			defer delete(values)
-			values["kind"] = "4" // Result
+			values["kind"] = fmt.aprintf("%d", int(Runtime_Member_Kind.Result))
 			values["type"] = fmt.aprintf("%d", typeid_value(e.c, shape.result))
 			append(&entries, named_field_constant(e, member, values))
 		}
@@ -1058,11 +1049,8 @@ named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]st
 			strings.write_string(&b, ",")
 		}
 		name := identifier_text(e.c, sym.name)
-		value, supplied := values[name]
-		if !supplied {
-			zero, ok := zero_const(e.c, sym.type)
-			value = ok ? llvm_const(e, zero, sym.type) : "zeroinitializer"
-		}
+		// design.md "Zero values": every zero is all-zero bits.
+		value := values[name] or_else "zeroinitializer"
 		fmt.sbprintf(&b, " %s %s", llvm_type(e, sym.type), value)
 	}
 	strings.write_string(&b, " }")

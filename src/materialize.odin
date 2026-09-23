@@ -68,6 +68,16 @@ request_materialization :: proc(k: ^Checker, e: Expr) -> bool {
 		return true
 	}
 	base := expr_base(root)
+	// design.md "Materialization": the storage is read-only, and an atomic's
+	// operations write through a `^`, so one there would fault on its first write.
+	if type_holds_atomic(k.c, base.type) {
+		errorf(
+			k.c, expr_span(e), "L0705",
+			"`%s` is or holds a `sync.Atomic`, which changes through a `^`, so this constant cannot be borrowed from read-only storage; declare a variable or `static` storage instead",
+			type_name(k.c, base.type),
+		)
+		return true
+	}
 	sym := symbol_of(k.c, symbol)
 	entry := new(Materialized, k.c.semantic_allocator)
 	entry.symbol = symbol
@@ -95,4 +105,46 @@ materialized_global_name :: proc(c: ^Compiler, sym: ^Symbol, index: int) -> stri
 		text = identifier_text(c, sym.name)
 	}
 	return fmt.aprintf("@.const.%s.%d", text, index, allocator = c.semantic_allocator)
+}
+
+// Whether a value of `type` holds a `core:sync` `Atomic` inline: the one leaf
+// whose operations write through a read-only `^`.
+type_holds_atomic :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	seen := make(map[Type_Id]bool, context.temp_allocator)
+	return type_holds_atomic_walk(c, type, &seen)
+}
+
+@(private = "file")
+type_holds_atomic_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool) -> bool {
+	if type == INVALID_TYPE || seen[type] {
+		return false
+	}
+	seen[type] = true
+	info := type_of(c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Distinct, .Array:
+		return type_holds_atomic_walk(c, info.element, seen)
+	case .Union:
+		for variant in info.variants {
+			if type_holds_atomic_walk(c, variant, seen) {
+				return true
+			}
+		}
+	case .Struct:
+		if template := symbol_of(c, info.instance_of); template != nil {
+			pkg := package_of(c, template.pkg)
+			if pkg != nil && pkg.key == STD_SYNC && identifier_text(c, template.name) == "Atomic" {
+				return true
+			}
+		}
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && type_holds_atomic_walk(c, sym.type, seen) {
+				return true
+			}
+		}
+	}
+	return false
 }

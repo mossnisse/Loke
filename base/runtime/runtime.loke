@@ -3,9 +3,9 @@
 //
 // This package is authoritative for the layouts the compiler and the seed
 // runtime both write: the allocator surface, the public type metadata, and
-// `Source_Code_Location`. The compiler asserts its own layout against these
-// declarations rather than the other way round, so the two record shapes cannot
-// drift apart silently.
+// `Source_Code_Location`. The compiler checks these declarations against the
+// layouts it writes, field names, order, and types, and the enums member by
+// member, so the two cannot drift apart silently.
 //
 // `Allocator` and `Allocator_Error` are contributed by the compiler
 // (`src/stdlib.odin`) and bind the *same* types the unqualified predeclared
@@ -51,7 +51,9 @@ Member_Info :: struct {
 //
 // Aggregate member tables expose public fields only; procedure entries retain
 // written parameter and result order, and union variants retain declaration
-// order. Unused scalar, relation, and member fields are zero.
+// order. Unused scalar, relation, and member fields are zero. A `Distinct`
+// entry's `element` is the type it is declared over, and the shape is that
+// type's entry to describe.
 @(public)
 Type_Info :: struct {
 	id:      typeid,
@@ -89,15 +91,6 @@ Source_Code_Location :: struct {
 	column:    int,
 }
 
-// design.md "Typed fallibility": the three declarations the compiler
-// bootstraps and binds into the universe, so every program spells absence and
-// failure with one pair of types rather than a trailing status convention.
-//
-// `Option` has a zero — `.none` is its first variant — so it may be stored in
-// a global, a container, or a zero-initialized allocation. `Result` has none:
-// there is no honest default between success and failure, so it must be
-// constructed.
-
 // design.md "Iteration protocol": an iterator's optional `Yield` says how a
 // binding receives what `next` hands back -- the element itself, a pointer
 // lending it, or, for a record element, a record of descriptors one per field.
@@ -110,6 +103,15 @@ Yield_Owned :: struct {}
 Yield_Borrowed :: struct {}
 @(public)
 Yield_Mutable :: struct {}
+
+// design.md "Typed fallibility": the three declarations the compiler
+// bootstraps and binds into the universe, so every program spells absence and
+// failure with one pair of types rather than a trailing status convention.
+//
+// `Option` has a zero — `.none` is its first variant — so it may be stored in
+// a global, a container, or a zero-initialized allocation. `Result` has none:
+// there is no honest default between success and failure, so it must be
+// constructed.
 
 // The no-payload result type. A fallible operation that produces nothing on
 // success returns `Result(Unit, E)`.

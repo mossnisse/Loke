@@ -55,7 +55,7 @@ packed_field :: proc(value: inout Packed) {
 	other := &mut value.count;
 }
 
-// An implicit `inout` method receiver is still an address-taking operation.
+// An implicit `^` method receiver is still an address-taking operation.
 packed_atomic_receiver :: proc(value: inout Packed_Atomic) {
 	value.count.store(1);
 }

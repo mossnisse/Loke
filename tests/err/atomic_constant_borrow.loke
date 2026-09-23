@@ -1,0 +1,20 @@
+package main;
+
+import "core:sync";
+
+// design.md "Materialization": a borrowed constant lives in read-only storage,
+// and an atomic's operations write through a `^`. A constant holding one can
+// be copied, never borrowed.
+
+Counter :: struct { hits: sync.Atomic(int), ready: sync.Once }
+
+START :: sync.Atomic(int){5};
+EMPTY :: Counter{};
+
+main :: proc() {
+	_ = START.add(1);
+	p := &EMPTY;
+	EMPTY.ready.do(proc() {});
+	fresh := START;
+	_ = fresh.add(1);
+}

@@ -41,14 +41,20 @@ memory_order_type :: proc(k: ^Checker) -> Type_Id {
 
 @(private = "file")
 memory_order_matches :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return runtime_enum_matches(c, type, Memory_Order)
+}
+
+// Does a `base:runtime` enum declare exactly `E`'s members, by name, in order,
+// with each value its index? The compiler writes these values as numbers.
+runtime_enum_matches :: proc(c: ^Compiler, type: Type_Id, $E: typeid) -> bool {
 	info := type_of(c, type)
-	if info == nil || info.kind != .Enum || len(info.fields) != len(Memory_Order) {
+	if info == nil || info.kind != .Enum || len(info.fields) != len(E) {
 		return false
 	}
 	for member, index in info.fields {
 		sym := symbol_of(c, member)
 		value, fits := bi_to_i64(c, sym.const_value.integer)
-		if sym.name != intern_identifier(c, fmt.tprint(Memory_Order(index))) || !fits || value != i64(index) {
+		if sym.name != intern_identifier(c, fmt.tprint(E(index))) || !fits || value != i64(index) {
 			return false
 		}
 	}
@@ -203,8 +209,11 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	}
 }
 
-// The address operand: a pointer to a supported type, `^mut` unless the
-// operation only loads. Returns the pointee, or INVALID_TYPE after an error.
+// The address operand: a pointer to a supported type. A read-only `^` is
+// enough even to write: design.md "Concurrency and the memory model" makes an
+// atomic write through one legal, since no atomic access conflicts with another,
+// which is what lets `Atomic(T)` work behind a `shared(T)`. Returns the pointee,
+// or INVALID_TYPE after an error.
 @(private = "file")
 check_atomic_place :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) -> Type_Id {
 	argument := v.args[0].value
@@ -217,14 +226,6 @@ check_atomic_place :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind:
 		errorf(
 			k.c, expr_span(argument), "L0661",
 			"`%s` takes the address of the atomic place, found `%s`",
-			ident.name, type_name(k.c, address),
-		)
-		return INVALID_TYPE
-	}
-	if kind != .Atomic_Load && !info.mutable {
-		errorf(
-			k.c, expr_span(argument), "L0661",
-			"`%s` writes through its operand, so it needs a `^mut` pointer, found `%s`",
 			ident.name, type_name(k.c, address),
 		)
 		return INVALID_TYPE

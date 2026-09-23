@@ -456,10 +456,6 @@ UNPINNED :: []string {
 	// `core:fmt` without its own `Writer`/`Options`.
 	"L0601",
 	"L0350",
-	// Need a replaced `base:runtime` — a copy of the whole runtime in the test
-	// tree to change one declaration in it.
-	"L0661",
-	"L0704",
 }
 
 @(test)

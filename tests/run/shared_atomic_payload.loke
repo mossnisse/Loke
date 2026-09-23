@@ -1,0 +1,43 @@
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+// design.md "Shared ownership": `get` hands back a read-only `^T`, and state
+// that changes behind a handle lives in atomics. Their operations take a
+// read-only receiver (design.md "Concurrency and the memory model"), so a
+// counter and a `Once` inside the payload update through any handle.
+
+Counter :: struct {
+	hits:  sync.Atomic(int),
+	ready: sync.Once,
+}
+
+announce :: proc() { fmt.println("ready"); }
+
+// A `^Counter` is all a caller needs.
+bump :: proc(counter: ^Counter) {
+	counter.hits.add(1);
+	counter.ready.do(announce);
+}
+
+total: static sync.Atomic(int) = {};
+
+main :: proc() {
+	first := shared(Counter{});
+	bump(first.get());
+	bump(first.get());
+	second := first;
+	second.get()^.hits.store(40);
+	first.get()^.hits.add(2);
+	fmt.println(first.get()^.hits.load(), first.get()^.ready.is_done());
+
+	total.add(3);
+	fmt.println(total.load());
+
+	// A read-only borrow and an atomic update coexist.
+	local := sync.Atomic(int){1};
+	watching := &local;
+	local.store(9);
+	fmt.println(watching^.load());
+}

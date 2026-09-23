@@ -47,6 +47,10 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// package dependency that would exist only to spell a name.
 		contribute_builtin(c, pkg, "default_allocator", .Default_Allocator, public = false)
 		contribute_builtin(c, pkg, "unsafe_free", .Unsafe_Free, public = false)
+		// The payload is capacity inside that block, so it arrives and leaves the way
+		// a container element does, without asking `T` for a zero.
+		contribute_builtin(c, pkg, "unsafe_write", .Unsafe_Write, public = false)
+		contribute_builtin(c, pkg, "unsafe_take", .Unsafe_Take, public = false)
 		// The control block is atomic, and `core:sync` is a package every program
 		// would then have to load — `shared` and `weak` are universe names.
 		contribute_atomic_intrinsics(c, pkg)

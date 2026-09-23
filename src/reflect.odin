@@ -318,10 +318,12 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 		}
 		request_typeid(c, referenced)
 	}
-	// A `distinct` type's own `element` is deliberately absent: `type_info_entry`
-	// reports the shape `underlying_info` resolves to, so the wrapped type is
-	// never named by the metadata and an id for it would be reachable from
-	// nothing. The shape's own components below are what a walk can reach.
+	// A `distinct` entry names only the type it is declared over, whose own entry
+	// carries the shape.
+	if info := type_of(c, type); info != nil && info.kind == .Distinct {
+		consider(c, info.element)
+		return
+	}
 	under := underlying_info(c, type)
 	if under == nil {
 		return

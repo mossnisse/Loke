@@ -1,0 +1,9 @@
+L0704
+@20:1
+`runtime.Member_Info` does not have the layout the compiler writes
+L0704
+@30:1
+`runtime.Type_Info` does not have the layout the compiler writes
+L0704
+@45:1
+`runtime.Source_Code_Location` does not have the layout the compiler writes

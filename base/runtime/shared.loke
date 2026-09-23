@@ -34,12 +34,18 @@ package runtime;
 // `weak` counts the weak handles *plus one for the strong handles as a group*,
 // which is the classic arrangement: the payload dies when `strong` reaches
 // zero, and the block itself is released when `weak` does.
+//
+// The payload is capacity (design.md "Uninitialized capacity"), so the block
+// has a zero whatever `T` is and `new` can make one: `live` says whether it
+// holds a value, and the payload is written in and taken out without a zero `T`
+// ever standing in for it.
 @(private)
 Shared_Block :: struct($T: type) {
 	strong:    int,
 	weak:      int,
 	allocator: Allocator,
-	payload:   T,
+	@(initialized = live) payload: [1]T,
+	live:      int,
 }
 
 // design.md: "It owns one stable, heap-allocated `T` payload and an atomic
@@ -96,7 +102,8 @@ try_shared_from_move :: proc(
 	block^.strong = 1;
 	block^.weak = 1;
 	block^.allocator = allocator;
-	block^.payload = move(value);
+	unsafe_write(block^.payload[0], move(value));
+	block^.live = 1;
 	return .ok(Shared(T){rawptr(block)});
 }
 
@@ -115,17 +122,17 @@ shared_no_block :: proc($T: type, allocator: Allocator) -> Shared(T) {
 
 impl Shared($T) {
 	// design.md: "`handle.get()` returns a non-owning `^T` whose root provenance
-	// derives from that handle." That is what the `inout` receiver buys: an
-	// `inout` parameter aliases the caller's own storage, so a borrow returned
-	// from it is derived from the caller's handle and cannot outlive it. Method
-	// syntax supplies the marker, so this is still written `handle.get()`.
+	// derives from that handle." That is what the `^` receiver buys: it borrows
+	// the caller's handle, so a borrow returned from it is derived from that
+	// handle and cannot outlive it, and a read-only handle can still be asked.
 	//
-	// It does *not* make concurrent access to `T` safe. A caller needs a mutex,
-	// atomics inside `T`, immutability, or another protocol of its own.
-	get :: proc(self: inout) -> ^T {
+	// It does *not* make concurrent access to `T` safe. State that changes behind
+	// a handle lives in `core:sync`'s `Atomic` or `Once` fields, whose operations
+	// work through a `^T`, or behind another protocol of the caller's own.
+	get :: proc(self: ^) -> ^T {
 		if (self.block == nil) { panic("this shared handle is nil"); }
 		block := (^mut Shared_Block(T))(self.block);
-		return &block^.payload;
+		return &block^.payload[0];
 	}
 
 	// The number of strong handles, for tests and diagnostics. It may be stale
@@ -165,12 +172,6 @@ impl Shared($T) {
 		return .ok(Shared(T){self.block});
 	}
 
-	// design.md: "`drop` decrements the count with release ordering. At the final
-	// reference, it performs an acquire fence and drops the payload one time."
-	//
-	// The release makes every write this thread made to the payload visible to
-	// whichever thread runs the final drop; the acquire fence there is what makes
-	// those writes visible to *it* before the payload is destroyed.
 	// design.md: the zero value is `nil`, so `handle == nil` has to be sayable.
 	// The compiler converts `nil` to this type's zero; comparing the blocks is
 	// what makes that answer right, and it also answers the other useful
@@ -179,17 +180,24 @@ impl Shared($T) {
 		return left.block == right.block;
 	}
 
+	// design.md: "`drop` decrements the count with release ordering. At the final
+	// reference, it performs an acquire fence and drops the payload one time."
+	//
+	// The release makes every write this thread made to the payload visible to
+	// whichever thread runs the final drop; the acquire fence there is what makes
+	// those writes visible to *it* before the payload is destroyed.
 	release :: hook(drop) proc(self: inout) {
 		if (self.block == nil) { return; }
 		block := (^mut Shared_Block(T))(self.block);
 		self.block = nil;
 		if (atomic_sub(&mut block^.strong, 1, Memory_Order.Release) != 1) { return; }
 		fence(Memory_Order.Acquire);
-		// Taking the payload out and letting the temporary die is what drops it
-		// exactly once: the block itself outlives this whenever a weak handle
-		// still names it, so the payload cannot be destroyed by freeing the block.
-		blank: T = {};
-		retired := exchange(inout block^.payload, blank);
+		// Taking the payload out and dropping it is what drops it exactly once:
+		// the block itself outlives this whenever a weak handle still names it, so
+		// the payload cannot be destroyed by freeing the block. The block stops
+		// claiming a value first, because the drop hook can panic.
+		block^.live = 0;
+		retired := unsafe_take(block^.payload[0]);
 		drop(retired);
 		release_block(block);
 	}
@@ -209,14 +217,9 @@ impl Weak($T) {
 			_, won := compare_exchange_strong(
 				&mut block^.strong, held, held + 1,
 			);
-			if (won) {
-				atomic_add(&mut block^.weak, 1, Memory_Order.Relaxed);
-				// The upgraded handle is a *strong* one, and the strong group already
-				// counts as one weak reference; the extra weak count above belongs to
-				// this handle being cloned into a `Shared`, so give it back.
-				atomic_sub(&mut block^.weak, 1, Memory_Order.Relaxed);
-				return .some(Shared(T){self.block});
-			}
+			// The new handle is a strong one, and the strong group already holds
+			// its one weak reference, so the weak count does not change.
+			if (won) { return .some(Shared(T){self.block}); }
 		}
 		return .none;
 	}

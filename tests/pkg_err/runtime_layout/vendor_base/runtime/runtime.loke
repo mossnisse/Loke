@@ -1,0 +1,81 @@
+// A replaced runtime whose metadata layouts disagree with the compiler's:
+// `size` and `align` are swapped, `Member_Kind` lists `Result` before
+// `Parameter`, and `Source_Code_Location` puts `column` before `line`. The
+// bootstrap declarations are stubs.
+@(public)
+package runtime;
+
+@(public)
+Type_Kind :: enum u8 {
+	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
+	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
+	Struct, Enum, Union, Proc, String, String_View, CString_View,
+	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
+}
+
+@(public)
+Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Result, Parameter }
+
+@(public)
+Member_Info :: struct {
+	kind:       Member_Kind,
+	name:       string_view,
+	type:       typeid,
+	offset:     int,
+	value_low:  u64,
+	value_high: u64,
+}
+
+@(public)
+Type_Info :: struct {
+	id:      typeid,
+	kind:    Type_Kind,
+	name:    string_view,
+	align:   int,
+	size:    int,
+	bits:    int,
+	signed:  bool,
+	element: typeid,
+	key:     typeid,
+	count:   int,
+	members: []Member_Info,
+}
+
+@(public)
+Source_Code_Location :: struct {
+	file:      string_view,
+	procedure: string_view,
+	column:    int,
+	line:      int,
+}
+
+@(public)
+Yield_Owned :: struct {}
+@(public)
+Yield_Borrowed :: struct {}
+@(public)
+Yield_Mutable :: struct {}
+
+@(public)
+Unit :: struct {}
+
+@(public)
+Option :: union($T: type) @(zero=none, failure=none) { none:, some: T }
+
+@(public)
+Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
+
+@(public)
+Shared :: struct($T: type) { @(private) block: rawptr }
+
+@(public)
+Weak :: struct($T: type) { @(private) block: rawptr }
+
+@(private)
+shared_stub :: proc(value: $T) -> Shared(T) { return Shared(T){nil}; }
+
+@(public)
+shared_construct :: proc{shared_stub};
+
+@(public)
+try_shared :: proc{shared_stub};

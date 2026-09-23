@@ -22,12 +22,22 @@ Tracked :: struct {
 drops: static int = 0;
 
 impl Tracked {
-	// Only a real payload is counted. Construction assigns into the freshly
-	// zeroed block, and a full assignment drops the destination's previous value
-	// first — here an inert zero that owns nothing. Counting it would say more
-	// about assignment than about shared ownership.
+	// Every drop is counted, the zero's included. The payload is written into the
+	// block and taken back out of it, so no zero `Tracked` is ever made or dropped.
 	retire :: hook(drop) proc(self: inout Tracked) {
-		if (self.id != 0) { drops += 1; }
+		drops += 1;
+	}
+}
+
+// No zero value: `shared(T)` asks nothing of `T` beyond what it owns.
+Shape :: union { circle: int, square: f64 }
+
+// `get` borrows the handle read-only, so a by-value parameter, a `foreach`
+// binding, and a `^` all reach the payload.
+radius :: proc(held: shared(Shape)) -> int {
+	switch (r in held.get()^) {
+	case .circle: return r;
+	case .square: return 0;
 	}
 }
 
@@ -123,6 +133,19 @@ main :: proc() {
 	switch (never in orphan.upgrade()) {
 	case .some: fmt.println("upgraded");
 	case .none: fmt.println("gone");
+	}
+
+	circle := shared(Shape.circle(5));
+	fmt.println(radius(circle));
+	through := &circle;
+	fmt.println(radius(through^));
+	shapes: [dynamic]shared(Shape) = {};
+	shapes.append(circle);
+	foreach (each in shapes) { fmt.println(each.strong_count(), radius(each)); }
+	outcome := shared(Result(int, Allocator_Error).ok(12));
+	switch (n in outcome.get()^) {
+	case .ok:  fmt.println("ok", n);
+	case .err: fmt.println("err");
 	}
 }
 

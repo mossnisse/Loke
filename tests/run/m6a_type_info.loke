@@ -23,6 +23,11 @@ Huge :: enum u128 { Value = 18446744073709551617 }
 // index the tag holds.
 Pair :: union { left: i32, right: i32, neither: }
 
+// A distinct entry names the type it is declared over and nothing else; that
+// type's own entry carries the shape, one level at a time.
+Meters :: distinct f64;
+Depth :: distinct Meters;
+
 // A `typeid` is an ordinary runtime scalar, so an out-of-range value can be
 // produced through unsafe storage reinterpretation.
 forge :: proc(raw: i64) -> typeid {
@@ -60,6 +65,16 @@ main :: proc() {
 		foreach (member in pair.members) {
 			fmt.println(member.name, int(member.kind), member.offset,
 				1 if member.type == typeid_of(i32) else 0);
+		}
+	}
+	depth := type_info_of(typeid_of(Depth));
+	if (depth != nil) {
+		fmt.println(int(depth.kind), depth.size, depth.bits, 1 if depth.element == typeid_of(Meters) else 0);
+		meters := type_info_of(depth.element);
+		if (meters != nil) {
+			fmt.println(int(meters.kind), 1 if meters.element == typeid_of(f64) else 0);
+			float := type_info_of(meters.element);
+			if (float != nil) { fmt.println(int(float.kind), float.bits); }
 		}
 	}
 }

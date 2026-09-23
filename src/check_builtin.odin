@@ -914,6 +914,10 @@ check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Bui
 		}
 		span = declared
 	}
+	if type == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
 	v.type = type
 	v.is_const = true
 	v.const_value = source_location_const(k, type, span)
@@ -995,7 +999,11 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 	record, resolved := runtime_type_named(k, "Type_Info")
 	// The table's member record is resolved with it, not on first use.
-	_, members_resolved := runtime_type_named(k, "Member_Info")
+	members, members_resolved := runtime_type_named(k, "Member_Info")
+	if resolved && members_resolved && (record == INVALID_TYPE || members == INVALID_TYPE) {
+		v.type = INVALID_TYPE
+		return
+	}
 	if !resolved || !members_resolved {
 		errorf(
 			k.c, v.span, "L0575",
@@ -1027,7 +1035,9 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 }
 
 // A type declared by a `base:runtime` this package imports, recorded for the
-// emitter's metadata tables.
+// emitter's metadata tables. The compiler writes these records field by field
+// and their enums as numbers, so the declaration is checked against that once:
+// a mismatch is reported and gives INVALID_TYPE, still `resolved`.
 @(private = "file")
 runtime_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
 	pkg := package_of(k.c, k.pkg)
@@ -1039,11 +1049,103 @@ runtime_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
 		if target == nil || target.key != STD_RUNTIME || target.scope == nil {
 			continue
 		}
-		symbol := symbol_of(k.c, target.scope.names[intern_identifier(k.c, name)])
-		if symbol != nil && symbol.kind == .Type && symbol.type != INVALID_TYPE {
-			k.c.runtime_types[name] = symbol.type
-			return symbol.type, true
+		symbol_id := target.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL
+		symbol := symbol_of(k.c, symbol_id)
+		if symbol == nil || symbol.kind != .Type || symbol.type == INVALID_TYPE {
+			continue
 		}
+		if recorded, checked := k.c.runtime_types[name]; checked {
+			return recorded, true
+		}
+		type := symbol.type
+		if !runtime_layout_matches(k, symbol_id, name) {
+			errorf(
+				k.c, symbol.span, "L0704",
+				"`runtime.%s` does not have the layout the compiler writes: the same fields, in the same order, with the same types, and enum members in design.md's order",
+				name,
+			)
+			// A speculative check's diagnostic is rolled back, so only a real one
+			// may settle the answer.
+			if k.c.speculation_depth > 0 {
+				return INVALID_TYPE, true
+			}
+			type = INVALID_TYPE
+		}
+		k.c.runtime_types[name] = type
+		return type, true
 	}
 	return INVALID_TYPE, false
+}
+
+// The public `Type_Kind` and `Member_Kind`, in the order `base:runtime`
+// declares them. The emitter writes their values as these indices.
+Runtime_Type_Kind :: enum {
+	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
+	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
+	Struct, Enum, Union, Proc, String, String_View, CString_View,
+	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
+}
+
+Runtime_Member_Kind :: enum { Field, Enum_Value, Union_Variant, Parameter, Result }
+
+@(private = "file")
+Runtime_Field :: struct {
+	name, type: string,
+}
+
+@(private = "file")
+SOURCE_CODE_LOCATION_LAYOUT := [?]Runtime_Field {
+	{"file", "string_view"}, {"procedure", "string_view"}, {"line", "int"}, {"column", "int"},
+}
+
+@(private = "file")
+TYPE_INFO_LAYOUT := [?]Runtime_Field {
+	{"id", "typeid"}, {"kind", "Type_Kind"}, {"name", "string_view"}, {"size", "int"},
+	{"align", "int"}, {"bits", "int"}, {"signed", "bool"}, {"element", "typeid"},
+	{"key", "typeid"}, {"count", "int"}, {"members", "[]Member_Info"},
+}
+
+@(private = "file")
+MEMBER_INFO_LAYOUT := [?]Runtime_Field {
+	{"kind", "Member_Kind"}, {"name", "string_view"}, {"type", "typeid"},
+	{"offset", "int"}, {"value_low", "u64"}, {"value_high", "u64"},
+}
+
+@(private = "file")
+runtime_layout_matches :: proc(k: ^Checker, symbol_id: Symbol_Id, name: string) -> bool {
+	c := k.c
+	// The fields and enum members are read here, possibly before anything else
+	// asked for them.
+	resolve_symbol_signature_in_place(k, symbol_id)
+	type := symbol_of(c, symbol_id).type
+	layout: []Runtime_Field
+	switch name {
+	case "Source_Code_Location": layout = SOURCE_CODE_LOCATION_LAYOUT[:]
+	case "Type_Info":            layout = TYPE_INFO_LAYOUT[:]
+	case "Member_Info":          layout = MEMBER_INFO_LAYOUT[:]
+	}
+	info := type_of(c, type)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(layout) {
+		return false
+	}
+	for field, index in info.fields {
+		sym := symbol_of(c, field)
+		if identifier_text(c, sym.name) != layout[index].name || type_name(c, sym.type) != layout[index].type {
+			return false
+		}
+		if kind := type_of(c, sym.type); kind != nil && kind.kind == .Enum {
+			resolve_symbol_signature_in_place(k, kind.symbol)
+		}
+		switch layout[index].type {
+		case "Type_Kind":
+			if !runtime_enum_matches(c, sym.type, Runtime_Type_Kind) {
+				return false
+			}
+		case "Member_Kind":
+			if !runtime_enum_matches(c, sym.type, Runtime_Member_Kind) {
+				return false
+			}
+		}
+	}
+	return true
 }

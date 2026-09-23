@@ -1,0 +1,9 @@
+L0705
+@15:6
+`Atomic(int)` is or holds a `sync.Atomic`
+L0705
+@16:8
+`Counter` is or holds a `sync.Atomic`
+L0705
+@17:2
+`Counter` is or holds a `sync.Atomic`
