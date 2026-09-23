@@ -1,0 +1,15 @@
+package vendor;
+
+@(public)
+Point :: struct {
+	@(public)
+	y: int,
+}
+
+@(public)
+wrap :: struct {}
+
+@(public)
+Shows :: interface($Self: type) {
+	slot show: proc(self) -> int;
+}

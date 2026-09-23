@@ -17,6 +17,8 @@ Emitter :: struct {
 	// abort instead of failing the build.
 	synth_bodies: bool,
 	names:        map[Symbol_Id]string,
+	// Every internal procedure name handed out, across all packages (`claim_name`).
+	taken_names:  map[string]bool,
 	struct_names: map[Type_Id]string,
 	// design.md "@(packed)": a place's alignment, by pointer temporary, when it is
 	// below the pointee's natural one.
@@ -49,6 +51,7 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 	e := Emitter {
 		c            = c,
 		names        = make(map[Symbol_Id]string),
+		taken_names  = make(map[string]bool),
 		struct_names = make(map[Type_Id]string),
 		place_align  = make(map[string]u64),
 		cleanups     = make([dynamic]Cleanup_Scope),
@@ -258,7 +261,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 					if sym := symbol_of(e.c, v.symbols[0]); sym != nil && sym.exported {
 						e.names[v.symbols[0]] = llvm_external_name(sym.link_name)
 					} else {
-						e.names[v.symbols[0]] = llvm_proc_name(pkg, v.names[0].text)
+						e.names[v.symbols[0]] = claim_name(e, llvm_proc_name(pkg, v.names[0].text))
 					}
 				}
 			case ^Item_Impl:
@@ -271,7 +274,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 					if sym == nil {
 						continue
 					}
-					e.names[d.symbols[0]] = llvm_proc_name(pkg, llvm_safe(qualified_member_name(e.c, sym)))
+					e.names[d.symbols[0]] = claim_name(e, llvm_proc_name(pkg, llvm_safe(qualified_member_name(e.c, sym))))
 				}
 			case ^Item_Foreign_Block:
 				// design.md "Foreign system": foreign members keep their link names.
@@ -295,36 +298,37 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 		if sym := symbol_of(e.c, literal.symbol); sym != nil && sym.decl != nil {
 			written = llvm_safe(identifier_text(e.c, sym.name))
 		}
-		e.names[literal.symbol] = llvm_proc_name(pkg, fmt.aprintf("%s.%d", written, index))
+		e.names[literal.symbol] = claim_name(e, llvm_proc_name(pkg, fmt.aprintf("%s.%d", written, index)))
 	}
-	// `f(alpha.Item)` and `f(beta.Item)` share a spelling; the id tells them apart.
-	taken := make(map[string]bool, len(pkg.instances), context.temp_allocator)
 	for instance in pkg.instances {
-		name := llvm_proc_name(pkg, llvm_safe(instance.name))
-		if taken[name] {
-			name = fmt.aprintf("%s.%d", name, int(instance.symbol))
-		}
-		taken[name] = true
-		e.names[instance.symbol] = name
+		e.names[instance.symbol] = claim_name(e, llvm_proc_name(pkg, llvm_safe(instance.name)))
 	}
+}
+
+// `base`, or the first `base.<n>` no earlier procedure took. The spellings
+// alone are not unique: `f(alpha.Item)` and `f(beta.Item)` read alike, an impl
+// member spells its owner unqualified (`Point.show` for two packages' `Point`),
+// an instance `wrap.int` can meet a member `int` of a type `wrap`, and the root
+// package has no key, so its `pt.x` meets package `pt`'s own `x`.
+@(private = "file")
+claim_name :: proc(e: ^Emitter, base: string) -> string {
+	name := base
+	for n := 1; e.taken_names[name]; n += 1 {
+		name = fmt.aprintf("%s.%d", base, n)
+	}
+	e.taken_names[name] = true
+	return name
 }
 
 // Compiler-contributed members belong to no package.
 @(private = "file")
 name_synth_procs :: proc(e: ^Emitter) {
-	used := make(map[string]bool, context.temp_allocator)
 	for symbol_id in e.c.synth_procs {
 		symbol := symbol_of(e.c, symbol_id)
 		if symbol == nil {
 			continue
 		}
-		base := fmt.aprintf("@loke.i.%s", llvm_safe(qualified_member_name(e.c, symbol)))
-		name := base
-		if used[name] {
-			name = fmt.aprintf("%s.%d", base, int(symbol_id))
-		}
-		used[name] = true
-		e.names[symbol_id] = name
+		e.names[symbol_id] = claim_name(e, fmt.aprintf("@loke.i.%s", llvm_safe(qualified_member_name(e.c, symbol))))
 	}
 }
 

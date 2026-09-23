@@ -1,0 +1,4 @@
+package pt;
+
+@(public)
+x :: proc() -> int { return 40; }

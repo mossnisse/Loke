@@ -1,0 +1,39 @@
+package main; import "core:fmt";
+
+import "./vendor";
+import other "./pt";
+
+Point :: struct { x: int }
+impl Point {
+	show :: proc(self) -> int { return self.x; }
+}
+impl vendor.Point {
+	show :: proc(self) -> int { return self.y * 10; }
+}
+
+wrap :: proc(value: $T) -> T { return value; }
+impl vendor.wrap {
+	int :: proc(self) -> int { return 5; }
+}
+
+// The root package's names carry no package key, so this `pt.x` would spell
+// the same as package pt's own `x`.
+pt :: struct {}
+impl pt {
+	x :: proc() -> int { return 50; }
+}
+
+Shows :: interface($Self: type) {
+	slot show: proc(self) -> int;
+}
+through :: proc(view: dyn Shows) -> int { return view.show(); }
+through_vendor :: proc(view: dyn vendor.Shows) -> int { return view.show(); }
+
+main :: proc() {
+	local := Point{x = 1};
+	remote := vendor.Point{y = 2};
+	fmt.println(local.show(), remote.show());
+	fmt.println(wrap(3), vendor.wrap{}.int());
+	fmt.println(pt.x(), other.x());
+	fmt.println(through((dyn Shows)(&local)), through_vendor((dyn vendor.Shows)(&local)));
+}
