@@ -35,6 +35,10 @@ total :: proc(a, b: $T) -> T where interfaces.Numeric(T) {
 	return a + b;
 }
 
+duplicate :: proc(value: $T) -> T where interfaces.Cloneable(T) {
+	return value.clone();
+}
+
 main :: proc() {
 	static_assert(interfaces.Equatable(int));
 	static_assert(interfaces.Ordered(int));
@@ -51,6 +55,16 @@ main :: proc() {
 	static_assert(interfaces.Cloneable(Counted));
 	static_assert(!interfaces.Cloneable(Move_Only));
 	static_assert(!interfaces.Cloneable(Holds_Move_Only));
+	// A plain value is its own clone, so every copyable type satisfies it, and a
+	// pointer to a move-only record is as copyable as any other pointer.
+	static_assert(interfaces.Cloneable(int));
+	static_assert(interfaces.Cloneable(f64));
+	static_assert(interfaces.Cloneable(bool));
+	static_assert(interfaces.Cloneable(rune));
+	static_assert(interfaces.Cloneable(^Move_Only));
+	static_assert(interfaces.Cloneable([]int));
+	static_assert(interfaces.Cloneable(string_view));
+	static_assert(interfaces.Cloneable(typeid));
 
 	static_assert(!interfaces.Integral(f64));
 	static_assert(!interfaces.Numeric(bool));
@@ -71,4 +85,5 @@ main :: proc() {
 
 	fmt.println(total(2, 3));
 	fmt.println(int(f64(total(Meters(1.5), Meters(2.5)))));
+	fmt.println(duplicate(6));
 }

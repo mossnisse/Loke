@@ -246,8 +246,9 @@ ensure_lifecycle_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 	}
 }
 
-// The public `try_clone`/`clone` of a record, union, fixed array, or owning
-// built-in, plus those of every managed part its generated bodies call. A
+// The public `try_clone`/`clone` of any runtime type, plus those of every
+// managed part its generated bodies call. A plain value such as `int` or a
+// slice is its own clone, so `Cloneable` holds for every copyable type. A
 // `distinct` name shares its underlying type's members.
 contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	type := type_underlying(k.c, written)
@@ -256,8 +257,8 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 		return
 	}
 	#partial switch info.kind {
-	case .Struct, .Array, .Union, .Dynamic_Array, .Map, .String:
-	case:
+	case .Invalid, .Void, .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune,
+	     .Untyped_Nil, .Untyped_String, .Interface, .Type:
 		return
 	}
 	if k.c.lifecycle_operations_ready {

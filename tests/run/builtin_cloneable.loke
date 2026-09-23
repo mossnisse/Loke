@@ -103,13 +103,13 @@ main :: proc() {
 	arena := mem.Arena.init();
 	fmt.println(xs.clone(arena.allocator()).len());
 
-	// Satisfaction follows what a type actually owns.
+	// Every copyable type satisfies it; an owning one clones what it owns.
 	fmt.println(1 if is_cloneable(string) else 0);
 	fmt.println(1 if is_cloneable([dynamic]int) else 0);
 	fmt.println(1 if is_cloneable(map[string]int) else 0);
 	fmt.println(1 if is_cloneable(Holder) else 0);
-	// A borrow owns nothing, a region provider is move-only, and a disabled
-	// hook fails the interface it names.
+	// A borrow or a scalar owns nothing and is its own clone; a region provider
+	// is move-only, and a disabled hook fails the interface it names.
 	fmt.println(1 if is_cloneable([]int) else 0);
 	fmt.println(1 if is_cloneable(mem.Arena) else 0);
 	fmt.println(1 if is_cloneable(Movable) else 0);
