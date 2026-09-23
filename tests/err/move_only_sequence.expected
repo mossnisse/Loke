@@ -1,0 +1,4 @@
+L0444
+@15:14
+does not satisfy `Sequence([dynamic]Handle)`
+it lends a move-only `Handle`, which cannot be copied out as a value

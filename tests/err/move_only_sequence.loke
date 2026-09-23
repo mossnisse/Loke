@@ -1,0 +1,16 @@
+package main; import "core:fmt"; import "base:interfaces";
+
+// design.md "Interface bodies": an expression requirement's result is a value,
+// so `value[index] -> Element` on an array of a move-only element would copy
+// the element out of its place. The array is therefore no `Sequence`, and a
+// consumer bound by one rejects it at the call rather than inside its body.
+Handle :: move_only struct { id: int }
+
+first :: proc(values: $S) -> S.Element where interfaces.Sequence(S) {
+	return values[0];
+}
+
+main :: proc() {
+	handles: [dynamic]Handle = {};
+	fmt.println(first(handles).id);
+}

@@ -740,6 +740,19 @@ check_one_requirement :: proc(
 			),
 		}, false
 	}
+	// A value result from a place is a copy of it, which a move-only type
+	// forbids; bindings are never consumed, so nothing can be moved out either.
+	// This is what `value[index] -> Element` asks of a sequence.
+	if base.value_category == .Place && type_clone_disabled(k.c, base.type) {
+		return Requirement_Failure {
+			span   = requirement.span,
+			reason = fmt.aprintf(
+				"it lends a move-only `%s`, which cannot be copied out as a value",
+				type_name(k.c, base.type),
+				allocator = k.c.semantic_allocator,
+			),
+		}, false
+	}
 	return Requirement_Failure{}, true
 }
 

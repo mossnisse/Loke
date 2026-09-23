@@ -92,6 +92,16 @@ main :: proc() {
 	static_assert(interfaces.Cloneable(Owned_Text));
 	static_assert(Named(Tagged));
 
+	// `value[index] -> Element` would copy a move-only element out of its place,
+	// so no array of one is a sequence of any kind; it is still iterable.
+	static_assert(!interfaces.Sequence([dynamic]Move_Only));
+	static_assert(!interfaces.Sequence([]Move_Only));
+	static_assert(!interfaces.Mutable_Sequence([2]Move_Only));
+	static_assert(!interfaces.Mutable_Sequence([]mut Move_Only));
+	static_assert(interfaces.Iterable([dynamic]Move_Only));
+	static_assert(interfaces.Growable_Sequence([dynamic]Opaque));
+	static_assert(interfaces.Mutable_Sequence([2]Opaque));
+
 	static_assert(!interfaces.Integral(f64));
 	static_assert(!interfaces.Numeric(bool));
 	// design.md "Comparison operators": a struct is comparable when all its
