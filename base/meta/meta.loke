@@ -13,4 +13,5 @@ package meta;
 // The compiler contributes:
 //
 //   Field       a record field: name, declared type, declaration index
-//   Enum_Value  an enum member: name, value, declaration index
+//   Enum_Value  an enum member: name, value in the enum's backing type,
+//               declaration index

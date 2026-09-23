@@ -401,7 +401,10 @@ require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: 
 		type_name(k.c, subject),
 		action,
 	)
-	add_notef(k.c, sym.span, "declared here; add `@(public)` to export it")
+	// A compiler-owned member, such as a descriptor's `owner`, has no source to edit.
+	if sym.pkg != INVALID_PACKAGE {
+		add_notef(k.c, sym.span, "declared here; add `@(public)` to export it")
+	}
 	return false
 }
 

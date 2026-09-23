@@ -1718,6 +1718,11 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []
 		if v.op == .Caret {
 			return walk_flow_expr(graph, v.operand), nil, true
 		}
+	case ^Expr_Call:
+		// `field.get(value)` is `field.pointer(value)^`.
+		if reflect, ok := v.operation.(Call_Reflect); ok && reflect.op == .Field_Get {
+			return walk_flow_expr(graph, v.bound[0]), nil, true
+		}
 	case ^Expr_Selector:
 		if v.resolution.kind != .Field || v.operand == nil {
 			return nil, nil, false

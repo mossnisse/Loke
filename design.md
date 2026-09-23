@@ -1077,7 +1077,7 @@ A `Simd(bool, N)` is the **lane mask** type. Its lanes are one bit of informatio
 
 `size_of(Simd(T, N))` is `N * size_of(T)`, and `align_of(Simd(T, N))` is `size_of(Simd(T, N))` — a vector is aligned to its own size, which is what permits an aligned whole-vector load. A vector is therefore not the array with the same element and count: `Simd(f32, 2)` has size 8 and alignment 8, while `[2]f32` has size 8 and alignment 4.
 
-`meta.Type_Info` reports the element type and lane count for `Type_Kind.Simd`.
+`runtime.Type_Info` reports the element type and lane count for `Type_Kind.Simd`.
 
 ### Construction and conversion
 
@@ -1872,11 +1872,9 @@ Type_Info :: struct {
 
 `base:meta` exports two immutable compile-time reflection descriptors: `meta.Field` and `meta.Enum_Value`.
 
-`fields_of(T)` and `enum_values_of(T)` return compile-time fixed arrays of the corresponding descriptor type. Descriptors are opaque and cannot be forged. Names are constant `string_view` values, and a descriptor's `.type` member is a compile-time `type` value. A `meta.Field` also carries the field's physical declaration index.
+`fields_of(T)` and `enum_values_of(T)` return compile-time fixed arrays of the corresponding descriptor type. Descriptors are opaque and cannot be forged. A descriptor describes only the type it was reflected from: `get` and `pointer` reject any other subject, even one with the same field, and descriptors from two types never compare equal. A `meta.Field` has `name`, `type`, and `index`: the name is a constant `string_view`, `type` is a compile-time `type` value, and `index` is the field's physical declaration index. A `meta.Enum_Value` has `name`, `value`, and `index`: `value` has the enum's backing integer type, so every member's value is exact, and `index` is the member's declaration index.
 
 Both preserve source declaration order, after conditional `when` selection. Reflection observes only declarations visible from its lookup package. Thus `fields_of(T)` contains every selected field when the lookup package declares `T`, but only public fields when reflecting from another package. In a generic body the reflection lookup package is the generic declaration's definition package, so an instantiation has the same reflected shape in every caller.
-
-Reflection provides these two descriptor types.
 
 A `meta.Field` bound by static expansion provides compiler-defined operations whose result follows that particular field's type:
 
@@ -1888,9 +1886,9 @@ visit_fields :: proc(value: ^$T, visitor: inout $Visitor) {
 }
 ```
 
-`field.get(value)` accepts a pointer of either capability, reads the selected field, and has type `field.type` after expansion. `field.pointer(value)` preserves capability: `^mut T` yields `^mut field.type`, while `^T` yields `^field.type`. Normal visibility, packed-field, borrow, copy, and mutation rules still apply; `pointer` is rejected for a packed field.
+`field.get(value)` accepts a pointer of either capability and names the selected field in place, exactly as `field.pointer(value)^` does, except that it is always read-only. It has type `field.type` after expansion. Binding or returning it copies the field, and a move-only field cannot be copied out. `field.pointer(value)` preserves capability: `^mut T` yields `^mut field.type`, while `^T` yields `^field.type`. Normal visibility, packed-field, borrow, copy, and mutation rules still apply; `pointer` is rejected for a packed field.
 
-Reflection values may be inspected, compared for identity, passed to `$` parameters, and iterated by static `foreach`. They cannot be materialized into runtime storage. Runtime tools instead use the less powerful `runtime.Type_Info` reached through `type_info_of`.
+Reflection values may be inspected, compared for identity, passed to `$` parameters, and iterated by static `foreach`. They cannot be materialized into runtime storage: a reflection value is always a constant, so `fields_of(T)[i]` needs a constant `i`, and a descriptor cannot become an `any_view` or bind a runtime parameter, including one whose `$T` would infer a descriptor or `type`. Runtime tools instead use the less powerful `runtime.Type_Info` reached through `type_info_of`.
 
 ### any_view type
 

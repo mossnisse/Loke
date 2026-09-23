@@ -126,19 +126,15 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	return "0"
 }
 
-// `field.get(value)` and `field.pointer(value)`.
+// `field.pointer(value)` is the field's address, and so is the place
+// `field.get(value)`, which its reader loads.
 @(private = "file")
 emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	checked := v.operation.(Call_Reflect)
 	base := emit_expr(e, v.bound[0])
 	owner := underlying_info(e.c, expr_base(v.bound[0]).type)
 	field := symbol_of(e.c, checked.field)
-	address := gep_field(e, llvm_type(e, owner.element), base, int(field.index))
-	if checked.op == .Field_Pointer {
-		return address
-	}
-	out := load(e, llvm_type(e, field.type), address)
-	return out
+	return gep_field(e, llvm_type(e, owner.element), base, int(field.index))
 }
 
 emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {

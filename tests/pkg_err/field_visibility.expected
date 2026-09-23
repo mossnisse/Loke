@@ -19,3 +19,6 @@ is not public, so it cannot be bound by a destructuring declaration here
 L0308
 @27:12
 is not public, so it cannot be bound by a destructuring declaration here
+L0452
+@33:51
+this descriptor does not describe `Account`

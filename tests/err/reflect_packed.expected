@@ -1,0 +1,5 @@
+L0614
+@13:18
+cannot take the address of `value`: it is reached through a packed struct
+L0614
+@14:12

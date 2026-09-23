@@ -1,0 +1,26 @@
+package main; import "core:fmt";
+
+// design.md "Compile-time reflection": descriptors and `type` values are
+// folded during compilation and never materialized at run time.
+
+Point :: struct { x: int }
+Other :: struct { x: int }
+
+takes :: proc(value: any_view) { }
+generic :: proc(value: $T) { }
+declared :: proc(t: type) { }
+
+main :: proc() {
+	i := 0;
+	c := true;
+	foreach ($field in fields_of(Point)) {
+		takes(field);
+		generic(field);
+	}
+	fmt.println(fields_of(Point));
+	fmt.println(fields_of(Point)[i].name);
+	fmt.println((fields_of(Point)[0] if c else fields_of(Other)[0]).name);
+	generic(int);
+	// A constant index still folds.
+	fmt.println(fields_of(Point)[0].name);
+}

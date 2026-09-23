@@ -22,9 +22,10 @@ meta_field_type :: proc(c: ^Compiler) -> Type_Id {
 		return c.meta_field_type
 	}
 	c.meta_field_type = new_descriptor_type(c, "meta.Field", []Descriptor_Field {
-		{"name", TYPE_STRING_VIEW},
-		{"type", TYPE_TYPE},
-		{"index", TYPE_INT},
+		{"name", TYPE_STRING_VIEW, false},
+		{"type", TYPE_TYPE, false},
+		{"index", TYPE_INT, false},
+		{"owner", TYPE_TYPE, true},
 	})
 	return c.meta_field_type
 }
@@ -32,15 +33,17 @@ meta_field_type :: proc(c: ^Compiler) -> Type_Id {
 META_FIELD_NAME :: 0
 META_FIELD_TYPE :: 1
 META_FIELD_INDEX :: 2
+META_FIELD_OWNER :: 3
 
 meta_enum_value_type :: proc(c: ^Compiler) -> Type_Id {
 	if c.meta_enum_value_type != INVALID_TYPE {
 		return c.meta_enum_value_type
 	}
 	c.meta_enum_value_type = new_descriptor_type(c, "meta.Enum_Value", []Descriptor_Field {
-		{"name", TYPE_STRING_VIEW},
-		{"value", TYPE_INT},
-		{"index", TYPE_INT},
+		{"name", TYPE_STRING_VIEW, false},
+		{"value", TYPE_INT, false},
+		{"index", TYPE_INT, false},
+		{"owner", TYPE_TYPE, true},
 	})
 	return c.meta_enum_value_type
 }
@@ -48,11 +51,16 @@ meta_enum_value_type :: proc(c: ^Compiler) -> Type_Id {
 META_ENUM_NAME :: 0
 META_ENUM_VALUE :: 1
 META_ENUM_INDEX :: 2
+META_ENUM_OWNER :: 3
 
+// A descriptor names the type it was reflected from, so it describes that type
+// alone and compares equal only to itself. `hidden` keeps that member out of
+// reach: a non-public symbol of no package is visible from none.
 @(private = "file")
 Descriptor_Field :: struct {
-	name: string,
-	type: Type_Id,
+	name:   string,
+	type:   Type_Id,
+	hidden: bool,
 }
 
 @(private = "file")
@@ -67,7 +75,7 @@ new_descriptor_type :: proc(c: ^Compiler, name: string, fields: []Descriptor_Fie
 			kind   = .Field,
 			type   = entry.type,
 			index  = u32(index),
-			public = true,
+			public = !entry.hidden,
 		})
 	}
 	if info := type_of(c, type); info != nil {
@@ -90,6 +98,20 @@ type_is_compile_time_only :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	}
 	if info := type_of(c, under); info != nil && info.kind == .Array {
 		return type_is_compile_time_only(c, info.element)
+	}
+	return false
+}
+
+// A value reflection folds: `type`, a descriptor, or a fixed array of them. An
+// iteration view over one is compile-time-only too, but is never folded; static
+// `foreach` peels it instead.
+type_is_reflection_value :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	under := type_underlying(c, id)
+	if under == TYPE_TYPE || (under != INVALID_TYPE && (under == c.meta_field_type || under == c.meta_enum_value_type)) {
+		return true
+	}
+	if info := type_of(c, under); info != nil && info.kind == .Array {
+		return type_is_reflection_value(c, info.element)
 	}
 	return false
 }
@@ -163,12 +185,13 @@ fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Cons
 		if sym == nil || !member_is_visible(k, sym) {
 			continue
 		}
-		values := make([]Const_Value, 3, k.c.semantic_allocator)
+		values := make([]Const_Value, 4, k.c.semantic_allocator)
 		values[META_FIELD_NAME] = string_view_const(identifier_text(k.c, sym.name))
 		values[META_FIELD_TYPE] = type_const(sym.type)
 		// A filtered descriptor still addresses the field's physical slot in the
 		// original record; its position in this compact array is not a storage index.
 		values[META_FIELD_INDEX] = int_const(k.c, i64(sym.index))
+		values[META_FIELD_OWNER] = type_const(subject)
 		append(&elements, aggregate_const(k.c, descriptor, values))
 	}
 	return descriptor_array(k.c, descriptor, elements[:])
@@ -191,10 +214,11 @@ enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id,
 		if sym == nil {
 			continue
 		}
-		values := make([]Const_Value, 3, k.c.semantic_allocator)
+		values := make([]Const_Value, 4, k.c.semantic_allocator)
 		values[META_ENUM_NAME] = string_view_const(identifier_text(k.c, sym.name))
 		values[META_ENUM_VALUE] = sym.const_value
 		values[META_ENUM_INDEX] = int_const(k.c, i64(sym.index))
+		values[META_ENUM_OWNER] = type_const(subject)
 		append(&elements, aggregate_const(k.c, descriptor, values))
 	}
 	return descriptor_array(k.c, descriptor, elements[:])
@@ -618,12 +642,11 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	}
 
 	aggregate := base.const_value.aggregate
-	if aggregate == nil || len(aggregate.elements) != 3 {
+	if aggregate == nil || len(aggregate.elements) != 4 {
 		return false
 	}
-	field_type := aggregate.elements[META_FIELD_TYPE].type_value
+	owner := aggregate.elements[META_FIELD_OWNER].type_value
 	field_index, _ := bi_to_i64(k.c, aggregate.elements[META_FIELD_INDEX].integer)
-	field_name := aggregate.elements[META_FIELD_NAME].text
 
 	v.value_category = .Value
 	if len(v.args) != 1 {
@@ -645,16 +668,15 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 		v.type = INVALID_TYPE
 		return true
 	}
-	// The subject must carry a field of this name and type in this slot. The
-	// access is then emitted against the subject's own symbol, so it reads at the
-	// subject's offset rather than the descriptor's.
-	owner := underlying_info(k.c, pointee.element)
+	// The subject must be the type the descriptor was reflected from. A look-alike
+	// record would otherwise lend its field names to another's private fields.
+	record := underlying_info(k.c, owner)
 	field := INVALID_SYMBOL
-	if owner != nil && field_index >= 0 && int(field_index) < len(owner.fields) {
-		field = owner.fields[field_index]
+	if pointee.element == owner && record != nil && field_index >= 0 && int(field_index) < len(record.fields) {
+		field = record.fields[field_index]
 	}
 	sym := symbol_of(k.c, field)
-	if sym == nil || sym.type != field_type || identifier_text(k.c, sym.name) != field_name {
+	if sym == nil {
 		errorf(
 			k.c,
 			expr_span(v.args[0].value),
@@ -666,18 +688,36 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 		return true
 	}
 
+	// A packed field may be misaligned (design.md "@(packed)"); `get` stays
+	// usable, and `&` on it is refused by `packed_field_reached`.
+	if op == .Field_Pointer && record.packed {
+		errorf(
+			k.c, sel.name.span, "L0614",
+			"cannot take the address of `%s`: it is reached through a packed struct",
+			identifier_text(k.c, sym.name),
+		)
+		v.type = INVALID_TYPE
+		return true
+	}
+
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = v.args[0].value
 	v.bound = bound
 	v.operation = Call_Reflect{op = op, field = field}
 	v.resolution = Resolution{kind = .Field, symbol = field}
 	if op == .Field_Get {
-		v.type = field_type
+		// The field itself, as `field.pointer(value)^` names it: a place, so a
+		// binding copies it and nothing drops it as a temporary. Read-only
+		// whatever the pointer's capability; writes go through `field.pointer`.
+		v.type = sym.type
+		v.value_category = .Place
+		v.addressable = true
+		v.immutable = .Read_Only
 	} else {
 		// `field.pointer` projects the subject pointer, so it carries the
 		// subject's capability through: a `^mut T` yields a writable field
 		// pointer, a `^T` a read-only one.
-		v.type = pointer_to(k.c, field_type, pointee.mutable)
+		v.type = pointer_to(k.c, sym.type, pointee.mutable)
 	}
 	return true
 }

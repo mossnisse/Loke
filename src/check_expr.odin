@@ -106,6 +106,17 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 			base.type = INVALID_TYPE
 		}
 	}
+	// design.md "Compile-time reflection": a descriptor or `type` value is only
+	// ever folded, so one computed at run time, such as `fields_of(T)[i]` with a
+	// runtime `i`, has no representation.
+	if base.type != INVALID_TYPE && !base.is_const && type_is_reflection_value(k.c, base.type) {
+		errorf(
+			k.c, base.span, "L0453",
+			"`%s` exists only during compilation, so this expression must be a constant",
+			type_name(k.c, base.type),
+		)
+		base.type = INVALID_TYPE
+	}
 	return base.type
 }
 
@@ -771,6 +782,14 @@ select_field :: proc(
 			v.is_const = true
 			v.const_value = aggregate.elements[sym.index]
 			v.immutable = .Constant
+			// design.md "Compile-time reflection": an `Enum_Value`'s `value` has its
+			// enum's backing type, so a `u64` member above `max(int)` keeps its value.
+			if operand_base.type == k.c.meta_enum_value_type && operand_base.type != INVALID_TYPE &&
+			   sym.index == META_ENUM_VALUE {
+				if owner := underlying_info(k.c, aggregate.elements[META_ENUM_OWNER].type_value); owner != nil {
+					v.type = owner.element
+				}
+			}
 		}
 	}
 	return true
@@ -1478,21 +1497,34 @@ agreed_index_param :: proc(k: ^Checker, candidates: []Symbol_Id, position: int, 
 packed_field_reached :: proc(k: ^Checker, operand: Expr) -> (string, bool) {
 	cur := operand
 	for {
-		sel, ok := cur.(^Expr_Selector)
-		if !ok || sel.operand == nil {
+		name: string
+		next: Expr
+		#partial switch v in cur {
+		case ^Expr_Selector:
+			name, next = v.name.text, v.operand
+		case ^Expr_Call:
+			// `field.get(value)` selects from what `value` points at.
+			reflect, is_reflect := v.operation.(Call_Reflect)
+			sym := symbol_of(k.c, reflect.field)
+			if !is_reflect || reflect.op != .Field_Get || sym == nil || len(v.bound) != 1 {
+				return "", false
+			}
+			name, next = identifier_text(k.c, sym.name), v.bound[0]
+		}
+		if next == nil {
 			return "", false
 		}
-		base := expr_base(sel.operand)
+		base := expr_base(next)
 		if base != nil {
 			struct_type := type_underlying(k.c, base.type)
 			if info := type_of(k.c, struct_type); info != nil && info.kind == .Pointer {
 				struct_type = type_underlying(k.c, info.element)
 			}
 			if info := type_of(k.c, struct_type); info != nil && info.kind == .Struct && info.packed {
-				return sel.name.text, true
+				return name, true
 			}
 		}
-		cur = sel.operand
+		cur = next
 	}
 }
 
@@ -2664,6 +2696,10 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// of and which `typeid` to pair with it (design.md "any_view type").
 	if target == TYPE_ANY_VIEW && base.type != TYPE_ANY_VIEW {
 		if !any_view_accepts(k.c, base.type) {
+			// Erasing a descriptor would materialise it at run time.
+			if offender := compile_time_only_component(k.c, base.type); offender != INVALID_TYPE {
+				report_compile_time_only(k, offender, base.span)
+			}
 			return false
 		}
 		concrete := any_view_source_type(k.c, base.type)

@@ -1,0 +1,30 @@
+package main; import "core:fmt"; import "base:meta";
+
+// design.md "Compile-time reflection": an `Enum_Value`'s `value` has its enum's
+// backing integer type, so no member's value wraps through `int`.
+
+Big :: enum u64 { Small = 1, Huge = 0xFFFF_FFFF_FFFF_FFFF }
+Neg :: enum i8 { A = -3, B }
+Plain :: enum { Red, Green = 5 }
+Shade :: distinct Neg;
+
+value_of :: proc($member: meta.Enum_Value) -> int { return int(member.value); }
+
+main :: proc() {
+	foreach ($member in enum_values_of(Big)) {
+		static_assert(type_of(member.value) == u64);
+		fmt.println(member.name, member.value, member.index);
+	}
+	foreach ($member in enum_values_of(Neg)) {
+		static_assert(type_of(member.value) == i8);
+		fmt.println(member.name, member.value);
+	}
+	foreach ($member in enum_values_of(Plain)) {
+		static_assert(type_of(member.value) == int);
+		fmt.println(value_of(member));
+	}
+	foreach ($member in enum_values_of(Shade)) {
+		static_assert(type_of(member.value) == i8);
+	}
+	static_assert(enum_values_of(Big)[1].value == 0xFFFF_FFFF_FFFF_FFFF);
+}

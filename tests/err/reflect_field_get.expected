@@ -1,0 +1,14 @@
+L0503
+@15:12
+`Handle` is move-only, so this binding cannot copy it
+L0497
+@16:18
+L0478
+@18:4
+read-only storage and cannot be an assignment destination
+L0452
+@19:26
+this descriptor does not describe `Twin`
+L0471
+@20:16
+field `owner` of `meta.Field` is not public

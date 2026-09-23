@@ -1,0 +1,59 @@
+package main; import "core:fmt";
+
+// design.md "Compile-time reflection": `field.get(value)` names the field in
+// place, as `field.pointer(value)^` does. A binding copies it, and a read that
+// is only used drops nothing the record still owns.
+
+drops: static int = 0;
+copies: static int = 0;
+
+Res :: struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { drops += 1; }
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		copies += 1;
+		return .ok(Res{self.id});
+	}
+}
+
+Holder :: struct { values: [dynamic]int, res: Res }
+
+// A packed field is read in place with no address taken.
+Packed :: struct @(packed) { tag: u8, value: int }
+
+// A field read through a pointer is borrowed, so returning it clones.
+first :: proc(h: ^Holder) -> [dynamic]int {
+	foreach ($field in fields_of(Holder)) {
+		when (field.index == 0) { return field.get(h); }
+	}
+}
+
+main :: proc() {
+	h: Holder = {{1, 2, 3}, {7}};
+	foreach ($field in fields_of(Holder)) {
+		when (field.index == 0) {
+			fmt.println(field.get(&h).len(), field.get(&h)[2]);
+			copy := field.get(&h);
+			copy[0] = 99;
+			fmt.println(h.values[0], copy[0]);
+		} else {
+			fmt.println(field.get(&h).id);
+			{ kept := field.get(&h); }
+			fmt.println(copies, drops);
+		}
+	}
+	c := first(&h);
+	c[1] = 50;
+	fmt.println(h.values[1], c[1]);
+	// design.md "Static `foreach` expansion": each copy is a scope of its own, so
+	// a local declared in one is dropped with it.
+	foreach ($n in [?]int{1, 2}) {
+		r: Res = {n};
+	}
+	fmt.println(drops);
+	p: Packed = {1, 300};
+	foreach ($field in fields_of(Packed)) {
+		fmt.println(int(field.get(&p)));
+	}
+}

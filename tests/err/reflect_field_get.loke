@@ -1,0 +1,24 @@
+package main; import "core:fmt";
+
+// design.md "Compile-time reflection": a descriptor describes only the type it
+// was reflected from, and `field.get` names that field as a read-only place.
+
+Handle :: move_only struct { id: int }
+Holder :: struct { handle: Handle, count: int }
+Twin :: struct { handle: Handle, count: int }
+
+main :: proc() {
+	h: Holder = {{1}, 2};
+	t: Twin = {{3}, 4};
+	foreach ($field in fields_of(Holder)) {
+		when (field.index == 0) {
+			kept := field.get(&h);
+			taken := move(field.get(&mut h));
+		} else {
+			field.get(&mut h) = 5;
+			fmt.println(field.get(&t));
+			fmt.println(field.owner);
+		}
+	}
+	static_assert(fields_of(Holder)[1] != fields_of(Twin)[1]);
+}

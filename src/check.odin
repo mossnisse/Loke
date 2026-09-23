@@ -2205,6 +2205,11 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 	if symbol.signature_error {
 		return // resolving the signature already said what is wrong with it
 	}
+	// `type` is a supported shape for `$` parameters, but never a runtime one.
+	if offender := compile_time_only_component(k.c, symbol.proc_type); offender != INVALID_TYPE {
+		report_compile_time_only(k, offender, literal.span)
+		return
+	}
 	if !gate_type(k, symbol.proc_type, literal.span) {
 		return
 	}

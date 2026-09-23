@@ -35,8 +35,9 @@ emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range, as_type: Type_Id) -> strin
 emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	if s.kind == .Static {
 		// An expansion is not a loop: its checked copies run in iterable order.
+		// Each copy is its own scope, as it was checked and walked.
 		for copy_block in s.expansion {
-			emit_block_statements(e, copy_block)
+			emit_scoped_block(e, copy_block)
 		}
 		return
 	}

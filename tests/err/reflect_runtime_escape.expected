@@ -1,0 +1,19 @@
+L0453
+@17:9
+`meta.Field` exists only during compilation and cannot be stored at run time
+L0453
+@10:12
+while instantiating `generic(meta.Field)`
+L0453
+@20:14
+`[1]meta.Field` exists only during compilation
+L0453
+@21:14
+so this expression must be a constant
+L0453
+@22:15
+L0378
+@11:13
+L0378
+@10:12
+while instantiating `generic(type)`

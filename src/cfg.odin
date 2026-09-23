@@ -717,6 +717,14 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 
 @(private = "file")
 walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
+	if s.kind == .Static {
+		// An expansion is not a loop: its checked copies run in iterable order, and
+		// the written body is never checked, so only the copies carry types.
+		for copy_block in s.expansion {
+			walk_flow_block(graph, copy_block)
+		}
+		return
+	}
 	place_loop := foreach_is_place_loop(s)
 	iterable := s.iterable
 	iterated := walk_flow_expr(graph, iterable)
@@ -1202,6 +1210,12 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			loans = walk_flow_expr(graph, v.bound[0])
 		}
 		return graph.mode == .Lifecycle ? nil : prov_variant_content(graph, v, loans)
+	case Call_Reflect:
+		// `field.get(value)` reads the place `field.pointer(value)^`.
+		if operation.op == .Field_Get {
+			carriers := walk_flow_expr(graph, v.bound[0])
+			return graph.mode == .Lifecycle ? nil : prov_load_content(graph, carriers, nil, v.type, v.span)
+		}
 	}
 	builtin := Builtin_Kind.None
 	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {

@@ -1808,7 +1808,14 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 
 	before := len(k.c.diagnostics)
 	instance.decl.check_state = .Checked
-	check_proc_body(k, literal)
+	// An inferred `$T` can be a compile-time-only type the template never wrote,
+	// such as `type` from `f(int)`, so the instance's runtime shape is gated.
+	proc_type := symbol_of(k.c, instance.symbol).proc_type
+	if offender := compile_time_only_component(k.c, proc_type); offender != INVALID_TYPE {
+		report_compile_time_only(k, offender, literal.span)
+	} else if gate_type(k, proc_type, literal.span) {
+		check_proc_body(k, literal)
+	}
 	if len(k.c.diagnostics) > before {
 		note_instantiation_stack(k)
 	}

@@ -26,4 +26,12 @@ main :: proc() {
 	id, secret := account;
 	id2, _ := account;
 	fmt.println(id, secret, id2);
+
+	// Nor is reflection: a look-alike record's descriptor describes only that
+	// record, so it cannot name the private field it happens to match.
+	foreach ($field in fields_of(Look_Alike)) {
+		when (field.index == 1) { fmt.println(field.get(&account)); }
+	}
 }
+
+Look_Alike :: struct { id: int, secret: int }
