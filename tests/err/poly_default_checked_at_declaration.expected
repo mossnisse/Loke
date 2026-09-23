@@ -13,3 +13,9 @@ this constant is not a value of `int`
 L0310
 @14:34
 this constant is not a value of `int`
+L0310
+@18:36
+cannot pass `string` with `Mode`
+L0310
+@19:36
+cannot pass `string` with `int`

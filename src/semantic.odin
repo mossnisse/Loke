@@ -637,6 +637,9 @@ Scope :: struct {
 	// The procedure literal this scope belongs to, or nil at package/universe
 	// level. Used to detect a capture across a procedure-literal boundary.
 	owner_proc: rawptr,
+	// Set when a lookup finds a name here. Only a probe reads it: whether a
+	// `$` default resolves any of its procedure's parameters.
+	reached:    bool,
 }
 
 // One resolved `import` edge, with the statement that wrote it: a cycle is
@@ -1767,6 +1770,7 @@ new_scope :: proc(c: ^Compiler, parent: ^Scope, kind: Scope_Kind) -> ^Scope {
 lookup_symbol :: proc(scope: ^Scope, name: Identifier_Id) -> Symbol_Id {
 	for current := scope; current != nil; current = current.parent {
 		if symbol, ok := current.names[name]; ok {
+			current.reached = true
 			return symbol
 		}
 	}
@@ -1776,6 +1780,7 @@ lookup_symbol :: proc(scope: ^Scope, name: Identifier_Id) -> Symbol_Id {
 lookup_symbol_with_scope :: proc(scope: ^Scope, name: Identifier_Id) -> (Symbol_Id, ^Scope) {
 	for current := scope; current != nil; current = current.parent {
 		if symbol, ok := current.names[name]; ok {
+			current.reached = true
 			return symbol, current
 		}
 	}

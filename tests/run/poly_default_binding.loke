@@ -15,9 +15,13 @@ per_type :: proc(x: $T, $N: int = twice(size_of(T))) -> int { return N; }
 width :: proc(x: $T, $N: int = size_of(T) * 2) -> int { return N; }
 spelled :: proc(x: $T, $S: string = "T and x") -> string { return S; }
 named :: proc(x: $T, $N: int = LIMIT, $K: type = Point) -> int { return N + size_of(K); }
+// Checked at the declaration, since no lookup reaches a parameter; the `T`
+// here is a field and the parameter of a procedure type.
+Pair :: struct { T: int }
+field :: proc(x: $T, $N: int = Pair{T = 3}.T + size_of(proc(T: int))) -> int { return N; }
 
 main :: proc() {
 	fmt.println(calls(1), calls(1, 5));
 	fmt.println(per_type(1), per_type(u8(1)), per_type(1));
-	fmt.println(width(1), width(u8(1)), named(1), spelled(1));
+	fmt.println(width(1), width(u8(1)), named(1), spelled(1), field(1));
 }

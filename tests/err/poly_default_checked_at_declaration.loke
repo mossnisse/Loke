@@ -12,6 +12,11 @@ always_supplied :: proc(x: $T, $N: int = "text") -> int { return N; }
 dependent :: proc(x: $T, $N: u8 = size_of(T) * 100) -> int { return int(N); }
 // A string that happens to spell a parameter's name is not a reference to it.
 spelled :: proc(x: $T, $N: int = "T") -> int { return N; }
+// Nor is a member, a field or a nested parameter spelled `T`: resolution
+// decides, not spelling. These were left to calls that never came.
+Mode :: enum { T }
+member :: proc(x: $T, $N: string = Mode.T) -> int { return 0; }
+nested :: proc(x: $T, $S: string = size_of(proc(T: int))) -> int { return 0; }
 
 main :: proc() {
 	n := always_supplied(1, 2);

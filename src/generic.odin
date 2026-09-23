@@ -243,15 +243,18 @@ reject_typeid_generic_parameter :: proc(k: ^Checker, name: Name, type_syntax: Ex
 // is checked where it is written: a mistake in it is the declaration's, and it
 // would otherwise surface only as an inapplicable candidate at a call, or not at
 // all when every call supplies the argument. A default that names a parameter,
-// as `$N: int = size_of(T)` does, is checked per call once `T` is bound.
+// as `$N: int = size_of(T)` does, is checked per call once `T` is bound. Which
+// it is, resolution decides: a speculative check against a scope of stand-ins
+// for every parameter name, `$` names in types included, sees whether any
+// lookup reached one. A field or a nested parameter spelled `T` does not.
 @(private = "file")
 check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter) {
-	names := make([dynamic]string, 0, 8, context.temp_allocator)
+	stand_ins := new_scope(k.c, k.scope, .Local)
 	for parameter in params {
 		for entry in parameter.names {
-			append(&names, entry.name.text)
+			declare_stand_in(k, stand_ins, entry.name.text, entry.name.span)
 		}
-		scan_source_identifiers(k.c, expr_span(parameter.type), &names, only_poly = true)
+		declare_poly_stand_ins(k, stand_ins, expr_span(parameter.type))
 	}
 	for parameter in params {
 		poly := false
@@ -261,52 +264,57 @@ check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter) {
 		if !poly || parameter.default == nil {
 			continue
 		}
-		mentioned := make([dynamic]string, 0, 8, context.temp_allocator)
-		scan_source_identifiers(k.c, expr_span(parameter.default), &mentioned)
-		dependent := false
-		for name in mentioned {
-			for parameter_name in names {
-				dependent ||= name == parameter_name
-			}
-		}
-		if dependent {
-			continue
-		}
 		// The parameter's type may still name `$T`; then only constness is known.
 		mark := len(k.c.diagnostics)
 		k.c.speculation_depth += 1
 		wanted := resolve_type_syntax(k, parameter.type)
+		saved := k.scope
+		k.scope = stand_ins
+		stand_ins.reached = false
+		check_poly_default(k, clone_expr(k.c, parameter.default), wanted)
+		k.scope = saved
 		k.c.speculation_depth -= 1
 		truncate_diagnostics(k.c, mark)
-		if wanted == TYPE_TYPE {
-			errors := k.c.error_count
-			if resolve_type_syntax(k, parameter.default) == INVALID_TYPE && k.c.error_count == errors {
-				report_unresolved_type(k, parameter.default)
-			}
-			continue
-		}
-		checked := false
-		if wanted == INVALID_TYPE {
-			checked = check_single_expr(k, parameter.default) != INVALID_TYPE
-		} else {
-			checked = check_value_expr(k, parameter.default, wanted, "pass")
-		}
-		if checked {
-			require_const(k, parameter.default, "a `$` parameter's default", "L0432")
+		if !stand_ins.reached {
+			check_poly_default(k, parameter.default, wanted)
 		}
 	}
 }
 
-// Appends the identifiers written in `span`, skipping string, rune and raw
-// string literals; with `only_poly`, just those written after a `$`.
-// ponytail: a lexical scan rather than a syntax walk. It can only over-report a
-// name, which makes a default look dependent and leaves it to the call.
 @(private = "file")
-scan_source_identifiers :: proc(c: ^Compiler, span: Span, out: ^[dynamic]string, only_poly := false) {
-	if span.file == NO_FILE || int(span.file) >= len(c.sources) {
+check_poly_default :: proc(k: ^Checker, default: Expr, wanted: Type_Id) {
+	if wanted == TYPE_TYPE {
+		errors := k.c.error_count
+		if resolve_type_syntax(k, default) == INVALID_TYPE && k.c.error_count == errors {
+			report_unresolved_type(k, default)
+		}
 		return
 	}
-	text := c.sources[span.file].text
+	checked := false
+	if wanted == INVALID_TYPE {
+		checked = check_single_expr(k, default) != INVALID_TYPE
+	} else {
+		checked = check_value_expr(k, default, wanted, "pass")
+	}
+	if checked {
+		require_const(k, default, "a `$` parameter's default", "L0432")
+	}
+}
+
+@(private = "file")
+declare_stand_in :: proc(k: ^Checker, scope: ^Scope, name: string, span: Span) {
+	id := intern_identifier(k.c, name)
+	scope.names[id] = new_symbol(k.c, Symbol{name = id, span = span, pkg = k.pkg})
+}
+
+// Every `$name` written in `span`. A `$` outside a string or rune literal
+// always binds a name, so spelling is exact here.
+@(private = "file")
+declare_poly_stand_ins :: proc(k: ^Checker, scope: ^Scope, span: Span) {
+	if span.file == NO_FILE || int(span.file) >= len(k.c.sources) {
+		return
+	}
+	text := k.c.sources[span.file].text
 	i, hi := int(span.lo), min(int(span.hi), len(text))
 	for i < hi {
 		ch := text[i]
@@ -317,13 +325,14 @@ scan_source_identifiers :: proc(c: ^Compiler, span: Span, out: ^[dynamic]string,
 				i += ch != '`' && text[i] == '\\' ? 2 : 1
 			}
 			i += 1
-		case ch == '_' || ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z'):
+		case ch == '$':
+			i += 1
 			start := i
 			for i < hi && (text[i] == '_' || ('a' <= text[i] && text[i] <= 'z') || ('A' <= text[i] && text[i] <= 'Z') || ('0' <= text[i] && text[i] <= '9')) {
 				i += 1
 			}
-			if !only_poly || (start > 0 && text[start - 1] == '$') {
-				append(out, text[start:i])
+			if i > start {
+				declare_stand_in(k, scope, text[start:i], Span{file = span.file, lo = u32(start), hi = u32(i)})
 			}
 		case:
 			i += 1
