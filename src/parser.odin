@@ -8,6 +8,7 @@
 package lokec
 
 import "core:mem"
+import "core:mem/virtual"
 import "core:strings"
 
 // The limit is on *node* nesting, not just parser recursion, because every
@@ -42,8 +43,13 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token) -> File {
 	result := File {
 		file = file,
 	}
-	mem.dynamic_arena_init(&result.arena)
-	allocator := mem.dynamic_arena_allocator(&result.arena)
+	// A growing virtual arena, not `mem.Dynamic_Arena`: that one refuses any
+	// allocation over its block size and `append` drops the error, so a list past
+	// 64 KiB (a long literal, a long body) silently lost its tail.
+	if err := virtual.arena_init_growing(&result.arena); err != nil {
+		panic("cannot reserve a syntax arena")
+	}
+	allocator := virtual.arena_allocator(&result.arena)
 	p := Parser {
 		c         = c,
 		file      = file,

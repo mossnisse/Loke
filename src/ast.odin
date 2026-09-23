@@ -4,7 +4,7 @@
 // positions, and the checker decides what syntax cannot.
 package lokec
 
-import "core:mem"
+import "core:mem/virtual"
 
 Expr_Base :: struct {
 	span:          Span,
@@ -1144,7 +1144,7 @@ item_span :: proc(item: Item) -> Span {
 
 File :: struct {
 	// Owns all syntax; source text lives with the source manager.
-	arena:        mem.Dynamic_Arena,
+	arena:        virtual.Arena,
 	file:         u32,
 	attributes:   []Attribute, // on the package clause
 	package_name: string,
@@ -1156,5 +1156,5 @@ File :: struct {
 }
 
 destroy_ast :: proc(f: ^File) {
-	mem.dynamic_arena_destroy(&f.arena)
+	virtual.arena_destroy(&f.arena)
 }

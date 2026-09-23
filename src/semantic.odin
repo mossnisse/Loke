@@ -1828,6 +1828,8 @@ destroy_compilation :: proc(c: ^Compiler) {
 	}
 	delete(c.parsed_files)
 
+	release_held_diagnostics(c)
+	delete(c.held_diagnostics)
 	for &diagnostic in c.diagnostics {
 		destroy_diagnostic(c, &diagnostic)
 	}

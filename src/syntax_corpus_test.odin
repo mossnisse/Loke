@@ -80,6 +80,43 @@ ambiguity_goldens :: proc(t: ^testing.T) {
 	}
 }
 
+// A list grown past 64 KiB keeps every element. The syntax arena was once a
+// `mem.Dynamic_Arena`, which refuses an allocation over its block size; `append`
+// dropped the error, so this literal came out `[1016]int` and the body lost
+// every statement after its 4096th, all without a diagnostic.
+@(test)
+long_lists_keep_every_element :: proc(t: ^testing.T) {
+	COUNT :: 5000
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "package main;\nmain :: proc() {\n\txs := [?]int{")
+	for i in 0 ..< COUNT {
+		strings.write_int(&b, i)
+		strings.write_string(&b, ", ")
+	}
+	strings.write_string(&b, "};\n")
+	for _ in 0 ..< COUNT {
+		strings.write_string(&b, "\txs[0] += 1;\n")
+	}
+	strings.write_string(&b, "}\n")
+
+	p: Checked
+	parse_source(&p, strings.to_string(b))
+	defer destroy_checked(&p)
+	expect_no_diagnostics(t, &p.c, "long lists")
+	main_decl, is_decl := p.f.items[0].(^Decl)
+	if !testing.expect(t, is_decl && decl_proc(main_decl) != nil) {
+		return
+	}
+	body := decl_proc(main_decl).body
+	testing.expect_value(t, len(body.stmts), COUNT + 1)
+	xs, is_xs := body.stmts[0].(^Decl)
+	if !testing.expect(t, is_xs && len(xs.values) == 1) {
+		return
+	}
+	literal, is_literal := xs.values[0].(^Expr_Composite)
+	testing.expect(t, is_literal && len(literal.elements) == COUNT)
+}
+
 // Whatever the token stream looks like, the parser must terminate, keep every
 // diagnostic span inside the file, and leave a tree the dump can walk.
 @(test)

@@ -1,0 +1,28 @@
+package main;
+import "core:fmt";
+
+// A `where` bound that calls a procedure not checked yet checks it on the spot,
+// for good. A bound that holds rolls back what it reported, but that body is
+// never checked again, so its own errors must survive the rollback: here they
+// once vanished and the use after `move` compiled and ran.
+
+show :: proc(x: $T) where allowed(size_of(T)) {
+	fmt.println(x);
+}
+
+main :: proc() {
+	show(3);
+}
+
+consume :: proc(xs: move [dynamic]int) {}
+
+allowed :: proc(n: int) -> bool {
+	if (n > 100) {
+		xs: [dynamic]int = {};
+		xs.append(1);
+		consume(move(xs));
+		fmt.println(xs[0]);
+		bad: int = "text";
+	}
+	return true;
+}

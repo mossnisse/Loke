@@ -67,6 +67,12 @@ Compiler :: struct {
 	sources:     [dynamic]Source,
 	diagnostics: [dynamic]Diagnostic,
 	error_count: int,
+	// What a body checked on demand for compile-time execution reported
+	// (`ensure_proc_typed_for_eval`). That body is settled and never checked
+	// again, so a speculative check that led to it and then rolls its
+	// diagnostics back must not take these along; they rejoin the list when
+	// checking ends (`release_held_diagnostics`).
+	held_diagnostics: [dynamic]Diagnostic,
 
 	// Hypothetical checks (overload bounds and interface requirements) may use
 	// the ordinary checker, but must not enroll backend artifacts in the final
@@ -465,10 +471,40 @@ truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 	c.last_noted_diagnostic = min(c.last_noted_diagnostic, wanted)
 }
 
+// Moves every diagnostic past `length`, with its share of `error_count`, out of
+// `truncate_diagnostics`' reach until `release_held_diagnostics`.
+hold_diagnostics :: proc(c: ^Compiler, length: int) {
+	wanted := clamp(length, 0, len(c.diagnostics))
+	if wanted == len(c.diagnostics) {
+		return
+	}
+	context.allocator = diagnostic_allocator(c)
+	for index in wanted ..< len(c.diagnostics) {
+		if c.diagnostics[index].severity == .Error {
+			c.error_count -= 1
+		}
+		append(&c.held_diagnostics, c.diagnostics[index])
+	}
+	resize(&c.diagnostics, wanted)
+	c.last_noted_diagnostic = min(c.last_noted_diagnostic, wanted)
+}
+
+release_held_diagnostics :: proc(c: ^Compiler) {
+	context.allocator = diagnostic_allocator(c)
+	for d in c.held_diagnostics {
+		append(&c.diagnostics, d)
+		if d.severity == .Error {
+			c.error_count += 1
+		}
+	}
+	clear(&c.held_diagnostics)
+}
+
 // Renders every accumulated diagnostic to stderr. The two provenance analyses
 // run after the whole program is checked, so their diagnostics arrive last; a
 // stable sort by position restores one reading order.
 report :: proc(c: ^Compiler) {
+	release_held_diagnostics(c)
 	slice.stable_sort_by(c.diagnostics[:], proc(a, b: Diagnostic) -> bool {
 		if a.span.file != b.span.file {
 			return a.span.file < b.span.file

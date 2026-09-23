@@ -1,0 +1,22 @@
+package main;
+import "core:fmt";
+
+// The same for an interface's own `where` predicate: the procedure it runs is
+// checked for good, so the predicate's rollback must leave that body's errors.
+
+Small :: interface($Self: type) where fits(size_of(Self)) {}
+
+show :: proc(x: $T) where Small(T) {
+	fmt.println(x);
+}
+
+main :: proc() {
+	show(3);
+}
+
+fits :: proc(n: int) -> bool {
+	if (n > 100) {
+		bad: int = "text";
+	}
+	return true;
+}

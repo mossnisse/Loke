@@ -58,6 +58,7 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	}
 	analyze_program_provenance(&k)
 	resolve_provider_factories(&k)
+	release_held_diagnostics(c)
 	return root, c.error_count == 0
 }
 

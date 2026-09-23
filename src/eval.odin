@@ -144,7 +144,13 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	// Executing a declaration is a real use, even from a `where` predicate.
 	saved_speculation := k.c.speculation_depth
 	k.c.speculation_depth = 0
-	defer k.c.speculation_depth = saved_speculation
+	// The same holds for what the check reports: a passing `where` bound rolls
+	// back everything after its mark, and this body is never checked again.
+	mark := len(k.c.diagnostics)
+	defer {
+		hold_diagnostics(k.c, mark)
+		k.c.speculation_depth = saved_speculation
+	}
 	if instance, found := k.c.procedure_instances[symbol_id]; found {
 		promote_generic_instance(k, instance, no_span())
 	}
