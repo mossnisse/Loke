@@ -1031,7 +1031,7 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 // A receiver-aware signature reads `proc(self, values: ..int)` as an implicit
 // receiver followed by a typed parameter. Plain procedure types do not split.
 parameter_splits_receiver :: proc(parameter: Parameter, position: int) -> bool {
-	return position == 0 && parameter.type != nil && len(parameter.names) > 1 &&
+	return position == 0 && (parameter.type != nil || parameter.default != nil) && len(parameter.names) > 1 &&
 		parameter.names[0].name.text == "self"
 }
 
@@ -1047,7 +1047,7 @@ normalize_signature_parameter :: proc(
 	type, mode = written, parameter.mode
 	if receiver != INVALID_TYPE && position == 0 && name_index == 0 {
 		split_receiver = parameter_splits_receiver(parameter, position)
-		if parameter.type == nil || split_receiver { type = receiver }
+		if (parameter.type == nil && parameter.default == nil) || split_receiver { type = receiver }
 		if split_receiver { mode = .Value }
 		// design.md "Receiver forms": `self: ^Self` is received by address. The
 		// body sees the pointer; callers pass the receiver as for any borrowing
@@ -1158,13 +1158,16 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		if parameter.type != nil && parameter_type == INVALID_TYPE && k.c.error_count == before {
 			report_unresolved_type(k, parameter.type)
 		}
-		if parameter.type == nil {
+		if parameter.type == nil && parameter.default != nil && !parameter_is_poly(parameter) {
+			// design.md "Default values": `name := default` takes the default's type.
+			parameter_type = infer_param_default_type(k, literal, position)
+		} else if parameter.type == nil {
 			// design.md "Receiver forms": a parameter with no type is the receiver
 			// `self`, whose type comes from the enclosing `impl` block.
-			if position == 0 && k.impl_type != INVALID_TYPE {
+			if position == 0 && k.impl_type != INVALID_TYPE && parameter.default == nil {
 				parameter_type = k.impl_type
 			} else {
-				errorf(k.c, parameter.span, "L0408", "a parameter needs a type; only the receiver `self` may omit one")
+				errorf(k.c, parameter.span, "L0408", "a parameter needs a type or a default; only the receiver `self` may omit both")
 			}
 		}
 		if parameter_type != INVALID_TYPE && type_mentions_any_view(k.c, parameter_type, allow_top = true) {
@@ -1311,16 +1314,59 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 	for parameter in literal.signature.params {
 		// A `$` default is checked at its declaration and bound per call
 		// (`bind_default_compile_time_argument`), never in an instance's copy.
-		poly := false
-		for entry in parameter.names {
-			poly ||= entry.is_poly
-		}
-		if parameter.default != nil && !poly {
+		// An inferred parameter's default was checked when its type was inferred.
+		if parameter.default != nil && !parameter_is_poly(parameter) && parameter.type != nil {
 			// Only the parameters to its left are in scope.
 			check_value_expr(k, parameter.default, resolve_type_syntax(k, parameter.type), "pass")
 		}
 		install_symbols(k.scope, k.c, parameter.symbols)
 	}
+}
+
+@(private = "file")
+parameter_is_poly :: proc(parameter: Parameter) -> bool {
+	for entry in parameter.names {
+		if entry.is_poly {
+			return true
+		}
+	}
+	return false
+}
+
+// design.md "Default values": the default of `name := default` decides the
+// parameter's type, seeing only the parameters to its left, as it does when
+// `check_param_defaults` checks a written type's default.
+@(private = "file")
+infer_param_default_type :: proc(k: ^Checker, literal: ^Expr_Proc, position: int) -> Type_Id {
+	parameter := literal.signature.params[position]
+	outer_scope, outer_proc := k.scope, k.proc_literal
+	outer_result, outer_result_inout := k.result_type, k.result_inout
+	defer {
+		k.scope, k.proc_literal = outer_scope, outer_proc
+		k.result_type, k.result_inout = outer_result, outer_result_inout
+	}
+	k.scope = new_scope(k.c, outer_scope, .Procedure)
+	k.scope.owner_proc = literal
+	k.proc_literal = literal
+	k.result_type, k.result_inout = INVALID_TYPE, false
+	for earlier in literal.signature.params[:position] {
+		install_symbols(k.scope, k.c, earlier.symbols)
+	}
+	type := check_single_expr(k, parameter.default, INVALID_TYPE)
+	if type == INVALID_TYPE {
+		return INVALID_TYPE
+	}
+	final := default_type(k.c, type)
+	if final == INVALID_TYPE {
+		errorf(k.c, expr_span(parameter.default), "L0310", "`nil` has no type to infer here")
+		return INVALID_TYPE
+	}
+	materialize(k, parameter.default, final)
+	if type_is_compile_time_only(k.c, final) {
+		report_compile_time_only(k, final, parameter.span)
+		return INVALID_TYPE
+	}
+	return final
 }
 
 @(private = "file")

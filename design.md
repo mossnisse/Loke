@@ -422,7 +422,7 @@ String iteration yields Unicode scalar values (runes) by default; byte iteration
 `x.runes()` names the same traversal a bare loop over `x` performs, and answers the `string_view` over the same bytes. `x.rune_offsets()` answers a borrowed view whose `Element` carries the offset beside the value. Both are ordinary values that can be stored and passed; neither copies or allocates.
 
 ```odin
-// by runes with byte offsets: `Element` is `struct{value: rune, offset: int}`
+// by runes with byte offsets: `Element` is `(value: rune, offset: int)`
 x := "AÅ✓";
 foreach (codepoint, offset in x.rune_offsets()) {
 	fmt.println(offset, codepoint);
@@ -586,9 +586,11 @@ x: [^]T = ...;
 x[i]   -> T
 x[:]   -> [^]T
 x[i:]  -> [^]T
-x[:n]  -> []T
-x[i:n] -> []T
+x[:n]  -> []mut T
+x[i:n] -> []mut T
 ```
+
+A C pointer is always mutable, so a bounded slice of one is a `[]mut T`; it converts to `[]T` implicitly where a read-only slice is wanted.
 
 Interacting with C pointers is easiest using `unsafe.raw_data`, which makes the loss of bounds and borrow capability visible at the call site.
 
@@ -691,7 +693,7 @@ p[n] = 123; // unchecked; the programmer proves that n is valid
 
 A slice is a non-owning view of a sequence. Its length is a runtime value. `[]T` has read-only elements. `[]mut T` has mutable elements. Both types have the same runtime representation. Mutability is a static capability and does not change the ABI.
 
-A mutable slice implicitly weakens to a read-only slice. A read-only slice never converts to a mutable slice, including when its original owner happens to be mutable. Slicing a mutable, addressable array or dynamic array produces `[]mut T`; slicing an immutable parameter, a string, or an existing `[]T` produces `[]T`.
+A mutable slice implicitly weakens to a read-only slice. A read-only slice never converts to a mutable slice, including when its original owner happens to be mutable. Slicing a mutable, addressable array or dynamic array produces `[]mut T`; slicing an immutable parameter or an existing `[]T` produces `[]T`. Slicing a `string` or `string_view` produces a [`string_view`](#string-types-and-views) over those bytes, not a slice.
 
 A slice expression has a low bound and a high bound separated by a colon:
 
@@ -1485,7 +1487,7 @@ These use the same attribute syntax as declarations and statements. See [Layout 
 
 ### Promoted struct fields
 
-A struct field declared with `using` promotes that field's members for selector lookup on the containing value.
+A struct field declared with `using` promotes that field's fields for selector lookup on the containing value. Only fields are promoted: the field type's methods are not, so `value.position.length()` stays explicit.
 
 ```odin
 Vector3 :: struct{x, y, z: f32};
@@ -1508,7 +1510,7 @@ foo :: proc(entity: ^Entity) {
 }
 ```
 
-Promoted names are only member-lookup shorthand. An explicitly declared field on the outer struct wins over a promoted name; otherwise two promoted fields supplying the same name make that selector ambiguous. A `using` field does not make the containing struct a subtype of the field type and does not create an implicit conversion. Passing the embedded value requires explicit selection, such as `consume(value.position)`.
+Promoted names are only field-lookup shorthand. An explicitly declared field on the outer struct wins over a promoted name; otherwise two promoted fields supplying the same name make that selector ambiguous. A `using` field does not make the containing struct a subtype of the field type and does not create an implicit conversion. Passing the embedded value requires explicit selection, such as `consume(value.position)`.
 
 ### Unions
 
@@ -2325,7 +2327,7 @@ Each call to `next` answers `.some(item)`, or `.none` to end the loop. See [Type
 | `Yield_Mutable` | `^mut T` | a mutable `T` place |
 | a record of descriptors | a record | each field as its own descriptor says |
 
-`Element` — what a single binding receives — is `T` for a borrowed or mutable leaf and `Item` otherwise. The checker validates `Yield` against `Item`'s shape and rejects a record descriptor over a record carrying a custom [`hook(copy)` or `hook(drop)`](#lifecycle-hooks-and-resource-types), the restriction consuming [destructuring](#destructuring) already carries.
+A single binding receives the element `T` itself for a borrowed or mutable leaf, and `Item` otherwise — for a record `Yield`, the record `next` handed back, pointer fields and all, which differs from `Element` when the record lends a part. The checker validates `Yield` against `Item`'s shape and rejects a record descriptor over a record carrying a custom [`hook(copy)` or `hook(drop)`](#lifecycle-hooks-and-resource-types), the restriction consuming [destructuring](#destructuring) already carries.
 
 **An iterator that declares no `Yield` is owned, with `Item = Element`.** Every iterator written before `Yield` existed keeps its meaning, including `Countdown` below. `Item` names what `next` hands back on any iterator, whether or not it declares one, which is what lets a single `Iterable` cover both modes. The three descriptors are predeclared names, like `Option` and `Result`, because the built-in containers lend and a program iterating an array imports nothing.
 
@@ -2375,7 +2377,7 @@ A manual `next()` call returns `Item`, pointers and all. Code that must be gener
 
 #### Element bindings
 
-One `foreach` binding receives the whole `Element`. Two or more destructure a record element by declaration order, and a parenthesised group nests:
+One `foreach` binding receives the whole element, or for a record `Yield` the whole lent record. Two or more destructure a record element by declaration order, and a parenthesised group nests:
 
 ```odin
 foreach (entry in table) {
@@ -2409,13 +2411,13 @@ Every iterable has one default `Element` and `Iterator`. An adapter selects a di
 
 | Adapter | `Element` |
 | --- | --- |
-| `source.indexed()` | `struct{value: Element, index: int}`, zero-based |
+| `source.indexed()` | `(value: Element, index: int)`, zero-based |
 | `source.reversed()` | the source `Element`, in reverse order |
 | `source.copied()` | the source `Element`, cloned once per step |
 
 `indexed()` and `reversed()` work in both [modes](#iteration-protocol) and nest where the underlying traversal supplies the required direction. Over a mutable view each is a mutable view, holding its source by value; over a container each is a read-only view. `copied()` turns a borrowed leaf into an owned one, cloning it with the element's own copy hook, allocator selection, and failure behaviour — it is the written form of the copy that a loop no longer makes on its own. An already-owned leaf passes through uncloned. It rejects a non-copyable borrowed leaf and an `&` leaf.
 
-`indexed()`'s own `Yield` is `struct{value: <the source's>, index: Yield_Owned}`: it lends whatever half its source lends and owns only the counter it supplies, so numbering a borrowed traversal stays borrowed and a move-only element can be numbered. `indexed()` starts at zero and advances only after `next` succeeds. `source.reversed().indexed()` numbers the reversed traversal from zero. Repeated indexing wraps the previous element in another `{value, index}` record. An indexed view is forward-only: reversing it would require knowing the end index. A reversed view supports reversal again, restoring the original traversal.
+`indexed()`'s own `Yield` is `(value: <the source's>, index: Yield_Owned)`: it lends whatever half its source lends and owns only the counter it supplies, so numbering a borrowed traversal stays borrowed and a move-only element can be numbered. `indexed()` starts at zero and advances only after `next` succeeds. `source.reversed().indexed()` numbers the reversed traversal from zero. Repeated indexing wraps the previous element in another `{value, index}` record. An indexed view is forward-only: reversing it would require knowing the end index. A reversed view supports reversal again, restoring the original traversal.
 
 `reversed()` requires [`Reverse_Iterable`](#standard-interface-catalogue) and a receiver method named `iter_reverse`; under an `&` leaf it requires `iter_mut_reverse` instead. A forward-only iterable is rejected; reversal never buffers or allocates. `iter_reverse` returns the type's declared `Iterator`, and `iter_mut_reverse` its `Mut_Iterator`. A reverse traversal that needs another iterator representation must instead be a separate adapter with its own `Element` and `Iterator`.
 
@@ -2435,11 +2437,11 @@ Built-in containers also provide these views:
 
 | View | Result | `Element` |
 | --- | --- | --- |
-| `map.entries()` | opaque borrowed map view | `struct{key: K, value: V}` — the map's own `Element`, lent as `{key: ^K, value: ^V}` |
+| `map.entries()` | opaque borrowed map view | `(key: K, value: V)` — the map's own `Element`, lent as `(key: ^K, value: ^V)` |
 | `map.keys()` | opaque borrowed map view | `K` |
 | `map.values()` | opaque borrowed map view | `V` |
 | `text.runes()` | `string_view` | `rune` — the string's own `Element` |
-| `text.rune_offsets()` | opaque borrowed text view | `struct{value: rune, offset: int}` |
+| `text.rune_offsets()` | opaque borrowed text view | `(value: rune, offset: int)` |
 | `text.bytes()` | `[]u8` | `u8` |
 
 Each view implements `Iterable`, can be stored or passed while its source remains valid, and starts a fresh traversal on each `iter()` call.
@@ -2482,7 +2484,7 @@ sum :: proc(items: []Entry) -> int {
 }
 ```
 
-Fixed arrays, slices, dynamic arrays, and the standard `Small_Array(T, N)` yield borrowed elements, [move-only](#lifecycle-hooks-and-resource-types) ones included. A map's entry is borrowed as `struct{key: ^K, value: ^V}` and an `Enum_Array`'s as `struct{key: E, value: ^T}`, whose key is owned because an enum member is a value, not stored storage. Ranges, runes, and bytes stay owned: each is generated per step rather than read out of a container.
+Fixed arrays, slices, dynamic arrays, and the standard `Small_Array(T, N)` yield borrowed elements, [move-only](#lifecycle-hooks-and-resource-types) ones included. A map's entry is borrowed as `(key: ^K, value: ^V)` and an `Enum_Array`'s as `(key: E, value: ^T)`, whose key is owned because an enum member is a value, not stored storage. Ranges, runes, and bytes stay owned: each is generated per step rather than read out of a container.
 
 Because the binding names the source's own storage, a borrowed yield **carries the source's provenance**. It, and any `&item` taken from it, stays valid after the iterator advances and after the iterator is dropped, for as long as the source itself is valid:
 
@@ -2521,7 +2523,7 @@ A temporary root lives for the complete `foreach` statement and lends its elemen
 
 Loke recognizes three semantic hooks: `hook(convert)`, `hook(copy)`, and `hook(drop)`. The `hook` role activates the behavior; the declaration name does not. A hook has a fixed signature, belongs to the subject type's package, and is used only by its corresponding language operation.
 
-Other behavior, including `hash`, `format`, and iteration, uses ordinary methods. Naming a procedure `init`, `drop`, or `try_clone` gives it no special meaning.
+Other behavior, including `hash`, `format`, and iteration, uses ordinary methods. Naming a procedure `init` or `drop` gives it no special meaning. `clone` and `try_clone` are the [generated copy operations](#lifecycle-hooks-and-resource-types), so an inherent member cannot take either name; custom copy behavior is bound with `hook(copy)`.
 
 ### Construction and conversions
 
@@ -2890,7 +2892,7 @@ Growable_Sequence :: interface($Self: type) {
 
 `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`; it is satisfied by every copyable type, including plain values such as `int`, pointers, and slices, each of which is its own clone, while `move_only struct` (including structural propagation from a field) makes it fail. `Iterable` describes reading traversal, whose elements a built-in container lends rather than copies; `Mutable_Iterable` describes mutable traversal, met by a container's `iter_mut(self: inout)` and a mutable view's `iter_mut(self)` alike, and generic indexed mutation uses `Mutable_Sequence`. An iterator that declares no `Yield` is owned with `Item = Element`, which is why `Iterator(Self.Iterator, Self.Iterator.Item)` accepts every iterator written before `Yield` existed.
 
-Formatting stays the `value.format(writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its `struct{key: K, value: V}` entry, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
+Formatting stays the `value.format(writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its `(key: K, value: V)` entry, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
 
 Built-in satisfaction follows the operations the language already defines:
 
@@ -2899,7 +2901,7 @@ Built-in satisfaction follows the operations the language already defines:
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers, enums, `typeid`, and fixed arrays of hashable elements satisfy `Hashable`. For floats, `+0` and `-0` hash identically because they compare equal. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`;
 - every copyable type satisfies `Cloneable`. A plain value — `bool`, integers, floats, runes, enums, pointers, slices, views, `typeid`, and procedures — is its own clone; owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, and aggregates containing them, clone ownership-recursively;
-- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `struct{key: K, value: V}` entry. Ranges, strings, and string views yield owned elements; the containers lend theirs, so a fixed array, slice, or dynamic array of a move-only element is iterable like any other, and a map entry is handed back as `struct{key: ^K, value: ^V}`. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; maps and text do not. The [container views](#iteration-adapters) satisfy `Iterable` with the `Element` each one names. Reversed views also satisfy `Reverse_Iterable`; indexed, text, and map views do not. Fixed arrays, mutable slices, dynamic arrays, maps, and `indexed()` or `reversed()` views over a mutable slice satisfy `Mutable_Iterable`;
+- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `(key: K, value: V)` entry. Ranges, strings, and string views yield owned elements; the containers lend theirs, so a fixed array, slice, or dynamic array of a move-only element is iterable like any other, and a map entry is handed back as `(key: ^K, value: ^V)`. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; maps and text do not. The [container views](#iteration-adapters) satisfy `Iterable` with the `Element` each one names. Reversed views also satisfy `Reverse_Iterable`; indexed, text, and map views do not. Fixed arrays, mutable slices, dynamic arrays, maps, and `indexed()` or `reversed()` views over a mutable slice satisfy `Mutable_Iterable`;
 - fixed arrays, slices, and dynamic arrays of a copyable element satisfy `Sequence`; fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Sequence` when supplied as mutable places; dynamic arrays satisfy `Growable_Sequence`. A [move-only](#lifecycle-hooks-and-resource-types) element leaves them with none of the three: `value[index] -> Element` would copy the element out of its place, and every sequence interface composes `Sequence`. They remain `Iterable`, and a `foreach` borrows each element. The standard `Small_Array(T, N)` library type supplies the same associated members and follows the same rule: a move-only element leaves it with none of the three, since `value[index] -> Element` and a copying `append` are exactly the members [the `where` exclusion](#where-clauses) removes; what remains is reached through `get_mut`, `view`, `iter_mut`, the consuming member of `append`, and `foreach`, which borrows each element and so needs no copy at all.
 
 #### Choosing between `where` constraints and specialization
@@ -3363,7 +3365,7 @@ The equality operators == and != apply to operands that are comparable. The orde
 - Union values are comparable if all their variants are comparable or a visible comparison overload is provided.
 - Array values are comparable if values of the element type are comparable.
 - typeid is comparable.
-- Slices, dynamic arrays, maps, and `dyn Interface` views are **not** comparable and may be tested only against `nil`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
+- Slices, dynamic arrays, maps, and `dyn Interface` views are **not** comparable. A slice or `dyn Interface` may be tested only against `nil`; a dynamic array or map has no nil value (its zero is `{}`), so emptiness is `value.len() == 0`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
 
 ### Logical operators
 
@@ -3402,13 +3404,12 @@ For an operand `x` of type `T`, `&x` returns a `^T` pointer to `x` and `&mut x` 
 - an index of a slice, dynamic array, addressable fixed array, or map; an absent map key panics rather than yielding a pointer
 - a visible [`operator([])` that returns `inout T`](#indexing-and-slicing)
 - a field of an addressable, non-packed struct
-- a panicking checked extraction `x.(T)` from an addressable `any_view`; `x.as(T)` produces a value rather than a place
 - a composite literal
 - a value parameter, and a [materialized constant](#materialization) or a place within one
 
 `&mut` additionally requires that the operand be assignable, so it is rejected for a value parameter, an element reached through a `[]T` or a `^T`, and a materialized constant — each of which `&` still reaches.
 
-An `any_view` is not addressable. An individual field of an `@(packed)` struct is not addressable.
+An `any_view` is not addressable, and a checked extraction `x.(T)` or `x.as(T)` produces a value rather than a place. An individual field of an `@(packed)` struct is not addressable.
 
 Both forms are always single-valued: every addressable operand yields exactly one pointer. A container whose caller must handle an absent element rather than panic supplies a method instead, as the built-in map does with [`m.find(key)`](#maps).
 
@@ -4306,7 +4307,7 @@ window1 := create_window("Title1") or_return;
 window2 := create_window(title="Title1", width=640, height=360) or_return;
 ```
 
-An input parameter's default is an ordinary expression, not necessarily a compile-time-known value. The expression is evaluated once for each call that omits that argument; it is not evaluated when the caller supplies the argument. Names in the expression are resolved in the lexical scope of the procedure declaration.
+A parameter written `name := default` takes its type from the default, as a [`:=` declaration](#variable-declarations) does, so `x := 0` is an `int` parameter; one written `name: T = default` converts the default to `T`. An input parameter's default is an ordinary expression, not necessarily a compile-time-known value. The expression is evaluated once for each call that omits that argument; it is not evaluated when the caller supplies the argument. Names in the expression are resolved in the lexical scope of the procedure declaration.
 
 A default may additionally reference `self` and ordinary parameters declared to its left. It may not reference its own parameter or any parameter to its right, even when a later parameter is supplied by name at a particular call. This makes every referenced parameter initialized before the default is evaluated and keeps the meaning independent of the caller's argument ordering. `$` parameters are compile-time values and may be referenced when they are declared to the left under the same rule.
 
@@ -5814,7 +5815,7 @@ main :: proc() {
 `caller_location()` denotes the source location of the code calling the
 procedure, as a `runtime.Source_Code_Location`. Its place is the default value of a procedure parameter, where it is evaluated at each call that omits that argument, like any other [default](#default-values). Written anywhere else it has nothing to name but its own site, and yields the same location `source_location()` does.
 
-`Source_Code_Location` is public, belongs to `base:runtime`, and is a constant:
+`Source_Code_Location` is public, belongs to `base:runtime`, and is a constant. Calling `caller_location()` or `source_location()` needs no import, as using an `Option` needs none; writing the type's name, `runtime.Source_Code_Location`, imports `base:runtime` like any other of its declarations. `type_info_of` behaves the same way:
 
 ```odin
 Source_Code_Location :: struct {

@@ -1,0 +1,13 @@
+package main;
+
+// The runtime is loaded for every program, so the builtins producing its types
+// need no import, as `Option` and `Result` need none. Nothing here imports it.
+
+where_called :: proc(loc := caller_location()) -> int { return loc.line; }
+
+main :: proc() {
+	info := type_info_of(typeid_of(i32));
+	assert(info.size == 4);
+	assert(source_location().line == 11);
+	assert(where_called() == 12);
+}

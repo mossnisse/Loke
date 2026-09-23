@@ -1,3 +1,0 @@
-L0575
-@7:10
-`type_info_of` produces a `^runtime.Type_Info`; add `import "base:runtime"` to this file's package

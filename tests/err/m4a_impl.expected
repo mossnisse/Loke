@@ -9,7 +9,7 @@ L0424
 `Maybe` has no zero value, so it cannot be produced by a declaration with static duration
 L0408
 @31:15
-a parameter needs a type; only the receiver `self` may omit one
+a parameter needs a type or a default; only the receiver `self` may omit both
 L0488
 @33:1
 `hook(convert)` is a type role and must be declared as an inherent `impl` member

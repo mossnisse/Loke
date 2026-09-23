@@ -2664,6 +2664,9 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 			param.mode = .Borrow
 		} else {
 			param.type = parse_type(p)
+			if allow(p, .Assign) {
+				param.default = parse_expr(p)
+			}
 		}
 	case .Inout:
 		advance(p)

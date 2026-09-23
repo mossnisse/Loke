@@ -888,7 +888,7 @@ check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Bui
 	if !resolved {
 		errorf(
 			k.c, v.span, "L0573",
-			"`%s` produces a `runtime.Source_Code_Location`; add `import \"base:runtime\"` to this file's package",
+			"`%s` produces a `runtime.Source_Code_Location`, and this program's `base:runtime` declares none",
 			ident.name,
 		)
 		v.type = INVALID_TYPE
@@ -1007,7 +1007,7 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 	if !resolved || !members_resolved {
 		errorf(
 			k.c, v.span, "L0575",
-			"`type_info_of` produces a `^runtime.Type_Info`; add `import \"base:runtime\"` to this file's package",
+			"`type_info_of` produces a `^runtime.Type_Info`, and this program's `base:runtime` declares none",
 		)
 		v.type = INVALID_TYPE
 		return
@@ -1034,22 +1034,23 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.type = pointer_to(k.c, record, false)
 }
 
-// A type declared by a `base:runtime` this package imports, recorded for the
-// emitter's metadata tables. The compiler writes these records field by field
+// A type declared by `base:runtime`, recorded for the emitter's metadata tables.
+// The runtime is loaded for every program, so a builtin producing one of its
+// types needs no import, as `Option` and `Result` need none (design.md). The compiler writes these records field by field
 // and their enums as numbers, so the declaration is checked against that once:
 // a mismatch is reported and gives INVALID_TYPE, still `resolved`.
 @(private = "file")
 runtime_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
-	pkg := package_of(k.c, k.pkg)
-	if pkg == nil {
-		return INVALID_TYPE, false
-	}
-	for edge in pkg.imports {
-		target := package_of(k.c, edge.target)
-		if target == nil || target.key != STD_RUNTIME || target.scope == nil {
+	for index in 1 ..< len(k.c.packages) {
+		target := &k.c.packages[index]
+		if target.key != STD_RUNTIME || target.scope == nil {
 			continue
 		}
 		symbol_id := target.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL
+		// Checked before any package importing it only if something imports it.
+		if found := symbol_of(k.c, symbol_id); found != nil && found.kind == .Type {
+			resolve_symbol_signature_in_place(k, symbol_id)
+		}
 		symbol := symbol_of(k.c, symbol_id)
 		if symbol == nil || symbol.kind != .Type || symbol.type == INVALID_TYPE {
 			continue

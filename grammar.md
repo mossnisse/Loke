@@ -75,7 +75,6 @@ Contextual keywords, reserved only in the positions given:
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `using` | before a promoted struct field |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
-| `borrow` | in the parameter-mode position of a parameter, after its `:` |
 
 `nil`, `true`, and `false` are predeclared identifiers, not keywords, but they
 are **reserved**: no name a lookup can reach may be one of them. A field or enum
@@ -452,26 +451,28 @@ Parameter_List = Parameter ("," Parameter)* ","?
 Parameter    = Attributes? Parameter_Names
              | Attributes? Parameter_Names ":" Type ("=" Expression)?
              | Attributes? Parameter_Names ":" Parameter_Mode Type?
+             | Attributes? Parameter_Names ":" "^"               // receiver `self: ^`
              | Attributes? Parameter_Names ":" ".." Type
              | Attributes? Parameter_Names ":" "=" Expression
 Parameter_Names = Parameter_Name ("," Parameter_Name)*
 Parameter_Name  = "$"? (Identifier | "_")
-Parameter_Mode  = "borrow" | "inout" | "move"
+Parameter_Mode  = "inout" | "move"
 
 Results      = Result_Type                                // exactly one, or none
 Result_Type  = "inout"? Type
 ```
 
-A parameter with no type is legal only for the receiver `self` (typed from the
-enclosing `impl` block or interface `slot`), which is why `Parameter_Mode` may
-stand alone: `self: borrow`, `self: inout`, and `self: move` write out a
-receiver's mode and leave its type to the enclosing block, while every other
-parameter writes both. A leading `self` therefore ends `Parameter_Names` in
-`proc(self, allocator: Allocator)`, since it would otherwise swallow the
-receiver. The receiver keeps an immutable borrow mode regardless of the group's
-`Parameter_Mode`; one wanting another mode writes its own type, as
-`self: inout Type`. `..T` is a variadic parameter; variadic, `borrow`, `inout`,
-and `move` parameters cannot have defaults. A value parameter's `= Expression`
+A parameter with neither a type nor a default is legal only for the receiver
+`self` (typed from the enclosing `impl` block or interface `slot`), which is why
+`Parameter_Mode` and a lone `^` may stand alone: `self: ^`, `self: inout`, and
+`self: move` write out a receiver's form and leave its type to the enclosing
+block (see [design.md](design.md#receiver-forms)). Every other parameter writes a
+type, or a default whose type it takes (`x := 0`). A leading `self` therefore
+ends `Parameter_Names` in `proc(self, allocator: Allocator)`, since it would
+otherwise swallow the receiver. The receiver is then a plain `self` value
+regardless of the group's type or `Parameter_Mode`; one wanting another form
+writes it separately, as `self: inout`. `..T` is a variadic parameter; variadic,
+`inout`, and `move` parameters cannot have defaults. A value parameter's `= Expression`
 default may reference the receiver and parameters to its left only — see
 [design.md](design.md#default-values) for when it's evaluated. A result is
 anonymous: `Results` is one `Result_Type`, so there is no result name and no
@@ -743,10 +744,8 @@ The productions above use the following deterministic parsing rules:
 - After the first `:` of a declaration, `static` and `thread_local` are storage
   modifiers only when followed by another modifier, by a type-start token, or by
   `=`. Otherwise they are ordinary type names.
-- After the `:` of a parameter, `borrow` is the parameter mode when followed by
-  a type-start token, an identifier, or `(`, and — for a lone `self` closed by
-  `,` or `)` — when the type is omitted. Otherwise it is an ordinary type name,
-  which is what keeps `value: borrow` a parameter of a type named `borrow`.
+- After the `:` of a parameter, a `^` closed by `,` or `)` is the receiver form
+  `self: ^`; followed by anything else it starts a pointer type.
 - At the start of an `impl` member, `delegate` is the contextual
   keyword only when followed by `(`; otherwise it remains an ordinary identifier
   that may begin a declaration.

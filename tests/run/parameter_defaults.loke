@@ -1,0 +1,28 @@
+package main;
+import "core:fmt";
+import "core:mem";
+
+// design.md "Default values": `name := default` takes the default's type, which
+// may read the parameters to its left, and a `^T` parameter may have a default.
+Monitor :: struct { id: int }
+
+window :: proc(title: string, x := 0, width := x + 854, scale := 1.5, monitor: ^Monitor = nil) {
+	fmt.println(title, x, width, scale, monitor == nil);
+}
+
+sized :: proc(n: int, allocator := mem.default_allocator()) -> int { return n; }
+
+Counter :: struct { v: int }
+impl Counter {
+	make :: proc(v := 7) -> Counter { return {v}; }
+	add :: proc(self, by := 1) -> int { return self.v + by; }
+}
+
+main :: proc() {
+	screen := Monitor{1};
+	window("a");
+	window("b", 10, monitor = &screen);
+	fmt.println(sized(3));
+	c := Counter.make();
+	fmt.println(c.v, c.add(), c.add(by = 5));
+}

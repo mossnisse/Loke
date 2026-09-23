@@ -7,7 +7,6 @@ main :: proc() {
 	// A false static assertion breaks compilation, message and all.
 	static_assert(BUDGET > 100, "the budget shrank");
 	static_assert(LABEL == "y");
-	// design.md: `source_location` produces a `runtime.Source_Code_Location`, so the
-	// file's package has to be able to name that type.
-	fmt.println(source_location().line);
+	// design.md "`caller_location()`": it names the caller, so it takes nothing.
+	fmt.println(caller_location(1).line);
 }

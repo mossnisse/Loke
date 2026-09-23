@@ -4,5 +4,5 @@ static assertion failed: the budget shrank
 L0387
 @9:2
 L0573
-@12:14
-add `import "base:runtime"`
+@11:14
+`caller_location` takes no arguments, found 1

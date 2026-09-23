@@ -455,6 +455,8 @@ UNPINNED :: []string {
 	"L0405",
 	// `core:fmt` without its own `Writer`/`Options`.
 	"L0601",
+	// A `base:runtime` without `Type_Info`/`Member_Info`; the runtime is always loaded.
+	"L0575",
 	"L0350",
 }
 
