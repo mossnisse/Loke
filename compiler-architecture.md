@@ -475,20 +475,22 @@ new code arrives without either.
 Common commands from the repository root:
 
 ```powershell
-odin test src -define:ODIN_TEST_TRACK_MEMORY=false
+odin test src -vet-unused -vet-shadowing -vet-packages:lokec
 odin build src -out:lokec.exe -vet-unused -vet-shadowing
-odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
+odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -vet-unused -vet-shadowing -vet-packages:tests
 .\test-all.ps1
 ```
 
-To check the compiler for leaks, run `odin test src` without the define (the
-test runner then tracks every test), or build with
-`-define:LOKE_TRACK_MEMORY=true`, which makes `lokec` print every allocation
-still live at exit, and every bad free, on stderr.
+`odin test src` tracks every unit test's memory and reports leaks and bad
+frees. For a whole compilation, build with `-define:LOKE_TRACK_MEMORY=true`,
+which makes `lokec` print every allocation still live at exit, and every bad
+free, on stderr. Test code is vetted with `-vet-packages`, because plain vet
+also reaches Odin's own `core:testing` and fails there.
 
-`test-all.ps1` checks design-document citations and backend layering, runs unit
-tests, rebuilds the compiler, runs the baseline corpus, and reruns the run/trap
-corpus at every supported optimization level. Use
+`test-all.ps1` checks design-document citations and backend layering, runs the
+unit tests, rebuilds the compiler, runs the baseline corpus, and reruns every
+test that honours `LOKE_TEST_FLAGS` (the run/trap corpus, multi-package
+programs, and the examples) at every supported optimization level. Use
 `-SkipOptimizationMatrix` for a quicker baseline check while iterating.
 
 Three tests need a tool this repository does not ship — nasm, and a clang or MSVC

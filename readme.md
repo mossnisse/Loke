@@ -243,8 +243,9 @@ separately and link it at the host's final link step.
 ### Compiler tests
 
 For compiler development, the test script checks spec citations and backend
-layering, runs unit tests, rebuilds `lokec.exe` with Odin's vet checks, then runs
-integration tests and the run/trap corpus across all five optimization modes:
+layering, runs unit tests with leak tracking, rebuilds `lokec.exe` with Odin's
+vet checks, runs the integration tests, then reruns the test programs, packages,
+and examples across all five optimization modes:
 
 ```powershell
 .\test-all.ps1
@@ -255,12 +256,14 @@ Known divergences between the specification and the compiler are recorded in
 not cover them, which is why they are written down.
 
 Use `.\test-all.ps1 -SkipOptimizationMatrix` for unit tests, a rebuild, and the
-baseline integration suite only. The suites can also be run separately:
+baseline integration suite only. Add `-RequireTools` on a machine that has nasm
+and a C host toolset, so tests that would skip for a missing tool fail instead.
+The suites can also be run separately:
 
 ```powershell
-odin test src -define:ODIN_TEST_TRACK_MEMORY=false
+odin test src -vet-unused -vet-shadowing -vet-packages:lokec
 odin build src -out:lokec.exe -vet-unused -vet-shadowing
-odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
+odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -vet-unused -vet-shadowing -vet-packages:tests
 ```
 
 ## Standard library
