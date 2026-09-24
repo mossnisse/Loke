@@ -3,8 +3,7 @@ package main;
 import "core:fmt";
 import "core:endian";
 
-// `Little_Endian(T)` and `Big_Endian(T)`, design.md's catalogue row "Distinct
-// storage wrappers supplied by binary-format libraries".
+// `Little_Endian(T)` and `Big_Endian(T)` (standard-library "`core:endian`").
 //
 // The point of the wrapper is that a field's byte order is fixed by its type
 // rather than remembered at each use, so these checks are all round trips:
@@ -27,6 +26,7 @@ main :: proc() {
 	fmt.println(endian.byte_swap(u128(1)) == u128(1) << 120);
 	fmt.println(endian.byte_swap(i16(0x0102)) == i16(0x0201));
 	fmt.println(endian.byte_swap(i32(-1)) == i32(-1));
+	fmt.println(endian.byte_swap(i16(0x00FF)) == i16(-256));
 
 	// A one-byte value has nothing to swap.
 	fmt.println(endian.byte_swap(u8(0x7F)) == u8(0x7F));
@@ -43,6 +43,9 @@ main :: proc() {
 
 	// Formatting shows the value, not the storage.
 	fmt.println(h.magic, h.version, h.flags);
+	// And honours the caller's options, as a plain integer does.
+	fmt.format_to_with(fmt.stdout(), fmt.Options{16, true}, h.magic);
+	fmt.println();
 
 	// The conversion hook is explicit, and produces the same stored value.
 	fmt.println(h.version == endian.Little_Endian(u16)(513));

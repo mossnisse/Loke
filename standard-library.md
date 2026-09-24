@@ -126,7 +126,7 @@ core:strconv          scalar parsing
 core:strings          UTF-8 algorithms and String_Builder
 core:cstrings         owned zero-terminated buffers
 core:encoding/utf16   UTF-8 to UTF-16 and back
-core:endian           fixed byte-order storage wrappers       *
+core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:slice            slice algorithms and sorting            *
 core:container        Small_Array, Bit_Set, Enum_Array        *
@@ -582,6 +582,35 @@ the same reason `core:cstrings` rejects it. `decode` converts exactly the range
 it is given, zeros included, and an unpaired surrogate is `Invalid_Data` rather
 than U+FFFD. `length_of` counts the units before the first zero, for an API that
 returns a terminated buffer.
+
+## `core:endian`
+
+A binary format fixes each field's byte order; these wrappers put that order in
+the field's type, so the swap happens at `store` and `load` rather than wherever
+a caller remembers it.
+
+```odin
+Order :: enum { Little, Big }
+host_order() -> Order
+byte_swap(value: $T) -> T where interfaces.Integral(T)
+
+Little_Endian :: struct($T: type) where interfaces.Integral(T) { /* private */ }
+Big_Endian    :: struct($T: type) where interfaces.Integral(T) { /* private */ }
+
+impl Little_Endian($T) {   // Big_Endian likewise
+	store     :: proc(value: T) -> Little_Endian(T);
+	load      :: proc(self) -> T;
+	from_host :: hook(convert) proc(value: T) -> Little_Endian(T);
+	format    :: proc(self, writer: fmt.Writer, options: fmt.Options);
+}
+```
+
+A wrapper has the size and alignment of `T` and defines no arithmetic. The
+conversion hook is explicit only, `Big_Endian(u32)(x)`, because an implicit one
+would let a host value land in a stored field unswapped. Equality compares the
+stored bytes, which is equality of the values. Formatting prints the loaded
+value, with the caller's options. Where the host order already matches, `store`
+and `load` compile to nothing.
 
 ## `core:strconv`
 

@@ -1,6 +1,5 @@
 // `Little_Endian(T)` and `Big_Endian(T)`: storage wrappers that fix a field's
-// byte order regardless of the target's (design.md "Basic types", catalogue row
-// "Distinct storage wrappers supplied by binary-format libraries").
+// byte order regardless of the target's (standard-library "`core:endian`").
 //
 // The wrapper is the *stored* form. Nothing arithmetic is defined on it: a
 // caller `store`s a host value into one and `load`s a host value back out, and
@@ -52,8 +51,9 @@ impl Little_Endian($T) {
 	}
 
 	// The value, not the storage: printing the swapped bytes would be a puzzle.
+	// `format_to_with`, so a caller asking for hex gets hex.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		fmt.format_to(writer, self.load());
+		fmt.format_to_with(writer, options, self.load());
 	}
 }
 
@@ -75,7 +75,7 @@ impl Big_Endian($T) {
 	}
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		fmt.format_to(writer, self.load());
+		fmt.format_to_with(writer, options, self.load());
 	}
 }
 
