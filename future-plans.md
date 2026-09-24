@@ -1,30 +1,12 @@
 # Future plans
 
-The v1 language design is complete, and the compiler implements its intended
-feature set except for the divergences recorded in [known-gaps.md](known-gaps.md).
-Closing those gaps is part of completing v1, not a future language extension.
+The v1 language design is complete, and the compiler implements it. Any
+divergence found later is recorded in [known-gaps.md](known-gaps.md) and fixed
+as v1 work, not treated as a future language extension.
 
 Later work should extend the existing architecture without weakening
-diagnostics, semantic consistency, reproducibility. Each
+diagnostics, semantic consistency, and reproducibility. Each
 initiative below should receive a detailed implementation plan when work begins.
-
-## Correctness and conformance
-
-Resolve every compiler/specification divergence in
-[known-gaps.md](known-gaps.md), starting with problems that can accept an unsafe
-program. Keep each entry's reproduction while the issue is open; once fixed,
-move it into the permanent regression corpus so the divergence cannot return.
-
-Main work:
-
-- fix each new divergence as it is found, and add negative diagnostics and
-  runtime coverage for the corrected case;
-- keep `design.md`, diagnostics, implementation comments, and tests in agreement;
-- define the v1 release gate as an empty known-gaps list, or document any
-  intentionally accepted exception as a specification change.
-
-Done means the shipped compiler agrees with the normative v1 specification for
-the complete conformance corpus and no known unsafe divergence remains.
 
 ## Continuous integration and releases
 
@@ -35,6 +17,8 @@ it across more hosts. A release is the compiler together with the `base/`,
 
 Main work:
 
+- define the v1 release gate as an empty known-gaps list, or document any
+  intentionally accepted exception as a specification change;
 - run citation checks, compiler tests, integration tests, layout checks, and the
   optimization matrix in CI on Windows x64;
 - publish versioned release bundles containing the compiler and every required
@@ -45,8 +29,9 @@ Main work:
   release checklist;
 - record compile time, peak compiler memory, output size, and representative
   program performance so regressions are visible;
-- add deterministic fuzzing for the lexer, parser, and diagnostic paths, and
-  retain every discovered failure as a minimized test.
+- extend the parser mutation fuzzer (`mutation_fuzzing` in
+  `src/syntax_corpus_test.odin`) to the checker and diagnostic paths, and retain
+  every discovered failure as a minimized test.
 
 Done means a tagged revision produces a repeatable, installable bundle whose
 tests pass in CI and whose version and compatibility expectations are clear.
@@ -54,9 +39,11 @@ tests pass in CI and whose version and compatibility expectations are clear.
 ## Tutorials
 
 Create practical, beginner-friendly tutorials that teach Loke from the first
-program through packages, testing, foreign-function interfaces, and common
-application patterns. Keep every tutorial executable and verified against the
-current compiler so examples cannot silently become outdated.
+program through packages, foreign-function interfaces, and common application
+patterns. Testing joins them once Loke has a test facility (see
+[Standard-library maturity](#standard-library-maturity)). Keep every tutorial
+executable and verified against the current compiler so examples cannot
+silently become outdated.
 
 Done means a new user can install the toolchain, learn the core language, and
 build a small multi-package program by following the tutorials alone.
@@ -106,17 +93,36 @@ Main work:
 Done means two clean machines can resolve the same project to the same dependency
 graph and build it without hand-written collection flags.
 
-## Language server
+## Compiler services
 
-Build an LSP server that reuses the real lexer, parser, package loader, checker,
-and semantic IDs. It must not grow a second, approximate Loke front end.
+Make the compiler usable as a long-lived service, not only as one command-line
+run. Compilation is whole-program and single-process today
+([compiler-architecture.md](compiler-architecture.md) "Deliberate v1
+boundaries"); the language server, developer tools, and a self-hosted compiler
+all need the same checked program without re-running everything.
 
 Main work:
 
+- separate the command-line driver from a reusable compilation session that owns
+  source, package, and semantic state;
 - add in-memory source overlays for unsaved editor buffers;
+- cache per-package results and invalidate only the packages an edit affects;
 - expose read-only semantic queries for symbols, types, definitions, references,
-  signatures, and diagnostics;
-- cache package state and invalidate affected packages after edits;
+  signatures, and diagnostics, keyed by the existing semantic IDs;
+- keep command-line compilation behavior unchanged.
+
+Done means a long-lived process re-checks an edited package without rebuilding
+unrelated packages, and `lokec` built on the same session produces the same
+diagnostics and IR as before.
+
+## Language server
+
+Build an LSP server on the [compiler services](#compiler-services). It reuses the
+real lexer, parser, package loader, and checker, and must not grow a second,
+approximate Loke front end.
+
+Main work:
+
 - support diagnostics, hover, go-to-definition, completion, references, rename,
   document symbols, and signature help;
 - keep partial and temporarily invalid programs responsive through the parser's
@@ -128,7 +134,7 @@ and name resolution.
 
 ## Debugging and developer tools
 
-Add source-level observability after the compiler-service boundary exists. Debug
+Add source-level observability once the compiler services exist. Debug
 information is a separate backend consumer and should drive any durable
 intermediate representation it actually needs.
 
@@ -157,12 +163,15 @@ than a milestone that ends after v1.
 
 Main work:
 
+- record every compiler/specification divergence in
+  [known-gaps.md](known-gaps.md) with its reproduction, fix those that can accept
+  an unsafe program first, and move each fixed reproduction into the regression
+  corpus;
 - expand syntax, semantic, IR, run, trap, package, object-host, and foreign-ABI
   corpora whenever a bug or new feature exposes a missing boundary;
 - test malformed and adversarial source without crashes, hangs, or unbounded
   diagnostic cascades;
-- benchmark incremental and whole-program compilation before changing compiler
-  representations for speed;
+- benchmark compilation before changing compiler representations for speed;
 - keep generated IR and binaries inspectable enough to explain material size or
   performance regressions;
 - test runtime and compiler code with the strongest practical sanitizers and
@@ -201,9 +210,9 @@ interfaces and continuously tested in CI.
 
 ## Self-hosting
 
-Reimplement `lokec` in Loke only after the compiler-service boundaries and
-standard library are sufficient for a compiler-sized program. The Odin compiler
-remains the trusted bootstrap until the replacement is reproducible.
+Reimplement `lokec` in Loke only after the compiler services and standard
+library are sufficient for a compiler-sized program. The Odin compiler remains
+the trusted bootstrap until the replacement is reproducible.
 
 Main work:
 
@@ -227,48 +236,27 @@ on the bootstrap implementation used.
 [comments.md](comments.md) is the canonical backlog for possible language
 changes. Keep proposals there until a concrete use case and implementation plan
 make them roadmap candidates; do not silently turn an open question into a
-compiler task. The question below is recorded here because its implementation
-consequences have already been investigated in detail.
-
-Nominal conformance was considered while file-scope `static_assert` was added
-and deliberately left out. It is not an unfinished part of that work: the
-structural interface model is complete without it, and it needs its own proposal
-before any compiler change.
-
-### Nominal conformance
-
-An `implements Drawable(Circle);` declaration was proposed and rejected. With no
-semantic force it is only a second spelling of `static_assert(Drawable(Circle));`
-while suggesting a nominal relationship the language does not create.
-
-It should be reconsidered only as a proposal in which it *has* force. That
-proposal must define ownership and orphan rules, coherence, generic and
-conditional conformances, conformances for built-in types, compatibility with
-existing structural code, and whether a claim gates static satisfaction or only
-`dyn` witness construction. Until then satisfaction stays structural, and a
-file-scope assertion stays a check rather than a registry.
+compiler task.
 
 ## Suggested order
 
-1. Close the known v1 correctness and conformance gaps, converting every fixed
-   reproduction into a regression test.
-2. Establish Windows CI, reproducible release bundles, compatibility records,
-   fuzzing, and performance baselines.
-3. Publish introductory tutorials while filling the concrete standard-library
+1. Establish Windows CI, the v1 release gate, reproducible release bundles,
+   compatibility records, fuzzing, and performance baselines.
+2. Publish introductory tutorials while filling the concrete standard-library
    gaps those tutorials and real programs expose.
-4. Define the reproducible package and dependency workflow, and finish the
+3. Define the reproducible package and dependency workflow, and finish the
    standard-library services required by a compiler-sized program.
-5. Extract a reusable, incremental compiler-service boundary without changing
-   command-line compilation behavior.
-6. Build the language server, formatter, documentation generator, and debug
-   information support on those shared compiler services.
-7. Isolate target interfaces and add Linux, then macOS, with an explicit native
+4. Build the compiler services without changing command-line compilation
+   behavior.
+5. Build the language server, formatter, documentation generator, and debug
+   information support on those compiler services.
+6. Isolate target interfaces and add Linux, then macOS, with an explicit native
    and cross-compilation policy and one shared conformance corpus.
-8. Begin self-hosting after the compiler APIs, package workflow, release process,
-   and required libraries have stabilized.
+7. Begin self-hosting after the compiler services, package workflow, release
+   process, and required libraries have stabilized.
 
-Tutorial and standard-library work may overlap once the v1 behavior is reliable.
-The language server, developer tools, and platform ports may overlap once the
-compiler-service boundary exists. Quality engineering continues through every
-step. Self-hosting remains last because it multiplies the cost of any compiler,
-runtime, library, or package interface that is still moving.
+Tutorial and standard-library work may overlap. The language server, developer
+tools, and platform ports may overlap once the compiler services exist. Quality
+engineering continues through every step. Self-hosting remains last because it
+multiplies the cost of any compiler, runtime, library, or package interface that
+is still moving.

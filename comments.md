@@ -216,6 +216,20 @@ such as `1 < 2 < 3` are already rejected by type (L0354), but an equality chain
 over `bool` type-checks and rarely means what it reads as. Should comparisons be
 non-associative, like ranges?
 
+## Nominal conformance
+
+An `implements Drawable(Circle);` declaration was proposed and rejected. With no
+semantic force it is only a second spelling of `static_assert(Drawable(Circle));`
+while suggesting a nominal relationship the language does not create. The
+structural interface model is complete without it.
+
+It should be reconsidered only as a proposal in which it *has* force. That
+proposal must define ownership and orphan rules, coherence, generic and
+conditional conformances, conformances for built-in types, compatibility with
+existing structural code, and whether a claim gates static satisfaction or only
+`dyn` witness construction. Until then satisfaction stays structural, and a
+file-scope assertion stays a check rather than a registry.
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
