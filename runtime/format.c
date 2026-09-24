@@ -1,6 +1,6 @@
 /* The byte sink behind `core:fmt`, and the scalar spellings.
  *
- * design.md "String format printing": "Formatting is a library protocol." The
+ * design.md "String format printing": printing is a library protocol. The
  * protocol, the writer, the options, and the `print` family are Loke source in
  * `core:fmt`; what lives here is what every formatter ends at — turning one
  * scalar into bytes, and handing bytes to a stream.
@@ -11,7 +11,9 @@
  */
 #include "loke_rt.h"
 
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 void loke_rt_v1_write_std(void *state, const uint8_t *bytes, int64_t count) {
@@ -104,20 +106,59 @@ void loke_rt_v1_fmt_i128(
 	loke_rt_v1_fmt_bytes(w, buffer, used);
 }
 
-/* ponytail: `%g` through the C library rather than a Ryu/Grisu implementation.
- * It round-trips at 17 significant digits, which is what shortest-representation
- * printing would also guarantee; swap it out if the exact shortest spelling ever
- * becomes observable. */
+/* The shortest spelling that reads back as the same value. `%.17g` alone always
+ * round-trips a double but spells 0.1 as 0.10000000000000001, so the precisions
+ * are tried in order and the first that survives `strtod` is kept. `single`
+ * compares at `float` precision, where 9 digits always suffice: a widened `f32`
+ * would otherwise print its binary noise, 0.10000000149011612.
+ *
+ * NaN and the infinities are spelled here because the C library's spelling is
+ * the platform's: the UCRT writes `-nan(ind)`. A NaN's sign carries no value.
+ *
+ * ponytail: up to 17 `snprintf`/`strtod` pairs per value rather than Ryu or
+ * Grisu. Formatting is not a hot path; swap in one of those if it becomes one. */
+static void fmt_float(const loke_rt_writer_v1 *w, double value, int single) {
+	if (isnan(value)) {
+		loke_rt_v1_fmt_bytes(w, (const uint8_t *)"nan", 3);
+		return;
+	}
+	if (isinf(value)) {
+		if (value < 0) {
+			loke_rt_v1_fmt_bytes(w, (const uint8_t *)"-inf", 4);
+		} else {
+			loke_rt_v1_fmt_bytes(w, (const uint8_t *)"inf", 3);
+		}
+		return;
+	}
+	/* The longest spelling, `-2.2250738585072014e-308`, is 24 bytes. */
+	char buffer[32];
+	int widest = single ? 9 : 17;
+	int precision = 1;
+	for (; precision < widest; precision++) {
+		snprintf(buffer, sizeof(buffer), "%.*e", precision - 1, value);
+		double back = strtod(buffer, 0);
+		if (single ? (float)back == (float)value : back == value) {
+			break;
+		}
+	}
+	/* `%g` switches to an exponent once it reaches the precision, so 10 at one
+	 * digit is `1e+01`. Where `%.17g` wrote fixed notation, from 1e-4 to below
+	 * 1e17, the precision widens to cover the integer digits. */
+	snprintf(buffer, sizeof(buffer), "%.*e", precision - 1, value);
+	int exponent = atoi(strchr(buffer, 'e') + 1);
+	if (exponent >= -4 && exponent < 17 && precision < exponent + 1) {
+		precision = exponent + 1;
+	}
+	int used = snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
+	loke_rt_v1_fmt_bytes(w, (const uint8_t *)buffer, used);
+}
+
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value) {
-	char buffer[64];
-	int used = snprintf(buffer, sizeof(buffer), "%.17g", value);
-	/* `snprintf` answers the length it wanted, not the length it wrote. */
-	if (used > (int)sizeof(buffer) - 1) {
-		used = (int)sizeof(buffer) - 1;
-	}
-	if (used > 0) {
-		loke_rt_v1_fmt_bytes(w, (const uint8_t *)buffer, used);
-	}
+	fmt_float(w, value, 0);
+}
+
+void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value) {
+	fmt_float(w, value, 1);
 }
 
 void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value) {

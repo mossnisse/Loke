@@ -29,12 +29,12 @@ inf
 true
 true
 5 5
-0.040000000000000001+-0.080000000000000002i+-0.080000000000000002j+-0.16k
+0.04+-0.08i+-0.08j+-0.16k
 true
 1+0i+0j+0k
 true true true true
 true true true true
-1+0i+0j+-2.7755575615628914e-17k 1+0i+5.5511151231257827e-17j+0k
+1+0i+0j+-2.7755575615628914e-17k 1+0i+5.551115123125783e-17j+0k
 true true true true
 true true true
 true true true true

@@ -111,4 +111,11 @@ main :: proc() {
 	arena := mem.Arena.from_buffer(room[:]);
 	text := fmt.to_string(arena.allocator(), "id", 7);
 	fmt.println(text, text.len());
+
+	// A float prints the shortest spelling that reads back as itself, at its own
+	// width, in fixed notation from 1e-4 to below 1e17; NaN has one spelling.
+	fmt.println(0.1, 0.3 - 0.1, 10.0, 1.5e10, 1e17, 0.00001);
+	fmt.println(f32(0.1), f32(1) / f32(3));
+	zero := 0.0;
+	fmt.println(zero / zero, -1.0 / zero);
 }

@@ -249,6 +249,21 @@ name. A checked conversion from a terminated `[]u8` to `cstring_view` that keeps
 the slice's provenance would let `core:cstrings` drop its `core:unsafe` import
 and let the checker reject both. Is that conversion worth adding?
 
+## Printed form of built-in types
+
+design.md "String format printing" says the compiler provides the format for a
+type without its own, but not what that format is. Two choices in it may
+surprise a reader:
+
+- A struct prints its public fields only, as reflection from another package
+  sees it, because one printed form serves every package. In a `package main`
+  whose fields are private by default, `fmt.println(Point{1, 2})` prints
+  `Point{}`.
+- A float in integer range prints without a fraction, so `fmt.println(1.0)`
+  prints `1`, the same as `fmt.println(1)`.
+
+Should the spec fix these forms, and should either change?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

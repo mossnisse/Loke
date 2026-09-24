@@ -359,6 +359,35 @@ to every program that prints. `to_string`
 itself keeps its selected allocator by receiving the same compiler-contributed
 `allocate_string` primitive `core:strings` gets.
 
+## `core:fmt`
+
+```odin
+Writer :: struct {
+	write: proc(state: rawptr, bytes: [^]u8, count: int),
+	state: rawptr,
+}
+Options :: struct { base: int, uppercase: bool }
+DEFAULT_OPTIONS :: Options{10, false};
+
+print(args: ..any_view)
+println(args: ..any_view)
+eprint(args: ..any_view)
+eprintln(args: ..any_view)
+stdout() -> Writer
+stderr() -> Writer
+format_to(w: Writer, args: ..any_view)
+format_to_with(w: Writer, options: Options, args: ..any_view)
+to_string(allocator: Allocator, args: ..any_view) -> string
+```
+
+Arguments are separated by one space. `Options.base` is 2 to 36 and any other
+value reads as 10; it and `uppercase` reach integers and whatever a type's
+`format` passes them to. A float prints the shortest spelling that reads back
+as the same value at its own width, in fixed notation from 1e-4 to below 1e17
+and with an exponent outside that; NaN prints as `nan` and the infinities as
+`inf` and `-inf`. A struct without its own `format` prints its public fields
+only.
+
 ## `core:strings`
 
 The built-in string already owns UTF-8 validation, byte/rune counts, immutable

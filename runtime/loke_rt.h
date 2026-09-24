@@ -480,6 +480,7 @@ void loke_rt_v1_fmt_i128(
 void loke_rt_v1_fmt_u128(
 	const loke_rt_writer_v1 *w, uint64_t low, uint64_t high, const loke_rt_options_v1 *o);
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value);
+void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value);
 void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_ptr(const loke_rt_writer_v1 *w, const void *value);

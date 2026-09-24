@@ -1,5 +1,4 @@
-// Formatted output (design.md "String format printing", "Formatting is a
-// library protocol").
+// Formatted output (design.md "String format printing").
 //
 // The protocol is a `value.format(writer, options)` method. `Writer` is a
 // byte sink — one procedure and its state — and `Options` is what a formatter
@@ -9,8 +8,8 @@
 // design.md's coherence rule: runtime formatting has one formatter per concrete
 // `typeid`. Built-ins receive compiler-generated formatters, and a user
 // customization is eligible only when its `format` is declared in the value
-// type's own package. A caller-local `extend` may still declare a `format` and
-// call it explicitly, but it cannot change what `print` does — an `any_view`
+// type's own package. An extension `impl` elsewhere may still declare a `format`
+// and call it explicitly, but it cannot change what `print` does — an `any_view`
 // carries only a pointer and a `typeid`, so a callee has no way to recover a
 // call-site-specific overload.
 @(public)

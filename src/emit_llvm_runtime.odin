@@ -60,6 +60,7 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_i128(ptr, i64, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_u128(ptr, i64, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_f64(ptr, double)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_f32(ptr, float)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bool(ptr, i32)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_rune(ptr, i32)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_ptr(ptr, ptr)")
@@ -503,12 +504,20 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	case .Float:
 		llvm := llvm_type(e, under)
 		value := load(e, llvm, address)
-		widened := value
-		if llvm != "double" {
-			widened = temp(e)
-			fmt.sbprintfln(&e.b, "  %s = fpext %s %s to double", widened, llvm, value)
+		if llvm == "double" {
+			fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f64(ptr %%w, double %s)", value)
+			break
 		}
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f64(ptr %%w, double %s)", widened)
+		// A narrower float prints at `f32` precision: widened to `double`, its
+		// shortest spelling would carry the binary noise of the narrower type.
+		// ponytail: `f16` shares the `f32` spelling, so `f16(0.1)` prints
+		// 0.099975586; give it its own runtime entry if half floats get printed.
+		widened := value
+		if llvm != "float" {
+			widened = temp(e)
+			fmt.sbprintfln(&e.b, "  %s = fpext %s %s to float", widened, llvm, value)
+		}
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f32(ptr %%w, float %s)", widened)
 
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator:
 		value := load(e, "ptr", address)
