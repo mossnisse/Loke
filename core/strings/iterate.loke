@@ -1,4 +1,4 @@
-// Borrowing iterators: split, fields, and lines (standard-library-plan
+// Borrowing iterators: split, fields, and lines (standard-library
 // "Borrowing transformations and iterators").
 //
 // None of these allocates. Every part borrows the text it was built from, so it

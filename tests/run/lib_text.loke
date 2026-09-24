@@ -5,8 +5,8 @@ import "core:encoding/utf16";
 import "core:fmt";
 import "core:mem";
 
-// `core:cstrings` and `core:encoding/utf16` (standard-library-plan stage 1
-// item 5, and the encoding stage 2 needed early).
+// `core:cstrings` and `core:encoding/utf16` (standard-library
+// "`core:cstrings`" and "Package layout").
 
 foreign import libc "system:legacy_stdio_definitions.lib";
 

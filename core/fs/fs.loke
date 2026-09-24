@@ -1,4 +1,4 @@
-// Files, directories, and file metadata (standard-library-plan "`core:fs`").
+// Files, directories, and file metadata (standard-library "`core:fs`").
 //
 // `design.md`'s "Library types assumed by this specification" once put `open`,
 // `close`, and `Handle` in `core:os`. They live here: `core:os` is *process*

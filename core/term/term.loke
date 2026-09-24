@@ -1,4 +1,4 @@
-// Standard streams, line input, and terminal key events (standard-library-plan
+// Standard streams, line input, and terminal key events (standard-library
 // "`core:term`").
 //
 // Terminal input has two levels. Line input is the default for a command-line
@@ -402,7 +402,7 @@ impl Raw_Mode {
 	// caller of this one asked for keys.
 	//
 	// A held key arrives as one record carrying a count, and that count is handed
-	// back as that many events (standard-library-plan: repeats are individual
+	// back as that many events (standard-library "Raw mode and key events": repeats are individual
 	// events). Ordering is unchanged by it -- every repeat belongs to the record
 	// already read, so they all precede the next one.
 	read_key :: proc(self: inout Raw_Mode) -> Result(Key_Event, io.Error) {

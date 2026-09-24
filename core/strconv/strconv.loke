@@ -1,4 +1,4 @@
-// Scalar parsing (standard-library-plan "`core:strconv`").
+// Scalar parsing (standard-library "`core:strconv`").
 //
 // Parsing is not a string algorithm: it interprets text as another type, so it
 // does not belong in `core:strings`. Formatting scalars stays in `core:fmt`;

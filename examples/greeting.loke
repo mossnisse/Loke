@@ -5,8 +5,7 @@ import "core:fs";
 import "core:io";
 import "core:term";
 
-// The standard library's first-release acceptance program
-// (standard-library-plan "First-release acceptance program"): a command-line
+// The standard library's acceptance program: a command-line
 // program that reads a line, reads and writes a text file, and reports a
 // failure — with no compiler-specific I/O built-in anywhere in it.
 

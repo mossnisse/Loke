@@ -4,7 +4,7 @@ import "core:fmt";
 import "core:io";
 import "core:term";
 
-// Raw key input with guaranteed terminal restoration (standard-library-plan
+// Raw key input with guaranteed terminal restoration (standard-library
 // "Raw mode and key events"). Run it from a real console — redirected input is
 // `Not_A_Terminal`, on purpose.
 //

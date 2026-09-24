@@ -1,5 +1,5 @@
 // Owned zero-terminated buffers for foreign APIs (design.md "C string views",
-// standard-library-plan "`core:cstrings`").
+// standard-library "`core:cstrings`").
 //
 // `cstring_view` from `string.to_c_view()` is valid only through the enclosing
 // expression. A foreign API that *retains* the pointer needs storage that

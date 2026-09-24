@@ -1,4 +1,4 @@
-// UTF-8 to UTF-16 and back (standard-library-plan "Package layout", pulled
+// UTF-8 to UTF-16 and back (standard-library "Package layout", pulled
 // forward by stage 2 from the later-packages list there).
 //
 // Windows is a wide-character operating system: every path, environment

@@ -1,4 +1,4 @@
-// Byte streams and the shared I/O error (standard-library-plan "Shared I/O
+// Byte streams and the shared I/O error (standard-library "Shared I/O
 // contract").
 //
 // This package owns the error type used by `io`, `fs`, `term`, and fallible

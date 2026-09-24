@@ -1,4 +1,4 @@
-// UTF-8 algorithms and efficient construction (standard-library-plan
+// UTF-8 algorithms and efficient construction (standard-library
 // "`core:strings`").
 //
 // The built-in `string` already owns validation, byte and rune counts,

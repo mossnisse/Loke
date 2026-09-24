@@ -7,7 +7,7 @@
 # case, which let three citations drift to a lower-case spelling of a real
 # heading and still pass.
 [CmdletBinding()]
-param([string[]]$Specs = @('design.md', 'standard-library-plan.md', 'compiler-architecture.md'))
+param([string[]]$Specs = @('design.md', 'standard-library.md', 'compiler-architecture.md'))
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location -LiteralPath $repoRoot
@@ -33,7 +33,7 @@ try {
             }
         }
 
-        # `design.md "X"` and `standard-library-plan "X"` are both written, so
+        # `design.md "X"` and `standard-library "X"` are both written, so
         # the extension is optional.
         $base = [regex]::Escape([System.IO.Path]::GetFileNameWithoutExtension($spec))
         $pattern = "$base(?:\.md)?\s+`"([^`"]+)`""

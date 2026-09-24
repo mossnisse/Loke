@@ -262,7 +262,7 @@ odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
 ## Standard library
 
 The **standard library** is ordinary Loke code over the compiler and runtime
-foundation; [standard-library-plan.md](standard-library-plan.md) documents its
+foundation; [standard-library.md](standard-library.md) documents its
 design. `base:` stays reserved for declarations that participate in the language
 or its runtime ABI. General-purpose code lives in `core:`, in small packages a
 program imports by name, with no prelude:
@@ -291,7 +291,7 @@ core:unsafe           explicit unchecked operations and conversions
 
 The library's design rules (errors as values, visible ownership, platform
 isolation) and each package's API are in
-[standard-library-plan.md](standard-library-plan.md).
+[standard-library.md](standard-library.md).
 
 `examples/greeting.loke` is the release's acceptance program: it prompts, reads
 and writes a text file, and reports a failure, with no compiler-specific I/O

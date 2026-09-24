@@ -68,7 +68,7 @@ build a small multi-package program by following the tutorials alone.
 Complete the library capabilities required by real applications and by a
 self-hosted compiler. Continue to add packages from concrete use cases rather
 than creating a broad utility namespace. The open inventory and its design
-constraints remain in [standard-library-plan.md](standard-library-plan.md).
+constraints remain in [standard-library.md](standard-library.md).
 
 Main work:
 
@@ -189,7 +189,9 @@ Main work:
   selected, and how target-specific foreign libraries are resolved;
 - port runtime startup, arguments, panic/unwind, TLS teardown, atomics, and
   platform services;
-- provide target-specific `core:os`, filesystem, terminal, and foreign bindings;
+- provide target-specific `core:os`, filesystem, terminal, and foreign bindings
+  behind the existing public contracts, and run the same library conformance
+  tests on every target;
 - add cross-platform toolchain discovery, diagnostics, and target-aware artifact
   naming;
 - run the same semantic, layout, IR, run, trap, package, and C-interop corpora on

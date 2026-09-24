@@ -1,4 +1,4 @@
-// Lexical path operations (standard-library-plan "`core:path`").
+// Lexical path operations (standard-library "`core:path`").
 //
 // Everything here is **lexical**: no procedure in this package touches the
 // filesystem. `clean` removes redundant separators and `.`/`..` elements without

@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:io";
 
-// `core:io` end to end (standard-library-plan stage 2, item 1).
+// `core:io` end to end (standard-library "Shared I/O contract").
 //
 // The protocol tests are driven by deliberately awkward in-memory streams: a
 // reader that hands out at most two bytes at a time, and a writer that accepts

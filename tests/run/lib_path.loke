@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:path";
 
-// `core:path` end to end (standard-library-plan stage 2, item 6).
+// `core:path` end to end (standard-library "`core:path`").
 //
 // Windows drive-relative, UNC, and extended-length paths get their own cases,
 // because those are exactly where a lexical rewrite goes wrong quietly.

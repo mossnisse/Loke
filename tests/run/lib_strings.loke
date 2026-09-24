@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:strings"; import "core:mem";
 
-// `core:strings` end to end (standard-library-plan stage 1).
+// `core:strings` end to end (standard-library "`core:strings`").
 
 // The builder's fallible half answers with `Result(Unit, Allocator_Error)`;
 // these checks only care which variant came back.

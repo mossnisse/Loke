@@ -1,5 +1,5 @@
 // Process state: the environment, the working directory, and the executable's
-// own path (standard-library-plan "`core:os` additions").
+// own path (standard-library "`core:os` additions").
 //
 // Files are **not** here. `core:os` is process state; opening a file is
 // `core:fs.open`. A process-spawning API is deferred until handle inheritance,

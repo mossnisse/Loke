@@ -14,7 +14,7 @@ true. Keep it short: point to a document rather than repeat it.
 | Why a choice was made, open questions, differences from Odin | [comments.md](comments.md) |
 | How the compiler is built, and how to change it | [compiler-architecture.md](compiler-architecture.md) |
 | Where the compiler disagrees with the spec | [known-gaps.md](known-gaps.md) |
-| Standard library design and APIs | [standard-library-plan.md](standard-library-plan.md) |
+| Standard library design and APIs | [standard-library.md](standard-library.md) |
 | Later work | [future-plans.md](future-plans.md) |
 
 When the compiler and `design.md` disagree, the spec wins unless the spec is

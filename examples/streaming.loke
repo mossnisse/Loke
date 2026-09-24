@@ -7,7 +7,7 @@ import "core:os";
 import "core:term";
 
 // The three habits the standard library expects of a program that reads files it
-// did not write (standard-library-plan "First-release acceptance program"):
+// did not write (standard-library "Shared I/O contract"):
 //
 //   1. a bounded read for untrusted input, so a huge file cannot exhaust memory;
 //   2. streaming through a fixed buffer, so size does not decide feasibility;

@@ -1,16 +1,13 @@
-# Loke standard library plan
+# Loke standard library
 
-Status: implemented for Windows x64. Stages 0 to 3 are in the tree with tests;
-stage 4 remains gated on non-Windows targets. "Implementation record" at the end
-of this document lists every place the shipped contract differs from the design
-above, and why.
+Status: implemented for Windows x64. Other targets wait on the compiler (see
+[future-plans.md](future-plans.md) "More platforms"); every platform call sits
+behind a `when (LOKE_OS == ...)` whose non-Windows arm is never selected yet.
 
-This document gives the organization, conventions, public APIs, and
-implementation order of Loke's standard library. It started from the library
-surface that already existed: `base:runtime`, `base:meta`, `base:interfaces`,
-`core:mem`, `core:fmt`, `core:os`, and `core:unsafe`.
+This document gives the organization, conventions, and public APIs of Loke's
+standard library. The `.loke` sources are the final word on exact signatures.
 
-The first useful release should let a small command-line program:
+The library lets a small command-line program:
 
 - read and write binary files and UTF-8 text files;
 - read lines from standard input and write raw bytes to standard output;
@@ -103,7 +100,7 @@ selected inside one file with `when (LOKE_OS == .Windows)`, over a foreign block
 per platform. `LOKE_OS` is currently a fixed `.Windows` in
 `src/build_config.odin`, so other branches exist but are never taken. If a
 file-selection rule is wanted later, it is a compiler and `design.md` change and
-must land before Stage 4, not as part of it.
+must land before non-Windows ports, not as part of them.
 
 The existing versioned C runtime remains the last resort for startup, compiler
 ABI, or unwind services. Normal file and terminal operations should be ordinary
@@ -167,8 +164,7 @@ for opening a file is the point of moving it.
 `core:io` owns the error type used by `io`, `fs`, `term`, and fallible process
 I/O. It is not a universal application error type.
 
-The exact declarations should be proven in Loke source before being frozen, but
-the intended shape is:
+The declarations are:
 
 ```odin
 Code :: enum {
@@ -256,7 +252,7 @@ the `try_` form internally; an `.err(mem.Allocator_Error)` is converted at that
 one call site with `from_allocator_error`, after the partial result is destroyed.
 No procedure's failure payload is both an `Allocator_Error` and an `io.Error`.
 
-The first release uses synchronous, blocking byte streams. Both are written with
+Streams are synchronous and blocking. Both are written with
 `slot` requirements, which is what dyn-compatibility requires, and that is what
 makes `dyn io.Writer` exist for the formatting adapter and for `io.copy`.
 
@@ -315,8 +311,8 @@ immediately preceding `\r` by default; `keep_ending` retains it. An unterminated
 final line is returned successfully. End of input before any bytes returns
 `End_Of_Input`.
 
-Buffered wrappers are not in the first release. `read_to_end` plus a caller's own
-`[]mut u8` covers what Stage 2 needs, and buffering policy is worth designing
+There are no buffered wrappers yet. `read_to_end` plus a caller's own
+`[]mut u8` covers what the file and stream APIs need, and buffering policy is worth designing
 against a measured cost rather than in advance. When it arrives it is an explicit
 wrapper value, never hidden global state.
 
@@ -326,8 +322,7 @@ The existing `fmt.Writer` callback cannot return an error. It remains suitable
 for process diagnostics and in-memory sinks, but a formatted file write must
 not silently lose a disk error.
 
-The first implementation should attempt an `io.write_formatted` adapter. The
-adapter presents a `fmt.Writer`, writes into an `io.Writer`, latches the first
+`io.write_formatted` bridges the two. Its adapter presents a `fmt.Writer`, writes into an `io.Writer`, latches the first
 `io.Error`, makes later callbacks no-ops, and returns the latched error after
 formatting. This preserves the existing formatting ABI:
 
@@ -360,7 +355,7 @@ and nothing defaulted before it can be omitted. This is useful independently and
 gives a simple fallback for any sink: format in memory, then call
 `io.write_string`.
 
-The planned `append_to(builder: inout strings.String_Builder, ...)` is **not**
+An `append_to(builder: inout strings.String_Builder, ...)` is **not**
 shipped, and the reason is measured rather than aesthetic. It would make
 `core:fmt` import `core:strings`, an imported package is emitted whole, and
 hello world's IR went from 397 to 4923 lines with that one import in place. The
@@ -411,7 +406,11 @@ fields(text) -> Fields_Iterator
 lines(text) -> Lines_Iterator
 ```
 
-Whitespace in `trim_space` and `fields` is Unicode White_Space, not only ASCII.
+Whitespace in `trim_space` and `fields` is Unicode White_Space, not only ASCII
+(`strings.is_space`: twenty-five code points tested by range).
+Search compares bytes and slices only at an offset that has already matched,
+which is a code-point boundary because UTF-8 is self-synchronising; slicing a
+view through a code point is a runtime failure.
 `lines` recognizes `\n`, `\r\n`, and a final unterminated line. General Unicode
 normalization, locale rules, grapheme segmentation, and case folding belong in
 a later `core:unicode` package.
@@ -445,7 +444,7 @@ owned storage, so the tables can arrive without changing a caller.
 The policy-following forms above panic only on allocation-policy failure.
 Negative counts and other programmer mistakes panic.
 
-No `try_` twin ships for these in the first release. `String_Builder` already
+No `try_` twin exists for these. `String_Builder` already
 offers the fallible path — including `try_reserve`, `try_append`, and
 `try_finish` — and a caller that must survive allocation failure can build the
 same result there. A `try_join` or `try_replace` is added when a caller actually
@@ -517,12 +516,12 @@ The compiler contributes one package-private `core:strings` primitive that
 copies a known-valid `string_view` into string storage with a supplied allocator
 and answers `Result(string, Allocator_Error)`. This is the minimal unexpressible
 bridge to the built-in string allocation ABI; UTF-8 algorithms and allocation
-policy remain ordinary Loke. Stage 0 must prove this primitive before the
-builder API is frozen. Arbitrary byte append is deliberately absent because it
+policy remain ordinary Loke. It is `allocate_string`, contributed to `core:fmt`
+as well. Arbitrary byte append is deliberately absent because it
 could break the UTF-8 invariant; callers validate bytes first or use a byte
 buffer.
 
-The type's public name in source should be `strings.String_Builder`. A shorter
+The type's public name in source is `strings.String_Builder`. A shorter
 `strings.Builder` alias can be considered only after real programs show that it
 improves readability.
 
@@ -557,7 +556,7 @@ zero; a Loke `string` may legitimately contain U+0000 even though a retained C
 string cannot. The package must never create a view whose apparent length is
 shorter than the owned data.
 
-`from_bytes` and a `bytes()` accessor are not in the first release. `design.md`
+There is no `from_bytes` or `bytes()` accessor. `design.md`
 only owes `view()`, and the one motivating case — handing a foreign API a string
 it retains — starts from a `string_view`. Add the byte-oriented pair when a
 caller has bytes that are not text.
@@ -626,6 +625,11 @@ flush(file: inout File) -> Result(Unit, io.Error)
 close(file: inout File) -> Result(Unit, io.Error)
 ```
 
+These are members of `File`, reached as `file.read(...)`: a `slot` requirement
+is satisfied by a *member*, so `io.Reader` and `io.Writer` can only be answered
+by methods. `file.is_open()` sits alongside them, because a caller that has
+closed explicitly has no other way to ask.
+
 Because structural interface satisfaction is determined by the static type,
 `File` satisfies both `io.Reader` and `io.Writer`: it has both slots regardless of
 the options used for a particular instance. The open mode is checked at runtime,
@@ -655,13 +659,6 @@ An explicit `replace_atomic` helper may be added later with precisely documented
 same-filesystem and durability guarantees.
 
 ### Filesystem operations
-
-The next slice after basic file I/O is:
-
-These are members of `File`, reached as `file.read(...)`: a `slot` requirement
-is satisfied by a *member*, so `io.Reader` and `io.Writer` can only be answered
-by methods. `file.is_open()` was added alongside them, because a caller that has
-closed explicitly has no other way to ask.
 
 ```odin
 metadata(path) -> Result(Metadata, io.Error)
@@ -732,8 +729,11 @@ separators and lexical `.`/`..` elements but does not resolve symlinks or access
 the filesystem. A later `fs.absolute` or `fs.canonicalize` performs actual
 filesystem resolution and returns an I/O error.
 
-Windows drive-relative paths, UNC paths, and extended-length paths need dedicated
-tests before `clean` and `is_absolute` are considered stable.
+Drive-relative (`C:x`), rooted-but-drive-relative, UNC, and extended-length
+paths each have a case in `tests/run/lib_path.loke`. `clean` returns an
+extended-length path unchanged: such a path exists to bypass normalization, and
+Windows passes it to the filesystem verbatim. There is no automatic long-path
+prefixing.
 
 ## `core:term`
 
@@ -757,6 +757,10 @@ prompt(label: string_view, allocator := mem.default_allocator(),
 `Input` satisfies `io.Reader`; `Output` satisfies `io.Writer`. These lightweight
 values do not own and cannot close the process standard handles. They work when
 the handles are redirected to pipes or files.
+
+`read_line` reads a real console through `ReadConsoleW` and a redirected handle
+through `io.read_line`, so typed non-ASCII text arrives intact. The raw
+`Input.read` stream is bytes through `ReadFile` either way.
 
 `prompt` writes the label to standard output, flushes it, and then reads a line.
 It returns output failures as well as input failures. It does not print a
@@ -790,7 +794,7 @@ process-level restore — a `SetConsoleCtrlHandler` handler on Windows — so
 Ctrl+C, Ctrl+Break, and console close restore the mode without depending on Loke
 cleanup running at all. The handler is idempotent with `drop` and with `close`.
 This is the one place the library pays for a guarantee the language does not
-make; the plan's rule against hidden process behavior still holds, because
+make; the rule against hidden process behavior still holds, because
 nothing is registered until a caller asks for raw mode.
 
 `begin_raw` on redirected input answers `.err(Not_A_Terminal)`.
@@ -802,7 +806,7 @@ A second `begin_raw` therefore answers `.err(Already_Exists)` and leaves the
 terminal unchanged.
 
 `Key_Event` contains a Unicode rune for text input, a `Key` enum for special
-keys, and explicit modifier flags. The first `Key` set should cover arrows,
+keys, and explicit modifier flags. The `Key` set covers arrows,
 Home, End, Page Up/Down, Insert, Delete, Backspace, Enter, Escape, Tab, and F1
 through F12. Repeats are reported as individual events unless the platform
 provides a count that can be represented without changing ordering.
@@ -814,8 +818,7 @@ UI belong to later terminal packages.
 
 ## `core:os` additions
 
-`core:os` already owns `os.args` and `os.exit`. The next portable process-level
-operations should be:
+Besides `os.args` and `os.exit`, `core:os` has these process-level operations:
 
 ```odin
 get_environment(name: string_view,
@@ -830,12 +833,14 @@ executable_path(allocator := mem.default_allocator())
 ```
 
 The `Option` from `get_environment` distinguishes a missing variable from a
-present empty value. Its owning result uses the supplied allocator. Environment
+present empty value, except that on Windows setting a variable to the empty
+string removes it; that is the platform's behavior, documented at the call. Its
+owning result uses the supplied allocator. Environment
 names and values must become valid UTF-8 or the operation returns invalid data.
 A process-spawning API is deferred until handle inheritance, quoting, environment
 replacement, and pipe ownership are designed together.
 
-## What is deliberately not in the first release
+## What is deliberately absent
 
 - async I/O or an event loop;
 - networking and DNS;
@@ -852,72 +857,13 @@ replacement, and pipe ownership are designed together.
 These can be added after their contracts are understood. None is required to
 make ordinary command-line programs useful.
 
-## Implementation roadmap
-
-### Stage 0: freeze conventions with executable API sketches — done
-
-1. Add compile-only examples for every proposed signature.
-2. Prove that `io.Error` works with `or_return`, unions, formatting, and named
-   multi-results.
-3. Declare `io.Reader` and `io.Writer` with `slot` requirements and prove that
-   `dyn io.Writer` forms. This is a declaration-only step and does not need an
-   implementation; it must precede item 4, which depends on the `dyn` type.
-4. Prove the `fmt.Writer` to `io.Writer` error-latching adapter, including that
-   the `core:unsafe` conversion of the latch address is accepted and that the
-   adapter cannot escape its constructing call.
-5. Prove the package-private `core:strings` string-allocation primitive, including
-   allocator failure and the unchanged-on-failure guarantee required by
-   `String_Builder.try_finish`.
-6. Decide the exact default-argument and public-field spellings from compiling
-   Loke, not only from this document.
-7. Mark packages experimental until these proofs and tests pass.
-
-No platform code should be written before the error and resource shapes survive
-these examples.
-
-### Stage 1: strings and conversion — done
-
-1. Implement `String_Builder` and its allocation-failure guarantees.
-2. Implement non-allocating search, cut, split, fields, lines, and trim.
-3. Implement join, repeat, and replace.
-4. Implement integer and Boolean parsing, then floating-point parsing.
-5. Implement `C_String` for retained foreign strings.
-
-This stage is platform-independent and exercises generics, iterators,
-allocators, lifecycle hooks, UTF-8 invariants, and formatting integration.
-
-### Stage 2: byte I/O and files — done
-
-1. Implement `io.Error`, `Reader`, `Writer`, `read_exact`, `write_all`, and
-   in-memory test readers/writers.
-2. Add Windows file open/read/write/seek/flush/close using wide paths.
-3. Wrap the native handle in move-only `fs.File` and test normal cleanup, plus
-   panic cleanup in an `unwind` build.
-4. Add whole-file byte and text helpers with allocation limits.
-5. Add metadata and basic directory operations.
-6. Add path operations only with the Windows edge-case matrix in place.
-
-### Stage 3: standard input and keyboard input — done
-
-1. Implement unbuffered standard streams and redirected-stream tests.
-2. Implement buffered `read_line` and `term.prompt`.
-3. Implement scoped raw mode and restoration tests.
-4. Decode Unicode text, modifiers, and the initial special-key set.
-5. Test interruption, end-of-input, broken pipes, and non-terminal input.
-
-### Stage 4: portability and the next utility layer — not started
-
-Stage 4 is gated on compiler work the library cannot do. Non-Windows targets are
-deferred after M7, so there is no Linux or macOS backend to build against, and
-`LOKE_OS` is a fixed `.Windows`. Items 1 and 2 start when that lands; items 3 and
-4 do not depend on it and can proceed earlier.
-
-1. Add Linux and macOS `when (LOKE_OS == ...)` branches without changing the
-   public contracts.
-2. Run the same filesystem and terminal conformance suite on every target.
-3. Add `bytes`, sorting, time, random, testing, and logging based on concrete
-   needs found while porting real programs.
-4. Add higher-level encoding packages independently of core I/O.
+Smaller omissions, each additive over what exists and waiting for a caller:
+`core:bytes`, `time`, `random`, and `testing`; a buffered reader,
+`fs.replace_atomic`, `fs.absolute`, and symlink support; a `try_` twin for the
+allocating string transformations; Unicode case mapping (case conversion is
+ASCII-only); in `core:math`, hyperbolics, `cbrt`/`fma`/`ldexp`/`frexp`/`modf`,
+`erf`, `gamma`, lane-wise math over `Simd(T, N)`, and integer bit helpers; in
+`core:simd`, the version-1 omissions design.md names.
 
 ## Test requirements
 
@@ -946,176 +892,3 @@ Filesystem tests must create an isolated temporary directory and never depend on
 the repository working directory or a developer's environment. Terminal decoder
 logic should be tested from synthetic native event records; only a thin final
 layer requires an interactive/manual test.
-
-## First-release acceptance program
-
-The first standard-library release is useful when a program equivalent to this
-can compile and run without compiler-specific I/O built-ins:
-
-```odin
-package main;
-
-import "core:fmt";
-import "core:fs";
-import "core:io";
-import "core:term";
-
-run :: proc() -> Result(Unit, io.Error) {
-	name := term.prompt("Name: ") or_return;
-
-	// The file does not exist on the first run, which is not a failure here.
-	old := "";
-	if (fs.exists("greetings.txt") or_return) {
-		old = fs.read_text("greetings.txt") or_return;
-	}
-
-	line := "Hello, " + name + "!\n";
-	return fs.write_text("greetings.txt", old + line);
-}
-
-main :: proc() {
-	switch (outcome in run()) {
-	case .ok:
-	case .err: fmt.eprintln("error:", outcome);
-	}
-}
-```
-
-The final examples should also show bounded reads for untrusted input, streaming
-large files without whole-file allocation, explicit close error handling, and
-raw key input with guaranteed terminal restoration.
-
-## Decisions validated during Stage 0
-
-The three narrower questions this plan left open, with the answers the
-implementation produced:
-
-1. **The `fmt.Writer` adapter works, and no ABI change is needed.** A `^Latch`
-   converts to the `rawptr` state field implicitly, `(^Latch)(state)` recovers
-   it inside the callback, and both `write_formatted` procedures construct, use,
-   and discard the adapter inside their own bodies. `fmt.Writer` keeps its
-   layout.
-2. **Unicode `White_Space` lives in `core:strings`**, as `strings.is_space`. It
-   is twenty-five code points tested by range, not a table, and a `core:unicode`
-   that existed only to hold it would be a package with one predicate in it.
-   Case *mapping* is the part that needs real tables, and that is the deferral
-   marked in `to_upper`/`to_lower`.
-3. **No automatic long-path prefixing.** `path.clean` returns an extended-length
-   path unchanged, because such a path exists precisely to bypass normalization
-   and Windows passes it to the filesystem verbatim. Drive-relative (`C:x`),
-   rooted-but-drive-relative, UNC, and extended-length paths each have a case in
-   `tests/run/lib_path.loke`.
-
-## Implementation record
-
-Everything above describes the shipped contract. This section lists what the
-implementation had to change, and why, so the difference is not left implicit.
-
-### The compiler grew one primitive, and lost five bugs
-
-`allocate_string(text: string_view, allocator: Allocator) -> Result(string,
-Allocator_Error)` is contributed package-privately to `core:strings` and to
-`core:fmt`. It is the plan's "minimal unexpressible bridge": every built-in text
-operation allocates from the default provider, so without it no library
-procedure could honour an allocator argument and still produce a `string`.
-
-Four compiler defects were found by writing this library, and fixed with it:
-
-- a slot returning an aggregate result crashed the backend when called through
-  `dyn`, because that lowering path had no arm for a slot call. `dyn io.Writer`
-  needs one. (The stream slots returned two values when this was found; they
-  answer `Result` now, and the same path carries it.);
-- a generic procedure could not be called with an omitted defaulted argument,
-  with a named argument, or with a variadic pack, because inference required
-  exactly one written argument per written parameter. The generic helpers here —
-  `read_to_end(reader, limit = 5)`, `write_formatted(writer, ..args)` — need all
-  three;
-- an untyped constant did not rank against an `any_view` parameter, which a
-  generic `..any_view` variadic made reachable;
-- `nil` was not accepted as a C pointer constant, though design.md lists
-  C pointers among the nil-able types. A `[^]u16` out-parameter is how a
-  Windows wide API is asked for a size.
-
-A fifth was found by *renaming* one of those contributions: a constant's folded
-value was written through a `^Symbol` taken before the compile-time evaluator
-ran, and the evaluator can grow the symbol array. Whether it corrupted anything
-depended on how many symbols the program had, so adding one name to `core:fmt`
-was enough to make an unrelated corpus program fail.
-
-### Language limits that shaped the API
-
-- **Two members of one `impl` block cannot share a name.** `String_Builder`'s
-  `append` and `try_append` are procedure groups over distinctly named members.
-- **A parameter default must name its type.** `allocator := mem.default_allocator()`
-  is rejected in a signature; `allocator: Allocator = mem.default_allocator()`
-  is the spelling. A slice default is `= nil`, because `{}` at a slice type is a
-  slice literal and must be written with its type.
-- **Slicing a view at an offset that splits a code point is a runtime failure.**
-  Search therefore compares bytes and slices only at an offset that has already
-  matched — which is a boundary, because UTF-8 is self-synchronising.
-- **A by-value `foreach` over a managed element copies it per step.** The loop
-  owns that copy and disposes of it at the end of the step, so the rejection this
-  plan was written against is gone; what remains is the cost. It is still why
-  `Directory_Reader` streams borrowed names instead of returning an owning array,
-  and why `tests/run/lib_fs.loke` indexes its `[dynamic]string` rather than
-  retaining each name it only reads. Borrowing iteration has since removed the
-  cost from the ordinary loop: traversing a place lends each element, including a
-  move-only one, and copying it out is written.
-
-### Deviations from the plan
-
-- `fmt.append_to` is **not** shipped; see the formatting-bridge section for the
-  measurement that decided it.
-- `core:encoding/utf16` was pulled forward from "later packages" into stage 2.
-  `fs`, `term`, and `os` all need UTF-16 on the first target, and three copies of
-  a surrogate decoder are worse than one package arriving a milestone early.
-- `io`'s query procedures are `is`, `code_of`, `operation_of` and
-  `native_code_of`: `code` cannot be both a procedure and the `Code` enum.
-- `fs` read/write/seek/flush/close are `File` members rather than free
-  procedures, because a `slot` requirement is satisfied by a member.
-- `Directory_Reader.next` answers `Result(Option(Directory_Entry), io.Error)`:
-  a walk has to tell "no more entries" from "the enumeration broke".
-- Case conversion is ASCII-only, marked in the source with its upgrade path.
-- `os.set_environment` with an empty value removes the variable on Windows. That
-  is the platform's behavior, and it is documented at the call rather than
-  papered over.
-- `term.read_line` reads a real console through `ReadConsoleW` and a redirected
-  handle through `io.read_line`, so typed non-ASCII text arrives intact. The raw
-  `Input.read` stream stays bytes-through-`ReadFile` either way.
-
-### What is still open
-
-Stage 4 remains gated on non-Windows targets: `LOKE_OS` is a fixed `.Windows`,
-so the `else` arm of every `when` in `core:fs`, `core:path`, `core:term` and
-`core:os` exists and is never selected.
-
-M8 closed four of the entries this list used to defer, because design.md's own
-catalogue assumed them rather than merely allowing them: ordering-based sorting
-is a contributed `sort`/`reverse_sort` member on `[dynamic]T` and `[]mut T`, and
-`core:slice` adds the typed-comparator `sort_by`; `core:log` sits on a
-build-selected logger;
-`core:sync` supplies `Atomic(T)`, `fence`, and `Once`; and `core:simd` supplies
-what the `Simd(T, N)` operators cannot spell. M8 also added `core:container`
-(`Small_Array`, `Bit_Set`, `Enum_Array`), `core:math` (`Complex`,
-`Quaternion`), and `core:endian`.
-
-`core:math` then grew its scalar half: the constants, the bit-level
-classification and sign procedures, the CRT-backed elementary functions over one
-private foreign block into versioned seed-runtime wrappers, scalar
-`min`/`max`/`clamp`, and `to`, the checked integer conversion that answers
-`Option(To)` where a written `To(value)` would wrap (design.md "Type
-conversion"). Each float-specific name has exactly two concrete
-spellings — the unsuffixed `f64` one and an `_f32` twin — rather than a
-procedure group, because design.md's own overload rules leave `f32` vs `f64`
-ambiguous for an untyped literal and `math.sqrt(2.0)` would not compile.
-Hyperbolics, `cbrt`/`fma`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise math
-over `Simd(T, N)`, and integer bit helpers (which want a `core:bits`) are named
-omissions, additive over what now exists.
-
-`core:bytes`, `time`, `random`, and `testing` still wait for a concrete need, as
-planned. A buffered reader, `fs.replace_atomic`, `fs.absolute`, symlink support,
-and a `try_` twin for the allocating string transformations are all deliberately
-absent until a caller asks. Within `core:simd`, shuffles, lane-wise
-`min`/`max`/`abs`, the bitwise reductions, and a mask popcount are named in
-design.md as version-1 omissions: each is additive over the type that now
-exists.

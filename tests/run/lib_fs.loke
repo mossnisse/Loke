@@ -7,8 +7,8 @@ import "core:os";
 import "core:path";
 import "core:strings";
 
-// `core:fs` and `core:path` against a real filesystem (standard-library-plan
-// stage 2, items 2 to 5).
+// `core:fs` and `core:path` against a real filesystem (standard-library
+// "`core:fs`" and "`core:path`").
 //
 // Every case runs inside an isolated temporary directory taken from the
 // environment, so nothing depends on the repository working directory or on a

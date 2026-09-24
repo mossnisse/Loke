@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:strconv";
 
-// `core:strconv` end to end (standard-library-plan stage 1, item 4).
+// `core:strconv` end to end (standard-library "`core:strconv`").
 //
 // A failure prints its `Parse_Error` ordinal: 0 invalid syntax, 1 invalid base,
 // 2 overflow, 3 trailing data.

@@ -1,5 +1,5 @@
 // `String_Builder`: repeated appends into one growing buffer, finished as one
-// immutable `string` (design.md "string type", standard-library-plan
+// immutable `string` (design.md "string type", standard-library
 // "`String_Builder`").
 @(public)
 package strings;

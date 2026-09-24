@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:io"; import "core:term";
 
-// `core:term`'s output half (standard-library-plan stage 3, items 1 and 2).
+// `core:term`'s output half (standard-library "`core:term`").
 //
 // The harness captures standard output, so this is also the redirected-stream
 // case: `Output` writes through whatever handle the process was given, console
