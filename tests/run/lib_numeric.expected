@@ -1,25 +1,25 @@
 1 2
 -1 4
 1+2i -1+4i
-2+4i 0+0i -1+-2i
+2+4i 0+0i -1-2i
 1+0i
 true false
-1+-2i 5
+1-2i 5
 3+0i
-0.5+-0.25i 0.3125
-0+0i+0j+1k 0+0i+0j+-1k
+0.5-0.25i 0.3125
+0+0i+0j+1k 0+0i+0j-1k
 true true
 -1+0i+0j+0k -1+0i+0j+0k -1+0i+0j+0k
 -1+0i+0j+0k
-0+1i+1j+0k 0+1i+-1j+0k -0+-1i+-0j+-0k
-0+-1i+-0j+-0k 1
+0+1i+1j+0k 0+1i-1j+0k -0-1i-0j-0k
+0-1i-0j-0k 1
 30
 1+1i+0j+0k
 5 5
-0.12+-0.16i 1+0i
+0.12-0.16i 1+0i
 3+2i 1+0i
 3+2i
-0.5+-0.5i 1+0i
+0.5-0.5i 1+0i
 true true
 true true true true
 true true true true
@@ -29,15 +29,17 @@ inf
 true
 true
 5 5
-0.04+-0.08i+-0.08j+-0.16k
+0.04-0.08i-0.08j-0.16k
 true
 1+0i+0j+0k
 true true true true
 true true true true
-1+0i+0j+-2.7755575615628914e-17k 1+0i+5.551115123125783e-17j+0k
+1+0i+0j-2.7755575615628914e-17k 1+0i+5.551115123125783e-17j+0k
 true true true true
 true true true
 true true true true
 4294967295+4294967294i
 FF+10i
 FF+10i+Aj+1k
+1-2i -1-2i 1+2i
+1+nani 1-0i

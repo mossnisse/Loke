@@ -79,9 +79,7 @@ impl Complex($T) {
 	// it was asked for. The separators are text and read nothing from `options`.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to_with(writer, options, self.real);
-		fmt.format_to(writer, "+");
-		fmt.format_to_with(writer, options, self.imaginary);
-		fmt.format_to(writer, "i");
+		join(writer, options, self.imaginary, "i");
 	}
 }
 
@@ -151,14 +149,32 @@ impl Quaternion($T) {
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to_with(writer, options, self.real);
-		fmt.format_to(writer, "+");
-		fmt.format_to_with(writer, options, self.i);
-		fmt.format_to(writer, "i+");
-		fmt.format_to_with(writer, options, self.j);
-		fmt.format_to(writer, "j+");
-		fmt.format_to_with(writer, options, self.k);
-		fmt.format_to(writer, "k");
+		join(writer, options, self.i, "i");
+		join(writer, options, self.j, "j");
+		join(writer, options, self.k, "k");
 	}
+}
+
+// One imaginary component and its unit, after a `+` unless the component prints
+// its own `-`: `1-2i`, not `1+-2i`. A float's sign bit decides, so a negative
+// zero joins with its `-` too; a NaN prints as `nan` whatever its sign, so it
+// takes the `+`. A `T` with no order prints no `-` that this could know about.
+@(private)
+join :: proc(writer: fmt.Writer, options: fmt.Options, component: $T, unit: string_view)
+	where interfaces.Numeric(T) {
+	negative := false;
+	when (T == f64) {
+		negative = sign_bit(component) && !is_nan(component);
+	} else when (T == f32) {
+		negative = sign_bit_f32(component) && !is_nan_f32(component);
+	} else when (T == f16) {
+		negative = sign_bit_f32(f32(component)) && !is_nan_f32(f32(component));
+	} else when (interfaces.Ordered(T)) {
+		negative = component < T(0);
+	}
+	if (!negative) { fmt.format_to(writer, "+"); }
+	fmt.format_to_with(writer, options, component);
+	fmt.format_to(writer, unit);
 }
 
 // ------------------------------------------------ the floating instances --

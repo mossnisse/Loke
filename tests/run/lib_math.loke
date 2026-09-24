@@ -5,16 +5,15 @@
 // printed: a value that gets folded at compile time instead of computed at run
 // time can move in its last digit. Exact operations assert on exact values;
 // everything else prints a tolerance comparison. Special cases are printed as
-// classifications, and never as a NaN — the platform C library spells one three
-// different ways depending on the payload.
+// classifications, so a NaN is asked with `is_nan` rather than printed.
 package main;
 
 import "core:fmt";
 import "core:math";
 import "core:unsafe";
 
-// The combined bound the plan specifies: absolute for values near zero,
-// relative over the rest of the dynamic range. A fixed `1e-12` would be neither
+// A combined bound: absolute for values near zero, relative over the rest of
+// the dynamic range. A fixed `1e-12` would be neither
 // a meaningful f32 test nor sufficient for a large result.
 close :: proc(got: f64, want: f64) -> bool {
 	return math.abs(got - want) <= 1.0e-290 + 1.0e-14*math.abs(want);

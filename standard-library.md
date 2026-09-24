@@ -999,9 +999,22 @@ replacement, and pipe ownership are designed together.
 
 ## `core:math`
 
-`Complex(T)` and `Quaternion(T)` are specified in `design.md` "Library numeric
-types", and the checked integer conversion `math.to(T, value)` in `design.md`
-"Type conversion". The rest of the package is:
+`design.md` "Library numeric types" makes `Complex(T)` and `Quaternion(T)`
+ordinary records, and `design.md` "Type conversion" specifies the checked
+integer conversion `math.to(T, value)`.
+
+For any `interfaces.Numeric(T)`, `Complex(T)` has the fields `real` and
+`imaginary`, and `Quaternion(T)` has `real`, `i`, `j`, and `k`. Both have
+`from_components`, a conversion hook from `T` written `Complex(f64)(x)`, `+`,
+unary and binary `-`, `*`, `==`, `conjugate`, and `norm_squared`; `Complex` also
+has `/`. Quaternion multiplication follows Hamilton, so `i*j == k` and
+`j*i == -k`. At `f32` and `f64` both types add `abs` and `inverse`. `abs` uses
+`hypot`, and complex division uses Smith's method, so finite non-zero
+components do not overflow merely because their squares would. A value prints
+as `1-2i` or `1+2i-3j+0k`, each component with the caller's `fmt.Options`. A
+component with its sign bit set brings its own `-`, negative zero included.
+
+The rest of the package is:
 
 - unfixed constants `PI`, `TAU`, `E`, `LN2`, `LN10`, and `SQRT_TWO`, and, per
   format, `F32_`/`F64_` `EPSILON`, `MAX`, `MIN_NORMAL`, `MIN_SUBNORMAL`,

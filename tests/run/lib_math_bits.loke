@@ -1,9 +1,8 @@
 // `core:math` constants, classification, sign, the scalar comparisons, and the
 // checked integer conversion (standard-library "`core:math`"). Everything here
 // is exact: bit patterns, predicates, and which argument a tie selects. No
-// transcendental value is printed, and no NaN
-// is printed — the platform C library spells one three different ways depending
-// on the payload, so `is_nan` is printed instead.
+// transcendental value is printed, and a NaN is checked with `is_nan` rather
+// than printed, because every NaN prints as `nan` whatever its payload.
 package main;
 
 import "core:fmt";

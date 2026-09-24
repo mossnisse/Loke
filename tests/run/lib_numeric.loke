@@ -172,4 +172,9 @@ floating :: proc() {
 	fmt.println("");
 	fmt.format_to_with(fmt.stdout(), fmt.Options{16, true}, math.Quaternion(i32){255, 16, 10, 1});
 	fmt.println("");
+
+	// A negative component brings its own `-`, at every width and for signed
+	// integers; a NaN prints as `nan` whatever its sign, so it keeps the `+`.
+	fmt.println(math.Complex(f32){1, -2}, math.Complex(i8){-1, -2}, math.Complex(u8){1, 2});
+	fmt.println(math.Complex(f64){1, -math.F64_NAN}, math.Complex(f64){1, -0.0});
 }
