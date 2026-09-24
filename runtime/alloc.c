@@ -73,7 +73,7 @@ loke_rt_allocator_v1 loke_rt_v1_default_allocator = {
 /* A record from a mismatched runtime would read as a different shape, and the
  * generated module cannot check that itself. */
 static void check_record(const loke_rt_allocator_v1 *a) {
-	if (a == 0 || a->abi_version != LOKE_RT_ABI_VERSION ||
+	if (a->abi_version != LOKE_RT_ABI_VERSION ||
 	    a->record_size < (uint32_t)sizeof(loke_rt_allocator_v1) || a->ops == 0) {
 		loke_rt_v1_abort("allocator record does not match this runtime's ABI");
 	}
@@ -94,6 +94,16 @@ static const loke_rt_allocator_v1 *loke_rt_selected = &loke_rt_v1_default_alloca
 
 const loke_rt_allocator_v1 *loke_rt_v1_selected_allocator(void) {
 	return loke_rt_selected;
+}
+
+/* design.md "Allocators": a nil handle is the default provider, as it already
+ * is for an allocator-unbound container. */
+static const loke_rt_allocator_v1 *resolve(const loke_rt_allocator_v1 *a) {
+	if (a == 0) {
+		a = loke_rt_selected;
+	}
+	check_record(a);
+	return a;
 }
 
 void loke_rt_v1_publish_allocator(const loke_rt_allocator_v1 *a) {
@@ -133,7 +143,7 @@ void loke_rt_v1_provider_init_end(void) {
  * a non-null address at the requested alignment that nothing may dereference,
  * and freeing it is a no-op. */
 void *loke_rt_v1_alloc(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t align) {
-	check_record(a);
+	a = resolve(a);
 	if (size == 0) {
 		return (void *)(uintptr_t)sane_align(align);
 	}
@@ -150,12 +160,12 @@ void *loke_rt_v1_alloc_zeroed(const loke_rt_allocator_v1 *a, uint64_t size, uint
 
 void *loke_rt_v1_resize(
 	const loke_rt_allocator_v1 *a, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align) {
-	check_record(a);
+	a = resolve(a);
 	return a->ops->resize(a->state, ptr, old_size, new_size, align);
 }
 
 void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, uint64_t align) {
-	check_record(a);
+	a = resolve(a);
 	if (size == 0) {
 		return;
 	}
@@ -167,7 +177,10 @@ void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, ui
  * program strategy; `.Trap` terminates immediately under either strategy, which
  * is the whole meaning of "`.Panic` may unwind while `.Trap` does not". */
 void loke_rt_v1_alloc_failed(const loke_rt_allocator_v1 *a) {
-	if (a != 0 && a->on_failure == LOKE_RT_ON_FAILURE_TRAP) {
+	if (a == 0) {
+		a = loke_rt_selected;
+	}
+	if (a->on_failure == LOKE_RT_ON_FAILURE_TRAP) {
 		loke_rt_v1_abort("allocation failed");
 	}
 	loke_rt_v1_panic("allocation failed");
@@ -180,7 +193,7 @@ void loke_rt_v1_alloc_failed(const loke_rt_allocator_v1 *a) {
  * promise chain can start. It stays because a future provider may answer 0, and
  * because a silent no-op here would be worse than a stop. */
 void loke_rt_v1_reset(const loke_rt_allocator_v1 *a) {
-	check_record(a);
+	a = resolve(a);
 	if (a->ops->reset(a->state) == 0) {
 		loke_rt_v1_abort("this allocator does not support free_all");
 	}

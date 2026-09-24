@@ -1332,6 +1332,13 @@ prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 @(private = "file")
 prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 	c := graph.k.c
+	// design.md "Allocators": a nil `Allocator` is the default provider.
+	if base := expr_base(e); base != nil && base.is_const && base.const_value.kind == .Nil &&
+	   type_underlying(c, base.type) == TYPE_ALLOCATOR {
+		set := prov_empty_region(graph)
+		set.default = true
+		return set
+	}
 	#partial switch v in e {
 	case ^Expr_Ident:
 		// A provider as a value is backed by its parent; the region it provides is
@@ -1589,10 +1596,9 @@ prov_reset :: proc(
 	ends := "",
 	ending := INVALID_SYMBOL,
 ) {
+	// A region the analysis cannot name, such as an allocator in a received
+	// record's field, is pre-existing: it stays uncovered.
 	covered, unmarked := prov_reset_promise(graph, set)
-	if !direct && unmarked == "" && region_is_empty(set) {
-		covered = true
-	}
 	// A locally created region needs no promise (design.md).
 	if region_is_local_only(set) {
 		covered, unmarked = true, ""

@@ -24,17 +24,6 @@ the compiler, unless the rewording is the intended fix.
 
   All providers inside one local record or container also share one region
   identity, so resetting one is blocked by owners of another.
-- **A nil `Allocator` reaches a runtime abort.** design.md does not say what a
-  nil handle means. A container `via` one binds the default provider, while
-  `new`, `free`, `free_all`, and `strings.copy` through one abort with
-  "allocator record does not match this runtime's ABI". A nil argument to an
-  `@(allocator_reset)` parameter is accepted because its region set is empty,
-  although design.md says checked code cannot reach a reset abort:
-
-  ```odin
-  release :: proc(@(allocator_reset) a: Allocator) { free_all(a); }
-  release(nil);                   // aborts
-  ```
 
 ## Not gaps
 

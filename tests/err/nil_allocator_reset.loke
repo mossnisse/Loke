@@ -1,0 +1,31 @@
+package main; import "core:mem";
+
+// design.md "Allocators": a nil `Allocator` is the default provider, which no
+// reset may name. An allocator the analysis cannot follow, such as one held in a
+// record's field, is a pre-existing region and needs a promise too.
+
+release :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+nil_literal :: proc() {
+	release(nil);
+}
+
+nil_local :: proc() {
+	allocator: Allocator = nil;
+	release(allocator);
+}
+
+Holder :: struct { allocator: Allocator }
+
+zero_field :: proc() {
+	holder := Holder{};
+	release(holder.allocator);
+}
+
+received_field :: proc(holder: Holder) {
+	release(holder.allocator);
+}
+
+main :: proc() {}

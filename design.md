@@ -5392,7 +5392,7 @@ Dynamic arrays, maps, runtime strings, and other managed containers remember the
 
 The allocator affects where backing storage comes from, but does not change value semantics or whether cleanup is automatic. Cleanup is suppressed per value with [`unsafe.forget`](#unsafeforget), never by a declaration modifier.
 
-Omitting the allocator argument selects the default provider: `new(int)` is `new(int, mem.default_allocator())`. The default expression is evaluated only when the caller omits the argument.
+Omitting the allocator argument selects the default provider: `new(int)` is `new(int, mem.default_allocator())`. The default expression is evaluated only when the caller omits the argument. A nil `Allocator` also selects the default provider, wherever it is passed.
 
 Temporary storage uses an explicit `mem.Scratch` or `mem.Arena` owner. `free_all`, and any call with the same reset effect, is rejected while a live owner or borrow still refers to that allocator's storage.
 

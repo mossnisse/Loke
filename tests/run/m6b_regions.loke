@@ -302,8 +302,21 @@ zero_provider :: proc() {
 	free_all(scratch.allocator());
 }
 
+// A nil allocator is the default provider, for an allocation as for a container.
+nil_allocator :: proc() {
+	allocator: Allocator = nil;
+	switch (p in new(int, allocator)) {
+	case .ok: p^ = 6; fmt.println(p^); free(p, allocator);
+	case .err: fmt.println(false);
+	}
+	xs: [dynamic]int via allocator = {};
+	xs.append(7);
+	fmt.println(xs[0]);
+}
+
 main :: proc() {
 	zero_size();
+	nil_allocator();
 	zero_provider();
 	buffer_after_arena();
 	provider_ends();

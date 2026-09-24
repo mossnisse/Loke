@@ -1,0 +1,12 @@
+L0538
+@12:2
+this call may reset a pre-existing or unknown allocator region, so the reset cannot be hidden in this procedure
+L0538
+@17:2
+this call may reset a pre-existing or unknown allocator region, so the reset cannot be hidden in this procedure
+L0538
+@24:2
+this call may reset a pre-existing or unknown allocator region, so the reset cannot be hidden in this procedure
+L0538
+@28:2
+this call may reset a pre-existing or unknown allocator region, so the reset cannot be hidden in this procedure
