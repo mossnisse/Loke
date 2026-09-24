@@ -1,24 +1,30 @@
 L0253
-@9:29
+@10:29
 a generic argument is positional
 L0253
-@10:24
+@11:24
 a generic argument is positional
 L0253
-@10:32
+@11:32
 a generic argument is positional
 L0243
-@12:29
+@13:29
 an operator needs a procedure body
 L0245
-@15:6
+@16:6
 an initial statement declares a variable
 L0245
-@16:7
+@17:7
 an initial statement declares a variable
 L0245
-@17:10
+@18:10
 an initial statement declares a variable
 L0209
-@19:12
+@20:12
 expected `;` after the declaration
+L0243
+@24:19
+`delegate` names at least one operator
+L0244
+@25:16
+a procedure group names at least one procedure

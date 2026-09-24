@@ -1,6 +1,7 @@
 // Forms grammar.md rules out that the parser used to accept: a named or moded
 // generic argument in type position, a bodiless operator, a constant as a header
-// initial statement, and a literal prefix with more than one selector.
+// initial statement, a literal prefix with more than one selector, and an
+// empty `delegate` list or procedure group.
 package main;
 
 Box :: struct($T: type, $N: int) { v: [N]T }
@@ -18,5 +19,9 @@ main :: proc() {
 	a := V{1};
 	c := a.b.c{};
 }
+
+W :: distinct int;
+impl W { delegate(); }
+empty :: proc {};
 
 sentinel :: proc() { }

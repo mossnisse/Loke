@@ -683,11 +683,15 @@ parse_delegate :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Ite
 			break
 		}
 	}
+	empty := opened && len(symbols) == 0 && at(p, .Rparen)
+	if empty {
+		parse_error(p, span_of(p, current(p)), "L0243", "found `)`", "`delegate` names at least one operator")
+	}
 	_, closed := expect(p, .Rparen, "L0243", "`)` after the delegated operators")
 	_, terminated := expect(p, .Semicolon, "L0243", "`;` after the delegation")
 
 	item.symbols = symbols[:]
-	item.has_error = !opened || !closed || !terminated
+	item.has_error = !opened || !closed || !terminated || empty
 	item.span = span_to_here(p, start)
 	return item
 }
@@ -1969,7 +1973,17 @@ parse_composite_body :: proc(p: ^Parser, type_expr: Expr, lo: u32) -> Expr {
 	for !at(p, .Rbrace) && !at(p, .EOF) {
 		start := current(p)
 		el: Element
-		first := parse_expr(p)
+		first: Expr
+		if at(p, .Type) && peek_token(p, 1).kind == .Assign {
+			// `Member_Name` admits `type`, so a keyed literal must reach it too.
+			name := advance(p)
+			key := new_expr(p, Expr_Ident, name.lo)
+			key.name = text_of(p, name)
+			key.name_id = intern_identifier(p.c, key.name)
+			first = key
+		} else {
+			first = parse_expr(p)
+		}
 		if allow(p, .Assign) {
 			el.key = first
 			el.value = parse_expr(p)
@@ -2624,6 +2638,10 @@ parse_proc_group :: proc(p: ^Parser, lo: u32) -> Expr {
 		if !more {
 			break
 		}
+	}
+	if len(names) == 0 && !bad && at(p, .Rbrace) {
+		parse_error(p, span_of(p, current(p)), "L0244", "found `}`", "a procedure group names at least one procedure")
+		bad = true
 	}
 	_, closed := expect(p, .Rbrace, "L0244", "`}` to close the procedure group")
 

@@ -694,7 +694,9 @@ compiler-defined reflection operations.
 
 An `Element_Key` is an ordinary expression; which kind of key it is depends on
 the literal's type, so a bare identifier is a field name in a record literal and
-an ordinary value expression everywhere else.
+an ordinary value expression everywhere else. The keyword `type` directly before
+`=` is read the same way, as the field name `type`, since a `Member_Name` may be
+spelled `type`.
 
 A `Composite_Literal` with no `Composite_Type` takes its type from context. It
 may not begin an expression statement, because `{` at statement position starts

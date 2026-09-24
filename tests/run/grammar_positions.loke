@@ -1,6 +1,7 @@
 // Spellings grammar.md allows that the parser used to reject: `using` on a
-// field named `type`, a storage modifier before a record type, and a type-only
-// type in a comparison once parenthesised. `static(int)` still names a type.
+// field named `type`, a keyed literal naming that field, a storage modifier
+// before a record type, and a type-only type in a comparison once
+// parenthesised. `static(int)` still names a type.
 package main;
 
 import "core:fmt";
@@ -22,6 +23,8 @@ main :: proc() {
 	b := B{};
 	b.type.x = 7;
 	fmt.println(b.x);
+	k := B{type = {x = 8}};
+	fmt.println(k.x);
 
 	_ = count();
 	fmt.println(count());
