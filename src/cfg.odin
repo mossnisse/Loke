@@ -417,6 +417,7 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 	if !found || slice.contains(dead, id) {
 		return
 	}
+	prov_provider_use(graph, id, span)
 	// A parameter's region is the caller's, and its owners are the caller's too.
 	if root, rooted := graph.root_by_symbol[id]; !rooted || graph.roots[int(root)].kind != .Local {
 		return

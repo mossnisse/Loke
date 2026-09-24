@@ -269,8 +269,21 @@ provider_ends :: proc() {
 	free_all(env.scratch.allocator());
 }
 
+// A fixed arena's buffer is the caller's again once the arena has ended.
+buffer_after_arena :: proc() {
+	buffer: [256]u8 = {};
+	{
+		arena := mem.Arena.from_buffer(buffer[:]);
+		xs: [dynamic]u8 via arena.allocator() = {};
+		xs.append(1);
+	}
+	buffer[0] = 5;
+	fmt.println(buffer[0]);
+}
+
 main :: proc() {
 	zero_size();
+	buffer_after_arena();
 	provider_ends();
 	environment();
 	parented();

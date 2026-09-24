@@ -24,18 +24,6 @@ the compiler, unless the rewording is the intended fix.
 
   All providers inside one local record or container also share one region
   identity, so resetting one is blocked by owners of another.
-- **A fixed-buffer arena's buffer is writable while owners in it are live.**
-  design.md "Allocators" says the arena borrows the supplied storage, but the
-  borrow ends at the arena's last use, not its owners' last use or cleanup:
-
-  ```odin
-  buffer: [4096]u8 = {};
-  arena := mem.Arena.from_buffer(buffer[:]);
-  xs: [dynamic]int via arena.allocator() = {};
-  xs.append(1, 2, 3);
-  for (i := 0; i < 4096; i += 1) { buffer[i] = 0; }
-  fmt.println(xs[0]);             // prints 0, then cleanup aborts
-  ```
 - **A zero `mem.Arena` or a nil `Allocator` reaches runtime aborts.** design.md
   "Allocators" says checked code cannot reach the unsupported-reset abort, and
   does not say what either zero value means. A zero `Arena` or `Scratch` hands

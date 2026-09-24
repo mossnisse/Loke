@@ -1,0 +1,52 @@
+package main; import "core:mem"; import "core:fmt";
+
+// design.md "Allocators": a fixed-buffer arena borrows the supplied storage.
+// Its control block lives in that buffer and its drop reads it, so the borrow
+// lasts until the arena ends — and every owner in the region ends first.
+
+written_under_an_owner :: proc() {
+	buffer: [4096]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[:]);
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1, 2, 3);
+	buffer[0] = 0;
+	fmt.println(xs[0]);
+}
+
+written_before_cleanup :: proc() {
+	buffer: [4096]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[:]);
+	buffer[0] = 0;
+}
+
+written_after_a_move :: proc() {
+	buffer: [4096]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[:]);
+	kept := move(arena);
+	xs: [dynamic]int via kept.allocator() = {};
+	xs.append(1);
+	buffer[0] = 0;
+	fmt.println(xs.len());
+}
+
+Env :: struct { arena: mem.Arena }
+
+written_under_a_record :: proc() {
+	buffer: [4096]u8 = {};
+	env := Env{mem.Arena.from_buffer(buffer[:])};
+	xs: [dynamic]int via env.arena.allocator() = {};
+	xs.append(1);
+	buffer[0] = 0;
+	fmt.println(xs.len());
+}
+
+// Moving any carrier moves the borrow it holds.
+moved_slice :: proc() {
+	buffer: [16]u8 = {};
+	view: []mut u8 = buffer[:];
+	kept := move(view);
+	buffer[0] = 1;
+	kept[1] = 2;
+}
+
+main :: proc() {}

@@ -732,6 +732,14 @@ prov_consume :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string) 
 	if root, path, ok := prov_place_of(graph, source); ok {
 		consumed = prov_content_at(graph, root, path)
 	}
+	// A bare carrier holds its loans in its own slot rather than as content, and
+	// they move with it.
+	if ident, is_ident := source.(^Expr_Ident); is_ident && len(consumed) == 0 {
+		if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
+			consumed = prov_one(graph, slot)
+			prov_emit(graph, Prov_Event{kind = .Live, sources = consumed, span = span})
+		}
+	}
 	prov_invalidate(graph, source, span, verb)
 	return consumed
 }
@@ -1217,6 +1225,25 @@ prov_provider_region :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_Set {
 	graph.provider_bits[id] = bit
 	out.locals = bit
 	return out
+}
+
+// Ending a provider reads its control block, which a fixed arena keeps in the
+// caller's buffer, so the buffer stays borrowed until then — and with it, until
+// every owner the region backs is gone, since those must end first.
+@(private)
+prov_provider_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
+	sources := make([dynamic]int, 0, 1, graph.alloc)
+	if slot, is_carrier := prov_slot_for_symbol(graph, id); is_carrier {
+		append(&sources, slot)
+	}
+	for slot in prov_content_slots(graph, id) {
+		if type_is_region_provider(graph.k.c, graph.prov_slots[slot].content_type) {
+			append(&sources, slot)
+		}
+	}
+	if len(sources) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = sources[:], span = span})
+	}
 }
 
 // The provider tokens a value moved out of locals carries, through composite

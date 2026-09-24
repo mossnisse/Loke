@@ -1,0 +1,15 @@
+L0511
+@12:2
+this write of `buffer` is not compatible with the mutable slice of it that is still in use
+L0511
+@19:2
+this write of `buffer` is not compatible with the mutable slice of it that is still in use
+L0511
+@28:2
+this write of `buffer` is not compatible with the mutable slice of it that is still in use
+L0511
+@39:2
+this write of `buffer` is not compatible with the mutable slice of it that is still in use
+L0511
+@48:2
+this write of `buffer` is not compatible with the mutable slice of it that is still in use
