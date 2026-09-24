@@ -673,6 +673,15 @@ array's and a vector's lengths stay properties of their type, but `x.len()` is
 still an ordinary call and still evaluates `x`; the unevaluated operand is
 `size_of`'s job, not a method call's.
 
+### `mem.` spellings of the allocation built-ins
+
+`design.md` once promised that `new`, `new_clone`, `make`, `free`, `free_all`,
+and `drop` were also available in package `mem`. No compiler ever contributed
+them, and a second name for each built-in would buy nothing: the built-ins
+already return `Result(T, Allocator_Error)` where failure is possible, so there
+was no stricter error handling left for a `mem.` spelling to add. The universe
+name is the only spelling.
+
 ### `fallthrough`
 
 Multi-value case lists cover what most C fallthrough chains are written for, and

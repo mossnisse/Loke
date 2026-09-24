@@ -5438,7 +5438,7 @@ view := scratch[:];
 release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
 ```
 
-The following low-level procedures are built in and are also available in package `mem` with enforced allocator errors. Normal managed strings, arrays, and maps do not need them.
+The following low-level procedures are built in. Normal managed strings, arrays, and maps do not need them.
 
 - `new(T, allocator := mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates a zero-initialized allocation, so `T` must have a [zero value](#zero-values). The result is an allocation root with pointer and allocator-region provenance. Release it with `free`, reset its region, or move responsibility into a resource wrapper.
 

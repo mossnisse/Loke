@@ -39,10 +39,6 @@ the compiler, unless the rewording is the intended fix.
   ```
 
   Fixing it needs a decision on what the zero provider and a nil handle mean.
-- **The low-level allocation procedures are not in package `mem`.** design.md
-  "Allocators" says `new`, `new_clone`, `make`, `free`, `free_all`, and `drop`
-  "are also available in package `mem`"; `mem.new(int)` is L0335. The
-  universe names work.
 
 ## Not gaps
 
