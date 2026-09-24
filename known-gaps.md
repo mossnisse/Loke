@@ -7,27 +7,12 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-- **Replacing a provider through a pointer is not checked.** design.md
-  "Allocators" requires a region to outlive the owners it backs. Assigning
-  over a provider field of a local, or removing one from a local container, is
-  checked, but a write through a pointer to that local is not, so this compiles
-  and then aborts in `xs`'s cleanup:
-
-  ```odin
-  holder := Holder{mem.Arena.init()};   // Holder :: struct { arena: mem.Arena }
-  xs: [dynamic]int via holder.arena.allocator() = {};
-  xs.append(1);
-  p := &mut holder;
-  p.arena = mem.Arena.init();
-  fmt.println(xs.len());
-  ```
-
-  The checks key a provider's end to the local it lives in; a pointer's target
-  is known only to the borrow solver.
-- **Providers in one local share a region identity.** All providers inside one
-  local record or container are one region to the checker, so resetting or
-  replacing one is blocked by live owners of another. This rejects valid
-  programs; it never accepts an invalid one.
+- **Providers share region identities more than they need to.** All providers
+  inside one local record or container are one region to the checker, and a
+  provider replaced or removed through a pointer or slice ends the regions of
+  every local holding providers, so resetting or replacing one is blocked by
+  live owners of another. This rejects valid programs; it never accepts an
+  invalid one.
 
 ## Not gaps
 

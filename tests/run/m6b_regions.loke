@@ -341,8 +341,24 @@ moved_into_storage :: proc() {
 	drop(zs);
 }
 
+// A provider may be replaced through a pointer once the owners it backs are gone.
+replaced_through_pointer :: proc() {
+	holder := Holder{mem.Arena.init()};
+	{
+		xs: [dynamic]int via holder.arena.allocator() = {};
+		xs.append(8);
+		fmt.println(xs[0]);
+	}
+	p := &mut holder;
+	p.arena = mem.Arena.init();
+	ys: [dynamic]int via holder.arena.allocator() = {};
+	ys.append(9);
+	fmt.println(ys[0]);
+}
+
 main :: proc() {
 	zero_size();
+	replaced_through_pointer();
 	moved_into_storage();
 	nil_allocator();
 	zero_provider();

@@ -1,0 +1,18 @@
+L0537
+@16:2
+assigning through a pointer or slice would end the region backing `xs`, which is still live here
+L0537
+@25:2
+assigning through a pointer or slice would end the region backing `xs`, which is still live here
+L0537
+@35:2
+assigning through a pointer or slice would end the region backing `xs`, which is still live here
+L0537
+@45:2
+removing through a pointer or slice would end the region backing `xs`, which is still live here
+L0537
+@54:7
+exchanging through a pointer or slice would end the region backing `xs`, which is still live here
+L0537
+@62:7
+exchanging `holder` would end the region backing `xs`, which is still live here

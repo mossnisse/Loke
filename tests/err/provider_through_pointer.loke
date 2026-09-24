@@ -1,0 +1,66 @@
+package main; import "core:mem"; import "core:fmt";
+
+// design.md "Allocators": replacing or removing a provider ends its region, and
+// that holds through a pointer or slice too. The checker cannot tell which local
+// such a place is in, so it checks every local holding providers.
+
+Holder :: struct { arena: mem.Arena }
+
+take :: proc(arena: move mem.Arena) {}
+
+field_through_pointer :: proc() {
+	holder := Holder{mem.Arena.init()};
+	xs: [dynamic]int via holder.arena.allocator() = {};
+	xs.append(1);
+	p := &mut holder;
+	p.arena = mem.Arena.init();
+	fmt.println(xs.len());
+}
+
+whole_through_pointer :: proc() {
+	holder := Holder{mem.Arena.init()};
+	xs: [dynamic]int via holder.arena.allocator() = {};
+	xs.append(1);
+	p := &mut holder;
+	p^ = Holder{mem.Arena.init()};
+	fmt.println(xs.len());
+}
+
+element_through_slice :: proc() {
+	all: [2]mem.Arena = {};
+	all[0] = mem.Arena.init();
+	xs: [dynamic]int via all[0].allocator() = {};
+	xs.append(1);
+	view: []mut mem.Arena = all[:];
+	view[0] = mem.Arena.init();
+	fmt.println(xs.len());
+}
+
+cleared_through_pointer :: proc() {
+	all: [dynamic]mem.Arena = {};
+	all.append(mem.Arena.init());
+	xs: [dynamic]int via all[0].allocator() = {};
+	xs.append(1);
+	p := &mut all;
+	p.clear();
+	fmt.println(xs.len());
+}
+
+exchanged_through_pointer :: proc() {
+	holder := Holder{mem.Arena.init()};
+	xs: [dynamic]int via holder.arena.allocator() = {};
+	xs.append(1);
+	p := &mut holder;
+	take(exchange(inout p.arena, mem.Arena.init()));
+	fmt.println(xs.len());
+}
+
+exchanged_from_field :: proc() {
+	holder := Holder{mem.Arena.init()};
+	xs: [dynamic]int via holder.arena.allocator() = {};
+	xs.append(1);
+	take(exchange(inout holder.arena, mem.Arena.init()));
+	fmt.println(xs.len());
+}
+
+main :: proc() {}

@@ -1138,7 +1138,7 @@ walk_flow_expr_erased :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 // ------------------------------------------------------------- regions --
 
-@(private = "file")
+@(private)
 prov_empty_region :: proc(graph: ^Flow_Graph) -> Region_Set {
 	return Region_Set{params = make([]bool, max(graph.param_count, 1), graph.alloc)}
 }

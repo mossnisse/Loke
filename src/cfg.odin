@@ -451,9 +451,7 @@ provider_exchange_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if graph.aliased_moves[v] {
 		return
 	}
-	if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
-		provider_region_end(graph, ident.symbol, v.span, v, provider_end_phrase(graph, "exchanging", ident.name))
-	}
+	provider_place_end(graph, v.bound[0], v, v.span, "exchanging")
 }
 
 // Assignment drops the destination's previous value (design.md).
@@ -465,9 +463,12 @@ provider_assign_end :: proc(graph: ^Flow_Graph, target: ^Expr_Ident) {
 }
 
 // The local whose own storage a place is in, when that local holds providers by
-// value; INVALID_SYMBOL for anything reached through a pointer.
+// value; INVALID_SYMBOL for anything reached through a pointer or slice.
 @(private)
 provider_place_root :: proc(graph: ^Flow_Graph, place: Expr) -> Symbol_Id {
+	if !place_is_direct(graph.k.c, place) {
+		return INVALID_SYMBOL
+	}
 	root := place_root_symbol(place)
 	sym := symbol_of(graph.k.c, root)
 	if sym == nil || sym.kind != .Var || sym.duration != .None || !type_carries_provider(graph.k.c, sym.type) {
@@ -476,17 +477,78 @@ provider_place_root :: proc(graph: ^Flow_Graph, place: Expr) -> Symbol_Id {
 	return root
 }
 
+// Whether a place is in its root variable's own storage: a field or element
+// path that never follows a pointer or a slice.
+@(private = "file")
+place_is_direct :: proc(c: ^Compiler, place: Expr) -> bool {
+	#partial switch v in place {
+	case ^Expr_Ident:
+		return true
+	case ^Expr_Selector:
+		return v.operand != nil && !type_is_pointer(c, expr_base(v.operand).type) && place_is_direct(c, v.operand)
+	case ^Expr_Index:
+		#partial switch underlying_kind(c, expr_base(v.operand).type) {
+		case .Array, .Dynamic_Array, .Map:
+			return len(v.bound) == 0 && place_is_direct(c, v.operand)
+		}
+	}
+	return false
+}
+
+// Replacing or removing the providers at a place ends their regions: in a
+// local's own storage, that local's; through a pointer or slice, any local's.
+// Static storage is not followed.
+@(private)
+provider_place_end :: proc(graph: ^Flow_Graph, place: Expr, node: rawptr, span: Span, verb: string, preposition := "") {
+	if !type_carries_provider(graph.k.c, expr_base(place).type) {
+		return
+	}
+	if root := provider_place_root(graph, place); root != INVALID_SYMBOL {
+		name := identifier_text(graph.k.c, symbol_of(graph.k.c, root).name)
+		direct := preposition == "" ? verb : fmt.aprintf("%s %s", verb, preposition, allocator = graph.alloc)
+		provider_region_end(graph, root, span, node, provider_end_phrase(graph, direct, name))
+		return
+	}
+	if !place_is_direct(graph.k.c, place) {
+		provider_indirect_end(graph, node, span, verb)
+	}
+}
+
+// A place behind a pointer or slice may be in any local holding providers, so
+// the regions of all of them in scope end here.
+@(private = "file")
+provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb: string) {
+	key := Cleanup_Reset_Key{graph.literal, INVALID_SYMBOL, 0, node}
+	if graph.mode == .Lifecycle {
+		emit(graph, Flow_Event{kind = .Reset_Point, cleanup_reset = key, span = span})
+		return
+	}
+	dead, found := graph.k.c.cleanup_reset_dead[key]
+	if !found {
+		return
+	}
+	set := prov_empty_region(graph)
+	for id in graph.owners_in_scope {
+		sym := symbol_of(graph.k.c, id)
+		if sym == nil || !type_carries_provider(graph.k.c, sym.type) {
+			continue
+		}
+		if root, rooted := graph.root_by_symbol[id]; rooted && graph.roots[int(root)].kind == .Local {
+			region_merge(&set, prov_provider_region(graph, id))
+		}
+	}
+	if region_is_empty(set) {
+		return
+	}
+	ends := fmt.aprintf("%s through a pointer or slice", verb, allocator = graph.alloc)
+	prov_reset(graph, set, span, true, nil, dead, ends)
+}
+
 // Assigning into a provider inside a local drops the provider there before.
 @(private)
 provider_field_assign_end :: proc(graph: ^Flow_Graph, target: Expr) {
-	if _, is_ident := target.(^Expr_Ident); is_ident || !type_carries_provider(graph.k.c, expr_base(target).type) {
-		return
-	}
-	if root := provider_place_root(graph, target); root != INVALID_SYMBOL {
-		name := identifier_text(graph.k.c, symbol_of(graph.k.c, root).name)
-		provider_region_end(
-			graph, root, expr_span(target), expr_base(target), provider_end_phrase(graph, "assigning into", name),
-		)
+	if _, is_ident := target.(^Expr_Ident); !is_ident {
+		provider_place_end(graph, target, expr_base(target), expr_span(target), "assigning", "into")
 	}
 }
 
@@ -523,14 +585,12 @@ provider_container_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if sym == nil || sym.synth != .Container_Op || len(v.bound) == 0 {
 		return
 	}
-	root := provider_place_root(graph, v.bound[0])
-	if root == INVALID_SYMBOL {
+	if sym.container_op in DROPPING_CONTAINER_OPS {
+		provider_place_end(graph, v.bound[0], v, v.span, "removing", "from")
 		return
 	}
-	if sym.container_op in DROPPING_CONTAINER_OPS {
-		name := identifier_text(graph.k.c, symbol_of(graph.k.c, root).name)
-		provider_region_end(graph, root, v.span, v, provider_end_phrase(graph, "removing from", name))
-	} else if sym.container_op in STORING_CONTAINER_OPS && graph.mode != .Lifecycle {
+	root := provider_place_root(graph, v.bound[0])
+	if root != INVALID_SYMBOL && sym.container_op in STORING_CONTAINER_OPS && graph.mode != .Lifecycle {
 		for argument in v.bound[1:] {
 			if argument != nil {
 				prov_merge_moved_bits(graph, root, argument)
