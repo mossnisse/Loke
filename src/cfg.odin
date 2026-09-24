@@ -464,6 +464,84 @@ provider_assign_end :: proc(graph: ^Flow_Graph, target: ^Expr_Ident) {
 	)
 }
 
+// The local whose own storage a place is in, when that local holds providers by
+// value; INVALID_SYMBOL for anything reached through a pointer.
+@(private)
+provider_place_root :: proc(graph: ^Flow_Graph, place: Expr) -> Symbol_Id {
+	root := place_root_symbol(place)
+	sym := symbol_of(graph.k.c, root)
+	if sym == nil || sym.kind != .Var || sym.duration != .None || !type_carries_provider(graph.k.c, sym.type) {
+		return INVALID_SYMBOL
+	}
+	return root
+}
+
+// Assigning into a provider inside a local drops the provider there before.
+@(private)
+provider_field_assign_end :: proc(graph: ^Flow_Graph, target: Expr) {
+	if _, is_ident := target.(^Expr_Ident); is_ident || !type_carries_provider(graph.k.c, expr_base(target).type) {
+		return
+	}
+	if root := provider_place_root(graph, target); root != INVALID_SYMBOL {
+		name := identifier_text(graph.k.c, symbol_of(graph.k.c, root).name)
+		provider_region_end(
+			graph, root, expr_span(target), expr_base(target), provider_end_phrase(graph, "assigning into", name),
+		)
+	}
+}
+
+// Container operations on a local that store a moved provider, and those that
+// may drop one.
+STORING_CONTAINER_OPS :: bit_set[Container_Op]{.Append, .Insert, .Map_Try_Insert}
+DROPPING_CONTAINER_OPS :: bit_set[Container_Op]{
+	.Pop, .Remove, .Remove_Unordered, .Clear, .Resize, .Map_Remove, .Map_Clear,
+}
+
+// A provider appended or inserted into a local container is stored there, so it
+// carries its region along.
+@(private)
+provider_container_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	if sym == nil || sym.synth != .Container_Op || len(v.bound) == 0 ||
+	   sym.container_op not_in STORING_CONTAINER_OPS ||
+	   provider_place_root(graph, v.bound[0]) == INVALID_SYMBOL {
+		return
+	}
+	for argument in v.bound[1:] {
+		if argument != nil {
+			mark_aliased_moves(graph, argument)
+		}
+	}
+	for argument in v.variadic_elements {
+		mark_aliased_moves(graph, argument)
+	}
+}
+
+@(private)
+provider_container_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	if sym == nil || sym.synth != .Container_Op || len(v.bound) == 0 {
+		return
+	}
+	root := provider_place_root(graph, v.bound[0])
+	if root == INVALID_SYMBOL {
+		return
+	}
+	if sym.container_op in DROPPING_CONTAINER_OPS {
+		name := identifier_text(graph.k.c, symbol_of(graph.k.c, root).name)
+		provider_region_end(graph, root, v.span, v, provider_end_phrase(graph, "removing from", name))
+	} else if sym.container_op in STORING_CONTAINER_OPS && graph.mode != .Lifecycle {
+		for argument in v.bound[1:] {
+			if argument != nil {
+				prov_merge_moved_bits(graph, root, argument)
+			}
+		}
+		for argument in v.variadic_elements {
+			prov_merge_moved_bits(graph, root, argument)
+		}
+	}
+}
+
 @(private = "file")
 provider_end_phrase :: proc(graph: ^Flow_Graph, verb, name: string) -> string {
 	return graph.mode == .Lifecycle ? "" : fmt.aprintf("%s `%s`", verb, name, allocator = graph.alloc)
@@ -709,6 +787,14 @@ declared_initializer :: proc(d: ^Decl, symbol_index: int) -> (initializer: Expr,
 
 @(private = "file")
 walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
+	// A provider moved into a local's storage goes on backing its owners there.
+	if s.op == .Assign && !s.destructure.active {
+		for target, index in s.lhs {
+			if index < len(s.rhs) && provider_place_root(graph, target) != INVALID_SYMBOL {
+				mark_aliased_moves(graph, s.rhs[index])
+			}
+		}
+	}
 	value_loans: [][]int
 	if graph.mode != .Lifecycle && len(s.rhs) > 0 {
 		value_loans = make([][]int, len(s.rhs), graph.alloc)
@@ -750,6 +836,9 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 				})
 				continue
 			}
+		}
+		if s.op == .Assign {
+			provider_field_assign_end(graph, target)
 		}
 		walk_flow_expr(graph, target)
 	}
@@ -1328,8 +1417,11 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	case .Size_Of, .Align_Of, .Offset_Of, .Type_Of, .Source_Location:
 		return nil
 	}
+	provider_container_moves(graph, v)
 	if graph.mode != .Lifecycle {
-		return prov_call(graph, v)
+		out := prov_call(graph, v)
+		provider_container_end(graph, v)
+		return out
 	}
 	#partial switch builtin {
 	case .Exchange:
@@ -1377,6 +1469,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			walk_flow_expr(graph, argument.value)
 		}
 	}
+	provider_container_end(graph, v)
 	note_reset_point(graph, v)
 	return nil
 }

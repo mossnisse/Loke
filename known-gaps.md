@@ -7,23 +7,27 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-- **A provider moved into existing storage ends its region.** design.md
-  "Allocators" says moving an owner transfers its region dependency to the
-  destination. The compiler follows a provider moved into a new local, a
-  composite literal initializing one, or a result, and treats a move anywhere
-  else as ending the region, so this valid program is rejected (L0537):
+- **Replacing a provider through a pointer is not checked.** design.md
+  "Allocators" requires a region to outlive the owners it backs. Assigning
+  over a provider field of a local, or removing one from a local container, is
+  checked, but a write through a pointer to that local is not, so this compiles
+  and then aborts in `xs`'s cleanup:
 
   ```odin
-  holder: Holder = {};            // Holder :: struct { arena: mem.Arena }
-  arena := mem.Arena.init();
-  xs: [dynamic]int via arena.allocator() = {};
+  holder := Holder{mem.Arena.init()};   // Holder :: struct { arena: mem.Arena }
+  xs: [dynamic]int via holder.arena.allocator() = {};
   xs.append(1);
-  holder.arena = move(arena);     // also: `all.append(move(arena))`
-  drop(xs);
+  p := &mut holder;
+  p.arena = mem.Arena.init();
+  fmt.println(xs.len());
   ```
 
-  All providers inside one local record or container also share one region
-  identity, so resetting one is blocked by owners of another.
+  The checks key a provider's end to the local it lives in; a pointer's target
+  is known only to the borrow solver.
+- **Providers in one local share a region identity.** All providers inside one
+  local record or container are one region to the checker, so resetting or
+  replacing one is blocked by live owners of another. This rejects valid
+  programs; it never accepts an invalid one.
 
 ## Not gaps
 

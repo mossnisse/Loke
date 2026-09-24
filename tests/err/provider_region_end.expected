@@ -25,3 +25,9 @@ dropping `old` would end the region backing `xs`, which is still live here
 L0537
 @84:7
 exchanging `arena` would end the region backing `xs`, which is still live here
+L0537
+@93:2
+assigning into `env` would end the region backing `xs`, which is still live here
+L0537
+@103:2
+removing from `all` would end the region backing `xs`, which is still live here

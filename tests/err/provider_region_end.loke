@@ -85,4 +85,23 @@ exchanged_away :: proc() {
 	fmt.println(xs.len());
 }
 
+// A provider in a local's storage ends when it is assigned over or removed.
+field_assigned_over :: proc() {
+	env := Env{mem.Scratch.init()};
+	xs: [dynamic]int via env.scratch.allocator() = {};
+	xs.append(1);
+	env.scratch = mem.Scratch.init();
+	fmt.println(xs.len());
+}
+
+cleared_from_container :: proc() {
+	all: [dynamic]mem.Arena = {};
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	all.append(move(arena));
+	all.clear();
+	fmt.println(xs.len());
+}
+
 main :: proc() {}

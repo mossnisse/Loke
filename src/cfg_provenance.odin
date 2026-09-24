@@ -1275,6 +1275,24 @@ prov_moved_bits :: proc(graph: ^Flow_Graph, e: Expr) -> u64 {
 	return 0
 }
 
+// A provider moved into a local's existing storage joins that local's tokens.
+@(private)
+prov_merge_moved_bits :: proc(graph: ^Flow_Graph, root: Symbol_Id, value: Expr) {
+	bits := prov_moved_bits(graph, value)
+	if bits == 0 {
+		return
+	}
+	existing := prov_provider_region(graph, root)
+	if existing.crowded {
+		return // already "may be any of them"
+	}
+	graph.provider_bits[root] = existing.locals | bits
+	if set, found := graph.region_of[root]; found && type_is_region_provider(graph.k.c, symbol_of(graph.k.c, root).type) {
+		set.locals |= bits
+		graph.region_of[root] = set
+	}
+}
+
 // The name of the one local region a set names, or "".
 prov_region_name :: proc(graph: ^Flow_Graph, set: Region_Set) -> string {
 	if set.crowded {
@@ -2386,8 +2404,18 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				value_region = prov_result_region(graph, value)
 			}
 		}
+		if s.op == .Assign {
+			// The old value ends first; a provider moved in then joins the local.
+			if ident, is_ident := target.(^Expr_Ident); is_ident {
+				provider_assign_end(graph, ident)
+			} else {
+				provider_field_assign_end(graph, target)
+			}
+			if root := provider_place_root(graph, target); root != INVALID_SYMBOL && value != nil {
+				prov_merge_moved_bits(graph, root, value)
+			}
+		}
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
-			provider_assign_end(graph, ident)
 			target_type := expr_base(target).type
 			if value != nil && type_is_region_provider(graph.k.c, target_type) {
 				// A provider's own region stays its token; the new value's parent joins

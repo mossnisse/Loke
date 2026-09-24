@@ -314,8 +314,36 @@ nil_allocator :: proc() {
 	fmt.println(xs[0]);
 }
 
+// A provider moved into a local's existing storage keeps backing its owners
+// from there, whether that is a field, a container, or another provider local.
+moved_into_storage :: proc() {
+	holder: Holder = {};
+	all: [dynamic]mem.Arena = {};
+	other := mem.Arena.init();
+	first := mem.Arena.init();
+	second := mem.Arena.init();
+	third := mem.Arena.init();
+	xs: [dynamic]int via first.allocator() = {};
+	ys: [dynamic]int via second.allocator() = {};
+	zs: [dynamic]int via third.allocator() = {};
+	xs.append(1);
+	ys.append(2);
+	zs.append(3);
+	holder.arena = move(first);
+	all.append(move(second));
+	other = move(third);
+	xs.append(4);
+	ys.append(5);
+	zs.append(6);
+	fmt.println(xs[1] + ys[1] + zs[1]);
+	drop(xs);
+	drop(ys);
+	drop(zs);
+}
+
 main :: proc() {
 	zero_size();
+	moved_into_storage();
 	nil_allocator();
 	zero_provider();
 	buffer_after_arena();
