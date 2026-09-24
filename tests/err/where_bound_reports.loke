@@ -1,0 +1,21 @@
+package main; import "core:fmt";
+
+// design.md "where clauses": a call first probes its bounds silently, then
+// commits the instance. What a holding bound reports, such as a deprecated
+// call, survives the probe's rollback. A bound naming a map key already
+// rejected elsewhere adds no second error calling it "not a boolean".
+
+Bare :: struct { v: int }
+
+@(deprecated = "use fresh") old :: proc() -> bool { return true; }
+
+need :: proc(x: $T) -> int where old() { return 1; }
+
+keyed :: proc(x: $T) -> int where size_of(map[Bare]T) > 0 { return 1; }
+
+second :: proc() -> int {
+	m: map[Bare]int = {};
+	return m.len();
+}
+
+main :: proc() { fmt.println(need(1), second(), keyed(1)); }

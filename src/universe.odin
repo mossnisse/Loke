@@ -3,7 +3,7 @@
 package lokec
 
 // One universe per compilation, not per package: `bind_runtime_bootstrap`
-// binds `Unit`, `Option`, and `Result` into it once for every package.
+// binds the `base:runtime` bootstrap names into it once for every package.
 build_universe :: proc(c: ^Compiler) -> ^Scope {
 	if c.universe != nil {
 		return c.universe

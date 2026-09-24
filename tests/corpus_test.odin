@@ -450,14 +450,14 @@ UNPINNED :: []string {
 	"L0311",
 	"L0325",
 	"L0340",
-	// Backend invariants: an emission contract violation and `unsupported_construct`
+	// Invariant guards: an emission contract violation, and `unsupported_construct`
 	// — every arm that used to reach it was given an honest diagnostic in M7.
 	"L0405",
+	"L0350",
 	// `core:fmt` without its own `Writer`/`Options`.
 	"L0601",
 	// A `base:runtime` without `Type_Info`/`Member_Info`; the runtime is always loaded.
 	"L0575",
-	"L0350",
 }
 
 @(test)

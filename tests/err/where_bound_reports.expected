@@ -1,0 +1,8 @@
+warning[L0611]: `old` is deprecated: use fresh
+@12:34
+
+L0586
+@17:2
+`Bare` cannot be a map key
+
+!L0435

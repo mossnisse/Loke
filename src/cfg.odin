@@ -1,8 +1,8 @@
 // A disposable per-procedure control-flow view over the annotated AST, rebuilt
-// per concrete body instance. A managed local goes live at a completed
-// initialization, dies at `move`/`drop`, must be live at a use, and is cleaned
-// up, innermost first, wherever control leaves its scope. Provenance events are
-// built in cfg_provenance.odin.
+// per concrete body instance. A local goes live at a completed initialization,
+// dies at `move`/`drop`, and must be live at a use; a managed one is also
+// cleaned up, innermost first, wherever control leaves its scope. Provenance
+// events are built in cfg_provenance.odin.
 package lokec
 
 import "core:mem"

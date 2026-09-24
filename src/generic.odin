@@ -98,6 +98,9 @@ Instance :: struct {
 	// The `where` bound a silent probe found false, so an overload note can name
 	// it; a later request that reports re-checks the bounds itself.
 	failed_bound: Expr,
+	// Whether the `where` bounds were checked by a reporting request. A silent
+	// probe's check is rolled back, so committing the body checks them again.
+	bounds_committed: bool,
 }
 
 // The head diagnostic of a contained rejection, kept rather than the whole
@@ -1803,6 +1806,7 @@ instantiate_procedure_signature :: proc(
 	if !check_where_clauses(k, literal.where_clauses, instance.span, name, report, false_bound = &instance.failed_bound) {
 		return false
 	}
+	instance.bounds_committed = report
 	return true
 }
 
@@ -1834,6 +1838,12 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	defer pop(&k.c.instantiation_stack)
 
 	before := len(k.c.diagnostics)
+	if !instance.bounds_committed {
+		// Known to hold; checked again only for what it reports, such as a
+		// deprecated call, which the probe rolled back.
+		instance.bounds_committed = true
+		_ = check_where_clauses(k, literal.where_clauses, instance.span, identifier_text(k.c, symbol_of(k.c, instance.symbol).name), true)
+	}
 	instance.decl.check_state = .Checked
 	// An inferred `$T` can be a compile-time-only type the template never wrote,
 	// such as `type` from `f(int)`, so the instance's runtime shape is gated.
@@ -1878,7 +1888,10 @@ check_where_clauses :: proc(
 		}
 		failed := type == INVALID_TYPE || !evaluated || folded.kind != .Boolean
 		if !failed && folded.boolean {
-			truncate_diagnostics(k.c, mark)
+			// A reporting check is committed, so what a passing bound reported stays.
+			if !report {
+				truncate_diagnostics(k.c, mark)
+			}
 			continue
 		}
 		if !report && !(failed && report_malformed) {
@@ -1889,13 +1902,14 @@ check_where_clauses :: proc(
 			return false
 		}
 		if failed {
-			if k.c.error_count == errors {
+			// An invalid bound whose cause was reported elsewhere, such as a map key
+			// a report-once cache already rejected, needs no second error.
+			if k.c.error_count == errors && !(type == INVALID_TYPE && k.c.error_count > 0) {
 				errorf(k.c, expr_span(clause), "L0435", "a `where` bound must be a compile-time boolean")
 			}
 			note_instantiation_stack(k)
 			return false
 		}
-		truncate_diagnostics(k.c, mark)
 		// An interface bound names the failed requirement; a predicate, itself.
 		if report_failed_interface_bound(k, clause, span) {
 			note_instantiation_stack(k)

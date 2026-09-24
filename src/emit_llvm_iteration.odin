@@ -632,7 +632,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		bind_foreach_fields(e, s, with_index(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload), numbered))
 	} else if foreach_is_place_loop(s) {
 		logical := s.indexed ? foreach_yielded_type(e, s) : s.element_type
-		address := emit_union_payload(e, option, pointer_to(e.c, logical, true), slot)
+		address := emit_union_payload(e, option, payload, slot)
 		fields := []Foreach_Field{{type = logical, address = address, place = true, stored = true}}
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	} else if s.borrows && !type_is_pointer(e.c, payload) {
@@ -641,7 +641,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	} else if s.borrows {
 		// The payload points into the source, and the loop owns nothing. It is
 		// `stored` because one name over an `indexed()` pair copies it into a record.
-		address := emit_union_payload(e, option, pointer_to(e.c, yielded, false), slot)
+		address := emit_union_payload(e, option, payload, slot)
 		fields := []Foreach_Field{{type = yielded, address = address, place = true, stored = true}}
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	} else {
