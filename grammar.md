@@ -540,7 +540,7 @@ Binding         = "$"? "&"? (Identifier | "_")
 When_Statement = Attributes? "when" "(" Expression ")" Block
                  ("else" (When_Statement | Block))?
 
-Defer_Statement= Attributes? "defer" Statement
+Defer_Statement= Attributes? "defer" Statement      // not the empty statement
 
 Return_Statement = Attributes? "return" Return_Value? ";"
 Return_Value   = "inout"? Expression
@@ -572,8 +572,9 @@ followed by one.
 declared `inout`; see [Procedures](#procedures). Everywhere else a `Return_Value`
 is an ordinary expression.
 
-`Defer_Statement`'s body is narrowed semantically: no `return`, `or_return`, or
-nested `defer`; `break`/`continue` may target only a loop wholly
+`Defer_Statement`'s body is any statement except the empty statement, which
+`defer ;` would make a no-op. It is narrowed further semantically: no `return`,
+`or_return`, or nested `defer`; `break`/`continue` may target only a loop wholly
 inside it. See [design.md](design.md#defer-statement).
 
 ## Switch
@@ -646,7 +647,7 @@ Primary_Expression =
        Int_Literal | Float_Literal | Rune_Literal
      | String_Literal | Raw_String_Literal
      | Identifier
-     | Type                                             // compile-time type value
+     | Type                                             // compile-time type value, restricted below
      | "." Member_Name                                 // implicit selector, .Member
      | "move" "(" Expression ")"
      | Composite_Literal
@@ -674,6 +675,14 @@ Argument      = Identifier "=" Named_Argument_Value    // named argument
 Named_Argument_Value = "inout" Expression | Argument_Value
 Argument_Value= Expression | Type                       // runtime value or compile-time type
 ```
+
+A `Type` that begins with a token no other expression begins with — `^`, `[`,
+`map`, `distinct`, `dyn`, `type`, `$`, `proc`, `struct`, `enum`, `union`,
+`interface`, or `move_only` — is a primary expression only as a call or generic
+argument, as the value of a constant declaration, inside parentheses, or as the
+prefix of its own composite or procedure literal. Anywhere else it is an error,
+so a comparison is written `T == (^int)`. The type grammar would otherwise read
+`^u32(&f)` as a pointer to the type `u32(&f)` rather than a conversion.
 
 Where `Expression` and `Type` overlap, the parser records one unresolved
 argument form and name resolution classifies it using the selected parameter.
@@ -742,8 +751,9 @@ The productions above use the following deterministic parsing rules:
   this means scanning a name list, which is the same bounded scan `Declaration`
   already performs at statement position.
 - After the first `:` of a declaration, `static` and `thread_local` are storage
-  modifiers only when followed by another modifier, by a type-start token, or by
-  `=`. Otherwise they are ordinary type names.
+  modifiers only when followed by an identifier, by a type-start token, by a
+  labelled `(` that opens a `Record_Type`, or by `=`. Otherwise they are
+  ordinary type names, so `static(int)` applies a type named `static`.
 - After the `:` of a parameter, a `^` closed by `,` or `)` is the receiver form
   `self: ^`; followed by anything else it starts a pointer type.
 - At the start of an `impl` member, `delegate` is the contextual
@@ -764,6 +774,9 @@ The productions above use the following deterministic parsing rules:
 - At the start of an interface requirement, `slot` is the contextual keyword
   only when followed by an identifier, `:`, and `proc`; otherwise it is an
   ordinary identifier beginning an expression requirement.
+- A type beginning with a type-only token is an expression only in the
+  positions listed under [Primary expressions](#primary-expressions); a
+  comparison or other operand parenthesises it.
 - A bare identifier in a generic argument, or in parentheses by itself, is stored
   as an unresolved name. Name resolution classifies it as a type, constant, or
   value. Syntactically distinctive type forms such as `^T`, `[]T`, and `proc()`

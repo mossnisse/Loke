@@ -853,7 +853,9 @@ parse_storage_modifiers :: proc(p: ^Parser, d: ^Decl) {
 		}
 
 		next := peek_token(p, 1).kind
-		if next != .Assign && next != .Ident && !starts_type(next) {
+		// A labelled `(` opens a record type; `static(int)` applies a type named `static`.
+		record := next == .Lparen && scans_name_list_colon(p, 2)
+		if next != .Assign && next != .Ident && !starts_type(next) && !record {
 			return // a type named `static`, not a modifier
 		}
 
@@ -1258,10 +1260,12 @@ parse_if :: proc(p: ^Parser) -> Stmt {
 	then, body_ok := parse_block(p)
 	otherwise: Stmt
 	if allow(p, .Else) {
+		// `If_Statement` carries its own attributes, as `When_Statement` does.
+		else_attributes := parse_attributes(p)
 		if at(p, .If) {
-			otherwise = parse_if(p)
+			otherwise = with_attributes(parse_if(p), else_attributes)
 		} else if block, ok := parse_block(p); ok {
-			otherwise = block
+			otherwise = with_attributes(block, else_attributes)
 		}
 	}
 
@@ -2901,7 +2905,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	return e
 }
 
-// `using` remains a valid field name when not followed by another identifier.
+// `using` remains a valid field name when not followed by another member name.
 @(private = "file")
 parse_field_list :: proc(p: ^Parser) -> ([]Field, bool) {
 	fields := make([dynamic]Field, 0, 0, p.allocator)
@@ -2911,7 +2915,7 @@ parse_field_list :: proc(p: ^Parser) -> ([]Field, bool) {
 
 		field: Field
 		field.attributes = parse_attributes(p)
-		if is_contextual(p, "using") && peek_token(p, 1).kind == .Ident {
+		if is_contextual(p, "using") && (peek_token(p, 1).kind == .Ident || peek_token(p, 1).kind == .Type) {
 			advance(p)
 			field.is_using = true
 		}

@@ -34,14 +34,18 @@ L0606
 unknown attribute `@(bogus_else)`
 @25:32
 
+L0606
+unknown attribute `@(bogus_else_if)`
+@26:23
+
 L0610
 `@(tool.x)` is an extension attribute; its `tool` namespace is not enabled
-@26:4
+@27:4
 
 L0607
 `@(private)` cannot appear on a statement
-@26:25
+@27:25
 
 L0606
 unknown attribute `@(bogus)`
-@27:4
+@28:4

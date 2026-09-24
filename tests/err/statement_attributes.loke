@@ -23,6 +23,7 @@ main :: proc() {
 	W :: struct { z: int }
 	@(bogus_local_impl) impl W { @(bogus_member) m :: proc(self) { } }
 	@(bogus) if (true) { } else @(bogus_else) { }
+	if (true) { } else @(bogus_else_if) if (false) { }
 	@(tool.x) for (;;) { @(private) break; }
 	@(bogus) return;
 }

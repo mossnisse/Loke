@@ -1,0 +1,35 @@
+// Spellings grammar.md allows that the parser used to reject: `using` on a
+// field named `type`, a storage modifier before a record type, and a type-only
+// type in a comparison once parenthesised. `static(int)` still names a type.
+package main;
+
+import "core:fmt";
+
+A :: struct { x: int }
+B :: struct { using type: A }
+
+static :: struct($T: type) { v: T }
+
+count :: proc() -> int {
+	n: static (calls: int, last: int);
+	n.calls += 1;
+	return n.calls;
+}
+
+pointer_only :: proc(x: $T) -> bool where T == (^int) { return true; }
+
+main :: proc() {
+	b := B{};
+	b.type.x = 7;
+	fmt.println(b.x);
+
+	_ = count();
+	fmt.println(count());
+
+	s: static(int) = {v = 3};
+	fmt.println(s.v);
+
+	y := 1;
+	fmt.println(pointer_only(&y));
+	static_assert(type_of(&y) == (^int));
+}
