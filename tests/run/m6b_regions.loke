@@ -139,6 +139,9 @@ moved :: proc() {
 	fmt.println(xs.len());
 	fmt.println(xs[1]);
 	fmt.println(holder.arena.allocator() != nil);
+	// `holder` is declared after `xs`, so its cleanup would end the region
+	// first and leave `xs` releasing into a freed control block.
+	drop(xs);
 }
 
 // Nested regions: a provider whose parent is the program default, and a fixed
@@ -220,7 +223,23 @@ fallible_provider :: proc() {
 	}
 }
 
+// A zero-size allocation is not a failure, from the heap or a region.
+Empty :: struct {}
+
+zero_size :: proc() {
+	arena := mem.Arena.init();
+	switch (p in new(Empty)) {
+	case .ok: free(p); fmt.println(true);
+	case .err: fmt.println(false);
+	}
+	switch (p in new_clone(Empty{}, arena.allocator())) {
+	case .ok: free(p, arena.allocator()); fmt.println(true);
+	case .err: fmt.println(false);
+	}
+}
+
 main :: proc() {
+	zero_size();
 	environment();
 	parented();
 	wrapped_provider();

@@ -128,8 +128,15 @@ void loke_rt_v1_provider_init_end(void) {
 	loke_rt_init_state = LOKE_RT_INIT_DONE;
 }
 
+/* A zero-size allocation succeeds without reaching the provider, whose NULL
+ * means failure: `new` of an empty struct is not out of memory. The answer is
+ * a non-null address at the requested alignment that nothing may dereference,
+ * and freeing it is a no-op. */
 void *loke_rt_v1_alloc(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t align) {
 	check_record(a);
+	if (size == 0) {
+		return (void *)(uintptr_t)sane_align(align);
+	}
 	return a->ops->alloc(a->state, size, align);
 }
 
@@ -149,6 +156,9 @@ void *loke_rt_v1_resize(
 
 void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, uint64_t align) {
 	check_record(a);
+	if (size == 0) {
+		return;
+	}
 	a->ops->free(a->state, ptr, size, align);
 }
 

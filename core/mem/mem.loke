@@ -46,7 +46,7 @@ package mem;
 //   free_all(arena.allocator());        // reusable: the region stays usable
 //
 // `from_buffer` needs room for the control block, one block header, and the
-// alignment between them — 128 bytes on x86-64. A buffer under that ends the
+// slack to align the first of them — 128 bytes on x86-64. A buffer under that ends the
 // process rather than failing, because no allocation policy could make it
 // succeed, and there is no fallible spelling to reach for: `try_arena` and
 // `try_scratch` take a parent allocator, not a buffer. The runtime knows the

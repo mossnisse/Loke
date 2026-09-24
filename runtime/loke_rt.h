@@ -40,7 +40,8 @@ enum {
 
 /* The four callbacks a provider supplies. `resize` returns NULL on failure and
  * must leave the old allocation live and unchanged; `reset` returns 0 when the
- * provider has no region to end. */
+ * provider has no region to end. `alloc` and `free` are never asked for zero
+ * bytes: `loke_rt_v1_alloc` answers those itself. */
 typedef struct loke_rt_allocator_ops_v1 {
 	void *(*alloc)(void *state, uint64_t size, uint64_t align);
 	void *(*resize)(void *state, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align);
