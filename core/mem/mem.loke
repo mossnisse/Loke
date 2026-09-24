@@ -53,6 +53,10 @@ package mem;
 // exact figure; it is not published here until a caller has to compute a buffer
 // size rather than pick one.
 //
+// The zero `Arena` or `Scratch` owns an empty region: allocating from it fails
+// under the provider's policy, and resetting or dropping it does nothing. That
+// is what a `static` provider holds until a factory assigns it.
+//
 // A provider is move-only: two owners of one control block would release it
 // twice, and a bump region has no meaningful copy. Moving one never changes its
 // record address, so its region identity survives the move.

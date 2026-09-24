@@ -1,0 +1,10 @@
+package main; import "core:mem";
+
+// design.md "Allocators": the zero `Arena` owns an empty region, so an implicit
+// allocation from it fails under the default `.Panic` policy.
+
+main :: proc() {
+	arena: mem.Arena = {};
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+}

@@ -5396,7 +5396,7 @@ Omitting the allocator argument selects the default provider: `new(int)` is `new
 
 Temporary storage uses an explicit `mem.Scratch` or `mem.Arena` owner. `free_all`, and any call with the same reset effect, is rejected while a live owner or borrow still refers to that allocator's storage.
 
-`Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows the supplied storage; provider-backed construction takes a parent allocator and defaults it to the program provider. Ordinary construction applies the parent's failure policy, while the `try_` procedures return a `Result` containing either the owner or an error, never a partial owner. A provider-backed child must be dropped before its parent region is reset or ended.
+`Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows the supplied storage; provider-backed construction takes a parent allocator and defaults it to the program provider. Ordinary construction applies the parent's failure policy, while the `try_` procedures return a `Result` containing either the owner or an error, never a partial owner. A provider-backed child must be dropped before its parent region is reset or ended. The zero `Arena` or `Scratch`, which a `static` provider holds until it is assigned, owns an empty region: allocating from it fails, and resetting or dropping it does nothing.
 
 ```odin
 fixed := mem.Arena.from_buffer(buffer[:]);

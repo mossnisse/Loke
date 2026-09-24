@@ -292,6 +292,45 @@ void loke_rt_v1_arena_drop(loke_rt_arena_v1 *arena) {
 	}
 }
 
+/* design.md "Allocators": the zero `Arena` or `Scratch` owns an empty region.
+ * Allocating from it fails and resetting it does nothing, so its handle is one
+ * shared record rather than nil, which would mean the default provider. */
+static void *empty_alloc(void *state, uint64_t size, uint64_t align) {
+	(void)state, (void)size, (void)align;
+	return 0;
+}
+
+static void *empty_resize(void *state, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align) {
+	(void)state, (void)ptr, (void)old_size, (void)new_size, (void)align;
+	return 0;
+}
+
+static void empty_free(void *state, void *ptr, uint64_t size, uint64_t align) {
+	(void)state, (void)ptr, (void)size, (void)align;
+}
+
+static int32_t empty_reset(void *state) {
+	(void)state;
+	return 1;
+}
+
+static const loke_rt_allocator_ops_v1 loke_rt_empty_ops = {
+	empty_alloc,
+	empty_resize,
+	empty_free,
+	empty_reset,
+};
+
+static const loke_rt_allocator_v1 loke_rt_empty_region = {
+	LOKE_RT_ABI_VERSION,
+	(uint32_t)sizeof(loke_rt_allocator_v1),
+	0,
+	(void *)&loke_rt_empty_region,
+	&loke_rt_empty_ops,
+	LOKE_RT_ON_FAILURE_PANIC,
+	0,
+};
+
 const loke_rt_allocator_v1 *loke_rt_v1_arena_allocator(loke_rt_arena_v1 *arena) {
-	return arena == 0 ? 0 : &arena->record;
+	return arena == 0 ? &loke_rt_empty_region : &arena->record;
 }

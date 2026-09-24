@@ -24,21 +24,17 @@ the compiler, unless the rewording is the intended fix.
 
   All providers inside one local record or container also share one region
   identity, so resetting one is blocked by owners of another.
-- **A zero `mem.Arena` or a nil `Allocator` reaches runtime aborts.** design.md
-  "Allocators" says checked code cannot reach the unsupported-reset abort, and
-  does not say what either zero value means. A zero `Arena` or `Scratch` hands
-  out a nil handle; a container `via` it binds the default provider, while
-  `new`, `free`, `free_all`, and `strings.copy` through it, or through any nil
-  `Allocator`, abort with "allocator record does not match this runtime's
-  ABI". A nil argument to an `@(allocator_reset)` parameter is accepted
-  because its region set is empty:
+- **A nil `Allocator` reaches a runtime abort.** design.md does not say what a
+  nil handle means. A container `via` one binds the default provider, while
+  `new`, `free`, `free_all`, and `strings.copy` through one abort with
+  "allocator record does not match this runtime's ABI". A nil argument to an
+  `@(allocator_reset)` parameter is accepted because its region set is empty,
+  although design.md says checked code cannot reach a reset abort:
 
   ```odin
-  a: mem.Arena = {};              // needed: a `static` provider starts here
-  free_all(a.allocator());        // aborts
+  release :: proc(@(allocator_reset) a: Allocator) { free_all(a); }
+  release(nil);                   // aborts
   ```
-
-  Fixing it needs a decision on what the zero provider and a nil handle mean.
 
 ## Not gaps
 

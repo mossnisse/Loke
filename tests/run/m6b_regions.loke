@@ -281,8 +281,30 @@ buffer_after_arena :: proc() {
 	fmt.println(buffer[0]);
 }
 
+// The zero provider owns an empty region: allocation fails, a reset and a drop
+// do nothing, and its handle is not nil, which would mean the default provider.
+zero_provider :: proc() {
+	arena: mem.Arena = {};
+	{
+		xs: [dynamic]int via arena.allocator() = {};
+		switch (_ in xs.try_append(1)) {
+		case .ok: fmt.println(false);
+		case .err: fmt.println(true);
+		}
+		switch (p in new(int, arena.allocator())) {
+		case .ok: free(p, arena.allocator()); fmt.println(false);
+		case .err: fmt.println(true);
+		}
+	}
+	free_all(arena.allocator());
+	fmt.println(arena.allocator() != nil);
+	scratch: mem.Scratch = {};
+	free_all(scratch.allocator());
+}
+
 main :: proc() {
 	zero_size();
+	zero_provider();
 	buffer_after_arena();
 	provider_ends();
 	environment();
