@@ -52,11 +52,12 @@ from_string :: proc(
 impl C_String {
 	// design.md spells the accessor as a method, so the whole surface is one.
 	//
-	// The view borrows storage this value owns, which the compiler stops tracking
-	// at the `unsafe.` call: keeping the `C_String` alive for as long as the
+	// The view borrows storage this value owns, hence `self: ^` (design.md
+	// "Receiver forms"). The compiler still stops tracking it at the `unsafe.`
+	// call (comments.md "Checked views of owned C strings"): keeping the `C_String` alive for as long as the
 	// foreign side holds the pointer is the caller's obligation, and is the whole
 	// reason this type exists.
-	view :: proc(self) -> cstring_view {
+	view :: proc(self: ^) -> cstring_view {
 		if (self.data.len() == 0) { return ""; }
 		return unsafe.cstring_view(unsafe.raw_data(self.data));
 	}

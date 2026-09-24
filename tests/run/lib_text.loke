@@ -25,8 +25,12 @@ main :: proc() {
 		fmt.println(true);
 		fmt.println(owned.len());
 		fmt.println(strlen(owned.view()));
+		// A clone owns its own buffer, terminator included.
+		copied := owned.clone();
+		fmt.println(strlen(copied.view()));
 	case .err:
 		fmt.println(false);
+		fmt.println(-1);
 		fmt.println(-1);
 		fmt.println(-1);
 	}
@@ -63,6 +67,7 @@ main :: proc() {
 	// The zero value of `C_String` is an empty, terminated buffer too.
 	inert: cstrings.C_String = {};
 	fmt.println(inert.len());
+	fmt.println(strlen(inert.view()));
 
 	// A caller's allocator reaches the buffer, so exhausting it is reported as
 	// `Out_Of_Memory` rather than ending the process.

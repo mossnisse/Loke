@@ -230,6 +230,25 @@ existing structural code, and whether a claim gates static satisfaction or only
 `dyn` witness construction. Until then satisfaction stays structural, and a
 file-scope assertion stays a check rather than a registry.
 
+## Checked views of owned C strings
+
+`C_String.view()` has no `unsafe` at its call site, yet its result is
+unchecked: the only way from `[dynamic]u8` to `cstring_view` goes through
+`unsafe.raw_data` and `unsafe.cstring_view`, which discard provenance inside the
+library. So this compiles and returns a view of freed storage:
+
+```odin
+keep :: proc() -> cstring_view {
+	owned := cstrings.from_string("abc") or_else no_c();
+	return owned.view();
+}
+```
+
+The same holds for `(cstrings.from_string(s) or_else no_c()).view()` bound to a
+name. A checked conversion from a terminated `[]u8` to `cstring_view` that keeps
+the slice's provenance would let `core:cstrings` drop its `core:unsafe` import
+and let the checker reject both. Is that conversion worth adding?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

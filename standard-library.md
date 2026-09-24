@@ -544,8 +544,8 @@ from_string :: proc(text: string_view, allocator := mem.default_allocator())
 	-> Result(C_String, Error)
 
 impl C_String {
-	view :: proc(self) -> cstring_view;
-	len  :: proc(self) -> int;          // excludes the terminator
+	view :: proc(self: ^) -> cstring_view;
+	len  :: proc(self) -> int;             // excludes the terminator
 }
 ```
 
