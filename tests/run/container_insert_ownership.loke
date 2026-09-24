@@ -5,7 +5,7 @@ import "core:fmt";
 // design.md "Container insertion": a temporary or `move(x)` transfers into the
 // container and a borrowed place is copied once, for a copyable element as for
 // a move-only one. A spread lends its elements, so each is copied. The drop
-// count closes the books: 21 values written here plus 11 clones.
+// count closes the books: 21 values written here plus 12 clones.
 
 clones: static int = 0;
 drops: static int = 0;

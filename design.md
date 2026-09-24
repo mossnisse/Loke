@@ -693,7 +693,7 @@ p[n] = 123; // unchecked; the programmer proves that n is valid
 
 A slice is a non-owning view of a sequence. Its length is a runtime value. `[]T` has read-only elements. `[]mut T` has mutable elements. Both types have the same runtime representation. Mutability is a static capability and does not change the ABI.
 
-A mutable slice implicitly weakens to a read-only slice. A read-only slice never converts to a mutable slice, including when its original owner happens to be mutable. Slicing a mutable, addressable array or dynamic array produces `[]mut T`; slicing an immutable parameter or an existing `[]T` produces `[]T`. Slicing a `string` or `string_view` produces a [`string_view`](#string-types-and-views) over those bytes, not a slice.
+A mutable slice implicitly weakens to a read-only slice. A read-only slice never converts to a mutable slice, including when its original owner happens to be mutable. Slicing a mutable, addressable array or dynamic array produces `[]mut T`; slicing an immutable parameter or an existing `[]T` produces `[]T`. A slice bound by `:=`, which names no type, is `[]T` even over mutable storage, as `&x` is a `^T`, so the source stays readable while the slice lives. Writing through a slice asks for the capability by type: `v: []mut int = a[:]`, or passing `a[:]` to a `[]mut T` parameter. Slicing a `string` or `string_view` produces a [`string_view`](#string-types-and-views) over those bytes, not a slice.
 
 A slice expression has a low bound and a high bound separated by a colon:
 
@@ -930,7 +930,7 @@ Use `resize` to grow and zero-fill an array, or `append` to add elements at the 
 
 #### Container insertion
 
-An element given to `append`, `insert`, `try_insert`, or `find_or_insert` is taken the way an initialization takes it, exactly as `m[key] = elem` and a container literal take theirs: a temporary or `move(x)` transfers into the container, and a borrowed place is copied. A move-only element therefore enters from a temporary or through `move`:
+An element given to `append`, `insert`, or `find_or_insert` is taken the way an initialization takes it, exactly as `m[key] = elem` and a container literal take theirs: a temporary or `move(x)` transfers into the container, and a borrowed place is copied. A move-only element therefore enters from a temporary or through `move`:
 
 ```odin
 File :: move_only struct { handle: int }
@@ -942,7 +942,9 @@ files.append(move(f));              // `f` is dead after the call
 files.append(f);                    // error: a borrowed move-only value cannot be copied
 ```
 
-Ownership passes at the call. When an insertion does not store its element — `find_or_insert` finds the key already present, or an allocation fails — the operation drops it, so every element is dropped exactly once. A `..` spread lends its elements, so spreading a move-only slice into `append` is rejected.
+Ownership passes at the call. When `find_or_insert` finds the key already present it does not store its element and drops it, so every element is dropped exactly once. A `..` spread lends its elements, so spreading a move-only slice into `append` is rejected.
+
+The `try_` forms — `try_append`, `try_insert`, and `try_find_or_insert` — never take ownership: they copy the element in only on success, so a failure leaves the argument exactly as the caller had it, the same promise every `try_` form makes. A move-only element cannot be copied, so calling a `try_` form with one is a compile-time error; reserve capacity with `try_reserve` first, then insert with `move(...)`, which cannot fail for want of space.
 
 #### Removing from a dynamic array
 
@@ -2329,7 +2331,7 @@ Each call to `next` answers `.some(item)`, or `.none` to end the loop. See [Type
 
 A single binding receives the element `T` itself for a borrowed or mutable leaf, and `Item` otherwise — for a record `Yield`, the record `next` handed back, pointer fields and all, which differs from `Element` when the record lends a part. The checker validates `Yield` against `Item`'s shape and rejects a record descriptor over a record carrying a custom [`hook(copy)` or `hook(drop)`](#lifecycle-hooks-and-resource-types), the restriction consuming [destructuring](#destructuring) already carries.
 
-**An iterator that declares no `Yield` is owned, with `Item = Element`.** Every iterator written before `Yield` existed keeps its meaning, including `Countdown` below. `Item` names what `next` hands back on any iterator, whether or not it declares one, which is what lets a single `Iterable` cover both modes. The three descriptors are predeclared names, like `Option` and `Result`, because the built-in containers lend and a program iterating an array imports nothing.
+**An iterator that declares no `Yield` is owned, with `Item = Element`**, as `Countdown` below is. `Item` names what `next` hands back on any iterator, whether or not it declares one, which is what lets a single `Iterable` cover both modes. The three descriptors are predeclared names, like `Option` and `Result`, because the built-in containers lend and a program iterating an array imports nothing.
 
 The two modes use two interfaces in the [standard catalogue](#standard-interface-catalogue): [`Iterable`](#standard-interface-catalogue) with `iter`, and `Mutable_Iterable` with `iter_mut`. Reversal is a receiver method in either mode: `iter_reverse` for reading, which [`Reverse_Iterable`](#standard-interface-catalogue) names, and `iter_mut_reverse` for mutable traversal, which no interface names. A type offering both modes must agree on the logical element.
 
@@ -2403,7 +2405,7 @@ An `&` leaf must land on a `Yield_Mutable` location, so a map's key, an `indexed
 
 A single binding over a record yield receives that record with its pointer fields, read through `entry.value^`; destructuring binds the pointees directly. No transparent borrowed-record type is introduced.
 
-A loop never invents an index, key, or byte offset. To receive one, use an adapter or view whose element carries it: `sequence.indexed()` for an index, and `map.keys()`, `map.values()`, or plain destructuring of a map entry for a key or value. The fixed spellings `foreach (&value, index in sequence)` and `foreach (&value in map)` are gone; each is a diagnostic naming its replacement.
+A loop never invents an index, key, or byte offset. To receive one, use an adapter or view whose element carries it: `sequence.indexed()` for an index, and `map.keys()`, `map.values()`, or plain destructuring of a map entry for a key or value. `foreach (&value, index in sequence)` and `foreach (&value in map)` are not valid headers; each is a diagnostic naming the adapter or destructuring that supplies what it asks for.
 
 #### Iteration adapters
 
@@ -2898,7 +2900,7 @@ Built-in satisfaction follows the operations the language already defines:
 
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers including `rawptr` and C pointers, enums, `typeid`, and recursively comparable fixed arrays satisfy `Equatable`; records and unions do so when their generated or inherent equality is available;
 - integers, floats, runes, `string`, `string_view`, pointers on targets that support pointer ordering, and enums satisfy `Ordered`;
-- `bool`, integers, floats, runes, `string`, `string_view`, pointers, enums, `typeid`, and fixed arrays of hashable elements satisfy `Hashable`. For floats, `+0` and `-0` hash identically because they compare equal. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
+- `bool`, integers, runes, `string`, `string_view`, pointers, enums, `typeid`, and fixed arrays of hashable elements satisfy `Hashable`. Floats do not: a NaN is unequal to itself, so no hash is coherent with float `==`, and a float key could be inserted repeatedly and never found. A map keyed by a float value keys by an integer image of it instead, such as its bits through [`unsafe.transmute`](#unsafetransmute) or a scaled, rounded integer. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`;
 - every copyable type satisfies `Cloneable`. A plain value — `bool`, integers, floats, runes, enums, pointers, slices, views, `typeid`, and procedures — is its own clone; owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, and aggregates containing them, clone ownership-recursively;
 - runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `(key: K, value: V)` entry. Ranges, strings, and string views yield owned elements; the containers lend theirs, so a fixed array, slice, or dynamic array of a move-only element is iterable like any other, and a map entry is handed back as `(key: ^K, value: ^V)`. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; maps and text do not. The [container views](#iteration-adapters) satisfy `Iterable` with the `Element` each one names. Reversed views also satisfy `Reverse_Iterable`; indexed, text, and map views do not. Fixed arrays, mutable slices, dynamic arrays, maps, and `indexed()` or `reversed()` views over a mutable slice satisfy `Mutable_Iterable`;
@@ -4742,7 +4744,7 @@ Where the weakening happens decides what it costs. A **fresh** borrow — `&mut 
 Weakening an **existing** mutable carrier is a read-only reborrow of it. While the reborrow is live, the carrier it was taken from is suspended and may not be used; after the reborrow's last use, the source is usable again. Without this a mutable alias could write behind the reborrow's back:
 
 ```odin
-source := numbers[0:2];      // []mut int
+source: []mut int = numbers[0:2];
 reborrow: []int = source;    // a read-only reborrow of `source`
 fmt.println(reborrow[0]);
 source[0] = 50;              // ERROR: `source` is suspended here
@@ -4885,7 +4887,7 @@ What a call may keep of one argument is written on the parameter as
 | `stored` | it may also be retained in storage the caller owns |
 | `static` | it may also be retained in storage that lasts for the whole process |
 
-An unwritten parameter is `result`, so an existing signature keeps its meaning. The level is an upper bound on the body: a procedure whose result borrows a parameter written `@(escape=none)`, or which retains a parameter beyond its declared level, is rejected at the parameter's declaration.
+An unwritten level is `result`. The level is an upper bound on the body: a procedure whose result borrows a parameter written `@(escape=none)`, or which retains a parameter beyond its declared level, is rejected at the parameter's declaration.
 
 The level belongs to the procedure type, as [`@(allocator_reset)`](#allocator_reset) does, which is what makes it useful where there is no body to infer from. A `none` parameter keeps a scratch argument out of the result of a call through a procedure value, a procedure-typed parameter, or a generic instantiation.
 
@@ -5077,7 +5079,7 @@ An [object build](#build-configuration) has no entry or argument conversion, so 
 | Operation | Result |
 | --- | --- |
 | `os.args.len()` | the argument count, including the executable path at index 0 |
-| `os.args[i]` | an owning UTF-8 `string`, copied; out of range yields `""` |
+| `os.args[i]` | an owning UTF-8 `string`, copied; an index out of range panics |
 | `foreach (a in os.args)` | a borrowed `string_view` per argument |
 | `os.view_at(i)` | the same borrow by index; out of range yields `""` |
 
@@ -6143,7 +6145,7 @@ Where this specification rejects a program, it often also says what the message 
 | An overloaded call stays ambiguous | every maximal candidate with its signature, and why selection failed, in the programmer's terms rather than as a rank vector or a tie-breaker number ([§](#operator-lookup-and-overload-resolution)) |
 | An overloaded call's result does not fit its destination | the member the arguments selected ([§](#operator-lookup-and-overload-resolution)) |
 | A `switch (name in expression)` subject is not a union | that the header bound a payload, and the second pair of parentheses that makes it a value switch ([§](#switch-statement)) |
-| A `foreach` header uses a retired fixed spelling | the adapter or view that replaces it ([§](#element-bindings)) |
+| A `foreach` header is written `(&value, index in sequence)` or `(&value in map)` | the adapter or destructuring that supplies the index or key ([§](#element-bindings)) |
 | A required interface application does not hold | the concrete application and the interface-body line that failed — “constraint not satisfied” alone is a defect ([§](#interface-bodies)) |
 | A mutating slot is called through a `dyn I` | `dyn mut I`, as a capability error rather than a missing member ([§](#borrowed-dynamic-interface-values)) |
 | Constant declarations form a cycle | the cycle as a path of constant declarations ([§](#constant-declarations)) |

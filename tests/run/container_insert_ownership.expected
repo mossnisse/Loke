@@ -8,8 +8,8 @@ append temporary and spread 1
 insert temporary 0
 insert place 1
 insert move 0
-try_insert temporary 0
+try_insert temporary 1
 try_insert place 1
 find_or_insert temporary 0
 literal mixed 1
-drops 32
+drops 33

@@ -325,6 +325,8 @@ Immutable_Reason :: enum {
 	// The same, reached by dereferencing or projecting a `^T`. Kept apart from
 	// `Read_Only` only so the diagnostic can name the fix: `^mut`.
 	Through_Pointer,
+	// The same, an element of a `[]T`, so the diagnostic can name `[]mut T`.
+	Through_Slice,
 	// A `foreach` binding over a traversal that lends its element read-only.
 	Loop_Binding,
 	// A `switch` binding over a payload the subject still owns.

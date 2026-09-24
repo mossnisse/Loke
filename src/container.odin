@@ -8,6 +8,14 @@
 // each element type's clone, drop, hash, and compare operations.
 package lokec
 
+// design.md "Container insertion": a `try_` form copies its element in, so a
+// failure leaves the caller's argument untouched, and a move-only element has
+// no such form.
+container_member_is_try :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
+	text := identifier_text(c, symbol.name)
+	return len(text) > 4 && text[:4] == "try_"
+}
+
 // Header field positions, shared by both containers.
 CONTAINER_STORAGE :: 0
 CONTAINER_LEN     :: 1

@@ -3,7 +3,7 @@ L0358
 a value parameter is immutable and cannot be returned as `inout`
 L0478
 @6:54
-read-only storage and cannot be returned as `inout`
+an element of a read-only `[]T` and cannot be returned as `inout`
 L0640
 @7:54
 reached through a read-only `^T` and cannot be returned as `inout`

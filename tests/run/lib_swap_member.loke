@@ -47,7 +47,7 @@ main :: proc() {
 
 	// The same operation through a slice of that array, and through the free
 	// spelling: one implementation, three ways in.
-	view := owners[:];
+	view: []mut Sealed = owners[:];
 	view.swap(0, 1);
 	fmt.println(id_of(owners[0]));
 	slice.swap(owners[:], 0, 1);

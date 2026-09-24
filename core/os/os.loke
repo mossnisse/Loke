@@ -46,11 +46,11 @@ impl Args {
 
 	// design.md "string type conversions": the conversion validates UTF-8 and
 	// copies into owned storage. The runtime's bytes are already valid, so the
-	// `.none` case is unreachable; an out-of-range index yields "" rather than
-	// reading past the vector.
+	// `.none` case is unreachable. An out-of-range index panics, as every index
+	// does (design.md "`os.Args`").
 	at :: operator([]) proc(self, index: int) -> string {
 		if (index < 0 || index >= rt_args_count()) {
-			return "";
+			panic("index out of range");
 		}
 		return string.from_utf8(rt_args_at(index)) or_else "";
 	}
@@ -73,11 +73,11 @@ impl Args_Iterator {
 
 // A borrow of one cached argument. The bytes live for the process, so the view
 // has no owner to outlive; the runtime already validated them as UTF-8, which is
-// why the `.none` case is unreachable.
+// why the `.none` case is unreachable. An out-of-range index panics.
 @(public)
 view_at :: proc(index: int) -> string_view {
 	if (index < 0 || index >= rt_args_count()) {
-		return "";
+		panic("index out of range");
 	}
 	bytes := unsafe.raw_data(rt_args_at(index));
 	return unsafe.string_view(bytes, rt_args_len(index)) or_else "";

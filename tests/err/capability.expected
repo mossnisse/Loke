@@ -11,7 +11,7 @@ L0358
 a value parameter is immutable and cannot be borrowed with `&mut`
 L0478
 @40:12
-this is read-only storage and cannot be borrowed with `&mut`
+this is an element of a read-only `[]T` and cannot be borrowed with `&mut`
 L0358
 @45:12
 a constant cannot be borrowed with `&mut`

@@ -430,6 +430,9 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 		// design.md "Container insertion": taken like an initialization, so a
 		// borrowed place is copied and a move-only one needs `move(...)`.
 		element := container_element(k.c, chosen.params[0])
+		if reject_move_only_try(k, v, chosen, element) {
+			return
+		}
 		if len(v.bound) > 2 {
 			classify_copy_cost(k, v.bound[2], element, .Insertion)
 			if type_clone_disabled(k.c, element) {
@@ -440,6 +443,9 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 		// A lone spread lends its slice instead of building a pack, and `append`
 		// would keep the elements.
 		element := container_element(k.c, chosen.params[0])
+		if reject_move_only_try(k, v, chosen, element) {
+			return
+		}
 		if type_clone_disabled(k.c, element) && v.variadic_forwards && len(v.bound) > 1 {
 			errorf(
 				k.c, expr_span(v.bound[1]), "L0503",
@@ -1136,4 +1142,20 @@ check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechec
 		return arg.value, false
 	}
 	return arg.value, true
+}
+
+// design.md "Container insertion": a `try_` form copies its element, so a
+// move-only one, which cannot be copied, has none.
+@(private = "file")
+reject_move_only_try :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol, element: Type_Id) -> bool {
+	if !container_member_is_try(k.c, chosen) || !type_clone_disabled(k.c, element) {
+		return false
+	}
+	errorf(
+		k.c, v.span, "L0491",
+		"`%s` is move-only, and `%s` copies its element so a failure leaves it with the caller; reserve capacity with `try_reserve`, then insert with `move(...)`",
+		type_name(k.c, element), identifier_text(k.c, chosen.name),
+	)
+	v.type = INVALID_TYPE
+	return true
 }

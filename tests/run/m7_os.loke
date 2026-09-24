@@ -6,8 +6,8 @@ package main; import "core:fmt"; import "core:os";
 //
 // The corpus runs a program with no extra arguments, so only the executable path
 // is present; `tests/os/args.loke` is the case that passes real ones. What is
-// asserted here is the surface: `len`, indexing, iteration, and the out-of-range
-// answers — none of which depend on the machine's paths.
+// asserted here is the surface: `len`, indexing, and iteration — none of which
+// depend on the machine's paths. tests/trap/os_args_out_of_range indexes past the end.
 
 main :: proc() {
 	fmt.println(os.args.len());
@@ -16,9 +16,6 @@ main :: proc() {
 	first := os.args[0];
 	fmt.println(first.len() > 0);
 
-	// Out of range in either direction is the empty string, not a fault.
-	fmt.println(os.args[-1].len());
-	fmt.println(os.args[os.args.len()].len());
 
 	// Iteration borrows: the runtime owns the bytes for the whole process.
 	count := 0;

@@ -1,4 +1,4 @@
-package main; import "core:fmt"; import "core:unsafe";
+package main; import "core:fmt";
 
 Equatable :: interface($T: type) {
 	(a, b: T) a == b -> bool;
@@ -14,7 +14,9 @@ Colour :: enum { Red, Green }
 main :: proc() {
 	static_assert(Hashable(int));
 	static_assert(Hashable(bool));
-	static_assert(Hashable(f64));
+	// NaN never equals itself, so no float is hashable (design.md).
+	static_assert(!Hashable(f64));
+	static_assert(!Hashable([2]f32));
 	static_assert(Hashable(rune));
 	static_assert(Hashable(Colour));
 	static_assert(Hashable([3]int));
@@ -26,25 +28,7 @@ main :: proc() {
 	runtime_value := 7;
 	if (runtime_value.hash(runtime_seed) == FOLDED) { fmt.println(1); } else { fmt.println(0); }
 
-	// `+0` and `-0` hash identically because they compare equal.
-	positive := 0.0;
-	negative := -0.0;
-	if (positive.hash(runtime_seed) == negative.hash(runtime_seed)) { fmt.println(1); } else { fmt.println(0); }
-
 	// A fixed array folds over its elements.
 	xs := [3]int{1, 2, 3};
 	if (xs.hash(runtime_seed) == [3]int{1, 2, 3}.hash(uint(0))) { fmt.println(1); } else { fmt.println(0); }
-
-	// Compile-time floats use the bit width of their declared type.
-	F32_FOLDED :: f32(1.5).hash(uint(0));
-	runtime_f32: f32 = 1.5;
-	if (runtime_f32.hash(runtime_seed) == F32_FOLDED) { fmt.println(1); } else { fmt.println(0); }
-
-	// A signalling NaN cannot round-trip through the evaluator's numeric f64
-	// field without being quieted. Its retained raw pattern must therefore drive
-	// the folded hash just as it drives runtime lowering.
-	F32_SIGNALLING :: unsafe.transmute(f32, u32(0x7f800001));
-	F32_SIGNALLING_FOLDED :: F32_SIGNALLING.hash(uint(0));
-	runtime_signalling := F32_SIGNALLING;
-	if (runtime_signalling.hash(runtime_seed) == F32_SIGNALLING_FOLDED) { fmt.println(1); } else { fmt.println(0); }
 }

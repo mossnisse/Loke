@@ -2,11 +2,11 @@ package main;
 
 import "core:fmt";
 
-// design.md: a `try_` form recovers cloning failure and returns the error. A
-// pack lends its borrowed places and spreads to `try_append`, which clones them
-// itself: the third clone fails, the one clone already made is destroyed, the
-// owned temporary is dropped, and nothing is published. Every value is still
-// dropped exactly once.
+// design.md "Container insertion": a `try_` form recovers cloning failure and
+// returns the error, and never takes ownership. The pack lends every element to
+// `try_append`, which clones each itself: the third clone fails, the two clones
+// already made are destroyed, nothing is published, and the caller drops the
+// temporary it built. Every value is still dropped exactly once.
 
 Huge :: struct { pad: [4611686018427387904]u8 }
 

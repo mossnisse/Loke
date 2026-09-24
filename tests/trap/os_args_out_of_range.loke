@@ -1,0 +1,7 @@
+package main; import "core:fmt"; import "core:os";
+
+// design.md "`os.Args`": an index out of range panics, as every index does.
+main :: proc() {
+	fmt.println("before");
+	fmt.println(os.args[os.args.len()]);
+}

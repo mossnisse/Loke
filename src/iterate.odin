@@ -1000,7 +1000,7 @@ check_foreach_pattern :: proc(
 	}
 	info := underlying_info(k.c, logical)
 	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
-		report_pattern_arity(k, bindings, logical, info)
+		report_pattern_arity(k, bindings, logical, info, raw_data(bindings) == raw_data(s.bindings))
 		return false
 	}
 	fields, eligible := destructure_fields(
@@ -1096,13 +1096,17 @@ bind_pattern_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Bindi
 }
 
 @(private = "file")
-report_pattern_arity :: proc(k: ^Checker, bindings: []Foreach_Binding, element: Type_Id, info: ^Type_Info) {
+report_pattern_arity :: proc(k: ^Checker, bindings: []Foreach_Binding, element: Type_Id, info: ^Type_Info, header: bool) {
 	span := len(bindings) > 0 ? bindings[0].name.span : no_span()
 	count := info != nil && info.kind == .Struct ? len(info.fields) : 0
 	errorf(
 		k.c, span, "L0459", "`%s` has %d fields, so this `foreach` pattern needs 1 or %d parts, not %d",
 		type_name(k.c, element), count, count, len(bindings),
 	)
+	// design.md "Element bindings": a loop never invents an index.
+	if header && count == 0 && len(bindings) == 2 {
+		add_notef(k.c, span, "a loop never invents an index; iterate `source.indexed()` to receive one")
+	}
 }
 
 @(private = "file")

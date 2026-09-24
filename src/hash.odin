@@ -12,8 +12,9 @@ import "core:mem"
 // The 64-bit FNV prime.
 HASH_MULTIPLIER :: u64(1099511628211)
 
-// design.md: `bool`, integers, floats, runes, `string`, `string_view`,
-// pointers, enums, `typeid`, and fixed arrays of hashable elements.
+// design.md: `bool`, integers, runes, `string`, `string_view`, pointers,
+// enums, `typeid`, and fixed arrays of hashable elements. Not floats: NaN is
+// unequal to itself, so no `==` over floats is coherent with any hash.
 type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	under := type_underlying(c, id)
 	info := type_of(c, under)
@@ -21,13 +22,29 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 		return false
 	}
 	#partial switch info.kind {
-	case .Bool, .Int, .Float, .Rune, .Enum, .Typeid,
+	case .Bool, .Int, .Rune, .Enum, .Typeid,
 	     .Raw_Pointer, .Pointer, .C_Pointer,
 	     .String, .String_View,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_String:
+	     .Untyped_Int, .Untyped_Bool, .Untyped_Rune, .Untyped_String:
 		return true
 	case .Array:
 		return type_is_hashable(c, info.element)
+	}
+	return false
+}
+
+// A float, or a fixed array of them, as `type_is_hashable` excludes.
+@(private = "file")
+type_holds_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	info := type_of(c, type_underlying(c, id))
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Float, .Untyped_Float:
+		return true
+	case .Array:
+		return type_holds_float(c, info.element)
 	}
 	return false
 }
@@ -56,6 +73,9 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
 		if type_is_hashable(c, key) {
 			return Key_Policy{kind = .Builtin}, ""
+		}
+		if type_holds_float(c, key) {
+			return Key_Policy{}, "holds a float, and NaN never equals itself, so no float is hashable; key by an integer image of the value instead"
 		}
 		return Key_Policy{}, "needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package"
 	}
@@ -111,24 +131,12 @@ inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string
 
 // --------------------------------------------------------- compile time --
 
-// The integer image of one scalar, which is what the mix consumes. `+0` and `-0`
-// hash identically because they compare equal.
+// The integer image of one scalar, which is what the mix consumes.
 hash_scalar_bits :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, allocator: mem.Allocator = {}) -> u64 {
 	under := type_underlying(c, type)
 	#partial switch type_kind(c, under) {
 	case .Bool, .Untyped_Bool:
 		return value.boolean ? 1 : 0
-	case .Float, .Untyped_Float:
-		if value.float == 0 {
-			return 0
-		}
-		info := type_of(c, under)
-		bits := u16(64)
-		if info != nil && info.bits != 0 {
-			bits = info.bits
-		}
-		// The retained source-width pattern, as runtime lowering hashes it.
-		return const_float_pattern(value, bits)
 	case .Raw_Pointer, .Pointer, .C_Pointer:
 		return 0 // the only compile-time pointer constant is nil
 	}

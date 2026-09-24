@@ -85,7 +85,7 @@ main :: proc() {
 
 	// A read-only reborrow of an existing mutable carrier releases it again
 	// after its own last use.
-	source := numbers[0:2];
+	source: []mut int = numbers[0:2];
 	reborrow: []int = source;
 	fmt.println(reborrow[0] + reborrow[1]);
 	source[0] = 50;
@@ -95,13 +95,13 @@ main :: proc() {
 	// names may stay live, but their current values no longer alias.
 	left := [2]int{1, 2};
 	right := [2]int{3, 4};
-	changing_source := left[:];
+	changing_source: []mut int = left[:];
 	old_reader: []int = changing_source;
 	changing_source = right[:];
 	changing_source[0] = 8;
 	fmt.println(old_reader[0]);
 
-	stable_source := left[:];
+	stable_source: []mut int = left[:];
 	changing_reader: []int = stable_source;
 	changing_reader = right[:];
 	stable_source[0] = 9;

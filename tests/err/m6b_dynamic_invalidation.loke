@@ -10,7 +10,7 @@ package main; import "core:fmt";
 
 grow :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
-	view := xs[:];
+	view: []mut int = xs[:];
 	xs.append(4);
 	fmt.println(view.len());
 }
@@ -24,21 +24,21 @@ shift :: proc() {
 
 truncate :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
-	view := xs[1:];
+	view: []mut int = xs[1:];
 	xs.clear();
 	fmt.println(view.len());
 }
 
 release :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
-	view := xs[:];
+	view: []mut int = xs[:];
 	drop(xs);
 	fmt.println(view.len());
 }
 
 replace :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
-	view := xs[:];
+	view: []mut int = xs[:];
 	xs = {4, 5};
 	fmt.println(view.len());
 }

@@ -64,8 +64,8 @@ main :: proc() {
 	// loan — there is no split call here, and no unsafe step.
 	lanes := [6]int{0, 0, 0, 0, 0, 0};
 	names := [6]string_view{"n", "e", "s", "w", "up", "down"};
-	front := lanes[0:3];
-	back := lanes[3:6];
+	front: []mut int = lanes[0:3];
+	back: []mut int = lanes[3:6];
 	accumulate(front, names[0:3], 2);
 	accumulate(back, names[3:6], 5);
 	fmt.println(total(front), total(back), total(lanes[:]));

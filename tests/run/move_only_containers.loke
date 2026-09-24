@@ -52,8 +52,9 @@ main :: proc() {
 		m.find_or_insert("k", move(r))^.id += 1;  // absent: moved in
 		m.find_or_insert("k", Res{ id = 8 });      // present: the 8 is dropped
 		fmt.println("find_or_insert", m["k"].id, drops);
-		_ = m.try_insert("k", Res{ id = 9 });       // replaces, dropping the 8 stored
-		_ = m.try_insert("j", Res{ id = 10 });
+		// A `try_` form copies, so a move-only value goes in by assignment.
+		m["k"] = Res{ id = 9 };                     // replaces, dropping the 8 stored
+		m["j"] = Res{ id = 10 };
 		fmt.println("try_insert", m["k"].id, m.len(), drops);
 	}
 	fmt.println("after inserting map", drops);

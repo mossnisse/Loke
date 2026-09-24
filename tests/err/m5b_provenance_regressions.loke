@@ -5,7 +5,7 @@ package main; import "core:mem"; import "core:fmt";
 borrow_after_invalidation :: proc() {
 	values := [2]int{1, 2};
 	values = [2]int{3, 4};
-	view := values[:];
+	view: []mut int = values[:];
 	values[0] = 9;
 	fmt.println(view[0]);
 }
@@ -14,7 +14,7 @@ borrow_after_invalidation :: proc() {
 loop_reborrow :: proc(iterations: int) {
 	values := [2]int{1, 2};
 	for (i := 0; i < iterations; i += 1) {
-		view := values[:];
+		view: []mut int = values[:];
 		fmt.println(values[0]);
 		fmt.println(view[0]);
 		values = [2]int{3, 4};

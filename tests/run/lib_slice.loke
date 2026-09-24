@@ -156,7 +156,7 @@ main :: proc() {
 	// `reverse` loops on `low + 1 < high`, so the lengths it must not touch and
 	// the first one it must are all below five.
 	foreach (n in 0 ..< 4) {
-		short := []mut int{1, 2, 3}[0:n];
+		short: []mut int = []mut int{1, 2, 3}[0:n];
 		slice.reverse(short);
 		fmt.println(n, short);
 	}

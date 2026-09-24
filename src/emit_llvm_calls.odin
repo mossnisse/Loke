@@ -179,20 +179,6 @@ emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
 		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out, value)
 	case .Raw_Pointer, .Pointer, .C_Pointer:
 		fmt.sbprintfln(&e.b, "  %s = ptrtoint ptr %s to i64", out, value)
-	case .Float:
-		// design.md: `+0` and `-0` hash identically because they compare equal.
-		llvm := llvm_type(e, under)
-		pattern := temp(e)
-		width := int(info.bits)
-		fmt.sbprintfln(&e.b, "  %s = bitcast %s %s to i%d", pattern, llvm, value, width)
-		widened := pattern
-		if width < 64 {
-			widened = temp(e)
-			fmt.sbprintfln(&e.b, "  %s = zext i%d %s to i64", widened, width, pattern)
-		}
-		zero := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = fcmp oeq %s %s, 0.0", zero, llvm, value)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", out, zero, widened)
 	case:
 		width := type_bits(e.c, under)
 		if info.kind == .Rune {
@@ -927,6 +913,17 @@ consumed_element_slot :: proc(
 		return -1, false
 	}
 	lifecycle := emit_lifecycle(e, container_element(e.c, symbol.params[0]))
+	// A `try_` form copies, so a failure leaves the argument with the caller. A
+	// built pack still goes to the lending body, which copies each element
+	// itself and so reports a failed copy; the caller keeps and drops the pack.
+	if container_member_is_try(e.c, symbol) {
+		if symbol.container_op != .Append || !lifecycle.managed || call_node == nil ||
+		   !call_node.is_variadic || call_node.variadic_forwards {
+			return -1, false
+		}
+		e.consuming_ops[symbol_id] = true
+		return -1, true
+	}
 	if lifecycle.clone_disabled {
 		return slot, false
 	}
@@ -1007,7 +1004,8 @@ emit_bound_call :: proc(
 			lends := consuming_body && symbol.container_op == .Append
 			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index], lend = lends)
 			if lends {
-				owned_flags = packed.cleanup.array_cleanup ? packed.cleanup.array_flags : "null"
+				// Nothing owned crosses into a `try_` form: it copies every element.
+				owned_flags = consumed == pack && packed.cleanup.array_cleanup ? packed.cleanup.array_flags : "null"
 			}
 			operands[index] = packed.value
 			pack_cleanup = packed.cleanup

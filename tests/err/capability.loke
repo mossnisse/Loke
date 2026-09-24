@@ -73,7 +73,7 @@ frees_a_reader :: proc() {
 // last use.
 uses_a_suspended_carrier :: proc() {
 	xs := [4]int{1, 2, 3, 4};
-	source := xs[0:2];
+	source: []mut int = xs[0:2];
 	reborrow: []int = source;
 	fmt.println(reborrow[0]);
 	source[0] = 9;

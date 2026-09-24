@@ -38,7 +38,7 @@ escape_temporary :: proc() {
 
 mutate_slice :: proc() {
 	values := [2]int{1, 2};
-	source := values[:];
+	source: []mut int = values[:];
 	frozen := source.reversed();
 	source[0] = 9;
 	foreach (item in frozen) { fmt.println(item); }

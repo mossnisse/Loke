@@ -36,8 +36,8 @@ nested_fields :: proc() {
 // Provably distinct constant ranges likewise.
 disjoint_ranges :: proc() {
 	xs := [6]int{0, 1, 2, 3, 4, 5};
-	low := xs[0:3];
-	high := xs[3:6];
+	low: []mut int = xs[0:3];
+	high: []mut int = xs[3:6];
 	low[0] = 100;
 	high[0] = 200;
 	fmt.println(sum(low) + sum(high));

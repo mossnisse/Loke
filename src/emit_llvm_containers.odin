@@ -748,11 +748,19 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 				&e.b, "  %s = call i32 @loke_rt_v1_dyn_append_owned(ptr %%arg0, ptr %s, ptr %s, ptr %%owned, i64 %s)",
 				status, ops, data, count,
 			)
-			// A failed append leaves every owned element with this body.
+			// A failed append leaves every owned element with this body. A `try_`
+			// form passes no flags: it owns nothing, and its caller drops the pack.
 			kept := branch_on_failure(e, status)
+			flagged := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %%owned, null", flagged)
+			drop_owned, dropped := new_label(e, "append.owned"), new_label(e, "append.dropped")
+			branch_if(e, flagged, drop_owned, dropped)
+			place_label(e, drop_owned)
 			count_slot := alloca(e, "i64")
 			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, count_slot)
 			emit_drop_flagged_array(e, element, data, "%owned", count_slot)
+			branch(e, dropped)
+			place_label(e, dropped)
 			rejoin(e, kept)
 		} else {
 			fmt.sbprintfln(

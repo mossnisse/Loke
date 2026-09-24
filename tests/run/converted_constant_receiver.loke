@@ -8,7 +8,7 @@ impl string_view {
 
 main :: proc() {
 	small: u8 = 3;
-	half: f32 = 1.5;
-	fmt.println(u8(3).hash(7) == small.hash(7), f32(1.5).hash(7) == half.hash(7));
+	wide: i64 = -2;
+	fmt.println(u8(3).hash(7) == small.hash(7), i64(-2).hash(7) == wide.hash(7));
 	fmt.println(string_view("abc").len(), string_view("abcd").twice());
 }

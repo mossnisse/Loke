@@ -22,7 +22,7 @@ main :: proc() {
 	b := [2]int{1, 2};
 
 	// Against `nil` both ways: accepted.
-	p := a[:];
+	p: []mut int = a[:];
 	if (p == nil) { }
 	if (nil != p) { }
 
@@ -31,7 +31,7 @@ main :: proc() {
 	if (v == nil) { }
 
 	// Against each other: rejected, for a slice and for a dyn alike.
-	q := b[:];
+	q: []mut int = b[:];
 	if (p == q) { }
 	w := (dyn Sized)(&c);
 	if (v == w) { }

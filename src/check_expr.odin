@@ -1049,7 +1049,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 			v.value_category = .Place
 			v.addressable = true
 			v.assignable = info.mutable
-			v.immutable = info.mutable ? .None : .Read_Only
+			v.immutable = info.mutable ? .None : .Through_Slice
 			return
 		case .Dynamic_Array:
 			// The element lives in the container's allocation, so it has the

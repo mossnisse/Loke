@@ -20,7 +20,7 @@ impl Res {
 // A mutable borrow excludes every competing access, including a read.
 read_through_a_competing_name :: proc() {
 	xs := [4]int{1, 2, 3, 4};
-	view := xs[0:2];
+	view: []mut int = xs[0:2];
 	fmt.println(xs[0]);
 	fmt.println(view[0]);
 }
@@ -53,7 +53,7 @@ whole_root_overlaps_a_field :: proc() {
 // A dynamic index proves nothing, so it overlaps conservatively.
 dynamic_index_overlaps :: proc(i: int) {
 	xs := [4]int{1, 2, 3, 4};
-	view := xs[0:2];
+	view: []mut int = xs[0:2];
 	xs[i] = 9;
 	fmt.println(view[0]);
 }
@@ -73,7 +73,7 @@ union_variant_overlaps :: proc() {
 // invalidates borrows of its previous value."
 assign_under_a_borrow :: proc() {
 	xs := [2]int{1, 2};
-	view := xs[0:2];
+	view: []mut int = xs[0:2];
 	xs = [2]int{3, 4};
 	fmt.println(view[0]);
 }

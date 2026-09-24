@@ -6,7 +6,7 @@ package main; import "core:fmt";
 main :: proc() {
 	values: [dynamic]int = {1};
 	foreach ($n in [?]int{1}) {
-		view := values[:];
+		view: []mut int = values[:];
 		values = {};
 		fmt.println(view[0]);
 	}
