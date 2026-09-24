@@ -243,6 +243,9 @@ interface_arguments_for :: proc(
 	if first < 0 || first + len(written) > len(info.params) || len(out) != len(written) {
 		return nil, false
 	}
+	if !generic_arguments_positional(k, written, code, report) {
+		return nil, false
+	}
 	bindings := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
 	if first > 0 {
 		if erased_subject == INVALID_TYPE {

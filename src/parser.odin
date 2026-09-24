@@ -1174,6 +1174,24 @@ expr_of_simple :: proc(p: ^Parser, s: Stmt) -> Expr {
 	return error_expr(p, stmt_span(s))
 }
 
+// grammar.md `Init_Statement` declares variables only. A constant there, a
+// brace-bodied one especially, runs into the condition with no `;` between.
+@(private = "file")
+parse_init_declaration :: proc(p: ^Parser) -> Stmt {
+	d, ok := parse_declaration(p, nil, current(p))
+	if !ok {
+		return nil
+	}
+	if d.kind == .Const && !d.has_error {
+		parse_error(
+			p, d.span, "L0245", "a constant",
+			"an initial statement declares a variable; declare the constant before the statement",
+		)
+		d.has_error = true
+	}
+	return d
+}
+
 // Without `(`, prevent the body brace from becoming a composite literal.
 @(private = "file")
 open_header :: proc(p: ^Parser, message: string) -> bool {
@@ -1223,9 +1241,7 @@ parse_if :: proc(p: ^Parser) -> Stmt {
 	init: Stmt
 	cond: Expr
 	if starts_declaration(p) {
-		if d, ok := parse_declaration(p, nil, current(p)); ok {
-			init = d
-		}
+		init = parse_init_declaration(p)
 	} else {
 		first := parse_simple_statement(p)
 		if allow(p, .Semicolon) {
@@ -1307,9 +1323,7 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 	switch {
 	case allow(p, .Semicolon):
 	case starts_declaration(p):
-		if d, ok := parse_declaration(p, nil, current(p)); ok {
-			init = d
-		}
+		init = parse_init_declaration(p)
 	case at(p, .Rparen):
 		t := current(p)
 		parse_error(p, span_of(p, t), "L0245", fmt_found(p, t), "a `for` header cannot be empty; `for (;;)` loops forever")
@@ -1498,9 +1512,7 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 	binding: Name
 
 	if starts_declaration(p) {
-		if d, ok := parse_declaration(p, nil, current(p)); ok {
-			init = d
-		}
+		init = parse_init_declaration(p)
 	} else if !at_type_switch_binding(p) {
 		first := parse_simple_statement(p)
 		if allow(p, .Semicolon) {
@@ -1921,16 +1933,25 @@ parse_index_or_slice :: proc(p: ^Parser, operand: Expr, lo: u32) -> Expr {
 @(private = "file")
 is_composite_type :: proc(e: Expr) -> bool {
 	#partial switch v in e {
-	case ^Expr_Ident, ^Expr_Selector, ^Type_Slice, ^Type_Array, ^Type_Dynamic_Array, ^Type_Map:
+	case ^Type_Slice, ^Type_Array, ^Type_Dynamic_Array, ^Type_Map:
 		return true
 	case ^Expr_Call:
 		// `Matrix(f32, 4){...}` is a generic application.
-		if _, is_ident := v.callee.(^Expr_Ident); is_ident {
-			return true
-		}
-		if _, is_selector := v.callee.(^Expr_Selector); is_selector {
-			return true
-		}
+		return is_type_name(v.callee)
+	}
+	return is_type_name(e)
+}
+
+// grammar.md `Type_Name`: a name with at most one selector, so `a.b.c{}` is
+// never a literal.
+@(private = "file")
+is_type_name :: proc(e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return true
+	case ^Expr_Selector:
+		_, is_ident := v.operand.(^Expr_Ident)
+		return is_ident
 	}
 	return false
 }
@@ -2501,6 +2522,14 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 		c.has_error = !args_ok
 		for arg in args {
 			c.has_error = c.has_error || expr_has_error(arg.value)
+			// grammar.md `Generic_Argument`: a bare type or value, never named or moded.
+			if arg.name.text != "" || arg.mode != .Value {
+				parse_error(
+					p, arg.span, "L0253", "not a bare type or value",
+					"a generic argument is positional and takes no `name =`, `inout`, or `..`",
+				)
+				c.has_error = true
+			}
 		}
 		e = c
 	}
@@ -3129,6 +3158,14 @@ parse_operator :: proc(p: ^Parser) -> Expr {
 	value: Expr
 	if at(p, .Proc) {
 		value = parse_proc(p)
+		// A bare signature is a `Proc_Type`, which declares no operator at all.
+		if signature, bare := value.(^Type_Proc); bare && !signature.has_error {
+			parse_error(
+				p, signature.span, "L0243", "a procedure type",
+				"an operator needs a procedure body, a procedure group, or `---`",
+			)
+			signature.has_error = true
+		}
 	} else {
 		t := current(p)
 		parse_error(

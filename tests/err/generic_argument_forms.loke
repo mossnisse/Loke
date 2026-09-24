@@ -1,0 +1,15 @@
+// grammar.md `Type_Arguments`: generic arguments are positional. In expression
+// position the parser cannot tell a generic application from a call, so the
+// checker rejects the name before binding anything by position.
+package main;
+
+Box :: struct($T: type, $N: int) { v: [N]T }
+I :: interface($T: type) { }
+
+bound :: proc(x: $T) where I(T = T) { }
+
+main :: proc() {
+	swapped := Box(N = int, T = 2){};
+	short := Box(int){};
+	bound(1);
+}

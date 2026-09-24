@@ -1,0 +1,22 @@
+// Forms grammar.md rules out that the parser used to accept: a named or moded
+// generic argument in type position, a bodiless operator, a constant as a header
+// initial statement, and a literal prefix with more than one selector.
+package main;
+
+Box :: struct($T: type, $N: int) { v: [N]T }
+V :: struct { x: int }
+
+named   :: proc(b: Box(int, M = 2)) { }
+pattern :: proc(b: Box(T = $X, N = 1)) { }
+
+impl V { add :: operator(+) proc(a, b: V) -> V; }
+
+main :: proc() {
+	if (S :: struct { x: int } S{1}.x > 0) { }
+	for (N :: 3; N > 0;) { }
+	switch (K :: 1; K) { case: }
+	a := V{1};
+	c := a.b.c{};
+}
+
+sentinel :: proc() { }

@@ -1963,8 +1963,9 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	}
 	// `Name(args)` whose head names nothing.
 	if call, is_call := syntax.(^Expr_Call); is_call {
-		// A generic rejected at its declaration was reported there.
-		if template := generic_template_of_callee(k, call.callee, .Record); template != nil && template.rejected {
+		// A generic rejected at its declaration was reported there, and an
+		// application of a known one reported its own arguments.
+		if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
 			return
 		}
 		if head, head_is_ident := call.callee.(^Expr_Ident); head_is_ident {

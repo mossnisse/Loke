@@ -1599,6 +1599,9 @@ instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Ge
 	if template_rejected(k, template) {
 		return INVALID_TYPE
 	}
+	if !generic_arguments_positional(k, v.args, "L0431", report) {
+		return INVALID_TYPE
+	}
 	if len(v.args) != len(template.params) {
 		if report {
 			report_generic_arity(k, v.span, template, len(v.args))
@@ -1635,6 +1638,30 @@ instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Ge
 	v.value_category = .Type
 	v.resolution = Resolution{kind = .Generic_Application, symbol = instance.symbol}
 	return instance.type
+}
+
+// grammar.md `Type_Arguments`: a generic argument is a bare type or value. The
+// call syntax it shares would otherwise let a name or mode through unread, so
+// `Box(N = int, T = 2)` bound by position.
+generic_arguments_positional :: proc(k: ^Checker, args: []Argument, code: string, report: bool) -> bool {
+	for arg in args {
+		what := ""
+		switch {
+		case arg.name.text != "":
+			what = "cannot be named; generic arguments are positional"
+		case arg.mode == .Inout:
+			what = "cannot be `inout`"
+		case arg.mode == .Spread:
+			what = "cannot be spread"
+		case:
+			continue
+		}
+		if report {
+			errorf(k.c, arg.span, code, "a generic argument %s", what)
+		}
+		return false
+	}
+	return true
 }
 
 @(private = "file")
@@ -1962,6 +1989,9 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 	}
 	template := generic_template_of_callee(k, call.callee, .Record)
 	if template == nil {
+		return
+	}
+	if !generic_arguments_positional(k, call.args, "L0431", true) {
 		return
 	}
 	if len(call.args) != len(template.params) {
