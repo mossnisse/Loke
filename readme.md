@@ -1,4 +1,4 @@
-Loke is an experimental general prupose programming language that builds on ideas from Odin.
+Loke is an experimental general-purpose programming language that builds on ideas from Odin.
 
 It aims to provide higher-level language features and ergonomic abstractions
 while preserving low-level access and control over generated binaries comparable
@@ -29,7 +29,8 @@ the language described by `design.md`, subject to the documented
 [known gaps](known-gaps.md). Its pipeline, phase contracts, allocation ownership,
 and source-code map are documented in
 [compiler-architecture.md](compiler-architecture.md). Longer-term work is
-summarized in [future-plans.md](future-plans.md).
+summarized in [future-plans.md](future-plans.md). Contributor conventions,
+for people and coding agents alike, are in [AGENTS.md](AGENTS.md).
 
 ### Build and run
 
@@ -288,33 +289,9 @@ core:term             standard streams and terminal key input
 core:unsafe           explicit unchecked operations and conversions
 ```
 
-- **text.** `core:strings` adds search, trimming, splitting, joining and
-  `String_Builder` to what the built-in `string` already owns. Its zero value is
-  a usable, allocator-unbound builder; `finish` is one copy into string storage
-  and keeps the buffer for reuse. Searching compares bytes, never subranges,
-  because a view sliced through a code point is a runtime failure and a candidate
-  offset is not known to be a boundary until it matches;
-- **errors are values.** `core:io` owns one `Error` for `io`, `fs`, `term` and
-  fallible process I/O: a normalized `Code`, a closed `Operation`, and the native
-  number, all owned scalars, so an error never borrows a caller's path and never
-  allocates to report a failure. A fallible call answers `Result(T, Error)`,
-  composes with `or_return`, and formats through its own package's `format`;
-- **streams.** `io.Reader` and `io.Writer` are `slot` interfaces, so a concrete
-  implementation is specialized and `dyn io.Writer` also exists — which is what
-  lets `io.write_formatted` present a `fmt.Writer` that latches the first real
-  write error instead of pretending a fallible file is an infallible sink;
-- **ownership is visible.** `fs.File`, `fs.Directory_Reader` and `term.Raw_Mode`
-  are move-only, have inert zero values, release themselves with `drop`, and
-  offer an idempotent `close` a caller can use to observe a failure. Because a
-  wedged terminal outlives the process that wedged it, `term.begin_raw` also
-  registers a console control handler — the one place the library pays for a
-  guarantee the language does not make, and nothing is registered until a caller
-  asks for raw mode;
-- **portable contract, platform implementation.** Windows x64 is the first
-  target. Every platform call sits behind `when (LOKE_OS == .Windows)` inside the
-  package that needs it, over `kernel32` foreign blocks; paths and environment
-  strings cross UTF-8 to UTF-16 in exactly one place, and a native name that is
-  not valid Unicode is reported as invalid data rather than silently changed.
+The library's design rules (errors as values, visible ownership, platform
+isolation) and each package's API are in
+[standard-library-plan.md](standard-library-plan.md).
 
 `examples/greeting.loke` is the release's acceptance program: it prompts, reads
 and writes a text file, and reports a failure, with no compiler-specific I/O

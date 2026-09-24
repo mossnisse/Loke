@@ -208,6 +208,14 @@ Encapsulation and abstractions must still be important so they can work on an pa
 
 add an garbage collected allocator as an alternative?
 
+## Chained comparisons
+
+Comparisons are left-associative like the other binary levels, so
+`false == false == true` compiles as `(false == false) == true`. Ordering chains
+such as `1 < 2 < 3` are already rejected by type (L0354), but an equality chain
+over `bool` type-checks and rarely means what it reads as. Should comparisons be
+non-associative, like ranges?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
