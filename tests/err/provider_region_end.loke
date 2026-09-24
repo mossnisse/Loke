@@ -1,0 +1,88 @@
+package main; import "core:mem"; import "core:fmt";
+
+// design.md "Allocators": a region must outlive the owners it backs, however
+// its provider ends — not only at the provider's own scope exit.
+
+dropped :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	drop(arena);
+	fmt.println(xs.len());
+}
+
+moved_into_shorter_scope :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	{
+		inner := move(arena);
+	}
+	fmt.println(xs.len());
+}
+
+take :: proc(arena: move mem.Arena) {}
+
+moved_into_call :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	take(move(arena));
+	fmt.println(xs.len());
+}
+
+assigned_over :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	arena = mem.Arena.init();
+	fmt.println(xs.len());
+}
+
+Env :: struct { scratch: mem.Scratch }
+
+record_dropped :: proc() {
+	env := Env{mem.Scratch.init()};
+	xs: [dynamic]int via env.scratch.allocator() = {};
+	xs.append(1);
+	drop(env);
+	fmt.println(xs.len());
+}
+
+Holder :: struct { arena: mem.Arena }
+
+// Cleanup runs in reverse declaration order, so `holder` ends the region first.
+record_cleaned_up_first :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	holder := Holder{move(arena)};
+	fmt.println(xs.len());
+}
+
+record_region_escapes :: proc() -> [dynamic]int {
+	env := Env{mem.Scratch.init()};
+	xs: [dynamic]int via env.scratch.allocator() = {};
+	xs.append(1);
+	return move(xs);
+}
+
+// The value `exchange` hands back is the one whose region backs `xs`.
+exchanged_out :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	old := exchange(inout arena, mem.Arena.init());
+	drop(old);
+	fmt.println(xs.len());
+}
+
+exchanged_away :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	take(exchange(inout arena, mem.Arena.init()));
+	fmt.println(xs.len());
+}
+
+main :: proc() {}

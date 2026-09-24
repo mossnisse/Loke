@@ -74,6 +74,38 @@ type_is_region_provider :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return info != nil && info.provider
 }
 
+// Whether a value of this type holds a provider by value, so ending the value
+// ends that provider's region.
+type_carries_provider :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
+	if type == INVALID_TYPE || depth > 8 {
+		return false
+	}
+	if type_is_region_provider(c, type) {
+		return true
+	}
+	info := underlying_info(c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && type_carries_provider(c, sym.type, depth + 1) {
+				return true
+			}
+		}
+	case .Union:
+		for payload in info.variants {
+			if payload != TYPE_VOID && type_carries_provider(c, payload, depth + 1) {
+				return true
+			}
+		}
+	case .Array, .Dynamic_Array, .Map:
+		return type_carries_provider(c, info.element, depth + 1) || type_carries_provider(c, info.key, depth + 1)
+	}
+	return false
+}
+
 // design.md writes both constructors as calls on the type name: `init` takes a
 // parent allocator and defaults to the program provider, and `from_buffer` lays
 // an `Arena` over a caller's storage.

@@ -1,0 +1,27 @@
+L0537
+@10:2
+dropping `arena` would end the region backing `xs`, which is still live here
+L0537
+@19:3
+this reset would end the region backing `xs`, which is still live here
+L0537
+@30:7
+moving `arena` would end the region backing `xs`, which is still live here
+L0537
+@38:2
+assigning over `arena` would end the region backing `xs`, which is still live here
+L0537
+@48:2
+dropping `env` would end the region backing `xs`, which is still live here
+L0537
+@59:2
+this reset would end the region backing `xs`, which is still live here
+L0592
+@67:9
+this result is backed by `env`, an allocator region that ends when this procedure returns
+L0537
+@76:2
+dropping `old` would end the region backing `xs`, which is still live here
+L0537
+@84:7
+exchanging `arena` would end the region backing `xs`, which is still live here

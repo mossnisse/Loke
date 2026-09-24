@@ -7,24 +7,23 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-- **Ending a region by `drop` or `move` is not checked.** design.md
-  "Allocators" requires a region to outlive the owners it backs, but only a
-  provider's own scope exit and `free_all` are checked against live owners.
-  Each of these compiles and then aborts in `xs`'s cleanup ("allocator record
-  does not match this runtime's ABI") after reading the freed control block:
+- **A provider moved into existing storage ends its region.** design.md
+  "Allocators" says moving an owner transfers its region dependency to the
+  destination. The compiler follows a provider moved into a new local, a
+  composite literal initializing one, or a result, and treats a move anywhere
+  else as ending the region, so this valid program is rejected (L0537):
 
   ```odin
+  holder: Holder = {};            // Holder :: struct { arena: mem.Arena }
   arena := mem.Arena.init();
   xs: [dynamic]int via arena.allocator() = {};
   xs.append(1);
-  drop(arena);                    // also: { b := move(arena); }
+  holder.arena = move(arena);     // also: `all.append(move(arena))`
+  drop(xs);
   ```
 
-  A record holding a provider (`Env :: struct { s: mem.Scratch }`, then
-  `drop(env)`) has the same hole, as does an owner declared before the record a
-  provider was moved into, since cleanup runs in reverse declaration order.
-  `cfg.odin` `provider_cleanup_reset` is the one place a region end is checked;
-  a moved provider also gets a fresh region token rather than its source's.
+  All providers inside one local record or container also share one region
+  identity, so resetting one is blocked by owners of another.
 - **A fixed-buffer arena's buffer is writable while owners in it are live.**
   design.md "Allocators" says the arena borrows the supplied storage, but the
   borrow ends at the arena's last use, not its owners' last use or cleanup:

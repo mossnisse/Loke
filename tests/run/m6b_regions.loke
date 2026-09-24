@@ -238,8 +238,40 @@ zero_size :: proc() {
 	}
 }
 
+// A provider may end, or move, once the owners it backs are gone or while it
+// keeps them: a move into a new local carries the region along, a reassigned
+// provider is a fresh region, and a provider in a local record is that
+// record's to reset.
+Scratch_Env :: struct { scratch: mem.Scratch }
+
+provider_ends :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	kept := move(arena);
+	xs.append(2);
+	fmt.println(xs.len());
+	drop(xs);
+	drop(kept);
+
+	again := mem.Arena.init();
+	again = mem.Arena.init();
+	ys: [dynamic]int via again.allocator() = {};
+	ys.append(3);
+	fmt.println(ys[0]);
+
+	env := Scratch_Env{mem.Scratch.init()};
+	{
+		zs: [dynamic]int via env.scratch.allocator() = {};
+		zs.append(4);
+		fmt.println(zs[0]);
+	}
+	free_all(env.scratch.allocator());
+}
+
 main :: proc() {
 	zero_size();
+	provider_ends();
 	environment();
 	parented();
 	wrapped_provider();

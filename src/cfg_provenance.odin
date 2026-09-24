@@ -73,6 +73,8 @@ Prov_Event :: struct {
 	// direct `free_all`, `Write` for handing an allocator onward.
 	reset_covered: bool,
 	owner_span:    Span,
+	// `Reset`: the written operation ending a provider, such as "dropping `a`".
+	ends:          string,
 	// `Live`: re-establishes its loans. A loop head re-reads its iterable, so a
 	// body invalidation must not cross the back edge.
 	revives:       bool,
@@ -723,6 +725,7 @@ prov_load_content :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step
 prov_consume :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string) -> []int {
 	source := place
 	if moved, is_move := place.(^Expr_Move); is_move {
+		provider_move_end(graph, moved)
 		source = moved.value
 	}
 	consumed: []int
@@ -1197,7 +1200,7 @@ prov_define_region_content :: proc(
 
 // The token for one local provider. Past 64 providers the set is `crowded`,
 // meaning "may be any of them".
-@(private = "file")
+@(private)
 prov_provider_region :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_Set {
 	out := prov_empty_region(graph)
 	if existing, found := graph.provider_bits[id]; found {
@@ -1214,6 +1217,35 @@ prov_provider_region :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_Set {
 	graph.provider_bits[id] = bit
 	out.locals = bit
 	return out
+}
+
+// The provider tokens a value moved out of locals carries, through composite
+// literals and `exchange`, or 0.
+@(private = "file")
+prov_moved_bits :: proc(graph: ^Flow_Graph, e: Expr) -> u64 {
+	source: Expr
+	#partial switch v in e {
+	case ^Expr_Move:
+		source = v.value
+	case ^Expr_Call:
+		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange && len(v.bound) == 2 {
+			source = v.bound[0]
+		}
+	case ^Expr_Composite:
+		bits: u64
+		for element in v.elements {
+			if element.value != nil {
+				bits |= prov_moved_bits(graph, element.value)
+			}
+		}
+		return bits
+	}
+	if source != nil {
+		if root, _, ok := prov_place_of(graph, source); ok && graph.roots[int(root)].kind == .Local {
+			return graph.provider_bits[graph.roots[int(root)].symbol]
+		}
+	}
+	return 0
 }
 
 // The name of the one local region a set names, or "".
@@ -1275,6 +1307,11 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 	c := graph.k.c
 	#partial switch v in e {
 	case ^Expr_Ident:
+		// A provider as a value is backed by its parent; the region it provides is
+		// reached through its handle.
+		if type_is_region_provider(c, expr_base(e).type) {
+			return graph.provider_parents[v.symbol] or_else Region_Set{}
+		}
 		return prov_region_for_symbol(graph, v.symbol)
 	case ^Expr_Move:
 		return prov_region_of(graph, v.value)
@@ -1336,6 +1373,12 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (Region_Set, bo
 	}
 	ident, is_ident := v.bound[0].(^Expr_Ident)
 	if !is_ident {
+		// A provider inside a local record or container: one token for that local.
+		if root, _, ok := prov_place_of(graph, v.bound[0]); ok {
+			if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
+				return prov_provider_region(graph, descriptor.symbol), true
+			}
+		}
 		set := prov_empty_region(graph)
 		set.unknown = true
 		return set, true
@@ -1509,7 +1552,16 @@ prov_parameter_symbol :: proc(graph: ^Flow_Graph, index: int) -> ^Symbol {
 // A reset may end every allocation in its region (design.md): checked for its
 // promise and for live owners it would strand.
 @(private)
-prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool, at: ^Expr_Call, cleanup_dead: []Symbol_Id = nil) {
+prov_reset :: proc(
+	graph: ^Flow_Graph,
+	set: Region_Set,
+	span: Span,
+	direct: bool,
+	at: ^Expr_Call,
+	cleanup_dead: []Symbol_Id = nil,
+	ends := "",
+	ending := INVALID_SYMBOL,
+) {
 	covered, unmarked := prov_reset_promise(graph, set)
 	if !direct && unmarked == "" && region_is_empty(set) {
 		covered = true
@@ -1525,6 +1577,7 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 		name          = unmarked,
 		region        = set,
 		reset_covered = unmarked == "" && covered,
+		ends          = ends,
 	}
 	// A live owner in an overlapping region blocks the reset, since its cleanup
 	// still runs. Liveness is lifecycle's answer, recorded one pass earlier; a
@@ -1535,7 +1588,8 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 		if owner == nil {
 			continue
 		}
-		if slice.contains(dead, id) {
+		// The local being ended is what ends the region, not a dependant of it.
+		if slice.contains(dead, id) || id == ending {
 			continue
 		}
 		if type_is_region_provider(graph.k.c, owner.type) {
@@ -2197,6 +2251,14 @@ prov_declare_region :: proc(
 			initializer_region = prov_result_region(graph, initializer)
 		}
 	}
+	// A provider moved in keeps its region, and so its token.
+	if initializer != nil && sym.duration == .None && projected < 0 {
+		if _, found := graph.provider_bits[id]; !found {
+			if bits := prov_moved_bits(graph, initializer); bits != 0 {
+				graph.provider_bits[id] = bits
+			}
+		}
+	}
 	// design.md: a local `mem.Arena`/`mem.Scratch` is a region of its own.
 	if type_is_region_provider(graph.k.c, sym.type) && sym.duration == .None {
 		graph.region_of[id] = prov_provider_region(graph, id)
@@ -2292,8 +2354,15 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			}
 		}
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
+			provider_assign_end(graph, ident)
 			target_type := expr_base(target).type
-			if value != nil &&
+			if value != nil && type_is_region_provider(graph.k.c, target_type) {
+				// A provider's own region stays its token; the new value's parent joins
+				// the parents it depends on.
+				parent := graph.provider_parents[ident.symbol] or_else prov_empty_region(graph)
+				region_merge(&parent, value_region)
+				graph.provider_parents[ident.symbol] = parent
+			} else if value != nil &&
 			   (type_underlying(graph.k.c, target_type) == TYPE_ALLOCATOR || type_is_managed(graph.k.c, target_type)) {
 				existing, found := graph.region_of[ident.symbol]
 				if !found {
@@ -2515,11 +2584,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			return nil
 		case .Drop:
 			if len(v.bound) == 1 {
+				provider_drop_end(graph, v)
 				prov_invalidate(graph, v.bound[0], v.span, "dropped")
 			}
 			return nil
 		case .Exchange:
 			if len(v.bound) == 2 {
+				provider_exchange_end(graph, v)
 				prov_invalidate(graph, v.bound[0], v.span, "exchanged")
 				walk_flow_expr(graph, v.bound[1])
 			}

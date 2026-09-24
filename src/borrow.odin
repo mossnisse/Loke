@@ -1994,7 +1994,8 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 			state.k.c,
 			event.span,
 			"L0537",
-			"this reset would end the region backing `%s`, which is still live here",
+			"%s would end the region backing `%s`, which is still live here",
+			event.ends != "" ? event.ends : "this reset",
 			event.verb,
 		)
 		add_notef(state.k.c, event.owner_span, "`%s` is declared here and is cleaned up after this point", event.verb)

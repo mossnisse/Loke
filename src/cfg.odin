@@ -5,6 +5,7 @@
 // events are built in cfg_provenance.odin.
 package lokec
 
+import "core:fmt"
 import "core:mem"
 import "core:slice"
 
@@ -37,20 +38,23 @@ Flow_Event :: struct {
 	name:          string,
 	assign:        ^Stmt_Assign,
 	target:        int,
-	// `Reset_Point`: the resetting call, or the provider cleanup's key.
+	// `Reset_Point`: the resetting call, or the provider end's key.
 	call:          ^Expr_Call,
 	cleanup_reset: Cleanup_Reset_Key,
 	// The attempted operation, for diagnostics.
 	verb:          string,
 }
 
-// A provider's cleanup can be expanded at several exits, so each is numbered
-// per symbol in walk order. Both passes number the same symbols' cleanups the
-// same way, whatever other roots only one of them registers.
+// Where a local holding a provider ends. A `drop`, `move`, or assignment is
+// keyed by its node. A cleanup can be expanded at several exits, so each is
+// numbered per symbol in walk order instead: both passes number the same
+// symbols' cleanups the same way, whatever other roots only one of them
+// registers.
 Cleanup_Reset_Key :: struct {
 	body:    ^Expr_Proc,
 	symbol:  Symbol_Id,
 	ordinal: int,
+	node:    rawptr,
 }
 
 Flow_Block :: struct {
@@ -173,6 +177,9 @@ Flow_Graph :: struct {
 	// One bit per local `mem.Arena`/`mem.Scratch`.
 	provider_bits:    map[Symbol_Id]u64,
 	provider_symbols: [dynamic]Symbol_Id,
+	// The `move`s and `exchange`s whose value becomes a new local or a result,
+	// which takes the provider's region with it rather than ending it.
+	aliased_moves:    map[rawptr]bool,
 	has_region_event: bool,
 	has_content_load: bool,
 
@@ -241,6 +248,7 @@ build_flow_graph :: proc(
 	graph.reborrows = make([dynamic]Prov_Reborrow, allocator)
 	graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
 	graph.cleanup_resets = make(map[Symbol_Id]int, 4, allocator)
+	graph.aliased_moves = make(map[rawptr]bool, 4, allocator)
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
@@ -366,13 +374,13 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 			append(&graph.in_scope, ..tail)
 			resize(&graph.owners_in_scope, owners)
 		case .Prov_Root:
-			provider_cleanup_reset(graph, graph.roots[int(action.root)].symbol, action.span)
+			provider_region_end(graph, graph.roots[int(action.root)].symbol, action.span)
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
 		case .Local:
 			id := graph.tracked[action.slot].symbol
 			sym := symbol_of(graph.k.c, id)
 			span := sym == nil ? no_span() : sym.span
-			provider_cleanup_reset(graph, id, span)
+			provider_region_end(graph, id, span)
 			emit(graph, Flow_Event {
 				kind = .Cleanup,
 				slot = action.slot,
@@ -383,24 +391,99 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 	}
 }
 
-@(private = "file")
-provider_cleanup_reset :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
+// A local holding a provider ends its region when it is cleaned up, dropped,
+// moved anywhere but a new local or a result, or assigned over; every owner the
+// region backs must be dead by then (design.md "Allocators"). `node` keys a
+// written end; a cleanup passes nil. `ends` names a written end for the
+// diagnostic.
+@(private)
+provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node: rawptr = nil, ends := "") {
 	sym := symbol_of(graph.k.c, id)
-	if sym == nil || !type_is_region_provider(graph.k.c, sym.type) || sym.duration != .None {
+	if sym == nil || sym.kind != .Var || sym.duration != .None || !type_carries_provider(graph.k.c, sym.type) {
 		return
 	}
-	graph.cleanup_resets[id] += 1
-	key := Cleanup_Reset_Key{graph.literal, id, graph.cleanup_resets[id]}
+	key := Cleanup_Reset_Key{graph.literal, id, 0, node}
+	if node == nil {
+		graph.cleanup_resets[id] += 1
+		key.ordinal = graph.cleanup_resets[id]
+	}
 	if graph.mode == .Lifecycle {
 		emit(graph, Flow_Event{kind = .Reset_Point, cleanup_reset = key, span = span})
-	} else {
-		dead, found := graph.k.c.cleanup_reset_dead[key]
-		// No key: an unreachable exit, or a view such as a `&` loop element that
-		// owns nothing. A consumed provider has no cleanup to run either.
-		if !found || slice.contains(dead, id) {
-			return
+		return
+	}
+	dead, found := graph.k.c.cleanup_reset_dead[key]
+	// No key: an unreachable exit, or a view such as a `&` loop element that
+	// owns nothing. A consumed value has no region left to end either.
+	if !found || slice.contains(dead, id) {
+		return
+	}
+	// A parameter's region is the caller's, and its owners are the caller's too.
+	if root, rooted := graph.root_by_symbol[id]; !rooted || graph.roots[int(root)].kind != .Local {
+		return
+	}
+	prov_reset(graph, prov_provider_region(graph, id), span, true, nil, dead, ends, id)
+}
+
+// A `move` out of a local ends what it holds, unless the move is into a new
+// local or a result, which carries the region along.
+@(private)
+provider_move_end :: proc(graph: ^Flow_Graph, v: ^Expr_Move) {
+	if graph.aliased_moves[v] {
+		return
+	}
+	if ident, is_ident := v.value.(^Expr_Ident); is_ident {
+		provider_region_end(graph, ident.symbol, v.span, v, provider_end_phrase(graph, "moving", ident.name))
+	}
+}
+
+@(private)
+provider_drop_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
+		provider_region_end(graph, ident.symbol, v.span, v, provider_end_phrase(graph, "dropping", ident.name))
+	}
+}
+
+// `exchange` hands back the old value, which ends its region wherever it goes
+// but a new local.
+@(private)
+provider_exchange_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	if graph.aliased_moves[v] {
+		return
+	}
+	if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
+		provider_region_end(graph, ident.symbol, v.span, v, provider_end_phrase(graph, "exchanging", ident.name))
+	}
+}
+
+// Assignment drops the destination's previous value (design.md).
+@(private)
+provider_assign_end :: proc(graph: ^Flow_Graph, target: ^Expr_Ident) {
+	provider_region_end(
+		graph, target.symbol, target.span, target, provider_end_phrase(graph, "assigning over", target.name),
+	)
+}
+
+@(private = "file")
+provider_end_phrase :: proc(graph: ^Flow_Graph, verb, name: string) -> string {
+	return graph.mode == .Lifecycle ? "" : fmt.aprintf("%s `%s`", verb, name, allocator = graph.alloc)
+}
+
+// The moves an initializer or a result takes whole, through composite literals.
+@(private = "file")
+mark_aliased_moves :: proc(graph: ^Flow_Graph, e: Expr) {
+	#partial switch v in e {
+	case ^Expr_Move:
+		graph.aliased_moves[v] = true
+	case ^Expr_Call:
+		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange {
+			graph.aliased_moves[v] = true
 		}
-		prov_reset(graph, prov_region_for_symbol(graph, id), span, true, nil, dead)
+	case ^Expr_Composite:
+		for element in v.elements {
+			if element.value != nil {
+				mark_aliased_moves(graph, element.value)
+			}
+		}
 	}
 }
 
@@ -445,6 +528,9 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 		append(&graph.in_scope, Flow_Cleanup{kind = .Defer, stmt = s.stmt})
 
 	case ^Stmt_Return:
+		if s.value != nil && !s.value.is_inout {
+			mark_aliased_moves(graph, s.value.expr)
+		}
 		if graph.mode != .Lifecycle {
 			if value := s.value; value != nil {
 				// design.md "`inout` results": `return inout place` hands back a
@@ -524,6 +610,12 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 	value_loans: [][]int
 	if graph.mode != .Lifecycle && len(d.values) > 0 {
 		value_loans = make([][]int, len(d.values), graph.alloc)
+	}
+	// A destructured value is split between bindings, so its region cannot follow.
+	if !d.destructure.active {
+		for value in d.values {
+			mark_aliased_moves(graph, value)
+		}
 	}
 	for value, index in d.values {
 		result := walk_flow_expr(graph, value)
@@ -645,6 +737,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		// A full assignment revives the variable; a write through a field or
 		// element is a use of its root.
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
+			provider_assign_end(graph, ident)
 			if slot, tracked := graph.by_symbol[ident.symbol]; tracked {
 				emit(graph, Flow_Event {
 					kind   = .Assign,
@@ -938,6 +1031,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return prov_read_ident(graph, v, .Read)
 
 	case ^Expr_Move:
+		provider_move_end(graph, v)
 		if prov {
 			return prov_consume(graph, v.value, v.span, "moved")
 		}
@@ -1240,6 +1334,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	case .Exchange:
 		// The destination must be live and stays live (design.md).
 		if len(v.bound) == 2 {
+			provider_exchange_end(graph, v)
 			walk_flow_operand(graph, v.bound[0], .Use, v.span, "exchanged")
 			walk_flow_expr(graph, v.bound[1])
 		}
@@ -1251,6 +1346,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		return nil
 	case .Drop:
 		if len(v.bound) == 1 {
+			provider_drop_end(graph, v)
 			walk_flow_operand(graph, v.bound[0], .Kill, v.span, "dropped")
 		}
 		return nil
