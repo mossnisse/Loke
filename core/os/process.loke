@@ -89,8 +89,11 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 @(private)
 wide :: proc(text: string_view, operation: io.Operation) -> Result([dynamic]u16, io.Error) {
 	switch (units in utf16.encode(text, mem.default_allocator())) {
-	case .ok:  return .ok(move(units));
-	case .err: return .err(io.make_error(.Out_Of_Memory, operation));
+	case .ok:
+		return .ok(move(units));
+	case .err:
+		code := io.Code.Out_Of_Memory if units == .Out_Of_Memory else io.Code.Invalid_Data;
+		return .err(io.make_error(code, operation));
 	}
 }
 

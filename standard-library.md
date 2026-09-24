@@ -45,7 +45,8 @@ name explicitly says `rune` or `grapheme`.
 Paths are accepted as UTF-8 `string_view`s. On Windows they are converted to
 UTF-16 (through `core:encoding/utf16`) and passed to the wide operating-system
 APIs. A native path that cannot be represented as valid Unicode is reported as
-invalid data rather than being silently changed.
+invalid data rather than being silently changed. A path containing U+0000 is
+`Invalid_Path`, because the wide call would read it only up to the zero.
 
 ### Errors are values
 
@@ -560,6 +561,28 @@ only owes `view()`, and the one motivating case — handing a foreign API a stri
 it retains — starts from a `string_view`. Add the byte-oriented pair when a
 caller has bytes that are not text.
 
+## `core:encoding/utf16`
+
+The conversion `core:fs`, `core:os`, and `core:term` share for the wide Windows
+APIs.
+
+```odin
+Error :: enum { Invalid_Data, Out_Of_Memory, Contains_Zero }
+
+encode(text: string_view, allocator := mem.default_allocator())
+	-> Result([dynamic]u16, Error)
+decode(units: []u16, allocator := mem.default_allocator())
+	-> Result(string, Error)
+length_of(units: []u16) -> int
+```
+
+`encode` returns zero-terminated units; the terminator is not part of the text,
+so the unit count is `len() - 1`. Text containing U+0000 is `Contains_Zero`, for
+the same reason `core:cstrings` rejects it. `decode` converts exactly the range
+it is given, zeros included, and an unpaired surrogate is `Invalid_Data` rather
+than U+FFFD. `length_of` counts the units before the first zero, for an API that
+returns a terminated buffer.
+
 ## `core:strconv`
 
 Parsing does not belong in `strings`: it interprets text as another type.
@@ -866,6 +889,7 @@ present empty value, except that on Windows setting a variable to the empty
 string removes it; that is the platform's behavior, documented at the call. Its
 owning result uses the supplied allocator. Environment
 names and values must become valid UTF-8 or the operation returns invalid data.
+A name, value, or path passed in containing U+0000 is invalid data as well.
 A process-spawning API is deferred until handle inheritance, quoting, environment
 replacement, and pipe ownership are designed together.
 

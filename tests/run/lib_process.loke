@@ -69,6 +69,21 @@ main :: proc() {
 	}
 	fmt.println(succeeded(os.unset_environment(name)));
 
+	// U+0000 would end the wide value early and store `a` instead.
+	zero := [?]u8{u8('a'), 0, u8('b')};
+	switch (outcome in os.set_environment(name, string.from_utf8(zero[:]) or_else "")) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(outcome, .Invalid_Data));
+	}
+	switch (found in os.get_environment(name)) {
+	case .ok:
+		switch (_ in found) {
+		case .some: fmt.println(false);
+		case .none: fmt.println(true);
+		}
+	case .err: fmt.println("get failed");
+	}
+
 	// The working directory round trip. Printed as booleans, so the case does not
 	// depend on where the harness runs it from.
 	start := "";

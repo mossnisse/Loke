@@ -63,6 +63,11 @@ main :: proc() {
 		fmt.println(true);
 		fmt.println(int(rejected));
 	}
+	// Nor may zero-terminated UTF-16.
+	switch (rejected in utf16.encode(text)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(rejected == .Contains_Zero);
+	}
 
 	// The zero value of `C_String` is an empty, terminated buffer too.
 	inert: cstrings.C_String = {};

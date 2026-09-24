@@ -179,6 +179,12 @@ main :: proc() {
 	fmt.println(succeeded(fs.write_text(unicode, "ok")));
 	fmt.println(fs.exists(unicode) or_else false);
 
+	// U+0000 would end the wide name early, writing `cut` instead.
+	zero := [?]u8{u8('c'), u8('u'), u8('t'), 0, u8('x')};
+	cut := in_root(directory, string.from_utf8(zero[:]) or_else "");
+	fmt.println(io.is(failure_of(fs.write_text(cut, "no")), .Invalid_Path));
+	fmt.println(fs.exists(in_root(directory, "cut")) or_else true);
+
 	// The handle API: write, seek, read back, and close explicitly.
 	handle_path := in_root(directory, "handle.bin");
 	handle := fs.open(handle_path, fs.Open_Options{.Read_Write, .Create_Or_Truncate, false}) or_else no_file();

@@ -1,4 +1,4 @@
-// UTF-8 to UTF-16 and back (standard-library "Package layout").
+// UTF-8 to UTF-16 and back (standard-library "`core:encoding/utf16`").
 //
 // Windows is a wide-character operating system: every path, environment
 // variable, and console record it hands out is UTF-16. The library's public
@@ -12,11 +12,6 @@
 // argument that Windows never promised to be well-formed becomes U+FFFD there.
 // Every caller reaching this package has a `Result` to fail into, and gets
 // `Invalid_Data` rather than a quietly changed name.
-//
-// The plan lists `core:encoding/utf16` among the later packages. It arrives
-// early because `core:fs`, `core:term`, and `core:os` all need it on the first
-// target, and a duplicated surrogate decoder in three packages is worse than a
-// package that exists a milestone sooner.
 @(public)
 package utf16;
 
@@ -29,44 +24,41 @@ Error :: enum {
 	// rather than silently changed.
 	Invalid_Data,
 	Out_Of_Memory,
+	// U+0000 in text to encode. The result is zero-terminated for a wide call,
+	// so a zero inside would end the name there: `a\0b` would open `a`.
+	Contains_Zero,
 }
 
 // The text as zero-terminated UTF-16, ready for a wide operating-system call.
 // The terminator is part of the buffer but not of its length contract: callers
 // pass the data pointer, and `result.len() - 1` is the unit count.
 //
-// A `string_view` is valid UTF-8 by construction, so the only failure is
-// allocation.
+// A `string_view` is valid UTF-8 by construction, so the only failures are an
+// interior zero and allocation.
 encode :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]u16, Error) {
-	units: [dynamic]u16 = {};
-	switch (made in make([dynamic]u16, 0, text.len() + 1, allocator)) {
-	case .ok:  units = move(made);
-	case .err: return .err(.Out_Of_Memory);
-	}
-	foreach (codepoint in text) {
-		value := int(codepoint);
-		if (value < 0x10000) {
-			switch (added in units.try_append(u16(value))) {
-			case .ok:
-			case .err: return .err(.Out_Of_Memory);
-			}
-			continue;
-		}
-		rest := value - 0x10000;
-		high := u16(0xD800 + (rest >> 10));
-		low := u16(0xDC00 + (rest & 0x3FF));
-		switch (added in units.try_append(high, low)) {
-		case .ok:
-		case .err: return .err(.Out_Of_Memory);
-		}
-	}
-	switch (added in units.try_append(0)) {
+	switch (units in make([dynamic]u16, 0, text.len() + 1, allocator)) {
 	case .ok:
-	case .err: return .err(.Out_Of_Memory);
+		// No scalar value takes fewer UTF-8 bytes than UTF-16 units, so the
+		// capacity covers every append below and none can fail.
+		foreach (codepoint in text) {
+			value := int(codepoint);
+			if (value == 0) {
+				return .err(.Contains_Zero);
+			}
+			if (value < 0x10000) {
+				units.append(u16(value));
+				continue;
+			}
+			rest := value - 0x10000;
+			units.append(u16(0xD800 + (rest >> 10)), u16(0xDC00 + (rest & 0x3FF)));
+		}
+		units.append(0);
+		return .ok(move(units));
+	case .err:
+		return .err(.Out_Of_Memory);
 	}
-	return .ok(move(units));
 }
 
 // The units as an owning UTF-8 `string`. A zero unit does not end the input:

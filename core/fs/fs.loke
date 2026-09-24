@@ -431,8 +431,11 @@ wide_path :: proc(path: string_view, operation: io.Operation) -> Result([dynamic
 		return .err(io.make_error(.Invalid_Path, operation));
 	}
 	switch (units in utf16.encode(path, mem.default_allocator())) {
-	case .ok:  return .ok(move(units));
-	case .err: return .err(io.make_error(.Out_Of_Memory, operation));
+	case .ok:
+		return .ok(move(units));
+	case .err:
+		code := io.Code.Invalid_Path if units == .Contains_Zero else io.Code.Out_Of_Memory;
+		return .err(io.make_error(code, operation));
 	}
 }
 
