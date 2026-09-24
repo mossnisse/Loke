@@ -124,7 +124,15 @@ impl File {
 	}
 }
 
+// Truncating writes to the file, so a read-only open that would truncate is
+// refused rather than performed. So is `Truncate_Existing` with `append`: Windows
+// truncates an existing file only for a caller holding the full write right,
+// which is exactly what append mode gives up. Both refusals leave the file alone.
 open :: proc(path: string_view, options: Open_Options) -> Result(File, io.Error) {
+	truncates := options.disposition == .Create_Or_Truncate || options.disposition == .Truncate_Existing;
+	if ((truncates && options.access == .Read) || (options.disposition == .Truncate_Existing && options.append)) {
+		return .err(io.make_error(.Unsupported, .Open));
+	}
 	return open_native(path, options);
 }
 
@@ -261,17 +269,20 @@ create_directories :: proc(path: string_view) -> Result(Unit, io.Error) {
 	return ensure_directory(path);
 }
 
-// `CreateDirectoryW` uses the same Already_Exists code for an existing
-// directory and an existing non-directory. Only the former satisfies this
-// operation's postcondition.
+// The postcondition is that a directory is there, so a failed creation is
+// settled by asking. `CreateDirectoryW` answers `Already_Exists` for an existing
+// directory and an existing non-directory alike, and `Permission_Denied` for a
+// volume root, which always exists; only a directory satisfies the operation.
 @(private)
 ensure_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 	switch (outcome in create_directory(path)) {
 	case .ok: return .ok;
 	case .err:
-		if (!io.is(outcome, .Already_Exists)) { return .err(outcome); }
-		info := metadata(path) or_return;
-		if (info.kind == .Directory) { return .ok; }
+		switch (info in metadata(path)) {
+		case .ok:
+			if (info.kind == .Directory) { return .ok; }
+		case .err:
+		}
 		return .err(outcome);
 	}
 }
@@ -694,15 +705,24 @@ impl Directory_Reader {
 read_directory_native :: proc(
 	path: string_view, allocator: Allocator,
 ) -> Result(Directory_Reader, io.Error) {
-	// `FindFirstFileW` takes a pattern, not a directory.
-	pattern := strings.join([]string_view{path, "*"}, "\\", mem.default_allocator());
+	// `FindFirstFileW` takes a pattern, not a directory. A path already ending in
+	// a separator or a drive's colon takes the `*` directly: `C:\*` would be the
+	// root rather than the current directory of drive C.
+	last := path.bytes()[path.len() - 1];
+	separator: string_view = "" if is_separator(last) || last == u8(':') else "\\";
+	pattern := strings.join([]string_view{path, "*"}, separator, mem.default_allocator());
 	wide := wide_path(pattern, .Read_Directory) or_return;
 
 	reader: Directory_Reader = {};
 	reader.allocator = allocator;
 	handle := rt_find_first(unsafe.raw_data(wide), &mut reader.data);
 	if (handle == INVALID_HANDLE) {
-		return .err(from_last_error(.Read_Directory));
+		error := from_last_error(.Read_Directory);
+		// ERROR_FILE_NOT_FOUND is a pattern that matched nothing. Every directory
+		// but a volume root matches its own `.`, so this is an empty root, and the
+		// inert reader yields no entries. A missing directory is ERROR_PATH_NOT_FOUND.
+		if (io.native_code_of(error) == 2) { return .ok(move(reader)); }
+		return .err(error);
 	}
 	reader.handle = handle;
 	reader.pending = true;

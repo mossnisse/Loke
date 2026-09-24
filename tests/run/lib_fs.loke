@@ -227,6 +227,24 @@ main :: proc() {
 	}
 	fmt.println(succeeded(reader.close()));
 
+	// Truncating is writing, so a read-only open refuses it and leaves the file
+	// whole; so does truncating an existing file for append.
+	truncating := fs.open(file, fs.Open_Options{.Read, .Create_Or_Truncate, false});
+	switch (refused in move(truncating)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(refused, .Unsupported));
+	}
+	appending := fs.open(file, fs.Open_Options{.Write, .Truncate_Existing, true});
+	switch (refused in move(appending)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(refused, .Unsupported));
+	}
+	fmt.println(fs.read_text(file) or_else no_text());
+
+	// A volume root always exists, though Windows refuses to create it.
+	volume_root := strings.join([]string_view{path.volume(directory), ""}, "\\");
+	fmt.println(succeeded(fs.create_directories(volume_root)));
+
 	// Renaming, then reading through the new name.
 	renamed := in_root(directory, "renamed.txt");
 	fmt.println(succeeded(fs.rename(file, renamed)));
@@ -234,6 +252,11 @@ main :: proc() {
 
 	// The directory reader yields every entry once, and skips `.` and `..`.
 	fmt.println(count_entries(directory) or_else -1);
+	// A bare drive names that drive's current directory, not its root.
+	previous := os.working_directory() or_else no_text();
+	fmt.println(succeeded(os.set_working_directory(directory)));
+	fmt.println(count_entries(path.volume(directory)) or_else -1);
+	fmt.println(succeeded(os.set_working_directory(previous)));
 
 	clean_up(directory);
 	fmt.println(fs.exists(directory) or_else true);

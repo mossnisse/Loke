@@ -724,7 +724,11 @@ Because structural interface satisfaction is determined by the static type,
 the options used for a particular instance. The open mode is checked at runtime:
 using an unsupported direction returns `Unsupported`, and a nonempty read or
 write, or a seek, on a closed file returns `Closed`; `flush` and `close` on a
-closed file succeed. Append mode guarantees
+closed file succeed. A disposition that truncates needs `Write` or
+`Read_Write` access, and `Truncate_Existing` cannot be combined with `append`
+(Windows truncates an existing file only for a caller holding the full write
+right, which append mode gives up); `open` answers `Unsupported` for either
+without touching the file. Append mode guarantees
 that each underlying write begins at the current end of file; it does not make
 multiple writes from multiple processes into one atomic transaction.
 
@@ -776,6 +780,12 @@ platform search handle in `drop`. A caller wanting an array collects one itself.
 Because `next` reports both the end and a failure, the reader is not a `foreach`
 iterable; the loop that walks it is design.md "Streaming a fallible source", and
 `tests/run/lib_fs` walks a directory with it.
+
+`create_directories` succeeds when the path ends up naming a directory, so an
+existing directory and a volume root such as `C:\` are not failures, while an
+existing file is `Already_Exists`. A path ending in a drive's colon, such as
+`C:`, names that drive's current directory for `read_directory` as for every
+other operation.
 
 `exists` answers `.ok(false)` only for a definite not-found result; permission
 and I/O failures remain errors. `Metadata` holds `kind` (`File`, `Directory`,

@@ -264,6 +264,19 @@ surprise a reader:
 
 Should the spec fix these forms, and should either change?
 
+## Symbolic links before `core:fs` supports them
+
+standard-library.md "`core:fs`" says symbolic links are unsupported and that
+their behavior, when it arrives, will be explicit rather than Windows's. Until
+then `fs.metadata` reports what `GetFileAttributesExW` says about the link
+itself. A junction reads as a `Directory`. A file link reads as the link, which
+Windows documents as describing the link rather than its target, though opening
+it reads the target. `Kind.Other` is never produced.
+
+Should a reparse point read as `Other` now? That would be explicit. It would
+also make `create_directories` fail through a junction, which ordinary Windows
+profiles contain.
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
