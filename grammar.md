@@ -426,7 +426,7 @@ left (see [design.md](design.md#default-values)). A result is anonymous, so
 `return` always carries its value. The `---` body marks a foreign declaration.
 
 A hook is legal only as an inherent `impl` member, and its role fixes its
-signature (see [design.md](design.md#compiler-semantic-hooks)).
+signature (see [design.md](design.md#hooks)).
 
 # Statements
 

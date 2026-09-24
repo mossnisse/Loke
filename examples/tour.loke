@@ -30,8 +30,8 @@ corners :: proc(width, height: int) -> Result([dynamic]Point, Grid_Error) {
 }
 
 main :: proc() {
-	moved := Point{0, 0}.shifted(3, 4) + Point{1, 1};
-	fmt.println("moved to", moved.x, moved.y);
+	target := Point{0, 0}.shifted(3, 4) + Point{1, 1};
+	fmt.println("target", target.x, target.y);
 
 	switch (outcome in corners(8, 8)) {
 	case .ok:
