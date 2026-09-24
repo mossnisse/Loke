@@ -58,6 +58,15 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Ty
 }
 
 @(private = "file")
+is_zero_constant :: proc(value: string) -> bool {
+	switch value {
+	case "0", "false", "null", "zeroinitializer", "0xH0000", "0x0000000000000000":
+		return true
+	}
+	return false
+}
+
+@(private = "file")
 write_byte_array_constant :: proc(b: ^strings.Builder, bytes: []u8) {
 	fmt.sbprintf(b, "[%d x i8] c\"", len(bytes))
 	for byte in bytes {
@@ -115,6 +124,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		mask := vector && type_kind(e.c, type_underlying(e.c, info.element)) == .Bool
 		b := strings.builder_make()
 		strings.write_string(&b, vector ? "<" : "[")
+		zero := true
 		for index in 0 ..< int(info.count) {
 			if index > 0 {
 				strings.write_string(&b, ",")
@@ -128,6 +138,11 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 				value = value == "true" ? "1" : "0"
 			}
 			fmt.sbprintf(&b, " %s %s", lane, value)
+			zero &&= is_zero_constant(value)
+		}
+		// `store` writes a large zero value with memset.
+		if zero {
+			return "zeroinitializer"
 		}
 		strings.write_string(&b, vector ? " >" : " ]")
 		return strings.to_string(b)
@@ -340,9 +355,24 @@ load_place :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
 	return out
 }
 
+LARGE_CONSTANT_STORE :: 4096
+
 @(private)
 store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 	if address == "" || value == "" {
+		return
+	}
+	// clang crashes in instruction selection on a store of a large aggregate
+	// constant, so one is written with memset or copied from a module constant.
+	// A large copy is still stored whole; see known-gaps.md.
+	if size := type_size(e.c, type); value[0] != '%' && size > LARGE_CONSTANT_STORE {
+		if value == "zeroinitializer" {
+			fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)", address, size)
+			return
+		}
+		name := fmt.aprintf("@.aggregate.%d", len(e.globals))
+		append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s\n", name, llvm_type(e, type), value))
+		fmt.sbprintfln(&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %d, i1 false)", address, name, size)
 		return
 	}
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s%s", llvm_type(e, type), value, address, align_suffix(e, address, type))

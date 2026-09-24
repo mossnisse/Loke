@@ -13,6 +13,16 @@ the compiler, unless the rewording is the intended fix.
   every local holding providers, so resetting or replacing one is blocked by
   live owners of another. This rejects valid programs; it never accepts an
   invalid one.
+- **Copying a large array or record crashes clang.** The backend copies a value
+  with one LLVM load and store of the whole aggregate, and clang's instruction
+  selection crashes on 64 KiB (L0403). Large constants are already written with
+  `memset` or `memcpy`; a copy needs the same.
+
+  ```
+  package main;
+  table: [65536]u8;
+  main :: proc() { copy := table; copy[1] = 2; }
+  ```
 
 ## Not gaps
 

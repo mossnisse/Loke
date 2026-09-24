@@ -1,0 +1,20 @@
+package main;
+
+import "core:fmt";
+
+// clang crashed in instruction selection on a store of a 64 KiB constant.
+Holder :: struct {
+	tag: int,
+	bytes: [65536]u8,
+}
+
+table: [65536]u8;
+
+main :: proc() {
+	buffer: [65536]u8 = {};
+	buffer[3] = 5;
+	holder: Holder = {};
+	holder.bytes[65535] = 9;
+	first: [65536]u8 = {7};
+	fmt.println(buffer[3], buffer[4], holder.bytes[2], holder.bytes[65535], table[4], first[0], first[1]);
+}
