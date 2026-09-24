@@ -2073,7 +2073,7 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, 
 		return lt, true
 	}
 	// A `string` and a `string_view` may occur in either order (design.md
-	// "Concatenation" and "Comparison operators"). They meet at the borrowed
+	// "Arithmetic operators" and "Comparison operators"). They meet at the borrowed
 	// view, which is the one both sides can produce without allocating.
 	if type_is_utf8_text(k.c, lt) && type_is_utf8_text(k.c, rt) {
 		if materialize(k, lhs, TYPE_STRING_VIEW) && materialize(k, rhs, TYPE_STRING_VIEW) {

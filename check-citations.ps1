@@ -34,9 +34,10 @@ try {
         }
 
         # `design.md "X"` and `standard-library "X"` are both written, so
-        # the extension is optional.
+        # the extension is optional. The name may wrap onto the next comment
+        # line before its opening quote.
         $base = [regex]::Escape([System.IO.Path]::GetFileNameWithoutExtension($spec))
-        $pattern = "$base(?:\.md)?\s+`"([^`"]+)`""
+        $pattern = "$base(?:\.md)?\s+(?:(?://|\*)\s*)?`"([^`"]+)`""
 
         foreach ($path in $texts.Keys) {
             $text = $texts[$path]
