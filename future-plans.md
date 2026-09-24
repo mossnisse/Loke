@@ -17,10 +17,8 @@ move it into the permanent regression corpus so the divergence cannot return.
 
 Main work:
 
-- enforce the lifetime of every local allocator region at ordinary scope exit;
-- audit adjacent ownership, borrow, cleanup, and panic paths for the same class
-  of escape;
-- add negative diagnostics and runtime coverage for every corrected case;
+- fix each new divergence as it is found, and add negative diagnostics and
+  runtime coverage for the corrected case;
 - keep `design.md`, diagnostics, implementation comments, and tests in agreement;
 - define the v1 release gate as an empty known-gaps list, or document any
   intentionally accepted exception as a specification change.
