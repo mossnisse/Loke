@@ -1,5 +1,5 @@
 // Logging over the build-selected provider (design.md "Build-selected
-// providers").
+// providers"; standard-library "`core:log`").
 //
 // A `Logger` is an ordinary service handle: one procedure and its state, the
 // same shape `fmt.Writer` has. Nothing about it is compiler-known. What the
@@ -53,6 +53,9 @@ standard_logger :: proc() -> Logger {
 	return Logger{standard_write, nil};
 }
 
+// ponytail: five writes per record, so records from two threads can interleave
+// within a line. Nothing can start a Loke thread yet; when something can, format
+// the whole line once and write it in one call.
 @(private)
 standard_write :: proc(state: rawptr, level: Level, message: string_view) {
 	w := fmt.stderr();

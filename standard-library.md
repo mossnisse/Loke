@@ -130,7 +130,7 @@ core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:slice            slice algorithms and sorting            *
 core:container        Small_Array, Bit_Set, Enum_Array        *
-core:log              logging over the selected provider      *
+core:log              logging over the selected provider
 core:io               byte stream protocols and the I/O error
 core:path             lexical path operations
 core:fs               files, directories, and file metadata
@@ -670,6 +670,41 @@ digits, as in a Loke literal.
 
 Formatting scalars remains in `core:fmt`; `strconv` should not grow a second
 formatting system.
+
+## `core:log`
+
+design.md "Build-selected providers" says how a program selects its logger, and
+"Compiled log level" what `-log-level` removes. This is the package's surface.
+
+```odin
+Level :: enum { Debug, Info, Warning, Error, Off }   // contributed by the compiler
+
+Logger :: struct {
+	write: proc(state: rawptr, level: Level, message: string_view),
+	state: rawptr,
+}
+
+debug(args: ..any_view)
+info(args: ..any_view)
+warning(args: ..any_view)
+error(args: ..any_view)
+at(level: Level, args: ..any_view)
+enabled(level: Level) -> bool
+current() -> Logger
+standard_logger() -> Logger
+```
+
+The compiler contributes `Level` so that it and `LOKE_LOG_LEVEL` are one type.
+`Off` is a threshold only: nothing records at it, `enabled(.Off)` is false, and
+`at(.Off, ...)` records nothing. `at` and `enabled` apply the compiled level to
+a level held in a variable.
+
+A record formats its arguments separated by one space, as `fmt.print` does,
+into `mem.default_allocator()`, and hands the logger that text without a line
+ending. The allocation follows that allocator's failure policy, so a record can
+panic under memory pressure. The standard logger writes `[Level] message` and a
+newline to the error stream. `current` returns the selected logger, or the
+standard one when none is selected or before it is published.
 
 ## `core:fs`
 

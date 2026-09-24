@@ -1,0 +1,17 @@
+package main;
+
+import "core:fmt";
+import "core:log";
+
+// `-log-level=off` (design.md "Compiled log level"): every record procedure,
+// `at` included, has no body, so the error stream stays empty, and nothing is
+// enabled. `Off` sorts after `Error`, which is what makes the guard below false.
+
+main :: proc() {
+	log.error("dropped");
+	log.at(log.Level.Error, "dropped");
+	fmt.println(log.enabled(log.Level.Error), LOKE_LOG_LEVEL);
+	when (LOKE_LOG_LEVEL <= log.Level.Error) {
+		log.error(never_declared());
+	}
+}
