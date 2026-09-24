@@ -1,6 +1,6 @@
 // Covers: Declaration, Variable_Decl, Constant_Decl, Identifier_List,
 // Variable_Initializer_List, Variable_Initializer, Declared_Type,
-// Storage_Modifiers, Duration_Modifier, Constant_Initializer,
+// Storage_Modifier, Constant_Initializer,
 // Braced_Constant_Value, Semicolon_Constant_Value.
 package main;
 

@@ -1,6 +1,6 @@
 // Covers: Type, Type_Name, Type_Arguments, Generic_Argument, Proc_Type,
 // Calling_Convention, Signature, Parameter_List, Parameter, Parameter_Names,
-// Parameter_Name, Parameter_Mode, Results, Result_Item, Result_Type.
+// Parameter_Name, Parameter_Mode, Results, Result_Type.
 package main;
 
 // Every type constructor, in a position that takes a type.

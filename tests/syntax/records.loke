@@ -3,7 +3,7 @@
 // Generic_Parameters, Generic_Parameter, Generic_Name, Where_Clause,
 // Interface_Definition, Requirement, Requirement_Result, Bindings,
 // Binding_Group, Proc_Header, Proc_Literal, Proc_Definition, Proc_Declaration,
-// Proc_Group, Operator_Decl, Operator_Definition, Operator_Declaration,
+// Proc_Group, Operator_Definition, Operator_Declaration,
 // Operator_Symbol.
 package main;
 

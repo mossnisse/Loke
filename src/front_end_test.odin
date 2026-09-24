@@ -921,7 +921,7 @@ main :: proc() {
 	)
 }
 
-// `Constant_Decl` binds one `Identifier` and has no `Storage_Modifiers` or
+// `Constant_Decl` binds one `Identifier` and has no `Storage_Modifier` or
 // `via`; `Variable_Decl` is the one that takes a list.
 @(test)
 constants_bind_one_plain_name :: proc(t: ^testing.T) {

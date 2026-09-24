@@ -1,6 +1,6 @@
 // Covers: Source_File, Package_Clause, Top_Level_Item, Top_Level_When,
 // Top_Level_Block, Import_Decl, Foreign_Import_Decl, Foreign_Block,
-// Foreign_Decl, Impl_Block, Extend_Block, Impl_Member, Delegate_Decl,
+// Foreign_Decl, Impl_Block, Impl_Member, Delegate_Decl,
 // Attributes, Attribute_Group, Attribute, Attribute_Value.
 @(compiler.no_alias, version = 2)
 @(private)

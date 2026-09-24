@@ -851,7 +851,7 @@ Stmt_Switch :: struct {
 	using base: Node_Base,
 	kind:       Switch_Kind,
 	init:       Stmt,
-	binding:    Name, // the traditional type switch's header `Binding_Name`
+	binding:    Name, // the type switch's header binding, `name in`
 	subject:    Expr,
 	cases:      []Switch_Case,
 	// Every path enters a case: all variants covered, or a default.

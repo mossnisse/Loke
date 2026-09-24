@@ -3,7 +3,7 @@
 // Element_List,
 // Element, Element_Key, Argument_List, Argument, Named_Argument_Value,
 // Argument_Value, Int_Literal, Float_Literal, Rune_Literal, String_Literal,
-// Raw_String_Literal, Hash_Name.
+// Raw_String_Literal.
 package main;
 
 main :: proc() {

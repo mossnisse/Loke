@@ -1,9 +1,9 @@
 // Covers: Block, Statement, Simple_Statement, Init_Statement, Assignment,
 // Compound_Operator, Expression_List, If_Statement, For_Statement, For_Header,
 // Foreach_Statement, Binding, When_Statement, Defer_Statement,
-// Return_Statement, Return_Value_List, Return_Value, Branch_Statement,
-// Switch_Statement, Value_Switch, Value_Case, Type_Switch, Type_Case,
-// Binding_Name.
+// Return_Statement, Return_Value, Branch_Statement,
+// Switch_Statement, Value_Switch, Value_Case, Branch_Pattern, Type_Switch,
+// Type_Case, Case_Selector.
 package main;
 
 main :: proc() {
