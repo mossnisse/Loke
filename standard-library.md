@@ -43,9 +43,9 @@ input silently. String indices and search results are byte offsets unless a
 name explicitly says `rune` or `grapheme`.
 
 Paths are accepted as UTF-8 `string_view`s. On Windows they are converted to
-UTF-16 and passed to the wide operating-system APIs. A native path that cannot
-be represented as valid Unicode is reported as invalid data rather than being
-silently changed.
+UTF-16 (through `core:encoding/utf16`) and passed to the wide operating-system
+APIs. A native path that cannot be represented as valid Unicode is reported as
+invalid data rather than being silently changed.
 
 ### Errors are values
 
@@ -75,7 +75,7 @@ and `continue`; it runs during panic unwinding only in a build using the `unwind
 strategy, and it never runs after `os.exit`. A resource whose release matters
 beyond the process — a terminal mode, not a file handle the operating system
 reclaims — needs a second, platform-level restore path as well. `core:term` is
-the only first-release case.
+the only such case so far.
 
 Borrowed views never hide allocation. Procedures that return owning storage
 accept an allocator when the caller may reasonably need to select one.
@@ -112,52 +112,46 @@ The list is dependency-ordered: a package may import packages above it, but not
 packages below it. Packages must not form import cycles.
 
 ```text
-base:runtime       compiler/runtime ABI types
-base:meta          compile-time descriptors
-base:interfaces    structural interface catalogue
+base:runtime          compiler/runtime ABI types
+base:meta             compile-time descriptors
+base:interfaces       structural interface catalogue
 
-core:mem           allocators and regions                       (existing)
-core:unsafe        explicit trust boundary                      (existing)
-core:strings       UTF-8 algorithms and String_Builder          (new)
-core:cstrings      owned zero-terminated buffers                (new)
-core:strconv       scalar parsing and text conversion           (new)
-core:fmt           value formatting and process diagnostics     (existing, grow)
-core:io            byte stream protocols and buffered helpers   (new)
-core:path          lexical path operations                      (new)
-core:fs            files, directories, and file metadata        (new)
-core:term          standard streams and terminal key input      (new)
-core:os            arguments, exit, environment, process state  (existing, grow)
+core:mem              allocators and regions                  *
+core:unsafe           explicit trust boundary                 *
+core:sync             atomics, fences, once                   *
+core:simd             cross-lane SIMD operations              *
+core:fmt              value formatting and process diagnostics
+core:strconv          scalar parsing
+core:strings          UTF-8 algorithms and String_Builder
+core:cstrings         owned zero-terminated buffers
+core:encoding/utf16   UTF-8 to UTF-16 and back
+core:endian           fixed byte-order storage wrappers       *
+core:math             elementary functions, Complex, Quaternion
+core:slice            slice algorithms and sorting            *
+core:container        Small_Array, Bit_Set, Enum_Array        *
+core:log              logging over the selected provider      *
+core:io               byte stream protocols and the I/O error
+core:path             lexical path operations
+core:fs               files, directories, and file metadata
+core:term             standard streams and terminal key input
+core:os               arguments, exit, environment, process state
 ```
 
-Later packages should follow the same pattern rather than expanding the first
-release packages indefinitely:
+A package marked `*` is specified by `design.md`, in the section its source
+header comment cites; this document covers the unmarked packages.
 
-```text
-core:bytes
-core:sort
-core:math
-core:time
-core:random
-core:encoding/utf16
-core:encoding/base64
-core:encoding/json
-core:log
-core:testing
-```
+Later packages follow the same pattern rather than growing the existing ones
+indefinitely: `core:bytes`, `core:time`, `core:random`, `core:unicode`,
+`core:encoding/base64`, `core:encoding/json`, and `core:testing`.
 
 Nested paths are taxonomy, not inheritance. For example,
 `core:encoding/json` does not automatically import `core:encoding`.
 
 ### Files are in `core:fs`, not `core:os`
 
-`design.md` originally assigned `os.open`, `os.close`, and `os.Handle` to
-`core:os`, in the "Library types assumed by this specification" table and in the
-`defer` example. Files belong in `core:fs`: `core:os` is process state, and a
-package that owns the argument vector should not also own file handles.
-
-The first `core:fs` commit amended both `design.md` sites, and they now name
-`fs.File`, `fs.open`, and `File.close`. No `os.open` alias is kept; one spelling
-for opening a file is the point of moving it.
+`core:os` is process state, and a package that owns the argument vector should
+not also own file handles. There is no `os.open` alias: one spelling for opening
+a file is the point.
 
 ## Shared I/O contract
 
@@ -179,6 +173,8 @@ Code :: enum {
 	Would_Block,
 	Broken_Pipe,
 	Not_A_Terminal,
+	Closed,
+	Directory_Not_Empty,
 	Out_Of_Space,
 	Out_Of_Memory,
 	Limit_Exceeded,
@@ -193,16 +189,14 @@ Operation :: enum {
 	Close,
 	Flush,
 	Seek,
-	Copy,
 	Read_Line,
 	Read_To_End,
 	Metadata,
-	Exists,
 	Remove,
+	Remove_Directory,
 	Rename,
 	Create_Directory,
 	Read_Directory,
-	Path_Conversion,
 	Terminal_Mode,
 	Read_Key,
 	Environment,
@@ -233,6 +227,8 @@ do not put paths or other caller data in the error merely for context.
 
 The error does not borrow the caller's path and does not allocate merely to
 report a failure. `native_code` is zero when there is no platform code.
+`Closed` means the stream was closed before the call; `Unsupported` means a
+live stream was asked for a direction it does not have.
 The query procedures are `is`, `code_of`, `operation_of`, and `native_code_of`;
 the reader is `code_of` rather than `code` because `Code` is the enum's own name
 and a package member cannot be both. The inherent `format` is declared in
@@ -322,11 +318,12 @@ The existing `fmt.Writer` callback cannot return an error. It remains suitable
 for process diagnostics and in-memory sinks, but a formatted file write must
 not silently lose a disk error.
 
-`io.write_formatted` bridges the two. Its adapter presents a `fmt.Writer`, writes into an `io.Writer`, latches the first
-`io.Error`, makes later callbacks no-ops, and returns the latched error after
-formatting. This preserves the existing formatting ABI:
+`io.write_formatted` bridges the two. Its adapter presents a `fmt.Writer`,
+writes into an `io.Writer`, latches the first `io.Error`, makes later callbacks
+no-ops, and returns the latched error after formatting. This preserves the
+existing formatting ABI.
 
-It is not a safe construction and must not be described as one. `fmt.Writer.state`
+The adapter is not a safe construction and must not be described as one. `fmt.Writer.state`
 is a `rawptr`, so the adapter holds a local latch record — a `dyn io.Writer`
 borrow plus an `Error` — and converts its address through `core:unsafe`, which
 discards checked provenance. The resulting `fmt.Writer` is valid only for the
@@ -340,10 +337,7 @@ write_formatted(writer, args: ..any_view) -> Result(Unit, Error)
 write_formatted_line(writer, args: ..any_view) -> Result(Unit, Error)
 ```
 
-Both shipped as written: the latch conversion is accepted, and the adapter never
-leaves the body that builds it.
-
-`fmt` additionally gains:
+`fmt` formats into memory with:
 
 ```odin
 to_string(allocator: Allocator, args: ..any_view) -> string
@@ -355,12 +349,12 @@ and nothing defaulted before it can be omitted. This is useful independently and
 gives a simple fallback for any sink: format in memory, then call
 `io.write_string`.
 
-An `append_to(builder: inout strings.String_Builder, ...)` is **not**
-shipped, and the reason is measured rather than aesthetic. It would make
-`core:fmt` import `core:strings`, an imported package is emitted whole, and
-hello world's IR went from 397 to 4923 lines with that one import in place. The
-call it saves is one line — `builder.append(fmt.to_string(allocator, ...))` —
-which is not worth a twelvefold cost to every program that prints. `to_string`
+There is no `append_to(builder: inout strings.String_Builder, ...)`, and the
+reason is measured rather than aesthetic. It would make `core:fmt` import
+`core:strings`, an imported package is emitted whole, and that one import
+roughly quadruples hello world's IR. The call it saves is one line —
+`builder.append(fmt.to_string(allocator, ...))` — which is not worth that cost
+to every program that prints. `to_string`
 itself keeps its selected allocator by receiving the same compiler-contributed
 `allocate_string` primitive `core:strings` gets.
 
@@ -368,7 +362,7 @@ itself keeps its selected allocator by receiving the same compiler-contributed
 
 The built-in string already owns UTF-8 validation, byte/rune counts, immutable
 bytes, comparisons, slicing, concatenation, rune iteration, and conversions.
-`core:strings` should add algorithms and efficient construction, not duplicate
+`core:strings` adds algorithms and efficient construction and does not duplicate
 those primitives.
 
 ### Non-allocating queries
@@ -386,9 +380,9 @@ index_rune(text: string_view, value: rune) -> Option(int)
 count(text, needle: string_view) -> int
 ```
 
-Empty-needle behavior must be documented and tested consistently: it matches at
-byte offset zero, `last_index` answers `.some(text.len())`, and `count` returns
-`text.len() + 1`.
+An empty needle matches at byte offset zero; `last_index` answers
+`.some(text.len())` for it, and `count` returns `text.len() + 1`. `count` counts
+non-overlapping occurrences.
 
 ### Borrowing transformations and iterators
 
@@ -436,7 +430,7 @@ standard library goes through them, because they are the only way a library can
 create a `string` in storage the caller selected. `join` takes a slice for the
 same reason `path.join` does: a variadic would absorb the allocator.
 
-Case conversion is ASCII-only in this release. Full Unicode case mapping needs
+Case conversion is ASCII-only. Full Unicode case mapping needs
 tables that belong in a `core:unicode`, and guessing a subset of them would be
 worse than passing the rest through unchanged; the signature already returns
 owned storage, so the tables can arrive without changing a caller.
@@ -450,8 +444,8 @@ offers the fallible path — including `try_reserve`, `try_append`, and
 same result there. A `try_join` or `try_replace` is added when a caller actually
 needs one, not as a matching set.
 
-Unicode case conversion may change the byte and rune counts. Locale-sensitive
-conversion is deferred and must not be guessed from process-global locale.
+Unicode case conversion, when it arrives, may change the byte and rune counts.
+Locale-sensitive conversion must not be guessed from a process-global locale.
 
 ### `String_Builder`
 
@@ -460,7 +454,7 @@ ordinary owning value over `[dynamic]u8`.
 
 **Its zero value is a usable, empty, allocator-unbound builder.** `design.md`'s
 string section already shows `builder: String_Builder = {};` followed by
-`append`, so `= {}` must keep compiling; it inherits the allocator-unbound
+`append`, so `= {}` compiles; it inherits the allocator-unbound
 behavior of the `[dynamic]u8` it wraps and binds on first growth. `init` exists
 only to select another allocator up front.
 
@@ -481,22 +475,23 @@ impl String_Builder {
 	cap          :: proc(self) -> int;
 	reserve      :: proc(self: inout String_Builder, additional: int);
 	try_reserve  :: proc(self: inout String_Builder, additional: int)
-		-> Allocator_Error;
+		-> Result(Unit, Allocator_Error);
 	append_text  :: proc(self: inout String_Builder, text: string_view);
 	append_rune  :: proc(self: inout String_Builder, value: rune);
 	append       :: proc{append_text, append_rune};
 	append_byte_ascii :: proc(self: inout String_Builder, value: u8);
 	try_append_text :: proc(self: inout String_Builder, text: string_view)
-		-> Allocator_Error;
+		-> Result(Unit, Allocator_Error);
 	try_append_rune :: proc(self: inout String_Builder, value: rune)
-		-> Allocator_Error;
+		-> Result(Unit, Allocator_Error);
 	try_append   :: proc{try_append_text, try_append_rune};
 	try_append_byte_ascii :: proc(self: inout String_Builder, value: u8)
-		-> Allocator_Error;
+		-> Result(Unit, Allocator_Error);
 	clear        :: proc(self: inout String_Builder);
 	finish       :: proc(self: inout String_Builder) -> string;
 	try_finish   :: proc(self: inout String_Builder)
 		-> Result(string, Allocator_Error);
+	view         :: proc(self: ^) -> string_view;
 	copy_string :: proc(self, allocator: Allocator
 		= mem.default_allocator()) -> string;
 	try_copy_string :: proc(self, allocator: Allocator
@@ -511,6 +506,10 @@ into string storage and then clears the builder, retaining its allocation for
 reuse. `try_finish` has the same success behavior and leaves the builder
 unchanged if allocation fails; `finish` applies the builder allocator's failure
 policy. `copy_string` and `try_copy_string` do not change the builder.
+
+`view` borrows the text written so far without allocating. The borrow checker
+rejects an append while the view is live, so a reader that only inspects the
+result (as `path.join` does before `path.clean`) need not copy it.
 
 The compiler contributes one package-private `core:strings` primitive that
 copies a known-valid `string_view` into string storage with a supplied allocator
@@ -565,7 +564,7 @@ caller has bytes that are not text.
 
 Parsing does not belong in `strings`: it interprets text as another type.
 
-First-release procedures:
+The procedures are:
 
 ```odin
 parse_bool(text: string_view) -> Option(bool)
@@ -578,13 +577,14 @@ parse_f64(text: string_view) -> Result(f64, Parse_Error)
 
 `Parse_Error` distinguishes invalid syntax, invalid base, overflow, and trailing
 data, and reaches a caller as the failure payload of `Result`. `parse_bool` has
-only one way to fail, so it answers `Option(bool)` instead. Parsing consumes the
+only one way to fail, so it answers `Option(bool)` instead; it accepts `true`,
+`True`, `TRUE`, `1`, and the matching `false` spellings and `0`. Parsing consumes the
 whole string after permitted surrounding ASCII whitespace. A separate scanner
 API can later parse a prefix.
 
 `base == 0` recognizes the language prefixes `0b`, `0o`, and `0x`; otherwise
-the accepted range is 2 through 36. Underscore rules should match Loke literals
-unless there is a documented reason not to.
+the accepted range is 2 through 36, with no prefix. Underscores may separate
+digits, as in a Loke literal.
 
 Formatting scalars remains in `core:fmt`; `strconv` should not grow a second
 formatting system.
@@ -613,27 +613,37 @@ Open_Options :: struct {
 	append:      bool,
 }
 
+Seek_Origin :: enum {Start, Current, End}
+
+File :: move_only struct { /* private handle and access */ }
+
 open(path: string_view, options: Open_Options) -> Result(File, io.Error)
 open_read(path: string_view) -> Result(File, io.Error)
 create(path: string_view) -> Result(File, io.Error)
 append(path: string_view) -> Result(File, io.Error)
 
-read(file: inout File, destination: []mut u8) -> Result(int, io.Error)
-write(file: inout File, source: []u8) -> Result(int, io.Error)
-seek(file: inout File, offset: i64, origin: Seek_Origin) -> Result(u64, io.Error)
-flush(file: inout File) -> Result(Unit, io.Error)
-close(file: inout File) -> Result(Unit, io.Error)
+impl File {
+	read    :: proc(self: inout File, destination: []mut u8) -> Result(int, io.Error);
+	write   :: proc(self: inout File, source: []u8) -> Result(int, io.Error);
+	seek    :: proc(self: inout File, offset: i64, origin: Seek_Origin)
+		-> Result(u64, io.Error);
+	flush   :: proc(self: inout File) -> Result(Unit, io.Error);
+	close   :: proc(self: inout File) -> Result(Unit, io.Error);
+	is_open :: proc(self) -> bool;
+}
 ```
 
-These are members of `File`, reached as `file.read(...)`: a `slot` requirement
-is satisfied by a *member*, so `io.Reader` and `io.Writer` can only be answered
-by methods. `file.is_open()` sits alongside them, because a caller that has
-closed explicitly has no other way to ask.
+The stream operations are methods because a `slot` requirement is satisfied by
+a *member*, so `io.Reader` and `io.Writer` can only be answered by methods.
+`is_open` exists because a caller that has closed explicitly has no other way
+to ask.
 
 Because structural interface satisfaction is determined by the static type,
 `File` satisfies both `io.Reader` and `io.Writer`: it has both slots regardless of
-the options used for a particular instance. The open mode is checked at runtime,
-and using an unsupported direction returns `Unsupported`. Append mode guarantees
+the options used for a particular instance. The open mode is checked at runtime:
+using an unsupported direction returns `Unsupported`, and a nonempty read or
+write, or a seek, on a closed file returns `Closed`; `flush` and `close` on a
+closed file succeed. Append mode guarantees
 that each underlying write begins at the current end of file; it does not make
 multiple writes from multiple processes into one atomic transaction.
 
@@ -679,10 +689,7 @@ returns a **move-only streaming reader**, not an owning array.
 This is not a preference: a `[dynamic]Directory_Entry` whose entries own their
 name `string` would have every step retain and release that name, and a
 directory walk that only reads each name should not pay for a copy of it. The
-reader borrows instead. (When this was written a by-value `foreach` over a
-managed element was rejected outright; that limit is gone — the loop now owns
-and disposes of its copy — but the reason for streaming is the copy itself, not
-the old rejection.) The reader yields one entry at a time, borrows
+reader borrows instead. The reader yields one entry at a time, borrows
 its name into a caller-visible buffer valid until the next `next`, and closes its
 platform search handle in `drop`. A caller wanting an array collects one itself.
 Because `next` reports both the end and a failure, the reader is not a `foreach`
@@ -690,10 +697,10 @@ iterable; the loop that walks it is design.md "Streaming a fallible source", and
 `tests/run/lib_fs` walks a directory with it.
 
 `exists` answers `.ok(false)` only for a definite not-found result; permission
-and I/O failures remain errors. `Metadata` initially exposes kind, byte size, and
-modified time. Symlink behavior must be explicit when symlink support is added;
-the first Windows implementation must not accidentally claim portable symlink
-semantics.
+and I/O failures remain errors. `Metadata` holds `kind` (`File`, `Directory`,
+or `Other`), `size` in bytes, and `modified` as nanoseconds since the Unix epoch
+in an `i64`, until `core:time` gives it a type. There is no symlink support; when
+it arrives its behavior is explicit, not inherited from what Windows does.
 
 ## `core:path`
 
@@ -773,12 +780,33 @@ fallible stream output uses `term.stdout()` with `io.write_all` or
 ### Raw mode and key events
 
 ```odin
-Raw_Mode :: struct { /* move-only, private state */ }
+Raw_Options :: struct { interrupt_as_key: bool }
+Raw_Mode :: move_only struct { /* private state */ }
 
-begin_raw(input := stdin(), options: Raw_Options = {})
+begin_raw(input: Input = stdin(), options: Raw_Options = {})
 	-> Result(Raw_Mode, io.Error)
-read_key(mode: inout Raw_Mode) -> Result(Key_Event, io.Error)
-close(mode: inout Raw_Mode) -> Result(Unit, io.Error)
+
+impl Raw_Mode {
+	read_key :: proc(self: inout Raw_Mode) -> Result(Key_Event, io.Error);
+	close    :: proc(self: inout Raw_Mode) -> Result(Unit, io.Error);
+}
+
+Key :: enum {
+	Character,
+	Up, Down, Left, Right,
+	Home, End, Page_Up, Page_Down,
+	Insert, Delete, Backspace, Enter, Escape, Tab,
+	F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+	Unknown,
+}
+
+Key_Event :: struct {
+	key:     Key,
+	value:   rune,
+	shift:   bool,
+	control: bool,
+	alt:     bool,
+}
 ```
 
 `Raw_Mode.drop` restores the exact previous terminal mode on ordinary return,
@@ -805,14 +833,15 @@ it would make out-of-order cleanup or a control event restore the wrong mode.
 A second `begin_raw` therefore answers `.err(Already_Exists)` and leaves the
 terminal unchanged.
 
-`Key_Event` contains a Unicode rune for text input, a `Key` enum for special
-keys, and explicit modifier flags. The `Key` set covers arrows,
-Home, End, Page Up/Down, Insert, Delete, Backspace, Enter, Escape, Tab, and F1
-through F12. Repeats are reported as individual events unless the platform
-provides a count that can be represented without changing ordering.
+Text input is `key == .Character` with the scalar value in `value`; a named key
+leaves `value` zero, and is preferred when a key such as Enter or Tab also
+carries a control character. A key the decoder has no name for is `.Unknown`.
+Modifiers are explicit flags. Key releases, mouse, focus, and resize records are
+skipped. A held key's repeat count becomes that many events, in order.
 
-Ctrl+C behavior must be an option of raw mode. The default preserves the normal
-process interrupt behavior; an explicit option requests it as a key event.
+By default Ctrl+C keeps interrupting the process; `Raw_Options{interrupt_as_key =
+true}` delivers it as a key event instead, and the program then terminates
+itself.
 Mouse events, window resizing, colors, cursor movement, and full-screen terminal
 UI belong to later terminal packages.
 
@@ -839,6 +868,35 @@ owning result uses the supplied allocator. Environment
 names and values must become valid UTF-8 or the operation returns invalid data.
 A process-spawning API is deferred until handle inheritance, quoting, environment
 replacement, and pipe ownership are designed together.
+
+## `core:math`
+
+`Complex(T)` and `Quaternion(T)` are specified in `design.md` "Library numeric
+types", and the checked integer conversion `math.to(T, value)` in `design.md`
+"Type conversion". The rest of the package is:
+
+- unfixed constants `PI`, `TAU`, `E`, `LN2`, `LN10`, and `SQRT_TWO`, and, per
+  format, `F32_`/`F64_` `EPSILON`, `MAX`, `MIN_NORMAL`, `MIN_SUBNORMAL`,
+  `INFINITY`, and `NAN`, each written as its exact IEEE-754 bit pattern;
+- `is_nan`, `is_infinite`, `is_finite`, `sign_bit`, `abs`, and `copy_sign`, which
+  are bit tests: no rounding, and a NaN is never quieted;
+- `min`, `max`, and `clamp` over any numeric, ordered `T`; `clamp` with
+  `high < low` panics;
+- `floor`, `ceil`, `round`, `trunc`, `mod`, `sqrt`, `hypot`, `pow`, `exp`, `log`,
+  `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
+  `to_radians`, and `to_degrees`.
+
+Every floating-point procedure has two spellings: the unsuffixed name works on
+`f64` and the `_f32` name on `f32`. They are not a procedure group, because
+`design.md` leaves an `f32`/`f64` overload ambiguous for an untyped literal and
+`math.sqrt(2.0)` would stop compiling. Both widths exist because there is no
+implicit widening, and `f32(math.sqrt(f64(x)))` rounds twice. `f16` has none.
+
+The procedures backed by the C library promise the classifications, signs,
+poles, and domain results documented on each one. They do not promise correctly
+rounded results, identical last bits across platforms, a particular NaN
+payload, or `errno` contents, and they never turn a floating-point exception
+into a panic.
 
 ## What is deliberately absent
 
@@ -867,8 +925,11 @@ ASCII-only); in `core:math`, hyperbolics, `cbrt`/`fma`/`ldexp`/`frexp`/`modf`,
 
 ## Test requirements
 
-Each package needs unit tests, integration tests, and runnable examples. The
-important initial matrix is:
+Library behavior is tested by the corpus programs `tests/run/lib_*.loke`, which
+run at every optimization level with the rest of the corpus
+([compiler-architecture.md](compiler-architecture.md) "Testing and
+verification"), and by the programs in `examples/`. A new or changed public API
+covers whichever of these cases apply:
 
 - empty input, empty files, and empty strings;
 - binary data containing zero bytes;
@@ -878,17 +939,19 @@ important initial matrix is:
 - partial reads/writes, end of input, interruption, and broken pipes;
 - bounded reads one byte below, exactly at, and one byte above the limit, with
   `Limit_Exceeded` destroying partial owning results;
-- allocator failure at every growing operation, with the destination unchanged;
+- allocator failure at every growing operation, with the destination unchanged
+  (a deliberately small `mem.Arena` makes this deterministic);
 - explicit close followed by drop, double close, and panic unwinding;
-- redirected standard handles versus a real console;
-- raw terminal mode restoration on scope exit, on explicit `close`, and — in an
-  `unwind` build only — on panic; plus one test asserting that the console
-  control handler restores the mode when cleanup does not run;
-- byte offsets around one-, two-, three-, and four-byte runes; and
-- identical behavior at every compiler optimization level.
+- redirected standard handles; and
+- byte offsets around one-, two-, three-, and four-byte runes.
 
-Fake short readers and writers should drive protocol tests deterministically.
-Filesystem tests must create an isolated temporary directory and never depend on
-the repository working directory or a developer's environment. Terminal decoder
-logic should be tested from synthetic native event records; only a thin final
-layer requires an interactive/manual test.
+Protocol tests drive fake short readers and writers, as `lib_io` does.
+Filesystem tests work in an isolated temporary directory, as `lib_fs` does, and
+never depend on the repository working directory or a developer's environment.
+
+Terminal input is not automated, because a corpus program has no console of its
+own: `lib_term` covers only output and redirected handles. Raw-mode restoration
+on scope exit, on `close`, and on panic in an `unwind` build, and the console
+control handler's restore, are checked by hand with `examples/keys.loke`.
+Testing the key decoder from synthetic console records would automate
+everything but that last layer.

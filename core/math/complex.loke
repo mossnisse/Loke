@@ -163,7 +163,7 @@ impl Quaternion($T) {
 
 // ------------------------------------------------ the floating instances --
 //
-// math-plan "What `Complex` and `Quaternion` gain". The generic blocks above are
+// design.md "Library numeric types". The generic blocks above are
 // constrained by `interfaces.Numeric(T)`, which admits integers and implies no
 // ordering, so nothing in them can call an `f32`/`f64` `hypot`. Narrowing the
 // types would break existing source, so the new operations live in exact

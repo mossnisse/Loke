@@ -78,7 +78,7 @@ main :: proc() {
 	fmt.println(Q.from_components(1, 2, 3, 4).norm_squared());
 	fmt.println(i + Q(1.0));
 
-	// ---- the floating specializations (math-plan step 4) ----
+	// ---- the floating specializations (design.md "Library numeric types") ----
 	//
 	// `abs`, `inverse`, and a `divide` that does not form `c*c + d*d` exist only
 	// for `Complex(f32)`/`Complex(f64)` and the two `Quaternion` instances; every

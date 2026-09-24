@@ -1,6 +1,7 @@
-// `core:math` constants, classification, sign, the scalar comparisons
-// (math-plan step 2), and the checked integer conversion. Everything here is exact: bit patterns, predicates, and
-// which argument a tie selects. No transcendental value is printed, and no NaN
+// `core:math` constants, classification, sign, the scalar comparisons, and the
+// checked integer conversion (standard-library "`core:math`"). Everything here
+// is exact: bit patterns, predicates, and which argument a tie selects. No
+// transcendental value is printed, and no NaN
 // is printed — the platform C library spells one three different ways depending
 // on the payload, so `is_nan` is printed instead.
 package main;

@@ -1,5 +1,5 @@
-// math-plan step 2: reversed `clamp` bounds are a caller mistake with no
-// defensible answer, so they panic rather than silently picking one of them.
+// standard-library "`core:math`": reversed `clamp` bounds are a caller mistake
+// with no defensible answer, so they panic rather than silently picking one of them.
 package main;
 
 import "core:fmt";

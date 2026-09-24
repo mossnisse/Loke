@@ -10,8 +10,8 @@
 @(public)
 package strconv;
 
-// What went wrong. `Parse_Error` is nil on success, so it composes with
-// `or_return` like every other error value in the library.
+// What went wrong: the failure payload of each parser's `Result`, so a parse
+// composes with `or_return` like every other fallible call in the library.
 Parse_Error :: enum {
 	// The text is not a number at all: no digits, a stray sign, a misplaced
 	// underscore, an exponent with no digits.

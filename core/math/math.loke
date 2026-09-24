@@ -1,4 +1,4 @@
-// The elementary functions and the constants (math-plan "The surface").
+// The elementary functions and the constants (standard-library "`core:math`").
 //
 // Every float-specific procedure has exactly two concrete spellings: the
 // unsuffixed name takes and returns `f64`, and the `_f32` name takes and

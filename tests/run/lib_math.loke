@@ -1,4 +1,4 @@
-// The `core:math` elementary functions (math-plan step 3), at both widths.
+// The `core:math` elementary functions (standard-library "`core:math`"), at both widths.
 //
 // The differential-optimization corpus runs this at every `-opt` level and one
 // `.expected` has to match all of them, so a transcendental result is never
