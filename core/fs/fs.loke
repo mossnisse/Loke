@@ -152,7 +152,7 @@ append :: proc(path: string_view) -> Result(File, io.Error) {
 // -------------------------------------------------- whole-file convenience --
 
 // The whole file as owned bytes. The `limit` contract is `io.read_to_end`'s: a
-// nonzero limit that would be exceeded returns `Limit_Exceeded` and no partial
+// positive limit that would be exceeded returns `Limit_Exceeded` and no partial
 // result.
 read_bytes :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,

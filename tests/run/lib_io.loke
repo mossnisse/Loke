@@ -151,6 +151,10 @@ main :: proc() {
 		fmt.println(0);
 	}
 
+	// A negative limit is no limit, as zero is.
+	unbounded := reader_over("0123456789", 3);
+	fmt.println((io.read_to_end(inout unbounded, limit = -1) or_else {}).len());
+
 	// copy moves everything through a caller-sized window.
 	from := reader_over("stream me", 2);
 	into: Short_Writer = {};
@@ -178,6 +182,17 @@ main :: proc() {
 
 	kept := reader_over("keep\n", 5);
 	fmt.println((io.read_line(inout kept, options = io.Line_Options{true}) or_else no_line()).len());
+
+	// A blank line is a line; invalid UTF-8 is refused without ending the stream;
+	// and a `\r` not followed by `\n` is text.
+	odd_bytes := [?]u8{u8('\n'), 0xFF, u8('\n'), u8('z'), u8('\r')};
+	odd := Short_Reader{odd_bytes[:], 0, 2};
+	fmt.println((io.read_line(inout odd) or_else no_line()).len());
+	switch (refused in io.read_line(inout odd)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(refused, .Invalid_Data));
+	}
+	fmt.println((io.read_line(inout odd) or_else no_line()).len());
 
 	combined: Error_After_Byte = {};
 	switch (combined_error in io.read_line(inout combined)) {

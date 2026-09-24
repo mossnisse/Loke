@@ -251,7 +251,7 @@ No procedure's failure payload is both an `Allocator_Error` and an `io.Error`.
 
 Streams are synchronous and blocking. Both are written with
 `slot` requirements, which is what dyn-compatibility requires, and that is what
-makes `dyn io.Writer` exist for the formatting adapter and for `io.copy`.
+makes `dyn mut io.Writer` exist for the formatting adapter.
 
 ```odin
 Reader :: interface($Self: type) {
@@ -300,10 +300,10 @@ default for a zero value must be written `name: T = {}`. A *slice* default is
 `= nil` rather than `= {}`, because `{}` at a slice type is a slice literal and
 must be written with its type.
 
-`limit == 0` means no library-imposed limit. A nonzero limit prevents an
-untrusted stream from causing unbounded allocation. An input that would make the
-result exceed a nonzero limit returns `Limit_Exceeded`; the partial owning result
-is destroyed and the returned value is zero. `read_line` removes `\n` and one
+A `limit` of zero or less means no library-imposed limit. A positive limit
+prevents an untrusted stream from causing unbounded allocation. An input that
+would make the result exceed a positive limit returns `Limit_Exceeded`; the
+partial owning result is destroyed and the returned value is zero. `read_line` removes `\n` and one
 immediately preceding `\r` by default; `keep_ending` retains it. An unterminated
 final line is returned successfully. End of input before any bytes returns
 `End_Of_Input`.
@@ -324,14 +324,15 @@ writes into an `io.Writer`, latches the first `io.Error`, makes later callbacks
 no-ops, and returns the latched error after formatting. This preserves the
 existing formatting ABI.
 
-The adapter is not a safe construction and must not be described as one. `fmt.Writer.state`
-is a `rawptr`, so the adapter holds a local latch record — a `dyn io.Writer`
-borrow plus an `Error` — and converts its address through `core:unsafe`, which
-discards checked provenance. The resulting `fmt.Writer` is valid only for the
-enclosing call and must never be stored, returned, or handed to a callee that
-retains it. `write_formatted` therefore constructs, uses, and discards the
+The adapter is not a safe construction and must not be described as one.
+`fmt.Writer.state` is a `rawptr`, so the adapter holds a local latch record — a
+`dyn mut io.Writer` borrow plus an `Option(Error)` — and passes its address
+through that field, which discards checked provenance
+(design.md "What is not checked"). The resulting `fmt.Writer` is valid only for
+the enclosing call and must never be stored, returned, or handed to a callee
+that retains it. `write_formatted` therefore constructs, uses, and discards the
 adapter within its own body; the raw pointer is never a value a caller holds.
-`dyn io.Writer` existing at all depends on `Writer` being declared with `slot`.
+`dyn mut io.Writer` existing at all depends on `Writer` being declared with `slot`.
 
 ```odin
 write_formatted(writer, args: ..any_view) -> Result(Unit, Error)
@@ -748,7 +749,7 @@ append_text(path, text: string_view) -> Result(Unit, io.Error)
 `read_text` validates UTF-8. `write_*` truncates an existing file only after it
 has successfully opened the target. It does not promise atomic replacement.
 `read_bytes` and `read_text` use the same `limit` contract as `io.read_to_end`:
-exceeding a nonzero limit answers `.err(Limit_Exceeded)` and destroys partial
+exceeding a positive limit answers `.err(Limit_Exceeded)` and destroys partial
 storage.
 An explicit `replace_atomic` helper may be added later with precisely documented
 same-filesystem and durability guarantees.

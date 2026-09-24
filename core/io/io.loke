@@ -16,7 +16,6 @@ package io;
 import "core:fmt";
 import "core:mem";
 import "core:strings";
-import "core:unsafe";
 
 // ----------------------------------------------------------------- errors --
 
@@ -204,9 +203,9 @@ write_string :: proc(writer: inout $W, text: string_view) -> Result(Unit, Error)
 
 // Everything the reader has left, as owned bytes.
 //
-// `limit == 0` means no library-imposed limit. A nonzero limit is what keeps an
-// untrusted stream from causing an unbounded allocation: input that would make
-// the result exceed it destroys the partial result and returns
+// A `limit` of zero or less means no library-imposed limit. A positive limit is
+// what keeps an untrusted stream from causing an unbounded allocation: input
+// that would make the result exceed it destroys the partial result and returns
 // `Limit_Exceeded` alone.
 read_to_end :: proc(
 	reader: inout $R,
