@@ -27,7 +27,8 @@ options:
                   here, and whether one could run at all, then stop
     -o <path>     output executable (default: input name with .exe)
     -emit-ll      write the LLVM IR next to the output and stop
-    -keep-temps   keep the generated .ll after linking
+    -keep-temps   keep the generated .ll, and any object assembled from a .asm
+                  import, after linking
     -parse-only   stop after lexing and parsing (file inputs only)
     -dump-ast     print a deterministic syntax tree and stop after parsing
                   (file inputs only)
@@ -107,6 +108,8 @@ main :: proc() {
 	os.exit(code)
 }
 
+// Exit status: 0 success, 1 source or configuration diagnostics, 2 invalid
+// command-line usage or a backend/toolchain failure.
 @(private = "file")
 run :: proc() -> int {
 	opts, args_ok := parse_args(os.args[1:])
@@ -124,7 +127,7 @@ run :: proc() -> int {
 	}
 	if !args_ok {
 		fmt.eprint(USAGE)
-		return 1
+		return 2
 	}
 	if opts.print_toolchain {
 		return print_toolchain()
@@ -148,7 +151,7 @@ run :: proc() -> int {
 		if is_directory(opts.input) {
 			mode := opts.dump_ast ? "-dump-ast" : "-parse-only"
 			fmt.eprintfln("error: %s needs a file input", mode)
-			return 1
+			return 2
 		}
 		file, loaded := load_source(&c, opts.input)
 		if !loaded {

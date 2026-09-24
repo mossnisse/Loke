@@ -1,3 +1,5 @@
+# Loke
+
 Loke is an experimental general-purpose programming language that builds on ideas from Odin.
 
 It aims to provide higher-level language features and ergonomic abstractions
@@ -36,7 +38,8 @@ for people and coding agents alike, are in [AGENTS.md](AGENTS.md).
 
 The current compiler targets **Windows x64**. You need:
 
-- **Odin**, on `PATH`, to build `lokec` from source.
+- **Odin**, on `PATH`, to build `lokec` from source. The tree builds with
+  `dev-2025-09-nightly`; Odin nightlies change often, so another one may not.
 - **LLVM/Clang**, to compile the generated LLVM IR and link executables. On Windows, LLVM can be installed with `winget install LLVM.LLVM`.
 - **MSVC C++ build tools and the Windows SDK**, including the C runtime headers and libraries, for executable builds.
 
@@ -181,7 +184,8 @@ The parsing modes take a **file**, not a package directory:
 .\lokec.exe tests\layout\types.loke -check-layout
 ```
 
-Run `.\lokec.exe` without arguments to print the built-in usage summary.
+`.\lokec.exe -h` prints the built-in usage summary and `-version` the compiler
+version.
 Compiler exit codes are `0` for success, `1` for source/configuration diagnostics,
 and `2` for invalid command-line usage or backend/toolchain failure. In
 PowerShell, inspect `$LASTEXITCODE` immediately after the command.
@@ -238,9 +242,9 @@ separately and link it at the host's final link step.
 
 ### Compiler tests
 
-For compiler development, the test script runs unit tests, rebuilds `lokec.exe`,
-then runs integration tests and the run/trap corpus across all five optimization
-modes:
+For compiler development, the test script checks spec citations and backend
+layering, runs unit tests, rebuilds `lokec.exe` with Odin's vet checks, then runs
+integration tests and the run/trap corpus across all five optimization modes:
 
 ```powershell
 .\test-all.ps1
@@ -255,17 +259,17 @@ baseline integration suite only. The suites can also be run separately:
 
 ```powershell
 odin test src -define:ODIN_TEST_TRACK_MEMORY=false
-odin build src -out:lokec.exe
+odin build src -out:lokec.exe -vet-unused -vet-shadowing
 odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
 ```
 
 ## Standard library
 
 The **standard library** is ordinary Loke code over the compiler and runtime
-foundation; [standard-library.md](standard-library.md) documents its
-design. `base:` stays reserved for declarations that participate in the language
-or its runtime ABI. General-purpose code lives in `core:`, in small packages a
-program imports by name, with no prelude:
+foundation; [standard-library.md](standard-library.md) documents its design
+rules and each package's API. `base:` stays reserved for declarations that
+participate in the language or its runtime ABI. General-purpose code lives in
+`core:`, in small packages a program imports by name, with no prelude:
 
 ```text
 core:container        fixed-capacity and enum-indexed containers and sets
@@ -288,13 +292,3 @@ core:sync             atomics, fences, and one-time initialization
 core:term             standard streams and terminal key input
 core:unsafe           explicit unchecked operations and conversions
 ```
-
-The library's design rules (errors as values, visible ownership, platform
-isolation) and each package's API are in
-[standard-library.md](standard-library.md).
-
-`examples/greeting.loke` is the release's acceptance program: it prompts, reads
-and writes a text file, and reports a failure, with no compiler-specific I/O
-built-in anywhere in it. `examples/streaming.loke` shows a bounded read, a
-fixed-buffer stream and an observed `close`; `examples/keys.loke` shows raw key
-input with terminal restoration.

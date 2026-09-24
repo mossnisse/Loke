@@ -170,7 +170,7 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 		context.allocator,
 	)
 	testing.expect(t, toolchain_err == nil, "cannot run malformed toolchain command")
-	testing.expect(t, toolchain.exit_code == 1, "malformed toolchain command succeeded")
+	testing.expect(t, toolchain.exit_code == 2, "malformed toolchain command did not exit 2")
 	testing.expect(t, strings.contains(string(toolchain_stderr), "unknown option"), "missing option diagnostic")
 	testing.expect(t, !strings.contains(string(toolchain_stdout), "clang="), "toolchain probe still ran")
 
@@ -179,7 +179,7 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 		context.allocator,
 	)
 	testing.expect(t, directory_err == nil, "cannot run directory parse command")
-	testing.expect(t, directory.exit_code == 1, "directory parse command succeeded")
+	testing.expect(t, directory.exit_code == 2, "directory parse command did not exit 2")
 	testing.expect(
 		t,
 		strings.contains(string(directory_stderr), "needs a file input"),
