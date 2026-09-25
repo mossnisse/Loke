@@ -140,7 +140,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			fmt.sbprintf(&b, " %s %s", lane, value)
 			zero &&= is_zero_constant(value)
 		}
-		// `store` writes a large zero value with memset.
+		// A zero value stays short, and `store` writes a large one with memset.
 		if zero {
 			return "zeroinitializer"
 		}
@@ -159,6 +159,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		byte_array := packed && over_aligned
 		b := strings.builder_make()
 		strings.write_string(&b, byte_array ? "{" : (packed ? "<{" : "{"))
+		zero := !byte_array
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
 			if index > 0 {
@@ -172,8 +173,13 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 				strings.write_string(&b, " ")
 				write_field_bytes(e, &b, element, symbol.type)
 			} else {
-				fmt.sbprintf(&b, " %s %s", llvm_type(e, symbol.type), llvm_const(e, element, symbol.type))
+				field_value := llvm_const(e, element, symbol.type)
+				fmt.sbprintf(&b, " %s %s", llvm_type(e, symbol.type), field_value)
+				zero &&= is_zero_constant(field_value)
 			}
+		}
+		if zero {
+			return "zeroinitializer"
 		}
 		if over_aligned {
 			if len(info.fields) > 0 {
@@ -350,29 +356,80 @@ f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
 // field. `load` stays right for compiler-owned slots.
 @(private)
 load_place :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
+	if is_large_value(e, type) {
+		snapshot := temporary_slot(e, type)
+		copy_bytes(e, snapshot, address, type_size(e.c, type))
+		return snapshot
+	}
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s%s", out, llvm_type(e, type), address, align_suffix(e, address, type))
 	return out
 }
 
-LARGE_CONSTANT_STORE :: 4096
+// clang crashes in instruction selection on a first-class value with 65536 or
+// more scalars in it, so a value larger than this never becomes one. It is the
+// address of storage nothing else writes, and crosses calls by pointer.
+LARGE_VALUE_BYTES :: 4096
+
+@(private)
+is_large_value :: proc(e: ^Emitter, type: Type_Id) -> bool {
+	return type != INVALID_TYPE && type_size(e.c, type) > LARGE_VALUE_BYTES
+}
+
+// Storage for one value of `type` within the current full expression. A large
+// one is shared with other full expressions, since each would otherwise keep its
+// whole size in the frame for the entire function.
+@(private)
+temporary_slot :: proc(e: ^Emitter, type: Type_Id) -> string {
+	llvm := llvm_type(e, type)
+	if !is_large_value(e, type) {
+		return alloca(e, llvm)
+	}
+	slot := Large_Slot{type = llvm}
+	for free, index in e.large_free {
+		if free.type == llvm {
+			slot = free
+			unordered_remove(&e.large_free, index)
+			break
+		}
+	}
+	if slot.name == "" {
+		slot.name = alloca(e, llvm)
+	}
+	append(&e.large_taken, slot)
+	return slot.name
+}
+
+// The value in storage only this value's producer can write, which a large
+// value can go on naming instead of copying.
+@(private)
+load_temporary :: proc(e: ^Emitter, type: Type_Id, slot: string) -> string {
+	return is_large_value(e, type) ? slot : load_place(e, type, slot)
+}
+
+@(private)
+copy_bytes :: proc(e: ^Emitter, to, from: string, size: u64) {
+	fmt.sbprintfln(&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %d, i1 false)", to, from, size)
+}
 
 @(private)
 store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 	if address == "" || value == "" {
 		return
 	}
-	// clang crashes in instruction selection on a store of a large aggregate
-	// constant, so one is written with memset or copied from a module constant.
-	// A large copy is still stored whole; see known-gaps.md.
-	if size := type_size(e.c, type); value[0] != '%' && size > LARGE_CONSTANT_STORE {
+	// A large constant is written with memset or copied from a module constant.
+	if is_large_value(e, type) {
+		size := type_size(e.c, type)
 		if value == "zeroinitializer" {
 			fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)", address, size)
 			return
 		}
-		name := fmt.aprintf("@.aggregate.%d", len(e.globals))
-		append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s\n", name, llvm_type(e, type), value))
-		fmt.sbprintfln(&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %d, i1 false)", address, name, size)
+		from := value
+		if value[0] != '%' {
+			from = fmt.aprintf("@.aggregate.%d", len(e.globals))
+			append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s\n", from, llvm_type(e, type), value))
+		}
+		copy_bytes(e, address, from, size)
 		return
 	}
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s%s", llvm_type(e, type), value, address, align_suffix(e, address, type))
@@ -413,7 +470,7 @@ record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_
 emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 	if expression_converts_storage(expr) {
 		type := expr_base(expr).type
-		slot := alloca(e, llvm_type(e, type))
+		slot := temporary_slot(e, type)
 		store(e, type, emit_expr(e, expr), slot)
 		register_temporary_place(e, type, slot)
 		return slot
@@ -464,7 +521,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			if sym := symbol_of(e.c, v.resolution.symbol); sym != nil && sym.result_inout {
 				return emit_operator_call(e, v.resolution.symbol, v.bound)
 			}
-			slot := alloca(e, llvm_type(e, as_type))
+			slot := temporary_slot(e, as_type)
 			store(e, as_type, emit_operator_call(e, v.resolution.symbol, v.bound), slot)
 			hold_addressed_temporary(e, expr, as_type, slot)
 			return slot
@@ -500,7 +557,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return out
 
 	case ^Expr_Composite:
-		slot := alloca(e, llvm_type(e, as_type))
+		slot := temporary_slot(e, as_type)
 		emit_composite_into(e, v, slot, as_type)
 		return slot
 
@@ -512,7 +569,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	}
 	// Any other value is materialised into a temporary. A folded conversion like
 	// `u8(3)` stores its constant, not its unconverted operand.
-	slot := alloca(e, llvm_type(e, as_type))
+	slot := temporary_slot(e, as_type)
 	store(e, as_type, emit_expr_at(e, expr, as_type), slot)
 	hold_addressed_temporary(e, expr, as_type, slot)
 	return slot
@@ -540,7 +597,7 @@ emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 	if base.is_const || !emit_lifecycle(e, base.type).managed || expression_is_borrowed_place(expr) {
 		return value
 	}
-	slot := alloca(e, llvm_type(e, base.type))
+	slot := temporary_slot(e, base.type)
 	store(e, base.type, value, slot)
 	register_temporary_place(e, base.type, slot)
 	return value
@@ -780,14 +837,12 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		if symbol != nil && symbol.kind == .Proc {
 			return symbol_name(e, v.symbol)
 		}
-		out := temp(e)
 		address, ok := e.names[v.symbol]
 		if !ok {
 			backend_fail(e, "a resolved value has no storage")
 			return "0"
 		}
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, as_type), address)
-		return out
+		return load_place(e, as_type, address)
 
 	case ^Expr_Slice:
 		if v.resolution.kind == .User_Operator {
@@ -800,7 +855,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			results := emit_producer_value(e, expr, as_type)
 			return len(results) == 0 ? "0" : results[0]
 		}
-		return load(e, llvm_type(e, as_type), emit_address_at(e, expr, as_type))
+		return load_place(e, as_type, emit_address_at(e, expr, as_type))
 
 	case ^Expr_Selector, ^Expr_Index:
 		if index, is_index := expr.(^Expr_Index); is_index {
@@ -814,7 +869,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 				if base.value_category != .Place {
 					return result
 				}
-				return load(e, llvm_type(e, as_type), result)
+				return load_place(e, as_type, result)
 			}
 		}
 		// `pkg.f` as a value is the procedure itself, not storage holding one.
@@ -837,7 +892,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		if base.value_category != .Place {
 			return result
 		}
-		return load(e, llvm_type(e, as_type), result)
+		return load_place(e, as_type, result)
 
 	case ^Expr_Checked_Extract, ^Expr_Or_Else:
 		return emit_producer_value(e, expr, as_type)[0]
@@ -846,7 +901,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		if v.backing != INVALID_TYPE {
 			return emit_slice_literal(e, v, as_type)
 		}
-		return load(e, llvm_type(e, as_type), emit_address_at(e, expr, as_type))
+		return load_temporary(e, as_type, emit_address_at(e, expr, as_type))
 
 	case ^Expr_Proc:
 		// Every reachable literal is hoisted and named before any body is emitted.
@@ -1223,6 +1278,9 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	if info == nil {
 		return "true"
 	}
+	if is_large_value(e, under) && (info.kind == .Array || info.kind == .Struct && !record_uses_byte_members(e, under, info)) {
+		return emit_large_equal(e, under, info, lhs, rhs)
+	}
 	#partial switch info.kind {
 	case .Union:
 		return emit_union_equal(e, under, lhs, rhs)
@@ -1263,7 +1321,11 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 			right := extract(e, llvm_type(e, under), rhs, index)
 			leaf := ""
 			if counter := symbol_of(e.c, symbol.initialized_by); counter != nil {
-				leaf = emit_prefix_equal(e, under, counter, symbol.type, lhs, rhs, left, right)
+				llvm := llvm_type(e, under)
+				leaf = emit_prefix_equal(
+					e, counter, symbol.type,
+					extract(e, llvm, lhs, int(counter.index)), extract(e, llvm, rhs, int(counter.index)), left, right,
+				)
 			} else {
 				leaf = emit_equal(e, symbol.type, left, right)
 			}
@@ -1274,20 +1336,70 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	return emit_compare(e, .Eq_Eq, type, lhs, rhs)
 }
 
+// A large value is an address, so its parts are compared in place: a record
+// field by field, an array in a loop rather than unrolled.
+@(private = "file")
+emit_large_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
+	part_value :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
+		return is_large_value(e, type) ? address : load_place(e, type, address)
+	}
+	llvm := llvm_type(e, type)
+	if info.kind == .Struct {
+		result := "true"
+		for field, index in info.fields {
+			symbol := symbol_of(e.c, field)
+			left := part_value(e, symbol.type, gep_field(e, llvm, lhs, index))
+			right := part_value(e, symbol.type, gep_field(e, llvm, rhs, index))
+			leaf := ""
+			if counter := symbol_of(e.c, symbol.initialized_by); counter != nil {
+				count_left := load_place(e, counter.type, gep_field(e, llvm, lhs, int(counter.index)))
+				count_right := load_place(e, counter.type, gep_field(e, llvm, rhs, int(counter.index)))
+				leaf = emit_prefix_equal(e, counter, symbol.type, count_left, count_right, left, right)
+			} else {
+				leaf = emit_equal(e, symbol.type, left, right)
+			}
+			result = combine_and(e, result, leaf)
+		}
+		return result
+	}
+	element_llvm := llvm_type(e, info.element)
+	same, cursor := alloca(e, "i1"), alloca(e, "i64")
+	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", same)
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	head := new_label(e, "large.equal.head")
+	body, done := new_label(e, "large.equal.body"), new_label(e, "large.equal.done")
+	branch(e, head)
+	place_label(e, head)
+	at := load(e, "i64", cursor)
+	more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %d", more, at, info.count)
+	branch_if(e, more, body, done)
+	place_label(e, body)
+	left := part_value(e, info.element, gep_at(e, element_llvm, lhs, at))
+	right := part_value(e, info.element, gep_at(e, element_llvm, rhs, at))
+	leaf := emit_equal(e, info.element, left, right)
+	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", combine_and(e, load(e, "i1", same), leaf), same)
+	step := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", step, at)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", step, cursor)
+	branch(e, head)
+	place_label(e, done)
+	return load(e, "i1", same)
+}
+
 // design.md "Uninitialized capacity": only the live prefix is compared. Unequal
 // counts already differ through the count field, and the loop stops at the
 // shorter one, so neither side's capacity is ever read.
 @(private = "file")
 emit_prefix_equal :: proc(
-	e: ^Emitter, record: Type_Id, counter: ^Symbol, array: Type_Id, lhs, rhs, left, right: string,
+	e: ^Emitter, counter: ^Symbol, array: Type_Id, raw_left, raw_right, left, right: string,
 ) -> string {
 	element := underlying_info(e.c, array).element
 	element_llvm := llvm_type(e, element)
-	record_llvm := llvm_type(e, record)
 	array_llvm := llvm_type(e, array)
 
-	count_left := widen_to_i64(e, extract(e, record_llvm, lhs, int(counter.index)), counter.type)
-	count_right := widen_to_i64(e, extract(e, record_llvm, rhs, int(counter.index)), counter.type)
+	count_left := widen_to_i64(e, raw_left, counter.type)
+	count_right := widen_to_i64(e, raw_right, counter.type)
 	shorter, total := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", shorter, count_left, count_right)
 	fmt.sbprintfln(
@@ -1296,8 +1408,8 @@ emit_prefix_equal :: proc(
 
 	// Both sides are spilled so the loop can index them.
 	left_slot, right_slot := alloca(e, array_llvm), alloca(e, array_llvm)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", array_llvm, left, left_slot)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", array_llvm, right, right_slot)
+	store(e, array, left, left_slot)
+	store(e, array, right, right_slot)
 	same, cursor := alloca(e, "i1"), alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", same)
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
@@ -1311,8 +1423,8 @@ emit_prefix_equal :: proc(
 	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", more, at, total)
 	branch_if(e, more, body, done)
 	place_label(e, body)
-	one := load(e, element_llvm, gep_at(e, element_llvm, left_slot, at))
-	other := load(e, element_llvm, gep_at(e, element_llvm, right_slot, at))
+	one := load_place(e, element, gep_at(e, element_llvm, left_slot, at))
+	other := load_place(e, element, gep_at(e, element_llvm, right_slot, at))
 	leaf := emit_equal(e, element, one, other)
 	previous := load(e, "i1", same)
 	next := temp(e)
@@ -1402,9 +1514,9 @@ emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_In
 	llvm := llvm_type(e, type)
 	left_slot := alloca(e, llvm)
 	right_slot := temp(e)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, lhs, left_slot)
+	store(e, type, lhs, left_slot)
 	alloca_named(e, right_slot, llvm)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, rhs, right_slot)
+	store(e, type, rhs, right_slot)
 
 	result := "true"
 	for field, index in info.fields {
@@ -1469,6 +1581,8 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 @(private = "file")
 emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 	cond := emit_expr(e, v.cond)
+	// A large value cannot be a phi operand, so each arm writes one slot.
+	joined := is_large_value(e, as_type) ? temporary_slot(e, as_type) : ""
 	then_label := new_label(e, "cond.then")
 	else_label := new_label(e, "cond.else")
 	done_label := new_label(e, "cond.done")
@@ -1476,6 +1590,9 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 
 	place_label(e, then_label)
 	then_value := emit_expr(e, v.then)
+	if joined != "" {
+		store(e, as_type, then_value, joined)
+	}
 	then_exit := new_label(e, "cond.then.exit")
 	branch(e, then_exit)
 	place_label(e, then_exit)
@@ -1483,12 +1600,18 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 
 	place_label(e, else_label)
 	else_value := emit_expr(e, v.otherwise)
+	if joined != "" {
+		store(e, as_type, else_value, joined)
+	}
 	else_exit := new_label(e, "cond.else.exit")
 	branch(e, else_exit)
 	place_label(e, else_exit)
 	branch(e, done_label)
 
 	place_label(e, done_label)
+	if joined != "" {
+		return joined
+	}
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b,

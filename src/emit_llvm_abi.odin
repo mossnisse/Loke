@@ -424,15 +424,13 @@ union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 @(private)
 emit_union_value :: proc(e: ^Emitter, union_type: Type_Id, index: int, value: string) -> string {
 	llvm := llvm_type(e, union_type)
-	slot := alloca(e, llvm)
-	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, slot)
+	slot := temporary_slot(e, union_type)
+	store(e, union_type, "zeroinitializer", slot)
 	if payload_type := union_variant_payload(e.c, union_type, index); payload_type != TYPE_VOID {
-		payload := gep_field(e, llvm, slot, 0)
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, payload_type), value, payload)
+		store(e, payload_type, value, gep_field(e, llvm, slot, 0))
 	}
 	emit_union_store_tag(e, union_type, slot, index)
-	out := load(e, llvm, slot)
-	return out
+	return load_temporary(e, union_type, slot)
 }
 
 // A two-variant union built from a runtime condition: each payload is written
@@ -450,8 +448,8 @@ emit_union_either :: proc(
 	false_index: int, false_payload: string,
 ) -> string {
 	llvm := llvm_type(e, union_type)
-	slot := alloca(e, llvm)
-	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, slot)
+	slot := temporary_slot(e, union_type)
+	store(e, union_type, "zeroinitializer", slot)
 	yes, no, done := new_label(e, "variant.yes"), new_label(e, "variant.no"), new_label(e, "variant.done")
 	branch_if(e, condition, yes, no)
 
@@ -461,8 +459,7 @@ emit_union_either :: proc(
 		// the whole value.
 		if payload_type := union_variant_payload(e.c, union_type, index);
 		   payload != "" && payload_type != TYPE_VOID {
-			address := gep_field(e, llvm, slot, 0)
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, payload_type), payload, address)
+			store(e, payload_type, payload, gep_field(e, llvm, slot, 0))
 		}
 		emit_union_store_tag(e, union_type, slot, index)
 	}
@@ -477,8 +474,7 @@ emit_union_either :: proc(
 
 	place_label(e, done)
 	e.terminated = false
-	out := load(e, llvm, slot)
-	return out
+	return load_temporary(e, union_type, slot)
 }
 
 @(private)
@@ -504,6 +500,11 @@ emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag
 // tests.
 @(private)
 emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
+	if is_large_value(e, union_type) {
+		shape := union_layout(e.c, union_type)
+		tag := gep_field(e, llvm_type(e, union_type), value, union_tag_member(e, union_type))
+		return load(e, fmt.aprintf("i%d", shape.tag_bytes * 8), tag)
+	}
 	out := extract(e, llvm_type(e, union_type), value, union_tag_member(e, union_type))
 	return out
 }
@@ -511,16 +512,15 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 // Spills a union value so its payload can be read at a variant's own type.
 @(private)
 emit_union_spill :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
-	llvm := llvm_type(e, union_type)
-	slot := alloca(e, llvm)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, value, slot)
+	slot := temporary_slot(e, union_type)
+	store(e, union_type, value, slot)
 	return slot
 }
 
 @(private)
 emit_union_payload :: proc(e: ^Emitter, union_type, payload_type: Type_Id, slot: string) -> string {
 	payload := gep_field(e, llvm_type(e, union_type), slot, 0)
-	out := load(e, llvm_type(e, payload_type), payload)
+	out := load_place(e, payload_type, payload)
 	return out
 }
 
@@ -542,13 +542,60 @@ union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
 }
 
 // design.md: a procedure returns at most one value. An `inout` result is a
-// place, so it travels as its address.
+// place, so it travels as its address. A large result is written through a
+// leading `ptr %sret` into the caller's storage.
 @(private)
 llvm_result_type :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
-	if result == INVALID_TYPE {
+	if result == INVALID_TYPE || !inout && is_large_value(e, result) {
 		return "void"
 	}
 	return inout ? "ptr" : llvm_type(e, result)
+}
+
+@(private)
+returns_sret :: proc(e: ^Emitter, result: Type_Id, inout: bool) -> bool {
+	return !inout && is_large_value(e, result)
+}
+
+// `ptr %sret, ` ahead of a procedure's own parameters when its result is
+// large; the procedure then returns with `emit_ret`.
+@(private)
+sret_param :: proc(e: ^Emitter, result: Type_Id, inout := false, last := false) -> string {
+	if !returns_sret(e, result, inout) {
+		return ""
+	}
+	e.abi_sret = "%sret"
+	return last ? "ptr %sret" : "ptr %sret, "
+}
+
+@(private)
+emit_ret :: proc(e: ^Emitter, result: Type_Id, value: string) {
+	if returns_sret(e, result, false) {
+		store(e, result, value, "%sret")
+		fmt.sbprintln(&e.b, "  ret void")
+		return
+	}
+	fmt.sbprintfln(&e.b, "  ret %s %s", llvm_type(e, result), value)
+}
+
+// Calls `callee` with the written `arguments` and returns its result, which a
+// large result receives through storage passed ahead of them.
+@(private)
+emit_call_result :: proc(e: ^Emitter, result: Type_Id, callee, arguments: string) -> string {
+	if returns_sret(e, result, false) {
+		out := temporary_slot(e, result)
+		fmt.sbprintfln(&e.b, "  call void %s(ptr %s%s%s)", callee, out, arguments == "" ? "" : ", ", arguments)
+		return out
+	}
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", out, llvm_type(e, result), callee, arguments)
+	return out
+}
+
+// A pointer-mode parameter, or a large value, travels as an address.
+@(private)
+param_llvm :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
+	return param_mode_is_pointer(mode) || is_large_value(e, type) ? "ptr" : llvm_type(e, type)
 }
 
 @(private)
@@ -571,10 +618,7 @@ symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mo
 // storage, exactly as an `inout` one does.
 @(private)
 synth_param_llvm :: proc(e: ^Emitter, symbol: ^Symbol, index: int) -> string {
-	if param_mode_is_pointer(symbol_param_mode(e.c, symbol, index)) {
-		return "ptr"
-	}
-	return llvm_type(e, symbol.params[index])
+	return param_llvm(e, symbol.params[index], symbol_param_mode(e.c, symbol, index))
 }
 
 // The receiver of a synthesized member as a *value*. The bodies below read
@@ -585,7 +629,7 @@ synth_receiver_value :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 	if !param_mode_is_pointer(symbol_param_mode(e.c, symbol, 0)) {
 		return "%arg0"
 	}
-	return load(e, llvm_type(e, symbol.params[0]), "%arg0")
+	return load_place(e, symbol.params[0], "%arg0")
 }
 
 // The receiver operand for a direct call to `hook` when the caller holds the
@@ -598,10 +642,10 @@ call_receiver_operand :: proc(
 ) -> (receiver_type: string, receiver: string) {
 	sym := symbol_of(e.c, hook)
 	if sym == nil || !param_mode_is_pointer(symbol_param_mode(e.c, sym, 0)) {
-		return llvm_type(e, type), value
+		return param_llvm(e, type, .Value), value
 	}
-	slot := alloca(e, llvm_type(e, type))
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, type), value, slot)
+	slot := temporary_slot(e, type)
+	store(e, type, value, slot)
 	return "ptr", slot
 }
 
@@ -698,7 +742,7 @@ emit_foreign_param_slot :: proc(e: ^Emitter, parameter: Type_Id, index: int) -> 
 	case .Bool_I1, .Direct:
 		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
 		alloca_named(e, slot, llvm_type(e, parameter))
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), arg, slot)
+		store(e, parameter, arg, slot)
 		return slot
 	}
 	return arg
@@ -732,7 +776,7 @@ emit_foreign_return :: proc(e: ^Emitter) {
 		v := load(e, "i1", slot)
 		fmt.sbprintfln(&e.b, "  ret i1 %s", v)
 	case .Direct:
-		v := load(e, llvm_type(e, result), slot)
+		v := load_place(e, result, slot)
 		fmt.sbprintfln(&e.b, "  ret %s %s", llvm_type(e, result), v)
 	}
 }
@@ -780,7 +824,7 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 			return fmt.aprintf("i%d %s", bits, loaded)
 		case .Indirect:
 			slot := alloca(e, llvm_type(e, under))
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, under), operand, slot)
+			store(e, under, operand, slot)
 			return fmt.aprintf("ptr %s", slot)
 		}
 	}
@@ -894,7 +938,7 @@ emit_foreign_call :: proc(
 		}
 		if param_is_by_ptr(callee_type, index) {
 			slot := alloca(e, llvm_type(e, parameter))
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), operand, slot)
+			store(e, parameter, operand, slot)
 			append(&args, fmt.aprintf("ptr %s", slot))
 			continue
 		}
@@ -910,7 +954,7 @@ emit_foreign_call :: proc(
 			append(&args, fmt.aprintf("i%d %s", bits, loaded))
 		case .Indirect:
 			slot := alloca(e, llvm_type(e, parameter))
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), operand, slot)
+			store(e, parameter, operand, slot)
 			append(&args, fmt.aprintf("ptr %s", slot))
 		case .Direct:
 			append(&args, fmt.aprintf("%s %s", llvm_type(e, parameter), operand))
@@ -948,7 +992,7 @@ emit_foreign_call :: proc(
 	}
 	switch abi_pass(e.c, result_type) {
 	case .Indirect:
-		v := load(e, llvm_type(e, result_type), sret)
+		v := load_place(e, result_type, sret)
 		single[0] = v
 	case .Reg_Int:
 		slot, v := temp(e), temp(e)

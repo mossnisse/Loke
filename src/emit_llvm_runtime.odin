@@ -447,8 +447,8 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 			receiver_type = llvm_type(e, type)
 			receiver = load(e, receiver_type, address)
 		}
-		writer := load(e, llvm_type(e, e.c.runtime_types["Writer"]), "%w")
-		options := load(e, llvm_type(e, e.c.runtime_types["Options"]), "%o")
+		writer := load_place(e, e.c.runtime_types["Writer"], "%w")
+		options := load_place(e, e.c.runtime_types["Options"], "%o")
 		fmt.sbprintfln(
 			&e.b, "  call void %s(%s %s, %s %s, %s %s)",
 			symbol_name(e, hook),
@@ -572,7 +572,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
 	shape := union_layout(e.c, under)
 	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
-	value := load(e, llvm_type(e, under), address)
+	value := load_place(e, under, address)
 	tag := emit_union_tag(e, under, value)
 	slot := emit_union_spill(e, under, value)
 	done := new_label(e, "fmt.union.done")
@@ -1251,7 +1251,7 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 		return single
 	}
 	slot := alloca(e, llvm_type(e, option))
-	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm_type(e, option), slot)
+	store(e, option, "zeroinitializer", slot)
 	then_label, done_label := new_label(e, "anyview.match"), new_label(e, "anyview.done")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", matched, then_label, done_label)
 	fmt.sbprintfln(&e.b, "%s:", then_label)
@@ -1260,10 +1260,10 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 		loaded = emit_clone_value(e, v.payload, loaded)
 	}
 	wrapped := emit_union_value(e, option, some, loaded)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, option), wrapped, slot)
+	store(e, option, wrapped, slot)
 	branch(e, done_label)
 	place_label(e, done_label)
-	single[0] = load(e, llvm_type(e, option), slot)
+	single[0] = load_place(e, option, slot)
 	return single
 }
 
@@ -1354,7 +1354,10 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	e.terminated = false
 	signature := type_of(e.c, target.proc_type)
 	result_type := llvm_result_type(e, target.result, signature.result_inout)
-	fmt.sbprintf(&e.b, "define private %s %s(ptr %%arg0", result_type, witness_thunk_name(e, witness, index))
+	fmt.sbprintf(
+		&e.b, "define private %s %s(%sptr %%arg0",
+		result_type, witness_thunk_name(e, witness, index), sret_param(e, target.result, signature.result_inout),
+	)
 	write_forwarded_params(e, target.params, signature.param_modes)
 	open_function(e, ")")
 
@@ -1362,8 +1365,8 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	// gets it loaded.
 	receiver_type, receiver := "ptr", "%arg0"
 	if !param_mode_is_pointer(symbol_param_mode(e.c, target, 0)) {
-		receiver_type = llvm_type(e, target.params[0])
-		receiver = load(e, receiver_type, "%arg0")
+		receiver_type = param_llvm(e, target.params[0], .Value)
+		receiver = load_place(e, target.params[0], "%arg0")
 	}
 	emit_forwarding_call(e, target, signature, symbol_name(e, slot.target), receiver_type, receiver)
 	fmt.sbprintln(&e.b, "")
@@ -1380,7 +1383,8 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	view_type := llvm_type(e, symbol.params[0])
 	receiver_by_ptr := len(signature.param_modes) > 0 && param_mode_is_pointer(signature.param_modes[0])
 	fmt.sbprintf(
-		&e.b, "define %s%s %s(%s %%arg0", llvm_linkage(name), result_type, name, receiver_by_ptr ? "ptr" : view_type,
+		&e.b, "define %s%s %s(%s%s %%arg0", llvm_linkage(name), result_type, name,
+		sret_param(e, symbol.result, signature.result_inout), receiver_by_ptr ? "ptr" : view_type,
 	)
 	write_forwarded_params(e, symbol.params, signature.param_modes)
 	open_function(e, ")")
@@ -1394,8 +1398,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 @(private = "file")
 write_forwarded_params :: proc(e: ^Emitter, params: []Type_Id, modes: []Param_Mode) {
 	for position in 1 ..< len(params) {
-		type := param_mode_is_pointer(modes[position]) ? "ptr" : llvm_type(e, params[position])
-		fmt.sbprintf(&e.b, ", %s %%arg%d", type, position)
+		fmt.sbprintf(&e.b, ", %s %%arg%d", param_llvm(e, params[position], modes[position]), position)
 	}
 }
 
@@ -1406,8 +1409,11 @@ emit_forwarding_call :: proc(
 	e: ^Emitter, symbol: ^Symbol, signature: ^Type_Info, callee, receiver_type, receiver: string,
 ) {
 	result_type := llvm_result_type(e, symbol.result, signature.result_inout)
+	sret := returns_sret(e, symbol.result, signature.result_inout)
 	call := ""
-	if symbol.result != INVALID_TYPE {
+	if sret {
+		fmt.sbprintf(&e.b, "  call void %s(ptr %%sret, %s %s", callee, receiver_type, receiver)
+	} else if symbol.result != INVALID_TYPE {
 		call = temp(e)
 		fmt.sbprintf(&e.b, "  %s = call %s %s(%s %s", call, result_type, callee, receiver_type, receiver)
 	} else {
@@ -1415,7 +1421,7 @@ emit_forwarding_call :: proc(
 	}
 	write_forwarded_params(e, symbol.params, signature.param_modes)
 	fmt.sbprintln(&e.b, ")")
-	if symbol.result == INVALID_TYPE {
+	if symbol.result == INVALID_TYPE || sret {
 		fmt.sbprintln(&e.b, "  ret void")
 	} else {
 		fmt.sbprintfln(&e.b, "  ret %s %s", result_type, call)

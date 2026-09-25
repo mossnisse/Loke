@@ -393,6 +393,16 @@ Implicit conversions use `emit_expr_at` with an explicit effective type; address
 and value helpers carry that type without changing the checker's AST annotations.
 Child expressions continue to use their own checked types.
 
+A value larger than `LARGE_VALUE_BYTES` never becomes an LLVM first-class value,
+because clang crashes on one with 65536 or more scalars in it. Such a value is
+instead the address of storage that nothing else writes. It travels by pointer,
+and it is returned through a leading `ptr %sret`. Its temporaries are shared
+between full expressions, so a function's frame holds what one statement needs.
+Every load, store, call, and return of a Loke-typed value therefore goes
+through the typed helpers: `load_place`, `store`, `temporary_slot`,
+`emit_call_result`, `emit_ret`, and `sret_param`. A raw `store %s` or `ret %s`
+of such a value is a bug.
+
 ## How to make a compiler change
 
 Use the narrowest path that preserves the phase contracts:

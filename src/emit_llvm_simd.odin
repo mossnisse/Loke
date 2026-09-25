@@ -263,8 +263,8 @@ emit_simd_cast :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	vector := type_is_simd(e.c, source) ? source : as_type
 	value := emit_expr(e, v.bound[0])
 	slot := alloca(e, llvm_type(e, vector))
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, source), value, slot)
-	return load(e, llvm_type(e, as_type), slot)
+	store(e, source, value, slot)
+	return load_place(e, as_type, slot)
 }
 
 @(private = "file")

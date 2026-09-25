@@ -3,6 +3,6 @@ call void @loke.p.Res.release(ptr %a.*)
 %defer0.* = alloca i1
 store i1 false, ptr %defer0.*
 store i1 true, ptr %defer0.*
-store %struct.Res.* { i64 0 }, ptr %b.*
+store %struct.Res.* zeroinitializer, ptr %b.*
 br i1 %t*, label %defer.run.*, label %defer.skip.*
 call void @loke.p.Res.release(ptr %a.*)

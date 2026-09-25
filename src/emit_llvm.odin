@@ -154,6 +154,16 @@ Function_State :: struct {
 	unwind: Unwind_State,
 	// Fixed-size allocas, spliced into the entry block so a loop can't grow the stack.
 	prologue: [dynamic]string,
+	// Large temporaries, shared by the full expressions that need one: taken ones
+	// in order, a mark per open full expression, and the free ones.
+	large_taken: [dynamic]Large_Slot,
+	large_marks: [dynamic]int,
+	large_free:  [dynamic]Large_Slot,
+}
+
+@(private)
+Large_Slot :: struct {
+	type, name: string,
 }
 
 // `define <signature> {` and the entry label; `{` can't go in a format string.
@@ -424,13 +434,12 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 			&e.b, "define %s%s %s(",
 			llvm_linkage(llvm_name), llvm_result_type(e, symbol.result, e.result_inout), llvm_name,
 		)
+		fmt.sbprint(&e.b, sret_param(e, symbol.result, e.result_inout, last = len(symbol.params) == 0))
 		for parameter, index in symbol.params {
 			if index > 0 {
 				fmt.sbprint(&e.b, ", ")
 			}
-			mode := symbol_param_mode(e.c, symbol, index)
-			type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, parameter)
-			fmt.sbprintf(&e.b, "%s %%arg%d", type, index)
+			fmt.sbprintf(&e.b, "%s %%arg%d", param_llvm(e, parameter, symbol_param_mode(e.c, symbol, index)), index)
 		}
 		fmt.sbprintln(&e.b, ") {")
 	}
@@ -465,7 +474,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		}
 		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
 		alloca_named(e, slot, llvm_type(e, parameter))
-		fmt.sbprintfln(&e.b, "  store %s %%arg%d, ptr %s", llvm_type(e, parameter), index, slot)
+		store(e, parameter, fmt.aprintf("%%arg%d", index), slot)
 		bind_local(e, binding, slot)
 	}
 
@@ -481,7 +490,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		if e.result_inout {
 			fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", e.result_slot)
 		} else if zero, ok := zero_const(e.c, result); ok {
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", type, llvm_const(e, zero, result), e.result_slot)
+			store(e, result, llvm_const(e, zero, result), e.result_slot)
 		}
 	}
 

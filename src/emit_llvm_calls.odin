@@ -212,7 +212,7 @@ emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr, lef
 	info := type_of(e.c, symbol.proc_type)
 	receiver := left_place
 	if left_place != "" && !param_mode_is_pointer(info.param_modes[0]) {
-		receiver = load(e, llvm_type(e, info.parameters[0]), left_place)
+		receiver = load_place(e, info.parameters[0], left_place)
 	}
 	results := emit_bound_call(e, symbol_id, symbol_name(e, symbol_id), info, bound, receiver = receiver)
 	return len(results) == 0 ? "0" : results[0]
@@ -231,7 +231,7 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: 
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, emit_expr(e, bound[0]))
 		return out
 	}
-	lhs := left_place != "" ? load(e, llvm_type(e, underlying), left_place) : emit_expr(e, bound[0])
+	lhs := left_place != "" ? load_place(e, underlying, left_place) : emit_expr(e, bound[0])
 	rhs := emit_expr(e, bound[1])
 	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
@@ -361,10 +361,8 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	}
 	clone_result := symbol_of(e.c, hook).result
 	receiver_type, receiver := call_receiver_operand(e, hook, checked.type, value)
-	returned := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		returned, llvm_type(e, clone_result), symbol_name(e, hook), receiver_type, receiver, allocator,
+	returned := emit_call_result(
+		e, clone_result, symbol_name(e, hook), fmt.aprintf("%s %s, ptr %s", receiver_type, receiver, allocator),
 	)
 	clone_slot := emit_union_spill(e, clone_result, returned)
 	failed := emit_union_failed(e, clone_result, returned)
@@ -543,12 +541,17 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	branch(e, entry)
 	place_label(e, entry)
 	failed := emit_union_failed(e, operand_type, value)
+	// A large value cannot be a phi operand, so each arm writes one slot.
+	joined_slot := is_large_value(e, payload_type) ? temporary_slot(e, payload_type) : ""
 	branch_if(e, failed, fallback_label, success_label)
 
 	place_label(e, success_label)
 	taken := emit_union_payload(e, operand_type, payload_type, slot)
 	if v.borrows && emit_lifecycle(e, payload_type).managed {
 		taken = emit_clone_value(e, payload_type, taken)
+	}
+	if joined_slot != "" {
+		store(e, payload_type, taken, joined_slot)
 	}
 	success_exit := new_label(e, "orelse.success.exit")
 	branch(e, success_exit)
@@ -567,19 +570,24 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	if v.fallback_clone {
 		fallback = emit_clone_value(e, payload_type, fallback)
 	}
+	if joined_slot != "" {
+		store(e, payload_type, fallback, joined_slot)
+	}
 	fallback_exit := new_label(e, "orelse.fallback.exit")
 	branch(e, fallback_exit)
 	place_label(e, fallback_exit)
 	branch(e, done)
 
 	place_label(e, done)
-	joined := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]",
-		joined, llvm_type(e, payload_type), taken, success_exit, fallback, fallback_exit,
-	)
 	out := make([]string, 1)
-	out[0] = joined
+	out[0] = joined_slot
+	if joined_slot == "" {
+		out[0] = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]",
+			out[0], llvm_type(e, payload_type), taken, success_exit, fallback, fallback_exit,
+		)
+	}
 	return out
 }
 
@@ -596,7 +604,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 		// conversions such as `T -> any_view` must point into that proven-live
 		// source rather than into the temporary union spill below.
 		operand_address = emit_address(e, v.operand)
-		value = load(e, llvm_type(e, operand_type), operand_address)
+		value = load_place(e, operand_type, operand_address)
 	} else {
 		value = emit_expr(e, v.operand)
 	}
@@ -816,7 +824,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 				branch_if(e, more, body, done)
 				place_label(e, body)
 				source := gep_at(e, element_llvm, spread_data[next_spread], index)
-				loaded := load(e, element_llvm, source)
+				loaded := load_place(e, element, source)
 				cloned := emit_clone_value(e, element, loaded)
 				position := load(e, "i64", cursor_slot)
 				destination := gep_at(e, element_llvm, buffer, position)
@@ -841,7 +849,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 				&e.b, "  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %d",
 				source, static_count, element_llvm, staging, next_element,
 			)
-			loaded := load(e, element_llvm, source)
+			loaded := load_place(e, element, source)
 			store(e, element, loaded, destination)
 			final_flag, staging_flag := temp(e), temp(e)
 			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", final_flag, final_flags, position)
@@ -1057,8 +1065,21 @@ emit_bound_call :: proc(
 	}
 
 	result_type := llvm_result_type(e, callee_type.result, callee_type.result_inout)
+	// A large argument is passed as the address of a copy only the callee reads.
+	for &operand, index in operands {
+		if index < len(callee_type.parameters) && is_large_value(e, callee_type.parameters[index]) &&
+		   operand[0] != '%' {
+			spill := temporary_slot(e, callee_type.parameters[index])
+			store(e, callee_type.parameters[index], operand, spill)
+			operand = spill
+		}
+	}
 	call := ""
-	if callee_type.result != INVALID_TYPE {
+	sret := returns_sret(e, callee_type.result, callee_type.result_inout)
+	if sret {
+		call = temporary_slot(e, callee_type.result)
+		fmt.sbprintf(&e.b, "  call void %s(ptr %s%s", callee, call, len(operands) > 0 ? ", " : "")
+	} else if callee_type.result != INVALID_TYPE {
 		call = temp(e)
 		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, callee)
 	} else {
@@ -1069,7 +1090,7 @@ emit_bound_call :: proc(
 			fmt.sbprint(&e.b, ", ")
 		}
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, callee_type.parameters[index])
+		type := param_llvm(e, callee_type.parameters[index], mode)
 		if index == 0 && receiver_type != "" {
 			type = receiver_type
 		}

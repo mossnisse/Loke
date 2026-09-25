@@ -8,17 +8,17 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	result := llvm_type(e, symbol.result)
 	source := symbol.params[0]
 	info := type_of(e.c, source)
-	open_function(e, "define %s%s %s(ptr %%arg0)", llvm_linkage(name), result, name)
+	open_function(e, "define %s%s %s(%sptr %%arg0)", llvm_linkage(name), llvm_result_type(e, symbol.result), name, sret_param(e, symbol.result))
 	e.terminated = false
 	#partial switch symbol.synth {
 	case .Adapter_View:
 		view := type_of(e.c, symbol.result)
 		held_type, held := "ptr", "%arg0"
 		if view.adapter_by_value {
-			held_type, held = llvm_type(e, source), load(e, llvm_type(e, source), "%arg0")
+			held_type, held = llvm_type(e, source), load_place(e, source, "%arg0")
 		}
 		value := insert(e, result, "undef", held_type, held, 0)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, value)
+		emit_ret(e, symbol.result, value)
 	case .Adapter_Iter:
 		address := gep_field(e, llvm_type(e, source), "%arg0", 0)
 		if !info.adapter_by_value { address = load(e, "ptr", address) }
@@ -27,10 +27,9 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		source_type, source_arg := "ptr", address
 		if !param_mode_is_pointer(symbol_param_mode(e.c, target, 0)) {
 			source_type = llvm_type(e, target.params[0])
-			source_arg = load(e, source_type, address)
+			source_arg = load_place(e, target.params[0], address)
 		}
-		iterator := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s(%s %s)", iterator, llvm_type(e, target.result), symbol_name(e, symbol.iteration_target), source_type, source_arg)
+		iterator := emit_call_result(e, target.result, symbol_name(e, symbol.iteration_target), fmt.aprintf("%s %s", source_type, source_arg))
 		value := iterator
 		if info.adapter_kind == .Indexed {
 			value = insert(e, result, "undef", llvm_type(e, target.result), iterator, 0)
@@ -38,18 +37,16 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		} else if info.adapter_kind == .Copied {
 			value = insert(e, result, "undef", llvm_type(e, target.result), iterator, 0)
 		}
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, value)
+		emit_ret(e, symbol.result, value)
 	case .Iterator_Copy:
-		value := load(e, result, "%arg0")
+		value := load_place(e, symbol.result, "%arg0")
 		if emit_lifecycle(e, source).managed { value = emit_clone_value(e, source, value) }
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, value)
+		emit_ret(e, symbol.result, value)
 	case .Indexed_Next:
 		target := symbol_of(e.c, symbol.iteration_target)
 		inner_option := target.result
-		inner_type := llvm_type(e, inner_option)
 		iterator := gep_field(e, llvm_type(e, source), "%arg0", 0)
-		produced := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, inner_type, symbol_name(e, symbol.iteration_target), iterator)
+		produced := emit_call_result(e, inner_option, symbol_name(e, symbol.iteration_target), fmt.aprintf("ptr %s", iterator))
 		tag := emit_union_tag(e, inner_option, produced)
 		ok := temp(e)
 		shape := union_layout(e.c, inner_option)
@@ -71,16 +68,14 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		stepped := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", stepped, counter)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_some(e, symbol.result, pair))
+		emit_ret(e, symbol.result, emit_option_some(e, symbol.result, pair))
 		fmt.sbprintfln(&e.b, "%s:", stopped)
-		fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", result)
+		emit_ret(e, symbol.result, "zeroinitializer")
 	case .Copied_Next:
 		target := symbol_of(e.c, symbol.iteration_target)
 		inner_option := target.result
-		inner_type := llvm_type(e, inner_option)
 		iterator := gep_field(e, llvm_type(e, source), "%arg0", 0)
-		produced := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, inner_type, symbol_name(e, symbol.iteration_target), iterator)
+		produced := emit_call_result(e, inner_option, symbol_name(e, symbol.iteration_target), fmt.aprintf("ptr %s", iterator))
 		tag := emit_union_tag(e, inner_option, produced)
 		ok := temp(e)
 		shape := union_layout(e.c, inner_option)
@@ -91,9 +86,9 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		handed := option_payload(e.c, inner_option)
 		payload := emit_union_payload(e, inner_option, handed, emit_union_spill(e, inner_option, produced))
 		owned := own_yielded(e, payload, handed, option_payload(e.c, symbol.result))
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_some(e, symbol.result, owned))
+		emit_ret(e, symbol.result, emit_option_some(e, symbol.result, owned))
 		fmt.sbprintfln(&e.b, "%s:", stopped)
-		fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", result)
+		emit_ret(e, symbol.result, "zeroinitializer")
 	}
 	fmt.sbprintln(&e.b, "}")
 }
@@ -105,7 +100,7 @@ own_yielded :: proc(e: ^Emitter, payload: string, handed, wanted: Type_Id) -> st
 		return payload
 	}
 	if type_is_pointer(e.c, handed) {
-		value := load(e, llvm_type(e, wanted), payload)
+		value := load_place(e, wanted, payload)
 		if emit_lifecycle(e, wanted).managed {
 			return emit_clone_value(e, wanted, value)
 		}

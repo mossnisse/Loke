@@ -198,8 +198,8 @@ emit_synth_swap :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	left := gep_at(e, element_llvm, data, "%arg1")
 	right := gep_at(e, element_llvm, data, "%arg2")
-	held_left := load(e, element_llvm, left)
-	held_right := load(e, element_llvm, right)
+	held_left := load_place(e, element, left)
+	held_right := load_place(e, element, right)
 	store(e, element, held_right, left)
 	store(e, element, held_left, right)
 	fmt.sbprintln(&e.b, "  ret void")
@@ -365,7 +365,7 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 		e, fmt.aprintf("@loke.chash.%d", int(key)), key,
 		"i64", "ptr %p, i64 %seed",
 		proc(e: ^Emitter, key: Type_Id) {
-			value := load(e, llvm_type(e, key), "%p")
+			value := load_place(e, key, "%p")
 			out := ""
 			if hook := key_policy_member(e, key, false); hook != INVALID_SYMBOL {
 				// An immutable receiver takes the key's address, which is `%p`.
@@ -695,6 +695,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 
 	result := llvm_result_type(e, symbol.result, symbol.result_inout)
 	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), result, name)
+	fmt.sbprint(&e.b, sret_param(e, symbol.result, symbol.result_inout))
 	for _, index in symbol.params {
 		if index > 0 {
 			fmt.sbprint(&e.b, ", ")
@@ -710,7 +711,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	// A single value entering the container is spilled for the helper to read.
 	value_storage :: proc(e: ^Emitter, element: Type_Id, argument: string) -> string {
 		slot := alloca(e, llvm_type(e, element))
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, element), argument, slot)
+		store(e, element, argument, slot)
 		return slot
 	}
 
@@ -791,10 +792,9 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		out := alloca(e, element_llvm)
 		found := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_dyn_pop(ptr %%arg0, ptr %s, ptr %s)", found, ops, out)
-		value, ok := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, out)
+		value, ok := load_temporary(e, element, out), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, ok, value))
+		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, value))
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -804,8 +804,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 			&e.b, "  call void @loke_rt_v1_dyn_remove(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i32 %d)",
 			ops, out, symbol.container_op == .Remove_Unordered ? 1 : 0,
 		)
-		value := load(e, element_llvm, out)
-		fmt.sbprintfln(&e.b, "  ret %s %s", element_llvm, value)
+		value := load_place(e, element, out)
+		emit_ret(e, element, value)
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -843,7 +843,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, slot,
 		)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", ok, found)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, ok, found))
+		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, found))
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -864,11 +864,11 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		if constant, zeroed := zero_const(e.c, element); zeroed {
 			zero = llvm_const(e, constant, element)
 		}
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element_llvm, zero, out)
+		store(e, element, zero, out)
 		hit_label, done_label := new_label(e, "mlookup.hit"), new_label(e, "mlookup.done")
 		branch_if(e, present, hit_label, done_label)
 		place_label(e, hit_label)
-		stored := load(e, element_llvm, found)
+		stored := load_place(e, element, found)
 		if emit_lifecycle(e, element).managed {
 			stored = emit_clone_value(e, element, stored)
 		}
@@ -876,8 +876,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		branch(e, done_label)
 		place_label(e, done_label)
 
-		value := load(e, element_llvm, out)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, present, value))
+		value := load_place(e, element, out)
+		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, present, value))
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -927,7 +927,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 
 		place_label(e, entry_ok)
 		// The key was absent a moment ago, so the slot is new and inert.
-		store(e, element, load(e, element_llvm, staged), place)
+		store(e, element, load_place(e, element, staged), place)
 		emit_map_slot_result(e, symbol.result, result, place, fallible)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -950,7 +950,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		clone_ready, clone_failed := new_label(e, "mins.cloned"), new_label(e, "mins.clone_failed")
 		branch_if(e, cloned, clone_ready, clone_failed)
 		place_label(e, clone_failed)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, "true"))
+		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "true"))
 		e.terminated = true
 
 		place_label(e, clone_ready)
@@ -961,15 +961,15 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		branch_if(e, missing, failed_label, ok_label)
 		place_label(e, failed_label)
 		emit_drop_place(e, element, staged)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, "true"))
+		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "true"))
 		e.terminated = true
 
 		place_label(e, ok_label)
 		// No failure point remains between dropping the old value and storing.
 		emit_replace_entry(e, element, place, inserted, "mins")
-		stored := load(e, element_llvm, staged)
+		stored := load_place(e, element, staged)
 		store(e, element, stored, place)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, "false"))
+		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "false"))
 		fmt.sbprintln(&e.b, "}")
 		e.terminated = true
 		return
@@ -990,10 +990,10 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 			&e.b, "  %s = call i32 @loke_rt_v1_map_remove(ptr %%arg0, ptr %s, ptr %s, ptr %s)",
 			found, ops, key_slot, out,
 		)
-		value := load(e, element_llvm, out)
+		value := load_place(e, element, out)
 		ok := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, ok, value))
+		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, value))
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -1026,7 +1026,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	if fallible {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, failed))
+		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, failed))
 		fmt.sbprintln(&e.b, "}")
 		return
 	}
@@ -1147,7 +1147,7 @@ prepare_map_assignment :: proc(e: ^Emitter, v: ^Expr_Index, snapshot_key: bool) 
 	// An earlier destination of a multiple assignment may overwrite the variable
 	// supplying this key, so it is snapshotted.
 	if snapshot_key && emit_lifecycle(e, key).managed && expression_is_borrowed_place(v.indices[0]) {
-		value := emit_clone_value(e, key, load(e, llvm_type(e, key), key_slot))
+		value := emit_clone_value(e, key, load_place(e, key, key_slot))
 		store(e, key, value, key_slot)
 		cleanup = begin_temporary_drop(e, key, key_slot)
 	}
@@ -1199,8 +1199,7 @@ emit_map_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 // `m[key]` as a read; `m.lookup_value(key)` is the `Option(V)` form.
 @(private)
 emit_map_lookup :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
-	element_llvm := llvm_type(e, container_element(e.c, expr_base(v.operand).type))
-	return load(e, element_llvm, emit_map_element_address(e, v))
+	return load_place(e, container_element(e.c, expr_base(v.operand).type), emit_map_element_address(e, v))
 }
 
 // Spills a key for the C helper, which only borrows it. Only an owned

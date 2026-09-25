@@ -2,7 +2,10 @@ package main;
 
 import "core:fmt";
 
-// clang crashed in instruction selection on a store of a 64 KiB constant.
+// clang crashes in instruction selection on a first-class LLVM value with 65536
+// or more scalars in it, so a large value lives in memory: constants are written
+// with memset or memcpy, copies go through memcpy, and it crosses a call by
+// pointer. Each case gets its own procedure to keep frames small.
 Holder :: struct {
 	tag: int,
 	bytes: [65536]u8,
@@ -10,11 +13,131 @@ Holder :: struct {
 
 table: [65536]u8;
 
-main :: proc() {
+constants :: proc() {
 	buffer: [65536]u8 = {};
 	buffer[3] = 5;
 	holder: Holder = {};
 	holder.bytes[65535] = 9;
 	first: [65536]u8 = {7};
 	fmt.println(buffer[3], buffer[4], holder.bytes[2], holder.bytes[65535], table[4], first[0], first[1]);
+}
+
+second :: proc(bytes: [65536]u8) -> u8 { return bytes[1]; }
+
+make_holder :: proc(tag: int) -> Holder {
+	h: Holder = {};
+	h.tag = tag;
+	h.bytes[0] = u8(tag);
+	return h;
+}
+
+blank_holder :: proc() -> Holder { return {}; }
+
+copies :: proc() {
+	table[1] = 4;
+	copy := table;
+	copy[1] = 2;
+	other: [65536]u8 = {};
+	other = copy;
+	holder := make_holder(3);
+	again := holder;
+	again.bytes[0] = 8;
+	old := exchange(inout other, table);
+	fmt.println(table[1], copy[1], other[1], second(copy), holder.bytes[0], again.bytes[0], old[1]);
+	fmt.println(blank_holder().tag);
+}
+
+// Past 4 KiB every value takes the in-memory path, so the remaining shapes use
+// a smaller record.
+Block :: struct {
+	tag: int,
+	bytes: [8192]u8,
+}
+
+Named :: struct {
+	name: string,
+	bytes: [8192]u8,
+}
+
+Shape :: union {
+	big: Block,
+	small: int,
+}
+
+impl Block {
+	first :: proc(self) -> u8 { return self.bytes[0]; }
+	with_tag :: proc(self, tag: int) -> Block { out := self; out.tag = tag; return out; }
+}
+
+Maker :: interface($Self: type) {
+	slot make: proc(self, seed: Block) -> Block;
+}
+
+Doubler :: struct { factor: int }
+impl Doubler {
+	make :: proc(self, seed: Block) -> Block { out := seed; out.tag = seed.tag * self.factor; return out; }
+}
+
+pick :: proc(flag: bool, a: Block, b: Block) -> Block { return a if flag else b; }
+
+maybe :: proc(flag: bool) -> Option(Block) {
+	if (flag) { b: Block = {}; b.bytes[0] = 6; return .some(b); }
+	return .none;
+}
+
+via_dyn :: proc(view: dyn Maker, seed: Block) -> Block { return view.make(seed); }
+via_generic :: proc(target: $T, seed: Block) -> Block where Maker(T) { return target.make(seed); }
+
+values :: proc() {
+	a: Block = {};
+	a.bytes[0] = 1;
+	b := a.with_tag(2);
+	fmt.println(b.tag, b.first(), a == b, a.bytes == b.bytes);
+	fmt.println(pick(false, a, b).tag);
+	op := pick;
+	fmt.println(op(true, a, b).tag);
+	d := Doubler{2};
+	fmt.println(via_dyn((dyn Maker)(&d), b).tag, via_generic(d, b).tag);
+}
+
+wrapped :: proc() {
+	switch (maybe(true)) {
+	case .some(found): fmt.println(found.bytes[0]);
+	case .none: fmt.println("none");
+	}
+	a: Block = {};
+	a.bytes[0] = 5;
+	s := Shape.big(a);
+	switch (s) {
+	case .big(v): fmt.println(v.bytes[0]);
+	case .small(v): fmt.println(v);
+	}
+	n := Named{name = "held", bytes = {}};
+	m := n;
+	fmt.println(m.name);
+}
+
+containers :: proc() {
+	a: Block = {};
+	b: Block = {};
+	b.tag = 2;
+	list: [dynamic]Block = {};
+	list.append(a);
+	list.append(b);
+	last := list.pop() or_else a;
+	fmt.println(list.len(), last.tag);
+	table: map[int]Block = {};
+	table[1] = b;
+	fmt.println(table[1].tag);
+	rows: [2]Block = {};
+	rows[1].tag = 9;
+	foreach (row in rows) { fmt.println(row.tag); }
+}
+
+main :: proc() {
+	constants();
+	copies();
+	values();
+	wrapped();
+	containers();
 }

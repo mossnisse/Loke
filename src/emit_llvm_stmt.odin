@@ -134,11 +134,17 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 			register_implicit_drop(e, symbol_id, live = false)
 			continue
 		}
-		value := emit_expr(e, d.values[i])
-		if i < len(d.value_clones) && d.value_clones[i] {
-			value = emit_clone_value(e, sym.type, value, emit_destination_allocator(e, symbol_id))
+		clones := i < len(d.value_clones) && d.value_clones[i]
+		if is_large_value(e, sym.type) && !clones && expression_is_borrowed_place(d.values[i]) {
+			// Nothing runs between reading the place and writing the new local.
+			copy_bytes(e, slot, emit_address(e, d.values[i]), type_size(e.c, sym.type))
+		} else {
+			value := emit_expr(e, d.values[i])
+			if clones {
+				value = emit_clone_value(e, sym.type, value, emit_destination_allocator(e, symbol_id))
+			}
+			store(e, sym.type, value, slot)
 		}
-		store(e, sym.type, value, slot)
 		// An empty literal has no allocator of its own, so a written `via` binds.
 		if composite, empty_literal := d.values[i].(^Expr_Composite); empty_literal && len(composite.elements) == 0 {
 			emit_eager_via_binding(e, symbol_id, slot)
@@ -153,7 +159,7 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	address := emit_address(e, v.bound[0])
 	replacement := emit_expr(e, v.bound[1])
-	previous := load(e, llvm_type(e, as_type), address)
+	previous := load_place(e, as_type, address)
 	store(e, as_type, replacement, address)
 	return previous
 }
@@ -405,7 +411,7 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	// design.md: the destination is read after the right operand.
 	address := emit_address(e, target)
 	rhs := emit_expr(e, s.rhs[0])
-	current := load(e, llvm_type(e, type), address)
+	current := load_place(e, type, address)
 	op := compound_operator(s.op)
 	result: string
 	if type_is_simd(e.c, type) {
@@ -678,13 +684,13 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 	alloca_named(e, binding, llvm_type(e, entry.binding_type))
 	bind_local(e, entry.binding_symbol, binding)
 	if entry.binding_type == union_type {
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, union_type), value, binding)
+		store(e, union_type, value, binding)
 		return
 	}
 	// A concrete erased case reads through the data pointer.
 	payload := ""
 	if erased {
-		payload = load(e, llvm_type(e, entry.binding_type), slot)
+		payload = load_place(e, entry.binding_type, slot)
 	} else {
 		payload = emit_union_payload(e, union_type, entry.binding_type, slot)
 	}
@@ -745,7 +751,7 @@ emit_epilogue :: proc(e: ^Emitter) {
 		e.terminated = true
 		return
 	}
-	if e.result_type == INVALID_TYPE {
+	if e.result_type == INVALID_TYPE || returns_sret(e, e.result_type, e.result_inout) {
 		fmt.sbprintln(&e.b, "  ret void")
 		e.terminated = true
 		return
