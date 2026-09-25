@@ -70,7 +70,7 @@ all :: proc(mask: Simd(bool, $N)) -> bool {
 // minimum and a maximum need no such rule, because they do not depend on order.
 // A floating-point sum starts from `-0.0` and a product from `1.0`, so a vector
 // of nothing but `-0.0` sums to `-0.0`. `reduce_min` and `reduce_max` ignore NaN
-// lanes and answer with a number whenever any lane holds one; a vector of
+// lanes and return a number whenever any lane holds one; a vector of
 // nothing but NaN reduces to NaN. Where two lanes compare equal, including
 // `-0.0` against `+0.0`, either may be the answer."
 reduce_add :: proc(vector: Simd($T, $N)) -> T {

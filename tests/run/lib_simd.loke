@@ -169,6 +169,11 @@ main :: proc() {
 	// a constant mask folds through them like any other constant vector.
 	fmt.println(MASK_AND, MASK_OR, MASK_XOR, MASK_ANDNOT);
 	fmt.println(FOLDED_COMPOUND);
+
+	// `core:simd` is ordinary library code, so it runs at compile time too, and
+	// agrees with the emitted calls lane for lane.
+	fmt.println(FOLDED_LIBRARY);
+	fmt.println(FOLDED_LIBRARY == library_folds());
 }
 
 Holder :: struct {
@@ -230,3 +235,30 @@ compound_lanes :: proc() -> Simd(i32, 4) {
 }
 
 FOLDED_COMPOUND :: compound_lanes();
+
+// Every `core:simd` procedure, over the cases that differ between folds: a
+// distinct lane, wrapping integer lanes, a signed minimum, an all-`-0.0` sum,
+// `f16` lanes, an order-dependent sum, and NaN lanes a minimum skips.
+library_folds :: proc() -> [16]f64 {
+	d: Simd(Lane, 4) = {Lane(1.5), Lane(-2.0), Lane(4.0), Lane(0.5)};
+	w: Simd(u8, 4) = {200, 3, 100, 1};
+	s: Simd(i8, 4) = {-100, 3, 100, -1};
+	z: Simd(f64, 2) = {-0.0, -0.0};
+	h: Simd(f16, 4) = {f16(1.5), f16(2.0), f16(-3.0), f16(0.25)};
+	o: Simd(f64, 4) = {1e16, 1.0, -1e16, 1.0};
+	nan := f64(0.0) / f64(0.0);
+	n: Simd(f64, 4) = {nan, 2.5, nan, 1.5};
+	m: Simd(i32, 4) = {1, 2, 3, 4};
+	mask := m > 2;
+	picked := simd.select(mask, m, m * 10);
+	back := simd.to_array(simd.from_array([2]i32{7, 9}));
+	return {
+		f64(simd.reduce_add(d)), f64(simd.reduce_mul(d)), f64(simd.reduce_min(d)), f64(simd.reduce_max(d)),
+		f64(simd.reduce_add(w)), f64(simd.reduce_mul(w)), f64(simd.reduce_min(s)), f64(simd.reduce_max(s)),
+		simd.reduce_add(z), f64(simd.reduce_add(h)), simd.reduce_add(o), simd.reduce_min(n),
+		simd.reduce_max(n), f64(simd.reduce_add(picked)), f64(back[1]),
+		1.0 if (simd.any(mask) && !simd.all(mask)) else 0.0,
+	};
+}
+
+FOLDED_LIBRARY :: library_folds();

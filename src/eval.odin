@@ -862,6 +862,53 @@ eval_simd_lane :: proc(value: Eval_Value, index: int) -> Eval_Value {
 	return value.elements[index]
 }
 
+// design.md "`core:simd`": a fold from lane 0, left to right, as the emitted
+// ordered reduction does. A float sum or product needs no `-0.0` or `1.0` seed
+// here, because the seed combined with lane 0 is lane 0. `reduce_min` and
+// `reduce_max` skip NaN lanes, so only an all-NaN vector answers NaN.
+@(private = "file")
+eval_simd_reduce :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
+	vector, ok := eval_expr(ev, v.bound[0])
+	if !ok {
+		return Eval_Value{}, false
+	}
+	info := underlying_info(ev.k.c, expr_base(v.bound[0]).type)
+	fold := v.operation.(Call_Simd_Reduce).fold
+	result := eval_simd_lane(vector, 0)
+	for index in 1 ..< int(info.count) {
+		lane := eval_simd_lane(vector, index)
+		switch fold {
+		case .Any:
+			result.boolean = result.boolean || lane.boolean
+		case .All:
+			result.boolean = result.boolean && lane.boolean
+		case .Add, .Mul:
+			folded, folded_ok := fold_arithmetic(
+				ev.k.c, fold == .Add ? .Plus : .Star, v.span, const_of(result), const_of(lane), info.element, ev.alloc,
+			)
+			if !folded_ok {
+				eval_fold_failed(ev)
+				return Eval_Value{}, false
+			}
+			result = scalar(folded, info.element)
+		case .Min, .Max:
+			if lane.kind == .Float && lane.float != lane.float {
+				continue
+			}
+			better, compared := eval_compare(ev, fold == .Min ? .Lt : .Gt, lane, result)
+			if !compared {
+				eval_fail(ev, v.span, "L0341", "this comparison has no compile-time meaning")
+				return Eval_Value{}, false
+			}
+			if better || (result.kind == .Float && result.float != result.float) {
+				result = lane
+			}
+		}
+	}
+	result.type = v.type
+	return result, true
+}
+
 // `fold_arithmetic` reported its own failure, unless memory ran out.
 @(private = "file")
 eval_fold_failed :: proc(ev: ^Evaluator) {
@@ -2228,6 +2275,37 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}
 		return Eval_Value{}, false
 
+	// design.md "`core:simd`": a vector and its array have the same lanes in the
+	// same order, so the conversion only retypes them.
+	case .Simd_Cast:
+		operand, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		out, copied := copy_value(ev, operand)
+		out.type = v.type
+		return out, copied
+
+	case .Simd_Select:
+		mask, mask_ok := eval_expr(ev, v.bound[0])
+		left, left_ok := eval_expr(ev, v.bound[1])
+		right, right_ok := eval_expr(ev, v.bound[2])
+		if !mask_ok || !left_ok || !right_ok {
+			return Eval_Value{}, false
+		}
+		count := int(underlying_info(ev.k.c, v.type).count)
+		elements, allocated := eval_elements(ev, count)
+		if !allocated {
+			return Eval_Value{}, false
+		}
+		for index in 0 ..< count {
+			chosen := left if eval_simd_lane(mask, index).boolean else right
+			elements[index] = eval_simd_lane(chosen, index)
+		}
+		return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+
+	case .Simd_Reduce:
+		return eval_simd_reduce(ev, v)
 	}
 	eval_fail(
 		ev,
