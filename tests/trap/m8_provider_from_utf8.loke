@@ -1,0 +1,16 @@
+@(default_allocator = "./providers/tiny:factory")
+package main; import "core:fmt";
+
+// `string.from_utf8` answers `.none` for invalid input only. These bytes are
+// valid; the 256-byte provider cannot hold them, and that failure follows the
+// allocator's policy instead of passing for invalid UTF-8.
+
+main :: proc() {
+	bytes: [1024]u8 = {};
+	foreach (i in 0 ..< 1024) { bytes[i] = 'a'; }
+	fmt.println("before");
+	switch (text in string.from_utf8(bytes[:])) {
+	case .some: fmt.println("some", text.len());
+	case .none: fmt.println("none");
+	}
+}

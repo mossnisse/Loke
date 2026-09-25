@@ -1,12 +1,7 @@
-/* Runtime text: UTF-8 validation and decoding, and the shared immutable storage
- * behind a `string` value.
+/* UTF-8 decoding and the shared immutable storage behind `string`.
  *
- * design.md "string type": a string is immutable, so "sharing their backing
- * storage is never observable as mutable aliasing" — assignment retains a handle
- * rather than copying bytes, and only `.copy()` allocates an independent
- * buffer. The last handle deallocates through the allocator the string was
- * created with, which is why that allocator is part of the buffer's header
- * rather than something the caller has to remember.
+ * design.md "string type": copies share one reference-counted block, and the
+ * last handle frees it through the allocator recorded in its header.
  */
 #include "loke_rt.h"
 
@@ -16,14 +11,12 @@
 
 static loke_rt_string_header_v1 *header_of(uintptr_t owner_flags) {
 	if (owner_flags == 0 || owner_flags == LOKE_RT_STRING_STATIC) {
-		return 0; /* the empty value, or static literal storage */
+		return 0; /* empty, or a static literal */
 	}
 	return (loke_rt_string_header_v1 *)owner_flags;
 }
 
-/* One block holds the header, the bytes, and the terminator, so a string always
- * has a zero one past its end. `to_c_view` therefore never has to allocate: the
- * terminator design.md lets it "reuse" is always already there. */
+/* Header, bytes, and a terminator in one block, so `to_c_view` never allocates. */
 static uint8_t *allocate_buffer(
 	loke_rt_string_v1 *out, int64_t len, const loke_rt_allocator_v1 *a) {
 	uint64_t block = (uint64_t)sizeof(loke_rt_string_header_v1) + (uint64_t)len + 1;
@@ -62,8 +55,6 @@ void loke_rt_v1_string_release(uintptr_t owner_flags) {
 	if (h == 0) {
 		return;
 	}
-	/* Acquire-release, so the thread that frees the block sees every write the
-	 * other handles made before dropping theirs. */
 	if (__atomic_fetch_sub(&h->handles, 1, __ATOMIC_ACQ_REL) == 1) {
 		loke_rt_v1_free(h->allocator, h, h->block_size, HEADER_ALIGN);
 	}
@@ -71,8 +62,7 @@ void loke_rt_v1_string_release(uintptr_t owner_flags) {
 
 /* --------------------------------------------------------------- UTF-8 -- */
 
-/* Rejects overlong encodings, surrogates, and anything above U+10FFFF, so a
- * `string` really does contain valid UTF-8 by construction. */
+/* Rejects overlong encodings, surrogates, and anything above U+10FFFF. */
 int64_t loke_rt_v1_rune_at(const uint8_t *data, int64_t len, int64_t offset, int32_t *out_rune) {
 	*out_rune = 0xFFFD;
 	if (data == 0 || offset < 0 || offset >= len) {
@@ -180,19 +170,17 @@ int32_t loke_rt_v1_string_from_bytes(
 		return 0;
 	}
 	if (len == 0) {
-		return 1; /* the empty value needs no storage */
+		return 1;
 	}
 	uint8_t *bytes = allocate_buffer(out, len, a);
 	if (bytes == 0) {
-		return 0;
+		loke_rt_v1_alloc_failed(a);
 	}
 	memcpy(bytes, data, (size_t)len);
 	return 1;
 }
 
-/* design.md "string type conversions": `.copy()` "allocates, because the result
- * must own its bytes". The source is already valid UTF-8, so this does not
- * re-validate it. */
+/* `.copy()`: the source is already valid UTF-8, so it is not re-validated. */
 int32_t loke_rt_v1_string_clone(
 	loke_rt_string_v1 *out, const uint8_t *data, int64_t len, const loke_rt_allocator_v1 *a) {
 	publish_empty(out);
@@ -214,8 +202,6 @@ int32_t loke_rt_v1_string_concat(
 	const loke_rt_allocator_v1 *allocator) {
 	publish_empty(out);
 	int64_t total;
-	/* A sum that is not representable is a failure, not a wrapped-negative
-	 * length handed to the provider. */
 	if (!loke_rt_v1_checked_add(a_len, b_len, &total)) {
 		return 0;
 	}
@@ -252,7 +238,7 @@ int32_t loke_rt_v1_string_from_runes(
 	}
 	uint8_t *bytes = allocate_buffer(out, total, a);
 	if (bytes == 0) {
-		return 0;
+		loke_rt_v1_alloc_failed(a);
 	}
 	int64_t cursor = 0;
 	for (int64_t i = 0; i < count; i++) {
@@ -263,8 +249,7 @@ int32_t loke_rt_v1_string_from_runes(
 
 /* ---------------------------------------------------------- comparison -- */
 
-/* design.md: "`string` and `string_view` values are comparable and ordered,
- * lexically byte-wise." */
+/* Byte-wise lexical order. */
 int32_t loke_rt_v1_bytes_compare(
 	const uint8_t *a_data, int64_t a_len, const uint8_t *b_data, int64_t b_len) {
 	int64_t shared = a_len < b_len ? a_len : b_len;

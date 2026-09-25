@@ -188,9 +188,9 @@ typedef struct loke_rt_string_header_v1 {
 	uint64_t block_size;
 } loke_rt_string_header_v1;
 
-/* Each returns 1 on success and 0 on failure. A validating conversion publishes
- * the zero value on failure, which is what design.md's optional-ok result
- * requires. */
+/* Each returns 1 on success and 0 on failure, publishing the zero value. A
+ * validating conversion's 0 means invalid input only: it has no fallible form,
+ * so an allocation failure applies the allocator's policy and does not return. */
 int32_t loke_rt_v1_string_from_bytes(
 	loke_rt_string_v1 *out, const uint8_t *data, int64_t len, const loke_rt_allocator_v1 *a);
 int32_t loke_rt_v1_string_concat(

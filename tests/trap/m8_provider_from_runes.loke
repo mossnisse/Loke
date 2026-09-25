@@ -1,0 +1,13 @@
+@(default_allocator = "./providers/tiny:factory")
+package main; import "core:fmt";
+
+// `string.from_runes` answers `.none` for an invalid rune only. These runes
+// are valid; the 256-byte provider cannot hold them, and that failure follows
+// the allocator's policy instead of passing for an invalid rune.
+
+main :: proc() {
+	runes: [300]rune = {};
+	foreach (i in 0 ..< 300) { runes[i] = 'b'; }
+	fmt.println("before");
+	fmt.println(string.from_runes(runes[:]) or_else "none");
+}
