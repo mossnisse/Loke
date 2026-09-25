@@ -1,8 +1,7 @@
-/* Unrecoverable runtime failure.
- *
- * M6a step 1 has one exit: report and terminate. Step 3 adds the classified
- * program panic strategy on top, and this immediate abort stays as the `.Trap`
- * and double-panic path.
+/* Unrecoverable runtime failure: report and terminate, with no strategy and no
+ * cleanup. It is the last step of every panic, and the whole of an allocator
+ * `.Trap`, a panic raised while unwinding, and a fault in the runtime's own
+ * records (an allocator ABI mismatch, a failed provider factory).
  */
 #include "loke_rt.h"
 

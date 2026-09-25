@@ -346,6 +346,13 @@ profiles contain.
   equal, and it succeeds from the zero `Arena`, which design.md "Allocators"
   says fails every allocation. Should zero-byte results be distinct, and does
   the empty region refuse them?
+- design.md "Allocation failure" gives every allocator one of two policies, but
+  no source spelling selects `.Trap`: `core:mem` names no policy, and `Arena`
+  and `Scratch` always answer `.Panic`. Only a record a foreign provider builds
+  can carry it, so the non-unwinding abort that `runtime/fail.c` implements
+  for it has no corpus test. Where does a program choose `.Trap`: on the
+  factory, on `Arena`/`Scratch` construction, or as a build-wide default for
+  freestanding targets?
 
 # Differences from Odin and design motivations
 

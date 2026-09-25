@@ -517,7 +517,8 @@ void loke_rt_v1_frame_pop(loke_rt_frame_v1 *frame);
 void loke_rt_v1_panic(const char *message);
 
 /* Immediate abort, bypassing every strategy: an allocator whose failure policy
- * is `.Trap`, and a panic raised while one is already unwinding. */
+ * is `.Trap`, a panic raised while one is already unwinding, a fault in the
+ * runtime's own records, and the end of every panic once its cleanup has run. */
 void loke_rt_v1_abort(const char *what);
 
 /* --------------------------------------------------- process arguments -- */
