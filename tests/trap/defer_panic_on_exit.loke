@@ -1,0 +1,26 @@
+package main;
+
+import "core:fmt";
+
+// A `defer` that panics while its scope exits normally. The walk still starts
+// at that frame, so it must run only the actions not yet run: `drop 2` and the
+// panicking defer happen once, and the earlier defer and owners still unwind.
+
+Noisy :: struct { id: int };
+
+impl Noisy {
+	release :: hook(drop) proc(self: inout Noisy) { fmt.println("drop", self.id); }
+}
+
+work :: proc() {
+	a := Noisy{1};
+	defer fmt.println("defer one");
+	defer panic("boom in defer");
+	b := Noisy{2};
+	fmt.println("body done");
+}
+
+main :: proc() {
+	outer := Noisy{0};
+	work();
+}
