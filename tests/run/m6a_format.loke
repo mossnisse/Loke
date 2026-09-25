@@ -116,6 +116,11 @@ main :: proc() {
 	// width, in fixed notation from 1e-4 to below 1e17; NaN has one spelling.
 	fmt.println(0.1, 0.3 - 0.1, 10.0, 1.5e10, 1e17, 0.00001);
 	fmt.println(f32(0.1), f32(1) / f32(3));
+	// Shortest, not nearest: at a power of two the gap below the value is half
+	// the gap above, so 2^-24 and 2^-96 read back from the spelling one up. And
+	// fixed notation does not print a large value's binary digits.
+	fmt.println(1.0 / 16777216.0, f64(45486998104437288));
+	fmt.println(f32(1) / f32(1 << 48) / f32(1 << 48), f32(5180255232));
 	zero := 0.0;
 	fmt.println(zero / zero, -1.0 / zero);
 }

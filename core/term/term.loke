@@ -47,8 +47,12 @@ impl Output {
 	// Bytes, through `WriteFile`, with the mirror of `Input.read`'s caveat: a real
 	// console renders them in its *output* code page, so non-ASCII UTF-8 arrives
 	// intact only where that page is UTF-8. Redirected output is the bytes given.
+	//
+	// `core:fmt` buffers standard output and this does not, so what `fmt` holds is
+	// flushed first; otherwise redirected output comes out of order.
 	write :: proc(self: inout Output, source: []u8) -> Result(int, io.Error) {
 		if (source.len() == 0) { return .ok(0); }
+		rt_flush_stdout();
 		return write_handle(self.handle, source);
 	}
 }
@@ -59,6 +63,13 @@ stderr :: proc() -> Output { return Output{standard_handle(.Error)}; }
 
 @(private)
 Stream :: enum {Input, Output, Error}
+
+// The seed runtime is part of every link, as `core:os` relies on too.
+@(private)
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_flush_stdout")
+	rt_flush_stdout :: proc "c" () ---;
+}
 
 // One line from standard input, without its ending unless `keep_ending` asks.
 //

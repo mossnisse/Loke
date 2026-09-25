@@ -23,6 +23,13 @@ void loke_rt_v1_write_std(void *state, const uint8_t *bytes, int64_t count) {
 	}
 }
 
+/* `core:term` writes the standard handles directly, past this buffer, so it
+ * flushes what `core:fmt` holds first; otherwise redirected output comes out of
+ * order. */
+void loke_rt_v1_flush_stdout(void) {
+	fflush(stdout);
+}
+
 void loke_rt_v1_fmt_bytes(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count) {
 	if (w != 0 && w->write != 0 && count > 0) {
 		w->write(w->state, bytes, count);
@@ -106,11 +113,92 @@ void loke_rt_v1_fmt_i128(
 	loke_rt_v1_fmt_bytes(w, buffer, used);
 }
 
+/* `sci`, a `%.*e` spelling, one unit up in its last digit, so 9.99e+05 becomes
+ * 1.00e+06. */
+static void spell_up(char *sci) {
+	char *exponent = strchr(sci, 'e');
+	char *digit = exponent - 1;
+	for (;;) {
+		if (*digit == '.') {
+			digit -= 1;
+			continue;
+		}
+		if (*digit != '9') {
+			*digit += 1;
+			return;
+		}
+		*digit = '0';
+		if (digit == sci || digit[-1] == '-') {
+			/* Carried out of the leading digit: every digit is now 0. */
+			*digit = '1';
+			snprintf(exponent + 1, 8, "%+03d", atoi(exponent + 1) + 1);
+			return;
+		}
+		digit -= 1;
+	}
+}
+
+/* `%g`'s layout for a `%.*e` spelling, with the trailing zeros dropped: fixed
+ * notation from 1e-4 to below 1e17, and an exponent outside that. */
+static int spell_general(char *out, const char *sci) {
+	char digits[24];
+	int count = 0;
+	int used = 0;
+	const char *p = sci;
+	if (*p == '-') {
+		out[used++] = *p++;
+	}
+	for (; *p != 'e'; p++) {
+		if (*p != '.') {
+			digits[count++] = *p;
+		}
+	}
+	int exponent = atoi(p + 1);
+	while (count > 1 && digits[count - 1] == '0') {
+		count -= 1;
+	}
+	if (exponent < -4 || exponent >= 17) {
+		out[used++] = digits[0];
+		if (count > 1) {
+			out[used++] = '.';
+			memcpy(out + used, digits + 1, (size_t)(count - 1));
+			used += count - 1;
+		}
+		return used + snprintf(out + used, 8, "e%+03d", exponent);
+	}
+	if (exponent < 0) {
+		out[used++] = '0';
+		out[used++] = '.';
+		for (int i = 1; i < -exponent; i++) {
+			out[used++] = '0';
+		}
+		memcpy(out + used, digits, (size_t)count);
+		return used + count;
+	}
+	for (int i = 0; i <= exponent || i < count; i++) {
+		if (i == exponent + 1) {
+			out[used++] = '.';
+		}
+		out[used++] = i < count ? digits[i] : '0';
+	}
+	return used;
+}
+
+static int reads_back(const char *sci, double value, int single) {
+	double back = strtod(sci, 0);
+	return single ? (float)back == (float)value : back == value;
+}
+
 /* The shortest spelling that reads back as the same value. `%.17g` alone always
  * round-trips a double but spells 0.1 as 0.10000000000000001, so the precisions
  * are tried in order and the first that survives `strtod` is kept. `single`
  * compares at `float` precision, where 9 digits always suffice: a widened `f32`
  * would otherwise print its binary noise, 0.10000000149011612.
+ *
+ * At each precision the spelling one up is tried after the nearest one. At a
+ * power of two the gap below the value is half the gap above it, so the nearest
+ * spelling can fall outside while the next one up still reads back: f64 2^-24
+ * is 5.960464477539063e-08, not the nearest 16 digits, 5.960464477539062e-08.
  *
  * NaN and the infinities are spelled here because the C library's spelling is
  * the platform's: the UCRT writes `-nan(ind)`. A NaN's sign carries no value.
@@ -130,27 +218,23 @@ static void fmt_float(const loke_rt_writer_v1 *w, double value, int single) {
 		}
 		return;
 	}
-	/* The longest spelling, `-2.2250738585072014e-308`, is 24 bytes. */
-	char buffer[32];
+	/* The longest spelling, `-2.2250738585072014e-308`, is 24 bytes; the
+	 * longest fixed one, `-0.00012345678901234567`, is 23. */
+	char sci[32];
+	char out[32];
 	int widest = single ? 9 : 17;
-	int precision = 1;
-	for (; precision < widest; precision++) {
-		snprintf(buffer, sizeof(buffer), "%.*e", precision - 1, value);
-		double back = strtod(buffer, 0);
-		if (single ? (float)back == (float)value : back == value) {
+	for (int precision = 1;; precision++) {
+		snprintf(sci, sizeof(sci), "%.*e", precision - 1, value);
+		if (precision == widest || reads_back(sci, value, single)) {
+			break;
+		}
+		spell_up(sci);
+		if (reads_back(sci, value, single)) {
 			break;
 		}
 	}
-	/* `%g` switches to an exponent once it reaches the precision, so 10 at one
-	 * digit is `1e+01`. Where `%.17g` wrote fixed notation, from 1e-4 to below
-	 * 1e17, the precision widens to cover the integer digits. */
-	snprintf(buffer, sizeof(buffer), "%.*e", precision - 1, value);
-	int exponent = atoi(strchr(buffer, 'e') + 1);
-	if (exponent >= -4 && exponent < 17 && precision < exponent + 1) {
-		precision = exponent + 1;
-	}
-	int used = snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
-	loke_rt_v1_fmt_bytes(w, (const uint8_t *)buffer, used);
+	int used = spell_general(out, sci);
+	loke_rt_v1_fmt_bytes(w, (const uint8_t *)out, used);
 }
 
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value) {

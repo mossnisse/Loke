@@ -1,6 +1,7 @@
+printed by fmt first
 written through term.stdout
-formatted: 42 true
 true
+formatted: 42 true
 true
 0
 true

@@ -330,6 +330,11 @@ profiles contain.
   because Windows 10 cannot allocate a hidden console. Anything typed into that
   console while `tests/run/lib_term_console` runs is read along with the
   records it wrote.
+- `core:fmt` writes standard output through the C library's text-mode stream,
+  so every `\n` it prints reaches the handle as `\r\n`. `term.stdout()` writes
+  the bytes it is given, so a program using both sends mixed line endings down
+  one redirected stream, and `fmt` cannot print a bare `\n` at all. Should
+  standard output be binary for both, as Odin's is, or text for both?
 
 ## Open questions in `core:unsafe`
 

@@ -11,6 +11,10 @@ main :: proc() {
 	static_assert(io.Writer(term.Output));
 	static_assert(io.Reader(term.Input));
 
+	// `fmt` buffers a redirected standard output and `term` does not, so a term
+	// write flushes what `fmt` holds first; without that, this line came last.
+	fmt.println("printed by fmt first");
+
 	out := term.stdout();
 	fmt.println(io.write_string(inout out, "written through term.stdout\n") == nil);
 	fmt.println(io.write_formatted_line(inout out, "formatted:", 42, true) == nil);

@@ -475,6 +475,8 @@ LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_options_v1) == 16, options_size);
  * implementation serves both and `core:fmt` needs no foreign declarations. */
 void loke_rt_v1_write_std(void *state, const uint8_t *bytes, int64_t count);
 enum { LOKE_RT_STDOUT = 0, LOKE_RT_STDERR = 1 };
+/* Called by `core:term` before it writes a standard handle directly. */
+void loke_rt_v1_flush_stdout(void);
 
 void loke_rt_v1_fmt_bytes(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count);
 void loke_rt_v1_fmt_i64(const loke_rt_writer_v1 *w, int64_t value, const loke_rt_options_v1 *o);
