@@ -177,10 +177,7 @@ void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, ui
  * program strategy; `.Trap` terminates immediately under either strategy, which
  * is the whole meaning of "`.Panic` may unwind while `.Trap` does not". */
 void loke_rt_v1_alloc_failed(const loke_rt_allocator_v1 *a) {
-	if (a == 0) {
-		a = loke_rt_selected;
-	}
-	if (a->on_failure == LOKE_RT_ON_FAILURE_TRAP) {
+	if (resolve(a)->on_failure == LOKE_RT_ON_FAILURE_TRAP) {
 		loke_rt_v1_abort("allocation failed");
 	}
 	loke_rt_v1_panic("allocation failed");

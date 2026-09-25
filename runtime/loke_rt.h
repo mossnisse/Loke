@@ -41,7 +41,10 @@ enum {
 /* The four callbacks a provider supplies. `resize` returns NULL on failure and
  * must leave the old allocation live and unchanged; `reset` returns 0 when the
  * provider has no region to end. `alloc` and `free` are never asked for zero
- * bytes: `loke_rt_v1_alloc` answers those itself. */
+ * bytes: `loke_rt_v1_alloc` answers those itself. `resize` is never asked for a
+ * new size of zero, and growth from nothing passes NULL rather than the
+ * placeholder a zero-byte allocation answers: callers free instead of
+ * shrinking to nothing, and keep NULL until they hold bytes. */
 typedef struct loke_rt_allocator_ops_v1 {
 	void *(*alloc)(void *state, uint64_t size, uint64_t align);
 	void *(*resize)(void *state, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align);
@@ -134,7 +137,8 @@ loke_rt_arena_v1 *loke_rt_v1_arena_open_fixed(void *buffer, int64_t size);
 /* Releases every block and, for a provider-backed arena, the control block
  * itself. A NULL arena is the moved-from/zero value and drops to nothing. */
 void loke_rt_v1_arena_drop(loke_rt_arena_v1 *arena);
-/* The handle. NULL for the zero value, which every dispatch already rejects. */
+/* The handle. The zero value answers one shared empty-region record, not NULL,
+ * which every dispatch reads as the default provider. */
 const loke_rt_allocator_v1 *loke_rt_v1_arena_allocator(loke_rt_arena_v1 *arena);
 
 /* Dispatch helpers. The generated module calls these rather than loading the

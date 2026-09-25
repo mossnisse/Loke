@@ -339,6 +339,14 @@ profiles contain.
   conversion" gives only the signature. Is a negative length a programmer
   error, or an input to report?
 
+## Open questions in the allocation runtime
+
+- A zero-byte allocation never reaches the provider: `new` of an empty struct
+  answers the same placeholder address every time, so two live results compare
+  equal, and it succeeds from the zero `Arena`, which design.md "Allocators"
+  says fails every allocation. Should zero-byte results be distinct, and does
+  the empty region refuse them?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

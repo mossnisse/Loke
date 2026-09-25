@@ -22,6 +22,17 @@ the compiler, unless the rewording is the intended fix.
   tail :: proc(text: string_view) -> int { return text[1:3].len(); }
   B :: tail("xyz");   // L0341: this expression has no compile-time meaning
   ```
+- **An allocation panic reports neither the size nor the allocator.** design.md
+  "Allocation failure" says `.Panic` reports both; the runtime prints only
+  `loke: panic: allocation failed`. The generated code reaches the policy after
+  a `try_` operation or `try_clone` has failed, so no size travels with it, and
+  a user `try_clone` may fail without making a request at all:
+
+  ```odin
+  arena: mem.Arena = {};
+  xs: [dynamic]int via arena.allocator() = {};
+  xs.append(1);   // loke: panic: allocation failed
+  ```
 
 ## Not gaps
 
