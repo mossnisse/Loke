@@ -136,8 +136,8 @@ LARGEST_LENGTH :: 0x7FFFFFFFFFFFFFFF;
 
 // The capacity `additional` more bytes need. A total past the largest `int` is
 // asked for as the largest, which no allocator supplies, so the request fails as
-// an allocation — reported by `try_reserve` — instead of wrapping to a negative
-// capacity.
+// an allocation — reported by `try_reserve` — instead of overflowing, which
+// panics.
 @(private)
 wanted_capacity :: proc(written: int, additional: int) -> int {
 	if (additional < 0) { panic("reserve count is negative"); }

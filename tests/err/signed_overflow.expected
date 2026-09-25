@@ -1,0 +1,19 @@
+L0397
+@10:24
+signed overflow: the result 2147483648 does not fit `i32`
+L0397
+@11:27
+the result -32769 does not fit `i16`
+L0397
+@12:19
+the result 128 does not fit `i8`
+L0397
+@13:13
+the result 128 does not fit `i8`
+L0397
+@14:43
+the result 9223372036854775808 does not fit `i64`
+L0397
+@18:4
+the result 33000 does not fit `i16`
+!%!(

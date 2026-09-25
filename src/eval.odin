@@ -703,6 +703,11 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
 		return Eval_Value{}, false
 	}
 	if folded.kind == .Integer || folded.kind == .Rune {
+		if v.op == .Minus && !signed_fits(ev.k.c, folded.integer, v.type, ev.alloc) {
+			report_signed_overflow(ev.k.c, v.op_span, folded.integer, v.type, ev.alloc)
+			eval_fold_failed(ev)
+			return Eval_Value{}, false
+		}
 		folded.integer = wrap_to_type(ev.k.c, folded.integer, v.type, ev.alloc)
 	}
 	return scalar(folded, v.type), true
@@ -843,7 +848,7 @@ eval_simd_binary_values :: proc(
 			continue
 		}
 		folded, ok := fold_arithmetic(
-			ev.k.c, op, op_span, const_of(a), const_of(b), source.element, ev.alloc,
+			ev.k.c, op, op_span, const_of(a), const_of(b), source.element, ev.alloc, wrapping = true,
 		)
 		if !ok {
 			eval_fold_failed(ev)
@@ -885,6 +890,7 @@ eval_simd_reduce :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		case .Add, .Mul:
 			folded, folded_ok := fold_arithmetic(
 				ev.k.c, fold == .Add ? .Plus : .Star, v.span, const_of(result), const_of(lane), info.element, ev.alloc,
+				wrapping = true,
 			)
 			if !folded_ok {
 				eval_fold_failed(ev)

@@ -219,6 +219,8 @@ fold_arithmetic :: proc(
 	a, b: Const_Value,
 	type: Type_Id,
 	allocator: mem.Allocator = {},
+	// SIMD lanes keep the modular arithmetic their instructions have.
+	wrapping := false,
 ) -> (Const_Value, bool) {
 	storage := value_allocator(c, allocator)
 	// design.md "SIMD vectors": operators apply lane-wise.
@@ -326,7 +328,32 @@ fold_arithmetic :: proc(
 		errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
 		return Const_Value{}, false
 	}
+	#partial switch op {
+	case .Plus, .Minus, .Star, .Slash:
+		if !wrapping && !signed_fits(c, result, type, storage) {
+			report_signed_overflow(c, op_span, result, type, storage)
+			return Const_Value{}, false
+		}
+	}
 	return Const_Value{kind = a.kind, integer = wrap_to_type(c, result, type, storage)}, true
+}
+
+// design.md "Integer overflow": a signed result that does not fit its type is a
+// compile-time error where a runtime one would panic. An untyped constant is
+// exact, and unsigned arithmetic is modular.
+signed_fits :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> bool {
+	if type_is_untyped(c, type) || !integer_traps_overflow(c, type) {
+		return true
+	}
+	bits := type_bits(c, type)
+	return bits <= 0 || bi_fits(value_allocator(c, allocator), value, bits, true)
+}
+
+report_signed_overflow :: proc(c: ^Compiler, span: Span, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) {
+	errorf(
+		c, span, "L0397", "signed overflow: the result %s does not fit `%s`",
+		bi_text(value_allocator(c, allocator), value), type_name(c, type),
+	)
 }
 
 // design.md "Integer overflow": a typed result wraps to its width; an untyped
@@ -484,7 +511,7 @@ fold_simd_lanes :: proc(
 	elements := make([]Const_Value, info.count, value_allocator(c, allocator))
 	for index in 0 ..< int(info.count) {
 		folded, ok := fold_arithmetic(
-			c, op, op_span, lane(a, index), lane(b, index), info.element, allocator,
+			c, op, op_span, lane(a, index), lane(b, index), info.element, allocator, wrapping = true,
 		)
 		if !ok {
 			return Const_Value{}, false

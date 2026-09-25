@@ -1,0 +1,12 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Integer operators": `MIN / -1` does not fit, so it panics as any
+// signed overflow does, while `MIN % -1` is 0.
+main :: proc() {
+	minimum: i64 = -9223372036854775807 - 1;
+	divisor: i64 = -1;
+	fmt.println(minimum % divisor);
+	fmt.println(minimum / divisor);
+}

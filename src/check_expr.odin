@@ -1650,6 +1650,10 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		folded = bool_const(!value.boolean)
 	}
 	if folded.kind == .Integer || folded.kind == .Rune {
+		if v.op == .Minus && !signed_fits(k.c, folded.integer, v.type) {
+			report_signed_overflow(k.c, v.op_span, folded.integer, v.type)
+			return
+		}
 		folded.integer = wrap_to_type(k.c, folded.integer, v.type)
 	}
 	v.is_const = true

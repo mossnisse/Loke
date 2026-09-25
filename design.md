@@ -350,7 +350,7 @@ A conversion that validates its input and can fail is instead a named constructo
 
 Assigning between different types requires an explicit conversion unless an implicit conversion rule applies.
 
-An integer converts to another integer type by keeping the low bits of its two's-complement representation, the same wrap the [arithmetic operators](#arithmetic-operators) define, so a narrowing or a negative-to-unsigned conversion is defined rather than a fault. That is the conversion bit manipulation wants and the wrong one for validating input, so `math.to(T, value)` returns `Option(T)`: the value when `T` represents it exactly, and `.none` when the wrap would have changed it. It is the integer twin of [`Enum.from_int`](#integer-conversion).
+An integer converts to another integer type by keeping the low bits of its two's-complement representation, the same wrap unsigned [arithmetic](#integer-overflow) defines, so a narrowing or a negative-to-unsigned conversion is defined rather than a fault. That is the conversion bit manipulation wants and the wrong one for validating input, so `math.to(T, value)` returns `Option(T)`: the value when `T` represents it exactly, and `.none` when the wrap would have changed it. It is the integer twin of [`Enum.from_int`](#integer-conversion).
 
 A floating-point value converts to an integer type only when it is in range: at least the destination's minimum, and less than one past its maximum. The value is then truncated toward zero. A NaN, an infinity, or a value outside that interval [panics](#panics-and-unwinding), and a constant one is a compilation diagnostic instead. The interval's endpoints are powers of two, which every floating-point format represents exactly, so a fractional value just past one of them panics even though truncating first would have fit: `u32(-0.5)` is out of range rather than zero. A `Simd(U, N)(v)` applies this rule per lane, and one invalid lane faults the whole conversion, because a panic is not lane-wise.
 
@@ -1157,7 +1157,7 @@ Every operator below applies lane-wise and produces a vector of the same lane co
 
 A comparison **yields a lane mask, not a `bool`**. `a < b` on vectors has type `Simd(bool, N)`, so it cannot be an `if` condition; reduce it first with `simd.any` or `simd.all`. This is why `&&` and `||` are rejected on vectors: they short-circuit, and there is nothing lane-wise for a short circuit to mean. Use `&` and `|` on the masks instead.
 
-Every lane obeys the scalar rule for its own operator, unchanged. Integer division or remainder by a zero lane panics as it does for a scalar, and any zero divisor lane panics for the whole operation. Signed `MIN / -1` and `MIN % -1` have the same wrapping results scalars give. A shift count at or beyond the element's width is defined exactly as it is for a scalar — the limit of the repeated one-bit shift — and a shift's right operand is a vector too, so `v << 2` splats the count. The count vector has the element type, which may be signed; each count lane is read as unsigned, so a negative lane is a count beyond the width.
+Every lane obeys the scalar rule for its own operator, unchanged. Integer division or remainder by a zero lane panics as it does for a scalar, and any zero divisor lane panics for the whole operation. Integer lanes are modular for signed element types too: a vector instruction reports no per-lane overflow, so `+`, `-`, `*`, and unary `-` wrap, signed `MIN / -1` is `MIN`, and `MIN % -1` is 0. A shift count at or beyond the element's width is defined exactly as it is for a scalar — the limit of the repeated one-bit shift — and a shift's right operand is a vector too, so `v << 2` splats the count. The count vector has the element type, which may be signed; each count lane is read as unsigned, so a negative lane is a count beyond the width.
 
 Floating-point lanes follow the scalar floating-point rules unchanged: no contraction the source did not write, and no reassociation.
 
@@ -3515,7 +3515,7 @@ with x/y truncated towards zero (truncated division).
 
 There is no floored-remainder operator; `%` is the truncated one.
 
-The exception to these rules is when the dividend x is the most negative value for the integer type of x, and the quotient q = x/-1 is equal to x (and r = 0) under the wrapping two’s-complement rule below.
+The exception to these rules is when the dividend x is the most negative value for the signed integer type of x and the divisor is -1. The quotient does not fit, so it [overflows](#integer-overflow) and panics; the remainder is 0.
 
 If the divisor is a constant, it must not be zero. If the divisor is zero at runtime, a runtime panic occurs.
 
@@ -3540,7 +3540,16 @@ This differs from C, where such a shift count is undefined behavior.
 
 For unsigned integers, the operations +, -, *, and << are computed modulo `2^n`, where `n` is the bit width of the unsigned integer’s type. In a sense, these unsigned integer operations discard the high bits upon overflow, and programs may rely on “wrap around”.
 
-Every signed integer uses two’s-complement representation. For a signed type of width `n`, `+`, `-`, `*`, and `<<` compute the mathematical result modulo `2^n` and interpret the resulting bit pattern as that two’s-complement type. Division is truncated toward zero except that `MIN / -1` produces `MIN`; its remainder is zero. These results are deterministic on every target, and overflow does not panic. A compiler may not assume signed overflow does not occur — `x < x+1` is not always true. Code wanting a no-overflow assumption states it explicitly (a sized unsigned type, a hoisted bound, a narrowed index range).
+Every signed integer uses two’s-complement representation. For a signed type, and for `rune`, binary `+`, `-`, `*`, `/`, and unary `-` **panic** when the mathematical result does not fit the type: `i32(2147483647) + one` and `MIN / -1` both stop the program, at every optimization level. Where the operation is evaluated at compile time — a constant expression or [compile-time evaluation](#compile-time-procedure-evaluation) — the same overflow is a compilation diagnostic instead. An unfixed constant is exact and never overflows; it is checked when it converts to a type.
+
+```odin
+count: i32 = 2147483647;
+wrapped := i32(u32(count) + 1);  // -2147483648: wrap is spelled in the unsigned type
+count += 1;                      // panics: signed integer overflow
+LIMIT :: i8(127) + 1;            // ERROR: the result 128 does not fit `i8`
+```
+
+These operations stay modular for signed operands: `<<`, which keeps the low bits exactly as for an unsigned type; `%`, which cannot overflow (`MIN % -1` is 0); [SIMD lanes](#lane-wise-operators); atomic `add` and `sub`; and integer [conversion](#type-conversion), which keeps the low bits. On the path that continues past a checked operation it did not overflow, so the optimizer may assume that result is in range.
 
 ### Floating-point operators
 
@@ -6088,6 +6097,7 @@ Where this specification rejects a program, it often also says what the message 
 | Two borrows conflict | the root, the borrow, the conflicting operation, and the later use keeping the borrow live ([§](#places-and-overlap)) |
 | An owner escapes its allocator region | the escaping owner and its shorter-lived region ([§](#allocator-regions-and-region-provenance)) |
 | An unchecked pointer operation is written in a file that does not import `core:unsafe` | the operation, and the missing import ([§](#the-unsafe-package)) |
+| Signed arithmetic overflows at compile time | the mathematical result, and the type it does not fit ([§](#integer-overflow)) |
 | Two `@(export)` declarations use one symbol name | both declarations ([§](#export)) |
 
 Two more are continuous rather than triggered: [copy-cost diagnostics](#copy-cost-diagnostics) report every context where the ownership rule copies a place instead of borrowing or transferring it, and [`@(require_results)`](#require_results) reports a result that is neither read nor explicitly discarded.

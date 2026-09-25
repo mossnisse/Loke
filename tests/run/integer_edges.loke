@@ -1,10 +1,10 @@
 package main; import "core:fmt";
 
-// `MIN / -1` wraps for a *typed* operand: design.md fixes that rule per width.
-// Untyped folding stays exact, so these constants are written with their type.
+// `MIN % -1` is 0 for a *typed* operand, where `MIN / -1` does not fit and is
+// an error (tests/err/signed_overflow) or a panic (tests/trap/signed_overflow).
+// Untyped folding stays exact, so the constant is written with its type.
 MINIMUM : int : -9223372036854775807 - 1;
-WRAPPED_QUOTIENT : int : MINIMUM / -1;
-WRAPPED_REMAINDER : int : MINIMUM % -1;
+MINIMUM_REMAINDER : int : MINIMUM % -1;
 
 main :: proc() {
 	left := 15;
@@ -18,10 +18,8 @@ main :: proc() {
 
 	minimum := -9223372036854775807 - 1;
 	negative_one := -1;
-	fmt.println(minimum / negative_one);
 	fmt.println(minimum % negative_one);
-	fmt.println(WRAPPED_QUOTIENT);
-	fmt.println(WRAPPED_REMAINDER);
+	fmt.println(MINIMUM_REMAINDER);
 
 	one := 1;
 	negative := -8;

@@ -242,7 +242,8 @@ main :: proc() {
 	number := body.stmts[0].(^Decl).symbols[0]
 	text := body.stmts[1].(^Decl).symbols[0]
 	sources := [4]Type_Id{TYPE_INT, TYPE_INT, TYPE_STRING, TYPE_INT}
-	operations := [4]string{"load i64", "add i64", "load " + STRING_TYPE, "sub i64"}
+	// design.md "Integer overflow": signed arithmetic is the checked intrinsic.
+	operations := [4]string{"load i64", "sadd.with.overflow.i64", "load " + STRING_TYPE, "ssub.with.overflow.i64"}
 	expressions: [4]Expr
 	saved: [4]Expr_Base
 	for index in 0 ..< len(expressions) {
@@ -264,8 +265,9 @@ main :: proc() {
 		ir := strings.to_string(e.b)
 		testing.expectf(t, !e.failed && strings.contains(ir, operations[index]),
 		                "source emission used the converted type:\n%s", ir)
+		// The overflow check reads its `{ i64, i1 }` pair; no converted view is read.
 		testing.expect(t, !strings.contains(ir, "insertvalue") &&
-		               !strings.contains(ir, "extractvalue") && !strings.contains(ir, "shufflevector"),
+		               !strings.contains(ir, "extractvalue %") && !strings.contains(ir, "shufflevector"),
 		               "source emission reapplied the node's conversion")
 	}
 

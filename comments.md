@@ -378,37 +378,6 @@ have replaced. And `fmt.Options` holds only `base` and `uppercase`, so a width,
 a precision, or padding has no spelling: `3.14159` cannot be printed as `3.14`,
 nor a column aligned.
 
-## Trapping signed overflow
-
-[Integer overflow](design.md#integer-overflow) wraps signed arithmetic, and
-[Defined signed overflow](#defined-signed-overflow) defends that against
-undefined overflow. Trapping is not weighed there, and it keeps the property the
-note values — a meaning that does not change under optimization — while
-catching the bugs the library has had to guard by hand:
-
-- `strings.repeat` reserved `text.len() * times`, which wrapped to a small
-  reservation (fixed in `c2f30eb` with a hand-written bound);
-- `String_Builder.try_reserve` computed `len + additional`, which wrapped
-  negative (same commit);
-- `core:fs` documents a tick subtraction in `unix_nanoseconds` that would wrap
-  an unrecorded time into the far future.
-
-All three are `int` or `i64`, and nothing in `core` or `base` relies on signed
-wrap. The language already stops where a value does not fit: `u32(-0.5)`
-panics, while `i32(2147483647) + 1` gives `-2147483648` silently.
-
-Proposal: signed `+`, `-`, `*`, unary `-`, and `/` panic when the mathematical
-result does not fit, at every optimization level, and are a diagnostic during
-compile-time evaluation. Unsigned arithmetic stays modular, since hashing and
-bit manipulation are written in it, and signed wrap is spelled by computing in
-the unsigned type. `<<`, SIMD lanes, and atomic `add` and `sub` keep their
-current definitions.
-
-The cost is a checked operation per signed arithmetic step, much of it removed
-where loop bounds already prove the range. It also returns part of what the note
-says wrapping costs: on the path that continues, the operation is known not to
-overflow, so the optimizer may treat it as `nsw` and widen induction variables.
-
 ## Signed shift counts
 
 A scalar shift count must have an unsigned type, so `1 << k` with `k: int` is
@@ -1241,18 +1210,44 @@ unknown numbers in an integer or `distinct` integer wrapper until validated.
 An enum without a variant represented by zero has no zero value, and that
 restriction propagates through aggregates just as it does for unions.
 
-### Defined signed overflow
+### Signed overflow panics
 
-Signed `+`, `-`, `*`, and `<<` are defined to wrap two's-complement, and a
-compiler may not assume signed overflow cannot happen. This costs the
-optimizations undefined overflow buys — widening a 32-bit induction variable to
-a 64-bit register, proving a loop terminates, strength-reducing address
-arithmetic — on exactly the loops a systems language cares about, and `int` is
-the recommended default type, so it costs them by default. It is the same trade
-made for shift counts: a rule whose meaning does not change under optimization is
-worth more than the code it costs, because the alternative is a program whose
-correctness depends on a compiler flag. Code in a measured hot loop that wants
-the wider assumption states it explicitly rather than inheriting it silently.
+Signed `+`, `-`, `*`, and `<<` used to wrap two's-complement, defended against
+C's undefined overflow: a meaning that does not change under optimization is
+worth more than the loop optimizations undefined overflow buys, because the
+alternative is a program whose correctness depends on a compiler flag.
+Trapping was never weighed, and it keeps that property while catching the bugs
+the library had guarded by hand:
+
+- `strings.repeat` reserved `text.len() * times`, which wrapped to a small
+  reservation (fixed in `c2f30eb` with a hand-written bound);
+- `String_Builder.try_reserve` computed `len + additional`, which wrapped
+  negative (same commit);
+- `core:fs` documents a tick subtraction in `unix_nanoseconds` that would wrap
+  an unrecorded time into the far future.
+
+All three are `int` or `i64`. Nothing in `core`, `base`, or the examples relied
+on signed wrap: turning the rule on changed three corpus programs, each of which
+existed to demonstrate wrapping. The rule is also what the rest of the language
+already did where a value does not fit — `u32(-0.5)` panics, while
+`i32(2147483647) + 1` gave `-2147483648` silently.
+
+So signed `+`, `-`, `*`, `/`, and unary `-` panic when the mathematical result
+does not fit, at every optimization level, and are a diagnostic (L0397) where
+they are evaluated at compile time. Unsigned arithmetic stays modular, since
+hashing and bit manipulation are written in it, and signed wrap is spelled by
+computing in the unsigned type and converting back, which keeps the low bits.
+The exceptions each keep an existing definition: `<<` is a bit operation whose
+limit is already defined for every count; `%` cannot overflow; a SIMD lane has
+no per-lane overflow flag to test; an atomic `add` is a hardware
+read-modify-write whose other readers have already seen the result; and integer
+conversion is the explicit wrap.
+
+The cost is a checked operation, `llvm.sadd.with.overflow` and its siblings, per
+signed arithmetic step, much of it removed where loop bounds already prove the
+range. It returns part of what wrapping cost: on the path that continues, the
+result is known to be in range, so the optimizer may widen induction variables
+the old rule forbade it to.
 
 ### `in` is a comparison, not an additive operator
 

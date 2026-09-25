@@ -1,8 +1,8 @@
 icmp eq i64 %t
 call void @loke_rt_v1_panic(ptr @.msg.
-div.special
-div.normal
+int.overflow
 sdiv i64
+smul.with.overflow.i64
 icmp uge i64
 select i1
 ashr i32

@@ -1010,6 +1010,8 @@ emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string {
 	case .Minus:
 		if type_is_float(e.c, type) {
 			fmt.sbprintfln(&e.b, "  %s = fneg %s %s", out, llvm, operand)
+		} else if integer_traps_overflow(e.c, type) {
+			return emit_checked_signed(e, "ssub", llvm, "0", operand)
 		} else {
 			fmt.sbprintfln(&e.b, "  %s = sub %s 0, %s", out, llvm, operand)
 		}
@@ -1104,7 +1106,7 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 		return out
 	}
 
-	signed := type_signed(e.c, type) || type_is_rune(e.c, type)
+	signed := integer_traps_overflow(e.c, type)
 	#partial switch op {
 	case .Slash, .Percent:
 		return emit_divrem(e, op, type, signed, lhs, rhs)
@@ -1117,13 +1119,41 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 		fmt.sbprintfln(&e.b, "  %s = and %s %s, %s", out, llvm, lhs, complement)
 		return out
 	}
+	if signed {
+		#partial switch op {
+		case .Plus:  return emit_checked_signed(e, "sadd", llvm, lhs, rhs)
+		case .Minus: return emit_checked_signed(e, "ssub", llvm, lhs, rhs)
+		case .Star:  return emit_checked_signed(e, "smul", llvm, lhs, rhs)
+		}
+	}
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, arith_mnemonic(op).integer, llvm, lhs, rhs)
 	return out
 }
 
-// Zero takes the trap seam; `MIN / -1` wraps (design.md) instead of reaching
-// `sdiv`/`srem`, where it would be poison.
+// design.md "Integer overflow": a signed result that does not fit panics. The
+// `*.with.overflow` intrinsics answer the wrapped value and whether it wrapped.
+@(private = "file")
+emit_checked_signed :: proc(e: ^Emitter, intrinsic, llvm, lhs, rhs: string) -> string {
+	pair_type := strings.concatenate({"{ ", llvm, ", i1 }"})
+	pair := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call %s @llvm.%s.with.overflow.%s(%s %s, %s %s)",
+		pair, pair_type, intrinsic, llvm, llvm, lhs, llvm, rhs,
+	)
+	overflowed := extract(e, pair_type, pair, 1)
+	panic_if(e, overflowed, "int.overflow", "signed integer overflow")
+	return extract(e, pair_type, pair, 0)
+}
+
+// Runes compute as the signed `i32` they are stored in.
+integer_traps_overflow :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type_signed(c, type) || type_is_rune(c, type)
+}
+
+// Zero takes the trap seam. `MIN / -1` does not fit, so it panics as any signed
+// overflow does, and `MIN % -1` is 0 (design.md "Integer operators"); neither
+// reaches `sdiv`/`srem`, where it would be poison.
 @(private = "file")
 emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lhs, rhs: string) -> string {
 	llvm := llvm_type(e, type)
@@ -1140,34 +1170,23 @@ emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lh
 	}
 
 	minimum := bi_text(e.c, bi_neg(e.c, bi_pow2(e.c, bits - 1)))
-	special_label := new_label(e, "div.special")
-	normal_label := new_label(e, "div.normal")
-	done_label := new_label(e, "div.done")
-
 	is_min := temp(e)
 	is_neg_one := temp(e)
 	is_overflow := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_min, llvm, lhs, minimum)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, -1", is_neg_one, llvm, rhs)
 	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", is_overflow, is_min, is_neg_one)
-	branch_if(e, is_overflow, special_label, normal_label)
-
-	place_label(e, special_label)
-	branch(e, done_label)
-
-	place_label(e, normal_label)
-	normal_value := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", normal_value, op == .Slash ? "sdiv" : "srem", llvm, lhs, rhs)
-	branch(e, done_label)
-
-	place_label(e, done_label)
+	if op == .Slash {
+		panic_if(e, is_overflow, "int.overflow", "signed integer overflow")
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = sdiv %s %s, %s", out, llvm, lhs, rhs)
+		return out
+	}
+	// `MIN % -1` is 0, and so is `MIN % 1`, which `srem` defines.
+	divisor := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s 1, %s %s", divisor, is_overflow, llvm, llvm, rhs)
 	out := temp(e)
-	special_value := op == .Slash ? minimum : "0"
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]",
-		out, llvm, special_value, special_label, normal_value, normal_label,
-	)
+	fmt.sbprintfln(&e.b, "  %s = srem %s %s, %s", out, llvm, lhs, divisor)
 	return out
 }
 

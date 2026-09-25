@@ -586,15 +586,22 @@ kind_of :: proc(attributes: u32) -> Kind {
 // nanoseconds from 1970, which an `i64` carries for 1677 to 2262.
 //
 // Zero is Windows for "not recorded" — a filesystem that does not keep the
-// field, or a device — and is the one value outside that range a real volume
-// hands back. Subtracting the epoch from it wraps (design.md "Arithmetic
-// operators"), so an unrecorded time would read as a date far in the future
-// rather than as no date at all.
+// field, or a device — and reads as no date at all. Any other time outside that
+// range saturates at its end: the nanosecond count would not fit, and signed
+// overflow panics (design.md "Integer overflow"), which a file's metadata
+// should not be able to cause.
 @(private)
 unix_nanoseconds :: proc(time: [2]u32) -> i64 {
+	latest: i64 = 0x7FFFFFFFFFFFFFFF;
+	earliest: i64 = -latest - 1;
 	ticks := (i64(time[1]) << 32) | i64(time[0]);
 	if (ticks == 0) { return 0; }
-	return (ticks - FILETIME_UNIX_EPOCH) * 100;
+	// The top bit set is past any date Windows records.
+	if (ticks < 0) { return latest; }
+	since := ticks - FILETIME_UNIX_EPOCH;
+	if (since > latest / 100) { return latest; }
+	if (since < earliest / 100) { return earliest; }
+	return since * 100;
 }
 
 @(private)

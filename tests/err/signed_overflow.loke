@@ -1,0 +1,32 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Integer overflow": a signed result that does not fit is an error
+// wherever it is computed at compile time, and a panic at runtime
+// (tests/trap/signed_overflow). Unsigned arithmetic and SIMD lanes are modular,
+// and an untyped constant is exact.
+
+SUM :: i32(2147483647) + 1;
+DIFFERENCE :: i16(-32768) - 1;
+PRODUCT :: i8(64) * 2;
+NEGATION :: -i8(-128);
+QUOTIENT :: i64(-9223372036854775807 - 1) / -1;
+
+bump :: proc() -> i16 {
+	x: i16 = 32000;
+	x += 1000;
+	return x;
+}
+EVALUATED :: bump();
+
+// None of these is an error.
+MODULAR :: u8(250) + u8(10);
+REMAINDER :: i64(-9223372036854775807 - 1) % -1;
+EXACT :: 9223372036854775807 + 1 - 1;
+LANES :: Simd(i8, 2){127, -128} + Simd(i8, 2){1, -1};
+
+main :: proc() {
+	fmt.println(SUM, DIFFERENCE, PRODUCT, NEGATION, QUOTIENT, EVALUATED);
+	fmt.println(MODULAR, REMAINDER, int(EXACT), LANES);
+}

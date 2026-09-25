@@ -1,0 +1,14 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Integer overflow": signed `+` panics when the result does not fit,
+// at every optimization level. `-`, `*`, and unary `-` share the check
+// (tests/ll/guards pins its shape).
+main :: proc() {
+	count: i32 = 2147483646;
+	count += 1;
+	fmt.println(count);
+	count += 1;
+	fmt.println(count);
+}

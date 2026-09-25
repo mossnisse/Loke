@@ -53,6 +53,11 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
 	fmt.sbprintln(&e.b, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
 	fmt.sbprintln(&e.b, "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)")
+	for bits in ([]int{8, 16, 32, 64, 128}) {
+		for operation in ([]string{"sadd", "ssub", "smul"}) {
+			fmt.sbprintfln(&e.b, "declare {{ i%d, i1 }} @llvm.%s.with.overflow.i%d(i%d, i%d)", bits, operation, bits, bits, bits)
+		}
+	}
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bytes(ptr, ptr, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_i64(ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_u64(ptr, i64, ptr)")

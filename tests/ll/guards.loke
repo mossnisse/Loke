@@ -7,7 +7,7 @@ indirect :: proc(f: proc(a: int) -> int, n: int) -> int {
 }
 
 main :: proc() {
-	// Signed division: a zero guard and the `MIN / -1` seam.
+	// Signed division: a zero guard, and `MIN / -1` panics as an overflow.
 	a := 10;
 	b := 3;
 	fmt.println(a / b);
