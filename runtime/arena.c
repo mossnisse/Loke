@@ -204,6 +204,11 @@ static void *arena_resize(void *state, void *ptr, uint64_t old_size, uint64_t ne
 			return ptr;
 		}
 	}
+	/* A shrink below the top keeps its block: copying it out would spend region
+	 * bytes to release none, and fail outright in a full fixed buffer. */
+	if (new_size <= old_size) {
+		return ptr;
+	}
 	out = arena_alloc(state, new_size, align);
 	if (out == 0) {
 		return 0; /* design.md: the old allocation is still live and unchanged */
