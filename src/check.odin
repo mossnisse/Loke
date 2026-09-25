@@ -319,9 +319,9 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 		errorf(c, no_span(), "L0302", "package `main` has no `main` procedure")
 	} else if symbol := symbol_of(c, entry); symbol == nil || symbol.kind != .Proc {
 		span := symbol == nil ? no_span() : symbol.span
-		errorf(c, span, "L0303", "`main` must be a procedure: `main :: proc() { ... }`")
+		errorf(c, span, "L0303", "`main` must be a procedure: `%s`", "main :: proc() { ... }")
 	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || info.result != INVALID_TYPE {
-		errorf(c, symbol.span, "L0303", "`main` must have no parameters and no results: `main :: proc() { ... }`")
+		errorf(c, symbol.span, "L0303", "`main` must have no parameters and no results: `%s`", "main :: proc() { ... }")
 	} else if c.error_count == errors_before {
 		c.entry_point = entry
 	}

@@ -1,3 +1,4 @@
 L0303
 @3:1
-`main` must have no parameters and no results
+`main` must have no parameters and no results: `main :: proc() { ... }`
+!%!(
