@@ -732,21 +732,21 @@ transmute_side_ok :: proc(k: ^Checker, type: Type_Id, span: Span, side: string) 
 }
 
 // A scalar bit cast of a constant folds, which is how `core:math` spells an
-// infinity or a NaN as a constant.
+// infinity or a NaN as a constant. An aggregate result is left to the
+// evaluator, which a compile-time context asks.
 @(private = "file")
 fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 	base := expr_base(v.args[1].value)
-	if base == nil || !base.is_const || type_size(k.c, target) > 8 {
+	if base == nil || !base.is_const {
 		return
 	}
-	raw, encoded := const_scalar_pattern(k.c, base.const_value, source)
-	if !encoded {
+	#partial switch underlying_kind(k.c, target) {
+	case .Float, .Bool, .Int, .Rune, .Enum:
+	case:
 		return
 	}
-	folded, status := const_from_pattern(k.c, raw, target)
-	switch status {
-	case .Unfoldable:
-		return
+	folded, status := transmute_const(k.c, base.const_value, source, target)
+	#partial switch status {
 	case .Invalid:
 		// A `bool` outside {0, 1}, a non-rune, or an enum with no such member.
 		errorf(
@@ -765,70 +765,160 @@ Const_Pattern :: enum {
 	Folded,
 	// Not a value of the type at all.
 	Invalid,
-	// Valid, but with no constant spelling (a pointer or an aggregate).
+	// Reads padding, whose bits no value put there.
+	Padding,
+	// Valid, but with no compile-time storage (a pointer, a union, or a record
+	// with uninitialized capacity).
 	Unfoldable,
 }
 
-// A scalar constant's storage bits, if it has any.
-const_scalar_pattern :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> (u64, bool) {
+// design.md "`unsafe.transmute`" at compile time: the constant's storage, read
+// back as `target`.
+transmute_const :: proc(c: ^Compiler, value: Const_Value, source, target: Type_Id) -> (Const_Value, Const_Pattern) {
+	size := int(type_size(c, source))
+	bytes := make([]u8, size)
+	defer delete(bytes)
+	written := make([]bool, size)
+	defer delete(written)
+	if !const_storage(c, value, source, bytes, written) {
+		return {}, .Unfoldable
+	}
+	return const_from_storage(c, bytes, written, target)
+}
+
+// Little-endian, like every target. `written` marks the bytes a value occupies,
+// so padding stays unwritten.
+@(private = "file")
+const_storage :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, bytes: []u8, written: []bool) -> bool {
 	info := underlying_info(c, type)
 	if info == nil {
-		return 0, false
+		return false
 	}
 	#partial switch info.kind {
 	case .Float:
 		if value.kind != .Float {
-			return 0, false
+			return false
 		}
-		return const_float_pattern(value, info.bits), true
+		return store_integer(c, bi_from_u64(c, const_float_pattern(value, info.bits)), bytes, written)
 	case .Bool:
 		if value.kind != .Boolean {
-			return 0, false
+			return false
 		}
-		return value.boolean ? 1 : 0, true
+		return store_integer(c, bi_from_u64(c, value.boolean ? 1 : 0), bytes, written)
 	case .Int, .Rune, .Enum:
 		if value.kind != .Integer && value.kind != .Rune {
-			return 0, false
+			return false
 		}
-		bits := info.kind == .Rune ? u16(32) : info.bits
-		signed := info.kind == .Rune ? true : info.signed
-		pattern, ok := bi_to_u64(c, bi_wrap(c, value.integer, int(bits), signed))
-		return pattern, ok
+		return store_integer(c, value.integer, bytes, written)
+	case .Array, .Simd:
+		if value.kind != .Aggregate || value.aggregate == nil || u64(len(value.aggregate.elements)) != info.count {
+			return false
+		}
+		step := int(type_size(c, info.element))
+		for element, index in value.aggregate.elements {
+			at := index * step
+			if !const_storage(c, element, info.element, bytes[at:at + step], written[at:at + step]) {
+				return false
+			}
+		}
+		return true
+	case .Struct:
+		if value.kind != .Aggregate || value.aggregate == nil || len(value.aggregate.elements) != len(info.fields) {
+			return false
+		}
+		for element, index in value.aggregate.elements {
+			field := symbol_of(c, info.fields[index])
+			if field == nil || field.initialized_by != INVALID_SYMBOL {
+				return false
+			}
+			at := int(type_field_offset(c, type, index))
+			end := at + int(type_size(c, field.type))
+			if !const_storage(c, element, field.type, bytes[at:end], written[at:end]) {
+				return false
+			}
+		}
+		return true
 	}
-	return 0, false
+	return false
 }
 
-// The constant a bit pattern denotes in `type`.
-const_from_pattern :: proc(c: ^Compiler, raw: u64, type: Type_Id) -> (Const_Value, Const_Pattern) {
+@(private = "file")
+store_integer :: proc(c: ^Compiler, value: Big_Int, bytes: []u8, written: []bool) -> bool {
+	rest := bi_wrap(c, value, len(bytes) * 8, false)
+	low_byte := bi_from_u64(c, 0xff)
+	for index in 0 ..< len(bytes) {
+		low, _ := bi_to_u64(c, bi_and(c, rest, low_byte))
+		bytes[index], written[index] = u8(low), true
+		rest = bi_shr(c, rest, 8)
+	}
+	return true
+}
+
+@(private = "file")
+const_from_storage :: proc(c: ^Compiler, bytes: []u8, written: []bool, type: Type_Id) -> (Const_Value, Const_Pattern) {
 	info := underlying_info(c, type)
 	if info == nil {
 		return {}, .Unfoldable
 	}
 	#partial switch info.kind {
-	case .Float:
-		return float_bits_const(raw, info.bits), .Folded
-	case .Bool:
-		if raw > 1 {
-			return {}, .Invalid
+	case .Float, .Bool, .Int, .Rune, .Enum:
+		raw := bi_zero(c)
+		for index := len(bytes) - 1; index >= 0; index -= 1 {
+			if !written[index] {
+				return {}, .Padding
+			}
+			raw = bi_or(c, bi_shl(c, raw, 8), bi_from_u64(c, u64(bytes[index])))
 		}
-		return bool_const(raw == 1), .Folded
-	case .Int:
-		return integer_const(bi_wrap(c, bi_from_u64(c, raw), int(info.bits), info.signed)), .Folded
-	case .Rune:
-		wrapped := bi_wrap(c, bi_from_u64(c, raw), 32, true)
-		// design.md: a `rune` excludes surrogates and anything above U+10FFFF.
-		if point, fits := bi_to_i64(c, wrapped); !fits || point < 0 || point > 0x10ffff ||
-		   (point >= 0xd800 && point <= 0xdfff) {
-			return {}, .Invalid
+		#partial switch info.kind {
+		case .Float:
+			pattern, _ := bi_to_u64(c, raw)
+			return float_bits_const(pattern, info.bits), .Folded
+		case .Bool:
+			if bi_magnitude_bits(c, raw) > 1 {
+				return {}, .Invalid
+			}
+			return bool_const(!bi_is_zero(raw)), .Folded
+		case .Int:
+			return integer_const(bi_wrap(c, raw, int(info.bits), info.signed)), .Folded
+		case .Rune:
+			// design.md: a `rune` excludes surrogates and anything above U+10FFFF.
+			point, fits := bi_to_i64(c, bi_wrap(c, raw, 32, true))
+			if !fits || point < 0 || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff) {
+				return {}, .Invalid
+			}
+			return rune_const(bi_from_i64(c, point)), .Folded
+		case .Enum:
+			candidate := integer_const(bi_wrap(c, raw, int(info.bits), info.signed))
+			if enum_member_by_value(c, type, candidate) == INVALID_SYMBOL {
+				return {}, .Invalid
+			}
+			return candidate, .Folded
 		}
-		return rune_const(wrapped), .Folded
-	case .Enum:
-		wrapped := bi_wrap(c, bi_from_u64(c, raw), int(info.bits), info.signed)
-		candidate := integer_const(wrapped)
-		if enum_member_by_value(c, type, candidate) == INVALID_SYMBOL {
-			return {}, .Invalid
+	case .Array, .Simd, .Struct:
+		count := info.kind == .Struct ? len(info.fields) : int(info.count)
+		elements := make([]Const_Value, count, c.semantic_allocator)
+		for index in 0 ..< count {
+			member := info.element
+			at := index * int(type_size(c, info.element))
+			if info.kind == .Struct {
+				field := symbol_of(c, info.fields[index])
+				if field == nil || field.initialized_by != INVALID_SYMBOL {
+					return {}, .Unfoldable
+				}
+				member = field.type
+				at = int(type_field_offset(c, type, index))
+			}
+			end := at + int(type_size(c, member))
+			element, status := const_from_storage(c, bytes[at:end], written[at:end], member)
+			if status != .Folded {
+				return {}, status
+			}
+			elements[index] = element
 		}
-		return candidate, .Folded
+		aggregate := new(Const_Aggregate, c.semantic_allocator)
+		aggregate.type = type
+		aggregate.elements = elements
+		return Const_Value{kind = .Aggregate, type_value = type, aggregate = aggregate}, .Folded
 	}
 	return {}, .Unfoldable
 }

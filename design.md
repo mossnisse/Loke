@@ -4963,6 +4963,8 @@ The compiler checks the shape of the conversion and nothing else. The source and
 
 Producing a valid destination representation is the caller's obligation. During compile-time evaluation, a bit pattern that is not a value of the destination type is a compile-time error. The same invalid pattern at runtime is not diagnosed.
 
+[Compile-time evaluation](#compile-time-procedure-evaluation) reads the source's storage byte by byte, little-endian, so a constant of any shape the checks admit — a scalar of any width, an array, a SIMD vector, or a struct of them — converts. Padding between or after fields holds no value, and a result that would read it is a compile-time error. A union, whose tag encoding is unspecified, and a record with an [`initialized`](#uninitialized-capacity) field, whose capacity holds no value, have no compile-time meaning on either side.
+
 Pointer destinations are limited to `rawptr` and C pointers, and the result is unchecked: dereferencing it is valid only when the input bits already describe suitably aligned, live storage of the destination pointee type.
 
 #### Uninitialized capacity

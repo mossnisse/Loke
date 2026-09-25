@@ -2253,18 +2253,20 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 			return Eval_Value{}, false
 		}
 		source := expr_base(v.bound[0]).type
-		raw, encoded := const_scalar_pattern(ev.k.c, frozen, source)
-		result, status := Const_Value{}, Const_Pattern.Unfoldable
-		if encoded {
-			result, status = const_from_pattern(ev.k.c, raw, v.type)
-		}
+		result, status := transmute_const(ev.k.c, frozen, source, v.type)
 		switch status {
 		case .Folded:
-			return scalar(result, v.type), true
+			return value_from_const(ev, result, v.type)
 		case .Invalid:
 			eval_fail(
 				ev, v.span, "L0688",
 				"this bit pattern is not a valid `%s`", type_name(ev.k.c, v.type),
+			)
+		case .Padding:
+			eval_fail(
+				ev, v.span, "L0688",
+				"`unsafe.transmute` reads the padding of `%s` into `%s`, and padding has no compile-time value",
+				type_name(ev.k.c, source), type_name(ev.k.c, v.type),
 			)
 		case .Unfoldable:
 			eval_fail(

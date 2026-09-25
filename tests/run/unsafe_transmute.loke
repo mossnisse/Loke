@@ -17,6 +17,24 @@ F32_SIGNALLING :: unsafe.transmute(f32, u32(0x7f800001));
 
 Colour :: enum u8 { Red, Green, Blue }
 
+// Compile-time evaluation reads storage byte by byte, little-endian, so every
+// trivially copyable shape folds and not only a scalar.
+WIDE :: unsafe.transmute(u128, i128(-1));
+BYTES :: unsafe.transmute([4]u8, u32(0x01020304));
+WORD :: unsafe.transmute(u32, [4]u8{4, 3, 2, 1});
+Triple :: struct { wide: u16, low: u8, high: u8 }
+TRIPLE :: unsafe.transmute(Triple, u32(0x04030201));
+LANES :: unsafe.transmute(Simd(u8, 4), u32(0x01020304));
+COLOURS :: unsafe.transmute([2]Colour, u16(0x0201));
+// A NaN payload survives a trip through an array, as it does through a scalar.
+PAYLOAD :: unsafe.transmute(u32, unsafe.transmute([1]f32, u32(0x7f800001)));
+
+reversed :: proc(value: u32) -> [4]u8 {
+	bytes := unsafe.transmute([4]u8, value);
+	return {bytes[3], bytes[2], bytes[1], bytes[0]};
+}
+REVERSED :: reversed(0x01020304);
+
 main :: proc() {
 	// Constant folding, both directions and both widths.
 	fmt.println(unsafe.transmute(u32, f32(1.5)));
@@ -95,6 +113,12 @@ main :: proc() {
 	fmt.println(wrapped.byte, unsafe.transmute(bool, wrapped));
 	bytes := unsafe.transmute([8]u8, double);
 	fmt.println(bytes[0], bytes[7], unsafe.transmute(f64, bytes));
+
+	// The folded aggregates, and the same conversions at runtime.
+	fmt.println(WIDE == ~u128(0), BYTES, WORD, TRIPLE.wide, TRIPLE.low, TRIPLE.high);
+	fmt.println(LANES, COLOURS, PAYLOAD, REVERSED);
+	word := u32(0x01020304);
+	fmt.println(unsafe.transmute([4]u8, word), reversed(word));
 
 	// A `rawptr` destination: unchecked, and here only observed as a pattern.
 	address := unsafe.transmute(rawptr, uint(0));

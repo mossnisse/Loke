@@ -1,10 +1,11 @@
 // The explicit trust boundary (design.md "What is not checked").
 //
-// Six members, all compiler built-ins, each one a promise the compiler cannot
+// Eight members, all compiler built-ins, each one a promise the compiler cannot
 // check: `raw_data`, `string_view` and `cstring_view` discard or manufacture
-// provenance, `transmute` reinterprets bits, `forget` suppresses cleanup, and
-// `free` releases storage nothing traced. This file is the whole package -- the
-// visible import is the review mechanism.
+// provenance, `transmute` reinterprets bits, `forget` suppresses cleanup, `free`
+// releases storage nothing traced, and `write` and `take` move a value into and
+// out of uninitialized capacity (design.md "Uninitialized capacity"). This file
+// is the whole package -- the visible import is the review mechanism.
 //
 // # `forget(value)`
 //
@@ -42,10 +43,11 @@
 // representation is not checked at runtime; a *constant* pattern that is not a
 // value of the destination type at all — a `bool` outside `{0, 1}`, an enum
 // with no such member, a `rune` outside the scalar range — is a compile error
-// instead, since there is no caller left to hold responsible. A scalar integer,
-// float, `bool`, `rune`, or enum result folds when its operand is constant,
-// which is how a package builds an infinity or a NaN: neither has a literal
-// spelling.
+// instead, since there is no caller left to hold responsible. A constant operand
+// folds, which is how a package builds an infinity or a NaN: neither has a
+// literal spelling. At compile time the storage is read byte by byte, so arrays
+// and structs fold as well, except where the result would read padding. A union
+// and a record with uninitialized capacity have no compile-time meaning.
 //
 // Pointer destinations are `rawptr` and C pointers only, and the result is
 // unchecked: dereferencing it is valid only when the bits already describe

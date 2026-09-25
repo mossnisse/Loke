@@ -40,3 +40,9 @@ L0688
 L0315
 @47:10
 unknown name `transmute`
+L0688
+@53:12
+`unsafe.transmute` reads the padding of `Padded` into `u32`, and padding has no compile-time value
+L0688
+@54:10
+this bit pattern is not a valid `[2]bool`

@@ -331,6 +331,14 @@ profiles contain.
   console while `tests/run/lib_term_console` runs is read along with the
   records it wrote.
 
+## Open questions in `core:unsafe`
+
+- `unsafe.string_view(pointer, length)` answers `.none` for a negative
+  length, the same answer as for invalid UTF-8, while `pointer[0:length]`
+  with the same length panics like any slice bound. design.md "String
+  conversion" gives only the signature. Is a negative length a programmer
+  error, or an input to report?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
