@@ -364,6 +364,7 @@ foreign import kernel32 "system:kernel32.lib";
 // The 100-nanosecond ticks between 1601-01-01 and 1970-01-01.
 @(private) FILETIME_UNIX_EPOCH :: 116444736000000000;
 
+@(private)
 foreign kernel32 {
 	@(link_name="CreateFileW")
 	rt_create_file :: proc "stdcall" (

@@ -1,0 +1,13 @@
+package main; import "core:fs"; import "core:math"; import "core:os"; import "core:term";
+
+// These packages are file-wide `@(public)`, and a foreign block inherits that
+// default. Their bindings are marked `@(private)`, so the `rt_*` procedures are
+// not part of any package API.
+
+main :: proc() {
+	os.rt_exit(0);
+	_ = os.rt_last_error();
+	_ = fs.rt_last_error();
+	_ = term.rt_last_error();
+	_ = math.rt_floor_f64(1.5);
+}

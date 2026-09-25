@@ -277,6 +277,24 @@ Should a reparse point read as `Other` now? That would be explicit. It would
 also make `create_directories` fail through a junction, which ordinary Windows
 profiles contain.
 
+## Open questions in `core:os`
+
+- `os.exit(status: int)` narrows with `i32(status)`, which wraps, so
+  `os.exit(4294967297)` exits with 1 although design.md "Program entry and
+  exit" says the process ends "with the specified status". Should the
+  parameter be `i32`, or the spec say the status is taken modulo 2^32?
+- `os.exit` does not diverge, so `f :: proc() -> int { os.exit(1); }` is L0365.
+  `panic` has the same shape but is built in. A way to mark a procedure as not
+  returning would fix both `os.exit` and user wrappers around it.
+- An environment name that is empty or contains `=` fails `set_environment`
+  and `unset_environment` as `Other` (Windows error 87), while
+  `get_environment` answers `.none` for it. Should the portable layer reject
+  such names as `Invalid_Data` on every call, as POSIX `setenv` does?
+- `from_last_error` is written three times, in `core:os`, `core:fs`, and
+  `core:term`, with different tables. `core:os` maps less: error 161 is
+  `Invalid_Path` from `fs` but `Other` from `os`, and 267 (a file given as the
+  new working directory) is `Other` in both.
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

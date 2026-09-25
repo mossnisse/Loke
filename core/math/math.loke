@@ -186,6 +186,7 @@ to :: proc($To: type, value: $From) -> Option(To)
 //
 // The Windows x64 toolchain links the CRT. Bind each width directly to its
 // C math function; f32 uses the float entry points without promotion to double.
+@(private)
 foreign platform_math {
 	@(link_name="floor")
 	rt_floor_f64 :: proc "c" (x: f64) -> f64 ---;

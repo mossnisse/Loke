@@ -5038,7 +5038,7 @@ An [object build](#build-configuration) has no entry or argument conversion, so 
 | `os.args.len()` | the argument count, including the executable path at index 0 |
 | `os.args[i]` | an owning UTF-8 `string`, copied; an index out of range panics |
 | `foreach (a in os.args)` | a borrowed `string_view` per argument |
-| `os.view_at(i)` | the same borrow by index; out of range yields `""` |
+| `os.view_at(i)` | the same borrow by index; an index out of range panics |
 
 Indexing copies an owning string; iteration borrows runtime-owned bytes valid for the process lifetime. For immediate termination without cleanup, see [`os.exit`](#program-entry-and-exit).
 

@@ -10,7 +10,9 @@ package os;
 import "core:unsafe";
 
 // The seed runtime is already part of every link, so this block names it without
-// a `foreign import` of its own: there is no library file to find.
+// a `foreign import` of its own: there is no library file to find. Private, or
+// the file-wide `@(public)` would export the runtime bindings as `os.rt_*`.
+@(private)
 foreign loke_runtime {
 	@(link_name="loke_rt_v1_args_count")
 	rt_args_count :: proc "c" () -> int ---;

@@ -1,0 +1,15 @@
+L0336
+@8:2
+`rt_exit` is not public in package `os`
+L0336
+@9:6
+`rt_last_error` is not public in package `os`
+L0336
+@10:6
+`rt_last_error` is not public in package `fs`
+L0336
+@11:6
+`rt_last_error` is not public in package `term`
+L0336
+@12:6
+`rt_floor_f64` is not public in package `math`

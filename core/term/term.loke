@@ -140,6 +140,7 @@ foreign import kernel32 "system:kernel32.lib";
 @(private) LEFT_CTRL_PRESSED :: 0x0008;
 @(private) SHIFT_PRESSED :: 0x0010;
 
+@(private)
 foreign kernel32 {
 	@(link_name="GetStdHandle")
 	rt_std_handle :: proc "stdcall" (which: u32) -> int ---;
