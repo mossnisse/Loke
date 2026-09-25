@@ -295,6 +295,17 @@ profiles contain.
   `Invalid_Path` from `fs` but `Other` from `os`, and 267 (a file given as the
   new working directory) is `Other` in both.
 
+## Open questions in `core:path`
+
+- `path.volume("\\?\UNC\server\share\x")` is `\\?\UNC`, not
+  `\\?\UNC\server\share`, so `fs.create_directories` on such a path tries to
+  create `\\?\UNC\server` and fails. `clean` already declines extended-length
+  paths. Should `volume` understand `\\?\UNC\`, or should extended-length paths
+  be documented as unsupported by the walking operations?
+- `path.SEPARATOR` is public, because the file is, but standard-library.md
+  "`core:path`" lists only `separator()`. Should the constant be specified or be
+  made private?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

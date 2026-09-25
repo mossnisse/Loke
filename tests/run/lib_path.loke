@@ -67,4 +67,15 @@ main :: proc() {
 	fmt.println(path.join([]string_view{"C:", "x"}));
 	fmt.println(path.is_absolute(path.join([]string_view{"C:", "x"})));
 	fmt.println(path.join([]string_view{"\\\\server\\share", "x"}));
+
+	// A run of separators before the last element leaves none behind, except the
+	// one that is a root.
+	fmt.println(path.directory("a//b"));
+	fmt.println(path.directory("C:a\\\\b"));
+	fmt.println(path.directory("C:\\\\b"));
+	// A UNC volume written with `/` is cleaned to the target separator too.
+	fmt.println(path.clean("//server/share/x"));
+	// `..` is the parent, not a file named `.` with the extension `.`.
+	fmt.println(path.extension("a\\..").len());
+	fmt.println(path.stem(".."));
 }

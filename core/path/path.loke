@@ -102,15 +102,18 @@ directory :: proc(path: string_view) -> string_view {
 	if (at == volume) {
 		return "." if volume == 0 else trimmed[0:volume];
 	}
-	// Keep exactly one separator when it is the root itself.
-	if (at == volume + 1) { return trimmed[0:at]; }
-	return trimmed[0:at - 1];
+	// Drop every separator before the last element, keeping one only when it is
+	// the root itself: `a//b` is in `a`, and `C:\b` in `C:\`.
+	for (; at > volume + 1 && is_separator(bytes[at - 1]); at -= 1) {}
+	return trimmed[0:at];
 }
 
 // The extension of the last element, **including** the dot, or "". A leading dot
-// names a hidden file rather than an extension, so `extension(".config")` is "".
+// names a hidden file rather than an extension, so `extension(".config")` is "",
+// and `..` names the parent rather than a file with the extension `.`.
 extension :: proc(path: string_view) -> string_view {
 	name := base(path);
+	if (name == "..") { return ""; }
 	bytes := name.bytes();
 	for (at := bytes.len(); at > 1; at -= 1) {
 		if (bytes[at - 1] == u8('.')) {
@@ -204,7 +207,11 @@ clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator())
 	}
 
 	builder := strings.init(allocator);
-	builder.append(path[0:volume]);
+	// A UNC volume has separators of its own: `//server/share` becomes
+	// `\\server\share` like the rest.
+	foreach (character in path[0:volume]) {
+		builder.append(SEPARATOR if character == ALTERNATE else character);
+	}
 	if (rooted) { builder.append(SEPARATOR); }
 	foreach (element, index in elements.indexed()) {
 		if (index > 0) { builder.append(SEPARATOR); }

@@ -42,3 +42,9 @@ C:
 C:x
 false
 \\server\share\x
+a
+C:a
+C:\
+\\server\share\x
+0
+..
