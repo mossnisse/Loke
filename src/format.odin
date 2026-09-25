@@ -130,13 +130,30 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 // A type declared by the package being checked, which is `core:fmt` here.
 @(private = "file")
 local_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
-	pkg := package_of(k.c, k.pkg)
+	return package_type_named(k, package_of(k.c, k.pkg), name)
+}
+
+// A type `pkg` declares by `name`, directly or as an alias such as
+// `Writer :: dyn mut Sink` — a constant whose value is a type.
+package_type_named :: proc(k: ^Checker, pkg: ^Package, name: string) -> (Type_Id, bool) {
 	if pkg == nil || pkg.scope == nil {
 		return INVALID_TYPE, false
 	}
-	symbol := symbol_of(k.c, pkg.scope.names[intern_identifier(k.c, name)])
-	if symbol != nil && symbol.kind == .Type && symbol.type != INVALID_TYPE {
-		return symbol.type, true
+	symbol_id := pkg.scope.names[intern_identifier(k.c, name)] or_else INVALID_SYMBOL
+	symbol := symbol_of(k.c, symbol_id)
+	if symbol != nil && symbol.kind == .Type {
+		resolve_symbol_signature_in_place(k, symbol_id)
+		symbol = symbol_of(k.c, symbol_id)
+		return symbol.type, symbol.type != INVALID_TYPE
+	}
+	if symbol != nil && symbol.kind == .Const {
+		if symbol.decl != nil && symbol.decl.check_state == .Unchecked {
+			check_symbol_decl_in_place(k, symbol_id)
+			symbol = symbol_of(k.c, symbol_id)
+		}
+		if const_names_type(k.c, symbol.const_value, symbol.type) {
+			return symbol.const_value.type_value, true
+		}
 	}
 	return INVALID_TYPE, false
 }

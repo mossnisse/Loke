@@ -450,10 +450,14 @@ uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed);
  *
  * `Writer` and `Options` are declared in `core:fmt`, and each field here must
  * match the width the language gives its counterpart, not merely the total size.
- * A compiler-generated formatter thunk receives a pointer to each. */
+ * A compiler-generated formatter thunk receives a pointer to each.
+ *
+ * `Writer` is `dyn mut fmt.Sink` (design.md "Borrowed dynamic interface
+ * values"): the sink's address and its witness table, whose one slot is
+ * `write(self: inout Self, bytes: []u8)`. A nil view has a null witness. */
 typedef struct loke_rt_writer_v1 {
-	void (*write)(void *state, const uint8_t *bytes, int64_t count);
-	void *state;
+	void *data;
+	void *const *witness;
 } loke_rt_writer_v1;
 
 typedef struct loke_rt_options_v1 {
@@ -477,6 +481,10 @@ void loke_rt_v1_write_std(void *state, const uint8_t *bytes, int64_t count);
 enum { LOKE_RT_STDOUT = 0, LOKE_RT_STDERR = 1 };
 /* Called by `core:term` before it writes a standard handle directly. */
 void loke_rt_v1_flush_stdout(void);
+
+/* Supplied by every generated module: calls the witness's `write` slot, which
+ * takes its slice as a Loke aggregate the C side has no business spelling. */
+void loke_rt_v1_sink_write(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count);
 
 void loke_rt_v1_fmt_bytes(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count);
 void loke_rt_v1_fmt_i64(const loke_rt_writer_v1 *w, int64_t value, const loke_rt_options_v1 *o);

@@ -367,56 +367,16 @@ profiles contain.
   factory, on `Arena`/`Scratch` construction, or as a build-wide default for
   freestanding targets?
 
-## `fmt.Writer` and `log.Logger` as `dyn` sinks
+## Neighbours of the `dyn` sinks
 
-Every `format` method receives a `fmt.Writer`: a `proc(state: rawptr, bytes:
-[^]u8, count: int)` beside a `rawptr`. A sink that formats into its own record
-converts `state` back to a typed pointer, which needs `core:unsafe`
-([Unchecked operations need the import](#unchecked-operations-need-the-import)):
-`core:fmt` does it in `collect`, and `core:io` in the latch adapter that
-standard-library.md "Formatting bridge" calls "not a safe construction". The
-closing paragraph of
+design.md [Procedures](design.md#procedures) still tells a callback to carry its
+state "usually as a `rawptr`", which the callable convention under
 [Build-selected services](#build-selected-services-and-explicit-runtime-state)
-gives the reason: neither a generic parameter nor a borrowed `dyn` describes a
-handle kept for the life of the program. Neither use needs one:
-
-- a formatter uses its sink only for the call, which is what a borrowed
-  `dyn mut` view is;
-- a logger lives for the process, and a `dyn mut` view of static storage may
-  already be stored in a global. This compiles and prints `5`:
-
-```odin
-Sink :: interface($Self: type) {
-	slot write: proc(self: inout Self, bytes: []u8);
-}
-Counter :: struct { total: int }
-impl Counter {
-	write :: proc(self: inout, bytes: []u8) { self.total += bytes.len(); }
-}
-
-counter: Counter;
-selected: dyn mut Sink;
-
-main :: proc() {
-	selected = (dyn mut Sink)(&mut counter);
-	text: string = "hello";
-	selected.write(text.bytes());
-	fmt.println(counter.total);
-}
-```
-
-Proposal: `fmt.Writer` becomes `dyn mut fmt.Sink` with one `write(bytes: []u8)`
-slot, and `log.Logger` a `dyn mut` view of the static storage its factory
-already has to return. The `core:io` latch becomes an ordinary record. The cost
-is in the runtime, which shares `Writer`'s layout with the C seed: the
-compiler-contributed `stdout_writer` and `format_any` need a Loke-side sink, or
-a fixed witness layout for this one interface.
-
-Two neighbours would move with it. design.md [Procedures](design.md#procedures)
-still tells a callback to carry its state "usually as a `rawptr`", which the
-callable convention above has replaced. And `fmt.Options` holds only `base` and
-`uppercase`, so a width, a precision, or padding has no spelling: `3.14159`
-cannot be printed as `3.14`, nor a column aligned.
+and the `dyn` sinks
+([Formatting and logging sinks are `dyn` views](#formatting-and-logging-sinks-are-dyn-views))
+have replaced. And `fmt.Options` holds only `base` and `uppercase`, so a width,
+a precision, or padding has no spelling: `3.14159` cannot be printed as `3.14`,
+nor a column aligned.
 
 ## Trapping signed overflow
 
@@ -882,9 +842,9 @@ Closure syntax is then a shorthand for the same record and method, with written
 captures, ordinary lifetime checks, and no implicit allocation. It is what gives
 the other two steps a caller, so its capture, mutation, and escape rules should
 be decided together with them. A callable that outlives the scope it was made in
-stays a separate question: `fmt.Writer` and `log.Logger` pair a procedure with
-`rawptr` state precisely because neither a generic parameter nor a borrowed
-`dyn` view describes a handle kept for the life of the program.
+stays a separate question. `fmt.Writer` and `log.Logger` were once cited as
+needing one; they turned out to need only a `dyn mut` view
+([Formatting and logging sinks are `dyn` views](#formatting-and-logging-sinks-are-dyn-views)).
 
 ### Typed fallibility, and the `Option` decision it reverses
 
@@ -1201,9 +1161,40 @@ anything converts to `rawptr`, and `^T` to `[^]T` — because nothing can be rea
 through the result without one of the gated operations. The rule is per file
 rather than per expression because the import is already the unit a reviewer
 searches for, and the cost was two library files: `core:fmt` and `core:io`,
-both for `fmt.Writer`'s `rawptr` state. `base:` packages are exempt: they are
+both for `fmt.Writer`'s `rawptr` state, which the `dyn` sinks below have since
+removed. `base:` packages are exempt: they are
 the runtime, reach the same operations through compiler-contributed names, and
 cannot import `core:`.
+
+### Formatting and logging sinks are `dyn` views
+
+`fmt.Writer` and `log.Logger` were a procedure beside a `rawptr` of state, so a
+sink that formatted into its own record converted `state` back to a typed
+pointer: `core:fmt` did so in `to_string`'s collector, and `core:io` in the
+latch adapter standard-library.md had to call "not a safe construction". The closing
+paragraph of
+[Build-selected services](#build-selected-services-and-explicit-runtime-state)
+said neither a generic parameter nor a borrowed `dyn` describes a handle kept
+for the life of the program. Neither use needs one. A
+formatter uses its sink only for the call, which is what a borrowed `dyn mut`
+view is, and a logger's factory already has to return process-lifetime
+storage, so a `dyn mut` view of a `static` record is exactly that handle.
+
+Both are now aliases of `dyn mut` views: `fmt.Writer :: dyn mut fmt.Sink`, with
+one `write(bytes: []u8)` slot, and `log.Logger :: dyn mut log.Sink`. A sink is
+any record with the method, the collector and the latch are ordinary records,
+and neither library imports `core:unsafe`. What it cost is in the seed runtime,
+whose scalar formatters write through a `Writer`. The generated module now
+supplies `loke_rt_v1_sink_write`, which calls the witness's one slot with a
+slice built in LLVM, so no C prototype has to agree with how LLVM passes a
+two-word aggregate, and the process streams are a compiler-emitted witness
+whose data pointer is the stream selector. A nil `Writer` used to write
+nothing; it now panics, as every slot call through a nil view does.
+
+A logger is no longer comparable with another: views are comparable only with
+`nil`. The provider test that compared `current().write` with
+`standard_logger().write` to see whether publication had happened now logs a
+record and checks whether its own sink received it.
 
 ### Explicit overload groups
 

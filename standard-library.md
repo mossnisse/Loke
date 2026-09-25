@@ -315,24 +315,17 @@ wrapper value, never hidden global state.
 
 ### Formatting bridge
 
-The existing `fmt.Writer` callback cannot return an error. It remains suitable
-for process diagnostics and in-memory sinks, but a formatted file write must
-not silently lose a disk error.
+A `fmt.Sink` cannot return an error. It remains suitable for process
+diagnostics and in-memory sinks, but a formatted file write must not silently
+lose a disk error.
 
-`io.write_formatted` bridges the two. Its adapter presents a `fmt.Writer`,
-writes into an `io.Writer`, latches the first `io.Error`, makes later callbacks
-no-ops, and returns the latched error after formatting. This preserves the
-existing formatting ABI.
-
-The adapter is not a safe construction and must not be described as one.
-`fmt.Writer.state` is a `rawptr`, so the adapter holds a local latch record — a
-`dyn mut io.Writer` borrow plus an `Option(Error)` — and passes its address
-through that field, which discards checked provenance
-(design.md "What is not checked"). The resulting `fmt.Writer` is valid only for
-the enclosing call and must never be stored, returned, or handed to a callee
-that retains it. `write_formatted` therefore constructs, uses, and discards the
-adapter within its own body; the raw pointer is never a value a caller holds.
-`dyn mut io.Writer` existing at all depends on `Writer` being declared with `slot`.
+`io.write_formatted` bridges the two. It formats through a local latch record —
+a `dyn mut io.Writer` borrow plus an `Option(Error)` — whose `write` writes into
+the `io.Writer`, latches the first `io.Error`, does nothing once one is latched,
+and returns the latched error after formatting. The latch is an ordinary
+`fmt.Sink`, viewed as a `fmt.Writer` for the call, so the borrow checker keeps
+it from outliving the body. `dyn mut io.Writer` existing at all depends on
+`Writer` being declared with `slot`.
 
 ```odin
 write_formatted(writer, args: ..any_view) -> Result(Unit, Error)
@@ -363,10 +356,10 @@ itself keeps its selected allocator by receiving the same compiler-contributed
 ## `core:fmt`
 
 ```odin
-Writer :: struct {
-	write: proc(state: rawptr, bytes: [^]u8, count: int),
-	state: rawptr,
+Sink :: interface($Self: type) {
+	slot write: proc(self: inout Self, bytes: []u8);
 }
+Writer :: dyn mut Sink;
 Options :: struct { base: int, uppercase: bool }
 DEFAULT_OPTIONS :: Options{10, false};
 
@@ -380,6 +373,10 @@ format_to(w: Writer, args: ..any_view)
 format_to_with(w: Writer, options: Options, args: ..any_view)
 to_string(allocator: Allocator, args: ..any_view) -> string
 ```
+
+A `Writer` borrows its sink: any record with a `write(self: inout, bytes:
+[]u8)` becomes one with `(fmt.Writer)(&mut sink)`, and the process streams are
+`stdout()` and `stderr()`. Formatting through a nil `Writer` panics.
 
 Arguments are separated by one space. `Options.base` is 2 to 36 and any other
 value reads as 10; it and `uppercase` reach integers and whatever a type's
@@ -695,10 +692,10 @@ design.md "Build-selected providers" says how a program selects its logger, and
 ```odin
 Level :: enum { Debug, Info, Warning, Error, Off }   // contributed by the compiler
 
-Logger :: struct {
-	write: proc(state: rawptr, level: Level, message: string_view),
-	state: rawptr,
+Sink :: interface($Self: type) {
+	slot write: proc(self: inout Self, level: Level, message: string_view);
 }
+Logger :: dyn mut Sink;
 
 debug(args: ..any_view)
 info(args: ..any_view)
@@ -721,6 +718,10 @@ ending. The allocation follows that allocator's failure policy, so a record can
 panic under memory pressure. The standard logger writes `[Level] message` and a
 newline to the error stream. `current` returns the selected logger, or the
 standard one when none is selected or before it is published.
+
+A provider's factory returns `(log.Logger)(&mut sink)` over a `static` record
+with a `write` method, which is the process-lifetime storage design.md
+"Provider initialization" asks for.
 
 ## `core:fs`
 

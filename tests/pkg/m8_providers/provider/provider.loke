@@ -37,13 +37,11 @@ state: static State = {};
 allocator_factory :: proc() -> Allocator {
 	state.allocator_calls += 1;
 	// Nothing has been published yet, so this call's own default allocations
-	// would go to the system heap, and logging goes to the standard sink.
-	//
-	// Comparing the *procedure* rather than the state: both this package's logger
-	// and the fallback carry a nil state, so a nil check here would read `false`
-	// whether or not publication had happened. `standard_logger` is public so
-	// that a caller can name the fallback, which is what makes this observable.
-	state.logger_at_allocator = log.current().write != log.standard_logger().write;
+	// would go to the system heap, and logging goes to the standard sink: a
+	// record from here reaching this package's sink would say otherwise.
+	before := state.records;
+	log.warning("from the allocator factory");
+	state.logger_at_allocator = state.records != before;
 	region = mem.Arena.from_buffer(storage[:]);
 	return region.allocator();
 }
@@ -53,23 +51,31 @@ logger_factory :: proc() -> log.Logger {
 	// The allocator is published first, so by now the default provider is the
 	// arena above rather than the runtime's fallback.
 	state.allocator_at_logger = mem.default_allocator() == region.allocator();
-	return log.Logger{write, nil};
+	return (log.Logger)(&mut sink);
 }
 
+// The sink holds nothing itself: what it records goes to `state`.
 @(private)
-write :: proc(handle: rawptr, level: log.Level, message: string_view) {
-	state.records += 1;
-	if (state.records == 1) {
-		fmt.println(
-			state.allocator_calls,
-			state.logger_calls,
-			state.logger_at_allocator,
-			state.allocator_at_logger,
-		);
+Sink :: struct {}
+
+@(private)
+sink: static Sink = {};
+
+impl Sink {
+	write :: proc(self: inout, level: log.Level, message: string_view) {
+		state.records += 1;
+		if (state.records == 1) {
+			fmt.println(
+				state.allocator_calls,
+				state.logger_calls,
+				state.logger_at_allocator,
+				state.allocator_at_logger,
+			);
+		}
+		fmt.print("provider[");
+		fmt.print(level);
+		fmt.print("] ");
+		fmt.print(message);
+		fmt.print("\n");
 	}
-	fmt.print("provider[");
-	fmt.print(level);
-	fmt.print("] ");
-	fmt.print(message);
-	fmt.print("\n");
 }

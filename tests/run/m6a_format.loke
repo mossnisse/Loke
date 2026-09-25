@@ -8,7 +8,7 @@ package main;
 
 import "core:fmt";
 import "base:runtime";
-import "core:mem"; import "core:unsafe";
+import "core:mem";
 
 Colour :: enum { Red, Green = 5, Blue }
 
@@ -36,11 +36,12 @@ impl Money {
 	}
 }
 
-// A writer is one procedure and its state, so a counting sink is an ordinary
-// value of the same type the standard ones have.
-count_bytes :: proc(state: rawptr, bytes: [^]u8, count: int) {
-	total := (^mut int)(state);
-	total^ = total^ + count;
+// Any record with a `write` is a sink, so a counting one is an ordinary record
+// viewed through the same `fmt.Writer` the standard ones are.
+Byte_Count :: struct { total: int }
+
+impl Byte_Count {
+	write :: proc(self: inout, bytes: []u8) { self.total += bytes.len(); }
 }
 
 main :: proc() {
@@ -77,10 +78,11 @@ main :: proc() {
 	fmt.eprintln("to stderr");
 
 	// A writer the program supplies itself.
-	total := 0;
-	sink := fmt.Writer{count_bytes, rawptr(&mut total)};
+	counter := Byte_Count{};
+	sink := (fmt.Writer)(&mut counter);
 	fmt.format_to(sink, 1, 22, 333);
-	fmt.println(total);
+	fmt.format_to(sink, "!");
+	fmt.println(counter.total);
 
 	// Formatting keeps all 128 value bits, and a distinct type owns its formatter
 	// rather than inheriting the formatter of its representation.

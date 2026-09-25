@@ -8,8 +8,8 @@ Point{x = 1, y = 2}
 [10, 20, 30]
 .count(4)
 $ 250
-main 74
-8
+main 75
+9
 18446744073709551617 18446744073709551617
 meters
 cafebabeCAFEBABE

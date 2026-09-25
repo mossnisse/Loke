@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Borrowed dynamic interface values": calling a slot on nil panics,
+// and `fmt.Writer` is a `dyn mut fmt.Sink`, so the runtime's own formatters
+// panic too rather than dropping the bytes. The nil arrives from a call, since
+// a provably nil local is L0701.
+no_writer :: proc() -> fmt.Writer { return nil; }
+
+main :: proc() {
+	fmt.println("before");
+	fmt.format_to(no_writer(), 42);
+	fmt.println("after");
+}

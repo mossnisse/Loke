@@ -1,8 +1,8 @@
 // Logging over the build-selected provider (design.md "Build-selected
 // providers"; standard-library "`core:log`").
 //
-// A `Logger` is an ordinary service handle: one procedure and its state, the
-// same shape `fmt.Writer` has. Nothing about it is compiler-known. What the
+// A `Logger` is an ordinary service handle: a `dyn mut` view of a sink, the same
+// shape `fmt.Writer` has. Nothing about it is compiler-known. What the
 // program selects is which one the package-level procedures below dispatch to,
 // and `-log-level` decides which of them have a body at all.
 //
@@ -27,22 +27,27 @@ import "core:mem";
 // `Off` is a threshold only — nothing logs at it — and it is last so that
 // `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled out entirely.
 
-Logger :: struct {
-	@(public) write: proc(state: rawptr, level: Level, message: string_view),
-	@(public) state: rawptr,
+// One logging sink. Any record with this `write` is one; the message carries no
+// line ending.
+Sink :: interface($Self: type) {
+	slot write: proc(self: inout Self, level: Level, message: string_view);
 }
 
+// The handle a program logs through: a view of a sink that lives as long as the
+// process, since a factory's result is kept for the life of the program.
+Logger :: dyn mut Sink;
+
 // Where a selected logging provider is published. Generated startup writes the
-// factory's result here, once, before `main`; until then it is the zero value
+// factory's result here, once, before `main`; until then it is the nil view
 // and every call goes to the standard sink below. That is also what makes an
 // unselected build need no initialization at all.
 @(private)
-selected: Logger = {};
+selected: Logger = nil;
 
 // The handle the program is logging through, for code that wants to pass it on
 // rather than call the package procedures.
 current :: proc() -> Logger {
-	if (selected.write == nil) { return standard_logger(); }
+	if (selected == nil) { return standard_logger(); }
 	return selected;
 }
 
@@ -50,20 +55,27 @@ current :: proc() -> Logger {
 // the level in front of it. It is the fallback *and* an ordinary provider — a
 // build may select `log.standard_logger` explicitly to say so.
 standard_logger :: proc() -> Logger {
-	return Logger{standard_write, nil};
+	return (Logger)(&mut standard);
 }
 
-// ponytail: five writes per record, so records from two threads can interleave
-// within a line. Nothing can start a Loke thread yet; when something can, format
-// the whole line once and write it in one call.
 @(private)
-standard_write :: proc(state: rawptr, level: Level, message: string_view) {
-	w := fmt.stderr();
-	fmt.format_to(w, "[");
-	fmt.format_to(w, level);
-	fmt.format_to(w, "] ");
-	fmt.format_to(w, message);
-	fmt.format_to(w, "\n");
+Standard :: struct {}
+
+@(private)
+standard: static Standard = {};
+
+impl Standard {
+	// ponytail: five writes per record, so records from two threads can
+	// interleave within a line. Nothing can start a Loke thread yet; when
+	// something can, format the whole line once and write it in one call.
+	write :: proc(self: inout, level: Level, message: string_view) {
+		w := fmt.stderr();
+		fmt.format_to(w, "[");
+		fmt.format_to(w, level);
+		fmt.format_to(w, "] ");
+		fmt.format_to(w, message);
+		fmt.format_to(w, "\n");
+	}
 }
 
 // The four record procedures. Each guards its own body with the compiled level,
@@ -125,12 +137,12 @@ at :: proc(level: Level, args: ..any_view) {
 // ponytail: one allocation per emitted record, because formatting into a
 // caller-supplied buffer needs a `fmt.Writer` over storage this package would
 // have to size arbitrarily, and truncation there would have to cut a rune. If
-// logging volume makes this matter, give `Logger` a bytes-and-count `write`
-// like `fmt.Writer`'s and stream into it instead. A suppressed call allocates
+// logging volume makes this matter, give `Sink` a bytes `write` like
+// `fmt.Sink`'s and stream into it instead. A suppressed call allocates
 // nothing: its whole body is discarded.
 @(private)
 record :: proc(level: Level, args: ..any_view) {
 	handle := current();
 	text := fmt.to_string(mem.default_allocator(), ..args);
-	handle.write(handle.state, level, text);
+	handle.write(level, text);
 }

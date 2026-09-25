@@ -106,6 +106,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 	fmt.sbprintln(&e.b, "declare i32 @printf(ptr, ...)")
 	// The seed runtime calls this on thread detach.
 	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() { ret void }")
+	emit_sink_bridge(&e)
 	emit_carrier_types(&e)
 	emit_struct_definitions(&e)
 

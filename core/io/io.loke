@@ -16,9 +16,6 @@ package io;
 import "core:fmt";
 import "core:mem";
 import "core:strings";
-// `latch_sink` turns a `fmt.Writer`'s `rawptr` state and C pointer back into a
-// record and a slice (design.md "The `unsafe` package").
-import "core:unsafe";
 
 // ----------------------------------------------------------------- errors --
 
@@ -333,27 +330,20 @@ read_line :: proc(
 
 // ------------------------------------------------------- formatting bridge --
 
-// The existing `fmt.Writer` callback cannot report a failure, which is fine for
-// a diagnostic sink and wrong for a file. These two present a `fmt.Writer` that
-// writes into an `io.Writer`, latch the first `Error`, make every later callback
-// a no-op, and return the latched error when formatting is done.
-//
-// **This is not a safe construction and must not be described as one.**
-// `fmt.Writer.state` is a `rawptr`, so the adapter holds a local latch record
-// and passes its address through that untyped field. The resulting `fmt.Writer`
-// is valid only for the enclosing call: it is constructed, used, and discarded
-// inside these bodies, and the raw pointer is never a value a caller holds.
+// A `fmt.Sink` cannot report a failure, which is fine for a diagnostic sink and
+// wrong for a file. These two format through a sink that writes into an
+// `io.Writer`, latch the first `Error`, make every later write a no-op, and
+// return the latched error when formatting is done.
 write_formatted :: proc(writer: inout $W, args: ..any_view) -> Result(Unit, Error) where Writer(W) {
 	latch := Latch{(dyn mut Writer)(&mut writer), .none};
-	fmt.format_to(fmt.Writer{latch_sink, &mut latch}, ..args);
+	fmt.format_to((fmt.Writer)(&mut latch), ..args);
 	return latched(latch.error);
 }
 
 write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Result(Unit, Error) where Writer(W) {
 	latch := Latch{(dyn mut Writer)(&mut writer), .none};
-	adapter := fmt.Writer{latch_sink, &mut latch};
-	fmt.format_to(adapter, ..args);
-	fmt.format_to(adapter, "\n");
+	fmt.format_to((fmt.Writer)(&mut latch), ..args);
+	fmt.format_to((fmt.Writer)(&mut latch), "\n");
 	return latched(latch.error);
 }
 
@@ -365,6 +355,21 @@ Latch :: struct {
 	error:  Option(Error),
 }
 
+impl Latch {
+	write :: proc(self: inout, bytes: []u8) {
+		// The first failure wins and every later write does nothing, so a
+		// half-formatted value cannot turn into a second, more confusing error.
+		switch (existing in self.error) {
+		case .some: return;
+		case .none:
+		}
+		switch (written in write_all(inout self.writer, bytes)) {
+		case .ok:
+		case .err: self.error = .some(written);
+		}
+	}
+}
+
 // The failure alone: taking the whole `Latch` would copy its `dyn mut Writer`
 // to read one scalar field beside it.
 @(private)
@@ -372,22 +377,6 @@ latched :: proc(error: Option(Error)) -> Result(Unit, Error) {
 	switch (failure in error) {
 	case .some: return .err(failure);
 	case .none: return .ok;
-	}
-}
-
-@(private)
-latch_sink :: proc(state: rawptr, bytes: [^]u8, count: int) {
-	latch := (^mut Latch)(state);
-	// The first failure wins and every later callback does nothing, so a
-	// half-formatted value cannot turn into a second, more confusing error.
-	switch (existing in latch^.error) {
-	case .some: return;
-	case .none:
-	}
-	if (count <= 0) { return; }
-	switch (written in write_all(inout latch^.writer, bytes[0:count])) {
-	case .ok:
-	case .err: latch^.error = .some(written);
 	}
 }
 

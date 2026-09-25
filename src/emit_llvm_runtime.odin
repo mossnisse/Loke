@@ -53,7 +53,6 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
 	fmt.sbprintln(&e.b, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
 	fmt.sbprintln(&e.b, "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_write_std(ptr, ptr, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bytes(ptr, ptr, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_i64(ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_u64(ptr, i64, ptr)")
@@ -757,6 +756,41 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 	emit_format_literal(e, "}")
 }
 
+// `fmt.Writer` is `dyn mut fmt.Sink`, whose one slot takes `[]u8`. The runtime's
+// formatters end at `loke_rt_v1_sink_write`, which builds that slice here, in
+// LLVM, so no C prototype has to agree with how a two-word aggregate is passed.
+// The process streams are a witness of their own whose data pointer is the
+// stream selector `loke_rt_v1_write_std` expects. Every module defines both:
+// the runtime's `fmt_bytes` calls the first whether or not `core:fmt` is used.
+SINK_STD_WITNESS :: "@loke.fmt.std_sink"
+
+@(private)
+emit_sink_bridge :: proc(e: ^Emitter) {
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_write_std(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, `define void @loke_rt_v1_sink_write(ptr %w, ptr %bytes, i64 %count) {
+entry:
+  %data = load ptr, ptr %w
+  %witness.at = getelementptr inbounds { ptr, ptr }, ptr %w, i32 0, i32 1
+  %witness = load ptr, ptr %witness.at
+  %write = load ptr, ptr %witness
+  %s.0 = insertvalue { ptr, i64 } undef, ptr %bytes, 0
+  %s = insertvalue { ptr, i64 } %s.0, i64 %count, 1
+  call void %write(ptr %data, { ptr, i64 } %s)
+  ret void
+}
+
+define private void @loke.fmt.std_write(ptr %stream, { ptr, i64 } %s) {
+entry:
+  %bytes = extractvalue { ptr, i64 } %s, 0
+  %count = extractvalue { ptr, i64 } %s, 1
+  call void @loke_rt_v1_write_std(ptr %stream, ptr %bytes, i64 %count)
+  ret void
+}
+`)
+	fmt.sbprintfln(&e.b, "%s = private unnamed_addr constant [1 x ptr] [ptr @loke.fmt.std_write]", SINK_STD_WITNESS)
+	fmt.sbprintln(&e.b, "")
+}
+
 // The four compiler-owned `core:fmt` entry points.
 @(private)
 emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
@@ -766,10 +800,10 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 		stream := kind == .Fmt_Stdout_Writer ? 0 : 1
 		first, out := temp(e), temp(e)
 		fmt.sbprintfln(
-			&e.b, "  %s = insertvalue %s undef, ptr @loke_rt_v1_write_std, 0",
-			first, writer_type,
+			&e.b, "  %s = insertvalue %s undef, ptr inttoptr (i64 %d to ptr), %d",
+			first, writer_type, stream, DYN_DATA,
 		)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, ptr inttoptr (i64 %d to ptr), 1", out, writer_type, first, stream)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, ptr %s, %d", out, writer_type, first, SINK_STD_WITNESS, DYN_WITNESS)
 		return out
 
 	case .Fmt_Write_Bytes:

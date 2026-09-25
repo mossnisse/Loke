@@ -96,6 +96,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (string, bool) {
 	emit_witnesses(&e)
 	// Every module, object builds included: the runtime's `thread_detach` calls it.
 	emit_thread_local_teardown(&e)
+	emit_sink_bridge(&e)
 	// design.md "Build-selected providers": no initializer unless one is selected.
 	if any_provider_selected(c) {
 		emit_program_init(&e)

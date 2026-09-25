@@ -31,8 +31,11 @@ void loke_rt_v1_flush_stdout(void) {
 }
 
 void loke_rt_v1_fmt_bytes(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count) {
-	if (w != 0 && w->write != 0 && count > 0) {
-		w->write(w->state, bytes, count);
+	if (w->witness == 0) {
+		loke_rt_v1_panic("call through a nil dyn view");
+	}
+	if (count > 0) {
+		loke_rt_v1_sink_write(w, bytes, count);
 	}
 }
 

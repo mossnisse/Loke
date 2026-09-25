@@ -1,7 +1,7 @@
 // Formatted output (design.md "String format printing").
 //
 // The protocol is a `value.format(writer, options)` method. `Writer` is a
-// byte sink — one procedure and its state — and `Options` is what a formatter
+// borrowed byte sink — a `dyn mut Sink` view — and `Options` is what a formatter
 // reads to spell a scalar. Both layouts are shared with the seed runtime, which
 // is where a formatter's bytes finally go.
 //
@@ -15,17 +15,17 @@
 @(public)
 package fmt;
 
-// `Writer` hands its sink a `rawptr` and a C pointer, and `collect` turns them
-// back into a record and a slice (design.md "The `unsafe` package").
-import "core:unsafe";
-
-// One byte sink. `write` receives `state` unchanged, which is what lets the
-// same shape serve a stream, a buffer, and a counting sink.
+// One byte sink. Any record with this `write` is one, so the same view serves a
+// stream, a buffer, and a counting sink; `(fmt.Writer)(&mut sink)` makes it.
 @(public)
-Writer :: struct {
-	@(public) write: proc(state: rawptr, bytes: [^]u8, count: int),
-	@(public) state: rawptr,
+Sink :: interface($Self: type) {
+	slot write: proc(self: inout Self, bytes: []u8);
 }
+
+// The view a formatter writes through. It borrows the sink for the call, which
+// is as long as any formatter keeps it.
+@(public)
+Writer :: dyn mut Sink;
 
 // How a formatter spells a scalar. `base` is 2 to 36; anything else reads as 10.
 @(public)
@@ -125,7 +125,7 @@ to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
 	// *selected* allocator and formats there, so `allocator` reached only the
 	// returned string and every call allocated twice.
 	collector := Collector{move(sink)};
-	emit(Writer{collect, &mut collector}, DEFAULT_OPTIONS, ..args);
+	emit((Writer)(&mut collector), DEFAULT_OPTIONS, ..args);
 	// Every formatter writes UTF-8; a `format` overload that does not is the
 	// one way here, and a wrong one.
 	view := string_view.from_utf8(collector.bytes[:]) or_else no_view();
@@ -138,11 +138,8 @@ to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
 @(private)
 Collector :: struct { bytes: [dynamic]u8 }
 
-@(private)
-collect :: proc(state: rawptr, bytes: [^]u8, count: int) {
-	if (count <= 0) { return; }
-	collector := (^mut Collector)(state);
-	collector^.bytes.append(..bytes[0:count]);
+impl Collector {
+	write :: proc(self: inout, bytes: []u8) { self.bytes.append(..bytes); }
 }
 
 @(private)

@@ -227,10 +227,8 @@ provider_handle_type :: proc(k: ^Checker, slot: Provider_Slot) -> Type_Id {
 		if pkg.key != STD_LOG || pkg.scope == nil {
 			continue
 		}
-		symbol_id := pkg.scope.names[intern_identifier(k.c, "Logger")] or_else INVALID_SYMBOL
-		if sym := symbol_of(k.c, symbol_id); sym != nil && sym.kind == .Type {
-			resolve_symbol_signature_in_place(k, symbol_id)
-			return symbol_of(k.c, symbol_id).type
+		if logger, found := package_type_named(k, pkg, "Logger"); found {
+			return logger
 		}
 	}
 	errorf(

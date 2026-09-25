@@ -36,12 +36,17 @@ allocator_factory :: proc() -> Allocator {
 
 logger_factory :: proc() -> log.Logger {
 	loggers += 1;
-	return log.Logger{write, nil};
+	return (log.Logger)(&mut sink);
 }
 
 @(private)
-write :: proc(handle: rawptr, level: log.Level, message: string_view) {
-	written += 1;
+Sink :: struct {}
+
+@(private)
+sink: static Sink = {};
+
+impl Sink {
+	write :: proc(self: inout, level: log.Level, message: string_view) { written += 1; }
 }
 
 allocator_calls :: proc() -> int { return allocators; }
