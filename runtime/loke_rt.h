@@ -524,7 +524,7 @@ void loke_rt_v1_abort(const char *what);
 /* --------------------------------------------------- process arguments -- */
 
 /* design.md "Program entry and exit". The generated `wmain`
- * calls the initializer once, before the initial thread attaches; the two
+ * calls the initializer once, before the initial thread attaches; the three
  * getters are foreign-ABI-safe scalars that `core:os` reads as ordinary Loke
  * source over a foreign block. An object build calls neither: its foreign host
  * owns startup, so `os.args` reports no arguments there. */

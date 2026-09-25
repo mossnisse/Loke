@@ -5,7 +5,7 @@
  * attaches — so `os.args` is a read of cached, already-valid UTF-8 rather than a
  * conversion at every use, and no Loke package needs an initializer to run.
  *
- * The two getters are deliberately foreign-ABI-safe scalars: `core:os` is
+ * The three getters are deliberately foreign-ABI-safe scalars: `core:os` is
  * ordinary Loke source over a foreign block, with no compiler knowledge.
  */
 #include "loke_rt.h"

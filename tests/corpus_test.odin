@@ -894,8 +894,9 @@ package_keys_come_from_the_directory :: proc(t: ^testing.T) {
 
 // design.md "Program entry and exit": the corpus runs every
 // other case with no arguments, so this is the one that passes a real vector —
-// including non-ASCII arguments, which is what exercises the UTF-16-to-UTF-8
-// conversion the generated `wmain` performs before the initial thread attaches.
+// including non-ASCII arguments and a surrogate pair, which is what exercises
+// the UTF-16-to-UTF-8 conversion the generated `wmain` performs before the
+// initial thread attaches.
 @(test)
 process_arguments_reach_os_args :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -916,7 +917,7 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 		return
 	}
 	run_state, stdout, _, run_err := os2.process_exec(
-		os2.Process_Desc{command = []string{launch_path(exe), "alpha", "héllo", "日本"}},
+		os2.Process_Desc{command = []string{launch_path(exe), "alpha", "héllo", "日本", "🙂"}},
 		context.allocator,
 	)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
