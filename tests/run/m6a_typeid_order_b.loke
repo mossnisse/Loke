@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 B :: struct { value: int }
 A :: struct { value: int }

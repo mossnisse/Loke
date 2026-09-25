@@ -367,45 +367,12 @@ profiles contain.
   factory, on `Arena`/`Scratch` construction, or as a build-wide default for
   freestanding targets?
 
-## Unchecked operations outside `core:unsafe`
-
-design.md [The `unsafe` package](design.md#the-unsafe-package) makes importing
-`core:unsafe` the review mechanism for operations that manufacture provenance.
-Three such operations need no import. This file imports nothing but `core:fmt`,
-compiles without a diagnostic, and prints garbage:
-
-```odin
-escape :: proc() -> ^mut int {
-	local := 5;
-	r: rawptr = &mut local;
-	return (^mut int)(r);
-}
-```
-
-`([^]int)(rawptr(&mut values[0]))[0:3]` likewise returns a `[]mut int` over a
-dynamic array that is freed when the procedure returns. And `---` accepts any
-type: `d: [dynamic]int = ---; d.append(1);` compiles and stops at run time with
-"allocator record does not match this runtime's ABI". design.md
-[Built-in values](design.md#built-in-values) only advises against `---` on a
-managed value.
-
-Proposal: converting *to* `rawptr` stays implicit, since losing provenance is
-harmless. Converting from `rawptr` or `[^]T` to `^T`, `^mut T`, or another C
-pointer, and indexing or slicing a `[^]T`, become valid only in a file that
-imports `core:unsafe`, which is what the import is already said to mark.
-Foreign declarations stay their own trust boundary. `---` is rejected for a type
-with a lifecycle or one that reaches a borrow carrier; the storage a foreign
-out-parameter needs is plain data.
-
-In `core` and `base`, only `core:fmt` and `core:io` use these operations without
-the import, and both do it for `fmt.Writer`'s `rawptr` state (next entry).
-`core:fs`, `core:os`, and `core:term` import `core:unsafe` already.
-
 ## `fmt.Writer` and `log.Logger` as `dyn` sinks
 
 Every `format` method receives a `fmt.Writer`: a `proc(state: rawptr, bytes:
 [^]u8, count: int)` beside a `rawptr`. A sink that formats into its own record
-converts `state` back to a typed pointer, the unchecked conversion above:
+converts `state` back to a typed pointer, which needs `core:unsafe`
+([Unchecked operations need the import](#unchecked-operations-need-the-import)):
 `core:fmt` does it in `collect`, and `core:io` in the latch adapter that
 standard-library.md "Formatting bridge" calls "not a safe construction". The
 closing paragraph of
@@ -1217,6 +1184,26 @@ low-level work, and the checked extraction that does exist — `view.(T)` on an
 `any_view`, where the set of types is open — traps rather than guessing.
 
 ## Changed features
+
+### Unchecked operations need the import
+
+design.md [The `unsafe` package](design.md#the-unsafe-package) always said the
+`core:unsafe` import was the review mechanism, but three operations that give an
+unchecked address a usable shape were ordinary syntax. With no import at all, a
+procedure could return `(^mut int)(r)` for `r: rawptr = &mut local`, slice a
+freed dynamic array through `([^]int)(rawptr(&mut values[0]))[0:3]`, and write
+`d: [dynamic]int = ---; d.append(1);`, which stopped at run time with
+"allocator record does not match this runtime's ABI".
+
+The conversions and C-pointer accesses now need the import in the file that
+writes them, and `---` is limited to plain data. Losing provenance stays free —
+anything converts to `rawptr`, and `^T` to `[^]T` — because nothing can be read
+through the result without one of the gated operations. The rule is per file
+rather than per expression because the import is already the unit a reviewer
+searches for, and the cost was two library files: `core:fmt` and `core:io`,
+both for `fmt.Writer`'s `rawptr` state. `base:` packages are exempt: they are
+the runtime, reach the same operations through compiler-contributed names, and
+cannot import `core:`.
 
 ### Explicit overload groups
 

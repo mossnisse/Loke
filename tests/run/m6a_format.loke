@@ -8,7 +8,7 @@ package main;
 
 import "core:fmt";
 import "base:runtime";
-import "core:mem";
+import "core:mem"; import "core:unsafe";
 
 Colour :: enum { Red, Green = 5, Blue }
 

@@ -1036,6 +1036,10 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		case .C_Pointer:
 			// Unchecked, and writable exactly as `p^` is (design.md "C pointers").
 			check_integer_index(k, v.indices[0])
+			if !require_unsafe_import(k, v.span, "indexing a C pointer") {
+				v.type = INVALID_TYPE
+				return
+			}
 			v.type = info.element
 			v.value_category = .Place
 			v.addressable = true
@@ -1393,6 +1397,9 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 	}
 	v.value_category = .Value
 	v.immutable = .Temporary
+	if info.kind == .C_Pointer && !require_unsafe_import(k, v.span, "slicing a C pointer") {
+		ok = false
+	}
 	if !ok {
 		v.type = INVALID_TYPE
 		return true
@@ -3091,6 +3098,55 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return true
 	}
 	return false
+}
+
+// design.md "The `unsafe` package": a conversion that gives an unchecked
+// address, or another pointee, a checked shape. Losing provenance (anything to
+// `rawptr`, a `^T` to `[^]T`) and weakening `^mut T` to `^T` are not.
+unchecked_pointer_conversion :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	source, dest := type_underlying(c, from), type_underlying(c, to)
+	if source == dest {
+		return false
+	}
+	#partial switch type_kind(c, dest) {
+	case .Pointer:
+		#partial switch type_kind(c, source) {
+		case .Raw_Pointer, .C_Pointer:
+			return true
+		case .Pointer:
+			return type_of(c, source).element != type_of(c, dest).element
+		}
+	case .C_Pointer:
+		#partial switch type_kind(c, source) {
+		case .Raw_Pointer, .C_Pointer:
+			return true
+		}
+	}
+	return false
+}
+
+// design.md "The `unsafe` package": the file's `core:unsafe` import is what
+// marks it for review. `base:` packages are the language's own runtime, which
+// cannot import `core:`; a span in no source file is compiler-synthesized.
+require_unsafe_import :: proc(k: ^Checker, span: Span, what: string) -> bool {
+	for &pkg in k.c.packages {
+		for f in pkg.files {
+			if f.file != span.file {
+				continue
+			}
+			if strings.has_prefix(pkg.key, "base:") {
+				return true
+			}
+			for edge in pkg.imports {
+				if target := package_of(k.c, edge.target); edge.span.file == span.file && target != nil && target.key == STD_UNSAFE {
+					return true
+				}
+			}
+			errorf(k.c, span, "L0706", "%s is unchecked, so this file must import `core:unsafe`", what)
+			return false
+		}
+	}
+	return true
 }
 
 // Value-level folding lives in `const_ops.odin`, so the interpreter in

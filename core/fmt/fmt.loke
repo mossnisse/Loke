@@ -15,6 +15,10 @@
 @(public)
 package fmt;
 
+// `Writer` hands its sink a `rawptr` and a C pointer, and `collect` turns them
+// back into a record and a slice (design.md "The `unsafe` package").
+import "core:unsafe";
+
 // One byte sink. `write` receives `state` unchanged, which is what lets the
 // same shape serve a stream, a buffer, and a counting sink.
 @(public)

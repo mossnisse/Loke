@@ -1,0 +1,59 @@
+package main;
+
+import "core:fmt";
+
+// design.md "The `unsafe` package": this file does not import `core:unsafe`,
+// so every operation that gives an unchecked address a usable shape is
+// rejected, and every one that only loses provenance is not.
+
+Handle :: move_only struct { id: int }
+
+impl Handle {
+	close :: hook(drop) proc(self: inout Handle) {}
+}
+
+escape :: proc() -> ^mut int {
+	local := 5;
+	r: rawptr = &mut local;
+	return (^mut int)(r);
+}
+
+conversions :: proc(p: [^]int, f: ^f64, r: rawptr) {
+	a := (^int)(p);
+	b := (^u64)(f);
+	c := ([^]u8)(r);
+	d := ([^]u8)(p);
+	fmt.println(a == nil, b == nil, c == nil, d == nil);
+}
+
+accesses :: proc(p: [^]int) {
+	x := p[0];
+	s := p[0:4];
+	fmt.println(x, s.len());
+}
+
+// Losing provenance and weakening stay ordinary code.
+allowed :: proc(value: ^mut int) {
+	raw: rawptr = value;
+	c := ([^]int)(value);
+	read := (^int)(value);
+	plain: [4]u8 = ---;
+	loose: rawptr = ---;
+	fmt.println(raw == nil, c == nil, read^, plain[0] == 0, loose == nil);
+}
+
+uninitialised :: proc() {
+	d: [dynamic]int = ---;
+	p: ^int = ---;
+	h: Handle = ---;
+	fmt.println(d.len(), p == nil, h.id);
+}
+
+main :: proc() {
+	value := 1;
+	fmt.println(escape()^);
+	conversions(nil, nil, nil);
+	accesses(nil);
+	allowed(&mut value);
+	uninitialised();
+}

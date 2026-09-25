@@ -12,7 +12,7 @@ outlive_local_arena :: proc() {
 }
 
 pointer_outlives_local_arena :: proc() {
-	p: ^mut int = ---;
+	p: ^mut int = nil;
 	{
 		a := mem.Arena.init();
 		p = new(int, a.allocator()) or_else nil;

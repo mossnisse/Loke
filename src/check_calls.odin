@@ -861,6 +861,10 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		}
 	} else if !convertible(k.c, source, target) {
 		return false
+	} else if unchecked_pointer_conversion(k.c, source, target) &&
+	   !require_unsafe_import(k, v.span, concat(k.c, "converting to `", concat(k.c, type_name(k.c, target), "`"))) {
+		v.type = INVALID_TYPE
+		return true
 	}
 	// design.md "Distinct types": converting a managed value between a distinct
 	// name and its underlying type reinterprets it, so a place must be cloned or

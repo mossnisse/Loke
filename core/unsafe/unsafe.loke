@@ -5,7 +5,9 @@
 // provenance, `transmute` reinterprets bits, `forget` suppresses cleanup, `free`
 // releases storage nothing traced, and `write` and `take` move a value into and
 // out of uninitialized capacity (design.md "Uninitialized capacity"). This file
-// is the whole package -- the visible import is the review mechanism.
+// is the whole package -- the visible import is the review mechanism, and it is
+// also what permits the unchecked pointer conversions and C-pointer indexing
+// and slicing in the importing file (design.md "The `unsafe` package").
 //
 // # `forget(value)`
 //

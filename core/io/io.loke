@@ -16,6 +16,9 @@ package io;
 import "core:fmt";
 import "core:mem";
 import "core:strings";
+// `latch_sink` turns a `fmt.Writer`'s `rawptr` state and C pointer back into a
+// record and a slice (design.md "The `unsafe` package").
+import "core:unsafe";
 
 // ----------------------------------------------------------------- errors --
 

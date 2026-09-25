@@ -599,7 +599,7 @@ A C pointer describes a foreign (C-like) pointer that acts like an array. `[^]T`
 p: [^]int = nil;
 ```
 
-C pointers support unchecked indexing, slicing, implicit conversion to `rawptr`, and explicit conversion to or from `^T` and `^mut T`. They are indexed rather than dereferenced with `^`. Conversions to checked pointer syntax remain explicit because the address has no checked lifetime.
+C pointers support unchecked indexing, slicing, implicit conversion to `rawptr`, and explicit conversion to or from `^T` and `^mut T`. They are indexed rather than dereferenced with `^`. Conversions to checked pointer syntax remain explicit because the address has no checked lifetime. Indexing, slicing, and converting a C pointer to a checked pointer are [unchecked operations](#the-unsafe-package), valid only in a file that imports `core:unsafe`.
 
 The following are the rules for indexing and slicing for C pointers, and what type they produce depending on the operands given:
 
@@ -4946,6 +4946,22 @@ view := unsafe.cstring_view(raw);    // programmer promises the lifetime
 unsafe.free(block, allocator);       // programmer promises the allocation
 ```
 
+Three operations that give an unchecked address a usable shape are language syntax rather than members, and are valid only in a file that imports `core:unsafe`:
+
+- an explicit conversion to `^T` or `^mut T` from `rawptr`, from a C pointer, or from a pointer to a different pointee;
+- an explicit conversion to a C pointer from `rawptr` or from a C pointer to a different element;
+- indexing or slicing a C pointer.
+
+Everything else stays ordinary code: a conversion to `rawptr`, or from `^T` to `[^]T`, only loses provenance, and weakening `^mut T` to `^T` is checked. Declaring a foreign procedure that takes or returns a C pointer needs no import either; using the pointer it returns does. A file in a `base:` package, which is the language's own runtime and cannot import `core:`, is exempt. Any other file is rejected at each such operation, with a diagnostic naming it.
+
+```odin
+escape :: proc() -> ^mut int {
+	local := 5;
+	r: rawptr = &mut local;
+	return (^mut int)(r);   // ERROR without `import "core:unsafe"` in this file
+}
+```
+
 `unsafe.free(pointer)` and `unsafe.free(pointer, allocator)` release an allocation whose root the compiler cannot follow — one reached through a `rawptr`, a parameter, or foreign code. They release exactly what checked `free` releases and check nothing: the caller promises that the pointer is an allocation base from that allocator, that nothing still refers to it, and that it is released once. A handle over an opaque control block, `shared(T)` among them, has no other way to release it.
 
 #### `unsafe.transmute`
@@ -5135,7 +5151,9 @@ nil   // unfixed nil value used for certain values
 
 As an initializer, `---` is an **unsafe assertion**. The variable starts dead, but reads, borrows, and address-taking are accepted even though its contents are unspecified. Use it for storage another party will fill, such as a foreign out-parameter reached through `&mut x`.
 
-`---` suppresses initialization checks, not lifecycle rules. The variable remains dead until a full assignment; `drop(x)` and `move(x)` are invalid before then. Do not use `---` for managed values.
+`---` suppresses initialization checks, not lifecycle rules. The variable remains dead until a full assignment; `drop(x)` and `move(x)` are invalid before then.
+
+Only plain data may be left unspecified. `---` is rejected for a type that is [managed](#managed-values-and-storage) or has a lifecycle hook, whose unspecified bytes would be read as an owner, and for one that is or contains a [borrow carrier](#storage-roots-and-borrow-carriers), whose bytes would be a borrow nothing loaned. `rawptr` and C pointers carry no checked provenance and are accepted. A dead local that needs no foreign party to fill it is declared without an initializer, or with `{}` or `nil`.
 
 ### Built-in procedures
 
@@ -6069,6 +6087,7 @@ Where this specification rejects a program, it often also says what the message 
 | A suspended carrier is used during a reborrow | both ends: where the reborrow was taken, and the later use keeping it live ([§](#weakening-and-reborrows)) |
 | Two borrows conflict | the root, the borrow, the conflicting operation, and the later use keeping the borrow live ([§](#places-and-overlap)) |
 | An owner escapes its allocator region | the escaping owner and its shorter-lived region ([§](#allocator-regions-and-region-provenance)) |
+| An unchecked pointer operation is written in a file that does not import `core:unsafe` | the operation, and the missing import ([§](#the-unsafe-package)) |
 | Two `@(export)` declarations use one symbol name | both declarations ([§](#export)) |
 
 Two more are continuous rather than triggered: [copy-cost diagnostics](#copy-cost-diagnostics) report every context where the ownership rule copies a place instead of borrowing or transferring it, and [`@(require_results)`](#require_results) reports a result that is neither read nor explicitly discarded.

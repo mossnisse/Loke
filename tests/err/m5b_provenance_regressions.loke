@@ -69,7 +69,7 @@ make_buffer :: proc(value: int, allocator: Allocator) -> Buffer {
 
 // A later assignment transfers region provenance into an initially dead owner.
 assigned_owner_region :: proc(@(allocator_reset) allocator: Allocator) {
-	held: Buffer = ---;
+	held: Buffer;
 	held = make_buffer(1, allocator);
 	free_all(allocator);
 	fmt.println(held.id);
@@ -94,7 +94,7 @@ indirect_moved_owner :: proc(
 	@(allocator_reset) allocator: Allocator,
 	transform: proc(value: move Buffer) -> Buffer,
 ) {
-	result: Buffer = ---;
+	result: Buffer;
 	{
 		source := make_buffer(2, allocator);
 		result = transform(move(source));

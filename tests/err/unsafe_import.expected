@@ -1,0 +1,32 @@
+L0706
+@18:9
+converting to `^mut int` is unchecked, so this file must import `core:unsafe`
+L0706
+@22:7
+converting to `^int` is unchecked
+L0706
+@23:7
+converting to `^u64` is unchecked
+L0706
+@24:7
+converting to `[^]u8` is unchecked
+L0706
+@25:7
+converting to `[^]u8` is unchecked
+L0706
+@30:7
+indexing a C pointer is unchecked
+L0706
+@31:7
+slicing a C pointer is unchecked
+L0381
+@46:2
+`[dynamic]int` has a lifecycle, so it cannot be left uninitialised with `---`
+L0381
+@47:2
+`^int` is or contains a reference
+L0381
+@48:2
+`Handle` has a lifecycle
+declare it without an initializer, or give it `{}` or `nil`
+!%!(

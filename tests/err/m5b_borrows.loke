@@ -165,19 +165,19 @@ map_index_carrier :: proc() {
 // A declaration in an `if`/`for`/`switch` header is scoped to that statement,
 // exactly as one in a block is, so a pointer to it may not outlive the header.
 for_header_borrow :: proc(n: int) {
-	p: ^int = ---;
+	p: ^int = nil;
 	for (x := n; x < 0;) { p = &x; }
 	fmt.println(p^);
 }
 
 if_header_borrow :: proc(n: int) {
-	p: ^int = ---;
+	p: ^int = nil;
 	if (x := n; x > 0) { p = &x; }
 	fmt.println(p^);
 }
 
 switch_header_borrow :: proc(n: int) {
-	p: ^int = ---;
+	p: ^int = nil;
 	switch (x := n; n) { case 0: p = &x; case: p = &x; }
 	fmt.println(p^);
 }

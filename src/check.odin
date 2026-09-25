@@ -2144,6 +2144,16 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 				errorf(k.c, d.span, "L0381", "`---` needs an explicitly written type")
 			} else if d.kind == .Const {
 				errorf(k.c, d.span, "L0381", "a constant cannot be left uninitialised")
+			} else if type_is_managed(k.c, declared) || type_carries_borrow(k.c, declared).any {
+				// design.md "Built-in values": unspecified bytes would be read as an
+				// owner or a borrow nothing loaned.
+				errorf(
+					k.c, d.span, "L0381",
+					"`%s` %s, so it cannot be left uninitialised with `---`",
+					type_name(k.c, declared),
+					type_is_managed(k.c, declared) ? "has a lifecycle" : "is or contains a reference",
+				)
+				add_notef(k.c, d.span, "declare it without an initializer, or give it `%s` or `nil`", "{}")
 			}
 			if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 				symbol.type = declared

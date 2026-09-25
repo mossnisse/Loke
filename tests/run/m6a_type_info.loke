@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 // design.md "`type` and `typeid`": `type_info_of(id)` "accepts a runtime
 // `typeid` and returns runtime metadata". The table is dense and keyed by the
