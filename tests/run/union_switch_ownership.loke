@@ -45,7 +45,7 @@ returns_from_a_case :: proc(id: int) -> int {
 // value that leaves is a copy of it.
 copies_out_of_a_case :: proc(id: int) -> Owned {
 	switch (value in held(id)) {
-	case .held:  return value;
+	case .held:  return value.clone();
 	case .spare: return Owned{0};
 	case .empty: return Owned{0};
 	}

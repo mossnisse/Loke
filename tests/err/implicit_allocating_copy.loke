@@ -1,0 +1,76 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Value semantics and the ownership rule": a place whose copy may
+// allocate is never copied implicitly, in any context that would copy it. Each
+// error below names the context and offers `move`, `.clone()`, or a borrow.
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		return .ok(Tracked{self.id});
+	}
+}
+
+Box :: struct { values: [dynamic]int }
+Held :: union { some: [dynamic]int, none: }
+Numbers :: distinct [dynamic]int;
+Pair :: struct { name: string, values: [dynamic]int }
+Outcome :: union @(failure=failed) { done: [dynamic]int, failed: }
+
+pack :: proc(items: ..[dynamic]int) -> int { return items.len(); }
+missing :: proc() -> Outcome { return .failed; }
+
+borrowed :: proc(values: [dynamic]int) -> [dynamic]int {
+	return values;
+}
+
+unwrapped :: proc(outcome: Outcome) -> Outcome {
+	values := outcome or_return;
+	return .done(move(values));
+}
+
+contexts :: proc(outcome: Outcome) {
+	a := [dynamic]int{1, 2};
+	b := a;
+	c: [dynamic]int = {};
+	c = a;
+	box := Box{a};
+	nested: [dynamic][dynamic]int = {};
+	nested.append(a);
+	count := pack(a);
+	held := Held.some(a);
+	wrapped := Numbers(a);
+	pair := Pair{"p", [dynamic]int{3}};
+	name, values := pair;
+	fallback := missing() or_else a;
+	chosen := outcome or_else [dynamic]int{};
+	tracked := Tracked{1};
+	copy := tracked;
+	nested.append(..nested[:]);
+	fmt.println(b, c, box.values, count, held, wrapped, name, values, fallback, chosen, copy.id);
+}
+
+// None of these copies allocates, or each is written out.
+allowed :: proc(outcome: Outcome) {
+	a := [dynamic]int{1, 2};
+	b := a.clone();
+	text := "shared";
+	also := text;
+	nested: [dynamic][dynamic]int = {};
+	nested.append(a.clone());
+	_ = nested.try_append(a);
+	moved := move(a);
+	strings := [dynamic]string{"x"};
+	first := strings[0];
+	chosen := outcome.clone() or_else [dynamic]int{};
+	fmt.println(b, also, nested, moved, first, chosen);
+}
+
+main :: proc() {
+	contexts(.done([dynamic]int{1}));
+	allowed(.done([dynamic]int{1}));
+	fmt.println(borrowed([dynamic]int{}), unwrapped(.failed));
+}

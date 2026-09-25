@@ -34,6 +34,6 @@ Pair :: struct { first: Tracked, second: Failing }
 main :: proc() {
 	p := Pair{Tracked{1}, Failing{2}};
 	fmt.println(p.first.id);
-	a, b := p;
+	a, b := p.clone();
 	fmt.println(a.id, b.id, p.first.id);
 }

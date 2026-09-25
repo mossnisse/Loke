@@ -94,7 +94,7 @@ main :: proc() {
 	// still run its hooks. The empty-array handling must not erase these calls.
 	{
 		present: [1]Empty_Element = {};
-		present_copy := present;
+		present_copy := present.clone();
 		assert(empty_copies == 1);
 	}
 	assert(empty_drops == 2);

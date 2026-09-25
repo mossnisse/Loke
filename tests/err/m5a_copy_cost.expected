@@ -1,41 +1,32 @@
 L0502
-@52:46
+@53:46
 `Only` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
 
 warning[L0507]: this aggregate literal copies 8 bytes from `self`
-@26:18
-warning[L0507]: this return clones `value`
-@48:47
+@27:18
 warning[L0507]: this argument copies 16 bytes from `pair`
-@60:22
+@61:22
 warning[L0507]: this binding copies 16 bytes from `pair`
-@67:12
-warning[L0507]: this binding clones `res`
 @68:12
 warning[L0507]: this assignment copies 16 bytes from `pair`
-@69:11
+@70:11
 warning[L0507]: this binding copies 16 bytes from `pair`
-@78:13
-warning[L0507]: this `or_else` clones `maybe`
-@91:15
-warning[L0507]: this binding clones `item`
-@101:37
-warning[L0507]: this `or_return` clones `outcome`
-@107:11
-warning[L0507]: this variant construction clones `taken`
-@108:13
-warning[L0507]: this aggregate literal clones `big`
-@123:17
-warning[L0507]: this variadic argument clones `big`
-@124:11
-warning[L0507]: this insertion clones `big`
-@127:18
-warning[L0507]: this `or_else` clones `absent`
-@130:12
-warning[L0507]: this `or_else` fallback clones `big`
-@130:27
+@79:13
+warning[L0507]: this aggregate literal copies 16 bytes from `big`
+@125:17
+warning[L0507]: this variadic argument copies 16 bytes from `big`
+@126:11
+warning[L0507]: this insertion copies 16 bytes from `big`
+@129:18
+warning[L0507]: this `or_else` copies 16 bytes from `absent`
+@132:12
+warning[L0507]: this `or_else` fallback copies 16 bytes from `big`
+@132:27
+warning[L0507]: this variant construction copies 16 bytes from `big`
+@133:36
 
-!:84:6
 !:85:6
-!:99:19
-!:100:20
+!:86:6
+!:100:19
+!:101:20
+!L0504

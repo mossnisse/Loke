@@ -69,11 +69,12 @@ impl Small_Array($T, $N) {
 	space :: proc(self) -> int { return N - self.count; }
 
 	// Reading an element out by value is a copy, so this is not part of a
-	// move-only instantiation (design.md "where clauses"). `get_mut`, `view` and
-	// `slice` reach the element without one, and `remove` hands it over entirely.
+	// move-only instantiation (design.md "where clauses"), and the copy is a
+	// written `clone` because it may allocate. `get_mut`, `view` and `slice`
+	// reach the element without one, and `remove` hands it over entirely.
 	get :: operator([]) proc(self, index: int) -> T where is_copyable(T) {
 		self.check_index(index);
-		return self.items[index];
+		return self.items[index].clone();
 	}
 
 	get_mut :: operator([]) proc(self: inout, index: int) -> inout T {
@@ -153,7 +154,7 @@ impl Small_Array($T, $N) {
 			return .err(Capacity_Error{wanted, N});
 		}
 		foreach (value in values) {
-			unsafe.write(self.items[self.count], value);
+			unsafe.write(self.items[self.count], value.clone());
 			self.count += 1;
 		}
 		return .ok({});
@@ -177,7 +178,7 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		unsafe.write(self.items[self.count], value);
+		unsafe.write(self.items[self.count], value.clone());
 		self.count += 1;
 		self.move_last_to(index);
 		return .ok({});

@@ -864,10 +864,6 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		if value_loans != nil {
 			value_loans[index] = result
 		}
-		// A clone allocates through the destination's `via`, evaluated here.
-		if index < len(s.rhs_clones) && s.rhs_clones[index] && index < len(s.lhs) {
-			walk_flow_expr(graph, symbol_via_allocator(graph.k.c, place_root_symbol(s.lhs[index])))
-		}
 	}
 	if graph.mode != .Lifecycle {
 		prov_assign(graph, s, value_loans)
@@ -1418,6 +1414,10 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	info := underlying_info(graph.k.c, call_proc_type(graph.k.c, v))
 	if info == nil {
+		return
+	}
+	// A container insertion reports its element as the insertion it is.
+	if callee := symbol_of(graph.k.c, v.resolution.symbol); callee != nil && callee.container_op != .None {
 		return
 	}
 	for argument, index in v.bound {

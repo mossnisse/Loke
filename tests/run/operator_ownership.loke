@@ -1,9 +1,9 @@
 package main; import "core:fmt";
 
 // design.md's ownership matrix for `or_else` and `or_return`, one row at a
-// time. A place operand copies the selected payload and leaves the source
-// live; a temporary or `move(x)` hands its value over. `or_else` never copies
-// the error — it drops a temporary's and leaves a place's alone.
+// time. A place operand would copy the selected payload, which may allocate, so
+// it is written `place.clone()`: a temporary, which like `move(x)` hands its
+// value over. `or_else` never copies the error — it drops a temporary's.
 
 copies, drops: int;
 
@@ -32,17 +32,17 @@ opened :: proc(id: int) -> Sealed { return .open(Handle{id}); }
 reset :: proc() { copies, drops = 0, 0; }
 report :: proc(label: string_view) { fmt.println(label, copies, drops); }
 
-// `or_return` over a place copies both payloads, so the source stays whole.
+// `or_return` over a clone of a place, so the source stays whole.
 place_or_return :: proc() -> Boxed {
 	source := held(1);
-	value := source or_return;
+	value := source.clone() or_return;
 	// The source still holds its own payload here.
 	return .held(Owned{value.id + 10});
 }
 
 place_or_return_fails :: proc() -> Boxed {
 	source := failed(2);
-	value := source or_return;
+	value := source.clone() or_return;
 	return .held(Owned{value.id});
 }
 
@@ -61,7 +61,7 @@ main :: proc() {
 	reset();
 	{
 		source := held(1);
-		taken := source or_else Owned{0};
+		taken := source.clone() or_else Owned{0};
 		fmt.println("place success", taken.id);
 	}
 	// One copy, and two values to drop: the place kept its own.
@@ -96,16 +96,16 @@ main :: proc() {
 	reset();
 	{
 		source := failed(5);
-		taken := source or_else Owned{9};
+		taken := source.clone() or_else Owned{9};
 		fmt.println("place failure", taken.id);
 	}
-	// The place still owns its error, so nothing was copied and two values end.
+	// The clone copied the error too, and `or_else` drops that copy: three values end.
 	report("place or_else failure");
 
 	reset();
 	{
 		fallback := Owned{10};
-		taken := failed(6) or_else fallback;
+		taken := failed(6) or_else fallback.clone();
 		fmt.println("place fallback", taken.id);
 	}
 	// The fallback place remains live and the selected result owns a clone.
@@ -113,7 +113,7 @@ main :: proc() {
 
 	// --- or_return -------------------------------------------------------
 	//
-	// Each block below reads `(outcome or_else Owned{0}).id`, selecting a field
+	// Each block below reads `(move(outcome) or_else Owned{0}).id`, selecting a field
 	// from an owned temporary rather than binding it. That temporary is the
 	// shape that used to leak: nothing named it, so nothing dropped it. It is
 	// destroyed at the end of its complete expression now, which is the extra
@@ -122,28 +122,28 @@ main :: proc() {
 	reset();
 	{
 		outcome := place_or_return();
-		fmt.println("place or_return", (outcome or_else Owned{0}).id);
+		fmt.println("place or_return", (move(outcome) or_else Owned{0}).id);
 	}
 	report("place or_return");
 
 	reset();
 	{
 		outcome := place_or_return_fails();
-		fmt.println("place or_return failed", (outcome or_else Owned{0}).id);
+		fmt.println("place or_return failed", (move(outcome) or_else Owned{0}).id);
 	}
 	report("place or_return failure");
 
 	reset();
 	{
 		outcome := temporary_or_return();
-		fmt.println("temporary or_return", (outcome or_else Owned{0}).id);
+		fmt.println("temporary or_return", (move(outcome) or_else Owned{0}).id);
 	}
 	report("temporary or_return");
 
 	reset();
 	{
 		outcome := temporary_or_return_fails();
-		fmt.println("temporary or_return failed", (outcome or_else Owned{0}).id);
+		fmt.println("temporary or_return failed", (move(outcome) or_else Owned{0}).id);
 	}
 	report("temporary or_return failure");
 

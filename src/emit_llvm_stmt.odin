@@ -141,7 +141,7 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 		} else {
 			value := emit_expr(e, d.values[i])
 			if clones {
-				value = emit_clone_value(e, sym.type, value, emit_destination_allocator(e, symbol_id))
+				value = emit_clone_value(e, sym.type, value)
 			}
 			store(e, sym.type, value, slot)
 		}
@@ -175,8 +175,8 @@ emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
 }
 
 // design.md "Destructuring": the operand is evaluated once. From a place,
-// retained managed fields are cloned (with each destination's allocator); a
-// consumed record's fields transfer. Every owned field is guarded until bound.
+// retained managed fields are copied, which never allocates; a consumed
+// record's fields transfer. Every owned field is guarded until bound.
 @(private = "file")
 emit_destructure_fields :: proc(
 	e: ^Emitter, plan: ^Destructure, operand: Expr, destinations: []Symbol_Id,
@@ -193,10 +193,7 @@ emit_destructure_fields :: proc(
 		value := extract(e, aggregate, record, index)
 		retained := index < len(plan.retained) && plan.retained[index]
 		if retained && index < len(plan.clones) && plan.clones[index] {
-			value = emit_clone_value(
-				e, field.type, value,
-				emit_destination_allocator(e, index < len(destinations) ? destinations[index] : INVALID_SYMBOL),
-			)
+			value = emit_clone_value(e, field.type, value)
 		}
 		values[index] = value
 		if !plan.from_place || (retained && index < len(plan.clones) && plan.clones[index]) {
@@ -317,10 +314,7 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		map_guards[index] = Deferred{slot = -1}
 		values[index] = emit_expr(e, value)
 		if index < len(s.rhs_clones) && s.rhs_clones[index] {
-			values[index] = emit_clone_value(
-				e, expr_base(s.lhs[index]).type, values[index],
-				emit_destination_allocator(e, place_root_symbol(s.lhs[index])),
-			)
+			values[index] = emit_clone_value(e, expr_base(s.lhs[index]).type, values[index])
 		}
 		if index < len(s.lhs) && inserting_map_index(s.lhs[index]) != nil {
 			map_guards[index] = hold_temporary_value(e, expr_base(s.lhs[index]).type, values[index])

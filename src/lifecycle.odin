@@ -347,6 +347,9 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 		)
 		return
 	}
+	if reject_allocating_copy(k, value.expr, result, .Return) {
+		return
+	}
 	value.clone_on_return = true
 	contribute_lifecycle_members(k, result)
 }
@@ -398,7 +401,36 @@ classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) 
 		)
 		return false
 	}
+	if reject_allocating_copy(k, value, type, site) {
+		return false
+	}
 	contribute_lifecycle_members(k, type)
+	return true
+}
+
+// design.md "Value semantics and the ownership rule": a copy of a place that
+// may allocate is written, never implied, so the only allocating copy is a
+// visible `clone`.
+reject_allocating_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
+	if !clone_may_allocate(k.c, type) {
+		return false
+	}
+	source := "this place"
+	transferable := false
+	if root := symbol_of(k.c, place_root_symbol(value)); root != nil {
+		source = identifier_text(k.c, root.name)
+		_, is_ident := value.(^Expr_Ident)
+		transferable = is_ident && symbol_is_owned_here(root)
+	}
+	errorf(
+		k.c, expr_span(value), "L0504",
+		"this %s would copy `%s`, and a copy of `%s` may allocate, so it must be written",
+		copy_site_text(site), source, type_name(k.c, type),
+	)
+	if transferable {
+		add_notef(k.c, no_span(), "write `move(%s)` if `%s` is no longer needed", source, source)
+	}
+	add_notef(k.c, no_span(), "write `.clone()` for an independent copy, or borrow it through a pointer or a slice")
 	return true
 }
 
@@ -522,6 +554,9 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr, in_
 			)
 			continue
 		}
+		if reject_allocating_copy(k, operand, field.type, .Binding) {
+			continue
+		}
 		contribute_lifecycle_members(k, field.type)
 		if clones == nil {
 			clones = make([]bool, len(plan.fields), k.c.semantic_allocator)
@@ -604,26 +639,16 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 	return "copy"
 }
 
-// Whether a copy of `type` is worth reporting, and why. A clone that may
-// allocate is expensive whatever its inline size, which is the case design.md
-// asks to be made more prominent.
+// Whether a copy of `type` is worth reporting. A copy that may allocate is not
+// implicit at all (L0504), so what is left is inline size: a large aggregate, or
+// a managed value whose copy only retains shared storage.
 @(private = "file")
-copy_is_expensive :: proc(c: ^Compiler, type: Type_Id) -> (bool, bool) {
-	// design.md "Shared ownership": "`try_clone` increments the strong count
-	// without a new allocation". The hook's signature is fallible like every
-	// other one, so only the language's knowledge of the type says that copying
-	// a handle is an atomic increment rather than a duplication of `T`.
-	allocates := type_is_managed(c, type) && type_clone_is_fallible(c, type) &&
-		!type_is_shared_handle(c, type)
-	if !c.copy_cost_enabled {
-		return false, allocates
-	}
-	return allocates || type_size(c, type) >= c.copy_cost_threshold, allocates
+copy_is_expensive :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return c.copy_cost_enabled && !clone_may_allocate(c, type) && type_size(c, type) >= c.copy_cost_threshold
 }
 
 report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool) {
-	expensive, allocates := copy_is_expensive(k.c, type)
-	if !expensive {
+	if !copy_is_expensive(k.c, type) {
 		return
 	}
 	name := ""
@@ -637,24 +662,11 @@ report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr,
 	}
 	source_text := name == "" ? fmt.aprintf("a `%s`", type_name(k.c, type), allocator = k.c.semantic_allocator) :
 		fmt.aprintf("`%s`", name, allocator = k.c.semantic_allocator)
-	// A clone is not a fixed-size copy: reporting only its inline bytes would
-	// understate it, since the allocation it makes is the expensive half.
-	if allocates {
-		warnf(k.c, span, "L0507", "this %s clones %s", copy_site_text(site), source_text)
-		add_notef(
-			k.c,
-			no_span(),
-			"`%s` has a lifecycle clone, which may allocate; its inline representation is %d bytes",
-			type_name(k.c, type),
-			type_size(k.c, type),
-		)
-	} else {
-		warnf(
-			k.c, span, "L0507",
-			"this %s copies %d bytes from %s",
-			copy_site_text(site), type_size(k.c, type), source_text,
-		)
-	}
+	warnf(
+		k.c, span, "L0507",
+		"this %s copies %d bytes from %s",
+		copy_site_text(site), type_size(k.c, type), source_text,
+	)
 	if in_loop {
 		add_notef(k.c, no_span(), "this runs on every iteration of the enclosing loop")
 	}

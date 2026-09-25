@@ -44,9 +44,9 @@ main :: proc() {
 	value.id = 3;
 	fmt.println(value.id);
 
-	// An implicit copy of a managed owner is a deep clone, not a hidden alias.
-	// Cloning two empty containers allocates nothing and cannot fail.
-	copy := value;
+	// A copy of a managed owner is a deep clone, not a hidden alias. Cloning
+	// two empty containers allocates nothing and cannot fail.
+	copy := value.clone();
 	fmt.println(copy.id);
 	fmt.println(size_of(globals) + size_of(lookup));
 }

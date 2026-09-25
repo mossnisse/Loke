@@ -22,10 +22,10 @@ Holder :: struct { values: [dynamic]int, res: Res }
 // A packed field is read in place with no address taken.
 Packed :: struct @(packed) { tag: u8, value: int }
 
-// A field read through a pointer is borrowed, so returning it clones.
+// A field read through a pointer is borrowed, so returning it is a clone.
 first :: proc(h: ^Holder) -> [dynamic]int {
 	foreach ($field in fields_of(Holder)) {
-		when (field.index == 0) { return field.get(h); }
+		when (field.index == 0) { return field.get(h).clone(); }
 	}
 }
 
@@ -34,12 +34,12 @@ main :: proc() {
 	foreach ($field in fields_of(Holder)) {
 		when (field.index == 0) {
 			fmt.println(field.get(&h).len(), field.get(&h)[2]);
-			copy := field.get(&h);
+			copy := field.get(&h).clone();
 			copy[0] = 99;
 			fmt.println(h.values[0], copy[0]);
 		} else {
 			fmt.println(field.get(&h).id);
-			{ kept := field.get(&h); }
+			{ kept := field.get(&h).clone(); }
 			fmt.println(copies, drops);
 		}
 	}

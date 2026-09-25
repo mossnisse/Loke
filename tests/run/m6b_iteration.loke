@@ -62,7 +62,7 @@ main :: proc() {
 
 	nested: [dynamic][dynamic]int = {};
 	inner: [dynamic]int = {1, 2};
-	nested.append(inner);
+	nested.append(move(inner));
 	fmt.println(nested);
 	deep: map[int][dynamic]int = {};
 	deep[7] = {8, 9};

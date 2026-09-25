@@ -142,12 +142,12 @@ impl Counted {
 copies :: proc() {
 	fmt.println(9000);
 	source := Counted{1};
-	binding := source;
+	binding := source.clone();
 	fmt.println(binding.id);
 
 	// The destination's previous value is dropped once the clone succeeded.
 	destination := Counted{2};
-	destination = source;
+	destination = source.clone();
 	fmt.println(destination.id);
 }
 

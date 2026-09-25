@@ -138,5 +138,5 @@ move_default_region_sibling :: proc() -> [dynamic]int {
 	held: Split_Regions = {};
 	held.local = move(local);
 	held.stable = move(stable);
-	return held.stable;
+	return exchange(inout held.stable, {});
 }

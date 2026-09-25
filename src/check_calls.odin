@@ -435,7 +435,8 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 		}
 		if len(v.bound) > 2 {
 			classify_copy_cost(k, v.bound[2], element, .Insertion)
-			if type_clone_disabled(k.c, element) {
+			if type_clone_disabled(k.c, element) ||
+			   clone_may_allocate(k.c, element) && !container_member_is_try(k.c, chosen) {
 				classify_copy(k, v.bound[2], element, .Insertion)
 			}
 		}
@@ -452,6 +453,9 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 				"`%s` is move-only, so a `..` spread cannot copy its elements into the pack",
 				type_name(k.c, element),
 			)
+		} else if clone_may_allocate(k.c, element) && !container_member_is_try(k.c, chosen) &&
+		          v.variadic_forwards && len(v.bound) > 1 {
+			reject_spread_copy(k, v.bound[1], element)
 		}
 	}
 	require_sort_order_policy(k, chosen, v.span)
@@ -1076,7 +1080,17 @@ bind_variadic_arguments :: proc(
 		needs_element_clone ||= expression_is_borrowed_place(value)
 		ok = ok && passed
 	}
-	if type_is_managed(k.c, element) && needs_element_clone && !lifecycle_of(k.c, element).intrinsic {
+	if needs_element_clone && clone_may_allocate(k.c, element) && !copies_on_success(k.c, declaration) {
+		for value in elements {
+			if expression_is_borrowed_place(value) {
+				classify_copy(k, value, element, .Variadic)
+			}
+		}
+		for spread in spreads {
+			reject_spread_copy(k, spread, element)
+		}
+		ok = false
+	} else if type_is_managed(k.c, element) && needs_element_clone && !lifecycle_of(k.c, element).intrinsic {
 		if type_clone_disabled(k.c, element) {
 			// design.md "Container insertion": each borrowed element is reported
 			// where `move(...)` belongs; a spread has no `move` form.
@@ -1162,4 +1176,26 @@ reject_move_only_try :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol, elemen
 	)
 	v.type = INVALID_TYPE
 	return true
+}
+
+// design.md "Container insertion": a `try_` container form never takes
+// ownership and copies each element in itself, only on success, so what it is
+// handed is lent, and a written `clone` would copy twice.
+@(private = "file")
+copies_on_success :: proc(c: ^Compiler, declaration: Symbol_Id) -> bool {
+	callee := symbol_of(c, declaration)
+	return callee != nil && callee.container_op != .None && container_member_is_try(c, callee)
+}
+
+// A spread copies every element and has no `move` form, so an element whose
+// copy may allocate is cloned one at a time instead (design.md "Value
+// semantics and the ownership rule").
+@(private = "file")
+reject_spread_copy :: proc(k: ^Checker, spread: Expr, element: Type_Id) {
+	errorf(
+		k.c, expr_span(spread), "L0504",
+		"a `..` spread would copy every element, and a copy of `%s` may allocate, so each must be written",
+		type_name(k.c, element),
+	)
+	add_notef(k.c, no_span(), "pass each element's `.clone()` instead")
 }

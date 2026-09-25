@@ -1879,6 +1879,15 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	if !target_ok {
 		return Eval_Value{}, false
 	}
+	// A generated `clone` is the evaluator's own deep copy, which is what an
+	// implicit copy was before copies that may allocate had to be written.
+	if sym := symbol_of(ev.k.c, target); sym != nil && sym.synth == .Clone && len(v.bound) >= 1 {
+		subject, subject_ok := eval_expr(ev, v.bound[0])
+		if !subject_ok {
+			return Eval_Value{}, false
+		}
+		return copy_value(ev, subject)
+	}
 	// A variant constructor has no body: its payload becomes the variant.
 	if sym := symbol_of(ev.k.c, target); sym != nil && sym.synth == .Variant_Construct && len(v.bound) == 1 {
 		payload, payload_ok := eval_expr(ev, v.bound[0])

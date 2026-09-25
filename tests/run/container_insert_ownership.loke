@@ -3,8 +3,10 @@ package main;
 import "core:fmt";
 
 // design.md "Container insertion": a temporary or `move(x)` transfers into the
-// container and a borrowed place is copied once, for a copyable element as for
-// a move-only one. A spread lends its elements, so each is copied. The drop
+// container. A borrowed place would be copied, and copying a `Copied` may
+// allocate, so the copy is written `.clone()` and is then a temporary; a spread
+// would copy every element, so its elements are cloned one by one. A `try_`
+// form copies in on success itself, so it takes the place as it is. The drop
 // count closes the books: 21 values written here plus 12 clones.
 
 clones: static int = 0;
@@ -24,18 +26,18 @@ impl Copied {
 
 main :: proc() {
 	{ d: [dynamic]Copied = {}; before := clones; d.append(Copied{1}); fmt.println("append temporary", clones - before); }
-	{ d: [dynamic]Copied = {}; c := Copied{2}; before := clones; d.append(c); fmt.println("append place", clones - before); }
+	{ d: [dynamic]Copied = {}; c := Copied{2}; before := clones; d.append(c.clone()); fmt.println("append place", clones - before); }
 	{ d: [dynamic]Copied = {}; c := Copied{3}; before := clones; d.append(move(c)); fmt.println("append move", clones - before); }
-	{ d: [dynamic]Copied = {}; c := Copied{4}; before := clones; d.append(Copied{4}, c); fmt.println("append mixed", clones - before); }
-	{ d: [dynamic]Copied = {}; c := [2]Copied{Copied{5}, Copied{5}}; before := clones; d.append(..c[:]); fmt.println("append spread", clones - before); }
-	{ d: [dynamic]Copied = {}; c := Copied{13}; s := [2]Copied{Copied{13}, Copied{13}}; before := clones; d.append(c, ..s[:]); fmt.println("append place and spread", clones - before); }
-	{ d: [dynamic]Copied = {}; s := [1]Copied{Copied{14}}; before := clones; d.append(Copied{14}, ..s[:]); fmt.println("append temporary and spread", clones - before); }
+	{ d: [dynamic]Copied = {}; c := Copied{4}; before := clones; d.append(Copied{4}, c.clone()); fmt.println("append mixed", clones - before); }
+	{ d: [dynamic]Copied = {}; c := [2]Copied{Copied{5}, Copied{5}}; before := clones; d.append(c[0].clone(), c[1].clone()); fmt.println("append spread", clones - before); }
+	{ d: [dynamic]Copied = {}; c := Copied{13}; s := [2]Copied{Copied{13}, Copied{13}}; before := clones; d.append(c.clone(), s[0].clone(), s[1].clone()); fmt.println("append place and spread", clones - before); }
+	{ d: [dynamic]Copied = {}; s := [1]Copied{Copied{14}}; before := clones; d.append(Copied{14}, s[0].clone()); fmt.println("append temporary and spread", clones - before); }
 	{ d: [dynamic]Copied = {}; before := clones; d.insert(0, Copied{6}); fmt.println("insert temporary", clones - before); }
-	{ d: [dynamic]Copied = {}; c := Copied{7}; before := clones; d.insert(0, c); fmt.println("insert place", clones - before); }
+	{ d: [dynamic]Copied = {}; c := Copied{7}; before := clones; d.insert(0, c.clone()); fmt.println("insert place", clones - before); }
 	{ d: [dynamic]Copied = {}; c := Copied{8}; before := clones; d.insert(0, move(c)); fmt.println("insert move", clones - before); }
 	{ m: map[int]Copied = {}; before := clones; _ = m.try_insert(1, Copied{9}); fmt.println("try_insert temporary", clones - before); }
 	{ m: map[int]Copied = {}; c := Copied{10}; before := clones; _ = m.try_insert(1, c); fmt.println("try_insert place", clones - before); }
 	{ m: map[int]Copied = {}; before := clones; _ = m.find_or_insert(1, Copied{11}); _ = m.find_or_insert(1, Copied{11}); fmt.println("find_or_insert temporary", clones - before); }
-	{ before := clones; c := Copied{12}; d := [dynamic]Copied{Copied{12}, c}; fmt.println("literal mixed", clones - before); }
+	{ before := clones; c := Copied{12}; d := [dynamic]Copied{Copied{12}, c.clone()}; fmt.println("literal mixed", clones - before); }
 	fmt.println("drops", drops);
 }

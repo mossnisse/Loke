@@ -321,10 +321,7 @@ contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requ
 	if !entry.clone_disabled {
 		members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
 		append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
-		// A fixed array is only reached as a part, so it gets no `clone`.
-		if info.kind != .Array {
-			append(&members, generated_hook(k, type, "clone", .Clone, false))
-		}
+		append(&members, generated_hook(k, type, "clone", .Clone, false))
 		add_members(k.c, type, members[:])
 	}
 	for part in lifecycle_parts(k.c, type) {
@@ -373,6 +370,25 @@ clone_part :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 	}
 	sym := symbol_of(c, info.fields[index])
 	return sym == nil ? INVALID_TYPE : sym.type
+}
+
+// Whether copying a `type` may allocate: a container, or a record whose own or
+// a field's copy is a custom `hook(copy)`. A `string` or `shared(T)` copy
+// retains its storage instead, and so does a record of them.
+clone_may_allocate :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if type == INVALID_TYPE || !type_is_managed(c, type) || type_is_shared_handle(c, type) {
+		return false
+	}
+	entry := lifecycle_of(c, type)
+	if entry.custom_try_clone != INVALID_SYMBOL || entry.container {
+		return true
+	}
+	for part in lifecycle_parts(c, type) {
+		if clone_may_allocate(c, part) {
+			return true
+		}
+	}
+	return false
 }
 
 // Only a custom copy hook or a container's clone can fail; a generated clone

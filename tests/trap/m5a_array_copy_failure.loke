@@ -19,6 +19,6 @@ impl Res {
 main :: proc() {
 	source := [2]Res{Res{1}, Res{2}};
 	destination := [2]Res{Res{10}, Res{20}};
-	destination = source;
+	destination = source.clone();
 	fmt.println(999);
 }

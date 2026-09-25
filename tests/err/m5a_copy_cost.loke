@@ -9,8 +9,9 @@ package main; import "core:fmt";
 //
 // Compiled with `-copy-cost=1`, so every real copy site reports and the ones
 // that are not copy sites still stay quiet — `_ = place` writes to nothing and
-// is not one. At the default threshold only the allocating clones report,
-// because a clone is expensive whatever its inline size while 16 bytes is not.
+// is not one. A copy that may allocate is not a copy site but an error (L0504,
+// tests/err/implicit_allocating_copy), so each one here is written `clone` or
+// `move`, and what reports is inline bytes: nothing at the default threshold.
 //
 // design.md also asks that an ABI hidden-pointer transport not be mistaken for a
 // semantic copy. M5a has no such transport — an aggregate argument travels as an
@@ -44,8 +45,8 @@ borrows :: proc(value: Res) -> int { return value.id; }
 // A scalar is not an aggregate, so its size is never the point.
 counts :: proc(value: int) -> int { return value; }
 
-// Returning a borrowed managed owner clones.
-give_back :: proc(value: Res) -> Res { return value; }
+// Returning a borrowed managed owner is a written clone, and no copy site.
+give_back :: proc(value: Res) -> Res { return value.clone(); }
 
 // design.md: "returning a borrowed value whose clone operation is disabled is a
 // compile-time error." Size stays out of type correctness; this does not.
@@ -65,7 +66,7 @@ main :: proc() {
 
 	// A binding and an assignment from a place.
 	copied := pair;
-	cloned := res;
+	cloned := res.clone();
 	copied = pair;
 
 	// A temporary transfers rather than duplicating.
@@ -86,48 +87,51 @@ main :: proc() {
 	_ = Res{9};
 
 	// design.md "Operator ownership": a place operand leaves the source live and
-	// copies a payload out of it, so a failure operator over one is a copy site.
+	// copies a payload out of it. Copying a `Res` may allocate, so that copy is
+	// written, and the fallible temporary it makes transfers; `absent` below is
+	// the copy site.
 	maybe: Option(Res) = .some(Res{8});
-	unwrapped := maybe or_else Res{0};
+	unwrapped := maybe.clone() or_else Res{0};
 	_ = unwrapped;
 
 	// design.md "Borrowing iteration": traversing a place lends each element, so
 	// no form of the loop is a copy site -- not the plain one and not `&item`.
-	// Copying an element is written, and reports as the binding it is rather
-	// than as the loop.
+	// Copying an element is written `item.clone()`.
 	items := [dynamic]Res{};
 	foreach (item in items) { fmt.println(item.id); }
 	foreach (&item in items) { fmt.println(item.id); }
-	foreach (item in items) { saved := item; fmt.println(saved.id); }
+	foreach (item in items) { saved := item.clone(); fmt.println(saved.id); }
 	_ = items;
 }
 
 relay :: proc() -> Result(Res, int) {
 	outcome: Result(Res, int) = .ok(Res{9});
-	taken := outcome or_return;
-	return .ok(taken);
+	taken := outcome.clone() or_return;
+	return .ok(move(taken));
 }
 
 // The sites that reach a value from inside a larger expression. Each is the
 // ownership rule copying a place, exactly as a binding is, but written as
 // construction -- which is what makes it the easiest copy to miss. The
-// aggregate literal and the variant payload are reported above, inside `Res`'s
-// own copy hook and in `relay`; these are the rest.
-Holder :: struct { values: [dynamic]int }
+// aggregate literal is reported above, inside `Res`'s own copy hook; these are
+// the rest, over a plain array whose copy allocates nothing.
+Holder :: struct { values: [2]int }
 
-pack :: proc(items: ..[dynamic]int) -> int { return items.len(); }
+pack :: proc(items: ..[2]int) -> int { return items.len(); }
 
 expression_sites :: proc() {
-	big: [dynamic]int = {};
+	big: [2]int = {};
 
 	held := Holder{big};                 // aggregate literal element
 	_ = pack(big);                       // variadic pack element
 
-	store: [dynamic][dynamic]int = {};
+	store: [dynamic][2]int = {};
 	store.insert(0, big);                // container insertion
 
-	absent: Option([dynamic]int) = .none;
+	absent: Option([2]int) = .none;
 	picked := absent or_else big;        // `or_else` fallback
+	chosen: Result([2]int, int) = .ok(big); // variant payload
+	_ = chosen;
 
 	// Not a copy: erasing into an `any_view` borrows what it points at, so the
 	// destination's own size is not a duplication of `big`.

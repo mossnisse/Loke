@@ -29,7 +29,7 @@ main :: proc() {
 	case .err: fmt.println(1);
 	}
 
-	// An implicit copy has no error to hand back, so it traps.
-	destination := source;
+	// `clone` has no error to hand back, so it traps.
+	destination := source.clone();
 	fmt.println(destination.id);
 }

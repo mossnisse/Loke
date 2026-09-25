@@ -34,8 +34,9 @@ L0490
 L0496
 @53:2
 `drop` takes one argument, the variable being cleaned up
-
-warning[L0507]: this return clones `self`
+L0504
 @15:52
-warning[L0507]: this variant construction clones `self`
+this return would copy `self`, and a copy of `S` may allocate
+L0504
 @24:14
+this variant construction would copy `self`, and a copy of `T` may allocate

@@ -32,7 +32,7 @@ main :: proc() {
 	reset();
 	{
 		empty: Boxed = .empty;
-		copy := empty;
+		copy := empty.clone();
 		fmt.println(empty == copy, copies, drops);
 		fmt.println(empty);
 	}
@@ -42,7 +42,7 @@ main :: proc() {
 	reset();
 	{
 		held: Boxed = .held(Owned{7});
-		copy := held;
+		copy := held.clone();
 		fmt.println(held == copy, copies, drops);
 		fmt.println(held);
 	}
@@ -81,10 +81,10 @@ main :: proc() {
 	{
 		Holder :: struct { id: int, boxed: Boxed }
 		h := Holder{1, .held(Owned{5})};
-		g := h;
+		g := h.clone();
 		fmt.println(g.boxed, copies);
 		row := [2]Boxed{.empty, .held(Owned{6})};
-		other := row;
+		other := row.clone();
 		fmt.println(other[1], copies);
 	}
 	fmt.println("nested", copies, drops);

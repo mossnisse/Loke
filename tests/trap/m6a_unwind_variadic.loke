@@ -16,5 +16,5 @@ explode :: proc(values: ..Res) { panic("inside variadic callee"); }
 
 main :: proc() {
 	resource := Res{1};
-	explode(resource, Res{2});
+	explode(resource.clone(), Res{2});
 }

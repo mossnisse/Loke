@@ -70,9 +70,9 @@ main :: proc() {
 	fmt.println(lookup(2));
 	fmt.println(lookup(0) + TABLE[3]);
 
-	// A custom lifecycle: an implicit copy clones, and both owners drop.
+	// A custom lifecycle: a copy clones, and both owners drop.
 	original := open_handle(5);
-	copy := original;
+	copy := original.clone();
 	fmt.println(copy.id);
 
 	// A `move` parameter kills the caller's source and drops in the callee.

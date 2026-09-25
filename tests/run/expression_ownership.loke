@@ -22,7 +22,7 @@ impl Box {
 main :: proc() {
 	{
 		v := Value{1};
-		s := []Value{v};
+		s := []Value{v.clone()};
 		fmt.println(copies, drops, s.len());
 	}
 	fmt.println(copies, drops);

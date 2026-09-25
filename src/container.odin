@@ -680,7 +680,7 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 		add_notef(
 			k.c,
 			no_span(),
-			"`via` applies to a managed owner whose clone takes a destination allocator, such as `[dynamic]T`, `map[K]V`, or a record with a `try_clone`",
+			"`via` applies to a managed owner whose storage is allocated as it grows, such as `[dynamic]T`, `map[K]V`, or a record with a `try_clone`",
 		)
 		return false
 	}

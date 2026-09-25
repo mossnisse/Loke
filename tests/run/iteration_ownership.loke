@@ -93,7 +93,7 @@ main :: proc() {
 	foreach (value in owned.copied()) { fmt.println(value.id); }
 	fmt.println(copies);
 	copies = 0;
-	foreach (value in owned) { saved := value; fmt.println(saved.id); }
+	foreach (value in owned) { saved := value.clone(); fmt.println(saved.id); }
 	fmt.println(copies);
 
 	// A move-only element has no copy to make, and now needs none to be read.

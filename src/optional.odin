@@ -127,6 +127,10 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else) {
 		v.type = INVALID_TYPE
 		return
 	}
+	if v.borrows && reject_allocating_copy(k, v.value, payload, .Or_Else) {
+		v.type = INVALID_TYPE
+		return
+	}
 	if v.borrows {
 		contribute_lifecycle_members(k, payload)
 	}
@@ -190,6 +194,10 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 					"`%s` is move-only, so `or_return` cannot copy it out of a place; write `move(...)`",
 					type_name(k.c, candidate),
 				)
+				v.type = INVALID_TYPE
+				return
+			}
+			if reject_allocating_copy(k, v.operand, candidate, .Or_Return) {
 				v.type = INVALID_TYPE
 				return
 			}

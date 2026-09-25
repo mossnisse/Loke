@@ -139,7 +139,7 @@ revived :: proc() -> int {
 COPIED :: copied();
 copied :: proc() -> int {
 	xs: [dynamic]int = {1, 2};
-	ys := xs;
+	ys := xs.clone();
 	ys.append(3);
 	return xs.len() * 10 + ys.len();
 }

@@ -91,12 +91,13 @@ main :: proc() {
 	fmt.println(one_of(..odds));
 	fmt.println(one_of());
 
-	// A borrowed managed argument is cloned, a temporary is moved, and both pack
-	// elements are destroyed in reverse order immediately after the call.
+	// A borrowed managed argument is written as a clone, a temporary is moved,
+	// and both pack elements are destroyed in reverse order immediately after
+	// the call. A spread would copy every element, so they are cloned one by one.
 	resource := Res{1};
-	consume(resource, Res{2});
+	consume(resource.clone(), Res{2});
 	pair := [?]Res{Res{3}, Res{4}};
-	consume(Res{5}, ..pair[:]);
+	consume(Res{5}, pair[0].clone(), pair[1].clone());
 
 	handed := Res{6};
 	hand_over(move(handed), 1, 2);

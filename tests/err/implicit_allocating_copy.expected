@@ -1,0 +1,47 @@
+L0504
+@27:9
+this return would copy `values`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@31:12
+this `or_return` would copy `outcome`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@37:7
+this binding would copy `a`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@39:6
+this assignment would copy `a`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@40:13
+this aggregate literal would copy `a`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@42:16
+this variadic argument would copy `a`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@43:16
+this variadic argument would copy `a`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@44:20
+this variant construction would copy `a`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@45:21
+this conversion would copy `a`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@47:18
+this binding would copy `pair`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@48:32
+this `or_else` fallback would copy `a`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@49:12
+this `or_else` would copy `outcome`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@51:10
+this binding would copy `tracked`, and a copy of `Tracked` may allocate, so it must be written
+L0504
+@52:18
+a `..` spread would copy every element, and a copy of `[dynamic]int` may allocate, so each must be written
+write `move(a)` if `a` is no longer needed
+write `.clone()` for an independent copy, or borrow it through a pointer or a slice
+pass each element
+!L0507
+!%!(

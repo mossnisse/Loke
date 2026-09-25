@@ -483,35 +483,6 @@ L0345. Proposal: accept trailing `..any_view` arguments after the constant
 message. The runtime formats them straight into the error stream, which
 allocates nothing, and the evaluator prints them for a compile-time failure.
 
-## Implicit allocating copies
-
-[Value-semantic assignment](#value-semantic-assignment) keeps `b := a` a deep
-copy so that an owning value is as simple as an integer, and reports the cost
-with L0507. Measured over the tree with the default `-copy-cost`: across the 13
-examples and 199 `tests/run` programs, the allocating half of L0507 fires 44
-times, all in 21 test files that exercise the copy rules themselves
-(`operator_ownership`, `container_insert_ownership`, `union_lifecycle`,
-`distinct_container_conversion`, and others), and never in an example or in the
-library code the examples reach. Idiomatic code already moves, borrows, or
-clones explicitly.
-
-What exists only for the implicit case is not small: the destination's bound
-allocator and the declaration allocation policy after a move or drop
-([Assignment statements](design.md#assignment-statements)), prepare-then-write
-and the failure policy on `=`, the allocating half of
-[Copy-cost diagnostics](design.md#copy-cost-diagnostics) across a dozen
-contexts, and the clone when a value parameter is returned, where L0507 still
-advises a pointer or `shared(T)` rather than a `move` parameter.
-
-Proposal: a place whose copy may allocate is not copied implicitly. Binding,
-assigning, returning, inserting, or putting it in a literal is an error that
-offers `move(x)`, `x.clone()`, or a borrow. A type whose copy allocates nothing,
-`string` and `shared(T)` included, copies as today. `clone`, `try_clone`, and
-`Cloneable` stay, and `via` keeps only its first-growth role. This is the
-earlier review's "explicit allocating copies" combination, with the count it
-asked for: the examples need no change, and the 21 test files change with the
-rules they test.
-
 ## Deriving `Yield`
 
 An iterator's `Yield` follows from its `Element` and `Item`: owned when `Item`
@@ -657,26 +628,41 @@ declaration that asks for it.
 
 Odin assignment of a `[dynamic]T` or `map` copies only the header, so two
 variables alias one mutable backing allocation and one of them frees it. Loke
-makes `b := a` a deep copy for mutable owners: an owning value behaves like a
-simple one, and the silent shared-backing alias — the classic source of
-double-free and mutation-at-a-distance bugs — is never produced implicitly.
-Immutable `string` may share backing storage because mutation cannot expose the
-alias. Shared mutable ownership is opted into with a pointer or `shared(T)`.
+keeps value semantics — a copy of an owner is independent of it, and the silent
+shared-backing alias, the classic source of double-free and
+mutation-at-a-distance bugs, is never produced — but a copy that may allocate
+is written: `b := a` over a `[dynamic]int` is an error that offers `move(a)`,
+`a.clone()`, or a borrow (L0504). Immutable `string` and `shared(T)` retain
+their storage when copied, so they, and records of them, still copy implicitly.
+Shared mutable ownership is opted into with a pointer or `shared(T)`.
 
-The obvious objection is that the language spells `move`, `inout`, and `clone`
-explicitly for visibility, yet leaves the potentially expensive copy unspelled.
-The resolution is that the accident, not the semantics, is the problem, so the
-fix targets the accident. Forbidding assignment or requiring `.clone()` on every
-copy (the Rust answer) would defeat the goal of making owning values as simple as
-integers, and copy-on-write would trade a visible copy for an unpredictable
-mutation-time allocation and an atomic refcount — against a systems language's
-need for predictable cost. Instead a large or allocating copy is reported by the
-[copy-cost diagnostic](design.md#copy-cost-diagnostics), covering binding and
-assignment sites. Ownership transfer remains explicitly written as `move`; the
-compiler does not silently remove a fallible clone or change the allocator bound
-to the destination merely because the source happens to be dead. Default deep
-copy, explicit move, and a warning on expensive copies keep both semantics and
-cost visible.
+An earlier version made the allocating copy implicit, on the grounds that
+requiring `.clone()` (the Rust answer) would defeat the goal of making owning
+values as simple as integers, and reported it with the
+[copy-cost diagnostic](design.md#copy-cost-diagnostics) instead. The count it
+was waiting for said otherwise. Across the 13 examples and 199 `tests/run`
+programs, the allocating half of that warning fired 44 times, all in 21 test
+files exercising the copy rules themselves and never in an example or in the
+library code the examples reach: idiomatic code already moved, borrowed, or
+cloned. Making the rule an error changed two library procedures — the
+`Small_Array` and `Enum_Array` accessors that copy a `T` out, which now write
+`.clone()` — and those test files.
+
+What existed only for the implicit case went with it: the destination's bound
+allocator and the declaration allocation policy after a move or drop, the
+failure policy on `=`, and the allocating half of the copy-cost warning. `via`
+keeps its first-growth role. Assignment still evaluates its right side before
+dropping the old value, so a failing `clone` leaves the destination whole.
+
+Three consequences are worth recording. A `..` spread copies every element and
+has no `move` form, so spreading a slice of containers is rejected and the
+elements are cloned one at a time. The `try_` container forms copy on success by
+definition, so they take a place, or a spread, as it is: a written `clone`
+there would copy twice. And because generic code copying a `T` now writes
+`.clone()`, every copyable type needs one: fixed arrays, which used to get only
+`try_clone` on the grounds that they were reached as parts, now get `clone` too,
+and compile-time evaluation runs a generated `clone` as the deep copy the
+implicit one was.
 
 ### Panics run lexical cleanup
 

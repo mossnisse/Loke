@@ -19,6 +19,6 @@ produce :: proc(values: ..Tracked) -> Tracked { return Tracked{9}; }
 
 main :: proc() {
 	original := Tracked{1};
-	result := produce(original, Tracked{2});
+	result := produce(original.clone(), Tracked{2});
 	fmt.println(result.id);
 }

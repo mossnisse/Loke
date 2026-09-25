@@ -46,9 +46,10 @@ impl Enum_Array($E, $T) {
 	len :: proc(self) -> int { return E.values().len(); }
 	cap :: proc(self) -> int { return E.values().len(); }
 
-	// Reading a slot out by value is a copy; `get_mut` reaches it without one.
+	// Reading a slot out by value is a written copy; `get_mut` reaches it
+	// without one.
 	get :: operator([]) proc(self, member: E) -> T where is_copyable(T) {
-		return self.slots[position_of(member)];
+		return self.slots[position_of(member)].clone();
 	}
 
 	get_mut :: operator([]) proc(self: inout, member: E) -> inout T {

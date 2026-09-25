@@ -32,7 +32,7 @@ main :: proc() {
 	fmt.println(key_copies, key_drops);
 	{
 		value := Value{1};
-		xs := [dynamic]Value{ value, Value{2} };
+		xs := [dynamic]Value{ value.clone(), Value{2} };
 		fmt.println(value_copies, value_drops);
 	}
 	fmt.println(value_copies, value_drops);

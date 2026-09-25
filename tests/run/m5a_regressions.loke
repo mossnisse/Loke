@@ -29,7 +29,7 @@ conditional_move :: proc() {
 aggregate_copy :: proc() {
 	fmt.println(2000);
 	source := Res{3};
-	box := Box{source};
+	box := Box{source.clone()};
 	fmt.println(box.item.id);
 }
 
