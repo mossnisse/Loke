@@ -97,6 +97,13 @@ main :: proc() {
 	fmt.println(wide_seen == u128(8), wide_swapped, w.load() == u128(1) << 127);
 	wide_missed, wide_failed := w.compare_exchange(u128(0), u128(1));
 	fmt.println(wide_missed == u128(1) << 127, wide_failed);
+	// The carry out of the low half, and the borrow back into it.
+	w.store((u128(1) << 64) - 1);
+	w.add(u128(1));
+	fmt.println(w.load() == u128(1) << 64);
+	w.store(u128(1) << 64);
+	w.sub(u128(1));
+	fmt.println(w.load() == (u128(1) << 64) - 1);
 
 	sw: sync.Atomic(i128) = {};
 	sw.store(-(i128(1) << 100));

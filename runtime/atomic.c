@@ -44,8 +44,6 @@
  * a sixteen-byte compare and copy; if a program ever contends hard enough for
  * that to matter, the upgrade is a platform wait, which changes only these
  * three functions. */
-#if defined(__clang__) || defined(__GNUC__)
-
 static volatile int32_t loke_rt_atomic_gate = 0;
 
 static void atomic_lock(void) {
@@ -59,16 +57,6 @@ static void atomic_unlock(void) { __sync_lock_release(&loke_rt_atomic_gate); }
  * order the native operations and the fences do, rather than only in the
  * lock's own order. */
 static void atomic_barrier(void) { __sync_synchronize(); }
-
-#else
-/* A toolchain without those builtins gets the single-threaded behaviour.
- * design.md places concurrent access outside the contract where there is no way
- * to provide it, and a wrong answer that looks atomic would be worse than none.
- */
-static void atomic_lock(void) {}
-static void atomic_unlock(void) {}
-static void atomic_barrier(void) {}
-#endif
 
 /* A 128-bit value, moved as bytes so this file needs no 128-bit integer type
  * and no compiler-specific spelling of one. */
@@ -197,11 +185,3 @@ LOKE_RT_ATOMIC128_RMW(xor, {
 	r_low = a_low ^ b_low;
 	r_high = a_high ^ b_high;
 })
-
-/* The fence the fallback widths order against. Generated code lowers a Loke
- * `fence` to LLVM's own `fence` instruction; this exists so a host, and this
- * file, can reach the same barrier. */
-void loke_rt_v1_atomic_fence(int32_t order) {
-	(void)order;
-	atomic_barrier();
-}

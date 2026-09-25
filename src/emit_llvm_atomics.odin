@@ -64,7 +64,6 @@ emit_atomic_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_and(ptr, ptr, ptr, i32)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_or(ptr, ptr, ptr, i32)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic128_xor(ptr, ptr, ptr, i32)")
-	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic_fence(i32)")
 }
 
 emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {

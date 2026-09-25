@@ -398,7 +398,6 @@ void loke_rt_v1_atomic128_sub(void *address, const void *value, void *out, int32
 void loke_rt_v1_atomic128_and(void *address, const void *value, void *out, int32_t order);
 void loke_rt_v1_atomic128_or(void *address, const void *value, void *out, int32_t order);
 void loke_rt_v1_atomic128_xor(void *address, const void *value, void *out, int32_t order);
-void loke_rt_v1_atomic_fence(int32_t order);
 
 int32_t loke_rt_v1_map_reserve(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
