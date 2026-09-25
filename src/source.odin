@@ -240,6 +240,7 @@ Compiler :: struct {
 	global_writes:       map[Symbol_Id][]Symbol_Id,
 	indirect_writes:     map[string][]Symbol_Id,
 	global_writes_ready: bool,
+	thread_spawns:       [dynamic]Thread_Spawn,
 
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker

@@ -1,0 +1,52 @@
+// design.md "Global write effects" and core:thread: a spawned entry that writes
+// a global every thread shares is warned about, through a callee and for a
+// `static` local too, while `thread_local`, atomic operations, and a `Mutex`
+// are not; a spawned argument may not borrow shorter-lived storage; and a
+// pointer from a guard may not outlive the lock.
+package main;
+
+import "core:sync";
+import "core:thread";
+
+count: int;
+hits: sync.Atomic(int);
+total: thread.Mutex(int);
+mine: thread_local int;
+
+bump :: proc() { count += 1; }
+indirect :: proc() { bump(); }
+
+fine :: proc() {
+	hits.add(1);
+	mine += 1;
+	guard := total.lock();
+	guard.get() += 1;
+}
+
+with_static :: proc(n: move int) {
+	calls: static int = 0;
+	calls += n;
+}
+
+raw :: proc() { hits.value = 1; }
+
+sum :: proc(values: move []int) {}
+
+main :: proc() {
+	a := thread.spawn(indirect);
+	b := thread.spawn(fine);
+	c := thread.spawn(with_static, 3);
+	d := thread.spawn(raw);
+
+	local := [3]int{1, 2, 3};
+	e := thread.spawn(sum, local[:]);
+}
+
+escapes :: proc() {
+	p: ^mut int = nil;
+	{
+		guard := total.lock();
+		p = &mut guard.get();
+	}
+	p^ = 1;
+}

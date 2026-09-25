@@ -1,0 +1,27 @@
+// design.md "Threads": a panic ends the whole program, and only the panicking
+// thread unwinds. The worker's owner is dropped; `main`'s is not, though `main`
+// is waiting in `join` when it happens.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Noisy :: struct { id: int }
+
+impl Noisy {
+	release :: hook(drop) proc(self: inout Noisy) {
+		if (self.id != 0) { fmt.println("drop", self.id); }
+	}
+}
+
+fail :: proc(id: move int) {
+	held := Noisy{id};
+	panic("worker failed");
+}
+
+main :: proc() {
+	outer := Noisy{1};
+	worker := thread.spawn(fail, 2);
+	worker.join();
+	fmt.println("unreachable");
+}

@@ -359,7 +359,7 @@ be file-private.
 | `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
 | `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
-| `global_effects.odin` | Whole-program global write effects: which globals each body, and each call through it, may write. |
+| `global_effects.odin` | Whole-program global write effects: which globals each body, and each call through it, may write; and the L0707 warning for a `thread.spawn` entry that writes a shared global. |
 | `nil_uses.odin` | Locals a body only ever writes `nil` to, reported at the use rather than left to the trap. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 

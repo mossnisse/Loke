@@ -121,6 +121,7 @@ core:mem              allocators and regions                  *
 core:unsafe           explicit trust boundary                 *
 core:sync             atomics, fences, once                   *
 core:simd             cross-lane SIMD operations              *
+core:thread           threads and the mutex
 core:fmt              value formatting and process diagnostics
 core:strconv          scalar parsing
 core:strings          UTF-8 algorithms and String_Builder
@@ -352,6 +353,45 @@ roughly quadruples hello world's IR. The call it saves is one line —
 to every program that prints. `to_string`
 itself keeps its selected allocator by receiving the same compiler-contributed
 `allocate_string` primitive `core:strings` gets.
+
+## `core:thread`
+
+`core:thread` starts threads and guards what they share. It supplies the
+thread start, join, and unlock edges of design.md "Concurrency and the memory
+model".
+
+```odin
+spawn(entry: proc(value: move T), arg: move T) -> Thread
+spawn(entry: proc()) -> Thread
+Thread.join(self: inout)
+Mutex(T).lock(self: ^) -> Guard(T)
+Guard(T).get(self: inout) -> inout T
+```
+
+`spawn` runs `entry(arg)` on a new thread. The argument is moved in, and any
+borrow it carries must be of process-lifetime storage, as
+`@(escape=static)` requires, so a string literal travels and a slice of a local
+does not. Several values travel as one record. Running out of memory or of
+threads panics; there is no `try_spawn` yet.
+
+`join` waits for the thread to return: its writes and its `thread_local` drops
+happen before `join` returns, and a second `join` does nothing. Dropping a
+`Thread` that has not been joined joins it, so a thread never outlives its
+handle. A panic on any thread ends the program (design.md "Threads").
+
+`Mutex(T)` owns its `T`. Its zero value is unlocked and holds `T`'s zero, so a
+mutex can live in file-scope storage with no initializer. `lock` blocks until
+this thread holds the lock and returns a guard; `guard.get()` is the value, as
+an `inout` result that borrows the guard, and dropping the guard unlocks. An
+unlock happens before the next lock. `lock` takes a read-only receiver, as the
+`Atomic` operations do, so a mutex behind a `shared(T)` handle or in file-scope
+storage still locks. The field `value` is public for a caller that owns the
+mutex outright, before spawning or after joining. Locking a mutex the thread
+already holds never returns. `Mutex` is move-only.
+
+The compiler warns when a spawned entry writes file-scope or `static` storage
+(design.md "Global write effects"). Storage behind a `Mutex` or an `Atomic`, and
+`thread_local` storage, do not count.
 
 ## `core:fmt`
 
@@ -1085,7 +1125,8 @@ Smaller omissions, each additive over what exists and waiting for a caller:
 allocating string transformations; Unicode case mapping (case conversion is
 ASCII-only); in `core:math`, hyperbolics, `cbrt`/`fma`/`ldexp`/`frexp`/`modf`,
 `erf`, `gamma`, lane-wise math over `Simd(T, N)`, and integer bit helpers; in
-`core:simd`, the version-1 omissions design.md names.
+`core:simd`, the version-1 omissions design.md names; in `core:thread`,
+`try_spawn`, `try_lock`, condition variables, and a thread identity.
 
 ## Test requirements
 

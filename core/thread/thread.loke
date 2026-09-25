@@ -1,0 +1,181 @@
+// Threads, and the mutex that guards what they share (standard-library.md
+// "`core:thread`", design.md "Concurrency and the memory model").
+//
+// Ordinary Loke over kernel32 and two runtime entry points: `spawn` and `join`
+// supply the thread start and join edges of happens-before, and `Mutex` the
+// unlock-to-lock edge. Windows is the only target, so nothing here is behind a
+// `when (LOKE_OS == ...)`.
+@(public)
+package thread;
+
+import "core:sync";
+import "core:unsafe";
+
+foreign import kernel32 "system:kernel32.lib";
+
+@(private)
+foreign kernel32 {
+	@(link_name="CreateThread")
+	rt_create_thread :: proc "stdcall" (
+		attributes: rawptr, stack_size: uint, start: proc "stdcall" (parameter: rawptr) -> u32,
+		parameter: rawptr, flags: u32, thread_id: rawptr,
+	) -> rawptr ---;
+	@(link_name="WaitForSingleObject")
+	rt_wait :: proc "stdcall" (handle: rawptr, milliseconds: u32) -> u32 ---;
+	@(link_name="CloseHandle")
+	rt_close :: proc "stdcall" (handle: rawptr) -> i32 ---;
+	@(link_name="AcquireSRWLockExclusive")
+	rt_lock :: proc "stdcall" (lock: rawptr) ---;
+	@(link_name="ReleaseSRWLockExclusive")
+	rt_unlock :: proc "stdcall" (lock: rawptr) ---;
+}
+
+// A spawned thread attaches to the runtime's panic state first, and detaching
+// runs its managed `thread_local` drops (design.md "Values that outlive every
+// scope").
+@(private)
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_thread_attach")
+	rt_attach :: proc "c" () ---;
+	@(link_name="loke_rt_v1_thread_detach")
+	rt_detach :: proc "c" () ---;
+}
+
+@(private) INFINITE :: u32(0xFFFFFFFF);
+
+// A running thread. Dropping one joins it, so a thread never outlives the owner
+// of its handle; `join` says so at the point it happens.
+Thread :: move_only struct {
+	@(private) handle: rawptr,
+}
+
+impl Thread {
+	// Waits for the thread to return. Its writes, and its `thread_local` drops,
+	// happen before this returns.
+	join :: proc(self: inout) {
+		if (self.handle == nil) { return; }
+		rt_wait(self.handle, INFINITE);
+		rt_close(self.handle);
+		self.handle = nil;
+	}
+
+	@(private)
+	wait :: hook(drop) proc(self: inout) {
+		self.join();
+	}
+}
+
+// What a new thread starts from: the entry and its argument, on the heap until
+// the thread takes them. `run` leads so the non-generic `thread_main` can find
+// the instantiation that knows `T`. The argument is capacity (design.md
+// "Uninitialized capacity"), so `new` needs no zero `T`.
+@(private)
+Start :: struct($T: type) {
+	run:   proc(block: rawptr),
+	entry: proc(value: move T),
+	@(initialized = live) arg: [1]T,
+	live:  int,
+}
+
+@(private)
+Start_Header :: struct {
+	run: proc(block: rawptr),
+}
+
+impl Start($T) {
+	begin :: proc(raw: rawptr) {
+		block := (^mut Start(T))(raw);
+		entry := block^.entry;
+		block^.live = 0;
+		arg := unsafe.take(block^.arg[0]);
+		unsafe.free(block);
+		entry(move(arg));
+	}
+}
+
+@(private)
+thread_main :: proc "stdcall" (raw: rawptr) -> u32 {
+	rt_attach();
+	(^Start_Header)(raw)^.run(raw);
+	rt_detach();
+	return 0;
+}
+
+// Runs `entry(arg)` on a new thread. The argument is moved in, and any borrow it
+// carries must be of process-lifetime storage, so nothing the thread holds can
+// end under it. Running out of memory or threads panics.
+@(private)
+spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) -> Thread {
+	block := new(Start(T)) or_else no_block(T);
+	block^.run = Start(T).begin;
+	block^.entry = entry;
+	unsafe.write(block^.arg[0], move(arg));
+	block^.live = 1;
+	handle := rt_create_thread(nil, 0, thread_main, rawptr(block), 0, nil);
+	if (handle == nil) { panic("thread creation failed"); }
+	return Thread{handle};
+}
+
+@(private)
+spawn_plain :: proc(entry: proc()) -> Thread {
+	plain := entry;
+	return spawn_with(run_plain, move(plain));
+}
+
+@(private)
+run_plain :: proc(entry: move proc()) {
+	entry();
+}
+
+spawn :: proc{spawn_with, spawn_plain};
+
+@(private)
+no_block :: proc($T: type) -> ^mut Start(T) {
+	panic("thread allocation failed");
+}
+
+// A `T` that one thread at a time may reach. `lock` blocks until the calling
+// thread holds it and answers a guard; the guard reaches the value, and
+// dropping it unlocks. An unlock happens before the next lock.
+//
+// Every operation takes a read-only `^` receiver, as `sync.Atomic`'s do, so a
+// `Mutex` works in file-scope storage and behind a `shared(T)`. It is
+// move-only: the lock word is an `Atomic`.
+Mutex :: struct($T: type) {
+	// A Windows SRWLOCK: one pointer, unlocked at zero, written only by the
+	// system's own atomic operations.
+	@(private) word: sync.Atomic(uintptr),
+	// Public for the same reason `Atomic`'s `value` is: a caller that owns the
+	// mutex outright, before spawning or after joining, needs no lock.
+	value: T,
+}
+
+impl Mutex($T) {
+	// Locking a mutex this thread already holds never returns.
+	lock :: proc(self: ^) -> Guard(T) {
+		rt_lock(rawptr(&self.word.value));
+		return Guard(T){&self.word, &self.value};
+	}
+}
+
+// Both pointers borrow the mutex, so it cannot move or end while locked. They
+// point into it rather than at it because naming `Mutex(T)` here would make
+// the two generic types instantiate each other (known-gaps.md).
+Guard :: move_only struct($T: type) {
+	@(private) word:  ^sync.Atomic(uintptr),
+	@(private) value: ^T,
+}
+
+impl Guard($T) {
+	// The guarded value, for as long as this guard holds the lock: an `inout`
+	// result borrows the guard, so nothing reached through it outlives the lock.
+	get :: proc(self: inout) -> inout T {
+		return inout (^mut T)(rawptr(self.value))^;
+	}
+
+	@(private)
+	unlock :: hook(drop) proc(self: inout) {
+		if (self.word == nil) { return; }
+		rt_unlock(rawptr(&self.word.value));
+	}
+}

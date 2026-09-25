@@ -1,0 +1,85 @@
+// design.md "Concurrency and the memory model", through `core:thread`: a moved
+// argument reaches the new thread, `join` orders the thread's writes and its
+// `thread_local` drops before what follows, dropping an unjoined `Thread` joins
+// it, and a `Mutex` and an `Atomic` keep two writers from racing.
+package main;
+
+import "core:fmt";
+import "core:sync";
+import "core:thread";
+
+// Every thread drops its own copy; the zero one is inert.
+Noisy :: struct { id: int }
+
+impl Noisy {
+	release :: hook(drop) proc(self: inout Noisy) {
+		if (self.id != 0) { fmt.println("drop", self.id); }
+	}
+}
+
+Job :: struct { name: string, rounds: int }
+
+total: thread.Mutex(int);
+hits: sync.Atomic(int);
+greeting: sync.Atomic(int);
+
+count :: proc(job: move Job) {
+	foreach (_ in 0..<job.rounds) {
+		guard := total.lock();
+		guard.get() += 1;
+		hits.add(1);
+	}
+}
+
+// Dropped on this thread's return, before `join` returns to `main`.
+keep :: proc(id: move int) {
+	held: thread_local Noisy;
+	held = Noisy{id};
+	fmt.println("kept", held.id);
+}
+
+// A handle copy moves in; the lock works through the `^T` it hands out.
+fill :: proc(list: move shared(thread.Mutex([dynamic]int))) {
+	foreach (i in 0..<1000) {
+		guard := list.get().lock();
+		guard.get().append(i);
+	}
+}
+
+greet :: proc() {
+	greeting.store(1);
+}
+
+main :: proc() {
+	first := thread.spawn(count, Job{"first", 10000});
+	second := thread.spawn(count, Job{"second", 10000});
+	first.join();
+	second.join();
+	fmt.println(total.value, hits.load());
+
+	list := shared(thread.Mutex([dynamic]int){value = {}});
+	{
+		one := thread.spawn(fill, list.clone());
+		two := thread.spawn(fill, list.clone());
+	}
+	{
+		guard := list.get().lock();
+		fmt.println(guard.get().len(), list.strong_count());
+	}
+
+	keeper := thread.spawn(keep, 7);
+	keeper.join();
+	fmt.println("joined");
+
+	{
+		greeter := thread.spawn(greet);
+	}
+	fmt.println(greeting.load());
+
+	// A borrow of process-lifetime storage may travel; a string literal is one.
+	named := thread.spawn(say, "literal");
+}
+
+say :: proc(text: move string_view) {
+	fmt.println(text);
+}

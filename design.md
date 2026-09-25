@@ -4932,6 +4932,8 @@ fmt.println(view[0]);
 
 The effect covers a value parameter, whose managed storage is shared with the caller for the call, as much as a view. A call through a procedure value may run any procedure of a compatible type, and a `dyn` call any witness the program builds for that slot, so each takes the union of their effects. Effects are whole-program and need no annotation; a procedure's effect is not part of its type.
 
+The same effect finds likely data races. When the entry passed to `core:thread`'s `spawn` is a named procedure whose effect writes file-scope or `static` storage, the call is reported with a warning, since every thread shares that storage. `thread_local` storage belongs to the thread, and an atomic operation takes a read-only receiver, so neither counts as a write here; nor does storage reached through a `thread.Mutex` guard. The warning finds no race the effect cannot see, such as one through a pointer or view.
+
 ### What is not checked
 
 The analysis is local to one procedure body, together with the recorded summary and declared levels of the procedures that body calls. Storing a borrow in a record field, container, global, or callback state is part of what it checks; see [Values that contain borrows](#values-that-contain-borrows) and [Retaining a borrow](#retaining-a-borrow). These cases remain the programmer's responsibility:
@@ -4940,7 +4942,7 @@ The analysis is local to one procedure body, together with the recorded summary 
 - pointers or views manufactured or stripped of provenance through `core:unsafe`;
 - aliases hidden by foreign code, and what a foreign procedure retains of a borrowed argument after it returns;
 - transferring borrows or unchecked addresses between threads, and keeping a `thread_local` borrow past the end of its thread;
-- concurrent access to the same storage. A data race is undefined behavior, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
+- concurrent access to the same storage, beyond the warning for a spawned entry's writes under [Global write effects](#global-write-effects). A data race is undefined behavior, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
 - which thread releases the last [`shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`'s `drop` and uses the control block's allocator;
 - everything [`unsafe.free`](#the-unsafe-package) releases.
 - a global written through a pointer or view to it that was itself stored in a global, or by foreign code, and one written by a hook the language calls implicitly (`drop`, `copy`, `convert`, or a `format` method run by `core:fmt`) while a borrow of it is live.
@@ -5580,7 +5582,7 @@ The fallible primitives `make`, `new`, and `new_clone`, and the `try_` forms of 
 
 ## Concurrency and the memory model
 
-Threads, mutexes, channels, and thread pools are library facilities, but reads and writes performed by them obey one language memory model.
+Threads, mutexes, channels, and thread pools are library facilities, but reads and writes performed by them obey one language memory model. `core:thread` provides the first two; see [standard-library.md](standard-library.md) "`core:thread`".
 
 Within one thread, evaluations are ordered by the rules under [Evaluation order](#evaluation-order). Evaluation and ownership transfer of a new thread's arguments happen before its first operation. On normal thread return, TLS destruction is sequenced before the thread's final operation; that final operation happens before a successful join returns. A mutex unlock happens before the next successful lock of that mutex. Atomic synchronization is defined below. These edges, together with ordinary sequenced-before order, form the **happens-before** relation.
 

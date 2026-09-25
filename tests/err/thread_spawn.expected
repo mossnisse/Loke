@@ -1,0 +1,11 @@
+warning[L0707]: `indirect` writes `count`, which every thread shares
+@36:7
+warning[L0707]: `with_static` writes `calls`
+@38:7
+warning[L0707]: `raw` writes `hits`
+@39:7
+L0647
+@42:7
+this slice borrows `local`, which does not outlive `arg`
+L0513
+@51:2

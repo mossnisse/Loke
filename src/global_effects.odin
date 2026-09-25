@@ -18,6 +18,12 @@ Effect_Call :: struct {
 	dyn_index:     int,
 }
 
+// A `thread.spawn` call and the procedure it starts.
+Thread_Spawn :: struct {
+	entry: Symbol_Id,
+	span:  Span,
+}
+
 // One body's own writes and calls, before the fixed point.
 @(private = "file")
 Body_Effects :: struct {
@@ -115,7 +121,69 @@ prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if !ok {
 		return
 	}
+	if !c.global_writes_ready {
+		note_thread_spawn(c, v, target.callee)
+	}
 	prov_effect_call(graph, target, v.span)
+}
+
+// design.md "Global write effects": a `thread.spawn` whose entry is a named
+// procedure, kept until the effects settle. Each body is summarized once before
+// then, so each call is noted once.
+@(private = "file")
+note_thread_spawn :: proc(c: ^Compiler, v: ^Expr_Call, callee: Symbol_Id) {
+	sym := symbol_of(c, callee)
+	if sym == nil || len(v.bound) == 0 {
+		return
+	}
+	if origin := symbol_of(c, sym.instance_of); origin != nil {
+		sym = origin
+	}
+	pkg := package_of(c, sym.pkg)
+	name := identifier_text(c, sym.name)
+	if pkg == nil || pkg.key != STD_THREAD || (name != "spawn_with" && name != "spawn_plain") {
+		return
+	}
+	entry := INVALID_SYMBOL
+	#partial switch e in v.bound[0] {
+	case ^Expr_Ident:
+		entry = e.symbol
+	case ^Expr_Selector:
+		entry = e.resolution.symbol
+	}
+	entry_sym := symbol_of(c, entry)
+	if entry_sym == nil || entry_sym.kind != .Proc {
+		return
+	}
+	// `spawn`'s own forwarding to `spawn_with` is not a caller's entry.
+	if entry_pkg := package_of(c, entry_sym.pkg); entry_pkg != nil && entry_pkg.key == STD_THREAD {
+		return
+	}
+	if c.thread_spawns == nil {
+		c.thread_spawns = make([dynamic]Thread_Spawn, 0, 4, c.semantic_allocator)
+	}
+	append(&c.thread_spawns, Thread_Spawn{entry = entry, span = v.span})
+}
+
+// A spawned entry that writes a global every thread shares races with any other
+// thread that reaches it. `thread_local` storage is the thread's own, and an
+// atomic operation reads its receiver, so neither is a write here.
+@(private = "file")
+warn_thread_races :: proc(c: ^Compiler) {
+	for spawn in c.thread_spawns {
+		for global in c.global_writes[spawn.entry] {
+			sym := symbol_of(c, global)
+			if sym == nil || sym.duration == .Thread_Local {
+				continue
+			}
+			warnf(
+				c, spawn.span, "L0707",
+				"`%s` writes `%s`, which every thread shares, so this thread may race with another",
+				identifier_text(c, symbol_of(c, spawn.entry).name), identifier_text(c, sym.name),
+			)
+			add_notef(c, sym.span, "declared here; make it `thread_local`, an `Atomic`, or a `thread.Mutex`")
+		}
+	}
 }
 
 // A user operator is a call too, though it has no Expr_Call node.
@@ -253,6 +321,7 @@ compute_global_writes :: proc(k: ^Checker) {
 		}
 	}
 	c.global_writes_ready = true
+	warn_thread_races(c)
 }
 
 // The bodies one call may run.

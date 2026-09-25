@@ -20,6 +20,8 @@ STD_FMT :: "core:fmt"
 STD_SLICE :: "core:slice"
 STD_STRINGS :: "core:strings"
 STD_SYNC :: "core:sync"
+// Contributes nothing; `global_effects.odin` finds its `spawn` by this key.
+STD_THREAD :: "core:thread"
 STD_SIMD :: "core:simd"
 STD_LOG :: "core:log"
 STD_META :: "base:meta"

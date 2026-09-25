@@ -31,6 +31,10 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 	if any_provider_selected(e.c) {
 		seen["@loke_rt_v1_program_init"] = true
 	}
+	// `emit_runtime_declarations` already declares these for `wmain`, and
+	// `core:thread` binds them for the threads it starts.
+	seen["@loke_rt_v1_thread_attach"] = true
+	seen["@loke_rt_v1_thread_detach"] = true
 	for id in package_order(e.c) {
 		pkg := package_of(e.c, id)
 		if pkg == nil {

@@ -522,23 +522,6 @@ and `string_view`, but not which methods an unfixed string receiver has.
 Proposal: an unfixed string receiver takes `string_view`'s methods, with static
 lifetime.
 
-## Threads the language cannot start
-
-The [memory model](design.md#concurrency-and-the-memory-model), `thread_local`
-teardown order, `Once` poisoning, `shared(T)`, and atomic handle accounting on
-every `string` copy (`loke_rt_v1_string_retain` in `runtime/text.c`) are all
-specified and paid for, but nothing in `core` or `base` starts a thread, so no
-program exercises any of it. [Thread-affine strings](#thread-affine-strings)
-calls the atomic count the most expensive rule per line of ordinary code; today
-it buys nothing.
-
-Proposal: add a minimal `core:thread` before v1 freezes these rules — `spawn`
-taking an entry procedure and moved arguments that carry no checked borrow,
-`join`, and a `Mutex` — so the model has a caller. The inferred
-[global write effects](design.md#global-write-effects) then give a cheap check:
-a spawned entry whose effect writes a global that is neither `thread_local` nor
-atomic is reported as a likely data race.
-
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
@@ -573,6 +556,38 @@ this conservative precision tradeoff.
 Raw pointers, stored borrows, foreign calls, and cross-thread lifetimes remain
 explicit trust boundaries. This keeps low-level optimization and interop
 possible without making unsafe behavior the default.
+
+### Threads the language can start
+
+The memory model, `thread_local` teardown, `Once` poisoning, `shared(T)`, and
+atomic handle accounting on every `string` copy were specified and paid for
+before anything in `core` or `base` started a thread, so no program exercised
+them. `core:thread` is the smallest library that gives them a caller: `spawn`,
+`join`, and `Mutex`.
+
+Odin's `thread.create` hands the new thread a `rawptr` of data. `spawn` takes an
+entry procedure and one moved argument instead, and the argument is checked
+with `@(escape=static)`: any borrow it carries must be of process-lifetime
+storage. The audit proposed "no checked borrow" at all; the escape level is the
+rule the checker already had, and it lets a string literal travel while a
+slice of a local does not. A static root can still race, but that is the case
+the effect warning below covers. One argument is enough: several travel as a
+record, and a procedure with no argument has its own overload.
+
+A mutex beside its data would be of little use here. A `^T` cannot be written
+through, so a `shared(T)` payload guarded by a `Mutex` field could not be
+updated, and data in a global beside a mutex is exactly what the race warning
+reports. So `Mutex(T)` owns the value, as Rust's does, and the guard returns it
+as an `inout` result, whose provenance the language already ties to the guard.
+Dropping an unjoined `Thread` joins it rather than detaching, so the owner of a
+handle always outlives the thread.
+
+The race check is a warning over the existing
+[global write effects](design.md#global-write-effects): a spawned entry whose
+effect writes shared, non-`thread_local` storage. Atomic operations and the
+mutex take read-only receivers, so they are not writes and need no exemption.
+It is a warning because it sees only globals and cannot prove that a global is
+written only before a thread starts or after it is joined.
 
 ### Managed lexical storage
 
