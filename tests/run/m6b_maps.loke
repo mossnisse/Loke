@@ -250,6 +250,7 @@ main :: proc() {
 
 	inout_slots();
 	distinct_keys();
+	shrink_floor();
 }
 
 bump :: proc(n: inout int) { n += 1; }
@@ -467,4 +468,21 @@ distinct_keys :: proc() {
 	plain[3] = 6;
 	fmt.println(folded.len(), folded[Folded(2)]);
 	fmt.println(plain.len(), plain[2]);
+}
+
+// `shrink(min)` with a floor above the current capacity leaves the capacity
+// where it is, whether or not a removal left a tombstone to clear.
+shrink_floor :: proc() {
+	clean: map[int]int = {};
+	clean[1] = 1;
+	before := clean.cap();
+	clean.shrink(100);
+	fmt.println(clean.cap() == before);
+	holed: map[int]int = {};
+	holed[1] = 1;
+	holed[2] = 2;
+	holed.remove(1);
+	before = holed.cap();
+	holed.shrink(100);
+	fmt.println(holed.cap() == before, holed[2]);
 }

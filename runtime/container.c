@@ -121,16 +121,16 @@ int32_t loke_rt_v1_dyn_reserve(
 
 void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops) {
 	uint64_t bytes;
-	if (self->data != 0) {
-		if (ops->elem_drop != 0) {
-			int64_t i;
-			for (i = 0; i < self->len; i += 1) {
-				ops->elem_drop(dyn_at(self, ops, i));
-			}
+	/* Not guarded by `data`: zero-sized elements are live without any storage,
+	 * and each still owes its drop hook. */
+	if (ops->elem_drop != 0) {
+		int64_t i;
+		for (i = 0; i < self->len; i += 1) {
+			ops->elem_drop(dyn_at(self, ops, i));
 		}
-		if (loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes) && bytes != 0) {
-			loke_rt_v1_free(self->allocator, self->data, bytes, sane_container_align(ops->elem_align));
-		}
+	}
+	if (self->data != 0 && loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes) && bytes != 0) {
+		loke_rt_v1_free(self->allocator, self->data, bytes, sane_container_align(ops->elem_align));
 	}
 	memset(self, 0, sizeof *self);
 }
@@ -473,17 +473,21 @@ int32_t loke_rt_v1_dyn_shrink(
 	if (min_capacity < 0) {
 		loke_rt_v1_container_fault("a container capacity cannot be negative");
 	}
-	if (target >= self->cap || self->data == 0) {
+	if (target >= self->cap) {
 		return 1;
 	}
 	if (!loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &old_bytes) ||
 	    !loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
 		return 0;
 	}
+	/* No element left, or a zero-sized element, whose capacity never had
+	 * storage behind it. */
 	if (new_bytes == 0) {
-		loke_rt_v1_free(self->allocator, self->data, old_bytes, sane_container_align(ops->elem_align));
+		if (self->data != 0) {
+			loke_rt_v1_free(self->allocator, self->data, old_bytes, sane_container_align(ops->elem_align));
+		}
 		self->data = 0;
-		self->cap = 0;
+		self->cap = target;
 		return 1;
 	}
 	storage = loke_rt_v1_resize(
@@ -989,7 +993,12 @@ int32_t loke_rt_v1_map_shrink(
 	if (!map_slots_for(want, &slots)) {
 		return 0;
 	}
-	if (slots >= old->slot_count && old->tombstones == 0) {
+	/* A minimum above the current size never grows the table; with tombstones
+	 * the rebuild still happens, at the size it already has. */
+	if (slots > old->slot_count) {
+		slots = old->slot_count;
+	}
+	if (slots == old->slot_count && old->tombstones == 0) {
 		return 1;
 	}
 	if (!map_block_shape(ops, slots, &shape)) {

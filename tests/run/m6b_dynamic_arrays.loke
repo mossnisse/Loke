@@ -90,4 +90,24 @@ main :: proc() {
 	names.clear();
 	fmt.println(names.len());
 	fmt.println(names.cap() >= 4);
+
+	zero_sized();
+}
+
+// A zero-sized element has no storage behind it, yet each one is live: its
+// drop hook runs, and `shrink` still brings the capacity down to the length.
+Token :: struct {};
+token_drops: static int = 0;
+impl Token {
+	release :: hook(drop) proc(self: inout Token) { token_drops += 1; }
+}
+
+zero_sized :: proc() {
+	{
+		tokens: [dynamic]Token = {};
+		tokens.append(Token{}, Token{}, Token{});
+		tokens.shrink();
+		fmt.println(tokens.len(), tokens.cap());
+	}
+	fmt.println(token_drops);
 }
