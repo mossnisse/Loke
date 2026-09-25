@@ -181,6 +181,8 @@ Flow_Graph :: struct {
 	// which takes the provider's region with it rather than ending it.
 	aliased_moves:    map[rawptr]bool,
 	has_region_event: bool,
+	// The uses that are a local's `drop` at scope exit, for the note naming them.
+	scope_drops:      map[Span]bool,
 	has_content_load: bool,
 
 	k:       ^Checker,
@@ -375,12 +377,16 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 			resize(&graph.owners_in_scope, owners)
 		case .Prov_Root:
 			provider_region_end(graph, graph.roots[int(action.root)].symbol, action.span)
+			prov_drop_use(graph, graph.roots[int(action.root)].symbol, action.span, at_scope_exit = true)
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
 		case .Local:
 			id := graph.tracked[action.slot].symbol
 			sym := symbol_of(graph.k.c, id)
 			span := sym == nil ? no_span() : sym.span
 			provider_region_end(graph, id, span)
+			if graph.mode != .Lifecycle {
+				prov_drop_use(graph, id, span, at_scope_exit = true)
+			}
 			emit(graph, Flow_Event {
 				kind = .Cleanup,
 				slot = action.slot,

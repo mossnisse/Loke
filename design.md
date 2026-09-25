@@ -4777,6 +4777,17 @@ numbers.append(5);      // ERROR: invalidates `second`
 fmt.println(second[0]);
 ```
 
+Dropping a value that runs a hand-written `hook(drop)`, its own or one of something it owns, is a use of every borrow the value carries, since the hook may read them. That drop happens at scope exit, at an explicit `drop`, and when the variable is assigned over, so a lock guard holding a borrow of its mutex keeps the mutex borrowed until the guard's scope ends, even if the guard is never named again. A value moved away no longer carries its borrows, and dropping a container runs no hook of its own, so a `[dynamic][]int` constrains its roots only until its last use.
+
+```odin
+Guard :: move_only struct { p: ^[dynamic]int }
+impl Guard { done :: hook(drop) proc(self: inout) { fmt.println(self.p^.len()); } }
+
+xs := [dynamic]int{1, 2, 3};
+g := Guard{&xs};
+drop(xs);               // ERROR: `g`'s hook reads `xs` when `g` is dropped
+```
+
 A conflict diagnostic identifies the root, borrow, conflicting operation, and the later use that keeps the borrow live.
 
 ### Temporaries and procedure boundaries

@@ -1,0 +1,56 @@
+// design.md "Capabilities and the one rule": dropping a value whose drop hook
+// may read its borrows is a use of them, at scope exit, at an explicit `drop`,
+// and at an assignment over it, including when the hook belongs to a field.
+// A locked `thread.Mutex` therefore cannot move while its guard is pending.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Guard :: move_only struct { p: ^[dynamic]int }
+
+impl Guard {
+	done :: hook(drop) proc(self: inout) {
+		if (self.p != nil) { fmt.println(self.p^.len()); }
+	}
+}
+
+Outer :: struct { inner: Guard, n: int }
+
+take :: proc(g: move Guard) {}
+
+maybe_moved :: proc(c: bool) {
+	xs := [dynamic]int{1};
+	g := Guard{&xs};
+	if (c) { take(move(g)); }
+	drop(xs);
+}
+
+assigned_after :: proc() {
+	xs := [dynamic]int{1};
+	ys := [dynamic]int{2};
+	g := Guard{&xs};
+	drop(xs);
+	g = Guard{&ys};
+}
+
+nested :: proc() {
+	xs := [dynamic]int{1};
+	o := Outer{Guard{&xs}, 1};
+	drop(xs);
+}
+
+declared_later :: proc() {
+	g: Guard = {};
+	ys := [dynamic]int{2};
+	g = Guard{&ys};
+}
+
+
+locked_mutex_moved :: proc() {
+	m: thread.Mutex(int) = {};
+	guard := m.lock();
+	moved := move(m);
+}
+
+main :: proc() {}

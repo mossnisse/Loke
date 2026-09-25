@@ -34,23 +34,6 @@ the compiler, unless the rewording is the intended fix.
   xs.append(1);   // loke: panic: allocation failed
   ```
 
-- **A drop hook does not keep its value's borrows live.** A record that carries
-  a borrow and has a `hook(drop)` still reads that borrow when it is dropped at
-  scope exit, but the checker ends the borrow at the record's last written use.
-  So the borrowed root can be dropped or moved first, and the hook reads dead
-  storage. The same hole lets a locked `thread.Mutex` be moved while its unused
-  guard is still waiting to unlock it:
-
-  ```odin
-  Guard :: move_only struct { p: ^[dynamic]int }
-  impl Guard {
-  	done :: hook(drop) proc(self: inout) { fmt.println(self.p^.len()); }
-  }
-  xs := [dynamic]int{1, 2, 3};
-  g := Guard{&xs};
-  drop(xs);   // accepted; `g`'s hook then reads the dropped array
-  ```
-
 - **Two generic types cannot name each other through a method.** A generic
   record whose field points to a second generic record, whose `impl` has a
   method returning the first, is reported as instantiating itself when the

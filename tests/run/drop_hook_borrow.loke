@@ -1,0 +1,65 @@
+// design.md "Capabilities and the one rule": a value whose drop hook reads its
+// borrows gives them up when it is moved away or dropped, and a container of
+// views runs no hook, so none of these keeps its root borrowed.
+package main;
+
+import "core:fmt";
+
+Guard :: move_only struct { p: ^[dynamic]int }
+
+impl Guard {
+	done :: hook(drop) proc(self: inout) {
+		if (self.p != nil) { fmt.println("guard", self.p^.len()); }
+	}
+}
+
+Plain :: struct { view: []int }
+
+take :: proc(g: move Guard) {}
+
+moved_away :: proc() {
+	xs := [dynamic]int{1};
+	g := Guard{&xs};
+	take(move(g));
+	drop(xs);
+}
+
+dropped_first :: proc() {
+	xs := [dynamic]int{1, 2};
+	g := Guard{&xs};
+	drop(g);
+	drop(xs);
+}
+
+reassigned :: proc() {
+	xs := [dynamic]int{1, 2, 3};
+	ys := [dynamic]int{4};
+	g := Guard{&xs};
+	g = Guard{&ys};
+	drop(xs);
+}
+
+no_hook :: proc() {
+	xs := [dynamic]int{1, 2};
+	views: [dynamic][]int = {};
+	views.append(xs[:]);
+	xs.append(3);
+	p := Plain{xs[:]};
+	xs.append(4);
+}
+
+forgotten :: proc() {
+	xs := [dynamic]int{1};
+	g := Guard{&xs};
+	moved := move(g);
+	drop(moved);
+	drop(xs);
+}
+
+main :: proc() {
+	moved_away();
+	dropped_first();
+	reassigned();
+	no_hook();
+	forgotten();
+}

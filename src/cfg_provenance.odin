@@ -739,9 +739,46 @@ prov_consume :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string) 
 			consumed = prov_one(graph, slot)
 			prov_emit(graph, Prov_Event{kind = .Live, sources = consumed, span = span})
 		}
+	} else if is_ident && prov_drop_reads(graph, ident.symbol) {
+		// The destination takes the borrows, and the local gives them up, or the
+		// drop its scope exit still reaches would keep them in use.
+		sym := symbol_of(graph.k.c, ident.symbol)
+		consumed = prov_project_content(graph, consumed, sym.type, nil, sym.type, span)
+		prov_clear_content(graph, ident.symbol, span)
 	}
 	prov_invalidate(graph, source, span, verb)
 	return consumed
+}
+
+// design.md "Owners and `drop`": dropping a local runs its `drop` hooks, which
+// may read what it borrows, so the drop uses those borrows. A container's own
+// drop reads none, so a local without a hand-written hook is not asked.
+@(private)
+prov_drop_reads :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
+	sym := symbol_of(graph.k.c, id)
+	return sym != nil && type_drop_runs_hook(graph.k.c, sym.type) && len(prov_content_slots(graph, id)) > 0
+}
+
+@(private)
+prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_exit := false) {
+	if !prov_drop_reads(graph, id) {
+		return
+	}
+	prov_emit(graph, Prov_Event{kind = .Live, sources = prov_content_slots(graph, id), span = span})
+	if at_scope_exit {
+		if graph.scope_drops == nil {
+			graph.scope_drops = make(map[Span]bool, 4, graph.alloc)
+		}
+		graph.scope_drops[span] = true
+	}
+}
+
+// A dropped or moved-out local holds no borrows until it is assigned again.
+@(private)
+prov_clear_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
+	for slot in prov_content_slots(graph, id) {
+		prov_define_one_content(graph, slot, nil, span)
+	}
 }
 
 // Binds loans to a name no declaration defines: a `foreach` element or a case
@@ -2434,6 +2471,8 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				graph.region_of[ident.symbol] = existing
 			}
 			prov_retain_escape(graph, target, sources, expr_span(target))
+			// The old value is dropped here.
+			prov_drop_use(graph, ident.symbol, expr_span(target))
 			prov_invalidate(graph, target, expr_span(target), "assigned")
 			if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
 				prov_reborrow(graph, sources, expr_base(target).type, slot, expr_span(target))
@@ -2647,6 +2686,10 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		case .Drop:
 			if len(v.bound) == 1 {
 				provider_drop_end(graph, v)
+				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
+					prov_drop_use(graph, ident.symbol, v.span)
+					prov_clear_content(graph, ident.symbol, v.span)
+				}
 				prov_invalidate(graph, v.bound[0], v.span, "dropped")
 			}
 			return nil

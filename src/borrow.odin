@@ -2016,9 +2016,7 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 		)
 		state.diagnostic_precision |= state.precision[slot]
 		add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
-		if uses[slot].file != NO_FILE {
-			add_notef(state.k.c, uses[slot], "and is still used here, which keeps it live")
-		}
+		add_use_note(state, uses[slot])
 		return
 	}
 }
@@ -2204,8 +2202,20 @@ add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, l
 		)
 	}
 	add_notef(k.c, loan.span, "the %s is created here", loan.what)
-	if later.file != NO_FILE {
-		add_notef(k.c, later, "and is still used here, which keeps it live")
+	add_use_note(state, later)
+}
+
+// The later use keeping a borrow live. One at a declaration is that local's
+// `drop` hook, run when its scope ends.
+@(private = "file")
+add_use_note :: proc(state: ^Prov_State, later: Span) {
+	if later.file == NO_FILE {
+		return
+	}
+	if state.graph.scope_drops[later] {
+		add_notef(state.k.c, later, "and is still used when this is dropped at the end of its scope, which keeps it live")
+	} else {
+		add_notef(state.k.c, later, "and is still used here, which keeps it live")
 	}
 }
 

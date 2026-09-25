@@ -169,6 +169,49 @@ type_is_managed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return lifecycle_of(c, type).managed
 }
 
+// Whether dropping a value of this type runs a hand-written `hook(drop)`, its
+// own or one of something it owns. Such a hook may read the value's borrows,
+// so the drop is a use of them; a container's intrinsic drop reads none.
+type_drop_runs_hook :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
+	return drop_runs_hook_walk(c, type, &visiting)
+}
+
+@(private = "file")
+drop_runs_hook_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> bool {
+	if !type_is_managed(c, type) {
+		return false
+	}
+	if lifecycle_of(c, type).custom_drop != INVALID_SYMBOL {
+		return true
+	}
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info == nil || visiting[under] {
+		return false
+	}
+	visiting[under] = true
+	#partial switch info.kind {
+	case .Array, .Dynamic_Array:
+		return drop_runs_hook_walk(c, info.element, visiting)
+	case .Map:
+		return drop_runs_hook_walk(c, info.key, visiting) || drop_runs_hook_walk(c, info.element, visiting)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && drop_runs_hook_walk(c, sym.type, visiting) {
+				return true
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if variant != TYPE_VOID && drop_runs_hook_walk(c, variant, visiting) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false

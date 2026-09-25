@@ -1,0 +1,19 @@
+L0512
+@26:2
+`xs` cannot be dropped here: a read-only pointer of it is still in use
+
+L0512
+@33:2
+`xs` cannot be dropped here
+
+L0512
+@40:2
+`xs` cannot be dropped here
+
+L0513
+@44:2
+this pointer is used after `ys`, the local it borrows, has ended
+
+L0512
+@53:11
+`m` cannot be moved here: a read-only borrow of it is still in use
