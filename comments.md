@@ -306,6 +306,16 @@ profiles contain.
   "`core:path`" lists only `separator()`. Should the constant be specified or be
   made private?
 
+## Open questions in `core:strconv`
+
+- `parse_f64` rounds through the C library's `strtod`, as `fmt` already does to
+  find its shortest spellings. That makes it foreign code, which design.md
+  "Compile-time procedure evaluation" keeps out of constants for good, and it
+  reads the decimal point of the C locale, which a program that calls
+  `setlocale` through a foreign binding can change. A correctly rounded parser
+  in Loke (Eisel-Lemire with a big-decimal fallback) would fix both. Is either
+  worth that much code?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

@@ -664,9 +664,17 @@ only one way to fail, so it answers `Option(bool)` instead; it accepts `true`,
 whole string after permitted surrounding ASCII whitespace. A separate scanner
 API can later parse a prefix.
 
-`base == 0` recognizes the language prefixes `0b`, `0o`, and `0x`; otherwise
-the accepted range is 2 through 36, with no prefix. Underscores may separate
-digits, as in a Loke literal.
+`base == 0` recognizes the language prefixes `0b`, `0o`, and `0x`, in lower
+case only; otherwise the accepted range is 2 through 36, with no prefix.
+Underscores may separate digits, as in a Loke literal: one may follow a digit or
+a prefix, never lead the digits.
+
+`parse_f64` accepts `[+-]digits[.digits][(e|E)[+-]digits]`, where the digits on
+one side of the point may be absent but not on both. Underscores follow the
+integer rule in all three digit runs, the exponent included. The result is the
+correctly rounded `f64`, so every value `core:fmt` prints parses back to itself.
+A finite spelling beyond the largest `f64` is `Overflow`; one below the smallest
+subnormal rounds to zero. `inf` and `nan` are not accepted.
 
 Formatting scalars remains in `core:fmt`; `strconv` should not grow a second
 formatting system.

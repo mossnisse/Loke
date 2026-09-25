@@ -71,6 +71,12 @@ main :: proc() {
 	show_i64("0x10", 16);
 	show_i64("0b11", 2);
 
+	// Only lower-case prefixes, and a leading underscore only after one, as in a
+	// Loke literal: `0X10` reads as decimal with trailing data, `_12` is a name.
+	show_i64("0X10");
+	show_i64("_12");
+	show_i64("0x_10");
+
 	switch (unsigned in strconv.parse_u64("18446744073709551615")) {
 	case .ok:
 		fmt.println(unsigned);
@@ -106,6 +112,16 @@ main :: proc() {
 	show_f64("1.5e1_0");
 	show_f64("_");
 	show_f64("1e_");
+	show_f64("_5");
+	show_f64(".5");
+	show_f64("5.");
+
+	// Correctly rounded: what `fmt` prints reads back as the same value. Scaling
+	// a decimal mantissa by powers of ten got each of these an ulp off.
+	show_f64("0.9999999999999999");
+	show_f64("1.602176634e-19");
+	show_f64("1.2345678901234567e-300");
+	show_f64("1.7976931348623157e308");
 
 	// Mantissas are accumulated without wrapping, and a finite spelling outside
 	// f64's range reports Overflow instead of succeeding with infinity.

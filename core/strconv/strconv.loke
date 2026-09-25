@@ -10,6 +10,8 @@
 @(public)
 package strconv;
 
+import "core:unsafe";
+
 // What went wrong: the failure payload of each parser's `Result`, so a parse
 // composes with `or_return` like every other fallible call in the library.
 Parse_Error :: enum {
@@ -29,7 +31,8 @@ Parse_Error :: enum {
 // Absence is the whole story here, so this one reports `Option` rather than an
 // error value.
 //
-// Accepts `true`/`false` in either case, and `1`/`0`.
+// Accepts `true`, `True`, `TRUE`, `1`, and the matching `false` spellings and
+// `0`; not `tRUE`.
 parse_bool :: proc(text: string_view) -> Option(bool) {
 	trimmed := trim_ascii_space(text);
 	if (trimmed == "true" || trimmed == "TRUE" || trimmed == "True" || trimmed == "1") {
@@ -72,131 +75,73 @@ parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error
 	return .ok(uint(parse_u64(text, base) or_return));
 }
 
-// ponytail: a decimal mantissa scaled by a power of ten. Exact when the mantissa
-// fits 53 bits and the exponent is within the exactly representable powers
-// (|exponent| <= 22) — the common case, including every value a program wrote
-// itself — and correct to within an ulp or two outside it. Correctly rounded
-// parsing (Eisel-Lemire, or a big-integer fallback) goes behind this same
-// signature when something needs bit-exact round-tripping.
+// Accepts `[+-]digits[.digits][(e|E)[+-]digits]`, where either digit run around
+// the point may be empty but not both. Underscores may follow any digit, the
+// rule `parse_u64` applies. The lexer takes them in a written literal's mantissa
+// but not its exponent; that asymmetry carries no reason this package can see,
+// so one rule covers all three digit runs here.
 //
-// Accepts `[+-]digits[.digits][(e|E)[+-]digits]`, with underscores ignored among
-// the digits exactly as `parse_u64` ignores them. The lexer takes them in a
-// written literal's mantissa but not its exponent; that asymmetry carries no
-// reason this package can see, so one rule covers all three digit runs here.
+// The result is correctly rounded. The syntax is checked here and the rounding
+// is the C library's `strtod`, the same one `fmt` relies on to find the shortest
+// spelling that reads back, so what `fmt` prints this parses to the same value.
 //
 // Infinities and NaNs are not spellable; a caller that needs them tests for the
 // words itself.
 parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
-	trimmed := trim_ascii_space(text);
-	if (trimmed.len() == 0) { return .err(.Invalid_Syntax); }
-	bytes := trimmed.bytes();
+	bytes := trim_ascii_space(text).bytes();
 	at := 0;
-	negative := false;
-	if (bytes[at] == u8('+') || bytes[at] == u8('-')) {
-		negative = bytes[at] == u8('-');
-		at += 1;
-	}
-
-	mantissa: u64 = 0;
-	exponent := 0;
-	digits := 0;
-	// Digits past the point where a u64 mantissa saturates change the exponent
-	// instead of the mantissa; they are below the precision of the result.
-	saturated := false;
-	for (; at < bytes.len() && (is_digit(bytes[at]) || bytes[at] == u8('_')); at += 1) {
-		if (bytes[at] == u8('_')) { continue; }
-		digits += 1;
-		if (saturated) {
-			exponent += 1;
-			continue;
-		}
-		digit := u64(bytes[at] - u8('0'));
-		if (mantissa > (0xFFFFFFFFFFFFFFFF - digit) / 10) {
-			saturated = true;
-			exponent += 1;
-			continue;
-		}
-		mantissa = mantissa * 10 + digit;
-	}
-	if (at < bytes.len() && bytes[at] == u8('.')) {
-		at += 1;
-		for (; at < bytes.len() && (is_digit(bytes[at]) || bytes[at] == u8('_')); at += 1) {
-			if (bytes[at] == u8('_')) { continue; }
-			digits += 1;
-			if (saturated) { continue; }
-			digit := u64(bytes[at] - u8('0'));
-			if (mantissa > (0xFFFFFFFFFFFFFFFF - digit) / 10) {
-				saturated = true;
-				continue;
-			}
-			mantissa = mantissa * 10 + digit;
-			exponent -= 1;
-		}
-	}
-	if (digits == 0) { return .err(.Invalid_Syntax); }
-
+	if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) { at += 1; }
+	whole := digit_run(bytes, at);
+	fraction := whole;
+	if (whole < bytes.len() && bytes[whole] == u8('.')) { fraction = digit_run(bytes, whole + 1); }
+	if (whole == at && fraction <= whole + 1) { return .err(.Invalid_Syntax); }
+	at = fraction;
 	if (at < bytes.len() && (bytes[at] == u8('e') || bytes[at] == u8('E'))) {
 		at += 1;
-		exponent_negative := false;
-		if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) {
-			exponent_negative = bytes[at] == u8('-');
-			at += 1;
-		}
-		written := 0;
-		value := 0;
-		for (; at < bytes.len() && (is_digit(bytes[at]) || bytes[at] == u8('_')); at += 1) {
-			if (bytes[at] == u8('_')) { continue; }
-			written += 1;
-			// Any exponent past this is already infinity or zero; clamping keeps the
-			// accumulation from wrapping.
-			if (value < 100000) {
-				value = value * 10 + int(bytes[at] - u8('0'));
-			}
-		}
-		if (written == 0) { return .err(.Invalid_Syntax); }
-		exponent += -value if exponent_negative else value;
+		if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) { at += 1; }
+		exponent := digit_run(bytes, at);
+		if (exponent == at) { return .err(.Invalid_Syntax); }
+		at = exponent;
 	}
 	if (at != bytes.len()) { return .err(.Trailing_Data); }
 
-	value := scale(f64(mantissa), exponent);
-	// Scaling a finite decimal outside f64's range must not quietly manufacture
-	// an infinity: infinities are not accepted spellings, and `Parse_Error.Overflow`
-	// exists precisely for a value the destination cannot hold.
-	if (mantissa != 0 && value > 1.7976931348623157e308) {
+	// `strtod` reads to a terminator, which a view does not have, and knows
+	// nothing of underscores.
+	// ponytail: allocates the spelling; a stack buffer for short numbers if parsing
+	// ever shows up in a profile.
+	spelled: [dynamic]u8 = {};
+	foreach (byte in bytes) {
+		if (byte != u8('_')) { spelled.append(byte); }
+	}
+	spelled.append(0);
+	value := rt_strtod(unsafe.cstring_view(unsafe.raw_data(spelled)), nil);
+	// A finite decimal outside f64's range must not quietly become an infinity:
+	// infinities are not accepted spellings, and `Parse_Error.Overflow` exists
+	// precisely for a value the destination cannot hold.
+	if (value > 1.7976931348623157e308 || value < -1.7976931348623157e308) {
 		return .err(.Overflow);
 	}
-	return .ok(-value if negative else value);
+	return .ok(value);
 }
 
 // ---------------------------------------------------------------- private --
 
+// The runtime links the C library, so `strtod` needs no `foreign import`.
+// Private, or the file-wide `@(public)` would export it as `strconv.rt_strtod`.
 @(private)
-POWERS_OF_TEN :: [23]f64{
-	1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
-	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
-};
+foreign loke_runtime {
+	@(link_name="strtod")
+	rt_strtod :: proc "c" (text: cstring_view, end: rawptr) -> f64 ---;
+}
 
-// One multiply or divide by an exactly representable power of ten is exactly
-// rounded; beyond that the scaling repeats and the error compounds.
-//
-// The table is indexed where it is declared. Binding it to a local first reads
-// as a convenience, but a constant aggregate materializes into the frame: that
-// spelling emitted an `alloca [23 x double]` and stored all 184 bytes on every
-// call.
+// The end of the digits starting at `start`: nothing unless the first is a
+// digit, and underscores only after one.
 @(private)
-scale :: proc(value: f64, exponent: int) -> f64 {
-	if (exponent >= 0) {
-		if (exponent <= 22) { return value * POWERS_OF_TEN[exponent]; }
-		scaled := value;
-		left := exponent;
-		for (; left > 22; left -= 22) { scaled *= POWERS_OF_TEN[22]; }
-		return scaled * POWERS_OF_TEN[left];
-	}
-	if (exponent >= -22) { return value / POWERS_OF_TEN[-exponent]; }
-	scaled := value;
-	left := -exponent;
-	for (; left > 22; left -= 22) { scaled /= POWERS_OF_TEN[22]; }
-	return scaled / POWERS_OF_TEN[left];
+digit_run :: proc(bytes: []u8, start: int) -> int {
+	if (start >= bytes.len() || !is_digit(bytes[start])) { return start; }
+	at := start + 1;
+	for (; at < bytes.len() && (is_digit(bytes[at]) || bytes[at] == u8('_')); at += 1) {}
+	return at;
 }
 
 @(private)
@@ -239,14 +184,20 @@ split_number :: proc(text: string_view, base: int) -> Result(Split, Parse_Error)
 		sign = bytes[at] == u8('-');
 		at += 1;
 	}
+	// Lower case only, as grammar.md "Literals" spells them.
 	selected := 10 if base == 0 else base;
+	prefixed := false;
 	if (base == 0 && at + 1 < bytes.len() && bytes[at] == u8('0')) {
 		marker := bytes[at + 1];
-		if (marker == u8('b') || marker == u8('B')) { selected = 2; at += 2; }
-		else if (marker == u8('o') || marker == u8('O')) { selected = 8; at += 2; }
-		else if (marker == u8('x') || marker == u8('X')) { selected = 16; at += 2; }
+		if (marker == u8('b')) { selected = 2; }
+		else if (marker == u8('o')) { selected = 8; }
+		else if (marker == u8('x')) { selected = 16; }
+		prefixed = selected != 10;
+		if (prefixed) { at += 2; }
 	}
-	if (at >= bytes.len()) {
+	// Only a prefix may be followed straight by an underscore: `0x_ff` is a
+	// literal, `_ff` a name.
+	if (at >= bytes.len() || (bytes[at] == u8('_') && !prefixed)) {
 		return .err(.Invalid_Syntax);
 	}
 	return .ok(Split{rest[at:], selected, sign});
@@ -254,9 +205,10 @@ split_number :: proc(text: string_view, base: int) -> Result(Split, Parse_Error)
 
 // The digits themselves, in `radix`, refusing anything above `limit`.
 //
-// Underscores are ignored wherever they appear among the digits, which is
-// exactly what the lexer does with a written literal — `1_000`, `0x_ff` and
-// `12_` all lex. At least one digit is still required.
+// Underscores are ignored among the digits, which is what the lexer does with
+// a written literal — `1_000`, `0x_ff` and `12_` all lex; `split_number` has
+// already refused one that leads without a prefix. At least one digit is still
+// required.
 @(private)
 accumulate :: proc(digits: string_view, radix: int, limit: u64) -> Result(u64, Parse_Error) {
 	bytes := digits.bytes();
