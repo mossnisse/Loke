@@ -1,0 +1,24 @@
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+// design.md "Atomic operations and Once": an action that panics poisons its
+// `Once`. Unwinding still runs this `defer`, and its `do` used to spin forever
+// on an action that would never finish, so the panic hung instead of ending the
+// program. Now the second `do` panics, which during unwinding terminates.
+
+gate: static sync.Once = {};
+
+fail :: proc() { panic("setup failed"); }
+
+quiet :: proc() { fmt.println("unreachable"); }
+
+main :: proc() {
+	defer {
+		fmt.println("cleanup");
+		gate.do(quiet);
+		fmt.println("unreachable");
+	}
+	gate.do(fail);
+}

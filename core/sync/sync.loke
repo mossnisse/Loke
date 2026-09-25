@@ -1,10 +1,8 @@
-// `Atomic(T)`, `fence`, and `once` (design.md "Concurrency and the memory
-// model").
+// `Atomic(T)`, `fence`, and `Once` (design.md "Concurrency and the memory
+// model", design.md "Atomic operations and Once").
 //
-// design.md calls `Atomic(T)` a "`core:sync` wrapper over compiler atomic
-// intrinsics", so the split is specified rather than chosen: the compiler owns
-// the operations whose ordering is part of the instruction, and everything
-// here is ordinary Loke over them.
+// The compiler owns the operations whose ordering is part of the instruction,
+// and everything here is ordinary Loke over them.
 //
 // **Ordering arguments are `$` parameters throughout.** A constant at the
 // caller does not make an ordinary parameter constant inside this body, and the
@@ -18,7 +16,8 @@
 @(public)
 package sync;
 
-// The compiler contributes, package-privately:
+// The compiler contributes `Memory_Order`, the `base:runtime` enum, publicly as
+// `sync.Memory_Order`, and, package-privately:
 //
 //   atomic_load, atomic_store, atomic_exchange, atomic_compare_exchange
 //   atomic_add, atomic_sub, atomic_and, atomic_or, atomic_xor
@@ -71,8 +70,8 @@ impl Atomic($T) {
 		return atomic_exchange(&self.value, value, order);
 	}
 
-	// design.md: both orderings are preserved across this boundary, which is what
-	// the two `$` parameters are for. `swapped` says whether the write happened,
+	// Both orderings stay constants across this boundary, which is what the two
+	// `$` parameters are for. `swapped` says whether the write happened,
 	// and `observed` is what was there — the value replaced when it swapped, and
 	// the value that stopped it when it did not.
 	compare_exchange :: proc(
@@ -130,16 +129,16 @@ fence :: proc($order: Memory_Order = Memory_Order.Sequentially_Consistent) {
 	atomic_fence(order);
 }
 
-// design.md "Storage modifiers" names `once` as the sanctioned way to do
-// runtime initialization: file-scope and `static` storage use constant
-// initialization, so anything that must *run* runs on first use instead.
+// design.md "Program entry and exit" names `Once` as the way to guard lazy
+// setup: file-scope and `static` storage use constant initialization (design.md
+// "Storage modifiers"), so anything that must *run* runs on first use instead.
 //
-// The zero value is an unfired `once`, which is what lets it live in `static`
+// The zero value is an unfired `Once`, which is what lets it live in `static`
 // storage with no initializer.
 //
 // `do` fires through a read-only `^` receiver, as every atomic operation does,
-// so a `once` works wherever it can be reached: in `static` storage, where
-// design.md puts it, and behind the `^T` a `shared(T)` hands out.
+// so a `Once` works wherever it can be reached: in `static` storage, and behind
+// the `^T` a `shared(T)` hands out.
 Once :: struct {
 	@(private) state: Atomic(u32),
 }
@@ -152,6 +151,12 @@ ONCE_RUNNING :: u32(1);
 
 @(private)
 ONCE_DONE :: u32(2);
+
+// The action panicked. Unwinding still runs `defer`s and drops, and one that
+// reached this `Once` would otherwise wait forever on an action that will never
+// finish, turning a terminating panic into a hang.
+@(private)
+ONCE_POISONED :: u32(3);
 
 impl Once {
 	// Runs `action` exactly once across every thread that reaches this. A caller
@@ -173,19 +178,22 @@ impl Once {
 			ONCE_IDLE, ONCE_RUNNING, Memory_Order.Acquire, Memory_Order.Acquire,
 		);
 		if (won) {
+			// Runs on the way out whether `action` returned or panicked.
+			finished := false;
+			defer self.state.store(ONCE_DONE if finished else ONCE_POISONED, Memory_Order.Release);
 			action();
-			self.state.store(ONCE_DONE, Memory_Order.Release);
+			finished = true;
 			return;
 		}
-		if (observed == ONCE_DONE) { return; }
 		// Another thread is running it. Spin on the acquire load rather than
 		// blocking: this is initialization, so the wait is short and there is no
 		// scheduler primitive in version 1 to block on.
 		//
-		// ponytail: a spin, with no yield and no backoff. If a `once` ever guards
+		// ponytail: a spin, with no yield and no backoff. If a `Once` ever guards
 		// something slow, give this a platform wait — the state values already
 		// distinguish "running" from "done", which is what such a wait needs.
-		for (self.state.load(Memory_Order.Acquire) != ONCE_DONE) { }
+		for (; observed == ONCE_RUNNING; observed = self.state.load(Memory_Order.Acquire)) { }
+		if (observed == ONCE_POISONED) { panic("a `Once` action panicked"); }
 	}
 
 	// Has the action completed? A `false` may be stale the moment it is read;

@@ -5577,6 +5577,23 @@ Thread transfer follows these rules:
 
 Threads and retained tasks receive only the arguments explicitly moved or copied into them. A request environment, logger, clock, scratch owner, or other service handle is transferred like any other value, and transferring a handle does not make its underlying state thread-safe.
 
+### Atomic operations and Once
+
+`core:sync` exposes the ordering type as `sync.Memory_Order`, an `enum { Relaxed, Acquire, Release, Acquire_Release, Sequentially_Consistent }` declared by `base:runtime`. Every ordering argument must be a compile-time constant and defaults to `.Sequentially_Consistent`.
+
+| Operation | Result |
+| --- | --- |
+| `a.load(order)` | the value; `order` is `.Relaxed`, `.Acquire`, or `.Sequentially_Consistent` |
+| `a.store(value, order)` | nothing; `order` is `.Relaxed`, `.Release`, or `.Sequentially_Consistent` |
+| `a.exchange(value, order)` | the previous value |
+| `a.compare_exchange(expected, desired, success, failure)` | `(observed: T, swapped: bool)`: `swapped` says whether `desired` was written, and `observed` is the value found, which equals `expected` exactly when it swapped. `failure` permits what a load permits |
+| `a.add`, `a.sub`, `a.bit_and`, `a.bit_or`, `a.bit_xor` `(value, order)` | the previous value. Integers only; `add` and `sub` wrap |
+| `sync.fence(order)` | nothing; every ordering but `.Relaxed` |
+| `once.do(action: proc())` | runs `action` exactly once across every thread that reaches `once`. A call that finds the action running waits for it, so a return means the action has completed and its writes are visible. An action that reaches its own `Once` never returns. If `action` panics, the `Once` is poisoned: every later call, and every call waiting on it, panics |
+| `once.is_done()` | whether the action has completed; `false` may be stale when it is read |
+
+`Atomic(T)` and `Once` have usable zero values, so either may live in `static` storage with no initializer.
+
 ### Shared ownership
 
 `shared(T)` is a library type for shared ownership of one stable `T` payload. Its zero value is `nil`, and copies use thread-safe handle accounting.
