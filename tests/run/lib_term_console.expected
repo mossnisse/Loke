@@ -1,0 +1,13 @@
+.ok(hé)
+.err(Read_Line failed: End_Of_Input)
+false
+Character 65 true false false
+Up 0 false false false
+Character 120 false false false
+Character 120 false false false
+Character 120 false false false
+Character 128512 false false false
+Unknown 0 false false false
+.err(Terminal_Mode failed: Already_Exists)
+true
+.err(Terminal_Mode failed: Already_Exists)

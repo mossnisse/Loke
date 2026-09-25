@@ -1,0 +1,121 @@
+package main; import "core:fmt"; import "core:io"; import "core:term"; import "core:unsafe";
+
+// `core:term`'s console half (standard-library "`core:term`"), driven by input
+// records written into the console's own input buffer rather than by a person.
+//
+// The program reads `CONIN$`, so it needs a console but not a console stdin; one
+// started without a console allocates its own. Every mode it changes it puts
+// back, because the console is usually the one the test run is using.
+
+foreign import kernel32 "system:kernel32.lib";
+
+foreign kernel32 {
+	@(link_name="CreateFileW")
+	create_file :: proc "stdcall" (
+		name: [^]u16, access: u32, share: u32, security: rawptr,
+		disposition: u32, flags: u32, template: int,
+	) -> int ---;
+	@(link_name="CloseHandle")
+	close_handle :: proc "stdcall" (handle: int) -> i32 ---;
+	@(link_name="AllocConsole")
+	alloc_console :: proc "stdcall" () -> i32 ---;
+	@(link_name="SetStdHandle")
+	set_std_handle :: proc "stdcall" (which: u32, handle: int) -> i32 ---;
+	@(link_name="WriteConsoleInputW")
+	write_console_input :: proc "stdcall" (
+		handle: int, records: rawptr, count: u32, written: ^mut u32,
+	) -> i32 ---;
+	@(link_name="GetConsoleMode")
+	get_console_mode :: proc "stdcall" (handle: int, mode: ^mut u32) -> i32 ---;
+	@(link_name="SetConsoleMode")
+	set_console_mode :: proc "stdcall" (handle: int, mode: u32) -> i32 ---;
+}
+
+STD_INPUT :: 0xFFFFFFF6;
+VIRTUAL_TERMINAL_INPUT :: u32(0x0200);
+SHIFT :: u32(0x0010);
+
+// `INPUT_RECORD` with its `KEY_EVENT_RECORD` arm, as `core:term` reads it.
+Record :: struct {
+	event_type: u16, pad: u16, key_down: i32, repeat_count: u16,
+	virtual_key: u16, virtual_scan: u16, unicode_char: u16, control_state: u32,
+}
+
+press :: proc(console: int, virtual_key: int, unit: int, state: u32 = 0, repeat: int = 1) {
+	down := Record{1, 0, 1, u16(repeat), u16(virtual_key), 0, u16(unit), state};
+	up := Record{1, 0, 0, 1, u16(virtual_key), 0, u16(unit), state};
+	written: u32 = 0;
+	write_console_input(console, &mut down, 1, &mut written);
+	write_console_input(console, &mut up, 1, &mut written);
+}
+
+open_input :: proc() -> int {
+	name: [7]u16 = {u16('C'), u16('O'), u16('N'), u16('I'), u16('N'), u16('$'), 0};
+	return create_file(unsafe.raw_data(name[:]), 0xC0000000, 3, nil, 3, 0, 0);
+}
+
+show :: proc(event: Result(term.Key_Event, io.Error)) {
+	switch (key in event) {
+	case .ok: fmt.println(key.key, int(key.value), key.shift, key.control, key.alt);
+	case .err: fmt.println(key);
+	}
+}
+
+main :: proc() {
+	console := open_input();
+	if (console == -1) {
+		alloc_console();
+		console = open_input();
+	}
+	set_std_handle(u32(STD_INPUT), console);
+	original: u32 = 0;
+	get_console_mode(console, &mut original);
+
+	// A console line arrives as UTF-16 and leaves as UTF-8, without its ending.
+	press(console, 72, 'h');
+	press(console, 0, 0xE9);
+	press(console, 13, 13);
+	fmt.println(term.read_line());
+	// Ctrl+Z at the start of a line is end of input, not a line holding U+001A.
+	press(console, 90, 0x1A, 0x0008);
+	press(console, 13, 13);
+	fmt.println(term.read_line());
+
+	// Raw mode turns virtual-terminal input off, or every key below would arrive
+	// as the characters of an escape sequence.
+	set_console_mode(console, original | VIRTUAL_TERMINAL_INPUT);
+	{
+		raw := term.begin_raw() or_else no_raw();
+		mode: u32 = 0;
+		get_console_mode(console, &mut mode);
+		fmt.println((mode & VIRTUAL_TERMINAL_INPUT) != 0);
+
+		press(console, 16, 0, SHIFT);         // Shift alone: no event
+		press(console, 65, 'A', SHIFT);
+		press(console, 38, 0);                // Up
+		press(console, 88, 'x', 0, 3);        // one record, three repeats
+		press(console, 0, 0xD83D);            // U+1F600, as two records
+		press(console, 0, 0xDE00);
+		press(console, 20, 0);                // Caps Lock has no name
+		for (i := 0; i < 7; i += 1) { show(raw.read_key()); }
+
+		fmt.println(term.begin_raw());
+	}
+	after: u32 = 0;
+	get_console_mode(console, &mut after);
+	fmt.println(after == original | VIRTUAL_TERMINAL_INPUT);
+
+	// A restore that fails keeps the claim, from `drop` as from `close`: the
+	// console's mode is no longer known, and the one to put back is still held.
+	doomed := open_input();
+	set_std_handle(u32(STD_INPUT), doomed);
+	{
+		raw := term.begin_raw() or_else no_raw();
+		close_handle(doomed);
+	}
+	set_std_handle(u32(STD_INPUT), console);
+	fmt.println(term.begin_raw());
+	set_console_mode(console, original);
+}
+
+no_raw :: proc() -> term.Raw_Mode { panic("no raw mode"); }

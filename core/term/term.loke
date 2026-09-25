@@ -132,6 +132,7 @@ foreign import kernel32 "system:kernel32.lib";
 @(private) ENABLE_PROCESSED_INPUT :: 0x0001;
 @(private) ENABLE_LINE_INPUT :: 0x0002;
 @(private) ENABLE_ECHO_INPUT :: 0x0004;
+@(private) ENABLE_VIRTUAL_TERMINAL_INPUT :: 0x0200;
 
 @(private) KEY_EVENT :: 0x0001;
 @(private) RIGHT_ALT_PRESSED :: 0x0001;
@@ -139,6 +140,10 @@ foreign import kernel32 "system:kernel32.lib";
 @(private) RIGHT_CTRL_PRESSED :: 0x0004;
 @(private) LEFT_CTRL_PRESSED :: 0x0008;
 @(private) SHIFT_PRESSED :: 0x0010;
+
+@(private) VK_SHIFT :: 16;
+@(private) VK_CONTROL :: 17;
+@(private) VK_MENU :: 18;
 
 @(private)
 foreign kernel32 {
@@ -216,8 +221,10 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 
 @(private)
 read_handle :: proc(handle: int, destination: []mut u8) -> Result(int, io.Error) {
+	wanted := destination.len();
+	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	read: u32 = 0;
-	if (rt_read_file(handle, unsafe.raw_data(destination), u32(destination.len()), &mut read, nil) == 0) {
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, nil) == 0) {
 		error := from_last_error(.Read);
 		if (io.is(error, .Broken_Pipe)) {
 			return .err(io.make_error(.End_Of_Input, .Read));
@@ -232,12 +239,18 @@ read_handle :: proc(handle: int, destination: []mut u8) -> Result(int, io.Error)
 
 @(private)
 write_handle :: proc(handle: int, source: []u8) -> Result(int, io.Error) {
+	wanted := source.len();
+	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	written: u32 = 0;
-	if (rt_write_file(handle, unsafe.raw_data(source), u32(source.len()), &mut written, nil) == 0) {
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
 		return .err(from_last_error(.Write));
 	}
 	return .ok(int(written));
 }
+
+// One call moves at most this many bytes: the count is a `DWORD`, and a caller's
+// slice is not. A shorter count is an ordinary partial read or write.
+@(private) MAX_CHUNK :: 0x3FFFFFFF;
 
 // A console delivers UTF-16, one cooked line at a time. The loop is for a line
 // longer than the buffer, not for the ordinary case.
@@ -257,7 +270,6 @@ read_console_line :: proc(
 			return .err(from_last_error(.Read_Line));
 		}
 		if (read == 0) {
-			// Ctrl+Z at the start of a line is the console's end of input.
 			if (line.len() == 0) {
 				return .err(io.make_error(.End_Of_Input, .Read_Line));
 			}
@@ -270,6 +282,11 @@ read_console_line :: proc(
 			return .err(io.make_error(.Out_Of_Memory, .Read_Line));
 		}
 		if (units[count - 1] == u16('\n')) { break; }
+	}
+	// Ctrl+Z at the start of a line is the console's end of input. `ReadConsoleW`
+	// does not say so itself: it hands the U+001A back as the line's first unit.
+	if (line.len() > 0 && line[0] == u16(0x1A)) {
+		return .err(io.make_error(.End_Of_Input, .Read_Line));
 	}
 	kept := line.len();
 	if (!options.keep_ending && kept > 0 && line[kept - 1] == u16('\n')) {
@@ -351,7 +368,9 @@ begin_raw :: proc(
 	// store below restores whatever a previous scope saved for it: stale, and
 	// cooked, which is the state the console is actually in.
 	handler_mode.store(previous);
-	wanted := previous & ~u32(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+	// Virtual-terminal input goes too: with it on, the console hands every key
+	// over as the characters of an escape sequence, and `read_key` decodes keys.
+	wanted := previous & ~u32(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT);
 	if (options.interrupt_as_key) {
 		wanted = wanted & ~u32(ENABLE_PROCESSED_INPUT);
 	}
@@ -373,12 +392,10 @@ begin_raw :: proc(
 
 impl Raw_Mode {
 	// One owner of a terminal mode; a second would restore it twice, out of order.
+	// A best-effort `close`, so a failed restore leaves the control handler armed
+	// here as well.
 	release :: hook(drop) proc(self: inout Raw_Mode) {
-		if (self.live) {
-			rt_set_console_mode(self.handle, self.previous);
-			self.live = false;
-			handler_handle.store(0);
-		}
+		_ = self.close();
 	}
 
 	// Idempotent, and leaves the value inert even when the restore failed.
@@ -400,7 +417,8 @@ impl Raw_Mode {
 
 	// One key event. Key releases, mouse events, focus changes, and window resizes
 	// are consumed and skipped: they belong to a later terminal package, and a
-	// caller of this one asked for keys.
+	// caller of this one asked for keys. So is Shift, Ctrl, or Alt pressed on its
+	// own, because a modifier is a flag on the key it modifies, not a key.
 	//
 	// A held key arrives as one record carrying a count, and that count is handed
 	// back as that many events (standard-library "Raw mode and key events": repeats are individual
@@ -424,6 +442,10 @@ impl Raw_Mode {
 				return .err(io.make_error(.End_Of_Input, .Read_Key));
 			}
 			if (record.event_type != u16(KEY_EVENT) || record.key_down == 0) {
+				continue;
+			}
+			vk := record.virtual_key;
+			if (vk == u16(VK_SHIFT) || vk == u16(VK_CONTROL) || vk == u16(VK_MENU)) {
 				continue;
 			}
 			switch (event in decode_record(inout self, record)) {

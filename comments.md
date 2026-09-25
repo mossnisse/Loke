@@ -316,6 +316,21 @@ profiles contain.
   in Loke (Eisel-Lemire with a big-decimal fallback) would fix both. Is either
   worth that much code?
 
+## Open questions in `core:term`
+
+- A Ctrl+letter key arrives as `.Character` with the control character in
+  `value` (Ctrl+C is `3`, with `control` set), because that is what the console
+  reports. Some libraries report the letter instead and leave the control
+  character to the flag. standard-library.md does not say which one `value`
+  holds.
+- A high surrogate that is not followed by a low one is dropped from `read_key`,
+  while `read_line` answers `Invalid_Data` for the same units. A keyboard cannot
+  send one, but a program writing console input can. Should it be U+FFFD?
+- Every console test writes records into the console the test run is using,
+  because Windows 10 cannot allocate a hidden console. Anything typed into that
+  console while `tests/run/lib_term_console` runs is read along with the
+  records it wrote.
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

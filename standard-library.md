@@ -909,8 +909,10 @@ values do not own and cannot close the process standard handles. They work when
 the handles are redirected to pipes or files.
 
 `read_line` reads a real console through `ReadConsoleW` and a redirected handle
-through `io.read_line`, so typed non-ASCII text arrives intact. The raw
-`Input.read` stream is bytes through `ReadFile` either way.
+through `io.read_line`, so typed non-ASCII text arrives intact. Ctrl+Z at the
+start of a console line is `End_Of_Input`, as the end of a redirected stream is.
+The raw `Input.read` stream is bytes through `ReadFile` either way, and one call
+moves at most `0x3FFFFFFF` bytes, as `core:fs` does.
 
 `prompt` writes the label to standard output, flushes it, and then reads a line.
 It returns output failures as well as input failures. It does not print a
@@ -966,9 +968,13 @@ Ctrl+C, Ctrl+Break, and console close restore the mode without depending on Loke
 cleanup running at all. The handler is idempotent with `drop` and with `close`.
 This is the one place the library pays for a guarantee the language does not
 make; the rule against hidden process behavior still holds, because
-nothing is registered until a caller asks for raw mode.
+nothing is registered until a caller asks for raw mode. A restore that fails,
+from `drop` as from `close`, leaves the handler armed and the claim below held,
+so a later `begin_raw` answers `.err(Already_Exists)`.
 
-`begin_raw` on redirected input answers `.err(Not_A_Terminal)`.
+`begin_raw` turns off line input, echo, and virtual-terminal input; with the
+last left on, the console would deliver every key as the characters of an escape
+sequence. On redirected input it answers `.err(Not_A_Terminal)`.
 
 Only one `Raw_Mode` may be live in a process. The process-level control handler
 has one authoritative saved console mode; allowing another scope to overwrite
@@ -979,8 +985,8 @@ terminal unchanged.
 Text input is `key == .Character` with the scalar value in `value`; a named key
 leaves `value` zero, and is preferred when a key such as Enter or Tab also
 carries a control character. A key the decoder has no name for is `.Unknown`.
-Modifiers are explicit flags. Key releases, mouse, focus, and resize records are
-skipped. A held key's repeat count becomes that many events, in order.
+Modifiers are explicit flags, so Shift, Ctrl, or Alt pressed alone is no event.
+Key releases, mouse, focus, and resize records are skipped. A held key's repeat count becomes that many events, in order.
 
 By default Ctrl+C keeps interrupting the process; `Raw_Options{interrupt_as_key =
 true}` delivers it as a key event instead, and the program then terminates
