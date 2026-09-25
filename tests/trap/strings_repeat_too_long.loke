@@ -1,0 +1,11 @@
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+// A result longer than the largest `int` fails up front as an allocation. Its
+// length used to wrap to a small reservation, after which `repeat` appended
+// until memory ran out.
+main :: proc() {
+	fmt.println(strings.repeat("abcd", 0x4000000000000001).len());
+}

@@ -251,7 +251,11 @@ repeat :: proc(
 ) -> string {
 	if (times < 0) { panic("repeat count is negative"); }
 	builder := init(allocator);
-	builder.reserve(text.len() * times);
+	// A result longer than the largest `int` is reserved as that, so it fails up
+	// front as an allocation rather than wrapping to a small reservation and
+	// appending until memory runs out.
+	too_long := text.len() > 0 && times > LARGEST_LENGTH / text.len();
+	builder.reserve(LARGEST_LENGTH if too_long else text.len() * times);
 	for (i := 0; i < times; i += 1) {
 		builder.append(text);
 	}

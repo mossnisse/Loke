@@ -35,14 +35,12 @@ impl String_Builder {
 
 	// Room for `additional` more bytes, on top of what is already written.
 	reserve :: proc(self: inout String_Builder, additional: int) {
-		if (additional < 0) { panic("reserve count is negative"); }
-		wanted := self.data.len() + additional;
+		wanted := wanted_capacity(self.data.len(), additional);
 		self.data.reserve(wanted);
 	}
 
 	try_reserve :: proc(self: inout String_Builder, additional: int) -> Result(Unit, Allocator_Error) {
-		if (additional < 0) { panic("reserve count is negative"); }
-		wanted := self.data.len() + additional;
+		wanted := wanted_capacity(self.data.len(), additional);
 		return self.data.try_reserve(wanted);
 	}
 
@@ -130,6 +128,21 @@ impl String_Builder {
 		selected := mem.default_allocator() if allocator == nil else allocator;
 		return allocate_string(view, selected);
 	}
+}
+
+// `int` is 64 bits on every supported target.
+@(private)
+LARGEST_LENGTH :: 0x7FFFFFFFFFFFFFFF;
+
+// The capacity `additional` more bytes need. A total past the largest `int` is
+// asked for as the largest, which no allocator supplies, so the request fails as
+// an allocation — reported by `try_reserve` — instead of wrapping to a negative
+// capacity.
+@(private)
+wanted_capacity :: proc(written: int, additional: int) -> int {
+	if (additional < 0) { panic("reserve count is negative"); }
+	if (additional > LARGEST_LENGTH - written) { return LARGEST_LENGTH; }
+	return written + additional;
 }
 
 // UTF-8 encoding of one scalar value, and how many of the four bytes it used.

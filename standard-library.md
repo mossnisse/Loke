@@ -436,6 +436,8 @@ Whitespace in `trim_space` and `fields` is Unicode White_Space, not only ASCII
 Search compares bytes and slices only at an offset that has already matched,
 which is a code-point boundary because UTF-8 is self-synchronising; slicing a
 view through a code point is a runtime failure.
+`split` yields every part between separators, so a trailing separator yields a
+final empty part; an empty separator yields the whole text once.
 `lines` recognizes `\n`, `\r\n`, and a final unterminated line. General Unicode
 normalization, locale rules, grapheme segmentation, and case folding belong in
 a later `core:unicode` package.
@@ -467,7 +469,11 @@ worse than passing the rest through unchanged; the signature already returns
 owned storage, so the tables can arrive without changing a caller.
 
 The policy-following forms above panic only on allocation-policy failure.
-Negative counts and other programmer mistakes panic.
+Negative counts and other programmer mistakes panic. `replace` replaces every
+occurrence when `limit` is negative, and an empty `old` matches nowhere. A
+`repeat` result longer
+than the largest `int` is an allocation failure, raised before anything is
+appended.
 
 No `try_` twin exists for these. `String_Builder` already
 offers the fallible path — including `try_reserve`, `try_append`, and
@@ -536,7 +542,9 @@ reference-counted allocation header. `finish` therefore performs one linear copy
 into string storage and then clears the builder, retaining its allocation for
 reuse. `try_finish` has the same success behavior and leaves the builder
 unchanged if allocation fails; `finish` applies the builder allocator's failure
-policy. `copy_string` and `try_copy_string` do not change the builder.
+policy. `copy_string` and `try_copy_string` do not change the builder. A
+reservation whose total would pass the largest `int` is an allocation failure:
+`try_reserve` reports it and `reserve` applies the policy.
 
 `view` borrows the text written so far without allocating. The borrow checker
 rejects an append while the view is live, so a reader that only inspects the

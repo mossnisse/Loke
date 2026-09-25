@@ -145,4 +145,9 @@ main :: proc() {
 		fmt.println(false);
 	}
 	fmt.println(fallible.len());
+
+	// More than the largest `int` in total is an allocation failure to report,
+	// not a count wrapped negative and a panic.
+	fallible.append("x");
+	fmt.println(succeeded(fallible.try_reserve(0x7FFFFFFFFFFFFFFF)), fallible.len());
 }

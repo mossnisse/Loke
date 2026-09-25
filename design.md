@@ -419,7 +419,7 @@ builder: String_Builder = {};
 builder.append("hello");
 builder.append(' ');
 builder.append("world");
-message := builder.finish(); // moves the buffer into an immutable string when possible
+message := builder.finish(); // copies the text into an immutable string; the buffer is kept for reuse
 ```
 
 #### String iteration
