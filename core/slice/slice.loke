@@ -1,4 +1,5 @@
-// Slice algorithms (design.md "Sorting slices", "Slices").
+// Slice algorithms: design.md "Slices", design.md "Sorting slices", and
+// design.md "Slice queries and copies".
 //
 // The public surface is ordinary Loke over `[]T` and `[]mut T`. The one private
 // sorting bridge reaches the runtime's raw relocation machinery. Nothing here
@@ -165,7 +166,9 @@ equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
 }
 
 // `.none` for an empty slice: there is no minimum of nothing, and returning the
-// zero value would be a wrong answer rather than a missing one.
+// zero value would be a wrong answer rather than a missing one. The candidate
+// changes only for an element `<` it, so ties keep the earliest and a NaN wins
+// only from index 0; `max` is the same with `<` reversed.
 min :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 	if (values.len() == 0) { return .none; }
 	best := values[0];

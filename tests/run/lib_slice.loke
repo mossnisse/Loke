@@ -144,6 +144,15 @@ main :: proc() {
 	// only reason `equal` can index `right` with `left`'s indices at all.
 	fmt.println(slice.equal(s, one), slice.equal(one, s), slice.equal(empty, empty));
 
+	// design.md "Slice queries and copies": equal elements keep the earliest, so
+	// the signed zeros show which one won, and a NaN wins only from index 0.
+	zeros := []f64{0.0, -0.0};
+	fmt.println(slice.min(zeros) or_else 1.0, slice.max(zeros) or_else 1.0);
+	nan := f64(0.0) / f64(0.0);
+	first := slice.min([]f64{nan, 1.0}) or_else 0.0;
+	later := slice.min([]f64{1.0, nan}) or_else 0.0;
+	fmt.println(first != first, later);
+
 	// Places.
 	scratch := []mut int{1, 2, 3, 4, 5};
 	slice.swap(scratch, 0, 4);

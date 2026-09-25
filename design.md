@@ -850,6 +850,23 @@ by_rank :: proc(left, right: Card) -> bool { return left.rank < right.rank; }
 slice.sort_by(cards, by_rank);
 ```
 
+#### Slice queries and copies
+
+`core:slice` also has these procedures. Only `fill` writes, and it takes `[]mut T`; the rest read a `[]T`. The ordering queries require `interfaces.Ordered(T)` and the searches `interfaces.Equatable(T)`.
+
+| Procedure | Result |
+| --- | --- |
+| `is_sorted(values)`, `is_reverse_sorted(values)` | whether no adjacent pair is out of order under `<` |
+| `binary_search(values, wanted) -> (index: int, found: bool)` | the leftmost index at which `wanted` could be inserted keeping the slice ascending, and whether the element there `==` `wanted` |
+| `index_of(values, wanted)`, `last_index_of(values, wanted)` | `Option(int)`: the first or last index whose element `==` `wanted` |
+| `contains(values, wanted)` | whether `index_of` finds `wanted` |
+| `equal(left, right)` | whether the lengths match and every pair of elements is `==` |
+| `min(values)`, `max(values)` | `Option(T)`: `.none` for an empty slice |
+| `fill(values, value)` | assigns a copy of `value` to every element |
+| `try_clone(values, allocator)` | `Result([dynamic]T, Allocator_Error)`: `clone` that returns an allocation failure rather than panicking |
+
+`binary_search` requires an ascending slice; an unsorted one yields an unspecified index, not a panic. `min` and `max` scan left to right and replace their candidate only with an element strictly before or after it under `<`, so equal elements keep the earliest, and a NaN is the answer only when it is first. `clone` and `try_clone` take `allocator := mem.default_allocator()`.
+
 ### Dynamic arrays
 
 Dynamic arrays are mutable owning values whose length may change at runtime. The value behaves like a local variable; its variable-sized backing storage is obtained through an allocator and released automatically when the array leaves scope.
