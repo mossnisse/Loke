@@ -216,6 +216,13 @@ such as `1 < 2 < 3` are already rejected by type (L0354), but an equality chain
 over `bool` type-checks and rarely means what it reads as. Should comparisons be
 non-associative, like ranges?
 
+Proposal: yes. `a == b == false` compiles today and prints `true` for `a := 1;
+b := 2`, which reads as a chain and is not one. Making precedence level 5
+non-associative, as level 2 already is, turns every such chain into a syntax
+error whose note gives the parenthesized form. `(a == b) == c` still means what
+it says, and no ordering chain loses anything, since L0354 rejects those
+already.
+
 ## Nominal conformance
 
 An `implements Drawable(Circle);` declaration was proposed and rejected. With no
@@ -285,7 +292,8 @@ profiles contain.
   parameter be `i32`, or the spec say the status is taken modulo 2^32?
 - `os.exit` does not diverge, so `f :: proc() -> int { os.exit(1); }` is L0365.
   `panic` has the same shape but is built in. A way to mark a procedure as not
-  returning would fix both `os.exit` and user wrappers around it.
+  returning would fix both `os.exit` and user wrappers around it; see
+  [Diverging procedures](#diverging-procedures).
 - An environment name that is empty or contains `=` fails `set_environment`
   and `unset_environment` as `Other` (Windows error 87), while
   `get_environment` answers `.none` for it. Should the portable layer reject
@@ -358,6 +366,311 @@ profiles contain.
   for it has no corpus test. Where does a program choose `.Trap`: on the
   factory, on `Arena`/`Scratch` construction, or as a build-wide default for
   freestanding targets?
+
+## Unchecked operations outside `core:unsafe`
+
+design.md [The `unsafe` package](design.md#the-unsafe-package) makes importing
+`core:unsafe` the review mechanism for operations that manufacture provenance.
+Three such operations need no import. This file imports nothing but `core:fmt`,
+compiles without a diagnostic, and prints garbage:
+
+```odin
+escape :: proc() -> ^mut int {
+	local := 5;
+	r: rawptr = &mut local;
+	return (^mut int)(r);
+}
+```
+
+`([^]int)(rawptr(&mut values[0]))[0:3]` likewise returns a `[]mut int` over a
+dynamic array that is freed when the procedure returns. And `---` accepts any
+type: `d: [dynamic]int = ---; d.append(1);` compiles and stops at run time with
+"allocator record does not match this runtime's ABI". design.md
+[Built-in values](design.md#built-in-values) only advises against `---` on a
+managed value.
+
+Proposal: converting *to* `rawptr` stays implicit, since losing provenance is
+harmless. Converting from `rawptr` or `[^]T` to `^T`, `^mut T`, or another C
+pointer, and indexing or slicing a `[^]T`, become valid only in a file that
+imports `core:unsafe`, which is what the import is already said to mark.
+Foreign declarations stay their own trust boundary. `---` is rejected for a type
+with a lifecycle or one that reaches a borrow carrier; the storage a foreign
+out-parameter needs is plain data.
+
+In `core` and `base`, only `core:fmt` and `core:io` use these operations without
+the import, and both do it for `fmt.Writer`'s `rawptr` state (next entry).
+`core:fs`, `core:os`, and `core:term` import `core:unsafe` already.
+
+## `fmt.Writer` and `log.Logger` as `dyn` sinks
+
+Every `format` method receives a `fmt.Writer`: a `proc(state: rawptr, bytes:
+[^]u8, count: int)` beside a `rawptr`. A sink that formats into its own record
+converts `state` back to a typed pointer, the unchecked conversion above:
+`core:fmt` does it in `collect`, and `core:io` in the latch adapter that
+standard-library.md "Formatting bridge" calls "not a safe construction". The
+closing paragraph of
+[Build-selected services](#build-selected-services-and-explicit-runtime-state)
+gives the reason: neither a generic parameter nor a borrowed `dyn` describes a
+handle kept for the life of the program. Neither use needs one:
+
+- a formatter uses its sink only for the call, which is what a borrowed
+  `dyn mut` view is;
+- a logger lives for the process, and a `dyn mut` view of static storage may
+  already be stored in a global. This compiles and prints `5`:
+
+```odin
+Sink :: interface($Self: type) {
+	slot write: proc(self: inout Self, bytes: []u8);
+}
+Counter :: struct { total: int }
+impl Counter {
+	write :: proc(self: inout, bytes: []u8) { self.total += bytes.len(); }
+}
+
+counter: Counter;
+selected: dyn mut Sink;
+
+main :: proc() {
+	selected = (dyn mut Sink)(&mut counter);
+	text: string = "hello";
+	selected.write(text.bytes());
+	fmt.println(counter.total);
+}
+```
+
+Proposal: `fmt.Writer` becomes `dyn mut fmt.Sink` with one `write(bytes: []u8)`
+slot, and `log.Logger` a `dyn mut` view of the static storage its factory
+already has to return. The `core:io` latch becomes an ordinary record. The cost
+is in the runtime, which shares `Writer`'s layout with the C seed: the
+compiler-contributed `stdout_writer` and `format_any` need a Loke-side sink, or
+a fixed witness layout for this one interface.
+
+Two neighbours would move with it. design.md [Procedures](design.md#procedures)
+still tells a callback to carry its state "usually as a `rawptr`", which the
+callable convention above has replaced. And `fmt.Options` holds only `base` and
+`uppercase`, so a width, a precision, or padding has no spelling: `3.14159`
+cannot be printed as `3.14`, nor a column aligned.
+
+## Trapping signed overflow
+
+[Integer overflow](design.md#integer-overflow) wraps signed arithmetic, and
+[Defined signed overflow](#defined-signed-overflow) defends that against
+undefined overflow. Trapping is not weighed there, and it keeps the property the
+note values — a meaning that does not change under optimization — while
+catching the bugs the library has had to guard by hand:
+
+- `strings.repeat` reserved `text.len() * times`, which wrapped to a small
+  reservation (fixed in `c2f30eb` with a hand-written bound);
+- `String_Builder.try_reserve` computed `len + additional`, which wrapped
+  negative (same commit);
+- `core:fs` documents a tick subtraction in `unix_nanoseconds` that would wrap
+  an unrecorded time into the far future.
+
+All three are `int` or `i64`, and nothing in `core` or `base` relies on signed
+wrap. The language already stops where a value does not fit: `u32(-0.5)`
+panics, while `i32(2147483647) + 1` gives `-2147483648` silently.
+
+Proposal: signed `+`, `-`, `*`, unary `-`, and `/` panic when the mathematical
+result does not fit, at every optimization level, and are a diagnostic during
+compile-time evaluation. Unsigned arithmetic stays modular, since hashing and
+bit manipulation are written in it, and signed wrap is spelled by computing in
+the unsigned type. `<<`, SIMD lanes, and atomic `add` and `sub` keep their
+current definitions.
+
+The cost is a checked operation per signed arithmetic step, much of it removed
+where loop bounds already prove the range. It also returns part of what the note
+says wrapping costs: on the path that continues, the operation is known not to
+overflow, so the optimizer may treat it as `nsw` and widen induction variables.
+
+## Signed shift counts
+
+A scalar shift count must have an unsigned type, so `1 << k` with `k: int` is
+L0356 and a shift by a loop index needs `uint(k)`. A SIMD shift already takes a
+signed count and reads each lane as unsigned, so a negative lane is a count
+beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
+`v << {1, -1, 2, 40}` over `{1, 2, 3, 4}` gives `{2, 0, 12, 0}`. Proposal: give
+scalars the lane rule — any integer count, read as unsigned — so the two agree
+and no new panic is added.
+
+## `for` with a bare membership condition
+
+`for (key in counts) { ... }` is a condition loop that repeats while `key` is in
+`counts`. Odin iterates with `for x in xs`, so this is the header a programmer
+from Odin, or one who forgot `foreach`, writes. With `key` already declared it
+compiles and runs; with `key` undeclared the error is only "unknown name `key`".
+[`foreach`](#foreach) keeps `in` a membership operator in a `for` condition,
+and `switch` already settles the same collision by requiring
+`switch ((x in y))` for the membership meaning
+([switch statement](design.md#switch-statement)).
+
+Proposal: give `for` the switch rule. A condition-only header whose whole
+condition is `name in expression` is rejected with a note naming `foreach`, and
+the membership loop is written `for ((key in counts))`. An unknown name in such
+a header gets the same note.
+
+## Octal escapes
+
+`\NNN` names a code point up to U+01FF and UTF-8 encodes it, so `"\377"` is the
+two bytes of `ÿ` where C and Go give the one byte `0xFF`
+([Escape characters](design.md#escape-characters)). It is the escape a C
+programmer uses to write a byte, and here it means something else. `\x` spells
+a byte and `\u` a character, so it adds nothing, and no `.loke` file in the tree
+uses it. Proposal: remove it.
+
+## Field order in destructuring and positional literals
+
+[Destructuring](design.md#destructuring) binds a record's fields by declaration
+order, and a positional literal fills them the same way. Reordering a struct's
+fields, a routine change to remove padding, silently swaps any two of the same
+type at every such site. With `Point :: struct { y: int, x: int }`, formerly
+`{ x: int, y: int }`, `x, y := origin_offset()` now puts the old `y` in `x`,
+and `Point{3, 4}` sets `y` to 3; both compile. An anonymous record has no such
+problem, because its field order is its type identity.
+
+Proposal: outside the declaring package, destructuring and positional literals
+of a nominal record are rejected in favour of named fields, as Go vet treats
+unkeyed fields of an imported struct. Inside the package, a reordering is a
+change its author can see. Anonymous records, including the entries the
+built-in containers yield, are unaffected. The migration is not measured.
+
+## Diverging procedures
+
+A call that never returns cannot say so. `os.exit` at the end of a
+value-returning procedure is L0365, and `panic` is not a value, so
+`m.lookup_value(key) or_else panic("missing")` is L0309. The library writes a
+one-line procedure per fallback type instead: `no_sink`, `no_view`, and
+`no_string` in `core:fmt`, `empty_bytes` in `core:io`, `no_elements` in
+`core:path`, `no_buffer`, `builder_no_string`, and `no_string` in
+`core:strings`, and twelve more in `tests/`.
+
+Proposal: a procedure may declare the result `-> !`, as Odin writes it. Its
+body may not reach its end or a `return`, and a call to it may stand wherever a
+value of any type is expected. `panic` and `os.exit` become `-> !`, and the
+helpers above go.
+
+## The allocation built-ins and the `try_` convention
+
+[Appending to a dynamic array](design.md#appending-to-a-dynamic-array) makes
+`try_` the library-wide mark of an operation that returns the failure its plain
+form would panic on. The allocation built-ins have the `try_` behaviour under
+the plain name: `new`, `make`, and `new_clone` return `Result(T,
+Allocator_Error)` and have no form that follows the allocator's policy. Their
+callers want both. Of the twelve calls in `core` and `base`, seven return or
+report the error, and five turn it into a panic through the helpers in
+[Diverging procedures](#diverging-procedures), as in `make(...) or_else
+no_sink()`. design.md's own `my_new` example wraps `new` in a panic, and its
+`make` examples use `or_else {}`, which turns an allocation failure into an
+empty container.
+
+Proposal: `new`, `make`, and `new_clone` follow the allocator's failure policy
+and return the value, and `try_new`, `try_make`, and `try_new_clone` return the
+`Result`. The `or_else {}` examples go. For [The `op`/`try_op`
+pair](#the-optry_op-pair), this keeps the pair and adds the built-ins to it.
+About 117 calls in `tests/` would change spelling.
+
+## `main` returning a status
+
+`main` has no result and `os.exit` runs no cleanup, so a program that must end
+with a non-zero status after cleanup moves its body into a helper and calls
+`os.exit` on what it returns;
+[Program entry and exit](design.md#program-entry-and-exit) spells that pattern
+out. Proposal: also accept `main :: proc() -> T`, with `T` the status type
+`os.exit` settles on (see [Open questions in `core:os`](#open-questions-in-coreos)),
+whose result becomes the exit status after `main`'s scope-exit actions run.
+
+## Formatted `assert` and `panic` messages
+
+The message of both must be a compile-time string
+([Built-in procedures](design.md#built-in-procedures)), so a failed check cannot
+say which value failed it: `assert(i < n, message)` with a runtime `message` is
+L0345. Proposal: accept trailing `..any_view` arguments after the constant
+message. The runtime formats them straight into the error stream, which
+allocates nothing, and the evaluator prints them for a compile-time failure.
+
+## Implicit allocating copies
+
+[Value-semantic assignment](#value-semantic-assignment) keeps `b := a` a deep
+copy so that an owning value is as simple as an integer, and reports the cost
+with L0507. Measured over the tree with the default `-copy-cost`: across the 13
+examples and 199 `tests/run` programs, the allocating half of L0507 fires 44
+times, all in 21 test files that exercise the copy rules themselves
+(`operator_ownership`, `container_insert_ownership`, `union_lifecycle`,
+`distinct_container_conversion`, and others), and never in an example or in the
+library code the examples reach. Idiomatic code already moves, borrows, or
+clones explicitly.
+
+What exists only for the implicit case is not small: the destination's bound
+allocator and the declaration allocation policy after a move or drop
+([Assignment statements](design.md#assignment-statements)), prepare-then-write
+and the failure policy on `=`, the allocating half of
+[Copy-cost diagnostics](design.md#copy-cost-diagnostics) across a dozen
+contexts, and the clone when a value parameter is returned, where L0507 still
+advises a pointer or `shared(T)` rather than a `move` parameter.
+
+Proposal: a place whose copy may allocate is not copied implicitly. Binding,
+assigning, returning, inserting, or putting it in a literal is an error that
+offers `move(x)`, `x.clone()`, or a borrow. A type whose copy allocates nothing,
+`string` and `shared(T)` included, copies as today. `clone`, `try_clone`, and
+`Cloneable` stay, and `via` keeps only its first-growth role. This is the
+earlier review's "explicit allocating copies" combination, with the count it
+asked for: the examples need no change, and the 21 test files change with the
+rules they test.
+
+## Deriving `Yield`
+
+An iterator's `Yield` follows from its `Element` and `Item`: owned when `Item`
+is `Element`, borrowed when it is `^Element`, mutable when it is
+`^mut Element`, and field by field for a record. The checker already computes
+`Item` from the other two (`yield_item_type` in `src/iteration_yield.odin`), and
+a declared `Yield` that disagrees with `next` is L0694, so the declaration adds
+no information. Proposal: derive it, as `Iterator`, `Mut_Iterator`, and `Item`
+already are, and drop `Yield_Owned`, `Yield_Borrowed`, and `Yield_Mutable` from
+the predeclared names. The library declares it three times, in
+`Small_Array_Iterator` and the two `Enum_Array` iterators.
+
+## Map lookups name the mutable one plainly
+
+Everywhere else the mutable form is the marked one: `^mut`, `[]mut`,
+`dyn mut`, `iter_mut`, `get_mut`. A map's `find` is the one that returns
+`Option(^mut V)` and needs a mutable receiver, while the read-only probe is
+`find_ref` ([Map container operations](design.md#map-container-operations)).
+Proposal: `find` returns `Option(^V)` and `find_mut` `Option(^mut V)`.
+
+## A user container's mutable slice
+
+A slice of a mutable place is `[]mut T` when a `[]mut T` destination asks for
+one ([Slices](design.md#slices)). A user container cannot do the same:
+`Small_Array`'s `operator([:])` has a `self: ^` receiver, so `sv: []mut int =
+s[0:2]` is L0310 where the same line over a dynamic array compiles, and the type
+carries a separate `slice()` for the mutable case. Proposal: count a `[]mut T`
+destination as a place position for `operator([:])`
+([Indexing and slicing](design.md#indexing-and-slicing)), so an `inout` slicing
+overload is chosen there as the built-in mutable slice is.
+
+## Methods on a string literal
+
+`"hello".len()` compiles, and `"hello".bytes()` is L0363, "`untyped string`
+has no field or member `bytes`". design.md says a literal converts to `string`
+and `string_view`, but not which methods an unfixed string receiver has.
+Proposal: an unfixed string receiver takes `string_view`'s methods, with static
+lifetime.
+
+## Threads the language cannot start
+
+The [memory model](design.md#concurrency-and-the-memory-model), `thread_local`
+teardown order, `Once` poisoning, `shared(T)`, and atomic handle accounting on
+every `string` copy (`loke_rt_v1_string_retain` in `runtime/text.c`) are all
+specified and paid for, but nothing in `core` or `base` starts a thread, so no
+program exercises any of it. [Thread-affine strings](#thread-affine-strings)
+calls the atomic count the most expensive rule per line of ordinary code; today
+it buys nothing.
+
+Proposal: add a minimal `core:thread` before v1 freezes these rules — `spawn`
+taking an entry procedure and moved arguments that carry no checked borrow,
+`join`, and a `Mutex` — so the model has a caller. The inferred
+[global write effects](design.md#global-write-effects) then give a cheap check:
+a spawned entry whose effect writes a global that is neither `thread_local` nor
+atomic is reported as a likely data race.
 
 # Differences from Odin and design motivations
 
