@@ -14,10 +14,6 @@ foreign libc {
 	strlen :: proc "c" (s: cstring_view) -> uint ---;
 }
 
-// These two are constructed from valid input; a failure is a bug in the test.
-no_text :: proc() -> string { panic("the test produced invalid UTF-8"); }
-no_units :: proc() -> [dynamic]u16 { panic("encoding failed"); }
-
 main :: proc() {
 	// An owned zero-terminated buffer, handed to a C routine that measures it.
 	switch (owned in cstrings.from_string("hej, värld")) {
@@ -49,7 +45,7 @@ main :: proc() {
 
 	// A Loke string may contain U+0000; a retained C string may not.
 	with_zero := [?]u8{u8('a'), 0, u8('b')};
-	text := string.from_utf8(with_zero[:]) or_else no_text();
+	text := string.from_utf8(with_zero[:]) or_else panic("the test produced invalid UTF-8");
 	fmt.println(true);
 	fmt.println(text.len());
 	switch (rejected in cstrings.from_string(text)) {
@@ -91,7 +87,7 @@ main :: proc() {
 	}
 
 	// UTF-16, both directions, including a surrogate pair.
-	units := utf16.encode("Hej å 😀") or_else no_units();
+	units := utf16.encode("Hej å 😀") or_else panic("encoding failed");
 	fmt.println(true);
 	fmt.println(units.len());
 	fmt.println(utf16.length_of(units[:]));

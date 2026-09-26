@@ -436,7 +436,9 @@ Parameter :: struct {
 Result :: struct {
 	span:     Span,
 	is_inout: bool,
-	type:     Expr,
+	type:     Expr, // nil for `-> !`
+	// `-> !`: the procedure never returns (design.md "Diverging procedures").
+	diverges: bool,
 }
 
 // `Proc_Type`: a signature with no body.

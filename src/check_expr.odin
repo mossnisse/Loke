@@ -124,8 +124,18 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 check_single_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Type_Id {
 	type := check_expr(k, e, expected)
 	base := expr_base(e)
+	// design.md "Diverging procedures": a call that never returns stands in
+	// for a value of whatever type is expected.
+	if type == TYPE_VOID && base != nil && expected != INVALID_TYPE && expected != TYPE_VOID &&
+	   !type_is_untyped(k.c, expected) && call_diverges(k.c, e) {
+		base.type = expected
+		return expected
+	}
 	if type == TYPE_VOID {
 		errorf(k.c, expr_span(e), "L0309", "this expression produces no value")
+		if call_diverges(k.c, e) {
+			add_notef(k.c, expr_span(e), "a call that never returns stands in for a value only where a type is expected")
+		}
 		if base != nil {
 			base.type = INVALID_TYPE
 		}

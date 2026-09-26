@@ -12,7 +12,6 @@ Holder :: struct { view: []int }
 Pair :: struct { left: []int, right: []int }
 Choice :: union { held: Holder, number: int }
 
-no_pointer :: proc() -> ^mut int { panic("allocation failed"); }
 Handle :: struct { target: ^int }
 
 // The bare form is `returns_a_local_array` in tests/err/m5b_escape.loke.
@@ -406,7 +405,7 @@ union_result_escape :: proc(values: []int) -> []int {
 
 Result_Pointers :: struct { left: ^mut int, right: ^mut int }
 allocate_result_pair :: proc() -> Result_Pointers {
-	p := new(int) or_else no_pointer();
+	p := new(int) or_else panic("allocation failed");
 	return Result_Pointers{p, p};
 }
 result_fields_may_alias :: proc() -> int {
@@ -535,7 +534,7 @@ unknown_global_aggregate_read :: proc() {
 // needs proof independent of the allocation root.
 retained_allocation: ^mut int;
 retain_and_release_escape :: proc() {
-	p := new(int) or_else no_pointer();
+	p := new(int) or_else panic("allocation failed");
 	retained_allocation = p;
 	free(p);
 }
@@ -545,7 +544,7 @@ retain_and_release_escape :: proc() {
 region_retained_allocation: ^mut int;
 retain_local_region_escape :: proc() {
 	arena := mem.Arena.init();
-	p := new(int, arena.allocator()) or_else no_pointer();
+	p := new(int, arena.allocator()) or_else panic("allocation failed");
 	region_retained_allocation = p;
 }
 

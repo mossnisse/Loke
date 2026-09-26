@@ -1,0 +1,19 @@
+package main;
+import "core:os";
+
+// design.md "Diverging procedures": a `-> !` body cannot return or reach its
+// end, and a diverging call is a value only where a type is expected.
+
+returns :: proc(x: int) -> ! {
+	if (x > 0) { os.exit(x); }
+	return;
+}
+
+falls_through :: proc(x: int) -> ! {
+	if (x > 0) { os.exit(x); }
+}
+
+main :: proc() {
+	value := os.exit(1);
+	_ = value;
+}

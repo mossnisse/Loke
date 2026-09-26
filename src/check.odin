@@ -1271,7 +1271,10 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 
 	result_type := INVALID_TYPE
 	result_inout := false
-	if result := literal.signature.result; result != nil {
+	diverges := false
+	if result := literal.signature.result; result != nil && result.diverges {
+		diverges = true
+	} else if result != nil {
 		before := k.c.error_count
 		result_type = resolve_type_syntax(k, result.type)
 		if result.type != nil && result_type == INVALID_TYPE && k.c.error_count == before {
@@ -1299,6 +1302,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.params = params[:]
 	symbol.result = result_type
 	symbol.result_inout = result_inout
+	symbol.diverges = diverges
 	symbol.param_symbols = param_symbols[:]
 	symbol.param_defaults = defaults[:]
 	symbol.proc_type = proc_type
@@ -1804,7 +1808,8 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		}
 		result_type := INVALID_TYPE
 		result_inout := false
-		if result := value.result; result != nil {
+		// The parser rejects `-> !` here.
+		if result := value.result; result != nil && !result.diverges {
 			before := k.c.error_count
 			result_type = resolve_type_syntax(k, result.type)
 			if result.type != nil && result_type == INVALID_TYPE && k.c.error_count == before {
@@ -2384,6 +2389,9 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	if symbol.result != INVALID_TYPE && flow.can_fall_through {
 		errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")
 	}
+	if symbol.diverges && flow.can_fall_through {
+		errorf(k.c, literal.span, "L0710", "this procedure is declared `-> !` but can reach its end")
+	}
 }
 
 install_symbols :: proc(scope: ^Scope, c: ^Compiler, symbols: []Symbol_Id) {
@@ -2517,9 +2525,9 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 			}
 			check_expr(k, expr)
 			report_discarded_required_results(k, expr)
-			// `panic` never returns, in either phase, so nothing after it in this
-			// block is reachable.
-			if is_builtin_call(k.c, expr, .Panic) {
+			// A diverging call never returns, in either phase, so nothing after it
+			// in this block is reachable.
+			if call_diverges(k.c, expr) {
 				flow.can_fall_through = false
 			}
 		}
@@ -2605,6 +2613,23 @@ expression_statement_has_effect :: proc(e: Expr) -> bool {
 		return v.op == .Or_Return
 	}
 	return false
+}
+
+// `panic`, or a call to a procedure declared `-> !` (design.md "Diverging
+// procedures"). A call through a procedure value never diverges.
+call_diverges :: proc(c: ^Compiler, e: Expr) -> bool {
+	call, is_call := e.(^Expr_Call)
+	if !is_call {
+		return false
+	}
+	symbol := symbol_of(c, call.resolution.symbol)
+	if symbol == nil {
+		return false
+	}
+	if symbol.kind == .Builtin {
+		return symbol.builtin == .Panic
+	}
+	return symbol.kind == .Proc && symbol.diverges
 }
 
 is_builtin_call :: proc(c: ^Compiler, e: Expr, kind: Builtin_Kind) -> bool {
@@ -3265,6 +3290,10 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 	}
 	terminated := Flow_Info{returns = true}
 
+	if k.proc_literal != nil && k.proc_literal.signature.result != nil && k.proc_literal.signature.result.diverges {
+		errorf(k.c, s.span, "L0710", "this procedure is declared `-> !`, so it cannot `return`")
+		return terminated
+	}
 	if s.value == nil {
 		if k.result_type != INVALID_TYPE {
 			errorf(

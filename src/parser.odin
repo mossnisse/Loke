@@ -2650,6 +2650,15 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 		)
 		return error_expr(p, signature.span)
 	case:
+		// Divergence belongs to a declared procedure, not to a procedure type
+		// (design.md "Diverging procedures").
+		if result != nil && result.diverges {
+			parse_error(
+				p, result.span, "L0257", "`-> !` on a procedure type",
+				"only a declared procedure can be `-> !`; a procedure type cannot",
+			)
+			signature.has_error = true
+		}
 		return signature // a `Proc_Type`: a signature and nothing else
 	}
 
@@ -2821,6 +2830,11 @@ parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 		return item, false
 	}
 
+	if allow(p, .Not) {
+		item.diverges = true
+		item.span = span_to_here(p, start)
+		return item, true
+	}
 	item.is_inout = allow(p, .Inout)
 	item.type = parse_type(p)
 	item.span = span_to_here(p, start)

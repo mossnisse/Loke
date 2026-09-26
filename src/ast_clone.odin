@@ -118,6 +118,7 @@ clone_result :: proc(c: ^Compiler, result: ^Result) -> ^Result {
 		span     = result.span,
 		is_inout = result.is_inout,
 		type     = clone_expr(c, result.type),
+		diverges = result.diverges,
 	}
 	return out
 }

@@ -23,7 +23,7 @@ String_Builder :: struct {
 
 // A builder whose buffer *and* finished string come from `allocator`.
 init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder {
-	made := make([dynamic]u8, 0, 0, allocator) or_else no_buffer();
+	made := make([dynamic]u8, 0, 0, allocator) or_else panic("String_Builder allocation failed");
 	return String_Builder{move(made), allocator};
 }
 
@@ -111,12 +111,12 @@ impl String_Builder {
 	view :: proc(self: ^) -> string_view {
 		// The same guard `try_copy_string` states: the public surface never admits
 		// a partial rune, so this is unreachable rather than a policy.
-		return string_view.from_utf8(self.data[:]) or_else not_utf8();
+		return string_view.from_utf8(self.data[:]) or_else panic("String_Builder holds invalid UTF-8");
 	}
 
 	// A copy of what is written so far. The builder is not disturbed either way.
 	copy_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
-		return self.try_copy_string(allocator) or_else builder_no_string();
+		return self.try_copy_string(allocator) or_else panic("String_Builder allocation failed");
 	}
 
 	try_copy_string :: proc(
@@ -124,7 +124,7 @@ impl String_Builder {
 	) -> Result(string, Allocator_Error) {
 		// Unreachable through the public surface, which never admits a partial
 		// rune. The diverging fallback is a guard, not a policy.
-		view := string_view.from_utf8(self.data[:]) or_else not_utf8();
+		view := string_view.from_utf8(self.data[:]) or_else panic("String_Builder holds invalid UTF-8");
 		selected := mem.default_allocator() if allocator == nil else allocator;
 		return allocate_string(view, selected);
 	}
@@ -178,14 +178,3 @@ encode_rune :: proc(value: rune) -> (bytes: [4]u8, length: int) {
 		length = 4,
 	};
 }
-
-// design.md "Typed fallibility": `or_else` needs a value on its right, and
-// these failures have none to offer - the program stops instead.
-@(private)
-no_buffer :: proc() -> [dynamic]u8 { panic("String_Builder allocation failed"); }
-
-@(private)
-builder_no_string :: proc() -> string { panic("String_Builder allocation failed"); }
-
-@(private)
-not_utf8 :: proc() -> string_view { panic("String_Builder holds invalid UTF-8"); }

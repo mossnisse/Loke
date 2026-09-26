@@ -741,6 +741,9 @@ dump_parameter :: proc(b: ^strings.Builder, param: Parameter, depth: int) {
 @(private = "file")
 dump_result :: proc(b: ^strings.Builder, result: Result, depth: int) {
 	fmt.sbprint(b, " (result")
+	if result.diverges {
+		fmt.sbprint(b, " !")
+	}
 	if result.is_inout {
 		fmt.sbprint(b, " inout")
 	}

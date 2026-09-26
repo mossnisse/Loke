@@ -1,183 +1,183 @@
 L0526
-@22:9
+@21:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@28:9
+@27:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0511
-@37:2
+@36:2
 this write of `numbers` is not compatible with the read-only slice of it that is still in use
 L0512
-@46:2
+@45:2
 `value` cannot be assigned here: a read-only pointer of it is still in use
 L0526
-@54:9
+@53:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@64:9
+@63:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@72:23
+@71:23
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@82:10
+@81:10
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@95:9
+@94:9
 this slice cannot be returned: `numbers` ends when this procedure returns
 L0526
-@101:9
+@100:9
 this slice cannot be returned: `others` ends when this procedure returns
 L0526
-@111:21
+@110:21
 this slice cannot be returned: `numbers` ends when this procedure returns
 L0526
-@120:9
+@119:9
 this slice cannot be returned: `numbers` ends when this procedure returns
 L0511
-@128:2
+@127:2
 this write of `numbers` is not compatible with the read-only slice of it that is still in use
 L0526
-@137:9
+@136:9
 this borrow cannot be returned: `table` ends when this procedure returns
 L0526
-@146:9
+@145:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@156:9
+@155:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@166:21
+@165:21
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@180:9
+@179:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@188:9
+@187:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@196:9
+@195:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@207:9
+@206:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@220:9
+@219:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@227:9
+@226:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@234:9
+@233:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@241:9
+@240:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@248:9
+@247:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@255:23
+@254:23
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@263:23
+@262:23
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@270:9
+@269:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@280:9
+@279:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0511
-@288:2
+@287:2
 this write of `local` is not compatible with the read-only slice of it that is still in use
 L0511
-@296:2
+@295:2
 this write of `local` is not compatible with the read-only slice of it that is still in use
 L0526
-@305:9
+@304:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@313:21
+@312:21
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@324:9
+@323:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@339:9
+@338:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@344:9
+@343:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@351:9
+@350:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@356:9
+@355:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@362:9
+@361:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@367:9
+@366:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@376:9
+@375:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@383:9
+@382:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@402:23
+@401:23
 this slice cannot be returned: `local` ends when this procedure returns
 L0512
-@414:2
+@413:2
 this allocation cannot be released here: a pointer of it is still in use
 L0526
-@432:9
+@431:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@446:9
+@445:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@460:9
+@459:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@470:9
+@469:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@477:9
+@476:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0647
-@483:2
+@482:2
 this slice borrows `local`, which does not outlive `retained_holders`: process-lifetime storage
 L0647
-@487:2
+@486:2
 this slice borrows `local`, which does not outlive `destination`: storage the caller owns
 L0647
-@492:2
+@491:2
 this slice borrows `local`, which does not outlive `destination`: storage the caller owns
 L0646
-@498:2
+@497:2
 this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
 L0526
-@507:9
+@506:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@514:9
+@513:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0647
-@522:2
+@521:2
 this slice borrows `aggregate_tls_numbers`, which does not outlive `aggregate_global_view`: process-lifetime storage
 L0647
-@530:2
+@529:2
 this slice borrows existing content of `unknown_global_holder`, which does not outlive `unknown_global_view`: process-lifetime storage
 L0647
-@539:2
+@538:2
 this pointer borrows this allocation, which does not outlive `retained_allocation`: process-lifetime storage
 L0647
-@549:2
+@548:2
 this pointer borrows this allocation, which does not outlive `region_retained_allocation`: process-lifetime storage
 L0647
-@560:2
+@559:2
 this slice borrows `local`, which does not outlive `distinct_global_holder`: process-lifetime storage

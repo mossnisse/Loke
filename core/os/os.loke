@@ -21,7 +21,7 @@ foreign loke_runtime {
 	@(link_name="loke_rt_v1_args_len")
 	rt_args_len :: proc "c" (index: int) -> int ---;
 	@(link_name="exit")
-	rt_exit :: proc "c" (status: i32) ---;
+	rt_exit :: proc "c" (status: i32) -> ! ---;
 }
 
 // The process argument vector: read-only, with process lifetime and no storage
@@ -90,6 +90,6 @@ view_at :: proc(index: int) -> string_view {
 // inside the call, so that is true by construction rather than by a rule the
 // compiler enforces.
 @(public)
-exit :: proc(status: int) {
+exit :: proc(status: int) -> ! {
 	rt_exit(i32(status));
 }

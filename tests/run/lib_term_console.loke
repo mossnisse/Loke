@@ -85,7 +85,7 @@ main :: proc() {
 	// as the characters of an escape sequence.
 	set_console_mode(console, original | VIRTUAL_TERMINAL_INPUT);
 	{
-		raw := term.begin_raw() or_else no_raw();
+		raw := term.begin_raw() or_else panic("no raw mode");
 		mode: u32 = 0;
 		get_console_mode(console, &mut mode);
 		fmt.println((mode & VIRTUAL_TERMINAL_INPUT) != 0);
@@ -110,12 +110,10 @@ main :: proc() {
 	doomed := open_input();
 	set_std_handle(u32(STD_INPUT), doomed);
 	{
-		raw := term.begin_raw() or_else no_raw();
+		raw := term.begin_raw() or_else panic("no raw mode");
 		close_handle(doomed);
 	}
 	set_std_handle(u32(STD_INPUT), console);
 	fmt.println(term.begin_raw());
 	set_console_mode(console, original);
 }
-
-no_raw :: proc() -> term.Raw_Mode { panic("no raw mode"); }

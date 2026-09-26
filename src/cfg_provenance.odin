@@ -1487,7 +1487,8 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 	c := graph.k.c
 	out := prov_empty_region(graph)
 	allocator_result := prov_carries_allocator(c, result_type)
-	if !type_is_managed(c, result_type) && !allocator_result {
+	// A diverging call's value is never produced, so it is in no region.
+	if (!type_is_managed(c, result_type) && !allocator_result) || call_diverges(c, v) {
 		return out
 	}
 	if _, construction := v.operation.(Call_Union_Construct); construction {
@@ -3241,7 +3242,9 @@ prov_carries_borrow :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 @(private = "file")
 prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int, borrowed: []int) -> []int {
-	if v.type == TYPE_VOID || v.type == INVALID_TYPE {
+	// A diverging call's value is never produced (design.md "Diverging
+	// procedures"), so it contributes no sources.
+	if v.type == TYPE_VOID || v.type == INVALID_TYPE || call_diverges(graph.k.c, v) {
 		return nil
 	}
 	result := Prov_Call_Result {

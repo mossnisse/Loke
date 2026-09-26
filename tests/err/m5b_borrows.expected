@@ -1,60 +1,60 @@
 L0511
-@24:14
+@22:14
 this read of `xs` is not compatible with the mutable slice of it that is still in use
 L0511
-@33:2
+@31:2
 this write of `xs` is not compatible with the read-only slice of it that is still in use
 L0511
-@41:9
+@39:9
 this write of `p` is not compatible with the mutable pointer of it that is still in use
 L0511
-@49:11
+@47:11
 this write of `p` is not compatible with the mutable pointer of it that is still in use
 L0511
-@57:2
+@55:2
 this write of `xs` is not compatible with the mutable slice of it that is still in use
 L0511
-@65:15
+@63:15
 this read of `c` is not compatible with the mutable pointer of it that is still in use
 L0512
-@77:2
+@75:2
 `xs` cannot be assigned here: a mutable slice of it is still in use
 L0512
-@84:11
+@82:11
 `r` cannot be moved here: a read-only pointer of it is still in use
 L0512
-@91:2
+@89:2
 `r` cannot be dropped here: a read-only pointer of it is still in use
 L0512
-@98:9
+@96:9
 `value` cannot be exchanged here: a read-only pointer of it is still in use
 L0513
-@109:14
+@107:14
 this slice is used after `local`, the local it borrows, has ended
 L0514
-@116:2
+@114:2
 `free` releases an allocation from `new` or `new_clone`; this pointer may designate local
 L0512
-@121:2
+@119:2
 this allocation cannot be released here: a pointer of it is still in use
 L0514
-@122:2
+@120:2
 this allocation has already been released
 L0512
-@130:2
+@128:2
 this allocation cannot be released here: a pointer of it is still in use
 L0641
-@130:7
+@128:7
 `q` cannot be used here: a mutable reborrow of it is still in use
 L0512
-@139:2
+@137:2
 `value` cannot be assigned here: a read-only pointer of it is still in use
 L0513
-@170:14
+@168:14
 this pointer is used after `x`, the local it borrows, has ended
 L0513
-@176:14
+@174:14
 this pointer is used after `x`, the local it borrows, has ended
 L0513
-@182:14
+@180:14
 this pointer is used after `x`, the local it borrows, has ended

@@ -4297,6 +4297,26 @@ escape :: proc() -> inout int {
 
 Because the borrow is mutable, the caller's root is exclusively loaned for as long as any copy of the result is live, under [the one rule](#capabilities-and-the-one-rule).
 
+#### Diverging procedures
+
+A procedure declared `-> !` never returns to its caller. Its body may not reach its end or a `return`; it ends by calling another diverging procedure, by panicking, or in a loop with no exit. [`panic`](#built-in-procedures) and [`os.exit`](#program-entry-and-exit) diverge.
+
+A call to a diverging procedure stands wherever a value of any type is expected, and nothing after it runs:
+
+```odin
+fail :: proc(message: string) -> ! {
+	log.error(message);
+	os.exit(1);
+}
+
+port := config.lookup_value("port") or_else fail("no port configured");
+sink := make([dynamic]u8, 0, 64) or_else panic("allocation failed");
+```
+
+Where no type is expected, as in `x := fail("...")`, the call produces no value. A call statement to a diverging procedure ends its block's reachable code, so a value-returning procedure may end with one instead of a `return`.
+
+Divergence belongs to the declaration, not to the procedure type: `proc() -> !` is not a type, and a call through a procedure value does not diverge.
+
 #### Named arguments
 
 A call can name its arguments. Named arguments show the parameter for each value and do not depend on parameter order:
@@ -5071,7 +5091,7 @@ A Loke program contains one or more packages. A Loke source file uses the `.loke
 
 ### Program entry and exit
 
-An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()`: no parameters, no results, the `loke` calling convention. Command-line arguments are read from `os.args`. The exit status is 0 when `main` returns normally. `os.exit(code)` terminates the process immediately with the specified status.
+An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()`: no parameters, no results, the `loke` calling convention. Command-line arguments are read from `os.args`. The exit status is 0 when `main` returns normally. `os.exit(code)` terminates the process immediately with the specified status; it is [`-> !`](#diverging-procedures).
 
 Program startup has this order:
 
@@ -5213,7 +5233,7 @@ The predeclared operations used by this document are:
 | `type_info_of(id)` | read-only `^runtime.Type_Info` for a `typeid`; the table is shared static storage |
 | `fields_of(T)`, `enum_values_of(T)` | Typed [compile-time reflection](#compile-time-reflection) descriptor arrays |
 | `assert(condition, message := "")` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string |
-| `panic(message)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string |
+| `panic(message)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
 | `new`, `new_clone`, `make`, `free`, `free_all`, `drop` | [Allocation and release](#allocators) |
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
 | `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |

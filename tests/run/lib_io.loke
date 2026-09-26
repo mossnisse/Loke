@@ -83,8 +83,6 @@ text_of :: proc(bytes: []u8) -> string {
 	}
 }
 
-no_line :: proc() -> string { panic("the reader ended early"); }
-
 succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
 	switch (_ in outcome) {
 	case .ok:  return true;
@@ -172,27 +170,27 @@ main :: proc() {
 
 	// read_line: both endings, an unterminated last line, and the end.
 	lines := reader_over("first\r\nsecond\nthird", 5);
-	fmt.println(io.read_line(inout lines) or_else no_line());
-	fmt.println(io.read_line(inout lines) or_else no_line());
-	fmt.println(io.read_line(inout lines) or_else no_line());
+	fmt.println(io.read_line(inout lines) or_else panic("the reader ended early"));
+	fmt.println(io.read_line(inout lines) or_else panic("the reader ended early"));
+	fmt.println(io.read_line(inout lines) or_else panic("the reader ended early"));
 	switch (done in io.read_line(inout lines)) {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(io.is(done, .End_Of_Input));
 	}
 
 	kept := reader_over("keep\n", 5);
-	fmt.println((io.read_line(inout kept, options = io.Line_Options{keep_ending = true}) or_else no_line()).len());
+	fmt.println((io.read_line(inout kept, options = io.Line_Options{keep_ending = true}) or_else panic("the reader ended early")).len());
 
 	// A blank line is a line; invalid UTF-8 is refused without ending the stream;
 	// and a `\r` not followed by `\n` is text.
 	odd_bytes := [?]u8{u8('\n'), 0xFF, u8('\n'), u8('z'), u8('\r')};
 	odd := Short_Reader{odd_bytes[:], 0, 2};
-	fmt.println((io.read_line(inout odd) or_else no_line()).len());
+	fmt.println((io.read_line(inout odd) or_else panic("the reader ended early")).len());
 	switch (refused in io.read_line(inout odd)) {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(io.is(refused, .Invalid_Data));
 	}
-	fmt.println((io.read_line(inout odd) or_else no_line()).len());
+	fmt.println((io.read_line(inout odd) or_else panic("the reader ended early")).len());
 
 	combined: Error_After_Byte = {};
 	switch (combined_error in io.read_line(inout combined)) {

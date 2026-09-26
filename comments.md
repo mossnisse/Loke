@@ -275,10 +275,6 @@ profiles contain.
   `os.exit(4294967297)` exits with 1 although design.md "Program entry and
   exit" says the process ends "with the specified status". Should the
   parameter be `i32`, or the spec say the status is taken modulo 2^32?
-- `os.exit` does not diverge, so `f :: proc() -> int { os.exit(1); }` is L0365.
-  `panic` has the same shape but is built in. A way to mark a procedure as not
-  returning would fix both `os.exit` and user wrappers around it; see
-  [Diverging procedures](#diverging-procedures).
 - An environment name that is empty or contains `=` fails `set_environment`
   and `unset_environment` as `Other` (Windows error 87), while
   `get_environment` answers `.none` for it. Should the portable layer reject
@@ -372,21 +368,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 `v << {1, -1, 2, 40}` over `{1, 2, 3, 4}` gives `{2, 0, 12, 0}`. Proposal: give
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
-
-## Diverging procedures
-
-A call that never returns cannot say so. `os.exit` at the end of a
-value-returning procedure is L0365, and `panic` is not a value, so
-`m.lookup_value(key) or_else panic("missing")` is L0309. The library writes a
-one-line procedure per fallback type instead: `no_sink`, `no_view`, and
-`no_string` in `core:fmt`, `empty_bytes` in `core:io`, `no_elements` in
-`core:path`, `no_buffer`, `builder_no_string`, and `no_string` in
-`core:strings`, and twelve more in `tests/`.
-
-Proposal: a procedure may declare the result `-> !`, as Odin writes it. Its
-body may not reach its end or a `return`, and a call to it may stand wherever a
-value of any type is expected. `panic` and `os.exit` become `-> !`, and the
-helpers above go.
 
 ## The allocation built-ins and the `try_` convention
 
@@ -1235,6 +1216,20 @@ their type identity, so `core:container`'s `Enum_Array` yields
 `(key: E, value: T)` rather than a nominal entry struct. The migration was 85
 literals, all in tests; 50 of them were `core:math` `Complex` and `Quaternion`
 values in one file.
+
+### Diverging procedures belong to the declaration
+
+Loke takes Odin's `-> !`. Before it, a call that never returned could not say
+so: `os.exit` at the end of a value-returning procedure was L0365, and `panic`
+was not a value, so `m.lookup_value(key) or_else panic("missing")` was L0309.
+The library wrote a one-line procedure per fallback type instead, ten in core
+and nine in tests, all now gone.
+
+Unlike Odin, divergence is not part of the procedure type. A diverging call
+takes whatever type its context expects, which the checker settles from the
+callee's declaration; carrying it through procedure values would add a
+subtyping rule (`proc() -> !` wherever `proc() -> T` is expected) for a case
+nothing in the tree needs. A later change can add it without breaking code.
 
 ### Map element mutation
 

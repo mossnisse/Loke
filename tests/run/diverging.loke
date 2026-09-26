@@ -1,0 +1,36 @@
+package main; import "core:fmt";
+import "core:os";
+
+// design.md "Diverging procedures": a `-> !` call stands in for a value of any
+// type, and nothing after it runs.
+
+stop :: proc(message: string) -> ! {
+	fmt.println(message);
+	os.exit(0);
+}
+
+// A value-returning procedure may end in a diverging call.
+first_even :: proc(values: []int) -> int {
+	foreach (value in values) {
+		if (value % 2 == 0) { return value; }
+	}
+	stop("no even value");
+}
+
+main :: proc() {
+	counts: map[string]int = {};
+	counts["a"] = 1;
+	fmt.println(counts.lookup_value("a") or_else stop("unreachable"));
+	fmt.println(counts.lookup_value("a") or_else panic("unreachable"));
+	name: string = "found" if counts.len() > 0 else stop("unreachable");
+	fmt.println(name);
+	// The fallback is never produced, so the pointer keeps the allocation's
+	// provenance and `free` accepts it.
+	cell := new(int) or_else stop("unreachable");
+	cell^ = 7;
+	fmt.println(cell^);
+	free(cell);
+	fmt.println(first_even([]int{1, 4, 5}));
+	fmt.println(first_even([]int{1, 3}));
+	fmt.println("not printed");
+}

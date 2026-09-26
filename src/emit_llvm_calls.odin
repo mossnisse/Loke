@@ -7,6 +7,9 @@ import "core:fmt"
 
 @(private)
 emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+	if call_diverges(e.c, v) {
+		return emit_diverging_call(e, v, as_type)
+	}
 	switch operation in v.operation {
 	case Call_Enum_From_Int:
 		value := emit_expr(e, v.bound[0])
@@ -60,7 +63,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			panic_if(e, failed, "assert.failed", panic_message_text(e, v, 1, "assertion failed"))
 			return "0"
 		case .Panic:
-			emit_panic(e, panic_message_text(e, v, 0, "explicit panic"))
+			backend_fail(e, "`panic` bypassed emit_diverging_call")
 			return "0"
 		case .Default_Allocator:
 			return emit_default_allocator(e)
@@ -649,6 +652,25 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 		out[0] = emit_clone_value(e, info.variants[success], out[0])
 	}
 	return out
+}
+
+// design.md "Diverging procedures": the call never returns. In a value position
+// the code after it still needs a block and an operand, neither ever reached.
+@(private = "file")
+emit_diverging_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+	if is_builtin_call(e.c, v, .Panic) {
+		emit_panic(e, panic_message_text(e, v, 0, "explicit panic"))
+	} else {
+		emit_direct_call(e, v)
+		fmt.sbprintln(&e.b, "  unreachable")
+		e.terminated = true
+	}
+	if as_type == INVALID_TYPE || as_type == TYPE_VOID {
+		return "0"
+	}
+	fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
+	e.terminated = false
+	return "undef"
 }
 
 // Emits the call and returns its one result operand, or nothing.

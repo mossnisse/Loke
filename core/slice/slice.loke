@@ -193,7 +193,7 @@ max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 clone :: proc(values: []$T, allocator: Allocator = mem.default_allocator()) -> [dynamic]T {
 	// `slice.try_clone` below, not a receiver member: a slice is a borrow and
 	// owns nothing to clone.
-	return try_clone(values, allocator) or_else no_copy(T);
+	return try_clone(values, allocator) or_else panic("slice clone allocation failed");
 }
 
 try_clone :: proc(
@@ -203,9 +203,3 @@ try_clone :: proc(
 	owned.try_append(..values) or_return;
 	return .ok(move(owned));
 }
-
-// design.md "Typed fallibility": `or_else` needs a value on its right, and this
-// failure has none to offer - the program stops instead. A diverging fallback
-// keeps the successful path a single expression.
-@(private)
-no_copy :: proc($T: type) -> [dynamic]T { panic("slice clone allocation failed"); }

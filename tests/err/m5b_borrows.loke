@@ -9,8 +9,6 @@ Pair :: struct { a: int, b: int }
 
 Choice :: union { number: int, flag: bool }
 
-no_pointer :: proc() -> ^mut int { panic("allocation failed"); }
-
 Res :: struct { id: int }
 
 impl Res {
@@ -117,7 +115,7 @@ free_of_a_lexical_root :: proc() {
 }
 
 double_free :: proc() {
-	q := new(int) or_else no_pointer();
+	q := new(int) or_else panic("allocation failed");
 	free(q);
 	free(q);
 }
@@ -125,7 +123,7 @@ double_free :: proc() {
 // A `free` invalidates every locally tracked alias, so one that survives it is
 // the error rather than the read it would later perform.
 alias_survives_free :: proc() {
-	q := new(int) or_else no_pointer();
+	q := new(int) or_else panic("allocation failed");
 	alias := q;
 	free(q);
 	fmt.println(alias^);

@@ -488,6 +488,9 @@ Symbol :: struct {
 	params:      []Type_Id,
 	result:      Type_Id, // INVALID_TYPE when the procedure has no result
 	result_inout: bool,
+	// Declared `-> !`: a call never returns and stands in for any value
+	// (design.md "Diverging procedures"). Not part of `proc_type`.
+	diverges:    bool,
 	proc_type:   Type_Id,
 	// Flattened one entry per parameter name, so `proc(a, b: int)` has two of
 	// each. Defaults are the declaration's syntax, evaluated at the call site.

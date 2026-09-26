@@ -1,0 +1,10 @@
+L0710
+@9:2
+so it cannot `return`
+L0710
+@12:18
+but can reach its end
+L0309
+@17:11
+this expression produces no value
+stands in for a value only where a type is expected

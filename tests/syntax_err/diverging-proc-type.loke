@@ -1,0 +1,6 @@
+// `-> !` belongs to a declared procedure, not to a procedure type.
+package main;
+
+f: proc() -> !;
+
+sentinel :: proc() { }

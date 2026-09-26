@@ -119,7 +119,7 @@ format_to_with :: proc(w: Writer, options: Options, args: ..any_view) {
 // world's IR going from 397 lines to 4923.
 @(public)
 to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
-	sink := make([dynamic]u8, 0, 64, allocator) or_else no_sink();
+	sink := make([dynamic]u8, 0, 64, allocator) or_else panic("formatting allocation failed");
 	// `move`, because a named local in a composite literal is copy initialization
 	// and not a transfer. Without it the collector clones the buffer from the
 	// *selected* allocator and formats there, so `allocator` reached only the
@@ -128,11 +128,11 @@ to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
 	emit((Writer)(&mut collector), DEFAULT_OPTIONS, ..args);
 	// Every formatter writes UTF-8; a `format` overload that does not is the
 	// one way here, and a wrong one.
-	view := string_view.from_utf8(collector.bytes[:]) or_else no_view();
+	view := string_view.from_utf8(collector.bytes[:]) or_else panic("formatted output is not valid UTF-8");
 	// The compiler contributes `allocate_string`: a copy of known-valid UTF-8
 	// into string storage from a *supplied* allocator. `core:strings` wraps the
 	// same primitive as `clone`.
-	return allocate_string(view, allocator) or_else no_string();
+	return allocate_string(view, allocator) or_else panic("formatting allocation failed");
 }
 
 @(private)
@@ -153,15 +153,3 @@ emit :: proc(w: Writer, options: Options, args: ..any_view) {
 		format_any(a, w, options);
 	}
 }
-
-// design.md "Typed fallibility": `or_else` needs a value on its right, and
-// these failures have none to offer — the program stops instead. A diverging
-// fallback keeps the successful path a single expression.
-@(private)
-no_sink :: proc() -> [dynamic]u8 { panic("formatting allocation failed"); }
-
-@(private)
-no_view :: proc() -> string_view { panic("formatted output is not valid UTF-8"); }
-
-@(private)
-no_string :: proc() -> string { panic("formatting allocation failed"); }

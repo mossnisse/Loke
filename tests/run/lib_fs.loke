@@ -70,13 +70,13 @@ main :: proc() {
 
 	// Appending adds to the end; writing truncates first.
 	fmt.println(succeeded(fs.append_text(file, "andra\n")));
-	both := fs.read_text(file) or_else no_text();
+	both := fs.read_text(file) or_else panic("a file the test just wrote could not be read");
 	fmt.println(both.len());
 	foreach (line in strings.lines(both)) {
 		fmt.println(line);
 	}
 	fmt.println(succeeded(fs.write_text(file, "kort")));
-	fmt.println(fs.read_text(file) or_else no_text());
+	fmt.println(fs.read_text(file) or_else panic("a file the test just wrote could not be read"));
 
 	// Bytes, including a zero byte, survive unchanged.
 	binary := in_root(directory, "binary.bin");
@@ -187,7 +187,7 @@ main :: proc() {
 
 	// The handle API: write, seek, read back, and close explicitly.
 	handle_path := in_root(directory, "handle.bin");
-	handle := fs.open(handle_path, fs.Open_Options{access = .Read_Write, disposition = .Create_Or_Truncate, append = false}) or_else no_file();
+	handle := fs.open(handle_path, fs.Open_Options{access = .Read_Write, disposition = .Create_Or_Truncate, append = false}) or_else panic("a file the test just created could not be opened");
 	fmt.println(true);
 	fmt.println(succeeded(io.write_string(inout handle, "0123456789")));
 	fmt.println(succeeded(handle.flush()));
@@ -208,7 +208,7 @@ main :: proc() {
 		fmt.println(false);
 		fmt.println(0);
 	}
-	fmt.println(string.from_utf8(window[:]) or_else no_text());
+	fmt.println(string.from_utf8(window[:]) or_else panic("a file the test just wrote could not be read"));
 	fmt.println(succeeded(handle.close()));
 	// Close is idempotent, and the value is inert afterwards.
 	fmt.println(succeeded(handle.close()));
@@ -219,7 +219,7 @@ main :: proc() {
 	}
 
 	// A file opened for reading refuses to write, whatever the static type says.
-	reader := fs.open_read(file) or_else no_file();
+	reader := fs.open_read(file) or_else panic("a file the test just created could not be opened");
 	one: string_view = "x";
 	switch (wrong_direction in reader.write(one.bytes())) {
 	case .ok:  fmt.println(false);
@@ -239,7 +239,7 @@ main :: proc() {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(io.is(refused, .Unsupported));
 	}
-	fmt.println(fs.read_text(file) or_else no_text());
+	fmt.println(fs.read_text(file) or_else panic("a file the test just wrote could not be read"));
 
 	// A volume root always exists, though Windows refuses to create it.
 	volume_root := strings.join([]string_view{path.volume(directory), ""}, "\\");
@@ -248,12 +248,12 @@ main :: proc() {
 	// Renaming, then reading through the new name.
 	renamed := in_root(directory, "renamed.txt");
 	fmt.println(succeeded(fs.rename(file, renamed)));
-	fmt.println(fs.read_text(renamed) or_else no_text());
+	fmt.println(fs.read_text(renamed) or_else panic("a file the test just wrote could not be read"));
 
 	// The directory reader yields every entry once, and skips `.` and `..`.
 	fmt.println(count_entries(directory) or_else -1);
 	// A bare drive names that drive's current directory, not its root.
-	previous := os.working_directory() or_else no_text();
+	previous := os.working_directory() or_else panic("a file the test just wrote could not be read");
 	fmt.println(succeeded(os.set_working_directory(directory)));
 	fmt.println(count_entries(path.volume(directory)) or_else -1);
 	fmt.println(succeeded(os.set_working_directory(previous)));
@@ -261,11 +261,6 @@ main :: proc() {
 	clean_up(directory);
 	fmt.println(fs.exists(directory) or_else true);
 }
-
-// Everything these stand in for is checked by the case that produced it; a
-// failure here is a broken test environment rather than a case to cover.
-no_text :: proc() -> string { panic("a file the test just wrote could not be read"); }
-no_file :: proc() -> fs.File { panic("a file the test just created could not be opened"); }
 
 // The documented shape for a fallible source (design.md "Streaming a fallible
 // source"): one `or_return` for the failure, one switch for the end. The reader

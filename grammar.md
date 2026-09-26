@@ -404,6 +404,7 @@ Parameter_Name  = "$"? Identifier
 Parameter_Mode  = "inout" | "move"
 
 Results      = Result_Type                                // exactly one, or none
+             | "!"                                        // diverging; declarations only
 Result_Type  = "inout"? Type
 ```
 

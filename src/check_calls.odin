@@ -190,7 +190,8 @@ result_written_but_unresolved :: proc(sym: ^Symbol) -> bool {
 	if literal == nil && sym.decl != nil {
 		literal = decl_proc_literal(sym.decl)
 	}
-	return literal != nil && literal.signature != nil && literal.signature.result != nil
+	return literal != nil && literal.signature != nil && literal.signature.result != nil &&
+		!literal.signature.result.diverges
 }
 
 // A call that denotes a type, such as `Simd(f32, 4)`.
