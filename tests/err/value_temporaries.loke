@@ -1,0 +1,37 @@
+package main; import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": a value temporary lives
+// until the end of its complete expression. A call or literal is not the only
+// temporary: an operator's result, a conditional's, an `or_else`'s, and a moved
+// value are too, and a borrow of any of them may not outlive its statement.
+
+byte_count :: proc(text: string_view) -> int { return text.len(); }
+prefix :: proc(text: string_view) -> string_view { return text[0:1]; }
+first :: proc(values: []int) -> int { return values[0]; }
+make_dyn :: proc() -> [dynamic]int { return [dynamic]int{4, 5}; }
+make_string :: proc() -> string { return "abc".copy(); }
+maybe :: proc() -> Option([dynamic]int) { return .some([dynamic]int{1, 2}); }
+
+main :: proc() {
+	flag := true;
+	a := "x".copy();
+
+	// Used within the statement that built the temporary: allowed.
+	fmt.println((a + "yz")[1:]);
+	fmt.println(byte_count(a + "yz"));
+	fmt.println((a + "yz").bytes()[0]);
+	fmt.println(first(make_dyn() if flag else make_dyn()));
+	fmt.println(first(maybe() or_else [dynamic]int{3}));
+
+	// Escaping it: rejected.
+	joined: string_view = a + "yz";
+	sliced := (a + "yz")[1:];
+	bytes := (a + "yz").bytes();
+	called := make_string().bytes();
+	passed := prefix(a + "yz");
+	chosen: []int = make_dyn() if flag else make_dyn();
+	fallback: []int = maybe() or_else [dynamic]int{3};
+	xs := [dynamic]int{1, 2};
+	moved: []int = move(xs);
+	fmt.println(joined, sliced, bytes[0], called[0], passed, chosen[0], fallback[0], moved[0]);
+}

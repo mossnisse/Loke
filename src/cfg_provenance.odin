@@ -2256,13 +2256,19 @@ prov_temp_root :: proc(graph: ^Flow_Graph, span: Span) -> Root_Id {
 	return root
 }
 
-// A field or element of a temporary is part of it, so `build().items[:]` ends
-// with its statement.
+// A value no name holds, which ends with its statement: a call or literal
+// result, an operator's (`a + "yz"`), a conditional's or `or_else`'s, or a
+// moved value. A field or element of one is part of it, so `build().items[:]`
+// ends with its statement too.
 @(private = "file")
 prov_expr_is_temporary :: proc(e: Expr) -> bool {
 	#partial switch v in e {
-	case ^Expr_Composite, ^Expr_Call:
+	case ^Expr_Composite, ^Expr_Call, ^Expr_Cond, ^Expr_Or_Else, ^Expr_Move:
 		return true
+	case ^Expr_Binary:
+		return v.value_category != .Place // a user operator may return a place
+	case ^Expr_Postfix:
+		return v.op == .Or_Return
 	case ^Expr_Selector:
 		// `pkg.name` is a whole global, not a field of its operand.
 		return v.resolution.kind != .Value && prov_expr_is_temporary(v.operand)
@@ -3197,10 +3203,13 @@ prov_text_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		loans := walk_flow_expr(graph, argument)
 		if index == 0 {
 			source = loans
-			// An owning `string` receiver lends its own storage.
+			// An owning `string` receiver lends its own storage, which a temporary
+			// gives up at the end of its statement.
 			if len(source) == 0 && text_result_borrows(graph.k.c, v) {
 				if root, path, ok := prov_place_of(graph, argument); ok {
 					source = prov_borrow(graph, root, path, false, v.span, "view")
+				} else if !type_is_carrier(graph.k.c, expr_base(argument).type) && prov_expr_is_temporary(argument) {
+					source = prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "view")
 				}
 			}
 		}
