@@ -1,0 +1,47 @@
+package main; import "core:fmt";
+
+// design.md "Retaining a borrow": a parameter's new borrow of its own storage,
+// left in that parameter, is a retention of it. A borrow it already carried,
+// as `self.rest = self.rest[n:]`, is not.
+
+Holder :: struct { items: [4]int, view: []int, rest: []int }
+
+// Not written `@(escape=stored)`: rejected.
+through_pointer :: proc(h: ^mut Holder) { h.view = h.items[:]; }
+through_inout :: proc(h: inout Holder) { h.view = h.items[:]; }
+
+// What the parameter already held: allowed.
+advance :: proc(h: inout Holder) { h.rest = h.rest[1:]; }
+advance_pointer :: proc(h: ^mut Holder) { h.rest = h.rest[1:]; }
+
+// Written `@(escape=stored)`: allowed, and the caller learns of it.
+point :: proc(@(escape=stored) h: ^mut Holder) { h.view = h.items[:]; }
+point_inout :: proc(@(escape=stored) h: inout Holder) { h.view = h.items[:]; }
+
+returned :: proc() -> Holder {
+	a: Holder = {};
+	point(&mut a);
+	return a; // `a.view` borrows `a`
+}
+
+returned_inout :: proc() -> Holder {
+	a: Holder = {};
+	point_inout(inout a);
+	return a;
+}
+
+// Used while `a` lives: allowed.
+counted :: proc() -> int {
+	a: Holder = {};
+	point(&mut a);
+	return a.view.len();
+}
+
+main :: proc() {
+	h: Holder = {};
+	through_pointer(&mut h);
+	through_inout(inout h);
+	advance(inout h);
+	advance_pointer(&mut h);
+	fmt.println(returned().view.len(), returned_inout().view.len(), counted());
+}

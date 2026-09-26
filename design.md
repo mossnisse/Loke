@@ -4972,6 +4972,19 @@ fmt.println(held.view[0]); // ERROR: `numbers` has ended
 
 Writing a value into its own root, as `self.rest = self.rest[n:]` does, is not a retention. A root outlives itself.
 
+A parameter's new borrow of its own storage is the exception. `h.view = h.items[:]` leaves the caller's storage borrowing itself, which the caller must know to stop the value outliving that storage, so it is a retention of `h` and needs `@(escape=stored)`. At a call, a `stored` argument that is also a mutable destination may land in itself:
+
+```odin
+Holder :: struct { items: [4]int, view: []int }
+point :: proc(@(escape=stored) h: ^mut Holder) { h.view = h.items[:]; }
+
+make_holder :: proc() -> Holder {
+	a: Holder = {};
+	point(&mut a);
+	return a; // ERROR: `a.view` borrows `a`, which ends when this procedure returns
+}
+```
+
 #### Global write effects
 
 A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through anything it calls. A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:

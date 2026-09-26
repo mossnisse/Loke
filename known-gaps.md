@@ -7,7 +7,7 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-The first five entries accept programs that read dead or freed memory. Each was
+The first four entries accept programs that read dead or freed memory. Each was
 found by a provenance audit, and each repro builds and runs.
 
 - **A conditional copies a place it should reject.** design.md "Value
@@ -20,25 +20,6 @@ found by a provenance audit, and each repro builds and runs.
   xs := [dynamic]int{1};
   ys := [dynamic]int{2};
   z := xs if flag else ys; // heap corruption; expected L0504
-  ```
-- **A callee can store a borrow of its parameter's own storage in it.**
-  design.md "Retaining a borrow" says writing a value into its own root is not
-  a retention, and `report_retention` skips same-root stores, but the caller
-  never learns that its argument now borrows itself. A load through a borrowed
-  parameter yields the parameter's entry loan, so a borrow it already carried
-  (`self.rest = self.rest[n:]`, the spec's example) and a new borrow of its
-  inline storage are the same loan. The direct form, `a.view = a.items[:];
-  return a;`, is rejected. Fixing this probably needs the spec's exemption
-  narrowed to borrows the root already carried:
-
-  ```odin
-  Holder :: struct { items: [4]int, view: []int }
-  selfref :: proc(h: ^mut Holder) { h.view = h.items[:]; }
-  make_holder :: proc() -> Holder {
-  	a: Holder = {};
-  	selfref(&mut a);
-  	return a; // `a.view` points into this frame
-  }
   ```
 - **Some ways of storing an owner drop its region.** design.md "Allocator
   regions and region provenance" keeps a local region's owner out of

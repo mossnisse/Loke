@@ -1,0 +1,12 @@
+L0646
+@10:43
+this pointer borrows `h`, which is not written `@(escape=stored)`, so it cannot reach `h`
+L0646
+@11:42
+this slice borrows `h`, which is not written `@(escape=stored)`, so it cannot reach `h`
+L0526
+@24:9
+this borrow cannot be returned: `a` ends when this procedure returns
+L0526
+@30:9
+this borrow cannot be returned: `a` ends when this procedure returns

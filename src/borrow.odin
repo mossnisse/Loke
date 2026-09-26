@@ -86,6 +86,8 @@ Prov_Root :: struct {
 	name:   string,
 	// `Param`: which borrowed parameter, for substitution at a direct call.
 	param_index: int,
+	// A carrier `Param`: the `content` loan a load through it yields.
+	content_loan: Loan_Id,
 	// `Allocation`: the region the storage came from. Empty means unrecorded,
 	// which every reset reaches.
 	region: Region_Set,
@@ -159,6 +161,9 @@ Prov_Loan :: struct {
 	mutable: bool,
 	span:    Span,
 	what:    string,
+	// A `Param` loan of what the parameter already held when the call began, as
+	// opposed to one of its own storage (design.md "Retaining a borrow").
+	content: bool,
 }
 
 // A carrier value the analysis follows: a variable, parameter or expression
@@ -1577,7 +1582,7 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 			}
 			if !found {
 				loss |= state.precision[carrier] | path_precision(loan.path)
-				bit_mark(state.merged, loan_index)
+				bit_mark(state.merged, root.content_loan != NO_LOAN ? int(root.content_loan) : loan_index)
 			}
 		}
 	}
@@ -2279,9 +2284,11 @@ report_retention :: proc(
 			loan := graph.loans[index]
 			root := graph.roots[int(loan.root)]
 			// Storing into the same storage is not retention. A parameter has two
-			// roots (entry loan and places), so compare the symbol too.
-			if loan.root == target ||
-			   (root.symbol != INVALID_SYMBOL && root.symbol == destination.symbol) {
+			// roots (entry loan and places), so compare the symbol too. A new
+			// borrow of a parameter's own storage is, since the caller's root would
+			// then borrow itself.
+			same := loan.root == target || (root.symbol != INVALID_SYMBOL && root.symbol == destination.symbol)
+			if same && (root.kind != .Param || loan.content) {
 				continue
 			}
 			if root.kind == .Param {

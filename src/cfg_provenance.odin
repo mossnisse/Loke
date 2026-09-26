@@ -358,7 +358,7 @@ symbol_outlives_bodies :: proc(sym: ^Symbol) -> bool {
 
 @(private = "file")
 prov_new_root :: proc(graph: ^Flow_Graph, kind: Root_Kind, span: Span, name: string) -> Root_Id {
-	append(&graph.roots, Prov_Root{kind = kind, span = span, name = name, param_index = -1})
+	append(&graph.roots, Prov_Root{kind = kind, span = span, name = name, param_index = -1, content_loan = NO_LOAN})
 	return Root_Id(len(graph.roots) - 1)
 }
 
@@ -1101,19 +1101,18 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 						sym.span,
 						path.truncated ? "borrow" : carrier_noun(graph.k.c, path.type),
 					)
+					graph.loans[int(loan)].content = true
 					append(&graph.entry_defs, Prov_Entry_Def{slot = content[path_index], loan = loan})
 				}
 				continue
 			}
-			loan := prov_new_loan(
-				graph,
-				root,
-				nil,
-				carrier_is_mutable(graph.k.c, sym.type),
-				sym.span,
-				carrier_noun(graph.k.c, sym.type),
-			)
+			mutable := carrier_is_mutable(graph.k.c, sym.type)
+			noun := carrier_noun(graph.k.c, sym.type)
+			loan := prov_new_loan(graph, root, nil, mutable, sym.span, noun)
 			append(&graph.entry_defs, Prov_Entry_Def{slot = slot, loan = loan})
+			content_loan := prov_new_loan(graph, root, nil, mutable, sym.span, noun)
+			graph.loans[int(content_loan)].content = true
+			graph.roots[int(root)].content_loan = content_loan
 		}
 	}
 }
@@ -2967,7 +2966,9 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 			destinations = prov_writable_arguments(graph, v, proc_type)
 		}
 		for target in destinations {
-			if target != index {
+			if target == index {
+				prov_retain_into_self(graph, v, index, slots)
+			} else {
 				prov_retain_into_argument(graph, v, target, actuals[target], slots)
 			}
 		}
@@ -3066,6 +3067,31 @@ prov_retain_into_argument :: proc(
 	}
 	for slot in slots {
 		prov_define_one_content(graph, slot, prov_join(graph, prov_one(graph, slot), sources), v.span)
+	}
+}
+
+// A `stored` argument that is also a destination may be left borrowing its own
+// storage, as `h.view = h.items[:]` leaves it. Each content slot of the place
+// gets a new borrow of it, weakened to that slot's capability; the argument's
+// own loan keeps its. Any other carrier publishes its loans as they are.
+@(private = "file")
+prov_retain_into_self :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, carrier: []int) {
+	place := v.bound[index]
+	if !prov_argument_is_place(graph, v, index) {
+		unary, is_unary := place.(^Expr_Unary)
+		if !is_unary || unary.op != .Amp {
+			prov_retain_into_argument(graph, v, index, carrier, carrier)
+			return
+		}
+		place = unary.operand
+	}
+	root, path, ok := prov_place_of(graph, place)
+	if !ok {
+		return
+	}
+	for slot in prov_content_at(graph, root, path) {
+		own := prov_borrow(graph, root, path, true, v.span, "borrow")
+		prov_define_one_content(graph, slot, prov_join(graph, prov_one(graph, slot), own), v.span)
 	}
 }
 
