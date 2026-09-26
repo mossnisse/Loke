@@ -512,15 +512,16 @@ escape :: proc(l: ^Lexer) -> bool {
 			return false
 		}
 		return true
-	case '0' ..= '7':
-		for i := 0; i < 3; i += 1 {
-			if peek(l) < '0' || peek(l) > '7' {
-				errorf(l.c, span_from(l, lo), "L0105", "an octal escape needs 3 digits")
-				return false
-			}
-			l.pos += 1
-		}
-		return true
+	case '0' ..= '9':
+		// C's octal byte escape; Loke has none (comments.md "No octal escapes").
+		l.pos += 1
+		errorf(
+			l.c,
+			span_from(l, lo),
+			"L0105",
+			"there are no octal escapes; write a byte as `\\xNN` or a character as `\\uNNNN`",
+		)
+		return false
 	}
 	l.pos += 1
 	errorf(l.c, span_from(l, lo), "L0105", "unknown escape sequence")

@@ -725,6 +725,8 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 		{"1e_5", "L0112"},
 		{"''", "L0107"}, // terminated, just empty
 		{`'\q'`, "L0105"},
+		{`"\377"`, "L0105"}, // no octal escapes
+		{`'\0'`, "L0105"},
 
 		{`"\ud800"`, "L0114"}, // a surrogate half
 		{`"\U00110000"`, "L0114"}, // past the last code point

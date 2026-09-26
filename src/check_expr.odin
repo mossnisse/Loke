@@ -315,8 +315,6 @@ escape_width :: proc(s: string) -> int {
 		return digits(s, 4, 16)
 	case 'U':
 		return digits(s, 8, 16)
-	case '0' ..= '7':
-		return digits(s, 2, 8) // `\NNN`, three octal digits including this one
 	}
 	return 2
 }
@@ -372,9 +370,6 @@ decode_rune_literal :: proc(text: string) -> (value: rune, ok: bool) {
 		return '\'', len(body) == 2
 	case 'x', 'u', 'U':
 		digits, parsed := strconv.parse_u64_of_base(body[2:], 16)
-		return rune(digits), parsed
-	case '0' ..= '7':
-		digits, parsed := strconv.parse_u64_of_base(body[1:], 8)
 		return rune(digits), parsed
 	}
 	return 0, false

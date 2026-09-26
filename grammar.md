@@ -130,7 +130,6 @@ String_Char = any Unicode scalar except '"', "\\", carriage return, or newline
 Rune_Char   = any Unicode scalar except "'", "\\", carriage return, or newline
 
 Escape = "\\" ("a"|"b"|"e"|"f"|"n"|"r"|"t"|"v"|"\\"|'"'|"'")
-       | "\\" Octal_Digit Octal_Digit Octal_Digit
        | "\\x" Hex_Digit Hex_Digit
        | "\\u" Hex_Digit Hex_Digit Hex_Digit Hex_Digit
        | "\\U" Hex_Digit Hex_Digit Hex_Digit Hex_Digit

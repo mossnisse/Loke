@@ -373,15 +373,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
-## Octal escapes
-
-`\NNN` names a code point up to U+01FF and UTF-8 encodes it, so `"\377"` is the
-two bytes of `ÿ` where C and Go give the one byte `0xFF`
-([Escape characters](design.md#escape-characters)). It is the escape a C
-programmer uses to write a byte, and here it means something else. `\x` spells
-a byte and `\u` a character, so it adds nothing, and no `.loke` file in the tree
-uses it. Proposal: remove it.
-
 ## Field order in destructuring and positional literals
 
 [Destructuring](design.md#destructuring) binds a record's fields by declaration
@@ -1061,6 +1052,15 @@ question. The trade was taken because a runtime-indexable read-only table is
 ordinary systems code, and spending a declaration attribute on it — one that
 looks like metadata but changes whether the program compiles — put it in the
 wrong category.
+
+### No octal escapes
+
+Odin's `\NNN` is a byte, as in C and Go. Loke's named a code point up to U+01FF
+and UTF-8 encoded it, so `"\377"` was the two bytes of `ÿ` where C gives the
+one byte `0xFF`: the escape a C programmer uses to write a byte meant something
+else. `\x` spells a byte and `\u` a character, so it added nothing, and only
+one test used it. It is removed; a backslash followed by a digit is an error
+that names `\x` and `\u`.
 
 ### Sized boolean types
 

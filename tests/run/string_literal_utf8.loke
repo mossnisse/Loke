@@ -4,14 +4,14 @@ import "core:fmt";
 
 // design.md "string type": a literal is checked as text once it is folded, so
 // these all compile. Two escapes that are half a character each make a whole
-// one together, an octal escape names a code point rather than a byte, a raw
+// one together, a `\u` escape names a code point rather than a byte, a raw
 // string has no escapes to check, and a `cstring_view` promises no encoding.
 
 main :: proc() {
 	joined: string = "\xc3" + "\xa9";
-	octal: string = "\351";
+	named: string = "é";
 	raw: string = `\xff`;
 	bytes: cstring_view = "\xff\xfe";
 	_ = bytes;
-	fmt.println(joined, joined.len(), octal, octal.len(), raw);
+	fmt.println(joined, joined.len(), named, named.len(), raw);
 }

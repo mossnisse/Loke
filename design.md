@@ -207,7 +207,6 @@ A string literal uses double quotes, a character literal single quotes, and `\` 
 - `\\` - backslash
 - `\"` - double quote
 - `\'` - single quote
-- `\NNN` - octal code point up to U+01FF, UTF-8 encoded (3 digits)
 - `\xNN` - hexadecimal byte, written as is (2 digits)
 - `\uNNNN` - hexadecimal 16-bit Unicode character, UTF-8 encoded (4 digits)
 - `\UNNNNNNNN` - hexadecimal 32-bit Unicode character, UTF-8 encoded (8 digits)
@@ -215,7 +214,8 @@ A string literal uses double quotes, a character literal single quotes, and `\` 
 Escapes follow these rules:
 
 - `\u` and `\U` must name a Unicode scalar value. A surrogate code point (U+D800 through U+DFFF) or a value above U+10FFFF is a compile-time error.
-- Only `\x` spells a byte; every other escape names a character. `"\377"` is the two bytes of `ÿ`, while `"\xff"` is the one byte `0xFF`.
+- Only `\x` spells a byte; every other escape names a character. `"\u00ff"` is the two bytes of `ÿ`, while `"\xff"` is the one byte `0xFF`.
+- There are no octal escapes: a backslash followed by a digit is a compile-time error.
 - A `string` always holds valid UTF-8, so a string constant that becomes a `string` or `string_view` must be valid UTF-8 once its escapes are decoded. The check is made on the folded value, so `"\xc3" + "\xa9"` is the `é` it spells.
 - A `cstring_view` promises no encoding and takes the bytes as written. Bytes that are not text belong in a `[]u8`.
 
