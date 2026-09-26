@@ -187,6 +187,8 @@ Prov_Slot :: struct {
 	fresh_loan:         Loan_Id,
 	fresh_access_block: Block_Id,
 	fresh_access_index: int,
+	// A result held across its exit path's deferred statements.
+	returned: bool,
 }
 
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
@@ -1801,7 +1803,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		it := live_loans(state, live)
 		for slot, index in next_live_loan(&it) {
 			loan := graph.loans[index]
-			if loan.root != event.root {
+			// A result borrowing frame storage is the `Escape` event's error.
+			if loan.root != event.root || graph.prov_slots[slot].returned {
 				continue
 			}
 			state.diagnostic_precision |= state.precision[slot]

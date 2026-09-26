@@ -4048,6 +4048,8 @@ snapshot :: proc() -> int {
 }
 ```
 
+The result stays live while the deferred statements run, so a deferred statement may not write, invalidate, or free storage a borrowed result views, nor use a mutable carrier the result reborrows ([Weakening and reborrows](#weakening-and-reborrows)).
+
 ### when statement
 
 `when` performs structural source selection: its condition decides which source branch exists and is semantically checked.

@@ -677,6 +677,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 			mark_aliased_moves(graph, s.value.expr)
 		}
 		if graph.mode != .Lifecycle {
+			held: []int
 			if value := s.value; value != nil {
 				// design.md "`inout` results": `return inout place` hands back a
 				// borrow of the place, which must outlive the frame.
@@ -700,8 +701,12 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 					// The frame's regions end here, so the diagnostic names them.
 					name           = prov_region_name(graph, escaping),
 				})
+				held = prov_hold_result(graph, sources, result_type, expr_span(value.expr))
 			}
 			emit_cleanups(graph, 0)
+			if len(held) > 0 {
+				prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = expr_span(s.value.expr)})
+			}
 			graph.current = NO_BLOCK
 			return
 		}
@@ -1245,6 +1250,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			link(graph, entry, failure)
 			graph.current = failure
 			proc_symbol := symbol_of(graph.k.c, graph.literal.symbol)
+			held: []int
 			if prov && proc_symbol != nil && proc_symbol.result != INVALID_TYPE {
 				shape, operand_fallible := fallible_of(graph.k, expr_base(v.operand).type)
 				target, target_fallible := fallible_of(graph.k, proc_symbol.result)
@@ -1271,9 +1277,13 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 					prov_emit(graph, Prov_Event {
 						kind = .Escape, sources = escaping, span = v.span,
 					})
+					held = prov_hold_result(graph, escaping, proc_symbol.result, v.span)
 				}
 			}
 			emit_cleanups(graph, 0)
+			if len(held) > 0 {
+				prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = v.span})
+			}
 			graph.current = resume
 			// The success payload carries the operand's loans and regions.
 			return prov_payload_content(

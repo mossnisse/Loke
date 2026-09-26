@@ -1,0 +1,12 @@
+L0512
+@11:8
+`xs` cannot be assigned here: a read-only slice of it is still in use
+L0512
+@18:8
+`xs` cannot be assigned here: a read-only borrow of it is still in use
+L0641
+@25:8
+`p` cannot be used here: a read-only reborrow of it is still in use
+L0526
+@39:9
+this slice cannot be returned: `arr` ends when this procedure returns

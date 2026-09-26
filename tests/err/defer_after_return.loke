@@ -1,0 +1,49 @@
+package main; import "core:fmt";
+
+// design.md "defer statement": a result is taken before the exit path's
+// deferred statements run, and what it borrows must survive them. A borrow of
+// frame storage is reported once, by the `return`.
+
+Err :: enum { Bad }
+
+// A deferred write through the storage a result borrows: rejected.
+cleared :: proc(xs: inout [dynamic]int) -> []int {
+	defer xs = [dynamic]int{};
+	return xs[:];
+}
+
+fallible :: proc(xs: inout [dynamic]int) -> Result([]int, Err) { return .ok(xs[:]); }
+
+propagated :: proc(xs: inout [dynamic]int) -> Result([]int, Err) {
+	defer xs = [dynamic]int{};
+	v := fallible(inout xs) or_return;
+	return .ok(v);
+}
+
+// design.md "Weakening and reborrows": the result reborrows `p`.
+written :: proc(p: []mut int) -> []int {
+	defer p[0] = 9;
+	return p;
+}
+
+// A deferred read of what a read-only result borrows: allowed.
+counted :: proc(xs: inout [dynamic]int) -> []int {
+	defer fmt.println(xs.len());
+	return xs[:];
+}
+
+// Frame storage: one diagnostic, at the `return`.
+local :: proc() -> []int {
+	arr := [2]int{1, 2};
+	defer fmt.println(arr[0]);
+	return arr[:];
+}
+
+main :: proc() {
+	xs := [dynamic]int{1, 2};
+	fmt.println(cleared(inout xs));
+	fmt.println(propagated(inout xs));
+	fmt.println(counted(inout xs), local());
+	a := [2]int{1, 2};
+	fmt.println(written(a[:]));
+}

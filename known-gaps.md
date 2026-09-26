@@ -7,7 +7,7 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-The first six entries accept programs that read dead or freed memory. Each was
+The first five entries accept programs that read dead or freed memory. Each was
 found by a provenance audit, and each repro builds and runs.
 
 - **A conditional copies a place it should reject.** design.md "Value
@@ -20,16 +20,6 @@ found by a provenance audit, and each repro builds and runs.
   xs := [dynamic]int{1};
   ys := [dynamic]int{2};
   z := xs if flag else ys; // heap corruption; expected L0504
-  ```
-- **A `defer` may invalidate what `return` hands back.** The `Escape` event
-  is emitted before the exit path's deferred statements, so nothing keeps the
-  result live across them. `or_return` has the same order:
-
-  ```odin
-  get :: proc(xs: inout [dynamic]int) -> []int {
-  	defer xs = [dynamic]int{}; // frees the storage the result views
-  	return xs[:];
-  }
   ```
 - **A callee can store a borrow of its parameter's own storage in it.**
   design.md "Retaining a borrow" says writing a value into its own root is not

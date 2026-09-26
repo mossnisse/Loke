@@ -864,6 +864,21 @@ prov_define_one_content :: proc(graph: ^Flow_Graph, slot: int, sources: []int, s
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, precision = precision})
 }
 
+// design.md "defer statement": a result is taken before its exit path's
+// deferred statements run, and what it borrows must survive them. The caller
+// emits a `Live` of the hold after the cleanups.
+@(private)
+prov_hold_result :: proc(graph: ^Flow_Graph, sources: []int, result_type: Type_Id, span: Span) -> []int {
+	if len(sources) == 0 {
+		return nil
+	}
+	held := prov_temp_slot(graph)
+	graph.prov_slots[held].returned = true
+	prov_reborrow(graph, sources, result_type, held, span)
+	prov_emit(graph, Prov_Event{kind = .Def, slot = held, loan = NO_LOAN, sources = sources, span = span})
+	return prov_one(graph, held)
+}
+
 @(private = "file")
 prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
 	append(&graph.prov_slots, empty_prov_slot(INVALID_SYMBOL))
