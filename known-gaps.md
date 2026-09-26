@@ -7,7 +7,7 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-The first seven entries accept programs that read dead or freed memory. Each was
+The first six entries accept programs that read dead or freed memory. Each was
 found by a provenance audit, and each repro builds and runs.
 
 - **A conditional copies a place it should reject.** design.md "Value
@@ -20,15 +20,6 @@ found by a provenance audit, and each repro builds and runs.
   xs := [dynamic]int{1};
   ys := [dynamic]int{2};
   z := xs if flag else ys; // heap corruption; expected L0504
-  ```
-- **A typed slice literal has no root.** design.md "Slice literals" makes the
-  hidden array a frame owner and rejects returning it, but only `[N]T{...}[:]`
-  gets a `Slice_Literal` root in `prov_slice`; `[]T{...}` is an
-  `Expr_Composite` with a `backing` type that the walk never roots. The same
-  literal assigned inside a block and used after it is accepted too:
-
-  ```odin
-  bad :: proc(n: int) -> []int { return []int{n, n + 1}; } // views bad's frame
   ```
 - **A `defer` may invalidate what `return` hands back.** The `Escape` event
   is emitted before the exit path's deferred statements, so nothing keeps the
@@ -109,6 +100,18 @@ found by a provenance audit, and each repro builds and runs.
   outer := id(move(inner));
   free_all(arena.allocator()); // accepted
   fmt.println(outer[0]);
+  ```
+- **A carrier's own loan and its elements' borrows are one set.** A carrier
+  is a single path of its `carrier_shape`, so a call summary cannot say that a
+  result holds only what a slice's elements borrow, not the slice itself.
+  Returning an element of a `[]mut T` whose `T` carries a borrow therefore
+  reborrows the slice, and a second use while that result is live is
+  rejected. This rejects valid programs; it never accepts an invalid one:
+
+  ```odin
+  arr := [2]string_view{"b", "a"};
+  xs: []mut string_view = arr[:];
+  fmt.println(slice.min(xs), slice.max(xs)); // L0641: `xs` is suspended
   ```
 - **Providers share region identities more than they need to.** All providers
   inside one local record or container are one region to the checker, and a

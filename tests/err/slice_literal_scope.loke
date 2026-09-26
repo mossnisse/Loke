@@ -1,0 +1,31 @@
+package main; import "core:fmt";
+
+// design.md "Slice literals": the hidden array of `[]T{...}` is a fixed-array
+// owner in the enclosing lexical scope, as the one of `[N]T{...}[:]` is, and a
+// slice of either carries its elements' borrows too. Slicing a temporary owner
+// ends with its statement; reslicing a carrier keeps only that carrier's loans.
+
+static_slice :: proc() -> []int { return nil; }
+views :: proc(s: string_view) -> [dynamic]string_view { return [dynamic]string_view{s}; }
+
+table := []int{7, 8}; // file scope: static lifetime
+
+// Returning either kind of literal: rejected.
+typed :: proc(n: int) -> []int { return []int{n, n + 1}; }
+fixed :: proc(s: string_view) -> []string_view { return [1]string_view{s}[:]; }
+
+// Used in its own scope, or from file scope: allowed.
+local :: proc() -> int {
+	w := []int{1, 2};
+	m := []mut int{3, 4};
+	m[0] = 5;
+	return w[0] + m[0] + table[1] + static_slice()[0:0].len();
+}
+
+main :: proc() {
+	v: []int = nil;
+	{ v = []int{5, 6}; }
+	a := "abc".copy();
+	y := views(a[:])[:];
+	fmt.println(v[0], y[0], local(), typed(1)[0], fixed("x")[0]);
+}

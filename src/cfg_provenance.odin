@@ -2212,21 +2212,30 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	if v.hi != nil {
 		walk_flow_expr(graph, v.hi)
 	}
-	if len(source) > 0 {
+	// Reslicing a carrier keeps its loans; slicing an owner also borrows it. An
+	// unmanaged literal's hidden array follows the lexical scope; a managed one
+	// such as `[dynamic]int{1, 2}[:]` ends with its statement.
+	if !array {
 		return source
 	}
-	// An unmanaged literal's hidden array follows the lexical scope (design.md);
-	// a managed one such as `[dynamic]int{1, 2}[:]` ends with its statement.
 	_, is_literal := v.operand.(^Expr_Composite)
 	if is_literal && !type_is_managed(graph.k.c, expr_base(v.operand).type) {
-		root := prov_new_root(graph, .Slice_Literal, expr_span(v.operand), "this slice literal")
-		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = expr_span(v.operand)})
-		return prov_borrow(graph, root, nil, mutable, v.span, "slice")
+		return prov_slice_literal(graph, expr_span(v.operand), mutable, source)
 	}
 	if prov_expr_is_temporary(v.operand) {
-		return prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, mutable, v.span, "slice")
+		temporary := prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, mutable, v.span, "slice")
+		return prov_join(graph, source, temporary)
 	}
-	return nil
+	return source
+}
+
+// design.md "Slice literals": the hidden array is a fixed-array owner in the
+// enclosing lexical scope, and a slice of it also carries its elements' loans.
+@(private)
+prov_slice_literal :: proc(graph: ^Flow_Graph, span: Span, mutable: bool, elements: []int) -> []int {
+	root := prov_new_root(graph, .Slice_Literal, span, "this slice literal")
+	append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
+	return prov_join(graph, elements, prov_borrow(graph, root, nil, mutable, span, "slice"))
 }
 
 // Iterating a place borrows it, mutably for a `ref` binding.

@@ -129,7 +129,10 @@ main :: proc() {
 	fmt.println(loose, slice.is_reverse_sorted(loose));
 	slice.sort(loose);
 	fmt.println(slice.binary_search(loose, Card{2, "?"}));
-	fmt.println(slice.min(loose), slice.max(loose));
+	// Two statements: known-gaps.md "A carrier's own loan and its elements'
+	// borrows are one set".
+	fmt.println(slice.min(loose));
+	fmt.println(slice.max(loose));
 
 	// `Card`s `==` compares rank alone. Field-wise equality would answer `false`
 	// here, so this is the answer only the inherent operator can give.

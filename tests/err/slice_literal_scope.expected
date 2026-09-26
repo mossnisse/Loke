@@ -1,0 +1,12 @@
+L0526
+@14:41
+this slice cannot be returned: the slice literal it borrows ends when this procedure returns
+L0526
+@15:57
+this slice cannot be returned: the slice literal it borrows ends when this procedure returns
+L0513
+@30:14
+this slice is used after this slice literal has ended
+L0513
+@30:20
+this slice is used after this temporary has ended
