@@ -39,6 +39,9 @@ Checker :: struct {
 	// How deep interface requirement checking is, so an interface that composes
 	// itself is a diagnostic rather than a spin.
 	interface_depth: int,
+	// Set by `check_finite_size` when its walk reached a record still resolving
+	// its fields, so the answer is not cached.
+	size_incomplete: bool,
 
 	// The procedure being checked, and so the frame a name may come from.
 	proc_literal:   ^Expr_Proc,
@@ -1472,6 +1475,14 @@ check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynami
 		info.size_state = .Finite
 		return true
 	}
+	// A generic instance whose fields are still resolving is walked again once
+	// they have; an answer through it now would be cached from a partial record.
+	if record_resolving(k.c, info) {
+		k.size_incomplete = true
+		return true
+	}
+	outer_incomplete := k.size_incomplete
+	k.size_incomplete = false
 
 	info.size_state = .Checking
 	append(path, type)
@@ -1502,8 +1513,26 @@ check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynami
 	}
 	// Reacquired: the walk may have grown the type store.
 	info = type_of(k.c, type)
-	info.size_state = ok ? .Finite : .Cyclic
+	switch {
+	case !ok:
+		info.size_state = .Cyclic
+	case k.size_incomplete:
+		info.size_state = .Unchecked
+	case:
+		info.size_state = .Finite
+	}
+	k.size_incomplete ||= outer_incomplete
 	return ok
+}
+
+// A record whose fields are still being resolved: its declaration signature is
+// on the stack.
+record_resolving :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	if info.kind != .Struct && info.kind != .Union {
+		return false
+	}
+	sym := symbol_of(c, info.symbol)
+	return sym != nil && sym.decl != nil && sym.decl.sig_state == .Checking
 }
 
 @(private = "file")

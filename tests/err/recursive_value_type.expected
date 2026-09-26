@@ -7,3 +7,9 @@ contains itself by value: Root -> X -> X
 L0364
 @11:1
 contains itself by value: Root -> Y -> Y
+L0364
+@17:1
+contains itself by value: GA(int) -> GB(int) -> GA(int)
+L0364
+@19:1
+contains itself by value: GS(int) -> GS(int)

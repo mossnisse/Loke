@@ -154,28 +154,25 @@ impl Mutex($T) {
 	// Locking a mutex this thread already holds never returns.
 	lock :: proc(self: ^) -> Guard(T) {
 		rt_lock(rawptr(&self.word.value));
-		return Guard(T){&self.word, &self.value};
+		return Guard(T){self};
 	}
 }
 
-// Both pointers borrow the mutex, so it cannot move or end while locked. They
-// point into it rather than at it because naming `Mutex(T)` here would make
-// the two generic types instantiate each other (known-gaps.md).
+// The pointer borrows the mutex, so it cannot move or end while locked.
 Guard :: move_only struct($T: type) {
-	@(private) word:  ^sync.Atomic(uintptr),
-	@(private) value: ^T,
+	@(private) mutex: ^Mutex(T),
 }
 
 impl Guard($T) {
 	// The guarded value, for as long as this guard holds the lock: an `inout`
 	// result borrows the guard, so nothing reached through it outlives the lock.
 	get :: proc(self: inout) -> inout T {
-		return inout (^mut T)(rawptr(self.value))^;
+		return inout (^mut T)(rawptr(&self.mutex.value))^;
 	}
 
 	@(private)
 	unlock :: hook(drop) proc(self: inout) {
-		if (self.word == nil) { return; }
-		rt_unlock(rawptr(&self.word.value));
+		if (self.mutex == nil) { return; }
+		rt_unlock(rawptr(&self.mutex.word.value));
 	}
 }

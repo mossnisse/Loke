@@ -101,6 +101,16 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 	entry := new(Lifecycle, c.semantic_allocator)
 	entry.custom_drop = INVALID_SYMBOL
 	entry.custom_try_clone = INVALID_SYMBOL
+	// design.md "Interface bodies": a requirement cannot prove capabilities of
+	// a record still defining its fields. Neither it nor a container holding it
+	// has a lifecycle to cache yet; assume no copy and possible cleanup until a
+	// later query can inspect the completed record.
+	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
+	if !lifecycle_fields_resolved(c, under, &visiting) {
+		entry.clone_disabled = true
+		entry.managed = true
+		return entry
+	}
 	entry.state = .Checking
 	c.lifecycles[under] = entry
 
@@ -120,6 +130,33 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 	}
 	entry.state = .Finite
 	return entry
+}
+
+@(private = "file")
+lifecycle_fields_resolved :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> bool {
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info == nil || visiting[under] { return true }
+	if record_resolving(c, info) { return false }
+	visiting[under] = true
+	#partial switch info.kind {
+	case .Array, .Dynamic_Array:
+		return lifecycle_fields_resolved(c, info.element, visiting)
+	case .Map:
+		return lifecycle_fields_resolved(c, info.key, visiting) &&
+		       lifecycle_fields_resolved(c, info.element, visiting)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && !lifecycle_fields_resolved(c, sym.type, visiting) {
+				return false
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if !lifecycle_fields_resolved(c, variant, visiting) { return false }
+		}
+	}
+	return true
 }
 
 // Inherent, hand-written members only: extensions never contribute a hook.
@@ -342,8 +379,9 @@ contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requ
 		emission_contract_error(k.c, "lifecycle members were requested after finalization")
 		return
 	}
-	info.contributed += {.Lifecycle}
 	entry := lifecycle_of(k.c, type)
+	if entry.state != .Finite { return }
+	info.contributed += {.Lifecycle}
 
 	#partial switch info.kind {
 	case .Dynamic_Array, .Map, .String:

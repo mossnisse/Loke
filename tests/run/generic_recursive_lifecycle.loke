@@ -1,0 +1,37 @@
+// design.md "Interface bodies" and "Lifecycle hooks and resource types":
+// probing a record before its fields resolve must not cache a partial lifecycle,
+// including through containers, or suppress its copy restrictions and cleanup.
+package main;
+import "core:fmt";
+import "base:interfaces";
+
+Noisy :: move_only struct { n: int }
+impl Noisy {
+	bye :: hook(drop) proc(self: inout) {
+		if (self.n != 0) { fmt.println("drop", self.n); }
+	}
+}
+
+Copyable :: struct { n: int }
+impl Copyable {
+	bye :: hook(drop) proc(self: inout) {
+		if (self.n != 0) { fmt.println("copyable drop", self.n); }
+	}
+}
+
+Probe :: struct($T: type) where interfaces.Cloneable(T) || true { n: int }
+Direct :: struct($T: type) { probe: ^Probe(Direct(T)), value: T }
+Nested :: struct($T: type) { probe: ^Probe([dynamic][1]Nested(T)), value: T }
+
+main :: proc() {
+	a := Direct(Noisy){nil, Noisy{1}};
+	b := Nested(Noisy){nil, Noisy{2}};
+	fmt.println(interfaces.Cloneable(Direct(Noisy)), interfaces.Cloneable([dynamic][1]Nested(Noisy)));
+	// A completed copyable instance must still acquire its generated methods.
+	c := Direct(int){nil, 3};
+	d := c.clone();
+	fmt.println(interfaces.Cloneable(Direct(int)), d.value);
+	e := Direct(Copyable){nil, Copyable{4}};
+	f := e.clone();
+	fmt.println(f.value.n);
+}

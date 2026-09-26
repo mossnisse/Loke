@@ -34,20 +34,6 @@ the compiler, unless the rewording is the intended fix.
   xs.append(1);   // loke: panic: allocation failed
   ```
 
-- **Two generic types cannot name each other through a method.** A generic
-  record whose field points to a second generic record, whose `impl` has a
-  method returning the first, is reported as instantiating itself when the
-  first is instantiated before the second. A pointer field needs no layout of
-  its pointee, so nothing is cyclic. `thread.Guard(T)` points into its mutex
-  instead of at it to avoid this:
-
-  ```odin
-  A :: struct($T: type) { b: ^B(T) }
-  B :: struct($T: type) { x: T }
-  impl B($T) { pair :: proc(self: ^) -> A(T) { return A(T){self}; } }
-  z: A(int) = {};   // L0436: `A(int)` is being instantiated in terms of itself
-  ```
-
 ## Not gaps
 
 Recorded because they look like gaps and are not, and each cost an

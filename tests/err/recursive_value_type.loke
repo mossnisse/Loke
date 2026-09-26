@@ -12,6 +12,14 @@ Root :: struct { x: X, y: Y }
 X :: struct { s: X }
 Y :: struct { s: Y }
 
+// Generic instances are checked the same way, once their fields exist, and a
+// zero value is never built for one that has none.
+GA :: struct($T: type) { b: GB(T) }
+GB :: struct($T: type) { a: GA(T) }
+GS :: struct($T: type) { s: GS(T) }
+
 main :: proc() {
+	ga: GA(int) = {};
+	gs: GS(int) = {};
 	fmt.println(1);
 }

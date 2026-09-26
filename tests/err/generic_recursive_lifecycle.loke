@@ -1,0 +1,17 @@
+// design.md "Interface bodies" and "Lifecycle hooks and resource types": an
+// unfinished record cannot satisfy Cloneable or permanently gain copy methods.
+package main;
+import "base:interfaces";
+
+Noisy :: move_only struct { n: int }
+A :: struct($T: type) { b: ^B(A(T)), n: Noisy }
+B :: struct($T: type) where interfaces.Cloneable(T) { n: int }
+
+Probe :: struct($T: type) where interfaces.Cloneable(T) || true { n: int }
+C :: struct($T: type) { probe: ^Probe(C(T)), n: Noisy }
+
+main :: proc() {
+	a: A(int) = {};
+	c := C(int){nil, Noisy{7}};
+	copy := c;
+}

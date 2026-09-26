@@ -1,0 +1,8 @@
+L0444
+@7:29
+`A(int)` does not satisfy `Cloneable(A(int))`
+has no method `try_clone`
+while instantiating `B(A(int))`
+L0503
+@16:10
+`C(int)` is move-only

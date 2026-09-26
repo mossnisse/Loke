@@ -1567,6 +1567,13 @@ instantiate_record_body :: proc(
 	if !check_where_clauses(k, record.where_clauses, instance.span, name, report) {
 		return false
 	}
+	// Settled once its bounds hold, as a non-generic record is once declared: a
+	// field or a method of another instance can name this one while its own
+	// fields resolve. Until they have, `sig_state` marks them incomplete, so
+	// nothing measures or caches a partial record.
+	instance.provisional = false
+	instance.signature_ok = true
+	clone.sig_state = .Checking
 	before := len(k.c.diagnostics)
 	if record.kind == .Struct {
 		resolve_struct_fields(k, type, record)
@@ -1574,6 +1581,7 @@ instantiate_record_body :: proc(
 		resolve_union_variants(k, type, record)
 	}
 	apply_type_metadata(k, clone, type)
+	clone.sig_state = .Checked
 	if report && len(k.c.diagnostics) > before {
 		note_instantiation_stack(k)
 	}
@@ -1581,9 +1589,6 @@ instantiate_record_body :: proc(
 	path := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
 	check_finite_size(k, type, template.decl.span, &path)
 
-	// Settled, so a method naming its own instantiation is a cache hit.
-	instance.provisional = false
-	instance.signature_ok = true
 	append(&template.instances, instance)
 	install_generic_impls(k, template, instance)
 	return true

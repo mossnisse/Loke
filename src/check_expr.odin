@@ -2643,6 +2643,11 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
 	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
+		// A record containing itself by value was already reported and has no
+		// zero value to build.
+		if info.size_state == .Cyclic {
+			return Const_Value{}, false
+		}
 		// All-zero fields: a nil view or slice, or an empty container.
 		ensure_slice_fields(c, under)
 		ensure_container_fields(c, under)

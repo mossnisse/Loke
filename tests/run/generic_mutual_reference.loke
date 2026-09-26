@@ -1,0 +1,38 @@
+// design.md "Generic data types": two generic records may name each other. A
+// field through a pointer needs no layout of its pointee, so an instance whose
+// fields are still resolving can be named by another instance's method, and
+// its lifecycle is still read off every field.
+package main;
+
+import "core:fmt";
+
+Noisy :: move_only struct { n: int }
+
+impl Noisy {
+	bye :: hook(drop) proc(self: inout) {
+		if (self.n != 0) { fmt.println("drop", self.n); }
+	}
+}
+
+// `Pair(int)` is instantiated first, so `Holder(int)`'s methods name it before
+// its fields exist.
+Pair :: struct($T: type) { holder: ^Holder(T), n: Noisy }
+Holder :: struct($T: type) { x: T }
+
+impl Holder($T) {
+	pair :: proc(self: ^, n: int) -> Pair(T) { return Pair(T){self, Noisy{n}}; }
+	take :: proc(self: ^, p: move Pair(T)) {}
+}
+
+List :: struct($T: type) { next: ^List(T), value: T }
+
+main :: proc() {
+	first: Pair(int) = {nil, Noisy{1}};
+	h := Holder(int){3};
+	p := h.pair(2);
+	fmt.println(p.holder^.x, p.n.n);
+	h.take(move(p));
+	tail := List(int){nil, 5};
+	head := List(int){&tail, 4};
+	fmt.println(head.value, head.next^.value);
+}
