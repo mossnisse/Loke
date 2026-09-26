@@ -7,6 +7,109 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
+The first seven entries accept programs that read dead or freed memory. Each was
+found by a provenance audit, and each repro builds and runs.
+
+- **A conditional copies a place it should reject.** design.md "Value
+  semantics and the ownership rule" rejects a place whose copy may allocate,
+  and binding a conditional binds its selected arm. A `[dynamic]T` or `map`
+  place in an arm is neither rejected nor cloned, so its storage is freed
+  twice. A `string` arm, whose copy retains its storage, runs correctly:
+
+  ```odin
+  xs := [dynamic]int{1};
+  ys := [dynamic]int{2};
+  z := xs if flag else ys; // heap corruption; expected L0504
+  ```
+- **A typed slice literal has no root.** design.md "Slice literals" makes the
+  hidden array a frame owner and rejects returning it, but only `[N]T{...}[:]`
+  gets a `Slice_Literal` root in `prov_slice`; `[]T{...}` is an
+  `Expr_Composite` with a `backing` type that the walk never roots. The same
+  literal assigned inside a block and used after it is accepted too:
+
+  ```odin
+  bad :: proc(n: int) -> []int { return []int{n, n + 1}; } // views bad's frame
+  ```
+- **A `defer` may invalidate what `return` hands back.** The `Escape` event
+  is emitted before the exit path's deferred statements, so nothing keeps the
+  result live across them. `or_return` has the same order:
+
+  ```odin
+  get :: proc(xs: inout [dynamic]int) -> []int {
+  	defer xs = [dynamic]int{}; // frees the storage the result views
+  	return xs[:];
+  }
+  ```
+- **A callee can store a borrow of its parameter's own storage in it.**
+  design.md "Retaining a borrow" says writing a value into its own root is not
+  a retention, and `report_retention` skips same-root stores, but the caller
+  never learns that its argument now borrows itself. A load through a borrowed
+  parameter yields the parameter's entry loan, so a borrow it already carried
+  (`self.rest = self.rest[n:]`, the spec's example) and a new borrow of its
+  inline storage are the same loan. The direct form, `a.view = a.items[:];
+  return a;`, is rejected. Fixing this probably needs the spec's exemption
+  narrowed to borrows the root already carried:
+
+  ```odin
+  Holder :: struct { items: [4]int, view: []int }
+  selfref :: proc(h: ^mut Holder) { h.view = h.items[:]; }
+  make_holder :: proc() -> Holder {
+  	a: Holder = {};
+  	selfref(&mut a);
+  	return a; // `a.view` points into this frame
+  }
+  ```
+- **Some ways of storing an owner drop its region.** design.md "Allocator
+  regions and region provenance" keeps a local region's owner out of
+  aggregates, containers and static storage. `prov_assign` records region
+  content for a direct place, but `prov_container_content` publishes only
+  borrows, so `append`, `insert` and `try_insert` lose the region, and so do
+  `exchange` and a write through a `^mut` or `[]mut` carrier. Appending to a
+  global is not reported as a region escape either:
+
+  ```odin
+  arena := mem.Arena.init();
+  outer: [dynamic][dynamic]int = {};
+  inner: [dynamic]int via arena.allocator() = {};
+  inner.append(1);
+  outer.append(move(inner));
+  free_all(arena.allocator()); // accepted while `outer[0]` lives in the arena
+  fmt.println(outer[0][0]);
+  ```
+- **Region facts are read in walk order.** `region_of` is flow-insensitive,
+  but a reset, a `return` or a global store reads it while the body is still
+  being walked, so an owner that becomes arena-backed later in a loop body is
+  missed on the back edge. `prov_finalize_allocation_regions` already
+  re-resolves allocation roots after the walk; owners are not re-resolved:
+
+  ```odin
+  arena := mem.Arena.init();
+  xs: [dynamic]int = {};
+  for (i := 0; i < 2; i += 1) {
+  	free_all(arena.allocator()); // accepted; `xs` is arena-backed here on the second pass
+  	if (i > 0) { fmt.println(xs[0]); }
+  	xs = make([dynamic]int, 4, arena.allocator());
+  }
+  ```
+- **A `move` parameter carries no region.** `prov_bind_parameters` gives a
+  region only to `Allocator` parameters, so returning a moved owner summarizes
+  to no region, although design.md "Allocator regions and region provenance"
+  says the result keeps the moved value's. The same section forbids retaining
+  a `move` parameter in longer-lived storage, but
+  `stash :: proc(dst: inout [dynamic][dynamic]int, v: move [dynamic]int) { dst.append(move(v)); }`
+  is accepted. A callee can also leave an owner it built from an allocator
+  parameter in a `^mut` argument; the spec states only the result rule for
+  that case:
+
+  ```odin
+  id :: proc(v: move [dynamic]int) -> [dynamic]int { return move(v); }
+  arena := mem.Arena.init();
+  inner: [dynamic]int via arena.allocator() = {};
+  inner.append(1);
+  outer := id(move(inner));
+  free_all(arena.allocator()); // accepted
+  fmt.println(outer[0]);
+  ```
 - **Providers share region identities more than they need to.** All providers
   inside one local record or container are one region to the checker, and a
   provider replaced or removed through a pointer or slice ends the regions of
