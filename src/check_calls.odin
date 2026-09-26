@@ -423,7 +423,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 		if type_clone_disabled(k.c, element) {
 			errorf(
 				k.c, v.span, "L0491",
-				"`%s` is move-only, so `lookup_value` cannot copy it out; use `find` or `find_ref`, which borrow",
+				"`%s` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows",
 				type_name(k.c, element),
 			)
 		}

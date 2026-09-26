@@ -96,7 +96,7 @@ queried :: proc() -> int {
 	total := 0;
 	if (view in m) { total += m[view]; }
 	total += m.lookup_value(view) or_else 0;
-	switch (slot in m.find_ref("a")) {
+	switch (slot in m.find("a")) {
 	case .some: total += slot^;
 	case .none: return -1;
 	}
@@ -107,11 +107,11 @@ queried :: proc() -> int {
 FOUND :: found();
 found :: proc() -> int {
 	m := map[int]int{1 = 10, 2 = 20, 1 = 30};
-	switch (slot in m.find(2)) {
+	switch (slot in m.find_mut(2)) {
 	case .some: slot^ = 99;
 	case .none: return -1;
 	}
-	switch (_ in m.find(7)) {
+	switch (_ in m.find_mut(7)) {
 	case .some: return -2;
 	case .none:
 	}
@@ -204,7 +204,7 @@ custom_keys :: proc() -> int {
 	if (!(Annotated_Key{1, 40} in m)) { return -2; }
 	m[Annotated_Key{1, 50}] = 8;
 	{
-		switch (p in m.find(Annotated_Key{1, 60})) {
+		switch (p in m.find_mut(Annotated_Key{1, 60})) {
 		case .some: if (p^ != 8) { return -3; }
 		case .none: return -3;
 		}

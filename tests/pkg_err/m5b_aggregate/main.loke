@@ -37,7 +37,7 @@ escaping_retention :: proc(destination: inout wrapping.Holder) {
 // borrow of the table's storage, and inserting through the same table may move
 // it while the wrapped view is still in use.
 invalidated_root :: proc(table: inout map[string][dynamic]int) -> int {
-	slot := table.find("a") or_else nil;
+	slot := table.find_mut("a") or_else nil;
 	if (slot == nil) { return -1; }
 	holder := wrapping.wrap(slot^[:]);
 	fresh: [dynamic]int = {};

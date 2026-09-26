@@ -24,7 +24,7 @@ main :: proc() {
 		m["a"] = Res{ id = 2 };
 		m["b"] = Res{ id = 3 };
 		fmt.println("overwrite", drops);
-		switch (p in m.find("b")) {
+		switch (p in m.find_mut("b")) {
 		case .some: p^.id += 10;
 		case .none:
 		}
@@ -78,7 +78,7 @@ main :: proc() {
 }
 
 read_id :: proc(m: ^map[string]Res, key: string) -> int {
-	switch (found in m.find_ref(key)) {
+	switch (found in m.find(key)) {
 	case .some: return found.id;
 	case .none:
 	}

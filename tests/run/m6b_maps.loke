@@ -102,14 +102,14 @@ main :: proc() {
 	fmt.println((m.lookup_value("nobody") or_else Test{5, 5}).x);
 
 	// `find` never inserts and hands back a pointer to the stored value.
-	switch (slot in m.find("Chloe")) {
+	switch (slot in m.find_mut("Chloe")) {
 	case .some:
 		fmt.println(true);
 		slot^ = Test{9, 9};
 	case .none: fmt.println(false);
 	}
 	fmt.println(m["Chloe"].y);
-	switch (_ in m.find("nobody")) {
+	switch (_ in m.find_mut("nobody")) {
 	case .some: fmt.println(true);
 	case .none: fmt.println(false);
 	}
@@ -338,13 +338,13 @@ lookup_regressions :: proc() {
 		case .some: assert(false);
 		case .none: assert(value_copies == 5 && value_drops == 5 && key_drops == 1);
 		}
-		switch (_ in m.find(key = key)) {
+		switch (_ in m.find_mut(key = key)) {
 		case .some: assert(key_drops == 1);
 		case .none: assert(false);
 		}
 		assert(key in m);
 		assert(m[key].id == 1 && key_drops == 1);
-		switch (_ in m.find({1})) {
+		switch (_ in m.find_mut({1})) {
 		case .some: assert(key_drops == 2);
 		case .none: assert(false);
 		}
@@ -382,7 +382,7 @@ lookup_regressions :: proc() {
 	grid: map[[2]int]int = {};
 	grid[{1, 2}] = 17;
 	assert((grid.lookup_value(key = {1, 2}) or_else -1) == 17);
-	switch (ptr in grid.find({1, 2})) {
+	switch (ptr in grid.find_mut({1, 2})) {
 	case .some: assert(ptr^ == 17);
 	case .none: assert(false);
 	}
@@ -392,7 +392,7 @@ lookup_regressions :: proc() {
 	borrowed_keys();
 	assert(read_grid(&grid, {1, 2}) == 17);
 	assert(read_grid(&grid, {3, 4}) == -1);
-	switch (ptr in grid.find_ref({1, 2})) {
+	switch (ptr in grid.find({1, 2})) {
 	case .some: assert(ptr^ == 17);
 	case .none: assert(false);
 	}
@@ -411,11 +411,11 @@ borrowed_keys :: proc() {
 	assert(m[view] == 1);
 	assert((m.lookup_value(view) or_else -1) == 1);
 	assert((m.lookup_value("missing") or_else -1) == -1);
-	switch (slot in m.find(view)) {
+	switch (slot in m.find_mut(view)) {
 	case .some: slot^ = 11;
 	case .none: assert(false);
 	}
-	switch (slot in m.find_ref(view)) {
+	switch (slot in m.find(view)) {
 	case .some: assert(slot^ == 11);
 	case .none: assert(false);
 	}
@@ -432,7 +432,7 @@ borrowed_keys :: proc() {
 }
 
 read_grid :: proc(m: ^map[[2]int]int, key: [2]int) -> int {
-	switch (ptr in m.find_ref(key)) {
+	switch (ptr in m.find(key)) {
 	case .some: return ptr^;
 	case .none:
 	}

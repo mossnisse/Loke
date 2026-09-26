@@ -589,7 +589,7 @@ make_key :: proc() -> string { return "x" + ""; }
 main :: proc() {
     m: map[string]int = {};
     m["x"] = 1;
-    _ = m.find_ref(make_key());
+    _ = m.find(make_key());
 }
 `)
 	defer destroy_checked(&p)
@@ -607,7 +607,7 @@ main :: proc() {
 	made := strings.index(main_ir, "call %loke.string @loke.p.make_key()")
 	if !testing.expect(t, made >= 0) { return }
 	after_make := main_ir[made:]
-	lookup := strings.index(after_make, ".find_ref(")
+	lookup := strings.index(after_make, ".find(")
 	release := strings.index(after_make, "call void @loke_rt_v1_string_release")
 	testing.expectf(t, lookup >= 0 && release > lookup, "converted query key was not released:\n%s", main_ir)
 }

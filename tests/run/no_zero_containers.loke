@@ -39,7 +39,7 @@ main :: proc() {
 	case .some: fmt.println(v);
 	case .none: fmt.println("missing");
 	}
-	switch (p in m.find(1)) {
+	switch (p in m.find_mut(1)) {
 	case .some: p^ = .b(true);
 	case .none:
 	}

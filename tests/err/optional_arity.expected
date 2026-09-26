@@ -16,7 +16,7 @@ L0363
 `Plain` has no field or member `lookup_value`
 L0491
 @35:7
-`Token` is move-only, so `lookup_value` cannot copy it out; use `find` or `find_ref`, which borrow
+`Token` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows
 L0425
 @42:7
 `as` names the requested type as its one positional argument, found 0 arguments

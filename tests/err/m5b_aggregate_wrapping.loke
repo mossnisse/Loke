@@ -133,7 +133,7 @@ container_held_borrow :: proc() -> int {
 entry_pointer_escapes :: proc(values: []int) -> ^mut Holder {
 	table: map[string]Holder = {};
 	table["a"] = Holder{values};
-	return table.find("a") or_else nil;
+	return table.find_mut("a") or_else nil;
 }
 
 // A small fixed array gives each element its own place, but only where the index

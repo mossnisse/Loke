@@ -9,4 +9,4 @@ L0392
 `try_insert` does not apply: argument 2 is `string_view` where `string` is wanted
 L0392
 @15:6
-`find_ref` does not apply: argument 2 is `string_view` where `int` is wanted
+`find` does not apply: argument 2 is `string_view` where `int` is wanted

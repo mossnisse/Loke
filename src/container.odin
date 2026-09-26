@@ -297,21 +297,21 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	}
 
 	// `inout`, because the returned pointer can mutate the stored value.
-	find := container_member(
-		k, type, "find", .Map_Find,
+	find_mut := container_member(
+		k, type, "find_mut", .Map_Find,
 		[]Type_Id{type, query}, []Param_Mode{.Inout, .Value},
 		option_type(k, pointer_to(k.c, value, true)), 0,
 	)
-	set_synth_result_summary(k.c, find, 0)
-	append(&members, find)
+	set_synth_result_summary(k.c, find_mut, 0)
+	append(&members, find_mut)
 	// The same probe through a read-only borrow.
-	find_ref := container_member(
-		k, type, "find_ref", .Map_Find,
+	find := container_member(
+		k, type, "find", .Map_Find,
 		[]Type_Id{type, query}, []Param_Mode{.Value, .Value},
 		option_type(k, pointer_to(k.c, value, false)), 0, .Value,
 	)
-	set_synth_result_summary(k.c, find_ref, 0)
-	append(&members, find_ref)
+	set_synth_result_summary(k.c, find, 0)
+	append(&members, find)
 	// The owning read, so the receiver is immutable.
 	lookup := container_member(
 		k, type, "lookup_value", .Map_Lookup_Value,

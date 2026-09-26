@@ -367,14 +367,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
-## Map lookups name the mutable one plainly
-
-Everywhere else the mutable form is the marked one: `^mut`, `[]mut`,
-`dyn mut`, `iter_mut`, `get_mut`. A map's `find` is the one that returns
-`Option(^mut V)` and needs a mutable receiver, while the read-only probe is
-`find_ref` ([Map container operations](design.md#map-container-operations)).
-Proposal: `find` returns `Option(^V)` and `find_mut` `Option(^mut V)`.
-
 ## A user container's mutable slice
 
 A slice of a mutable place is `[]mut T` when a `[]mut T` destination asks for
@@ -1229,6 +1221,14 @@ no longer synthesizes one for its own iterators. The derivation tries owned
 before borrowed, so an element that is itself a pointer, returned unchanged,
 stays owned; the old descriptor could say otherwise only by making `Item` a
 pointer to the pointer, which `next` would then have to return anyway.
+
+### A map's mutable lookup is the marked one
+
+Everywhere else the mutable form is the marked one: `^mut`, `[]mut`,
+`dyn mut`, `iter_mut`, `get_mut`. The map had it the other way round, with
+`find` returning `Option(^mut V)` from an `inout` receiver and the read-only
+probe spelled `find_ref`. `find` now returns `Option(^V)` and `find_mut`
+`Option(^mut V)`. Every call in the tree was renamed to keep its meaning.
 
 ### Map element mutation
 

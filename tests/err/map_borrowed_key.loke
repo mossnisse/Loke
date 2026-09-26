@@ -12,5 +12,5 @@ main :: proc() {
 	_ = m.try_insert(view, 3);
 	// A borrowed key is the `string` pairing only; nothing else queries across types.
 	other: map[int]int = {};
-	_ = other.find_ref(view);
+	_ = other.find(view);
 }

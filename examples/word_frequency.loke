@@ -71,8 +71,8 @@ main :: proc() {
 	// does, recursively, so this needs no loop.
 	fmt.println("repeated:", repeated);
 
-	// `find` hands back `Option(^mut V)` over the stored value without inserting.
-	switch (slot in counts.find("fox")) {
+	// `find_mut` hands back `Option(^mut V)` over the stored value without inserting.
+	switch (slot in counts.find_mut("fox")) {
 	case .some: slot^ += 100;
 	case .none:
 	}

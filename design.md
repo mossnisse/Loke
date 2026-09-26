@@ -1239,7 +1239,7 @@ A lookup that tolerates a missing key is a method; each is listed under [Map con
 ```odin
 present := "Bob" in m;                         // presence only
 bob := m.lookup_value("Bob") or_else Score{};  // an owned copy, or a fallback
-switch (slot in m.find("Bob")) {               // a pointer to the stored element
+switch (slot in m.find_mut("Bob")) {           // a pointer to the stored element
 case .some: slot^ = { 2, 2 };
 case .none:
 }
@@ -1248,9 +1248,9 @@ counts: map[string]int = {};
 counts.find_or_insert(word, 0)^ += 1;          // inserts 0 first when `word` is absent
 ```
 
-A pointer from `find`, `find_ref`, `find_or_insert`, or `&m[key]` borrows the map for as long as it is live, so no insertion can reallocate the table under it. `find_ref` is the read-only probe: its receiver is immutable, so it serves a path that has no `inout`, and an element that is [move-only](#lifecycle-hooks-and-resource-types), which `lookup_value` could not copy out.
+A pointer from `find`, `find_mut`, `find_or_insert`, or `&m[key]` borrows the map for as long as it is live, so no insertion can reallocate the table under it. `find` is the read-only probe: its receiver is immutable, so it serves a path that has no `inout`, and an element that is [move-only](#lifecycle-hooks-and-resource-types), which `lookup_value` could not copy out.
 
-A `map[string]V` is queried with a `string_view` as well as a `string`. `view in m`, `m[view]` in every position but the inserting one, and the non-storing lookups — `find`, `find_ref`, `lookup_value`, and `remove` — all take the borrowed form, so a query builds no owned key and an owned one is not cloned to be compared:
+A `map[string]V` is queried with a `string_view` as well as a `string`. `view in m`, `m[view]` in every position but the inserting one, and the non-storing lookups — `find`, `find_mut`, `lookup_value`, and `remove` — all take the borrowed form, so a query builds no owned key and an owned one is not cloned to be compared:
 
 ```odin
 counts: map[string]int = {};
@@ -1271,8 +1271,8 @@ The built-in map supports these container operations:
 - `some_map.reserve(capacity)` reserves capacity for at least the requested number of entries.
 - `some_map.shrink()` removes excess capacity.
 - `some_map.try_insert(key, elem)` inserts or updates the entry, returning the [allocation error](#allocation-failure) rather than following the policy. It is the recoverable call form of `m[key] = elem`.
-- `some_map.find(key)` returns `Option(^mut V)`: a pointer to the existing value, or `.none`. It does not insert. `&m[key]` is the same pointer without the `Option`, and panics instead.
-- `some_map.find_ref(key)` returns `Option(^V)`: the same lookup through a read-only borrow, so its receiver is immutable. It does not insert.
+- `some_map.find(key)` returns `Option(^V)`: a read-only pointer to the existing value, or `.none`. It does not insert, and its receiver is immutable.
+- `some_map.find_mut(key)` returns `Option(^mut V)`: the same lookup through a mutable borrow of the map. It does not insert. `&m[key]` is the same pointer without the `Option`, and panics instead.
 - `some_map.find_or_insert(key, elem)` returns `^mut V`: a pointer to the existing value, or to `elem` after inserting it under `key`. `elem` is evaluated either way and taken as any [inserted element](#container-insertion) is; when the key is already present, it is dropped. Allocation failure follows the [policy](#allocation-failure); `try_find_or_insert` returns the error instead.
 - `some_map.remove(key)` returns `Option(V)`: the removed value, or `.none` when the key was absent.
 - `some_map.lookup_value(key)` returns `Option(V)`: an independently owned copy of the existing value, or `.none`. It does not insert, and its receiver is immutable. It evaluates its receiver before its key and performs exactly one lookup; a managed element is cloned once, inside the operation.
@@ -2228,7 +2228,7 @@ When both a value and an `inout` overload are visible, position selects between 
 1. In a **place position** — the target of an assignment or compound assignment, the operand of `&`, or an `inout` argument — the `inout` overload is required; if none exists, `operator([]=)` is used; if neither, the expression is not assignable.
 2. Everywhere else the value overload is preferred, even for a mutable receiver.
 
-The same rule applies to built-in indexing of maps and dynamic arrays. Place position selects *which operation runs*; it never creates a missing element (see [Maps](#maps) for the one map form that does). A container wanting a lookup that does not panic supplies a method, as the map does with `m.find(key)`.
+The same rule applies to built-in indexing of maps and dynamic arrays. Place position selects *which operation runs*; it never creates a missing element (see [Maps](#maps) for the one map form that does). A container wanting a lookup that does not panic supplies a method, as the map does with `m.find(key)` and `m.find_mut(key)`.
 
 `operator([]=)` is for containers with no location to hand out — computed, compressed, proxied, or validating storage. It takes the receiver, the index list, and the new value last, and returns nothing:
 
