@@ -90,6 +90,6 @@ view_at :: proc(index: int) -> string_view {
 // inside the call, so that is true by construction rather than by a rule the
 // compiler enforces.
 @(public)
-exit :: proc(status: int) -> ! {
-	rt_exit(i32(status));
+exit :: proc(status: i32) -> ! {
+	rt_exit(status);
 }

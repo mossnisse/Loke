@@ -5088,7 +5088,7 @@ A Loke program contains one or more packages. A Loke source file uses the `.loke
 
 ### Program entry and exit
 
-An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()`: no parameters, no results, the `loke` calling convention. Command-line arguments are read from `os.args`. The exit status is 0 when `main` returns normally. `os.exit(code)` terminates the process immediately with the specified status; it is [`-> !`](#diverging-procedures).
+An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()` or `main :: proc() -> i32`: no parameters, the `loke` calling convention. Command-line arguments are read from `os.args`. When `main` returns normally, the exit status is its result, or 0 when it has none. `os.exit(status: i32)` terminates the process immediately with the specified status; it is [`-> !`](#diverging-procedures).
 
 Program startup has this order:
 
@@ -5099,11 +5099,11 @@ Importing a package does not run package code. A package that needs runtime init
 
 Normal return from `main` runs its scope-exit actions before the process ends. Managed values at file scope are [not dropped](#values-that-outlive-every-scope). `os.exit` terminates immediately. It does not run `defer`, automatic `drop`, or thread-local cleanup. A [panic](#panics-and-unwinding) follows its selected panic strategy.
 
-To return a nonzero status after cleanup, keep owned state in a helper procedure. Cleanup runs when the helper returns. `main` can then call `os.exit`:
+A status returned from `main` takes effect after those scope-exit actions, so cleanup runs before a nonzero exit:
 
 ```odin
-run_application :: proc() -> int {
-	// `initialize` returns Result(State, Error).
+main :: proc() -> i32 {
+	// `initialize` returns Result(State, Error); `run` returns an i32 status.
 	switch (state in application.initialize()) {
 	case .ok:
 		defer application.shutdown(inout state);
@@ -5111,11 +5111,6 @@ run_application :: proc() -> int {
 	case .err:
 		return 1;
 	}
-}
-
-main :: proc() {
-	status := run_application();
-	if (status != 0) { os.exit(status); }
 }
 ```
 

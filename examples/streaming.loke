@@ -66,11 +66,12 @@ run :: proc() -> Result(Unit, io.Error) {
 	return .ok;
 }
 
-main :: proc() {
+main :: proc() -> i32 {
 	switch (outcome in run()) {
 	case .ok:
+		return 0;
 	case .err:
 		fmt.eprintln("error:", outcome);
-		os.exit(1);
+		return 1;
 	}
 }

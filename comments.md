@@ -273,10 +273,6 @@ profiles contain.
 
 ## Open questions in `core:os`
 
-- `os.exit(status: int)` narrows with `i32(status)`, which wraps, so
-  `os.exit(4294967297)` exits with 1 although design.md "Program entry and
-  exit" says the process ends "with the specified status". Should the
-  parameter be `i32`, or the spec say the status is taken modulo 2^32?
 - An environment name that is empty or contains `=` fails `set_environment`
   and `unset_environment` as `Other` (Windows error 87), while
   `get_environment` answers `.none` for it. Should the portable layer reject
@@ -370,16 +366,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 `v << {1, -1, 2, 40}` over `{1, 2, 3, 4}` gives `{2, 0, 12, 0}`. Proposal: give
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
-
-## `main` returning a status
-
-`main` has no result and `os.exit` runs no cleanup, so a program that must end
-with a non-zero status after cleanup moves its body into a helper and calls
-`os.exit` on what it returns;
-[Program entry and exit](design.md#program-entry-and-exit) spells that pattern
-out. Proposal: also accept `main :: proc() -> T`, with `T` the status type
-`os.exit` settles on (see [Open questions in `core:os`](#open-questions-in-coreos)),
-whose result becomes the exit status after `main`'s scope-exit actions run.
 
 ## Formatted `assert` and `panic` messages
 
@@ -1225,6 +1211,16 @@ turns an allocation failure into an empty container. `new`, `new_clone`, and
 `make` now follow the allocator's failure policy, and `try_new`,
 `try_new_clone`, and `try_make` return the `Result`. About a hundred calls in
 `tests/` changed spelling.
+
+### `main` may return an `i32` status
+
+Odin's `main` has no result, and neither had Loke's. Since `os.exit` runs no
+cleanup, a program that had to fail after cleanup moved its body into a
+helper and called `os.exit` on what the helper returned. `main :: proc() ->
+i32` returns the status instead, after its scope-exit actions, as C's `main`
+does. The status is `i32` because that is what the process gets: `os.exit`
+took an `int` and narrowed it, so `os.exit(4294967297)` exited with 1. It now
+takes an `i32` as well, and a wider value needs an explicit conversion.
 
 ### Map element mutation
 

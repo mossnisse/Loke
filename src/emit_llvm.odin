@@ -545,9 +545,16 @@ emit_entry :: proc(e: ^Emitter) {
 	if any_provider_selected(e.c) {
 		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_program_init()")
 	}
-	fmt.sbprintfln(&e.b, "  call void %s()", entry)
+	// design.md "Program entry and exit": an `i32` result is the exit status.
+	status := "0"
+	if symbol := symbol_of(e.c, e.c.entry_point); symbol != nil && symbol.result == TYPE_I32 {
+		status = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i32 %s()", status, entry)
+	} else {
+		fmt.sbprintfln(&e.b, "  call void %s()", entry)
+	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
-	fmt.sbprintln(&e.b, "  ret i32 0")
+	fmt.sbprintfln(&e.b, "  ret i32 %s", status)
 	fmt.sbprintln(&e.b, "}")
 }
 

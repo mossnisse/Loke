@@ -323,8 +323,8 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	} else if symbol := symbol_of(c, entry); symbol == nil || symbol.kind != .Proc {
 		span := symbol == nil ? no_span() : symbol.span
 		errorf(c, span, "L0303", "`main` must be a procedure: `%s`", "main :: proc() { ... }")
-	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || info.result != INVALID_TYPE {
-		errorf(c, symbol.span, "L0303", "`main` must have no parameters and no results: `%s`", "main :: proc() { ... }")
+	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || (info.result != INVALID_TYPE && info.result != TYPE_I32) {
+		errorf(c, symbol.span, "L0303", "`main` takes no parameters and returns nothing or an `i32` status: `%s`", "main :: proc() -> i32 { ... }")
 	} else if c.error_count == errors_before {
 		c.entry_point = entry
 	}

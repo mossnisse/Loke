@@ -1,0 +1,11 @@
+package main; import "core:fmt";
+
+// design.md "Program entry and exit": `main`'s `i32` result is the exit status,
+// and it takes effect after `main`'s scope-exit actions, so the deferred line
+// is printed before the process exits with 3.
+
+main :: proc() -> i32 {
+	defer fmt.println("cleanup");
+	fmt.println("work");
+	return 3;
+}
