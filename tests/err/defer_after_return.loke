@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:mem";
 
 // design.md "defer statement": a result is taken before the exit path's
 // deferred statements run, and what it borrows must survive them. A borrow of
@@ -26,6 +26,13 @@ written :: proc(p: []mut int) -> []int {
 	return p;
 }
 
+// design.md "Allocator regions and region provenance": nor may a defer reset
+// the region backing an allocation the result holds.
+reset_later :: proc(@(allocator_reset) allocator: Allocator) -> ^mut int {
+	defer free_all(allocator);
+	return try_new(int, allocator) or_else nil;
+}
+
 // A deferred read of what a read-only result borrows: allowed.
 counted :: proc(xs: inout [dynamic]int) -> []int {
 	defer fmt.println(xs.len());
@@ -39,6 +46,12 @@ local :: proc() -> []int {
 	return arr[:];
 }
 
+// A region that ends with this frame: one diagnostic, at the `return`.
+arena_backed :: proc() -> ^mut int {
+	arena := mem.Arena.init();
+	return try_new(int, arena.allocator()) or_else nil;
+}
+
 main :: proc() {
 	xs := [dynamic]int{1, 2};
 	fmt.println(cleared(inout xs));
@@ -46,4 +59,6 @@ main :: proc() {
 	fmt.println(counted(inout xs), local());
 	a := [2]int{1, 2};
 	fmt.println(written(a[:]));
+	arena := mem.Arena.init();
+	fmt.println(reset_later(arena.allocator()) == nil, arena_backed() == nil);
 }

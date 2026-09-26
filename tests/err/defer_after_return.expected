@@ -7,6 +7,12 @@ L0512
 L0641
 @25:8
 `p` cannot be used here: a read-only reborrow of it is still in use
+L0537
+@32:8
+this reset ends every allocation in the region, but a pointer of one of them is still in use
 L0526
-@39:9
+@46:9
 this slice cannot be returned: `arr` ends when this procedure returns
+L0592
+@52:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns

@@ -2009,7 +2009,12 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 	it := live_loans(state, live)
 	for slot, index in next_live_loan(&it) {
 		loan := graph.loans[index]
-		if !reset_ends_root(graph.roots[int(loan.root)], event) {
+		root := graph.roots[int(loan.root)]
+		if !reset_ends_root(root, event) {
+			continue
+		}
+		// A result backed by this frame's region is the `Escape` event's error.
+		if graph.prov_slots[slot].returned && region_is_local_only(root.region) {
 			continue
 		}
 		errorf(
