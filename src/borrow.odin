@@ -86,7 +86,8 @@ Prov_Root :: struct {
 	name:   string,
 	// `Param`: which borrowed parameter, for substitution at a direct call.
 	param_index: int,
-	// A carrier `Param`: the `content` loan a load through it yields.
+	// A `Param` that reaches caller storage: the `content` loan standing for
+	// whatever that storage holds, which a load through it yields.
 	content_loan: Loan_Id,
 	// `Allocation`: the region the storage came from. Empty means unrecorded,
 	// which every reset reaches.
@@ -704,12 +705,21 @@ Result_Dependencies :: struct {
 	// Per parameter, which paths of its `carrier_shape` the result may borrow.
 	// Nil means the whole parameter.
 	param_paths:  [][]bool,
+	// Which parameters the result may hold what is stored behind, at any depth:
+	// an element copied out of a slice, not the slice.
+	param_loads:  []bool,
 	static:       bool,
 	thread:       bool,
 	fresh:        bool, // a fresh allocation, which lets a returned pointer reach `free`
 	fresh_region: Region_Set,
 	local:        bool, // already an error in the callee
 	unknown:      bool,
+}
+
+// Whether a result may depend on a parameter: borrow it, or hold what its
+// storage holds.
+result_uses_param :: proc(dependencies: Result_Dependencies, index: int) -> bool {
+	return index < len(dependencies.params) && (dependencies.params[index] || dependencies.param_loads[index])
 }
 
 Result_Content_Provenance :: struct {
@@ -737,6 +747,7 @@ new_result_dependencies :: proc(c: ^Compiler, param_count: int) -> Result_Depend
 	return Result_Dependencies {
 		params      = make([]bool, param_count, c.semantic_allocator),
 		param_paths = make([][]bool, param_count, c.semantic_allocator),
+		param_loads = make([]bool, param_count, c.semantic_allocator),
 		fresh_region = Region_Set{params = make([]bool, param_count, c.semantic_allocator)},
 	}
 }
@@ -881,6 +892,11 @@ joined_result_summary :: proc(c: ^Compiler, members: []Symbol_Id) -> (Result_Pro
 merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_Dependencies) {
 	merge_provenance(into, from)
 	merge_precision(&into.precision, from.precision)
+	for loaded, index in from.param_loads {
+		if loaded && index < len(into.param_loads) {
+			into.param_loads[index] = true
+		}
+	}
 	for wanted, index in from.params {
 		if !wanted || index >= len(into.params) {
 			continue
@@ -1093,7 +1109,7 @@ check_declared_escape :: proc(k: ^Checker, literal: ^Expr_Proc) {
 		if bound == nil || bound.escape != .None {
 			continue
 		}
-		if index < len(summary.result.params) && summary.result.params[index] {
+		if result_uses_param(summary.result, index) {
 			errorf(
 				k.c,
 				bound.span,
@@ -1260,13 +1276,12 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 						if !bit_get(row, index) {
 							continue
 						}
-						loan := graph.loans[index]
-						changed = merge_loan_provenance(state, &into.dependencies, loan) || changed
+						changed = merge_loan_provenance(state, &into.dependencies, index) || changed
 						for &content in into.content {
 							if slot.content_shape == into.content_type && !paths_overlap(slot.path, content.path.steps) {
 								continue
 							}
-							changed = merge_loan_provenance(state, &content.dependencies, loan) || changed
+							changed = merge_loan_provenance(state, &content.dependencies, index) || changed
 						}
 					}
 				}
@@ -1291,11 +1306,17 @@ paths_equal :: proc(a, b: []Proj_Step) -> bool {
 }
 
 @(private = "file")
-merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, loan: Prov_Loan) -> bool {
+merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, index: int) -> bool {
+	loan := state.graph.loans[index]
 	root := state.graph.roots[int(loan.root)]
 	one := Result_Dependencies{}
 	switch root.kind {
 	case .Param:
+		if Loan_Id(index) == root.content_loan && root.param_index < len(into.param_loads) {
+			changed := !into.param_loads[root.param_index]
+			into.param_loads[root.param_index] = true
+			return changed
+		}
 		if root.param_index >= 0 && root.param_index < len(into.params) {
 			changed := merge_param_paths(state, into, root, loan)
 			if !into.params[root.param_index] {
@@ -1617,7 +1638,8 @@ end_loans :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, invalid: [
 }
 
 // A load reads the slots at the pointee path through the addressing loans and
-// copies their dependencies. Storage with no local content keeps the loan.
+// copies their dependencies. Storage with no local content keeps the loan. A
+// deep load goes on through what it read until nothing new turns up.
 @(private = "file")
 load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, reads: ^[dynamic]int = nil) {
 	graph := state.graph
@@ -1625,51 +1647,75 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 	loss := graph.prov_slots[event.slot].precision | path_precision(event.path)
 	for carrier in event.into {
 		row := reach_row(state, reach, carrier)
-		for loan, loan_index in graph.loans {
-			if !bit_get(row, loan_index) {
-				continue
+		for index in 0 ..< state.loans {
+			if bit_get(row, index) && !load_through_loan(state, index, event.path, reach, &loss, reads) {
+				loss |= state.precision[carrier]
 			}
-			root := graph.roots[int(loan.root)]
-			sym := symbol_of(graph.k.c, root.symbol)
-			found := false
-			if sym != nil && !(root.kind == .Param && type_is_carrier(graph.k.c, sym.type)) {
-				slots := graph.content_by_symbol[root.symbol]
-				bare: [1]int
-				if index, exists := graph.slot_by_symbol[root.symbol]; exists {
-					bare[0] = index
-					slots = bare[:]
+		}
+	}
+	if event.deep {
+		expanded := make([]bool, state.loans, graph.alloc)
+		for grew := true; grew; {
+			grew = false
+			for index in 0 ..< state.loans {
+				if !expanded[index] && bit_get(state.merged, index) {
+					expanded[index] = true
+					grew = true
+					load_through_loan(state, index, nil, reach, &loss, reads)
 				}
-				for index in slots {
-					slot := graph.prov_slots[index]
-					if !paths_overlap(slot.path, loan.path) {
-						continue
-					}
-					suffix := slot.path[min(len(loan.path), len(slot.path)):]
-					if !paths_overlap(suffix, event.path) {
-						continue
-					}
-					found = true
-					loss |= state.precision[index]
-					bytes_or(state.merged, reach_row(state, reach, index))
-					if reads != nil {
-						seen := false
-						for existing in reads^ {
-							seen ||= existing == index
-						}
-						if !seen {
-							append(reads, index)
-						}
-					}
-				}
-			}
-			if !found {
-				loss |= state.precision[carrier] | path_precision(loan.path)
-				bit_mark(state.merged, root.content_loan != NO_LOAN ? int(root.content_loan) : loan_index)
 			}
 		}
 	}
 	copy(reach_row(state, reach, event.slot), state.merged)
 	state.precision[event.slot] = loss
+}
+
+// Joins into `state.merged` what the storage one loan names holds at `path`;
+// false when that storage has no local content, and the loan stands for it. A
+// parameter's caller storage is never local: its `content_loan` stands for it.
+@(private = "file")
+load_through_loan :: proc(
+	state: ^Prov_State,
+	loan_index: int,
+	path: []Proj_Step,
+	reach: []u8,
+	loss: ^Precision_Loss,
+	reads: ^[dynamic]int,
+) -> bool {
+	graph := state.graph
+	loan := graph.loans[loan_index]
+	root := graph.roots[int(loan.root)]
+	sym := symbol_of(graph.k.c, root.symbol)
+	found := false
+	if sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(graph.k.c, sym.type))) {
+		slots := graph.content_by_symbol[root.symbol]
+		bare: [1]int
+		if index, exists := graph.slot_by_symbol[root.symbol]; exists {
+			bare[0] = index
+			slots = bare[:]
+		}
+		for index in slots {
+			slot := graph.prov_slots[index]
+			if !paths_overlap(slot.path, loan.path) {
+				continue
+			}
+			suffix := slot.path[min(len(loan.path), len(slot.path)):]
+			if !paths_overlap(suffix, path) {
+				continue
+			}
+			found = true
+			loss^ |= state.precision[index]
+			bytes_or(state.merged, reach_row(state, reach, index))
+			if reads != nil && !slice.contains(reads[:], index) {
+				append(reads, index)
+			}
+		}
+	}
+	if !found {
+		loss^ |= path_precision(loan.path)
+		bit_mark(state.merged, root.content_loan != NO_LOAN ? int(root.content_loan) : loan_index)
+	}
+	return found
 }
 
 // Records which slots each indirect read uses before the backward pass, so a

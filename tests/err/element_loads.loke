@@ -1,0 +1,91 @@
+package main; import "core:fmt"; import "core:slice";
+
+// design.md "Procedure result contracts": a result copied out of what a
+// parameter reaches holds what that storage holds, not the parameter's own
+// borrow. So it survives a use of the argument, and it cannot outlive what the
+// elements borrow.
+
+first :: proc(values: [][]u8) -> []u8 { return values[0]; }
+deref :: proc(values: []^[]u8) -> []u8 { return values[0]^; }
+
+Box :: struct { items: [][]u8 }
+first_item :: proc(b: Box) -> []u8 { return b.items[0]; }
+
+keep :: proc(dst: inout [dynamic][]u8, @(escape=stored) src: [][]u8) { dst.append(src[0]); }
+
+// Fine: neither result reborrows `xs`, so both may be live together.
+both :: proc() {
+	arr := [2]string_view{"b", "a"};
+	xs: []mut string_view = arr[:];
+	fmt.println(slice.min(xs), slice.max(xs));
+	low := slice.min(xs);
+	xs[0] = "c";
+	fmt.println(low);
+}
+
+element :: proc() {
+	r: []u8 = nil;
+	arr := [1][]u8{nil};
+	{
+		s := [3]u8{1, 2, 3};
+		arr[0] = s[:];
+		r = first(arr[:]);
+	}
+	fmt.println(r); // `s` has ended
+}
+
+// Two loads deep: the pointer reaches `v`, and `v` holds `s`.
+through_pointer :: proc() {
+	r: []u8 = nil;
+	v: []u8 = nil;
+	{
+		s := [3]u8{1, 2, 3};
+		v = s[:];
+		arr := [1]^[]u8{&v};
+		r = deref(arr[:]);
+	}
+	fmt.println(r); // `s` has ended
+}
+
+field :: proc() {
+	r: []u8 = nil;
+	arr := [1][]u8{nil};
+	{
+		s := [3]u8{1, 2, 3};
+		arr[0] = s[:];
+		r = first_item(Box{arr[:]});
+	}
+	fmt.println(r); // `s` has ended
+}
+
+plain :: proc() {
+	f: proc(values: [][]u8) -> []u8 = first;
+	r: []u8 = nil;
+	arr := [1][]u8{nil};
+	{
+		s := [3]u8{1, 2, 3};
+		arr[0] = s[:];
+		r = f(arr[:]);
+	}
+	fmt.println(r); // `s` has ended
+}
+
+kept :: proc() {
+	out: [dynamic][]u8 = {};
+	arr := [1][]u8{nil};
+	{
+		s := [3]u8{1, 2, 3};
+		arr[0] = s[:];
+		keep(inout out, arr[:]);
+	}
+	fmt.println(out[0]); // `s` has ended
+}
+
+main :: proc() {
+	both();
+	element();
+	through_pointer();
+	field();
+	plain();
+	kept();
+}

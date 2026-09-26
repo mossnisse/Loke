@@ -75,8 +75,8 @@ check_proc_contracts :: proc(k: ^Checker) {
 				errorf(k.c, check.span, "L0645", "procedure result provenance does not satisfy the inferred contract of `%s`",
 					contract_name(k.c, b.proc_contract))
 				if have && known {
-					for wanted, index in actual.params {
-						if wanted && (index >= len(bound.params) || !bound.params[index]) {
+					for index in 0 ..< len(actual.params) {
+						if result_uses_param(actual, index) && !result_uses_param(bound, index) {
 							add_notef(k.c, check.span, "the result of `%s` may borrow `%s`, which that contract excludes",
 								contract_name(k.c, a.proc_contract), contract_param_name(k.c, a.proc_contract, index))
 							break
@@ -90,7 +90,7 @@ check_proc_contracts :: proc(k: ^Checker) {
 		}
 		if !have { continue }
 		for index := discharged_escape(k.c, check.from, check.to); index >= 0; index = discharged_escape(k.c, check.from, check.to, index) {
-			if index < len(actual.params) && actual.params[index] {
+			if result_uses_param(actual, index) {
 				errorf(k.c, check.span, "L0645", "the result of `%s` may borrow `%s`, which `%s` marks `@(escape=none)`",
 					contract_name(k.c, a.proc_contract), contract_param_name(k.c, a.proc_contract, index), type_name(k.c, check.to))
 				add_contract_notes(k.c, a.proc_contract)
@@ -176,6 +176,9 @@ dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 	if (a.static && !b.static) || (a.thread && !b.thread) || (a.fresh && !b.fresh) ||
 	   (a.local && !b.local) || (a.unknown && !b.unknown) { return false }
 	if a.fresh && !region_contract_within(a.fresh_region, b.fresh_region) { return false }
+	for loaded, index in a.param_loads {
+		if loaded && (index >= len(b.param_loads) || !b.param_loads[index]) { return false }
+	}
 	for wanted, index in a.params {
 		if !wanted { continue }
 		if index >= len(b.params) || !b.params[index] { return false }

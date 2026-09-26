@@ -4901,6 +4901,18 @@ Each named Loke procedure and generic instantiation has a result-provenance cont
 
 Where a parameter reaches a borrow through its own [carrier paths](#values-that-contain-borrows), the summary records which of those paths the result may name, so a helper returning one field of a record argument substitutes that field's root rather than everything the argument holds.
 
+The summary also tells a borrow *of* the storage a parameter reaches apart from a value read *out of* it. `return values[:1]` borrows the caller's storage; `return values[0]` copies an element, and a copied `string_view` borrows only what that element borrowed. A result read out of an argument's storage substitutes what the storage holds at any depth, not the argument, so it does not suspend a mutable argument and cannot outlive what the elements borrow:
+
+```odin
+first :: proc(values: []string_view) -> string_view { return values[0]; }
+
+arr := [2]string_view{"b", "a"};
+xs: []mut string_view = arr[:];
+low := first(xs);  // borrows the literals, not `xs`
+xs[0] = "c";       // fine
+fmt.println(low);
+```
+
 At a call, actual argument roots and allocator regions replace the corresponding parameters. The contract is transitive, independent of declaration order, and specific to each concrete generic instantiation. It does not change the runtime ABI.
 
 An inferred callback type retains the declaration's result contract, including carrier paths, roots, and allocator-region dependencies. Indirect calls through that type preserve the same provenance as direct calls.
@@ -4928,7 +4940,7 @@ A plain written `proc(...) -> T` signature has no inferred result contract. Conv
 A conditional between distinct inferred callback types with the same plain signature carries both contracts: a call through it may return whatever either declaration may. The joined contract is its own type, printed with both names (`[result contract: a | b]`); it does not depend on branch order, and a procedure assigned to it later must fit the join like any other contract-bearing destination. If either branch has a plain type, the conditional has the plain type. An expected callback type still constrains both branches instead.
 
 
-At a call through a plain procedure type, a returned pointer, slice, view, or [`inout` result](#inout-results) conservatively derives from every borrowed argument the type does not exclude with `@(escape=none)` (unknown root provenance if there is none). An owning result retains the region provenance of every moved owner and allocator argument (unknown if none), and so does every argument the call may write. Fresh-allocation root provenance is erased in this case, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through an erased callback uses a move-only resource wrapper. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
+At a call through a plain procedure type, a returned pointer, slice, view, or [`inout` result](#inout-results) conservatively derives from every borrowed argument the type does not exclude with `@(escape=none)`, and from whatever those arguments' storage holds (unknown root provenance if there is none). An owning result retains the region provenance of every moved owner and allocator argument (unknown if none), and so does every argument the call may write. Fresh-allocation root provenance is erased in this case, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through an erased callback uses a move-only resource wrapper. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
 
 Allocator-wide invalidation is the one effect propagated through arbitrary ordinary procedure wrappers. A parameter marked [`@(allocator_reset)`](#allocator_reset) states that a successful call may end every allocation root in that allocator region. At the call, the compiler rejects the reset while a value or checked borrow from the region is live.
 

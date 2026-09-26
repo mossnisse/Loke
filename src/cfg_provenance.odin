@@ -81,6 +81,8 @@ Prov_Event :: struct {
 	// `Live`: re-establishes its loans. A loop head re-reads its iterable, so a
 	// body invalidation must not cross the back edge.
 	revives:       bool,
+	// `Load`: also reads through what was read, at any depth.
+	deep:          bool,
 }
 
 // A borrowed parameter arrives holding the caller's storage, which the entry
@@ -1099,6 +1101,10 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			root := prov_new_root(graph, .Param, sym.span, name)
 			graph.roots[int(root)].symbol = id
 			graph.roots[int(root)].param_index = index
+			// What the caller storage it reaches holds, which a load through it yields.
+			content_loan := prov_new_loan(graph, root, nil, type_carries_borrow(graph.k.c, sym.type).mutable, sym.span, carrier_noun(graph.k.c, sym.type))
+			graph.loans[int(content_loan)].content = true
+			graph.roots[int(root)].content_loan = content_loan
 			if !is_carrier {
 				shape := carrier_shape(graph.k.c, sym.type)
 				for path, path_index in shape {
@@ -1115,13 +1121,8 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 				}
 				continue
 			}
-			mutable := carrier_is_mutable(graph.k.c, sym.type)
-			noun := carrier_noun(graph.k.c, sym.type)
-			loan := prov_new_loan(graph, root, nil, mutable, sym.span, noun)
+			loan := prov_new_loan(graph, root, nil, carrier_is_mutable(graph.k.c, sym.type), sym.span, carrier_noun(graph.k.c, sym.type))
 			append(&graph.entry_defs, Prov_Entry_Def{slot = slot, loan = loan})
-			content_loan := prov_new_loan(graph, root, nil, mutable, sym.span, noun)
-			graph.loans[int(content_loan)].content = true
-			graph.roots[int(root)].content_loan = content_loan
 		}
 	}
 }
@@ -2949,9 +2950,29 @@ prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]in
 		if proc_param_escape(graph.k.c, proc_type, index) == .None {
 			continue
 		}
-		out = prov_join(graph, out, slots)
+		out = prov_join(graph, out, prov_with_content(graph, slots, v.span))
 	}
 	return out
+}
+
+// Everything stored behind `carriers`, at any depth: what a callee may hand
+// back or keep from the storage an argument reaches.
+@(private = "file")
+prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -> []int {
+	if len(carriers) == 0 {
+		return nil
+	}
+	slot := prov_temp_slot(graph)
+	graph.has_content_load = true
+	prov_emit(graph, Prov_Event{kind = .Load, slot = slot, into = carriers, deep = true, span = span})
+	return prov_one(graph, slot)
+}
+
+// An argument and everything it reaches, for a callee with no summary to say
+// which of the two it hands back or keeps.
+@(private = "file")
+prov_with_content :: proc(graph: ^Flow_Graph, slots: []int, span: Span) -> []int {
+	return prov_join(graph, slots, prov_load_deep(graph, slots, span))
 }
 
 // Whether an argument names the caller's storage. A receiver answers with its
@@ -3323,14 +3344,16 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 	prov_call_written_regions(graph, v, proc_type)
 	destinations: []int
 	info := underlying_info(graph.k.c, proc_type)
-	for slots, index in actuals {
+	for held, index in actuals {
 		level := proc_param_escape(graph.k.c, proc_type, index)
 		if level >= .Stored && index < len(info.param_modes) && info.param_modes[index] == .Move {
 			prov_call_moved_owner(graph, v, index, level)
 		}
-		if len(slots) == 0 {
+		if len(held) == 0 || level < .Stored {
 			continue
 		}
+		// The callee may keep what the argument reaches as well as the argument.
+		slots := prov_with_content(graph, held, v.span)
 		if level == .Static {
 			prov_emit(graph, Prov_Event {
 				kind    = .Retain,
@@ -3818,6 +3841,11 @@ prov_substitute_result :: proc(
 	synthetic: ^map[Root_Kind]Root_Id,
 ) -> []int {
 	out: []int
+	for loaded, index in dependencies.param_loads {
+		if loaded && index < len(actuals) {
+			out = prov_join(graph, out, prov_load_deep(graph, actuals[index], v.span))
+		}
+	}
 	for wanted, index in dependencies.params {
 		if !wanted || index >= len(actuals) {
 			continue
@@ -3927,6 +3955,9 @@ prov_result_reads_through_receiver :: proc(c: ^Compiler, v: ^Expr_Call, index: i
 	summary, found := result_summary(c, call_contract_declaration(c, v))
 	if !found || index >= len(summary.param_paths) {
 		return false
+	}
+	if summary.param_loads[index] && !summary.params[index] {
+		return true
 	}
 	for named in summary.param_paths[index] {
 		if named {
