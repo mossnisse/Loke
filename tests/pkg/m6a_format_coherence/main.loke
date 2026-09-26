@@ -5,11 +5,11 @@ import "./vendor";
 import "./adapter";
 
 main :: proc() {
-	m := vendor.Money{5};
+	m := vendor.Money{cents = 5};
 	// The owning package's formatter, whichever package prints the value.
 	fmt.println(m);
 
-	p := vendor.Plain{7};
+	p := vendor.Plain{id = 7};
 	// The extension is callable where it is visible ...
 	adapter.spelled_here(p, fmt.stdout());
 	fmt.println();

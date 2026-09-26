@@ -97,46 +97,46 @@ nan_complex :: proc(z: C) -> bool {
 
 floating :: proc() {
 	// Ordinary values, both widths.
-	fmt.println(C{3.0, 4.0}.abs(), CF{f32(3.0), f32(4.0)}.abs());
-	fmt.println(C{3.0, 4.0}.inverse(), C{3.0, 4.0}*C{3.0, 4.0}.inverse());
-	fmt.println(C{6.0, 4.0}/C{2.0, 0.0}, C{0.0, 1.0}/C{0.0, 1.0});
-	fmt.println(CF{f32(6.0), f32(4.0)}/CF{f32(2.0), f32(0.0)});
+	fmt.println(C{real = 3.0, imaginary = 4.0}.abs(), CF{real = f32(3.0), imaginary = f32(4.0)}.abs());
+	fmt.println(C{real = 3.0, imaginary = 4.0}.inverse(), C{real = 3.0, imaginary = 4.0}*C{real = 3.0, imaginary = 4.0}.inverse());
+	fmt.println(C{real = 6.0, imaginary = 4.0}/C{real = 2.0, imaginary = 0.0}, C{real = 0.0, imaginary = 1.0}/C{real = 0.0, imaginary = 1.0});
+	fmt.println(CF{real = f32(6.0), imaginary = f32(4.0)}/CF{real = f32(2.0), imaginary = f32(0.0)});
 
 	// The regression the Smith rewrite claims: a denominator whose component
 	// squares overflow but whose quotient is perfectly finite. The textbook form
 	// forms `2e400`, gets `+infinity`, and answers `0+0i`.
-	huge := C{1.0e200, 1.0e200};
-	fmt.println(C{1.0e200, 0.0}/huge, huge/huge);
+	huge := C{real = 1.0e200, imaginary = 1.0e200};
+	fmt.println(C{real = 1.0e200, imaginary = 0.0}/huge, huge/huge);
 	fmt.println(huge.abs() > 1.0e200, math.is_infinite(huge.norm_squared()));
-	maximum := C{math.F64_MAX, math.F64_MAX}/C{math.F64_MAX, math.F64_MAX};
-	maximum_f32 := CF{math.F32_MAX, math.F32_MAX}/CF{math.F32_MAX, math.F32_MAX};
+	maximum := C{real = math.F64_MAX, imaginary = math.F64_MAX}/C{real = math.F64_MAX, imaginary = math.F64_MAX};
+	maximum_f32 := CF{real = math.F32_MAX, imaginary = math.F32_MAX}/CF{real = math.F32_MAX, imaginary = math.F32_MAX};
 	fmt.println(maximum.real == 1.0, maximum.imaginary == 0.0,
 	            maximum_f32.real == f32(1.0), maximum_f32.imaginary == f32(0.0));
-	mixed := C{math.F64_MAX, math.F64_MAX}/C{math.F64_MIN_SUBNORMAL, math.F64_MIN_SUBNORMAL};
-	mixed_f32 := CF{math.F32_MAX, math.F32_MAX}/CF{math.F32_MIN_SUBNORMAL, math.F32_MIN_SUBNORMAL};
+	mixed := C{real = math.F64_MAX, imaginary = math.F64_MAX}/C{real = math.F64_MIN_SUBNORMAL, imaginary = math.F64_MIN_SUBNORMAL};
+	mixed_f32 := CF{real = math.F32_MAX, imaginary = math.F32_MAX}/CF{real = math.F32_MIN_SUBNORMAL, imaginary = math.F32_MIN_SUBNORMAL};
 	fmt.println(math.is_infinite(mixed.real), mixed.imaginary == 0.0,
 	            math.is_infinite_f32(mixed_f32.real), mixed_f32.imaginary == f32(0.0));
 
 	// The same at the other end of the range: subnormal components, where the
 	// squares underflow to zero and the textbook form divides by zero.
-	tiny := C{math.F64_MIN_SUBNORMAL, math.F64_MIN_SUBNORMAL};
+	tiny := C{real = math.F64_MIN_SUBNORMAL, imaginary = math.F64_MIN_SUBNORMAL};
 	fmt.println(tiny/tiny, tiny.norm_squared());
 
 	// Zero, infinity, and NaN. A zero denominator divides by zero, which is the
 	// ordinary scalar rule rather than a trap.
-	fmt.println(C{0.0, 0.0}.abs(), C{math.F64_INFINITY, 1.0}.abs());
-	fmt.println(C{math.F64_NAN, math.F64_INFINITY}.abs());
-	fmt.println(math.is_nan(C{math.F64_NAN, 0.0}.abs()));
-	fmt.println(nan_complex(C{1.0, 1.0}/C{0.0, 0.0}));
+	fmt.println(C{real = 0.0, imaginary = 0.0}.abs(), C{real = math.F64_INFINITY, imaginary = 1.0}.abs());
+	fmt.println(C{real = math.F64_NAN, imaginary = math.F64_INFINITY}.abs());
+	fmt.println(math.is_nan(C{real = math.F64_NAN, imaginary = 0.0}.abs()));
+	fmt.println(nan_complex(C{real = 1.0, imaginary = 1.0}/C{real = 0.0, imaginary = 0.0}));
 
 	// `Quaternion.abs` is the nested `hypot`, so it survives the same overflow.
-	fmt.println(Q{1.0, 2.0, 2.0, 4.0}.abs(), QF{f32(1.0), f32(2.0), f32(2.0), f32(4.0)}.abs());
-	fmt.println(Q{1.0, 2.0, 2.0, 4.0}.inverse());
-	fmt.println(Q{1.0e200, 2.0e200, 2.0e200, 4.0e200}.abs() > 1.0e200);
-	big := Q{1.0e200, 2.0e200, 2.0e200, 4.0e200};
+	fmt.println(Q{real = 1.0, i = 2.0, j = 2.0, k = 4.0}.abs(), QF{real = f32(1.0), i = f32(2.0), j = f32(2.0), k = f32(4.0)}.abs());
+	fmt.println(Q{real = 1.0, i = 2.0, j = 2.0, k = 4.0}.inverse());
+	fmt.println(Q{real = 1.0e200, i = 2.0e200, j = 2.0e200, k = 4.0e200}.abs() > 1.0e200);
+	big := Q{real = 1.0e200, i = 2.0e200, j = 2.0e200, k = 4.0e200};
 	fmt.println(big*big.inverse());
-	maximum_q := Q{math.F64_MAX, math.F64_MAX, math.F64_MAX, math.F64_MAX}.inverse();
-	maximum_qf := QF{math.F32_MAX, math.F32_MAX, math.F32_MAX, math.F32_MAX}.inverse();
+	maximum_q := Q{real = math.F64_MAX, i = math.F64_MAX, j = math.F64_MAX, k = math.F64_MAX}.inverse();
+	maximum_qf := QF{real = math.F32_MAX, i = math.F32_MAX, j = math.F32_MAX, k = math.F32_MAX}.inverse();
 	fmt.println(maximum_q.real > 0.0, maximum_q.i < 0.0,
 	            maximum_q.j < 0.0, maximum_q.k < 0.0);
 	fmt.println(maximum_qf.real > f32(0.0), maximum_qf.i < f32(0.0),
@@ -144,37 +144,37 @@ floating :: proc() {
 
 	// Quaternion multiplication does not commute, so `inverse` is the operation
 	// and there is deliberately no `/`: the caller writes which side.
-	q := Q{1.0, 2.0, 3.0, 4.0};
+	q := Q{real = 1.0, i = 2.0, j = 3.0, k = 4.0};
 	fmt.println(q*q.inverse(), q.inverse()*q);
 
 	// A zero quaternion divides zero by zero in every component.
-	zero := Q{0.0, 0.0, 0.0, 0.0}.inverse();
+	zero := Q{real = 0.0, i = 0.0, j = 0.0, k = 0.0}.inverse();
 	fmt.println(math.is_nan(zero.real), math.is_nan(zero.i),
 	            math.is_nan(zero.j), math.is_nan(zero.k));
 
 	// Negation is unary minus, not `0 - x`: the second maps `+0.0` to `+0.0`
 	// and so loses the sign of a zero that `negate` and `conjugate` are supposed
 	// to flip. `sign_bit` is the only way to see it -- `+0.0 == -0.0`.
-	positive := C{0.0, 0.0};
+	positive := C{real = 0.0, imaginary = 0.0};
 	negated := -positive;
 	fmt.println(math.sign_bit(negated.real), math.sign_bit(negated.imaginary),
 	            math.sign_bit(positive.conjugate().imaginary));
-	negated_q := -Q{0.0, 0.0, 0.0, 0.0};
-	conjugated_q := Q{0.0, 0.0, 0.0, 0.0}.conjugate();
+	negated_q := -Q{real = 0.0, i = 0.0, j = 0.0, k = 0.0};
+	conjugated_q := Q{real = 0.0, i = 0.0, j = 0.0, k = 0.0}.conjugate();
 	fmt.println(math.sign_bit(negated_q.real), math.sign_bit(negated_q.k),
 	            math.sign_bit(conjugated_q.i), math.sign_bit(conjugated_q.k));
 	// Unsigned wraps exactly as `T(0) - x` did, which is what made the change safe.
-	fmt.println(-math.Complex(u32){1, 2});
+	fmt.println(-math.Complex(u32){real = 1, imaginary = 2});
 
 	// A formatter is handed `options` so it can spell its components the way it
 	// was asked to. An integer instantiation is where a base is observable.
-	fmt.format_to_with(fmt.stdout(), fmt.Options{16, true}, math.Complex(i32){255, 16});
+	fmt.format_to_with(fmt.stdout(), fmt.Options{base = 16, uppercase = true}, math.Complex(i32){real = 255, imaginary = 16});
 	fmt.println("");
-	fmt.format_to_with(fmt.stdout(), fmt.Options{16, true}, math.Quaternion(i32){255, 16, 10, 1});
+	fmt.format_to_with(fmt.stdout(), fmt.Options{base = 16, uppercase = true}, math.Quaternion(i32){real = 255, i = 16, j = 10, k = 1});
 	fmt.println("");
 
 	// A negative component brings its own `-`, at every width and for signed
 	// integers; a NaN prints as `nan` whatever its sign, so it keeps the `+`.
-	fmt.println(math.Complex(f32){1, -2}, math.Complex(i8){-1, -2}, math.Complex(u8){1, 2});
-	fmt.println(math.Complex(f64){1, -math.F64_NAN}, math.Complex(f64){1, -0.0});
+	fmt.println(math.Complex(f32){real = 1, imaginary = -2}, math.Complex(i8){real = -1, imaginary = -2}, math.Complex(u8){real = 1, imaginary = 2});
+	fmt.println(math.Complex(f64){real = 1, imaginary = -math.F64_NAN}, math.Complex(f64){real = 1, imaginary = -0.0});
 }

@@ -373,22 +373,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
-## Field order in destructuring and positional literals
-
-[Destructuring](design.md#destructuring) binds a record's fields by declaration
-order, and a positional literal fills them the same way. Reordering a struct's
-fields, a routine change to remove padding, silently swaps any two of the same
-type at every such site. With `Point :: struct { y: int, x: int }`, formerly
-`{ x: int, y: int }`, `x, y := origin_offset()` now puts the old `y` in `x`,
-and `Point{3, 4}` sets `y` to 3; both compile. An anonymous record has no such
-problem, because its field order is its type identity.
-
-Proposal: outside the declaring package, destructuring and positional literals
-of a nominal record are rejected in favour of named fields, as Go vet treats
-unkeyed fields of an imported struct. Inside the package, a reordering is a
-change its author can see. Anonymous records, including the entries the
-built-in containers yield, are unaffected. The migration is not measured.
-
 ## Diverging procedures
 
 A call that never returns cannot say so. `os.exit` at the end of a
@@ -1235,6 +1219,22 @@ comparison level non-associative, as the range level already is, turns every
 such chain into a syntax error whose note gives both the parenthesised form and
 the `&&` chain. Nothing expressible is lost: `(a == b) == c` still means what it
 says.
+
+### Field order stays inside the declaring package
+
+Odin accepts an imported struct's positional literal, so reordering the
+struct's fields, a routine change to remove padding, silently swaps any two of
+the same type at every such site; destructuring would add more. With
+`Point :: struct { y: int, x: int }`, formerly `{ x: int, y: int }`,
+`x, y := origin_offset()` would put the old `y` in `x`, and `Point{3, 4}` would
+set `y` to 3, and both would compile. Outside the declaring package both forms
+are therefore rejected in favour of named fields, as Go vet treats unkeyed
+fields of an imported struct. Inside the package, a reordering is a change its
+author can see. Anonymous records are unaffected, since their field order is
+their type identity, so `core:container`'s `Enum_Array` yields
+`(key: E, value: T)` rather than a nominal entry struct. The migration was 85
+literals, all in tests; 50 of them were `core:math` `Complex` and `Quaternion`
+values in one file.
 
 ### Map element mutation
 

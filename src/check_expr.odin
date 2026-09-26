@@ -2408,6 +2408,23 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 			ok = false
 			continue
 		}
+		// design.md "Struct literals": positional only where the fields are
+		// declared. Positional elements come first, so the first reports.
+		if record_order_is_foreign(k, target) {
+			if index == 0 {
+				errorf(
+					k.c, element.span, "L0709",
+					"the fields of `%s` are declared in another package, so its literal must name them",
+					type_name(k.c, target),
+				)
+				add_notef(
+					k.c, element.span, "write `%s = ...`; that package may reorder its fields",
+					identifier_text(k.c, symbol_of(k.c, info.fields[index]).name),
+				)
+			}
+			ok = false
+			continue
+		}
 		symbol := symbol_of(k.c, info.fields[index])
 		seen[index] = true
 		values[index] = element.value

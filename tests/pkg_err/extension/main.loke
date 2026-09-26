@@ -9,7 +9,7 @@ impl vendor.Vector2 {
 }
 
 main :: proc() {
-	v := vendor.Vector2{3, 4};
+	v := vendor.Vector2{x = 3, y = 4};
 	// The extension block in `adapter` does not reach implicit lookup here.
 	fmt.println(int(v.doubled()));
 	fmt.println(int(vendor.Vector2.doubled(v)));

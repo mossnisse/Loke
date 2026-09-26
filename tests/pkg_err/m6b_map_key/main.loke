@@ -16,7 +16,7 @@ impl keys.Id {
 
 main :: proc() {
 	// The extension satisfies an ordinary local query...
-	fmt.println(keys.Id{1} == keys.Id{1});
+	fmt.println(keys.Id{v = 1} == keys.Id{v = 1});
 	// ...and still does not make the type a map key.
 	table: map[keys.Id]int;
 	fmt.println(1);

@@ -58,7 +58,7 @@ main :: proc() {
 
 	// The zero is not the only initial value: `value` is public exactly so a
 	// caller holding exclusive access can seed one without a synchronizing store.
-	seeded: Counter = {5};
+	seeded: Counter = {value = 5};
 	fmt.println(seeded.load(), seeded.add(1), seeded.load());
 
 	sync.fence(Order.Acquire);

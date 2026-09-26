@@ -33,7 +33,7 @@ impl Numbers_Iterator {
 }
 
 main :: proc() {
-	values: vendor.Numbers = {{1, 2, 3}};
+	values: vendor.Numbers = {values = {1, 2, 3}};
 	foreach (value in values) { fmt.println(value); }
 	foreach (value in values.reversed()) { fmt.println(value); }
 	iterator := values.iter();

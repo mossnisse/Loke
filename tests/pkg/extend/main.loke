@@ -4,7 +4,7 @@ import "./vendor";
 import "./adapter";
 
 main :: proc() {
-	v := vendor.Vector2{3, 4};
+	v := vendor.Vector2{x = 3, y = 4};
 	// The inherent method is visible everywhere.
 	fmt.println(int(v.sum()));
 	fmt.println(int(vendor.Vector2.sum(v)));
@@ -15,8 +15,8 @@ main :: proc() {
 	// deliberately the first thing to instantiate each `Cell`: callee lookup must
 	// already find the stable group, then see the member the argument adds to it.
 	fmt.println(
-		int(adapter.unwrap(vendor.Cell(i32){7})),
-		adapter.unwrap(vendor.Cell(string){"cell"}),
-		int(adapter.unwrap_here(vendor.Cell(i32){7})),
+		int(adapter.unwrap(vendor.Cell(i32){value = 7})),
+		adapter.unwrap(vendor.Cell(string){value = "cell"}),
+		int(adapter.unwrap_here(vendor.Cell(i32){value = 7})),
 	);
 }

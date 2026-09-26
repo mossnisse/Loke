@@ -912,7 +912,28 @@ destructure_fields :: proc(
 			return nil, false
 		}
 	}
+	if record_order_is_foreign(k, record) {
+		errorf(
+			k.c, span, "L0708",
+			"the fields of `%s` are declared in another package, so they cannot be %s",
+			type_name(k.c, record), action,
+		)
+		add_notef(k.c, span, "bind the whole value and select its fields by name; that package may reorder them")
+		return nil, false
+	}
 	return info.fields, true
+}
+
+// design.md "Destructuring": a nominal record's field order belongs to the
+// package that declares its fields, which may reorder them. An anonymous
+// record's order is its type identity.
+record_order_is_foreign :: proc(k: ^Checker, record: Type_Id) -> bool {
+	info := underlying_info(k.c, record)
+	if info == nil || info.kind != .Struct || info.anonymous_record || len(info.fields) == 0 {
+		return false
+	}
+	field := symbol_of(k.c, info.fields[0])
+	return field != nil && field.pkg != INVALID_PACKAGE && field.pkg != lookup_package(k)
 }
 
 // A place is cloned from; a temporary is taken apart, which a custom copy or

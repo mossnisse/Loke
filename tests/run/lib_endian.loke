@@ -44,7 +44,7 @@ main :: proc() {
 	// Formatting shows the value, not the storage.
 	fmt.println(h.magic, h.version, h.flags);
 	// And honours the caller's options, as a plain integer does.
-	fmt.format_to_with(fmt.stdout(), fmt.Options{16, true}, h.magic);
+	fmt.format_to_with(fmt.stdout(), fmt.Options{base = 16, uppercase = true}, h.magic);
 	fmt.println();
 
 	// The conversion hook is explicit, and produces the same stored value.

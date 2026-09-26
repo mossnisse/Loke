@@ -33,7 +33,7 @@ main :: proc() {
 
 	// Private extensions in the interface's own package, one of them supplying
 	// a slot the composed interface inherited.
-	t := widget.Tag{7};
+	t := widget.Tag{id = 7};
 	fmt.println(use(t));
 	fmt.println(describe(t));
 }

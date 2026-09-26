@@ -4,5 +4,5 @@ package observer;
 import "../vendor";
 
 touch :: proc() -> int {
-	return vendor.Cursor{4}.ping();
+	return vendor.Cursor{at = 4}.ping();
 }

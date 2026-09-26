@@ -14,6 +14,6 @@ main :: proc() {
 	static_assert(!iface.Named(shapes.Gadget));
 
 	// The caller's own extension is still an ordinary method here.
-	g: shapes.Gadget = {5};
+	g: shapes.Gadget = {size = 5};
 	fmt.println(g.describe());
 }

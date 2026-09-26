@@ -1,0 +1,20 @@
+L0709
+@11:18
+so its literal must name them
+write `x = ...`
+L0709
+@12:19
+so its literal must name them
+L0708
+@13:10
+cannot be bound by a destructuring declaration
+bind the whole value and select its fields by name
+L0708
+@14:9
+cannot be bound by a destructuring assignment
+L0708
+@16:11
+cannot be bound by a `foreach`
+L0708
+@18:12
+the fields of `Local` are declared in another package

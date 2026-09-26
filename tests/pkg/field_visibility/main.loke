@@ -15,15 +15,15 @@ visible_there :: proc() -> int {
 main :: proc() {
 	built := models.build(3, 4);
 
-	// Public fields: read, write, measure, and both literal forms.
+	// Public fields: read, write, measure, and a named literal. Outside its
+	// package a record's literal names its fields (design.md "Struct literals").
 	fmt.println(built.x + built.y);
 	built.x = 10;
 	fmt.println(built.x);
 	fmt.println(offset_of(models.Point, x));
 
-	positional := models.Point{1, 2};   // `scratch` is omitted, so it zero-fills
-	named := models.Point{x = 1, y = 2};
-	fmt.println(positional.x + named.y);
+	named := models.Point{x = 1, y = 2};   // `scratch` is omitted, so it zero-fills
+	fmt.println(named.x + named.y);
 
 	fmt.println(models.visible_here());
 	fmt.println(visible_there());

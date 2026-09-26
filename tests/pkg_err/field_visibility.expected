@@ -10,6 +10,9 @@ is not public, so it cannot be measured with `offset_of` here
 L0473
 @15:34
 is not public, so it cannot be initialised here
+L0709
+@16:31
+so its literal must name them
 L0474
 @16:34
 is not public, so it cannot be initialised positionally here

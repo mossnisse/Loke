@@ -1,0 +1,12 @@
+package geom;
+
+@(public)
+Point :: struct {
+	@(public) x: int,
+	@(public) y: int,
+}
+
+// An anonymous record's field order is its type identity, so it destructures
+// anywhere.
+@(public)
+bounds :: proc() -> (low: int, high: int) { return {1, 9}; }

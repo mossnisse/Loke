@@ -10,14 +10,14 @@ impl vendor.Vector2 {
 	// A private member opts out of the file-level public default and must not
 	// consume the package-level name `init`.
 	@(private)
-	init :: proc(x: i32) -> vendor.Vector2 { return {x, x}; }
+	init :: proc(x: i32) -> vendor.Vector2 { return {x = x, y = x}; }
 }
 
 // Private members belong to their subject's namespace, so the same ordinary
 // member name is valid on another extended type.
 impl vendor.Other {
 	@(private)
-	init :: proc(x: i32) -> vendor.Other { return {x}; }
+	init :: proc(x: i32) -> vendor.Other { return {value = x}; }
 }
 
 use_here :: proc(v: vendor.Vector2) -> i32 {

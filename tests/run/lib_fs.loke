@@ -187,7 +187,7 @@ main :: proc() {
 
 	// The handle API: write, seek, read back, and close explicitly.
 	handle_path := in_root(directory, "handle.bin");
-	handle := fs.open(handle_path, fs.Open_Options{.Read_Write, .Create_Or_Truncate, false}) or_else no_file();
+	handle := fs.open(handle_path, fs.Open_Options{access = .Read_Write, disposition = .Create_Or_Truncate, append = false}) or_else no_file();
 	fmt.println(true);
 	fmt.println(succeeded(io.write_string(inout handle, "0123456789")));
 	fmt.println(succeeded(handle.flush()));
@@ -229,12 +229,12 @@ main :: proc() {
 
 	// Truncating is writing, so a read-only open refuses it and leaves the file
 	// whole; so does truncating an existing file for append.
-	truncating := fs.open(file, fs.Open_Options{.Read, .Create_Or_Truncate, false});
+	truncating := fs.open(file, fs.Open_Options{access = .Read, disposition = .Create_Or_Truncate, append = false});
 	switch (refused in move(truncating)) {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(io.is(refused, .Unsupported));
 	}
-	appending := fs.open(file, fs.Open_Options{.Write, .Truncate_Existing, true});
+	appending := fs.open(file, fs.Open_Options{access = .Write, disposition = .Truncate_Existing, append = true});
 	switch (refused in move(appending)) {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(io.is(refused, .Unsupported));

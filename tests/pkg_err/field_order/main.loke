@@ -1,0 +1,22 @@
+package main; import "core:fmt";
+
+import "./geom";
+
+// design.md "Destructuring" and "Struct literals": outside the package that
+// declares a record's fields, its field order is not the caller's to rely on.
+Local :: distinct geom.Point;
+
+main :: proc() {
+	p := geom.Point{x = 1, y = 2};
+	q := geom.Point{1, 2};
+	r: geom.Point = {3, y = 4};
+	x, y := p;
+	x, y = p;
+	points: [1]geom.Point = {{x = 5, y = 6}};
+	foreach (px, py in points) { fmt.println(px, py); }
+	l := Local(p);
+	lx, ly := l;
+
+	low, high := geom.bounds();
+	fmt.println(p.x, q.x, r.x, x, y, lx, ly, low, high);
+}

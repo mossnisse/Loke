@@ -5,7 +5,7 @@ import "./draw";
 import "./other";
 
 main :: proc() {
-	c := shapes.Circle{5};
+	c := shapes.Circle{radius = 5};
 	fmt.println(draw.erase(&c));
 	fmt.println(other.erase(&c));
 }

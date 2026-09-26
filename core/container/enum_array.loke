@@ -68,7 +68,7 @@ impl Enum_Array($E, $T) {
 	// Iteration yields `{key, value}` entries, the shape design.md gives a map's
 	// `Element` — an enum-keyed container is a keyed container, so a bare value
 	// would lose the half a caller usually wants.
-	Element  :: Enum_Entry(E, T);
+	Element  :: (key: E, value: T);
 
 	// The iterator borrows the slots rather than carrying a copy of the whole
 	// array: a `self: ^` receiver designates the caller's value (design.md
@@ -92,11 +92,6 @@ impl Enum_Array($E, $T) {
 	}
 }
 
-Enum_Entry :: struct($E: type, $T: type) {
-	key:   E,
-	value: T,
-}
-
 // A borrow of the array's slots plus the traversal position. The array cannot
 // be mutated, moved, or dropped while this is live, which is the ordinary borrow
 // rule rather than anything this type arranges.
@@ -106,7 +101,7 @@ Enum_Array_Iterator :: struct($E: type, $T: type) {
 }
 
 impl Enum_Array_Iterator($E, $T) {
-	Element  :: Enum_Entry(E, T);
+	Element  :: (key: E, value: T);
 	// design.md "Borrowing iteration": the key is an enum member, a value made
 	// per step; the value is lent where the array stores it.
 	Yield    :: (key: Yield_Owned, value: Yield_Borrowed);

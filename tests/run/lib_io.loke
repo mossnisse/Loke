@@ -181,7 +181,7 @@ main :: proc() {
 	}
 
 	kept := reader_over("keep\n", 5);
-	fmt.println((io.read_line(inout kept, options = io.Line_Options{true}) or_else no_line()).len());
+	fmt.println((io.read_line(inout kept, options = io.Line_Options{keep_ending = true}) or_else no_line()).len());
 
 	// A blank line is a line; invalid UTF-8 is refused without ending the stream;
 	// and a `\r` not followed by `\n` is text.

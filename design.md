@@ -1396,6 +1396,13 @@ foreach (key, value in table) { ... }
 
 The record must have exactly as many **directly declared** fields as there are bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is. Only a `foreach` header [nests](#element-bindings).
 
+A nominal record — a struct, or a `distinct` type over one — destructures only in the package that declares its fields, since that package may reorder them. Elsewhere the value is bound whole and its fields selected by name. An [anonymous record](#anonymous-records) destructures anywhere: its field order is its type identity.
+
+```odin
+x, y := geom.origin();          // ERROR: `geom.Point`'s fields are declared in `geom`
+low, high := geom.bounds();     // fine: `bounds` returns `(low: int, high: int)`
+```
+
 Ownership follows the operand's category, exactly as every other binding does:
 
 - A **place** copies. `x, y := point` copy-initializes each binding and `point` stays live and drops normally. Each retained field must be copyable without allocating: one whose copy [may allocate](#value-semantics-and-the-ownership-rule) is rejected, and the operand is written `move(point)` or `point.clone()` instead. The copy-cost diagnostic applies per copied field. This projects fields; it does not call the containing record's copy hook.
@@ -1427,6 +1434,8 @@ v = Vector3{};           // zero value
 v = Vector3{1, 4, 9};
 v = Vector3{1, y = 4};   // positional first, then named; `z` zero-fills
 ```
+
+A positional element is allowed only in the package that declares the struct's fields; elsewhere, as with [destructuring](#destructuring), every element names its field, so a reordering in the declaring package cannot silently move a value into another field of the same type. `geom.Point{3, 4}` is an error outside `geom`, and `geom.Point{x = 3, y = 4}` is the literal.
 
 A named initializer list can supply a subset of fields. Field order does not matter. Omitted fields use their zero value:
 

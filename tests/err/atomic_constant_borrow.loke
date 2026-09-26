@@ -8,7 +8,7 @@ import "core:sync";
 
 Counter :: struct { hits: sync.Atomic(int), ready: sync.Once }
 
-START :: sync.Atomic(int){5};
+START :: sync.Atomic(int){value = 5};
 EMPTY :: Counter{};
 
 main :: proc() {

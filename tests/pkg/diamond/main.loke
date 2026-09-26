@@ -7,7 +7,7 @@ import u "util";
 
 main :: proc() {
 	assert(u.as(21) == 42);
-	p := geom.Point{3, 4};
+	p := geom.Point{x = 3, y = 4};
 	fmt.println(geom.area(p));
 	fmt.println(geom.ORIGIN);
 	fmt.println(u.double(21));

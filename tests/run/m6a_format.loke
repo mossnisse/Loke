@@ -91,20 +91,20 @@ main :: proc() {
 	// `Options` chooses the spelling. The seed runtime has always implemented
 	// base 2 to 36 and both digit cases; `format_to_with` is what reaches them.
 	out := fmt.stdout();
-	fmt.format_to_with(out, fmt.Options{16, false}, u32(3405691582));
-	fmt.format_to_with(out, fmt.Options{16, true}, u32(3405691582));
+	fmt.format_to_with(out, fmt.Options{base = 16, uppercase = false}, u32(3405691582));
+	fmt.format_to_with(out, fmt.Options{base = 16, uppercase = true}, u32(3405691582));
 	fmt.println("");
-	fmt.format_to_with(out, fmt.Options{2, false}, u8(5));
-	fmt.format_to_with(out, fmt.Options{36, true}, int(1295));
+	fmt.format_to_with(out, fmt.Options{base = 2, uppercase = false}, u8(5));
+	fmt.format_to_with(out, fmt.Options{base = 36, uppercase = true}, int(1295));
 	fmt.println("");
 
 	// A base outside 2 to 36 reads as 10, which is what `Options` documents.
-	fmt.format_to_with(out, fmt.Options{1, false}, 255);
-	fmt.format_to_with(out, fmt.Options{37, false}, 255);
+	fmt.format_to_with(out, fmt.Options{base = 1, uppercase = false}, 255);
+	fmt.format_to_with(out, fmt.Options{base = 37, uppercase = false}, 255);
 	fmt.println("");
 
 	// The separator and the sign are the default path's, not the base's.
-	fmt.format_to_with(out, fmt.Options{16, true}, i128(-255), u128(255));
+	fmt.format_to_with(out, fmt.Options{base = 16, uppercase = true}, i128(-255), u128(255));
 	fmt.println("");
 
 	// `to_string` formats into storage from the allocator it is handed. The
