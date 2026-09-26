@@ -86,9 +86,10 @@ Prov_Root :: struct {
 	name:   string,
 	// `Param`: which borrowed parameter, for substitution at a direct call.
 	param_index: int,
-	// A `Param` that reaches caller storage: the `content` loan standing for
-	// whatever that storage holds, which a load through it yields.
-	content_loan: Loan_Id,
+	// A `Param` that reaches caller storage: per load depth, the `content` loan
+	// standing for what that many loads through it read. The last stands for
+	// every depth from its own on.
+	content_loans: []Loan_Id,
 	// `Allocation`: the region the storage came from. Empty means unrecorded,
 	// which every reset reaches.
 	region: Region_Set,
@@ -165,6 +166,8 @@ Prov_Loan :: struct {
 	// A `Param` loan of what the parameter already held when the call began, as
 	// opposed to one of its own storage (design.md "Retaining a borrow").
 	content: bool,
+	// A `content_loans` entry: how many loads below the parameter it stands for.
+	depth: int,
 }
 
 // A carrier value the analysis follows: a variable, parameter or expression
@@ -475,6 +478,26 @@ carrier_reach_join :: proc(into: ^Carrier_Reach, from: Carrier_Reach) {
 	into.mutable ||= from.mutable
 }
 
+// How many loads through a value of this type can still read a borrow: 1 for
+// `[]string_view`, 2 for `[]^string_view`. A shape it cannot follow, or one
+// deeper than `CARRIER_DEPTH`, answers `CARRIER_DEPTH`.
+load_depth :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> int {
+	if depth >= CARRIER_DEPTH {
+		return CARRIER_DEPTH
+	}
+	most := 0
+	for path in carrier_shape(c, type) {
+		if path.truncated {
+			return CARRIER_DEPTH
+		}
+		info := underlying_info(c, path.type)
+		if info != nil && (info.kind == .Pointer || info.kind == .Slice) && type_carries_borrow(c, info.element).any {
+			most = max(most, 1 + load_depth(c, info.element, depth + 1))
+		}
+	}
+	return min(most, CARRIER_DEPTH)
+}
+
 // Every place inside a value of this type that can hold a borrow.
 carrier_shape :: proc(c: ^Compiler, type: Type_Id) -> []Carrier_Path {
 	if type == INVALID_TYPE {
@@ -705,9 +728,9 @@ Result_Dependencies :: struct {
 	// Per parameter, which paths of its `carrier_shape` the result may borrow.
 	// Nil means the whole parameter.
 	param_paths:  [][]bool,
-	// Which parameters the result may hold what is stored behind, at any depth:
-	// an element copied out of a slice, not the slice.
-	param_loads:  []bool,
+	// Per parameter, a bit per load depth at which the result may hold what is
+	// read through it: bit 0 for an element copied out of a slice, not the slice.
+	param_loads:  []u8,
 	static:       bool,
 	thread:       bool,
 	fresh:        bool, // a fresh allocation, which lets a returned pointer reach `free`
@@ -719,7 +742,7 @@ Result_Dependencies :: struct {
 // Whether a result may depend on a parameter: borrow it, or hold what its
 // storage holds.
 result_uses_param :: proc(dependencies: Result_Dependencies, index: int) -> bool {
-	return index < len(dependencies.params) && (dependencies.params[index] || dependencies.param_loads[index])
+	return index < len(dependencies.params) && (dependencies.params[index] || dependencies.param_loads[index] != 0)
 }
 
 Result_Content_Provenance :: struct {
@@ -747,7 +770,7 @@ new_result_dependencies :: proc(c: ^Compiler, param_count: int) -> Result_Depend
 	return Result_Dependencies {
 		params      = make([]bool, param_count, c.semantic_allocator),
 		param_paths = make([][]bool, param_count, c.semantic_allocator),
-		param_loads = make([]bool, param_count, c.semantic_allocator),
+		param_loads = make([]u8, param_count, c.semantic_allocator),
 		fresh_region = Region_Set{params = make([]bool, param_count, c.semantic_allocator)},
 	}
 }
@@ -892,9 +915,9 @@ joined_result_summary :: proc(c: ^Compiler, members: []Symbol_Id) -> (Result_Pro
 merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_Dependencies) {
 	merge_provenance(into, from)
 	merge_precision(&into.precision, from.precision)
-	for loaded, index in from.param_loads {
-		if loaded && index < len(into.param_loads) {
-			into.param_loads[index] = true
+	for depths, index in from.param_loads {
+		if index < len(into.param_loads) {
+			into.param_loads[index] |= depths
 		}
 	}
 	for wanted, index in from.params {
@@ -1312,9 +1335,10 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, in
 	one := Result_Dependencies{}
 	switch root.kind {
 	case .Param:
-		if Loan_Id(index) == root.content_loan && root.param_index < len(into.param_loads) {
-			changed := !into.param_loads[root.param_index]
-			into.param_loads[root.param_index] = true
+		if loan.depth > 0 && root.param_index < len(into.param_loads) {
+			bit := u8(1) << u8(loan.depth - 1)
+			changed := into.param_loads[root.param_index] & bit == 0
+			into.param_loads[root.param_index] |= bit
 			return changed
 		}
 		if root.param_index >= 0 && root.param_index < len(into.params) {
@@ -1672,7 +1696,7 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 
 // Joins into `state.merged` what the storage one loan names holds at `path`;
 // false when that storage has no local content, and the loan stands for it. A
-// parameter's caller storage is never local: its `content_loan` stands for it.
+// parameter's caller storage is never local: its `content_loans` stand for it.
 @(private = "file")
 load_through_loan :: proc(
 	state: ^Prov_State,
@@ -1713,7 +1737,11 @@ load_through_loan :: proc(
 	}
 	if !found {
 		loss^ |= path_precision(loan.path)
-		bit_mark(state.merged, root.content_loan != NO_LOAN ? int(root.content_loan) : loan_index)
+		deeper := loan_index
+		if count := len(root.content_loans); count > 0 {
+			deeper = int(root.content_loans[min(loan.depth, count - 1)])
+		}
+		bit_mark(state.merged, deeper)
 	}
 	return found
 }

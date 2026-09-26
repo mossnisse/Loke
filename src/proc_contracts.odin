@@ -176,8 +176,8 @@ dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 	if (a.static && !b.static) || (a.thread && !b.thread) || (a.fresh && !b.fresh) ||
 	   (a.local && !b.local) || (a.unknown && !b.unknown) { return false }
 	if a.fresh && !region_contract_within(a.fresh_region, b.fresh_region) { return false }
-	for loaded, index in a.param_loads {
-		if loaded && (index >= len(b.param_loads) || !b.param_loads[index]) { return false }
+	for depths, index in a.param_loads {
+		if depths != 0 && (index >= len(b.param_loads) || depths & ~b.param_loads[index] != 0) { return false }
 	}
 	for wanted, index in a.params {
 		if !wanted { continue }

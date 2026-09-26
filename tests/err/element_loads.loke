@@ -7,6 +7,8 @@ package main; import "core:fmt"; import "core:slice";
 
 first :: proc(values: [][]u8) -> []u8 { return values[0]; }
 deref :: proc(values: []^[]u8) -> []u8 { return values[0]^; }
+deref_view :: proc(values: []^string_view) -> string_view { return values[0]^; }
+deref_twice :: proc(values: []^^string_view) -> string_view { return values[0]^^; }
 
 Box :: struct { items: [][]u8 }
 first_item :: proc(b: Box) -> []u8 { return b.items[0]; }
@@ -21,6 +23,22 @@ both :: proc() {
 	low := slice.min(xs);
 	xs[0] = "c";
 	fmt.println(low);
+}
+
+// Fine: read two and three loads deep, the result holds the literal, not the
+// pointers it was read through.
+deep_views :: proc() {
+	r: string_view = "";
+	q: string_view = "";
+	{
+		v: string_view = "text";
+		ptrs := [1]^string_view{&v};
+		r = deref_view(ptrs[:]);
+		p := &v;
+		twice := [1]^^string_view{&p};
+		q = deref_twice(twice[:]);
+	}
+	fmt.println(r, q);
 }
 
 element :: proc() {
@@ -83,6 +101,7 @@ kept :: proc() {
 
 main :: proc() {
 	both();
+	deep_views();
 	element();
 	through_pointer();
 	field();

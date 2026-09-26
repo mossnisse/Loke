@@ -363,7 +363,7 @@ symbol_outlives_bodies :: proc(sym: ^Symbol) -> bool {
 
 @(private = "file")
 prov_new_root :: proc(graph: ^Flow_Graph, kind: Root_Kind, span: Span, name: string) -> Root_Id {
-	append(&graph.roots, Prov_Root{kind = kind, span = span, name = name, param_index = -1, content_loan = NO_LOAN})
+	append(&graph.roots, Prov_Root{kind = kind, span = span, name = name, param_index = -1})
 	return Root_Id(len(graph.roots) - 1)
 }
 
@@ -1101,10 +1101,14 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			root := prov_new_root(graph, .Param, sym.span, name)
 			graph.roots[int(root)].symbol = id
 			graph.roots[int(root)].param_index = index
-			// What the caller storage it reaches holds, which a load through it yields.
-			content_loan := prov_new_loan(graph, root, nil, type_carries_borrow(graph.k.c, sym.type).mutable, sym.span, carrier_noun(graph.k.c, sym.type))
-			graph.loans[int(content_loan)].content = true
-			graph.roots[int(root)].content_loan = content_loan
+			// What the caller storage it reaches holds, which loads through it yield.
+			depths := make([]Loan_Id, max(1, load_depth(graph.k.c, sym.type)), graph.alloc)
+			for &loan, depth in depths {
+				loan = prov_new_loan(graph, root, nil, type_carries_borrow(graph.k.c, sym.type).mutable, sym.span, carrier_noun(graph.k.c, sym.type))
+				graph.loans[int(loan)].content = true
+				graph.loans[int(loan)].depth = depth + 1
+			}
+			graph.roots[int(root)].content_loans = depths
 			if !is_carrier {
 				shape := carrier_shape(graph.k.c, sym.type)
 				for path, path_index in shape {
@@ -2955,17 +2959,21 @@ prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]in
 	return out
 }
 
-// Everything stored behind `carriers`, at any depth: what a callee may hand
-// back or keep from the storage an argument reaches.
+// What is stored behind `carriers`, `from` loads down and at every depth below:
+// what a callee may hand back or keep from the storage an argument reaches.
 @(private = "file")
-prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -> []int {
+prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 1) -> []int {
 	if len(carriers) == 0 {
 		return nil
 	}
-	slot := prov_temp_slot(graph)
 	graph.has_content_load = true
-	prov_emit(graph, Prov_Event{kind = .Load, slot = slot, into = carriers, deep = true, span = span})
-	return prov_one(graph, slot)
+	through := carriers
+	for depth in 1 ..= from {
+		slot := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Load, slot = slot, into = through, deep = depth == from, span = span})
+		through = prov_one(graph, slot)
+	}
+	return through
 }
 
 // An argument and everything it reaches, for a callee with no summary to say
@@ -3841,9 +3849,11 @@ prov_substitute_result :: proc(
 	synthetic: ^map[Root_Kind]Root_Id,
 ) -> []int {
 	out: []int
-	for loaded, index in dependencies.param_loads {
-		if loaded && index < len(actuals) {
-			out = prov_join(graph, out, prov_load_deep(graph, actuals[index], v.span))
+	for depths, index in dependencies.param_loads {
+		for depth in 1 ..= 8 {
+			if index < len(actuals) && depths & (u8(1) << u8(depth - 1)) != 0 {
+				out = prov_join(graph, out, prov_load_deep(graph, actuals[index], v.span, depth))
+			}
 		}
 	}
 	for wanted, index in dependencies.params {
@@ -3956,7 +3966,7 @@ prov_result_reads_through_receiver :: proc(c: ^Compiler, v: ^Expr_Call, index: i
 	if !found || index >= len(summary.param_paths) {
 		return false
 	}
-	if summary.param_loads[index] && !summary.params[index] {
+	if summary.param_loads[index] != 0 && !summary.params[index] {
 		return true
 	}
 	for named in summary.param_paths[index] {

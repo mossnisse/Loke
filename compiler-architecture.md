@@ -268,9 +268,10 @@ panic unwind consume the same settled cleanup facts.
 Procedure result summaries, the regions each body may leave in the arguments
 it writes, and escape levels carry these facts through direct, generic, and
 indirect calls. A summary tells a borrow of what a parameter reaches from a
-value read out of it: a parameter's `content_loan` stands for whatever its
-caller storage holds, and a call substitutes a deep `Load` through the argument
-for it. A call also counts as a write to every global its
+value read out of it: a parameter's `content_loans` stand for what one, two, or
+more loads through its caller storage read, up to the depth its type allows,
+and a call substitutes that many `Load`s through the argument, the last one
+deep. A call also counts as a write to every global its
 callee may write, settled over the whole program first. What these analyses
 trust rather than check is listed under "Deliberate v1 boundaries".
 

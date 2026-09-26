@@ -7,23 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-- **A value read two loads deep also keeps the pointers it went through.**
-  design.md "Procedure result contracts" substitutes what an argument's
-  storage holds, but a summary records only that the result was read out of
-  it, not how deep, so the call keeps every level. `deref` below returns the
-  literal `v` held, yet the result counts as borrowing `v`. This rejects valid
-  programs; it never accepts an invalid one:
-
-  ```odin
-  deref :: proc(values: []^string_view) -> string_view { return values[0]^; }
-  r: string_view = "";
-  {
-  	v: string_view = "text";
-  	ptrs := [1]^string_view{&v};
-  	r = deref(ptrs[:]);
-  }
-  fmt.println(r); // L0513: the pointer is used after `v` has ended
-  ```
 - **Slicing has no compile-time meaning.** design.md "Compile-time procedure
   evaluation" allows ordinary expressions, but the evaluator rejects every slice
   expression with L0341, so `strconv.parse_i64`, which trims its input by
