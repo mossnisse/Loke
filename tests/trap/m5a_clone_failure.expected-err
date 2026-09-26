@@ -1,2 +1,2 @@
-loke: panic: allocation failed
+loke: panic: allocation failed: 4611686018427387904 bytes requested from the system heap
 loke: panicked

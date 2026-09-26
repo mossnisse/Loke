@@ -339,3 +339,15 @@ static const loke_rt_allocator_v1 loke_rt_empty_region = {
 const loke_rt_allocator_v1 *loke_rt_v1_arena_allocator(loke_rt_arena_v1 *arena) {
 	return arena == 0 ? &loke_rt_empty_region : &arena->record;
 }
+
+/* How an allocation-failure report names this handle, or NULL when it is not
+ * an arena's. */
+const char *loke_rt_arena_name(const loke_rt_allocator_v1 *a) {
+	if (a == &loke_rt_empty_region) {
+		return "a zero-value arena, which holds no memory";
+	}
+	if (a->ops != &loke_rt_arena_ops) {
+		return 0;
+	}
+	return ((const loke_rt_arena_v1 *)a->state)->parent == 0 ? "a fixed-buffer arena" : "an arena";
+}

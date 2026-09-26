@@ -1,0 +1,20 @@
+package main; import "core:fmt";
+
+// design.md "Allocation failure": `.Panic` reports the requested size and the
+// allocator. A `try_clone` that answers `.err` without asking for memory has
+// no size to report, so the report names only the allocator.
+
+Refusing :: struct { id: int }
+
+impl Refusing {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Refusing, Allocator_Error) {
+		refused: Allocator_Error = {};
+		return .err(refused);
+	}
+}
+
+main :: proc() {
+	r := Refusing{1};
+	other := r.clone();
+	fmt.println(other.id);
+}

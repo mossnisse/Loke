@@ -5661,6 +5661,8 @@ Each allocator carries one of two **failure policies**:
 | `.Panic` | Raise a runtime panic reporting the requested size and the allocator. The default. |
 | `.Trap` | Abort the process immediately without unwinding. For freestanding and embedded targets. |
 
+The report names the allocator by kind, such as the system heap or an arena, and says when the build selected it as the default. A failure that requested nothing, such as a `try_clone` that answers `.err` without allocating, reports only the allocator.
+
 The policy is part of the allocator value and follows an explicitly supplied allocator into a subsystem. `.Panic` raises an ordinary [panic](#panics-and-unwinding) and therefore follows the program's panic strategy, unwinding or not accordingly; `.Trap` aborts immediately without unwinding whatever that strategy is. In either case a partially constructed temporary is cleaned up when unwinding permits it, and an existing assignment destination is not modified before all required allocation and cloning succeeds.
 
 An explicitly fallible form returns the failure to the caller. A procedure returning a compatible `Result` may propagate it with `or_return`:

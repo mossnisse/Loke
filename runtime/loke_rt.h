@@ -140,6 +140,9 @@ void loke_rt_v1_arena_drop(loke_rt_arena_v1 *arena);
 /* The handle. The zero value answers one shared empty-region record, not NULL,
  * which every dispatch reads as the default provider. */
 const loke_rt_allocator_v1 *loke_rt_v1_arena_allocator(loke_rt_arena_v1 *arena);
+/* Internal to the runtime: how an allocation-failure report names an arena's
+ * handle, or NULL for any other. */
+const char *loke_rt_arena_name(const loke_rt_allocator_v1 *a);
 
 /* Dispatch helpers. The generated module calls these rather than loading the
  * ops table itself, so the record layout has exactly one reader. */

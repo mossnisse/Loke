@@ -8,6 +8,7 @@
 #include "loke_rt.h"
 
 #include <malloc.h>
+#include <stdio.h>
 #include <string.h>
 
 /* Alignment is honoured exactly, so a caller asking for 32 gets 32 rather than
@@ -138,6 +139,26 @@ void loke_rt_v1_provider_init_end(void) {
 	loke_rt_init_state = LOKE_RT_INIT_DONE;
 }
 
+/* design.md "Allocation failure": `.Panic` reports the requested size and the
+ * allocator, which only the request knows. So each thread keeps its last
+ * request while the provider has refused it, and a request that succeeds
+ * clears it. An arena refused by its parent is noted after the parent, so the
+ * report names the request the program made.
+ *
+ * ponytail: a failure that makes no request at all (a size that overflows, or
+ * a user `try_clone` answering `.err` on its own) reports only the allocator,
+ * unless an earlier refusal on this thread was handled with no request since;
+ * that one is reported instead (known-gaps.md "An allocation panic can report
+ * an earlier, handled request"). A per-operation record would close it. */
+static __declspec(thread) const loke_rt_allocator_v1 *refused_by;
+static __declspec(thread) uint64_t refused_size;
+
+static void *note_request(const loke_rt_allocator_v1 *a, uint64_t size, void *result) {
+	refused_by = result == 0 ? a : 0;
+	refused_size = size;
+	return result;
+}
+
 /* A zero-size allocation succeeds without reaching the provider, whose NULL
  * means failure: `new` of an empty struct is not out of memory. The answer is
  * a non-null address at the requested alignment that nothing may dereference,
@@ -147,7 +168,7 @@ void *loke_rt_v1_alloc(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t al
 	if (size == 0) {
 		return (void *)(uintptr_t)sane_align(align);
 	}
-	return a->ops->alloc(a->state, size, align);
+	return note_request(a, size, a->ops->alloc(a->state, size, align));
 }
 
 void *loke_rt_v1_alloc_zeroed(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t align) {
@@ -161,7 +182,7 @@ void *loke_rt_v1_alloc_zeroed(const loke_rt_allocator_v1 *a, uint64_t size, uint
 void *loke_rt_v1_resize(
 	const loke_rt_allocator_v1 *a, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align) {
 	a = resolve(a);
-	return a->ops->resize(a->state, ptr, old_size, new_size, align);
+	return note_request(a, new_size, a->ops->resize(a->state, ptr, old_size, new_size, align));
 }
 
 void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, uint64_t align) {
@@ -172,15 +193,39 @@ void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, ui
 	a->ops->free(a->state, ptr, size, align);
 }
 
+/* How a failure report names an allocator: its kind, and whether the build
+ * selected it as the default. An address would mean nothing to the reader and
+ * differ on every run. */
+static const char *allocator_kind(const loke_rt_allocator_v1 *a) {
+	const char *arena = loke_rt_arena_name(a);
+	if (arena != 0) {
+		return arena;
+	}
+	return a == &loke_rt_v1_default_allocator ? "the system heap" : "a program-defined allocator";
+}
+
+static const char *allocator_role(const loke_rt_allocator_v1 *a) {
+	return a == loke_rt_selected && a != &loke_rt_v1_default_allocator ? ", the build-selected default" : "";
+}
+
 /* design.md "Allocation failure": an implicit allocation has nowhere to return
  * an error, so the *allocator's* failure policy decides. `.Panic` follows the
  * program strategy; `.Trap` terminates immediately under either strategy, which
  * is the whole meaning of "`.Panic` may unwind while `.Trap` does not". */
 void loke_rt_v1_alloc_failed(const loke_rt_allocator_v1 *a) {
-	if (resolve(a)->on_failure == LOKE_RT_ON_FAILURE_TRAP) {
-		loke_rt_v1_abort("allocation failed");
+	char message[160];
+	a = resolve(a);
+	if (refused_by != 0) {
+		snprintf(message, sizeof message, "allocation failed: %llu bytes requested from %s%s",
+		         (unsigned long long)refused_size, allocator_kind(refused_by), allocator_role(refused_by));
+	} else {
+		snprintf(message, sizeof message, "allocation failed in %s%s, with no size requested", allocator_kind(a), allocator_role(a));
 	}
-	loke_rt_v1_panic("allocation failed");
+	refused_by = 0;
+	if (a->on_failure == LOKE_RT_ON_FAILURE_TRAP) {
+		loke_rt_v1_abort(message);
+	}
+	loke_rt_v1_panic(message);
 }
 
 /* ponytail: the abort below is unreachable from checked Loke. The only provider

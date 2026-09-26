@@ -1,2 +1,2 @@
-loke: panic: allocation failed
+loke: panic: allocation failed: 64 bytes requested from a zero-value arena, which holds no memory
 loke: panicked

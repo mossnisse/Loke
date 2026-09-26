@@ -1,2 +1,2 @@
-loke: panic: allocation failed
+loke: panic: allocation failed: 4096 bytes requested from a fixed-buffer arena, the build-selected default
 loke: panicked
