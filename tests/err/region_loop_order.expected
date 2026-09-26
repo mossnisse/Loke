@@ -1,0 +1,12 @@
+L0537
+@13:3
+this reset would end the region backing `xs`, which is still live here
+L0537
+@23:3
+this reset would end the region backing `xs`, which is still live here
+L0536
+@33:16
+`g_held` is backed by an allocator region created in this procedure, so it cannot be stored in file-scope storage, which outlives that region
+L0592
+@41:23
+this result is backed by `arena`, an allocator region that ends when this procedure returns

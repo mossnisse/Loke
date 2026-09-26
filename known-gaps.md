@@ -7,24 +7,9 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-The first three entries accept programs that read dead or freed memory. Each was
+The first two entries accept programs that read dead or freed memory. Each was
 found by a provenance audit, and each repro builds and runs.
 
-- **Region facts are read in walk order.** `region_of` is flow-insensitive,
-  but a reset, a `return` or a global store reads it while the body is still
-  being walked, so an owner that becomes arena-backed later in a loop body is
-  missed on the back edge. `prov_finalize_allocation_regions` already
-  re-resolves allocation roots after the walk; owners are not re-resolved:
-
-  ```odin
-  arena := mem.Arena.init();
-  xs: [dynamic]int = {};
-  for (i := 0; i < 2; i += 1) {
-  	free_all(arena.allocator()); // accepted; `xs` is arena-backed here on the second pass
-  	if (i > 0) { fmt.println(xs[0]); }
-  	xs = make([dynamic]int, 4, arena.allocator());
-  }
-  ```
 - **A `move` parameter carries no region.** `prov_bind_parameters` gives a
   region only to `Allocator` parameters, so returning a moved owner summarizes
   to no region, although design.md "Allocator regions and region provenance"

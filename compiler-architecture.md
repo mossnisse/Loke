@@ -159,7 +159,11 @@ The graph is an analysis view, not a lowering IR, built in one of three modes:
   each body.
 
 Every concrete body gets a fresh graph per mode, and one per summary round, in
-the analysis arena; each is discarded after its analysis. LLVM lowering still
+the analysis arena; each is discarded after its analysis. A provenance build
+with allocator-region facts is repeated, seeded with the previous pass's
+facts, until they stop growing: the facts are flow-insensitive, but each pass
+reads them as it walks, so a later write reaches an earlier read only on the
+next pass. Building a provenance graph reports nothing, so a repeat is safe. LLVM lowering still
 walks the annotated AST directly.
 
 ### Allocation domains

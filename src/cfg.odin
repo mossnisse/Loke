@@ -211,6 +211,36 @@ build_flow_graph :: proc(
 	allocator: mem.Allocator,
 	mode := Flow_Mode.Lifecycle,
 ) -> ^Flow_Graph {
+	graph := build_flow_pass(k, literal, allocator, mode, nil)
+	if mode == .Lifecycle {
+		return graph
+	}
+	// design.md "Allocator regions and region provenance": region facts are
+	// flow-insensitive, but a pass reads them while it walks, so a fact written
+	// later in a loop body reaches an earlier read only on the next pass. Facts
+	// only grow, so the passes stop.
+	for graph != nil {
+		weight := prov_region_weight(graph)
+		if weight == 0 {
+			return graph
+		}
+		next := build_flow_pass(k, literal, allocator, mode, graph)
+		if prov_region_weight(next) == weight {
+			return next
+		}
+		graph = next
+	}
+	return graph
+}
+
+@(private = "file")
+build_flow_pass :: proc(
+	k: ^Checker,
+	literal: ^Expr_Proc,
+	allocator: mem.Allocator,
+	mode: Flow_Mode,
+	seed: ^Flow_Graph,
+) -> ^Flow_Graph {
 	if literal == nil || literal.body == nil {
 		return nil
 	}
@@ -261,6 +291,9 @@ build_flow_graph :: proc(
 		track_move_parameters(graph, literal)
 	} else {
 		prov_bind_parameters(graph, literal)
+		if seed != nil {
+			prov_seed_regions(graph, seed)
+		}
 	}
 	walk_flow_block(graph, literal.body)
 	leave_flow_scope(graph)

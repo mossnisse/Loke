@@ -1,0 +1,61 @@
+package main; import "core:fmt"; import "core:mem";
+
+// design.md "Allocator regions and region provenance": which region backs an
+// owner is not a question of statement order. An owner that becomes
+// arena-backed later in a loop body is arena-backed on the next pass through
+// every check before it.
+
+g_held: [dynamic]int;
+looped :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int = {};
+	for (i := 0; i < 2; i += 1) {
+		free_all(arena.allocator());
+		if (i > 0) { fmt.println(xs[0]); }
+		xs = make([dynamic]int, 4, arena.allocator());
+	}
+}
+chained :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int = {};
+	ys: [dynamic]int = {};
+	for (i := 0; i < 2; i += 1) {
+		free_all(arena.allocator());
+		if (i > 0) { fmt.println(ys.len()); }
+		ys = move(xs);
+		xs = make([dynamic]int, 4, arena.allocator());
+	}
+}
+stored_late :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int = {};
+	for (i := 0; i < 2; i += 1) {
+		if (i > 0) { g_held = move(xs); }
+		xs = make([dynamic]int, 4, arena.allocator());
+	}
+}
+returned_late :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	xs: [dynamic]int = {};
+	for (i := 0; i < 2; i += 1) {
+		if (i > 0) { return move(xs); }
+		xs = make([dynamic]int, 4, arena.allocator());
+	}
+	return {};
+}
+// Reset before the owner is made each pass: allowed.
+fine :: proc() {
+	arena := mem.Arena.init();
+	for (i := 0; i < 2; i += 1) {
+		free_all(arena.allocator());
+		xs := make([dynamic]int, 4, arena.allocator());
+		fmt.println(xs.len());
+	}
+}
+main :: proc() {
+	looped();
+	chained();
+	stored_late();
+	fmt.println(returned_late().len());
+	fine();
+}

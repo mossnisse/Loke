@@ -4,6 +4,7 @@
 package lokec
 
 import "core:fmt"
+import "core:math/bits"
 import "core:slice"
 
 // ------------------------------------------------------ provenance events --
@@ -197,7 +198,7 @@ prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Expr) 
 		return
 	}
 	if set := prov_region_of(graph, subject); !region_is_empty(set) {
-		graph.region_of[id] = set
+		prov_merge_region_of(graph, id, set)
 	}
 }
 
@@ -1192,6 +1193,67 @@ walk_flow_expr_erased :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 @(private)
 prov_empty_region :: proc(graph: ^Flow_Graph) -> Region_Set {
 	return Region_Set{params = make([]bool, max(graph.param_count, 1), graph.alloc)}
+}
+
+// Region facts only grow, within a pass and from one pass to the next.
+@(private)
+prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
+	existing, found := graph.region_of[id]
+	if !found {
+		existing = prov_empty_region(graph)
+	}
+	region_merge(&existing, set)
+	graph.region_of[id] = existing
+}
+
+// Starts a pass from the previous pass's region facts, copied so this pass's
+// merges leave them alone.
+@(private)
+prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
+	for id, set in seed.region_of {
+		prov_merge_region_of(graph, id, set)
+	}
+	for id, set in seed.provider_parents {
+		parent := graph.provider_parents[id] or_else prov_empty_region(graph)
+		region_merge(&parent, set)
+		graph.provider_parents[id] = parent
+	}
+	for id, content in seed.region_content {
+		copied := make([]Prov_Region_Content, len(content), graph.alloc)
+		for entry, index in content {
+			copied[index] = Prov_Region_Content{path = entry.path, region = prov_empty_region(graph)}
+			region_merge(&copied[index].region, entry.region)
+		}
+		graph.region_content[id] = copied
+	}
+}
+
+// How many region facts a pass holds. They only grow, so a pass that ends with
+// as many as it was seeded with read every one at its final value.
+@(private)
+prov_region_weight :: proc(graph: ^Flow_Graph) -> int {
+	weight := 0
+	for _, set in graph.region_of {
+		weight += region_weight(set)
+	}
+	for _, set in graph.provider_parents {
+		weight += region_weight(set)
+	}
+	for _, content in graph.region_content {
+		for entry in content {
+			weight += 1 + region_weight(entry.region)
+		}
+	}
+	return weight
+}
+
+@(private = "file")
+region_weight :: proc(set: Region_Set) -> int {
+	weight := int(bits.count_ones(set.locals)) + int(set.default) + int(set.unknown) + int(set.crowded)
+	for value in set.params {
+		weight += int(value)
+	}
+	return weight
 }
 
 // Every region dependency of a symbol, including its field facts.
@@ -2422,9 +2484,10 @@ prov_declare_region :: proc(
 	}
 	// design.md: a local `mem.Arena`/`mem.Scratch` is a region of its own.
 	if type_is_region_provider(graph.k.c, sym.type) && sym.duration == .None {
-		graph.region_of[id] = prov_provider_region(graph, id)
+		prov_merge_region_of(graph, id, prov_provider_region(graph, id))
 		if initializer != nil {
-			parent := initializer_region
+			parent := graph.provider_parents[id] or_else prov_empty_region(graph)
+			region_merge(&parent, initializer_region)
 			if !region_is_empty(parent) {
 				graph.provider_parents[id] = parent
 			}
@@ -2434,7 +2497,7 @@ prov_declare_region :: proc(
 	}
 	if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR {
 		if initializer != nil {
-			graph.region_of[id] = initializer_region
+			prov_merge_region_of(graph, id, initializer_region)
 		}
 		return
 	}
@@ -2450,7 +2513,7 @@ prov_declare_region :: proc(
 		region_merge(&set, initializer_region)
 	}
 	if !region_is_empty(set) {
-		graph.region_of[id] = set
+		prov_merge_region_of(graph, id, set)
 		if sym.duration != .None && (region_is_parameter_backed(set) || region_has_local(set)) {
 			storage := sym.duration == .Thread_Local ? "`thread_local` storage" : "`static` storage"
 			prov_emit(graph, Prov_Event {
@@ -2535,12 +2598,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				graph.provider_parents[ident.symbol] = parent
 			} else if value != nil &&
 			   (type_underlying(graph.k.c, target_type) == TYPE_ALLOCATOR || type_is_managed(graph.k.c, target_type)) {
-				existing, found := graph.region_of[ident.symbol]
-				if !found {
-					existing = prov_empty_region(graph)
-				}
-				region_merge(&existing, value_region)
-				graph.region_of[ident.symbol] = existing
+				prov_merge_region_of(graph, ident.symbol, value_region)
 			}
 			prov_retain_escape(graph, target, sources, expr_span(target))
 			// The old value is dropped here.
