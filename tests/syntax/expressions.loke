@@ -16,8 +16,10 @@ main :: proc() {
 	e4 := 1 ..= 2;
 	e5 := lo ..< hi;
 
-	// Levels 3-7, tightest last.
-	e6 := a || b && c == d < e | f ~ g & h << i + j * k;
+	// Levels 3-7, tightest last. Level 5 does not chain, so a second
+	// comparison needs parentheses.
+	e6 := a || b && c == d | f ~ g & h << i + j * k;
+	e6a := (c == d) < e;
 	e7 := (a || b) && (c | d) == (e &~ f);
 
 	// Unary, which stacks.

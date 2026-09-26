@@ -538,12 +538,14 @@ Case_Selector = ("." Identifier) | Type
 # Expressions
 
 Levels are numbered as in [Operator precedence](design.md#operator-precedence);
-level 1 binds loosest. Levels 3 through 7 associate left to right. Level 1
+level 1 binds loosest. Levels 3, 4, 6 and 7 associate left to right. Level 1
 associates **right**: `a if c else b if d else e` groups as the else-if chain it
 reads as, and `a or_else b or_else c` as `a or_else (b or_else c)`, which gives
 each `or_else` an unresolved [fallible expression](design.md#typed-fallibility)
 on its left. Level 2 is **non-associative**: a range takes exactly two
-endpoints, so `a ..< b ..< c` is a syntax error.
+endpoints, so `a ..< b ..< c` is a syntax error. Level 5 is non-associative
+too: `a == b == c` and `x in s == true` are syntax errors, and a comparison
+of a comparison's result is parenthesised.
 
 `in` sits at level 5 with the comparisons because it produces a `bool`; at the
 additive level `x in values + extra` would group as `(x in values) + extra`.
@@ -553,7 +555,7 @@ Expression   = Level_2 (("or_else" Expression) | ("if" Level_2 "else" Expression
 Level_2      = Level_3 (("..=" | "..<") Level_3)?                               // 2
 Level_3      = Level_4 ("||" Level_4)*                                          // 3
 Level_4      = Level_5 ("&&" Level_5)*                                          // 4
-Level_5      = Level_6 (("==" | "!=" | "<" | ">" | "<=" | ">=" | "in") Level_6)* // 5
+Level_5      = Level_6 (("==" | "!=" | "<" | ">" | "<=" | ">=" | "in") Level_6)? // 5
 Level_6      = Level_7 (("+" | "-" | "|" | "~") Level_7)*                       // 6
 Level_7      = Unary_Expression
                (("*" | "/" | "%" | "&" | "&~" | "<<" | ">>") Unary_Expression)*  // 7

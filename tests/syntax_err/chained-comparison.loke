@@ -1,0 +1,17 @@
+// Comparisons do not chain: `a == b == c` is a diagnostic, not
+// `(a == b) == c`. Parentheses and `&&` still work.
+package main;
+
+main :: proc() {
+	a := 1;
+	b := 2;
+	c := a == b == false;
+	d := a < b < 3;
+	e := a == b != c == true;
+	f := a in s == true;
+	g := (a == b) == false;
+	h := a < b && b < 3;
+	i := a == (b == c);
+}
+
+sentinel :: proc() { }

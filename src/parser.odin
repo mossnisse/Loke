@@ -1726,7 +1726,8 @@ is_range_op :: proc(kind: Token_Kind) -> bool {
 	return kind == .Range_Incl || kind == .Range_Excl
 }
 
-// Binary levels 3-7 are left-associative; zero is not an operator.
+// Binary levels 3, 4, 6 and 7 are left-associative and level 5 does not
+// chain (design.md "Operator precedence"); zero is not an operator.
 @(private = "file")
 binary_level :: proc(kind: Token_Kind) -> int {
 	#partial switch kind {
@@ -1752,6 +1753,7 @@ parse_binary :: proc(p: ^Parser, min_level: int) -> Expr {
 
 	spine := 0
 	defer p.depth -= spine
+	chain_reported := false
 
 	for {
 		level := binary_level(current(p).kind)
@@ -1777,6 +1779,27 @@ parse_binary :: proc(p: ^Parser, min_level: int) -> Expr {
 		e.rhs = rhs
 		e.has_error = expr_has_error(lhs) || expr_has_error(rhs)
 		lhs = e
+
+		// `a == b == c` reads as a chain and is not one. Recovery groups it
+		// left, so the error comes once per chain.
+		if level == 5 && binary_level(current(p).kind) == 5 {
+			e.has_error = true
+			if !chain_reported {
+				chain_reported = true
+				next := current(p)
+				parse_error(
+					p, span_of(p, next), "L0256", "comparisons do not chain",
+					"`%s` cannot follow a comparison", text_of(p, next),
+				)
+				if !p.suppress {
+					add_notef(
+						p.c, span_of(p, next),
+						"write `(a %s b) %s c` to compare the result, or `a %s b && b %s c` for a chain",
+						text_of(p, op), text_of(p, next), text_of(p, op), text_of(p, next),
+					)
+				}
+			}
+		}
 	}
 }
 

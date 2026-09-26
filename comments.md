@@ -208,21 +208,6 @@ Encapsulation and abstractions must still be important so they can work on an pa
 
 add an garbage collected allocator as an alternative?
 
-## Chained comparisons
-
-Comparisons are left-associative like the other binary levels, so
-`false == false == true` compiles as `(false == false) == true`. Ordering chains
-such as `1 < 2 < 3` are already rejected by type (L0354), but an equality chain
-over `bool` type-checks and rarely means what it reads as. Should comparisons be
-non-associative, like ranges?
-
-Proposal: yes. `a == b == false` compiles today and prints `true` for `a := 1;
-b := 2`, which reads as a chain and is not one. Making precedence level 5
-non-associative, as level 2 already is, turns every such chain into a syntax
-error whose note gives the parenthesized form. `(a == b) == c` still means what
-it says, and no ordering chain loses anything, since L0354 rejects those
-already.
-
 ## Nominal conformance
 
 An `implements Drawable(Circle);` declaration was proposed and rejected. With no
@@ -1239,6 +1224,17 @@ the old rule forbade it to.
 Odin places `in` at the comparison precedence level and Loke had moved it to the
 additive one. That silently regrouped `x in values + extra` as
 `(x in values) + extra`. `in` produces a `bool`, so it belongs with `==` and `<`.
+
+### Comparisons do not chain
+
+Odin, like C, groups comparisons left, so `a == b == false` is
+`(a == b) == false`: for `a := 1; b := 2` it is `true`, although it reads as a
+chain and is not one. Ordering chains such as `1 < 2 < 3` were already rejected
+by type, leaving only the misleading `bool` equality chains. Making the
+comparison level non-associative, as the range level already is, turns every
+such chain into a syntax error whose note gives both the parenthesised form and
+the `&&` chain. Nothing expressible is lost: `(a == b) == c` still means what it
+says.
 
 ### Map element mutation
 

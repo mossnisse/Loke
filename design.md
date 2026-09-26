@@ -3498,7 +3498,7 @@ Precedence    Operator
 
 `in` sits at the comparison level because it produces a `bool` and is used where a comparison would be.
 
-Binary operators of the same precedence associate from left to right. For instance `x / y * z` is the same as `(x / y) * z`. Level 2 is **non-associative**: `a ..< b ..< c` is a syntax error rather than a nested range, because a range takes two endpoints and neither grouping means anything.
+Binary operators of the same precedence associate from left to right. For instance `x / y * z` is the same as `(x / y) * z`. Levels 2 and 5 are **non-associative**. `a ..< b ..< c` is a syntax error rather than a nested range, because a range takes two endpoints and neither grouping means anything. `a == b == c` and `a < b < c` are syntax errors because they read as a chain of comparisons and left grouping would compare a `bool` result instead; `(a == b) == c` compares the result, and `a < b && b < c` is the chain.
 
 **Level 1 is the exception: it associates from right to left.** This is what makes both of its forms chain the way they read:
 
