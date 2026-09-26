@@ -1,0 +1,12 @@
+L0526
+@18:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0647
+@26:2
+this slice borrows `local`, which does not outlive `held`
+L0513
+@39:14
+this slice is used after `local`, the local it borrows, has ended
+L0641
+@48:2
+`s` cannot be used here: a read-only reborrow of it is still in use

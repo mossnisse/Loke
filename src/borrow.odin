@@ -929,9 +929,11 @@ Prov_State :: struct {
 	// words and than unpacked rows on the corpus.
 	row_bytes: int,
 	reach:   []u8,
-	// A loan ended on some path to here, which the carrier rules skip.
+	// A loan ended on some path to here, so `free` may release it twice. An
+	// invalidation marks every loan of its root, even one another branch made,
+	// so no check may skip a loan for being here.
 	invalid: []bool,
-	// A loan ended on every path to here. Conflict reports skip only these, so an
+	// A loan ended on every path to here. Checks skip only these, so an
 	// invalidation that reaches its own loop head still meets the loan it ends.
 	ended:   []bool,
 	live:    []bool,
@@ -1451,7 +1453,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 		for slot in event.into {
 			row := reach_row(state, reach, slot)
 			for index in 0 ..< state.loans {
-				if !bit_get(row, index) || invalid[index] {
+				if !bit_get(row, index) || ended[index] {
 					continue
 				}
 				publish_into_loan(state, reach, graph.loans[index])
@@ -1813,7 +1815,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		for source in event.sources {
 			row := reach_row(state, state.reach, source)
 			for index in 0 ..< state.loans {
-				if !bit_get(row, index) || state.invalid[index] {
+				if !bit_get(row, index) || state.ended[index] {
 					continue
 				}
 				root := graph.roots[int(graph.loans[index].root)]
@@ -1845,7 +1847,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		for source in event.sources {
 			row := reach_row(state, state.reach, source)
 			for index in 0 ..< state.loans {
-				if !bit_get(row, index) || state.invalid[index] {
+				if !bit_get(row, index) || state.ended[index] {
 					continue
 				}
 				loan := graph.loans[index]
@@ -1947,7 +1949,7 @@ prov_slots_overlap :: proc(state: ^Prov_State, source_slot, derived_slot: int) -
 	source := reach_row(state, state.reach, source_slot)
 	derived := reach_row(state, state.reach, derived_slot)
 	for index in 0 ..< state.loans {
-		if bit_get(source, index) && bit_get(derived, index) && !state.invalid[index] {
+		if bit_get(source, index) && bit_get(derived, index) && !state.ended[index] {
 			return true
 		}
 	}
@@ -2263,7 +2265,7 @@ report_retention :: proc(
 	for source in event.sources {
 		row := reach_row(state, state.reach, source)
 		for index in 0 ..< state.loans {
-			if !bit_get(row, index) || state.invalid[index] {
+			if !bit_get(row, index) || state.ended[index] {
 				continue
 			}
 			loan := graph.loans[index]

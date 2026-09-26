@@ -1,0 +1,57 @@
+package main; import "core:fmt";
+
+// An invalidation on one branch does not excuse a borrow the other branch made.
+// Writing `local` ends every loan of it on that path, including loans only the
+// other path created, so each check here must ask whether the loan ended on
+// every path, not on some path.
+
+Holder :: struct { view: []int }
+
+held: []int;
+
+// design.md "Temporaries and procedure boundaries": a borrow of a local cannot
+// be returned.
+escaped :: proc(flag: bool) -> []int {
+	local := [3]int{1, 2, 3};
+	v: []int = nil;
+	if (flag) { v = local[:]; } else { local = [3]int{4, 5, 6}; }
+	return v;
+}
+
+// design.md "Retaining a borrow": nor stored in process-lifetime storage.
+retained :: proc(flag: bool) {
+	local := [3]int{1, 2, 3};
+	v: []int = nil;
+	if (flag) { v = local[:]; } else { local = [3]int{4, 5, 6}; }
+	held = v;
+}
+
+// A write through `p` reaches `h` on the path that set `p`, so `h` holds the
+// borrow of `local` after its scope ends.
+published :: proc(flag: bool) {
+	h: Holder = {};
+	p: ^mut Holder = nil;
+	if (flag) { p = &mut h; } else { h = Holder{}; }
+	{
+		local := [3]int{1, 2, 3};
+		if (flag) { p.view = local[:]; }
+	}
+	fmt.println(h.view[0]);
+}
+
+// design.md "Weakening and reborrows": `s` is suspended while `d` is live.
+suspended :: proc(flag: bool) {
+	local := [3]int{1, 2, 3};
+	s: []mut int = nil;
+	d: []int = nil;
+	if (flag) { s = local[:]; d = s; } else { local = [3]int{4, 5, 6}; }
+	s[0] = 9;
+	fmt.println(d[0]);
+}
+
+main :: proc() {
+	fmt.println(escaped(true)[0]);
+	retained(true);
+	published(true);
+	suspended(true);
+}
