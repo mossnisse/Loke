@@ -1,0 +1,33 @@
+package main; import "core:fmt";
+
+// design.md "Conditional expression": the result owns its value. A place
+// operand is copied into it and stays live; a temporary or `move(x)` operand
+// transfers. Each value here is released exactly once.
+
+make_string :: proc(text: string_view) -> string { return text.copy(); }
+length :: proc(text: string) -> int { return text.len(); }
+
+main :: proc() {
+	for (i := 0; i < 2; i += 1) {
+		flag := i == 0;
+		s := make_string("left");
+		t := make_string("right");
+		// Places: each binding retains its own reference, so ending the copy
+		// leaves the original's text in place for the next allocation to miss.
+		{
+			u := s if flag else t;
+			fmt.println(u, length(t if flag else s));
+		}
+		reuse := make_string("XXXXX");
+		fmt.println(s, t, reuse);
+		// A place and a temporary.
+		v := s if flag else make_string("fresh");
+		w := make_string("fresh") if flag else s;
+		fmt.println(v, w);
+		// A moved owner and a clone of one.
+		xs := [dynamic]int{1, 2};
+		ys := [dynamic]int{3};
+		z := move(xs) if flag else ys.clone();
+		fmt.println(z, ys);
+	}
+}

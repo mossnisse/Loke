@@ -617,6 +617,7 @@ Copy_Site :: enum {
 	Variant,
 	Conversion,
 	Or_Else_Fallback,
+	Conditional,
 }
 
 @(private = "file")
@@ -635,6 +636,7 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 	case .Variant:          return "variant construction"
 	case .Conversion:       return "conversion"
 	case .Or_Else_Fallback: return "`or_else` fallback"
+	case .Conditional:      return "conditional expression"
 	}
 	return "copy"
 }

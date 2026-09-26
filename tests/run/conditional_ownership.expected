@@ -1,0 +1,8 @@
+left 5
+left right XXXXX
+left fresh
+[1, 2] [3]
+right 4
+left right XXXXX
+fresh left
+[3] [3]

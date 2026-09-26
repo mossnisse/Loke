@@ -312,6 +312,9 @@ Expr_Cond :: struct {
 	then:       Expr,
 	cond:       Expr,
 	otherwise:  Expr,
+	// A managed place operand is cloned into the result; a temporary transfers.
+	then_clone: bool,
+	else_clone: bool,
 }
 
 Expr_Move :: struct {

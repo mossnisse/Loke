@@ -7,20 +7,9 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-The first four entries accept programs that read dead or freed memory. Each was
+The first three entries accept programs that read dead or freed memory. Each was
 found by a provenance audit, and each repro builds and runs.
 
-- **A conditional copies a place it should reject.** design.md "Value
-  semantics and the ownership rule" rejects a place whose copy may allocate,
-  and binding a conditional binds its selected arm. A `[dynamic]T` or `map`
-  place in an arm is neither rejected nor cloned, so its storage is freed
-  twice. A `string` arm, whose copy retains its storage, runs correctly:
-
-  ```odin
-  xs := [dynamic]int{1};
-  ys := [dynamic]int{2};
-  z := xs if flag else ys; // heap corruption; expected L0504
-  ```
 - **Some ways of storing an owner drop its region.** design.md "Allocator
   regions and region provenance" keeps a local region's owner out of
   aggregates, containers and static storage. `prov_assign` records region

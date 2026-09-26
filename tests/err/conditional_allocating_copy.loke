@@ -1,0 +1,23 @@
+package main; import "core:fmt";
+
+// design.md "Conditional expression": the result owns its value, so a place
+// operand whose copy may allocate is rejected in every context, even one that
+// would only borrow the result.
+
+count :: proc(xs: [dynamic]int) -> int { return xs.len(); }
+
+pick :: proc(flag: bool, xs: [dynamic]int, ys: [dynamic]int) -> [dynamic]int {
+	return xs if flag else ys.clone();
+}
+
+main :: proc() {
+	flag := true;
+	xs := [dynamic]int{1};
+	ys := [dynamic]int{2};
+	bound := xs if flag else ys;
+	fmt.println(count(ys if flag else [dynamic]int{3}));
+	nested := [][dynamic]int{xs if flag else ys.clone()};
+	// Written transfers and copies: allowed.
+	moved := move(xs) if flag else ys.clone();
+	fmt.println(bound, nested.len(), moved, pick(flag, ys, ys));
+}

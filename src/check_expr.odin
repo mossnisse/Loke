@@ -2201,6 +2201,12 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 		return
 	}
 	v.type = result
+	// design.md "Conditional expression": the result owns its value, so a place
+	// operand is copied into it.
+	classify_copy_cost(k, v.then, result, .Conditional)
+	classify_copy_cost(k, v.otherwise, result, .Conditional)
+	v.then_clone = classify_copy(k, v.then, result, .Conditional)
+	v.else_clone = classify_copy(k, v.otherwise, result, .Conditional)
 
 	// Both branches are checked, but only the selected one is folded.
 	condition := expr_base(v.cond)

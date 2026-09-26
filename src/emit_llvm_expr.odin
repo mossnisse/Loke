@@ -1609,6 +1609,9 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 
 	place_label(e, then_label)
 	then_value := emit_expr(e, v.then)
+	if v.then_clone {
+		then_value = emit_clone_value(e, as_type, then_value)
+	}
 	if joined != "" {
 		store(e, as_type, then_value, joined)
 	}
@@ -1619,6 +1622,9 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 
 	place_label(e, else_label)
 	else_value := emit_expr(e, v.otherwise)
+	if v.else_clone {
+		else_value = emit_clone_value(e, as_type, else_value)
+	}
 	if joined != "" {
 		store(e, as_type, else_value, joined)
 	}

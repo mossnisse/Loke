@@ -3102,6 +3102,7 @@ One rule covers every context that takes a value. **A place stays live: it is bo
 | [`switch` subject](#switch-ownership) | payload borrowed, and the binding is immutable | payload consumed |
 | [`or_else`](#or_else-expression) | success payload copied out, failure left alone | payload transferred, and a managed failure dropped before the fallback |
 | [`or_return`](#or_return-operator) | the selected payload copied out, source stays live | transferred |
+| [conditional operand](#conditional-expression) | copied into the result | transferred |
 | aggregate literal element | cloned | transferred |
 | [container insertion](#container-insertion) | cloned | transferred |
 
@@ -3467,6 +3468,15 @@ BUFFER_SIZE :: 4096 if LOKE_OS == .Windows else 8192; // a constant
 ```
 
 When the condition and selected value are constant, the result is constant. Use a `when` statement when the unselected branch must not be checked.
+
+The result is a temporary that owns its value, whatever takes it. A place operand is copied into it under [the ownership rule](#value-semantics-and-the-ownership-rule), so a `string` retains its text and a place whose copy may allocate is rejected; a temporary or `move(x)` operand transfers:
+
+```odin
+xs := [dynamic]int{1};
+ys := [dynamic]int{2};
+a := xs if flag else ys;              // ERROR: copying a `[dynamic]int` may allocate
+b := move(xs) if flag else ys.clone(); // one transferred, one written copy
+```
 
 ### Other operators
 

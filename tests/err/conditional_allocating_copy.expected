@@ -1,0 +1,15 @@
+L0504
+@10:9
+this conditional expression would copy `xs`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@17:11
+this conditional expression would copy `xs`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@17:27
+this conditional expression would copy `ys`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@18:20
+this conditional expression would copy `ys`, and a copy of `[dynamic]int` may allocate, so it must be written
+L0504
+@19:27
+this conditional expression would copy `xs`, and a copy of `[dynamic]int` may allocate, so it must be written
