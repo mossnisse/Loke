@@ -660,6 +660,9 @@ The productions above use the following deterministic parsing rules:
 - `switch (name in expression)` is a type switch, over a union's variants or an
   `any_view`'s types. A value switch over membership uses
   `switch ((name in expression))`.
+- A condition-only `For_Header` whose whole `Expression` is
+  `name in expression` is rejected. A loop over membership uses
+  `for ((name in expression))`; iteration is `foreach`.
 - A `Value_Switch` parses its cases as expressions. When the subject's type is a
   union, the checker reads a singleton case of the exact shape `.name(binding)`
   as a branch-local pattern; calls of any other shape, and every case of a

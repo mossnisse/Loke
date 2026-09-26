@@ -388,22 +388,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
-## `for` with a bare membership condition
-
-`for (key in counts) { ... }` is a condition loop that repeats while `key` is in
-`counts`. Odin iterates with `for x in xs`, so this is the header a programmer
-from Odin, or one who forgot `foreach`, writes. With `key` already declared it
-compiles and runs; with `key` undeclared the error is only "unknown name `key`".
-[`foreach`](#foreach) keeps `in` a membership operator in a `for` condition,
-and `switch` already settles the same collision by requiring
-`switch ((x in y))` for the membership meaning
-([switch statement](design.md#switch-statement)).
-
-Proposal: give `for` the switch rule. A condition-only header whose whole
-condition is `name in expression` is rejected with a note naming `foreach`, and
-the membership loop is written `for ((key in counts))`. An unknown name in such
-a header gets the same note.
-
 ## Octal escapes
 
 `\NNN` names a code point up to U+01FF and UTF-8 encodes it, so `"\377"` is the
@@ -1364,6 +1348,12 @@ Odin's `for value in values` form is written `foreach (value in values)`.
 Keeping `for` and `foreach` separate makes the repetition form visible at the
 keyword and lets `in` retain its membership-operator meaning in an ordinary
 `for` condition.
+
+`for (key in counts)` is nonetheless rejected: it is the header a programmer from
+Odin, or one who forgot `foreach`, writes, and as a membership loop it compiled
+and ran whenever `key` happened to be declared, or failed with only "unknown
+name `key`". `for` therefore takes the rule `switch` already uses for the same
+collision: the membership loop is `for ((key in counts))`.
 
 ## Features kept close to Odin
 

@@ -1,0 +1,19 @@
+package main; import "core:fmt";
+
+// design.md "for statement": a condition-only `for` whose whole condition is a
+// membership test needs a second pair of parentheses; `for (key in counts)` is
+// rejected (tests/syntax_err/for-bare-membership.loke).
+
+main :: proc() {
+	counts: map[string]int = {};
+	counts["a"] = 1;
+	counts["b"] = 2;
+	key := "a";
+	rounds := 0;
+	for ((key in counts)) {
+		_ = counts.remove(key);
+		key = "b";
+		rounds += 1;
+	}
+	fmt.println(rounds);
+}

@@ -1327,6 +1327,7 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 	cond: Expr
 	post: Stmt
 	condition_only := false
+	bare_in := false
 
 	switch {
 	case allow(p, .Semicolon):
@@ -1336,12 +1337,32 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 		t := current(p)
 		parse_error(p, span_of(p, t), "L0245", fmt_found(p, t), "a `for` header cannot be empty; `for (;;)` loops forever")
 	case:
+		// `for (name in xs)` is Odin's iteration header; membership needs
+		// `for ((name in xs))`, as a switch header does (design.md "for statement").
+		name_in := at_type_switch_binding(p)
 		first := parse_simple_statement(p)
 		if allow(p, .Semicolon) {
 			init = first
 		} else {
 			condition_only = true
 			cond = expr_of_simple(p, first)
+			b, is_binary := cond.(^Expr_Binary)
+			if is_binary && b.op == .In && name_in {
+				if lhs, named := b.lhs.(^Expr_Ident); named {
+					bare_in = true
+					parse_error(
+						p, b.op_span, "L0245", "membership test",
+						"a `for` header cannot be a bare `%s in ...`", lhs.name,
+					)
+					if !p.suppress {
+						add_notef(
+							p.c, b.op_span,
+							"iterate with `foreach (%s in ...)`; the membership loop is `for ((%s in ...))`",
+							lhs.name, lhs.name,
+						)
+					}
+				}
+			}
 		}
 	}
 
@@ -1364,7 +1385,7 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 	s.post = post
 	s.body = body
 	s.condition_only = condition_only
-	s.has_error = !opened || !closed || !body_ok || expr_has_error(cond)
+	s.has_error = !opened || !closed || !body_ok || bare_in || expr_has_error(cond)
 	return s
 }
 

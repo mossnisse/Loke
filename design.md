@@ -3459,11 +3459,11 @@ When the condition and selected value are constant, the result is constant. Use 
 
 `..=` and `..<` are ordinary binary operators producing a [`Range(T)`](#ranges) value. [Range literals](#range-literals) covers them, including the `switch` and array-initializer positions where the same spelling is matching syntax instead.
 
-The `in` in a `foreach` header separates bindings from the iterable expression. In an ordinary `for` condition, `in` retains its usual membership-operator meaning, so no contextual parsing exception is needed:
+The `in` in a `foreach` header separates bindings from the iterable expression. In an ordinary `for` condition, `in` retains its usual membership-operator meaning, but a condition-only header written as a bare `name in expression` is rejected; see [for statement](#for-statement):
 
 ```odin
 foreach (x in y) {} // iteration
-for (x in y) {}     // condition-only loop: repeats while `x` is in `y`
+for ((x in y)) {}   // condition-only loop: repeats while `x` is in `y`
 ```
 
 ### Evaluation order
@@ -3687,6 +3687,15 @@ for (i < 10) {
 	i += 1;
 }
 ```
+
+A condition-only header whose whole condition is `name in expression` is rejected, since it is the spelling of iteration in Odin; iteration is written with [`foreach`](#foreach-statement). A loop that repeats while `name` is a member needs a second pair of parentheses, as a [switch header](#switch-statement) does:
+
+```odin
+for (key in counts) { }     // error: iterate with `foreach (key in counts)`
+for ((key in counts)) { }   // repeats while `key` is in `counts`
+```
+
+The rule applies only to the whole condition: `for (key in counts && ready)` and the condition of a three-part header are ordinary expressions.
 
 If the condition is omitted, this produces an infinite loop:
 

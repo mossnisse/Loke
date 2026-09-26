@@ -1,0 +1,15 @@
+// `for (name in xs)` is Odin's iteration header, not a membership loop; the
+// membership loop needs a second pair of parentheses.
+package main;
+
+main :: proc() {
+	counts := map[string]int{};
+	for (key in counts) { }
+	key := "a";
+	for (key in counts) { }
+	for ((key in counts)) { }
+	for (key in counts && true) { }
+	for (; key in counts;) { }
+}
+
+sentinel :: proc() { }
