@@ -191,9 +191,8 @@ compile-time evaluation cooperate in a fixed point rather than running once in
 a simple sequence.
 
 `base:runtime` is loaded before user code because `Unit`, `Option`, `Result`,
-`Shared`, `Weak`, `try_shared`, and the `Yield_Owned`/`Yield_Borrowed`/
-`Yield_Mutable` markers are ordinary Loke declarations whose identities the
-compiler uses. `bootstrap.odin` binds those declarations into the predeclared
+`Shared`, `Weak`, and `try_shared` are ordinary Loke declarations whose
+identities the compiler uses. `bootstrap.odin` binds those declarations into the predeclared
 universe instead of synthesizing lookalikes; `Shared` and `Weak` are bound as
 `shared` and `weak`, and a call `shared(value)` resolves to `shared_construct`.
 
@@ -337,7 +336,7 @@ be file-private.
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Closed enum validation, tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
-| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Fallback `indexed`/`reversed`/`copied` adapters, peeled so `foreach` lowers directly; mutable lending over arrays, dynamic arrays, mutable slices, and maps, and the `iter_mut` protocol check; and the `Yield` descriptors that decide whether a loop binding owns, borrows, or mutably borrows each part. |
+| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Fallback `indexed`/`reversed`/`copied` adapters, peeled so `foreach` lowers directly; mutable lending over arrays, dynamic arrays, mutable slices, and maps, and the `iter_mut` protocol check; and the yield modes, derived from `next`, that decide whether a loop binding owns, borrows, or mutably borrows each part. |
 
 ### Generics, compile-time features, and bootstrap
 

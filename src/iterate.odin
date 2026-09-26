@@ -164,23 +164,6 @@ map_entry_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	})
 }
 
-// The `Yield` a map's iterator declares: both stored halves are lent.
-map_entry_yield_type :: proc(c: ^Compiler) -> Type_Id {
-	borrowed := c.yield_markers[Yield_Kind.Borrowed]
-	return anon_record_type(c, []Anon_Record_Field{
-		{name = intern_identifier(c, "key"), type = borrowed},
-		{name = intern_identifier(c, "value"), type = borrowed},
-	})
-}
-
-// `indexed()`'s `Yield`: the source's lending, plus an owned counter.
-indexed_yield_type :: proc(c: ^Compiler, value: Yield_Kind) -> Type_Id {
-	return anon_record_type(c, []Anon_Record_Field{
-		{name = intern_identifier(c, "value"), type = c.yield_markers[value]},
-		{name = intern_identifier(c, "index"), type = c.yield_markers[Yield_Kind.Owned]},
-	})
-}
-
 // `indexed()`'s `Element`: `(value: E, index: int)`.
 indexed_element_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return anon_record_type(c, []Anon_Record_Field{
@@ -452,16 +435,12 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	// A copying `next` over a move-only element has no copy to make.
 	if next_kind == .Array_Next && type_clone_disabled(k.c, element) { return }
 	// A map lends a record of two pointers, since the table never holds a record.
-	entry_yield := next_kind == .Map_Next
-	descriptor := k.c.yield_markers[Yield_Kind.Borrowed]
 	item := lends ? pointer_to(k.c, element, false) : element
-	if entry_yield {
+	if next_kind == .Map_Next {
 		lent := []Yield_Desc{{kind = .Borrowed}, {kind = .Borrowed}}
-		descriptor = map_entry_yield_type(k.c)
 		item = yield_item_type(k, element, Yield_Desc{kind = .Record, fields = lent}, no_span())
 		if item == INVALID_TYPE { return }
 	}
-	next_members := make([]Symbol_Id, lends ? 2 : 1, k.c.semantic_allocator)
 	next := synth_proc(
 		k.c, "next", next_kind, iterator,
 		[]Type_Id{iterator}, []Param_Mode{.Inout}, option_type(k, item),
@@ -470,11 +449,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		sym.has_receiver = true
 		sym.receiver = .Inout
 	}
-	next_members[0] = next
-	if lends {
-		next_members[1] = new_associated_type(k.c, "Yield", descriptor, iterator)
-	}
-	add_members(k.c, iterator, next_members)
+	add_members(k.c, iterator, []Symbol_Id{next})
 }
 
 // `source.iter()` or `iter_reverse()`: a borrowing receiver whose result borrows
@@ -896,11 +871,8 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		}
 		iter = reverse
 	}
-	// `next` returns the `Item` the iterator's `Yield` makes of the element.
-	yield, yield_ok := iterator_yield(k, iterator, expr_span(s.iterable))
-	if !yield_ok {
-		return FLOWS
-	}
+	// `next`'s `Item` says how the element is handed over.
+	yield := iterator_yield(k, iterator, element)
 	item := yield_item_type(k, element, yield, expr_span(s.iterable))
 	if item == INVALID_TYPE {
 		return FLOWS
@@ -954,7 +926,7 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if !gate_type(k, element, expr_span(s.iterable)) {
 		return FLOWS
 	}
-	// The protocol path already read its iterator's `Yield`.
+	// The protocol path already read its iterator's yield mode.
 	if s.kind != .Protocol {
 		s.borrows = foreach_lends_elements(s)
 	}

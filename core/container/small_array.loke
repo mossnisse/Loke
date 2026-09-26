@@ -318,7 +318,6 @@ impl Small_Array_Iterator($T) {
 	Element  :: T;
 	// design.md "Borrowing iteration": each element is lent where the array
 	// stores it, so traversal copies nothing and a move-only `T` is read too.
-	Yield    :: Yield_Borrowed;
 
 	iter :: proc(self) -> Small_Array_Iterator(T) { return self; }
 

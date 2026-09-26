@@ -1,9 +1,11 @@
 package main;
 
-// design.md "Iteration protocol": an iterator's `Yield` says how a binding
-// receives what `next` hands back, and the checker validates it against the
-// element's shape. Invalid descriptors remain diagnostics.
+// design.md "Yield modes": how a binding receives an element follows from what
+// `next` returns. A `next` the element does not explain, and a record lent
+// field by field that a custom hook forbids taking apart, remain diagnostics.
 
+// `^mut int` over an `int` element lends it mutably, lowered like any lending
+// leaf.
 Lender :: struct { values: []mut int }
 Lender_Iterator :: struct { source: []mut int, at: int }
 
@@ -15,9 +17,6 @@ impl Lender {
 }
 
 impl Lender_Iterator {
-	// A mutable descriptor is valid and lowered like any lending leaf.
-	Yield :: Yield_Mutable;
-
 	next :: proc(self: inout Lender_Iterator) -> Option(^mut int) {
 		if (self.at >= self.source.len()) { return .none; }
 		item := &mut self.source[self.at];
@@ -26,8 +25,7 @@ impl Lender_Iterator {
 	}
 }
 
-// A descriptor is one of the three markers or a record of them. Nothing else
-// describes a yield.
+// A `bool` is neither an `int` nor a pointer to one.
 Muddle :: struct { values: []int }
 Muddle_Iterator :: struct { at: int }
 
@@ -39,13 +37,11 @@ impl Muddle {
 }
 
 impl Muddle_Iterator {
-	Yield :: int;
-
-	next :: proc(self: inout Muddle_Iterator) -> Option(int) { return .none; }
+	next :: proc(self: inout Muddle_Iterator) -> Option(bool) { return .none; }
 }
 
-// A record descriptor takes a record apart field by field, which a type with a
-// custom hook does not allow — the restriction a consuming destructure carries.
+// Lending a record field by field takes it apart, which a type with a custom
+// hook does not allow — the restriction a consuming destructure carries.
 Guarded :: struct { key: int, value: int }
 
 impl Guarded {
@@ -63,9 +59,7 @@ impl Keeper {
 }
 
 impl Keeper_Iterator {
-	Yield :: struct{key: Yield_Borrowed, value: Yield_Borrowed};
-
-	next :: proc(self: inout Keeper_Iterator) -> Option(Guarded) { return .none; }
+	next :: proc(self: inout Keeper_Iterator) -> Option((key: ^int, value: ^int)) { return .none; }
 }
 
 main :: proc() {

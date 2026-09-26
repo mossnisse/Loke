@@ -79,10 +79,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	if !iteration_proc_matches(k, symbol_of(k.c, iter), source, .Borrow, iterator) ||
 	   element == INVALID_TYPE || iterator == INVALID_TYPE { return INVALID_SYMBOL }
 	next := iteration_member(k, iterator, "next")
-	source_yield, described := iterator_yield(k, iterator, no_span(), report = false)
-	if !described {
-		return INVALID_SYMBOL
-	}
+	source_yield := iterator_yield(k, iterator, element)
 	item := yield_item_type(k, element, source_yield, no_span(), report = false)
 	if item == INVALID_TYPE ||
 	   !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
@@ -159,11 +156,6 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		append(&members, new_associated_type(c, "Element", element, result_iterator))
 		append(&members, new_associated_type(c, "Iterator", result_iterator, result_iterator))
 		append(&members, next_member, copy_member)
-		if lends {
-			descriptor := yield_desc_type(c, element, indexed_yield)
-			if descriptor == INVALID_TYPE { return INVALID_SYMBOL }
-			append(&members, new_associated_type(c, "Yield", descriptor, result_iterator))
-		}
 		add_members(c, result_iterator, members[:])
 		if type_is_managed(c, result_iterator) { contribute_lifecycle_members(k, result_iterator) }
 	} else if kind == .Copied {
@@ -225,8 +217,7 @@ add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Ad
 	if element == INVALID_TYPE || iterator == INVALID_TYPE || !found || receiver == .Inout {
 		return
 	}
-	yield, described := mutable_iterator_yield(k, iterator, no_span())
-	if !described { return }
+	yield := iterator_yield(k, iterator, element, .Mutable)
 	item := yield_item_type(k, element, yield, no_span(), report = false)
 	next := iteration_member(k, iterator, "next")
 	if item == INVALID_TYPE || !iteration_proc_matches(k, symbol_of(c, next), iterator, .Inout, option_type(k, item)) {
@@ -249,8 +240,7 @@ add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Ad
 	parts[0], parts[1] = yield, Yield_Desc{kind = .Owned}
 	numbered := Yield_Desc{kind = .Record, fields = parts}
 	yielded := yield_item_type(k, indexed, numbered, no_span(), report = false)
-	descriptor := yield_desc_type(c, indexed, numbered)
-	if yielded == INVALID_TYPE || descriptor == INVALID_TYPE { return }
+	if yielded == INVALID_TYPE { return }
 	walker := new_type(c, Type_Info{
 		kind = .Struct, name = intern_identifier(c, fmt.aprintf("Indexed_Iterator(%s)", type_name(c, iterator), allocator = c.semantic_allocator)),
 		key = iterator, element = indexed, adapter_kind = .Indexed,
@@ -264,7 +254,6 @@ add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Ad
 	walker_info.contributed += {.Iteration}
 	add_members(c, walker, []Symbol_Id{
 		adapter_proc(k, "next", .Indexed_Next, walker, .Inout, option_type(k, yielded), next),
-		new_associated_type(c, "Yield", descriptor, walker),
 	})
 	add_members(c, view, []Symbol_Id{
 		new_associated_type(c, "Mut_Iterator", walker, view),

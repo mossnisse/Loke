@@ -1,6 +1,6 @@
+L0456
+@72:20
+`Muddle_Iterator` needs `next :: proc(self: inout Muddle_Iterator) -> Option(int)`
 L0694
-@78:20
-is not a yield descriptor
-L0694
-@82:20
-has a custom `hook(copy)` or `hook(drop)`, so a record `Yield` cannot describe it
+@76:20
+so `next` cannot lend it field by field

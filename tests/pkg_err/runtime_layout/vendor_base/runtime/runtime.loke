@@ -50,13 +50,6 @@ Source_Code_Location :: struct {
 }
 
 @(public)
-Yield_Owned :: struct {}
-@(public)
-Yield_Borrowed :: struct {}
-@(public)
-Yield_Mutable :: struct {}
-
-@(public)
 Unit :: struct {}
 
 @(public)

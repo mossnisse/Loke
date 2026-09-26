@@ -367,18 +367,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
-## Deriving `Yield`
-
-An iterator's `Yield` follows from its `Element` and `Item`: owned when `Item`
-is `Element`, borrowed when it is `^Element`, mutable when it is
-`^mut Element`, and field by field for a record. The checker already computes
-`Item` from the other two (`yield_item_type` in `src/iteration_yield.odin`), and
-a declared `Yield` that disagrees with `next` is L0694, so the declaration adds
-no information. Proposal: derive it, as `Iterator`, `Mut_Iterator`, and `Item`
-already are, and drop `Yield_Owned`, `Yield_Borrowed`, and `Yield_Mutable` from
-the predeclared names. The library declares it three times, in
-`Small_Array_Iterator` and the two `Enum_Array` iterators.
-
 ## Map lookups name the mutable one plainly
 
 Everywhere else the mutable form is the marked one: `^mut`, `[]mut`,
@@ -1226,6 +1214,21 @@ the error stream, so `base` and `core` code can use them without importing
 values land between the message and the newline. An `assert`'s arguments are
 evaluated only on the failing path, like its message in C, so an expensive
 argument costs nothing while the check holds.
+
+### An iterator's yield mode follows from `next`
+
+An iterator used to declare a `Yield` descriptor, built from the predeclared
+markers `Yield_Owned`, `Yield_Borrowed`, and `Yield_Mutable`, and the checker
+computed `Item` from it and `Element`. The declaration carried no
+information: `next` already says what it returns, and a `Yield` that
+disagreed with it was an error. The checker now reads the mode off `next`'s
+`Item`, as it reads `Iterator` off `iter`, and the three markers are gone from
+the universe. The library declared `Yield` three times, in
+`Small_Array_Iterator` and the two `Enum_Array` iterators, and the compiler
+no longer synthesizes one for its own iterators. The derivation tries owned
+before borrowed, so an element that is itself a pointer, returned unchanged,
+stays owned; the old descriptor could say otherwise only by making `Item` a
+pointer to the pointer, which `next` would then have to return anyway.
 
 ### Map element mutation
 

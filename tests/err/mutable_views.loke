@@ -3,7 +3,7 @@ package main;
 // design.md "Iteration protocol": `&` asks the iterable for a mutable
 // traversal and never reaches through a call to its root.
 
-// `Yield_Mutable` behind `iter` is read traversal; `&` needs `iter_mut`.
+// A `next` lending `^mut int` behind `iter` is read traversal; `&` needs `iter_mut`.
 Lender :: struct { cells: []mut int }
 Lender_Cursor :: struct { cells: []mut int, at: int }
 
@@ -14,7 +14,6 @@ impl Lender {
 }
 
 impl Lender_Cursor {
-	Yield :: Yield_Mutable;
 	next :: proc(self: inout Lender_Cursor) -> Option(^mut int) {
 		if (self.at >= self.cells.len()) { return .none; }
 		value := &mut self.cells[self.at];

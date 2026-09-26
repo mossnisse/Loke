@@ -12,7 +12,6 @@ impl Mutable_Lender {
 	iter :: proc(self) -> Mutable_Cursor { return {self.values, 0}; }
 }
 impl Mutable_Cursor {
-	Yield :: Yield_Mutable;
 	next :: proc(self: inout Mutable_Cursor) -> Option(^mut int) {
 		if (self.at >= self.values.len()) { return .none; }
 		value := &mut self.values[self.at];

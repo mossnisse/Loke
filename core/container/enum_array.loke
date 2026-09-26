@@ -104,7 +104,6 @@ impl Enum_Array_Iterator($E, $T) {
 	Element  :: (key: E, value: T);
 	// design.md "Borrowing iteration": the key is an enum member, a value made
 	// per step; the value is lent where the array stores it.
-	Yield    :: (key: Yield_Owned, value: Yield_Borrowed);
 
 	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return self; }
 
@@ -125,7 +124,6 @@ Enum_Array_Mut_Iterator :: struct($E: type, $T: type) {
 }
 
 impl Enum_Array_Mut_Iterator($E, $T) {
-	Yield :: (key: Yield_Owned, value: Yield_Mutable);
 
 	next :: proc(self: inout) -> Option((key: E, value: ^mut T)) {
 		members := E.values();

@@ -1,17 +1,5 @@
 package main;
 
-Bad_Yield :: struct {}
-Bad_Yield_Iterator :: struct {}
-impl Bad_Yield {
-	Element :: int;
-	Iterator :: Bad_Yield_Iterator;
-	iter :: proc(self) -> Bad_Yield_Iterator { return {}; }
-}
-impl Bad_Yield_Iterator {
-	Yield :: 1;
-	next :: proc(self: inout Bad_Yield_Iterator) -> Option(int) { return .none; }
-}
-
 Bad_Item :: struct {}
 Bad_Item_Iterator :: struct {}
 impl Bad_Item {
@@ -25,6 +13,5 @@ impl Bad_Item_Iterator {
 }
 
 main :: proc() {
-	foreach (value in Bad_Yield{}) { _ = value; }
 	foreach (value in Bad_Item{}) { _ = value; }
 }

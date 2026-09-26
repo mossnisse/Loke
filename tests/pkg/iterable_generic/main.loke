@@ -25,7 +25,7 @@ impl Countdown_Iterator {
 //
 // design.md "Iteration protocol": a manual `next()` returns `Item`, which is a
 // pointer wherever the traversal lends, so code that must be generic over the
-// yield mode uses `foreach` -- which is what applies `Yield` -- rather than
+// yield mode uses `foreach` -- which is what applies it -- rather than
 // projecting the pointer itself.
 first :: proc(source: $S) -> Option(S.Element)
 	where interfaces.Iterable(S) {

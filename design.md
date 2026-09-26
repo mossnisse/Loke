@@ -172,7 +172,7 @@ A field or enum member is reached through a selector rather than by name lookup,
 Every other predeclared name may be shadowed by a declaration like any other name. They are:
 
 - types: `bool`, `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `uint`, `u8`, `u16`, `u32`, `u64`, `u128`, `uintptr`, `byte`, `f16`, `f32`, `f64`, `rune`, `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `any_view`, `Allocator`, and `Allocator_Error`;
-- generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `shared`, `weak`, `Yield_Owned`, `Yield_Borrowed`, and `Yield_Mutable`;
+- generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `shared`, and `weak`;
 - operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `new`, `new_clone`, `make`, `free`, `free_all`, `drop`, `exchange`, and `try_shared`;
 - [build constants](#build-constants): `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`, `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_LOG_LEVEL`, `LOKE_VENDOR`, and `LOKE_VERSION`.
 
@@ -2310,9 +2310,8 @@ An iterable type provides:
 
 - an `Element` type;
 - `iter(self) -> Iterator`, whose result type is the associated `Iterator`;
-- `next(self: inout Iterator) -> Option(Item)` on its iterator, whose payload is the associated `Item`;
-- optionally a `Yield` descriptor, saying how a binding receives `Item`;
-- for mutable traversal, `iter_mut`, whose result type is the associated `Mut_Iterator` and whose iterator's `Yield` says which parts are lent mutably — `Yield_Mutable` when it declares none.
+- `next(self: inout Iterator) -> Option(Item)` on its iterator, whose payload is the associated `Item` and whose [yield mode](#yield-modes) says how a binding receives it;
+- for mutable traversal, `iter_mut`, whose result type is the associated `Mut_Iterator`, whose iterator's `next` says which parts are lent mutably.
 
 `Iterator`, `Mut_Iterator`, and `Item` follow from those signatures, so a type need not declare them; one it does declare must agree, or the declaration is an error. `Element` is always written: it is the element a caller names in `S.Element`.
 
@@ -2322,7 +2321,7 @@ A visible [extension block](#methods-and-implementation-blocks) can make a forei
 
 Generic code refers to the yielded type as `S.Element`, and to the handed-back type as `S.Iterator.Item` where the two differ. A borrowing or mutable traversal holds a loan on its source, so that source cannot be mutated — or, for a mutable traversal, read — while the iterator is in use; the normal [borrow rules](#borrows-and-lifetimes) apply.
 
-A manual `next()` call returns `Item`, pointers and all. Code that must be generic over the yield mode uses `foreach`, which is what applies `Yield`; no projection operation is added for it.
+A manual `next()` call returns `Item`, pointers and all. Code that must be generic over the yield mode uses `foreach`, which is what applies the yield mode; no projection operation is added for it.
 
 #### Traversal modes
 
@@ -2342,24 +2341,26 @@ foreach (item in items.copied()) { take(move(item)); }  // one clone per element
 
 An adapter or container view — `indexed`, `reversed`, `copied`, `keys`, `values`, `entries` — is an ordinary value, and a header means the same by it as a local holding it: `&` asks that value, never the collection it was made from. `foreach (&v, i in values.indexed())` over a dynamic array is therefore rejected, because `values.indexed()` is a read-only view; `values[:].indexed()` numbers the mutable view. The **root**, the expression the adapters are applied to, is evaluated once, and a temporary root lives for the whole statement (see [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries)). A user-defined method with one of those names keeps lookup precedence and is an ordinary call.
 
-#### Yield descriptors
+#### Yield modes
 
-`Yield` describes what `next` hands back:
+`next`'s `Item`, read against `Element`, is the traversal's **yield mode**:
 
-| `Yield` | `Item` | what a leaf binding receives |
+| `Item` | yield mode | what a leaf binding receives |
 | --- | --- | --- |
-| `Yield_Owned` | the element itself | the element, owned by this iteration |
-| `Yield_Borrowed` | `^T` | a borrowed, immutable `T` |
-| `Yield_Mutable` | `^mut T` | a mutable `T` place |
-| a record of descriptors | a record | each field as its own descriptor says |
+| `Element` itself | owned | the element, owned by this iteration |
+| `^Element` | borrowed | a borrowed, immutable element |
+| `^mut Element` | mutable | a mutable element place |
+| a record with `Element`'s field names, lending at least one | record | each field by its own mode, read against the element's field in the same way |
 
-A single binding receives the element `T` itself for a borrowed or mutable leaf, and `Item` otherwise — for a record `Yield`, the record `next` handed back, pointer fields and all, which differs from `Element` when the record lends a part. The checker validates `Yield` against `Item`'s shape and rejects a record descriptor over a record carrying a custom [`hook(copy)` or `hook(drop)`](#lifecycle-hooks-and-resource-types), the restriction consuming [destructuring](#destructuring) already carries.
+The rows are tried in that order, so an element that is itself a pointer is owned when `next` returns it unchanged. A record that lends no field is a different type rather than a way of handing back the element, and a `next` whose `Item` fits no row cannot serve `foreach`.
 
-**An iterator that declares no `Yield` is owned, with `Item = Element`**, as `Countdown` above is. `Item` names what `next` hands back on any iterator, whether or not it declares one, which is what lets a single `Iterable` cover both modes. The three descriptors are predeclared names, like `Option` and `Result`, because the built-in containers lend and a program iterating an array imports nothing.
+A single binding receives the element `T` itself for a borrowed or mutable leaf, and `Item` otherwise — for a record mode, the record `next` handed back, pointer fields and all. A record mode takes the element apart field by field, so it is rejected over a record carrying a custom [`hook(copy)` or `hook(drop)`](#lifecycle-hooks-and-resource-types), the restriction consuming [destructuring](#destructuring) already carries.
+
+**An iterator whose `next` returns `Option(Element)` is owned**, as `Countdown` above is. `Item` names what `next` hands back on any iterator, which is what lets a single `Iterable` cover both modes.
 
 #### Element bindings
 
-One `foreach` binding receives the whole element, or for a record `Yield` the whole lent record. Two or more destructure a record element by declaration order, and a parenthesized group nests:
+One `foreach` binding receives the whole element, or for a record mode the whole lent record. Two or more destructure a record element by declaration order, and a parenthesized group nests:
 
 ```odin
 foreach (entry in table) {
@@ -2375,13 +2376,13 @@ foreach (key, &value in table) { value += 1; }   // the key stays read-only
 
 This is the general [destructuring](#destructuring) rule applied to the element, so a destructured element must be a record with exactly the same number of directly declared, visible fields. A header extends it with nesting, which `:=` and `=` do not have: a group descends into a field that is itself a record, to any depth; promoted fields are not flattened. Any binding may be `_`.
 
-A leaf is a **binding**, and what it receives is decided by the traversal's [`Yield`](#iteration-protocol):
+A leaf is a **binding**, and what it receives is decided by the traversal's [yield mode](#yield-modes):
 
 - an **owned** leaf binds the value, which the iteration owns until the end of that step and then disposes of exactly once, including on early exit or panic;
 - a **borrowed** leaf binds the element itself, immutably — no copy is made, and a [move-only](#lifecycle-hooks-and-resource-types) element is read like any other;
 - a **mutable** leaf is written `&name` and binds a place, which may be written through.
 
-An `&` leaf must land on a `Yield_Mutable` location, so a map's key, an `indexed()` counter, or a part a record `Yield` lends read-only cannot be taken by reference; an unmarked leaf is immutable. A borrowed or mutable binding names storage the source still owns, so it cannot be moved or dropped — `move(item)` and `drop(item)` on one are the error [a switch over a place](#switch-ownership) already gives. `saved := item` still clones, and so still rejects a move-only element. `&item` on a borrowed binding yields a `^T` carrying the element's own provenance, which is how a pointer to an element is taken.
+An `&` leaf must land on a mutably lent part, so a map's key, an `indexed()` counter, or a part a record `Item` lends read-only cannot be taken by reference; an unmarked leaf is immutable. A borrowed or mutable binding names storage the source still owns, so it cannot be moved or dropped — `move(item)` and `drop(item)` on one are the error [a switch over a place](#switch-ownership) already gives. `saved := item` still clones, and so still rejects a move-only element. `&item` on a borrowed binding yields a `^T` carrying the element's own provenance, which is how a pointer to an element is taken.
 
 A single binding over a record yield receives that record with its pointer fields, read through `entry.value^`; destructuring binds the pointees directly. No transparent borrowed-record type is introduced.
 
@@ -2399,7 +2400,7 @@ Every iterable has one default `Element` and `Iterator`. An adapter selects a di
 
 `indexed()` and `reversed()` work in both [modes](#traversal-modes) and nest where the underlying traversal supplies the required direction. Over a mutable view each is a mutable view, holding its source by value; over a container each is a read-only view. `copied()` turns a borrowed leaf into an owned one, cloning it with the element's own copy hook, allocator selection, and failure behavior — a loop never copies an element on its own. An already-owned leaf passes through uncloned. It rejects a non-copyable borrowed leaf and an `&` leaf.
 
-`indexed()`'s own `Yield` is `(value: <the source's>, index: Yield_Owned)`: it lends whatever half its source lends and owns only the counter it supplies, so numbering a borrowed traversal stays borrowed and a move-only element can be numbered. `indexed()` starts at zero and advances only after `next` succeeds. `source.reversed().indexed()` numbers the reversed traversal from zero. Repeated indexing wraps the previous element in another `{value, index}` record. An indexed view is forward-only: reversing it would require knowing the end index. A reversed view supports reversal again, restoring the original traversal.
+`indexed()`'s own `Item` is `(value: <the source's Item>, index: int)`: it lends whatever its source lends and owns only the counter it supplies, so numbering a borrowed traversal stays borrowed and a move-only element can be numbered. `indexed()` starts at zero and advances only after `next` succeeds. `source.reversed().indexed()` numbers the reversed traversal from zero. Repeated indexing wraps the previous element in another `{value, index}` record. An indexed view is forward-only: reversing it would require knowing the end index. A reversed view supports reversal again, restoring the original traversal.
 
 `reversed()` requires [`Reverse_Iterable`](#standard-interface-catalogue) and a receiver method named `iter_reverse`; under an `&` leaf it requires `iter_mut_reverse` instead. A forward-only iterable is rejected; reversal never buffers or allocates. `iter_reverse` returns the type's declared `Iterator`, and `iter_mut_reverse` its `Mut_Iterator`. A reverse traversal that needs another iterator representation must instead be a separate adapter with its own `Element` and `Iterator`.
 
@@ -2479,7 +2480,7 @@ foreach (item in items) {
 
 The source cannot be mutated or invalidated while the traversal, or a pointer taken from it, is live. A temporary source lasts for the whole `foreach` statement. Packed fields cannot supply element pointers.
 
-For a user-defined iterator declaring `Yield_Borrowed`, the pointer `next` returns must derive from a view the iterator holds, not from the iterator's own storage — the ordinary rule that a view carried by a receiver obeys its own source. An iterator that lends its own cursor is rejected, because advancing it would invalidate an element already handed back.
+For a user-defined iterator whose `next` returns `^Element`, the pointer it returns must derive from a view the iterator holds, not from the iterator's own storage — the ordinary rule that a view carried by a receiver obeys its own source. An iterator that lends its own cursor is rejected, because advancing it would invalidate an element already handed back.
 
 #### By-reference iteration
 
@@ -2493,7 +2494,7 @@ foreach (&value, index in slice.indexed()) { ... }
 
 Mutable fixed arrays, dynamic arrays, `Small_Array`, maps, and user-defined containers implementing `Mutable_Iterable` support it as mutable places. A map lends its key read-only and its value mutably, so an entry is never yielded as a mutable whole. **Mutable views** support it as any value: a `[]mut T`, an `indexed()` or `reversed()` over one, and a user type whose `iter_mut` takes `self` or `self: ^`, since what it lends is in what it views rather than in the variable.
 
-The user-defined protocol has associated `Element` and `Mut_Iterator` types, `iter_mut :: proc(self: inout Self) -> Mut_Iterator` for a container or `iter_mut :: proc(self) -> Mut_Iterator` for a view, and `next :: proc(self: inout Mut_Iterator) -> Option(Item)`. The iterator's `Yield` decides `Item` as for reading; one declaring none lends a `^mut Element`. The source is mutably borrowed for the whole traversal, which is exclusive: it cannot even be read through another path while the loop runs, and a `[]mut T` or other mutable view is [reborrowed](#weakening-and-reborrows) by it.
+The user-defined protocol has associated `Element` and `Mut_Iterator` types, `iter_mut :: proc(self: inout Self) -> Mut_Iterator` for a container or `iter_mut :: proc(self) -> Mut_Iterator` for a view, and `next :: proc(self: inout Mut_Iterator) -> Option(Item)`. The iterator's `next` decides the yield mode as for reading. The source is mutably borrowed for the whole traversal, which is exclusive: it cannot even be read through another path while the loop runs, and a `[]mut T` or other mutable view is [reborrowed](#weakening-and-reborrows) by it.
 
 Each successful `next()` lends one element, and **every loan it hands out — nested pointers and pointers derived from them included — ends before the iterator advances or is dropped.** That holds on every exit, `break` and `continue` among them, and for manual `next()` calls as much as for a header.
 
@@ -2865,7 +2866,7 @@ Growable_Sequence :: interface($Self: type) {
 - `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`. Every copyable type satisfies it, including plain values such as `int`, pointers, and slices, each of which is its own clone. A `move_only struct`, or a type that holds one in a field, does not.
 - `Iterable` describes reading traversal, whose elements a built-in container lends rather than copies.
 - `Mutable_Iterable` describes mutable traversal, met by a container's `iter_mut(self: inout)` and a mutable view's `iter_mut(self)` alike. Generic indexed mutation uses `Mutable_Sequence`.
-- An iterator that declares no `Yield` is owned with `Item = Element`, so `Iterator(Self.Iterator, Self.Iterator.Item)` also accepts it.
+- An owned iterator has `Item = Element`, so `Iterator(Self.Iterator, Self.Iterator.Item)` also accepts it.
 
 Three capabilities have no catalogue interface. Formatting is the `value.format(writer, options)` protocol in `core:fmt`. UTF-8 text is its concrete `string`/`string_view` type. Maps are constrained by their concrete `map[K]V` shape: a map's `Element` is its `(key: K, value: V)` entry, so a map satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet.
 
@@ -6184,7 +6185,7 @@ Terms this specification gives a precise meaning, with the section that defines 
 | **temporary** | A value not bound to a name. It lives until the end of its complete expression, or of the enclosing statement in a `foreach`, `switch`, or `if` header. A temporary transfers where a place would be copied. See [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). |
 | **unfixed constant** | A constant with no fixed type until context converts it, such as the literal `42`. See [Unfixed constants](#unfixed-constants). |
 | **witness** | Immutable evidence that a concrete type satisfies an interface's named slots. One per `(Interface, Concrete, arguments...)` tuple; not a source-level value. See [Runtime polymorphism](#runtime-polymorphism). |
-| **`Yield`** | An iterator's descriptor of what `next` hands back — `Yield_Owned`, `Yield_Borrowed`, `Yield_Mutable`, or a record of them — which fixes `Item` and what a loop binding receives. See [Yield descriptors](#yield-descriptors). |
+| **yield mode** | How an iterator hands back each element — owned, borrowed, mutable, or a record lending some fields — read from `next`'s `Item` against `Element`. It fixes what a loop binding receives. See [Yield modes](#yield-modes). |
 
 ## Library types assumed by this specification
 

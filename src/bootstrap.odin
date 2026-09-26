@@ -4,7 +4,6 @@
 // each rather than two that print the same.
 package lokec
 
-import "core:fmt"
 
 @(private = "file")
 Bootstrap_Kind :: enum {
@@ -41,14 +40,6 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	bind_universe_name(c, universe, "shared", c.shared_symbol)
 	bind_universe_name(c, universe, "weak", c.weak_symbol)
 	bind_universe_name(c, universe, "try_shared", try_shared)
-	for kind in Yield_Kind.Owned ..= Yield_Kind.Mutable {
-		name := fmt.tprintf("Yield_%v", kind)
-		marker := bootstrap_symbol(k, pkg, name, .Type)
-		if sym := symbol_of(c, marker); sym != nil {
-			c.yield_markers[kind] = sym.type
-		}
-		bind_universe_name(c, universe, name, marker)
-	}
 
 	c.alloc_result_type = result_type(k, c.unit_type, TYPE_ALLOCATOR_ERROR)
 }

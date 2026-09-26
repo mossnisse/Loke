@@ -15,7 +15,6 @@ impl Source {
 }
 
 impl Cursor {
-	Yield :: Yield_Mutable;
 	next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; }
 }
 

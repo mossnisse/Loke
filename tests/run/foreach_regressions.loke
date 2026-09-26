@@ -17,7 +17,7 @@ make_source :: proc() -> [2]Source_Item {
 	return [2]Source_Item{Source_Item{7}, Source_Item{9}};
 }
 
-// A one-field record Yield still lends a record, not its sole field.
+// A one-field record lent field by field is still a record, not its sole field.
 Entry :: struct { value: int }
 Entries :: struct { values: []int }
 Entry_Iterator :: struct { values: []int, at: int }
@@ -27,7 +27,6 @@ impl Entries {
 	iter :: proc(self) -> Entry_Iterator { return {self.values, 0}; }
 }
 impl Entry_Iterator {
-	Yield :: struct { value: Yield_Borrowed };
 	next :: proc(self: inout Entry_Iterator) -> Option((value: ^int)) {
 		if (self.at >= self.values.len()) { return .none; }
 		item := &self.values[self.at];

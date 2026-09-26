@@ -1,4 +1,4 @@
-// Iterator yield descriptors and their projected item types.
+// Iterator yield modes, derived from `next`, and their projected item types.
 package lokec
 
 // One derived associated type: `Item` from `next`, `Iterator` from `iter`, and
@@ -19,57 +19,52 @@ Yield_Desc :: struct {
 	fields: []Yield_Desc,
 }
 
-iterator_yield :: proc(k: ^Checker, iterator: Type_Id, span: Span, report := true) -> (Yield_Desc, bool) {
-	member := iteration_member(k, iterator, "Yield")
-	if member == INVALID_SYMBOL { return Yield_Desc{kind = .Owned}, true }
-	written := associated_type_of(k, iterator, "Yield")
-	if written == INVALID_TYPE {
-		if report {
-			errorf(k.c, span, "L0694", "the `Yield` member of `%s` must name a type", type_name(k.c, iterator))
+// design.md "Yield modes": what `next` hands back, read against `Element`. An
+// iterator without a `next` the element explains reads as `fallback`, so the
+// caller's signature check names the `next` it expected.
+iterator_yield :: proc(k: ^Checker, iterator, element: Type_Id, fallback := Yield_Kind.Owned) -> Yield_Desc {
+	next := symbol_of(k.c, iteration_member(k, iterator, "next"))
+	if next != nil && next.result != INVALID_TYPE {
+		if item := option_payload(k.c, next.result); item != INVALID_TYPE {
+			if desc, derived := yield_of(k.c, element, item); derived {
+				return desc
+			}
 		}
-		return {}, false
 	}
-	return yield_desc_of(k, written, span, report)
+	return Yield_Desc{kind = fallback}
 }
 
+// The element itself is owned, a pointer to it lent, and a record of the same
+// field names lent field by field. A record lending nothing is not the element.
 @(private = "file")
-yield_desc_of :: proc(k: ^Checker, written: Type_Id, span: Span, report: bool) -> (Yield_Desc, bool) {
-	if kind, is_marker := yield_marker_kind_of(k, written); is_marker {
-		return Yield_Desc{kind = kind}, true
+yield_of :: proc(c: ^Compiler, element, item: Type_Id) -> (Yield_Desc, bool) {
+	switch item {
+	case element:
+		return Yield_Desc{kind = .Owned}, true
+	case pointer_to(c, element, false):
+		return Yield_Desc{kind = .Borrowed}, true
+	case pointer_to(c, element, true):
+		return Yield_Desc{kind = .Mutable}, true
 	}
-	info := underlying_info(k.c, written)
-	if info == nil || info.kind != .Struct || len(info.fields) == 0 {
-		if report {
-			errorf(
-				k.c, span, "L0694",
-				"`%s` is not a yield descriptor: write `Yield_Owned`, `Yield_Borrowed`, `Yield_Mutable`, or a record of those",
-				type_name(k.c, written),
-			)
-		}
+	from, to := underlying_info(c, element), underlying_info(c, item)
+	if from == nil || to == nil || from.kind != .Struct || to.kind != .Struct ||
+	   len(from.fields) == 0 || len(from.fields) != len(to.fields) {
 		return {}, false
 	}
-	fields := make([]Yield_Desc, len(info.fields), k.c.semantic_allocator)
-	for field_id, index in info.fields {
-		field := symbol_of(k.c, field_id)
-		if field == nil {
+	fields := make([]Yield_Desc, len(from.fields), c.semantic_allocator)
+	for field_id, index in from.fields {
+		have, want := symbol_of(c, field_id), symbol_of(c, to.fields[index])
+		if have == nil || want == nil || have.name != want.name {
 			return {}, false
 		}
-		desc, ok := yield_desc_of(k, field.type, span, report)
-		if !ok {
+		derived: bool
+		fields[index], derived = yield_of(c, have.type, want.type)
+		if !derived {
 			return {}, false
 		}
-		fields[index] = desc
 	}
-	return Yield_Desc{kind = .Record, fields = fields}, true
-}
-
-yield_marker_kind_of :: proc(k: ^Checker, type: Type_Id) -> (Yield_Kind, bool) {
-	for marker, index in k.c.yield_markers {
-		if marker != INVALID_TYPE && marker == type {
-			return Yield_Kind(index), true
-		}
-	}
-	return .Owned, false
+	desc := Yield_Desc{kind = .Record, fields = fields}
+	return desc, !yield_is_owned(desc)
 }
 
 yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: Span, report := true) -> Type_Id {
@@ -87,8 +82,8 @@ yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: S
 		if report {
 			errorf(
 				k.c, span, "L0694",
-				"a record `Yield` of %d fields needs a record element with %d fields, and `%s` is not one",
-				len(desc.fields), len(desc.fields), type_name(k.c, element),
+				"`next` lends %d fields, and `%s` is not a record of %d fields",
+				len(desc.fields), type_name(k.c, element), len(desc.fields),
 			)
 		}
 		return INVALID_TYPE
@@ -99,7 +94,7 @@ yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: S
 		if report {
 			errorf(
 				k.c, span, "L0694",
-				"`%s` has a custom `hook(copy)` or `hook(drop)`, so a record `Yield` cannot describe it field by field",
+				"`%s` has a custom `hook(copy)` or `hook(drop)`, so `next` cannot lend it field by field",
 				type_name(k.c, element),
 			)
 		}
@@ -130,30 +125,6 @@ yield_is_owned :: proc(desc: Yield_Desc) -> bool {
 		}
 	}
 	return true
-}
-
-// Rebuild a checked descriptor as a source-level type.
-yield_desc_type :: proc(c: ^Compiler, element: Type_Id, desc: Yield_Desc) -> Type_Id {
-	if desc.kind != .Record {
-		return c.yield_markers[desc.kind]
-	}
-	info := underlying_info(c, element)
-	if info == nil || info.kind != .Struct || len(info.fields) != len(desc.fields) {
-		return INVALID_TYPE
-	}
-	fields := make([]Anon_Record_Field, len(desc.fields), c.semantic_allocator)
-	for field_id, index in info.fields {
-		field := symbol_of(c, field_id)
-		if field == nil {
-			return INVALID_TYPE
-		}
-		projected := yield_desc_type(c, field.type, desc.fields[index])
-		if projected == INVALID_TYPE {
-			return INVALID_TYPE
-		}
-		fields[index] = {name = field.name, type = projected}
-	}
-	return anon_record_type(c, fields)
 }
 
 ensure_item_member :: proc(k: ^Checker, type: Type_Id) {

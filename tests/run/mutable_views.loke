@@ -5,7 +5,7 @@ import "base:interfaces";
 
 // design.md "By-reference iteration": a mutable view is iterated by reference as
 // any value of it, and an adapter over one is a mutable view too. `&` reads the
-// mutable iterator's `Yield`, so a record can lend some parts mutably.
+// mutable iterator's `next`, so a record can lend some parts mutably.
 
 Entry :: (key: int, value: int);
 Table :: struct { keys: []int, values: []mut int }
@@ -20,7 +20,6 @@ impl Table {
 }
 
 impl Table_Cursor {
-	Yield :: (key: Yield_Borrowed, value: Yield_Mutable);
 	next :: proc(self: inout Table_Cursor) -> Option((key: ^int, value: ^mut int)) {
 		if (self.at >= self.keys.len()) { return .none; }
 		at := self.at;
@@ -42,7 +41,6 @@ impl Row {
 }
 
 impl Row_Cursor {
-	Yield :: Yield_Mutable;
 	next :: proc(self: inout Row_Cursor) -> Option(^mut int) {
 		if (self.at >= self.cells.len()) { return .none; }
 		value := &mut self.cells[self.at];

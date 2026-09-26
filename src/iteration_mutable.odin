@@ -30,7 +30,7 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 		lent := Yield_Desc{kind = .Record, fields = parts}
 		item := yield_item_type(k, entry, lent, no_span(), report = false)
 		next := adapter_proc(k, "next", .Map_Next, iterator, .Inout, option_type(k, item))
-		add_members(c, iterator, []Symbol_Id{next, new_associated_type(c, "Yield", yield_desc_type(c, entry, lent), iterator)})
+		add_members(c, iterator, []Symbol_Id{next})
 		iter := adapter_proc(k, "iter_mut", .Map_Iter, subject, .Inout, iterator)
 		add_members(c, subject, []Symbol_Id{new_associated_type(c, "Mut_Iterator", iterator, subject), iter})
 		return
@@ -85,8 +85,7 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 		}
 		iter = reverse
 	}
-	yield, yield_ok := mutable_iterator_yield(k, iterator, expr_span(s.iterable))
-	if !yield_ok { return FLOWS }
+	yield := iterator_yield(k, iterator, element, .Mutable)
 	item := yield_item_type(k, element, yield, expr_span(s.iterable))
 	if item == INVALID_TYPE { return FLOWS }
 	next := iteration_member(k, iterator, "next")
@@ -124,14 +123,6 @@ mutable_iteration_receiver :: proc(k: ^Checker, member: Symbol_Id, subject, iter
 		}
 	}
 	return .Inout, false
-}
-
-// A mutable iterator that declares no `Yield` lends each `^mut Element`.
-mutable_iterator_yield :: proc(k: ^Checker, iterator: Type_Id, span: Span) -> (Yield_Desc, bool) {
-	if iteration_member(k, iterator, "Yield") == INVALID_SYMBOL {
-		return Yield_Desc{kind = .Mutable}, true
-	}
-	return iterator_yield(k, iterator, span)
 }
 
 // A read view over a container, stored or written in the header, says how to
