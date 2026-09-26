@@ -1,0 +1,41 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// design.md "`inout` results": `&mut` of an `inout` result borrows what the
+// call's `inout` arguments name, not a temporary. A user indexing operator
+// reads its index operands before it borrows its receiver, as built-in
+// indexing does (design.md "Indexing and slicing").
+
+first :: proc(ys: inout [4]int) -> inout int { return inout ys[0]; }
+
+V2 :: struct { x, y: int }
+impl V2 {
+	add :: operator(+) proc(a, b: V2) -> V2 { return V2{a.x + b.x, a.y + b.y}; }
+	neg :: operator(-) proc(a: V2) -> V2 { return V2{-a.x, -a.y}; }
+	add_to :: operator(+=) proc(a: inout V2, b: V2) { a.x += b.x; a.y += b.y; }
+}
+
+main :: proc() {
+	values := [4]int{1, 2, 3, 4};
+	pointer := &mut first(inout values);
+	pointer^ = 99;
+	fmt.println(values[0]);
+
+	sa: container.Small_Array(int, 4) = {};
+	sa.append(1);
+	sa.append(2);
+	sa[sa.len() - 1] = 5;
+	last := &mut sa[sa.len() - 1];
+	last^ += 1;
+	whole: []mut int = sa[:];
+	whole[0] = 7;
+	part := sa[0:2];
+	fmt.println(part[0], part[1]);
+
+	a := V2{1, 2};
+	b := a + -a;
+	b += a;
+	fmt.println(b.x, b.y);
+}

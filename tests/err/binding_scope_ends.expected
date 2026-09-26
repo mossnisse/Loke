@@ -1,0 +1,12 @@
+L0513
+@18:14
+this slice is used after `v`, the local it borrows, has ended
+L0513
+@24:14
+this pointer is used after `i`, the local it borrows, has ended
+L0513
+@30:14
+this iterator is used after this temporary has ended
+L0513
+@38:14
+this iterator is used after this temporary has ended

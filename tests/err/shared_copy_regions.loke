@@ -1,0 +1,106 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Allocator regions and region provenance": a copy of a string
+// shares its source's allocation, so it keeps the source's region wherever it
+// is copied from: a parameter, a view, a pointer, a loop element, or a record.
+
+g: string;
+
+same :: proc(x: string) -> string { return x; }
+first :: proc(xs: []string) -> string { return xs[0]; }
+
+H :: struct { s: string }
+
+from_a_parameter :: proc() {
+	arena := mem.Arena.init();
+	s0 := fmt.to_string(arena.allocator(), "hello", 42);
+	s := same(s0);
+	drop(s0);
+	free_all(arena.allocator());
+	fmt.println(s);
+}
+
+through_a_view :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic]string = {};
+	outer.append(fmt.to_string(arena.allocator(), "hello", 42));
+	v := outer[:];
+	s := v[0];
+	drop(outer);
+	free_all(arena.allocator());
+	fmt.println(s);
+}
+
+through_a_pointer :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic]string = {};
+	outer.append(fmt.to_string(arena.allocator(), "hello", 42));
+	p := &outer;
+	s := p[0];
+	drop(outer);
+	free_all(arena.allocator());
+	fmt.println(s);
+}
+
+through_a_view_parameter :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic]string = {};
+	outer.append(fmt.to_string(arena.allocator(), "hello", 42));
+	s := first(outer[:]);
+	drop(outer);
+	free_all(arena.allocator());
+	fmt.println(s);
+}
+
+out_of_a_loop :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic]string = {};
+	outer.append(fmt.to_string(arena.allocator(), "hello", 42));
+	keep := "";
+	foreach (s in outer) { keep = s; }
+	drop(outer);
+	free_all(arena.allocator());
+	fmt.println(keep);
+}
+
+record_copy :: proc() {
+	arena := mem.Arena.init();
+	h := H{fmt.to_string(arena.allocator(), "hello", 42)};
+	k := h;
+	drop(h);
+	free_all(arena.allocator());
+	fmt.println(k.s);
+}
+
+into_a_global :: proc() {
+	arena := mem.Arena.init();
+	s := fmt.to_string(arena.allocator(), "hello", 42);
+	g = s;
+}
+
+into_the_caller :: proc(h: inout H) {
+	arena := mem.Arena.init();
+	s := fmt.to_string(arena.allocator(), "hello", 42);
+	h.s = s;
+}
+
+// The caller may have passed a string backed by an arena it resets.
+store_a_parameter :: proc(name: string) {
+	g = name;
+}
+
+spread_into_a_container :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic]string = {};
+	outer.append(fmt.to_string(arena.allocator(), "hello", 42));
+	copies: [dynamic]string = {};
+	copies.append(..outer[:]);
+	drop(outer);
+	free_all(arena.allocator());
+	fmt.println(copies[0]);
+}
+
+main :: proc() {}

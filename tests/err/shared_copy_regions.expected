@@ -1,0 +1,30 @@
+L0537
+@22:2
+this reset would end the region backing `s`, which is still live here
+L0537
+@33:2
+this reset would end the region backing `s`, which is still live here
+L0537
+@44:2
+this reset would end the region backing `s`, which is still live here
+L0537
+@54:2
+this reset would end the region backing `s`, which is still live here
+L0537
+@65:2
+this reset would end the region backing `keep`, which is still live here
+L0537
+@74:2
+this reset would end the region backing `k`, which is still live here
+L0536
+@81:2
+`g` is backed by an allocator region created in this procedure, so it cannot be stored in file-scope storage, which outlives that region
+L0536
+@87:2
+`h` is backed by an allocator region created in this procedure, so it cannot be stored in storage the caller owns, which outlives that region
+L0536
+@92:2
+`g` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage, which outlives that region
+L0537
+@102:2
+this reset would end the region backing `copies`, which is still live here

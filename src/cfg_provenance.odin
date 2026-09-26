@@ -96,6 +96,8 @@ Prov_Entry_Def :: struct {
 // carries.
 Prov_Call_Result :: struct {
 	loans:          []int,
+	// An `inout` result's place: what the `inout` arguments borrow.
+	place:          []int,
 	region:         Region_Set,
 	region_content: []Prov_Region_Content,
 }
@@ -1083,10 +1085,11 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			if sym == nil {
 				continue
 			}
-			// design.md "Allocator regions and region provenance": an owner moved in
-			// keeps the region of the argument, which the caller substitutes.
-			if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR ||
-			   sym.mode == .Move && type_is_managed(graph.k.c, sym.type) {
+			// design.md "Allocator regions and region provenance": an owner moved in,
+			// a copy of one passed in, and what a carrier passed in views keep the
+			// argument's region, which the caller substitutes.
+			if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR || type_is_managed(graph.k.c, sym.type) ||
+			   type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) {
 				set := prov_empty_region(graph)
 				set.params[index] = true
 				graph.region_of[id] = set
@@ -1272,11 +1275,14 @@ region_weight :: proc(set: Region_Set) -> int {
 	return weight
 }
 
-// Every region dependency of a symbol, including its field facts.
+// Every region dependency of a symbol, including its field facts. A carrier's
+// own entry is what it views, which only a read through it reaches.
 @(private)
-prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_Set {
+prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false) -> Region_Set {
 	out := prov_empty_region(graph)
-	if direct, found := graph.region_of[id]; found {
+	sym := symbol_of(graph.k.c, id)
+	carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type)
+	if direct, found := graph.region_of[id]; found && (viewed || !carrier) {
 		region_merge(&out, direct)
 	}
 	for content in graph.region_content[id] {
@@ -1580,12 +1586,23 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		region_merge(&out, prov_region_of(graph, v.fallback))
 		return out
 	case ^Expr_Selector, ^Expr_Index:
+		if call := prov_call_node(graph, e); call != nil {
+			return prov_call_node_region(graph, call)
+		}
 		if root, path, ok := prov_place_of(graph, e); ok {
 			return prov_region_content_at(graph, root, path)
+		}
+		return prov_read_region(graph, e)
+	case ^Expr_Binary, ^Expr_Unary, ^Expr_Slice:
+		if call := prov_call_node(graph, e); call != nil {
+			return prov_call_node_region(graph, call)
 		}
 	case ^Expr_Postfix:
 		if v.op == .Or_Return {
 			return prov_region_of(graph, v.operand)
+		}
+		if v.op == .Caret {
+			return prov_viewed_region(graph, v.operand)
 		}
 	case ^Expr_Composite:
 		out := prov_empty_region(graph)
@@ -1605,10 +1622,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		if set, ok := prov_handle_region(graph, v); ok {
 			return set
 		}
-		if result, found := graph.call_results[v]; found {
-			return result.region
-		}
-		return prov_call_region(graph, v, v.type)
+		return prov_call_node_region(graph, v)
 	}
 	if prov_carries_allocator(c, expr_base(e) == nil ? INVALID_TYPE : expr_base(e).type) {
 		set := prov_empty_region(graph)
@@ -1616,6 +1630,82 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		return set
 	}
 	return Region_Set{}
+}
+
+@(private = "file")
+prov_call_node_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Region_Set {
+	if result, found := graph.call_results[v]; found {
+		return result.region
+	}
+	return prov_call_region(graph, v, v.type)
+}
+
+// design.md "Allocator regions and region provenance": a copy of a managed
+// value shares its source's allocation, since a copy that allocates is written
+// as a clone, so it keeps the source's region. What a carrier views is backed
+// by the regions of the owners it was taken from: a view or pointer local takes
+// them from each value it is given, and a carrier parameter from its argument.
+@(private = "file")
+prov_storage_region :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
+	c := graph.k.c
+	if base := expr_base(e); base != nil && type_is_carrier(c, base.type) && !type_is_region_provider(c, base.type) {
+		return prov_viewed_region(graph, e)
+	}
+	return prov_region_of(graph, e)
+}
+
+@(private = "file")
+prov_viewed_region :: proc(graph: ^Flow_Graph, carrier: Expr) -> Region_Set {
+	#partial switch v in carrier {
+	case ^Expr_Ident:
+		return prov_region_for_symbol(graph, v.symbol, viewed = true)
+	case ^Expr_Unary:
+		if v.op == .Amp {
+			return prov_storage_region(graph, v.operand)
+		}
+	case ^Expr_Slice:
+		if v.resolution.kind != .User_Operator && v.operand != nil {
+			return prov_storage_region(graph, v.operand)
+		}
+	case ^Expr_Move:
+		return prov_viewed_region(graph, v.value)
+	case ^Expr_Selector, ^Expr_Index:
+		if _, _, ok := prov_place_of(graph, carrier); !ok {
+			return prov_read_region(graph, carrier)
+		}
+	}
+	return Region_Set{}
+}
+
+// A value read out through a carrier (`view[0]`, `p.field`, `p^`) is in what
+// the carrier views; a part of a value is in that value's regions.
+@(private = "file")
+prov_read_region :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
+	operand: Expr
+	#partial switch v in e {
+	case ^Expr_Index:
+		operand = v.operand
+	case ^Expr_Selector:
+		if v.resolution.kind == .Field {
+			operand = v.operand
+		}
+	}
+	if operand == nil {
+		return Region_Set{}
+	}
+	return prov_storage_region(graph, operand)
+}
+
+// A loop element is in the storage of what the loop iterates.
+@(private)
+prov_bind_element_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable: Expr) {
+	sym := symbol_of(graph.k.c, id)
+	if sym == nil || !(type_is_managed(graph.k.c, sym.type) || type_is_carrier(graph.k.c, sym.type)) {
+		return
+	}
+	if set := prov_storage_region(graph, iterable); !region_is_empty(set) {
+		prov_merge_region_of(graph, id, set)
+	}
 }
 
 // The region an `arena.allocator()` names; unknown unless the receiver is a
@@ -1718,7 +1808,7 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, summary: Regio
 	out := prov_empty_region(graph)
 	for wanted, index in summary.params {
 		if wanted && index < len(v.bound) && v.bound[index] != nil {
-			region_merge(&out, prov_region_of(graph, v.bound[index]))
+			region_merge(&out, prov_storage_region(graph, v.bound[index]))
 		}
 	}
 	out.default ||= summary.default
@@ -1955,12 +2045,6 @@ prov_carrier_slots :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 // assigned to `static`, `thread_local`, or file-scope storage (design.md).
 @(private = "file")
 prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
-	// An implicit copy of a place never allocates (design.md "Value semantics and
-	// the ownership rule"), so only a move, a call result, or a literal carries a
-	// region in.
-	if type_is_managed(graph.k.c, expr_base(value).type) && expression_is_borrowed_place(value) {
-		return
-	}
 	prov_region_escape_set(graph, target, prov_result_region(graph, value))
 }
 
@@ -2035,8 +2119,7 @@ prov_store_region :: proc(graph: ^Flow_Graph, destination: Expr, value: Expr, el
 	if value == nil || !type_is_managed(graph.k.c, expr_base(value).type) {
 		return
 	}
-	copied := expression_is_borrowed_place(value)
-	prov_store_region_set(graph, destination, prov_result_region(graph, value), prov_owner_name(graph, value), element, !copied)
+	prov_store_region_set(graph, destination, prov_result_region(graph, value), prov_owner_name(graph, value), element)
 }
 
 @(private = "file")
@@ -2046,15 +2129,12 @@ prov_store_region_set :: proc(
 	region: Region_Set,
 	owner: string,
 	element := false,
-	escapes := true,
 ) {
 	if region_is_empty(region) {
 		return
 	}
 	if root, path, ok := prov_place_of(graph, destination); ok {
-		if escapes {
-			prov_region_escape_set(graph, destination, region)
-		}
+		prov_region_escape_set(graph, destination, region)
 		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region)
 		return
 	}
@@ -2533,6 +2613,9 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 		if carriers, _, through := prov_read_through_carrier(graph, operand); through {
 			return carriers
 		}
+		if place, is_inout := prov_inout_result_place(graph, operand); is_inout {
+			return place
+		}
 		loans := walk_flow_expr(graph, operand)
 		if len(loans) > 0 || !prov_expr_is_temporary(operand) {
 			return loans
@@ -2547,27 +2630,8 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 
 @(private)
 prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
-	if len(v.bound) > 0 {
-		// A selected `operator([:])` result borrows the receiver unless its result
-		// type is owning (design.md).
-		receiver_loans := walk_flow_expr(graph, v.bound[0])
-		borrowed := receiver_loans
-		for index in 1 ..< len(v.bound) {
-			if v.bound[index] != nil {
-				borrowed = prov_join(graph, borrowed, walk_flow_expr(graph, v.bound[index]))
-			}
-		}
-		prov_operator_effects(graph, v.resolution, v.span, borrowed)
-		if !type_is_carrier(graph.k.c, v.type) {
-			return nil // an owning result carries no borrow edge at all
-		}
-		if len(receiver_loans) > 0 {
-			return receiver_loans
-		}
-		if root, path, ok := prov_place_of(graph, v.bound[0]); ok {
-			return prov_borrow(graph, root, path, slice_is_mutable(graph.k.c, v.type), v.span, "slice")
-		}
-		return nil
+	if v.resolution.kind == .User_Operator {
+		return prov_call(graph, prov_operator_call(graph, v))
 	}
 	mutable := slice_is_mutable(graph.k.c, v.type)
 	// An array, string, or dynamic array is sliced out of its own root (design.md
@@ -2641,11 +2705,16 @@ prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> [
 	if type := expr_base(iterable).type; carrier_is_mutable(graph.k.c, type) && !type_is_region_provider(graph.k.c, type) {
 		return iterated
 	}
+	span := expr_span(s.iterable)
 	root, path, ok := prov_place_of(graph, iterable)
 	if !ok {
+		// design.md "Temporary roots": a temporary owner lives for the whole
+		// statement and lends its elements like any other source.
+		if (s.borrows || mutable) && prov_expr_is_temporary(iterable) && !type_is_carrier(graph.k.c, expr_base(iterable).type) {
+			return prov_join(graph, iterated, prov_borrow(graph, prov_temp_root(graph, span), nil, mutable, span, "iterator"))
+		}
 		return iterated
 	}
-	span := expr_span(s.iterable)
 	prov_access(graph, root, path, mutable ? .Write : .Read, span)
 	return prov_join(graph, iterated, prov_borrow(graph, root, path, mutable, span, "iterator"))
 }
@@ -2742,7 +2811,9 @@ prov_declare_region :: proc(
 	projected: int = -1,
 ) {
 	initializer_region := Region_Set{}
-	if initializer != nil {
+	if initializer != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) {
+		initializer_region = prov_storage_region(graph, initializer)
+	} else if initializer != nil {
 		if projected >= 0 {
 			initializer_region = prov_result_region_at(graph, initializer, {proj_field(projected)})
 		} else {
@@ -2770,7 +2841,7 @@ prov_declare_region :: proc(
 		append(&graph.owners_in_scope, id)
 		return
 	}
-	if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR {
+	if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR || type_is_carrier(graph.k.c, sym.type) {
 		if initializer != nil {
 			prov_merge_region_of(graph, id, initializer_region)
 		}
@@ -2845,7 +2916,11 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			prov_region_escape(graph, target, value)
 		}
 		value_region := Region_Set{}
-		if value != nil {
+		target_type := expr_base(target).type
+		if value != nil && !s.destructure.active && type_is_carrier(graph.k.c, target_type) &&
+		   !type_is_region_provider(graph.k.c, target_type) {
+			value_region = prov_storage_region(graph, value)
+		} else if value != nil {
 			if s.destructure.active {
 				value_region = prov_result_region_at(graph, value, {proj_field(index)})
 			} else {
@@ -2864,7 +2939,6 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			}
 		}
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
-			target_type := expr_base(target).type
 			if value != nil && type_is_region_provider(graph.k.c, target_type) {
 				// A provider's own region stays its token; the new value's parent joins
 				// the parents it depends on.
@@ -2872,7 +2946,8 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				region_merge(&parent, value_region)
 				graph.provider_parents[ident.symbol] = parent
 			} else if value != nil &&
-			   (type_underlying(graph.k.c, target_type) == TYPE_ALLOCATOR || type_is_managed(graph.k.c, target_type)) {
+			   (type_underlying(graph.k.c, target_type) == TYPE_ALLOCATOR || type_is_managed(graph.k.c, target_type) ||
+			    type_is_carrier(graph.k.c, target_type)) {
 				prov_merge_region_of(graph, ident.symbol, value_region)
 			}
 			prov_retain_escape(graph, target, sources, expr_span(target))
@@ -2896,11 +2971,19 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		prov_retain_escape(graph, target, sources, expr_span(target))
 		root, path, place_ok := prov_place_of(graph, target)
 		if !place_ok && s.op == .Assign {
-			if through := prov_retain_through_carrier(graph, target); len(through) > 0 {
+			// A store through a carrier, or into what an `inout` result names.
+			through := prov_retain_through_carrier(graph, target)
+			walked := false
+			if len(through) == 0 {
+				through, walked = prov_inout_result_place(graph, target)
+			}
+			if len(through) > 0 || walked {
 				prov_store_region(graph, target, value)
-				prov_walk_subscripts(graph, target, true)
+				if !walked {
+					prov_walk_subscripts(graph, target, true)
+				}
 				// design.md "Weakening and reborrows".
-				if len(sources) > 0 {
+				if len(sources) > 0 && len(through) > 0 {
 					prov_reborrow(graph, sources, expr_base(target).type)
 					prov_emit(graph, Prov_Event {
 						kind    = .Publish,
@@ -2930,6 +3013,85 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		}
 		walk_flow_expr(graph, target)
 	}
+}
+
+// design.md "Operator declarations": a user operator is a call to the procedure
+// it resolved to, its operands bound in parameter order. Each operator node keeps
+// one call node, so a later region or place query finds that call's result.
+@(private)
+prov_operator_call :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
+	if call, found := graph.operator_calls[rawptr(expr_base(e))]; found {
+		return call
+	}
+	bound: []Expr
+	indexes := false
+	#partial switch v in e {
+	case ^Expr_Index:
+		bound, indexes = v.bound, true
+	case ^Expr_Slice:
+		bound, indexes = v.bound, true
+	case ^Expr_Binary:
+		bound = make([]Expr, 2, graph.alloc)
+		bound[0], bound[1] = v.lhs, v.rhs
+	case ^Expr_Unary:
+		bound = make([]Expr, 1, graph.alloc)
+		bound[0] = v.operand
+	}
+	base := expr_base(e)
+	call := prov_synthetic_call(graph, base.resolution.chosen_overload, bound, base.type, base.span, indexes)
+	graph.operator_calls[rawptr(base)] = call
+	return call
+}
+
+// A call to `callee` that no `Expr_Call` spells: a user operator, a compound
+// assignment's, or `operator([]=)`. An indexing receiver is borrowed after its
+// operands, as a built-in container is, so `x[x.len() - 1]` and the `len()` an
+// omitted endpoint reads are not uses under the receiver's own borrow; an
+// operand's borrow that outlives it still conflicts at the call.
+@(private)
+prov_synthetic_call :: proc(
+	graph: ^Flow_Graph, callee: Symbol_Id, bound: []Expr, type: Type_Id, span: Span, indexes := false,
+) -> ^Expr_Call {
+	call := new(Expr_Call, graph.alloc)
+	call.span = span
+	call.type = type
+	call.bound = bound
+	call.resolution = Resolution{kind = .User_Operator, symbol = callee, chosen_overload = callee}
+	call.operation = Call_Procedure{}
+	if indexes && len(bound) > 1 {
+		call.bound_order = make([]int, len(bound), graph.alloc)
+		for index in 1 ..< len(bound) {
+			call.bound_order[index - 1] = index
+		}
+		call.bound_order[len(bound) - 1] = 0
+	}
+	return call
+}
+
+// The call an expression makes, if it is one: a spelled call or a user operator.
+@(private = "file")
+prov_call_node :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
+	#partial switch v in e {
+	case ^Expr_Call:
+		return v
+	case ^Expr_Index, ^Expr_Slice, ^Expr_Binary, ^Expr_Unary:
+		if expr_base(e).resolution.kind == .User_Operator {
+			return prov_operator_call(graph, e)
+		}
+	}
+	return nil
+}
+
+// design.md "`inout` results": walks a call whose result is `inout` and returns
+// the place that result names, which its `inout` arguments borrow.
+@(private = "file")
+prov_inout_result_place :: proc(graph: ^Flow_Graph, e: Expr) -> ([]int, bool) {
+	call := prov_call_node(graph, e)
+	if call == nil || !prov_result_is_inout(graph, call) {
+		return nil, false
+	}
+	walk_flow_expr(graph, e)
+	return graph.call_results[call].place, true
 }
 
 // The procedure type a call goes through: the chosen overload's, or the callee
@@ -3212,6 +3374,15 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			actuals[index] = prov_consume(graph, argument, expr_span(argument), "moved")
 			borrowed = prov_join(graph, borrowed, actuals[index])
 			continue
+		}
+		// design.md "`inout` results": an `inout` call result passed on `inout`
+		// is the place its own `inout` arguments borrow.
+		if prov_argument_is_inout(graph, v, index) {
+			if place, is_inout := prov_inout_result_place(graph, argument); is_inout {
+				actuals[index] = place
+				borrowed = prov_join(graph, borrowed, place)
+				continue
+			}
 		}
 		if index == 0 && receiver == .Inout {
 			// An `inout` receiver invalidates borrows of it (design.md), and its held
@@ -3595,7 +3766,18 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	if info == nil {
 		return
 	}
-	// A spread copies its elements, and a copy never allocates.
+	// A spread's elements are copied in, keeping the regions they are in.
+	if op == .Append && type_is_managed(graph.k.c, info.element) {
+		spreads := v.variadic_spreads
+		if v.variadic_forwards {
+			spreads = v.bound[v.variadic_slot:][:1]
+		}
+		for spread in spreads {
+			prov_store_region_set(
+				graph, v.bound[0], prov_storage_region(graph, spread), prov_owner_name(graph, spread), element = true,
+			)
+		}
+	}
 	stored_values: []Expr
 	#partial switch op {
 	case .Append:
@@ -3737,6 +3919,9 @@ prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]
 		region         = prov_call_region(graph, v, v.type),
 		region_content = prov_call_region_content(graph, v),
 	}
+	if prov_result_is_inout(graph, v) {
+		result.place = prov_inout_actuals(graph, v, actuals)
+	}
 	graph.call_results[v] = result
 	return result.loans
 }
@@ -3771,12 +3956,7 @@ prov_call_result :: proc(
 	c := graph.k.c
 	// design.md "`inout` results": the result aliases the `inout` arguments.
 	if prov_result_is_inout(graph, v) {
-		out: []int
-		for slots, index in actuals {
-			if prov_argument_is_inout(graph, v, index) {
-				out = prov_join(graph, out, slots)
-			}
-		}
+		out := prov_inout_actuals(graph, v, actuals)
 		return type_is_carrier(c, result_type) ? out : prov_value_content(graph, out, result_type, v.span)
 	}
 	// design.md "Shared ownership": a borrow from a handle derives from it. The
@@ -3827,6 +4007,17 @@ prov_call_result :: proc(
 		}
 	}
 	return type_is_carrier(c, result_type) ? out : prov_value_content(graph, out, result_type, v.span)
+}
+
+@(private = "file")
+prov_inout_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) -> []int {
+	out: []int
+	for slots, index in actuals {
+		if prov_argument_is_inout(graph, v, index) {
+			out = prov_join(graph, out, slots)
+		}
+	}
+	return out
 }
 
 @(private = "file")
@@ -3958,8 +4149,10 @@ prov_synthetic_borrow :: proc(graph: ^Flow_Graph, v: ^Expr_Call, kind: Root_Kind
 @(private = "file")
 prov_result_reads_through_receiver :: proc(c: ^Compiler, v: ^Expr_Call, index: int) -> bool {
 	// A mutable yield keeps naming the receiver (design.md "By-reference
-	// iteration").
-	if type_carries_borrow(c, v.type).mutable {
+	// iteration"); a mutable slice out of `operator([:])` reborrows the view
+	// it reads through instead (design.md "Indexing and slicing").
+	sym := symbol_of(c, v.resolution.chosen_overload)
+	if type_carries_borrow(c, v.type).mutable && (sym == nil || sym.operator != "[:]") {
 		return false
 	}
 	summary, found := result_summary(c, call_contract_declaration(c, v))

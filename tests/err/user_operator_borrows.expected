@@ -1,0 +1,18 @@
+L0512
+@36:2
+`g` cannot be modified here: a read-only slice of it is still in use
+L0512
+@43:4
+`g` cannot be modified here: a read-only slice of it is still in use
+L0512
+@50:7
+`l` cannot be modified here: a read-only slice of it is still in use
+L0512
+@58:2
+`sa` cannot be modified here: a mutable borrow of it is still in use
+L0512
+@66:21
+`sa` cannot be modified here: a read-only borrow of it is still in use
+L0511
+@81:32
+this read of `xs` is not compatible with the mutable borrow of it that is still in use

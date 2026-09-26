@@ -1,0 +1,41 @@
+package main;
+
+import "core:fmt";
+
+// A binding that owns its value is a local of its case or loop step, and a
+// temporary a loop lends from ends with the loop (design.md "Switch
+// ownership", "Temporary roots").
+
+U :: union { a: [dynamic]int, b: f64 }
+make_u :: proc() -> U { return U.a([dynamic]int{1}); }
+
+consumed_case_binding :: proc() {
+	outer: []int = nil;
+	switch (make_u()) {
+	case .a(v): outer = v[:];
+	case .b(f):
+	}
+	fmt.println(outer[0]);
+}
+
+copied_loop_element :: proc() {
+	q: ^int = nil;
+	foreach (i in 0 ..< 3) { q = &i; }
+	fmt.println(q^);
+}
+
+lent_from_a_temporary :: proc() {
+	p: ^int = nil;
+	foreach (x in [dynamic]int{1, 2, 3}) { p = &x; }
+	fmt.println(p^);
+}
+
+make_list :: proc() -> [dynamic]string { return [dynamic]string{"ab", "cd"}; }
+
+view_of_a_temporary_element :: proc() {
+	keep: string_view = "";
+	foreach (s in make_list()) { keep = s; }
+	fmt.println(keep);
+}
+
+main :: proc() {}

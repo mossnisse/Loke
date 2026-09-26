@@ -1227,6 +1227,10 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 		}
 		set := prov_region_for_symbol(graph, id)
 		set.locals, set.crowded = 0, false
+		// What the argument already was says nothing new about it.
+		if index < len(set.params) {
+			set.params[index] = false
+		}
 		changed = merge_region_provenance(&written[index], set) || changed
 	}
 	return changed

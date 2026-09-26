@@ -183,27 +183,6 @@ warn_thread_races :: proc(c: ^Compiler) {
 	}
 }
 
-// A user operator is a call too, though it has no Expr_Call node.
-prov_operator_effects :: proc(
-	graph: ^Flow_Graph, resolution: Resolution, span: Span, borrowed: []int = nil,
-) {
-	if resolution.kind == .User_Operator {
-		prov_direct_effects(graph, resolution.chosen_overload, span, borrowed)
-	}
-}
-
-prov_direct_effects :: proc(
-	graph: ^Flow_Graph, callee: Symbol_Id, span: Span, borrowed: []int = nil,
-) {
-	if callee == INVALID_SYMBOL {
-		return
-	}
-	prov_effect_call(graph, Effect_Call{callee = callee}, span)
-	if len(borrowed) > 0 {
-		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = span})
-	}
-}
-
 @(private = "file")
 prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span) {
 	c := graph.k.c

@@ -264,7 +264,14 @@ panic unwind consume the same settled cleanup facts.
   pointer-like result, or aggregate carrier borrows and checks exclusivity,
   invalidation, retention, and escape;
 - region provenance follows allocator identity through owners and borrows and
-  proves that values do not escape or survive an allocator reset.
+  proves that values do not escape or survive an allocator reset. A copy of an
+  owner shares its source's storage and keeps its region; a carrier stands for
+  the regions of what it views, so a copy read through it keeps those.
+
+A user operator, a compound assignment's overload, and `operator([]=)` have no
+`Expr_Call`; the provenance walk treats each as a synthesized call to the
+procedure it resolved to, so it borrows, invalidates, and summarizes like any
+other call.
 
 Procedure result summaries, the regions each body may leave in the arguments
 it writes, and escape levels carry these facts through direct, generic, and

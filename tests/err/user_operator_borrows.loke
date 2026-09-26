@@ -1,0 +1,84 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// design.md "Operator declarations": a user operator is a call to the
+// procedure it names. An `inout` receiver invalidates borrows of it (design.md
+// "Places and overlap"), and an `inout` result borrows what its `inout`
+// arguments name (design.md "`inout` results").
+
+Vec :: struct { cells: [dynamic]int }
+impl Vec {
+	at :: operator([]) proc(self: inout Vec, i: int) -> inout int {
+		for (self.cells.len() <= i) { self.cells.append(0); }
+		return inout self.cells[i];
+	}
+	put :: operator([]=) proc(self: inout Vec, i: int, value: int) {
+		self.cells.append(value);
+	}
+	grow :: operator(+=) proc(self: inout Vec, n: int) {
+		self.cells.append(n);
+	}
+}
+
+Log :: struct { cells: [dynamic]int }
+impl Log {
+	at :: operator([]) proc(self: Log, i: int) -> int { return self.cells[i]; }
+	put :: operator([]=) proc(self: inout Log, i: int, value: int) {
+		self.cells.append(value);
+	}
+}
+
+index_reallocates :: proc() {
+	g := Vec{[dynamic]int{1}};
+	v: []int = g.cells[:];
+	g[1000] = 5;
+	fmt.println(v[0]);
+}
+
+compound_reallocates :: proc() {
+	g := Vec{[dynamic]int{1}};
+	v: []int = g.cells[:];
+	g += 5;
+	fmt.println(v[0]);
+}
+
+setter_reallocates :: proc() {
+	l := Log{[dynamic]int{1}};
+	v: []int = l.cells[:];
+	l[0] = 5;
+	fmt.println(v[0]);
+}
+
+element_outlives_clear :: proc() {
+	sa: container.Small_Array([dynamic]int, 4) = {};
+	sa.append([dynamic]int{1});
+	p := &mut sa[0];
+	sa.clear();
+	p^.append(1);
+}
+
+mutable_slice_under_a_view :: proc() {
+	sa: container.Small_Array(int, 4) = {};
+	sa.append(1);
+	part := sa[0:1];
+	whole: []mut int = sa[0:1];
+	whole[0] = 2;
+	fmt.println(part[0]);
+}
+
+inout_result_argument :: proc() {
+	pick :: proc(xs: inout [dynamic][dynamic]int, i: int) -> inout [dynamic]int {
+		return inout xs[i];
+	}
+	grow :: proc(a: inout [dynamic]int, b: []int) {
+		a.append(1);
+		fmt.println(b[0]);
+	}
+	xs: [dynamic][dynamic]int = {};
+	xs.append([dynamic]int{1});
+	grow(inout pick(inout xs, 0), xs[0][:]);
+}
+
+main :: proc() {}

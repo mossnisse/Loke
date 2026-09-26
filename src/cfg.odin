@@ -152,6 +152,8 @@ Flow_Graph :: struct {
 	// The keyed map-shape entry each constant key uses, first written first.
 	map_key_entries: map[string]int,
 	call_results:   map[^Expr_Call]Prov_Call_Result,
+	// The call each user operator stands for, keyed by its node.
+	operator_calls: map[rawptr]^Expr_Call,
 	allocation_region_sources: [dynamic]Prov_Allocation_Region_Source,
 	// Summary mode: the direct callees whose result summaries this body reads.
 	summary_callees: [dynamic]Symbol_Id,
@@ -273,6 +275,7 @@ build_flow_pass :: proc(
 	graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
 	graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 	graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
+	graph.operator_calls = make(map[rawptr]^Expr_Call, 4, allocator)
 	graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
 	graph.summary_callees = make([dynamic]Symbol_Id, allocator)
 	graph.plain_calls = make([dynamic]^Expr_Call, allocator)
@@ -920,6 +923,28 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			}
 		}
 	}
+	if graph.mode != .Lifecycle {
+		// design.md "Operator declarations": `operator([]=)` and a direct compound
+		// overload are the whole statement, a call like any other.
+		if s.place_setter != INVALID_SYMBOL {
+			prov_call(graph, prov_synthetic_call(graph, s.place_setter, s.setter_bound, TYPE_VOID, s.op_span, indexes = true))
+			return
+		}
+		if s.operator != INVALID_SYMBOL {
+			operands := make([]Expr, 2, graph.alloc)
+			operands[0], operands[1] = s.lhs[0], s.rhs[0]
+			if s.operator_direct {
+				prov_call(graph, prov_synthetic_call(graph, s.operator, operands, TYPE_VOID, s.op_span))
+				return
+			}
+			// The binary operator, then a write of its result.
+			result := symbol_of(graph.k.c, s.operator).result
+			value_loans := make([][]int, 1, graph.alloc)
+			value_loans[0] = prov_call(graph, prov_synthetic_call(graph, s.operator, operands, result, s.op_span))
+			prov_assign(graph, s, value_loans)
+			return
+		}
+	}
 	value_loans: [][]int
 	if graph.mode != .Lifecycle && len(s.rhs) > 0 {
 		value_loans = make([][]int, len(s.rhs), graph.alloc)
@@ -932,12 +957,6 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	}
 	if graph.mode != .Lifecycle {
 		prov_assign(graph, s, value_loans)
-		borrowed: []int
-		for loans in value_loans {
-			borrowed = prov_join(graph, borrowed, loans)
-		}
-		prov_direct_effects(graph, s.operator, s.op_span, borrowed)
-		prov_direct_effects(graph, s.place_setter, s.op_span, borrowed)
 		return
 	}
 	classify_assignment_copies(graph.k, s, graph.loop_depth > 0)
@@ -1066,8 +1085,9 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	if graph.mode != .Lifecycle {
 		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements)
 	}
-	// design.md "By-reference iteration": a `&` binding's loan ends with its step.
-	walk_flow_loop_body(graph, s.body, head, done, s.bindings, place_loop)
+	// design.md "By-reference iteration": a `&` binding's loan ends with its
+	// step, and a copied element is a local of its step.
+	walk_flow_loop_body(graph, s.body, head, done, s.bindings, place_loop || !s.borrows)
 	link(graph, graph.current, head)
 	graph.current = done
 }
@@ -1086,6 +1106,7 @@ walk_foreach_binding_provenance :: proc(
 			loans = elements
 		}
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
+		prov_bind_element_region(graph, binding.symbol, s.iterable)
 		// A lent or mutable element is the source's storage, not a copy.
 		if s.borrows || foreach_is_place_loop(s) {
 			prov_bind_view(graph, binding.symbol, iterated, lends = !foreach_is_place_loop(s))
@@ -1096,7 +1117,7 @@ walk_foreach_binding_provenance :: proc(
 @(private = "file")
 walk_flow_loop_body :: proc(
 	graph: ^Flow_Graph, body: ^Block, next, done: Block_Id,
-	bindings: []Foreach_Binding = nil, all_step_borrows := false,
+	bindings: []Foreach_Binding = nil, all_step_locals := false,
 ) {
 	outer_break, outer_continue := graph.break_block, graph.continue_block
 	outer_break_depth, outer_continue_depth := graph.break_depth, graph.continue_depth
@@ -1105,7 +1126,7 @@ walk_flow_loop_body :: proc(
 	graph.loop_depth += 1
 	enter_flow_scope(graph)
 	if graph.mode != .Lifecycle {
-		add_foreach_ref_cleanups(graph, bindings, all_step_borrows)
+		add_foreach_ref_cleanups(graph, bindings, all_step_locals)
 	}
 	walk_flow_block(graph, body)
 	leave_flow_scope(graph)
@@ -1173,9 +1194,14 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		if graph.mode != .Lifecycle {
 			prov_bind_value(graph, c.binding_symbol, prov_case_payload(graph, s, c, subject), c.span)
 			prov_bind_case_region(graph, c.binding_symbol, s.subject)
-			// A place subject keeps its payload, so the binding views its storage.
+			// A place subject keeps its payload, so the binding views its storage;
+			// a consumed one is the binding's own, which ends with its case
+			// (design.md "Switch ownership").
 			if !consumes {
 				prov_bind_view(graph, c.binding_symbol, prov_subject_view(graph, s.subject))
+			} else if c.binding_symbol != INVALID_SYMBOL {
+				root := prov_root_for_symbol(graph, c.binding_symbol)
+				append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = c.span})
 			}
 		} else {
 			track_case_binding(graph, c, consumes)
@@ -1259,29 +1285,31 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return walk_flow_call(graph, v)
 
 	case ^Expr_Binary:
-		borrowed := walk_flow_expr(graph, v.lhs)
+		if prov && v.resolution.kind == .User_Operator {
+			return prov_call(graph, prov_operator_call(graph, v))
+		}
+		walk_flow_expr(graph, v.lhs)
 		if v.op == .And_And || v.op == .Or_Or {
 			entry := graph.current
 			merge := new_flow_block(graph)
 			link(graph, entry, merge)
 			graph.current = new_flow_block(graph)
 			link(graph, entry, graph.current)
-			right := walk_flow_expr(graph, v.rhs)
-			if prov { borrowed = prov_join(graph, borrowed, right) }
+			walk_flow_expr(graph, v.rhs)
 			link(graph, graph.current, merge)
 			graph.current = merge
 		} else {
-			right := walk_flow_expr(graph, v.rhs)
-			if prov { borrowed = prov_join(graph, borrowed, right) }
+			walk_flow_expr(graph, v.rhs)
 		}
-		if prov { prov_operator_effects(graph, v.resolution, v.span, borrowed) }
 
 	case ^Expr_Unary:
 		if prov && v.op == .Amp {
 			return prov_address_of(graph, v)
 		}
-		borrowed := walk_flow_expr(graph, v.operand)
-		if prov { prov_operator_effects(graph, v.resolution, v.span, borrowed) }
+		if prov && v.resolution.kind == .User_Operator {
+			return prov_call(graph, prov_operator_call(graph, v))
+		}
+		walk_flow_expr(graph, v.operand)
 
 	case ^Expr_Postfix:
 		operand_loans := walk_flow_expr(graph, v.operand)
@@ -1368,6 +1396,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Index:
 		if prov {
+			if v.resolution.kind == .User_Operator {
+				return prov_call(graph, prov_operator_call(graph, v))
+			}
 			if root, path, ok := prov_place_of(graph, v); ok {
 				prov_walk_subscripts(graph, v)
 				prov_access(graph, root, path, .Read, v.span)
@@ -1379,10 +1410,6 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			loans := walk_flow_expr(graph, v.operand)
 			for index in v.indices {
 				loans = prov_join(graph, loans, walk_flow_expr(graph, index))
-			}
-			if len(v.bound) > 0 {
-				prov_operator_effects(graph, v.resolution, v.span, loans)
-				return prov_value_content(graph, loans, v.type, v.span)
 			}
 			return prov_project_content(
 				graph, loans, expr_base(v.operand).type, prov_index_path(graph, v), v.type, v.span,

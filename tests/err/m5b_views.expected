@@ -18,4 +18,4 @@ L0547
 this `operator([:])` yields `[]mut int`, which is an exclusive borrow, so its `self` parameter must be `inout`
 L0512
 @101:2
-`t` cannot be assigned here: a mutable slice of it is still in use
+`t` cannot be assigned here: a mutable borrow of it is still in use
