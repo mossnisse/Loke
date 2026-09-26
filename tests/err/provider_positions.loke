@@ -1,0 +1,106 @@
+package main; import "core:fmt"; import "core:mem";
+
+// design.md "Allocator regions and region provenance": regions that cannot be
+// proved distinct are treated as possibly identical. Two providers at different
+// fields of one local are proved distinct, and a pointer can only reach a local
+// whose storage was lent mutably. A provider moved in may sit anywhere in its
+// new owner, and providers inside a container share one identity.
+
+Pools :: struct { a: mem.Arena, b: mem.Arena }
+Nested :: struct { inner: Pools, c: mem.Arena }
+
+// Allowed: resetting one field's arena while an owner of the other lives.
+other_field :: proc() {
+	pools := Pools{mem.Arena.init(), mem.Arena.init()};
+	xs: [dynamic]int via pools.b.allocator() = {};
+	xs.append(1);
+	free_all(pools.a.allocator());
+	fmt.println(xs[0]);
+}
+
+// Allowed: replacing a provider through a pointer that can only name `other`.
+other_local :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	other := mem.Arena.init();
+	p := &mut other;
+	p^ = mem.Arena.init();
+	fmt.println(xs[0]);
+}
+
+// Rejected: each of these ends the region backing `xs`.
+same_field :: proc() {
+	pools := Pools{mem.Arena.init(), mem.Arena.init()};
+	xs: [dynamic]int via pools.b.allocator() = {};
+	xs.append(1);
+	free_all(pools.b.allocator());
+	fmt.println(xs[0]);
+}
+
+replaced_field :: proc() {
+	pools := Pools{mem.Arena.init(), mem.Arena.init()};
+	xs: [dynamic]int via pools.b.allocator() = {};
+	xs.append(1);
+	pools.b = mem.Arena.init();
+	fmt.println(xs[0]);
+}
+
+replaced_parent :: proc() {
+	n := Nested{Pools{mem.Arena.init(), mem.Arena.init()}, mem.Arena.init()};
+	xs: [dynamic]int via n.inner.a.allocator() = {};
+	xs.append(1);
+	n.inner = Pools{mem.Arena.init(), mem.Arena.init()};
+	fmt.println(xs[0]);
+}
+
+whole_moved :: proc() {
+	pools := Pools{mem.Arena.init(), mem.Arena.init()};
+	xs: [dynamic]int via pools.a.allocator() = {};
+	xs.append(1);
+	drop(pools);
+	fmt.println(xs[0]);
+}
+
+moved_in :: proc() {
+	a := mem.Arena.init();
+	xs: [dynamic]int via a.allocator() = {};
+	xs.append(1);
+	pools := Pools{move(a), mem.Arena.init()};
+	pools.a = mem.Arena.init();
+	fmt.println(xs[0]);
+}
+
+through_pointer :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	p := &mut arena;
+	p^ = mem.Arena.init();
+	fmt.println(xs[0]);
+}
+
+pointer_in_loop :: proc() {
+	other := mem.Arena.init();
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1);
+	p := &mut other;
+	for (i := 0; i < 2; i += 1) {
+		p^ = mem.Arena.init();
+		fmt.println(xs[0]);
+		p = &mut arena;
+	}
+}
+
+main :: proc() {
+	other_field();
+	other_local();
+	same_field();
+	replaced_field();
+	replaced_parent();
+	whole_moved();
+	moved_in();
+	through_pointer();
+	pointer_in_loop();
+}

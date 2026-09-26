@@ -122,16 +122,16 @@ prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		return
 	}
 	if !c.global_writes_ready {
-		note_thread_spawn(c, v, target.callee)
+		note_thread_spawn(graph, v, target.callee)
 	}
 	prov_effect_call(graph, target, v.span)
 }
 
 // design.md "Global write effects": a `thread.spawn` whose entry is a named
-// procedure, kept until the effects settle. Each body is summarized once before
-// then, so each call is noted once.
+// procedure, kept until the effects settle.
 @(private = "file")
-note_thread_spawn :: proc(c: ^Compiler, v: ^Expr_Call, callee: Symbol_Id) {
+note_thread_spawn :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: Symbol_Id) {
+	c := graph.k.c
 	sym := symbol_of(c, callee)
 	if sym == nil || len(v.bound) == 0 {
 		return
@@ -159,10 +159,7 @@ note_thread_spawn :: proc(c: ^Compiler, v: ^Expr_Call, callee: Symbol_Id) {
 	if entry_pkg := package_of(c, entry_sym.pkg); entry_pkg != nil && entry_pkg.key == STD_THREAD {
 		return
 	}
-	if c.thread_spawns == nil {
-		c.thread_spawns = make([dynamic]Thread_Spawn, 0, 4, c.semantic_allocator)
-	}
-	append(&c.thread_spawns, Thread_Spawn{entry = entry, span = v.span})
+	append(&graph.thread_spawns, Thread_Spawn{entry = entry, span = v.span})
 }
 
 // A spawned entry that writes a global every thread shares races with any other
@@ -270,6 +267,12 @@ compute_global_writes :: proc(k: ^Checker) {
 		copy(effects.calls, graph.effect_calls[:])
 		for id in graph.effect_values {
 			used_as_value[id] = true
+		}
+		if len(graph.thread_spawns) > 0 {
+			if c.thread_spawns == nil {
+				c.thread_spawns = make([dynamic]Thread_Spawn, 0, 4, c.semantic_allocator)
+			}
+			append(&c.thread_spawns, ..graph.thread_spawns[:])
 		}
 		append(&bodies, effects)
 		free_all(c.analysis_allocator)

@@ -7,12 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-- **Providers share region identities more than they need to.** All providers
-  inside one local record or container are one region to the checker, and a
-  provider replaced or removed through a pointer or slice ends the regions of
-  every local holding providers, so resetting or replacing one is blocked by
-  live owners of another. This rejects valid programs; it never accepts an
-  invalid one.
 - **Slicing has no compile-time meaning.** design.md "Compile-time procedure
   evaluation" allows ordinary expressions, but the evaluator rejects every slice
   expression with L0341, so `strconv.parse_i64`, which trims its input by

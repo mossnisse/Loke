@@ -982,6 +982,9 @@ prov_new_loan :: proc(
 ) -> Loan_Id {
 	if mutable {
 		prov_note_static_write(graph, root)
+		if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
+			graph.lent_locals[descriptor.symbol] = true
+		}
 	}
 	append(&graph.loans, Prov_Loan{root = root, path = path, mutable = mutable, span = span, what = what})
 	return Loan_Id(len(graph.loans) - 1)
@@ -1223,6 +1226,9 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
 		region_merge(&parent, set)
 		graph.provider_parents[id] = parent
 	}
+	for id in seed.lent_locals {
+		graph.lent_locals[id] = true
+	}
 	for id, content in seed.region_content {
 		copied := make([]Prov_Region_Content, len(content), graph.alloc)
 		for entry, index in content {
@@ -1249,7 +1255,7 @@ prov_region_weight :: proc(graph: ^Flow_Graph) -> int {
 			weight += 1 + region_weight(entry.region)
 		}
 	}
-	return weight
+	return weight + len(graph.lent_locals)
 }
 
 @(private = "file")
@@ -1324,25 +1330,95 @@ prov_define_region_content :: proc(
 	graph.region_content[id] = grown[:]
 }
 
-// The token for one local provider. Past 64 providers the set is `crowded`,
-// meaning "may be any of them".
+// One provider position in a local: a field path its type fixes, or the path
+// of a container, union, or array whose providers share one token.
+Provider_Path :: struct {
+	key: []Proj_Step,
+	bit: u64,
+}
+
+// Every token of one local. Past 64 tokens the set is `crowded`, meaning "may
+// be any of them".
 @(private)
 prov_provider_region :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_Set {
 	out := prov_empty_region(graph)
-	if existing, found := graph.provider_bits[id]; found {
-		out.locals = existing
-		return out
-	}
-	index := len(graph.provider_symbols)
-	if index >= 64 {
+	if !prov_provider_tokens(graph, id) {
 		out.crowded = true
 		return out
 	}
-	append(&graph.provider_symbols, id)
-	bit := u64(1) << u64(index)
-	graph.provider_bits[id] = bit
-	out.locals = bit
+	out.locals = graph.provider_bits[id]
 	return out
+}
+
+// The tokens of the providers at or under `path` in a local, or containing it,
+// and of any provider moved in.
+@(private)
+prov_provider_region_at :: proc(graph: ^Flow_Graph, id: Symbol_Id, path: []Proj_Step) -> Region_Set {
+	out := prov_empty_region(graph)
+	if !prov_provider_tokens(graph, id) {
+		out.crowded = true
+		return out
+	}
+	key := path
+	for step, index in path {
+		if step.kind != .Field {
+			key = path[:index]
+			break
+		}
+	}
+	out.locals = graph.provider_moved[id]
+	for position in graph.provider_paths[id] {
+		if path_has_exact_prefix(position.key, key) || path_has_exact_prefix(key, position.key) {
+			out.locals |= position.bit
+		}
+	}
+	return out
+}
+
+// Gives a local one token per provider position on first use, so every token
+// exists before any reset or handle reads it. False when the bits run out.
+@(private = "file")
+prov_provider_tokens :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> bool {
+	if _, found := graph.provider_bits[id]; found {
+		return true
+	}
+	positions := make([dynamic]Provider_Path, 0, 1, graph.alloc)
+	if sym := symbol_of(graph.k.c, id); sym != nil {
+		prov_provider_positions(graph, sym.type, nil, 0, &positions)
+	}
+	if len(positions) == 0 {
+		append(&positions, Provider_Path{})
+	}
+	if len(graph.provider_symbols) + len(positions) > 64 {
+		return false
+	}
+	bits := graph.provider_moved[id]
+	for &position in positions {
+		position.bit = u64(1) << u64(len(graph.provider_symbols))
+		append(&graph.provider_symbols, id)
+		bits |= position.bit
+	}
+	graph.provider_paths[id] = positions[:]
+	graph.provider_bits[id] = bits
+	return true
+}
+
+@(private = "file")
+prov_provider_positions :: proc(graph: ^Flow_Graph, type: Type_Id, prefix: []Proj_Step, depth: int, out: ^[dynamic]Provider_Path) {
+	c := graph.k.c
+	if !type_carries_provider(c, type) {
+		return
+	}
+	info := underlying_info(c, type)
+	if type_is_region_provider(c, type) || info == nil || info.kind != .Struct || depth >= CARRIER_DEPTH {
+		append(out, Provider_Path{key = prefix})
+		return
+	}
+	for field in info.fields {
+		if sym := symbol_of(c, field); sym != nil {
+			prov_provider_positions(graph, sym.type, prov_extend(graph, prefix, proj_field(int(sym.index))), depth + 1, out)
+		}
+	}
 }
 
 // Ending a provider reads its control block, which a fixed arena keeps in the
@@ -1404,6 +1480,7 @@ prov_merge_moved_bits :: proc(graph: ^Flow_Graph, root: Symbol_Id, value: Expr) 
 	if existing.crowded {
 		return // already "may be any of them"
 	}
+	graph.provider_moved[root] |= bits
 	graph.provider_bits[root] = existing.locals | bits
 	if set, found := graph.region_of[root]; found && type_is_region_provider(graph.k.c, symbol_of(graph.k.c, root).type) {
 		set.locals |= bits
@@ -1421,12 +1498,14 @@ prov_region_name :: proc(graph: ^Flow_Graph, set: Region_Set) -> string {
 		if set.locals & (u64(1) << u64(index)) == 0 {
 			continue
 		}
-		if found != "" {
+		name := ""
+		if sym := symbol_of(graph.k.c, id); sym != nil {
+			name = identifier_text(graph.k.c, sym.name)
+		}
+		if found != "" && found != name {
 			return ""
 		}
-		if sym := symbol_of(graph.k.c, id); sym != nil {
-			found = identifier_text(graph.k.c, sym.name)
-		}
+		found = name
 	}
 	return found
 }
@@ -1543,10 +1622,10 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (Region_Set, bo
 	}
 	ident, is_ident := v.bound[0].(^Expr_Ident)
 	if !is_ident {
-		// A provider inside a local record or container: one token for that local.
-		if root, _, ok := prov_place_of(graph, v.bound[0]); ok {
+		// A provider inside a local record or container: the token of its position.
+		if root, path, ok := prov_place_of(graph, v.bound[0]); ok {
 			if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
-				return prov_provider_region(graph, descriptor.symbol), true
+				return prov_provider_region_at(graph, descriptor.symbol, path), true
 			}
 		}
 		set := prov_empty_region(graph)
@@ -2669,7 +2748,7 @@ prov_declare_region :: proc(
 	if initializer != nil && sym.duration == .None && projected < 0 {
 		if _, found := graph.provider_bits[id]; !found {
 			if bits := prov_moved_bits(graph, initializer); bits != 0 {
-				graph.provider_bits[id] = bits
+				graph.provider_moved[id] = bits
 			}
 		}
 	}

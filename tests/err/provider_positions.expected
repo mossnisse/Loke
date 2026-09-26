@@ -1,0 +1,24 @@
+L0537
+@37:2
+this reset would end the region backing `xs`, which is still live here
+L0537
+@45:2
+assigning into `pools` would end the region backing `xs`, which is still live here
+L0537
+@53:2
+assigning into `n` would end the region backing `xs`, which is still live here
+L0537
+@61:2
+dropping `pools` would end the region backing `xs`, which is still live here
+L0537
+@69:2
+this reset would end the region backing `xs`, which is still live here
+L0537
+@70:2
+assigning into `pools` would end the region backing `xs`, which is still live here
+L0537
+@79:2
+assigning through a pointer or slice would end the region backing `xs`, which is still live here
+L0537
+@90:3
+assigning through a pointer or slice would end the region backing `xs`, which is still live here

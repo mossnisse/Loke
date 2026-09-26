@@ -164,6 +164,8 @@ Flow_Graph :: struct {
 	// Procedures this body uses as values, and the callee being walked, which is
 	// a call rather than a use.
 	effect_values: [dynamic]Symbol_Id,
+	// `thread.spawn` calls, kept on the graph so a repeated pass notes each once.
+	thread_spawns: [dynamic]Thread_Spawn,
 	callee_expr:   Expr,
 	// Temporaries ending with the current statement (design.md).
 	temp_roots:     [dynamic]Root_Id,
@@ -177,6 +179,13 @@ Flow_Graph :: struct {
 	// One bit per local `mem.Arena`/`mem.Scratch`.
 	provider_bits:    map[Symbol_Id]u64,
 	provider_symbols: [dynamic]Symbol_Id,
+	// Per local, one token per provider position its type fixes, and the tokens
+	// of providers moved in, which may sit at any position.
+	provider_paths: map[Symbol_Id][]Provider_Path,
+	provider_moved: map[Symbol_Id]u64,
+	// Locals a mutable loan was ever taken of: only these can be reached through
+	// a pointer or slice. Flow-insensitive, like the region facts.
+	lent_locals: map[Symbol_Id]bool,
 	// The `move`s and `exchange`s whose value becomes a new local or a result,
 	// which takes the provider's region with it rather than ending it.
 	aliased_moves:    map[rawptr]bool,
@@ -270,6 +279,7 @@ build_flow_pass :: proc(
 	graph.effect_writes = make([dynamic]Symbol_Id, allocator)
 	graph.effect_calls = make([dynamic]Effect_Call, allocator)
 	graph.effect_values = make([dynamic]Symbol_Id, allocator)
+	graph.thread_spawns = make([dynamic]Thread_Spawn, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
 	graph.region_content = make(map[Symbol_Id][]Prov_Region_Content, 8, allocator)
@@ -279,6 +289,9 @@ build_flow_pass :: proc(
 	graph.map_key_entries = make(map[string]int, 4, allocator)
 	graph.reborrows = make([dynamic]Prov_Reborrow, allocator)
 	graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
+	graph.provider_paths = make(map[Symbol_Id][]Provider_Path, 4, allocator)
+	graph.provider_moved = make(map[Symbol_Id]u64, 4, allocator)
+	graph.lent_locals = make(map[Symbol_Id]bool, 4, allocator)
 	graph.cleanup_resets = make(map[Symbol_Id]int, 4, allocator)
 	graph.aliased_moves = make(map[rawptr]bool, 4, allocator)
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
@@ -436,7 +449,7 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 // written end; a cleanup passes nil. `ends` names a written end for the
 // diagnostic.
 @(private)
-provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node: rawptr = nil, ends := "") {
+provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node: rawptr = nil, ends := "", path: []Proj_Step = nil) {
 	sym := symbol_of(graph.k.c, id)
 	if sym == nil || sym.kind != .Var || sym.duration != .None || !type_carries_provider(graph.k.c, sym.type) {
 		return
@@ -461,7 +474,8 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 	if root, rooted := graph.root_by_symbol[id]; !rooted || graph.roots[int(root)].kind != .Local {
 		return
 	}
-	prov_reset(graph, prov_provider_region(graph, id), span, true, nil, dead, ends, id)
+	region := path == nil ? prov_provider_region(graph, id) : prov_provider_region_at(graph, id, path)
+	prov_reset(graph, region, span, true, nil, dead, ends, id)
 }
 
 // A `move` out of a local ends what it holds, unless the move is into a new
@@ -545,7 +559,14 @@ provider_place_end :: proc(graph: ^Flow_Graph, place: Expr, node: rawptr, span: 
 	if root := provider_place_root(graph, place); root != INVALID_SYMBOL {
 		name := identifier_text(graph.k.c, symbol_of(graph.k.c, root).name)
 		direct := preposition == "" ? verb : fmt.aprintf("%s %s", verb, preposition, allocator = graph.alloc)
-		provider_region_end(graph, root, span, node, provider_end_phrase(graph, direct, name))
+		// Only the providers at or under this place end.
+		path: []Proj_Step
+		if graph.mode != .Lifecycle {
+			if _, place_path, ok := prov_place_of(graph, place); ok {
+				path = place_path
+			}
+		}
+		provider_region_end(graph, root, span, node, provider_end_phrase(graph, direct, name), path)
 		return
 	}
 	if !place_is_direct(graph.k.c, place) {
@@ -553,8 +574,8 @@ provider_place_end :: proc(graph: ^Flow_Graph, place: Expr, node: rawptr, span: 
 	}
 }
 
-// A place behind a pointer or slice may be in any local holding providers, so
-// the regions of all of them in scope end here.
+// A place behind a pointer or slice may be in any local holding providers that
+// was ever lent mutably, so the regions of all of those in scope end here.
 @(private = "file")
 provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb: string) {
 	key := Cleanup_Reset_Key{graph.literal, INVALID_SYMBOL, 0, node}
@@ -569,7 +590,7 @@ provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb
 	set := prov_empty_region(graph)
 	for id in graph.owners_in_scope {
 		sym := symbol_of(graph.k.c, id)
-		if sym == nil || !type_carries_provider(graph.k.c, sym.type) {
+		if sym == nil || !type_carries_provider(graph.k.c, sym.type) || !graph.lent_locals[id] {
 			continue
 		}
 		if root, rooted := graph.root_by_symbol[id]; rooted && graph.roots[int(root)].kind == .Local {

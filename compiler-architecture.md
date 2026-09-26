@@ -163,7 +163,9 @@ the analysis arena; each is discarded after its analysis. A provenance build
 with allocator-region facts is repeated, seeded with the previous pass's
 facts, until they stop growing: the facts are flow-insensitive, but each pass
 reads them as it walks, so a later write reaches an earlier read only on the
-next pass. Building a provenance graph reports nothing, so a repeat is safe. LLVM lowering still
+next pass. Building a provenance graph reports nothing and writes no compiler
+state, so a repeat is safe; what a build finds, such as `thread.spawn` calls,
+stays on the graph for its caller to take. LLVM lowering still
 walks the annotated AST directly.
 
 ### Allocation domains
