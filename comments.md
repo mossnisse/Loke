@@ -367,15 +367,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
-## Formatted `assert` and `panic` messages
-
-The message of both must be a compile-time string
-([Built-in procedures](design.md#built-in-procedures)), so a failed check cannot
-say which value failed it: `assert(i < n, message)` with a runtime `message` is
-L0345. Proposal: accept trailing `..any_view` arguments after the constant
-message. The runtime formats them straight into the error stream, which
-allocates nothing, and the evaluator prints them for a compile-time failure.
-
 ## Deriving `Yield`
 
 An iterator's `Yield` follows from its `Element` and `Item`: owned when `Item`
@@ -1221,6 +1212,20 @@ i32` returns the status instead, after its scope-exit actions, as C's `main`
 does. The status is `i32` because that is what the process gets: `os.exit`
 took an `int` and narrowed it, so `os.exit(4294967297)` exited with 1. It now
 takes an `i32` as well, and a wider value needs an explicit conversion.
+
+### `assert` and `panic` print values after the message
+
+Odin's `assert` and `panic` take a runtime message string, and `fmt.assertf`
+and `fmt.panicf` format one. Loke's message is a compile-time string, so the
+report never needs an allocation that could itself fail, and a failed check
+could not say which value failed it. Values now follow the message as
+`..any_view` arguments. The generated code formats them onto the report line
+through the same per-type formatters `fmt.print` uses, writing straight to
+the error stream, so `base` and `core` code can use them without importing
+`core:fmt`. The runtime's panic entry is split into a begin and an end so the
+values land between the message and the newline. An `assert`'s arguments are
+evaluated only on the failing path, like its message in C, so an expensive
+argument costs nothing while the check holds.
 
 ### Map element mutation
 

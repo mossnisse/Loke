@@ -43,7 +43,13 @@ void loke_rt_v1_frame_pop(loke_rt_frame_v1 *frame) {
 }
 
 void loke_rt_v1_panic(const char *message) {
-	/* design.md "Panic during unwinding". */
+	loke_rt_v1_panic_begin(message);
+	loke_rt_v1_panic_end();
+}
+
+void loke_rt_v1_panic_begin(const char *message) {
+	/* design.md "Panic during unwinding". A formatter that panics while the
+	 * report is written lands here too. */
 	if (panicking) {
 		loke_rt_v1_abort("panic while unwinding a panic");
 	}
@@ -52,6 +58,9 @@ void loke_rt_v1_panic(const char *message) {
 	fflush(stdout);
 	fputs("loke: panic: ", stderr);
 	fputs(message == 0 ? "runtime failure" : message, stderr);
+}
+
+void loke_rt_v1_panic_end(void) {
 	fputc('\n', stderr);
 	fflush(stderr);
 

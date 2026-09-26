@@ -13,3 +13,4 @@ L0579
 L0345
 @14:17
 this message must be a compile-time string
+print a runtime value after a constant message

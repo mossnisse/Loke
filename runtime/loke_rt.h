@@ -526,6 +526,11 @@ void loke_rt_v1_frame_pop(loke_rt_frame_v1 *frame);
  * frames, so this runs no cleanup and terminates at the point of the fault. */
 void loke_rt_v1_panic(const char *message);
 
+/* The same panic in two halves, so the generated code can format an
+ * `assert`/`panic`'s trailing arguments onto the report line between them. */
+void loke_rt_v1_panic_begin(const char *message);
+void loke_rt_v1_panic_end(void);
+
 /* Immediate abort, bypassing every strategy: an allocator whose failure policy
  * is `.Trap`, a panic raised while one is already unwinding, a fault in the
  * runtime's own records, and the end of every panic once its cleanup has run. */

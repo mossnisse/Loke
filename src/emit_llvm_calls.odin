@@ -58,9 +58,11 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		switch symbol.builtin {
 		case .Assert:
 			cond := emit_expr(e, v.bound[0])
-			failed := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, cond)
-			panic_if(e, failed, "assert.failed", panic_message_text(e, v, 1, "assertion failed"))
+			fail, ok := new_label(e, "assert.failed"), new_label(e, "ok")
+			branch_if(e, cond, ok, fail)
+			place_label(e, fail)
+			emit_formatted_panic(e, v, 1, "assertion failed")
+			place_label(e, ok)
 			return "0"
 		case .Panic:
 			backend_fail(e, "`panic` bypassed emit_diverging_call")
@@ -678,7 +680,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 @(private = "file")
 emit_diverging_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if is_builtin_call(e.c, v, .Panic) {
-		emit_panic(e, panic_message_text(e, v, 0, "explicit panic"))
+		emit_formatted_panic(e, v, 0, "explicit panic")
 	} else {
 		emit_direct_call(e, v)
 		fmt.sbprintln(&e.b, "  unreachable")

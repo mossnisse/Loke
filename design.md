@@ -5224,15 +5224,22 @@ The predeclared operations used by this document are:
 | `typeid_of(T)` | The runtime [`typeid`](#type-and-typeid) constant for a compile-time type |
 | `type_info_of(id)` | read-only `^runtime.Type_Info` for a `typeid`; the table is shared static storage |
 | `fields_of(T)`, `enum_values_of(T)` | Typed [compile-time reflection](#compile-time-reflection) descriptor arrays |
-| `assert(condition, message := "")` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string |
-| `panic(message)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
+| `assert(condition, message := "", ..args)` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string, and `args` are `any_view`s printed after it |
+| `panic(message, ..args)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string, and `args` are `any_view`s printed after it. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
 | `new`, `new_clone`, `make`, `free`, `free_all`, `drop` | [Allocation and release](#allocators) |
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
 | `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |
 
 `size_of`, `align_of`, and `offset_of` all result in `int`. Element counts and capacities are receiver members, not built-ins: see [Standard customization procedures](#standard-customization-procedures).
 
-The `message` of `assert` and `panic` must be a compile-time string constant, such as a literal or a named string constant; a runtime `string` value is rejected. `assert` and `panic` execute in the phase of the call that reaches them. In an ordinary runtime call they have their runtime behavior. In a procedure whose result is required at compile time, reaching a failed `assert` or any `panic` produces a compilation diagnostic with the evaluator call stack. `-no-assert` may remove runtime assertions, but it never removes an assertion reached during required compile-time evaluation.
+The `message` of `assert` and `panic` must be a compile-time string constant, such as a literal or a named string constant; a runtime `string` value is rejected. Runtime values go after it: each argument converts to an `any_view`, and the report prints it after the message, preceded by a space, as `fmt.eprintln` would. The report is written straight to the error stream, so the program need not import `core:fmt`. The arguments of an `assert` are evaluated only when its condition fails:
+
+```odin
+assert(i < n, "index out of range:", i, "of", n);
+// loke: panic: index out of range: 7 of 4
+```
+
+A compile-time failure prints a scalar argument's value and any other argument as `<value>`. `assert` and `panic` execute in the phase of the call that reaches them. In an ordinary runtime call they have their runtime behavior. In a procedure whose result is required at compile time, reaching a failed `assert` or any `panic` produces a compilation diagnostic with the evaluator call stack. `-no-assert` may remove runtime assertions, but it never removes an assertion reached during required compile-time evaluation.
 
 [`static_assert`](#static_assertboolean) independently requires its operand and check at compile time, even when it appears inside code that otherwise executes at runtime. `static_assert(false, message)` is therefore the compile-time unconditional-failure form. Neither spelling silently changes phase.
 
@@ -5385,7 +5392,7 @@ Each step propagates its own failure, so the loop belongs in a procedure whose r
 
 A **panic** is an unrecoverable runtime fault. In required compile-time procedure evaluation, it produces a compilation diagnostic with the evaluator call stack. Runtime panics arise from:
 
-- `panic(message)`
+- `panic(message, ..args)`
 - a failed `assert`
 - dereference of a nil pointer
 - a call through a nil procedure value or a nil `dyn` view

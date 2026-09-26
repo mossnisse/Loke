@@ -160,13 +160,14 @@ builtin_arguments_ok :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 	return true
 }
 
-// `assert(condition[, message])` and `panic([message])`. Neither folds: the
-// evaluator diagnoses a compile-time occurrence and the backend lowers the rest.
+// `assert(condition[, message, ..args])` and `panic([message, ..args])`. Neither
+// folds: the evaluator diagnoses a compile-time occurrence and the backend
+// lowers the rest. The arguments after the message are `any_view`s.
 @(private = "file")
 check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.type = INVALID_TYPE
 	first := kind == .Assert ? 1 : 0
-	if len(v.args) < first || len(v.args) > first + 1 {
+	if len(v.args) < first {
 		errorf(
 			k.c,
 			v.span,
@@ -184,10 +185,16 @@ check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, ki
 	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
 	for arg, index in v.args {
 		bound[index] = arg.value
-		if kind == .Assert && index == 0 {
+		switch {
+		case index < first:
 			check_condition(k, arg.value)
-		} else {
-			check_message_arg(k, arg.value)
+		case index == first:
+			check_message_arg(k, arg.value, formatted = true)
+		case:
+			bound[index], _ = check_argument_value(k, arg.value, TYPE_ANY_VIEW)
+			if k.c.speculation_depth == 0 {
+				k.c.format_requested = true
+			}
 		}
 	}
 	v.bound = bound
@@ -210,7 +217,7 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 	check_condition(k, v.args[0].value)
 	message := ""
 	if len(v.args) == 2 {
-		check_message_arg(k, v.args[1].value)
+		check_message_arg(k, v.args[1].value, formatted = false)
 		if base := expr_base(v.args[1].value); base != nil && base.const_value.kind == .String {
 			message = base.const_value.text
 		}
@@ -970,15 +977,19 @@ check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id, form: string)
 	return true
 }
 
-// An `assert`/`panic` message is a compile-time string.
+// An `assert`/`panic`/`static_assert` message is a compile-time string. The
+// `formatted` ones may be followed by runtime values.
 @(private = "file")
-check_message_arg :: proc(k: ^Checker, e: Expr) {
+check_message_arg :: proc(k: ^Checker, e: Expr, formatted: bool) {
 	if check_single_expr(k, e) == INVALID_TYPE {
 		return
 	}
 	base := expr_base(e)
 	if !base.is_const || base.const_value.kind != .String {
 		errorf(k.c, expr_span(e), "L0345", "this message must be a compile-time string")
+		if formatted {
+			add_notef(k.c, expr_span(e), "print a runtime value after a constant message: `panic(\"failed:\", value)`")
+		}
 	}
 }
 

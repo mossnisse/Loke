@@ -3,7 +3,6 @@
 // procedure runs and are frozen into `Const_Value`s on the way out.
 package lokec
 
-import "core:fmt"
 import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
@@ -2336,6 +2335,9 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 
 // The optional constant message of `assert`/`panic`.
 @(private = "file")
+// The message, then each argument after it, as the runtime report spells them.
+// ponytail: a scalar prints as its value and anything else as `<value>`; give
+// aggregates a spelling here if a compile-time failure ever needs one.
 eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 	if index >= len(v.bound) || v.bound[index] == nil {
 		return ""
@@ -2344,7 +2346,20 @@ eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 	if base == nil || !base.is_const || base.const_value.kind != .String {
 		return ""
 	}
-	return fmt.aprintf(": %s", base.const_value.text, allocator = ev.k.c.semantic_allocator)
+	b := strings.builder_make(ev.k.c.semantic_allocator)
+	strings.write_string(&b, ": ")
+	strings.write_string(&b, base.const_value.text)
+	for arg in v.bound[index + 1:] {
+		text := "<value>"
+		if value, ok := eval_expr(ev, arg); ok {
+			if frozen, froze := freeze(ev, value, ev.alloc); froze {
+				text = const_display_text(ev.k.c, frozen)
+			}
+		}
+		strings.write_byte(&b, ' ')
+		strings.write_string(&b, text)
+	}
+	return strings.to_string(b)
 }
 
 eval_block :: proc(ev: ^Evaluator, b: ^Block) -> Eval_Flow {

@@ -1,7 +1,7 @@
 package main; import "core:fmt";
 
 positive :: proc(n: int) -> int {
-	assert(n > 0, "positive() needs a positive argument");
+	assert(n > 0, "positive() needs a positive argument, not", n);
 	return n;
 }
 

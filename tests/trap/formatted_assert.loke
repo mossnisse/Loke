@@ -1,0 +1,15 @@
+package main;
+
+// design.md "Built-in procedures": the values after an `assert` or `panic`
+// message follow it on the report line, a space before each. The program does
+// not import `core:fmt`, and the concatenated string is a managed temporary
+// built only on the failing path.
+
+check :: proc(i: int, n: int, name: string) {
+	assert(i < n, "index out of range:", i, "of", n, name + "!", 2.5, true);
+}
+
+main :: proc() {
+	check(1, 2, "fine");
+	check(5, 3, "items");
+}

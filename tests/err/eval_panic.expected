@@ -1,5 +1,5 @@
 L0343
-compile-time assertion failed: positive() needs a positive argument
+compile-time assertion failed: positive() needs a positive argument, not -1
 @15:6
 L0343
 compile-time panic: checked() was given nothing to check

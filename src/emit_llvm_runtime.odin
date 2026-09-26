@@ -45,6 +45,8 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_provider_init_begin()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_provider_init_end()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic(ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic_begin(ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic_end()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
@@ -319,6 +321,42 @@ emit_panic :: proc(e: ^Emitter, message: string) {
 	e.terminated = true
 }
 
+// design.md "Built-in procedures": the arguments after the message follow it on
+// the report line, each after a space, as `fmt.eprintln` would print them. They
+// are evaluated before the report starts, so one that panics is its own panic.
+@(private)
+emit_formatted_panic :: proc(e: ^Emitter, v: ^Expr_Call, message_index: int, fallback: string) {
+	message := panic_message_text(e, v, message_index, fallback)
+	if len(v.bound) <= message_index + 1 {
+		emit_panic(e, message)
+		return
+	}
+	// The arguments' temporaries belong to this path, which never reaches the
+	// statement's end; the unwind drops them.
+	push_temporaries(e)
+	defer pop_temporaries(e)
+	views := make([dynamic]string, 0, len(v.bound), context.temp_allocator)
+	for arg in v.bound[message_index + 1:] {
+		append(&views, emit_expr(e, arg))
+	}
+	writer := alloca(e, "{ ptr, ptr }")
+	// `{` is a format directive to core:fmt, so these are concatenated.
+	strings.write_string(&e.b, strings.concatenate({
+		"  store { ptr, ptr } { ptr inttoptr (i64 1 to ptr), ptr ", SINK_STD_WITNESS, " }, ptr ", writer, "\n",
+	}))
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_panic_begin(ptr %s)", message_global(e, message))
+	space := text_literal_global(e, " ")
+	storage := llvm_type(e, TYPE_ANY_VIEW)
+	for view in views {
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 1)", writer, space)
+		data, id := extract(e, storage, view, ANY_VIEW_DATA), extract(e, storage, view, ANY_VIEW_ID)
+		emit_format_dispatch_at(e, data, id, writer, PANIC_OPTIONS)
+	}
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_panic_end()")
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
+}
+
 // A synthesized body copying a move-only value is dead (L0491), so it aborts
 // instead of failing the build. Anywhere else it is a compiler bug.
 @(private)
@@ -342,6 +380,10 @@ panic_if :: proc(e: ^Emitter, cond: string, prefix: string, message: string) {
 	emit_panic(e, message)
 	place_label(e, ok)
 }
+
+// `fmt.DEFAULT_OPTIONS`, for a formatted panic, which has no `core:fmt` to ask.
+@(private = "file")
+PANIC_OPTIONS :: "@loke.fmt.panic_options"
 
 @(private = "file")
 fmt_thunk_name :: proc(e: ^Emitter, type: Type_Id) -> string {
@@ -388,6 +430,9 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	}
 	strings.write_string(&b, " ]\n")
 	fmt.sbprintf(&b, "%s = private unnamed_addr constant i64 %d\n", FMT_THUNK_COUNT, count)
+	strings.write_string(&b, strings.concatenate({
+		PANIC_OPTIONS, " = private unnamed_addr constant { i64, i8, [7 x i8] } { i64 10, i8 0, [7 x i8] zeroinitializer }\n",
+	}))
 	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x %s] [", TYPE_NAMES, count + 1, STRING_VIEW_TYPE)
 	for name, index in names {
 		if index > 0 {
