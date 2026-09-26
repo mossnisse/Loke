@@ -95,15 +95,18 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 		backend_fail(e, "a fallible container element has no `try_clone` member")
 		return "false"
 	}
-	cloned, broke := emit_clone_call(e, hook, type, value, allocator)
+	cloned, broke, error := emit_clone_call(e, hook, type, value, allocator)
 	ok := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", ok, broke)
 	// A failed clone returns an inert zero the caller must not count as
 	// initialised, so the value is stored only on success.
-	store_label, done_label := new_label(e, "clone.store"), new_label(e, "clone.done")
-	branch_if(e, ok, store_label, done_label)
+	store_label, fail_label, done_label := new_label(e, "clone.store"), new_label(e, "clone.refused"), new_label(e, "clone.done")
+	branch_if(e, ok, store_label, fail_label)
 	place_label(e, store_label)
 	store(e, type, cloned, out)
+	branch(e, done_label)
+	place_label(e, fail_label)
+	emit_restore_refusal(e, allocator, error)
 	branch(e, done_label)
 	place_label(e, done_label)
 	return ok
@@ -757,11 +760,12 @@ clone_result_of :: proc(e: ^Emitter, hook: Symbol_Id) -> Type_Id {
 	return sym.result
 }
 
-// Calls one `try_clone`. `cloned` is only meaningful where `failed` is false.
+// Calls one `try_clone`. `cloned` is only meaningful where `failed` is false,
+// and `error`, the `Allocator_Error`, only where it is true.
 @(private)
 emit_clone_call :: proc(
 	e: ^Emitter, hook: Symbol_Id, subject: Type_Id, value, allocator: string,
-) -> (cloned: string, failed: string) {
+) -> (cloned: string, failed: string, error: string) {
 	result := clone_result_of(e, hook)
 	receiver_type, receiver := call_receiver_operand(e, hook, subject, value)
 	returned := emit_call_result(
@@ -770,6 +774,7 @@ emit_clone_call :: proc(
 	slot := emit_union_spill(e, result, returned)
 	failed = emit_union_failed(e, result, returned)
 	cloned = emit_union_payload(e, result, subject, slot)
+	error = emit_union_payload(e, result, TYPE_ALLOCATOR_ERROR, slot)
 	return
 }
 
@@ -860,7 +865,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			store(e, part, emit_clone_value(e, part, loaded, "%arg1"), destination)
 			continue
 		}
-		cloned, failed := emit_part_clone(e, part, source)
+		cloned, failed, error := emit_part_clone(e, part, source)
 		unwind, ok := new_label(e, "clone.unwind"), new_label(e, "clone.ok")
 		branch_if(e, failed, unwind, ok)
 
@@ -869,7 +874,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		for done := index - 1; done >= 0; done -= 1 {
 			emit_drop_record_part(e, subject, out, done)
 		}
-		emit_ret(e, result, emit_alloc_result(e, result, "true"))
+		emit_ret(e, result, emit_alloc_result(e, result, "true", error = error))
 		e.terminated = true
 		// Only a successful part is published, so a hook that returns a live value
 		// beside an error cannot leak it into the temporary.
@@ -992,7 +997,7 @@ emit_clone_prefix :: proc(
 	if !emit_lifecycle(e, element).clone_fallible {
 		cloned = emit_clone_value(e, element, load_place(e, element, from), "%arg1")
 	} else {
-		value, failed := emit_part_clone(e, element, from)
+		value, failed, error := emit_part_clone(e, element, from)
 		fail, ok := new_label(e, "prefix.clone.fail"), new_label(e, "prefix.clone.ok")
 		branch_if(e, failed, fail, ok)
 		place_label(e, fail)
@@ -1000,7 +1005,7 @@ emit_clone_prefix :: proc(
 		for earlier := index - 1; earlier >= 0; earlier -= 1 {
 			emit_drop_record_part(e, record, out, earlier)
 		}
-		emit_ret(e, result, emit_alloc_result(e, result, "true"))
+		emit_ret(e, result, emit_alloc_result(e, result, "true", error = error))
 		e.terminated = true
 		place_label(e, ok)
 		cloned = value
@@ -1032,10 +1037,11 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 	return out
 }
 
-// Clones one part through its own `try_clone`. Returns the value and the error
-// flag; the caller publishes the value only on success.
+// Clones one part through its own `try_clone`. Returns the value, the error
+// flag, and the `Allocator_Error`, empty when the failure is still a status in
+// the runtime's note; the caller publishes the value only on success.
 @(private = "file")
-emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, string) {
+emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, string, string) {
 	operations := emit_lifecycle(e, part)
 	if operations.container {
 		destination := alloca(e, CONTAINER_TYPE)
@@ -1043,12 +1049,12 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 		cloned := load(e, CONTAINER_TYPE, destination)
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, ok)
-		return cloned, failed
+		return cloned, failed, ""
 	}
 	hook := operations.try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a fallible clone part has no `try_clone` member")
-		return "0", "true"
+		return "0", "true", ""
 	}
 	loaded := load_place(e, part, source)
 	return emit_clone_call(e, hook, part, loaded, "%arg1")
@@ -1114,10 +1120,11 @@ emit_clone_with_policy :: proc(e: ^Emitter, subject: Type_Id, value, allocator: 
 		backend_fail(e, "a policy-following copy has no `try_clone` operation")
 		return "0"
 	}
-	cloned, failed := emit_clone_call(e, hook, subject, value, allocator)
+	cloned, failed, error := emit_clone_call(e, hook, subject, value, allocator)
 	fail, ok := new_label(e, "clone.failed"), new_label(e, "ok")
 	branch_if(e, failed, fail, ok)
 	place_label(e, fail)
+	emit_restore_refusal(e, allocator, error)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
 	fmt.sbprintln(&e.b, "  unreachable")
 	e.terminated = true
@@ -1233,11 +1240,11 @@ emit_union_try_clone_body :: proc(
 			place_label(e, next)
 			continue
 		}
-		cloned, failed := emit_part_clone(e, variant, source)
+		cloned, failed, error := emit_part_clone(e, variant, source)
 		broke, ok := new_label(e, "unionclone.failed"), new_label(e, "unionclone.ok")
 		branch_if(e, failed, broke, ok)
 		place_label(e, broke)
-		emit_ret(e, result, emit_alloc_result(e, result, "true"))
+		emit_ret(e, result, emit_alloc_result(e, result, "true", error = error))
 		e.terminated = true
 		place_label(e, ok)
 		built := emit_union_value(e, subject, index, cloned)

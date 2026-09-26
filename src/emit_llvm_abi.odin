@@ -1022,16 +1022,29 @@ emit_option_value :: proc(e: ^Emitter, option_type: Type_Id, present, payload: s
 	)
 }
 
-// `Result(T, Allocator_Error)` from a runtime failure flag. The error payload is
-// the one non-zero `Allocator_Error` code the seed runtime reports; `value` is
+// `Result(T, Allocator_Error)` from a runtime failure flag. The error is the
+// refused size (design.md "Allocation failure"): `error` when the failure is
+// already an `Allocator_Error`, else taken from the runtime's note. `value` is
 // the success payload, empty when success carries `Unit`.
 @(private)
-emit_alloc_result :: proc(e: ^Emitter, result: Type_Id, failed: string, value := "") -> string {
+emit_alloc_result :: proc(e: ^Emitter, result: Type_Id, failed: string, value := "", error := "") -> string {
+	refused := error
+	if refused == "" && failed != "false" {
+		refused = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_take_refusal()", refused)
+	}
 	return emit_union_either(
 		e, result, failed,
-		union_index_of(e.c, result, "err"), "1",
+		union_index_of(e.c, result, "err"), refused,
 		union_index_of(e.c, result, "ok"), value,
 	)
+}
+
+// An `Allocator_Error` turning back into a status or a policy call: its size
+// returns to the runtime's note, charged to `allocator`.
+@(private)
+emit_restore_refusal :: proc(e: ^Emitter, allocator, error: string) {
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_restore_refusal(ptr %s, i64 %s)", allocator, error)
 }
 
 // A vector lane's backend type. It is the element's own spelling except for a

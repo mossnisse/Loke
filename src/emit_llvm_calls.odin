@@ -391,8 +391,14 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	clone_slot := emit_union_spill(e, clone_result, returned)
 	failed := emit_union_failed(e, clone_result, returned)
 	cloned := emit_union_payload(e, clone_result, checked.type, clone_slot)
+	refused_label := new_label(e, "newclone.refused")
 	allocate_label, done_label := new_label(e, "newclone.allocate"), new_label(e, "newclone.done")
-	branch_if(e, failed, done_label, allocate_label)
+	branch_if(e, failed, refused_label, allocate_label)
+
+	// The clone's error becomes a status again, so its size goes back to the note.
+	place_label(e, refused_label)
+	emit_restore_refusal(e, allocator, emit_union_payload(e, clone_result, TYPE_ALLOCATOR_ERROR, clone_slot))
+	branch(e, done_label)
 
 	place_label(e, allocate_label)
 	guard := hold_temporary_value(e, checked.type, cloned)

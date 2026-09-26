@@ -140,16 +140,15 @@ void loke_rt_v1_provider_init_end(void) {
 }
 
 /* design.md "Allocation failure": `.Panic` reports the requested size and the
- * allocator, which only the request knows. So each thread keeps its last
+ * allocator, which only the request knows. So each thread notes its last
  * request while the provider has refused it, and a request that succeeds
  * clears it. An arena refused by its parent is noted after the parent, so the
  * report names the request the program made.
  *
- * ponytail: a failure that makes no request at all (a size that overflows, or
- * a user `try_clone` answering `.err` on its own) reports only the allocator,
- * unless an earlier refusal on this thread was handled with no request since;
- * that one is reported instead (known-gaps.md "An allocation panic can report
- * an earlier, handled request"). A per-operation record would close it. */
+ * The note holds a refusal only while the failure is a status. Turning it into
+ * an `Allocator_Error` takes the note into the error value, and turning an
+ * error back into a status or a policy call restores it, so a failure the
+ * program handled leaves nothing behind for a later report. */
 static __declspec(thread) const loke_rt_allocator_v1 *refused_by;
 static __declspec(thread) uint64_t refused_size;
 
@@ -191,6 +190,23 @@ void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, ui
 		return;
 	}
 	a->ops->free(a->state, ptr, size, align);
+}
+
+/* The size an `Allocator_Error` carries, taken from the note: the refused
+ * request, or `LOKE_RT_REFUSAL_UNSIZED` when the failure requested nothing. */
+uint64_t loke_rt_v1_take_refusal(void) {
+	uint64_t size = refused_by != 0 ? refused_size : LOKE_RT_REFUSAL_UNSIZED;
+	refused_by = 0;
+	return size;
+}
+
+/* An `Allocator_Error` becoming a status again: its size goes back into the
+ * note, charged to `a`, the allocator the failing operation was given. A nil
+ * error, or one that carries no size, notes nothing. */
+void loke_rt_v1_restore_refusal(const loke_rt_allocator_v1 *a, uint64_t size) {
+	int unsized = size == 0 || size == LOKE_RT_REFUSAL_UNSIZED;
+	refused_by = unsized ? 0 : resolve(a);
+	refused_size = size;
 }
 
 /* How a failure report names an allocator: its kind, and whether the build

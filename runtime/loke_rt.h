@@ -156,6 +156,13 @@ void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, ui
 void loke_rt_v1_reset(const loke_rt_allocator_v1 *a);
 /* An implicit allocation that failed, dispatched by the allocator's own policy. */
 void loke_rt_v1_alloc_failed(const loke_rt_allocator_v1 *a);
+/* design.md "Allocation failure": an `Allocator_Error` is the refused size.
+ * `take` moves this thread's noted refusal into one, and `restore` moves one
+ * back before a policy call or a status return. All bits set means the
+ * failure requested nothing. */
+#define LOKE_RT_REFUSAL_UNSIZED UINT64_MAX
+uint64_t loke_rt_v1_take_refusal(void);
+void loke_rt_v1_restore_refusal(const loke_rt_allocator_v1 *a, uint64_t size);
 
 /* ----------------------------------------------------------------- text -- */
 

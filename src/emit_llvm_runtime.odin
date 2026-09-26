@@ -40,6 +40,8 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_free(ptr, ptr, i64, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_reset(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_alloc_failed(ptr)")
+	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_take_refusal()")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_restore_refusal(ptr, i64)")
 	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_selected_allocator()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_publish_allocator(ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_provider_init_begin()")

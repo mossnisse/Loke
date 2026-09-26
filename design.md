@@ -5672,7 +5672,7 @@ backup := source.try_clone() or_return;
 numbers.try_append(value) or_return;
 ```
 
-The `try_` forms of allocating operations, `try_new`, `try_new_clone`, and `try_make` among them, return `Result(T, Allocator_Error)` and do not invoke the allocator policy. `free` and `drop` return no status. Passing `unsafe.free` the wrong allocation or allocator is a programmer error; checked `free` rejects both.
+The `try_` forms of allocating operations, `try_new`, `try_new_clone`, and `try_make` among them, return `Result(T, Allocator_Error)` and do not invoke the allocator policy. An `Allocator_Error` holds the size of the request that was refused, or all bits set when the failure requested nothing, and a nil one is no failure. Handing the error on, as `or_return` does, keeps the size for the report of a policy that is reached later. `free` and `drop` return no status. Passing `unsafe.free` the wrong allocation or allocator is a programmer error; checked `free` rejects both.
 
 ## Concurrency and the memory model
 

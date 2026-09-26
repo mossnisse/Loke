@@ -1,8 +1,12 @@
 package main; import "core:fmt";
 
 // design.md "Allocation failure": `.Panic` reports the requested size and the
-// allocator. A `try_clone` that answers `.err` without asking for memory has
-// no size to report, so the report names only the allocator.
+// allocator. An `Allocator_Error` carries the refused size, so a failure the
+// program handled leaves nothing behind, and a `try_clone` that answers `.err`
+// without asking for memory has no size to report: the report names only the
+// allocator.
+
+Huge :: struct { pad: [4611686018427387904]u8 }
 
 Refusing :: struct { id: int }
 
@@ -14,6 +18,10 @@ impl Refusing {
 }
 
 main :: proc() {
+	switch (failure in try_new(Huge)) {
+	case .ok: fmt.println("allocated");
+	case .err: fmt.println("handled", failure);
+	}
 	r := Refusing{1};
 	other := r.clone();
 	fmt.println(other.id);

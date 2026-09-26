@@ -7,17 +7,7 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-- **An allocation panic can report an earlier, handled request.** design.md
-  "Allocation failure" has `.Panic` report the requested size, and a failure
-  that made no request reports only the allocator. The runtime keeps each
-  thread's last refused request until another request is made, so a handled
-  `try_` failure followed by a `try_clone` that answers `.err` on its own, or
-  a size that overflows before any request, reports the handled one:
-
-  ```odin
-  switch (_ in try_new(Huge)) { case .ok: case .err: }  // handled
-  other := refusing.clone();  // reports Huge's size, not "no size requested"
-  ```
+None recorded.
 
 ## Not gaps
 
