@@ -1,0 +1,20 @@
+package main; import "core:fmt";
+
+// design.md "string type": as a method receiver, a literal or a named string
+// constant is a `string_view` of its static storage, so it has the view's
+// operations and what they borrow outlives every scope.
+
+TEXT :: "Hej, världen";
+
+static_bytes :: proc() -> []u8 {
+	return "static".bytes();
+}
+
+main :: proc() {
+	fmt.println("hello".len(), TEXT.len(), TEXT.rune_count());
+	fmt.println("hi".bytes());
+	fmt.println(static_bytes().len());
+	foreach (r in "ab".runes()) { fmt.println(r); }
+	owned := "copied".copy();
+	fmt.println(owned);
+}

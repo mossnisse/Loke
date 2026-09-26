@@ -739,9 +739,10 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			return
 		}
 		// An unfixed receiver takes its default type (design.md "Unfixed
-		// constants"), so `TEXT.len()` finds `string`'s member.
+		// constants"), and an unfixed string is a `string_view` (design.md
+		// "string type"), so `TEXT.len()` finds the view's member.
 		if type_is_untyped(k.c, operand) {
-			materialized := default_type(k.c, operand)
+			materialized := operand == TYPE_UNTYPED_STRING ? TYPE_STRING_VIEW : default_type(k.c, operand)
 			if materialized != operand && materialized != INVALID_TYPE {
 				if !materialize(k, v.operand, materialized) {
 					v.type = INVALID_TYPE

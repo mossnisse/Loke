@@ -35,13 +35,17 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	// call's receiver is not checked here and then again as a method.
 	if ident, is_ident := sel.operand.(^Expr_Ident); is_ident {
 		sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-		if sym != nil && sym.kind != .Type && sym.const_value.kind != .Type && !type_is_text(k.c, sym.type) {
+		if sym != nil && sym.kind != .Type && sym.const_value.kind != .Type &&
+		   !type_is_text(k.c, sym.type) && sym.type != TYPE_UNTYPED_STRING {
 			return false
 		}
 	}
 	operand := check_single_expr(k, sel.operand)
 	if operand == INVALID_TYPE {
 		return false
+	}
+	if operand == TYPE_UNTYPED_STRING && op != .None {
+		operand = fix_string_receiver(k, sel.operand)
 	}
 
 	if base := expr_base(sel.operand); base.value_category == .Type {
@@ -103,6 +107,13 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 		contribute_lifecycle_members(k, v.type)
 	}
 	return true
+}
+
+// design.md "string type": an unfixed string receiver is a `string_view` of the
+// literal's static storage, so it takes the view's methods and borrows nothing
+// that ends.
+fix_string_receiver :: proc(k: ^Checker, operand: Expr) -> Type_Id {
+	return materialize(k, operand, TYPE_STRING_VIEW) ? TYPE_STRING_VIEW : INVALID_TYPE
 }
 
 @(private = "file")

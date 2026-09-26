@@ -367,14 +367,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
-## Methods on a string literal
-
-`"hello".len()` compiles, and `"hello".bytes()` is L0363, "`untyped string`
-has no field or member `bytes`". design.md says a literal converts to `string`
-and `string_view`, but not which methods an unfixed string receiver has.
-Proposal: an unfixed string receiver takes `string_view`'s methods, with static
-lifetime.
-
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
@@ -1230,6 +1222,17 @@ position for slicing, as an `inout` argument does for indexing, and
 `Small_Array` has a `span_mut` overload for it. Its `slice()` stays: a method
 receiver is not a destination, so `small.slice().indexed()` still names the
 mutable view it iterates.
+
+### A string literal receiver is a static `string_view`
+
+`"hello".len()` compiled and `"hello".bytes()` was L0363, because an unfixed
+receiver took its default type, `string`, through ordinary method lookup,
+while the text operations looked only at receivers whose type was already
+fixed. A literal's storage is static, so the receiver that describes it
+without an owner is a `string_view`, and nothing borrowed from it can end:
+`"hello".bytes()` may be returned from a procedure. An extension method
+declared on `string` alone no longer applies to a literal receiver; the
+view is what the literal is.
 
 ### Map element mutation
 

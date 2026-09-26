@@ -385,6 +385,8 @@ S :: "Hello"; // unfixed string; converts to string
 B :: true;    // unfixed boolean; converts to bool
 ```
 
+A method receiver is not a destination, so an unfixed receiver takes its default type, `int` for `I`. An unfixed string receiver is a `string_view` of its static storage, as [string type](#string-type) describes.
+
 ## String types and views
 
 ### string type
@@ -397,7 +399,7 @@ second := first;              // cheap value copy; backing storage may be shared
 message := first + " world";
 ```
 
-A string literal uses static storage. A runtime string owns managed storage and releases it through the allocator used to create it. Copies may share immutable storage. When a string is transferred between threads, its allocator must permit deallocation on the receiving thread. Use `[]u8` or `string_view` for a non-owning view.
+A string literal uses static storage. As a method receiver, a literal or a named string constant is a `string_view` of that storage, so it has the view's operations and what they borrow outlives every scope: a procedure may return `"hello".bytes()`. A runtime string owns managed storage and releases it through the allocator used to create it. Copies may share immutable storage. When a string is transferred between threads, its allocator must permit deallocation on the receiving thread. Use `[]u8` or `string_view` for a non-owning view.
 
 A `string` always holds valid UTF-8; arbitrary bytes use `[]u8` or `[dynamic]u8`. A string literal is held to this at compile time (see [Escape characters](#escape-characters)). The named constructor `string.from_utf8(bytes)` validates a byte slice and returns `.none` for invalid UTF-8.
 
