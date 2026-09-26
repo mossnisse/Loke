@@ -1,0 +1,9 @@
+L0343
+@9:6
+string slice bounds split a code point
+L0361
+@10:6
+slice bounds 1:5 are out of range for length 3
+L0361
+@11:6
+slice bounds 1:0 are out of range for length 3

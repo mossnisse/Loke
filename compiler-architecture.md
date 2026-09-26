@@ -240,7 +240,8 @@ holding bound reports, such as a deprecated call, is not lost with the probe.
 Simple constant semantics live in `const_ops.odin` and are shared by the checker
 and evaluator. `eval.odin` is a tree-walking interpreter over already typed AST;
 it adds frames, mutation, calls, loops, containers, and `defer`, but it is not a
-second type checker.
+second type checker. Assignment deep-copies an aggregate, except a slice, which
+shares the elements it was taken from, as a pointer shares its target.
 
 Generic procedures and records are monomorphized. `generic.odin` owns template
 recognition, inference, specialization, `where` evaluation, instance caching,

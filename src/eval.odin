@@ -358,10 +358,11 @@ value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (Eva
 	return value, true
 }
 
-// A deep copy, so an assigned aggregate never aliases its source.
+// A deep copy, so an assigned aggregate never aliases its source. A slice is
+// a view, and a copy of it views the same elements.
 @(private = "file")
 copy_value :: proc(ev: ^Evaluator, v: Eval_Value) -> (Eval_Value, bool) {
-	if v.elements == nil {
+	if v.elements == nil || underlying_kind(ev.k.c, v.type) == .Slice {
 		return v, true
 	}
 	out := v
@@ -623,7 +624,10 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 	case ^Expr_Or_Else:
 		return eval_or_else(ev, v)
 
-	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract, ^Expr_Slice,
+	case ^Expr_Slice:
+		return eval_slice(ev, v)
+
+	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract,
 	     ^Expr_Move, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
@@ -1632,6 +1636,68 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 	}
 	eval_fail(ev, expr_span(e), "L0341", "this expression is not compile-time storage")
 	return nil, false
+}
+
+// design.md "Slices": a slice views the elements of what it slices, so a write
+// through a `[]mut T` reaches the original, and text slices by byte offsets.
+@(private = "file")
+eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (Eval_Value, bool) {
+	if v.resolution.kind == .User_Operator {
+		eval_fail(ev, v.span, "L0341", "a user operator has no compile-time meaning yet")
+		return Eval_Value{}, false
+	}
+	operand: Eval_Value
+	base := expr_base(v.operand)
+	#partial switch underlying_kind(ev.k.c, base.type) {
+	case .Array, .Dynamic_Array:
+		if base.addressable {
+			place, ok := eval_place(ev, v.operand)
+			if !ok {
+				return Eval_Value{}, false
+			}
+			operand = place^
+			break
+		}
+		fallthrough
+	case .Slice, .String, .String_View:
+		value, ok := eval_expr(ev, v.operand)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		operand = value
+	case:
+		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
+		return Eval_Value{}, false
+	}
+	length := operand.kind == .String ? len(operand.text) : len(operand.elements)
+	bounds := [2]i64{0, i64(length)}
+	for endpoint, index in ([2]Expr{v.lo, v.hi}) {
+		if endpoint == nil {
+			continue
+		}
+		value, ok := eval_expr(ev, endpoint)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		fits: bool
+		if bounds[index], fits = bi_to_i64(ev.alloc, value.integer); !fits {
+			bounds[index] = -1
+		}
+	}
+	low, high := bounds[0], bounds[1]
+	if low < 0 || low > high || high > i64(length) {
+		eval_fail(ev, v.span, "L0361", "slice bounds %d:%d are out of range for length %d", low, high, length)
+		return Eval_Value{}, false
+	}
+	if operand.kind == .String {
+		text := operand.text[low:high]
+		if !utf8.valid_string(text) {
+			eval_fail(ev, v.span, "L0343", "string slice bounds split a code point")
+			return Eval_Value{}, false
+		}
+		return Eval_Value{kind = .String, type = v.type, text = text}, true
+	}
+	return Eval_Value{kind = .Aggregate, type = v.type, elements = operand.elements[low:high]}, true
 }
 
 @(private = "file")

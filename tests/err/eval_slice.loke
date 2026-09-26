@@ -1,0 +1,13 @@
+package main;
+
+// design.md "Compile-time procedure evaluation": a reached panic is a
+// compilation error, and slicing panics where it would at run time.
+
+cut :: proc(text: string_view, n: int) -> string_view { return text[n:]; }
+part :: proc(n: int) -> int { a := [3]int{1, 2, 3}; return a[1:n].len(); }
+
+A :: cut("héllo", 2);
+B :: part(5);
+C :: part(0);
+
+main :: proc() {}

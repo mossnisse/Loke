@@ -7,15 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-- **Slicing has no compile-time meaning.** design.md "Compile-time procedure
-  evaluation" allows ordinary expressions, but the evaluator rejects every slice
-  expression with L0341, so `strconv.parse_i64`, which trims its input by
-  slicing, cannot initialise a constant:
-
-  ```odin
-  tail :: proc(text: string_view) -> int { return text[1:3].len(); }
-  B :: tail("xyz");   // L0341: this expression has no compile-time meaning
-  ```
 - **An allocation panic reports neither the size nor the allocator.** design.md
   "Allocation failure" says `.Panic` reports both; the runtime prints only
   `loke: panic: allocation failed`. The generated code reaches the policy after
