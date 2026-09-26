@@ -212,7 +212,7 @@ read_to_end :: proc(
 	allocator: Allocator = mem.default_allocator(),
 	limit: int = 0,
 ) -> Result([dynamic]u8, Error) where Reader(R) {
-	collected := make([dynamic]u8, 0, 0, allocator) or_else panic("io allocation failed");
+	collected := make([dynamic]u8, 0, 0, allocator);
 	chunk: [CHUNK]u8 = {};
 	for (;;) {
 		count := 0;
@@ -273,7 +273,7 @@ read_line :: proc(
 	allocator: Allocator = mem.default_allocator(),
 	options: Line_Options = {},
 ) -> Result(string, Error) where Reader(R) {
-	collected := make([dynamic]u8, 0, 0, allocator) or_else panic("io allocation failed");
+	collected := make([dynamic]u8, 0, 0, allocator);
 	one: [1]u8 = {};
 	seen := 0;
 	ended := false;

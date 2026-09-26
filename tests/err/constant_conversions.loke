@@ -10,7 +10,7 @@ main :: proc() {
 	fraction: int = 1.5;
 	overflowing := 1e400;
 	negated := !5;
-	container := make();
+	container := try_make();
 	assert(1 == 1, message());
 	_ = fraction; _ = overflowing; _ = negated; _ = container;
 }

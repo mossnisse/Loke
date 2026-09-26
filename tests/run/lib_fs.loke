@@ -293,7 +293,7 @@ clean_up :: proc(directory: string_view) {
 	case .ok:  reader = move(opened);
 	case .err: return;
 	}
-	names := make([dynamic]string, 0, 8) or_else {};
+	names := make([dynamic]string, 0, 8);
 	reading := true;
 	for (; reading; ) {
 		switch (outcome in reader.next()) {

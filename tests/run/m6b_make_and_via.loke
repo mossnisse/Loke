@@ -29,27 +29,27 @@ main :: proc() {
 	// Four zero-valued elements inside a capacity of sixteen. The zero of a
 	// managed element is the inert value every hook must already handle, so the
 	// fill is not a construction and the drop of an untouched element is a no-op.
-	switch (_ in make([dynamic]Res, 4, 16)) {
+	switch (_ in try_make([dynamic]Res, 4, 16)) {
 	case .ok: fmt.println(true);
 	case .err: fmt.println(false);
 	}
 
 	// A map takes an optional reservation, and the allocator is recognised by its
 	// type rather than by a written parameter name.
-	switch (_ in make(map[int]Res, 32, mem.default_allocator())) {
+	switch (_ in try_make(map[int]Res, 32, mem.default_allocator())) {
 	case .ok: fmt.println(true);
 	case .err: fmt.println(false);
 	}
 
 	// Empty, and still bound: `make` with no counts allocates nothing.
-	switch (_ in make([dynamic]string)) {
+	switch (_ in try_make([dynamic]string)) {
 	case .ok: fmt.println(true);
 	case .err: fmt.println(false);
 	}
 
 	// Representable, and far larger than any heap will give: the `Result` carries
 	// the error alone.
-	switch (_ in make([dynamic]i128, 0, 1152921504606846976)) {
+	switch (_ in try_make([dynamic]i128, 0, 1152921504606846976)) {
 	case .ok: fmt.println(false);
 	case .err: fmt.println(true);
 	}

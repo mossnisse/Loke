@@ -67,9 +67,10 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return "0"
 		case .Default_Allocator:
 			return emit_default_allocator(e)
-		case .New, .New_Clone:
-			return emit_allocation_pair(e, v, symbol.builtin, as_type)[0]
-		case .Make:
+		case .New, .New_Clone, .Try_New, .Try_New_Clone:
+			kind, _ := allocation_builtin(symbol.builtin)
+			return emit_allocation_pair(e, v, kind, as_type)[0]
+		case .Make, .Try_Make:
 			return emit_make_container(e, v, as_type)[0]
 		case .Drop:
 			emit_explicit_drop(e, v)
@@ -254,7 +255,7 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []stri
 		case Call_Dyn_Slot:
 			return emit_dyn_slot_call(e, v)
 		case Call_Allocation:
-			kind := call_builtin_kind(e, v)
+			kind, _ := allocation_builtin(call_builtin_kind(e, v))
 			if kind == .Make { return emit_make_container(e, v, as_type) }
 			return emit_allocation_pair(e, v, kind, as_type)
 		case Call_Text:
@@ -296,7 +297,25 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 	}
 }
 
-// `new` and `new_clone` report allocation failure to the caller.
+// design.md "Allocation failure": the `try_` form returns the failure as a
+// `Result`; the plain form applies the allocator's policy, which does not
+// return, and produces the value.
+@(private = "file")
+emit_alloc_outcome :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, failed, value, allocator: string) -> string {
+	if v.operation.(Call_Allocation).fallible {
+		return emit_alloc_result(e, as_type, failed, value)
+	}
+	fail, ok := new_label(e, "alloc.failed"), new_label(e, "alloc.ok")
+	branch_if(e, failed, fail, ok)
+	place_label(e, fail)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
+	place_label(e, ok)
+	return value
+}
+
+// `new` and `new_clone`, in either spelling.
 @(private = "file")
 emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> []string {
 	checked := v.operation.(Call_Allocation)
@@ -338,7 +357,7 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_
 	}
 
 	out := make([]string, 1)
-	out[0] = emit_alloc_result(e, as_type, failed, pointer)
+	out[0] = emit_alloc_outcome(e, v, as_type, failed, pointer, allocator)
 	return out
 }
 
@@ -403,7 +422,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", code, error_slot)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", broke, code)
 	out := make([]string, 1)
-	out[0] = emit_alloc_result(e, as_type, broke, published)
+	out[0] = emit_alloc_outcome(e, v, as_type, broke, published, allocator)
 	return out
 }
 
@@ -467,7 +486,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	built := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", built, CONTAINER_TYPE, header)
 	out := make([]string, 1)
-	out[0] = emit_alloc_result(e, as_type, failed, built)
+	out[0] = emit_alloc_outcome(e, v, as_type, failed, built, allocator)
 	return out
 }
 

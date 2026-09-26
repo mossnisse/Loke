@@ -32,13 +32,13 @@ main :: proc() {
 	nested := Wrapped{};
 
 	// A fresh allocation is zeroed.
-	p := new(Choice);
-	q := new(Named);
+	p := try_new(Choice);
+	q := try_new(Named);
 
 	// A written length fills that many slots; a constant `0` length fills none,
 	// which is how `make(T, 0, capacity)` reserves storage for one of these.
-	filled := make([dynamic]Choice, 4);
-	reserved := make([dynamic]Choice, 0, 8);
+	filled := try_make([dynamic]Choice, 4);
+	reserved := try_make([dynamic]Choice, 0, 8);
 
 	// So does growth. Reserving capacity does not, and is accepted.
 	ys: [dynamic]Choice = {};

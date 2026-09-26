@@ -9,5 +9,5 @@ main :: proc() {
 	z: [2]E = {};
 	d: D = {};
 	_ = x; _ = y; _ = z; _ = d;
-	_ = make([dynamic]E, 2);
+	_ = try_make([dynamic]E, 2);
 }

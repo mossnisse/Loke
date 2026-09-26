@@ -15,7 +15,7 @@ pointer_outlives_local_arena :: proc() {
 	p: ^mut int = nil;
 	{
 		a := mem.Arena.init();
-		p = new(int, a.allocator()) or_else nil;
+		p = try_new(int, a.allocator()) or_else nil;
 	}
 	if (p == nil) { panic("no"); }
 	fmt.println(p^);

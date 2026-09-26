@@ -20,7 +20,7 @@ Handle :: struct {
 main :: proc() {
 	allocator := mem.default_allocator();
 	held := Handle{nil};
-	switch (p in new(int, allocator)) {
+	switch (p in try_new(int, allocator)) {
 	case .ok:
 		p^ = 41;
 		held.block = p;
@@ -38,7 +38,7 @@ main :: proc() {
 
 	// The default allocator is the same provider whether written or omitted, so
 	// the one-argument form releases what the two-argument form would.
-	switch (q in new(int, allocator)) {
+	switch (q in try_new(int, allocator)) {
 	case .ok:
 		q^ = 7;
 		fmt.println(q^);

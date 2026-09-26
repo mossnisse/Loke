@@ -27,6 +27,8 @@ The pair costs a type author nothing. Both names are generated from the single `
 
 And the policy-following half is load-bearing rather than convenient. Copy assignment of a copyable type is *defined* as `try_clone` plus the [allocation failure policy](design.md#allocation-failure), and [`Cloneable`](design.md#standard-interface-catalogue) names the fallible slot, so both halves already have language-level jobs. Deleting `clone` would not remove the policy call, only move it to every call site that copies. A container `try_op` carries no equivalent obligation, which is what leaves the container pair the live half of the question.
 
+The allocation built-ins are a third instance, and they keep the pair: `new`/`try_new`, `new_clone`/`try_new_clone`, and `make`/`try_make` (see [The allocation built-ins follow the `try_` convention](#the-allocation-built-ins-follow-the-try_-convention)).
+
 ## `()` as a type category
 
 Is `()` a new zero-sized type category, or the anonymous spelling of an already-legal empty struct? The shipped `Unit :: struct {}` already covers `Result(Unit, E)`, so a second spelling for one type buys nothing yet, and the product, call-matching, and one-result work all shipped without it. The question only becomes live if a second zero-sized use appears.
@@ -368,26 +370,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 `v << {1, -1, 2, 40}` over `{1, 2, 3, 4}` gives `{2, 0, 12, 0}`. Proposal: give
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
-
-## The allocation built-ins and the `try_` convention
-
-[Appending to a dynamic array](design.md#appending-to-a-dynamic-array) makes
-`try_` the library-wide mark of an operation that returns the failure its plain
-form would panic on. The allocation built-ins have the `try_` behaviour under
-the plain name: `new`, `make`, and `new_clone` return `Result(T,
-Allocator_Error)` and have no form that follows the allocator's policy. Their
-callers want both. Of the twelve calls in `core` and `base`, seven return or
-report the error, and five turn it into a panic through the helpers in
-[Diverging procedures](#diverging-procedures), as in `make(...) or_else
-no_sink()`. design.md's own `my_new` example wraps `new` in a panic, and its
-`make` examples use `or_else {}`, which turns an allocation failure into an
-empty container.
-
-Proposal: `new`, `make`, and `new_clone` follow the allocator's failure policy
-and return the value, and `try_new`, `try_make`, and `try_new_clone` return the
-`Result`. The `or_else {}` examples go. For [The `op`/`try_op`
-pair](#the-optry_op-pair), this keeps the pair and adds the built-ins to it.
-About 117 calls in `tests/` would change spelling.
 
 ## `main` returning a status
 
@@ -894,10 +876,10 @@ still an ordinary call and still evaluates `x`; the unevaluated operand is
 
 `design.md` once promised that `new`, `new_clone`, `make`, `free`, `free_all`,
 and `drop` were also available in package `mem`. No compiler ever contributed
-them, and a second name for each built-in would buy nothing: the built-ins
-already return `Result(T, Allocator_Error)` where failure is possible, so there
-was no stricter error handling left for a `mem.` spelling to add. The universe
-name is the only spelling.
+them, and a second name for each built-in would buy nothing: each allocating
+built-in has a `try_` form returning `Result(T, Allocator_Error)`, so there is
+no stricter error handling left for a `mem.` spelling to add. The universe name
+is the only spelling.
 
 ### `fallthrough`
 
@@ -1230,6 +1212,19 @@ takes whatever type its context expects, which the checker settles from the
 callee's declaration; carrying it through procedure values would add a
 subtyping rule (`proc() -> !` wherever `proc() -> T` is expected) for a case
 nothing in the tree needs. A later change can add it without breaking code.
+
+### The allocation built-ins follow the `try_` convention
+
+Odin's `new` and `make` return the value and an error. Loke's returned a
+`Result` under the plain name, the opposite of the library-wide convention
+that `try_` marks the form returning the failure its plain form would panic
+on. Callers wanted both: of the twelve calls in `core` and `base`, seven
+returned or reported the error and five turned it into a panic through a
+one-line helper, and design.md's `make` examples used `or_else {}`, which
+turns an allocation failure into an empty container. `new`, `new_clone`, and
+`make` now follow the allocator's failure policy, and `try_new`,
+`try_new_clone`, and `try_make` return the `Result`. About a hundred calls in
+`tests/` changed spelling.
 
 ### Map element mutation
 

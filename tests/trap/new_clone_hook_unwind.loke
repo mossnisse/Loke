@@ -13,12 +13,12 @@ main :: proc() {
 	room: [320]u8 = {};
 	arena := mem.Arena.from_buffer(room[:]);
 	defer {
-		probe := new(Payload, arena.allocator()) or_else nil;
+		probe := try_new(Payload, arena.allocator()) or_else nil;
 		fmt.println(probe != nil);
 		if (probe != nil) { free(probe, arena.allocator()); }
 	}
 	value: Payload = {};
-	switch (_ in new_clone(value, arena.allocator())) {
+	switch (_ in try_new_clone(value, arena.allocator())) {
 	case .ok:
 	case .err:
 	}

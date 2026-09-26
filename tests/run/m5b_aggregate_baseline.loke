@@ -96,7 +96,7 @@ move_an_owner :: proc(values: []int) -> Owner {
 
 // POSITIVE. The bare base reaches checked `free`.
 alloc_bare :: proc() {
-	pointer := new(int) or_else nil;
+	pointer := try_new(int) or_else nil;
 	if (pointer == nil) { return; }
 	pointer^ = 1;
 	free(pointer);
@@ -108,7 +108,7 @@ alloc_bare :: proc() {
 Handle :: struct { target: ^mut int }
 
 alloc_wrapped :: proc() {
-	pointer := new(int) or_else nil;
+	pointer := try_new(int) or_else nil;
 	if (pointer == nil) { return; }
 	pointer^ = 1;
 	handle := Handle{pointer};

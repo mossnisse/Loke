@@ -39,7 +39,7 @@ conditional_free :: proc(use_heap: bool) {
 	local := 7;
 	pointer := &mut local;
 	if (use_heap) {
-		pointer = new(int) or_else nil;
+		pointer = try_new(int) or_else nil;
 	}
 	free(pointer);
 }
@@ -147,7 +147,7 @@ reset_after_or_return :: proc(
 	@(allocator_reset) allocator: Allocator,
 ) -> Result(Unit, Allocator_Error) {
 	held := make_buffer(1, allocator);
-	p := new(int, allocator) or_return;
+	p := try_new(int, allocator) or_return;
 	free_all(allocator);
 	fmt.println(held.id);
 	return .ok(Unit{});

@@ -129,7 +129,7 @@ get_environment_native :: proc(
 			return .err(error);
 		}
 		buffer: [dynamic]u16 = {};
-		switch (made in make([dynamic]u16, int(needed), int(needed), mem.default_allocator())) {
+		switch (made in try_make([dynamic]u16, int(needed), int(needed), mem.default_allocator())) {
 		case .ok:  buffer = move(made);
 		case .err: return .err(io.make_error(.Out_Of_Memory, .Environment));
 		}
@@ -174,7 +174,7 @@ working_directory_native :: proc(allocator: Allocator) -> Result(string, io.Erro
 			return .err(from_last_error(.Working_Directory));
 		}
 		buffer: [dynamic]u16 = {};
-		switch (made in make([dynamic]u16, int(needed), int(needed), mem.default_allocator())) {
+		switch (made in try_make([dynamic]u16, int(needed), int(needed), mem.default_allocator())) {
 		case .ok:  buffer = move(made);
 		case .err: return .err(io.make_error(.Out_Of_Memory, .Working_Directory));
 		}
@@ -203,7 +203,7 @@ executable_path_native :: proc(allocator: Allocator) -> Result(string, io.Error)
 	size := 260;
 	for (; size <= 65536; size *= 2) {
 		buffer: [dynamic]u16 = {};
-		switch (made in make([dynamic]u16, size, size, mem.default_allocator())) {
+		switch (made in try_make([dynamic]u16, size, size, mem.default_allocator())) {
 		case .ok:  buffer = move(made);
 		case .err: return .err(io.make_error(.Out_Of_Memory, .Executable_Path));
 		}

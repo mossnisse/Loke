@@ -199,7 +199,7 @@ clone :: proc(values: []$T, allocator: Allocator = mem.default_allocator()) -> [
 try_clone :: proc(
 	values: []$T, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]T, Allocator_Error) {
-	owned := make([dynamic]T, 0, values.len(), allocator) or_return;
+	owned := try_make([dynamic]T, 0, values.len(), allocator) or_return;
 	owned.try_append(..values) or_return;
 	return .ok(move(owned));
 }

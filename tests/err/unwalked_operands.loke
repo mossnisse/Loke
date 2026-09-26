@@ -21,7 +21,7 @@ map_literal_key :: proc() {
 
 free_operand :: proc() {
     xs: [dynamic]int = {};
-    q := new(int) or_else nil;
+    q := try_new(int) or_else nil;
     free(q if count(move(xs)) == 0 else q);
     xs.append(1);
 }

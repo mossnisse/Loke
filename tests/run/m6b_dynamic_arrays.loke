@@ -30,7 +30,7 @@ main :: proc() {
 	fmt.println(xs[1]);
 
 	// Appending several values, and spreading another container's view.
-	ys := make([dynamic]int, 0, 2) or_else {};
+	ys := make([dynamic]int, 0, 2);
 	ys.append(4, 5);
 	ys.append(..xs[:], 6);
 	fmt.println(ys.len());

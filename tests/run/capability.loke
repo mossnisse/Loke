@@ -69,7 +69,7 @@ main :: proc() {
 	fmt.println(1 if &FIRST == &SECOND else 0);
 
 	// `new` hands back `^mut T`; `free` needs that capability.
-	allocated := new(int) or_else nil;
+	allocated := try_new(int) or_else nil;
 	if (allocated == nil) { panic("allocation failed"); }
 	allocated^ = 99;
 	fmt.println(allocated^);

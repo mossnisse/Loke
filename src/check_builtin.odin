@@ -27,11 +27,11 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_is_copyable_builtin(k, v, ident)
 	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		check_reflection_builtin(k, v, ident, sym.builtin)
-	case .Make:
-		check_make_builtin(k, v)
+	case .Make, .Try_Make:
+		check_make_builtin(k, v, sym.builtin == .Try_Make)
 	case .Simd_Cast, .Simd_Select, .Simd_Reduce:
 		check_simd_builtin(k, v, ident, sym.builtin)
-	case .New, .New_Clone, .Free, .Unsafe_Free, .Free_All:
+	case .New, .New_Clone, .Try_New, .Try_New_Clone, .Free, .Unsafe_Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
 	case .Drop:
 		check_drop_builtin(k, v)
@@ -441,7 +441,8 @@ operand_type :: proc(k: ^Checker, e: Expr, builtin: string, accepts_value: bool)
 // return their `Allocator_Error`; `free(pointer[, allocator])` and
 // `free_all(allocator)` return nothing. An omitted allocator is the default.
 @(private = "file")
-check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, written: Builtin_Kind) {
+	kind, fallible := allocation_builtin(written)
 	arity_high := kind == .Free_All ? 1 : 2
 	if len(v.args) < 1 || len(v.args) > arity_high {
 		errorf(
@@ -477,8 +478,8 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			v.type = INVALID_TYPE
 			return
 		}
-		v.operation = Call_Allocation{type = element}
-		set_allocation_results(k, v, pointer_to(k.c, element, true))
+		v.operation = Call_Allocation{type = element, fallible = fallible}
+		set_allocation_results(k, v, pointer_to(k.c, element, true), fallible)
 
 	case .New_Clone:
 		value := check_single_expr(k, v.args[0].value)
@@ -495,11 +496,11 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			}
 		}
 		append(&bound, v.args[0].value)
-		v.operation = Call_Allocation{type = value}
+		v.operation = Call_Allocation{type = value, fallible = fallible}
 		contribute_lifecycle_members(k, value)
 		// The result shape is settled first, so a destructuring still knows its
 		// arity and the move-only failure is reported once.
-		set_allocation_results(k, v, pointer_to(k.c, value, true))
+		set_allocation_results(k, v, pointer_to(k.c, value, true), fallible)
 		if type_clone_disabled(k.c, value) {
 			errorf(
 				k.c,
@@ -563,7 +564,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 // both returning `(container, Allocator_Error)`. `Allocator` is a distinct type,
 // so the trailing allocator is recognised by its type rather than its position.
 @(private = "file")
-check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
+check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, fallible: bool) {
 	v.value_category = .Value
 	v.type = INVALID_TYPE
 	if len(v.args) == 0 {
@@ -636,7 +637,7 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 	bound[max_counts] = allocator
 	v.bound = bound
-	v.operation = Call_Allocation{type = container}
+	v.operation = Call_Allocation{type = container, fallible = fallible}
 	// design.md "Zero values": only a length fills slots with zeroes, and a
 	// constant `0` fills none.
 	if !is_map && len(counts) > 0 && !is_constant_zero(counts[0]) {
@@ -647,7 +648,7 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
 		}
 	}
 
-	v.type = result_type(k, container, TYPE_ALLOCATOR_ERROR)
+	v.type = fallible ? result_type(k, container, TYPE_ALLOCATOR_ERROR) : container
 }
 
 // design.md "`unsafe.transmute`": reads `value`'s storage as a `T`. Only equal
@@ -930,9 +931,24 @@ is_constant_zero :: proc(e: Expr) -> bool {
 }
 
 @(private = "file")
-set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id) {
-	v.type = result_type(k, pointer, TYPE_ALLOCATOR_ERROR)
+set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id, fallible: bool) {
+	v.type = fallible ? result_type(k, pointer, TYPE_ALLOCATOR_ERROR) : pointer
 	v.value_category = .Value
+}
+
+// design.md "Allocation failure": `try_new`, `try_new_clone`, and `try_make`
+// are `new`, `new_clone`, and `make` returning the error instead of following
+// the allocator's policy.
+allocation_builtin :: proc(kind: Builtin_Kind) -> (base: Builtin_Kind, fallible: bool) {
+	#partial switch kind {
+	case .Try_New:
+		return .New, true
+	case .Try_New_Clone:
+		return .New_Clone, true
+	case .Try_Make:
+		return .Make, true
+	}
+	return kind, false
 }
 
 // `free` needs a `^mut T`; whether it is really an allocation base, and not yet

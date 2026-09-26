@@ -43,12 +43,12 @@ impl Resource {
 main :: proc() {
 	// A move-only value has no copy entry point to allocate through.
 	m := Move_Only{1};
-	bad := new_clone(m);
+	bad := try_new_clone(m);
 	r := Resource{true};
 	r.release();
 
 	// Arity and operand shape of the allocation built-ins and `drop`.
-	bad_new := new(int, a, a);
+	bad_new := try_new(int, a, a);
 	handle := mem.default_allocator(1);
 	drop();
 

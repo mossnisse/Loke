@@ -93,9 +93,12 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"type_info_of", .Type_Info_Of},
 		{"new", .New},
 		{"new_clone", .New_Clone},
+		{"try_new", .Try_New},
+		{"try_new_clone", .Try_New_Clone},
 		{"free", .Free},
 		{"free_all", .Free_All},
 		{"make", .Make},
+		{"try_make", .Try_Make},
 		{"drop", .Drop},
 		{"exchange", .Exchange},
 	}

@@ -50,7 +50,7 @@ main :: proc() {
 	fmt.println(original.copy());
 	{
 		source := original.copy();
-		switch (root in new_clone(source)) {
+		switch (root in try_new_clone(source)) {
 		case .ok:
 			taken := unsafe.take(root^);
 			free(root);

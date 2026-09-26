@@ -23,7 +23,7 @@ erased :: proc() {
 
 // design.md `free`: the allocator must be the one the allocation came from.
 received :: proc(allocator: Allocator) {
-	p := new(int, allocator) or_else nil;
+	p := try_new(int, allocator) or_else nil;
 	free(p);
 }
 
@@ -32,9 +32,9 @@ main :: proc() {
 	erased();
 	received(mem.default_allocator());
 	arena := mem.Arena.init();
-	p := new(int, arena.allocator()) or_else nil;
+	p := try_new(int, arena.allocator()) or_else nil;
 	free(p);
-	q := new(int) or_else nil;
+	q := try_new(int) or_else nil;
 	free(q, arena.allocator());
 }
 

@@ -106,7 +106,7 @@ thread_main :: proc "stdcall" (raw: rawptr) -> u32 {
 // end under it. Running out of memory or threads panics.
 @(private)
 spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) -> Thread {
-	block := new(Start(T)) or_else no_block(T);
+	block := new(Start(T));
 	block^.run = Start(T).begin;
 	block^.entry = entry;
 	unsafe.write(block^.arg[0], move(arg));
@@ -128,11 +128,6 @@ run_plain :: proc(entry: move proc()) {
 }
 
 spawn :: proc{spawn_with, spawn_plain};
-
-@(private)
-no_block :: proc($T: type) -> ^mut Start(T) {
-	panic("thread allocation failed");
-}
 
 // A `T` that one thread at a time may reach. `lock` blocks until the calling
 // thread holds it and answers a guard; the guard reaches the value, and

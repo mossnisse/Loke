@@ -10,7 +10,7 @@ impl Res {
 Box :: struct { item: Res }
 
 stale_allocation_root :: proc() {
-	p := new(int) or_else nil;
+	p := try_new(int) or_else nil;
 	free(p);
 	x := 42;
 	p = &mut x;

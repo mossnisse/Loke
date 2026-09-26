@@ -77,7 +77,7 @@ main :: proc() {
 	fmt.println(xs.len());
 
 	// A capacity with no length allocates storage and initialises nothing.
-	ys := make([dynamic]Choice, 0, 8) or_else {};
+	ys := make([dynamic]Choice, 0, 8);
 	fmt.println(ys.len(), ys.cap() >= 8);
 
 	// An empty fixed array of them has a zero, because it holds no element.

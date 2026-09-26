@@ -37,7 +37,7 @@ resets_across_a_package :: proc(allocator: Allocator) {
 // The promise written, the call is accepted; the allocation has no surviving
 // carrier, so the reset releases it.
 marked_across_a_package :: proc(@(allocator_reset) allocator: Allocator) {
-	switch (pointer in new(int, allocator)) {
+	switch (pointer in try_new(int, allocator)) {
 	case .ok:  pointer^ = 1;
 	case .err: return;
 	}

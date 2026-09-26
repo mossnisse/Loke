@@ -20,14 +20,14 @@ L0698
 @46:2
 `bad` holds a `Result(^mut Move_Only, Allocator_Error)` that is never used
 L0491
-@46:19
+@46:23
 `Move_Only` is move-only, so it cannot be cloned into a new allocation
 L0412
 @48:2
 `release` implements `hook(drop)` and is not directly accessible; use `drop(value)`
 L0490
 @51:13
-`new` takes an operand and an optional allocator
+`try_new` takes an operand and an optional allocator
 L0490
 @52:12
 `default_allocator` takes no arguments

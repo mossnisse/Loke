@@ -18,7 +18,7 @@ impl Res {
 	release :: hook(drop) proc(self: inout Res) { if (self.id != 0) { drops += 1; } }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
 		if (self.id == 3) {
-			p := new(Huge, allocator) or_return;
+			p := try_new(Huge, allocator) or_return;
 			free(p, allocator);
 		}
 		return .ok(Res{self.id});

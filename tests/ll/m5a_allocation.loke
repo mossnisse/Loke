@@ -19,7 +19,7 @@ impl Res {
 }
 
 main :: proc() {
-	switch (p in new(int)) {
+	switch (p in try_new(int)) {
 	case .ok:
 		p^ = 1;
 		free(p);
@@ -27,14 +27,14 @@ main :: proc() {
 	}
 
 	// A trivially copyable operand stores its representation.
-	switch (q in new_clone(7)) {
+	switch (q in try_new_clone(7)) {
 	case .ok:  free(q);
 	case .err:
 	}
 
 	// A record whose clone can fail goes through the hook, and the allocation it
 	// cannot publish into is released.
-	switch (r in new_clone(Res{2})) {
+	switch (r in try_new_clone(Res{2})) {
 	case .ok:  free(r);
 	case .err:
 	}

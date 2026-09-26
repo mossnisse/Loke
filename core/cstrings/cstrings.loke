@@ -35,7 +35,7 @@ from_string :: proc(
 			return .err(.Contains_Zero);
 		}
 	}
-	switch (buffer in make([dynamic]u8, 0, text.len() + 1, allocator)) {
+	switch (buffer in try_make([dynamic]u8, 0, text.len() + 1, allocator)) {
 	case .ok:
 		// The capacity covers the text and the terminator, so neither append
 		// can grow the buffer, and neither can fail.

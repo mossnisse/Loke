@@ -34,7 +34,7 @@ constant_view :: proc() -> []int {
 // `new_clone` may be returned because the allocation is not callee-local
 // storage."
 allocate :: proc(value: int) -> ^mut int {
-	pointer := new(int) or_else nil;
+	pointer := try_new(int) or_else nil;
 	if (pointer == nil) { panic("allocation failed"); }
 	pointer^ = value;
 	return pointer;

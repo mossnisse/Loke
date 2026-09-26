@@ -228,11 +228,11 @@ Empty :: struct {}
 
 zero_size :: proc() {
 	arena := mem.Arena.init();
-	switch (p in new(Empty)) {
+	switch (p in try_new(Empty)) {
 	case .ok: free(p); fmt.println(true);
 	case .err: fmt.println(false);
 	}
-	switch (p in new_clone(Empty{}, arena.allocator())) {
+	switch (p in try_new_clone(Empty{}, arena.allocator())) {
 	case .ok: free(p, arena.allocator()); fmt.println(true);
 	case .err: fmt.println(false);
 	}
@@ -305,7 +305,7 @@ zero_provider :: proc() {
 		case .ok: fmt.println(false);
 		case .err: fmt.println(true);
 		}
-		switch (p in new(int, arena.allocator())) {
+		switch (p in try_new(int, arena.allocator())) {
 		case .ok: free(p, arena.allocator()); fmt.println(false);
 		case .err: fmt.println(true);
 		}
@@ -319,7 +319,7 @@ zero_provider :: proc() {
 // A nil allocator is the default provider, for an allocation as for a container.
 nil_allocator :: proc() {
 	allocator: Allocator = nil;
-	switch (p in new(int, allocator)) {
+	switch (p in try_new(int, allocator)) {
 	case .ok: p^ = 6; fmt.println(p^); free(p, allocator);
 	case .err: fmt.println(false);
 	}

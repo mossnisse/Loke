@@ -2,10 +2,10 @@ L0386
 @7:38
 `size_of` needs a typed value, found `untyped nil`
 L0386
-@8:40
-`new` needs a type, found a value of type `int`
+@8:44
+`try_new` needs a type, found a value of type `int`
 L0386
-@9:58
+@9:62
 `make` needs a type, found a value of type `[dynamic]int`
 L0315
 @10:39

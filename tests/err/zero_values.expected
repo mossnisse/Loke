@@ -23,7 +23,7 @@ L0424
 @36:7
 `Named` has no zero value, so it cannot be produced by `new`, which zeroes the allocation
 L0424
-@40:34
+@40:38
 `Choice` has no zero value, so it cannot be produced by a `make` length
 L0424
 @46:2

@@ -36,7 +36,7 @@ Failing :: struct { id: int }
 
 impl Failing {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Failing, Allocator_Error) {
-		p := new(Huge, allocator) or_return;
+		p := try_new(Huge, allocator) or_return;
 		free(p, allocator);
 		return .ok(Failing{self.id});
 	}
@@ -127,7 +127,7 @@ main :: proc() {
 
 	// design.md: `new_clone` "creates a new allocation root containing a clone of
 	// the value", so it fills the allocation through the same hook.
-	switch (held in new_clone(Res{5})) {
+	switch (held in try_new_clone(Res{5})) {
 	case .ok:
 		fmt.println(held^.id);
 		free(held);
@@ -136,7 +136,7 @@ main :: proc() {
 
 	// And destroys the allocation it could not publish into: the two elements
 	// already cloned are dropped, then the block is released.
-	switch (_ in new_clone(ok)) {
+	switch (_ in try_new_clone(ok)) {
 	case .ok: fmt.println(0);
 	case .err: fmt.println(-2);
 	}

@@ -383,17 +383,20 @@ Builtin_Kind :: enum {
 	Typeid_Of,
 	Fields_Of,
 	Enum_Values_Of,
-	// design.md "Allocators" and "Allocation failure": explicitly fallible, so
-	// they always return an error and never invoke a failure policy. `free_all`
-	// lowers to the provider's reset entry once provenance proves no dependant
-	// survives it.
+	// design.md "Allocators" and "Allocation failure": the plain forms follow
+	// the allocator's failure policy and the `try_` forms return the error;
+	// `allocation_builtin` pairs them. `free_all` lowers to the provider's reset
+	// entry once provenance proves no dependant survives it.
 	New,
 	New_Clone,
+	Try_New,
+	Try_New_Clone,
 	Free,
 	Free_All,
 	// design.md "Dynamic arrays" and "Maps": its first operand is a *type*, which
 	// no ordinary signature can spell.
 	Make,
+	Try_Make,
 	// `mem.default_allocator()`. Compiler-owned and bound by `core:mem`, so a
 	// generated default argument and a written call are one call.
 	Default_Allocator,

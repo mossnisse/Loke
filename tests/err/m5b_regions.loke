@@ -42,7 +42,7 @@ indirect_wrapper :: proc(allocator: Allocator, reset: proc(@(allocator_reset) a:
 // design.md: `free_all` "frees every allocation in the allocator's region", so
 // a pointer into it that is used afterwards would dangle.
 alias_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
-	pointer := new(int, allocator) or_else nil;
+	pointer := try_new(int, allocator) or_else nil;
 	free_all(allocator);
 	fmt.println(pointer^);
 }
@@ -59,7 +59,7 @@ owner_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
 // this body created: the gate above is region identity, not allocation kind.
 local_arena_alias_survives_reset :: proc() {
 	arena := mem.Arena.init();
-	pointer := new(int, arena.allocator()) or_else nil;
+	pointer := try_new(int, arena.allocator()) or_else nil;
 	free_all(arena.allocator());
 	fmt.println(pointer^);
 }
@@ -70,7 +70,7 @@ parameter_regions_may_alias :: proc(
 	@(allocator_reset) reset: Allocator,
 	allocate: Allocator,
 ) {
-	pointer := new(int, allocate) or_else nil;
+	pointer := try_new(int, allocate) or_else nil;
 	free_all(reset);
 	fmt.println(pointer^);
 }
@@ -82,7 +82,7 @@ loop_carried_allocation_region :: proc() {
 	b := mem.Arena.init();
 	allocator := a.allocator();
 	for (i := 0; i < 2; i += 1) {
-		pointer := new(int, allocator) or_else nil;
+		pointer := try_new(int, allocator) or_else nil;
 		allocator = b.allocator();
 		free_all(b.allocator());
 		fmt.println(pointer^);
@@ -93,7 +93,7 @@ loop_carried_allocation_region :: proc() {
 // region. A caller cannot receive one backed by a provider the callee destroys.
 return_local_region_allocation :: proc() -> ^mut int {
 	arena := mem.Arena.init();
-	return new(int, arena.allocator()) or_else nil;
+	return try_new(int, arena.allocator()) or_else nil;
 }
 
 // design.md: an owner "backed by a region created in the current procedure may

@@ -4,7 +4,7 @@ Huge :: struct { pad: [4611686018427387904]u8 }
 Failing :: struct { id: int }
 impl Failing {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Failing, Allocator_Error) {
-		p := new(Huge, allocator) or_return;
+		p := try_new(Huge, allocator) or_return;
 		free(p, allocator);
 		return .ok(Failing{self.id});
 	}

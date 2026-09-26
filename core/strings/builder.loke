@@ -23,7 +23,7 @@ String_Builder :: struct {
 
 // A builder whose buffer *and* finished string come from `allocator`.
 init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder {
-	made := make([dynamic]u8, 0, 0, allocator) or_else panic("String_Builder allocation failed");
+	made := make([dynamic]u8, 0, 0, allocator);
 	return String_Builder{move(made), allocator};
 }
 

@@ -12,7 +12,7 @@ impl Tracked {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
 		copies += 1;
 		if (copies == 3) {
-			p := new(Huge, allocator) or_return;
+			p := try_new(Huge, allocator) or_return;
 			free(p, allocator);
 		}
 		return .ok(Tracked{copies});

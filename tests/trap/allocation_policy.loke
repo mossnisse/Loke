@@ -1,0 +1,20 @@
+package main; import "core:fmt";
+
+// design.md "Allocation failure": `try_new` and `try_make` hand the error back;
+// `new` and `make` follow the allocator's failure policy, which panics.
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+
+main :: proc() {
+	switch (_ in try_new(Huge)) {
+	case .ok: fmt.println("allocated");
+	case .err: fmt.println("try_new failed");
+	}
+	switch (_ in try_make([dynamic]Huge, 0, 2)) {
+	case .ok: fmt.println("made");
+	case .err: fmt.println("try_make failed");
+	}
+	p := new(Huge);
+	fmt.println("not reached");
+	free(p);
+}

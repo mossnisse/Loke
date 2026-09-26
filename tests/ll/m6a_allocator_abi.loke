@@ -14,7 +14,7 @@ Wide :: struct { a: i128, b: int }
 
 // The handle arrives as one `ptr` parameter and is forwarded unchanged.
 in_region :: proc(allocator: Allocator) -> Result(Unit, Allocator_Error) {
-	p := new(Wide, allocator) or_return;
+	p := try_new(Wide, allocator) or_return;
 	free(p, allocator);
 	return .ok(Unit{});
 }

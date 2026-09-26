@@ -1051,13 +1051,13 @@ b = [dynamic]int{};
 assert(b.len() == 0);
 ```
 
-The fallible `make` constructor returns an ordinary owning value, cleaned up at scope exit like any other. In a procedure returning a compatible `Result`, `or_return` propagates construction failure; moving the owner still requires `move`:
+`make` returns an ordinary owning value, cleaned up at scope exit like any other, and follows the allocator's [failure policy](#allocation-failure). `try_make` returns the failure instead; in a procedure returning a compatible `Result`, `or_return` propagates it. Moving the owner still requires `move`:
 
 ```odin
 Log :: struct { lines: [dynamic]string }
 
 open_log :: proc(allocator: mem.Allocator) -> Result(Log, mem.Allocator_Error) {
-	lines := make([dynamic]string, 0, 64, allocator) or_return;
+	lines := try_make([dynamic]string, 0, 64, allocator) or_return;
 	return .ok(Log{lines = move(lines)}); // `lines` is dead now and needs no `drop`
 }
 ```
@@ -3179,7 +3179,7 @@ Managed locals may own allocator-supplied backing storage. Use `new`, a `[dynami
 
 ```odin
 // Within a procedure returning a compatible Result:
-buffer := make([dynamic]u8, allocator=my_allocator) or_return;
+buffer := try_make([dynamic]u8, allocator=my_allocator) or_return;
 drop(buffer); // or leave it to scope exit
 ```
 
@@ -4310,7 +4310,7 @@ fail :: proc(message: string) -> ! {
 }
 
 port := config.lookup_value("port") or_else fail("no port configured");
-sink := make([dynamic]u8, 0, 64) or_else panic("allocation failed");
+text := string.from_utf8(bytes) or_else panic("not UTF-8");
 ```
 
 Where no type is expected, as in `x := fail("...")`, the call produces no value. A call statement to a diverging procedure ends its block's reachable code, so a value-returning procedure may end with one instead of a `return`.
@@ -4432,10 +4432,7 @@ Types can also be explicitly passed through a `$` parameter of compile-time-only
 
 ```odin
 my_new :: proc($T: type) -> ^mut T {
-	switch (ptr in new(T)) {
-	case .ok: return ptr;
-	case .err: panic("allocation failed");
-	}
+	return new(T);
 }
 
 ptr := my_new(int);
@@ -5539,55 +5536,49 @@ view := scratch[:];
 release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
 ```
 
-The following low-level procedures are built in. Normal managed strings, arrays, and maps do not need them.
+The following low-level procedures are built in. Normal managed strings, arrays, and maps do not need them. Each follows the allocator's [failure policy](#allocation-failure); its `try_` form, `try_new`, `try_new_clone`, or `try_make`, takes the same arguments and returns `Result(T, Allocator_Error)` instead.
 
-- `new(T, allocator := mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates a zero-initialized allocation, so `T` must have a [zero value](#zero-values). The result is an allocation root with pointer and allocator-region provenance. Release it with `free`, reset its region, or move responsibility into a resource wrapper.
+- `new(T, allocator := mem.default_allocator()) -> ^mut T` creates a zero-initialized allocation, so `T` must have a [zero value](#zero-values). The result is an allocation root with pointer and allocator-region provenance. Release it with `free`, reset its region, or move responsibility into a resource wrapper.
 
 ```odin
-switch (ptr in new(int)) {
-case .ok:
-	ptr^ = 123;
-	x: int = ptr^;
-	free(ptr);
-case .err:
-	panic("integer allocation failed");
+ptr := new(int);
+ptr^ = 123;
+x: int = ptr^;
+free(ptr);
+
+switch (maybe in try_new(int)) {
+case .ok: free(maybe);
+case .err: fmt.println("no memory for an int");
 }
 ```
 
-- `new_clone(value, allocator := mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates an allocation containing a clone. It has the same provenance and release rules as `new`.
+- `new_clone(value, allocator := mem.default_allocator()) -> ^mut T` creates an allocation containing a clone. It has the same provenance and release rules as `new`.
 
 ```odin
 x: int = 123;
-switch (ptr in new_clone(x)) {
-case .ok:
-	assert(ptr^ == 123);
-	free(ptr);
-case .err:
-	panic("clone allocation failed");
-}
+ptr := new_clone(x);
+assert(ptr^ == 123);
+free(ptr);
 ```
 
-- `make(Container, ..., allocator := mem.default_allocator()) -> Result(Container, Allocator_Error)` constructs a dynamic array or map with selected backing storage. A length creates zero values and therefore requires one; capacity or map reservation does not. The result is an ordinary owning value.
+- `make(Container, ..., allocator := mem.default_allocator()) -> Container` constructs a dynamic array or map with selected backing storage. A length creates zero values and therefore requires one; capacity or map reservation does not. The result is an ordinary owning value.
 
 ```odin
-zero_length := make([dynamic]int) or_else {};
-with_length := make([dynamic]int, 32) or_else {};
-with_length_and_capacity := make([dynamic]int, 16, 64) or_else {};
-made_map := make(map[string]int) or_else {};
-made_map_with_reservation := make(map[string]int, 64) or_else {};
-// Each failure must be handled or explicitly discarded.
+zero_length := make([dynamic]int);
+with_length := make([dynamic]int, 32);
+with_length_and_capacity := make([dynamic]int, 16, 64);
+made_map := make(map[string]int);
+made_map_with_reservation := make(map[string]int, 64);
 ```
 
 - `free(pointer, allocator := mem.default_allocator())` consumes a checked `^mut T` base pointer from `new` or `new_clone` and invalidates its pointers and views. Pointers created with `&` or `&mut`, and weakened `^T` pointers, cannot be freed. The allocator must be the one that created the allocation, and the compiler checks it through region provenance: both must name the same single region — the default provider, one `Allocator` parameter, or one local provider — so `free(p)` of an arena allocation, or of one made through an allocator the compiler cannot follow, is a compile-time error. [`unsafe.free`](#the-unsafe-package) handles unchecked or foreign allocations.
 
 ```odin
-switch (ptr in new(int)) {
-case .ok: free(ptr);
-case .err: panic("integer allocation failed");
-}
+ptr := new(int);
+free(ptr);
 
 arena := mem.Arena.init();
-cell := new(int, arena.allocator()) or_else nil;
+cell := new(int, arena.allocator());
 free(cell);                    // ERROR: `cell` came from the arena, not the default provider
 free(cell, arena.allocator()); // OK
 ```
@@ -5627,7 +5618,7 @@ backup := source.try_clone() or_return;
 numbers.try_append(value) or_return;
 ```
 
-The fallible primitives `make`, `new`, and `new_clone`, and the `try_` forms of allocating operations, return `Result(T, Allocator_Error)` and do not invoke the allocator policy. `free` and `drop` return no status. Passing `unsafe.free` the wrong allocation or allocator is a programmer error; checked `free` rejects both.
+The `try_` forms of allocating operations, `try_new`, `try_new_clone`, and `try_make` among them, return `Result(T, Allocator_Error)` and do not invoke the allocator policy. `free` and `drop` return no status. Passing `unsafe.free` the wrong allocation or allocator is a programmer error; checked `free` rejects both.
 
 ## Concurrency and the memory model
 

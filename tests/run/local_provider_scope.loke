@@ -28,7 +28,7 @@ last_use :: proc() -> int {
 	total := 0;
 	{
 		a := mem.Scratch.init();
-		p := new(int, a.allocator()) or_else nil;
+		p := try_new(int, a.allocator()) or_else nil;
 		if (p == nil) { return 0; }
 		p^ = 9;
 		total = p^;

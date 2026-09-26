@@ -229,7 +229,8 @@ Call_Simd_Reduce :: struct { fold: Simd_Fold }
 Call_Dyn_Conversion :: struct { witness: ^Witness }
 Call_Dyn_Slot :: struct { index: int }
 // The element of new/new_clone, or the container type of make.
-Call_Allocation :: struct { type: Type_Id }
+// `fallible`: a `try_` form, whose result is `Result(T, Allocator_Error)`.
+Call_Allocation :: struct { type: Type_Id, fallible: bool }
 
 // A call, a conversion, or a generic application; syntax cannot tell them apart.
 Expr_Call :: struct {

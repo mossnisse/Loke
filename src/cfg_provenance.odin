@@ -2632,7 +2632,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
-		case .New, .New_Clone:
+		case .New, .New_Clone, .Try_New, .Try_New_Clone:
 			for argument in v.bound {
 				if argument != nil {
 					walk_flow_expr(graph, argument)
@@ -2644,7 +2644,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// the default provider's.
 			region := prov_empty_region(graph)
 			region.default = true
-			operands := sym.builtin == .New ? 0 : 1
+			operands := sym.builtin == .New || sym.builtin == .Try_New ? 0 : 1
 			if len(v.bound) > operands {
 				allocator := v.bound[operands]
 				region = prov_region_of(graph, allocator)

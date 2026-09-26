@@ -38,7 +38,7 @@ Error :: enum {
 encode :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]u16, Error) {
-	switch (units in make([dynamic]u16, 0, text.len() + 1, allocator)) {
+	switch (units in try_make([dynamic]u16, 0, text.len() + 1, allocator)) {
 	case .ok:
 		// No scalar value takes fewer UTF-8 bytes than UTF-16 units, so the
 		// capacity covers every append below and none can fail.

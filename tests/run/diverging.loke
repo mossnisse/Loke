@@ -26,7 +26,7 @@ main :: proc() {
 	fmt.println(name);
 	// The fallback is never produced, so the pointer keeps the allocation's
 	// provenance and `free` accepts it.
-	cell := new(int) or_else stop("unreachable");
+	cell := try_new(int) or_else stop("unreachable");
 	cell^ = 7;
 	fmt.println(cell^);
 	free(cell);

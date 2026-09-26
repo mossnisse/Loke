@@ -104,7 +104,7 @@ invalidation_after_last_use :: proc() {
 // design.md: `free` "ends the allocation root designated by a checked base
 // pointer". M5b propagates that identity through pointer copies.
 free_through_a_copy :: proc() {
-	q := new(int) or_else nil;
+	q := try_new(int) or_else nil;
 	if (q == nil) { panic("allocation failed"); }
 	q^ = 41;
 	alias := q;

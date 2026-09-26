@@ -11,7 +11,7 @@ impl Key {
 	release :: hook(drop) proc(self: inout Key) { self.id = 0; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Key, Allocator_Error) {
 		if (self.id == 99) {
-			p := new(Huge, allocator) or_return;
+			p := try_new(Huge, allocator) or_return;
 			free(p, allocator);
 		}
 		return .ok(Key{self.id});
@@ -26,7 +26,7 @@ impl Value {
 	release :: hook(drop) proc(self: inout Value) { self.id = 0; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
 		if (self.id == 99) {
-			p := new(Huge, allocator) or_return;
+			p := try_new(Huge, allocator) or_return;
 			free(p, allocator);
 		}
 		return .ok(Value{self.id});

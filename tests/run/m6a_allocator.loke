@@ -8,7 +8,7 @@ package main; import "core:mem"; import "core:fmt";
 Wide :: struct { a: i128, b: int }
 
 round_trip :: proc(allocator: Allocator) -> int {
-	p := new(Wide, allocator) or_else nil;
+	p := try_new(Wide, allocator) or_else nil;
 	if (p == nil) {
 		return -1;
 	}
@@ -22,7 +22,7 @@ main :: proc() {
 	fmt.println(round_trip(mem.default_allocator()));
 
 	// `new_clone` through the same provider, with a value whose clone can fail.
-	switch (q in new_clone(41)) {
+	switch (q in try_new_clone(41)) {
 	case .ok:
 		fmt.println(q^ + 1);
 		free(q);
