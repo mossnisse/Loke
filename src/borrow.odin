@@ -1887,6 +1887,17 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		check_region_reset(state, event, live, uses)
 	case .Region_Escape:
 		// An owner stored in longer-lived storage than its region.
+		if event.moved != "" {
+			errorf(
+				state.k.c,
+				event.span,
+				"L0536",
+				"`%s` was received by `move`, and its `@(escape=...)` level does not let it be stored in %s",
+				event.moved,
+				event.name,
+			)
+			return
+		}
 		if region_has_local(event.region) {
 			errorf(
 				state.k.c,

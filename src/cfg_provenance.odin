@@ -76,6 +76,8 @@ Prov_Event :: struct {
 	owner_span:    Span,
 	// `Reset`: the written operation ending a provider, such as "dropping `a`".
 	ends:          string,
+	// `Region_Escape`: the `move` parameter whose owner is being kept.
+	moved:         string,
 	// `Live`: re-establishes its loans. A loop head re-reads its iterable, so a
 	// body invalidation must not cross the back edge.
 	revives:       bool,
@@ -1076,7 +1078,10 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			if sym == nil {
 				continue
 			}
-			if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR {
+			// design.md "Allocator regions and region provenance": an owner moved in
+			// keeps the region of the argument, which the caller substitutes.
+			if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR ||
+			   sym.mode == .Move && type_is_managed(graph.k.c, sym.type) {
 				set := prov_empty_region(graph)
 				set.params[index] = true
 				graph.region_of[id] = set
@@ -1894,9 +1899,10 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
 	if type_is_managed(graph.k.c, expr_base(value).type) && expression_is_borrowed_place(value) {
 		return
 	}
-	set := prov_result_region(graph, value)
-	// A received region may back what the caller owns; only a local one ends first.
-	if !region_has_local(set) && (param || !region_is_parameter_backed(set)) {
+	// A received region may back what the caller owns; only a local one ends
+	// first. An owner moved in is kept only as far as its parameter allows.
+	moved, set := prov_moved_parameter(graph, prov_result_region(graph, value), param ? .Stored : .Static)
+	if moved == "" && !region_has_local(set) && (param || !region_is_parameter_backed(set)) {
 		return
 	}
 	prov_emit(graph, Prov_Event {
@@ -1905,6 +1911,7 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
 		verb   = identifier_text(graph.k.c, sym.name),
 		name   = storage,
 		region = set,
+		moved  = moved,
 	})
 }
 
@@ -1927,24 +1934,94 @@ prov_store_region :: proc(graph: ^Flow_Graph, destination: Expr, value: Expr, el
 		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region)
 		return
 	}
-	if !region_has_local(region) {
+	moved, rest := prov_moved_parameter(graph, region, .Stored)
+	if moved == "" && !region_has_local(rest) {
 		return
-	}
-	owner := value
-	if moved, is_move := value.(^Expr_Move); is_move {
-		owner = moved.value
-	}
-	name := "this value"
-	if sym := symbol_of(graph.k.c, place_root_symbol(owner)); sym != nil {
-		name = identifier_text(graph.k.c, sym.name)
 	}
 	prov_emit(graph, Prov_Event {
 		kind   = .Region_Escape,
 		span   = expr_span(destination),
-		verb   = name,
+		verb   = prov_owner_name(graph, value),
 		name   = "storage reached through a pointer or slice",
-		region = region,
+		region = rest,
+		moved  = moved,
 	})
+}
+
+@(private = "file")
+prov_owner_name :: proc(graph: ^Flow_Graph, value: Expr) -> string {
+	owner := value
+	if moved, is_move := value.(^Expr_Move); is_move {
+		owner = moved.value
+	}
+	if sym := symbol_of(graph.k.c, place_root_symbol(owner)); sym != nil {
+		return identifier_text(graph.k.c, sym.name)
+	}
+	return "this value"
+}
+
+// design.md "Allocator regions and region provenance": an owner received by
+// `move` may be kept only as far as its `@(escape=...)` level allows. Returns
+// the first `move` parameter backing the set that may not be kept at `level`,
+// and the set without its `move` parameters, which are not received regions.
+@(private = "file")
+prov_moved_parameter :: proc(graph: ^Flow_Graph, set: Region_Set, level: Escape_Level) -> (name: string, rest: Region_Set) {
+	rest = prov_empty_region(graph)
+	region_merge(&rest, set)
+	if graph.literal.signature == nil {
+		return
+	}
+	index := 0
+	for parameter in graph.literal.signature.params {
+		for id in parameter.symbols {
+			defer index += 1
+			sym := symbol_of(graph.k.c, id)
+			if sym == nil || sym.mode != .Move || index >= len(set.params) || !set.params[index] {
+				continue
+			}
+			rest.params[index] = false
+			if name == "" && sym.escape < level {
+				name = identifier_text(graph.k.c, sym.name)
+			}
+		}
+	}
+	return
+}
+
+// The caller's half: a moved owner the call may keep takes its region into each
+// argument it may be written to, or into static storage.
+@(private = "file")
+prov_call_moved_owner :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, level: Escape_Level) {
+	value := v.bound[index]
+	info := underlying_info(graph.k.c, call_proc_type(graph.k.c, v))
+	if value == nil || info == nil {
+		return
+	}
+	region := prov_result_region(graph, value)
+	if level == .Static && region_has_local(region) {
+		prov_emit(graph, Prov_Event {
+			kind   = .Region_Escape,
+			span   = expr_span(value),
+			verb   = prov_owner_name(graph, value),
+			name   = "storage that lasts for the whole process",
+			region = region,
+		})
+	}
+	for destination, target in v.bound {
+		if target == index || destination == nil || target >= len(info.parameters) {
+			continue
+		}
+		place := destination
+		if !prov_argument_is_place(graph, v, target) {
+			if !carrier_is_mutable(graph.k.c, info.parameters[target]) {
+				continue
+			}
+			if unary, is_unary := destination.(^Expr_Unary); is_unary && unary.op == .Amp {
+				place = unary.operand
+			}
+		}
+		prov_store_region(graph, place, value)
+	}
 }
 
 // ------------------------------------------------------------- places --
@@ -3046,11 +3123,15 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 		return
 	}
 	destinations: []int
+	info := underlying_info(graph.k.c, proc_type)
 	for slots, index in actuals {
+		level := proc_param_escape(graph.k.c, proc_type, index)
+		if level >= .Stored && index < len(info.param_modes) && info.param_modes[index] == .Move {
+			prov_call_moved_owner(graph, v, index, level)
+		}
 		if len(slots) == 0 {
 			continue
 		}
-		level := proc_param_escape(graph.k.c, proc_type, index)
 		if level == .Static {
 			prov_emit(graph, Prov_Event {
 				kind    = .Retain,

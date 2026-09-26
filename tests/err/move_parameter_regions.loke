@@ -1,0 +1,66 @@
+package main; import "core:fmt"; import "core:mem";
+
+// design.md "Allocator regions and region provenance": an owner received by
+// `move` keeps the moved value's region when returned, and may be kept only as
+// far as its `@(escape=...)` level allows. A call that may keep it stores it,
+// with its region, into each argument the callee may write.
+
+g_kept: [dynamic][dynamic]int;
+
+id :: proc(v: move [dynamic]int) -> [dynamic]int { return move(v); }
+
+// Kept without the level for it: rejected.
+into_caller :: proc(dst: inout [dynamic][dynamic]int, v: move [dynamic]int) { dst.append(move(v)); }
+into_global :: proc(@(escape=stored) v: move [dynamic]int) { g_kept.append(move(v)); }
+through_pointer :: proc(p: ^mut [dynamic]int, v: move [dynamic]int) { p^ = move(v); }
+
+// Used locally, or kept at its level: allowed.
+counted :: proc(v: move [dynamic]int) -> int {
+	held: [dynamic][dynamic]int = {};
+	held.append(move(v));
+	return held.len();
+}
+stash :: proc(dst: inout [dynamic][dynamic]int, @(escape=stored) v: move [dynamic]int) { dst.append(move(v)); }
+keep :: proc(@(escape=static) v: move [dynamic]int) { g_kept.append(move(v)); }
+
+returned :: proc() {
+	arena := mem.Arena.init();
+	inner: [dynamic]int via arena.allocator() = {};
+	inner.append(1);
+	outer := id(move(inner));
+	free_all(arena.allocator());
+	fmt.println(outer[0]);
+}
+
+stashed :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic][dynamic]int = {};
+	inner: [dynamic]int via arena.allocator() = {};
+	inner.append(1);
+	stash(inout outer, move(inner));
+	free_all(arena.allocator());
+	fmt.println(outer[0][0]);
+}
+
+kept :: proc() {
+	arena := mem.Arena.init();
+	inner: [dynamic]int via arena.allocator() = {};
+	keep(move(inner));
+}
+
+fine :: proc() {
+	arena := mem.Arena.init();
+	inner: [dynamic]int via arena.allocator() = {};
+	outer := id(move(inner));
+	all: [dynamic][dynamic]int = {};
+	stash(inout all, [dynamic]int{1});
+	keep([dynamic]int{2});
+	fmt.println(outer.len(), all.len(), counted([dynamic]int{3}));
+}
+
+main :: proc() {
+	returned();
+	stashed();
+	kept();
+	fine();
+}

@@ -10,36 +10,24 @@ the compiler, unless the rewording is the intended fix.
 The first two entries accept programs that read dead or freed memory. Each was
 found by a provenance audit, and each repro builds and runs.
 
-- **A `move` parameter carries no region.** `prov_bind_parameters` gives a
-  region only to `Allocator` parameters, so returning a moved owner summarizes
-  to no region, although design.md "Allocator regions and region provenance"
-  says the result keeps the moved value's. The same section forbids retaining
-  a `move` parameter in longer-lived storage, but
-  `stash :: proc(dst: inout [dynamic][dynamic]int, v: move [dynamic]int) { dst.append(move(v)); }`
-  is accepted. A callee can also leave an owner it built from an allocator
-  parameter in a `^mut` argument; the spec states only the result rule for
-  that case:
+- **A callee's owner in an argument keeps no region at the call.** A callee
+  may leave an owner built from an allocator parameter in an `inout` or
+  `^mut` argument, since a received region may back what the caller owns,
+  but the call does not give that argument the allocator argument's region.
+  design.md "Allocator regions and region provenance" states only the result
+  rule for this case:
 
   ```odin
-  id :: proc(v: move [dynamic]int) -> [dynamic]int { return move(v); }
+  fill :: proc(dst: inout [dynamic][dynamic]int, allocator: Allocator) {
+  	inner: [dynamic]int via allocator = {};
+  	inner.append(1);
+  	dst.append(move(inner));
+  }
   arena := mem.Arena.init();
-  inner: [dynamic]int via arena.allocator() = {};
-  inner.append(1);
-  outer := id(move(inner));
-  free_all(arena.allocator()); // accepted
-  fmt.println(outer[0]);
-  ```
-- **A carrier's own loan and its elements' borrows are one set.** A carrier
-  is a single path of its `carrier_shape`, so a call summary cannot say that a
-  result holds only what a slice's elements borrow, not the slice itself.
-  Returning an element of a `[]mut T` whose `T` carries a borrow therefore
-  reborrows the slice, and a second use while that result is live is
-  rejected. This rejects valid programs; it never accepts an invalid one:
-
-  ```odin
-  arr := [2]string_view{"b", "a"};
-  xs: []mut string_view = arr[:];
-  fmt.println(slice.min(xs), slice.max(xs)); // L0641: `xs` is suspended
+  outer: [dynamic][dynamic]int = {};
+  fill(inout outer, arena.allocator());
+  free_all(arena.allocator()); // accepted while `outer[0]` lives in the arena
+  fmt.println(outer[0][0]);
   ```
 - **`exchange` does not move borrows.** The value `exchange(inout x, v)`
   writes into `x` keeps its region but not its loans, and the old value it

@@ -1,0 +1,18 @@
+L0536
+@13:79
+`v` was received by `move`, and its `@(escape=...)` level does not let it be stored in storage the caller owns
+L0536
+@14:62
+`v` was received by `move`, and its `@(escape=...)` level does not let it be stored in file-scope storage
+L0536
+@15:71
+`v` was received by `move`, and its `@(escape=...)` level does not let it be stored in storage reached through a pointer or slice
+L0537
+@31:2
+this reset would end the region backing `outer`, which is still live here
+L0537
+@41:2
+this reset would end the region backing `outer`, which is still live here
+L0536
+@48:7
+`inner` is backed by an allocator region created in this procedure, so it cannot be stored in storage that lasts for the whole process, which outlives that region

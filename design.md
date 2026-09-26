@@ -4943,6 +4943,8 @@ What a call may keep of one argument is written on the parameter as `@(escape=<l
 | `stored` | it may also be retained in storage the caller owns |
 | `static` | it may also be retained in storage that lasts for the whole process |
 
+On a `move` parameter the level bounds where the owner itself may be kept; see [Allocator regions and region provenance](#allocator-regions-and-region-provenance).
+
 An unwritten level is `result`. The level is an upper bound on the body: a procedure whose result borrows a parameter written `@(escape=none)`, or which retains a parameter beyond its declared level, is rejected at the parameter's declaration.
 
 The level belongs to the procedure type, as [`@(allocator_reset)`](#allocator_reset) does, which is what makes it useful where there is no body to infer from. A `none` parameter keeps a scratch argument out of the result of a call through a procedure value, a procedure-typed parameter, or a generic instantiation.
@@ -5552,7 +5554,7 @@ Region provenance is distinct from the root provenance carried by a borrow. Thei
 
 Procedure checking is conservatively polymorphic over an owning argument's region provenance. Result provenance follows these rules:
 
-- An owner received through a `move` parameter may be used locally or returned, but not retained in longer-lived storage. A returned owner keeps the moved value's region dependency.
+- An owner received through a `move` parameter may be used locally or returned. A returned owner keeps the moved value's region dependency. It may be retained in storage the caller owns only when the parameter is written `@(escape=stored)`, and in static storage only with `@(escape=static)`; the call then treats the moved argument as stored, with its region, into each argument the callee may write, or into static storage.
 - Returning an ordinary borrowed managed parameter follows the clone rule under [Parameter semantics](#parameter-semantics-and-abi-lowering). A mutable clone takes the result allocator's region provenance; a shared-storage logical clone keeps the source allocation's provenance.
 - An owning result built with an allocator parameter derives its region provenance from that argument.
 
@@ -6132,7 +6134,7 @@ A Loke procedure is verified: every `free_all` operation on a region that existe
 
 ##### `@(escape=<level>)`
 
-Bounds retention of a borrowed argument: `none`, `result` (the default), `stored`, or `static`, in increasing order. The parameter's type must reach a borrow carrier. The bound is part of the procedure type and applies to bodies, indirect calls, and generic calls. See [Escape levels](#escape-levels).
+Bounds retention of a borrowed argument, or of an owner taken by `move`: `none`, `result` (the default), `stored`, or `static`, in increasing order. The parameter's type must reach a borrow carrier, or the parameter must be `move`. The bound is part of the procedure type and applies to bodies, indirect calls, and generic calls. See [Escape levels](#escape-levels).
 
 ```odin
 pick :: proc(input: []int, @(escape=none) scratch: []int) -> []int {

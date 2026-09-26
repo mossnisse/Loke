@@ -496,7 +496,7 @@ field_is_public :: proc(k: ^Checker, attributes: []Attribute) -> bool {
 }
 
 // design.md `@(escape=...)`: the written level, which only a parameter carrying
-// a borrow may have.
+// a borrow, or taking an owner by `move`, may have.
 check_escape_attribute :: proc(
 	k: ^Checker,
 	attributes: []Attribute,
@@ -1224,7 +1224,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			written_type := split_receiver ? k.impl_type : parameter_type
 			escape := check_escape_attribute(
 				k, parameter.attributes, written_type, parameter.span, in_generic_signature(k, literal),
-				borrowing = mode == .Borrow || mode == .Inout,
+				borrowing = mode == .Borrow || mode == .Inout || mode == .Move,
 			)
 			resets := has_attribute(parameter.attributes, "allocator_reset") &&
 				!split_receiver
@@ -1803,7 +1803,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				append(&params, resolved)
 				append(&modes, mode)
 				append(&resets, marked)
-				append(&escapes, check_escape_attribute(k, parameter.attributes, resolved, parameter.span, borrowing = mode == .Borrow || mode == .Inout))
+				append(&escapes, check_escape_attribute(k, parameter.attributes, resolved, parameter.span, borrowing = mode == .Borrow || mode == .Inout || mode == .Move))
 			}
 		}
 		result_type := INVALID_TYPE
