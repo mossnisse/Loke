@@ -1915,6 +1915,27 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
 	})
 }
 
+// A value's loans written into a place, as assignment writes them.
+@(private = "file")
+prov_store_loans :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, span: Span) {
+	root, path, ok := prov_place_of(graph, target)
+	if !ok {
+		return
+	}
+	prov_retain_escape(graph, target, sources, span)
+	type := expr_base(target).type
+	if ident, is_ident := target.(^Expr_Ident); is_ident {
+		if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
+			prov_reborrow(graph, sources, type, slot, span)
+			prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
+			return
+		}
+	}
+	if written := prov_content_at(graph, root, path); len(written) > 0 {
+		prov_define_content(graph, written, sources, span, path, type)
+	}
+}
+
 // design.md "Allocator regions and region provenance": a stored owner keeps its
 // region. A place records it as content, so resetting the region while the
 // place is live is caught, and storage outliving the region rejects it. A
@@ -2904,9 +2925,14 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		case .Exchange:
 			if len(v.bound) == 2 {
 				provider_exchange_end(graph, v)
+				// `old := x; x = value; return old`, for loans as for regions.
+				type := expr_base(v.bound[0]).type
+				old := prov_project_content(graph, walk_flow_expr(graph, v.bound[0]), type, nil, type, v.span)
 				prov_invalidate(graph, v.bound[0], v.span, "exchanged")
-				walk_flow_expr(graph, v.bound[1])
+				sources := walk_flow_expr(graph, v.bound[1])
 				prov_store_region(graph, v.bound[0], v.bound[1])
+				prov_store_loans(graph, v.bound[0], sources, v.span)
+				return old
 			}
 			return nil
 		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,

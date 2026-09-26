@@ -1,0 +1,47 @@
+package main; import "core:fmt";
+
+// `exchange(inout x, value)` is `old := x; x = value; return old` for borrows
+// as for everything else: `x` takes the value's loans, and the result keeps
+// the ones `x` held.
+
+Holder :: struct { view: []int }
+into :: proc() {
+	v: []int = nil;
+	{ local := [2]int{1, 2}; _ = exchange(inout v, local[:]); }
+	fmt.println(v[0]);
+}
+out_of :: proc() {
+	v: []int = nil;
+	old: []int = nil;
+	{
+		local := [2]int{1, 2};
+		v = local[:];
+		old = exchange(inout v, nil);
+	}
+	fmt.println(old[0]);
+}
+field :: proc() {
+	h: Holder = {};
+	{ local := [2]int{1, 2}; _ = exchange(inout h.view, local[:]); }
+	fmt.println(h.view[0]);
+}
+global_view: []int;
+retained :: proc() {
+	local := [2]int{1, 2};
+	_ = exchange(inout global_view, local[:]);
+}
+// Both values outlive their uses: allowed.
+fine :: proc() {
+	a := [2]int{1, 2};
+	b := [2]int{3, 4};
+	v: []int = a[:];
+	old := exchange(inout v, b[:]);
+	fmt.println(v[0], old[0]);
+}
+main :: proc() {
+	into();
+	out_of();
+	field();
+	retained();
+	fine();
+}

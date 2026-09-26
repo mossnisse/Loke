@@ -7,8 +7,8 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-The first two entries accept programs that read dead or freed memory. Each was
-found by a provenance audit, and each repro builds and runs.
+The first entry accepts a program that reads freed memory. It was found by a
+provenance audit, and its repro builds and runs.
 
 - **A callee's owner in an argument keeps no region at the call.** A callee
   may leave an owner built from an allocator parameter in an `inout` or
@@ -28,15 +28,6 @@ found by a provenance audit, and each repro builds and runs.
   fill(inout outer, arena.allocator());
   free_all(arena.allocator()); // accepted while `outer[0]` lives in the arena
   fmt.println(outer[0][0]);
-  ```
-- **`exchange` does not move borrows.** The value `exchange(inout x, v)`
-  writes into `x` keeps its region but not its loans, and the old value it
-  returns carries none of `x`'s, so either may outlive what it borrows:
-
-  ```odin
-  v: []int = nil;
-  { local := [2]int{1, 2}; _ = exchange(inout v, local[:]); }
-  fmt.println(v[0]); // accepted; `local` has ended
   ```
 - **Providers share region identities more than they need to.** All providers
   inside one local record or container are one region to the checker, and a

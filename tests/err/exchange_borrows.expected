@@ -1,0 +1,12 @@
+L0513
+@11:14
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@21:14
+this slice is used after `local`, the local it borrows, has ended
+L0513
+@26:14
+this slice is used after `local`, the local it borrows, has ended
+L0647
+@31:6
+this slice borrows `local`, which does not outlive `global_view`: process-lifetime storage
