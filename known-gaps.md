@@ -10,23 +10,6 @@ the compiler, unless the rewording is the intended fix.
 The first three entries accept programs that read dead or freed memory. Each was
 found by a provenance audit, and each repro builds and runs.
 
-- **Some ways of storing an owner drop its region.** design.md "Allocator
-  regions and region provenance" keeps a local region's owner out of
-  aggregates, containers and static storage. `prov_assign` records region
-  content for a direct place, but `prov_container_content` publishes only
-  borrows, so `append`, `insert` and `try_insert` lose the region, and so do
-  `exchange` and a write through a `^mut` or `[]mut` carrier. Appending to a
-  global is not reported as a region escape either:
-
-  ```odin
-  arena := mem.Arena.init();
-  outer: [dynamic][dynamic]int = {};
-  inner: [dynamic]int via arena.allocator() = {};
-  inner.append(1);
-  outer.append(move(inner));
-  free_all(arena.allocator()); // accepted while `outer[0]` lives in the arena
-  fmt.println(outer[0][0]);
-  ```
 - **Region facts are read in walk order.** `region_of` is flow-insensitive,
   but a reset, a `return` or a global store reads it while the body is still
   being walked, so an owner that becomes arena-backed later in a loop body is
@@ -72,6 +55,15 @@ found by a provenance audit, and each repro builds and runs.
   arr := [2]string_view{"b", "a"};
   xs: []mut string_view = arr[:];
   fmt.println(slice.min(xs), slice.max(xs)); // L0641: `xs` is suspended
+  ```
+- **`exchange` does not move borrows.** The value `exchange(inout x, v)`
+  writes into `x` keeps its region but not its loans, and the old value it
+  returns carries none of `x`'s, so either may outlive what it borrows:
+
+  ```odin
+  v: []int = nil;
+  { local := [2]int{1, 2}; _ = exchange(inout v, local[:]); }
+  fmt.println(v[0]); // accepted; `local` has ended
   ```
 - **Providers share region identities more than they need to.** All providers
   inside one local record or container are one region to the checker, and a

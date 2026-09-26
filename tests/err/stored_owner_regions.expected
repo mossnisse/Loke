@@ -1,0 +1,18 @@
+L0537
+@16:2
+this reset would end the region backing `outer`, which is still live here
+L0537
+@25:2
+this reset would end the region backing `table`, which is still live here
+L0536
+@32:2
+`g_outer` is backed by an allocator region created in this procedure, so it cannot be stored in file-scope storage, which outlives that region
+L0537
+@40:2
+this reset would end the region backing `outer`, which is still live here
+L0536
+@49:2
+`inner` is backed by an allocator region created in this procedure, so it cannot be stored in storage reached through a pointer or slice, which outlives that region
+L0536
+@56:2
+`outer` is backed by an allocator region created in this procedure, so it cannot be stored in storage the caller owns, which outlives that region

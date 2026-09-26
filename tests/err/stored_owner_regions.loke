@@ -1,0 +1,81 @@
+package main; import "core:fmt"; import "core:mem";
+
+// design.md "Allocator regions and region provenance": storing an owner keeps
+// its region, however it is stored. A place holding it is backed by the region,
+// storage that outlives the region rejects it, and a write through a pointer or
+// slice, whose destination is unknown, rejects an owner of a local region.
+
+g_outer: [dynamic][dynamic]int;
+
+appended :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic][dynamic]int = {};
+	inner: [dynamic]int via arena.allocator() = {};
+	inner.append(1);
+	outer.append(move(inner));
+	free_all(arena.allocator());
+	fmt.println(outer[0][0]);
+}
+
+inserted :: proc() {
+	arena := mem.Arena.init();
+	table: map[int][dynamic]int = {};
+	inner: [dynamic]int via arena.allocator() = {};
+	_ = table.try_insert(1, move(inner));
+	free_all(arena.allocator());
+	fmt.println(table.len());
+}
+
+global_append :: proc() {
+	arena := mem.Arena.init();
+	inner: [dynamic]int via arena.allocator() = {};
+	g_outer.append(move(inner));
+}
+
+exchanged :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic]int = {};
+	inner: [dynamic]int via arena.allocator() = {};
+	_ = exchange(inout outer, move(inner));
+	free_all(arena.allocator());
+	fmt.println(outer.len());
+}
+
+through_pointer :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic]int = {};
+	p := &mut outer;
+	inner: [dynamic]int via arena.allocator() = {};
+	p^ = move(inner);
+	fmt.println(outer.len());
+}
+
+into_caller :: proc(outer: inout [dynamic]int) {
+	arena := mem.Arena.init();
+	inner: [dynamic]int via arena.allocator() = {};
+	outer = move(inner);
+}
+
+// Allowed: a received region may back what the caller owns, and an owner of
+// the default allocator goes anywhere.
+received :: proc(outer: inout [dynamic][dynamic]int, allocator: Allocator) {
+	inner: [dynamic]int via allocator = {};
+	outer.append(move(inner));
+}
+
+defaulted :: proc() {
+	inner := [dynamic]int{1};
+	g_outer.append(move(inner));
+}
+
+main :: proc() {
+	appended();
+	inserted();
+	global_append();
+	exchanged();
+	through_pointer();
+	outer: [dynamic][dynamic]int = {};
+	into_caller(inout outer[0]);
+	received(inout outer, mem.default_allocator());
+	defaulted();
+}

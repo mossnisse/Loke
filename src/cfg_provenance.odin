@@ -1816,10 +1816,12 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
 		return
 	}
 	storage := ""
+	param := graph.roots[int(root)].kind == .Param
 	switch {
 	case sym.duration == .Thread_Local: storage = "`thread_local` storage"
 	case sym.duration == .Static:       storage = "`static` storage"
 	case sym.decl != nil && sym.decl.top_level: storage = "file-scope storage"
+	case param:                         storage = "storage the caller owns"
 	}
 	if storage == "" {
 		return
@@ -1831,7 +1833,8 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
 		return
 	}
 	set := prov_result_region(graph, value)
-	if !region_is_parameter_backed(set) && !region_has_local(set) {
+	// A received region may back what the caller owns; only a local one ends first.
+	if !region_has_local(set) && (param || !region_is_parameter_backed(set)) {
 		return
 	}
 	prov_emit(graph, Prov_Event {
@@ -1840,6 +1843,45 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
 		verb   = identifier_text(graph.k.c, sym.name),
 		name   = storage,
 		region = set,
+	})
+}
+
+// design.md "Allocator regions and region provenance": a stored owner keeps its
+// region. A place records it as content, so resetting the region while the
+// place is live is caught, and storage outliving the region rejects it. A
+// carrier's target is not known here, so an owner of a local region may not be
+// written through one. `element` stores into a container's elements.
+@(private)
+prov_store_region :: proc(graph: ^Flow_Graph, destination: Expr, value: Expr, element := false) {
+	if value == nil || !type_is_managed(graph.k.c, expr_base(value).type) {
+		return
+	}
+	region := prov_result_region(graph, value)
+	if region_is_empty(region) {
+		return
+	}
+	if root, path, ok := prov_place_of(graph, destination); ok {
+		prov_region_escape(graph, destination, value)
+		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region)
+		return
+	}
+	if !region_has_local(region) {
+		return
+	}
+	owner := value
+	if moved, is_move := value.(^Expr_Move); is_move {
+		owner = moved.value
+	}
+	name := "this value"
+	if sym := symbol_of(graph.k.c, place_root_symbol(owner)); sym != nil {
+		name = identifier_text(graph.k.c, sym.name)
+	}
+	prov_emit(graph, Prov_Event {
+		kind   = .Region_Escape,
+		span   = expr_span(destination),
+		verb   = name,
+		name   = "storage reached through a pointer or slice",
+		region = region,
 	})
 }
 
@@ -2522,6 +2564,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		root, path, place_ok := prov_place_of(graph, target)
 		if !place_ok && s.op == .Assign {
 			if through := prov_retain_through_carrier(graph, target); len(through) > 0 {
+				prov_store_region(graph, target, value)
 				prov_walk_subscripts(graph, target, true)
 				// design.md "Weakening and reborrows".
 				if len(sources) > 0 {
@@ -2728,6 +2771,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				provider_exchange_end(graph, v)
 				prov_invalidate(graph, v.bound[0], v.span, "exchanged")
 				walk_flow_expr(graph, v.bound[1])
+				prov_store_region(graph, v.bound[0], v.bound[1])
 			}
 			return nil
 		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
@@ -3181,6 +3225,19 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	info := underlying_info(graph.k.c, expr_base(v.bound[0]).type)
 	if info == nil {
 		return
+	}
+	// A spread copies its elements, and a copy never allocates.
+	stored_values: []Expr
+	#partial switch op {
+	case .Append:
+		stored_values = v.is_variadic ? v.variadic_elements : v.bound[1:]
+	case .Insert:
+		stored_values = v.bound[min(2, len(v.bound)):]
+	case .Map_Try_Insert, .Map_Find_Or_Insert:
+		stored_values = v.bound[1:]
+	}
+	for value in stored_values {
+		prov_store_region(graph, v.bound[0], value, element = true)
 	}
 	if op == .Clear || op == .Map_Clear {
 		if root, path, ok := prov_place_of(graph, v.bound[0]); ok {

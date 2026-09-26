@@ -5546,7 +5546,7 @@ For this rule, an owner is live when it may be used later or still requires clea
 
 An allocator has a region identity. Copying the allocator preserves that identity; regions that cannot be proved distinct are treated as possibly identical. A procedure that may reset a received allocator marks the parameter with `@(allocator_reset)`. The attribute is part of the procedure type, so wrappers and indirect calls preserve the effect.
 
-An owning value has **region provenance**: the region supplying its backing storage must outlive it. An owner backed by a local region cannot escape that region through a return, static-duration storage, aggregate, or container. Moving the owner preserves the dependency.
+An owning value has **region provenance**: the region supplying its backing storage must outlive it. An owner backed by a local region cannot escape that region through a return, static-duration storage, storage the caller owns, aggregate, or container. Moving the owner preserves the dependency, and so does storing it: a container or aggregate holding the owner is backed by its region too. A write through a pointer or slice has no destination the checker can name, so an owner backed by a local region may not be written through one.
 
 Region provenance is distinct from the root provenance carried by a borrow. Their complete composition rule is specified under [How root and region provenance compose](#how-root-and-region-provenance-compose). This section defines the region half: it constrains owner escape and allocator reset, but does not itself grant borrow capabilities or decide whether aliases may overlap.
 
