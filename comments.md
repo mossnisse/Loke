@@ -367,17 +367,6 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
-## A user container's mutable slice
-
-A slice of a mutable place is `[]mut T` when a `[]mut T` destination asks for
-one ([Slices](design.md#slices)). A user container cannot do the same:
-`Small_Array`'s `operator([:])` has a `self: ^` receiver, so `sv: []mut int =
-s[0:2]` is L0310 where the same line over a dynamic array compiles, and the type
-carries a separate `slice()` for the mutable case. Proposal: count a `[]mut T`
-destination as a place position for `operator([:])`
-([Indexing and slicing](design.md#indexing-and-slicing)), so an `inout` slicing
-overload is chosen there as the built-in mutable slice is.
-
 ## Methods on a string literal
 
 `"hello".len()` compiles, and `"hello".bytes()` is L0363, "`untyped string`
@@ -1229,6 +1218,18 @@ Everywhere else the mutable form is the marked one: `^mut`, `[]mut`,
 `find` returning `Option(^mut V)` from an `inout` receiver and the read-only
 probe spelled `find_ref`. `find` now returns `Option(^V)` and `find_mut`
 `Option(^mut V)`. Every call in the tree was renamed to keep its meaning.
+
+### A `[]mut T` destination selects a mutable slicing overload
+
+A slice of a mutable place is `[]mut T` when a `[]mut T` destination asks for
+one, but a user container could not do the same: `operator([:])` overloads
+were ranked by their arguments alone, so `Small_Array`'s one read-only
+overload made `sv: []mut int = s[0:2]` L0310 where the same line over a
+dynamic array compiled. A `[]mut T` destination now counts as a place
+position for slicing, as an `inout` argument does for indexing, and
+`Small_Array` has a `span_mut` overload for it. Its `slice()` stays: a method
+receiver is not a destination, so `small.slice().indexed()` still names the
+mutable view it iterates.
 
 ### Map element mutation
 

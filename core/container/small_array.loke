@@ -87,9 +87,15 @@ impl Small_Array($T, $N) {
 	// elements.
 	//
 	// The receiver is immutable, so `x[a:b]` reads on any array rather than only
-	// on a mutable one. A writable subrange is `slice()[a:b]`: built-in slicing of
-	// the mutable whole-prefix view, already bounded by the live prefix.
+	// on a mutable one.
 	span :: operator([:]) proc(self: ^, low: int, high: int) -> []T {
+		self.check_span(low, high);
+		return self.items[low:high];
+	}
+
+	// The writable subrange, which a `[]mut T` destination selects
+	// (design.md "Indexing and slicing"): `part: []mut T = x[a:b]`.
+	span_mut :: operator([:]) proc(self: inout, low: int, high: int) -> []mut T {
 		self.check_span(low, high);
 		return self.items[low:high];
 	}

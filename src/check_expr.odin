@@ -50,7 +50,7 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_index(k, v, place)
 
 	case ^Expr_Slice:
-		check_slice(k, v, place)
+		check_slice(k, v, expected)
 
 	case ^Expr_Checked_Extract:
 		check_extract_of(k, v, check_single_expr(k, v.operand))
@@ -1273,7 +1273,7 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: b
 
 // `x[lo:hi]`: built in for a carrier, `operator([:])` for anything else.
 @(private = "file")
-check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
+check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 	v.value_category = .Value
 	operand := check_single_expr(k, v.operand)
 	if operand == INVALID_TYPE {
@@ -1283,7 +1283,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	if check_builtin_slice(k, v, operand) {
 		return
 	}
-	slicers := operator_candidates_for_receiver(k, "[:]", operand)
+	slicers := select_slicers(k, operator_candidates_for_receiver(k, "[:]", operand), expected)
 	if len(slicers) == 0 {
 		errorf(
 			k.c, v.span, "L0362",
@@ -1355,6 +1355,22 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 		add_notef(k.c, sym.span, "declared here with a read-only receiver, which can only yield a read-only slice")
 		v.type = INVALID_TYPE
 	}
+}
+
+// design.md "Indexing and slicing": a `[]mut T` destination is a place position
+// for slicing, so it takes the overload yielding `[]mut T`; any other position
+// prefers one yielding `[]T`. Either falls back to every overload when its kind
+// has none, and the destination then reports the mismatch.
+@(private = "file")
+select_slicers :: proc(k: ^Checker, all: []Symbol_Id, expected: Type_Id) -> []Symbol_Id {
+	wants_mutable := slice_is_mutable(k.c, expected)
+	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
+	for candidate in all {
+		if sym := symbol_of(k.c, candidate); sym != nil && slice_is_mutable(k.c, sym.result) == wants_mutable {
+			append(&out, candidate)
+		}
+	}
+	return len(out) == 0 ? all : out[:]
 }
 
 // A variable, a field path, or a dereference: evaluating one twice reads the same

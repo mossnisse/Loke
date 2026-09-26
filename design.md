@@ -2264,6 +2264,13 @@ A compound assignment on such a type reads through `operator([])` and writes bac
 
 `operator([:])` defines slicing. It returns either an owning value or a borrow derived from the receiver, treated as a borrow under [Borrows and lifetimes](#borrows-and-lifetimes). A `[]mut T` result requires an `inout` receiver; a `self: ^` receiver returns only `[]T`.
 
+Position selects between the two as it does for `operator([])`: a `[]mut T` destination is a place position for slicing, so the overload yielding `[]mut T` is required there, as a built-in slice of a mutable place is `[]mut T`. Everywhere else the overload yielding `[]T` is preferred, so `x[a:b]` reads on any container that offers it:
+
+```odin
+part: []mut int = small[0:2];   // the `inout` overload; `small` must be a mutable place
+read := small[0:2];             // the read-only overload
+```
+
 An omitted endpoint means what it does for built-in slicing: a missing low endpoint is `0` and a missing high one is `x.len()`, so `x[:]` and `x[1:]` reach the same `operator([:])` as `x[0:x.len()]`. The length is read from the operand a second time, so a missing high endpoint requires an operand whose evaluation runs nothing — a variable, a field path, or a dereference — and a type with a `len` method.
 
 An indexing or slicing overload is responsible for its own bounds checks.
