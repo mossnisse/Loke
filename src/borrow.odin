@@ -1111,19 +1111,32 @@ check_declared_escape :: proc(k: ^Checker, literal: ^Expr_Proc) {
 @(private = "file")
 summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	sym := symbol_of(k.c, literal.symbol)
-	if sym == nil || sym.result == INVALID_TYPE {
+	if sym == nil {
 		return false
+	}
+	writes := proc_may_write_owners(k.c, sym)
+	if sym.result == INVALID_TYPE && !writes {
+		return false
+	}
+	defer free_all(k.c.analysis_allocator)
+	graph := build_flow_graph(k, literal, k.c.analysis_allocator, .Prov_Summary)
+	if graph == nil {
+		return false
+	}
+	changed := writes && collect_written_regions(k.c, graph, literal.symbol, sym)
+	if sym.result == INVALID_TYPE {
+		if _, known := k.c.result_summary_dependencies[literal.symbol]; !known {
+			dependencies := make([]Symbol_Id, len(graph.summary_callees), k.c.semantic_allocator)
+			copy(dependencies, graph.summary_callees[:])
+			k.c.result_summary_dependencies[literal.symbol] = dependencies
+		}
+		return changed
 	}
 	summary, found := k.c.result_summaries[literal.symbol]
 	if !found {
 		summary = new(Proc_Summary, k.c.semantic_allocator)
 		summary.result = new_result_provenance(k.c, len(sym.param_symbols), sym.result, true)
 		k.c.result_summaries[literal.symbol] = summary
-	}
-	defer free_all(k.c.analysis_allocator)
-	graph := build_flow_graph(k, literal, k.c.analysis_allocator, .Prov_Summary)
-	if graph == nil {
-		return false
 	}
 	if _, known := k.c.result_summary_dependencies[literal.symbol]; !known {
 		dependencies := make([]Symbol_Id, len(graph.summary_callees), k.c.semantic_allocator)
@@ -1132,10 +1145,79 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	}
 	state := Prov_State{graph = graph, k = k}
 	if !prepare_state(&state) {
-		return false
+		return changed
 	}
 	solve_reaching(&state)
-	return collect_escape_provenance(&state, summary)
+	return collect_escape_provenance(&state, summary) || changed
+}
+
+// Whether a parameter names caller storage the body may write: `inout`, or a
+// mutable pointer or slice.
+param_writes_caller :: proc(c: ^Compiler, param: ^Symbol) -> bool {
+	return param != nil && (param.mode == .Inout || carrier_is_mutable(c, param.type))
+}
+
+@(private = "file")
+proc_may_write_owners :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
+	for id in sym.param_symbols {
+		if param_writes_caller(c, symbol_of(c, id)) {
+			return true
+		}
+	}
+	return false
+}
+
+// design.md "Allocator regions and region provenance": the regions of owners a
+// body leaves in each argument it may write, read off its flow-insensitive
+// region facts. A region local to the body is its own error there.
+@(private = "file")
+collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: Symbol_Id, sym: ^Symbol) -> bool {
+	count := len(sym.param_symbols)
+	written, found := c.written_regions[declaration]
+	if !found {
+		written = make([]Region_Set, count, c.semantic_allocator)
+		for &set in written {
+			set.params = make([]bool, max(count, 1), c.semantic_allocator)
+		}
+		c.written_regions[declaration] = written
+	}
+	changed := false
+	for id, index in sym.param_symbols {
+		if !param_writes_caller(c, symbol_of(c, id)) {
+			continue
+		}
+		set := prov_region_for_symbol(graph, id)
+		set.locals, set.crowded = 0, false
+		changed = merge_region_provenance(&written[index], set) || changed
+	}
+	return changed
+}
+
+// The written regions of a call's declaration; a join's members are unioned.
+written_region_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> ([]Region_Set, bool) {
+	if !is_contract_join(c, declaration) {
+		written, found := c.written_regions[declaration]
+		return written, found
+	}
+	out: []Region_Set
+	for member in symbol_of(c, declaration).members {
+		written, found := c.written_regions[member]
+		if !found {
+			continue
+		}
+		if out == nil {
+			out = make([]Region_Set, len(written), c.semantic_allocator)
+			for &set in out {
+				set.params = make([]bool, max(len(written), 1), c.semantic_allocator)
+			}
+		}
+		for set, index in written {
+			if index < len(out) {
+				region_merge(&out[index], set)
+			}
+		}
+	}
+	return out, out != nil
 }
 
 // Every loan that can reach a `return` becomes a possibility in the summary.

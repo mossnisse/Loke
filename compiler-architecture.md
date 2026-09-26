@@ -263,8 +263,9 @@ panic unwind consume the same settled cleanup facts.
 - region provenance follows allocator identity through owners and borrows and
   proves that values do not escape or survive an allocator reset.
 
-Procedure result summaries and escape levels carry these facts through direct,
-generic, and indirect calls. A call also counts as a write to every global its
+Procedure result summaries, the regions each body may leave in the arguments
+it writes, and escape levels carry these facts through direct, generic, and
+indirect calls. A call also counts as a write to every global its
 callee may write, settled over the whole program first. What these analyses
 trust rather than check is listed under "Deliberate v1 boundaries".
 

@@ -1871,6 +1871,17 @@ prov_carrier_slots :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 // assigned to `static`, `thread_local`, or file-scope storage (design.md).
 @(private = "file")
 prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
+	// An implicit copy of a place never allocates (design.md "Value semantics and
+	// the ownership rule"), so only a move, a call result, or a literal carries a
+	// region in.
+	if type_is_managed(graph.k.c, expr_base(value).type) && expression_is_borrowed_place(value) {
+		return
+	}
+	prov_region_escape_set(graph, target, prov_result_region(graph, value))
+}
+
+@(private = "file")
+prov_region_escape_set :: proc(graph: ^Flow_Graph, target: Expr, region: Region_Set) {
 	if !type_is_managed(graph.k.c, expr_base(target).type) {
 		return
 	}
@@ -1893,15 +1904,9 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
 	if storage == "" {
 		return
 	}
-	// An implicit copy of a place never allocates (design.md "Value semantics and
-	// the ownership rule"), so only a move, a call result, or a literal carries a
-	// region in.
-	if type_is_managed(graph.k.c, expr_base(value).type) && expression_is_borrowed_place(value) {
-		return
-	}
 	// A received region may back what the caller owns; only a local one ends
 	// first. An owner moved in is kept only as far as its parameter allows.
-	moved, set := prov_moved_parameter(graph, prov_result_region(graph, value), param ? .Stored : .Static)
+	moved, set := prov_moved_parameter(graph, region, param ? .Stored : .Static)
 	if moved == "" && !region_has_local(set) && (param || !region_is_parameter_backed(set)) {
 		return
 	}
@@ -1946,14 +1951,32 @@ prov_store_region :: proc(graph: ^Flow_Graph, destination: Expr, value: Expr, el
 	if value == nil || !type_is_managed(graph.k.c, expr_base(value).type) {
 		return
 	}
-	region := prov_result_region(graph, value)
+	copied := expression_is_borrowed_place(value)
+	prov_store_region_set(graph, destination, prov_result_region(graph, value), prov_owner_name(graph, value), element, !copied)
+}
+
+@(private = "file")
+prov_store_region_set :: proc(
+	graph: ^Flow_Graph,
+	destination: Expr,
+	region: Region_Set,
+	owner: string,
+	element := false,
+	escapes := true,
+) {
 	if region_is_empty(region) {
 		return
 	}
 	if root, path, ok := prov_place_of(graph, destination); ok {
-		prov_region_escape(graph, destination, value)
+		if escapes {
+			prov_region_escape_set(graph, destination, region)
+		}
 		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region)
 		return
+	}
+	// A write through a parameter's carrier is what the caller learns of.
+	if param := prov_written_parameter(graph, destination); param != INVALID_SYMBOL {
+		prov_define_region_content(graph, prov_root_for_symbol(graph, param), nil, region)
 	}
 	moved, rest := prov_moved_parameter(graph, region, .Stored)
 	if moved == "" && !region_has_local(rest) {
@@ -1962,11 +1985,81 @@ prov_store_region :: proc(graph: ^Flow_Graph, destination: Expr, value: Expr, el
 	prov_emit(graph, Prov_Event {
 		kind   = .Region_Escape,
 		span   = expr_span(destination),
-		verb   = prov_owner_name(graph, value),
+		verb   = owner,
 		name   = "storage reached through a pointer or slice",
 		region = rest,
 		moved  = moved,
 	})
+}
+
+// The parameter whose `^mut` or `[]mut` a write goes through, as `p^`, `p.x`,
+// or `p[i]` do.
+@(private = "file")
+prov_written_parameter :: proc(graph: ^Flow_Graph, destination: Expr) -> Symbol_Id {
+	#partial switch v in destination {
+	case ^Expr_Ident:
+		if sym := symbol_of(graph.k.c, v.symbol); sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym) {
+			return v.symbol
+		}
+	case ^Expr_Selector:
+		return prov_written_parameter(graph, v.operand)
+	case ^Expr_Index:
+		return prov_written_parameter(graph, v.operand)
+	case ^Expr_Postfix:
+		return prov_written_parameter(graph, v.operand)
+	}
+	return INVALID_SYMBOL
+}
+
+// design.md "Allocator regions and region provenance": a call leaves in each
+// argument it may write the owners its body leaves there, with the regions of
+// the arguments they came from. With no body to summarize, every allocator or
+// moved-owner argument may land in every such argument.
+@(private = "file")
+prov_call_written_regions :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Type_Id) {
+	c := graph.k.c
+	info := underlying_info(c, proc_type)
+	if info == nil {
+		return
+	}
+	callee := call_contract_declaration(c, v)
+	direct := prov_has_direct_body(c, callee)
+	prov_note_summary_dependency(graph, callee, direct)
+	written, found := written_region_summary(c, callee)
+	if !found && direct {
+		return // no parameter it writes can hold an owner
+	}
+	everything := prov_empty_region(graph)
+	if !found {
+		for argument, index in v.bound {
+			if argument == nil || index >= len(info.parameters) {
+				continue
+			}
+			moved := index < len(info.param_modes) && info.param_modes[index] == .Move
+			if moved || type_underlying(c, info.parameters[index]) == TYPE_ALLOCATOR {
+				region_merge(&everything, prov_region_of(graph, argument))
+			}
+		}
+	}
+	for destination, index in v.bound {
+		if destination == nil || index >= len(info.parameters) {
+			continue
+		}
+		region := everything
+		if found {
+			if index >= len(written) {
+				continue
+			}
+			region = prov_substitute_region(graph, v, written[index])
+		} else if !prov_argument_is_place(graph, v, index) && !carrier_is_mutable(c, info.parameters[index]) {
+			continue
+		}
+		place := destination
+		if unary, is_unary := destination.(^Expr_Unary); is_unary && unary.op == .Amp {
+			place = unary.operand
+		}
+		prov_store_region_set(graph, place, region, "an owner this call leaves")
+	}
 }
 
 @(private = "file")
@@ -3148,6 +3241,7 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 	if underlying_info(graph.k.c, proc_type) == nil {
 		return
 	}
+	prov_call_written_regions(graph, v, proc_type)
 	destinations: []int
 	info := underlying_info(graph.k.c, proc_type)
 	for slots, index in actuals {

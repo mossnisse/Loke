@@ -229,6 +229,9 @@ Compiler :: struct {
 	// change the runtime ABI (design.md "Temporaries and procedure boundaries").
 	// Keyed per declaration or instance, so two instances may differ.
 	result_summaries: map[Symbol_Id]^Proc_Summary,
+	// Per parameter, the regions of owners a body may leave in the storage that
+	// argument names (design.md "Allocator regions and region provenance").
+	written_regions: map[Symbol_Id][]Region_Set,
 	proc_contract_checks: [dynamic]Proc_Contract_Check,
 	// The contracts a conditional between two inferred callbacks joined.
 	contract_joins: [dynamic]Symbol_Id,

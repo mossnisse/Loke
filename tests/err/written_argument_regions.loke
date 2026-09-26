@@ -1,0 +1,65 @@
+package main; import "core:fmt"; import "core:mem";
+
+// design.md "Allocator regions and region provenance": an owner a callee leaves
+// in an argument it may write keeps the region of the allocator argument it was
+// built from, so that argument is backed by the region after the call. Through
+// a plain procedure type, every allocator argument's region may land there.
+
+Box :: struct { items: [dynamic]int }
+
+fill :: proc(dst: inout [dynamic][dynamic]int, allocator: Allocator) {
+	inner: [dynamic]int via allocator = {};
+	inner.append(1);
+	dst.append(move(inner));
+}
+
+point :: proc(p: ^mut Box, allocator: Allocator) {
+	p.items = make([dynamic]int, 2, allocator);
+}
+
+// Uses the allocator only for a temporary: the argument keeps no region.
+scratch_only :: proc(dst: inout [dynamic]int, allocator: Allocator) {
+	tmp: [dynamic]int via allocator = {};
+	tmp.append(5);
+	dst.append(tmp[0]);
+}
+
+filled :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic][dynamic]int = {};
+	fill(inout outer, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(outer[0][0]);
+}
+
+pointed :: proc() {
+	arena := mem.Arena.init();
+	b: Box = {};
+	point(&mut b, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(b.items.len());
+}
+
+indirect :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic][dynamic]int = {};
+	f: proc(dst: inout [dynamic][dynamic]int, allocator: Allocator) = fill;
+	f(inout outer, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(outer.len());
+}
+
+fine :: proc() {
+	arena := mem.Arena.init();
+	out: [dynamic]int = {};
+	scratch_only(inout out, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(out[0]);
+}
+
+main :: proc() {
+	filled();
+	pointed();
+	indirect();
+	fine();
+}

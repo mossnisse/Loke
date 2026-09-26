@@ -7,28 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-The first entry accepts a program that reads freed memory. It was found by a
-provenance audit, and its repro builds and runs.
-
-- **A callee's owner in an argument keeps no region at the call.** A callee
-  may leave an owner built from an allocator parameter in an `inout` or
-  `^mut` argument, since a received region may back what the caller owns,
-  but the call does not give that argument the allocator argument's region.
-  design.md "Allocator regions and region provenance" states only the result
-  rule for this case:
-
-  ```odin
-  fill :: proc(dst: inout [dynamic][dynamic]int, allocator: Allocator) {
-  	inner: [dynamic]int via allocator = {};
-  	inner.append(1);
-  	dst.append(move(inner));
-  }
-  arena := mem.Arena.init();
-  outer: [dynamic][dynamic]int = {};
-  fill(inout outer, arena.allocator());
-  free_all(arena.allocator()); // accepted while `outer[0]` lives in the arena
-  fmt.println(outer[0][0]);
-  ```
 - **Providers share region identities more than they need to.** All providers
   inside one local record or container are one region to the checker, and a
   provider replaced or removed through a pointer or slice ends the regions of
