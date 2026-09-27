@@ -23,7 +23,7 @@ specification change, not a gap.
 
 Main work:
 
-- add a changelog, supported-version policy, upgrade notes, and a documented
+- add a supported-version policy, upgrade notes, and a documented
   release checklist;
 - record compile time, peak compiler memory, output size, and representative
   program performance so regressions are visible;

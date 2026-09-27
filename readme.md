@@ -263,7 +263,8 @@ CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs
 pull request. Pushing a tag `v<LOKE_VERSION_STRING>` runs
 [.github/workflows/release.yml](.github/workflows/release.yml), which publishes a
 zip of `lokec.exe` with `base/`, `core/`, `runtime/`, and `examples/` once the
-gate passes, [known-gaps.md](known-gaps.md) lists no gaps, and the unzipped
+gate passes, [known-gaps.md](known-gaps.md) lists no gaps, the version has a
+section in [CHANGELOG.md](CHANGELOG.md) (its release notes), and the unzipped
 bundle builds and runs programs on a fresh machine. The suites can also be run separately:
 
 ```powershell

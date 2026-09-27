@@ -21,14 +21,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The release gate: no open divergence from the spec, and the tag names
-      # the version the compiler reports as LOKE_VERSION.
+      # The release gate: no open divergence from the spec, the tag names the
+      # version the compiler reports as LOKE_VERSION, and CHANGELOG.md has its
+      # section, which becomes the release notes.
       - name: Release gate
         run: |
           $gaps = [regex]::Match((Get-Content -Raw known-gaps.md), '(?s)## Gaps\s*(.*?)\s*## Not gaps').Groups[1].Value
           if ($gaps -ne 'None.') { throw "known-gaps.md lists open gaps; a release needs none" }
           $version = [regex]::Match((Get-Content -Raw src/build_config.odin), 'LOKE_VERSION_STRING :: "([^"]+)"').Groups[1].Value
           if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "tag $env:GITHUB_REF_NAME does not match LOKE_VERSION_STRING $version" }
+          if ((Get-Content -Raw CHANGELOG.md) -notmatch "(?m)^## \[$([regex]::Escape($version))\]") { throw "CHANGELOG.md has no [$version] section" }
 
       # Same Odin as ci.yml.
       - name: Install Odin dev-2025-09
@@ -102,11 +104,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
       - uses: actions/download-artifact@v4
         with:
           name: bundle
 
+      # The notes are the version's CHANGELOG.md section, up to the next one.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" loke-*.zip --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          awk -v heading="## [${GITHUB_REF_NAME#v}]" 'index($0, heading) == 1 { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" loke-*.zip --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md
