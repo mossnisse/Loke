@@ -1,0 +1,18 @@
+L0537
+@16:2
+this reset would end the region backing `x`, which is still live here
+L0537
+@25:2
+this reset would end the region backing `x`, which is still live here
+L0537
+@34:2
+this reset would end the region backing `x`, which is still live here
+L0537
+@43:2
+this reset would end the region backing `s`, which is still live here
+L0537
+@52:2
+this reset would end the region backing `s`, which is still live here
+L0536
+@60:2
+`g` is backed by an allocator region created in this procedure, so it cannot be stored in file-scope storage, which outlives that region

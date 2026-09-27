@@ -8,25 +8,9 @@ the compiler, unless the rewording is the intended fix.
 ## Gaps
 
 A second audit of the root and region provenance analyses found the entries
-below. The first seven accept programs that read or write dead or freed
+below. The first six accept programs that read or write dead or freed
 memory; each repro builds and runs.
 
-- **A removed element takes the default region.** design.md "Places and
-  overlap" says `pop`, `remove`, `remove_unordered` and a map's `remove` hand
-  back what the element held. `set_synth_result_summary` gives every managed
-  result of a synthesized member `region.default`, so an arena-backed element
-  loses its region on the way out, and `lookup_value` loses a `string`
-  element's the same way:
-
-  ```odin
-  arena := mem.Arena.init();
-  outer: [dynamic][dynamic]int = {};
-  outer.append(make([dynamic]int, 4, arena.allocator()));
-  x := outer.pop() or_else [dynamic]int{};
-  drop(outer);
-  free_all(arena.allocator()); // `x` is arena-backed
-  fmt.println(x[0]);
-  ```
 - **One call's arguments may alias through one carrier.** `inout p^` is no
   place to `prov_place_of`, so it takes neither a write access nor a mutable
   loan, and `prov_reborrow` records nothing for an argument (`into == -1`), so

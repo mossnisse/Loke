@@ -1,0 +1,74 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Places and overlap": `pop`, `remove`, `remove_unordered`, a map's
+// `remove`, and `lookup_value` hand back what the container held, so the value
+// keeps the regions the container's elements are in.
+
+pop_arena :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic][dynamic]int = {};
+	outer.append(make([dynamic]int, 4, arena.allocator()));
+	x := outer.pop() or_else [dynamic]int{};
+	drop(outer);
+	free_all(arena.allocator());
+	fmt.println(x[0]);
+}
+remove_arena :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic][dynamic]int = {};
+	outer.append(make([dynamic]int, 4, arena.allocator()));
+	x := outer.remove(0);
+	drop(outer);
+	free_all(arena.allocator());
+	fmt.println(x[0]);
+}
+unordered_arena :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic][dynamic]int = {};
+	outer.append(make([dynamic]int, 4, arena.allocator()));
+	x := outer.remove_unordered(0);
+	drop(outer);
+	free_all(arena.allocator());
+	fmt.println(x[0]);
+}
+map_remove_arena :: proc() {
+	arena := mem.Arena.init();
+	m: map[int]string = {};
+	m[1] = fmt.to_string(arena.allocator(), "hello", 42);
+	s := m.remove(1) or_else "";
+	drop(m);
+	free_all(arena.allocator());
+	fmt.println(s);
+}
+lookup_arena :: proc() {
+	arena := mem.Arena.init();
+	m: map[int]string = {};
+	m[1] = fmt.to_string(arena.allocator(), "hello", 42);
+	s := m.lookup_value(1) or_else "";
+	drop(m);
+	free_all(arena.allocator());
+	fmt.println(s);
+}
+g: [dynamic]int;
+into_global :: proc() {
+	arena := mem.Arena.init();
+	outer: [dynamic][dynamic]int = {};
+	outer.append(make([dynamic]int, 4, arena.allocator()));
+	g = outer.pop() or_else [dynamic]int{};
+}
+// Default-backed elements may go anywhere.
+default_backed :: proc() -> [dynamic]int {
+	outer: [dynamic][dynamic]int = {};
+	outer.append([dynamic]int{1});
+	x := outer.pop() or_else [dynamic]int{};
+	g = move(x);
+	m: map[int]string = {};
+	m[1] = "a";
+	s := m.remove(1) or_else "";
+	fmt.println(s);
+	return outer.pop() or_else [dynamic]int{};
+}
+main :: proc() {}

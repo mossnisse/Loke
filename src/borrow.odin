@@ -856,8 +856,8 @@ widen_summary_map_path :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) {
 }
 
 // A compiler-contributed member has no body, so its summary is written directly:
-// a result holding borrows borrows through `param`, and an owned result uses
-// the default allocator.
+// a result holding borrows borrows through `param`, and an owned result is in
+// `param`'s regions or the default allocator's.
 set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: int) {
 	sym := symbol_of(c, declaration)
 	if sym == nil || sym.result == INVALID_TYPE || param >= len(sym.params) {
@@ -866,7 +866,12 @@ set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: in
 	summary := new(Proc_Summary, c.semantic_allocator)
 	summary.result = new_result_provenance(c, len(sym.params), sym.result, false)
 	summary.result.params[param] = type_carries_borrow(c, sym.result).any
+	// design.md "Places and overlap": a removed element, or a copy sharing its
+	// storage, is in the container's regions; `lookup_value`'s allocating copy is
+	// the default provider's.
 	if type_is_managed(c, sym.result) {
+		clones := sym.container_op == .Map_Lookup_Value && clone_may_allocate(c, sym.result)
+		summary.result.region.params[param] = !clones
 		summary.result.region.default = true
 	}
 	c.result_summaries[declaration] = summary
