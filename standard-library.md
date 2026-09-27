@@ -629,9 +629,11 @@ impl C_String {
 a caller as the failure payload of `Result`. The constructor rejects an interior
 zero; a Loke `string` may legitimately contain U+0000 even though a retained C
 string cannot. The package must never create a view whose apparent length is
-shorter than the owned data.
+shorter than the owned data. `view` builds its result with
+`cstring_view.from_bytes`, so the view borrows the `C_String` and the package
+needs no `core:unsafe`.
 
-There is no `from_bytes` or `bytes()` accessor. `design.md`
+There is no `cstrings.from_bytes` constructor or `bytes()` accessor. `design.md`
 only owes `view()`, and the one motivating case — handing a foreign API a string
 it retains — starts from a `string_view`. Add the byte-oriented pair when a
 caller has bytes that are not text.

@@ -34,7 +34,7 @@ Counter_First :: struct($T: type, $N: int) {
 impl Buffer($T, $N) {
 	len :: proc(self) -> int { return self.count; }
 
-	push :: proc(self: inout, value: move T) {
+	push :: proc(self: inout, @(escape=stored) value: move T) {
 		unsafe.write(self.items[self.count], move(value));
 		self.count += 1;
 	}

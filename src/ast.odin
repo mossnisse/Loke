@@ -178,12 +178,13 @@ Text_Op :: enum {
 	From_Runes, // `string.from_runes(runes)`, validating, optional-ok
 }
 
-// The named UTF-8 constructors, which validate and return Option(T).
+// The named text constructors, which validate and return Option(T).
 Text_Conversion :: enum {
 	None,
 	String_From_Bytes,  // `string.from_utf8(bytes)` — validate and copy
 	View_From_Bytes,    // `string_view.from_utf8(bytes)` — validate and borrow
 	String_From_C_View, // `string.from_utf8(cview)` — scan, validate, and copy
+	C_View_From_Bytes,  // `cstring_view.from_bytes(bytes)` — check the terminator and borrow
 }
 
 // The operation the checker selected for a call; nil until checked.

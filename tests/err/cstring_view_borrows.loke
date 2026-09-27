@@ -1,0 +1,30 @@
+package main;
+
+import "core:cstrings";
+
+// design.md "C string views": `C_String.view()` borrows the buffer it owns, so
+// the view may not outlive the `C_String`. `cstring_view.from_bytes` borrows its
+// slice the same way.
+
+no_c :: proc() -> ! { panic("out of memory"); }
+
+returned :: proc() -> cstring_view {
+	owned := cstrings.from_string("abc") or_else no_c();
+	return owned.view();
+}
+
+from_temporary :: proc() {
+	v := (cstrings.from_string("abc") or_else no_c()).view();
+	_ = string.from_utf8(v);
+}
+
+from_bytes :: proc() -> cstring_view {
+	bytes := [2]u8{65, 0};
+	return cstring_view.from_bytes(bytes[:]) or_else "";
+}
+
+main :: proc() {
+	_ = returned();
+	from_temporary();
+	_ = from_bytes();
+}

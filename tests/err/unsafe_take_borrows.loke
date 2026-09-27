@@ -49,6 +49,12 @@ keep :: proc(h: inout Holder, view: []int) {
 	unsafe.write(h.items[0], view);
 }
 
+// Nor may a moved-in owner, whose region would then back what the caller owns.
+Names :: struct { items: [1]string }
+keep_owner :: proc(n: inout Names, value: move string) {
+	unsafe.write(n.items[0], move(value));
+}
+
 used_in_scope :: proc() {
 	sa: container.Small_Array([]int, 4) = {};
 	arr := [3]int{1, 2, 3};

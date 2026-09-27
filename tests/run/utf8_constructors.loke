@@ -34,4 +34,11 @@ main :: proc() {
 	fmt.println(string.from_utf8(cbytes) == .none);
 	with_zero := [3]u8{65, 0, 66};
 	fmt.println((string.from_utf8(with_zero[:]) or_else "bad").len());
+	// `cstring_view.from_bytes` checks only the last byte, and borrows the slice.
+	static_assert(type_of(cstring_view.from_bytes(bad_c[:])) == Option(cstring_view));
+	fmt.println(string.from_utf8(cstring_view.from_bytes([]u8{72, 105, 0}) or_else "bad") or_else "bad");
+	fmt.println(string.from_utf8(cstring_view.from_bytes(with_zero[:]) or_else "none") or_else "bad");
+	fmt.println(string.from_utf8(cstring_view.from_bytes(empty) or_else "none") or_else "bad");
+	inner_zero := [4]u8{97, 0, 98, 0};
+	fmt.println(string.from_utf8(cstring_view.from_bytes(inner_zero[:]) or_else "bad") or_else "bad");
 }

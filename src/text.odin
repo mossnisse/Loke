@@ -22,13 +22,13 @@ type_is_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return info != nil && (info.kind == .String || info.kind == .String_View || info.kind == .CString_View)
 }
 
-// `text.op()`, `string.from_runes(...)`, or `string.from_utf8(...)` /
-// `string_view.from_utf8(...)`. Returns true when the selector named one, so the
-// caller stops looking for an ordinary method.
+// `text.op()`, `string.from_runes(...)`, `string.from_utf8(...)` /
+// `string_view.from_utf8(...)`, or `cstring_view.from_bytes(...)`. Returns true
+// when the selector named one, so the caller stops looking for an ordinary method.
 check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 	name := sel.name.text
 	op := text_op_named(name)
-	if op == .None && name != "from_utf8" && name != "from_runes" {
+	if op == .None && name != "from_utf8" && name != "from_runes" && name != "from_bytes" {
 		return false
 	}
 	// A receiver that is a name already knows its type, so an ordinary method
@@ -51,6 +51,8 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	if base := expr_base(sel.operand); base.value_category == .Type {
 		switch {
 		case name == "from_utf8" && (base.denoted_type == TYPE_STRING || base.denoted_type == TYPE_STRING_VIEW):
+			check_from_utf8(k, v, base.denoted_type)
+		case name == "from_bytes" && base.denoted_type == TYPE_CSTRING_VIEW:
 			check_from_utf8(k, v, base.denoted_type)
 		case name == "from_runes" && base.denoted_type == TYPE_STRING:
 			check_from_runes(k, v)
@@ -172,7 +174,11 @@ check_from_runes :: proc(k: ^Checker, v: ^Expr_Call) {
 @(private = "file")
 check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	v.value_category = .Value
-	name := target == TYPE_STRING ? "string.from_utf8" : "string_view.from_utf8"
+	name, from_bytes := "string.from_utf8", Text_Conversion.String_From_Bytes
+	switch target {
+	case TYPE_STRING_VIEW:  name, from_bytes = "string_view.from_utf8", .View_From_Bytes
+	case TYPE_CSTRING_VIEW: name, from_bytes = "cstring_view.from_bytes", .C_View_From_Bytes
+	}
 	if len(v.args) != 1 {
 		errorf(k.c, v.span, "L0561", "`%s` takes one argument, found %d", name, len(v.args))
 		v.type = INVALID_TYPE
@@ -194,7 +200,7 @@ check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	op := Text_Conversion.None
 	switch {
 	case info.kind == .Slice && info.element == TYPE_U8:
-		op = target == TYPE_STRING ? .String_From_Bytes : .View_From_Bytes
+		op = from_bytes
 	case target == TYPE_STRING && info.kind == .CString_View:
 		op = .String_From_C_View
 	case:

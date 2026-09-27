@@ -23,21 +23,6 @@ below.
   }
   free(p);
   ```
-- **`unsafe.write` does not record the region of the owner it stores.**
-  design.md "The `unsafe` package" stores the value the way an initialization
-  takes it, and `self.items[0] = move(value)` into caller storage needs
-  `@(escape=stored)` on `value` (L0536). Through `unsafe.write` it does not, so
-  a caller is not told that its argument's region now backs `self`. Checking it
-  needs that annotation on `try_shared_from_move` in `base/runtime/shared.loke`
-  and on the `move` parameters of the containers in `tests/run`:
-
-  ```odin
-  Buffer :: struct { count: int, @(initialized = count) items: [4]string }
-  push :: proc(self: inout Buffer, value: move string) {
-  	unsafe.write(self.items[self.count], move(value)); // accepted
-  	self.count += 1;
-  }
-  ```
 - **L0536 names the destination, not the escaping owner.** design.md
   "Required diagnostics" asks for the owner and its region.
   `prov_region_escape_set` names the destination and calls the region "created

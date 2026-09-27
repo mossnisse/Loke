@@ -96,7 +96,7 @@ try_shared_from_clone :: proc(
 
 @(private)
 try_shared_from_move :: proc(
-	value: move $T, allocator: Allocator = default_allocator(),
+	@(escape=stored) value: move $T, allocator: Allocator = default_allocator(),
 ) -> Result(Shared(T), Allocator_Error) {
 	block := try_new(Shared_Block(T), allocator) or_return;
 	block^.strong = 1;

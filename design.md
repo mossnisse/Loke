@@ -512,7 +512,9 @@ text := string.from_utf8(static_name) or_else ""; // validates and copies, or us
 c_api(runtime_name.to_c_view());   // temporary lives through this call
 ```
 
-To retain an owned zero-terminated buffer, use `C_String` from `core:cstrings`, a library type over `[dynamic]u8` exposing `view() -> cstring_view`.
+`cstring_view.from_bytes(bytes)` accepts a byte slice and returns a borrowed `Option(cstring_view)`: `.some` when the last byte is zero, so C's read stops inside the slice, and `.none` otherwise, including for an empty slice. An earlier zero ends the C string early, as it does for `to_c_view()`. The view borrows `bytes` like any other view.
+
+To retain an owned zero-terminated buffer, use `C_String` from `core:cstrings`, a library type over `[dynamic]u8` exposing `view() -> cstring_view`, which borrows the `C_String`.
 
 ### string type conversions
 
@@ -552,6 +554,7 @@ In the table below `src` is the source value, and the action is one of: **copy**
 | string literal | `cstring_view` | borrow static storage | `c_text: cstring_view = src` |
 | `[]u8` | `Option(string)` | validate and copy | `string.from_utf8(src)` |
 | `[]u8` | `Option(string_view)` | validate and borrow | `string_view.from_utf8(src)` |
+| `[]u8` | `Option(cstring_view)` | check the terminator and borrow | `cstring_view.from_bytes(src)` |
 | `[]u8` | `[^]u8` | unsafe borrow | `unsafe.raw_data(src)` |
 | `[]rune` | `Option(string)` | validate and copy | `string.from_runes(src)` |
 | `[^]u8` | `cstring_view` | unsafe borrow | `unsafe.cstring_view(src)` |

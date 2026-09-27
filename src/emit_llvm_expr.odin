@@ -1845,6 +1845,30 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []
 		data, length := emit_byte_slice_parts(e, v.bound[0])
 		return emit_checked_view(e, as_type, data, length)
 
+	case .C_View_From_Bytes:
+		// Also a borrow of the slice's root. C reads to the first zero, so a
+		// zero last byte keeps every read inside the slice.
+		data, length := emit_byte_slice_parts(e, v.bound[0])
+		terminated := alloca(e, "i1")
+		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", terminated)
+		nonempty := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", nonempty, length)
+		check, done := new_label(e, "cview.check"), new_label(e, "cview.done")
+		branch_if(e, nonempty, check, done)
+		place_label(e, check)
+		last := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", last, length)
+		zero := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq i8 %s, 0", zero, load(e, "i8", gep_at(e, "i8", data, last)))
+		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", zero, terminated)
+		branch(e, done)
+		place_label(e, done)
+		ok, kept := load(e, "i1", terminated), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept, ok, data)
+		out := make([]string, 1)
+		out[0] = emit_option_value(e, as_type, ok, kept)
+		return out
+
 	case .String_From_C_View:
 		pointer := emit_expr(e, v.bound[0])
 		length := temp(e)

@@ -1,0 +1,9 @@
+L0526
+@13:9
+this borrow cannot be returned: `owned` ends when this procedure returns
+L0513
+@18:23
+this borrow is used after this temporary has ended
+L0526
+@23:9
+this slice cannot be returned: `bytes` ends when this procedure returns

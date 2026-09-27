@@ -3349,11 +3349,11 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			}
 			return nil
 		case .Unsafe_Write:
-			// Stored the way an initialization takes it, for its loans; its region
-			// is not (known-gaps.md).
+			// Stored the way an initialization takes it, loans and region alike.
 			if len(v.bound) == 2 {
 				prov_invalidate(graph, v.bound[0], v.span, "overwritten")
 				sources := walk_flow_expr(graph, v.bound[1])
+				prov_store_region(graph, v.bound[0], v.bound[1])
 				prov_store_loans(graph, v.bound[0], sources, v.span)
 			}
 			return nil
