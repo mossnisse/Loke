@@ -118,6 +118,9 @@ Contribution :: enum u8 {
 	Mutable_Iteration,
 	Iteration,
 	Lifecycle,
+	// The `Lifecycle` members are enrolled for emission. A hypothetical check
+	// creates them to resolve a lookup; only a real use enrolls them.
+	Lifecycle_Enrolled,
 	// The compiler-owned canonical receiver members: `len`, `cap`, and `hash` on
 	// the built-in types that provide them.
 	Standard_Customization,

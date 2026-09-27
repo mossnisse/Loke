@@ -348,23 +348,53 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id, requested :=
 contribute_distinct_copy_members :: proc(k: ^Checker, written, under: Type_Id) {
 	info := type_of(k.c, written)
 	under_info := type_of(k.c, under)
-	if info == nil || under_info == nil || .Lifecycle in info.contributed ||
+	if info == nil || under_info == nil || lifecycle_settled(k.c, info) ||
 	   .Lifecycle not_in under_info.contributed || lifecycle_of(k.c, under).clone_disabled {
 		return
 	}
-	info.contributed += {.Lifecycle}
-	members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
-	append(&members, generated_hook(k, written, "try_clone", .Try_Clone, true))
-	if under_info.kind != .Array {
-		append(&members, generated_hook(k, written, "clone", .Clone, false))
+	if .Lifecycle not_in info.contributed {
+		info.contributed += {.Lifecycle}
+		members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+		append(&members, generated_hook(k, written, "try_clone", .Try_Clone, true))
+		if under_info.kind != .Array {
+			append(&members, generated_hook(k, written, "clone", .Clone, false))
+		}
+		add_members(k.c, written, members[:])
 	}
-	add_members(k.c, written, members[:])
+	enroll_lifecycle_members(k.c, written)
+}
+
+// A hypothetical check may create a type's copy members, since resolving
+// `value.clone()` needs the symbol, but must not enroll them in the program
+// (compiler-architecture.md "Checking and overload resolution"). A real use
+// enrolls them, so a speculative contribution is finished once created, a real
+// one only once enrolled.
+@(private = "file")
+lifecycle_settled :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	return (c.speculation_depth == 0 ? Contribution.Lifecycle_Enrolled : .Lifecycle) in info.contributed
+}
+
+@(private = "file")
+enroll_lifecycle_members :: proc(c: ^Compiler, type: Type_Id) {
+	info := type_of(c, type)
+	if c.speculation_depth != 0 || .Lifecycle_Enrolled in info.contributed { return }
+	info.contributed += {.Lifecycle_Enrolled}
+	for id in info.members {
+		sym := symbol_of(c, id)
+		if sym == nil || (sym.synth != .Clone && sym.synth != .Try_Clone) { continue }
+		append(&c.synth_procs, id)
+		// A `distinct` name's pair is its own; the entry records the underlying's.
+		if type_underlying(c, type) == type {
+			entry := lifecycle_of(c, type)
+			if sym.synth == .Try_Clone { entry.try_clone = id } else { entry.clone = id }
+		}
+	}
 }
 
 @(private = "file")
 contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requested: bool) {
 	info := type_of(k.c, type)
-	if info == nil || info.descriptor || .Lifecycle in info.contributed {
+	if info == nil || info.descriptor || lifecycle_settled(k.c, info) {
 		return
 	}
 	#partial switch info.kind {
@@ -381,13 +411,16 @@ contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requ
 	}
 	entry := lifecycle_of(k.c, type)
 	if entry.state != .Finite { return }
+	created := .Lifecycle in info.contributed
 	info.contributed += {.Lifecycle}
 
 	#partial switch info.kind {
 	case .Dynamic_Array, .Map, .String:
-		if !entry.clone_disabled {
+		if !entry.clone_disabled && !created {
 			contribute_intrinsic_copy_members(k, type)
 		}
+		// Settled before the parts, so a type reached again through them stops.
+		enroll_lifecycle_members(k.c, type)
 		if info.kind != .String {
 			contribute_lifecycle_members(k, info.element)
 		}
@@ -399,12 +432,13 @@ contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requ
 
 	// A move-only type has no copy entry point, but its parts still need theirs
 	// for cleanup.
-	if !entry.clone_disabled {
+	if !entry.clone_disabled && !created {
 		members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
 		append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
 		append(&members, generated_hook(k, type, "clone", .Clone, false))
 		add_members(k.c, type, members[:])
 	}
+	enroll_lifecycle_members(k.c, type)
 	for part in lifecycle_parts(k.c, type) {
 		if type_is_managed(k.c, part) {
 			contribute_lifecycle_members(k, part)
@@ -493,19 +527,16 @@ type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 @(private = "file")
 generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kind, fallible: bool) -> Symbol_Id {
 	result := fallible ? result_type(k, type, TYPE_ALLOCATOR_ERROR) : type
+	// `enroll_lifecycle_members` enrolls it and records it in the lifecycle entry.
 	id := synth_proc(
 		k.c, name, kind, type,
 		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Borrow, .Value}, result,
+		enroll = false,
 	)
 	if sym := symbol_of(k.c, id); sym != nil {
 		sym.has_receiver = true
 		sym.receiver = .Borrow
 		sym.param_defaults[1] = default_allocator_arg(k.c)
-	}
-	// A `distinct` name's pair is its own; the entry records the underlying's.
-	if type_underlying(k.c, type) == type {
-		entry := lifecycle_of(k.c, type)
-		if kind == .Try_Clone { entry.try_clone = id } else { entry.clone = id }
 	}
 	return id
 }

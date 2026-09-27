@@ -499,6 +499,7 @@ synth_proc :: proc(
 	params: []Type_Id,
 	modes: []Param_Mode,
 	result: Type_Id,
+	enroll := true,
 ) -> Symbol_Id {
 	param_copy := make([]Type_Id, len(params), c.semantic_allocator)
 	copy(param_copy, params)
@@ -515,7 +516,7 @@ synth_proc :: proc(
 		proc_type     = intern_proc_type(c, param_copy, modes, result, false, ""),
 		synth         = kind,
 	})
-	append(&c.synth_procs, id)
+	if enroll { append(&c.synth_procs, id) }
 	return id
 }
 

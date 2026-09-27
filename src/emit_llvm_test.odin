@@ -567,7 +567,7 @@ lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 		case "late_contribution":
 			// Clearing the marker models a late request; it must not change state.
 			info := type_of(c, target)
-			info.contributed -= {.Lifecycle}
+			info.contributed -= {.Lifecycle, .Lifecycle_Enrolled}
 			symbols_before, procs_before, members_before := len(c.symbols), len(c.synth_procs), len(info.members)
 			checker := Checker{c = c}
 			contribute_lifecycle_members(&checker, target)

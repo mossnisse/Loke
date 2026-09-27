@@ -7,23 +7,7 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-An architecture review of the checker found the one below.
-
-- **A procedure literal in an interface requirement adds copy procedures to the
-  program.** A requirement is checked hypothetically (design.md "Interface
-  bodies"), but the ownership analysis of the probed literal's body still
-  contributes `Tag`'s lifecycle members, so `Tag.clone` and `Tag.try_clone` are
-  emitted although nothing in the program copies a `Tag`. Without the
-  `static_assert` they are not:
-
-  ```odin
-  Tag :: struct { label: string }
-  call_with :: proc(value: int, f: proc(x: int) -> int) -> int { return 1; }
-  Probe :: interface($T: type) {
-  	(value: T) call_with(value, proc(x: int) -> int { a: Tag = {}; b := a; return x; }) -> int;
-  }
-  main :: proc() { static_assert(Probe(int)); }
-  ```
+None.
 
 ## Not gaps
 

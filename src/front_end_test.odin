@@ -258,6 +258,7 @@ Probe_Emission_State :: struct {
 	witnesses, witness_order:                int,
 	materialized, materialized_order:        int,
 	instances, checked_bodies, static_locals: int,
+	synth_procs:                             int,
 	format_requested, type_info_requested:   bool,
 }
 
@@ -272,6 +273,7 @@ probe_emission_state :: proc(c: ^Compiler) -> Probe_Emission_State {
 		materialized_order  = len(c.materialized_order),
 		checked_bodies      = len(c.checked_bodies),
 		static_locals       = len(c.static_locals),
+		synth_procs         = len(c.synth_procs),
 		format_requested    = c.format_requested,
 		type_info_requested = c.type_info_requested,
 	}
@@ -288,6 +290,7 @@ import "base:runtime";
 Writer :: struct {}
 Options :: struct {}
 Record :: struct { value: int }
+Tag :: struct { label: string }
 Sized :: interface($T: type) { slot size: proc(self) -> int; }
 impl Record { size :: proc(self) -> int { return self.value; } }
 View :: dyn Sized;
@@ -296,7 +299,8 @@ identity :: proc(value: $T) -> typeid { return typeid_of(T); }
 call_with :: proc(value: Record, f: proc(x: int) -> int) -> int { return f(value.value); }
 Probe :: interface($T: type) {
     (value: T) identity(value) -> typeid;
-    (value: T) call_with(value, proc(x: int) -> int { hits: static int = 0; hits += x; return hits; }) -> int;
+    (tag: Tag) tag.clone() -> Tag;
+    (value: T) call_with(value, proc(x: int) -> int { hits: static int = 0; hits += x; a: Tag = {}; b := a; return hits; }) -> int;
     (value: ^T) (dyn Sized)(value) -> View;
     &TABLE -> ^[2]int;
     typeid_of(T) -> typeid;
