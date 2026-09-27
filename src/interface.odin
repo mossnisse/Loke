@@ -512,15 +512,14 @@ interface_check :: proc(
 	scope := interface_scope(k, info, args)
 
 	saved := save_checker_location(k)
-	saved_result, saved_place := k.result_type, k.place_position
+	saved_place := k.place_position
 	k.interface_depth += 1
 	defer {
 		restore_checker_location(k, saved)
-		k.result_type, k.place_position = saved_result, saved_place
+		k.place_position = saved_place
 		k.interface_depth -= 1
 	}
-	k.proc_literal = nil
-	k.result_type = INVALID_TYPE
+	k.body = {}
 
 	application_pkg := lookup_package(k)
 	for requirement in info.node.requirements {
@@ -561,19 +560,18 @@ interface_predicates_check :: proc(
 	}
 
 	saved := save_checker_location(k)
-	saved_result, saved_place := k.result_type, k.place_position
+	saved_place := k.place_position
 	probe := begin_probe(k.c)
 	k.interface_depth += 1
 	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
-	k.proc_literal = nil
-	k.result_type = INVALID_TYPE
+	k.body = {}
 	k.place_position = false
 	if info.file_node != nil {
 		k.file, k.file_node = info.file, info.file_node
 	}
 	defer {
 		restore_checker_location(k, saved)
-		k.result_type, k.place_position = saved_result, saved_place
+		k.place_position = saved_place
 		k.interface_depth -= 1
 		end_probe(k.c, probe, keep = true)
 	}

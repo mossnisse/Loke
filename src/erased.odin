@@ -30,7 +30,7 @@ ensure_any_view_fields :: proc(c: ^Compiler) {
 	// across the field symbols being made.
 	info = type_of(c, TYPE_ANY_VIEW)
 	info.fields = fields
-	info.mangled = "any_view"
+	info.backend_label = "any_view"
 }
 
 // design.md: `any_view` may only be a local or a parameter. The resolved type is
@@ -178,7 +178,7 @@ dyn_type :: proc(
 	fields[DYN_WITNESS] = new_field(k.c, "witness", TYPE_RAWPTR, DYN_WITNESS)
 	if stored := type_of(k.c, type); stored != nil {
 		stored.fields = fields
-		stored.mangled = fmt.aprintf("dyn.%s", llvm_safe(identifier_text(k.c, name), allocator = context.temp_allocator), allocator = k.c.semantic_allocator)
+		stored.backend_label = fmt.aprintf("dyn.%s", identifier_text(k.c, name), allocator = k.c.semantic_allocator)
 	}
 	k.c.dyn_types[key] = type
 	install_dyn_forwarding_slots(k, info, args, type)
@@ -618,7 +618,6 @@ Witness :: struct {
 	args:             []Generic_Arg,
 	// In the flattened order slot calls index by.
 	slots:            []Witness_Slot,
-	name:             string,
 }
 
 Witness_Slot :: struct {
@@ -684,7 +683,6 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	witness.interface_symbol = info.symbol
 	witness.concrete = concrete
 	witness.args = args
-	witness.name = witness_llvm_name(k.c, info.symbol, concrete, args)
 
 	slots := make([]Witness_Slot, len(flattened), k.c.semantic_allocator)
 	saved := save_checker_location(k)
@@ -708,11 +706,6 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	restore_checker_location(k, saved)
 	witness.slots = slots
 	if k.c.speculation_depth == 0 {
-		// The readable name need not be unique: two packages may both have a `Shape`.
-		if k.c.witness_names[witness.name] {
-			witness.name = fmt.aprintf("%s.%d", witness.name, len(k.c.witness_order), allocator = k.c.semantic_allocator)
-		}
-		k.c.witness_names[witness.name] = true
 		k.c.witnesses[key] = witness
 		append(&k.c.witness_order, witness)
 	}
@@ -724,29 +717,6 @@ witness_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id
 	b := strings.builder_make(c.semantic_allocator)
 	fmt.sbprintf(&b, "%d|%d", u32(interface_symbol), u32(concrete))
 	write_arg_keys(c, &b, args)
-	return strings.to_string(b)
-}
-
-// Spelled from names rather than ids, which shift on unrelated changes.
-@(private = "file")
-witness_llvm_name :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id, args: []Generic_Arg) -> string {
-	b := strings.builder_make(c.semantic_allocator)
-	interface_name := "interface"
-	if sym := symbol_of(c, interface_symbol); sym != nil {
-		interface_name = identifier_text(c, sym.name)
-	}
-	fmt.sbprintf(&b, "@loke.w.%s.%s", llvm_safe(interface_name, allocator = context.temp_allocator), llvm_safe(type_name(c, concrete), allocator = context.temp_allocator))
-	for arg in args {
-		part := arg.is_type ? type_name(c, arg.type) : fmt.aprintf(
-			"v%s:%s",
-			type_name(c, arg.value_type),
-			const_key_text(c, arg.value),
-			allocator = c.semantic_allocator,
-		)
-		escaped := llvm_safe(part, dots = false)
-		fmt.sbprintf(&b, ".%s", escaped)
-		delete(escaped)
-	}
 	return strings.to_string(b)
 }
 

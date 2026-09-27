@@ -24,7 +24,7 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 		fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
 		iterator_info := type_of(c, iterator)
 		iterator_info.fields = fields
-		iterator_info.mangled = fmt.aprintf("Mutable_Map_Iterator.%d", subject, allocator = c.semantic_allocator)
+		iterator_info.backend_label = fmt.aprintf("Mutable_Map_Iterator.%d", subject, allocator = c.semantic_allocator)
 		parts := make([]Yield_Desc, 2, c.semantic_allocator)
 		parts[0], parts[1] = Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Mutable}
 		lent := Yield_Desc{kind = .Record, fields = parts}
@@ -48,7 +48,7 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 	fields[1] = new_field(c, "index", TYPE_INT, 1, public = false)
 	fields[2] = new_field(c, "reversed", TYPE_BOOL, 2, public = false)
 	type_of(c, iterator).fields = fields
-	type_of(c, iterator).mangled = fmt.aprintf("Mutable_Iterator.%d", subject, allocator = c.semantic_allocator)
+	type_of(c, iterator).backend_label = fmt.aprintf("Mutable_Iterator.%d", subject, allocator = c.semantic_allocator)
 	next := adapter_proc(k, "next", .Slice_Mut_Next, iterator, .Inout, option_type(k, pointer_to(c, element, true)))
 	add_members(c, iterator, []Symbol_Id{next})
 	// A `[]mut T` is a mutable view: any value of it walks mutably, so its

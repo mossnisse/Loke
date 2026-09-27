@@ -156,7 +156,8 @@ The graph is an analysis view, not a lowering IR, built in one of three modes:
 - `Prov_Summary` and `Prov_Diagnose` rebuild the same topology without mutating
   settled lifecycle annotations and record the event stream consumed by
   `borrow.odin`: the first while result summaries settle, the second to check
-  each body.
+  each body. Their state is a `Prov_State`, which a lifecycle graph does not
+  have.
 
 Every concrete body gets a fresh graph per mode, and one per summary round, in
 the analysis arena; each is discarded after its analysis. A provenance build
@@ -405,7 +406,10 @@ and returns module text in memory. It creates no types or symbols; the only
 semantic state it writes is the layout cache `layout.odin` shares with the
 checker. Filesystem and process policy
 belongs in `emit_llvm_toolchain.odin`. Backend names and temporary values belong
-to `Emitter`, never to semantic symbols. No non-test backend file
+to `Emitter`, never to semantic symbols: the checker records identities (an
+instance's template and arguments, a compiler-made type's `backend_label`, a
+witness's interface and arguments), and the emitter spells and escapes them.
+No non-test backend file
 (`emit_llvm*.odin`, `emission_contract.odin`) names `Checker`, and no front-end
 file other than the driver, `main.odin`, calls a procedure an `emit_llvm*.odin`
 file defines: a helper both sides need lives with its semantic owner.

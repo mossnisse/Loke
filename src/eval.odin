@@ -165,19 +165,9 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	}
 
 	outer_location := save_checker_location(k)
-	outer_proc, outer_result := k.proc_literal, k.result_type
-	outer_loop, outer_defer := k.loop_depth, k.in_defer
-	outer_slots := k.defer_slots
-	defer {
-		restore_checker_location(k, outer_location)
-		k.proc_literal, k.result_type = outer_proc, outer_result
-		k.loop_depth, k.in_defer = outer_loop, outer_defer
-		k.defer_slots = outer_slots
-	}
+	defer restore_checker_location(k, outer_location)
 	enter_symbol_location(k, symbol)
-	k.proc_literal = nil
-	k.result_type = INVALID_TYPE
-	k.loop_depth, k.in_defer = 0, false
+	k.body = {}
 
 	resolve_declaration_signature(k, d)
 	check_decl(k, d)

@@ -62,7 +62,7 @@ new_provider_type :: proc(c: ^Compiler, name: string) -> Type_Id {
 	})
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
-		info.mangled = llvm_safe(name, allocator = c.semantic_allocator)
+		info.backend_label = name
 	}
 	return type
 }

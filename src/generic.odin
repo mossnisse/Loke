@@ -85,9 +85,6 @@ Instance :: struct {
 	// A provisional entry is on the instantiation stack: a request that reaches it
 	// again is recursion, not a cache hit.
 	provisional:  bool,
-	// The backend spelling of this instance, kept apart from the readable name
-	// diagnostics use.
-	mangled:      string,
 	signature_ok: bool,
 	// Deferred so an unselected overload never has its body diagnosed.
 	body_checked: bool,
@@ -131,11 +128,13 @@ Pending_Impl :: struct {
 }
 
 // A procedure instance waiting to be named and emitted with its defining
-// package's items.
+// package's items: a template's instance, or with no `template` a member of an
+// instantiated `impl` block.
 Instance_Decl :: struct {
-	symbol: Symbol_Id,
-	decl:   ^Decl,
-	name:   string,
+	symbol:   Symbol_Id,
+	decl:     ^Decl,
+	template: Symbol_Id,
+	args:     []Generic_Arg,
 }
 
 // ------------------------------------------------------------- templates --
@@ -725,7 +724,7 @@ const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 	return "?"
 }
 
-// A readable `Table(string, int)` for diagnostics and mangled symbol names.
+// A readable `Table(string, int)` for diagnostics.
 generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	if sym := symbol_of(c, template); sym != nil {
@@ -751,30 +750,6 @@ generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gen
 		}
 	}
 	strings.write_string(&b, ")")
-	return strings.to_string(b)
-}
-
-// The same identity as a backend symbol, `Table.int.i32`; each part is escaped
-// on its own, so distinct vectors stay distinct.
-generic_mangled_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> string {
-	b := strings.builder_make(c.semantic_allocator)
-	if sym := symbol_of(c, template); sym != nil {
-		// `Atomic(int).load` and `Atomic(bool).load` are two templates named `load`.
-		if sym.owner_type != INVALID_TYPE {
-			owner := llvm_safe(qualified_member_name(c, sym, context.temp_allocator))
-			strings.write_string(&b, owner)
-			delete(owner)
-		} else {
-			strings.write_string(&b, identifier_text(c, sym.name))
-		}
-	}
-	for binding in bindings {
-		strings.write_string(&b, ".")
-		part := binding.arg.is_type ? type_name(c, binding.arg.type) : const_key_text(c, binding.arg.value)
-		escaped := llvm_safe(part, dots = false)
-		strings.write_string(&b, escaped)
-		delete(escaped)
-	}
 	return strings.to_string(b)
 }
 
@@ -1391,7 +1366,6 @@ instantiate_generic :: proc(
 	k.c.instantiation_count += 1
 
 	name := generic_instance_name(k.c, template.symbol, bindings)
-	instance.mangled = generic_mangled_name(k.c, template.symbol, bindings)
 	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span})
 	defer {
 		pop(&k.c.instantiation_stack)
@@ -1502,7 +1476,7 @@ enter_generic_location :: proc(
 	k.scope = scope
 	k.pkg, k.lookup_pkg = pkg, lookup_pkg
 	k.impl_type = impl_type
-	k.proc_literal = nil
+	k.body = {}
 	k.generic_depth += 1
 	if file_node != nil {
 		k.file, k.file_node = file, file_node
@@ -1550,7 +1524,6 @@ instantiate_record_body :: proc(
 	if info := type_of(k.c, type); info != nil {
 		info.instance_of = template.symbol
 		info.instance_args = generic_args_of(k.c, instance.bindings)
-		info.mangled = generic_mangled_name(k.c, template.symbol, instance.bindings)
 	}
 	instance.symbol = symbol_id
 	instance.type = type
@@ -1858,9 +1831,10 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 
 	if pkg := package_of(k.c, template.pkg); pkg != nil {
 		append(&pkg.instances, Instance_Decl {
-			symbol = instance.symbol,
-			decl   = instance.decl,
-			name   = instance.mangled,
+			symbol   = instance.symbol,
+			decl     = instance.decl,
+			template = template.symbol,
+			args     = generic_args_of(k.c, instance.bindings),
 		})
 	}
 }
@@ -2347,11 +2321,7 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 				if sym != nil && sym.bound_excluded {
 					continue
 				}
-				append(&pkg.instances, Instance_Decl {
-					symbol = d.symbols[0],
-					decl   = d,
-					name   = qualified_member_name(k.c, sym, k.c.semantic_allocator),
-				})
+				append(&pkg.instances, Instance_Decl{symbol = d.symbols[0], decl = d})
 			}
 		}
 

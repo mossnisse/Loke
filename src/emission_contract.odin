@@ -127,8 +127,8 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 		}
 	}
 	for witness in c.witness_order {
-		if witness == nil || witness.name == "" || type_of(c, witness.concrete) == nil {
-			return emission_contract_error(c, "a witness has no concrete type or global name")
+		if witness == nil || witness.concrete == INVALID_TYPE || type_of(c, witness.concrete) == nil {
+			return emission_contract_error(c, "a witness has no concrete type")
 		}
 		for slot in witness.slots {
 			if !emission_procedure_available(c, slot.target) {

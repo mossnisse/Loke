@@ -204,9 +204,10 @@ Type_Info :: struct {
 	// produced it. Structural specialization matches against these.
 	instance_of:   Symbol_Id,
 	instance_args: []Generic_Arg,
-	// The backend spelling of an instance, kept apart from `name`, which is the
-	// readable `Table(int, i32)` diagnostics use.
-	mangled:       string,
+	// A compiler-made type's identity for backend names, as readable text such
+	// as `Range.int`; the emitter escapes and spells it. An instance is spelled
+	// from `instance_of` and `instance_args` instead.
+	backend_label: string,
 	// A `dyn Interface(args...)` type: the interface it erases behind, and the
 	// non-subject arguments of the application.
 	dyn_interface: Symbol_Id,
@@ -741,7 +742,6 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.dyn_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.witnesses = make(map[string]^Witness, c.semantic_allocator)
 	c.witness_order = make([dynamic]^Witness, 0, 4, c.semantic_allocator)
-	c.witness_names = make(map[string]bool, c.semantic_allocator)
 	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
 	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
@@ -1150,11 +1150,11 @@ anon_record_type :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> Type_Id {
 		})
 	}
 	display := intern_identifier(c, anon_record_display(c, fields))
-	mangled := anon_record_mangled(c, fields)
+	label := anon_record_label(c, fields)
 	if info := type_of(c, id); info != nil {
 		info.fields = members
 		info.name = display
-		info.mangled = mangled
+		info.backend_label = label
 	}
 	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
 	copy(grown, bucket)
@@ -1179,18 +1179,15 @@ anon_record_display :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string
 	return strings.to_string(b)
 }
 
-// The backend spelling. It is built from the structural sort key rather than
-// the display name, so two packages' unrelated `Token` types cannot collide in
-// a generated symbol merely because both print as `Token`.
+// The backend label. It is built from the structural sort key rather than the
+// display name, so two packages' unrelated `Token` types cannot collide in a
+// generated symbol merely because both print as `Token`.
 @(private = "file")
-anon_record_mangled :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string {
+anon_record_label :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	strings.write_string(&b, "anon")
 	for field in fields {
-		fmt.sbprintf(
-			&b, ".%s.%s", llvm_safe(identifier_text(c, field.name), allocator = context.temp_allocator),
-			llvm_safe(typeid_sort_key(c, field.type), allocator = context.temp_allocator),
-		)
+		fmt.sbprintf(&b, ".%s.%s", identifier_text(c, field.name), typeid_sort_key(c, field.type))
 	}
 	return strings.to_string(b)
 }
@@ -1884,26 +1881,4 @@ destroy_compilation :: proc(c: ^Compiler) {
 	// Last: diagnostics raised while emitting may live in it.
 	virtual.arena_destroy(&c.emission_arena)
 	c^ = {}
-}
-
-llvm_name_byte :: proc(ch: u8) -> bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-		ch == '_' || ch == '.'
-}
-
-// Escapes every byte LLVM would need quoted, `$` included, as `$XX`: injective
-// and still readable. `dots = false` also escapes `.`, for a part that a `.`
-// joins to others.
-llvm_safe :: proc(name: string, dots := true, allocator := context.allocator) -> string {
-	hex := "0123456789abcdef"
-	out := make([dynamic]u8, 0, len(name) + 8, allocator)
-	for i in 0 ..< len(name) {
-		ch := name[i]
-		if llvm_name_byte(ch) && (dots || ch != '.') {
-			append(&out, ch)
-			continue
-		}
-		append(&out, '$', hex[ch >> 4], hex[ch & 0x0f])
-	}
-	return string(out[:])
 }

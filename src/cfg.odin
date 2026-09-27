@@ -141,7 +141,35 @@ Flow_Graph :: struct {
 	alloc:     mem.Allocator,
 	mode:      Flow_Mode,
 
-	// Provenance modes only.
+	// Nil in lifecycle mode, so a lifecycle walk cannot read what only the
+	// provenance walks build.
+	using prov: ^Prov_State,
+	// Walk state both modes keep.
+	// Temporaries ending with the current statement (design.md).
+	temp_roots:     [dynamic]Root_Id,
+	// The `move`s and `exchange`s whose value becomes a new local or a result,
+	// which takes the provider's region with it rather than ending it.
+	aliased_moves:    map[rawptr]bool,
+	owners_in_scope: [dynamic]Symbol_Id,
+
+	k:       ^Checker,
+	literal: ^Expr_Proc,
+	current: Block_Id,
+	// The cleanups of every open scope, in registration order; `scopes` marks
+	// where each scope starts.
+	in_scope:       [dynamic]Flow_Cleanup,
+	scopes:         [dynamic]Flow_Scope,
+	cleanup_resets: map[Symbol_Id]int,
+	loop_depth:     int,
+	// Where an abrupt exit lands, and how far down `in_scope` it unwinds.
+	break_block:    Block_Id,
+	continue_block: Block_Id,
+	break_depth:    int,
+	continue_depth: int,
+}
+
+// The state only the provenance modes build.
+Prov_State :: struct {
 	roots:          [dynamic]Prov_Root,
 	loans:          [dynamic]Prov_Loan,
 	prov_slots:     [dynamic]Prov_Slot,
@@ -177,14 +205,11 @@ Flow_Graph :: struct {
 	// `thread.spawn` calls, kept on the graph so a repeated pass notes each once.
 	thread_spawns: [dynamic]Thread_Spawn,
 	callee_expr:   Expr,
-	// Temporaries ending with the current statement (design.md).
-	temp_roots:     [dynamic]Root_Id,
 	// design.md "Allocator regions and region provenance".
 	region_of:       map[Symbol_Id]Region_Set,
 	region_content:  map[Symbol_Id][]Prov_Region_Content,
 	// The parent allocator a provider depends on until it is dropped.
 	provider_parents: map[Symbol_Id]Region_Set,
-	owners_in_scope: [dynamic]Symbol_Id,
 	param_count:     int,
 	// One bit per local `mem.Arena`/`mem.Scratch`.
 	provider_bits:    map[Symbol_Id]u64,
@@ -196,28 +221,10 @@ Flow_Graph :: struct {
 	// Locals a mutable loan was ever taken of: only these can be reached through
 	// a pointer or slice. Flow-insensitive, like the region facts.
 	lent_locals: map[Symbol_Id]bool,
-	// The `move`s and `exchange`s whose value becomes a new local or a result,
-	// which takes the provider's region with it rather than ending it.
-	aliased_moves:    map[rawptr]bool,
 	has_region_event: bool,
 	// The uses that are a local's `drop` at scope exit, for the note naming them.
 	scope_drops:      map[Span]bool,
 	has_content_load: bool,
-
-	k:       ^Checker,
-	literal: ^Expr_Proc,
-	current: Block_Id,
-	// The cleanups of every open scope, in registration order; `scopes` marks
-	// where each scope starts.
-	in_scope:       [dynamic]Flow_Cleanup,
-	scopes:         [dynamic]Flow_Scope,
-	cleanup_resets: map[Symbol_Id]int,
-	loop_depth:     int,
-	// Where an abrupt exit lands, and how far down `in_scope` it unwinds.
-	break_block:    Block_Id,
-	continue_block: Block_Id,
-	break_depth:    int,
-	continue_depth: int,
 }
 
 NO_BLOCK :: Block_Id(-1)
@@ -273,38 +280,41 @@ build_flow_pass :: proc(
 	graph.by_symbol = make(map[Symbol_Id]int, 8, allocator)
 	graph.scopes = make([dynamic]Flow_Scope, allocator)
 	graph.in_scope = make([dynamic]Flow_Cleanup, allocator)
-	graph.roots = make([dynamic]Prov_Root, allocator)
-	graph.loans = make([dynamic]Prov_Loan, allocator)
-	graph.prov_slots = make([dynamic]Prov_Slot, allocator)
-	graph.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
-	graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
-	graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
-	graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
-	graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
-	graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
-	graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
-	graph.operator_calls = make(map[rawptr]^Expr_Call, 4, allocator)
-	graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
-	graph.summary_callees = make([dynamic]Symbol_Id, allocator)
-	graph.plain_calls = make([dynamic]^Expr_Call, allocator)
-	graph.effect_writes = make([dynamic]Symbol_Id, allocator)
-	graph.effect_calls = make([dynamic]Effect_Call, allocator)
-	graph.effect_values = make([dynamic]Symbol_Id, allocator)
-	graph.thread_spawns = make([dynamic]Thread_Spawn, allocator)
-	graph.temp_roots = make([dynamic]Root_Id, allocator)
-	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
-	graph.region_content = make(map[Symbol_Id][]Prov_Region_Content, 8, allocator)
-	graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
-	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
-	graph.provider_bits = make(map[Symbol_Id]u64, 4, allocator)
-	graph.map_key_entries = make(map[string]int, 4, allocator)
-	graph.reborrows = make([dynamic]Prov_Reborrow, allocator)
-	graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
-	graph.provider_paths = make(map[Symbol_Id][]Provider_Path, 4, allocator)
-	graph.provider_moved = make(map[Symbol_Id]u64, 4, allocator)
-	graph.lent_locals = make(map[Symbol_Id]bool, 4, allocator)
 	graph.cleanup_resets = make(map[Symbol_Id]int, 4, allocator)
+	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
+	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.aliased_moves = make(map[rawptr]bool, 4, allocator)
+	if mode != .Lifecycle {
+		graph.prov = new(Prov_State, allocator)
+		graph.roots = make([dynamic]Prov_Root, allocator)
+		graph.loans = make([dynamic]Prov_Loan, allocator)
+		graph.prov_slots = make([dynamic]Prov_Slot, allocator)
+		graph.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
+		graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
+		graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
+		graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
+		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
+		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
+		graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
+		graph.operator_calls = make(map[rawptr]^Expr_Call, 4, allocator)
+		graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
+		graph.summary_callees = make([dynamic]Symbol_Id, allocator)
+		graph.plain_calls = make([dynamic]^Expr_Call, allocator)
+		graph.effect_writes = make([dynamic]Symbol_Id, allocator)
+		graph.effect_calls = make([dynamic]Effect_Call, allocator)
+		graph.effect_values = make([dynamic]Symbol_Id, allocator)
+		graph.thread_spawns = make([dynamic]Thread_Spawn, allocator)
+		graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
+		graph.region_content = make(map[Symbol_Id][]Prov_Region_Content, 8, allocator)
+		graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
+		graph.provider_bits = make(map[Symbol_Id]u64, 4, allocator)
+		graph.map_key_entries = make(map[string]int, 4, allocator)
+		graph.reborrows = make([dynamic]Prov_Reborrow, allocator)
+		graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
+		graph.provider_paths = make(map[Symbol_Id][]Provider_Path, 4, allocator)
+		graph.provider_moved = make(map[Symbol_Id]u64, 4, allocator)
+		graph.lent_locals = make(map[Symbol_Id]bool, 4, allocator)
+	}
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 

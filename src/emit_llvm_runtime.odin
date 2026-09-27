@@ -1362,7 +1362,7 @@ emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	}
 	data := emit_expr(e, v.bound[0])
 	first := insert(e, storage, "undef", "ptr", data, DYN_DATA)
-	out := insert(e, storage, first, "ptr", v.operation.(Call_Dyn_Conversion).witness.name, DYN_WITNESS)
+	out := insert(e, storage, first, "ptr", e.witness_names[v.operation.(Call_Dyn_Conversion).witness], DYN_WITNESS)
 	return out
 }
 
@@ -1412,7 +1412,7 @@ emit_witnesses :: proc(e: ^Emitter) {
 		}
 	}
 	for witness in e.c.witness_order {
-		fmt.sbprintf(&e.b, "%s = private unnamed_addr constant [%d x ptr] [", witness.name, len(witness.slots))
+		fmt.sbprintf(&e.b, "%s = private unnamed_addr constant [%d x ptr] [", e.witness_names[witness], len(witness.slots))
 		for _, index in witness.slots {
 			if index > 0 {
 				fmt.sbprint(&e.b, ",")
@@ -1426,7 +1426,7 @@ emit_witnesses :: proc(e: ^Emitter) {
 
 @(private = "file")
 witness_thunk_name :: proc(e: ^Emitter, witness: ^Witness, index: int) -> string {
-	return fmt.aprintf("%s.thunk.%d", witness.name, index)
+	return fmt.aprintf("%s.thunk.%d", e.witness_names[witness], index)
 }
 
 @(private = "file")

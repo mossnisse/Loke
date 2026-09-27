@@ -5,8 +5,6 @@
 // an unused import cannot change what an expression means.
 package lokec
 
-import "core:fmt"
-
 // ------------------------------------------------------------- declaration --
 
 // Runs in the discovery fixed point, so it must be idempotent and tolerate a
@@ -483,16 +481,4 @@ hook_candidates :: proc(k: ^Checker, target: Type_Id, role: Hook_Kind) -> []Symb
 		}
 	}
 	return out[:]
-}
-
-// ------------------------------------------------------------- backend name --
-
-// The backend name of a method, unique within a package.
-qualified_member_name :: proc(c: ^Compiler, sym: ^Symbol, allocator := context.allocator) -> string {
-	owner := type_name(c, sym.owner_type)
-	// An instantiation's own spelling: `Pair.int.member`.
-	if info := type_of(c, sym.owner_type); info != nil && info.mangled != "" {
-		owner = info.mangled
-	}
-	return fmt.aprintf("%s.%s", owner, identifier_text(c, sym.name), allocator = allocator)
 }

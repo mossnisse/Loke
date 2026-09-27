@@ -172,7 +172,6 @@ Compiler :: struct {
 	dyn_types:     map[string]Type_Id,
 	witnesses:     map[string]^Witness,
 	witness_order: [dynamic]^Witness,
-	witness_names: map[string]bool,
 
 	// Materialised constants (`src/materialize.odin`): one read-only global per
 	// constant that runtime indexing or slicing needs storage for, keyed by the

@@ -20,6 +20,8 @@ Emitter :: struct {
 	// Every internal procedure name handed out, across all packages (`claim_name`).
 	taken_names:  map[string]bool,
 	struct_names: map[Type_Id]string,
+	// Every witness table's global, numbered in commit order (`name_witnesses`).
+	witness_names: map[^Witness]string,
 	// design.md "@(packed)": a place's alignment, by pointer temporary, when it is
 	// below the pointee's natural one.
 	place_align:  map[string]u64,
@@ -53,6 +55,7 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		names        = make(map[Symbol_Id]string),
 		taken_names  = make(map[string]bool),
 		struct_names = make(map[Type_Id]string),
+		witness_names = make(map[^Witness]string),
 		place_align  = make(map[string]u64),
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),
@@ -87,6 +90,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (string, bool) {
 		name_package_symbols(&e, package_of(c, id))
 	}
 	name_synth_procs(&e)
+	name_witnesses(&e)
 	emit_foreign_declarations(&e)
 	emit_static_locals(&e)
 	for id in order {
@@ -285,7 +289,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 					if sym == nil {
 						continue
 					}
-					e.names[d.symbols[0]] = claim_name(e, llvm_proc_name(pkg, llvm_safe(qualified_member_name(e.c, sym))))
+					e.names[d.symbols[0]] = claim_name(e, llvm_proc_name(pkg, llvm_safe(qualified_member_name(e, sym))))
 				}
 			case ^Item_Foreign_Block:
 				// design.md "Foreign system": foreign members keep their link names.
@@ -312,7 +316,13 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 		e.names[literal.symbol] = claim_name(e, llvm_proc_name(pkg, fmt.aprintf("%s.%d", written, index)))
 	}
 	for instance in pkg.instances {
-		e.names[instance.symbol] = claim_name(e, llvm_proc_name(pkg, llvm_safe(instance.name)))
+		spelled: string
+		if instance.template == INVALID_SYMBOL {
+			spelled = qualified_member_name(e, symbol_of(e.c, instance.symbol))
+		} else {
+			spelled = instance_spelling(e, instance.template, instance.args)
+		}
+		e.names[instance.symbol] = claim_name(e, llvm_proc_name(pkg, llvm_safe(spelled)))
 	}
 }
 
@@ -339,8 +349,81 @@ name_synth_procs :: proc(e: ^Emitter) {
 		if symbol == nil {
 			continue
 		}
-		e.names[symbol_id] = claim_name(e, fmt.aprintf("@loke.i.%s", llvm_safe(qualified_member_name(e.c, symbol))))
+		e.names[symbol_id] = claim_name(e, fmt.aprintf("@loke.i.%s", llvm_safe(qualified_member_name(e, symbol))))
 	}
+}
+
+// Spelled from names rather than ids, which shift on unrelated changes. The
+// spelling need not be unique, since two packages may both have a `Shape`, so a
+// repeat takes its position in commit order.
+@(private = "file")
+name_witnesses :: proc(e: ^Emitter) {
+	for witness, index in e.c.witness_order {
+		b := strings.builder_make()
+		interface_name := "interface"
+		if sym := symbol_of(e.c, witness.interface_symbol); sym != nil {
+			interface_name = identifier_text(e.c, sym.name)
+		}
+		fmt.sbprintf(&b, "@loke.w.%s.%s", llvm_safe(interface_name), llvm_safe(type_name(e.c, witness.concrete)))
+		for arg in witness.args {
+			part := arg.is_type ? type_name(e.c, arg.type) : fmt.aprintf("v%s:%s", type_name(e.c, arg.value_type), const_key_text(e.c, arg.value))
+			fmt.sbprintf(&b, ".%s", llvm_safe(part, dots = false))
+		}
+		name := strings.to_string(b)
+		if e.taken_names[name] {
+			name = fmt.aprintf("%s.%d", name, index)
+		}
+		e.taken_names[name] = true
+		e.witness_names[witness] = name
+	}
+}
+
+// A type's backend spelling, escaped, or "" for one known only by its name. An
+// instance is spelled from its template and arguments, a compiler-made type
+// from the label the checker gave it.
+@(private)
+type_spelling :: proc(e: ^Emitter, type: Type_Id) -> string {
+	info := type_of(e.c, type)
+	switch {
+	case info == nil:
+		return ""
+	case info.instance_of != INVALID_SYMBOL:
+		return instance_spelling(e, info.instance_of, info.instance_args)
+	case info.backend_label != "":
+		return llvm_safe(info.backend_label)
+	}
+	return ""
+}
+
+// `Table.int.i32`. Each argument is escaped on its own, so distinct vectors stay
+// distinct.
+@(private = "file")
+instance_spelling :: proc(e: ^Emitter, template: Symbol_Id, args: []Generic_Arg) -> string {
+	b := strings.builder_make()
+	if sym := symbol_of(e.c, template); sym != nil {
+		// `Atomic(int).load` and `Atomic(bool).load` are two templates named `load`.
+		if sym.owner_type != INVALID_TYPE {
+			strings.write_string(&b, llvm_safe(qualified_member_name(e, sym)))
+		} else {
+			strings.write_string(&b, identifier_text(e.c, sym.name))
+		}
+	}
+	for arg in args {
+		part := arg.is_type ? type_name(e.c, arg.type) : const_key_text(e.c, arg.value)
+		fmt.sbprintf(&b, ".%s", llvm_safe(part, dots = false))
+	}
+	return strings.to_string(b)
+}
+
+// The backend name of a method, unique within a package: `Pair.int.member` for
+// an instantiation's.
+@(private)
+qualified_member_name :: proc(e: ^Emitter, sym: ^Symbol) -> string {
+	owner := type_spelling(e, sym.owner_type)
+	if owner == "" {
+		owner = type_name(e.c, sym.owner_type)
+	}
+	return fmt.aprintf("%s.%s", owner, identifier_text(e.c, sym.name))
 }
 
 @(private = "file")
@@ -723,6 +806,29 @@ llvm_plain_name :: proc(name: string) -> bool {
 		}
 	}
 	return len(name) > 0
+}
+
+@(private = "file")
+llvm_name_byte :: proc(ch: u8) -> bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+		ch == '_' || ch == '.'
+}
+
+// Escapes every byte LLVM would need quoted, `$` included, as `$XX`: injective
+// and still readable. `dots = false` also escapes `.`, for a part that a `.`
+// joins to others.
+llvm_safe :: proc(name: string, dots := true, allocator := context.allocator) -> string {
+	hex := "0123456789abcdef"
+	out := make([dynamic]u8, 0, len(name) + 8, allocator)
+	for i in 0 ..< len(name) {
+		ch := name[i]
+		if llvm_name_byte(ch) && (dots || ch != '.') {
+			append(&out, ch)
+			continue
+		}
+		append(&out, '$', hex[ch >> 4], hex[ch & 0x0f])
+	}
+	return string(out[:])
 }
 
 // The key's own dots are escaped: `util.v2` + `f` must not meet `util` + `v2.f`.

@@ -122,7 +122,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	view_info.adapter_by_value = by_value
 	view_info.descriptor = type_is_compile_time_only(c, source)
 	view_info.contributed += {.Iteration}
-	view_info.mangled = fmt.aprintf("%s.%d.%d", label, source, key.pkg, allocator = c.semantic_allocator)
+	view_info.backend_label = fmt.aprintf("%s.%d.%d", label, source, key.pkg, allocator = c.semantic_allocator)
 	result_iterator := iterator
 	if kind == .Indexed {
 		element = indexed_element_type(c, element)
@@ -136,7 +136,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		result_info := type_of(c, result_iterator)
 		result_info.fields = iterator_fields
 		result_info.descriptor = type_is_compile_time_only(c, source)
-		result_info.mangled = fmt.aprintf("Indexed_Iterator.%d", view, allocator = c.semantic_allocator)
+		result_info.backend_label = fmt.aprintf("Indexed_Iterator.%d", view, allocator = c.semantic_allocator)
 		result_info.contributed += {.Iteration}
 		yielded := element
 		indexed_yield := Yield_Desc{}
@@ -168,7 +168,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		result_info := type_of(c, result_iterator)
 		result_info.fields = copied_fields
 		result_info.descriptor = type_is_compile_time_only(c, source)
-		result_info.mangled = fmt.aprintf("Copied_Iterator.%d", view, allocator = c.semantic_allocator)
+		result_info.backend_label = fmt.aprintf("Copied_Iterator.%d", view, allocator = c.semantic_allocator)
 		result_info.contributed += {.Iteration}
 		next_member := adapter_proc(k, "next", .Copied_Next, result_iterator, .Inout, option_type(k, element), next)
 		copy_member := adapter_proc(k, "iter", .Iterator_Copy, result_iterator, .Borrow, result_iterator)
@@ -250,7 +250,7 @@ add_mutable_adapter_members :: proc(k: ^Checker, view, source: Type_Id, kind: Ad
 	fields[1] = new_field(c, "index", TYPE_INT, 1, public = false)
 	walker_info := type_of(c, walker)
 	walker_info.fields = fields
-	walker_info.mangled = fmt.aprintf("Indexed_Mut_Iterator.%d", view, allocator = c.semantic_allocator)
+	walker_info.backend_label = fmt.aprintf("Indexed_Mut_Iterator.%d", view, allocator = c.semantic_allocator)
 	walker_info.contributed += {.Iteration}
 	add_members(c, walker, []Symbol_Id{
 		adapter_proc(k, "next", .Indexed_Next, walker, .Inout, option_type(k, yielded), next),

@@ -395,23 +395,19 @@ rather than a wrong answer; the wrong answers it found are in
   does not find is an assertion failure rather than "nothing to check". The
   coupling remains: should liveness at reset points be solved on the provenance
   graph, which already has the topology?
-- **One graph builder serves three modes.** `Flow_Graph` carries every mode's
-  state and `cfg.odin` branches on the mode throughout. The lifecycle walk also
+- **One graph builder serves three modes.** The provenance modes' state is a
+  `Prov_State` that a lifecycle graph does not have, but one walk in `cfg.odin`
+  still builds every mode's topology and events, branching on the mode, because
+  the provenance walk computes loans as it goes. The lifecycle walk also
   decides clone or move for declarations and assignments (`value_clones`,
   `rhs_clones`) and reports copy costs, so the disposable view writes
   annotations the backend reads. Should topology construction be separated from
   the per-mode consumers?
-- **Checker context is saved by hand.** `Checker_Location` covers eight of the
-  checker's mutable fields. The body context (`proc_literal`, `result_type`,
-  `loop_depth`, `in_defer`, `defer_slots`) and the positional flags (`in_callee`,
-  `place_position`, `insert_position`) are saved at each site that needs them,
-  each saving a different subset. One body-context record with an enter/leave
-  pair, and the positional flags passed to `check_expr` as parameters, would
-  leave no field to forget.
-- **The checker spells LLVM names.** `test-all.ps1` now checks layering both
-  ways, but `Type_Info.mangled`, `Instance.mangled`, and the witness globals are
-  built by the checker with `llvm_safe`, against compiler-architecture.md "LLVM
-  and toolchain". Should the names move to the emitter?
+- **Positional flags are saved by hand.** The body context is one
+  `Body_Context` record, replaced and restored whole, but `in_callee`,
+  `place_position`, and `insert_position` are still set before a `check_expr`
+  and restored at each site that needs them. Passed as parameters, they would
+  leave nothing to restore.
 - **Query walkers are partial.** The main passes switch over `Expr`
   exhaustively, but the smaller walkers that ask one question of a subtree
   (`first_unresolved_name`, `type_syntax_names`, `pattern_shape`, and the

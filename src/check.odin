@@ -43,16 +43,22 @@ Checker :: struct {
 	// its fields, so the answer is not cached.
 	size_incomplete: bool,
 
-	// The procedure being checked, and so the frame a name may come from.
-	proc_literal:   ^Expr_Proc,
-	// design.md: at most one result. INVALID_TYPE means the procedure has none.
-	result_type:    Type_Id,
-	// Whether the result was declared `inout`, so `return` must hand out a place.
-	result_inout:   bool,
+	using body: Body_Context,
+}
 
+// The procedure body being checked. Entering another body, or a position that
+// is in none, replaces the whole record and restores it afterwards, so no field
+// is left behind: `outer := k.body; defer k.body = outer`.
+Body_Context :: struct {
+	// The procedure being checked, and so the frame a name may come from.
+	proc_literal: ^Expr_Proc,
+	// design.md: at most one result. INVALID_TYPE means the procedure has none.
+	result_type:  Type_Id,
+	// Whether the result was declared `inout`, so `return` must hand out a place.
+	result_inout: bool,
 	// Lexical loop targets for `break` and `continue`, and defer restrictions.
-	loop_depth: int,
-	in_defer:   bool,
+	loop_depth:   int,
+	in_defer:     bool,
 	// One flag slot per syntactic `defer` in the procedure being checked.
 	defer_slots:  int,
 }
@@ -605,7 +611,7 @@ Checker_Location :: struct {
 	impl_type:     Type_Id,
 	file:          u32,
 	file_node:     ^File,
-	proc_literal:  ^Expr_Proc,
+	body:          Body_Context,
 	generic_depth: int,
 }
 
@@ -613,14 +619,14 @@ save_checker_location :: proc(k: ^Checker) -> Checker_Location {
 	return Checker_Location {
 		scope = k.scope, pkg = k.pkg, lookup_pkg = k.lookup_pkg,
 		impl_type = k.impl_type, file = k.file, file_node = k.file_node,
-		proc_literal = k.proc_literal, generic_depth = k.generic_depth,
+		body = k.body, generic_depth = k.generic_depth,
 	}
 }
 
 restore_checker_location :: proc(k: ^Checker, saved: Checker_Location) {
 	k.scope, k.pkg, k.lookup_pkg = saved.scope, saved.pkg, saved.lookup_pkg
 	k.impl_type, k.file, k.file_node = saved.impl_type, saved.file, saved.file_node
-	k.proc_literal, k.generic_depth = saved.proc_literal, saved.generic_depth
+	k.body, k.generic_depth = saved.body, saved.generic_depth
 }
 
 enter_symbol_location :: proc(k: ^Checker, sym: ^Symbol, subject := INVALID_TYPE) {
@@ -1327,18 +1333,12 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 		return
 	}
 	symbol := symbol_of(k.c, symbol_id)
-	outer_scope, outer_proc := k.scope, k.proc_literal
-	outer_result, outer_result_inout := k.result_type, k.result_inout
-	defer {
-		k.scope, k.proc_literal = outer_scope, outer_proc
-		k.result_type, k.result_inout = outer_result, outer_result_inout
-	}
+	outer_scope, outer_body := k.scope, k.body
+	defer k.scope, k.body = outer_scope, outer_body
 	// The body's context, so `source_location()` reports this procedure.
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
 	k.scope.owner_proc = literal
-	k.proc_literal = literal
-	k.result_type = symbol.result
-	k.result_inout = symbol.result_inout
+	k.body = {proc_literal = literal, result_type = symbol.result, result_inout = symbol.result_inout}
 	for parameter in literal.signature.params {
 		// A `$` default is checked at its declaration and bound per call
 		// (`bind_default_compile_time_argument`), never in an instance's copy.
@@ -1380,16 +1380,11 @@ parameter_is_poly :: proc(parameter: Parameter) -> bool {
 @(private = "file")
 infer_param_default_type :: proc(k: ^Checker, literal: ^Expr_Proc, position: int) -> Type_Id {
 	parameter := literal.signature.params[position]
-	outer_scope, outer_proc := k.scope, k.proc_literal
-	outer_result, outer_result_inout := k.result_type, k.result_inout
-	defer {
-		k.scope, k.proc_literal = outer_scope, outer_proc
-		k.result_type, k.result_inout = outer_result, outer_result_inout
-	}
+	outer_scope, outer_body := k.scope, k.body
+	defer k.scope, k.body = outer_scope, outer_body
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
 	k.scope.owner_proc = literal
-	k.proc_literal = literal
-	k.result_type, k.result_inout = INVALID_TYPE, false
+	k.body = {proc_literal = literal}
 	for earlier in literal.signature.params[:position] {
 		install_symbols(k.scope, k.c, earlier.symbols)
 	}
@@ -2348,31 +2343,15 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	if symbol == nil {
 		return
 	}
-	outer_scope := k.scope
-	outer_proc := k.proc_literal
-	outer_result := k.result_type
-	outer_result_inout := k.result_inout
-	outer_loop, outer_defer := k.loop_depth, k.in_defer
-	defer {
-		k.scope = outer_scope
-		k.proc_literal = outer_proc
-		k.result_type = outer_result
-		k.result_inout = outer_result_inout
-		k.loop_depth, k.in_defer = outer_loop, outer_defer
-	}
+	outer_scope, outer_body := k.scope, k.body
+	defer k.scope, k.body = outer_scope, outer_body
 	// Only this body's uses, not an enclosing one's (`nil_uses.odin`).
 	nil_mark := len(k.nil_uses)
 	defer report_nil_uses(k, nil_mark)
 
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
 	k.scope.owner_proc = literal
-	k.proc_literal = literal
-	k.result_type = symbol.result
-	k.result_inout = symbol.result_inout
-	k.loop_depth, k.in_defer = 0, false
-	outer_slots := k.defer_slots
-	k.defer_slots = 0
-	defer k.defer_slots = outer_slots
+	k.body = {proc_literal = literal, result_type = symbol.result, result_inout = symbol.result_inout}
 
 	errors_before := k.c.error_count
 	// Defaults were checked with the signature; the body only needs the names.

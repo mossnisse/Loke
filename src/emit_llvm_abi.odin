@@ -304,10 +304,11 @@ struct_name :: proc(e: ^Emitter, raw: Type_Id) -> string {
 	info := type_of(e.c, type)
 	prefix := info != nil && info.kind == .Union ? "union" : "struct"
 	name := ""
-	if info != nil && (info.mangled != "" || info.name != INVALID_IDENTIFIER) {
-		// An instantiation carries its own backend spelling; a written name may
-		// still mention punctuation LLVM would need quoting for.
-		text := info.mangled
+	spelled := type_spelling(e, type)
+	if info != nil && (spelled != "" || info.name != INVALID_IDENTIFIER) {
+		// An instantiation or a compiler-made type has its own backend spelling;
+		// a written name may still mention punctuation LLVM would need quoting for.
+		text := spelled
 		if text == "" {
 			text = identifier_text(e.c, info.name)
 			if !llvm_plain_name(text) {
