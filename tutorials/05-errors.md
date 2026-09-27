@@ -72,11 +72,7 @@ Time_Error :: enum { Missing_Colon, Not_A_Number, Out_Of_Range }
 
 // Reads a time written as "HH:MM".
 parse_time :: proc(text: string_view) -> Result(Time, Time_Error) {
-	parts: strings.Cut;
-	switch (found in strings.cut(text, ":")) {
-	case .some: parts = found;
-	case .none: return .err(.Missing_Colon);
-	}
+	parts := strings.cut(text, ":").ok_or(Time_Error.Missing_Colon) or_return;
 	hours := parse_number(parts.before) or_return;
 	minutes := parse_number(parts.after) or_return;
 	if (hours > 23 || minutes > 59) {
@@ -114,9 +110,12 @@ main :: proc() {
 `or_return` is the operator that makes this readable. `parse_number(...)
 or_return` gives the number when the call succeeds. When it fails, `parse_time`
 returns at once, passing the same error on to its own caller. Without it, each
-call would need a `switch` like the one around `strings.cut`, which is needed
-there because `cut` returns an `Option`: it has no error of its own to pass on,
-so the code chooses one.
+call would need a `switch`.
+
+`strings.cut` returns an `Option`, whose absence carries no error to pass on, so
+`.ok_or(Time_Error.Missing_Colon)` names the error it becomes first. The enum
+value is written with its type because `ok_or` learns the error type from its
+argument.
 
 `parse_number` turns the library's error into a `Time_Error`, so that
 `parse_time` has one error type to report. It is also the example of a switch

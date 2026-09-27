@@ -88,6 +88,15 @@ format_to :: proc(w: Writer, args: ..any_view) {
 	emit(w, DEFAULT_OPTIONS, ..args);
 }
 
+// The arguments back to back, with nothing between: what a `format` method
+// uses to write `(3, 4)`, and anything else whose punctuation is its own.
+@(public)
+concat_to :: proc(w: Writer, args: ..any_view) {
+	foreach (a in args) {
+		format_any(a, w, DEFAULT_OPTIONS);
+	}
+}
+
 // The same, with the caller choosing how a scalar is spelled: `Options{16, true}`
 // writes `CAFEBABE` where the default writes `3405691582`. The seed runtime has
 // always implemented base 2 to 36 and both digit cases; until this procedure

@@ -1,0 +1,17 @@
+// A case label that fails to parse is one diagnostic: the rest of the label,
+// up to its `:`, is skipped rather than read as statements of the case, and the
+// cases after it parse normally.
+package main;
+
+sign :: proc(n: int) -> int {
+	switch (n) {
+	case ..< 0:
+		return -1;
+	case 0:
+		return 0;
+	case:
+		return 1;
+	}
+}
+
+sentinel :: proc() { }

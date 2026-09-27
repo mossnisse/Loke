@@ -1201,8 +1201,13 @@ check_map_key :: proc(k: ^Checker, e: Expr, key: Type_Id, borrows: bool) -> bool
 	if type == INVALID_TYPE || key == INVALID_TYPE {
 		return false
 	}
-	if borrows && key == TYPE_STRING && type == TYPE_STRING_VIEW {
-		return true
+	if key == TYPE_STRING && type == TYPE_STRING_VIEW {
+		if borrows {
+			return true
+		}
+		errorf(k.c, expr_span(e), "L0310", "an inserted key must be an owned `string`, found `string_view`")
+		add_notef(k.c, no_span(), "`.copy()` makes a `string` from a `string_view`")
+		return false
 	}
 	return materialize_value_expr(k, e, key, "look up")
 }

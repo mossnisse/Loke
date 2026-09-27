@@ -410,6 +410,7 @@ eprintln(args: ..any_view)
 stdout() -> Writer
 stderr() -> Writer
 format_to(w: Writer, args: ..any_view)
+concat_to(w: Writer, args: ..any_view)
 format_to_with(w: Writer, options: Options, args: ..any_view)
 to_string(allocator: Allocator, args: ..any_view) -> string
 ```
@@ -418,7 +419,9 @@ A `Writer` borrows its sink: any record with a `write(self: inout, bytes:
 []u8)` becomes one with `(fmt.Writer)(&mut sink)`, and the process streams are
 `stdout()` and `stderr()`. Formatting through a nil `Writer` panics.
 
-Arguments are separated by one space. `Options.base` is 2 to 36 and any other
+Arguments are separated by one space, except by `concat_to`, which writes them
+back to back for a `format` method or a line whose punctuation is its own.
+`Options.base` is 2 to 36 and any other
 value reads as 10; it and `uppercase` reach integers and whatever a type's
 `format` passes them to. A float prints the shortest spelling that reads back
 as the same value at its own width, in fixed notation from 1e-4 to below 1e17

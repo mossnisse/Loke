@@ -94,14 +94,10 @@ impl Vector {
 		return {left.x + right.x, left.y + right.y};
 	}
 
-	// How `fmt` prints a `Vector`. Each `format_to` call writes its arguments
-	// separated by spaces, so the pieces that must touch are written one by one.
+	// How `fmt` prints a `Vector`. `concat_to` writes its arguments with
+	// nothing between them, where `format_to` would put spaces.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		fmt.format_to(writer, "(");
-		fmt.format_to(writer, self.x);
-		fmt.format_to(writer, ", ");
-		fmt.format_to(writer, self.y);
-		fmt.format_to(writer, ")");
+		fmt.concat_to(writer, "(", self.x, ", ", self.y, ")");
 	}
 }
 

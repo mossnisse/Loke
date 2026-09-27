@@ -5417,7 +5417,23 @@ read_setting :: proc(text: string_view) -> Result(int, App_Error) {
 
 `map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The mapper owns the error it is handed, since its parameter is a `move` parameter. A [variant constructor](#constructing-a-variant) therefore moves any error, managed or move-only, into its variant without cloning it. Any other mapping is an ordinary procedure of the same shape, which transfers a managed error with `move(error)`. The mapper's result is the target error type, [inferred](#specialization) from the argument.
 
-This is the only error adaptation the language provides. Inspecting or logging a failure uses the same `switch` and mapping facilities; there is no second, implicit conversion path between error types.
+An `Option` has no error to map: its failure, `none`, carries nothing. `Option.ok_or` supplies one, so an absence becomes a failure in the caller's domain:
+
+```odin
+Config_Error :: enum { Missing_Port, Bad_Port }
+
+port :: proc(settings: map[string]int) -> Result(int, Config_Error) {
+	value := settings.lookup_value("port").ok_or(Config_Error.Missing_Port) or_return;
+	if (value <= 0 || value > 65535) {
+		return .err(.Bad_Port);
+	}
+	return .ok(value);
+}
+```
+
+`ok_or` consumes its receiver as `map_error` does, and relocates the payload. The error is an ordinary `move` argument: it is evaluated before the call whether or not it is used, so an error that is costly to build belongs in a `switch` instead. Its type is [inferred](#specialization) from the argument, so an enum value is written with its type, `Config_Error.Missing_Port` rather than `.Missing_Port`.
+
+These two are the only error adaptations the language provides. Inspecting or logging a failure uses the same `switch` and mapping facilities; there is no second, implicit conversion path between error types.
 
 ### Streaming a fallible source
 

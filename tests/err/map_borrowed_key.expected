@@ -1,6 +1,6 @@
 L0310
 @10:4
-cannot look up `string` with `string_view`
+an inserted key must be an owned `string`, found `string_view`
 L0392
 @11:2
 `find_or_insert` does not apply: argument 2 is `string_view` where `string` is wanted

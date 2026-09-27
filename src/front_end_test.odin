@@ -71,6 +71,20 @@ test_compiler :: proc(text: string) -> Compiler {
 	return c
 }
 
+// A directory's files are loaded by absolute path; a diagnostic still names
+// them as the command line would, and a file outside the working directory by
+// its whole path, both with `/`.
+@(test)
+diagnostics_show_paths_relative_to_the_working_directory :: proc(t: ^testing.T) {
+	cwd, _ := os2.get_working_directory(context.temp_allocator)
+	inside := filepath.join({cwd, "stock", "report.loke"}, context.temp_allocator)
+	testing.expect_value(t, display_path(inside), "stock/report.loke")
+	testing.expect_value(t, display_path(`stock\report.loke`), "stock/report.loke")
+	outside := filepath.join({filepath.dir(cwd, context.temp_allocator), "elsewhere", "x.loke"}, context.temp_allocator)
+	shown, _ := strings.replace_all(outside, "\\", "/", context.temp_allocator)
+	testing.expect_value(t, display_path(outside), shown)
+}
+
 @(test)
 deep_type_graphs_have_no_arbitrary_cutoff :: proc(t: ^testing.T) {
 	c: Compiler

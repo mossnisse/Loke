@@ -1591,17 +1591,28 @@ parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
 
 	entry: Switch_Case
 	values := make([dynamic]Expr, 0, 0, p.allocator)
+	bad_label := false
 	if !at(p, .Colon) {
 		for {
 			// The checker distinguishes a type from an implicit union selector.
 			append(&values, kind == .Type && !at(p, .Period) ? parse_type(p) : parse_expr(p))
+			bad_label ||= expr_has_error(values[len(values) - 1])
 			if !allow(p, .Comma) {
 				break
 			}
 		}
 	}
 	entry.values = values[:]
-	expect(p, .Colon, "L0248", "`:` after the case")
+	// A label that failed to parse has reported itself; the rest of it up to
+	// the `:` is not statements, so skip it rather than report it again.
+	if bad_label && !at(p, .Colon) {
+		for !at(p, .Colon) && !at(p, .Semicolon) && !at(p, .Case) && !at(p, .Rbrace) && !at(p, .EOF) {
+			advance(p)
+		}
+		allow(p, .Colon)
+	} else {
+		expect(p, .Colon, "L0248", "`:` after the case")
+	}
 
 	stmts := make([dynamic]Stmt, 0, 0, p.allocator)
 	for !at(p, .Case) && !at(p, .Rbrace) && !at(p, .EOF) {

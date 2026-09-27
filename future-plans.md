@@ -30,9 +30,8 @@ constraints remain in [standard-library.md](standard-library.md).
 
 Main work:
 
-- settle the gaps the tutorials exposed: printing without separators, column
-  widths, and an absent `Option` as an error
-  ([comments.md "Found by writing the tutorials"](comments.md#found-by-writing-the-tutorials));
+- settle width and precision in `fmt` together, once a program needs both
+  ([comments.md "Width and precision in `fmt`"](comments.md#width-and-precision-in-fmt));
 - implement process creation with explicit argument, environment, pipe, handle,
   and lifetime rules;
 - provide the testing and binary/text facilities needed to express the compiler
@@ -223,22 +222,22 @@ compiler task.
 
 ## Suggested order
 
-1. Fill the concrete library and diagnostic gaps the tutorials exposed, and
-   those real programs expose.
-2. Add debug information, and keep comments in the syntax tree for the formatter
+1. Add debug information, and keep comments in the syntax tree for the formatter
    and the documentation generator.
-3. Define the reproducible package and dependency workflow, and finish the
+2. Define the reproducible package and dependency workflow, and finish the
    standard-library services required by a compiler-sized program.
-4. Build the compiler services without changing command-line compilation
+3. Build the compiler services without changing command-line compilation
    behavior.
-5. Build the language server on those compiler services, and connect the
+4. Build the language server on those compiler services, and connect the
    formatter, documentation, and debugging metadata to editors through it.
-6. Isolate target interfaces and add Linux, then macOS, with an explicit native
+5. Isolate target interfaces and add Linux, then macOS, with an explicit native
    and cross-compilation policy and one shared conformance corpus.
-7. Begin self-hosting after the compiler services, package workflow, release
+6. Begin self-hosting after the compiler services, package workflow, release
    process, and required libraries have stabilized.
 
-Standard-library and debug-information work may overlap. The
+Library and diagnostic gaps that real programs expose are filled as they
+appear, as the tutorials' were. Standard-library and debug-information work may
+overlap. The
 language server and platform ports may overlap once the compiler services
 exist. Quality
 engineering continues through every step. Self-hosting remains last because it

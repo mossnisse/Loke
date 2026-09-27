@@ -1,0 +1,45 @@
+package main;
+
+// design.md "Changing error domains": `Option.ok_or` names the error an absence
+// becomes. It consumes its receiver and relocates the payload, so a managed or
+// move-only one is neither cloned nor leaked, and the error is an ordinary
+// argument, dropped when the option is present.
+
+import "core:fmt";
+
+Config_Error :: enum { Missing_Port, Bad_Port }
+
+port :: proc(settings: map[string]int) -> Result(int, Config_Error) {
+	value := settings.lookup_value("port").ok_or(Config_Error.Missing_Port) or_return;
+	if (value <= 0 || value > 65535) {
+		return .err(.Bad_Port);
+	}
+	return .ok(value);
+}
+
+Token :: move_only struct { id: int }
+
+impl Token {
+	release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.id); }
+}
+
+main :: proc() {
+	settings: map[string]int = {};
+	fmt.println(port(settings));
+	settings["port"] = 8080;
+	fmt.println(port(settings));
+	settings["port"] = 0;
+	fmt.println(port(settings));
+
+	// A bound option is a place, so it is consumed with `move`.
+	name: Option(string) = .some("owned".copy());
+	fmt.println(move(name).ok_or("unused".copy()));
+	absent: Option(string) = .none;
+	fmt.println(move(absent).ok_or("absent".copy()));
+
+	token: Option(Token) = .some(Token{7});
+	switch (found in move(token).ok_or(0)) {
+	case .ok:  fmt.println("token", found.id);
+	case .err: fmt.println("no token");
+	}
+}

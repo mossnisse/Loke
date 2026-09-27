@@ -16,6 +16,14 @@ checklist.
   block strictly more specialized, as `impl Pair(int, int)` is than both
   `impl Pair($A, int)` and `impl Pair(int, $B)`.
 
+### Added
+
+- `Option.ok_or(error)` turns an absent value into a `Result` failure, so
+  `settings.lookup_value("port").ok_or(Config_Error.Missing_Port) or_return`
+  replaces a `switch` (design.md "Changing error domains").
+- `fmt.concat_to(w, ...)` writes its arguments with nothing between them, for a
+  `format` method that prints `(3, 4)`.
+
 ### Fixed
 
 - A generic record instance first reached by a hypothetical check, such as an
@@ -36,6 +44,15 @@ checklist.
   errors are in a branch it would not take.
 - A constant whose initializer reported an error, such as a literal naming a
   field the record lacks, is not evaluated, instead of failing internally.
+
+- A diagnostic names a file relative to the working directory, with `/`, when
+  the program is a directory or a note points into `base:` or `core:`; it used
+  to print the whole path, mixing `/` and `\`.
+- Inserting a `string_view` key into a `map[string]V` says that an inserted
+  key must be an owned `string`, and suggests `.copy()`; it used to report a
+  failed lookup.
+- A case label that fails to parse, such as `case ..< 0:`, is one diagnostic;
+  it used to be six, including a missing `return` for the enclosing procedure.
 
 ### Documentation
 

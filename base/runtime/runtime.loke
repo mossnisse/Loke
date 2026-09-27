@@ -129,3 +129,15 @@ impl Result($T, $E) {
 		}
 	}
 }
+
+// design.md "Changing error domains": `none` carries no error, so the caller
+// names the one it becomes. `error` is an ordinary argument, built before the
+// call whether or not it is used.
+impl Option($T) {
+	ok_or :: proc(self: move, error: move $E) -> Result(T, E) {
+		switch (payload in move(self)) {
+		case .some: return .ok(move(payload));
+		case .none: return .err(move(error));
+		}
+	}
+}

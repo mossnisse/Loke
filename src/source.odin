@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:mem"
 import "core:mem/virtual"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:unicode/utf8"
@@ -333,6 +334,21 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 	return index, true
 }
 
+// A diagnostic names a file relative to the working directory when it lies
+// under it, and with `/` however the loader reached it, so a directory's files
+// read like a file given on the command line.
+display_path :: proc(path: string) -> string {
+	shown := path
+	if filepath.is_abs(path) {
+		cwd := os.get_current_directory(context.temp_allocator)
+		if relative, err := filepath.rel(cwd, path, context.temp_allocator); err == nil && !strings.has_prefix(relative, "..") {
+			shown = relative
+		}
+	}
+	slashed, _ := strings.replace_all(shown, "\\", "/", context.temp_allocator)
+	return slashed
+}
+
 // Registers source text; `owned` is freed with the compilation.
 add_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> u32 {
 	starts := make([dynamic]u32)
@@ -595,7 +611,7 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 			}
 		}
 
-		fmt.eprintf("%*s--> %s:%d:%d\n", gutter, "", src.path, line, col)
+		fmt.eprintf("%*s--> %s:%d:%d\n", gutter, "", display_path(src.path), line, col)
 		fmt.eprintf("%*s |\n", gutter + 1, "")
 		fmt.eprintf("%d | %s\n", line, text)
 		fmt.eprintf("%*s | %s%s", gutter + 1, "", indent, strings.repeat("^", width, context.temp_allocator))
@@ -609,7 +625,7 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 		if note.span.file != NO_FILE && int(note.span.file) < len(c.sources) {
 			src := &c.sources[note.span.file]
 			line, col := line_col(src, note.span.lo)
-			fmt.eprintf("  = note: %s:%d:%d: %s\n", src.path, line, col, note.message)
+			fmt.eprintf("  = note: %s:%d:%d: %s\n", display_path(src.path), line, col, note.message)
 		} else {
 			fmt.eprintf("  = note: %s\n", note.message)
 		}
