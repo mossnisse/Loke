@@ -220,9 +220,9 @@ the variable that owns it goes out of scope, the memory is released.
 
 What happens when you assign one to another variable depends on the type. A
 `string` cannot change, so a copy can safely share the same text, and copying it
-costs nothing. A dynamic array or map *can* change, so a copy has to be a second
-container, which means allocating memory. Loke never does that silently, so
-this is an error:
+costs nothing. A dynamic array or map *can* change, so assigning one **copies
+it**: the new variable gets a second container of its own, which means
+allocating memory and copying every element.
 
 ```odin file=copies.loke
 package main;
@@ -231,22 +231,29 @@ import "core:fmt";
 
 main :: proc() {
 	first := [dynamic]int{1, 2, 3};
-	second := first;
+	second := first;        // a copy: a second array
+	second.append(4);
 	fmt.println(first, second);
+
+	third := second;        // nothing reads `second` again: it moves
+	fmt.println(third);
 }
 ```
 
-```text error=copies
-error[L0504]: this binding would copy `first`, and a copy of `[dynamic]int` may allocate, so it must be written
- --> copies.loke:7:12
-   |
-7 | 	second := first;
-   | 	          ^^^^^
-  = note: write `move(first)` if `first` is no longer needed
-  = note: write `.clone()` for an independent copy, or borrow it through a pointer or a slice
+```text output=copies
+[1, 2, 3] [1, 2, 3, 4]
+[1, 2, 3, 4]
 ```
 
-The diagnostic gives the three choices:
+A copy costs time and memory in proportion to the container, and nothing on the
+line shows it, so Loke skips it where it can. When the variable you copy from
+is never read again, as `second` is not after `third := second;`, the assignment
+hands the container over instead of copying it.
+[design.md "Last-use transfer"](../design.md#last-use-transfer) has the exact
+rule. Large copies are also reported: the compiler warns when one copies 512
+bytes or more of a value itself (`-copy-cost=N` changes the limit).
+
+When you want to be sure which of the two happens, say so:
 
 ```odin file=ownership.loke
 package main;
@@ -274,7 +281,7 @@ evens_up_to :: proc(limit: int) -> [dynamic]int {
 main :: proc() {
 	original := [dynamic]int{4, 8, 15};
 
-	extra := original.clone();      // a second, independent array
+	extra := original.clone();      // always a copy
 	extra.append(16);
 	fmt.println(original, extra);
 
@@ -299,7 +306,8 @@ main :: proc() {
 Ada
 ```
 
-- `.clone()` makes an independent copy.
+- `.clone()` makes an independent copy, even where plain assignment would
+  move.
 - `move(original)` hands the container over without copying it. `original` has
   no value afterwards, and the compiler rejects any later read of it, the same
   way it rejected the unassigned variable on the
@@ -344,9 +352,9 @@ read, so moving `fmt.println(first_two);` above the `append` makes the program
 valid. The same check stops a procedure from returning a view of its own local
 variables, which would point at memory that is gone.
 
-The rules are the same everywhere, and short: a copy that may allocate is
-written, a move is written, and a view may not outlive or conflict with what it
-views. [design.md "Borrows and lifetimes"](../design.md#borrows-and-lifetimes)
+The rules are the same everywhere, and short: assignment copies unless the
+source is not used again, `move` hands a value over, and a view may not outlive
+or conflict with what it views. [design.md "Borrows and lifetimes"](../design.md#borrows-and-lifetimes)
 has the full version.
 
 Next: [Errors](05-errors.md).

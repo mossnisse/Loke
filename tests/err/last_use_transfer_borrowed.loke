@@ -1,0 +1,20 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Last-use transfer": the transfer is checked as a written move is.
+// `keep` stores the slice through a pointer, not an `inout` argument, so the
+// copy of `list` is still its last use and moves it while the slice is in use:
+// an error, whose note says where the move came from and how to keep a copy.
+
+keep :: proc(into: ^mut [dynamic][]int, @(escape=stored) view: []int) {
+	into^.append(view);
+}
+
+main :: proc() {
+	views: [dynamic][]int = {};
+	list := [dynamic]int{1};
+	keep(&mut views, list[:]);
+	copy := list;
+	fmt.println(views, copy);
+}

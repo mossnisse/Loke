@@ -321,6 +321,9 @@ Expr_Cond :: struct {
 Expr_Move :: struct {
 	using base: Expr_Base,
 	value:      Expr,
+	// Not written: a copy at the local's last use, which the lifecycle pass
+	// turned into this move (design.md "Last-use transfer").
+	implicit:   bool,
 }
 
 // `Element`. A nil `key` is an unkeyed element.

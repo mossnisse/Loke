@@ -2281,6 +2281,7 @@ report_live_dependants :: proc(
 			loan.what,
 		)
 		add_borrow_notes(state, descriptor, loan, uses[slot])
+		note_last_use_move(state.k.c, verb)
 		state.diagnostic_precision |= state.precision[slot]
 		return
 	}
@@ -2325,6 +2326,15 @@ report_borrow_conflict :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov
 		)
 	}
 	add_borrow_notes(state, root, loan, later)
+	note_last_use_move(k.c, event.verb)
+}
+
+// A move the program did not write needs saying where it came from.
+@(private = "file")
+note_last_use_move :: proc(c: ^Compiler, verb: string) {
+	if verb == LAST_USE_VERB {
+		add_notef(c, no_span(), "a copy of a local that nothing reads afterwards moves it; write `.clone()` to copy it instead")
+	}
 }
 
 @(private = "file")

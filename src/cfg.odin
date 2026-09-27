@@ -165,6 +165,25 @@ Flow_Graph :: struct {
 	continue_block: Block_Id,
 	break_depth:    int,
 	continue_depth: int,
+
+	// Lifecycle only, for design.md "Last-use transfer": the locals read while
+	// `reads` is set, those an enclosing `foreach` or `switch` holds a borrow
+	// of, those ever bound into a borrow-carrying value, and the clones of a
+	// whole local that may turn out to be its last use.
+	reads:     ^[dynamic]int,
+	held:      [dynamic]int,
+	lent:      map[int]bool,
+	last_uses: [dynamic]Last_Use,
+}
+
+// A clone of a local, and the `Use` event that reads it. Whether it clones at
+// all is decided after the walk, by the statement's own flags.
+Last_Use :: struct {
+	block:  Block_Id,
+	event:  int,
+	decl:   ^Decl,
+	assign: ^Stmt_Assign,
+	index:  int,
 }
 
 // The state only the provenance modes build.
@@ -280,6 +299,9 @@ build_flow_pass :: proc(
 	graph.scopes = make([dynamic]Flow_Scope, allocator)
 	graph.in_scope = make([dynamic]Flow_Cleanup, allocator)
 	graph.cleanup_resets = make(map[Symbol_Id]int, 4, allocator)
+	graph.held = make([dynamic]int, allocator)
+	graph.lent = make(map[int]bool, 4, allocator)
+	graph.last_uses = make([dynamic]Last_Use, allocator)
 	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.aliased_moves = make(map[rawptr]bool, 4, allocator)
@@ -363,7 +385,77 @@ emit :: proc(graph: ^Flow_Graph, event: Flow_Event) {
 	if graph.current == NO_BLOCK {
 		return // unreachable code carries no obligation
 	}
+	if graph.reads != nil && event.kind == .Use {
+		append(graph.reads, event.slot)
+	}
 	append(&graph.blocks[graph.current].events, event)
+}
+
+// Lifecycle mode: walks `e` and returns the tracked locals it reads.
+@(private = "file")
+walk_flow_reads :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+	outer := graph.reads
+	reads := make([dynamic]int, 0, 4, graph.alloc)
+	graph.reads = &reads
+	walk_flow_expr(graph, e)
+	graph.reads = outer
+	if outer != nil {
+		append(outer, ..reads[:])
+	}
+	return reads[:]
+}
+
+// Lifecycle mode: walks a value that is stored. One that carries a borrow may
+// keep one of any local it reads, so those locals never move at a last use; a
+// bare local is copied, not borrowed.
+@(private = "file")
+walk_flow_stored :: proc(graph: ^Flow_Graph, value: Expr) {
+	reads := walk_flow_reads(graph, value)
+	if _, is_ident := value.(^Expr_Ident); is_ident {
+		return
+	}
+	if base := expr_base(value); base != nil && type_carries_borrow(graph.k.c, base.type).any {
+		for slot in reads {
+			graph.lent[slot] = true
+		}
+	}
+}
+
+// An argument, stored when the call has somewhere to keep it: an `inout`
+// argument or receiver, such as the container of an `append`.
+@(private = "file")
+walk_flow_argument :: proc(graph: ^Flow_Graph, argument: Expr, stores: bool) -> []int {
+	if stores && graph.mode == .Lifecycle {
+		walk_flow_stored(graph, argument)
+		return nil
+	}
+	return walk_flow_expr(graph, argument)
+}
+
+@(private = "file")
+call_may_store :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
+	info := underlying_info(c, call_proc_type(c, v))
+	return info != nil && slice.contains(info.param_modes, Param_Mode.Inout)
+}
+
+// Lifecycle mode: walks a value bound into a destination, which is stored, and
+// which is a candidate last use when it is a bare local.
+@(private = "file")
+walk_flow_bound_value :: proc(graph: ^Flow_Graph, value: Expr, decl: ^Decl, assign: ^Stmt_Assign, index: int) {
+	walk_flow_stored(graph, value)
+	ident, is_ident := value.(^Expr_Ident)
+	if !is_ident {
+		return
+	}
+	slot, tracked := graph.by_symbol[ident.symbol]
+	if !tracked || graph.current == NO_BLOCK || slice.contains(graph.held[:], slot) {
+		return
+	}
+	events := graph.blocks[graph.current].events
+	if len(events) == 0 || events[len(events) - 1].kind != .Use || events[len(events) - 1].slot != slot {
+		return
+	}
+	append(&graph.last_uses, Last_Use{graph.current, len(events) - 1, decl, assign, index})
 }
 
 // ------------------------------------------------------------- the walk --
@@ -849,6 +941,10 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		}
 	}
 	for value, index in d.values {
+		if graph.mode == .Lifecycle {
+			walk_flow_bound_value(graph, value, d, nil, index)
+			continue
+		}
 		result := walk_flow_expr(graph, value)
 		if value_loans != nil {
 			value_loans[index] = result
@@ -974,9 +1070,14 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		value_loans = make([][]int, len(s.rhs), graph.alloc)
 	}
 	for value, index in s.rhs {
-		result := walk_flow_expr(graph, value)
-		if value_loans != nil {
+		if graph.mode == .Lifecycle {
+			walk_flow_bound_value(graph, value, nil, s, index)
+		} else if result := walk_flow_expr(graph, value); value_loans != nil {
 			value_loans[index] = result
+		}
+		// A clone allocates through the destination's `via`, evaluated here.
+		if index < len(s.rhs_clones) && s.rhs_clones[index] && index < len(s.lhs) {
+			walk_flow_expr(graph, symbol_via_allocator(graph.k.c, place_root_symbol(s.lhs[index])))
 		}
 	}
 	if graph.mode != .Lifecycle {
@@ -1081,7 +1182,15 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	}
 	place_loop := foreach_is_place_loop(s)
 	iterable := s.iterable
-	iterated := walk_flow_expr(graph, iterable)
+	// The iteration borrows what it reads until the loop ends.
+	held := len(graph.held)
+	defer resize(&graph.held, held)
+	iterated: []int
+	if graph.mode == .Lifecycle {
+		append(&graph.held, ..walk_flow_reads(graph, iterable))
+	} else {
+		iterated = walk_flow_expr(graph, iterable)
+	}
 	if graph.mode != .Lifecycle {
 		iterated = prov_reborrow_traversal(graph, iterated, expr_span(s.iterable), place_loop)
 	}
@@ -1175,12 +1284,19 @@ add_foreach_ref_cleanups :: proc(graph: ^Flow_Graph, bindings: []Foreach_Binding
 walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	enter_flow_header_scope(graph, s.init)
 	defer leave_flow_scope(graph)
-	subject := walk_flow_expr(graph, s.subject)
 	// A switch over a temporary consumes it into the case binding; one over a
-	// place borrows it.
+	// place borrows it, for the whole switch.
 	consumes := s.kind != .Value && s.subject != nil &&
 		expr_base(s.subject).type != TYPE_ANY_VIEW &&
 		!expression_is_borrowed_place(s.subject)
+	held := len(graph.held)
+	defer resize(&graph.held, held)
+	subject: []int
+	if graph.mode == .Lifecycle && s.kind != .Value && !consumes {
+		append(&graph.held, ..walk_flow_reads(graph, s.subject))
+	} else {
+		subject = walk_flow_expr(graph, s.subject)
+	}
 	merge := new_flow_block(graph)
 	bodies := make([]Block_Id, len(s.cases), graph.alloc)
 	for _, index in s.cases {
@@ -1294,7 +1410,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	case ^Expr_Move:
 		provider_move_end(graph, v)
 		if prov {
-			return prov_consume(graph, v.value, v.span, "moved")
+			return prov_consume(graph, v.value, v.span, v.implicit ? LAST_USE_VERB : "moved")
 		}
 		// `Kill` alone: it already requires the source live.
 		if ident, is_ident := v.value.(^Expr_Ident); is_ident {
@@ -1641,12 +1757,13 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		walk_flow_expr(graph, v.callee)
 	}
 	report_argument_copies(graph, v)
+	stores := call_may_store(graph.k.c, v)
 	for step in 0 ..< len(v.bound) {
 		index := call_slot_at(v, step)
 		if v.is_variadic && index == v.variadic_slot && !v.variadic_forwards {
-			walk_variadic_pack(graph, v)
+			walk_variadic_pack(graph, v, stores)
 		} else {
-			walk_flow_expr(graph, v.bound[index])
+			walk_flow_argument(graph, v.bound[index], stores)
 		}
 	}
 	if len(v.bound) == 0 {
@@ -1662,7 +1779,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 // An unforwarded variadic pack's operands in written order; the pack holds the
 // union of their loans.
 @(private)
-walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call, stores := false) -> []int {
 	joined: []int
 	next_element, next_spread := 0, 0
 	for is_spread in v.variadic_order {
@@ -1674,7 +1791,7 @@ walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			operand = v.variadic_elements[next_element]
 			next_element += 1
 		}
-		joined = prov_join(graph, joined, walk_flow_expr(graph, operand))
+		joined = prov_join(graph, joined, walk_flow_argument(graph, operand, stores))
 	}
 	return joined
 }
@@ -1707,4 +1824,114 @@ note_reset_point :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if len(graph.tracked) > 0 {
 		emit(graph, Flow_Event{kind = .Reset_Point, span = v.span, call = v})
 	}
+}
+
+// ------------------------------------------------------------ last uses --
+
+// The verb a borrow diagnostic uses for a move the program did not write.
+LAST_USE_VERB :: "moved by its last use"
+
+// design.md "Last-use transfer": a clone of a whole local that no path reads
+// again becomes a move of it, unless something may still borrow it. A read is
+// a use, a move, or a drop; a new value ends the old one's reads. The events
+// stay in place, with the move's `Kill` where its `Use` was, so the forward
+// solve that follows sees the local end there.
+settle_last_uses :: proc(graph: ^Flow_Graph) {
+	if len(graph.last_uses) == 0 || graph.k.c.speculation_depth > 0 {
+		return
+	}
+	tracked := len(graph.tracked)
+	read_in := make([][]bool, len(graph.blocks), graph.alloc)
+	for &row in read_in {
+		row = make([]bool, tracked, graph.alloc)
+	}
+	reads := make([]bool, tracked, graph.alloc)
+	// Backward to a fixed point: reads only grow, so this stops.
+	for changed := true; changed; {
+		changed = false
+		for index := len(graph.blocks) - 1; index >= 0; index -= 1 {
+			reads_at_exit(graph, read_in, Block_Id(index), reads)
+			events := graph.blocks[index].events[:]
+			reads_before(events, 0, reads)
+			if !slice.equal(reads, read_in[index]) {
+				copy(read_in[index], reads)
+				changed = true
+			}
+		}
+	}
+	for use in graph.last_uses {
+		site, clone, via := last_use_site(graph, use)
+		if site == nil || !clone^ || via {
+			continue
+		}
+		event := &graph.blocks[use.block].events[use.event]
+		if graph.lent[event.slot] {
+			continue
+		}
+		reads_at_exit(graph, read_in, use.block, reads)
+		reads_before(graph.blocks[use.block].events[:], use.event + 1, reads)
+		if reads[event.slot] {
+			continue
+		}
+		ident := site^.(^Expr_Ident)
+		if !clone_may_allocate(graph.k.c, ident.type) {
+			continue
+		}
+		// The verb stays the copy's, so a liveness error reads as the use written.
+		event.kind = .Kill
+		clone^ = false
+		moved := new(Expr_Move, graph.k.c.semantic_allocator)
+		moved.span, moved.type, moved.value_category = ident.span, ident.type, .Value
+		moved.value = ident
+		moved.implicit = true
+		site^ = moved
+	}
+}
+
+// Which locals a block's successors may read.
+@(private = "file")
+reads_at_exit :: proc(graph: ^Flow_Graph, read_in: [][]bool, block: Block_Id, reads: []bool) {
+	slice.fill(reads, false)
+	for successor in graph.blocks[int(block)].succs {
+		for value, slot in read_in[int(successor)] {
+			reads[slot] ||= value
+		}
+	}
+}
+
+// Steps `reads` backward over `events[from:]`.
+@(private = "file")
+reads_before :: proc(events: []Flow_Event, from: int, reads: []bool) {
+	for index := len(events) - 1; index >= from; index -= 1 {
+		event := events[index]
+		#partial switch event.kind {
+		case .Use, .Kill:
+			reads[event.slot] = true
+		case .Init, .Assign:
+			reads[event.slot] = false
+		}
+	}
+}
+
+// The operand and clone flag a candidate names, and whether its destination
+// has a `via`, which a clone allocates from and a move would not.
+@(private = "file")
+last_use_site :: proc(graph: ^Flow_Graph, use: Last_Use) -> (site: ^Expr, clone: ^bool, via: bool) {
+	c := graph.k.c
+	if d := use.decl; d != nil {
+		if use.index >= len(d.value_clones) {
+			return
+		}
+		return &d.values[use.index], &d.value_clones[use.index], d.via != nil
+	}
+	s := use.assign
+	if s == nil || use.index >= len(s.rhs_clones) || use.index >= len(s.lhs) {
+		return
+	}
+	target := place_root_symbol(s.lhs[use.index])
+	// `x = x` would move the value out of the place it is stored back into.
+	if ident, is_ident := s.rhs[use.index].(^Expr_Ident); is_ident && ident.symbol == target {
+		return
+	}
+	return &s.rhs[use.index], &s.rhs_clones[use.index], symbol_via_allocator(c, target) != nil
 }

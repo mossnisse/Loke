@@ -256,7 +256,11 @@ caller's local extension cannot change the meaning of a specialization.
 Managed values have language-defined clone, move, and drop behavior.
 `hooks.odin` classifies types and records canonical lifecycle operations;
 `lifecycle.odin` assigns copy obligations, tracks liveness, diagnoses invalid
-uses, and determines cleanup slots. Liveness follows every local, because a
+uses, and determines cleanup slots. Before liveness is solved, a backward
+pass over the same graph (`settle_last_uses` in `cfg.odin`) replaces a clone
+at a local's last use with a `move` in the syntax tree (design.md "Last-use
+transfer"), so every later phase sees an ordinary written move and checks it as
+one. It runs only outside hypothetical checks. Liveness follows every local, because a
 local starts dead and definite initialization is checked for all of them; only
 a managed one also carries a scope-exit cleanup obligation. Normal exits and
 panic unwind consume the same settled cleanup facts.
@@ -268,8 +272,10 @@ panic unwind consume the same settled cleanup facts.
   invalidation, retention, and escape;
 - region provenance follows allocator identity through owners and borrows and
   proves that values do not escape or survive an allocator reset. A copy of an
-  owner shares its source's storage and keeps its region; a carrier stands for
-  the regions of what it views, so a copy read through it keeps those.
+  owner keeps its source's region, even a clone that allocates from its
+  destination: a clone of a container still shares its strings with the
+  source. A carrier stands for the regions of what it views, so a copy read
+  through it keeps those.
 
 A user operator, a compound assignment's overload, and `operator([]=)` have no
 `Expr_Call`; the provenance walk treats each as a synthesized call to the

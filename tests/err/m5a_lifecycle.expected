@@ -34,9 +34,3 @@ L0490
 L0496
 @53:2
 `drop` takes one argument, the variable being cleaned up
-L0504
-@15:52
-this return would copy `self`, and a copy of `S` may allocate
-L0504
-@24:14
-this variant construction would copy `self`, and a copy of `T` may allocate

@@ -560,41 +560,49 @@ declaration that asks for it.
 
 Odin assignment of a `[dynamic]T` or `map` copies only the header, so two
 variables alias one mutable backing allocation and one of them frees it. Loke
-keeps value semantics — a copy of an owner is independent of it, and the silent
+keeps value semantics: a copy of an owner is independent of it, and the silent
 shared-backing alias, the classic source of double-free and
-mutation-at-a-distance bugs, is never produced — but a copy that may allocate
-is written: `b := a` over a `[dynamic]int` is an error that offers `move(a)`,
-`a.clone()`, or a borrow (L0504). Immutable `string` and `shared(T)` retain
-their storage when copied, so they, and records of them, still copy implicitly.
-Shared mutable ownership is opted into with a pointer or `shared(T)`.
+mutation-at-a-distance bugs, is never produced. `b := a` over a `[dynamic]int`
+clones it, from `b`'s declaration allocation policy. Immutable `string` and
+`shared(T)` retain their storage instead. Shared mutable ownership is opted
+into with a pointer or `shared(T)`.
 
-An earlier version made the allocating copy implicit, on the grounds that
-requiring `.clone()` (the Rust answer) would defeat the goal of making owning
-values as simple as integers, and reported it with the
-[copy-cost diagnostic](design.md#copy-cost-diagnostics) instead. The count it
-was waiting for said otherwise. Across the 13 examples and 199 `tests/run`
-programs, the allocating half of that warning fired 44 times, all in 21 test
-files exercising the copy rules themselves and never in an example or in the
-library code the examples reach: idiomatic code already moved, borrowed, or
-cloned. Making the rule an error changed two library procedures — the
-`Small_Array` and `Enum_Array` accessors that copy a `T` out, which now write
-`.clone()` — and those test files.
+This has gone back and forth. The allocating copy was first implicit, then
+(0.7.1) an error, L0504, that offered `move(a)`, `a.clone()`, or a borrow: a
+count across the examples and `tests/run` found the copy only in tests of the
+copy rules, so requiring it to be written seemed to cost nothing. It is implicit
+again because the error cost more than that count showed:
 
-What existed only for the implicit case went with it: the destination's bound
-allocator and the declaration allocation policy after a move or drop, the
-failure policy on `=`, and the allocating half of the copy-cost warning. `via`
-keeps its first-growth role. Assignment still evaluates its right side before
-dropping the old value, so a failing `clone` leaves the destination whole.
+- assignment, the most common operation, did nothing useful for a whole class of
+  types, and a beginner met three ways out of L0504 before a first `append`;
+- adding a `[dynamic]T` field to a record of strings made every copy of the
+  record elsewhere an error, so a private detail broke other packages;
+- generic code copying a `T` had to write `.clone()`, so every copyable type
+  needed one.
 
-Three consequences are worth recording. A `..` spread copies every element and
-has no `move` form, so spreading a slice of containers is rejected and the
-elements are cloned one at a time. The `try_` container forms copy on success by
-definition, so they take a place, or a spread, as it is: a written `clone`
-there would copy twice. And because generic code copying a `T` now writes
-`.clone()`, every copyable type needs one: fixed arrays, which used to get only
-`try_clone` on the grounds that they were reached as parts, now get `clone` too,
-and compile-time evaluation runs a generated `clone` as the deep copy the
-implicit one was.
+The cost the error guarded against is a hidden allocation. Loke already has
+abstractions that hide work, and the answer here is to make the common case
+free rather than forbid it: a copy at a local's last use is a move
+([design.md "Last-use transfer"](design.md#last-use-transfer)), which removes
+the copy people write when they mean "hand it over", and the copy-cost
+diagnostic still reports large inline copies. What stays a copy is one whose
+source is used afterwards, where the copy was the point.
+
+Last-use transfer is decided on the procedure's control-flow graph, backward
+from each candidate, and is conservative about borrows rather than exact: a
+local that is ever stored into a borrow-carrying value, or passed as one to a
+call with an `inout` argument, never moves at a last use, whether or not the
+borrow is still live. An exact answer needs the provenance pass, which runs
+after lifecycle analysis has already fixed each local's drop. The transfer is
+then an ordinary `move(x)` in the syntax tree, so the borrow and region checks
+see it as written, and a borrow the rule misses is an error at the copy with a
+note, not unsoundness. It applies only to bindings and assignments; an
+argument, an aggregate element, or an insertion still clones, which keeps the
+rule short and each copy site's cost visible in one place.
+
+A generic `clone` for fixed arrays and compile-time evaluation of a generated
+`clone`, both added while the error stood, remain: the first is still needed by
+generic code that clones, the second by constant evaluation of one.
 
 ### Panics run lexical cleanup
 

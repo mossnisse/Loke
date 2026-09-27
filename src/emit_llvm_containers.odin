@@ -443,6 +443,14 @@ emit_eager_via_binding :: proc(e: ^Emitter, symbol_id: Symbol_Id, address: strin
 	emit_store_via(e, address, sym.via)
 }
 
+// The provider an implicit clone into a destination uses: its declaration's
+// `via`, or the default (design.md "Value semantics and the ownership rule").
+@(private)
+emit_destination_allocator :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
+	written := symbol_via_allocator(e.c, symbol_id)
+	return written == nil ? emit_default_allocator(e) : emit_expr(e, written)
+}
+
 // The allocator a call was given, or the default when it was omitted.
 @(private)
 emit_allocator_operand :: proc(e: ^Emitter, v: ^Expr_Call, index: int) -> string {

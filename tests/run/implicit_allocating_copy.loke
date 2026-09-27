@@ -3,14 +3,17 @@ package main;
 import "core:fmt";
 
 // design.md "Value semantics and the ownership rule": a place whose copy may
-// allocate is never copied implicitly, in any context that would copy it. Each
-// error below names the context and offers `move`, `.clone()`, or a borrow.
+// allocate is copied implicitly, in every context that copies, and the copy is
+// independent of it. `a` is read again after each copy, so none of them is a
+// last use (design.md "Last-use transfer"); the appends at the end show that
+// no copy shares its storage.
 
 Tracked :: struct { id: int }
 
 impl Tracked {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
-		return .ok(Tracked{self.id});
+		fmt.println("copy", self.id);
+		return .ok(Tracked{self.id + 10});
 	}
 }
 
@@ -23,13 +26,9 @@ Outcome :: union @(failure=failed) { done: [dynamic]int, failed: }
 pack :: proc(items: ..[dynamic]int) -> int { return items.len(); }
 missing :: proc() -> Outcome { return .failed; }
 
+// A parameter is borrowed, so returning it copies.
 borrowed :: proc(values: [dynamic]int) -> [dynamic]int {
 	return values;
-}
-
-unwrapped :: proc(outcome: Outcome) -> Outcome {
-	values := outcome or_return;
-	return .done(move(values));
 }
 
 contexts :: proc(outcome: Outcome) {
@@ -49,28 +48,19 @@ contexts :: proc(outcome: Outcome) {
 	chosen := outcome or_else [dynamic]int{};
 	tracked := Tracked{1};
 	copy := tracked;
-	nested.append(..nested[:]);
-	fmt.println(b, c, box.values, count, held, wrapped, name, values, fallback, chosen, copy.id);
-}
-
-// None of these copies allocates, or each is written out.
-allowed :: proc(outcome: Outcome) {
-	a := [dynamic]int{1, 2};
-	b := a.clone();
-	text := "shared";
-	also := text;
-	nested: [dynamic][dynamic]int = {};
-	nested.append(a.clone());
-	_ = nested.try_append(a);
-	moved := move(a);
-	strings := [dynamic]string{"x"};
-	first := strings[0];
-	chosen := outcome.clone() or_else [dynamic]int{};
-	fmt.println(b, also, nested, moved, first, chosen);
+	spread: [dynamic][dynamic]int = {};
+	spread.append(..nested[:]);
+	a.append(9);
+	pair.values.append(9);
+	nested[0].append(9);
+	fmt.println(a, b, c, box.values, nested, spread, count, held, wrapped);
+	fmt.println(name, values, pair.values, fallback, chosen, tracked.id, copy.id);
 }
 
 main :: proc() {
-	contexts(.done([dynamic]int{1}));
-	allowed(.done([dynamic]int{1}));
-	fmt.println(borrowed([dynamic]int{}), unwrapped(.failed));
+	contexts(.done([dynamic]int{5}));
+	original := [dynamic]int{7};
+	returned := borrowed(original);
+	returned.append(8);
+	fmt.println(original, returned);
 }

@@ -16,6 +16,14 @@ checklist.
   block strictly more specialized, as `impl Pair(int, int)` is than both
   `impl Pair($A, int)` and `impl Pair(int, $B)`.
 
+### Changed
+
+- Assigning or binding a place whose copy allocates, such as a `[dynamic]T` or
+  `map[K]V`, copies it again, from the destination's `via` or the default
+  allocator; 0.7.1 rejected it (`L0504`). A copy at a local's last use is a
+  move instead, so `b := a` costs nothing when `a` is not used afterwards
+  (design.md "Last-use transfer"). Every program 0.7.1 accepted means the same.
+
 ### Added
 
 - `Option.ok_or(error)` turns an absent value into a `Result` failure, so

@@ -894,8 +894,8 @@ Along with `len`, dynamic arrays provide `cap` to report their current underlyin
 
 ```odin
 x := [dynamic]int{1, 2, 3};
-y := x.clone(); // independent ownership-recursive clone
-z := move(x);   // allocation transfer; x becomes dead
+y := x;       // independent ownership-recursive clone
+z := move(x); // allocation transfer; x becomes dead
 ```
 
 Each array records the allocator responsible for its backing storage and cleanup:
@@ -905,7 +905,7 @@ Each array records the allocator responsible for its backing storage and cleanup
 
 `via` applies only to declarations. It neither introduces names nor changes cleanup. Procedures receive allocators through ordinary parameters, with [ordinary default-argument rules](#default-values).
 
-`move` transfers the allocation and its allocator without relocating the data, and a copy is `value.clone(allocator)`, which allocates from the allocator it is given or `mem.default_allocator()`. A `via` allocator applies to the array's own growth, not to a value moved into it.
+A copy allocates from the destination's allocator, `move` transfers the allocation and its allocator without relocating the data, and `value.clone(allocator)` picks one explicitly. [Assignment statements](#assignment-statements) has the full rule.
 
 Backing storage need not be on the heap. An arena over a local buffer provides frame-local storage while the array's own size remains fixed by its type:
 
@@ -970,7 +970,7 @@ Use `resize` to grow and zero-fill an array, or `append` to add elements at the 
 
 #### Container insertion
 
-An element given to `append`, `insert`, or `find_or_insert` is taken the way an initialization takes it, exactly as `m[key] = elem` and a container literal take theirs: a temporary or `move(x)` transfers into the container, and a borrowed place is copied — which, for an element whose copy [may allocate](#value-semantics-and-the-ownership-rule), is written `x.clone()`. A move-only element therefore enters from a temporary or through `move`:
+An element given to `append`, `insert`, or `find_or_insert` is taken the way an initialization takes it, exactly as `m[key] = elem` and a container literal take theirs: a temporary or `move(x)` transfers into the container, and a borrowed place is copied. A move-only element therefore enters from a temporary or through `move`:
 
 ```odin
 Connection :: move_only struct { id: int }
@@ -982,9 +982,9 @@ connections.append(move(c));                // `c` is dead after the call
 connections.append(c);                      // ERROR: a borrowed move-only value cannot be copied
 ```
 
-Ownership passes at the call. When `find_or_insert` finds the key already present it does not store its element and drops it, so every element is dropped exactly once. A `..` spread lends its elements and copies each, so spreading a slice into `append` is rejected when its elements are move-only or their copy may allocate; clone the elements one at a time instead.
+Ownership passes at the call. When `find_or_insert` finds the key already present it does not store its element and drops it, so every element is dropped exactly once. A `..` spread lends its elements, so spreading a move-only slice into `append` is rejected.
 
-The `try_` forms — `try_append`, `try_insert`, and `try_find_or_insert` — never take ownership: they copy the element in only on success, so a failure leaves the argument exactly as the caller had it, the same promise every `try_` form makes. That copy is the operation, so a `try_` form takes a place, or a spread, as it is; a written `clone` would copy twice. A move-only element cannot be copied, so calling a `try_` form with one is a compile-time error; reserve capacity with `try_reserve` first, then insert with `move(...)`, which cannot fail for want of space.
+The `try_` forms — `try_append`, `try_insert`, and `try_find_or_insert` — never take ownership: they copy the element in only on success, so a failure leaves the argument exactly as the caller had it, the same promise every `try_` form makes. A move-only element cannot be copied, so calling a `try_` form with one is a compile-time error; reserve capacity with `try_reserve` first, then insert with `move(...)`, which cannot fail for want of space.
 
 #### Removing from a dynamic array
 
@@ -1307,7 +1307,7 @@ A distinct type may define its own methods, operators, named constructors, conve
 - **Operations** are not inherited: `Meters :: distinct f64` supports no arithmetic until it is given some. Bring them over one at a time with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form.
 - **Copy and drop hooks** are record lifecycle roles, so a resource-bearing distinct type wraps a record that owns the lifecycle.
 - **Copying** is not inherited either: a copyable distinct type has its own generated `try_clone` and `clone`, typed in the distinct name and copying as its underlying type does, so it satisfies `Cloneable`.
-- **Converting** between a distinct type and its underlying type keeps the representation, so it follows the ordinary copy rule: a managed operand read from a place is copied — written `x.clone()` when that [may allocate](#value-semantics-and-the-ownership-rule) — and `move(x)` or a temporary transfers instead. A move-only operand must be moved.
+- **Converting** between a distinct type and its underlying type keeps the representation, so it follows the ordinary copy rule: a managed operand read from a place is cloned, and `move(x)` or a temporary transfers instead. A move-only operand must be moved.
 
 Each named aggregate type (`struct`, `enum`, or `union`) is distinct.
 
@@ -1410,20 +1410,20 @@ low, high := geom.bounds();     // fine: `bounds` returns `(low: int, high: int)
 
 Ownership follows the operand's category, exactly as every other binding does:
 
-- A **place** copies. `x, y := point` copy-initializes each binding and `point` stays live and drops normally. Each retained field must be copyable without allocating: one whose copy [may allocate](#value-semantics-and-the-ownership-rule) is rejected, and the operand is written `move(point)` or `point.clone()` instead. The copy-cost diagnostic applies per copied field. This projects fields; it does not call the containing record's copy hook.
+- A **place** clones. `x, y := point` copy-initializes each binding and `point` stays live and drops normally. Each retained field must be copyable, and the copy-cost diagnostic applies per cloned field. This projects fields; it does not call the containing record's copy hook.
 - A **temporary** or `move(...)` consumes. Retained fields transfer without cloning. The containing record must have neither a custom `hook(copy)` nor a custom `hook(drop)` — decomposing a value whose hooks own its lifecycle is rejected rather than given an exception; its *fields* may have hooks of their own.
 
 `_` discards. It clones nothing from a place; in a consuming form the discarded field drops exactly once, in reverse declaration order, after every retained binding is published.
 
-Retained fields are prepared in declaration order before any binding is published, and assignment writes a destination only once its value is complete, as [Assignment statements](#assignment-statements) requires.
+Retained fields are prepared in declaration order before any binding is published, and assignment follows the ordinary prepare-then-write rule. If cloning fails, it cleans partial field temporaries and leaves the source untouched.
 
 ```odin
 // The temporary is consumed: nothing is cloned.
 name, bytes := read_document(path) or_return;
 
-// The place would copy `bytes`, which may allocate: an error.
+// The place is cloned, and the copy-cost diagnostic reports it.
 doc := read_document(path) or_return;
-doc_name, doc_bytes := doc;           // ERROR: write `move(doc)` or `doc.clone()`
+doc_name, doc_bytes := doc;
 ```
 
 #### Struct literals
@@ -1532,7 +1532,7 @@ v = .absent;
 return .ok; // in a procedure returning Result(Unit, E)
 ```
 
-Record-field initialization rules apply to the payload: a place argument is copied and must be copyable, with a copy that [may allocate](#value-semantics-and-the-ownership-rule) written `x.clone()`; a temporary or `move(x)` transfers it.
+Record-field initialization rules apply to the payload: a place argument clones it and must be copyable; a temporary or `move(x)` transfers it.
 
 Outside a call, `U.name` of a payload variant is the variant's **constructor**: a procedure value of type `proc(payload: move P) -> U`, where `P` is the payload type. It takes its payload over, so a place is passed to it as `move(x)`, where `U.name(x)` would clone the place. The contextual `.name` is not a constructor, since a destination never chooses the union; a generic union names its instance, as in `Option(int).some`.
 
@@ -2605,13 +2605,18 @@ Default copying recursively calls `try_clone` for owning fields. A custom copy h
 Allocator selection follows these rules:
 
 - `value.clone()` uses the program default; `value.clone(allocator)` uses the supplied allocator.
+- Assignment and copy initialization use the destination's allocator, as specified under [Assignment statements](#assignment-statements).
 - A non-allocating copy hook ignores the allocator and returns `.ok`.
-
-A type with a copy hook may allocate when copied, so it is never copied implicitly (see [Value semantics and the ownership rule](#value-semantics-and-the-ownership-rule)); its copies are written `clone` or `try_clone`.
 
 A `string` copy shares its storage instead; its explicit independent byte copy is `copy`.
 
-`clone` calls `try_clone` once; on `.err` it invokes the policy specified under [Allocation failure](#allocation-failure). An explicit call to `try_clone` returns the error and never invokes the policy. `x = x.clone()` is safe: the clone is complete before the old value is dropped.
+Copy assignment of a copyable type has the following order; self-assignment is safe:
+
+1. Evaluate `source.try_clone(destination_allocator)` once.
+2. On `.err`, invoke the policy specified under [Allocation failure](#allocation-failure), leaving the destination unchanged.
+3. On `.ok`, drop the previous destination value and transfer the cloned value into the destination.
+
+An explicit call to `try_clone` returns the error and never invokes the policy.
 
 Each type may have one copy hook, one drop hook, and one coherent `==`/`hash` pair. Hook signatures and package ownership are checked at compile time.
 
@@ -2639,7 +2644,7 @@ Receiver-shaped common behavior is defined canonically as methods, and the metho
 
 These operations use method syntax: write `x.len()`, not `len(x)`.
 
-**A clone is ownership-recursive, not deep.** It duplicates owned storage but does not follow pointers, slices, or views. Components with sharing semantics, such as immutable [`string`](#string-type) and [`shared(T)`](#shared-ownership), remain shared. Thus cloning `[dynamic]string` creates a new array whose strings still share text, while cloning a record with a `^T` field copies the pointer.
+**A clone is ownership-recursive, not deep.** It duplicates owned storage but does not follow pointers, slices, or views. Components with sharing semantics, such as immutable [`string`](#string-type) and [`shared(T)`](#shared-ownership), remain shared. Thus cloning `[dynamic]string` creates a new array whose strings still share text, while cloning a record with a `^T` field copies the pointer. Assignment follows the same rule through `try_clone`.
 
 Built-in types provide the methods they support. Lifecycle behavior is customized with `hook(copy)`, not a separate `clone` method.
 
@@ -3111,20 +3116,27 @@ One rule covers every context that takes a value. **A place stays live: it is bo
 
 [Iteration](#borrowing-iteration) holds its root for the complete statement and borrows stored elements; [`copied()`](#iteration-adapters) is the written clone. `move(place)` can transfer the collection into that statement-owned root, but does not transfer its elements individually.
 
-**A copy that may allocate is written, never implied.** Where a row above says a place is copied or cloned, that holds only for a type whose copy allocates nothing: scalars, pointers and views, `string` and `shared(T)`, which retain their storage, and records and arrays of those. A place whose copy may allocate — a `[dynamic]T` or `map[K]V`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — is rejected in each of those contexts, and the diagnostic offers the three spellings that say what was meant: `move(x)` to transfer it, `x.clone()` for an independent copy, or a borrow.
+Whether a place is copied or a temporary transferred changes what an expression costs, never what it computes, apart from the copy hooks a [last-use transfer](#last-use-transfer) does not run. [Copy-cost diagnostics](#copy-cost-diagnostics) reports the copies.
+
+#### Last-use transfer
+
+Copying an owner is implicit, so a program may copy one it is about to discard. It pays nothing for that: **a copy of a local at its last use is a move.** When a binding or an assignment would clone a whole local variable or `move` parameter whose copy may allocate — a `[dynamic]T` or `map[K]V`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — and no path from there reads the local again before it is assigned anew or its scope ends, the local is transferred exactly as `move(x)` would transfer it, and is dead afterwards.
 
 ```odin
-a := [dynamic]int{1, 2, 3};
-b := a;              // ERROR: copying a `[dynamic]int` may allocate
-c := a.clone();      // an independent copy, from `mem.default_allocator()`
-d := move(a);        // `a` is dead; nothing is copied
-names := [dynamic]string{"x"};
-first := names[0];   // a `string` copy retains its text: no allocation
+first := [dynamic]int{1, 2, 3};
+second := first;          // `first` is read below: a clone
+second.append(4);
+fmt.println(first, second);
+third := second;          // nothing reads `second` again: a move
 ```
 
-So the only allocating copies are visible `clone` and `try_clone` calls and the operations whose job is copying: a [`try_` insertion](#container-insertion), `lookup_value`, [`copied()`](#iteration-adapters), `new_clone(value)`, and [`shared(value)`](#shared-ownership). Generic code follows the same rule at each instantiation: a `where is_copyable(T)` body that copies a `T` out of a place writes `.clone()`, which every copyable type has.
+A read is anything that names the local: an expression, a borrow, a `move` or `drop`, or a deferred statement that runs after the copy. Three things keep the copy a clone even at the last use:
 
-Whether a place is copied or a temporary transferred changes what an expression costs, never what it computes. [Copy-cost diagnostics](#copy-cost-diagnostics) reports the copies that remain implicit.
+- a statement still running holds the local: it is what an enclosing `foreach` iterates, or the place an enclosing `switch` binds its payloads from;
+- the procedure stores a value that may carry a borrow, and whose expression reads the local, anywhere in its body: it binds it to a variable or place, as `view := list[:]` does, or passes it to a call that has an `inout` argument or receiver, as `views.append(list[:])` does. A view of the local may still be in use;
+- the destination is declared with `via`, whose allocator a clone uses and a move would not.
+
+The transfer is checked as a written move is. A borrow of the local that is still in use when it moves, such as one a callee stored through a pointer, is an error at the copy, and writing `.clone()` keeps it a copy. A transferred local runs no `hook(copy)`, and its value is dropped with the destination rather than at the end of the local's scope. Every other context that copies a place — an argument, an aggregate element, a container insertion, an `or_else` operand — clones.
 
 #### Values that outlive every scope
 
@@ -3473,12 +3485,12 @@ BUFFER_SIZE :: 4096 if LOKE_OS == .Windows else 8192; // a constant
 
 When the condition and selected value are constant, the result is constant. Use a `when` statement when the unselected branch must not be checked.
 
-The result is a temporary that owns its value, whatever takes it. A place operand is copied into it under [the ownership rule](#value-semantics-and-the-ownership-rule), so a `string` retains its text and a place whose copy may allocate is rejected; a temporary or `move(x)` operand transfers:
+The result is a temporary that owns its value, whatever takes it. A place operand is copied into it under [the ownership rule](#value-semantics-and-the-ownership-rule), so a `string` retains its text and a `[dynamic]T` is cloned; a temporary or `move(x)` operand transfers:
 
 ```odin
 xs := [dynamic]int{1};
 ys := [dynamic]int{2};
-a := xs if flag else ys;              // ERROR: copying a `[dynamic]int` may allocate
+a := xs if flag else ys;               // clones the one selected
 b := move(xs) if flag else ys.clone(); // one transferred, one written copy
 ```
 
@@ -3633,11 +3645,11 @@ x:     = 123; // default type for an integer literal is `int`
 x := 123;
 ```
 
-Assignment has value semantics and is one of the contexts the [ownership rule](#value-semantics-and-the-ownership-rule) covers: assigning a place copies it, so the destination is independent of the source, while `string` and `shared(T)` share their storage and a pointer, slice, or view still refers to what it did. A place whose copy may allocate is not assigned implicitly; its copy is a written [`clone`](#standard-customization-procedures).
+Assignment has value semantics and is one of the contexts the [ownership rule](#value-semantics-and-the-ownership-rule) covers: assigning a place [clones](#standard-customization-procedures) it, so the destination is independent of the source, while `string` and `shared(T)` share their storage and a pointer, slice, or view still refers to what it did.
 
 ```odin
 a := [dynamic]int{1, 2, 3};
-b := a.clone(); // independent clone: modifying `b` does not modify `a`
+b := a; // independent clone: modifying `b` does not modify `a`
 b[0] = 99;
 assert(a[0] == 1);
 ```
@@ -3649,9 +3661,9 @@ c := move(a); // transfers the allocation; `a` is now dead
 a = [dynamic]int{7, 8}; // a full assignment revives `a`
 ```
 
-Copy initialization and assignment never allocate: a place whose copy [may allocate](#value-semantics-and-the-ownership-rule) is not copied implicitly, so what reaches a destination is a transfer, a copy that allocates nothing, or the result of a written `clone`. Moving an owner into a variable transfers the owner's bound allocator. A `via` allocator binds only an owner the declaration itself starts empty, for its first growth. A `string` or `shared(T)` copy shares storage and keeps that allocation's allocator, so those types select their allocator at construction and cannot use `via`.
+A clone made by copy initialization or assignment allocates from the destination variable's **declaration allocation policy**: its `via` expression, or `mem.default_allocator()` when no `via` was written. The policy belongs to the declaration, not to the value it holds, so it is the same whether the destination is live or dead, and after a move or drop. Assigning to a field or element uses the policy of the variable it belongs to. Moving an owner into a variable transfers the owner's bound allocator instead, and so does a [last-use transfer](#last-use-transfer).
 
-Assignment evaluates its right side completely before it drops the destination's previous value, so a `clone` that fails leaves a previously live destination unchanged.
+On failure, the compiler invokes that allocator's [failure policy](#allocation-failure) and leaves a previously live destination unchanged. A `string` or `shared(T)` copy shares storage instead of allocating and keeps that allocation's allocator, so those types select their allocator at construction and cannot use `via`.
 
 ### Exchange
 
@@ -4197,7 +4209,7 @@ Machine-level argument passing does not grant extra ownership, mutation, or life
 
 #### Copy-cost diagnostics
 
-A copy that may allocate is never implicit ([§](#value-semantics-and-the-ownership-rule)). What remains implicit is a copy of inline bytes, which is valid but may be large, so tools may warn wherever [the ownership rule](#value-semantics-and-the-ownership-rule) copies a large aggregate place rather than borrowing or transferring it: a binding, an assignment, a parameter, a return, a place operand or fallback of [`or_else` or `or_return`](#operator-ownership), an [aggregate literal](#struct-literals) element, a [variant](#unions) payload, a [container insertion](#container-insertion), and a variadic pack element. Every context in that table is asked, because a copy written as construction is the easiest one to miss.
+Copying a large aggregate or managed owner is valid, but tools may warn wherever [the ownership rule](#value-semantics-and-the-ownership-rule) copies a place rather than borrowing or transferring it: a binding, an assignment, a parameter, a return, a place operand or fallback of [`or_else` or `or_return`](#operator-ownership), an [aggregate literal](#struct-literals) element, a [variant](#unions) payload, a [container insertion](#container-insertion), a variadic pack element, and an explicit `clone` or [`copied()`](#iteration-adapters). Every context in that table is asked, because a copy written as construction is the easiest one to miss.
 
 Building a destination by *converting* the operand is not a copy of it and is not reported: `print(count)` erases an `int` into a borrowing `any_view`, duplicating nothing. An ordinary `value: T` parameter shares a managed owner for the call and is not a copy site either. Use `move` for ownership transfer and `inout` only when mutation is intended.
 
@@ -4212,7 +4224,7 @@ sum :: proc(values: [dynamic]int) -> int {
 }
 ```
 
-`sum(values)` borrows, while `local := values` is rejected: it would copy the array, which may allocate, so it is written `values.clone()`. When two names must share one value, use a pointer or `shared(T)`; when the source is finished, use `move`.
+`sum(values)` borrows, while `local := values` clones. When two names must share one value, use a pointer or `shared(T)`; when the source is finished, use `move`.
 
 Use `inout` for a mutable borrow and `move` when a procedure must take ownership:
 
@@ -4720,7 +4732,7 @@ Operations propagate the two dependencies differently:
 
 - Borrowing an owner creates a root dependency on that owner; its region dependency is inherited transitively rather than copied onto the borrow as a second ownership claim.
 - Moving an owner is forbidden while one of its checked borrows is live. The move transfers the owner's region dependency to the destination, but does not make the destination borrow the source variable.
-- Cloning creates a new owner. An allocating clone receives the region provenance of the allocator it is given; a documented logical clone that retains shared storage retains that allocation's region provenance.
+- Cloning creates a new owner. An allocating clone receives the destination allocator's region provenance; a documented logical clone that retains shared storage retains that allocation's region provenance.
 - Returning a borrow propagates root provenance from borrowed parameters. Returning a moved owner propagates region provenance from the moved value. Constructing an owning result with an allocator parameter propagates that allocator's region provenance. These cases are recorded separately in the procedure's result-provenance summary.
 - Storing a borrow inside a record, union, or container preserves its root provenance along that value's carrier path. Converting it through `core:unsafe`, or storing it in a `rawptr` or `[^]T` field, loses checked root provenance as described under [What is not checked](#what-is-not-checked). Losing provenance does not extend the root or allocator region and therefore cannot make an otherwise invalid lifetime safe.
 
@@ -5121,7 +5133,7 @@ unsafe.write(self.items[self.count], move(value)); // storage becomes a value
 taken := unsafe.take(self.items[last]);            // the value leaves the storage
 ```
 
-`unsafe.write(place, value)` stores into a place holding no value, so nothing is dropped first. The value arrives the way an initialization takes it: a borrowed place is copied into the storage — written `value.clone()` when that may allocate — and a temporary or a `move` hands ownership over.
+`unsafe.write(place, value)` stores into a place holding no value, so nothing is dropped first. The value arrives the way an initialization takes it: a borrowed place is cloned into the storage, a temporary or a `move` hands ownership over.
 
 `unsafe.take(place)` reads the value out and runs no cleanup for what is left behind. The result is owned by the caller like any other value. Afterwards the storage holds the bits of a value that no longer exists, and reading it again as one is undefined.
 
@@ -5334,11 +5346,11 @@ Both operators read their operand once, and what they do with the payload depend
 | a place | copied out, source stays live | copied by `or_return`; left alone by `or_else` |
 | a temporary, or `move(x)` | transferred | dropped by `or_else` before the fallback runs |
 
-A place operand therefore requires a payload that copies without allocating: a move-only one must be written `move(x)`, and one whose copy [may allocate](#value-semantics-and-the-ownership-rule) `move(x)` or `x.clone()`. `or_else` never copies the error.
+A place operand therefore requires a copyable payload: a move-only one must be written `move(x)`. `or_else` never copies the error.
 
 ### or_else expression
 
-`or_else` is an infix binary operator that supplies a fallback for a [fallible expression](#typed-fallibility). The left operand's success variant must carry a payload; the fallback must be assignable to that payload type, and is evaluated only on the failure path. The result is the payload. Ordinary value semantics apply to the fallback: selecting a managed place copies it and leaves the place live — a copy that [may allocate](#value-semantics-and-the-ownership-rule) is written `.clone()`, for the operand as for the fallback — while a temporary or `move(x)` transfers ownership.
+`or_else` is an infix binary operator that supplies a fallback for a [fallible expression](#typed-fallibility). The left operand's success variant must carry a payload; the fallback must be assignable to that payload type, and is evaluated only on the failure path. The result is the payload. Ordinary value semantics apply to the fallback: selecting a managed place clones it and leaves the place live, while a temporary or `move(x)` transfers ownership.
 
 ```odin
 m: map[string]int = {};
@@ -5555,7 +5567,7 @@ when (LOKE_LOG_LEVEL <= .Debug) {
 
 Managed owning values use deterministic lexical cleanup, not garbage collection. Explicit allocators select their backing storage.
 
-Dynamic arrays, maps, runtime strings, and other managed containers remember the allocator responsible for their backing storage. Mutable containers and user-defined managed types whose clone takes an allocator use `mem.default_allocator()` by default, binding it lazily when their allocator-unbound zero state first needs storage, and may select another allocator eagerly with `via`.
+Dynamic arrays, maps, runtime strings, and other managed containers remember the allocator responsible for their backing storage. Mutable containers and user-defined managed types whose lifecycle clone honors a destination allocator use `mem.default_allocator()` by default, binding it lazily when their allocator-unbound zero state first needs storage, and may select another allocator eagerly with `via`.
 
 `string` and `shared(T)` copies share their allocation rather than allocate, so they cannot use `via`: string-producing procedures accept a conventional `allocator` argument, and `shared` has the constructor argument described under [Shared ownership](#shared-ownership).
 
@@ -6219,7 +6231,6 @@ Where this specification rejects a program, it often also says what the message 
 | Two borrows conflict | the root, the borrow, the conflicting operation, and the later use keeping the borrow live ([§](#places-and-overlap)) |
 | An owner escapes its allocator region | the escaping owner and its shorter-lived region ([§](#allocator-regions-and-region-provenance)) |
 | An unchecked pointer operation is written in a file that does not import `core:unsafe` | the operation, and the missing import ([§](#the-unsafe-package)) |
-| A place whose copy may allocate is copied implicitly | the context, the place, and the ways out: `move(x)` when it owns the value, `.clone()`, or a borrow ([§](#value-semantics-and-the-ownership-rule)) |
 | Signed arithmetic overflows at compile time | the mathematical result, and the type it does not fit ([§](#integer-overflow)) |
 | Two `@(export)` declarations use one symbol name | both declarations ([§](#export)) |
 

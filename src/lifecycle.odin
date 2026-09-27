@@ -347,9 +347,6 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 		)
 		return
 	}
-	if reject_allocating_copy(k, value.expr, result, .Return) {
-		return
-	}
 	value.clone_on_return = true
 	contribute_lifecycle_members(k, result)
 }
@@ -401,36 +398,7 @@ classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) 
 		)
 		return false
 	}
-	if reject_allocating_copy(k, value, type, site) {
-		return false
-	}
 	contribute_lifecycle_members(k, type)
-	return true
-}
-
-// design.md "Value semantics and the ownership rule": a copy of a place that
-// may allocate is written, never implied, so the only allocating copy is a
-// visible `clone`.
-reject_allocating_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
-	if !clone_may_allocate(k.c, type) {
-		return false
-	}
-	source := "this place"
-	transferable := false
-	if root := symbol_of(k.c, place_root_symbol(value)); root != nil {
-		source = identifier_text(k.c, root.name)
-		_, is_ident := value.(^Expr_Ident)
-		transferable = is_ident && symbol_is_owned_here(root)
-	}
-	errorf(
-		k.c, expr_span(value), "L0504",
-		"this %s would copy `%s`, and a copy of `%s` may allocate, so it must be written",
-		copy_site_text(site), source, type_name(k.c, type),
-	)
-	if transferable {
-		add_notef(k.c, no_span(), "write `move(%s)` if `%s` is no longer needed", source, source)
-	}
-	add_notef(k.c, no_span(), "write `.clone()` for an independent copy, or borrow it through a pointer or a slice")
 	return true
 }
 
@@ -554,9 +522,6 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr, in_
 			)
 			continue
 		}
-		if reject_allocating_copy(k, operand, field.type, .Binding) {
-			continue
-		}
 		contribute_lifecycle_members(k, field.type)
 		if clones == nil {
 			clones = make([]bool, len(plan.fields), k.c.semantic_allocator)
@@ -643,12 +608,12 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 	return "copy"
 }
 
-// Whether a copy of `type` is worth reporting. A copy that may allocate is not
-// implicit at all (L0504), so what is left is inline size: a large aggregate, or
-// a managed value whose copy only retains shared storage.
+// Whether a copy of `type` is worth reporting: its inline size. What an
+// allocating copy duplicates besides is not known until it runs, and a copy at
+// a local's last use is a move instead (design.md "Last-use transfer").
 @(private = "file")
 copy_is_expensive :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return c.copy_cost_enabled && !clone_may_allocate(c, type) && type_size(c, type) >= c.copy_cost_threshold
+	return c.copy_cost_enabled && type_size(c, type) >= c.copy_cost_threshold
 }
 
 report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool) {
@@ -708,6 +673,7 @@ analyze_ownership :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	if graph == nil {
 		return
 	}
+	settle_last_uses(graph)
 	solve_liveness(k, graph)
 	assign_cleanup_slots(k, graph)
 }

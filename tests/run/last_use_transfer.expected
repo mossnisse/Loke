@@ -1,0 +1,47 @@
+binding
+b 1
+  drop 1
+assignment
+  drop 3
+b 2
+  drop 2
+read afterwards
+  copy 4
+a 4
+b 104
+  drop 104
+  drop 4
+read on one path
+  copy 5
+a 5
+  drop 105
+  drop 5
+deferred read
+  copy 6
+b 106
+  drop 106
+a 6
+  drop 6
+loop over an outer local
+  copy 7
+b 107
+  drop 107
+  copy 7
+b 107
+  drop 107
+  drop 7
+loop-local source
+b 8
+  drop 8
+b 9
+  drop 9
+iterated
+   1 [1]
+viewed
+   [1] [1]
+via
+   [1]
+move parameter
+kept 10
+  drop 10
+end
