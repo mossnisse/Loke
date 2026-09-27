@@ -367,6 +367,75 @@ beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
 scalars the lane rule — any integer count, read as unsigned — so the two agree
 and no new panic is added.
 
+## Open questions in the compiler's structure
+
+An architecture review of `src/` left these open. Each is a structural risk
+rather than a wrong answer; the wrong answers it found are in
+[known-gaps.md](known-gaps.md).
+
+- **Hypothetical checks are a counter, not a boundary.** A probe runs the
+  ordinary checker with `speculation_depth` raised, each registry that must not
+  remember the probe checks the counter itself, and rollback removes only
+  diagnostics. Enrollments reached from a procedure literal inside a probe have
+  missed the check four times: hoisting (fixed, `default_probe_emits_no_literal`),
+  and still `checked_bodies`, static locals, and contributed lifecycle members.
+  The silent probe in `build_generic_candidate` also truncates diagnostics at
+  depth zero, which compiler-architecture.md "Checking and overload resolution"
+  rules out. Should registry writes made under speculation be journaled and
+  rolled back with the diagnostics, or should a probe stop before body-level
+  work? Either way, `probe_emission_state` in `src/front_end_test.odin` should
+  cover a requirement that holds a procedure literal.
+- **Lifecycle and provenance meet through walk-order keys.** The dead owners at
+  each reset point reach the provenance walk through `reset_dead` and
+  `cleanup_reset_dead`, keyed by node or by a cleanup ordinal that both walks
+  must count identically in different `Flow_Mode`s. A key the provenance walk
+  does not find reads as "nothing to check", which is also what an unreachable
+  exit means, so a miscount disables the check silently. Should a missing key be
+  an internal error, or liveness at reset points be solved on the provenance
+  graph, which already has the topology?
+- **One graph builder serves three modes.** `Flow_Graph` carries every mode's
+  state and `cfg.odin` branches on the mode throughout. The lifecycle walk also
+  decides clone or move for declarations and assignments (`value_clones`,
+  `rhs_clones`) and reports copy costs, so the disposable view writes
+  annotations the backend reads. Should topology construction be separated from
+  the per-mode consumers?
+- **Checker context is saved by hand.** `Checker_Location` covers eight of the
+  checker's mutable fields. The body context (`proc_literal`, `result_type`,
+  `loop_depth`, `in_defer`, `defer_slots`) and the positional flags (`in_callee`,
+  `place_position`, `insert_position`) are saved at each site that needs them,
+  each saving a different subset. One body-context record with an enter/leave
+  pair, and the positional flags passed to `check_expr` as parameters, would
+  leave no field to forget.
+- **Layering is checked in one direction.** `test-all.ps1` keeps backend files
+  from naming `Checker`, but checker and analysis files call helpers defined in
+  backend files (`is_discard`, `integer_traps_overflow`, `option_payload`,
+  `symbol_param_mode`, `llvm_safe`), and the checker spells LLVM names:
+  `Type_Info.mangled`, `Instance.mangled`, and the witness globals, against
+  compiler-architecture.md "LLVM and toolchain". Should the helpers move to
+  their semantic owners, the names to the emitter, and the check run both ways?
+- **Cloning copies syntax field by field.** A syntactic field added to a node is
+  dropped from every generic instance unless `ast_clone.odin` copies it
+  (compiler-architecture.md "How to make a compiler change"), and no test
+  notices. A unit test that lists each node's fields with `core:reflect` against
+  a written syntax/annotation split would turn the omission into a failure.
+- **Query walkers are partial.** The main passes switch over `Expr`
+  exhaustively, but the smaller walkers that ask one question of a subtree
+  (`first_unresolved_name`, `type_syntax_names`, `pattern_shape`, and the
+  like) each recurse through a `#partial switch` of their own, so a form one of
+  them forgets is skipped silently, as in known-gaps.md;
+  `declare_poly_stand_ins` scans source text for `$` names instead of walking
+  the parsed `Type_Poly` nodes. Should these recurse through one exhaustive
+  child enumeration?
+- **The runtime ABI is written twice.** `runtime/loke_rt.h` and the `declare`
+  lines in `emit_llvm_runtime.odin` are kept in step by hand. With opaque
+  pointers a mismatched parameter list is a silent miscompile, not a link error.
+  Generate one from the other, or compare them in a test?
+- **Procedure types are interned by linear search.** `intern_proc_type` scans
+  every type, so checking time grows with the square of the number of distinct
+  signatures: a synthetic file of 16000 of them took 15 s, and 4.4 s with the
+  signatures hashed into buckets as anonymous records already are, with
+  byte-identical IR. Worth doing before any program that size exists?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
