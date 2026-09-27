@@ -293,8 +293,10 @@ impl Record { size :: proc(self) -> int { return self.value; } }
 View :: dyn Sized;
 TABLE :: [2]int{1, 2};
 identity :: proc(value: $T) -> typeid { return typeid_of(T); }
+call_with :: proc(value: Record, f: proc(x: int) -> int) -> int { return f(value.value); }
 Probe :: interface($T: type) {
     (value: T) identity(value) -> typeid;
+    (value: T) call_with(value, proc(x: int) -> int { hits: static int = 0; hits += x; return hits; }) -> int;
     (value: ^T) (dyn Sized)(value) -> View;
     &TABLE -> ^[2]int;
     typeid_of(T) -> typeid;

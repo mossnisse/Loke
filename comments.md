@@ -377,14 +377,13 @@ rather than a wrong answer; the wrong answers it found are in
   ordinary checker with `speculation_depth` raised, each registry that must not
   remember the probe checks the counter itself, and rollback removes only
   diagnostics. Enrollments reached from a procedure literal inside a probe have
-  missed the check four times: hoisting (fixed, `default_probe_emits_no_literal`),
-  and still `checked_bodies`, static locals, and contributed lifecycle members.
-  The silent probe in `build_generic_candidate` also truncates diagnostics at
-  depth zero, which compiler-architecture.md "Checking and overload resolution"
-  rules out. Should registry writes made under speculation be journaled and
-  rolled back with the diagnostics, or should a probe stop before body-level
-  work? Either way, `probe_emission_state` in `src/front_end_test.odin` should
-  cover a requirement that holds a procedure literal.
+  missed the check four times: hoisting, `checked_bodies`, and static locals
+  (fixed; `probe_emission_state` in `src/front_end_test.odin` now probes such a
+  literal), and still contributed lifecycle members. The silent probe in
+  `build_generic_candidate` also truncates diagnostics at depth zero, which
+  compiler-architecture.md "Checking and overload resolution" rules out. Should
+  registry writes made under speculation be journaled and rolled back with the
+  diagnostics, or should a probe stop before body-level work?
 - **Lifecycle and provenance meet through walk-order keys.** The dead owners at
   each reset point reach the provenance walk through `reset_dead` and
   `cleanup_reset_dead`, keyed by node or by a cleanup ordinal that both walks
@@ -422,7 +421,8 @@ rather than a wrong answer; the wrong answers it found are in
   exhaustively, but the smaller walkers that ask one question of a subtree
   (`first_unresolved_name`, `type_syntax_names`, `pattern_shape`, and the
   like) each recurse through a `#partial switch` of their own, so a form one of
-  them forgets is skipped silently, as in known-gaps.md;
+  them forgets is skipped silently, as `first_unresolved_name` skipped slices,
+  ranges, `or_else`, and `.(T)` until the review;
   `declare_poly_stand_ins` scans source text for `$` names instead of walking
   the parsed `Type_Poly` nodes. Should these recurse through one exhaustive
   child enumeration?

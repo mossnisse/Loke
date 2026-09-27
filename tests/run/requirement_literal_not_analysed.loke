@@ -1,0 +1,18 @@
+package main; import "core:fmt";
+
+// Probed for `choose("text")`, which selects `pick_text`. The literal returns
+// the address of its own local, which the provenance pass rejects in a real
+// body; a probe's body is not part of the program, so it must not be analysed.
+call_with :: proc(value: int, f: proc(x: int) -> ^int) -> int { return 1; }
+
+Probe :: interface($T: type) {
+	(value: T) call_with(value, proc(x: int) -> ^int { y := x; return &y; }) -> int;
+}
+
+pick_probe :: proc(value: $T) -> int where Probe(T) { return 1; }
+pick_text :: proc(value: string) -> int { return 2; }
+choose :: proc { pick_probe, pick_text }
+
+main :: proc() {
+	fmt.println(choose("text"));
+}

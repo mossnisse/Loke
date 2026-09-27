@@ -34,6 +34,18 @@ when ([2]Row{{1}, {2}}[1].a == 2) {
 	LITERAL :: 99;
 }
 
+when ([3]int{1, LEVEL, 3}[0:2][1] == 1) {
+	SLICED :: 12;
+} else {
+	SLICED :: 13;
+}
+
+when ((Option(int){} or_else LEVEL) == 1) {
+	DEFAULTED :: 14;
+} else {
+	DEFAULTED :: 15;
+}
+
 // A condition that needs a declaration the selected branch above supplied.
 when (LEVEL > 1) {
 	NAME :: 11;
@@ -50,6 +62,8 @@ main :: proc() {
 	fmt.println(WIDTH);
 	fmt.println(SIGNATURE);
 	fmt.println(LITERAL);
+	fmt.println(SLICED);
+	fmt.println(DEFAULTED);
 	fmt.println(extra());
 
 	// Procedure-scope `when`: no new scope, and it contributes flow and defer.

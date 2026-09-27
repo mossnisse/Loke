@@ -51,41 +51,22 @@ below.
   `emit_llvm_expr.odin`), so either the spec says it borrows the string, or
   the checker rejects keeping it.
 
-An architecture review of the checker found the two below.
+An architecture review of the checker found the one below.
 
-- **A procedure literal in an interface requirement is analysed as part of the
+- **A procedure literal in an interface requirement adds copy procedures to the
   program.** A requirement is checked hypothetically (design.md "Interface
-  bodies"), and a bound that does not hold only removes its candidate
-  (design.md "where clauses"), so this program selects `pick_text`. It is
-  rejected instead, with L0526 reported twice, once per probe: `check_proc_body`
-  enrolls the literal's body in `checked_bodies` at any `speculation_depth`, and
-  the whole-program provenance pass reports on it. With `{ return nil; }` as the
-  literal's body the program prints `2`. The same probe also emits the literal's
-  `static` locals as globals (`record_static_local` is not gated either) and the
-  `clone`/`try_clone` procedures of a type the literal copies:
+  bodies"), but the ownership analysis of the probed literal's body still
+  contributes `Tag`'s lifecycle members, so `Tag.clone` and `Tag.try_clone` are
+  emitted although nothing in the program copies a `Tag`. Without the
+  `static_assert` they are not:
 
   ```odin
-  call_with :: proc(value: int, f: proc(x: int) -> ^int) -> int { return 1; }
+  Tag :: struct { label: string }
+  call_with :: proc(value: int, f: proc(x: int) -> int) -> int { return 1; }
   Probe :: interface($T: type) {
-  	(value: T) call_with(value, proc(x: int) -> ^int { y := x; return &y; }) -> int;
+  	(value: T) call_with(value, proc(x: int) -> int { a: Tag = {}; b := a; return x; }) -> int;
   }
-  pick_probe :: proc(value: $T) -> int where Probe(T) { return 1; }
-  pick_text :: proc(value: string) -> int { return 2; }
-  choose :: proc { pick_probe, pick_text }
-  main :: proc() { fmt.println(choose("text")); }
-  ```
-- **A `when` condition that slices a name from another `when` branch is
-  answered a round early.** A selected branch's declarations behave as if
-  written in its place (design.md "when statement"), so `TABLE` is a file-scope
-  constant. The second condition is evaluated before that branch is declared,
-  reports L0315 for `TABLE`, and selects neither branch, so `PICKED` is unknown.
-  `first_unresolved_name` in `src/select.odin` does not look inside a slice, a
-  range, an `or_else`, or a `.(T)` extraction, so it finds nothing to wait for;
-  `TABLE[1] == 2` waits a round and selects `PICKED :: 1`:
-
-  ```odin
-  when (true) { TABLE :: [3]int{1, 2, 3}; }
-  when (TABLE[0:2][1] == 2) { PICKED :: 1; } else { PICKED :: 2; }
+  main :: proc() { static_assert(Probe(int)); }
   ```
 
 ## Not gaps

@@ -2383,8 +2383,11 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	flow := check_block(k, literal.body)
 	// design.md "Managed values and storage": dataflow over the finished body.
 	analyze_ownership(k, literal)
-	// Provenance runs later, once every body's summary is settled.
-	append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
+	// Provenance runs later, once every body's summary is settled. A probe's body
+	// is not part of the program, as its literal is not hoisted.
+	if k.c.speculation_depth == 0 {
+		append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
+	}
 	literal.defer_count = k.defer_slots
 	if symbol.result != INVALID_TYPE && flow.can_fall_through {
 		errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")

@@ -585,7 +585,9 @@ record_static_local :: proc(k: ^Checker, d: ^Decl) {
 			)
 			continue
 		}
-		append(&k.c.static_locals, symbol_id)
+		if k.c.speculation_depth == 0 {
+			append(&k.c.static_locals, symbol_id)
+		}
 	}
 }
 

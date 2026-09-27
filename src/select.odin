@@ -389,6 +389,29 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 				return missing
 			}
 		}
+	case ^Expr_Slice:
+		if missing := first_unresolved_name(k, v.operand); missing != "" {
+			return missing
+		}
+		if missing := first_unresolved_name(k, v.lo); missing != "" {
+			return missing
+		}
+		return first_unresolved_name(k, v.hi)
+	case ^Expr_Range:
+		if missing := first_unresolved_name(k, v.lo); missing != "" {
+			return missing
+		}
+		return first_unresolved_name(k, v.hi)
+	case ^Expr_Or_Else:
+		if missing := first_unresolved_name(k, v.value); missing != "" {
+			return missing
+		}
+		return first_unresolved_name(k, v.fallback)
+	case ^Expr_Checked_Extract:
+		if missing := first_unresolved_name(k, v.operand); missing != "" {
+			return missing
+		}
+		return first_unresolved_name(k, v.target)
 	case ^Expr_Call:
 		if missing := first_unresolved_name(k, v.callee); missing != "" {
 			return missing
