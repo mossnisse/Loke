@@ -2,10 +2,16 @@
 
 User-visible changes to the language, the compiler, and the standard library.
 Each release's section is its GitHub release notes. A change lands under
-**Unreleased**; tagging `vX.Y.Z` means renaming that heading to `[X.Y.Z]` with
-the date and setting `LOKE_VERSION_STRING` in `src/build_config.odin` to match.
+**Unreleased**, and a break also gets an upgrade note under **Breaking
+changes**. [releasing.md](releasing.md) has the version policy and the release
+checklist.
 
 ## [Unreleased]
+
+### Documentation
+
+- [releasing.md](releasing.md) states what a version promises before and
+  after 1.0, where upgrade notes go, and the release checklist.
 
 ## [0.7.1] - 2026-09-27
 

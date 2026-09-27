@@ -17,6 +17,7 @@ true. Keep it short: point to a document rather than repeat it.
 | Standard library design and APIs | [standard-library.md](standard-library.md) |
 | Later work | [future-plans.md](future-plans.md) |
 | What each release changed | [CHANGELOG.md](CHANGELOG.md) |
+| What a version promises, and how to release | [releasing.md](releasing.md) |
 
 When the compiler and `design.md` disagree, the spec wins unless the spec is
 being deliberately changed. Record an unfixed divergence in `known-gaps.md` with
@@ -31,7 +32,8 @@ a minimal reproduction; never reword the spec to match a bug.
   citations it breaks.
 - Rationale belongs in `comments.md`, not in normative text.
 - A user-visible change adds a line under **Unreleased** in `CHANGELOG.md` in
-  the same commit.
+  the same commit, and a breaking one also adds an upgrade note there
+  (`releasing.md` "Upgrade notes").
 - Findings from a review or audit end up in the repository: fixed ones in the
   commit message and a regression test, open ones in `known-gaps.md` or
   `comments.md`. Agent memory is not project documentation.

@@ -19,12 +19,11 @@ it across more hosts. A release is the compiler together with the `base/`,
 [.github/workflows/release.yml](.github/workflows/release.yml): the gate passes,
 known-gaps.md lists no gaps, and the bundle compiles and runs programs from a
 fresh runner before it is published. An intentionally accepted divergence is a
-specification change, not a gap.
+specification change, not a gap. [releasing.md](releasing.md) has the version
+policy, upgrade notes, and the release checklist.
 
 Main work:
 
-- add a supported-version policy, upgrade notes, and a documented
-  release checklist;
 - record compile time, peak compiler memory, output size, and representative
   program performance so regressions are visible;
 - extend the parser mutation fuzzer (`mutation_fuzzing` in

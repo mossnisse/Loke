@@ -265,7 +265,8 @@ pull request. Pushing a tag `v<LOKE_VERSION_STRING>` runs
 zip of `lokec.exe` with `base/`, `core/`, `runtime/`, and `examples/` once the
 gate passes, [known-gaps.md](known-gaps.md) lists no gaps, the version has a
 section in [CHANGELOG.md](CHANGELOG.md) (its release notes), and the unzipped
-bundle builds and runs programs on a fresh machine. The suites can also be run separately:
+bundle builds and runs programs on a fresh machine. [releasing.md](releasing.md)
+has the version policy and the release checklist. The suites can also be run separately:
 
 ```powershell
 odin test src -vet-unused -vet-shadowing -vet-packages:lokec
