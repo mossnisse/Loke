@@ -57,6 +57,14 @@ Cleanup_Reset_Key :: struct {
 	node:    rawptr,
 }
 
+// The owners dead at one reset point. Lifecycle registers every point it walks
+// and solves the reachable ones, so the provenance walk tells an unreachable
+// point from one the two walks keyed differently, which is a compiler bug.
+Reset_Liveness :: struct {
+	dead:    []Symbol_Id,
+	reached: bool,
+}
+
 Flow_Block :: struct {
 	events: [dynamic]Flow_Event,
 	preds:  [dynamic]Block_Id,
@@ -457,19 +465,24 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 	if sym == nil || sym.kind != .Var || sym.duration != .None || !type_carries_provider(graph.k.c, sym.type) {
 		return
 	}
+	// A view such as a `&` loop element owns nothing, so it ends no region.
+	if sym.borrowed_binding != .None {
+		return
+	}
 	key := Cleanup_Reset_Key{graph.literal, id, 0, node}
 	if node == nil {
 		graph.cleanup_resets[id] += 1
 		key.ordinal = graph.cleanup_resets[id]
 	}
 	if graph.mode == .Lifecycle {
+		graph.k.c.cleanup_reset_dead[key] = {}
 		emit(graph, Flow_Event{kind = .Reset_Point, cleanup_reset = key, span = span})
 		return
 	}
-	dead, found := graph.k.c.cleanup_reset_dead[key]
-	// No key: an unreachable exit, or a view such as a `&` loop element that
-	// owns nothing. A consumed value has no region left to end either.
-	if !found || slice.contains(dead, id) {
+	live, found := graph.k.c.cleanup_reset_dead[key]
+	assert(found, "the provenance walk reached a provider end the lifecycle walk did not")
+	// An unreachable exit ends nothing, and a consumed value has no region left.
+	if !live.reached || slice.contains(live.dead, id) {
 		return
 	}
 	prov_provider_use(graph, id, span)
@@ -478,7 +491,7 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 		return
 	}
 	region := path == nil ? prov_provider_region(graph, id) : prov_provider_region_at(graph, id, path)
-	prov_reset(graph, region, span, true, nil, dead, ends, id)
+	prov_reset(graph, region, span, true, nil, live.dead, ends, id)
 }
 
 // A `move` out of a local ends what it holds, unless the move is into a new
@@ -583,11 +596,13 @@ provider_place_end :: proc(graph: ^Flow_Graph, place: Expr, node: rawptr, span: 
 provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb: string) {
 	key := Cleanup_Reset_Key{graph.literal, INVALID_SYMBOL, 0, node}
 	if graph.mode == .Lifecycle {
+		graph.k.c.cleanup_reset_dead[key] = {}
 		emit(graph, Flow_Event{kind = .Reset_Point, cleanup_reset = key, span = span})
 		return
 	}
-	dead, found := graph.k.c.cleanup_reset_dead[key]
-	if !found {
+	live, found := graph.k.c.cleanup_reset_dead[key]
+	assert(found, "the provenance walk reached a provider end the lifecycle walk did not")
+	if !live.reached {
 		return
 	}
 	set := prov_empty_region(graph)
@@ -604,7 +619,7 @@ provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb
 		return
 	}
 	ends := fmt.aprintf("%s through a pointer or slice", verb, allocator = graph.alloc)
-	prov_reset(graph, set, span, true, nil, dead, ends)
+	prov_reset(graph, set, span, true, nil, live.dead, ends)
 }
 
 // Assigning into a provider inside a local drops the provider there before.
@@ -1676,8 +1691,11 @@ call_is_reset :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 // After the arguments, which may themselves move an owner out.
 @(private = "file")
 note_reset_point :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
-	if len(graph.tracked) == 0 || !call_is_reset(graph.k.c, v) {
+	if !call_is_reset(graph.k.c, v) {
 		return
 	}
-	emit(graph, Flow_Event{kind = .Reset_Point, span = v.span, call = v})
+	graph.k.c.reset_dead[v] = {}
+	if len(graph.tracked) > 0 {
+		emit(graph, Flow_Event{kind = .Reset_Point, span = v.span, call = v})
+	}
 }

@@ -1964,7 +1964,12 @@ prov_reset :: proc(
 	// A live owner in an overlapping region blocks the reset, since its cleanup
 	// still runs. Liveness is lifecycle's answer, recorded one pass earlier; a
 	// dropped owner no longer blocks (design.md).
-	dead := at == nil ? cleanup_dead : graph.k.c.reset_dead[at]
+	dead := cleanup_dead
+	if at != nil {
+		live, found := graph.k.c.reset_dead[at]
+		assert(found, "the provenance walk reached a reset the lifecycle walk did not")
+		dead = live.dead
+	}
 	for id in graph.owners_in_scope {
 		owner := symbol_of(graph.k.c, id)
 		if owner == nil {

@@ -714,6 +714,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.types = make([dynamic]^Type_Info, 0, 64, c.semantic_allocator)
 	c.type_by_shape = make(map[Type_Key]Type_Id, c.semantic_allocator)
 	c.anon_record_types = make(map[u64][]Type_Id, c.semantic_allocator)
+	c.proc_types = make(map[u64][]Type_Id, c.semantic_allocator)
 	c.symbols = make([dynamic]^Symbol, 0, 128, c.semantic_allocator)
 	c.packages = make([dynamic]Package, 0, 8, c.semantic_allocator)
 	c.generic_templates = make(map[Symbol_Id]^Generic_Template, c.semantic_allocator)
@@ -749,8 +750,8 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.runtime_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.formatters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
 	c.result_summary_dependencies = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
-	c.reset_dead = make(map[^Expr_Call][]Symbol_Id, c.semantic_allocator)
-	c.cleanup_reset_dead = make(map[Cleanup_Reset_Key][]Symbol_Id, c.semantic_allocator)
+	c.reset_dead = make(map[^Expr_Call]Reset_Liveness, c.semantic_allocator)
+	c.cleanup_reset_dead = make(map[Cleanup_Reset_Key]Reset_Liveness, c.semantic_allocator)
 	c.package_by_dir = make(map[string]Package_Id, c.semantic_allocator)
 	c.map_keyed = make(map[Type_Id]bool, c.semantic_allocator)
 	c.checked_bodies = make([dynamic]Checked_Body, 0, 16, c.semantic_allocator)
@@ -880,9 +881,18 @@ intern_proc_type :: proc(
 	proc_contract := INVALID_SYMBOL,
 ) -> Type_Id {
 	init_semantic_stores(c)
-	for info, index in c.types {
-		if info.kind == .Proc &&
-		   info.convention == convention &&
+	hash := u64(0xcbf29ce484222325)
+	for parameter in parameters {
+		hash = (hash ~ u64(parameter)) * HASH_MULTIPLIER
+	}
+	for mode in param_modes {
+		hash = (hash ~ u64(mode)) * HASH_MULTIPLIER
+	}
+	hash = (hash ~ u64(result)) * HASH_MULTIPLIER
+	bucket := c.proc_types[hash]
+	for candidate in bucket {
+		info := c.types[candidate]
+		if info.convention == convention &&
 		   equal_type_ids(info.parameters, parameters) &&
 		   equal_param_modes(info.param_modes, param_modes) &&
 		   info.result == result &&
@@ -892,7 +902,7 @@ intern_proc_type :: proc(
 		   equal_escape_levels(info.param_escapes, param_escapes) &&
 		   info.proc_contract == proc_contract &&
 		   info.c_vararg == c_vararg {
-			return Type_Id(index)
+			return candidate
 		}
 	}
 	parameter_copy := make([]Type_Id, len(parameters), c.semantic_allocator)
@@ -914,7 +924,7 @@ intern_proc_type :: proc(
 	}
 	copy(parameter_copy, parameters)
 	copy(mode_copy, param_modes)
-	return new_type(c, Type_Info {
+	id := new_type(c, Type_Info {
 		kind          = .Proc,
 		bits          = c.target.pointer_bits,
 		parameters    = parameter_copy,
@@ -928,6 +938,11 @@ intern_proc_type :: proc(
 		result_inout  = result_inout,
 		convention    = convention,
 	})
+	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
+	copy(grown, bucket)
+	grown[len(bucket)] = id
+	c.proc_types[hash] = grown
+	return id
 }
 
 // A level vector is only stored when something in it is not the default, so an

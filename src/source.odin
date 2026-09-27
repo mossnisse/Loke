@@ -275,8 +275,8 @@ Compiler :: struct {
 	// An explicitly dropped owner is dead and no longer blocks reset (design.md).
 	// Liveness answers that a pass earlier than the reset check, so the dead owners
 	// at each call or cleanup are recorded here (`src/lifecycle.odin`, `src/cfg.odin`).
-	reset_dead:               map[^Expr_Call][]Symbol_Id,
-	cleanup_reset_dead:       map[Cleanup_Reset_Key][]Symbol_Id,
+	reset_dead:               map[^Expr_Call]Reset_Liveness,
+	cleanup_reset_dead:       map[Cleanup_Reset_Key]Reset_Liveness,
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
 	semantic_arena:       virtual.Arena,
@@ -298,6 +298,8 @@ Compiler :: struct {
 	// The hash only picks a bucket; identity is settled by comparing every
 	// `(name, type)` pair, so a collision costs a walk and never a wrong reuse.
 	anon_record_types:    map[u64][]Type_Id,
+	// Procedure types, bucketed the same way by parameters, modes, and result.
+	proc_types:           map[u64][]Type_Id,
 	symbols:              [dynamic]^Symbol,
 	packages:             [dynamic]Package,
 }

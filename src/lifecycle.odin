@@ -887,9 +887,9 @@ record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event
 		}
 	}
 	if event.call != nil {
-		k.c.reset_dead[event.call] = dead[:]
+		k.c.reset_dead[event.call] = {dead[:], true}
 	} else {
-		k.c.cleanup_reset_dead[event.cleanup_reset] = dead[:]
+		k.c.cleanup_reset_dead[event.cleanup_reset] = {dead[:], true}
 	}
 }
 

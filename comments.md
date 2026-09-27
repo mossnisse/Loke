@@ -390,10 +390,10 @@ rather than a wrong answer; the wrong answers it found are in
 - **Lifecycle and provenance meet through walk-order keys.** The dead owners at
   each reset point reach the provenance walk through `reset_dead` and
   `cleanup_reset_dead`, keyed by node or by a cleanup ordinal that both walks
-  must count identically in different `Flow_Mode`s. A key the provenance walk
-  does not find reads as "nothing to check", which is also what an unreachable
-  exit means, so a miscount disables the check silently. Should a missing key be
-  an internal error, or liveness at reset points be solved on the provenance
+  must count identically in different `Flow_Mode`s. Lifecycle registers every
+  point it walks, marks the ones its solve reaches, and a key the provenance walk
+  does not find is an assertion failure rather than "nothing to check". The
+  coupling remains: should liveness at reset points be solved on the provenance
   graph, which already has the topology?
 - **One graph builder serves three modes.** `Flow_Graph` carries every mode's
   state and `cfg.odin` branches on the mode throughout. The lifecycle walk also
@@ -425,11 +425,6 @@ rather than a wrong answer; the wrong answers it found are in
   lines in `emit_llvm_runtime.odin` are kept in step by hand. With opaque
   pointers a mismatched parameter list is a silent miscompile, not a link error.
   Generate one from the other, or compare them in a test?
-- **Procedure types are interned by linear search.** `intern_proc_type` scans
-  every type, so checking time grows with the square of the number of distinct
-  signatures: a synthetic file of 16000 of them took 15 s, and 4.4 s with the
-  signatures hashed into buckets as anonymous records already are, with
-  byte-identical IR. Worth doing before any program that size exists?
 
 # Differences from Odin and design motivations
 
