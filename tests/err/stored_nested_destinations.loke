@@ -1,0 +1,59 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Retaining a borrow": a `stored` argument may land in any mutable
+// destination the call receives, at any depth: behind a `^mut` in a record, a
+// `[]^mut T`, a `^mut ^mut T`, or an `inout ^mut T`.
+
+Holder :: struct { v: []int }
+Ctx :: struct { dst: ^mut Holder }
+keep_ctx :: proc(ctx: Ctx, @(escape=stored) a: []int) { ctx.dst.v = a; }
+keep_all :: proc(dsts: []^mut Holder, @(escape=stored) a: []int) { dsts[0].v = a; }
+keep_deep :: proc(pp: ^mut ^mut Holder, @(escape=stored) a: []int) { pp^.v = a; }
+keep_inout :: proc(p: inout ^mut Holder, @(escape=stored) a: []int) { p.v = a; }
+record_field :: proc() {
+	h: Holder = {};
+	{
+		arr := [3]int{1, 2, 3};
+		keep_ctx(Ctx{&mut h}, arr[:]);
+	}
+	fmt.println(h.v[0]);
+}
+slice_of_pointers :: proc() {
+	h: Holder = {};
+	{
+		arr := [3]int{1, 2, 3};
+		ptrs := [1]^mut Holder{&mut h};
+		keep_all(ptrs[:], arr[:]);
+	}
+	fmt.println(h.v[0]);
+}
+pointer_to_pointer :: proc() {
+	h: Holder = {};
+	{
+		arr := [3]int{1, 2, 3};
+		p := &mut h;
+		keep_deep(&mut p, arr[:]);
+	}
+	fmt.println(h.v[0]);
+}
+inout_pointer :: proc() {
+	h: Holder = {};
+	{
+		arr := [3]int{1, 2, 3};
+		p := &mut h;
+		keep_inout(inout p, arr[:]);
+	}
+	fmt.println(h.v[0]);
+}
+// A destination that outlives the argument is fine.
+outlived :: proc() {
+	h: Holder = {};
+	arr := [3]int{1, 2, 3};
+	keep_ctx(Ctx{&mut h}, arr[:]);
+	p := &mut h;
+	keep_inout(inout p, arr[:]);
+	fmt.println(h.v[0]);
+}
+main :: proc() {}

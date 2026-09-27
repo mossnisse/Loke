@@ -714,6 +714,7 @@ prov_load_content :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step
 	content := prov_temp_content(graph, type)
 	graph.has_content_load ||= len(content) > 0
 	for slot in content {
+		graph.prov_slots[slot].loaded = true
 		prov_emit(graph, Prov_Event {
 			kind = .Load,
 			slot = slot,
@@ -917,11 +918,41 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		// Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. A
 		// traversal's reborrow passes on to what is taken from its elements.
 		if into < 0 || into == slot ||
-		   !(prov_slot_is_mutable_carrier(graph, slot) || prov_slot_is_reborrow(graph, slot)) {
+		   !(prov_slot_is_mutable_carrier(graph, slot) || prov_slot_is_reborrow(graph, slot) || prov_slot_is_loaded_mutable(graph, slot)) {
 			continue
 		}
 		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = into, span = span, mutable = !weakens})
 	}
+}
+
+// A mutable carrier copied out through a pointer, as `pp^`, reborrows each
+// carrier the `Load` read; `prov_reborrow` has already linked it to where it
+// was stored.
+@(private)
+prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
+	if !prov_slot_is_loaded_mutable(graph, event.slot) {
+		return
+	}
+	// Its capability is the one the copy is stored with.
+	mutable := true
+	for reborrow in graph.reborrows {
+		if reborrow.source == event.slot {
+			mutable = reborrow.mutable
+		}
+	}
+	for source in event.sources {
+		if prov_slot_is_mutable_carrier(graph, source) {
+			append(&graph.reborrows, Prov_Reborrow{source = source, derived = event.slot, span = event.span, mutable = mutable})
+		}
+	}
+}
+
+@(private = "file")
+prov_slot_is_loaded_mutable :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+	entry := graph.prov_slots[slot]
+	c := graph.k.c
+	return entry.loaded && entry.content_type != INVALID_TYPE &&
+		!type_is_region_provider(c, entry.content_type) && carrier_is_mutable(c, entry.content_type)
 }
 
 // A traversal of a mutable carrier reborrows it for as long as the traversal,
@@ -3308,12 +3339,23 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				}
 			}
 			return nil
-		case .Unsafe_Take, .Unsafe_Write:
-			if len(v.bound) >= 1 {
-				prov_invalidate(graph, v.bound[0], v.span, sym.builtin == .Unsafe_Take ? "taken" : "overwritten")
-				for bound in v.bound[1:] {
-					walk_flow_expr(graph, bound)
-				}
+		case .Unsafe_Take:
+			// design.md "The `unsafe` package": the value is read out, and keeps
+			// what it borrows.
+			if len(v.bound) == 1 {
+				type := expr_base(v.bound[0]).type
+				taken := prov_project_content(graph, walk_flow_expr(graph, v.bound[0]), type, nil, type, v.span)
+				prov_invalidate(graph, v.bound[0], v.span, "taken")
+				return taken
+			}
+			return nil
+		case .Unsafe_Write:
+			// Stored the way an initialization takes it, for its loans; its region
+			// is not (known-gaps.md).
+			if len(v.bound) == 2 {
+				prov_invalidate(graph, v.bound[0], v.span, "overwritten")
+				sources := walk_flow_expr(graph, v.bound[1])
+				prov_store_loans(graph, v.bound[0], sources, v.span)
 			}
 			return nil
 		case .Unsafe_Forget:
@@ -3595,8 +3637,9 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Ty
 	start := 0
 	if sym != nil && sym.has_receiver {
 		start = 1
-		if sym.receiver == .Inout && len(v.bound) > 0 && v.bound[0] != nil {
-			if type_carries_borrow(c, expr_base(v.bound[0]).type).any {
+		if len(v.bound) > 0 && v.bound[0] != nil {
+			type := expr_base(v.bound[0]).type
+			if sym.receiver == .Inout && type_carries_borrow(c, type).any || prov_type_reaches_destination(c, type) {
 				append(&out, 0)
 			}
 		}
@@ -3606,22 +3649,41 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Ty
 		return out[:]
 	}
 	for index in start ..< min(len(v.bound), len(info.parameters)) {
-		if prov_argument_is_inout(graph, v, index) {
-			if type_carries_borrow(c, info.parameters[index]).any {
-				append(&out, index)
-			}
-			continue
-		}
-		// `p^.view = values`: what the pointee holds, not the pointer.
-		if !carrier_is_mutable(c, info.parameters[index]) {
-			continue
-		}
-		element := underlying_info(c, info.parameters[index])
-		if element != nil && type_carries_borrow(c, element.element).any {
+		type := info.parameters[index]
+		if prov_argument_is_inout(graph, v, index) && type_carries_borrow(c, type).any || prov_type_reaches_destination(c, type) {
 			append(&out, index)
 		}
 	}
 	return out[:]
+}
+
+// Whether a callee receiving `type` can write a borrow through it: through a
+// mutable carrier, at any depth, to storage that can hold one, as `p^.view =
+// values` or `ctx.destination.view = values` does.
+@(private = "file")
+prov_type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
+	if depth > CARRIER_DEPTH {
+		return false
+	}
+	for path in carrier_shape(c, type) {
+		if path.truncated {
+			if path.mutable {
+				return true
+			}
+			continue
+		}
+		info := underlying_info(c, path.type)
+		if info == nil {
+			continue
+		}
+		if path.mutable && type_carries_borrow(c, info.element).any {
+			return true
+		}
+		if prov_type_reaches_destination(c, info.element, depth + 1) {
+			return true
+		}
+	}
+	return false
 }
 
 // One argument receiving what another may leave in it, joined since the callee
@@ -3640,23 +3702,13 @@ prov_retain_into_argument :: proc(
 		return
 	}
 	if !prov_argument_is_place(graph, v, index) {
-		if len(carrier) == 0 {
-			return
-		}
-		prov_emit(graph, Prov_Event {
-			kind    = .Retain,
-			span    = v.span,
-			sources = sources,
-			root    = NO_ROOT,
-			into    = carrier,
-		})
-		prov_emit(graph, Prov_Event {
-			kind    = .Publish,
-			span    = v.span,
-			sources = sources,
-			into    = carrier,
-		})
+		// Through the argument's carriers, and what they reach in turn.
+		prov_publish_through(graph, prov_with_content(graph, carrier, v.span), sources, v.span)
 		return
+	}
+	// `inout p` with `p: ^mut T`: through `p` as well as into it.
+	if prov_type_reaches_destination(graph.k.c, expr_base(argument).type) {
+		prov_publish_through(graph, prov_with_content(graph, prov_carrier_slots(graph, argument), v.span), sources, v.span)
 	}
 	root, path, ok := prov_place_of(graph, argument)
 	if !ok {
@@ -3678,6 +3730,15 @@ prov_retain_into_argument :: proc(
 	for slot in slots {
 		prov_define_one_content(graph, slot, prov_join(graph, prov_one(graph, slot), sources), v.span)
 	}
+}
+
+@(private = "file")
+prov_publish_through :: proc(graph: ^Flow_Graph, carriers, sources: []int, span: Span) {
+	if len(carriers) == 0 {
+		return
+	}
+	prov_emit(graph, Prov_Event{kind = .Retain, span = span, sources = sources, root = NO_ROOT, into = carriers})
+	prov_emit(graph, Prov_Event{kind = .Publish, span = span, sources = sources, into = carriers})
 }
 
 // A `stored` argument that is also a destination may be left borrowing its own

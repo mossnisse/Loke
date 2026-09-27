@@ -1,0 +1,41 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Procedure result contracts": a call through a `type_of` contract
+// takes the regions it leaves in each writable argument from the contract's
+// declaration, so a procedure converted to that type may leave no others.
+
+leaves_nothing :: proc(dst: ^mut [dynamic]int, alloc: Allocator) -> string { return ""; }
+leaves_one :: proc(dst: ^mut [dynamic]int, alloc: Allocator) -> string {
+	dst^ = make([dynamic]int, 4, alloc);
+	return "";
+}
+leaves_another :: proc(dst: ^mut [dynamic]int, alloc: Allocator) -> string {
+	dst^ = make([dynamic]int, 2, alloc);
+	return "";
+}
+
+Nothing :: type_of(leaves_nothing);
+One :: type_of(leaves_one);
+
+leaves_more_than_its_contract :: proc() {
+	f: Nothing = leaves_one;
+	xs: [dynamic]int = {};
+	arena := mem.Arena.init();
+	_ = f(&mut xs, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(xs[0]);
+}
+
+// The same regions, or fewer, convert.
+within_its_contract :: proc() {
+	f: One = leaves_another;
+	f = leaves_nothing;
+	xs: [dynamic]int = {};
+	_ = f(&mut xs, mem.default_allocator());
+	fmt.println(xs.len());
+}
+
+main :: proc() {}

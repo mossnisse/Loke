@@ -1,0 +1,3 @@
+L0645
+@24:15
+procedure result provenance does not satisfy the inferred contract of `leaves_nothing`

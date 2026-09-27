@@ -71,10 +71,14 @@ check_proc_contracts :: proc(k: ^Checker) {
 		actual, have := result_summary(k.c, a.proc_contract)
 		if b.proc_contract != INVALID_SYMBOL {
 			bound, known := result_summary(k.c, b.proc_contract)
-			if !have || !known || !result_contract_within(actual, bound) {
+			written := written_contract_within(k.c, a.proc_contract, b.proc_contract)
+			if !have || !known || !result_contract_within(actual, bound) || written >= 0 {
 				errorf(k.c, check.span, "L0645", "procedure result provenance does not satisfy the inferred contract of `%s`",
 					contract_name(k.c, b.proc_contract))
-				if have && known {
+				if written >= 0 {
+					add_notef(k.c, check.span, "`%s` may leave an owner in `%s` from a region that contract does not",
+						contract_name(k.c, a.proc_contract), contract_param_name(k.c, a.proc_contract, written))
+				} else if have && known {
 					for index in 0 ..< len(actual.params) {
 						if result_uses_param(actual, index) && !result_uses_param(bound, index) {
 							add_notef(k.c, check.span, "the result of `%s` may borrow `%s`, which that contract excludes",
@@ -223,6 +227,25 @@ result_contract_within :: proc(a, b: Result_Provenance) -> bool {
 		}
 	}
 	return true
+}
+
+// design.md "Procedure result contracts": a call through the contract takes
+// the regions it leaves in each writable argument from the contract's own
+// declaration, so a substitute may leave no others. The first parameter where
+// `from` leaves more, or -1.
+@(private = "file")
+written_contract_within :: proc(c: ^Compiler, from, to: Symbol_Id) -> int {
+	actual, _ := written_region_summary(c, from)
+	bound, _ := written_region_summary(c, to)
+	for set, index in actual {
+		if region_is_empty(set) {
+			continue
+		}
+		if index >= len(bound) || !region_contract_within(set, bound[index]) {
+			return index
+		}
+	}
+	return -1
 }
 
 // Contract-bearing indirect calls use direct-call substitution.

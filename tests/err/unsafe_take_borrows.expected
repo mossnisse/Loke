@@ -1,0 +1,12 @@
+L0513
+@20:14
+this slice is used after `arr`, the local it borrows, has ended
+L0513
+@31:14
+this slice is used after `arr`, the local it borrows, has ended
+L0513
+@42:14
+this slice is used after `arr`, the local it borrows, has ended
+L0646
+@49:2
+this slice borrows `view`, which is not written `@(escape=stored)`, so it cannot reach `h`

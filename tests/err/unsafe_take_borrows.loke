@@ -1,0 +1,65 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+import "core:unsafe";
+
+// design.md "The `unsafe` package": `unsafe.take` reads a value out, and the
+// value keeps what it borrows; `unsafe.write` stores one the way an
+// initialization does. Neither strips provenance, so a caller that never
+// imports `core:unsafe` still sees what a removed element borrows.
+
+popped :: proc() {
+	sa: container.Small_Array([]int, 4) = {};
+	v: []int = nil;
+	{
+		arr := [3]int{1, 2, 3};
+		sa.append(arr[:]);
+		v = sa.pop() or_else nil;
+	}
+	fmt.println(v[0]);
+}
+
+removed :: proc() {
+	sa: container.Small_Array([]int, 4) = {};
+	v: []int = nil;
+	{
+		arr := [3]int{1, 2, 3};
+		sa.append(arr[:]);
+		v = sa.remove(0);
+	}
+	fmt.println(v[0]);
+}
+
+removed_unordered :: proc() {
+	sa: container.Small_Array([]int, 4) = {};
+	v: []int = nil;
+	{
+		arr := [3]int{1, 2, 3};
+		sa.append(arr[:]);
+		v = sa.remove_unordered(0);
+	}
+	fmt.println(v[0]);
+}
+
+Holder :: struct { items: [1][]int }
+
+// Without `@(escape=stored)` the written view may not outlive the call.
+keep :: proc(h: inout Holder, view: []int) {
+	unsafe.write(h.items[0], view);
+}
+
+used_in_scope :: proc() {
+	sa: container.Small_Array([]int, 4) = {};
+	arr := [3]int{1, 2, 3};
+	sa.append(arr[:]);
+	v := sa.pop() or_else nil;
+	fmt.println(v[0]);
+}
+
+main :: proc() {
+	popped();
+	removed();
+	removed_unordered();
+	used_in_scope();
+}

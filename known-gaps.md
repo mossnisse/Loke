@@ -8,79 +8,9 @@ the compiler, unless the rewording is the intended fix.
 ## Gaps
 
 A second audit of the root and region provenance analyses found the entries
-below. The first five accept programs that read or write dead or freed
-memory; each repro builds and runs.
+below. The first accepts a program that reads memory that may have been
+freed; its repro builds and runs.
 
-- **`@(escape=stored)` misses destinations nested in an argument.** design.md
-  "Retaining a borrow" lets a `stored` argument land in any mutable destination
-  the call receives. `prov_writable_arguments` counts only an `inout` argument
-  and the storage one `^mut` or `[]mut` level down, so a `^mut` inside a record
-  argument, a `[]^mut T`, a `^mut ^mut T` or an `inout ^mut T` is written
-  behind the caller's back:
-
-  ```odin
-  Holder :: struct { v: []int }
-  Ctx :: struct { dst: ^mut Holder }
-  keep :: proc(ctx: Ctx, @(escape=stored) a: []int) { ctx.dst.v = a; }
-  h: Holder = {};
-  {
-  	arr := [3]int{1, 2, 3};
-  	keep(Ctx{&mut h}, arr[:]);
-  }
-  fmt.println(h.v[0]); // `arr` has ended
-  ```
-- **Contract substitution ignores written regions.** A call through a
-  `type_of` contract uses the contract declaration's written regions
-  (`prov_call_written_regions`), but `result_contract_within` compares only
-  result dependencies and regions, so a declaration that leaves an owner in a
-  `^mut` argument converts to the type of one that does not (design.md
-  "Procedure result contracts"):
-
-  ```odin
-  a :: proc(dst: ^mut [dynamic]int, alloc: Allocator) -> string { return ""; }
-  b :: proc(dst: ^mut [dynamic]int, alloc: Allocator) -> string {
-  	dst^ = make([dynamic]int, 4, alloc);
-  	return "";
-  }
-  A :: type_of(a);
-  f: A = b;
-  xs: [dynamic]int = {};
-  arena := mem.Arena.init();
-  _ = f(&mut xs, arena.allocator());
-  free_all(arena.allocator()); // `xs` is arena-backed
-  fmt.println(xs[0]);
-  ```
-- **`unsafe.take` strips borrows for callers that never import `core:unsafe`.**
-  `prov_call` returns no loans for `Unsafe_Take`, so `Small_Array`'s `pop`,
-  `remove` and `remove_unordered` summarize to results that borrow nothing.
-  design.md "What is not checked" exempts views stripped through
-  `core:unsafe`, but here the file doing it is the library's, and the caller's
-  view goes unchecked:
-
-  ```odin
-  sa: container.Small_Array([]int, 4) = {};
-  v: []int = nil;
-  {
-  	arr := [3]int{1, 2, 3};
-  	sa.append(arr[:]);
-  	v = sa.pop() or_else nil;
-  }
-  fmt.println(v[0]); // `arr` has ended
-  ```
-- **A mutable carrier loaded through a pointer is no reborrow.** design.md
-  "Weakening and reborrows" makes any copy of a mutable carrier a reborrow of
-  it. A `Load` copies the loans but registers no `Prov_Reborrow`, so the
-  source is not suspended:
-
-  ```odin
-  xs := [dynamic]int{1};
-  p := &mut xs;
-  pp := &p;
-  q := pp^;     // a copy of `p` that does not suspend it
-  e := &q^[0];
-  p^.append(2); // may reallocate under `e`
-  fmt.println(e^);
-  ```
 - **A bare carrier in static storage forgets what it borrows.**
   `prov_slot_for_symbol` gives a file-scope or `static` carrier no slot, citing
   an exemption design.md "What is not checked" does not state, and
@@ -121,6 +51,21 @@ memory; each repro builds and runs.
   a: Holder;
   b: Holder;
   main :: proc() { b = a; }
+  ```
+- **`unsafe.write` does not record the region of the owner it stores.**
+  design.md "The `unsafe` package" stores the value the way an initialization
+  takes it, and `self.items[0] = move(value)` into caller storage needs
+  `@(escape=stored)` on `value` (L0536). Through `unsafe.write` it does not, so
+  a caller is not told that its argument's region now backs `self`. Checking it
+  needs that annotation on `try_shared_from_move` in `base/runtime/shared.loke`
+  and on the `move` parameters of the containers in `tests/run`:
+
+  ```odin
+  Buffer :: struct { count: int, @(initialized = count) items: [4]string }
+  push :: proc(self: inout Buffer, value: move string) {
+  	unsafe.write(self.items[self.count], move(value)); // accepted
+  	self.count += 1;
+  }
   ```
 - **L0536 names the destination, not the escaping owner.** design.md
   "Required diagnostics" asks for the owner and its region.

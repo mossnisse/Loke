@@ -1,0 +1,42 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows": any copy of a mutable carrier is a
+// reborrow of it, including one read out through a pointer, so the carrier it
+// was read from is suspended while the copy is in use.
+
+loaded :: proc() {
+	xs := [dynamic]int{1};
+	p := &mut xs;
+	pp := &p;
+	q := pp^;
+	e := &q^[0];
+	p^.append(2); // may reallocate under `e`
+	fmt.println(e^);
+}
+
+weakened :: proc() {
+	xs := [dynamic]int{1};
+	p := &mut xs;
+	pp := &p;
+	q: ^[dynamic]int = pp^;
+	p^.append(2);
+	fmt.println(q^[0]);
+}
+
+after_last_use :: proc() {
+	xs := [dynamic]int{1};
+	p := &mut xs;
+	pp := &p;
+	q := pp^;
+	q^.append(2);
+	p^.append(3);
+	fmt.println(xs.len());
+}
+
+main :: proc() {
+	loaded();
+	weakened();
+	after_last_use();
+}

@@ -1,0 +1,12 @@
+L0513
+@21:14
+this slice is used after `arr`, the local it borrows, has ended
+L0513
+@30:14
+this slice is used after `arr`, the local it borrows, has ended
+L0513
+@39:14
+this slice is used after `arr`, the local it borrows, has ended
+L0513
+@48:14
+this slice is used after `arr`, the local it borrows, has ended

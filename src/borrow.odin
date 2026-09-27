@@ -198,6 +198,9 @@ Prov_Slot :: struct {
 	fresh_access_index: int,
 	// A result held across its exit path's deferred statements.
 	returned: bool,
+	// Read out through a carrier, so what it copies is known only once the
+	// `Load` is resolved.
+	loaded: bool,
 }
 
 // A slot holding no fresh borrow. Zero would name loan 0 and event 0.
@@ -1775,6 +1778,7 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 				reads := make([dynamic]int, 0, 4, state.graph.alloc)
 				load_pointee_content(state, event, state.reach, &reads)
 				event.sources = reads[:]
+				prov_reborrow_loaded(state.graph, event)
 			} else {
 				run_prov_event(state, event, state.reach, state.invalid, state.ended)
 			}
