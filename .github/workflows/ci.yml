@@ -1,0 +1,46 @@
+# The whole gate, test-all.ps1 -RequireTools, on Windows x64. The runner image
+# already has LLVM, MSVC, and the Windows SDK where lokec looks for them; Odin
+# and nasm are installed here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      # readme.md "Build and run" names the Odin the tree builds with; the
+      # dev-2025-09 release is that nightly's commit, 42c2cb8.
+      - name: Install Odin dev-2025-09
+        run: |
+          $zip = "$env:RUNNER_TEMP\odin.zip"
+          Invoke-WebRequest https://github.com/odin-lang/Odin/releases/download/dev-2025-09/odin-windows-amd64-dev-2025-09.zip -OutFile $zip
+          Expand-Archive $zip "$env:RUNNER_TEMP\odin"
+          $odin = Get-ChildItem "$env:RUNNER_TEMP\odin" -Recurse -Filter odin.exe | Select-Object -First 1
+          $odin.DirectoryName >> $env:GITHUB_PATH
+          & $odin.FullName version
+
+      # The installer does not reach this job's PATH; LOKE_NASM names it instead.
+      - name: Install nasm
+        run: |
+          choco install nasm --no-progress -y
+          $nasm = (Get-Item 'C:\Program Files\NASM\nasm.exe').FullName
+          "LOKE_NASM=$nasm" >> $env:GITHUB_ENV
+          & $nasm -v
+
+      - name: Test
+        run: .\test-all.ps1 -RequireTools

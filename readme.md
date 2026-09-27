@@ -258,7 +258,9 @@ not cover them, which is why they are written down.
 Use `.\test-all.ps1 -SkipOptimizationMatrix` for unit tests, a rebuild, and the
 baseline integration suite only. Add `-RequireTools` on a machine that has nasm
 and a C host toolset, so tests that would skip for a missing tool fail instead.
-The suites can also be run separately:
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs
+`.\test-all.ps1 -RequireTools` on Windows x64 for every push to `main` and every
+pull request. The suites can also be run separately:
 
 ```powershell
 odin test src -vet-unused -vet-shadowing -vet-packages:lokec

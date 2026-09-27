@@ -13,14 +13,13 @@ initiative below should receive a detailed implementation plan when work begins.
 Make the existing Windows build and test process reproducible before multiplying
 it across more hosts. A release is the compiler together with the `base/`,
 `core/`, and `runtime/` trees it discovers beside itself, not a standalone
-`lokec.exe`.
+`lokec.exe`. CI already runs the full test gate on Windows x64
+([.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
 Main work:
 
 - define the v1 release gate as an empty known-gaps list, or document any
   intentionally accepted exception as a specification change;
-- run citation checks, compiler tests, integration tests, layout checks, and the
-  optimization matrix in CI on Windows x64;
 - publish versioned release bundles containing the compiler and every required
   installation-relative component;
 - verify a release from a clean machine or image rather than from a developer
@@ -240,7 +239,7 @@ compiler task.
 
 ## Suggested order
 
-1. Establish Windows CI, the v1 release gate, reproducible release bundles,
+1. On the existing Windows CI, establish reproducible release bundles,
    compatibility records, fuzzing, and performance baselines.
 2. Publish introductory tutorials while filling the concrete standard-library
    gaps those tutorials and real programs expose.
