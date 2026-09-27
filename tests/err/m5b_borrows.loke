@@ -179,3 +179,11 @@ switch_header_borrow :: proc(n: int) {
 	switch (x := n; n) { case 0: p = &x; case: p = &x; }
 	fmt.println(p^);
 }
+
+// Released on the back edge and never replaced, so the next pass frees it again.
+double_free_in_a_loop :: proc() {
+	p := new(int);
+	for (i := 0; i < 3; i += 1) {
+		free(p);
+	}
+}

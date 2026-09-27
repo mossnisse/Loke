@@ -58,3 +58,6 @@ this pointer is used after `x`, the local it borrows, has ended
 L0513
 @180:14
 this pointer is used after `x`, the local it borrows, has ended
+L0514
+@187:3
+this allocation has already been released

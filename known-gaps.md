@@ -10,19 +10,6 @@ the compiler, unless the rewording is the intended fix.
 A second audit of the root and region provenance analyses found the entries
 below.
 
-- **Freeing and reallocating in a loop is reported as a double release.**
-  `invalid` is kept per loan, not per slot: at the loop head `p` may hold the
-  first allocation (from the entry edge) and that allocation is released (on
-  the back edge), so L0514 reports a second `free` no path performs:
-
-  ```odin
-  p := new(int);
-  for (i := 0; i < 3; i += 1) {
-  	free(p);
-  	p = new(int);
-  }
-  free(p);
-  ```
 - **L0536 names the destination, not the escaping owner.** design.md
   "Required diagnostics" asks for the owner and its region.
   `prov_region_escape_set` names the destination and calls the region "created

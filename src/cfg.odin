@@ -75,14 +75,13 @@ Flow_Block :: struct {
 	visited:     bool,
 
 	// Provenance modes, solved by `src/borrow.odin`. Reaching loans are packed
-	// one `ceil(loans/8)`-byte row per slot.
+	// one `ceil(2*loans/8)`-byte row per slot: which loans the slot may hold,
+	// then which of those it may hold after their release.
 	prov:            [dynamic]Prov_Event,
 	reach_entry:     []u8,
 	reach_exit:      []u8,
 	precision_entry: []Precision_Loss,
 	precision_exit:  []Precision_Loss,
-	invalid_entry:   []bool,
-	invalid_exit:    []bool,
 	ended_entry:     []bool,
 	ended_exit:      []bool,
 	live_entry:      []bool,
