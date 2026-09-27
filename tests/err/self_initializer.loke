@@ -1,0 +1,10 @@
+package main;
+
+// design.md "Variable declarations": a local is dead until its initializer has
+// run, so the declaration cannot read it. Found by the checker fuzzer: the
+// local was left without a type and no error, and the backend rejected it.
+
+main :: proc() {
+	area := 8 * area;
+	a, b := 1, a;
+}

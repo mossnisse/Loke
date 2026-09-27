@@ -1,0 +1,19 @@
+package main;
+
+// Code whose check reported errors is not run at compile time. Found by the
+// checker fuzzer, each as an internal contract violation from the evaluator.
+// An initializer whose own check failed is not evaluated at all; one that calls
+// a procedure whose body failed earlier says so.
+
+Reverse :: struct { second, first: int }
+named :: proc(seed: $T) -> T { return T{counter = 22, first = 11}; }
+folded :: named(Reverse{});
+
+bad :: proc() -> int { return nope; }
+FROM_BAD :: bad();
+
+// Nor is a constant initializer that reported an error.
+Table :: struct { sum: [2]int }
+NESTED :: Table{values = [2]int{11, 22}};
+
+main :: proc() {}

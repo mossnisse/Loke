@@ -57,7 +57,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Type_Interface, "generic_params where_clauses requirements", ""},
 
 		{Block, "stmts", ""},
-		{Decl, "kind names duration declared_type via values top_level", "symbols value_clones destructure sig_state check_state"},
+		{Decl, "kind names duration declared_type via values top_level", "symbols value_clones destructure sig_state check_state check_failed"},
 		{Stmt_Error, "", ""},
 		{Stmt_Expr, "exprs", ""},
 		{Stmt_Assign, "op op_span lhs rhs", "rhs_clones destination_live destructure operator operator_direct place_setter setter_bound"},

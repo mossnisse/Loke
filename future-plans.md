@@ -25,10 +25,12 @@ policy, upgrade notes, and the release checklist.
 Main work:
 
 - record compile time, peak compiler memory, output size, and representative
-  program performance so regressions are visible;
-- extend the parser mutation fuzzer (`mutation_fuzzing` in
-  `src/syntax_corpus_test.odin`) to the checker and diagnostic paths, and retain
-  every discovered failure as a minimized test.
+  program performance so regressions are visible.
+
+The parser mutation fuzzer (`mutation_fuzzing` in
+`src/syntax_corpus_test.odin`) has a checker counterpart in
+`tests/checker_fuzz_test.odin` ([compiler-architecture.md](compiler-architecture.md)
+"Testing and verification").
 
 Done means a tagged revision produces a repeatable, installable bundle whose
 tests pass in CI and whose version and compatibility expectations are clear.

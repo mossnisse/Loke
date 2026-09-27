@@ -1,8 +1,8 @@
 package main;
 import "core:fmt";
 
-// The same for an interface's own `where` predicate: the procedure it runs is
-// checked for good, so the predicate's rollback must leave that body's errors.
+// The same for an interface's own `where` predicate: the procedure it calls is
+// checked for good, and its errors are reported although the predicate fails.
 
 Small :: interface($Self: type) where fits(size_of(Self)) {}
 

@@ -1825,6 +1825,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	} else if gate_type(k, proc_type, literal.span) {
 		check_proc_body(k, literal)
 	}
+	instance.decl.check_failed = errors_since(k.c, before)
 	if len(k.c.diagnostics) > before {
 		note_instantiation_stack(k)
 	}

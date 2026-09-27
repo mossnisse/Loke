@@ -8,6 +8,17 @@ checklist.
 
 ## [Unreleased]
 
+### Fixed
+
+- A local read in the declaration that introduces it, as in `x := x + 1;`, is
+  an error (`L0500`) instead of reaching the backend as an internal failure.
+- A compile-time call of a procedure whose body has errors reports that the
+  body has errors (`L0344`) instead of an internal failure. This includes a
+  `where` or interface predicate, which no longer runs such a body even when the
+  errors are in a branch it would not take.
+- A constant whose initializer reported an error, such as a literal naming a
+  field the record lacks, is not evaluated, instead of failing internally.
+
 ### Documentation
 
 - [releasing.md](releasing.md) states what a version promises before and

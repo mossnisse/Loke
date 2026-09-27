@@ -462,6 +462,14 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 		case .Checked:
 		}
 	}
+	// design.md "Variable declarations": a local is dead until its initializer
+	// has run, so the initializer cannot read it. Nothing else would say so: the
+	// local has no type yet, and an invalid type reports nothing further.
+	if sym.decl != nil && sym.kind == .Var && !sym.decl.top_level && sym.decl.check_state == .Checking {
+		errorf(k.c, v.span, "L0500", "`%s` cannot be used in the declaration that introduces it: it has no value yet", v.name)
+		v.type = INVALID_TYPE
+		return
+	}
 
 	annotate_symbol_use(k, &v.base, symbol_id, v.name)
 }

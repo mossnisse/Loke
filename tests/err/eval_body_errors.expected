@@ -1,0 +1,11 @@
+L0363
+`Reverse` has no field `counter`
+L0315
+@12:31
+unknown name `nope`
+L0344
+@13:13
+`bad` cannot be called at compile time: its body has errors
+L0363
+@17:17
+`Table` has no field `values`

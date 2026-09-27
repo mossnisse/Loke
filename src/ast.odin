@@ -995,6 +995,9 @@ Decl :: struct {
 	// Separate, since the evaluator may need a body before its checking phase.
 	sig_state:     Check_State,
 	check_state:   Check_State,
+	// Checking reported an error, so the evaluator must not run the body: its
+	// nodes may carry no resolution at all.
+	check_failed:  bool,
 }
 
 // The literal of `name :: proc() { ... }`, or nil.

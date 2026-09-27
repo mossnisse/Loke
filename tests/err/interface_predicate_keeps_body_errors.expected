@@ -1,3 +1,7 @@
+L0444
+@14:2
+`int` does not satisfy `Small(int)`
+`fits` cannot be called at compile time: its body has errors
 L0310
 @19:14
 this constant is not a value of `int`

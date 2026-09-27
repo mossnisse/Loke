@@ -500,6 +500,15 @@ end_probe :: proc(c: ^Compiler, probe: Probe, keep := false) {
 
 // Moves every diagnostic past `length`, with its share of `error_count`, out of
 // `truncate_diagnostics`' reach until `release_held_diagnostics`.
+// Whether an error was reported since `mark`, a length of `c.diagnostics`.
+// Diagnostics a nested check held aside belong to that check.
+errors_since :: proc(c: ^Compiler, mark: int) -> bool {
+	for d in c.diagnostics[clamp(mark, 0, len(c.diagnostics)):] {
+		if d.severity == .Error { return true }
+	}
+	return false
+}
+
 hold_diagnostics :: proc(c: ^Compiler, length: int) {
 	wanted := clamp(length, 0, len(c.diagnostics))
 	if wanted == len(c.diagnostics) {

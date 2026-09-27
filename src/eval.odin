@@ -2082,6 +2082,12 @@ eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Sp
 		eval_fail(ev, site, "L0342", "compile-time evaluation exceeded a call depth of %d", EVAL_MAX_DEPTH)
 		return Eval_Value{}, false
 	}
+	// Its errors are already reported; running it would trip over nodes the
+	// checker gave up on.
+	if symbol.decl != nil && symbol.decl.check_failed {
+		eval_fail(ev, site, "L0344", "`%s` cannot be called at compile time: its body has errors", eval_proc_name(ev.k.c, symbol_id))
+		return Eval_Value{}, false
+	}
 
 	frame := new(Eval_Frame, ev.alloc)
 	if frame == nil { return Eval_Value{}, false }

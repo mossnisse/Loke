@@ -499,6 +499,16 @@ The integration harness is `tests/corpus_test.odin`:
 | `tests/obj/`, `tests/os/` | C-host object linking, and real process arguments and environment values. |
 | `tests/examples/` | Every program in `examples/` is built from its real source and must carry a classification; an output example's stdout is compared with `tests/examples/<name>.expected`. |
 
+`tests/checker_fuzz_test.odin` mutates the `tests/run/` programs (another name
+from the same file, another number or operator, a duplicated or deleted line)
+and runs `lokec -emit-ll` on each mutant. The compiler must exit 0 or 1 within
+a time limit, report no internal contract violation (`L0405`), never repeat a
+whole diagnostic, and report no more errors than the mutant has lines. A
+failure is reduced line by line, printed, and kept in `tests/tmp/fuzz/`; it
+becomes a `tests/err/` or `tests/run/` case with the fix. The fixed run is
+deterministic; `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` (per program) explore
+further.
+
 Every diagnostic code the compiler can write is pinned by a case in one of those
 directories, or by a harness or unit test for the ones no corpus shape reaches
 — a missing input, an unwritable module, an absent clang or assembler, a

@@ -1,3 +1,6 @@
+L0344
+@9:27
+`allowed` cannot be called at compile time: its body has errors
 L0500
 @24:15
 it has already been moved

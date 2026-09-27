@@ -2063,8 +2063,10 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	d.check_state = .Checking
+	mark := len(k.c.diagnostics)
 	check_decl_inner(k, d)
 	d.check_state = .Checked
+	d.check_failed = errors_since(k.c, mark)
 	// Here rather than in `check_decl_inner`, which returns from several places.
 	if d.duration != .None && !d.top_level && d.kind == .Var {
 		record_static_local(k, d)
@@ -2211,8 +2213,14 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			continue
 		}
 
+		value_mark := len(k.c.diagnostics)
 		type := check_single_expr(k, value, declared)
-		if type == INVALID_TYPE {
+		// A literal with an unknown field still has a type, but an initializer
+		// that reported an error is never evaluated: its nodes may carry no
+		// resolution. A variable keeps the type; a constant, which would have no
+		// value, is left invalid, so its uses report nothing further.
+		evaluable := !errors_since(k.c, value_mark)
+		if type == INVALID_TYPE || (d.kind == .Const && !evaluable) {
 			if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 				symbol.type = declared
 			}
@@ -2242,7 +2250,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		}
 
 		// The codes here are `require_const`'s fallback, unpinned by design.
-		if d.top_level && d.kind == .Var {
+		if d.top_level && d.kind == .Var && evaluable {
 			require_const(k, value, "a file-scope initializer", "L0325")
 		}
 

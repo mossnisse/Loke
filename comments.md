@@ -327,9 +327,10 @@ rather than a wrong answer; the wrong answers it found are in
   ordinary checker with `speculation_depth` raised, each registry that must not
   remember the probe checks the counter itself, and rollback removes only
   diagnostics. Enrollments reached from a procedure literal inside a probe have
-  missed the check four times: hoisting, `checked_bodies`, and static locals
-  (fixed; `probe_emission_state` in `src/front_end_test.odin` now probes such a
-  literal), and still contributed lifecycle members. `begin_probe`/`end_probe`
+  missed the check four times: hoisting, `checked_bodies`, static locals, and
+  contributed lifecycle members (all fixed; `probe_emission_state` in
+  `src/front_end_test.odin` probes such a literal and counts each registry,
+  `synth_procs` included). `begin_probe`/`end_probe`
   now pair the depth with the rollback, but the silent probe in
   `build_generic_candidate` still truncates diagnostics at depth zero, which
   compiler-architecture.md "Checking and overload resolution" rules out: its
@@ -371,6 +372,24 @@ rather than a wrong answer; the wrong answers it found are in
   lines in `emit_llvm_runtime.odin` are kept in step by hand. With opaque
   pointers a mismatched parameter list is a silent miscompile, not a link error.
   Generate one from the other, or compare them in a test?
+
+## Open checker-fuzzer findings
+
+The checker fuzzer (`tests/checker_fuzz_test.odin`) found these with
+`LOKE_FUZZ_SEED=1 LOKE_FUZZ_MUTANTS=10`. They break no rule of the
+specification, so they are not in [known-gaps.md](known-gaps.md), but each
+fails one of the fuzzer's checks under some seed.
+
+- **A copyable fixed array with a `hook(copy)` element compiles in quadratic
+  time.** `arr := [N]Value{Value{1}};`, where `Value` has a copy hook, takes
+  2.4 s at N = 1024 and 9.4 s at N = 2048; without the hook, N = 65536 takes
+  2 s. The fuzzer reports it as a hang at N = 65536.
+- **An error in a generic record's field type is repeated per instance without
+  saying which.** For `Sized :: struct($V: [2]int) { items: [V[18446744073709551616]]int }`
+  and two instances, `L0352` is reported twice, identically, with no
+  "while instantiating" note; the `L0361` that follows each is a cascade from
+  the same unrepresentable constant, and the note names the instance
+  `Sized({0,1:1,1:9})` rather than `Sized([2]int{1, 9})`.
 
 # Differences from Odin and design motivations
 
