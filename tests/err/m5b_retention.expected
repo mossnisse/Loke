@@ -15,7 +15,7 @@ L0646
 this slice borrows `values`, which is not written `@(escape=static)`, so it cannot reach `global_holder`
 L0647
 @45:2
-this slice borrows `tls_view`, which does not outlive `global_view`: process-lifetime storage
+this slice borrows existing content of `tls_view`, which does not outlive `global_view`: process-lifetime storage
 L0646
 @51:2
 this slice borrows `values`, which is not written `@(escape=static)`, so it cannot reach `held`

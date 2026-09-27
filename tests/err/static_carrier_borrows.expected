@@ -1,0 +1,6 @@
+L0512
+@21:2
+`g_arr` cannot be modified here: a read-only slice of it is still in use
+L0512
+@29:2
+`g_arr` cannot be modified here: a read-only slice of it is still in use

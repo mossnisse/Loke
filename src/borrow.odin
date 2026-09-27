@@ -58,8 +58,11 @@ root_phrase :: proc(root: Prov_Root) -> string {
 	if root.symbol != INVALID_SYMBOL {
 		return root_label(root)
 	}
-	if (root.kind == .Unknown || root.kind == .Allocation) && root.name != "" {
-		return root.name
+	#partial switch root.kind {
+	case .Unknown, .Allocation, .Static, .Thread_Local:
+		if root.name != "" {
+			return root.name
+		}
 	}
 	return fmt.tprintf("the %s it borrows", root_kind_text(root.kind))
 }

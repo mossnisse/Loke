@@ -1,0 +1,50 @@
+package main;
+
+import "core:fmt";
+
+// design.md "What is not checked" does not exempt a view stored in a global: a
+// bare carrier in static storage holds what it was given, as a global
+// record's carrier fields do. Until then it holds what another body may have
+// stored there: borrows that outlive the process, or its thread for a
+// `thread_local` (design.md "Retaining a borrow").
+
+g_view: []int;
+g_arr: [dynamic]int;
+
+H :: struct { v: []int }
+g_holder: H;
+g_copy: H;
+
+bare :: proc() {
+	g_arr.append(1);
+	g_view = g_arr[:];
+	g_arr.append(2); // may reallocate under `g_view`
+	fmt.println(g_view[0]);
+}
+
+in_static :: proc() {
+	view: static []int;
+	g_arr.append(1);
+	view = g_arr[:];
+	g_arr.append(2);
+	fmt.println(view[0]);
+}
+
+// Reading one set elsewhere is not reported, nor is a view last used before
+// the storage it borrows changes, and either may be kept in static storage.
+get :: proc() -> []int { return g_view; }
+
+settled :: proc() {
+	g_view = g_arr[:];
+	fmt.println(g_view.len());
+	g_arr.append(3);
+	g_holder.v = get();
+	g_copy = g_holder;
+	fmt.println(get().len(), g_copy.v.len());
+}
+
+main :: proc() {
+	bare();
+	in_static();
+	settled();
+}

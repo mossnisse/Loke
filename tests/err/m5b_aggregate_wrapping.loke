@@ -521,8 +521,8 @@ tls_aggregate_retention_escape :: proc() {
 	aggregate_global_view = aggregate_tls_holder.view;
 }
 
-// A body that has not established a global aggregate's content must retain an
-// explicit unknown fact rather than silently treating the field as empty.
+// A body that has not established a global aggregate's content assumes what
+// any static storage may hold: borrows that outlive the process.
 unknown_global_holder: Holder;
 unknown_global_view: []int;
 unknown_global_aggregate_read :: proc() {

@@ -416,8 +416,8 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 	return root
 }
 
-// A carrier variable's slot. A static-duration carrier gets none: design.md lists
-// a view stored in a global as unchecked.
+// A carrier variable's slot. A static-duration one starts holding whatever
+// another body may have stored there, as a global's content slots do.
 @(private = "file")
 prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 	if id == INVALID_SYMBOL {
@@ -436,16 +436,30 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 	if sym.kind != .Var && sym.kind != .Parameter {
 		return 0, false
 	}
-	if symbol_outlives_bodies(sym) {
-		return 0, false
-	}
 	entry := empty_prov_slot(id)
 	entry.name = identifier_text(graph.k.c, sym.name)
 	entry.span = sym.span
 	append(&graph.prov_slots, entry)
 	slot := len(graph.prov_slots) - 1
 	graph.slot_by_symbol[id] = slot
+	if symbol_outlives_bodies(sym) {
+		loan := prov_new_loan(
+			graph, prov_existing_content_root(graph, sym), nil,
+			carrier_is_mutable(graph.k.c, sym.type), sym.span, carrier_noun(graph.k.c, sym.type),
+		)
+		append(&graph.entry_defs, Prov_Entry_Def{slot = slot, loan = loan})
+	}
 	return slot, true
+}
+
+// Another body may have filled static storage, with borrows that outlive the
+// process, or the thread for a `thread_local` (design.md "Retaining a borrow").
+@(private = "file")
+prov_existing_content_root :: proc(graph: ^Flow_Graph, sym: ^Symbol) -> Root_Id {
+	return prov_new_root(
+		graph, sym.duration == .Thread_Local ? .Thread_Local : .Static, sym.span,
+		fmt.aprintf("existing content of `%s`", identifier_text(graph.k.c, sym.name), allocator = graph.alloc),
+	)
 }
 
 // Each literal element's borrows go to its own place; an element whose slot
@@ -575,16 +589,9 @@ prov_content_slots :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> []int {
 	if len(shape) == 0 {
 		return nil // an all-scalar value initializes no payload facts
 	}
-	external_duration := symbol_outlives_bodies(sym)
 	unknown_root := NO_ROOT
-	if external_duration {
-		// Another body may have filled this storage, so it starts as unknown.
-		unknown_root = prov_new_root(
-			graph, .Unknown, sym.span,
-			fmt.aprintf(
-				"existing content of `%s`", identifier_text(graph.k.c, sym.name), allocator = graph.alloc,
-			),
-		)
+	if symbol_outlives_bodies(sym) {
+		unknown_root = prov_existing_content_root(graph, sym)
 	}
 	slots := make([]int, len(shape), graph.alloc)
 	for path, index in shape {
@@ -2594,19 +2601,6 @@ prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind) -
 		sources := prov_one(graph, slot)
 		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = v.span})
 		return sources
-	}
-	// A carrier in static or thread storage reads as a borrow of that storage.
-	if sym := symbol_of(graph.k.c, v.symbol); sym != nil && sym.duration != .None {
-		if type_is_carrier(graph.k.c, sym.type) {
-			if root := prov_root_for_symbol(graph, v.symbol); root != NO_ROOT {
-				return prov_borrow(
-					graph, root, nil,
-					carrier_is_mutable(graph.k.c, sym.type),
-					v.span,
-					carrier_noun(graph.k.c, sym.type),
-				)
-			}
-		}
 	}
 	if content := prov_content_slots(graph, v.symbol); len(content) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = v.span})

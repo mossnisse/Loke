@@ -8,25 +8,8 @@ the compiler, unless the rewording is the intended fix.
 ## Gaps
 
 A second audit of the root and region provenance analyses found the entries
-below. The first accepts a program that reads memory that may have been
-freed; its repro builds and runs.
+below.
 
-- **A bare carrier in static storage forgets what it borrows.**
-  `prov_slot_for_symbol` gives a file-scope or `static` carrier no slot, citing
-  an exemption design.md "What is not checked" does not state, and
-  `prov_read_ident` reads it as a borrow of its own storage. The same view in a
-  field of a global record is tracked, and the program below rejected:
-
-  ```odin
-  g_view: []int;
-  g_arr: [dynamic]int;
-  main :: proc() {
-  	g_arr.append(1);
-  	g_view = g_arr[:];
-  	g_arr.append(2); // may reallocate under `g_view`
-  	fmt.println(g_view[0]);
-  }
-  ```
 - **Freeing and reallocating in a loop is reported as a double release.**
   `invalid` is kept per loan, not per slot: at the loop head `p` may hold the
   first allocation (from the entry edge) and that allocation is released (on
@@ -39,18 +22,6 @@ freed; its repro builds and runs.
   	p = new(int);
   }
   free(p);
-  ```
-- **Copying a global record that holds a borrow into another global is
-  rejected.** `prov_content_slots` gives a global's existing content an
-  `Unknown` root, which `root_satisfies_retention` refuses for every
-  destination, although only a borrow that outlives the process can have been
-  stored there (L0647):
-
-  ```odin
-  Holder :: struct { v: []int }
-  a: Holder;
-  b: Holder;
-  main :: proc() { b = a; }
   ```
 - **`unsafe.write` does not record the region of the owner it stores.**
   design.md "The `unsafe` package" stores the value the way an initialization

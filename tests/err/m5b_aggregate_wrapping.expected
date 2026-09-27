@@ -170,9 +170,6 @@ L0647
 @521:2
 this slice borrows `aggregate_tls_numbers`, which does not outlive `aggregate_global_view`: process-lifetime storage
 L0647
-@529:2
-this slice borrows existing content of `unknown_global_holder`, which does not outlive `unknown_global_view`: process-lifetime storage
-L0647
 @538:2
 this pointer borrows this allocation, which does not outlive `retained_allocation`: process-lifetime storage
 L0647
