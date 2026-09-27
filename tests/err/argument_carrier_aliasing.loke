@@ -1,0 +1,64 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Weakening and reborrows": a mutable carrier passed to a call, or
+// the storage `inout p^` reaches through one, is reborrowed for the call, so
+// another argument cannot use it at the same time.
+
+grow_and_read :: proc(a: inout [dynamic]int, b: []int) {
+	for (i := 0; i < 1000; i += 1) { a.append(i); }
+	fmt.println(b[0]);
+}
+both :: proc(a: []mut int, b: []mut int) { a[0] = b[0]; }
+through_pointer :: proc() {
+	xs := [dynamic]int{1};
+	p := &mut xs;
+	grow_and_read(inout p^, p^[:]);
+}
+two_views :: proc() {
+	arr := [2]int{1, 2};
+	v: []mut int = arr[:];
+	both(v, v);
+}
+// Distinct carriers, and one used again after the call, are fine.
+distinct_carriers :: proc() {
+	xs := [dynamic]int{1};
+	p := &mut xs;
+	grow_and_read(inout p^, [1]int{3}[:]);
+	p^.append(2);
+	arr := [2]int{1, 2};
+	v: []mut int = arr[:];
+	arr2 := [2]int{3, 4};
+	w: []mut int = arr2[:];
+	both(v, w);
+	both(v, w);
+	v[0] = 1;
+	fmt.println(v[0], w[0], xs.len());
+}
+
+Pair :: struct { s: string }
+share :: proc(a: inout Pair, b: Pair) { a.s = "x"; fmt.println(b.s); }
+value_param :: proc() {
+	x := Pair{"hello"};
+	p := &mut x;
+	share(inout p^, p^);
+}
+// The carrier read first and lent second.
+read_and_grow :: proc(b: []int, a: inout [dynamic]int) {
+	a.append(1);
+	fmt.println(b[0]);
+}
+read_then_lend :: proc() {
+	xs := [dynamic]int{1};
+	p := &mut xs;
+	read_and_grow(p^[:], inout p^);
+}
+overwrite :: proc(b: []int, a: []mut int) { a[0] = b[0] + 1; }
+view_then_lend :: proc() {
+	arr := [2]int{1, 2};
+	v: []mut int = arr[:];
+	overwrite(v, v);
+}
+
+main :: proc() {}

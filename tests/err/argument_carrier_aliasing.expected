@@ -1,0 +1,15 @@
+L0641
+@17:26
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@22:10
+`v` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@45:18
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@55:29
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@61:15
+`v` cannot be used here: a mutable reborrow of it is still in use

@@ -8,25 +8,9 @@ the compiler, unless the rewording is the intended fix.
 ## Gaps
 
 A second audit of the root and region provenance analyses found the entries
-below. The first six accept programs that read or write dead or freed
+below. The first five accept programs that read or write dead or freed
 memory; each repro builds and runs.
 
-- **One call's arguments may alias through one carrier.** `inout p^` is no
-  place to `prov_place_of`, so it takes neither a write access nor a mutable
-  loan, and `prov_reborrow` records nothing for an argument (`into == -1`), so
-  no argument suspends the carrier another is read through (design.md
-  "Weakening and reborrows"). `f(inout p^, p^)` with a value parameter, and one
-  `[]mut` passed to two `[]mut` parameters, are accepted too:
-
-  ```odin
-  grow_and_read :: proc(a: inout [dynamic]int, b: []int) {
-  	for (i := 0; i < 1000; i += 1) { a.append(i); }
-  	fmt.println(b[0]);
-  }
-  xs := [dynamic]int{1};
-  p := &mut xs;
-  grow_and_read(inout p^, p^[:]); // `b` views what `a` reallocates
-  ```
 - **`@(escape=stored)` misses destinations nested in an argument.** design.md
   "Retaining a borrow" lets a `stored` argument land in any mutable destination
   the call receives. `prov_writable_arguments` counts only an `inout` argument

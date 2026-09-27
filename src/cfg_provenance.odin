@@ -3446,6 +3446,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				borrowed = prov_join(graph, borrowed, actuals[index])
 				continue
 			}
+			// design.md "Weakening and reborrows": `inout p^` lends what `p` names,
+			// as `&mut p^` would, so `p` is suspended for the call.
+			if carriers, _, through := prov_read_through_carrier(graph, argument); through {
+				actuals[index] = prov_lend_carrier(graph, carriers, borrowed, expr_span(argument))
+				borrowed = prov_join(graph, borrowed, actuals[index])
+				continue
+			}
 		}
 		if index == 0 && container_op == .Map_Lookup_Value {
 			// `lookup_value` copies the payload, carrying its stored dependencies.
@@ -3498,7 +3505,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		} else {
 			actuals[index] = walk_flow_expr(graph, argument)
 		}
-		prov_reborrow(graph, actuals[index], prov_parameter_type(graph, v, index))
+		param_type := prov_parameter_type(graph, v, index)
+		prov_reborrow(graph, actuals[index], param_type)
+		// A mutable carrier passed on as one is reborrowed until the call and what
+		// it returns are done with it, so no other argument may use it meanwhile.
+		if carrier_is_mutable(c, param_type) && !(index == 0 && has_receiver) {
+			actuals[index] = prov_lend_carrier(graph, actuals[index], borrowed, expr_span(argument))
+		}
 		borrowed = prov_join(graph, borrowed, actuals[index])
 	}
 	prov_call_resets(graph, v)
@@ -3509,6 +3522,19 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
 	return prov_store_call_results(graph, v, actuals, borrowed)
+}
+
+// design.md "Weakening and reborrows": a mutable carrier lent to a call is
+// reborrowed for it. The arguments already evaluated are held through the call,
+// so they are used again after the reborrow is taken, which catches one that
+// reads through the same carrier.
+@(private = "file")
+prov_lend_carrier :: proc(graph: ^Flow_Graph, carriers, held: []int, span: Span) -> []int {
+	lent := prov_reborrow_traversal(graph, carriers, span, true)
+	if len(held) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = span})
+	}
+	return lent
 }
 
 // The caller's half of `@(escape=...)`. `static` must outlive the process;
