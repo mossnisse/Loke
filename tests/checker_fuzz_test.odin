@@ -13,6 +13,7 @@
 package tests
 
 import "core:fmt"
+import "core:hash"
 import "core:log"
 import "core:os"
 import os2 "core:os/os2"
@@ -46,7 +47,7 @@ Fuzz_Failure :: enum {
 checker_mutation_fuzzing :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	os.make_directory(FUZZ_DIR)
-	state := env_u64("LOKE_FUZZ_SEED", 0x2545f4914f6cdd1d)
+	base := env_u64("LOKE_FUZZ_SEED", 0x2545f4914f6cdd1d)
 	mutants := int(env_u64("LOKE_FUZZ_MUTANTS", 3))
 	cases, _ := filepath.glob("tests/run/*.loke")
 	testing.expect(t, len(cases) > 0, "no run cases to mutate")
@@ -59,6 +60,8 @@ checker_mutation_fuzzing :: proc(t: ^testing.T) {
 			continue
 		}
 		flags := extra_flags(path)
+		// Seeded per program, so a new run case changes only its own mutants.
+		state := base ~ hash.fnv64a(transmute([]byte)filepath.base(path))
 		for _ in 0 ..< mutants {
 			seed := state
 			mutant := mutate_source(string(data), &state)

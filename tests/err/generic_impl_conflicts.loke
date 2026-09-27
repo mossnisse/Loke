@@ -1,0 +1,40 @@
+package main; import "core:fmt";
+
+// design.md "Generic types": between two blocks that both apply, the more
+// specialized supplies a member (tie-breaker 5). Neither being more specialized
+// is an error, not a silent first-wins.
+Box :: struct($T: type) { v: T }
+impl Box($T) { get :: proc(self) -> int { return 1; } }
+impl Box($T) { get :: proc(self) -> int { return 2; } }
+
+Pair :: struct($A, $B: type) { a: A, b: B }
+impl Pair($A, int) { which :: proc(self) -> int { return 1; } }
+impl Pair(int, $B) { which :: proc(self) -> int { return 2; } }
+impl Pair($T, $T) { same :: proc(self) -> T { return self.a; } }
+
+// A more specialized block that only arrives after the instance exists cannot
+// take the member back.
+Late :: struct($T: type) { v: T }
+impl Late($T) { which :: proc(self) -> int { return 1; } }
+when (size_of(Late(int)) > 0) {
+	impl Late(int) { which :: proc(self) -> int { return 2; } }
+}
+
+// First reached by a probe that rolls its errors back; the use still reports.
+Bad :: struct($T: type) { a: [size_of(T) - 2]int }
+wrap :: proc(x: $T) -> Bad(T) { return {}; }
+keep :: proc(x: u8) -> int { return 2; }
+pick :: proc{wrap, keep};
+
+main :: proc() {
+	b: Box(int) = {5};
+	fmt.println(b.get());
+	p: Pair(int, int) = {1, 2};
+	fmt.println(p.which());
+	q: Pair(int, f64) = {1, 2.5};
+	fmt.println(q.same());
+	l: Late(int) = {1};
+	fmt.println(l.which());
+	fmt.println(pick(u8(1)));
+	y: Bad(u8) = {};
+}

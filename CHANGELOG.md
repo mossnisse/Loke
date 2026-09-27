@@ -8,7 +8,25 @@ checklist.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Two generic `impl` blocks that both give one instance a member of the same
+  name, where neither block is more specialized, are an error (`L0409`); the
+  first block's member used to win silently. Remove one member, or make one
+  block strictly more specialized, as `impl Pair(int, int)` is than both
+  `impl Pair($A, int)` and `impl Pair(int, $B)`.
+
 ### Fixed
+
+- A generic record instance first reached by a hypothetical check, such as an
+  overload member whose signature names it, keeps its field errors: a later use
+  reports them, instead of the compiler crashing or failing internally.
+- A generic `impl` subject with a nested pattern, as in `impl Box([]$E)` or
+  `impl Box(Box($E))`, applies to the instances it matches; it applied to none.
+  A name bound twice, as in `impl Pair($T, $T)`, needs both arguments equal.
+- A method whose receiver shares a parameter group with a generic parameter,
+  as in `proc(self, value: $U)` or `proc(self, values: ..$U)`, is callable; the
+  receiver used to be matched against `$U`.
 
 - A local read in the declaration that introduces it, as in `x := x + 1;`, is
   an error (`L0500`) instead of reaching the backend as an internal failure.

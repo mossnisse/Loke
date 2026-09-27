@@ -1,0 +1,42 @@
+package main; import "core:fmt";
+
+// design.md "Generic types": an `impl` subject is a shape, bound like a
+// specialized parameter's. A nested pattern binds its parts, and a name bound
+// twice needs both arguments equal.
+Box :: struct($T: type) { v: T }
+impl Box([]$E) { first :: proc(self) -> E { return self.v[0]; } }
+impl Box(Box($E)) { inner :: proc(self) -> E { return self.v.v; } }
+
+Pair :: struct($A, $B: type) { a: A, b: B }
+impl Pair($T, $T) { sum :: proc(self) -> T { return self.a + self.b; } }
+
+// A method's `self, value: $U` is a receiver followed by a pattern: `self` takes
+// the block's type, not `$U`.
+Plain :: struct { v: int }
+impl Plain {
+	tagged :: proc(self, value: $U) -> U { return value; }
+	counted :: proc(self, values: ..$U) -> int { return self.v + values.len(); }
+}
+
+// `Bad(u8)` is ill formed, so `pick(u8)` cannot use `wrap`; the probe that finds
+// out must not leave a broken `Bad(u8)` behind for the program to use.
+Bad :: struct($T: type) { a: [size_of(T) - 2]int }
+wrap :: proc(x: $T) -> Bad(T) { return {}; }
+keep :: proc(x: u8) -> int { return 2; }
+pick :: proc{wrap, keep};
+
+main :: proc() {
+	xs := [3]int{7, 8, 9};
+	b: Box([]int) = {xs[:]};
+	fmt.println(b.first());
+	nested: Box(Box(int)) = {{5}};
+	fmt.println(nested.inner());
+	p: Pair(int, int) = {3, 4};
+	fmt.println(p.sum());
+
+	plain: Plain = {10};
+	fmt.println(plain.tagged(2.5), plain.tagged("x"));
+	fmt.println(plain.counted(1, 2, 3));
+
+	fmt.println(pick(u8(1)));
+}

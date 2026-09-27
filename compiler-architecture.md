@@ -506,8 +506,9 @@ a time limit, report no internal contract violation (`L0405`), never repeat a
 whole diagnostic, and report no more errors than the mutant has lines. A
 failure is reduced line by line, printed, and kept in `tests/tmp/fuzz/`; it
 becomes a `tests/err/` or `tests/run/` case with the fix. The fixed run is
-deterministic; `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` (per program) explore
-further.
+deterministic, and each program's mutants come from a seed of its own, so a new
+`tests/run/` case leaves every other program's mutants unchanged;
+`LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` (per program) explore further.
 
 Every diagnostic code the compiler can write is pinned by a case in one of those
 directories, or by a harness or unit test for the ones no corpus shape reaches

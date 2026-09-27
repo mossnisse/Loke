@@ -98,6 +98,8 @@ Instance :: struct {
 	// Whether the `where` bounds were checked by a reporting request. A silent
 	// probe's check is rolled back, so committing the body checks them again.
 	bounds_committed: bool,
+	// Record instances only: the generic `impl` blocks installed on it.
+	impls:        [dynamic]^Generic_Impl,
 }
 
 // The head diagnostic of a contained rejection, kept rather than the whole
@@ -111,6 +113,8 @@ Instance_Rejection :: struct {
 Instantiation_Frame :: struct {
 	description: string,
 	span:        Span,
+	// A silent probe: what is reported beneath it is truncated if it fails.
+	silent:      bool,
 }
 
 // An instantiated `impl` block waiting for its bodies to be checked.
@@ -125,6 +129,18 @@ Pending_Impl :: struct {
 	file_node: ^File,
 	subject:   Type_Id,
 	checked:   bool,
+	// Members another installed block also supplies, reported when the block is
+	// checked: installing may happen inside a probe, which would roll them back.
+	conflicts: []Impl_Conflict,
+}
+
+// A member name two `impl` blocks both give one instance, where the block
+// installed first is not the more specialized one.
+Impl_Conflict :: struct {
+	name:  Name,
+	other: ^Generic_Impl,
+	// The later block is the more specialized, but arrived after the instance.
+	late:  bool,
 }
 
 // A procedure instance waiting to be named and emitted with its defining
@@ -972,15 +988,22 @@ match_generic_args :: proc(
 	k: ^Checker, args: []Argument, bound: []Generic_Arg, scope: ^Scope, out: ^[dynamic]Generic_Binding,
 ) -> bool {
 	for arg, index in args {
-		if poly, is_poly := arg.value.(^Type_Poly); is_poly {
-			if !bind_pattern_name(k, poly.name, bound[index], scope, out) {
-				return false
-			}
-		} else if type_syntax_has_poly(arg.value) {
-			if !bound[index].is_type || !match_type_pattern(k, arg.value, bound[index].type, scope, out) {
-				return false
-			}
+		if !match_generic_arg(k, arg.value, bound[index], scope, out) {
+			return false
 		}
+	}
+	return true
+}
+
+// One written generic argument against its bound one. A written argument with
+// no `$` matches here; the caller compares it.
+@(private = "file")
+match_generic_arg :: proc(k: ^Checker, written: Expr, bound: Generic_Arg, scope: ^Scope, out: ^[dynamic]Generic_Binding) -> bool {
+	if poly, is_poly := written.(^Type_Poly); is_poly {
+		return bind_pattern_name(k, poly.name, bound, scope, out)
+	}
+	if type_syntax_has_poly(written) {
+		return bound.is_type && match_type_pattern(k, written, bound.type, scope, out)
 	}
 	return true
 }
@@ -1066,7 +1089,19 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	compile_targets := make([]Type_Id, len(args), k.c.semantic_allocator)
 	next := 0
 	position := 0
-	for parameter in literal.signature.params {
+	for parameter, parameter_index in literal.signature.params {
+		names := parameter.names
+		// `proc(self, u: $U)` is one parameter group, but `self` is the receiver
+		// and takes the block's type, not `$U` (`parameter_splits_receiver`).
+		// The receiver's own type is checked when the candidate is ranked.
+		if template.impl_type != INVALID_TYPE && parameter_splits_receiver(parameter, parameter_index) {
+			position += 1
+			if _, found := claim_argument(args, names[0].name.id, &next, claimed); !found {
+				result.reason = "it needs more arguments than were supplied"
+				return result
+			}
+			names = names[1:]
+		}
 		if parameter.mode == .Variadic {
 			// A pattern in the element type binds from the first of the remaining
 			// arguments; the rest are ranked, not matched.
@@ -1095,7 +1130,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			}
 			continue
 		}
-		for entry in parameter.names {
+		for entry in names {
 			position += 1
 			index, found := claim_argument(args, entry.name.id, &next, claimed)
 			if !found {
@@ -1366,7 +1401,7 @@ instantiate_generic :: proc(
 	k.c.instantiation_count += 1
 
 	name := generic_instance_name(k.c, template.symbol, bindings)
-	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span})
+	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span, silent = !report})
 	defer {
 		pop(&k.c.instantiation_stack)
 		instance.provisional = false
@@ -1408,7 +1443,7 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 	// A contained rejection: the caret on this request, a note at the original.
 	if instance.rejection.code != "" {
 		errorf(k.c, span, instance.rejection.code, "%s", instance.rejection.message)
-		add_notef(k.c, instance.rejection.span, "in the signature of `%s`", name)
+		add_notef(k.c, instance.rejection.span, "in the %s of `%s`", template.kind == .Record ? "fields" : "signature", name)
 		note_instantiation_stack(k)
 		return
 	}
@@ -1426,6 +1461,21 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 		}
 	case .None:
 	}
+}
+
+// Whether a diagnostic reported now may yet be rolled back: by a probe, or by a
+// silent instantiation that fails.
+@(private = "file")
+diagnostics_provisional :: proc(k: ^Checker) -> bool {
+	if k.c.speculation_depth > 0 {
+		return true
+	}
+	for frame in k.c.instantiation_stack {
+		if frame.silent {
+			return true
+		}
+	}
+	return false
 }
 
 @(private = "file")
@@ -1527,6 +1577,7 @@ instantiate_record_body :: proc(
 	}
 	instance.symbol = symbol_id
 	instance.type = type
+	instance.impls = make([dynamic]^Generic_Impl, 0, 0, k.c.semantic_allocator)
 	saved := enter_instance(k, template, instance.scope)
 	defer restore_checker_location(k, saved)
 
@@ -1551,6 +1602,24 @@ instantiate_record_body :: proc(
 	clone.sig_state = .Checked
 	if report && len(k.c.diagnostics) > before {
 		note_instantiation_stack(k)
+	}
+	// Errors an enclosing probe will roll back would leave a broken instance in
+	// the cache that no later use reports, so the instance is rejected and keeps
+	// its cause, as a silently rejected signature does.
+	if errors_since(k.c, before) && diagnostics_provisional(k) {
+		for d in k.c.diagnostics[before:] {
+			if d.severity == .Error {
+				instance.rejection = Instance_Rejection{code = d.code, message = strings.clone(d.message, k.c.semantic_allocator), span = d.span}
+				break
+			}
+		}
+		// Emptied like an instance whose bound failed, since the backend defines
+		// every record in the type store.
+		if info := type_of(k.c, type); info != nil {
+			info.fields = nil
+		}
+		instance.signature_ok = false
+		return false
 	}
 
 	path := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
@@ -2078,11 +2147,16 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 
 	// A written argument that differs from the bound one skips this instance;
 	// `check_generic_impl_subject` reports one that could never match, so each
-	// comparison here is a speculation whose diagnostics are rolled back.
+	// comparison here is a speculation whose diagnostics are rolled back. A
+	// pattern binds its `$` names as a parameter's does, so `impl Pair($T, $T)`
+	// needs both arguments equal and `impl Box([]$E)` binds `E`.
+	bindings := make([dynamic]Generic_Binding, 0, len(block.args), context.temp_allocator)
 	for written, index in block.args {
 		bound := instance.bindings[index].arg
-		if poly, is_poly := written.(^Type_Poly); is_poly {
-			bind_generic_name(k, scope, Generic_Binding{name = name_identifier(k.c, poly.name), span = poly.name.span, arg = bound})
+		if type_syntax_has_poly(written) {
+			if !match_generic_arg(k, written, bound, scope, &bindings) {
+				return
+			}
 			continue
 		}
 		if bound.is_type {
@@ -2113,7 +2187,8 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	clone.subject = instance.type
 	clone.declared = true
 	k.impl_type = instance.type
-	declare_instance_impl_members(k, clone, instance.type, block)
+	conflicts := declare_instance_impl_members(k, clone, instance, block)
+	append(&instance.impls, block)
 	// Resolved here, in the block's own scope.
 	for member in clone.members {
 		if d, is_decl := member.(^Decl); is_decl {
@@ -2126,7 +2201,7 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 			check_delegate(k, delegate, instance.type)
 		}
 	}
-	append(&k.c.pending_impl_instances, Pending_Impl{item = clone, scope = scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type})
+	append(&k.c.pending_impl_instances, Pending_Impl{item = clone, scope = scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type, conflicts = conflicts})
 }
 
 // design.md "where clauses": a method whose bound fails is dropped from that
@@ -2157,10 +2232,13 @@ exclude_member_on_failed_bound :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
-// Members of an instantiated block. Names a specialized block already supplied
-// are left alone rather than reported as duplicates.
+// Members of an instantiated block. A name a more specialized block already
+// supplied is left alone; one an equally or less specialized block supplied is a
+// conflict (design.md "Generic types": tie-breaker 5 decides between blocks).
 @(private = "file")
-declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Type_Id, block: ^Generic_Impl) {
+declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, instance: ^Instance, block: ^Generic_Impl) -> []Impl_Conflict {
+	subject := instance.type
+	conflicts := make([dynamic]Impl_Conflict, 0, 0, k.c.semantic_allocator)
 	added := make([dynamic]Symbol_Id, 0, len(item.members), k.c.semantic_allocator)
 	for member in item.members {
 		d, is_decl := member.(^Decl)
@@ -2177,7 +2255,13 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 			name_id := name_identifier(k.c, name)
 			if member_named(k.c, impl_member_table(k, item.kind, subject, block.pkg), name_id) !=
 			   INVALID_SYMBOL {
-				append(&symbols, INVALID_SYMBOL) // a more specialized block supplied it
+				if other := installed_block_declaring(k, instance, block, name_id); other != nil {
+					relation := impl_block_relation(other, block)
+					if relation != .Left {
+						append(&conflicts, Impl_Conflict{name = name, other = other, late = relation == .Right})
+					}
+				}
+				append(&symbols, INVALID_SYMBOL)
 				continue
 			}
 			if member_named(k.c, added[:], name_id) != INVALID_SYMBOL {
@@ -2227,6 +2311,49 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 		d.symbols = symbols[:]
 	}
 	install_impl_members(k, item.kind, subject, added[:], block.pkg)
+	return conflicts[:]
+}
+
+// The block already installed on `instance` that declares `name` into the same
+// member table `block` does, or nil when the name came from elsewhere.
+@(private = "file")
+installed_block_declaring :: proc(k: ^Checker, instance: ^Instance, block: ^Generic_Impl, name: Identifier_Id) -> ^Generic_Impl {
+	for other in instance.impls {
+		if other == block || other.item.kind != block.item.kind || (block.item.kind != .Impl && other.pkg != block.pkg) {
+			continue
+		}
+		if impl_block_member_name(k, other, name) != nil {
+			return other
+		}
+	}
+	return nil
+}
+
+@(private = "file")
+impl_block_member_name :: proc(k: ^Checker, block: ^Generic_Impl, name: Identifier_Id) -> ^Name {
+	for member in block.item.members {
+		if d, is_decl := member.(^Decl); is_decl && d.kind == .Const {
+			for &written in d.names {
+				if name_identifier(k.c, written) == name {
+					return &written
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// `.Left` when `a` is the more specialized block, `.Right` when `b` is.
+@(private = "file")
+impl_block_relation :: proc(a, b: ^Generic_Impl) -> Pattern_Relation {
+	if len(a.args) != len(b.args) {
+		return .Crossed
+	}
+	relation := Pattern_Relation.Equal
+	for arg, index in a.args {
+		relation = merge_pattern_relation(relation, pattern_relation(arg, b.args[index]))
+	}
+	return relation
 }
 
 // The package-qualified name of a public instantiated `extend` member. Each
@@ -2301,6 +2428,26 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 		saved := enter_generic_location(
 			k, pending.scope, pending.pkg, pending.pkg, pending.subject, pending.file, pending.file_node,
 		)
+
+		for conflict in pending.conflicts {
+			subject := type_name(k.c, pending.subject)
+			if conflict.late {
+				errorf(
+					k.c, conflict.name.span, "L0409",
+					"`%s` already has a member `%s`: this block is more specialized, but it is declared after `%s` was first used",
+					subject, conflict.name.text, subject,
+				)
+			} else {
+				errorf(
+					k.c, conflict.name.span, "L0409",
+					"`%s` gets a member `%s` from two `impl` blocks, and neither is more specialized",
+					subject, conflict.name.text,
+				)
+			}
+			if other := impl_block_member_name(k, conflict.other, name_identifier(k.c, conflict.name)); other != nil {
+				add_notef(k.c, other.span, "the other `%s` is declared here", conflict.name.text)
+			}
+		}
 
 		for member in pending.item.members {
 			if d, is_decl := member.(^Decl); is_decl {
