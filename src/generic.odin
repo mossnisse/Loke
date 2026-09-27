@@ -226,11 +226,9 @@ reject_typeid_generic_parameter :: proc(k: ^Checker, name: Name, type_syntax: Ex
 	if type_syntax == nil {
 		return false
 	}
-	mark := len(k.c.diagnostics)
-	k.c.speculation_depth += 1
+	probe := begin_probe(k.c)
 	type := resolve_type_syntax(k, type_syntax)
-	k.c.speculation_depth -= 1
-	truncate_diagnostics(k.c, mark)
+	end_probe(k.c, probe)
 	if type == INVALID_TYPE || type_underlying(k.c, type) != TYPE_TYPEID {
 		return false
 	}
@@ -268,16 +266,14 @@ check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter) {
 			continue
 		}
 		// The parameter's type may still name `$T`; then only constness is known.
-		mark := len(k.c.diagnostics)
-		k.c.speculation_depth += 1
+		probe := begin_probe(k.c)
 		wanted := resolve_type_syntax(k, parameter.type)
 		saved := k.scope
 		k.scope = stand_ins
 		stand_ins.reached = false
 		check_poly_default(k, clone_expr(k.c, parameter.default), wanted)
 		k.scope = saved
-		k.c.speculation_depth -= 1
-		truncate_diagnostics(k.c, mark)
+		end_probe(k.c, probe)
 		if !stand_ins.reached {
 			check_poly_default(k, parameter.default, wanted)
 		}
@@ -1264,15 +1260,13 @@ bind_default_compile_time_argument :: proc(
 	// its own diagnostics are rolled back; so the check is a speculation and must
 	// claim no report-once cache and hoist no literal.
 	per_call := clone_expr(k.c, default)
-	mark := len(k.c.diagnostics)
-	k.c.speculation_depth += 1
+	probe := begin_probe(k.c)
 	type := check_expr(k, per_call, wanted)
 	folded, evaluated := Const_Value{}, false
 	if type != INVALID_TYPE && wanted != TYPE_TYPE {
 		folded, evaluated = require_const(k, per_call, "a `$` parameter's default", "L0432")
 	}
-	k.c.speculation_depth -= 1
-	truncate_diagnostics(k.c, mark)
+	end_probe(k.c, probe)
 	if type == INVALID_TYPE {
 		return "its omitted `$` argument's default does not check", false
 	}
@@ -1881,26 +1875,23 @@ check_where_clauses :: proc(
 	report_malformed := false, false_bound: ^Expr = nil,
 ) -> bool {
 	for clause in clauses {
-		mark := len(k.c.diagnostics)
 		errors := k.c.error_count
+		probe: Probe
 		if !report {
-			k.c.speculation_depth += 1
+			probe = begin_probe(k.c)
 		}
 		type := check_single_expr(k, clause, TYPE_BOOL)
 		folded, evaluated := require_const(k, clause, "a `where` bound", "L0435")
-		if !report {
-			k.c.speculation_depth -= 1
-		}
 		failed := type == INVALID_TYPE || !evaluated || folded.kind != .Boolean
+		// A reporting check is committed, so what a passing bound reported stays;
+		// so does a malformed bound's report when that is asked for.
+		if !report {
+			end_probe(k.c, probe, keep = failed && report_malformed)
+		}
 		if !failed && folded.boolean {
-			// A reporting check is committed, so what a passing bound reported stays.
-			if !report {
-				truncate_diagnostics(k.c, mark)
-			}
 			continue
 		}
 		if !report && !(failed && report_malformed) {
-			truncate_diagnostics(k.c, mark)
 			if !failed && false_bound != nil {
 				false_bound^ = clause
 			}
@@ -1933,11 +1924,9 @@ check_where_clauses :: proc(
 failed_bound_reason :: proc(k: ^Checker, template: ^Generic_Template, instance: ^Instance) -> string {
 	saved := enter_instance(k, template, instance.scope)
 	defer restore_checker_location(k, saved)
-	mark := len(k.c.diagnostics)
-	k.c.speculation_depth += 1
+	probe := begin_probe(k.c)
 	text := failed_bound_text(k, instance.failed_bound)
-	k.c.speculation_depth -= 1
-	truncate_diagnostics(k.c, mark)
+	end_probe(k.c, probe)
 	return text
 }
 
@@ -2023,11 +2012,10 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 		}
 		parameter := template.params[index]
 		// The template reports its own parameter types; this only reads one.
-		mark, errors := len(k.c.diagnostics), k.c.error_count
-		k.c.speculation_depth += 1
+		errors := k.c.error_count
+		probe := begin_probe(k.c)
 		wanted := resolve_type_syntax(k, parameter.type_syntax)
-		k.c.speculation_depth -= 1
-		truncate_diagnostics(k.c, mark)
+		end_probe(k.c, probe)
 		if wanted == TYPE_TYPE || wanted == INVALID_TYPE {
 			if resolve_type_syntax(k, arg.value) == INVALID_TYPE && k.c.error_count == errors {
 				report_unresolved_type(k, arg.value)
@@ -2123,24 +2111,20 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 			continue
 		}
 		if bound.is_type {
-			mark := len(k.c.diagnostics)
-			k.c.speculation_depth += 1
+			probe := begin_probe(k.c)
 			resolved := resolve_type_syntax(k, written)
-			k.c.speculation_depth -= 1
-			truncate_diagnostics(k.c, mark)
+			end_probe(k.c, probe)
 			if resolved != bound.type {
 				return
 			}
 			continue
 		}
-		mark := len(k.c.diagnostics)
 		folded, evaluated := Const_Value{}, false
-		k.c.speculation_depth += 1
+		probe := begin_probe(k.c)
 		if check_single_expr(k, written, bound.value_type) != INVALID_TYPE {
 			folded, evaluated = require_const(k, written, "a generic argument", "L0432")
 		}
-		k.c.speculation_depth -= 1
-		truncate_diagnostics(k.c, mark)
+		end_probe(k.c, probe)
 		if !evaluated {
 			return
 		}

@@ -222,7 +222,9 @@ bodies, witnesses, materialized globals, type IDs, or backend helpers in the
 final program.
 
 Rolling back a check removes only its diagnostics, so **any check whose
-diagnostics may be truncated runs with `speculation_depth` raised**. Report-once
+diagnostics may be truncated runs with `speculation_depth` raised**:
+`begin_probe` raises it and marks the diagnostics, and `end_probe` rolls them
+back before lowering it again. Report-once
 caches (map-key and sort-order policies, validated attributes) and hoisted
 procedures are gated on it; a rollback outside speculation lets a cache record a
 report that no longer exists. The one sanctioned commit from inside speculation
@@ -404,8 +406,10 @@ semantic state it writes is the layout cache `layout.odin` shares with the
 checker. Filesystem and process policy
 belongs in `emit_llvm_toolchain.odin`. Backend names and temporary values belong
 to `Emitter`, never to semantic symbols. No non-test backend file
-(`emit_llvm*.odin`, `emission_contract.odin`) names `Checker`; `test-all.ps1`
-enforces this.
+(`emit_llvm*.odin`, `emission_contract.odin`) names `Checker`, and no front-end
+file other than the driver, `main.odin`, calls a procedure an `emit_llvm*.odin`
+file defines: a helper both sides need lives with its semantic owner.
+`test-all.ps1` enforces both.
 
 Implicit conversions use `emit_expr_at` with an explicit effective type; address
 and value helpers carry that type without changing the checker's AST annotations.
@@ -427,9 +431,9 @@ Use the narrowest path that preserves the phase contracts:
 
 1. If syntax changes, update `grammar.md`, tokens/lexer, AST nodes, parser, AST
    dump, `ast_clone.odin`, and syntax recovery fixtures together. A new node
-   kind fails to compile until it has a clone case, but a new field on an
-   existing node is silently dropped from every generic instance unless the
-   clone copies it.
+   kind fails to compile until it has a clone case, and a new field on a node
+   fails `ast_clone_classifies_every_node_field` until it is listed as copied
+   or dropped; a written field must also be copied by the clone.
 2. Settle the language decision in `design.md` first, then put it in the
    checker or the relevant semantic feature module. Record the chosen symbol,
    type, operation, conversion, or policy on the AST or in a semantic registry.

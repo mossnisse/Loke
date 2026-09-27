@@ -434,12 +434,6 @@ inserting_map_index :: proc(target: Expr) -> ^Expr_Index {
 	return index
 }
 
-// `_` as a destination; its value is dropped.
-is_discard :: proc(target: Expr) -> bool {
-	ident, ok := target.(^Expr_Ident)
-	return ok && ident.name == "_"
-}
-
 @(private = "file")
 emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 	push_scope(e, nil)

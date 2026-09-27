@@ -7,12 +7,6 @@ import "core:fmt"
 
 // ============================================================== iteration ==
 
-// design.md "Iteration protocol": `next` yields `Option(Element)`.
-@(private)
-option_payload :: proc(c: ^Compiler, option_type: Type_Id) -> Type_Id {
-	return union_variant_payload(c, option_type, union_index_of(c, option_type, "some"))
-}
-
 @(private)
 emit_option_some :: proc(e: ^Emitter, option_type: Type_Id, payload: string) -> string {
 	return emit_union_value(e, option_type, union_index_of(e.c, option_type, "some"), payload)

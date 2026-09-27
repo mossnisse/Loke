@@ -608,15 +608,6 @@ result_inout_of :: proc(e: ^Emitter, proc_type: Type_Id) -> bool {
 	return info != nil && info.result_inout
 }
 
-@(private)
-symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mode {
-	info := type_of(c, symbol.proc_type)
-	if info == nil || index >= len(info.param_modes) {
-		return .Value
-	}
-	return info.param_modes[index]
-}
-
 // The LLVM type of one parameter of a compiler-synthesized member. design.md
 // "Receiver forms": a `self: ^` receiver arrives as a pointer to the caller's
 // storage, exactly as an `inout` one does.

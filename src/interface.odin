@@ -506,8 +506,9 @@ interface_check :: proc(
 		return failure, false
 	}
 	// Speculation keeps a rejected probe from registering typeids or witnesses.
-	k.c.speculation_depth += 1
-	defer k.c.speculation_depth -= 1
+	// Each requirement rolls back its own diagnostics.
+	probe := begin_probe(k.c)
+	defer end_probe(k.c, probe, keep = true)
 	scope := interface_scope(k, info, args)
 
 	saved := save_checker_location(k)
@@ -561,7 +562,7 @@ interface_predicates_check :: proc(
 
 	saved := save_checker_location(k)
 	saved_result, saved_place := k.result_type, k.place_position
-	k.c.speculation_depth += 1
+	probe := begin_probe(k.c)
 	k.interface_depth += 1
 	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
 	k.proc_literal = nil
@@ -574,7 +575,7 @@ interface_predicates_check :: proc(
 		restore_checker_location(k, saved)
 		k.result_type, k.place_position = saved_result, saved_place
 		k.interface_depth -= 1
-		k.c.speculation_depth -= 1
+		end_probe(k.c, probe, keep = true)
 	}
 
 	for clause in info.node.where_clauses {

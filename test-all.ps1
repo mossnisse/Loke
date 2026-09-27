@@ -32,6 +32,29 @@ try {
         throw "backend files name the checker's ``Checker``"
     }
 
+    # Nor does the checker reach into the backend: a helper both sides need
+    # lives with its semantic owner. The driver, main.odin, runs the emitter.
+    $emitter = Get-ChildItem src/emit_llvm*.odin | Where-Object { $_.Name -notlike '*_test.odin' }
+    $emitterProcs = $emitter |
+        Select-String -Pattern '^(\w+) :: (#force_inline )?proc' -CaseSensitive -Context 1, 0 |
+        Where-Object { $_.Context.PreContext[0] -ne '@(private = "file")' } |
+        ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique
+    $frontEnd = Get-ChildItem src/*.odin | Where-Object {
+        $_.Name -notlike '*_test.odin' -and $_.Name -notlike 'emit_llvm*' -and $_.Name -ne 'main.odin'
+    }
+    # A file-private procedure of the same name, such as the evaluator's
+    # `bind_local`, is the front end's own.
+    $frontProcs = $frontEnd | Select-String -Pattern '^(\w+) :: (#force_inline )?proc' -CaseSensitive |
+        ForEach-Object { $_.Matches[0].Groups[1].Value }
+    $emitterProcs = $emitterProcs | Where-Object { $_ -cnotin $frontProcs }
+    $reverse = $frontEnd |
+        Select-String -Pattern "(?<![\w.])($($emitterProcs -join '|'))\(" -CaseSensitive |
+        Where-Object { $_.Line -notmatch '^\s*//' }
+    if ($reverse) {
+        $reverse | ForEach-Object { Write-Host "$($_.Filename):$($_.LineNumber): $($_.Line.Trim())" }
+        throw "front-end files call an emitter procedure"
+    }
+
     # Memory tracking stays on here: the unit tests are where a leak in the
     # compiler shows up, and it costs a fraction of a second. Vet covers the test
     # code too; `-vet-packages` keeps it out of Odin's own `core:testing`.

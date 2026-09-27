@@ -680,6 +680,12 @@ expr_has_error :: proc(e: Expr) -> bool {
 	return base != nil && base.has_error
 }
 
+// `_` as a destination; its value is dropped.
+is_discard :: proc(target: Expr) -> bool {
+	ident, ok := target.(^Expr_Ident)
+	return ok && ident.name == "_"
+}
+
 // The base of statements, declarations and items.
 Node_Base :: struct {
 	span:       Span,

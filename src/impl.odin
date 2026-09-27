@@ -25,18 +25,17 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 
 	// A quiet attempt that fails is rolled back and retried, so it is a
 	// speculation: it must not claim a report-once cache the retry needs.
-	mark := len(k.c.diagnostics)
 	errors := k.c.error_count
+	probe: Probe
 	if quiet {
-		k.c.speculation_depth += 1
+		probe = begin_probe(k.c)
 	}
 	subject := resolve_type_syntax(k, item.type)
 	if quiet {
-		k.c.speculation_depth -= 1
+		end_probe(k.c, probe, keep = subject != INVALID_TYPE)
 	}
 	if subject == INVALID_TYPE {
 		if quiet {
-			truncate_diagnostics(k.c, mark)
 			return
 		}
 		item.declared = true

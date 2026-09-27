@@ -203,6 +203,11 @@ union_variant_payload :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> 
 	return info.variants[index]
 }
 
+// design.md "Iteration protocol": `next` yields `Option(Element)`.
+option_payload :: proc(c: ^Compiler, option_type: Type_Id) -> Type_Id {
+	return union_variant_payload(c, option_type, union_index_of(c, option_type, "some"))
+}
+
 union_variant_name :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> string {
 	info := type_of(c, type_underlying(c, union_type))
 	if info == nil || index < 0 || index >= len(info.variant_names) {

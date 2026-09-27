@@ -30,6 +30,14 @@ param_mode_is_pointer :: proc(mode: Param_Mode) -> bool {
 	return mode == .Inout || mode == .Borrow
 }
 
+symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mode {
+	info := type_of(c, symbol.proc_type)
+	if info == nil || index >= len(info.param_modes) {
+		return .Value
+	}
+	return info.param_modes[index]
+}
+
 // design.md "Parameter semantics and ABI lowering": an ordinary `value: T`
 // holding a managed owner shares the caller's allocations for the call, cloning
 // nothing and transferring nothing. So at a call the argument is borrowed until

@@ -476,6 +476,27 @@ truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 	c.last_noted_diagnostic = min(c.last_noted_diagnostic, wanted)
 }
 
+// A hypothetical check (compiler-architecture.md "Checking and overload
+// resolution"): `begin_probe` raises `speculation_depth` and marks the
+// diagnostics, and `end_probe` rolls them back, unless `keep`, before lowering
+// the depth again, so a rollback never happens outside speculation.
+Probe :: struct {
+	diagnostics, depth: int,
+}
+
+begin_probe :: proc(c: ^Compiler) -> Probe {
+	c.speculation_depth += 1
+	return Probe{diagnostics = len(c.diagnostics), depth = c.speculation_depth}
+}
+
+end_probe :: proc(c: ^Compiler, probe: Probe, keep := false) {
+	assert(c.speculation_depth == probe.depth, "a probe ended out of order")
+	if !keep {
+		truncate_diagnostics(c, probe.diagnostics)
+	}
+	c.speculation_depth -= 1
+}
+
 // Moves every diagnostic past `length`, with its share of `error_count`, out of
 // `truncate_diagnostics`' reach until `release_held_diagnostics`.
 hold_diagnostics :: proc(c: ^Compiler, length: int) {

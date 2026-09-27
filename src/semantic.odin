@@ -1349,6 +1349,11 @@ type_is_rune :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return false
 }
 
+// Runes compute as the signed `i32` they are stored in.
+integer_traps_overflow :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type_signed(c, type) || type_is_rune(c, type)
+}
+
 type_is_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch underlying_kind(c, id) {
 	case .Float, .Untyped_Float:
@@ -1864,4 +1869,26 @@ destroy_compilation :: proc(c: ^Compiler) {
 	// Last: diagnostics raised while emitting may live in it.
 	virtual.arena_destroy(&c.emission_arena)
 	c^ = {}
+}
+
+llvm_name_byte :: proc(ch: u8) -> bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+		ch == '_' || ch == '.'
+}
+
+// Escapes every byte LLVM would need quoted, `$` included, as `$XX`: injective
+// and still readable. `dots = false` also escapes `.`, for a part that a `.`
+// joins to others.
+llvm_safe :: proc(name: string, dots := true, allocator := context.allocator) -> string {
+	hex := "0123456789abcdef"
+	out := make([dynamic]u8, 0, len(name) + 8, allocator)
+	for i in 0 ..< len(name) {
+		ch := name[i]
+		if llvm_name_byte(ch) && (dots || ch != '.') {
+			append(&out, ch)
+			continue
+		}
+		append(&out, '$', hex[ch >> 4], hex[ch & 0x0f])
+	}
+	return string(out[:])
 }

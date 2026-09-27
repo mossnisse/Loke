@@ -379,9 +379,12 @@ rather than a wrong answer; the wrong answers it found are in
   diagnostics. Enrollments reached from a procedure literal inside a probe have
   missed the check four times: hoisting, `checked_bodies`, and static locals
   (fixed; `probe_emission_state` in `src/front_end_test.odin` now probes such a
-  literal), and still contributed lifecycle members. The silent probe in
-  `build_generic_candidate` also truncates diagnostics at depth zero, which
-  compiler-architecture.md "Checking and overload resolution" rules out. Should
+  literal), and still contributed lifecycle members. `begin_probe`/`end_probe`
+  now pair the depth with the rollback, but the silent probe in
+  `build_generic_candidate` still truncates diagnostics at depth zero, which
+  compiler-architecture.md "Checking and overload resolution" rules out: its
+  instance is cached for every later call, so running it inside a probe would
+  drop what a signature that holds records. Should
   registry writes made under speculation be journaled and rolled back with the
   diagnostics, or should a probe stop before body-level work?
 - **Lifecycle and provenance meet through walk-order keys.** The dead owners at
@@ -405,18 +408,10 @@ rather than a wrong answer; the wrong answers it found are in
   each saving a different subset. One body-context record with an enter/leave
   pair, and the positional flags passed to `check_expr` as parameters, would
   leave no field to forget.
-- **Layering is checked in one direction.** `test-all.ps1` keeps backend files
-  from naming `Checker`, but checker and analysis files call helpers defined in
-  backend files (`is_discard`, `integer_traps_overflow`, `option_payload`,
-  `symbol_param_mode`, `llvm_safe`), and the checker spells LLVM names:
-  `Type_Info.mangled`, `Instance.mangled`, and the witness globals, against
-  compiler-architecture.md "LLVM and toolchain". Should the helpers move to
-  their semantic owners, the names to the emitter, and the check run both ways?
-- **Cloning copies syntax field by field.** A syntactic field added to a node is
-  dropped from every generic instance unless `ast_clone.odin` copies it
-  (compiler-architecture.md "How to make a compiler change"), and no test
-  notices. A unit test that lists each node's fields with `core:reflect` against
-  a written syntax/annotation split would turn the omission into a failure.
+- **The checker spells LLVM names.** `test-all.ps1` now checks layering both
+  ways, but `Type_Info.mangled`, `Instance.mangled`, and the witness globals are
+  built by the checker with `llvm_safe`, against compiler-architecture.md "LLVM
+  and toolchain". Should the names move to the emitter?
 - **Query walkers are partial.** The main passes switch over `Expr`
   exhaustively, but the smaller walkers that ask one question of a subtree
   (`first_unresolved_name`, `type_syntax_names`, `pattern_shape`, and the

@@ -1146,11 +1146,6 @@ emit_checked_signed :: proc(e: ^Emitter, intrinsic, llvm, lhs, rhs: string) -> s
 	return extract(e, pair_type, pair, 0)
 }
 
-// Runes compute as the signed `i32` they are stored in.
-integer_traps_overflow :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type_signed(c, type) || type_is_rune(c, type)
-}
-
 // Zero takes the trap seam. `MIN / -1` does not fit, so it panics as any signed
 // overflow does, and `MIN % -1` is 0 (design.md "Integer operators"); neither
 // reaches `sdiv`/`srem`, where it would be poison.

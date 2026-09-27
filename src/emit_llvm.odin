@@ -725,29 +725,6 @@ llvm_plain_name :: proc(name: string) -> bool {
 	return len(name) > 0
 }
 
-@(private = "file")
-llvm_name_byte :: proc(ch: u8) -> bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-		ch == '_' || ch == '.'
-}
-
-// Escapes every byte LLVM would need quoted, `$` included, as `$XX`: injective
-// and still readable. `dots = false` also escapes `.`, for a part that a `.`
-// joins to others.
-llvm_safe :: proc(name: string, dots := true, allocator := context.allocator) -> string {
-	hex := "0123456789abcdef"
-	out := make([dynamic]u8, 0, len(name) + 8, allocator)
-	for i in 0 ..< len(name) {
-		ch := name[i]
-		if llvm_name_byte(ch) && (dots || ch != '.') {
-			append(&out, ch)
-			continue
-		}
-		append(&out, '$', hex[ch >> 4], hex[ch & 0x0f])
-	}
-	return string(out[:])
-}
-
 // The key's own dots are escaped: `util.v2` + `f` must not meet `util` + `v2.f`.
 @(private = "file")
 mangled_key :: proc(pkg: ^Package) -> string {
