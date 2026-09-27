@@ -1,0 +1,112 @@
+# A `v*` tag becomes a GitHub release: the tagged revision passes the full gate,
+# its bundle is installed and used from outside any checkout, and only then is
+# it published. A release is lokec.exe with the `base/`, `core/` and `runtime/`
+# trees it discovers beside itself (future-plans.md "Continuous integration and
+# releases").
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  bundle:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      # The release gate: no open divergence from the spec, and the tag names
+      # the version the compiler reports as LOKE_VERSION.
+      - name: Release gate
+        run: |
+          $gaps = [regex]::Match((Get-Content -Raw known-gaps.md), '(?s)## Gaps\s*(.*?)\s*## Not gaps').Groups[1].Value
+          if ($gaps -ne 'None.') { throw "known-gaps.md lists open gaps; a release needs none" }
+          $version = [regex]::Match((Get-Content -Raw src/build_config.odin), 'LOKE_VERSION_STRING :: "([^"]+)"').Groups[1].Value
+          if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "tag $env:GITHUB_REF_NAME does not match LOKE_VERSION_STRING $version" }
+
+      # Same Odin as ci.yml.
+      - name: Install Odin dev-2025-09
+        run: |
+          $zip = "$env:RUNNER_TEMP\odin.zip"
+          Invoke-WebRequest https://github.com/odin-lang/Odin/releases/download/dev-2025-09/odin-windows-amd64-dev-2025-09.zip -OutFile $zip
+          Expand-Archive $zip "$env:RUNNER_TEMP\odin"
+          $odin = Get-ChildItem "$env:RUNNER_TEMP\odin" -Recurse -Filter odin.exe | Select-Object -First 1
+          $odin.DirectoryName >> $env:GITHUB_PATH
+
+      # Built exactly as test-all.ps1 builds the binary it tests.
+      - name: Build and package
+        run: |
+          odin build src -out:lokec.exe -vet-unused -vet-shadowing
+          if ($LASTEXITCODE -ne 0) { throw "compiler build failed" }
+          $name = "loke-$env:GITHUB_REF_NAME-windows-amd64"
+          $stage = "$env:RUNNER_TEMP\$name"
+          New-Item -ItemType Directory $stage | Out-Null
+          Copy-Item lokec.exe, LICENSE, readme.md $stage
+          Copy-Item base, core, runtime, examples $stage -Recurse
+          # A compile cache lokec rebuilds on demand, never shipped.
+          Remove-Item "$stage\runtime\prebuilt" -Recurse -Force -ErrorAction SilentlyContinue
+          Compress-Archive $stage "$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+          path: loke-*.zip
+
+  # A fresh runner with no checkout and no Odin: only the bundle and the
+  # LLVM/MSVC toolchain readme.md "Build and run" asks a user to install.
+  verify:
+    needs: bundle
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle
+
+      - name: Install the bundle
+        run: |
+          $zip = Get-Item loke-*.zip
+          Expand-Archive $zip "$env:RUNNER_TEMP\install"
+          "LOKEC=$env:RUNNER_TEMP\install\$($zip.BaseName)\lokec.exe" >> $env:GITHUB_ENV
+
+      - name: Compile and run a single file
+        working-directory: ${{ runner.temp }}
+        run: |
+          & $env:LOKEC (Join-Path (Split-Path $env:LOKEC) examples\hello.loke) -o hello.exe
+          if ($LASTEXITCODE -ne 0) { throw "hello.loke did not compile" }
+          $out = (.\hello.exe) -join "`n"
+          if ($out -ne 'The answer is 42') { throw "hello.exe printed '$out'" }
+
+      - name: Compile and run a multi-package program
+        working-directory: ${{ runner.temp }}
+        run: |
+          New-Item -ItemType Directory app\greet -Force | Out-Null
+          Set-Content app\main.loke 'package main; import "core:fmt"; import "greet"; main :: proc() { fmt.println(greet.message()); }'
+          Set-Content app\greet\greet.loke 'package greet; @(public) message :: proc() -> string { return "hello from greet"; }'
+          & $env:LOKEC app -o app.exe
+          if ($LASTEXITCODE -ne 0) { throw "the multi-package program did not compile" }
+          $out = (.\app.exe) -join "`n"
+          if ($out -ne 'hello from greet') { throw "app.exe printed '$out'" }
+
+  publish:
+    needs: [test, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" loke-*.zip --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

@@ -260,7 +260,11 @@ baseline integration suite only. Add `-RequireTools` on a machine that has nasm
 and a C host toolset, so tests that would skip for a missing tool fail instead.
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs
 `.\test-all.ps1 -RequireTools` on Windows x64 for every push to `main` and every
-pull request. The suites can also be run separately:
+pull request. Pushing a tag `v<LOKE_VERSION_STRING>` runs
+[.github/workflows/release.yml](.github/workflows/release.yml), which publishes a
+zip of `lokec.exe` with `base/`, `core/`, `runtime/`, and `examples/` once the
+gate passes, [known-gaps.md](known-gaps.md) lists no gaps, and the unzipped
+bundle builds and runs programs on a fresh machine. The suites can also be run separately:
 
 ```powershell
 odin test src -vet-unused -vet-shadowing -vet-packages:lokec

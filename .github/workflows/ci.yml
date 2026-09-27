@@ -8,6 +8,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # release.yml runs the same gate on the tagged revision.
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
