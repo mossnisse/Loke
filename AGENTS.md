@@ -50,6 +50,9 @@ lists the suites. Useful while iterating:
   `odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_NAMES=<name>`.
 - `LOKE_TEST_FLAGS="-opt=speed"` passes flags to every run/trap/pkg compile in
   the corpus; output must match at every `-opt` level.
+- The pages in `tutorials/` are tests too: rewording a diagnostic or changing
+  what a program prints can fail `tutorials_compile_and_run`, which names the
+  page and the block to update.
 - For a change meant to be faster: `.\perf.ps1 -Out before.json` first, then
   `.\perf.ps1 -Baseline before.json` after rebuilding `lokec.exe`.
 - If a PowerShell host reports odin's stderr as `NativeCommandError`, run the

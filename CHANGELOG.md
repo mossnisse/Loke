@@ -39,6 +39,9 @@ checklist.
 
 ### Documentation
 
+- [tutorials/](tutorials/README.md): nine pages that teach Loke from installing
+  it to a program in several packages and a call into C. The test suite builds
+  and runs every program on them and checks what the page says it prints.
 - A release attaches `perf.json`: compile time, compiler memory, and executable
   size for every example, and the run time of the programs in `bench/`.
   `perf.ps1` produces it and compares it with an earlier one.

@@ -419,6 +419,53 @@ the specification as written.
   error (`L0436`) prints every nested type in full on each of its notes, so
   `deep([1]T{x})` spells `[1]` 64 times per line.
 
+## Found by writing the tutorials
+
+Writing [tutorials/](tutorials/README.md) left these open. The pages work around
+each one, so each workaround marks a place to revisit once it is settled.
+
+- **Printing pieces without spaces.** Every `fmt` procedure puts a space between
+  its arguments, so a `format` method that prints `(3, 4)` needs one
+  `format_to` call per piece (tutorials/03 "Methods"). Column widths are the
+  question in [Width and precision in `fmt`](#width-and-precision-in-fmt); the
+  tool in tutorials/08 pads with `strings.repeat` meanwhile.
+- **An absent `Option` as an error.** Turning `.none` into a failure takes a
+  `switch` of four lines, as around `strings.cut` in tutorials/05 and
+  tutorials/08. `or_else` needs a value of the payload type, and `or_return`
+  cannot pass on an `Option`'s failure in a procedure whose error is an enum,
+  because `Unit` does not convert to the enum. Something like
+  `Option.ok_or(error) -> Result(T, E)` would make it
+  `strings.cut(text, ":").ok_or(.Missing_Colon) or_return`. design.md "Changing
+  error domains" makes `map_error` the only error adaptation, so this is a
+  specification question.
+- **Diagnostics name a directory's files by full path.** `lokec file.loke`
+  prints `file.loke:6:15`, but for `lokec inventory` the same diagnostic prints
+  something like `C:/work/inventory/stock\report.loke:20:1`, mixing separators.
+  A note that points into `base:` or `core:` does the same. The loader keeps
+  `entry.fullpath` of a canonical, `/`-separated directory (`package_sources` in
+  `packages.odin`). The tutorials show diagnostics only for one-file programs
+  because of it. Printing a path relative to the working directory, with one
+  separator, would fix both cases.
+- **Inserting a `string_view` key is reported as a lookup.** For
+  `counts: map[string]int` and `word: string_view`, `counts[word] = 1` reports
+  "cannot look up `string` with `string_view`" (`L0310`). The problem is that
+  an inserted key must be an owned `string`, and the fix, `word.copy()`, goes
+  unmentioned.
+- **One syntax error, six diagnostics.** A case label with no low end,
+  `case ..< 0:`, reports `L0220`, `L0248`, `L0313`, `L0216`, and `L0220` again,
+  all on that line, plus `L0365` "this procedure can end without returning a
+  value" for the enclosing procedure, which prints first because its position
+  is earlier. future-plans.md "Ongoing quality engineering" asks for no
+  diagnostic cascades. Recovery could skip to the case's `:`, and a procedure
+  whose body failed to parse could skip the missing-return check.
+- **Two slices of one local array in one call.** `fmt.println(primes[1:4],
+  total(primes[:]))` is rejected (`L0511`): slicing a mutable local gives
+  `[]mut int`, which keeps that type inside the `any_view`, so the second slice
+  conflicts with it. That follows design.md "Slices", and an extracted
+  `[]mut int` could indeed write. But a reader who only prints has to write
+  `middle := primes[1:4];` first (tutorials/04). Should erasing a fresh slice
+  into an `any_view` settle it read-only, as a `[]T` destination does?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

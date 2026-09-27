@@ -75,11 +75,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "baseline integration tests failed ($LASTEXITCODE)" }
 
     # Every test that compiles with LOKE_TEST_FLAGS reruns at each level: the
-    # run/trap corpus, multi-package programs, and the examples.
+    # run/trap corpus, multi-package programs, the examples, and the tutorials.
     $matrix = @(
         'programs_run', 'programs_trap', 'packages_run',
         'examples_compile_and_run', 'example_greeting_appends_to_its_file',
-        'example_streaming_reads_its_input'
+        'example_streaming_reads_its_input', 'tutorials_compile_and_run'
     ) -join ','
     if (-not $SkipOptimizationMatrix) {
         foreach ($mode in @('minimal', 'size', 'speed', 'aggressive')) {

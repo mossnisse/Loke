@@ -12,8 +12,10 @@ param([string[]]$Specs = @('design.md', 'standard-library.md', 'compiler-archite
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location -LiteralPath $repoRoot
 try {
-    $sources = Get-ChildItem -Recurse -File -Include *.odin, *.loke, *.c, *.h |
-        Where-Object { $_.FullName -notlike '*\tests\tmp\*' }
+    # The tutorials link to the sections they teach from as `design.md "X"`.
+    $sources = @(Get-ChildItem -Recurse -File -Include *.odin, *.loke, *.c, *.h |
+        Where-Object { $_.FullName -notlike '*\tests\tmp\*' }) +
+        @(Get-ChildItem -File tutorials/*.md)
 
     $texts = @{}
     foreach ($file in $sources) {

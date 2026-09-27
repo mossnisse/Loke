@@ -10,16 +10,16 @@ initiative below should receive a detailed implementation plan when work begins.
 
 ## Tutorials
 
-Create practical, beginner-friendly tutorials that teach Loke from the first
-program through packages, foreign-function interfaces, and common application
-patterns. Testing joins them once Loke has a test facility (see
-[Standard-library maturity](#standard-library-maturity)). Test every tutorial
-program the way `tests/examples/` tests `examples/`: built from its real source,
-classified, and compared with its expected output, so no tutorial can silently
-fall out of date.
+[tutorials/](tutorials/README.md) teaches Loke from installing it to a program in
+several packages and a call into C, and `tests/tutorial_test.odin` builds and
+runs every program on the pages. Keep them current as the language grows:
 
-Done means a new user can install the toolchain, learn the core language, and
-build a small multi-package program by following the tutorials alone.
+- add a page on testing once Loke has a test facility (see
+  [Standard-library maturity](#standard-library-maturity));
+- add a page when a later initiative changes how a new user works, such as the
+  package workflow or debugging;
+- revisit the workarounds the pages use for the gaps listed in
+  [comments.md "Found by writing the tutorials"](comments.md#found-by-writing-the-tutorials).
 
 ## Standard-library maturity
 
@@ -30,6 +30,9 @@ constraints remain in [standard-library.md](standard-library.md).
 
 Main work:
 
+- settle the gaps the tutorials exposed: printing without separators, column
+  widths, and an absent `Option` as an error
+  ([comments.md "Found by writing the tutorials"](comments.md#found-by-writing-the-tutorials));
 - implement process creation with explicit argument, environment, pipe, handle,
   and lifetime rules;
 - provide the testing and binary/text facilities needed to express the compiler
@@ -220,8 +223,8 @@ compiler task.
 
 ## Suggested order
 
-1. Publish introductory tutorials while filling the concrete standard-library
-   gaps those tutorials and real programs expose.
+1. Fill the concrete library and diagnostic gaps the tutorials exposed, and
+   those real programs expose.
 2. Add debug information, and keep comments in the syntax tree for the formatter
    and the documentation generator.
 3. Define the reproducible package and dependency workflow, and finish the
@@ -235,7 +238,7 @@ compiler task.
 7. Begin self-hosting after the compiler services, package workflow, release
    process, and required libraries have stabilized.
 
-Tutorial, standard-library, and debug-information work may overlap. The
+Standard-library and debug-information work may overlap. The
 language server and platform ports may overlap once the compiler services
 exist. Quality
 engineering continues through every step. Self-hosting remains last because it

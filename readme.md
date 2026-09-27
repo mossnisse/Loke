@@ -22,7 +22,7 @@ allowed because the possibility is visible at the call boundary. Hidden
 allocations are also allowed, but a returned value that requires manual cleanup
 should make that responsibility clear in its type or API.
 
-The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
+To learn the language, start with the [tutorials](tutorials/README.md). The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
 
 ## The compiler
 

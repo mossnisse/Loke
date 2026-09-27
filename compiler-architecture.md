@@ -510,6 +510,16 @@ deterministic, and each program's mutants come from a seed of its own, so a new
 `tests/run/` case leaves every other program's mutants unchanged;
 `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` (per program) explore further.
 
+`tests/tutorial_test.odin` checks the pages under `tutorials/` from their own
+text, so a reader copies exactly what was compiled. A fenced block whose info
+string says `file=` is written out: a `.loke` file of a program, a data file, or
+C source that clang compiles to an object for a `foreign import`. A following
+`output=`, `panic=`, or `error=` block names a program and says what the console
+shows when it runs, with any `args=` and `exit=`, or what lokec reports when it
+rejects it. Every program is built and run from one directory, as a reader
+following the pages would, and each needs a result block. A page therefore
+cannot show a program, an output, or a diagnostic the suite does not check.
+
 Every diagnostic code the compiler can write is pinned by a case in one of those
 directories, or by a harness or unit test for the ones no corpus shape reaches
 — a missing input, an unwritable module, an absent clang or assembler, a
