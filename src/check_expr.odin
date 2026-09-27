@@ -1975,8 +1975,9 @@ check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, 
 	v.const_value = folded
 }
 
-// The same rule for `a << b` and `a <<= b`: an unsigned typed count, or an
-// untyped constant a typed unsigned integer could represent. The compound form
+// The same rule for `a << b` and `a <<= b`: a typed integer count, read as
+// unsigned (design.md "Integer operators"), or an untyped constant a typed
+// unsigned integer could represent. The compound form
 // checks its own operand here rather than against the destination's type, which
 // would happily accept a signed one.
 check_shift_count :: proc(k: ^Checker, e: Expr) -> bool {
@@ -1998,14 +1999,14 @@ validate_shift_count :: proc(k: ^Checker, e: Expr, type: Type_Id) -> bool {
 			}
 			return materialize(k, e, TYPE_UINT)
 		}
-	} else if type_is_integer(k.c, type) && !type_signed(k.c, type) {
+	} else if type_is_integer(k.c, type) {
 		return true
 	}
 	errorf(
 		k.c,
 		expr_span(e),
 		"L0356",
-		"a shift count must have an unsigned integer type, found `%s`",
+		"a shift count must have an integer type, found `%s`",
 		type_name(k.c, type),
 	)
 	return false

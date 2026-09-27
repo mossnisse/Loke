@@ -41,6 +41,15 @@ main :: proc() {
 	fmt.println(int(i << count));
 	fmt.println(-1 >> 40);
 
+	// A signed count is read as unsigned, so a negative one is beyond the width.
+	back := -1;
+	narrow: i8 = -1;
+	fmt.println(int(i >> back));
+	fmt.println(int(j >> back));
+	fmt.println(int(i << narrow));
+	three: i8 = 3;
+	fmt.println(int(j >> three));
+
 	// Remainder keeps the sign of the dividend, constant and at runtime.
 	fmt.println(-7 / 2);
 	fmt.println(-7 % 2);

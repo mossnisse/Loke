@@ -18,13 +18,13 @@ L0537
 this reset would end the region backing `k`, which is still live here
 L0536
 @81:2
-`g` is backed by an allocator region created in this procedure, so it cannot be stored in file-scope storage, which outlives that region
+`s` is backed by an allocator region created in this procedure, so it cannot be stored in `g` (file-scope storage), which outlives that region
 L0536
 @87:2
-`h` is backed by an allocator region created in this procedure, so it cannot be stored in storage the caller owns, which outlives that region
+`s` is backed by an allocator region created in this procedure, so it cannot be stored in `h` (storage the caller owns), which outlives that region
 L0536
 @92:2
-`g` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage, which outlives that region
+`name` is backed by an allocator region this procedure received, so it cannot be stored in `g` (file-scope storage), which outlives that region
 L0537
 @102:2
 this reset would end the region backing `copies`, which is still live here

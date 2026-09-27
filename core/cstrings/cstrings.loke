@@ -1,9 +1,10 @@
 // Owned zero-terminated buffers for foreign APIs (design.md "C string views",
 // standard-library "`core:cstrings`").
 //
-// `cstring_view` from `string.to_c_view()` is valid only through the enclosing
-// expression. A foreign API that *retains* the pointer needs storage that
-// outlives the call, and that is what `C_String` is.
+// `cstring_view` from `string.to_c_view()` borrows the string, and the compiler
+// stops following that borrow at the foreign call. A foreign API that *retains*
+// the pointer needs storage kept for as long, with no interior zero, and that is
+// what `C_String` is.
 //
 // Unlike `string`, it does not promise UTF-8: a foreign encoding is exactly the
 // case it exists for. It only promises that the bytes it owns end at the

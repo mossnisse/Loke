@@ -3,4 +3,4 @@ L0526
 this slice cannot be returned: `bytes` ends when this procedure returns
 L0536
 @35:2
-`held` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage, which outlives that region
+this value is backed by an allocator region this procedure received, so it cannot be stored in `held` (file-scope storage), which outlives that region

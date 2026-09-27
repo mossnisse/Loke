@@ -270,9 +270,6 @@ profiles contain.
   create `\\?\UNC\server` and fails. `clean` already declines extended-length
   paths. Should `volume` understand `\\?\UNC\`, or should extended-length paths
   be documented as unsupported by the walking operations?
-- `path.SEPARATOR` is public, because the file is, but standard-library.md
-  "`core:path`" lists only `separator()`. Should the constant be specified or be
-  made private?
 
 ## Open questions in `core:strconv`
 
@@ -304,21 +301,8 @@ profiles contain.
   one redirected stream, and `fmt` cannot print a bare `\n` at all. Should
   standard output be binary for both, as Odin's is, or text for both?
 
-## Open questions in `core:unsafe`
-
-- `unsafe.string_view(pointer, length)` answers `.none` for a negative
-  length, the same answer as for invalid UTF-8, while `pointer[0:length]`
-  with the same length panics like any slice bound. design.md "String
-  conversion" gives only the signature. Is a negative length a programmer
-  error, or an input to report?
-
 ## Open questions in the allocation runtime
 
-- A zero-byte allocation never reaches the provider: `new` of an empty struct
-  answers the same placeholder address every time, so two live results compare
-  equal, and it succeeds from the zero `Arena`, which design.md "Allocators"
-  says fails every allocation. Should zero-byte results be distinct, and does
-  the empty region refuse them?
 - design.md "Allocation failure" gives every allocator one of two policies, but
   no source spelling selects `.Trap`: `core:mem` names no policy, and `Arena`
   and `Scratch` always answer `.Panic`. Only a record a foreign provider builds
@@ -327,26 +311,11 @@ profiles contain.
   factory, on `Arena`/`Scratch` construction, or as a build-wide default for
   freestanding targets?
 
-## Neighbours of the `dyn` sinks
+## Width and precision in `fmt`
 
-design.md [Procedures](design.md#procedures) still tells a callback to carry its
-state "usually as a `rawptr`", which the callable convention under
-[Build-selected services](#build-selected-services-and-explicit-runtime-state)
-and the `dyn` sinks
-([Formatting and logging sinks are `dyn` views](#formatting-and-logging-sinks-are-dyn-views))
-have replaced. And `fmt.Options` holds only `base` and `uppercase`, so a width,
-a precision, or padding has no spelling: `3.14159` cannot be printed as `3.14`,
-nor a column aligned.
-
-## Signed shift counts
-
-A scalar shift count must have an unsigned type, so `1 << k` with `k: int` is
-L0356 and a shift by a loop index needs `uint(k)`. A SIMD shift already takes a
-signed count and reads each lane as unsigned, so a negative lane is a count
-beyond the width ([Lane-wise operators](design.md#lane-wise-operators)):
-`v << {1, -1, 2, 40}` over `{1, 2, 3, 4}` gives `{2, 0, 12, 0}`. Proposal: give
-scalars the lane rule — any integer count, read as unsigned — so the two agree
-and no new panic is added.
+`fmt.Options` holds only `base` and `uppercase`, so a width, a precision, or
+padding has no spelling: `3.14159` cannot be printed as `3.14`, nor a column
+aligned.
 
 ## Open questions in the compiler's structure
 

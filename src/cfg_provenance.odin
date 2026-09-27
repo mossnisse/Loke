@@ -2088,11 +2088,11 @@ prov_carrier_slots :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 // assigned to `static`, `thread_local`, or file-scope storage (design.md).
 @(private = "file")
 prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
-	prov_region_escape_set(graph, target, prov_result_region(graph, value))
+	prov_region_escape_set(graph, target, prov_result_region(graph, value), prov_owner_name(graph, value))
 }
 
 @(private = "file")
-prov_region_escape_set :: proc(graph: ^Flow_Graph, target: Expr, region: Region_Set) {
+prov_region_escape_set :: proc(graph: ^Flow_Graph, target: Expr, region: Region_Set, owner: string) {
 	if !type_is_managed(graph.k.c, expr_base(target).type) {
 		return
 	}
@@ -2121,11 +2121,13 @@ prov_region_escape_set :: proc(graph: ^Flow_Graph, target: Expr, region: Region_
 	if moved == "" && !region_has_local(set) && (param || !region_is_parameter_backed(set)) {
 		return
 	}
+	// design.md "Required diagnostics" names the escaping owner; the
+	// destination follows its kind of storage.
 	prov_emit(graph, Prov_Event {
 		kind   = .Region_Escape,
 		span   = expr_span(target),
-		verb   = identifier_text(graph.k.c, sym.name),
-		name   = storage,
+		verb   = owner,
+		name   = fmt.aprintf("`%s` (%s)", identifier_text(graph.k.c, sym.name), storage, allocator = graph.alloc),
 		region = set,
 		moved  = moved,
 	})
@@ -2177,7 +2179,7 @@ prov_store_region_set :: proc(
 		return
 	}
 	if root, path, ok := prov_place_of(graph, destination); ok {
-		prov_region_escape_set(graph, destination, region)
+		prov_region_escape_set(graph, destination, region, owner)
 		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region)
 		return
 	}
@@ -2276,7 +2278,7 @@ prov_owner_name :: proc(graph: ^Flow_Graph, value: Expr) -> string {
 		owner = moved.value
 	}
 	if sym := symbol_of(graph.k.c, place_root_symbol(owner)); sym != nil {
-		return identifier_text(graph.k.c, sym.name)
+		return fmt.aprintf("`%s`", identifier_text(graph.k.c, sym.name), allocator = graph.alloc)
 	}
 	return "this value"
 }
@@ -2895,7 +2897,7 @@ prov_declare_region :: proc(
 			prov_emit(graph, Prov_Event {
 				kind   = .Region_Escape,
 				span   = sym.span,
-				verb   = identifier_text(graph.k.c, sym.name),
+				verb   = fmt.aprintf("`%s`", identifier_text(graph.k.c, sym.name), allocator = graph.alloc),
 				name   = storage,
 				region = set,
 			})

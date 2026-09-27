@@ -2109,7 +2109,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				state.k.c,
 				event.span,
 				"L0536",
-				"`%s` is backed by an allocator region created in this procedure, so it cannot be stored in %s, which outlives that region",
+				"%s is backed by an allocator region created in this procedure, so it cannot be stored in %s, which outlives that region",
 				event.verb,
 				event.name,
 			)
@@ -2119,7 +2119,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			state.k.c,
 			event.span,
 			"L0536",
-			"`%s` is backed by an allocator region this procedure received, so it cannot be stored in %s, which outlives that region",
+			"%s is backed by an allocator region this procedure received, so it cannot be stored in %s, which outlives that region",
 			event.verb,
 			event.name,
 		)

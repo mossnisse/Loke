@@ -1716,11 +1716,14 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 		)
 
 	case .To_C_View:
-		// ponytail: every `string` buffer and literal already carries a terminator,
-		// so no terminated temporary is ever needed. A representation that could
-		// hand out an unterminated `string` would need that branch back.
+		// design.md "C string views": every `string` buffer and literal carries a
+		// terminator, so the view is the string's own data, borrowed like `bytes()`.
+		// The empty string has no buffer, and C needs a pointer to read.
 		data, _ := emit_text_parts(e, v.bound[0])
-		out[0] = data
+		missing := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, data)
+		out[0] = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", out[0], missing, text_literal_global(e, ""), data)
 
 	case .To_Runes:
 		// The helper releases its partial buffer before the policy applies.
@@ -1994,8 +1997,13 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 		out[0] = emit_expr(e, v.bound[0])
 
 	case .Unsafe_String_View:
+		// design.md "string type conversions": a negative length is a bounds
+		// error, as in `pointer[0:length]`, not input to report.
 		data := emit_expr(e, v.bound[0])
 		length := widen_to_i64(e, emit_expr(e, v.bound[1]), expr_base(v.bound[1]).type)
+		negative := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, length)
+		panic_if(e, negative, "slice.bounds", "slice bounds out of range")
 		return emit_checked_view(e, as_type, data, length)
 	}
 	return out

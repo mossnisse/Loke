@@ -15,4 +15,4 @@ L0537
 this reset would end the region backing `s`, which is still live here
 L0536
 @60:2
-`g` is backed by an allocator region created in this procedure, so it cannot be stored in file-scope storage, which outlives that region
+this value is backed by an allocator region created in this procedure, so it cannot be stored in `g` (file-scope storage), which outlives that region

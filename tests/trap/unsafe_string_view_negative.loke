@@ -1,0 +1,10 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// design.md "string type conversions": a negative length is a bounds error, as
+// in `pointer[0:length]`, not an input answered with `.none`.
+main :: proc() {
+	bytes := [2]u8{65, 66};
+	length := -1;
+	view := unsafe.string_view(unsafe.raw_data(bytes[:]), length) or_else "invalid";
+	fmt.println(view);
+}

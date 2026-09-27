@@ -124,4 +124,12 @@ main :: proc() {
 		fmt.println(false);
 		fmt.println("");
 	}
+
+	// design.md "C string views": `to_c_view()` borrows the string, so it may be
+	// kept while the string lives, and the empty string's view is still readable.
+	built := "ab" + "c";
+	kept := built.to_c_view();
+	fmt.println(strlen(kept));
+	nothing := built[0:0].copy();
+	fmt.println(strlen(nothing.to_c_view()));
 }

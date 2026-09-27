@@ -1,9 +1,9 @@
 L0536
 @13:79
-`v` was received by `move`, and its `@(escape=...)` level does not let it be stored in storage the caller owns
+`v` was received by `move`, and its `@(escape=...)` level does not let it be stored in `dst` (storage the caller owns)
 L0536
 @14:62
-`v` was received by `move`, and its `@(escape=...)` level does not let it be stored in file-scope storage
+`v` was received by `move`, and its `@(escape=...)` level does not let it be stored in `g_kept` (file-scope storage)
 L0536
 @15:71
 `v` was received by `move`, and its `@(escape=...)` level does not let it be stored in storage reached through a pointer or slice

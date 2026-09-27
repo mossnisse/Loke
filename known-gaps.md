@@ -7,22 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-A second audit of the root and region provenance analyses found the entries
-below.
-
-- **L0536 names the destination, not the escaping owner.** design.md
-  "Required diagnostics" asks for the owner and its region.
-  `prov_region_escape_set` names the destination and calls the region "created
-  in this procedure": `t := make([dynamic]int, 4, arena.allocator()); g =
-  move(t);` reports "`g` is backed by an allocator region created in this
-  procedure".
-- **A `to_c_view()` result may be kept.** design.md "C string views" says it
-  cannot be assigned, returned, or stored, but `c := s.to_c_view();` is
-  accepted. It is safe today, because the emitter never builds a terminated
-  temporary and the view borrows `s` (the `ponytail:` note on `.To_C_View` in
-  `emit_llvm_expr.odin`), so either the spec says it borrows the string, or
-  the checker rejects keeping it.
-
 An architecture review of the checker found the one below.
 
 - **A procedure literal in an interface requirement adds copy procedures to the

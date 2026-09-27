@@ -27,10 +27,10 @@ L0592
 this result is backed by `arena`, an allocator region that ends when this procedure returns
 L0536
 @102:2
-`global_buffer` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage, which outlives that region
+this value is backed by an allocator region this procedure received, so it cannot be stored in `global_buffer` (file-scope storage), which outlives that region
 L0536
 @107:2
-`kept` is backed by an allocator region this procedure received, so it cannot be stored in `static` storage, which outlives that region
+this value is backed by an allocator region this procedure received, so it cannot be stored in `kept` (`static` storage), which outlives that region
 L0539
 @111:23
 `@(allocator_reset)` marks an `Allocator` parameter whose region a call may end, found `int`
@@ -42,7 +42,7 @@ L0537
 this reset would end the region backing `xs`, which is still live here
 L0536
 @149:2
-`global_holder` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage
+this value is backed by an allocator region this procedure received, so it cannot be stored in `global_holder` (file-scope storage), which outlives that region
 L0592
 @163:9
 this result is backed by `arena`, an allocator region that ends when this procedure returns

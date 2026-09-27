@@ -504,12 +504,12 @@ Use `string_view` to read text and `string` to store it. The conversion runs one
 
 `cstring_view` is a non-owning, zero-terminated byte view — what C `char const *` maps to. It does not promise UTF-8, since foreign strings often use other encodings. A view from foreign code has no owner known to the compiler, so keeping it alive is the programmer's responsibility (see [foreign boundary](#what-is-not-checked)). `string.from_utf8(view)` scans for the terminator, validates UTF-8, and copies into owned storage.
 
-A string literal may initialize a `cstring_view` (its bytes have static lifetime). A runtime `string` uses `to_c_view()`, which adds a terminator only when needed and returns a temporary valid for the enclosing expression; the temporary cannot be assigned, returned, or stored. A `string` may contain U+0000, and C reads such a view only up to the first zero; `C_String` below rejects an interior zero when that must be caught:
+A string literal may initialize a `cstring_view` (its bytes have static lifetime). A runtime `string` uses `to_c_view()`, which borrows the string as `bytes()` does: a `string`'s storage always ends in a terminator, so the view can be kept, returned, or stored wherever a borrow of the string can. A `string` may contain U+0000, and C reads such a view only up to the first zero; `C_String` below rejects an interior zero when that must be caught:
 
 ```odin
 static_name: cstring_view = "Hellope";
 text := string.from_utf8(static_name) or_else ""; // validates and copies, or uses the fallback
-c_api(runtime_name.to_c_view());   // temporary lives through this call
+c_api(runtime_name.to_c_view());   // borrows `runtime_name` for the call
 ```
 
 `cstring_view.from_bytes(bytes)` accepts a byte slice and returns a borrowed `Option(cstring_view)`: `.some` when the last byte is zero, so C's read stops inside the slice, and `.none` otherwise, including for an empty slice. An earlier zero ends the C string early, as it does for `to_c_view()`. The view borrows `bytes` like any other view.
@@ -531,7 +531,7 @@ case .none:
 text := string.from_utf8(bytes) or_else "";
 ```
 
-`string.from_utf8(bytes)` accepts `[]u8` or `cstring_view` and returns an owned `Option(string)`. A C string view is scanned for its terminator first. `string_view.from_utf8(bytes)` accepts a byte slice and returns a borrowed `Option(string_view)` without copying. Both forms validate UTF-8.
+`string.from_utf8(bytes)` accepts `[]u8` or `cstring_view` and returns an owned `Option(string)`. A C string view is scanned for its terminator first. `string_view.from_utf8(bytes)` accepts a byte slice and returns a borrowed `Option(string_view)` without copying. Both forms validate UTF-8. `unsafe.string_view(pointer, length)` validates the same way; a negative `length` panics, as `pointer[0:length]` does.
 
 A view from a `string` is `[]u8` and cannot become `[]mut u8`, by the ordinary [capability rule](#capabilities-and-the-one-rule).
 
@@ -544,7 +544,7 @@ In the table below `src` is the source value, and the action is one of: **copy**
 | `string` | `string_view` | borrow a subrange | `src[low:high]` |
 | `string` | `string` | share | `other := src` |
 | `string` | `string` | independent byte copy | `src.copy()` |
-| `string` | `cstring_view` | temporary borrow | `src.to_c_view()` |
+| `string` | `cstring_view` | borrow | `src.to_c_view()` |
 | `string` | `[]rune` | stream | `foreach (r in src) { ... }` |
 | `string` | `[dynamic]rune` | copy | `src.to_runes()` |
 | `string` | `[^]u8` | unsafe borrow | `unsafe.raw_data(src.bytes())` |
@@ -3351,8 +3351,8 @@ Binary:
 ~       bitwise xor                integers
 &       bitwise and                integers
 &~      bitwise and-not            integers
-<<      left shift                 integer << unsigned integer
->>      right shift                integer >> unsigned integer
+<<      left shift                 integer << integer
+>>      right shift                integer >> integer
 ```
 
 Except for shift operations, if one operand is an unfixed constant and the other operand is not, the constant is implicitly converted to the type of the other operand (if possible).
@@ -3365,14 +3365,15 @@ Each `+` allocates and copies the accumulated result, so repeated concatenation 
 
 Enum values do not support arithmetic or bitwise operators; see [Enumerations](#enumerations).
 
-The right operand in a shift expression must have an unsigned integer type or be an unfixed constant representable by a typed unsigned integer. If the left operand of a non-constant shift expression is an unfixed constant, it is first implicitly converted to the type it would assume if the shift expression were replaced solely by the left operand alone (with type inference and hinting rules applied).
+The right operand in a shift expression must have an integer type or be an unfixed constant representable by a typed unsigned integer. A count of a signed type is read as unsigned, as a [SIMD](#lane-wise-operators) count lane is, so a negative count is one at or beyond the width. If the left operand of a non-constant shift expression is an unfixed constant, it is first implicitly converted to the type it would assume if the shift expression were replaced solely by the left operand alone (with type inference and hinting rules applied).
 
 ```odin
 n: u32 = 3;
 a: u8 = 1 << n;   // `1` is a `u8`, as in `a: u8 = 1`
 b := 1 << n;      // `1` is an `int`, as in `b := 1`
 k := 2;
-c := 1 << k;      // ERROR: a shift count must have an unsigned integer type
+c := 1 << k;      // `k` is an `int`, read as unsigned
+d := 1 << -1;     // ERROR: an unfixed constant count cannot be negative
 ```
 
 ### Comparison operators
@@ -3559,7 +3560,7 @@ The exception to these rules is when the dividend x is the most negative value f
 
 If the divisor is a constant, it must not be zero. If the divisor is zero at runtime, a runtime panic occurs.
 
-A shift count is an unsigned integer, so it is never negative, and has no upper limit. Shifts are arithmetic for a signed left operand and logical for an unsigned one, behaving as `n` repeated one-bit shifts. So `x<<1` equals `x*2`, and `x>>1` equals `x/2` truncated toward negative infinity.
+A shift count is read as an unsigned integer, so it is never negative, and has no upper limit. Shifts are arithmetic for a signed left operand and logical for an unsigned one, behaving as `n` repeated one-bit shifts. So `x<<1` equals `x*2`, and `x>>1` equals `x/2` truncated toward negative infinity.
 
 A shift count that is equal to or greater than the width of the left operand has defined behavior. It is the limit of the repeated one-bit shift:
 
@@ -4146,7 +4147,7 @@ fibonacci :: proc(n: int) -> int {
 fmt.println(fibonacci(3)); // 2
 ```
 
-**Procedure literals do not capture local state.** They may refer to constants, types, and file-scope declarations, but not local variables or parameters of an enclosing procedure. Pass callback state explicitly, usually as a `rawptr` or typed user-data parameter.
+**Procedure literals do not capture local state.** They may refer to constants, types, and file-scope declarations, but not local variables or parameters of an enclosing procedure. Pass callback state explicitly: as a typed parameter, or as a record whose method is the callback, taken as a [borrowed `dyn` view](#borrowed-dynamic-interface-values) as `fmt.Writer` is.
 
 ### Parameters
 
@@ -5546,9 +5547,11 @@ The allocator affects where backing storage comes from, but does not change valu
 
 Omitting the allocator argument selects the default provider: `new(int)` is `new(int, mem.default_allocator())`. The default expression is evaluated only when the caller omits the argument. A nil `Allocator` also selects the default provider, wherever it is passed.
 
+A request for zero bytes, such as `new` of an empty struct, never reaches the allocator. It succeeds from every allocator, the empty region below included, and answers a non-null address at the requested alignment that nothing may dereference. Two such results may compare equal, and releasing one does nothing.
+
 Temporary storage uses an explicit `mem.Scratch` or `mem.Arena` owner. `free_all`, and any call with the same reset effect, is rejected while a live owner or borrow still refers to that allocator's storage.
 
-`Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows the supplied storage; provider-backed construction takes a parent allocator and defaults it to the program provider. Ordinary construction applies the parent's failure policy, while the `try_` procedures return a `Result` containing either the owner or an error, never a partial owner. A provider-backed child must be dropped before its parent region is reset or ended. The zero `Arena` or `Scratch`, which a `static` provider holds until it is assigned, owns an empty region: allocating from it fails, and resetting or dropping it does nothing.
+`Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows the supplied storage; provider-backed construction takes a parent allocator and defaults it to the program provider. Ordinary construction applies the parent's failure policy, while the `try_` procedures return a `Result` containing either the owner or an error, never a partial owner. A provider-backed child must be dropped before its parent region is reset or ended. The zero `Arena` or `Scratch`, which a `static` provider holds until it is assigned, owns an empty region: allocating a byte or more from it fails, and resetting or dropping it does nothing.
 
 ```odin
 fixed := mem.Arena.from_buffer(buffer[:]);

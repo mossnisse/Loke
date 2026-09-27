@@ -12,4 +12,4 @@ L0646
 this slice borrows `view`, which is not written `@(escape=stored)`, so it cannot reach `h`
 L0536
 @55:15
-`value` was received by `move`, and its `@(escape=...)` level does not let it be stored in storage the caller owns
+`value` was received by `move`, and its `@(escape=...)` level does not let it be stored in `n` (storage the caller owns)

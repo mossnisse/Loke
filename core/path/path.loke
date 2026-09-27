@@ -18,10 +18,10 @@ import "core:strings";
 // source selection. `LOKE_OS` is a fixed `.Windows` today, so the other branch
 // exists and is never taken.
 when (LOKE_OS == .Windows) {
-	SEPARATOR :: '\\';
+	@(private) SEPARATOR :: '\\';
 	@(private) ALTERNATE :: '/';
 } else {
-	SEPARATOR :: '/';
+	@(private) SEPARATOR :: '/';
 	@(private) ALTERNATE :: '/';
 }
 
