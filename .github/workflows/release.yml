@@ -114,9 +114,12 @@ jobs:
           name: bundle
 
       # The notes are the version's CHANGELOG.md section, up to the next one.
+      # Its links are repository-relative (AGENTS.md), which resolve nowhere on
+      # the releases page, so they are pointed at the tagged revision.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          awk -v heading="## [${GITHUB_REF_NAME#v}]" 'index($0, heading) == 1 { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md > notes.md
+          awk -v heading="## [${GITHUB_REF_NAME#v}]" 'index($0, heading) == 1 { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md |
+            perl -pe 's{\]\((?!https?://|#)([^)]+)\)}{](https://github.com/$ENV{GITHUB_REPOSITORY}/blob/$ENV{GITHUB_REF_NAME}/$1)}g' > notes.md
           gh release create "$GITHUB_REF_NAME" loke-*.zip --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md
