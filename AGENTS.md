@@ -50,5 +50,7 @@ lists the suites. Useful while iterating:
   `odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_NAMES=<name>`.
 - `LOKE_TEST_FLAGS="-opt=speed"` passes flags to every run/trap/pkg compile in
   the corpus; output must match at every `-opt` level.
+- For a change meant to be faster: `.\perf.ps1 -Out before.json` first, then
+  `.\perf.ps1 -Baseline before.json` after rebuilding `lokec.exe`.
 - If a PowerShell host reports odin's stderr as `NativeCommandError`, run the
   commands inside `test-all.ps1` one by one from a POSIX shell instead.

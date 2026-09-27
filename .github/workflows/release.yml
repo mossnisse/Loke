@@ -112,6 +112,12 @@ jobs:
         with:
           name: bundle
 
+      # The tagged revision's performance record, from the test job; the next
+      # release's CI compares against it.
+      - uses: actions/download-artifact@v4
+        with:
+          name: perf
+
       # The notes are the version's CHANGELOG.md section, up to the next one.
       # Its links are repository-relative (AGENTS.md), which resolve nowhere on
       # the releases page, so they are pointed at the tagged revision.
@@ -121,4 +127,4 @@ jobs:
         run: |
           awk -v heading="## [${GITHUB_REF_NAME#v}]" 'index($0, heading) == 1 { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md |
             perl -pe 's{\]\((?!https?://|#)([^)]+)\)}{](https://github.com/$ENV{GITHUB_REPOSITORY}/blob/$ENV{GITHUB_REF_NAME}/$1)}g' > notes.md
-          gh release create "$GITHUB_REF_NAME" loke-*.zip --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" loke-*.zip perf.json --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md

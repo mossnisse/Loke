@@ -546,6 +546,18 @@ toolset to link a C host — and record what they skipped when it is absent. Pas
 supposed to have them: the skips become failures, so the assembly link, the
 object-build host link and the IR validation cannot go missing on a green run.
 
+`perf.ps1` records performance rather than testing it. For every program in
+`examples/` and `bench/` it takes the front end's time (`-emit-ll`, which stops
+before clang), the whole build's time at `-opt=speed`, lokec's peak working
+set, and the executable's size, each timing the fastest of three runs. It also
+runs the `bench/` programs, which are sized to take a measurable time, and
+requires each one's output to match its `.expected`. `-Out` writes the record
+as JSON; `-Baseline` shows each figure's change from an earlier record. CI runs
+it after the gate, compares with the latest release's `perf.json`, and a
+release attaches its own. Measure before and after a change meant to make the
+compiler faster, on one machine, because figures from different CI runners
+vary by more than most changes.
+
 For a structural backend refactor, compare emitted `.ll` with the same source
 path and options before and after the change. Reproducible IR catches naming and
 ordering drift that successful execution may hide.

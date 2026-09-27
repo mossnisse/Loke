@@ -39,6 +39,9 @@ checklist.
 
 ### Documentation
 
+- A release attaches `perf.json`: compile time, compiler memory, and executable
+  size for every example, and the run time of the programs in `bench/`.
+  `perf.ps1` produces it and compares it with an earlier one.
 - [releasing.md](releasing.md) states what a version promises before and
   after 1.0, where upgrade notes go, and the release checklist.
 

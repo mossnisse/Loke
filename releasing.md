@@ -71,10 +71,14 @@ entry under **Unreleased** in the same commit.
 4. Set `LOKE_VERSION_STRING` in `src/build_config.odin`, and the
    `static_assert(LOKE_VERSION == ...)` in `src/front_end_test.odin` that pins
    it, to `X.Y.Z`.
-5. Commit, push to `main`, and wait for CI.
+5. Commit, push to `main`, and wait for CI. Its Performance step compares the
+   revision with the previous release's `perf.json`; a slower figure there
+   does not fail CI, so read the job summary and explain or fix a real
+   regression before tagging.
 6. Tag and push: `git tag -a vX.Y.Z -m "Loke X.Y.Z"`, then
    `git push origin vX.Y.Z`.
 7. Watch the Release workflow. If it fails before publishing, fix the cause on
    `main`, delete the tag locally and on `origin`, and tag again. Once a release
    is published its tag never moves; a mistake ships as the next patch.
-8. Open the release page and check the notes and the attached zip.
+8. Open the release page and check the notes, the attached zip, and the
+   attached `perf.json`, which the next release is compared with.

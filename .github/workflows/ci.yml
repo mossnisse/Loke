@@ -46,3 +46,20 @@ jobs:
 
       - name: Test
         run: .\test-all.ps1 -RequireTools
+
+      # Figures, not a gate: only a wrong benchmark output fails here. They are
+      # compared with the latest release's record, when it has one, and a
+      # release attaches this run's record (release.yml).
+      - name: Performance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo $env:GITHUB_REPOSITORY --pattern perf.json --output baseline.json 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No released perf.json to compare with'; $global:LASTEXITCODE = 0 }
+          $baseline = if (Test-Path baseline.json) { 'baseline.json' }
+          .\perf.ps1 -Out perf.json -Baseline $baseline
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf
+          path: perf.json

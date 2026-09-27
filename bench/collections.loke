@@ -1,0 +1,64 @@
+package main;
+import "core:fmt";
+import "core:strings";
+
+// Containers under load: a dynamic array grown and sorted, a map from integers
+// hit on every step, and a map keyed by strings built one byte at a time.
+
+COUNT   :: 2_000_000;
+BUCKETS :: 50_000;
+WORDS   :: 300_000;
+
+// xorshift64: unsigned arithmetic wraps, so the generator needs no masking.
+next :: proc(state: inout u64) -> u64 {
+	state ~= state << 13;
+	state ~= state >> 7;
+	state ~= state << 17;
+	return state;
+}
+
+main :: proc() {
+	state: u64 = 0x9E3779B97F4A7C15;
+
+	values: [dynamic]int = {};
+	counts: map[int]int = {};
+	foreach (_ in 0 ..< COUNT) {
+		value := int(next(inout state) % 1_000_000_000);
+		values.append(value);
+		bucket := value % BUCKETS;
+		if (bucket in counts) {
+			counts[bucket] += 1;
+		} else {
+			counts[bucket] = 1;
+		}
+	}
+	values.sort();
+
+	checksum := 0;
+	foreach (i in 0 ..< values.len()) {
+		if (i % 1000 == 0) { checksum = (checksum + values[i]) % 1_000_000_007; }
+	}
+	busiest := 0;
+	foreach (_, count in counts) {
+		if (count > busiest) { busiest = count; }
+	}
+	fmt.println("sorted:", values.len(), "checksum:", checksum);
+	fmt.println("buckets:", counts.len(), "busiest:", busiest);
+
+	// Short lowercase words: enough collisions for the counts to matter.
+	words: map[string]int = {};
+	foreach (_ in 0 ..< WORDS) {
+		builder := strings.init();
+		length := 1 + int(next(inout state) % 4);
+		foreach (_ in 0 ..< length) {
+			builder.append_byte_ascii(u8('a') + u8(next(inout state) % 6));
+		}
+		word := builder.finish();
+		if (word in words) {
+			words[word] += 1;
+		} else {
+			words[word] = 1;
+		}
+	}
+	fmt.println("distinct words:", words.len(), "aaaa:", words.lookup_value("aaaa") or_else 0);
+}

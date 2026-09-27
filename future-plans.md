@@ -149,9 +149,9 @@ Main work:
   corpora whenever a bug or new feature exposes a missing boundary;
 - test malformed and adversarial source without crashes, hangs, or unbounded
   diagnostic cascades;
-- record compile time, peak compiler memory, output size, and representative
-  program performance in CI, so regressions are visible;
-- benchmark compilation before changing compiler representations for speed;
+- measure with `perf.ps1` before and after changing compiler representations
+  for speed, and add a `bench/` program when a workload it matters for is
+  missing;
 - keep generated IR and binaries inspectable enough to explain material size or
   performance regressions;
 - test runtime and compiler code with the strongest practical sanitizers and
@@ -220,20 +220,19 @@ compiler task.
 
 ## Suggested order
 
-1. Record performance baselines in the existing Windows CI.
-2. Publish introductory tutorials while filling the concrete standard-library
+1. Publish introductory tutorials while filling the concrete standard-library
    gaps those tutorials and real programs expose.
-3. Add debug information, and keep comments in the syntax tree for the formatter
+2. Add debug information, and keep comments in the syntax tree for the formatter
    and the documentation generator.
-4. Define the reproducible package and dependency workflow, and finish the
+3. Define the reproducible package and dependency workflow, and finish the
    standard-library services required by a compiler-sized program.
-5. Build the compiler services without changing command-line compilation
+4. Build the compiler services without changing command-line compilation
    behavior.
-6. Build the language server on those compiler services, and connect the
+5. Build the language server on those compiler services, and connect the
    formatter, documentation, and debugging metadata to editors through it.
-7. Isolate target interfaces and add Linux, then macOS, with an explicit native
+6. Isolate target interfaces and add Linux, then macOS, with an explicit native
    and cross-compilation policy and one shared conformance corpus.
-8. Begin self-hosting after the compiler services, package workflow, release
+7. Begin self-hosting after the compiler services, package workflow, release
    process, and required libraries have stabilized.
 
 Tutorial, standard-library, and debug-information work may overlap. The
