@@ -8,41 +8,15 @@ Later work should extend the existing architecture without weakening
 diagnostics, semantic consistency, and reproducibility. Each
 initiative below should receive a detailed implementation plan when work begins.
 
-## Continuous integration and releases
-
-Make the existing Windows build and test process reproducible before multiplying
-it across more hosts. A release is the compiler together with the `base/`,
-`core/`, and `runtime/` trees it discovers beside itself, not a standalone
-`lokec.exe`. CI already runs the full test gate on Windows x64
-([.github/workflows/ci.yml](.github/workflows/ci.yml)). A `v*` tag matching
-`LOKE_VERSION_STRING` is released by
-[.github/workflows/release.yml](.github/workflows/release.yml): the gate passes,
-known-gaps.md lists no gaps, and the bundle compiles and runs programs from a
-fresh runner before it is published. An intentionally accepted divergence is a
-specification change, not a gap. [releasing.md](releasing.md) has the version
-policy, upgrade notes, and the release checklist.
-
-Main work:
-
-- record compile time, peak compiler memory, output size, and representative
-  program performance so regressions are visible.
-
-The parser mutation fuzzer (`mutation_fuzzing` in
-`src/syntax_corpus_test.odin`) has a checker counterpart in
-`tests/checker_fuzz_test.odin` ([compiler-architecture.md](compiler-architecture.md)
-"Testing and verification").
-
-Done means a tagged revision produces a repeatable, installable bundle whose
-tests pass in CI and whose version and compatibility expectations are clear.
-
 ## Tutorials
 
 Create practical, beginner-friendly tutorials that teach Loke from the first
 program through packages, foreign-function interfaces, and common application
 patterns. Testing joins them once Loke has a test facility (see
-[Standard-library maturity](#standard-library-maturity)). Keep every tutorial
-executable and verified against the current compiler so examples cannot
-silently become outdated.
+[Standard-library maturity](#standard-library-maturity)). Test every tutorial
+program the way `tests/examples/` tests `examples/`: built from its real source,
+classified, and compared with its expected output, so no tutorial can silently
+fall out of date.
 
 Done means a new user can install the toolchain, learn the core language, and
 build a small multi-package program by following the tutorials alone.
@@ -133,18 +107,23 @@ and name resolution.
 
 ## Debugging and developer tools
 
-Add source-level observability once the compiler services exist. Debug
-information is a separate backend consumer and should drive any durable
+Only the editor integration below needs the
+[compiler services](#compiler-services); the rest can start at any time. Debug
+information is a separate backend consumer, and since the backend emits textual
+LLVM it can carry LLVM's debug metadata directly. It should drive any durable
 intermediate representation it actually needs.
 
 Main work:
 
 - emit source locations, procedure and local-variable information, and readable
   stack traces for debug builds;
-- define a debug build mode separately from optimization and the compile-time
-  `LOKE_DEBUG` value;
+- add a driver flag that emits debug information at any `-opt` level, and a
+  separate one that sets `LOKE_DEBUG`, so a program can have either without the
+  other;
 - preserve useful source locations through generated cleanup, specialization,
   and compile-time expansion;
+- keep comments in the tokens and the syntax tree; the lexer discards them
+  today, and the formatter, the documentation generator, and hover all need them;
 - build a deterministic formatter over the real syntax tree;
 - generate package API documentation from checked public declarations and their
   source comments;
@@ -170,6 +149,8 @@ Main work:
   corpora whenever a bug or new feature exposes a missing boundary;
 - test malformed and adversarial source without crashes, hangs, or unbounded
   diagnostic cascades;
+- record compile time, peak compiler memory, output size, and representative
+  program performance in CI, so regressions are visible;
 - benchmark compilation before changing compiler representations for speed;
 - keep generated IR and binaries inspectable enough to explain material size or
   performance regressions;
@@ -239,23 +220,25 @@ compiler task.
 
 ## Suggested order
 
-1. On the existing Windows CI and release workflow, establish compatibility
-   records, fuzzing, and performance baselines.
+1. Record performance baselines in the existing Windows CI.
 2. Publish introductory tutorials while filling the concrete standard-library
    gaps those tutorials and real programs expose.
-3. Define the reproducible package and dependency workflow, and finish the
+3. Add debug information, and keep comments in the syntax tree for the formatter
+   and the documentation generator.
+4. Define the reproducible package and dependency workflow, and finish the
    standard-library services required by a compiler-sized program.
-4. Build the compiler services without changing command-line compilation
+5. Build the compiler services without changing command-line compilation
    behavior.
-5. Build the language server, formatter, documentation generator, and debug
-   information support on those compiler services.
-6. Isolate target interfaces and add Linux, then macOS, with an explicit native
+6. Build the language server on those compiler services, and connect the
+   formatter, documentation, and debugging metadata to editors through it.
+7. Isolate target interfaces and add Linux, then macOS, with an explicit native
    and cross-compilation policy and one shared conformance corpus.
-7. Begin self-hosting after the compiler services, package workflow, release
+8. Begin self-hosting after the compiler services, package workflow, release
    process, and required libraries have stabilized.
 
-Tutorial and standard-library work may overlap. The language server, developer
-tools, and platform ports may overlap once the compiler services exist. Quality
+Tutorial, standard-library, and debug-information work may overlap. The
+language server and platform ports may overlap once the compiler services
+exist. Quality
 engineering continues through every step. Self-hosting remains last because it
 multiplies the cost of any compiler, runtime, library, or package interface that
 is still moving.

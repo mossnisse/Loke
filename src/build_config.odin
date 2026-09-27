@@ -99,7 +99,7 @@ predeclare_build_config :: proc(c: ^Compiler, universe: ^Scope) {
 	define_universe(c, universe, "LOKE_OPTIMIZATION_MODE", enum_const(c, .Optimization_Mode, int(c.opt_mode)))
 	define_universe(c, universe, "LOKE_LOG_LEVEL", enum_const(c, .Log_Level, int(c.log_level)))
 	define_universe(c, universe, "LOKE_VENDOR", enum_const(c, .Vendor, 0))
-	// No driver flag sets this yet (future-plans.md).
+	// No driver flag sets this yet (future-plans.md "Debugging and developer tools").
 	define_universe(c, universe, "LOKE_DEBUG", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,

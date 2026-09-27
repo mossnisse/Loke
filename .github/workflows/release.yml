@@ -1,8 +1,7 @@
 # A `v*` tag becomes a GitHub release: the tagged revision passes the full gate,
 # its bundle is installed and used from outside any checkout, and only then is
 # it published. A release is lokec.exe with the `base/`, `core/` and `runtime/`
-# trees it discovers beside itself (future-plans.md "Continuous integration and
-# releases").
+# trees it discovers beside itself (releasing.md "Version policy").
 name: Release
 
 on:
