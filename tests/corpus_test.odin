@@ -21,6 +21,7 @@
 //     tests/pkg_err/<case>.expected
 //   tests/syntax_err/*.loke        the same, for parser diagnostics, and assert
 //     with .expected               the file's trailing sentinel survived recovery
+//   tests/doc/*.loke + .expected   document with -doc, compare stdout exactly
 //
 // Two cases are one-off rather than a corpus, because each needs something the
 // glob-and-compare shape cannot express:
@@ -915,6 +916,33 @@ package_keys_come_from_the_directory :: proc(t: ^testing.T) {
 		!strings.contains(string(ir), "@loke.p.lib.value"),
 		"the relative import spelling decided the package key",
 	)
+}
+
+// `-doc` prints the package's public API, each declaration with the comments
+// directly above it, and must match `<case>.expected` exactly.
+@(test)
+documentation_lists_the_public_api :: proc(t: ^testing.T) {
+	cases, _ := filepath.glob("tests/doc/*.loke")
+	testing.expect(t, len(cases) > 0, "no documentation cases found")
+	for path in cases {
+		state, stdout, stderr, err := exec(
+			os2.Process_Desc{command = []string{compiler_path(), path, "-doc"}},
+			context.allocator,
+		)
+		if !testing.expectf(t, err == nil && state.exit_code == 0, "%s: -doc failed\n%s", path, string(stderr)) {
+			continue
+		}
+		expected, has_expected := os.read_entire_file(expected_path(path), context.temp_allocator)
+		if !testing.expectf(t, has_expected, "%s: missing .expected file", path) {
+			continue
+		}
+		testing.expectf(
+			t,
+			normalise(string(stdout)) == normalise(string(expected)),
+			"%s: expected\n%s\ngot\n%s",
+			path, normalise(string(expected)), normalise(string(stdout)),
+		)
+	}
 }
 
 // design.md "Program entry and exit": the corpus runs every

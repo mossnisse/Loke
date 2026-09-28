@@ -668,7 +668,8 @@ Package :: struct {
 	// The canonical import identity — root-relative, or
 	// `collection:relative/path` — which every user symbol is mangled with. Never
 	// an alias and never a host absolute path, so a build is reproducible and two
-	// same-named packages cannot collide. The root package's key is "".
+	// same-named packages cannot collide. The root package's key is "", unless
+	// its directory is inside a collection.
 	key:            string,
 	files:          [dynamic]^File,
 	scope:          ^Scope,

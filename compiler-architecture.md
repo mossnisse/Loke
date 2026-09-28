@@ -353,6 +353,7 @@ be file-private.
 | `source.odin` | `Compiler`, source buffers, spans, and the diagnostics engine. Start here when locating global state; `destroy_compilation` is `semantic.odin`'s. |
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
+| `doc.odin` | `-doc`: the checked root package's public API as Markdown, with the comments above each declaration. |
 | `semantic.odin`, `universe.odin` | Stable IDs, symbols, types, scopes, packages, type interning, and predeclared names. |
 
 ### Checking and language features
@@ -506,6 +507,7 @@ The integration harness is `tests/corpus_test.odin`:
 | `tests/layout/` | Compare compiler and LLVM layout. |
 | `tests/pkg/`, `tests/pkg_err/` | Multi-package success and import/package diagnostics. |
 | `tests/obj/`, `tests/os/` | C-host object linking, and real process arguments and environment values. |
+| `tests/doc/` | Document with `-doc`, and compare stdout with `.expected`. |
 | `tests/examples/` | Every program in `examples/` is built from its real source and must carry a classification; an output example's stdout is compared with `tests/examples/<name>.expected`. |
 
 `tests/checker_fuzz_test.odin` mutates the `tests/run/` programs (another name

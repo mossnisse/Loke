@@ -33,6 +33,7 @@ options:
     -dump-ast     print a deterministic syntax tree and stop after parsing
                   (file inputs only)
     -check-layout compare every folded size/alignment/offset with LLVM's own
+    -doc          print the root package's public API as Markdown and stop
     -collection name=path
     -collection:name=path
                   register an import-path prefix; base: and core: are seeded
@@ -73,6 +74,7 @@ Options :: struct {
 	parse_only: bool,
 	dump_ast:   bool,
 	check_layout: bool,
+	doc:        bool,
 	defines:    [dynamic]string,
 	collections: [dynamic]string,
 	copy_cost:         u64,
@@ -183,7 +185,8 @@ run :: proc() -> int {
 	if compiled {
 		// An object build accepts any root package: its foreign
 		// host owns process entry, so `main` is neither required nor emitted.
-		if opts.build_mode == .Exe {
+		// Nor does documenting a library need one.
+		if opts.build_mode == .Exe && !opts.doc {
 			validate_executable(&c, package_id)
 		}
 		check_exports(&c)
@@ -191,6 +194,11 @@ run :: proc() -> int {
 	if c.error_count > 0 {
 		report(&c)
 		return 1
+	}
+	if opts.doc {
+		fmt.print(document_package(&c, package_id))
+		report(&c) // warnings
+		return 0
 	}
 
 	finalize_semantics(&c)
@@ -242,6 +250,8 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.dump_ast = true
 		case arg == "-check-layout":
 			opts.check_layout = true
+		case arg == "-doc":
+			opts.doc = true
 		case arg == "-g":
 			opts.debug_info = true
 		case arg == "-debug":

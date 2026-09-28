@@ -122,7 +122,9 @@ formatter, the documentation generator, and hover to find by position.
 statement's line, as CodeView in a PDB, at any `-opt` level; a panic in a `-g`
 executable prints its Loke frames; and `-debug` sets `LOKE_DEBUG` on its own
 ([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin),
-[runtime/trace.c](runtime/trace.c)).
+[runtime/trace.c](runtime/trace.c)). `lokec <package> -doc` prints a checked
+package's public API as Markdown, each declaration with the comments directly
+above it ([src/doc.odin](src/doc.odin)).
 
 Main work:
 
@@ -135,8 +137,8 @@ Main work:
 - preserve useful source locations through generated cleanup, specialization,
   and compile-time expansion;
 - build a deterministic formatter over the real syntax tree;
-- generate package API documentation from checked public declarations and their
-  source comments;
+- give `-doc` what a real library shows it needs: struct-field and package
+  comments, and a page for each package of a multi-package project;
 - integrate formatting, documentation, and debugging metadata with editor tools
   without teaching them a second language front end.
 
@@ -230,8 +232,8 @@ compiler task.
 
 ## Suggested order
 
-1. Build the formatter and the documentation generator over the syntax tree and
-   its comments, and finish the smaller debug-information items.
+1. Build the formatter over the syntax tree and its comments, and finish the
+   smaller debug-information and documentation items.
 2. Define the reproducible package and dependency workflow, and finish the
    standard-library services required by a compiler-sized program.
 3. Build the compiler services without changing command-line compilation

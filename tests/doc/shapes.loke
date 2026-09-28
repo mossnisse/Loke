@@ -1,0 +1,47 @@
+// A package comment is not any declaration's doc comment.
+@(public)
+package shapes;
+
+// A point on the plane.
+Point :: struct {
+	x: f64,
+	y: f64,
+	@(private) cached_length: f64,
+}
+
+// Opaque to importers.
+Handle :: struct {
+	@(private) index: int,
+}
+
+/* The directions a shape may face. */
+Facing :: enum { North, South }
+
+// The largest side any shape may have.
+MAX_SIDE :: 1000;
+
+// This comment is separated by a blank line, so it documents nothing.
+
+make_point :: proc(x: f64, y: f64) -> Point {
+	return Point{x, y, 0};
+}
+
+limit := 10; // trailing, so not the doc comment of what follows
+// The area of a square with `side`.
+// It is always non-negative.
+@(require_results)
+square_area :: proc(side: f64) -> f64 {
+	return side * side;
+}
+
+// Hidden: private to the package.
+@(private)
+helper :: proc() {}
+
+impl Point {
+	// The sum of the coordinates.
+	sum :: proc(self) -> f64 { return self.x + self.y; }
+
+	@(private)
+	scratch :: proc(self) {}
+}

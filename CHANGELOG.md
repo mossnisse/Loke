@@ -31,6 +31,10 @@ checklist.
   debugger can set a source breakpoint, show a Loke call stack, and inspect
   locals. An executable gets a `.pdb` beside it, and a panic in it prints each
   Loke frame, newest first, with its procedure, file, and line.
+- `lokec -doc` prints a package's public API as Markdown: each public
+  declaration's signature, without procedure bodies or private struct fields,
+  and the comments directly above it. It needs no `main`, and documents a
+  standard-library directory such as `core\strings` as the package importers see.
 - `lokec -debug` sets `LOKE_DEBUG` to `true`; it used to be `false` always.
 - A fixed array `[N]T` converts implicitly to a read-only `[]T` of its
   elements, as a `[dynamic]T` already did, so `total(primes)` needs no

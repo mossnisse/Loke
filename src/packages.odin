@@ -336,12 +336,11 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 }
 
 // Directory-derived identity makes alternate import spellings deterministic.
-// The longest registered collection root wins.
+// The longest registered collection root wins, for the root directory too, so
+// `lokec core/strings -doc` checks `core:strings` with what the compiler
+// contributes to it.
 @(private = "file")
 package_key :: proc(c: ^Compiler, canonical: string) -> string {
-	if c.root_dir != "" && dir_key(canonical) == dir_key(c.root_dir) {
-		return ""
-	}
 	names := make([dynamic]string, 0, len(c.collections), context.temp_allocator)
 	for name in c.collections {
 		append(&names, name)
@@ -358,6 +357,9 @@ package_key :: proc(c: ^Compiler, canonical: string) -> string {
 	}
 	if best_root >= 0 {
 		return best
+	}
+	if c.root_dir != "" && dir_key(canonical) == dir_key(c.root_dir) {
+		return ""
 	}
 	return root_relative_key(c, canonical)
 }

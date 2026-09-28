@@ -1,0 +1,66 @@
+# package shapes
+
+## Point
+
+```odin
+Point :: struct {
+	x: f64,
+	y: f64,
+	// and fields private to the package
+}
+```
+
+A point on the plane.
+
+## Handle
+
+```odin
+Handle :: struct {
+	// and fields private to the package
+}
+```
+
+Opaque to importers.
+
+## Facing
+
+```odin
+Facing :: enum { North, South }
+```
+
+The directions a shape may face.
+
+## MAX_SIDE
+
+```odin
+MAX_SIDE :: 1000
+```
+
+The largest side any shape may have.
+
+## make_point
+
+```odin
+make_point :: proc(x: f64, y: f64) -> Point
+```
+
+## limit
+
+```odin
+limit := 10
+```
+
+## square_area
+
+```odin
+@(require_results)
+square_area :: proc(side: f64) -> f64
+```
+
+## Point.sum
+
+```odin
+sum :: proc(self) -> f64
+```
+
+The sum of the coordinates.
