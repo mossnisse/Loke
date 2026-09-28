@@ -37,6 +37,11 @@ Source :: struct {
 	// literals directly, and the destructor has to be correct for both.
 	owned_text:  []u8,
 	line_starts: []u32, // byte offset of the first character of each line
+	// Every comment, in source order, as the lexer last found them: a `//`
+	// comment without its line ending, a block comment through its `*/`. The
+	// token stream leaves them out; the formatter, the documentation
+	// generator, and hover read them here, by span.
+	comments:    [dynamic]Span,
 }
 
 Severity :: enum {

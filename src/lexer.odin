@@ -128,6 +128,7 @@ lex :: proc(c: ^Compiler, file: u32) -> []Token {
 		file = file,
 		src  = c.sources[file].text,
 	}
+	clear(&c.sources[file].comments)
 	tokens := make([dynamic]Token)
 	for {
 		t := next_token(&l)
@@ -208,12 +209,19 @@ skip_trivia :: proc(l: ^Lexer) {
 		case ' ', '\t', '\r', '\n':
 			l.pos += 1
 		case '/':
+			lo := l.pos
 			if peek(l, 1) == '/' {
 				for !at_end(l) && peek(l) != '\n' {
 					l.pos += 1
 				}
+				hi := l.pos
+				if l.src[hi - 1] == '\r' {
+					hi -= 1
+				}
+				append(&l.c.sources[l.file].comments, Span{file = l.file, lo = lo, hi = hi})
 			} else if peek(l, 1) == '*' {
 				block_comment(l)
+				append(&l.c.sources[l.file].comments, span_from(l, lo))
 			} else {
 				return
 			}

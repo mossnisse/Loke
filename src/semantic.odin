@@ -1871,6 +1871,7 @@ destroy_compilation :: proc(c: ^Compiler) {
 	delete(c.diagnostics)
 	for &source in c.sources {
 		delete(source.line_starts)
+		delete(source.comments)
 		if source.owned_text != nil {
 			delete(source.owned_text)
 		}

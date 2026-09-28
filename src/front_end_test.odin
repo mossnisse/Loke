@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:mem"
 import os2 "core:os/os2"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 
@@ -782,6 +783,26 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 	defer delete(tokens)
 	testing.expectf(t, valid.error_count == 0, "valid literals produced %d diagnostics", valid.error_count)
 	testing.expectf(t, len(tokens) == 8, "expected seven literals, got %d tokens", len(tokens) - 1)
+}
+
+// The token stream leaves comments out, and the source keeps each one's span in
+// order: a line comment without its line ending, a nested block comment whole,
+// and nothing for a `//` inside a string. Lexing again replaces the list.
+@(test)
+comments_are_kept_on_the_source :: proc(t: ^testing.T) {
+	text := "// doc\r\nx := \"// not\"; /* a /* b */ c */ y := 1; // end"
+	c := test_compiler(text)
+	defer destroy_compilation(&c)
+	for _ in 0 ..< 2 {
+		tokens := lex(&c, 0)
+		delete(tokens)
+	}
+	got := make([dynamic]string, context.temp_allocator)
+	for span in c.sources[0].comments {
+		append(&got, text[span.lo:span.hi])
+	}
+	want := []string{"// doc", "/* a /* b */ c */", "// end"}
+	testing.expectf(t, slice.equal(got[:], want), "comments: got %q, want %q", got[:], want)
 }
 
 // A backslash escapes no line ending, so a string missing its closing quote is

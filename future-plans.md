@@ -115,6 +115,9 @@ information is a separate backend consumer, and since the backend emits textual
 LLVM it can carry LLVM's debug metadata directly. It should drive any durable
 intermediate representation it actually needs.
 
+The lexer keeps every comment's span on its `Source`, in source order, for the
+formatter, the documentation generator, and hover to find by position.
+
 `-g` already emits each procedure, its locals and their types, and each
 statement's line, as CodeView in a PDB, at any `-opt` level; a panic in a `-g`
 executable prints its Loke frames; and `-debug` sets `LOKE_DEBUG` on its own
@@ -131,8 +134,6 @@ Main work:
   the line of the last statement emitted before them today;
 - preserve useful source locations through generated cleanup, specialization,
   and compile-time expansion;
-- keep comments in the tokens and the syntax tree; the lexer discards them
-  today, and the formatter, the documentation generator, and hover all need them;
 - build a deterministic formatter over the real syntax tree;
 - generate package API documentation from checked public declarations and their
   source comments;
@@ -229,8 +230,8 @@ compiler task.
 
 ## Suggested order
 
-1. Keep comments in the syntax tree for the formatter and the documentation
-   generator, and finish the smaller debug-information items.
+1. Build the formatter and the documentation generator over the syntax tree and
+   its comments, and finish the smaller debug-information items.
 2. Define the reproducible package and dependency workflow, and finish the
    standard-library services required by a compiler-sized program.
 3. Build the compiler services without changing command-line compilation

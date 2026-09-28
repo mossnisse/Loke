@@ -94,7 +94,9 @@ semantic closure passes and compares the compiler's layout facts with LLVM.
 ### Source and syntax
 
 `Span` is a byte range into a loaded `Source`. Line and column numbers are
-derived only when diagnostics are rendered. Every AST node has a span, including
+derived only when diagnostics are rendered. The token stream has no comments;
+the lexer records each comment's span on its `Source` instead, in source order,
+for the tools that need them. Every AST node has a span, including
 recovery nodes, so later phases never need to reconstruct source locations.
 
 Each parsed `File` owns a syntax arena. The parser keeps errors in the tree as
