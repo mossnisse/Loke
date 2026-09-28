@@ -100,6 +100,8 @@ Compile examples individually: `examples/` contains separate programs, not one m
 | `-build-mode=exe\|obj` | Produce an executable (default) or one relocatable object. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
+| `-g` | Emit debug information at any `-opt` level: procedures and a line for each statement. An executable gets a `.pdb` beside it. Local variables are not described yet. |
+| `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |
 
 For an optimized executable:
 

@@ -680,7 +680,11 @@ programs_trap :: proc(t: ^testing.T) {
 // they generate: substring matching alone passes on IR that cannot be assembled.
 @(test)
 generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
+	// Its own directory: `tests/run` shares case names, and a run case deletes its
+	// `.ll` once linked, which raced this test's reading the same path.
+	dir := fmt.tprintf("%s/ll", TMP)
 	os.make_directory(TMP)
+	os.make_directory(dir)
 	cases, _ := filepath.glob("tests/ll/*.loke")
 	testing.expect(t, len(cases) > 0, "no IR cases found")
 
@@ -697,11 +701,11 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 			continue
 		}
 
-		exe := fmt.tprintf("%s/%s.exe", TMP, filepath.stem(path))
-		state, _, stderr, err := exec(
-			os2.Process_Desc{command = []string{compiler_path(), path, "-o", exe, "-emit-ll"}},
-			context.allocator,
-		)
+		exe := fmt.tprintf("%s/%s.exe", dir, filepath.stem(path))
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), path, "-o", exe, "-emit-ll")
+		append(&command, ..extra_flags(path))
+		state, _, stderr, err := exec(os2.Process_Desc{command = command[:]}, context.allocator)
 		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
 			continue
 		}
@@ -709,7 +713,7 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 			continue
 		}
 
-		ll_path := fmt.tprintf("%s/%s.ll", TMP, filepath.stem(path))
+		ll_path := fmt.tprintf("%s/%s.ll", dir, filepath.stem(path))
 		ir, read_ok := os.read_entire_file(ll_path)
 		if !testing.expectf(t, read_ok, "%s: no IR at %s", path, ll_path) {
 			continue
@@ -719,7 +723,7 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 				os2.Process_Desc {
 					command = []string {
 						clang, "-x", "ir", "-c", ll_path,
-						"-o", fmt.tprintf("%s/%s.ll.o", TMP, filepath.stem(path)),
+						"-o", fmt.tprintf("%s/%s.ll.o", dir, filepath.stem(path)),
 					},
 				},
 				context.allocator,

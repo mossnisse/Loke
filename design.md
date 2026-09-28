@@ -5853,7 +5853,7 @@ The compiler provides a small set of constants in every compilation:
 | `LOKE_OS` | Target operating system: `.Windows`, `.Linux`, `.Darwin`. |
 | `LOKE_ENDIAN` | Target endianness: `.Little`, `.Big`. |
 | `LOKE_BUILD_MODE` | Requested output kind: `.Exe`, `.Obj`. |
-| `LOKE_DEBUG` | Build-provided debug flag. |
+| `LOKE_DEBUG` | Build-provided debug flag: `true` when the build asks for it, `false` otherwise. It is independent of the optimization mode and of whether debug information is emitted. |
 | `LOKE_OPTIMIZATION_MODE` | Selected optimization mode: `.None`, `.Minimal`, `.Size`, `.Speed`, `.Aggressive`. |
 | `LOKE_LOG_LEVEL` | The [compiled log level](#compiled-log-level); `core:log` suppresses everything below it. |
 | `LOKE_VENDOR` | Compiler implementation identifier; the official compiler uses `.Loke`. |

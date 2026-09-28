@@ -52,6 +52,9 @@ options:
     -opt=none|minimal|size|speed|aggressive
                   optimization level, mapped to clang -O0/-O1/-Os/-O2/-O3
                   (default: none)
+    -g            emit debug information, at any -opt level: an executable
+                  gets a .pdb beside it
+    -debug        set LOKE_DEBUG to true
     -build-mode=exe|obj
                   build an executable, or a relocatable object (default: exe)
     -log-level=debug|info|warning|error|off
@@ -78,6 +81,8 @@ Options :: struct {
 	panic_unwind: bool,
 	opt_mode:   Opt_Mode,
 	build_mode: Build_Mode,
+	debug_info: bool,
+	debug:      bool,
 	log_level:  Log_Level,
 }
 
@@ -137,6 +142,7 @@ run :: proc() -> int {
 	c.copy_cost_threshold, c.copy_cost_enabled = opts.copy_cost, opts.copy_cost_enabled
 	c.panic_unwind = opts.panic_unwind
 	c.opt_mode, c.build_mode = opts.opt_mode, opts.build_mode
+	c.debug_info, c.debug = opts.debug_info, opts.debug
 	c.log_level = opts.log_level
 	if !seed_defines(&c, opts.defines[:]) {
 		report(&c)
@@ -236,6 +242,10 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.dump_ast = true
 		case arg == "-check-layout":
 			opts.check_layout = true
+		case arg == "-g":
+			opts.debug_info = true
+		case arg == "-debug":
+			opts.debug = true
 		case arg == "-collection":
 			i += 1
 			if i >= len(args) {

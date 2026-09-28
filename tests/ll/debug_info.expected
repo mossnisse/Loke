@@ -1,0 +1,11 @@
+!llvm.dbg.cu = !{!0}
+!"CodeView", i32 1}
+@loke.p.add(i64 %arg0, i64 %arg1) !dbg !
+@loke.p.main() !dbg !
+!DISubprogram(name: "add", scope: !*, line: 7,
+!DISubprogram(name: "main", scope: !*, line: 11,
+!DISubprogram(name: "core:fmt.println",
+!DILocation(line: 8, column: 2, scope: !
+!DILocation(line: 12, column: 2, scope: !
+!DILocation(line: 13, column: 2, scope: !
+call i64 @loke.p.add(i64 40, i64 2), !dbg !

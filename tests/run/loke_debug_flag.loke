@@ -1,0 +1,12 @@
+package main;
+
+import "core:fmt";
+
+// `-debug` sets LOKE_DEBUG, and `-g` beside it still links (with a PDB).
+main :: proc() {
+	when (LOKE_DEBUG) {
+		fmt.println("debug build");
+	} else {
+		fmt.println("release build");
+	}
+}

@@ -120,6 +120,9 @@ emit_llvm_module :: proc(c: ^Compiler) -> (string, bool) {
 	if e.failed || c.error_count != 0 {
 		return "", false
 	}
+	if c.debug_info {
+		return attach_debug_info(&e, strings.to_string(e.b)), true
+	}
 	return strings.to_string(e.b), true
 }
 
@@ -527,6 +530,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		}
 		fmt.sbprintln(&e.b, ") {")
 	}
+	debug_mark_proc(e, symbol_id)
 	fmt.sbprintln(&e.b, "entry:")
 
 	// The unwind prologue depends on the whole body, so the body is written aside.

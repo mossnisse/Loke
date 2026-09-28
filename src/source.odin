@@ -205,6 +205,10 @@ Compiler :: struct {
 	// predeclared constants take their value from these.
 	opt_mode:            Opt_Mode,
 	build_mode:          Build_Mode,
+	// `-g`: emit debug information (`emit_llvm_debug.odin`).
+	debug_info:          bool,
+	// `-debug`, the value `LOKE_DEBUG` is predeclared with.
+	debug:               bool,
 	// The build-configuration enum types, synthesized once and shared by the
 	// `LOKE_*` universe constants and their `base:runtime` bindings.
 	build_config:        Build_Config,

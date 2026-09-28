@@ -31,6 +31,7 @@ emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
 		// A block statement's full-expression boundary; initial statements and loop
 		// updates declare their own.
 		push_temporaries(e)
+		debug_mark_location(e, stmt_span(stmt))
 		emit_stmt(e, stmt)
 		pop_temporaries(e)
 	}

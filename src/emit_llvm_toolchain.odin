@@ -434,6 +434,11 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	command := make([dynamic]string)
 	append(&command, clang, ll_path, "-o", exe_path)
 	append(&command, opt_clang_flag(opts.opt_mode))
+	// The module carries its own debug information; `-g` has the linker write
+	// the PDB.
+	if c.debug_info {
+		append(&command, "-g")
+	}
 	runtime_inputs := sources
 	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, opts); prebuilt != nil {
 		runtime_inputs = prebuilt

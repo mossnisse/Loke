@@ -26,6 +26,11 @@ checklist.
 
 ### Added
 
+- `lokec -g` emits debug information at any `-opt` level: each procedure, and
+  the line of each statement, so a debugger can set a source breakpoint and
+  show a Loke call stack. An executable gets a `.pdb` beside it. Local
+  variables are not described yet.
+- `lokec -debug` sets `LOKE_DEBUG` to `true`; it used to be `false` always.
 - A fixed array `[N]T` converts implicitly to a read-only `[]T` of its
   elements, as a `[dynamic]T` already did, so `total(primes)` needs no
   `primes[:]` (design.md "Fixed arrays").
