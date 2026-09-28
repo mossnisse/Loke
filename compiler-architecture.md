@@ -319,7 +319,7 @@ The repository has three implementation layers outside `src/`:
 | --- | --- |
 | `base/` | Foundational Loke declarations needed by the compiler itself: runtime result/option/shared types, reflection metadata, and structural interfaces. |
 | `core/` | The standard library written in ordinary Loke: formatting, memory, containers, strings and string conversion, I/O, logging, filesystem and paths, OS, terminal, synchronization, SIMD helpers, math, encoding, and related packages. |
-| `runtime/` | The versioned C ABI for allocation, arenas, process arguments, atomics, managed containers, failure, panic, formatting, and text storage. `loke_rt.h` is the ABI contract. |
+| `runtime/` | The versioned C ABI for allocation, arenas, process arguments, atomics, managed containers, failure, panic and its `-g` stack trace, formatting, and text storage. `loke_rt.h` is the ABI contract. |
 
 The rule is to keep a feature in Loke source whenever the language can express
 it. `stdlib.odin` contributes only identities or primitives the compiler already

@@ -541,6 +541,11 @@ void loke_rt_v1_panic(const char *message);
 void loke_rt_v1_panic_begin(const char *message);
 void loke_rt_v1_panic_end(void);
 
+/* A `-g` executable's `wmain` enables the stack trace a panic prints after its
+ * report line: each Loke frame, newest first, from the PDB. */
+void loke_rt_v1_enable_panic_trace(void);
+void loke_rt_v1_panic_trace(void);
+
 /* Immediate abort, bypassing every strategy: an allocator whose failure policy
  * is `.Trap`, a panic raised while one is already unwinding, a fault in the
  * runtime's own records, and the end of every panic once its cleanup has run. */

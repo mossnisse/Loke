@@ -629,16 +629,22 @@ emit_entry :: proc(e: ^Emitter) {
 	open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv)")
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
+	if e.c.debug_info {
+		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_enable_panic_trace()")
+	}
 	if any_provider_selected(e.c) {
 		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_program_init()")
 	}
 	// design.md "Program entry and exit": an `i32` result is the exit status.
 	status := "0"
+	// `wmain` has no debug information, and LLVM drops the locations of code
+	// inlined into it, so a `-g` build keeps `main` a frame of its own.
+	attributes := e.c.debug_info ? " noinline" : ""
 	if symbol := symbol_of(e.c, e.c.entry_point); symbol != nil && symbol.result == TYPE_I32 {
 		status = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i32 %s()", status, entry)
+		fmt.sbprintfln(&e.b, "  %s = call i32 %s()%s", status, entry, attributes)
 	} else {
-		fmt.sbprintfln(&e.b, "  call void %s()", entry)
+		fmt.sbprintfln(&e.b, "  call void %s()%s", entry, attributes)
 	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
 	fmt.sbprintfln(&e.b, "  ret i32 %s", status)

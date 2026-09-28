@@ -49,6 +49,7 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic_begin(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic_end()")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_enable_panic_trace()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")

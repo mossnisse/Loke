@@ -23,3 +23,5 @@ call void @llvm.dbg.declare(metadata ptr %total.*, metadata !*, metadata !DIExpr
 !DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !*, size: 8, offset: 64)
 !DICompositeType(tag: DW_TAG_structure_type, name: "string", size: 192, elements: !
 !DIDerivedType(tag: DW_TAG_member, name: "len", baseType: !*, size: 64, offset: 64)
+call void @loke_rt_v1_enable_panic_trace()
+call void @loke.p.main() noinline

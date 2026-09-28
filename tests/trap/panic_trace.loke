@@ -1,0 +1,23 @@
+package main;
+
+import "core:fmt";
+
+// A `-g` build's panic report names each Loke frame, newest first, and the
+// line each one was at. The full gate reruns this at every `-opt` level, where
+// `item` and `sum_to` are inlined and must still appear as frames.
+item :: proc(values: []int, index: int) -> int {
+	return values[index];
+}
+
+sum_to :: proc(values: []int, count: int) -> int {
+	total := 0;
+	foreach (i in 0 ..< count) {
+		total += item(values, i);
+	}
+	return total;
+}
+
+main :: proc() {
+	values := [3]int{1, 2, 3};
+	fmt.println(sum_to(values[:], 4));
+}

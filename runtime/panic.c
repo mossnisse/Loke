@@ -63,6 +63,7 @@ void loke_rt_v1_panic_begin(const char *message) {
 void loke_rt_v1_panic_end(void) {
 	fputc('\n', stderr);
 	fflush(stderr);
+	loke_rt_v1_panic_trace();
 
 	/* Newest first, as returns would. `-panic=abort` pushes no frames. */
 	for (loke_rt_frame_v1 *frame = frames; frame != 0; frame = frame->previous) {

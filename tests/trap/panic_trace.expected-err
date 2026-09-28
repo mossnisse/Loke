@@ -1,0 +1,6 @@
+loke: panic: index out of range
+loke: stack trace, newest call first:
+    item at panic_trace.loke:9
+    sum_to at panic_trace.loke:15
+    main at panic_trace.loke:22
+loke: panicked
