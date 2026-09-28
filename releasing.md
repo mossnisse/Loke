@@ -50,7 +50,7 @@ promise:
 
 Only the latest release is supported. A fix ships as the next patch release;
 nothing is backported. Each release records the Odin version that builds it
-from source in [readme.md](readme.md) "Build and run".
+from source in [readme.md](readme.md) "Building from source".
 
 ## Upgrade notes
 

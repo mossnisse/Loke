@@ -22,7 +22,12 @@ allowed because the possibility is visible at the call boundary. Hidden
 allocations are also allowed, but a returned value that requires manual cleanup
 should make that responsibility clear in its type or API.
 
-To learn the language, start with the [tutorials](tutorials/README.md). The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
+To try it, install a release and follow
+[Getting started](tutorials/01-getting-started.md), the first of the
+[tutorials](tutorials/README.md); to work on the compiler, build it from source
+as [below](#building-from-source).
+
+The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
 
 ## The compiler
 
@@ -34,33 +39,23 @@ and source-code map are documented in
 summarized in [future-plans.md](future-plans.md). Contributor conventions,
 for people and coding agents alike, are in [AGENTS.md](AGENTS.md).
 
-### Build and run
+### Building from source
 
-The current compiler targets **Windows x64**. You need:
+The current compiler targets **Windows x64**. Besides the LLVM and Microsoft
+C++ tools every Loke build needs ([Getting started](tutorials/01-getting-started.md#what-you-need)),
+building `lokec` needs **Odin** on `PATH`. The tree builds with
+`dev-2025-09-nightly`; Odin nightlies change often, so another one may not.
 
-- **Odin**, on `PATH`, to build `lokec` from source. The tree builds with
-  `dev-2025-09-nightly`; Odin nightlies change often, so another one may not.
-- **LLVM/Clang**, to compile the generated LLVM IR and link executables. On Windows, LLVM can be installed with `winget install LLVM.LLVM`.
-- **MSVC C++ build tools and the Windows SDK**, including the C runtime headers and libraries, for executable builds.
-
-The commands below use PowerShell from the repository root. Build the compiler:
+From the repository root, in PowerShell:
 
 ```powershell
 odin build src -out:lokec.exe
-```
-
-After a successful build, compile and run a program:
-
-```powershell
 .\lokec.exe examples\hello.loke -o hello.exe
-if ($LASTEXITCODE -eq 0) { .\hello.exe }
 ```
 
-`lokec` checks the program, generates LLVM IR, and invokes Clang to produce the executable. It does **not** run the program. The exit-code check avoids running an older executable if compilation fails.
-
-Keep `lokec.exe` beside the repository's `base/`, `core/`, and `runtime/` directories. These are located relative to the compiler executable, not the shell's working directory; copying only `lokec.exe` is not a complete installation.
-
-Program arguments go to the generated executable, not to `lokec`. The argument test program prints its argument count and values:
+The compiler finds `base/`, `core/`, and `runtime/` beside its own executable,
+so a `lokec.exe` built here is used from here; copying it alone elsewhere is not
+an installation. Program arguments go to the built executable, not to `lokec`:
 
 ```powershell
 .\lokec.exe tests\os\args.loke -o args.exe

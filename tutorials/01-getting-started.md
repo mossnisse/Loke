@@ -48,7 +48,7 @@ with `ready=no`, one of the two was not found;
 readme says where lokec looks for each.
 
 You can also build the compiler from source instead; the
-[readme](../readme.md#build-and-run) explains how.
+[readme](../readme.md#building-from-source) explains how.
 
 ## A first program
 

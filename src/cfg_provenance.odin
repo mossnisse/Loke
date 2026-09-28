@@ -1195,8 +1195,8 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	return prov_borrow(graph, prov_hidden_root(graph, span, "this erased value"), nil, false, span, "view")
 }
 
-// design.md "string type conversions" and "Dynamic arrays": a `string` read as
-// a `string_view`, or a `[dynamic]T` as a `[]T`, borrows the owner it came
+// design.md "string type conversions", "Dynamic arrays", and "Fixed arrays": a
+// `string` read as a `string_view`, or a `[dynamic]T` or `[N]T` as a `[]T`, borrows the owner it came
 // from, or the temporary that holds it. A constant's storage is static.
 @(private)
 prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {

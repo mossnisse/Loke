@@ -135,8 +135,8 @@ main :: proc() {
 ## Enums
 
 An `enum` is a type with a fixed list of named values. Inside a context that
-already knows the enum's type, a value is written with a leading dot, as
-`.North`.
+already knows the enum's type, a value can be written with just a leading dot,
+as `.North` instead of `Direction.North`.
 
 ```odin file=enums.loke
 package main;
@@ -167,8 +167,7 @@ main :: proc() {
 		fmt.println(direction);
 	}
 
-	fmt.println(Http_Status.from_int(404) or_else .Ok);
-	fmt.println(Http_Status.from_int(500) or_else .Ok);
+	fmt.println(Http_Status.Not_Found, int(Http_Status.Not_Found));
 }
 ```
 
@@ -178,15 +177,12 @@ North
 East
 South
 West
-Not_Found
-Ok
+Not_Found 404
 ```
 
-Each value has a number, counting from 0 unless you choose one, and `int(facing)`
-reads it. The other direction is checked: `Http_Status.from_int(404)` gives back
-a value only if 404 is one of the enum's numbers. What it gives back, and what
-`or_else` does with it, is the subject of [Errors](05-errors.md).
-`Direction.values()` lists every value in order.
+Each value has a number, counting from 0 unless you choose one, as
+`Http_Status` does, and `int(facing)` reads it. `Direction.values()` lists
+every value in order.
 
 A `switch` over an enum must handle every value, or say that it ignores the rest
 with an empty `case:`. That is why `turn_right` needs no `return` after the
@@ -246,14 +242,9 @@ area :: proc(shape: Shape) -> f64 {
 }
 
 main :: proc() {
-	shapes := [?]Shape{
-		.circle(1),
-		.rectangle({width = 2, height = 3}),
-		.empty,
-	};
-	foreach (shape in shapes) {
-		fmt.println(area(shape));
-	}
+	fmt.println(area(.circle(1)));
+	fmt.println(area(.rectangle({width = 2, height = 3})));
+	fmt.println(area(.empty));
 }
 ```
 
@@ -264,14 +255,13 @@ main :: proc() {
 ```
 
 - `.circle(1)` builds a `Shape` holding the variant `circle` with the payload
-  `1`. A variant without a payload is written without parentheses, `.empty`.
+  `1`; the parameter of `area` says it is a `Shape`. A variant without a
+  payload is written without parentheses, `.empty`.
 - `(width: f64, height: f64)` is a record written in place, without a name of
   its own. It is handy for a payload or a result with a few fields.
 - A `switch` over a union picks the case for the variant it holds, and
   `case .circle(radius):` names the payload for that case. Like an enum switch,
   it must cover every variant.
-- `[?]Shape{...}` is a fixed array whose length, `?`, is counted from the
-  literal.
 
 A union is the tool for a value that can be one of a known set of things. The
 next pages lean on two unions the language provides: `Option`, for a value that

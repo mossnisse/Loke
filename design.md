@@ -371,6 +371,7 @@ The following list defines the implicit conversions. There are no user-defined o
 - Unfixed rune constants -> rune types
 - `string` -> `string_view`; a non-owning borrow subject to [Borrows and lifetimes](#borrows-and-lifetimes)
 - `[dynamic]T` -> `[]T`, a read-only view of the live elements under the same borrow rules; see [Dynamic arrays](#dynamic-arrays)
+- `[N]T` -> `[]T`, a read-only view of all `N` elements under the same borrow rules; see [Fixed arrays](#fixed-arrays)
 - Unfixed strings -> `string`, `string_view`, or `cstring_view` when the destination supplies the required lifetime
 - A scalar of a vector's lane type -> that `Simd(T, N)`, the [splat](#construction-and-conversion) with every lane equal to it
 
@@ -665,6 +666,8 @@ A fixed array stores its elements contiguously. Its layout is equivalent to a re
 
 `x[i]` accesses element `i` of `x`. The first element has index 0.
 
+**A `[N]T` converts implicitly to a `[]T`** of all its elements, as a [`[dynamic]T`](#dynamic-arrays) does: a zero-cost read-only borrow of the array, which the view cannot outlive. `total(x)` therefore passes a slice of `x` to `total :: proc(values: []int) -> int`, and a generic `[]$T` parameter binds `T` to the element. The writable `[]mut T` stays explicit, `x[:]` from a mutable place.
+
 #### Multidimensional arrays
 
 A multidimensional fixed array is an ordinary nested array. `[Rows][Columns]T` means an outer array of `Rows` values, each of which is an inner `[Columns]T` array:
@@ -881,7 +884,7 @@ x: [dynamic]int = {};
 x.append(10); // the zero value is immediately usable
 ```
 
-**A `[dynamic]T` converts implicitly to a `[]T`** of its live elements, as a `string` does to a `string_view`: a zero-cost borrow of the array, which cannot be modified while the view is in use and which the view cannot outlive. A procedure that only reads a sequence therefore takes `[]T` and accepts either. The writable `[]mut T` stays explicit, `x[:]` from a mutable place. A generic `[]$T` parameter accepts a dynamic array the same way, binding `T` to its element.
+**A `[dynamic]T` converts implicitly to a `[]T`** of its live elements, as a `string` does to a `string_view`: a zero-cost borrow of the array, which cannot be modified while the view is in use and which the view cannot outlive. A procedure that only reads a sequence therefore takes `[]T` and accepts a slice, a dynamic array, or a [fixed array](#fixed-arrays). The writable `[]mut T` stays explicit, `x[:]` from a mutable place. A generic `[]$T` parameter accepts a dynamic array the same way, binding `T` to its element.
 
 ```odin
 total :: proc(values: []int) -> int { ... }

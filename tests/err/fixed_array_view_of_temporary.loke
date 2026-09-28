@@ -1,0 +1,13 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Fixed arrays": the implicit `[]T` borrows the array, and a
+// temporary array ends with the statement that created it.
+
+make_primes :: proc() -> [4]int { return {2, 3, 5, 7}; }
+
+main :: proc() {
+	dangling: []int = make_primes();
+	fmt.println(dangling);
+}

@@ -26,6 +26,9 @@ checklist.
 
 ### Added
 
+- A fixed array `[N]T` converts implicitly to a read-only `[]T` of its
+  elements, as a `[dynamic]T` already did, so `total(primes)` needs no
+  `primes[:]` (design.md "Fixed arrays").
 - `Option.ok_or(error)` turns an absent value into a `Result` failure, so
   `settings.lookup_value("port").ok_or(Config_Error.Missing_Port) or_return`
   replaces a `switch` (design.md "Changing error domains").

@@ -115,11 +115,10 @@ main :: proc() {
 	scores[0] = 75;
 	scores.sort();
 	fmt.println(scores);
-	fmt.println(scores.pop() or_else 0, scores);
 
 	// A slice is a view of part of an array.
 	middle := primes[1:4];
-	fmt.println(middle, total(primes[:]), total(scores));
+	fmt.println(middle, total(primes), total(scores));
 
 	// `&` in a `foreach` changes each element in place.
 	foreach (&score in scores) {
@@ -135,20 +134,17 @@ main :: proc() {
 [2, 3, 5, 7, 11] 5 2
 [72, 95, 88, 61] 4
 [61, 75, 88, 95]
-95 [61, 75, 88]
-[3, 5, 7] 28 224
+[3, 5, 7] 28 319
 0 66
 1 80
 2 93
+3 100
 ```
 
 - An index is checked: `scores[10]` panics instead of reading past the end.
   Assigning to an index never grows the array; `append` does.
-- `pop` removes the last element. The array might be empty, so `pop` returns an
-  `Option`, and `or_else 0` supplies a value for that case.
-  [Errors](05-errors.md) explains both.
-- `total` takes a `[]int`, so it accepts a slice of a fixed array, `primes[:]`,
-  and a dynamic array, which converts to a slice of its elements.
+- `total` takes a `[]int`, so it accepts a slice, and also a fixed or dynamic
+  array, which converts to a slice of all its elements.
 - A `foreach` over a container gives each element without copying it. Write
   `&score` to change the elements, and `.indexed()` to number them.
 
@@ -156,7 +152,7 @@ main :: proc() {
 
 A map stores values under keys. `counts[key] = value` adds or replaces an entry.
 Reading `counts[key]` requires the key to be there, and panics if it is not;
-`lookup_value` asks without that requirement.
+`key in counts` asks whether it is.
 
 ```odin file=maps.loke
 package main;
@@ -177,7 +173,7 @@ main :: proc() {
 	}
 	fmt.println(counts.len(), "different words");
 	fmt.println("the:", counts["the"]);
-	fmt.println("fish:", counts.lookup_value("fish") or_else 0);
+	fmt.println("fish:", "fish" in counts);
 
 	// A map has no order, so sort the keys to print them in a fixed one.
 	words: [dynamic]string = {};
@@ -197,7 +193,7 @@ main :: proc() {
 ```text output=maps
 5 different words
 the: 3
-fish: 0
+fish: false
 and 2
 bird 1
 cat 1

@@ -33,6 +33,41 @@ The allocation built-ins are a third instance, and they keep the pair: `new`/`tr
 
 Is `()` a new zero-sized type category, or the anonymous spelling of an already-legal empty struct? The shipped `Unit :: struct {}` already covers `Result(Unit, E)`, so a second spelling for one type buys nothing yet, and the product, call-matching, and one-result work all shipped without it. The question only becomes live if a second zero-sized use appears.
 
+## Unnamed record fields, and records versus structs
+
+**Unnamed fields.** `divide :: proc(dividend, divisor: int) -> (int, int)` is
+rejected (`L0238`): an [anonymous record](design.md#anonymous-records) names
+every field, and the names are part of its type. A caller that destructures,
+`q, r := divide(17, 5)`, never reads them, so they can look like ceremony.
+Allowing the unnamed form would need:
+
+- an unnamed record type, and a way to reach its fields without names, such as
+  `.0` and `.1`, which Loke does not have;
+- a spelling for one field, since `(T)` must stay grouping;
+- a rule for how `(int, int)` relates to `(quotient: int, remainder: int)`:
+  unrelated types, or a conversion between them.
+
+Against it: the names document each result where the procedure is declared,
+and [One result](#one-result-and-the-compatibility-break-that-came-with-it)
+accepted them as part of procedure-type identity, the price of structural
+record identity. Revisit if real call sites keep writing names nobody reads.
+
+**Records versus structs.** Loke has two kinds of record. A `struct` is
+nominal: its declaration is its identity, a field may be private, a positional
+literal or a destructure is allowed only in the declaring package, and it can
+carry hooks and attributes such as `move_only`. An anonymous record is
+structural: its ordered field names and types are its identity, every field is
+public, and positional use is allowed anywhere. No package declares it, so an
+`impl` on one, through an alias such as `Pair :: (a: int, b: int)`, is an
+extension block: it may add methods but no hooks (`L0486`). Could they be one
+concept, with a `struct` as a named, nominal record over the same field list, so
+literals, destructuring, equality, formatting, reflection, and layout have one
+set of rules, and the tutorials explain records once? The questions it raises
+are the differences above: privacy, the field-order rule, which package owns
+a record's hooks, and whether naming a record type always makes it nominal or
+only when it is declared `struct`. Nothing is wrong today; the question is
+whether two kinds are worth their extra rules.
+
 ## Retaining defer
 
 Does scope-based `defer` provide enough clarity and utility to remain in the final language? Its current semantics are fully defined, including its ordering with automatic cleanup. The remaining question is whether explicit resource types and managed cleanup make most uses unnecessary.
@@ -125,11 +160,6 @@ Should we have some monady thing for concurency like futures?
 Should we have some language help for reactivity, like procedures that automatically get called when an variable is changed?
 
 ## Implementation blocks
-
-Should `self` be an implicit parameter? The current version requires it to be
-written as the first parameter name, which is what lets the four receiver forms
-— `self`, `inout self`, `move self`, and a plain `^Type` first parameter — be
-distinguished at the declaration.
 
 Should methods be written in a separate `impl` block or inside a struct? If they
 are written inside structs, how should methods on other kinds of types work?
@@ -280,6 +310,28 @@ profiles contain.
   `setlocale` through a foreign binding can change. A correctly rounded parser
   in Loke (Eisel-Lemire with a big-decimal fallback) would fix both. Is either
   worth that much code?
+
+## Slicing text at a byte offset
+
+`text[a:b]` panics when an offset falls inside a code point, so an offset read
+from input or computed by arithmetic ("the first 10 bytes") can crash a program
+on text its author never tried. An offset from `find`, `split`, or
+`rune_offsets()` is always on a boundary, so the risk is only in the second
+kind. Keeping the panic matches an out-of-range array index; the question is
+what to offer so that a program rarely needs to risk it:
+
+- `try_slice(a, b) -> Option(string_view)`, answering `none` for a cut through
+  a code point, for offsets that come from outside the program.
+- Operations naming the usual reasons to cut, which cannot fail:
+  `truncate_bytes(n)` (at most `n` bytes, rounded down to a boundary),
+  `prefix_runes(n)`, and `floor_boundary(i)` / `ceil_boundary(i)`.
+- `bytes()[a:b]` already slices anywhere, for data that is bytes rather than
+  text.
+
+Two alternatives seem worse. An opaque index type, as in Swift, makes a bad cut
+a compile error, but `text[0:3]` stops compiling and every offset needs a
+conversion. Rounding inside `[a:b]` never crashes, but quietly returns other
+text than was asked for.
 
 ## Open questions in `core:term`
 
@@ -643,6 +695,13 @@ a caller-local extension cannot change an existing instantiation. The built-in
 map is stricter still: equality and hashing for a user key must be inherent to
 the key type. Without that restriction, two packages could operate on the same
 map using different hash policies and invalidate its contents.
+
+The receiver is an explicit first parameter named `self`. A procedure in an
+`impl` block is a method exactly when it declares one, so the declaration shows
+whether it is called on a value or on the type, as instance and static methods
+differ in Java. Writing it also places the receiver's mode where every other
+parameter's mode is written: `self`, `self: ^`, `self: inout`, or
+`self: move`.
 
 Operator overloading, indexing, iteration, conversions, and lifecycle hooks let
 library types be as convenient as built-in types.

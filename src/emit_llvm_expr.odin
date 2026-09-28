@@ -805,6 +805,13 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 	}
+	// A `[N]T` read as a `[]T` of all its elements.
+	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .Slice &&
+	   underlying_kind(e.c, from) == .Array {
+		address := emit_address_at(e, expr, from)
+		length := fmt.tprintf("%d", underlying_info(e.c, from).count)
+		return emit_slice_value(e, as_type, address, length)
+	}
 	// A `[dynamic]T` read as a `[]T` of its live elements.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .Slice {
 		value := load(e, CONTAINER_TYPE, emit_address_at(e, expr, from))

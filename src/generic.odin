@@ -806,15 +806,15 @@ bind_generic_name :: proc(k: ^Checker, scope: ^Scope, binding: Generic_Binding) 
 // argument's type. Returns false only when a binding is impossible — a pattern
 // with no `$` is not this function's business, and ordinary conversion ranking
 // still decides whether the argument fits.
-// design.md "Dynamic arrays": a `[dynamic]T` argument reaches a `[]T` pattern
-// through the implicit view, so `sum(xs: []$T)` accepts one. A failed attempt
-// leaves no binding behind.
+// design.md "Dynamic arrays" and "Fixed arrays": a `[dynamic]T` or `[N]T`
+// argument reaches a `[]T` pattern through the implicit view, so
+// `sum(xs: []$T)` accepts one. A failed attempt leaves no binding behind.
 @(private = "file")
-match_dynamic_as_view :: proc(
+match_array_as_view :: proc(
 	k: ^Checker, pattern: Expr, actual: Type_Id, scope: ^Scope, out: ^[dynamic]Generic_Binding,
 ) -> bool {
 	info := underlying_info(k.c, actual)
-	if _, is_slice := pattern.(^Type_Slice); !is_slice || info == nil || info.kind != .Dynamic_Array {
+	if _, is_slice := pattern.(^Type_Slice); !is_slice || info == nil || (info.kind != .Dynamic_Array && info.kind != .Array) {
 		return false
 	}
 	before := len(out)
@@ -1158,7 +1158,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 				// An ordinary runtime parameter, whose written type may still be a
 				// pattern binding parts of the argument's type.
 				if !match_type_pattern(k, parameter.type, arg.type, scope, &bindings) &&
-				   !match_dynamic_as_view(k, parameter.type, arg.type, scope, &bindings) {
+				   !match_array_as_view(k, parameter.type, arg.type, scope, &bindings) {
 					result.reason = fmt.aprintf(
 						"`%s` does not match the shape of parameter %d",
 						type_name(k.c, arg.type),

@@ -141,27 +141,21 @@ package main;
 import "core:fmt";
 
 main :: proc() {
-	count: i8 = 120;
-	foreach (_ in 0 ..< 10) {
-		count += 1;
-		fmt.println(count);
-	}
+	count: i8 = 126;
+	count += 1;
+	fmt.println(count);
+	count += 1;
+	fmt.println(count);
 }
 ```
 
 ```text panic=overflow
-121
-122
-123
-124
-125
-126
 127
 loke: panic: signed integer overflow
 loke: panicked
 ```
 
-`i8` holds -128 through 127, so the eighth addition cannot be done. That is why
+`i8` holds -128 through 127, so the second addition cannot be done. That is why
 `constants.loke` converts to `i64` before doubling two billion, which is more
 than an `i32` can hold. [Errors](05-errors.md) says more about panics.
 
@@ -169,8 +163,49 @@ than an `i32` can hold. [Errors](05-errors.md) says more about panics.
 
 `if` takes a condition in parentheses and a body in braces, and may continue
 with `else if` and `else`. The braces are always written, even for one
-statement. `switch` compares one value against several cases; only the
-matching case runs, and `case:` with nothing after it catches the rest:
+statement.
+
+```odin file=ifs.loke
+package main;
+
+import "core:fmt";
+
+main :: proc() {
+	temperature := 14;
+	if (temperature < 0) {
+		fmt.println("freezing");
+	} else if (temperature < 15) {
+		fmt.println("cold");
+	} else {
+		fmt.println("warm");
+	}
+
+	raining := true;
+	if (raining && temperature < 20) {
+		fmt.println("take a coat");
+	}
+
+	count := 3;
+	noun := "apple" if count == 1 else "apples";
+	fmt.println(count, noun);
+}
+```
+
+```text output=ifs
+cold
+take a coat
+3 apples
+```
+
+The comparison operators are `==`, `!=`, `<`, `<=`, `>`, and `>=`, and
+conditions combine with `&&` (and), `||` (or), and `!` (not). A condition must
+be a `bool`: `if (count)` is an error, where C would test for zero.
+`x if condition else y` chooses between two values in the middle of an
+expression.
+
+`switch` compares one value against several cases. Only the matching case
+runs, with no falling through into the next, and `case:` with nothing after it
+catches the rest:
 
 ```odin file=decisions.loke
 package main;
@@ -188,31 +223,20 @@ part_of_day :: proc(hour: int) -> string {
 }
 
 main :: proc() {
-	foreach (hour in [?]int{3, 9, 14, 21, 25}) {
-		fmt.println(hour, part_of_day(hour));
-	}
-
-	count := 3;
-	noun := "apple" if count == 1 else "apples";
-	fmt.println(count, noun);
+	fmt.println(3, part_of_day(3));
+	fmt.println(14, part_of_day(14));
+	fmt.println(25, part_of_day(25));
 }
 ```
 
 ```text output=decisions
 3 night
-9 morning
 14 afternoon
-21 evening
 25 not an hour
-3 apples
 ```
 
 A case can list single values, `case 1, 2, 3:`, or ranges: `a ..< b` stops
-before `b`, and `a ..= b` includes it. `x if condition else y` chooses between
-two values in the middle of an expression.
-
-The comparison operators are `==`, `!=`, `<`, `<=`, `>`, and `>=`, and
-conditions combine with `&&` (and), `||` (or), and `!` (not).
+before `b`, and `a ..= b` includes it.
 
 ## Loops
 
@@ -278,7 +302,7 @@ first power of two past 1000: 1024
 
 `break` leaves the innermost loop and `continue` starts its next round.
 `for (;;)` loops until a `break` or `return`. When a loop needs no name for its
-value, write `_`, as `overflow.loke` does.
+value, write `_`: `foreach (_ in 0 ..< 3)` runs its body three times.
 
 ## Procedures
 

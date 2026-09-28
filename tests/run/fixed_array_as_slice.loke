@@ -1,0 +1,53 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Fixed arrays": a `[N]T` reads as a `[]T` of all its elements.
+
+total :: proc(values: []int) -> int {
+	sum := 0;
+	foreach (value in values) {
+		sum += value;
+	}
+	return sum;
+}
+
+largest :: proc(values: []$T) -> T {
+	best := values[0];
+	foreach (value in values) {
+		if (value > best) { best = value; }
+	}
+	return best;
+}
+
+make_primes :: proc() -> [4]int {
+	return {2, 3, 5, 7};
+}
+
+Holder :: struct {
+	values: [3]int,
+}
+
+PRIMES :: [3]int{11, 13, 17};
+
+main :: proc() {
+	primes := [5]int{2, 3, 5, 7, 11};
+	fmt.println(total(primes), total(primes[1:3]), largest(primes));
+
+	view: []int = primes;
+	fmt.println(view.len(), view[4]);
+
+	// A temporary lives through the full expression.
+	fmt.println(total(make_primes()));
+
+	holder := Holder{{4, 5, 6}};
+	fmt.println(total(holder.values), largest([3]f64{1.5, 2.5, 0.5}));
+
+	fmt.println(total(PRIMES));
+
+	names := [2]string{"Ada", "Grace"};
+	foreach (name in names[:]) {
+		fmt.println(name);
+	}
+	fmt.println(largest(names));
+}
