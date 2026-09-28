@@ -245,6 +245,13 @@ A call usually probes a generic instance's `where` bounds speculatively first.
 Committing that instance's body checks the bounds again at depth zero, so what a
 holding bound reports, such as a deprecated call, is not lost with the probe.
 
+A silent instantiation (`instantiate_generic` with `report = false`, as an
+overload candidate asks) is itself a probe. Its signature is cached either way,
+but nothing it resolves is enrolled, and a rejection rolls its diagnostics back
+and keeps the head one as the instance's rejection for a later request that
+reports. Enrollment waits for a use that commits the instance
+(`promote_generic_instance`).
+
 ### Compile-time execution and generics
 
 Simple constant semantics live in `const_ops.odin` and are shared by the checker

@@ -235,6 +235,16 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 	}
 }
 
+// Puts `entry` where `previous` is in the table `impl_member_table` reads.
+replace_impl_member :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, in_pkg: Package_Id, previous, entry: Symbol_Id) {
+	for &member in impl_member_table(k, kind, subject, in_pkg) {
+		if member == previous {
+			member = entry
+			return
+		}
+	}
+}
+
 // Fields share the namespace members are declared into.
 subject_field_named :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	info := type_of(k.c, type_underlying(k.c, subject))
@@ -416,6 +426,7 @@ expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_
 			resolve_symbol_signature_in_place(k, member, subject)
 			sym = symbol_of(k.c, member)
 		}
+		sym.looked_up = true
 		if sym.kind == .Proc_Group {
 			for nested in sym.members {
 				append(out, nested)
@@ -454,7 +465,11 @@ find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_I
 visible_member_named :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {
 	member := member_named(k.c, members, name)
 	sym := symbol_of(k.c, member)
-	return member_is_visible(k, sym) ? member : INVALID_SYMBOL
+	if !member_is_visible(k, sym) {
+		return INVALID_SYMBOL
+	}
+	sym.looked_up = true
+	return member
 }
 
 has_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> bool {

@@ -1,0 +1,26 @@
+package main; import "core:fmt";
+
+// comments.md A5: a signature an overload candidate rejected as a probe keeps
+// its cause, so a direct use reports it in either order.
+Bad :: struct($T: type) { a: [size_of(T) - 2]int }
+wrap :: proc(x: $T) -> Bad(T) { return {}; }
+keep :: proc(x: u8) -> int { return 2; }
+pick :: proc{wrap, keep};
+
+// The same shape, used directly first.
+Worse :: struct($T: type) { a: [size_of(T) - 2]int }
+enclose :: proc(x: $T) -> Worse(T) { return {}; }
+choose :: proc{enclose, keep};
+
+fallback :: proc(x: $T, y: T = T.nope) -> int { return 1; }
+direct :: proc(x: u8) -> int { return 2; }
+either :: proc{fallback, direct};
+
+main :: proc() {
+	fmt.println(pick(u8(1)));
+	first := wrap(u8(1));
+	second := enclose(u8(1));
+	fmt.println(choose(u8(1)));
+	fmt.println(either(u8(1)));
+	third := fallback(u8(1));
+}

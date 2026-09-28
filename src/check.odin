@@ -2324,8 +2324,9 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 	if symbol == nil {
 		return
 	}
-	if symbol.bound_excluded {
-		// Its `where` bound excluded it from this instantiation.
+	if symbol.bound_excluded || symbol.superseded {
+		// Its `where` bound excluded it from this instantiation, or a more
+		// specialized block replaced it.
 		return
 	}
 	if k.generic_depth > 0 && !literal.generic_instance {

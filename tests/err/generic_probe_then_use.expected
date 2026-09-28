@@ -1,0 +1,12 @@
+L0384
+@21:11
+an array length must be a non-negative constant
+in the signature of `wrap(u8)`
+L0384
+@22:12
+an array length must be a non-negative constant
+in the signature of `enclose(u8)`
+L0408
+@25:11
+`u8` has no member `nope`
+in the signature of `fallback(u8)`

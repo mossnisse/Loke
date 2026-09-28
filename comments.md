@@ -658,7 +658,7 @@ rejects a missing `program_analyzed`, an unfinished `formatters_ready`, and any
 held diagnostic. `emission_rejects_incomplete_registries` has a negative case
 for each.
 
-### A5 — P2: Speculation has multiple, incompatible commitment policies
+### A5 — resolved in part: Speculation had multiple commitment policies
 
 **Existing concern, confirmed in the current call path.**
 `begin_probe`/`end_probe` pair a counter with diagnostic rollback in
@@ -684,6 +684,22 @@ body commitment and diagnostics. Test rejected candidates followed by selected
 uses in both orders, with lifecycle contributions, attributes, and defaults.
 A general mutation journal should wait until these narrower rules prove
 insufficient.
+
+**Changed:** no wrong result could be reproduced. Probe-then-use in both orders,
+with a rejected signature, a default only valid for some `T`, a clone
+contribution through a bound-rejected candidate, and `@(require_results)`, all
+behaved, because a silent rejection keeps its head diagnostic for the next
+reporting request. The structural fix the finding asks for is done: a silent
+`instantiate_generic` now opens a probe itself, so the rollback belongs to the
+operation that rejects, every checker truncation happens under speculation as
+compiler-architecture.md says, and a silently resolved signature is cached
+without enrolling anything; enrollment waits for `promote_generic_instance`.
+CTFE's depth-zero body commitment is unchanged, which is why
+`diagnostics_provisional` still asks the instantiation frames.
+[tests/run/generic_probe_then_use.loke](tests/run/generic_probe_then_use.loke)
+and [tests/err/generic_probe_then_use.loke](tests/err/generic_probe_then_use.loke)
+pin the orders above. Centralizing the remaining depth-zero enrollment tests
+behind one operation is left for when another is added.
 
 ### A6 — P2: Region fixed-point iterations retain whole superseded graphs
 
@@ -762,10 +778,10 @@ existing staging/install behavior and the custom-runtime fallback. Verify
 invalidation when the tool override or effective flags change; this does not
 require a general-purpose build cache.
 
-### A10 — P2: Generic member installation commits before applicability settles
+### A10 — resolved: Generic member installation committed before applicability settled
 
 **Existing language defects with a common structural cause.** The two generic
-`impl` reproductions in [known-gaps.md "Gaps"](known-gaps.md#gaps) expose eager
+`impl` reproductions then in [known-gaps.md](known-gaps.md) exposed eager
 member installation in `install_generic_impls`, `install_one_generic_impl`,
 and `declare_instance_impl_members` in
 [src/generic.odin](src/generic.odin). An instance can exist during package
@@ -779,6 +795,30 @@ Reuse the existing overload/specificity machinery. Verify both source orders,
 an instance created from a `when`, an unused ambiguous member, and a called
 ambiguous member. Reordering files or rewriting the specification would leave
 the premature commitment intact.
+
+**Fixed:** each record instance keeps `impl_candidates`, the members no other
+block is more specialized than, by name and member table.
+`declare_instance_impl_members` admits a block's member against them: a more
+specialized supplier makes it lose silently, as before; an equal pattern, or a
+crossed non-procedure, is still a duplicate (`L0409`). A block more specialized
+than every supplier takes the name over and marks the replaced member
+`superseded`, which skips its body check and emission, so a general body that
+is invalid for the instance is never checked for it. Crossed procedure
+survivors share the table entry as a `Proc_Group`, so a call reaches the
+overload engine and reports the ambiguity (`L0391`) and an unused one costs
+nothing. Member lookups mark the entry `looked_up`; a block arriving after a
+lookup cannot change what it found and is reported as before.
+[tests/run/generic_impl_specificity.loke](tests/run/generic_impl_specificity.loke)
+covers crossed blocks unused and settled by a third block, and the `when`-made
+instance with an invalid general body;
+[tests/err/generic_impl_conflicts.loke](tests/err/generic_impl_conflicts.loke)
+now expects the called ambiguity at the call.
+
+Still open: a `when` condition cannot yet see a member of a generic `impl`
+block declared in the same package, as in
+`when (Box(int){5}.which() == 1) { ... }` with `impl Box($T)` above it
+(`L0363`). This predates the fix and leaves the `looked_up` conflict hard to
+reach from one package.
 
 ### Structure and simplification work with lower urgency
 
@@ -832,7 +872,7 @@ was identified.
    phases, and test that emission cannot add semantic entities. Include the
    real production pipeline in that check. Done (A3, A4).
 3. Clarify generic commitment and member applicability, retaining the existing
-   overload engine and CTFE behavior.
+   overload engine and CTFE behavior. Done (A10; A5 in part).
 4. Measure graph iteration/storage before changing analysis topology; then
    improve cleanup identity and scratch ownership where the evidence warrants.
 5. Add the runtime ABI check and cache-input manifest. Do the smaller state,
@@ -855,8 +895,8 @@ Validation performed on the reviewed implementation:
   after the observations were recorded. Its successful result confirms the
   observations, not that those states satisfy the intended contract.
 
-The original audit changed documentation only. A1–A4 were fixed in the
-follow-ups described above; the other findings remain open.
+The original audit changed documentation only. A1–A4 and A10 were fixed, and
+A5 in part, in the follow-ups described above; the other findings remain open.
 
 ## Open checker-fuzzer findings
 

@@ -100,6 +100,22 @@ Instance :: struct {
 	bounds_committed: bool,
 	// Record instances only: the generic `impl` blocks installed on it.
 	impls:        [dynamic]^Generic_Impl,
+	// Record instances only: the members of those blocks no other block is more
+	// specialized than, by name and table. The table holds the one survivor,
+	// or a group of crossed ones a call finds ambiguous (design.md "Generic
+	// types": tie-breaker 5 decides for a use).
+	impl_candidates: map[Impl_Member_Key][dynamic]Impl_Candidate,
+}
+
+Impl_Member_Key :: struct {
+	name: Identifier_Id,
+	kind: Impl_Kind,
+	pkg:  Package_Id, // an extension table's package; none for inherent members
+}
+
+Impl_Candidate :: struct {
+	symbol: Symbol_Id,
+	block:  ^Generic_Impl,
 }
 
 // The head diagnostic of a contained rejection, kept rather than the whole
@@ -134,12 +150,13 @@ Pending_Impl :: struct {
 	conflicts: []Impl_Conflict,
 }
 
-// A member name two `impl` blocks both give one instance, where the block
-// installed first is not the more specialized one.
+// A member name two `impl` blocks both give one instance and no use can
+// decide: their patterns are equal, the member is not a procedure, or the name
+// was already looked up when the later block arrived.
 Impl_Conflict :: struct {
 	name:  Name,
 	other: ^Generic_Impl,
-	// The later block is the more specialized, but arrived after the instance.
+	// The later block is the more specialized, but arrived after a use.
 	late:  bool,
 }
 
@@ -1383,7 +1400,13 @@ instantiate_generic :: proc(
 		instance.provisional = false
 	}
 
-	mark := len(k.c.diagnostics)
+	// A silent request is a probe: it must not fail the compilation over a
+	// signature that does not resolve, so a rejection rolls its diagnostics back
+	// and keeps the head one for a later request that reports.
+	probe: Probe
+	if !report {
+		probe = begin_probe(k.c)
+	}
 	switch template.kind {
 	case .Record:
 		instance.signature_ok = instantiate_record_body(k, template, instance, name, report)
@@ -1391,16 +1414,16 @@ instantiate_generic :: proc(
 		instance.signature_ok = instantiate_procedure_signature(k, template, instance, name, report)
 	case .None:
 	}
-	// A silent probe must not fail the compilation over a signature that does not
-	// resolve; keep the head diagnostic for a later request that reports.
-	if !report && !instance.signature_ok && len(k.c.diagnostics) > mark {
-		head := k.c.diagnostics[mark]
-		instance.rejection = Instance_Rejection {
-			code    = head.code,
-			message = strings.clone(head.message, k.c.semantic_allocator),
-			span    = head.span,
+	if !report {
+		if !instance.signature_ok && len(k.c.diagnostics) > probe.diagnostics {
+			head := k.c.diagnostics[probe.diagnostics]
+			instance.rejection = Instance_Rejection {
+				code    = head.code,
+				message = strings.clone(head.message, k.c.semantic_allocator),
+				span    = head.span,
+			}
 		}
-		truncate_diagnostics(k.c, mark)
+		end_probe(k.c, probe, keep = instance.signature_ok)
 	}
 	return instance, instance.signature_ok
 }
@@ -1440,7 +1463,8 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 }
 
 // Whether a diagnostic reported now may yet be rolled back: by a probe, or by a
-// silent instantiation that fails.
+// silent instantiation that fails. A silent instantiation is a probe, but
+// compile-time evaluation beneath it runs at depth zero, so its frame is asked.
 @(private = "file")
 diagnostics_provisional :: proc(k: ^Checker) -> bool {
 	if k.c.speculation_depth > 0 {
@@ -1554,6 +1578,7 @@ instantiate_record_body :: proc(
 	instance.symbol = symbol_id
 	instance.type = type
 	instance.impls = make([dynamic]^Generic_Impl, 0, 0, k.c.semantic_allocator)
+	instance.impl_candidates = make(map[Impl_Member_Key][dynamic]Impl_Candidate, k.c.semantic_allocator)
 	saved := enter_instance(k, template, instance.scope)
 	defer restore_checker_location(k, saved)
 
@@ -2209,8 +2234,9 @@ exclude_member_on_failed_bound :: proc(k: ^Checker, d: ^Decl) {
 }
 
 // Members of an instantiated block. A name a more specialized block already
-// supplied is left alone; one an equally or less specialized block supplied is a
-// conflict (design.md "Generic types": tie-breaker 5 decides between blocks).
+// supplied is left alone; one this block is more specialized than every
+// supplier of is taken over; a crossed one is kept beside the others for a use
+// to find ambiguous (design.md "Generic types": tie-breaker 5).
 @(private = "file")
 declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, instance: ^Instance, block: ^Generic_Impl) -> []Impl_Conflict {
 	subject := instance.type
@@ -2229,16 +2255,15 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, instance: ^
 				continue
 			}
 			name_id := name_identifier(k.c, name)
-			if member_named(k.c, impl_member_table(k, item.kind, subject, block.pkg), name_id) !=
-			   INVALID_SYMBOL {
-				if other := installed_block_declaring(k, instance, block, name_id); other != nil {
-					relation := impl_block_relation(other, block)
-					if relation != .Left {
-						append(&conflicts, Impl_Conflict{name = name, other = other, late = relation == .Right})
-					}
+			key := Impl_Member_Key{name = name_id, kind = item.kind, pkg = item.kind == .Impl ? INVALID_PACKAGE : block.pkg}
+			current := member_named(k.c, impl_member_table(k, item.kind, subject, block.pkg), name_id)
+			if current != INVALID_SYMBOL {
+				// A name from outside the generic blocks keeps its meaning.
+				candidates, _ := instance.impl_candidates[key]
+				if len(candidates) == 0 || !admit_impl_candidate(k, candidates[:], block, current, name, d, &conflicts) {
+					append(&symbols, INVALID_SYMBOL)
+					continue
 				}
-				append(&symbols, INVALID_SYMBOL)
-				continue
 			}
 			if member_named(k.c, added[:], name_id) != INVALID_SYMBOL {
 				errorf(
@@ -2282,7 +2307,10 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, instance: ^
 				register_instance_extension_name(k, block, name_id, id, name.span)
 			}
 			append(&symbols, id)
-			append(&added, id)
+			if current == INVALID_SYMBOL {
+				append(&added, id)
+			}
+			settle_impl_candidates(k, instance, key, Impl_Candidate{symbol = id, block = block}, current, name.span)
 		}
 		d.symbols = symbols[:]
 	}
@@ -2290,19 +2318,78 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, instance: ^
 	return conflicts[:]
 }
 
-// The block already installed on `instance` that declares `name` into the same
-// member table `block` does, or nil when the name came from elsewhere.
+// Whether `block`'s member may join the candidates for a name the table already
+// has as `current`. A more specialized supplier makes it lose silently; an equal
+// one, a crossed constant, or a use already made of `current` is a conflict.
 @(private = "file")
-installed_block_declaring :: proc(k: ^Checker, instance: ^Instance, block: ^Generic_Impl, name: Identifier_Id) -> ^Generic_Impl {
-	for other in instance.impls {
-		if other == block || other.item.kind != block.item.kind || (block.item.kind != .Impl && other.pkg != block.pkg) {
-			continue
-		}
-		if impl_block_member_name(k, other, name) != nil {
-			return other
+admit_impl_candidate :: proc(
+	k: ^Checker, candidates: []Impl_Candidate, block: ^Generic_Impl, current: Symbol_Id,
+	name: Name, d: ^Decl, conflicts: ^[dynamic]Impl_Conflict,
+) -> bool {
+	dominates_all := true
+	for candidate in candidates {
+		switch impl_block_relation(candidate.block, block) {
+		case .Left:
+			return false
+		case .Equal:
+			append(conflicts, Impl_Conflict{name = name, other = candidate.block})
+			return false
+		case .Crossed:
+			dominates_all = false
+			if decl_proc_literal(d) == nil || symbol_of(k.c, candidate.symbol).kind != .Proc {
+				append(conflicts, Impl_Conflict{name = name, other = candidate.block})
+				return false
+			}
+		case .Right:
 		}
 	}
-	return nil
+	if symbol_of(k.c, current).looked_up {
+		append(conflicts, Impl_Conflict{name = name, other = candidates[0].block, late = dominates_all})
+		return false
+	}
+	return true
+}
+
+// Adds `candidate`, supersedes every candidate its block is more specialized
+// than, and puts the survivor, or a group of the crossed survivors, in the
+// table where `current` was.
+@(private = "file")
+settle_impl_candidates :: proc(k: ^Checker, instance: ^Instance, key: Impl_Member_Key, candidate: Impl_Candidate, current: Symbol_Id, span: Span) {
+	survivors := make([dynamic]Impl_Candidate, 0, 2, k.c.semantic_allocator)
+	previous, _ := instance.impl_candidates[key]
+	for other in previous {
+		if impl_block_relation(candidate.block, other.block) == .Left {
+			// Never checked or emitted for this instance.
+			symbol_of(k.c, other.symbol).superseded = true
+			continue
+		}
+		append(&survivors, other)
+	}
+	append(&survivors, candidate)
+	instance.impl_candidates[key] = survivors
+	if current == INVALID_SYMBOL {
+		return
+	}
+	entry := candidate.symbol
+	if len(survivors) > 1 {
+		members := make([]Symbol_Id, len(survivors), k.c.semantic_allocator)
+		public := false
+		for survivor, index in survivors {
+			members[index] = survivor.symbol
+			public ||= symbol_of(k.c, survivor.symbol).public
+		}
+		entry = new_symbol(k.c, Symbol {
+			name        = key.name,
+			span        = span,
+			kind        = .Proc_Group,
+			pkg         = candidate.block.pkg,
+			lookup_pkg  = candidate.block.pkg,
+			owner_type  = instance.type,
+			public      = public,
+			members     = members,
+		})
+	}
+	replace_impl_member(k, key.kind, instance.type, candidate.block.pkg, current, entry)
 }
 
 @(private = "file")
@@ -2440,9 +2527,10 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 					continue
 				}
 				sym := symbol_of(k.c, d.symbols[0])
-				// A method whose bound did not hold is not part of this instantiation:
-				// its body was never checked, so there is no body to emit.
-				if sym != nil && sym.bound_excluded {
+				// A method whose bound did not hold, or that a more specialized block
+				// replaced, is not part of this instantiation: its body was never
+				// checked, so there is no body to emit.
+				if sym != nil && (sym.bound_excluded || sym.superseded) {
 					continue
 				}
 				append(&pkg.instances, Instance_Decl{symbol = d.symbols[0], decl = d})

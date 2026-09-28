@@ -1,0 +1,33 @@
+package main; import "core:fmt";
+
+// comments.md A5: an overload candidate instantiates a generic signature as a
+// probe. A later use of the same instance still gets its default, its clone
+// contribution, and its attribute checks, whichever comes first.
+Res :: struct { v: int }
+impl Res {
+	copy_owned :: hook(copy) proc(self, a: Allocator) -> Result(Res, Allocator_Error) {
+		return .ok(Res{self.v + 10});
+	}
+}
+
+wrap :: proc(x: $T, y: [2]T = {}) -> int { return y.len(); }
+keep :: proc(x: u8) -> int { return 7; }
+pick :: proc{wrap, keep};
+
+// Rejected for `Res` by its bound, then the other member is selected.
+twin :: proc(x: $T, y: T) -> T where size_of(T) > 100 { return y.clone(); }
+plain :: proc(x: Res, y: Res) -> Res { return y.clone(); }
+copy :: proc{twin, plain};
+
+@(require_results)
+marked :: proc(x: $T) -> T { return x; }
+other :: proc(x: u8) -> int { return 3; }
+choose :: proc{marked, other};
+
+main :: proc() {
+	fmt.println(pick(u8(1)), wrap(u8(1)));
+	fmt.println(wrap(1));
+	a := Res{1};
+	b := copy(a, a);
+	fmt.println(b.v, choose(u8(1)), marked(2));
+}

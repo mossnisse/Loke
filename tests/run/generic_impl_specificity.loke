@@ -1,0 +1,36 @@
+package main; import "core:fmt";
+
+// design.md "Generic types": the more specialized block supplies a member,
+// decided for a use (tie-breaker 5), whenever the blocks are declared.
+
+// Crossed blocks: an instance both apply to is valid while no call is made.
+Pair :: struct($A, $B: type) { a: A, b: B }
+impl Pair($A, int) { which :: proc(self) -> int { return 1; } }
+impl Pair(int, $B) { which :: proc(self) -> int { return 2; } }
+unused: Pair(int, int) = {1, 2};
+
+// A third block more specialized than both settles the shared instance.
+Trio :: struct($A, $B: type) { a: A, b: B }
+impl Trio($A, int) { which :: proc(self) -> int { return 1; } }
+impl Trio(int, $B) { which :: proc(self) -> int { return 2; } }
+impl Trio(int, int) { which :: proc(self) -> int { return 3; } }
+
+// The instance exists before the specialized block is registered. The general
+// member it replaces is never checked for `int`, where its body is invalid.
+Late :: struct($T: type) { v: T }
+impl Late($T) { which :: proc(self) -> int { return self.v.width(); } }
+when (size_of(Late(int)) > 0) {
+	impl Late(int) { which :: proc(self) -> int { return 2; } }
+}
+
+Wide :: struct { n: int }
+impl Wide { width :: proc(self) -> int { return self.n; } }
+
+main :: proc() {
+	p: Pair(bool, int) = {true, 2};
+	q: Pair(int, bool) = {1, true};
+	t: Trio(int, int) = {1, 2};
+	l: Late(int) = {1};
+	w: Late(Wide) = {Wide{7}};
+	fmt.println(p.which(), q.which(), t.which(), l.which(), w.which());
+}

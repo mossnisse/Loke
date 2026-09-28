@@ -550,6 +550,12 @@ Symbol :: struct {
 	// not hold, so the method is not part of that instantiation. The symbol stays
 	// only so a call can say why it is missing.
 	bound_excluded: bool,
+	// An instantiated generic `impl` member a more specialized block replaced
+	// before any use: no longer a member, so its body is neither checked nor
+	// emitted for that instance.
+	superseded: bool,
+	// A member lookup found this entry, so a later block can no longer replace it.
+	looked_up: bool,
 	// A procedure the compiler contributes: it has a real symbol and signature,
 	// and the backend writes its body (`src/iterate.odin`).
 	synth:       Synth_Kind,

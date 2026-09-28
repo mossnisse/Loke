@@ -1,16 +1,14 @@
 L0409
-@8:16
+@9:16
 `Box(int)` gets a member `get` from two `impl` blocks, and neither is more specialized
 the other `get` is declared here
-L0409
-@12:22
-`Pair(int, int)` gets a member `which` from two `impl` blocks
-L0409
-@20:19
-this block is more specialized, but it is declared after `Late(int)` was first used
+L0391
+@26:14
+method `which` is ambiguous here
+no candidate is more specialized than the others
 L0363
-@35:14
+@28:14
 `Pair(int, f64)` has no field or member `same`
 L0384
-@39:5
+@30:5
 in the fields of `Bad(u8)`

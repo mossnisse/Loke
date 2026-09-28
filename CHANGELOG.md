@@ -16,10 +16,12 @@ checklist.
   referenced name in the declaration's scope or correct the default; a `$name`
   written only in a comment does not declare a parameter.
 - Two generic `impl` blocks that both give one instance a member of the same
-  name, where neither block is more specialized, are an error (`L0409`); the
-  first block's member used to win silently. Remove one member, or make one
-  block strictly more specialized, as `impl Pair(int, int)` is than both
-  `impl Pair($A, int)` and `impl Pair(int, $B)`.
+  name, where neither block is more specialized, make a call of that member
+  ambiguous (`L0391`); the first block's member used to win silently. Blocks
+  with equal patterns declaring one name twice are an error (`L0409`). Remove
+  one member, or make one block strictly more specialized, as
+  `impl Pair(int, int)` is than both `impl Pair($A, int)` and
+  `impl Pair(int, $B)`.
 - A constant or file-scope initializer that builds an array or struct of more
   constant elements than the compile-time evaluator's 64 MB scratch budget
   holds, such as `Table :: [2000000]u8{1};`, is an error (`L0342`); the
@@ -75,6 +77,12 @@ checklist.
   `buffer: [16777216]u8;` compiles in a fraction of a second instead of 44, and
   a local `a := [1000000000]int{1};` compiles instead of crashing the compiler.
   A literal too large to fold is built at run time.
+- An instance that two crossed generic `impl` blocks both apply to is valid
+  while their shared member is not called; it used to be rejected as soon as
+  the instance existed.
+- A more specialized generic `impl` block supplies its member even when it is
+  registered after the instance exists, as a `when` block can be; the
+  general block's member is dropped from that instance, body unchecked.
 - `lokec` no longer keeps a CPU core busy while it waits for clang, so several
   builds run side by side finish sooner instead of starving each other.
 - A diagnostic whose span runs past its first line, such as a `switch` missing
