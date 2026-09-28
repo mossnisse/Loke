@@ -1,0 +1,15 @@
+L0342
+@5:10
+compile-time evaluation exceeded 67108864 bytes of scratch memory
+L0342
+@12:14
+compile-time evaluation exceeded 67108864 bytes of scratch memory
+L0364
+@15:2
+the layout of `[9223372036854775807]int` exceeds
+L0364
+@16:2
+the layout of `[9223372036854775807]i32` exceeds
+L0364
+@17:7
+the layout of `[9223372036854775807]i16` exceeds

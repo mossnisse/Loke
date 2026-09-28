@@ -623,8 +623,8 @@ kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	if sym == nil {
 		return
 	}
-	if zero, ok := zero_const(e.c, sym.type); ok {
-		store(e, sym.type, llvm_const(e, zero, sym.type), symbol_name(e, symbol_id))
+	if zero, ok := llvm_zero(e, sym.type); ok {
+		store(e, sym.type, zero, symbol_name(e, symbol_id))
 	}
 	if flag := drop_flag_of(e, symbol_id); flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)

@@ -184,7 +184,9 @@ walks the annotated AST directly.
   body, so no flow graph outlives its analysis.
 - Each CTFE invocation has bounded scratch storage for frames, mutable values,
   strings, big integers, and containers. Values that escape evaluation are
-  frozen into semantic storage.
+  frozen into semantic storage. A constant built outside evaluation, by
+  folding a literal or making a zero value, is held to the same budget
+  (`MAX_CONST_ELEMENTS`); the backend writes a zero without building one.
 - LLVM strings and temporary maps belong to the emitter invocation and never
   become semantic annotations. Emission, `-check-layout`, and the toolchain run
   on the compilation's emission arena, freed by `destroy_compilation`.

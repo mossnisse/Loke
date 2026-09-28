@@ -862,8 +862,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 
 		out := alloca(e, element_llvm)
 		zero := "zeroinitializer"
-		if constant, zeroed := zero_const(e.c, element); zeroed {
-			zero = llvm_const(e, constant, element)
+		if constant, zeroed := llvm_zero(e, element); zeroed {
+			zero = constant
 		}
 		store(e, element, zero, out)
 		hit_label, done_label := new_label(e, "mlookup.hit"), new_label(e, "mlookup.done")

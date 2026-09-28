@@ -57,6 +57,20 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Ty
 	return strings.to_string(b)
 }
 
+// A type's zero value as an LLVM constant, when it has one. design.md "Zero
+// values" makes every zero all-zero bits, so an aggregate's is written without
+// building a constant per element.
+llvm_zero :: proc(e: ^Emitter, type: Type_Id) -> (string, bool) {
+	zero, ok := zero_const(e.c, type, build = false)
+	if !ok {
+		return "", false
+	}
+	if zero.kind == .Aggregate {
+		return "zeroinitializer", true
+	}
+	return llvm_const(e, zero, type), true
+}
+
 @(private = "file")
 is_zero_constant :: proc(value: string) -> bool {
 	switch value {
@@ -957,9 +971,9 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 @(private = "file")
 emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as_type: Type_Id) {
 	// Start from the zero value so an omitted field is not left undefined.
-	zero, ok := zero_const(e.c, as_type)
+	zero, ok := llvm_zero(e, as_type)
 	if ok {
-		store(e, as_type, llvm_const(e, zero, as_type), address)
+		store(e, as_type, zero, address)
 	}
 	info := underlying_info(e.c, as_type)
 	if info == nil {

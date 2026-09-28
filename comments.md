@@ -490,10 +490,10 @@ P1 is the first reliability issue to address; P2 is focused corrective work.
 Previously recorded findings are explicitly identified, rather than counted
 as new discoveries.
 
-### A1 — P1: Constant construction bypasses the evaluator's resource bounds
+### A1 — resolved: Constant construction bypassed the evaluator's resource bounds
 
-**Existing defect; allocation paths rechecked.** The large-array failures in
-[known-gaps.md "Gaps"](known-gaps.md#gaps) remain an architectural problem:
+**Existing defect; allocation paths rechecked.** The large-array failures
+then recorded in [known-gaps.md](known-gaps.md) were an architectural problem:
 the bounded interpreter is only one way the compiler constructs constants.
 `check_array_literal` builds a full-length expression vector and passes it to
 `fold_aggregate`; `zero_const` and `capacity_const` likewise allocate
@@ -514,6 +514,31 @@ retain a zero/repeat representation instead of manufacturing one host object
 per element. Keep this focused on real constant constructors, not a new
 compiler-wide allocator framework. Verify both direct literals and evaluated
 equivalents, and preserve the existing reproduction until fixed.
+
+**Fixed:** `const_element_count` measures the constants a value is built from,
+through arrays and struct fields, and `MAX_CONST_ELEMENTS` holds it to the
+evaluator's 64 MB (`EVAL_MAX_MEMORY` over `size_of(Const_Value)`).
+`fold_aggregate` and a building `zero_const` refuse past it, so the literal is
+not a constant: at run time it is built into memory, and where a constant is
+required the evaluator runs instead and reports `L0342`. An array literal keeps
+only its written elements. The backend writes a zero with `llvm_zero` as
+`zeroinitializer`, asking `zero_const` only whether one exists, since design.md
+"Zero values" makes every zero all-zero bits; a 16 MB zeroed global fell from
+44 s to 0.05 s. A variable's declared type and a composite literal's type now
+request their layout, so an oversized one is `L0364` where it is written.
+[tests/err/large_constant_arrays.loke](tests/err/large_constant_arrays.loke),
+[tests/ll/large_arrays.loke](tests/ll/large_arrays.loke), and
+[tests/run/large_literal_runtime.loke](tests/run/large_literal_runtime.loke)
+cover the three reproductions, a direct literal and its evaluated equivalent,
+and a struct literal built at run time.
+
+Two costs remain. A literal past the bound is built like one with non-constant
+elements, in a stack temporary, so `g = [2000000]u8{7};` into a global
+overflows the default 1 MB stack where it used to be copied from a folded
+module constant; a large value built in place of its destination would fix
+that and the non-constant case together. Below the bound, a literal is still
+folded, and emitted, one element at a time; a zero/repeat representation would
+make that cost follow what the literal writes.
 
 ### A2 — resolved: Semantic binding was rediscovered from raw source text
 
@@ -781,7 +806,8 @@ was identified.
 ### Recommended order and verification record
 
 1. Address the known constant-allocation failure with focused correctness
-   regressions. The comment/default bug is now fixed with its regressions (A2).
+   regressions. Both it (A1) and the comment/default bug (A2) are now fixed
+   with their regressions.
 2. Close emission preparation: settle carrier fields, require completed
    phases, and test that emission cannot add semantic entities. Include the
    real production pipeline in that check.
@@ -809,8 +835,8 @@ Validation performed on the reviewed implementation:
   after the observations were recorded. Its successful result confirms the
   observations, not that those states satisfy the intended contract.
 
-The original audit changed documentation only. A2 was fixed in the follow-up
-described above; the other findings remain open.
+The original audit changed documentation only. A1 and A2 were fixed in the
+follow-ups described above; the other findings remain open.
 
 ## Open checker-fuzzer findings
 

@@ -207,8 +207,8 @@ emit_static_locals :: proc(e: ^Emitter) {
 		name := fmt.aprintf("@loke.s.%d.%s", index, llvm_safe(identifier_text(e.c, sym.name)))
 		e.names[symbol_id] = name
 		value := "zeroinitializer"
-		if zero, ok := zero_const(e.c, sym.type); ok {
-			value = llvm_const(e, zero, sym.type)
+		if zero, ok := llvm_zero(e, sym.type); ok {
+			value = zero
 		}
 		if sym.decl != nil {
 			for initialiser, position in sym.decl.values {
@@ -261,12 +261,12 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 		if i < len(d.values) && d.values[i] != nil && is_const_expr(d.values[i]) {
 			value = llvm_const(e, const_value_of(d.values[i]), sym.type)
 		} else {
-			zero, ok := zero_const(e.c, sym.type)
+			zero, ok := llvm_zero(e, sym.type)
 			if !ok {
 				backend_fail(e, "a global type was not gated by the checker")
 				continue
 			}
-			value = llvm_const(e, zero, sym.type)
+			value = zero
 		}
 		fmt.sbprintfln(&e.b, "%s = global %s %s", name, llvm_type(e, sym.type), value)
 	}

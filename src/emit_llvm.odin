@@ -577,8 +577,8 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		}
 		if e.result_inout {
 			fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", e.result_slot)
-		} else if zero, ok := zero_const(e.c, result); ok {
-			store(e, result, llvm_const(e, zero, result), e.result_slot)
+		} else if zero, ok := llvm_zero(e, result); ok {
+			store(e, result, zero, e.result_slot)
 		}
 	}
 

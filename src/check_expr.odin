@@ -2314,6 +2314,8 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// Reports `L0364` here for a value whose layout is past the maximum.
+	type_size(k.c, target, v.span)
 
 	under := type_underlying(k.c, target)
 	info := type_of(k.c, under)
@@ -2522,7 +2524,8 @@ check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 		v.type = INVALID_TYPE
 		return
 	}
-	values := make([]Expr, count, k.c.semantic_allocator)
+	// Only the written elements: `fold_aggregate` zeroes the rest.
+	values := make([]Expr, min(len(v.elements), count), k.c.semantic_allocator)
 	ok := true
 	for element, index in v.elements {
 		if element.key != nil {
@@ -2610,11 +2613,17 @@ check_map_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info
 }
 
 // A literal whose written elements all folded is a constant, with zero values
-// for the rest.
+// for the rest. `values` may stop short of an array's length.
 @(private = "file")
 fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, values: []Expr, fields: []Symbol_Id) {
-	elements := make([]Const_Value, len(values), k.c.semantic_allocator)
-	for value, index in values {
+	// Too large to build: the literal is constructed at run time instead.
+	if const_element_count(k.c, target) > MAX_CONST_ELEMENTS {
+		return
+	}
+	count := fields == nil ? int(underlying_info(k.c, target).count) : len(fields)
+	elements := make([]Const_Value, count, k.c.semantic_allocator)
+	for index in 0 ..< count {
+		value := index < len(values) ? values[index] : nil
 		if value == nil {
 			element_type := INVALID_TYPE
 			if fields == nil {
@@ -2659,13 +2668,54 @@ capacity_const :: proc(c: ^Compiler, type: Type_Id) -> Const_Value {
 	return Const_Value{kind = .Aggregate, aggregate = aggregate}
 }
 
+// Constant construction is held to the evaluator's scratch budget, counted as
+// the elements `const_element_count` measures.
+MAX_CONST_ELEMENTS :: u64(EVAL_MAX_MEMORY / size_of(Const_Value))
+
+// The constants a value of `type` is built from, counting through arrays and
+// struct fields; saturates rather than overflowing.
+const_element_count :: proc(c: ^Compiler, type: Type_Id) -> u64 {
+	info := underlying_info(c, type)
+	if info == nil {
+		return 1
+	}
+	#partial switch info.kind {
+	case .Array, .Simd:
+		element := const_element_count(c, info.element)
+		if info.count > max(u64) / element {
+			return max(u64)
+		}
+		return max(info.count * element, 1)
+	case .Struct:
+		if info.size_state == .Cyclic {
+			return 1
+		}
+		total := u64(1)
+		for field in info.fields {
+			if symbol := symbol_of(c, field); symbol != nil {
+				total += min(const_element_count(c, symbol.type), max(u64) - total)
+			}
+		}
+		return total
+	}
+	return 1
+}
+
 // The compile-time zero value of every runtime M2 type (design.md "Zero
-// values"). Recursive for aggregates.
-zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
+// values"). Recursive for aggregates. Without `build`, only whether one exists
+// is answered, and an aggregate comes back as an empty `.Aggregate`; with it,
+// an aggregate past `MAX_CONST_ELEMENTS` is not built and reports false.
+zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, bool) {
 	under := type_underlying(c, type)
 	info := type_of(c, under)
 	if info == nil {
 		return Const_Value{}, false
+	}
+	#partial switch info.kind {
+	case .Array, .Simd, .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
+		if build && const_element_count(c, type) > MAX_CONST_ELEMENTS {
+			return Const_Value{}, false
+		}
 	}
 	#partial switch info.kind {
 	case .Bool:
@@ -2687,15 +2737,20 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 	case .String, .String_View:
 		return Const_Value{kind = .String}, true
 	case .Array, .Simd:
-		elements := make([]Const_Value, info.count, c.semantic_allocator)
+		element := Const_Value{}
 		if info.count > 0 {
-			element, ok := zero_const(c, info.element)
+			ok: bool
+			element, ok = zero_const(c, info.element, build)
 			if !ok {
 				return Const_Value{}, false
 			}
-			for index in 0 ..< int(info.count) {
-				elements[index] = element
-			}
+		}
+		if !build {
+			return Const_Value{kind = .Aggregate}, true
+		}
+		elements := make([]Const_Value, info.count, c.semantic_allocator)
+		for &slot in elements {
+			slot = element
 		}
 		aggregate := new(Const_Aggregate, c.semantic_allocator)
 		aggregate.type = type
@@ -2711,21 +2766,31 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		ensure_slice_fields(c, under)
 		ensure_container_fields(c, under)
 		info = type_of(c, under)
-		elements := make([]Const_Value, len(info.fields), c.semantic_allocator)
+		elements: []Const_Value
+		if build {
+			elements = make([]Const_Value, len(info.fields), c.semantic_allocator)
+		}
 		for field, index in info.fields {
 			symbol := symbol_of(c, field)
 			if symbol == nil {
 				return Const_Value{}, false
 			}
 			if symbol.initialized_by != INVALID_SYMBOL {
-				elements[index] = capacity_const(c, symbol.type)
+				if build {
+					elements[index] = capacity_const(c, symbol.type)
+				}
 				continue
 			}
-			element, ok := zero_const(c, symbol.type)
+			element, ok := zero_const(c, symbol.type, build)
 			if !ok {
 				return Const_Value{}, false
 			}
-			elements[index] = element
+			if build {
+				elements[index] = element
+			}
+		}
+		if !build {
+			return Const_Value{kind = .Aggregate}, true
 		}
 		aggregate := new(Const_Aggregate, c.semantic_allocator)
 		aggregate.type = type

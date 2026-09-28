@@ -1,0 +1,18 @@
+package main;
+
+// comments.md A1: constant construction is held to the evaluator's budget, and
+// storage whose layout is past the maximum is rejected where it is declared.
+Table :: [2000000]u8{1};
+
+big :: proc() -> [1000000000]int {
+	a: [1000000000]int = {};
+	a[1] = 2;
+	return a;
+}
+Evaluated :: big();
+
+main :: proc() {
+	b: [9223372036854775807]int = {};
+	c: [9223372036854775807]i32;
+	d := [9223372036854775807]i16{};
+}

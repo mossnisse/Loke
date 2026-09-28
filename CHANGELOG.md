@@ -20,6 +20,12 @@ checklist.
   first block's member used to win silently. Remove one member, or make one
   block strictly more specialized, as `impl Pair(int, int)` is than both
   `impl Pair($A, int)` and `impl Pair(int, $B)`.
+- A constant or file-scope initializer that builds an array or struct of more
+  constant elements than the compile-time evaluator's 64 MB scratch budget
+  holds, such as `Table :: [2000000]u8{1};`, is an error (`L0342`); the
+  compiler used to fold it one element at a time, taking seconds or running out
+  of memory. Leave a zero-initialized global without an initializer
+  (`buffer: [2000000]u8;`), or fill a large table at run time.
 
 ### Changed
 
@@ -62,6 +68,13 @@ checklist.
 
 ### Fixed
 
+- A variable or composite literal whose type's layout is past the maximum
+  size, such as `c: [9223372036854775807]int;`, is an error (`L0364`) where it
+  is written; it was accepted, or with `= {}` never finished compiling.
+- A zero value of a large array is written whole: a global
+  `buffer: [16777216]u8;` compiles in a fraction of a second instead of 44, and
+  a local `a := [1000000000]int{1};` compiles instead of crashing the compiler.
+  A literal too large to fold is built at run time.
 - `lokec` no longer keeps a CPU core busy while it waits for clang, so several
   builds run side by side finish sooner instead of starving each other.
 - A diagnostic whose span runs past its first line, such as a `switch` missing

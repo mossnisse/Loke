@@ -2117,6 +2117,10 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	if declared != INVALID_TYPE && !gate_type(k, declared, d.span) {
 		return
 	}
+	// Reports `L0364` here for storage whose layout is past the maximum.
+	if declared != INVALID_TYPE {
+		type_size(k.c, declared, d.span)
+	}
 	// design.md "Allocators": before the initialiser, which builds with the
 	// selected provider.
 	if !check_via_policy(k, d, declared) {
