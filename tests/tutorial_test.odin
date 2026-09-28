@@ -84,7 +84,7 @@ tutorials_compile_and_run :: proc(t: ^testing.T) {
 		command := make([dynamic]string, context.temp_allocator)
 		append(&command, compiler_path(), input, "-o", fmt.tprintf("%s.exe", name))
 		append(&command, ..env_flags())
-		state, _, stderr, err := os2.process_exec(
+		state, _, stderr, err := exec(
 			os2.Process_Desc{command = command[:], working_dir = root},
 			context.temp_allocator,
 		)
@@ -104,7 +104,7 @@ tutorials_compile_and_run :: proc(t: ^testing.T) {
 			run_command := make([dynamic]string, context.temp_allocator)
 			append(&run_command, exe)
 			append(&run_command, ..run.args[:])
-			run_state, stdout, run_stderr, run_err := os2.process_exec(
+			run_state, stdout, run_stderr, run_err := exec(
 				os2.Process_Desc{command = run_command[:], working_dir = root},
 				context.temp_allocator,
 			)
@@ -135,7 +135,7 @@ compile_tutorial_c_files :: proc(t: ^testing.T, root: string, files: map[string]
 			continue
 		}
 		if clang == "" {
-			state, stdout, _, err := os2.process_exec(
+			state, stdout, _, err := exec(
 				os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
 				context.temp_allocator,
 			)
@@ -152,7 +152,7 @@ compile_tutorial_c_files :: proc(t: ^testing.T, root: string, files: map[string]
 			}
 		}
 		object := fmt.tprintf("%s.obj", strings.trim_suffix(path, ".c"))
-		state, _, stderr, err := os2.process_exec(
+		state, _, stderr, err := exec(
 			os2.Process_Desc{command = []string{clang, "-c", path, "-o", object}, working_dir = root},
 			context.temp_allocator,
 		)

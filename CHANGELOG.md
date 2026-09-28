@@ -37,6 +37,8 @@ checklist.
 
 ### Fixed
 
+- `lokec` no longer keeps a CPU core busy while it waits for clang, so several
+  builds run side by side finish sooner instead of starving each other.
 - A diagnostic whose span runs past its first line, such as a `switch` missing
   a case, no longer underlines a trailing `//` comment on that line.
 - A generic record instance first reached by a hypothetical check, such as an

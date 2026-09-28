@@ -551,10 +551,18 @@ free, on stderr. Test code is vetted with `-vet-packages`, because plain vet
 also reaches Odin's own `core:testing` and fails there.
 
 `test-all.ps1` checks design-document citations and backend layering, runs the
-unit tests, rebuilds the compiler, runs the baseline corpus, and reruns every
-test that honours `LOKE_TEST_FLAGS` (the run/trap corpus, multi-package
-programs, and the examples) at every supported optimization level. Use
-`-SkipOptimizationMatrix` for a quicker baseline check while iterating.
+unit tests, rebuilds the compiler, and runs the baseline corpus. `-Full` adds
+the costly part: the checker mutation fuzzer, which runs only when
+`LOKE_TEST_FULL` is set, and a rerun of every test that honours
+`LOKE_TEST_FLAGS` (the run/trap corpus, multi-package programs, the examples,
+and the tutorials) at every supported optimization level. CI runs `-Full`.
+
+The corpora compile and run their cases a core's worth at a time (`exec_all` in
+tests/corpus_test.odin) and judge the results afterwards on the test's own
+thread, because `testing.expect` is not safe to call from another one. Every
+launch, in the harness and in `lokec`, waits without spinning: Odin's
+`os2.process_exec` polls its pipes in a busy loop, which held a core per waiting
+process and starved the parallel compiles it was waiting for.
 
 Three tests need a tool this repository does not ship — nasm, and a clang or MSVC
 toolset to link a C host — and record what they skipped when it is absent. Pass

@@ -1,4 +1,4 @@
-# The whole gate, test-all.ps1 -RequireTools, on Windows x64. The runner image
+# The whole gate, test-all.ps1 -Full -RequireTools, on Windows x64. The runner image
 # already has LLVM, MSVC, and the Windows SDK where lokec looks for them; Odin
 # and nasm are installed here.
 name: CI
@@ -45,7 +45,7 @@ jobs:
           & $nasm -v
 
       - name: Test
-        run: .\test-all.ps1 -RequireTools
+        run: .\test-all.ps1 -Full -RequireTools
 
       # Figures, not a gate: only a wrong benchmark output fails here. They are
       # compared with the latest release's record, when it has one, and a

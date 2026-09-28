@@ -10,6 +10,9 @@
 // failure message prints it, so a CI failure can be turned into a regression
 // test without rerunning. LOKE_FUZZ_SEED and LOKE_FUZZ_MUTANTS (per program)
 // explore beyond the fixed run.
+//
+// It costs a compile per mutant, over a minute in all, so it runs only when
+// LOKE_TEST_FULL is set, as `test-all.ps1 -Full` and CI do.
 package tests
 
 import "core:fmt"
@@ -45,6 +48,10 @@ Fuzz_Failure :: enum {
 
 @(test)
 checker_mutation_fuzzing :: proc(t: ^testing.T) {
+	if os.get_env("LOKE_TEST_FULL", context.temp_allocator) == "" {
+		log.info("LOKE_TEST_FULL is not set; skipping the mutation fuzzer")
+		return
+	}
 	os.make_directory(TMP)
 	os.make_directory(FUZZ_DIR)
 	base := env_u64("LOKE_FUZZ_SEED", 0x2545f4914f6cdd1d)

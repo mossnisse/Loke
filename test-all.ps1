@@ -1,6 +1,10 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipOptimizationMatrix,
+    # The quick run is every check once, at the default optimization level. Full
+    # adds what multiplies the cost: the whole corpus again at each -opt level,
+    # and the checker mutation fuzzer. CI runs it; so should the last run before
+    # a merge.
+    [switch]$Full,
     # Turns the harness's tool skips into failures: nasm and a C host toolset are
     # not shipped here, and without this a machine missing one still runs green
     # with that coverage gone.
@@ -11,6 +15,10 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $savedFlags = [Environment]::GetEnvironmentVariable('LOKE_TEST_FLAGS', 'Process')
 $savedRequireTools = [Environment]::GetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', 'Process')
+$savedFull = [Environment]::GetEnvironmentVariable('LOKE_TEST_FULL', 'Process')
+if ($Full) {
+    [Environment]::SetEnvironmentVariable('LOKE_TEST_FULL', '1', 'Process')
+}
 if ($RequireTools) {
     [Environment]::SetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', '1', 'Process')
 }
@@ -81,7 +89,7 @@ try {
         'examples_compile_and_run', 'example_greeting_appends_to_its_file',
         'example_streaming_reads_its_input', 'tutorials_compile_and_run'
     ) -join ','
-    if (-not $SkipOptimizationMatrix) {
+    if ($Full) {
         foreach ($mode in @('minimal', 'size', 'speed', 'aggressive')) {
             Write-Host "Checking the optimization corpus at -opt=$mode"
             [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', "-opt=$mode", 'Process')
@@ -97,5 +105,6 @@ try {
 finally {
     [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', $savedFlags, 'Process')
     [Environment]::SetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', $savedRequireTools, 'Process')
+    [Environment]::SetEnvironmentVariable('LOKE_TEST_FULL', $savedFull, 'Process')
     Pop-Location
 }

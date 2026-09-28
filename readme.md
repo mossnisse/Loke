@@ -239,22 +239,23 @@ separately and link it at the host's final link step.
 
 For compiler development, the test script checks spec citations and backend
 layering, runs unit tests with leak tracking, rebuilds `lokec.exe` with Odin's
-vet checks, runs the integration tests, then reruns the test programs, packages,
-and examples across all five optimization modes:
+vet checks, and runs the integration tests. `-Full` also runs the checker
+mutation fuzzer and reruns the test programs, packages, examples, and tutorials
+across all five optimization modes:
 
 ```powershell
 .\test-all.ps1
+.\test-all.ps1 -Full
 ```
 
 Known divergences between the specification and the compiler are recorded in
 [known-gaps.md](known-gaps.md), each with a reproduction. The test corpus does
 not cover them, which is why they are written down.
 
-Use `.\test-all.ps1 -SkipOptimizationMatrix` for unit tests, a rebuild, and the
-baseline integration suite only. Add `-RequireTools` on a machine that has nasm
+Add `-RequireTools` on a machine that has nasm
 and a C host toolset, so tests that would skip for a missing tool fail instead.
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs
-`.\test-all.ps1 -RequireTools` on Windows x64 for every push to `main` and every
+`.\test-all.ps1 -Full -RequireTools` on Windows x64 for every push to `main` and every
 pull request. Pushing a tag `v<LOKE_VERSION_STRING>` runs
 [.github/workflows/release.yml](.github/workflows/release.yml), which publishes a
 zip of `lokec.exe` with `base/`, `core/`, `runtime/`, and `examples/` once the

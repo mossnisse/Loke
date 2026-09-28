@@ -42,7 +42,12 @@ a minimal reproduction; never reword the spec to match a bug.
 
 ## Testing
 
-`.\test-all.ps1` is the gate; `-SkipOptimizationMatrix` is the quick version.
+`.\test-all.ps1` is the quick gate for iterating; `.\test-all.ps1 -Full` is the
+whole gate, and CI runs it on every push to `main` and every pull request.
+Don't run `-Full` locally after each small change: run the quick gate, or the
+one suite you touched, and let CI run the full gate. Run `-Full` locally only
+when a change targets what only it covers (optimization levels, the mutation
+fuzzer) or when you're chasing a CI failure.
 [compiler-architecture.md](compiler-architecture.md) "Testing and verification"
 lists the suites. Useful while iterating:
 

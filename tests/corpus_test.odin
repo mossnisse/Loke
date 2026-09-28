@@ -49,6 +49,7 @@
 // coverage quietly.
 package tests
 
+import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:os"
@@ -56,6 +57,7 @@ import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "core:thread"
 import "core:time"
 
 LOKEC_DEFAULT :: "lokec.exe"
@@ -74,6 +76,74 @@ launch_path :: proc(path: string) -> string {
 	}
 	cwd := os.get_current_directory(context.temp_allocator)
 	return filepath.join({cwd, path}, context.temp_allocator)
+}
+
+// `os2.process_exec`, but idle while the child runs. The core one polls its pipes
+// in a loop with no pause, so every process the harness waits on held a whole
+// core, and the parallel corpora starved the very compiles they were waiting for.
+// Every launch in the harness goes through here.
+@(private)
+exec :: proc(
+	desc: os2.Process_Desc,
+	allocator: runtime.Allocator,
+) -> (
+	state: os2.Process_State,
+	stdout, stderr: []byte,
+	err: os2.Error,
+) {
+	stdout_r, stdout_w := os2.pipe() or_return
+	defer os2.close(stdout_r)
+	stderr_r, stderr_w := os2.pipe() or_return
+	defer os2.close(stderr_r)
+	process: os2.Process
+	{
+		// Our copies of the write ends must close, or the reads never see EOF.
+		defer os2.close(stdout_w)
+		defer os2.close(stderr_w)
+		desc := desc
+		desc.stdout, desc.stderr = stdout_w, stderr_w
+		process = os2.process_start(desc) or_return
+	}
+
+	out := make([dynamic]byte, allocator)
+	errs := make([dynamic]byte, allocator)
+	out_done, errs_done: bool
+	for err == nil && !(out_done && errs_done) {
+		got_out, got_errs: bool
+		got_out, err = drain(stdout_r, &out, &out_done)
+		if err == nil {
+			got_errs, err = drain(stderr_r, &errs, &errs_done)
+		}
+		if !got_out && !got_errs {
+			time.sleep(time.Millisecond)
+		}
+	}
+	stdout, stderr = out[:], errs[:]
+	if err != nil {
+		_ = os2.process_kill(process)
+	}
+	state, _ = os2.process_wait(process)
+	return
+}
+
+// One read from `pipe` if it holds anything; `done` once the writer is gone.
+@(private = "file")
+drain :: proc(pipe: ^os2.File, into: ^[dynamic]byte, done: ^bool) -> (got: bool, err: os2.Error) {
+	if done^ {
+		return false, nil
+	}
+	buf: [4096]byte
+	n := 0
+	has_data: bool
+	has_data, err = os2.pipe_has_data(pipe)
+	if has_data {
+		n, err = os2.read(pipe, buf[:])
+	}
+	if err == .EOF || err == .Broken_Pipe {
+		done^, err = true, nil
+	}
+	append(into, ..buf[:n])
+	return n > 0, err
 }
 
 @(private)
@@ -141,7 +211,7 @@ compiler_binary_is_current :: proc(t: ^testing.T) {
 
 @(test)
 front_end_modes :: proc(t: ^testing.T) {
-	parse_state, parse_stdout, parse_stderr, parse_err := os2.process_exec(
+	parse_state, parse_stdout, parse_stderr, parse_err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-parse-only"}},
 		context.allocator,
 	)
@@ -149,7 +219,7 @@ front_end_modes :: proc(t: ^testing.T) {
 	testing.expectf(t, parse_state.exit_code == 0, "parse-only failed:\n%s", string(parse_stderr))
 	testing.expectf(t, len(parse_stdout) == 0, "parse-only unexpectedly wrote output: %s", string(parse_stdout))
 
-	dump_state, dump_stdout, dump_stderr, dump_err := os2.process_exec(
+	dump_state, dump_stdout, dump_stderr, dump_err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-dump-ast"}},
 		context.allocator,
 	)
@@ -165,7 +235,7 @@ front_end_modes :: proc(t: ^testing.T) {
 
 @(test)
 driver_rejects_invalid_modes :: proc(t: ^testing.T) {
-	toolchain, toolchain_stdout, toolchain_stderr, toolchain_err := os2.process_exec(
+	toolchain, toolchain_stdout, toolchain_stderr, toolchain_err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain", "-unknown"}},
 		context.allocator,
 	)
@@ -174,7 +244,7 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(string(toolchain_stderr), "unknown option"), "missing option diagnostic")
 	testing.expect(t, !strings.contains(string(toolchain_stdout), "clang="), "toolchain probe still ran")
 
-	directory, _, directory_stderr, directory_err := os2.process_exec(
+	directory, _, directory_stderr, directory_err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "examples", "-parse-only"}},
 		context.allocator,
 	)
@@ -187,7 +257,7 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 	)
 
 	for collection in ([]string{"-collection:foo=", "-collection:foo:bar=tests"}) {
-		state, _, stderr, err := os2.process_exec(
+		state, _, stderr, err := exec(
 			os2.Process_Desc {
 				command = []string{compiler_path(), "examples/hello.loke", "-parse-only", collection},
 			},
@@ -212,7 +282,7 @@ seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
 	exe := filepath.join({cwd, TMP, "runtime-elsewhere.exe"}, context.temp_allocator)
 	elsewhere := filepath.join({cwd, TMP}, context.temp_allocator)
 
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc{command = []string{compiler, source, "-o", exe}, working_dir = elsewhere},
 		context.allocator,
 	)
@@ -223,7 +293,7 @@ seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
 	// the override really replaced the bundled tree.
 	bare := filepath.join({cwd, TMP, "empty-runtime"}, context.temp_allocator)
 	os.make_directory(bare)
-	replaced, _, replaced_stderr, replaced_err := os2.process_exec(
+	replaced, _, replaced_stderr, replaced_err := exec(
 		os2.Process_Desc {
 			command = []string{compiler, source, "-o", exe, fmt.tprintf("-runtime=%s", bare)},
 		},
@@ -261,7 +331,7 @@ a_partial_seed_runtime_is_not_a_foreign_failure :: proc(t: ^testing.T) {
 		os.write_entire_file(filepath.join({partial, name}, context.temp_allocator), content)
 	}
 
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc {
 			command = []string {
 				compiler_path(), "examples/hello.loke",
@@ -391,7 +461,7 @@ expect_diagnostic_with_env :: proc(t: ^testing.T, command: []string, env: []stri
 
 @(private)
 expect_diagnostic_env :: proc(t: ^testing.T, command: []string, env: []string, exit: int, code, names: string) {
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc{command = command, env = env},
 		context.allocator,
 	)
@@ -417,7 +487,7 @@ a_dot_ll_output_survives_its_own_build :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	out := fmt.tprintf("%s/dot-ll-output.ll", TMP)
 	os.remove(out)
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-o", out}},
 		context.allocator,
 	)
@@ -573,11 +643,13 @@ is_digits :: proc(s: string) -> bool {
 @(test)
 programs_run :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	cases, _ := filepath.glob("tests/run/*.loke")
-	testing.expect(t, len(cases) > 0, "no run cases found; is the working directory the repo root?")
-	for path in cases {
-		run_one_program(t, path, expected_path(path), fmt.tprintf("%s/%s.exe", TMP, filepath.stem(path)))
+	paths, _ := filepath.glob("tests/run/*.loke")
+	testing.expect(t, len(paths) > 0, "no run cases found; is the working directory the repo root?")
+	cases := make([]Program_Case, len(paths), context.temp_allocator)
+	for path, i in paths {
+		cases[i] = {path, expected_path(path), fmt.tprintf("%s/%s.exe", TMP, filepath.stem(path))}
 	}
+	run_programs(t, cases)
 }
 
 // A non-zero exit alone cannot prove what a panic did on the way down, so a
@@ -589,62 +661,13 @@ programs_run :: proc(t: ^testing.T) {
 @(test)
 programs_trap :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	cases, _ := filepath.glob("tests/trap/*.loke")
-	testing.expect(t, len(cases) > 0, "no runtime-trap cases found")
-
-	for path in cases {
-		exe := fmt.tprintf("%s/trap-%s.exe", TMP, filepath.stem(path))
-		command := make([dynamic]string, context.temp_allocator)
-		append(&command, compiler_path(), path, "-o", exe)
-		for flag in env_flags() {
-			append(&command, flag)
-		}
-		for flag in extra_flags(path) {
-			append(&command, flag)
-		}
-		state, _, stderr, err := os2.process_exec(
-			os2.Process_Desc{command = command[:]},
-			context.allocator,
-		)
-		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
-			continue
-		}
-		if !testing.expectf(t, state.exit_code == 0, "%s: compile failed\n%s", path, string(stderr)) {
-			continue
-		}
-
-		run_state, stdout, run_stderr, run_err := os2.process_exec(
-			os2.Process_Desc{command = []string{launch_path(exe)}},
-			context.allocator,
-		)
-		testing.expectf(t, run_err == nil, "%s: cannot run the produced exe", path)
-		testing.expectf(t, run_state.exit_code != 0, "%s: expected a runtime failure", path)
-
-		errors, has_errors := os.read_entire_file(fmt.tprintf("%s-err", expected_path(path)))
-		if testing.expectf(t, has_errors, "%s: missing .expected-err naming the panic", path) {
-			testing.expectf(
-				t,
-				normalise(string(run_stderr)) == normalise(string(errors)),
-				"%s: expected stderr %q, got %q",
-				path,
-				normalise(string(errors)),
-				normalise(string(run_stderr)),
-			)
-		}
-
-		expected, has_expected := os.read_entire_file(expected_path(path))
-		if !has_expected {
-			continue
-		}
-		testing.expectf(
-			t,
-			normalise(string(stdout)) == normalise(string(expected)),
-			"%s: expected %q before the failure, got %q",
-			path,
-			normalise(string(expected)),
-			normalise(string(stdout)),
-		)
+	paths, _ := filepath.glob("tests/trap/*.loke")
+	testing.expect(t, len(paths) > 0, "no runtime-trap cases found")
+	cases := make([]Program_Case, len(paths), context.temp_allocator)
+	for path, i in paths {
+		cases[i] = {path, expected_path(path), fmt.tprintf("%s/trap-%s.exe", TMP, filepath.stem(path))}
 	}
+	run_programs(t, cases, trap = true)
 }
 
 // The generated IR is not compared whole — that would break on every temporary
@@ -675,7 +698,7 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 		}
 
 		exe := fmt.tprintf("%s/%s.exe", TMP, filepath.stem(path))
-		state, _, stderr, err := os2.process_exec(
+		state, _, stderr, err := exec(
 			os2.Process_Desc{command = []string{compiler_path(), path, "-o", exe, "-emit-ll"}},
 			context.allocator,
 		)
@@ -692,7 +715,7 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 			continue
 		}
 		if has_clang {
-			assembled, _, reject, assemble_err := os2.process_exec(
+			assembled, _, reject, assemble_err := exec(
 				os2.Process_Desc {
 					command = []string {
 						clang, "-x", "ir", "-c", ll_path,
@@ -780,7 +803,7 @@ generated_ir_is_reproducible :: proc(t: ^testing.T) {
 	ll_path := fmt.tprintf("%s/deterministic.ll", TMP)
 	baseline: string
 	for run := 0; run < 12; run += 1 {
-		state, _, stderr, err := os2.process_exec(
+		state, _, stderr, err := exec(
 			os2.Process_Desc{command = []string{
 				compiler_path(), "tests/run/m3_eval.loke", "-o", exe, "-emit-ll",
 			}},
@@ -818,7 +841,7 @@ layout_agrees_with_llvm :: proc(t: ^testing.T) {
 
 	for path in cases {
 		exe := fmt.tprintf("%s/layout-%s.exe", TMP, filepath.stem(path))
-		state, stdout, stderr, err := os2.process_exec(
+		state, stdout, stderr, err := exec(
 			os2.Process_Desc{command = []string{compiler_path(), path, "-o", exe, "-check-layout"}},
 			context.allocator,
 		)
@@ -842,14 +865,12 @@ layout_agrees_with_llvm :: proc(t: ^testing.T) {
 @(test)
 packages_run :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	for path in case_directories(t, "tests/pkg") {
-		run_one_program(
-			t,
-			path,
-			fmt.tprintf("%s.expected", path),
-			fmt.tprintf("%s/pkg-%s.exe", TMP, filepath.base(path)),
-		)
+	paths := case_directories(t, "tests/pkg")
+	cases := make([]Program_Case, len(paths), context.temp_allocator)
+	for path, i in paths {
+		cases[i] = {path, fmt.tprintf("%s.expected", path), fmt.tprintf("%s/pkg-%s.exe", TMP, filepath.base(path))}
 	}
+	run_programs(t, cases)
 }
 
 // A package's mangled prefix comes from its directory, not from whichever import
@@ -861,7 +882,7 @@ packages_run :: proc(t: ^testing.T) {
 package_keys_come_from_the_directory :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	exe := fmt.tprintf("%s/spelling-ir.exe", TMP)
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc {
 			command = []string {
 				compiler_path(), "tests/pkg/spelling", "-o", exe, "-emit-ll",
@@ -901,7 +922,7 @@ package_keys_come_from_the_directory :: proc(t: ^testing.T) {
 process_arguments_reach_os_args :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	exe := fmt.tprintf("%s/os-args.exe", TMP)
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "tests/os/args.loke", "-o", exe}},
 		context.allocator,
 	)
@@ -916,7 +937,7 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 	if !testing.expect(t, has_expected, "missing tests/os/args.expected") {
 		return
 	}
-	run_state, stdout, _, run_err := os2.process_exec(
+	run_state, stdout, _, run_err := exec(
 		os2.Process_Desc{command = []string{launch_path(exe), "alpha", "héllo", "日本", "🙂"}},
 		context.allocator,
 	)
@@ -939,7 +960,7 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 empty_environment_values_are_values :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	exe := fmt.tprintf("%s/os-environment.exe", TMP)
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "tests/os/environment.loke", "-o", exe}},
 		context.allocator,
 	)
@@ -966,7 +987,7 @@ empty_environment_values_are_values :: proc(t: ^testing.T) {
 	append(&block, ..inherited)
 	append(&block, "LOKE_EMPTY_PROBE=", "LOKE_VALUE_PROBE=fivec")
 
-	run_state, stdout, _, run_err := os2.process_exec(
+	run_state, stdout, _, run_err := exec(
 		os2.Process_Desc{command = []string{launch_path(exe)}, env = block[:]},
 		context.allocator,
 	)
@@ -993,7 +1014,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 	if nasm == "" {
 		nasm = "nasm"
 	}
-	if _, _, _, probe := os2.process_exec(
+	if _, _, _, probe := exec(
 		os2.Process_Desc{command = []string{nasm, "-v"}},
 		context.allocator,
 	); probe != nil {
@@ -1010,7 +1031,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 	}
 	exe := fmt.tprintf("%s/asm-exe.exe", dir)
 
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "tests/obj/asm_exe.loke", "-o", exe}},
 		context.allocator,
 	)
@@ -1020,7 +1041,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 	if !testing.expectf(t, state.exit_code == 0, "an assembly import failed to link:\n%s", string(stderr)) {
 		return
 	}
-	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	run_state, _, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t,
@@ -1032,7 +1053,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 
 	// `-keep-temps` governs it too: the object is a build temporary like the
 	// generated module, not something the build set out to produce.
-	kept_state, _, kept_stderr, kept_err := os2.process_exec(
+	kept_state, _, kept_stderr, kept_err := exec(
 		os2.Process_Desc {
 			command = []string{compiler_path(), "tests/obj/asm_exe.loke", "-o", exe, "-keep-temps"},
 		},
@@ -1081,7 +1102,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	}
 	for assembly_case in assembly_cases {
 		source, assembler := assembly_case[0], assembly_case[1]
-		asm_state, _, asm_stderr, asm_err := os2.process_exec(
+		asm_state, _, asm_stderr, asm_err := exec(
 			os2.Process_Desc {
 				command = []string {
 					compiler_path(), source, "-build-mode=obj",
@@ -1112,7 +1133,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	}
 
 	obj := fmt.tprintf("%s/widget.obj", TMP)
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc {
 			command = []string{compiler_path(), "tests/obj/lib.loke", "-build-mode=obj", "-o", obj},
 		},
@@ -1129,7 +1150,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	// with the host's own, and the runtime references it keeps are the point.
 	nm := filepath.join({filepath.dir(clang), "llvm-nm.exe"}, context.temp_allocator)
 	if os.is_file(nm) {
-		nm_state, symbols, _, nm_err := os2.process_exec(
+		nm_state, symbols, _, nm_err := exec(
 			os2.Process_Desc{command = []string{nm, obj}},
 			context.allocator,
 		)
@@ -1171,7 +1192,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	for flag in include_flags {
 		append(&command, flag)
 	}
-	link_state, _, link_stderr, link_err := os2.process_exec(
+	link_state, _, link_stderr, link_err := exec(
 		os2.Process_Desc{command = command[:]},
 		context.allocator,
 	)
@@ -1182,7 +1203,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 		return
 	}
 
-	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	run_state, _, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(t, run_state.exit_code == 0, "the C host got the wrong answer (exit %d)", run_state.exit_code)
 
@@ -1201,7 +1222,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 @(private)
 atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flags: []string) {
 	obj := fmt.tprintf("%s/conc.obj", TMP)
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc {
 			command = []string {
 				compiler_path(), "tests/obj/concurrentlib", "-build-mode=obj", "-o", obj,
@@ -1227,7 +1248,7 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 	for flag in include_flags {
 		append(&command, flag)
 	}
-	link_state, _, link_stderr, link_err := os2.process_exec(
+	link_state, _, link_stderr, link_err := exec(
 		os2.Process_Desc{command = command[:]},
 		context.allocator,
 	)
@@ -1237,7 +1258,7 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 	if !testing.expectf(t, link_state.exit_code == 0, "the concurrency host link failed:\n%s", string(link_stderr)) {
 		return
 	}
-	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	run_state, _, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t, run_state.exit_code == 0,
@@ -1254,7 +1275,7 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 @(private)
 selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, include_flags: []string) {
 	obj := fmt.tprintf("%s/hostlib.obj", TMP)
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc {
 			command = []string {
 				compiler_path(), "tests/obj/providerlib", "-build-mode=obj",
@@ -1272,7 +1293,7 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 
 	nm := filepath.join({filepath.dir(clang), "llvm-nm.exe"}, context.temp_allocator)
 	if os.is_file(nm) {
-		nm_state, symbols, _, nm_err := os2.process_exec(
+		nm_state, symbols, _, nm_err := exec(
 			os2.Process_Desc{command = []string{nm, obj}},
 			context.allocator,
 		)
@@ -1299,7 +1320,7 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 	for flag in include_flags {
 		append(&command, flag)
 	}
-	link_state, _, link_stderr, link_err := os2.process_exec(
+	link_state, _, link_stderr, link_err := exec(
 		os2.Process_Desc{command = command[:]},
 		context.allocator,
 	)
@@ -1309,7 +1330,7 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 	if !testing.expectf(t, link_state.exit_code == 0, "the selected host link failed:\n%s", string(link_stderr)) {
 		return
 	}
-	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	run_state, _, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t, run_state.exit_code == 0,
@@ -1326,7 +1347,7 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 @(test)
 the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	state, stdout, _, err := os2.process_exec(
+	state, stdout, _, err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
 		context.allocator,
 	)
@@ -1348,7 +1369,7 @@ the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
 	)
 	ready := strings.contains(report, "ready=yes")
 
-	build, _, build_stderr, build_err := os2.process_exec(
+	build, _, build_stderr, build_err := exec(
 		os2.Process_Desc {
 			command = []string {
 				compiler_path(), "examples/hello.loke",
@@ -1384,7 +1405,7 @@ the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
 // this machine. The test skips rather than fails when it says no.
 @(private)
 host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
-	state, stdout, _, err := os2.process_exec(
+	state, stdout, _, err := exec(
 		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
 		context.allocator,
 	)
@@ -1414,14 +1435,13 @@ host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
 
 @(test)
 package_diagnostics_reported :: proc(t: ^testing.T) {
-	for path in case_directories(t, "tests/pkg_err") {
-		check_one_diagnostic_case(t, path, fmt.tprintf("%s.expected", path), "-emit-ll", "")
-	}
+	check_diagnostics(t, case_directories(t, "tests/pkg_err"), "-emit-ll", "")
 }
 
 @(test)
 diagnostics_reported :: proc(t: ^testing.T) {
-	check_diagnostics(t, "tests/err/*.loke", "-emit-ll", "")
+	cases, _ := filepath.glob("tests/err/*.loke")
+	check_diagnostics(t, cases, "-emit-ll", "")
 }
 
 // Syntax errors are reported by the parser, so these run in `-dump-ast` mode:
@@ -1429,15 +1449,23 @@ diagnostics_reported :: proc(t: ^testing.T) {
 // assert the file's trailing sentinel survived recovery.
 @(test)
 syntax_errors_recover :: proc(t: ^testing.T) {
-	check_diagnostics(t, "tests/syntax_err/*.loke", "-dump-ast", `(const names=["sentinel"]`)
+	cases, _ := filepath.glob("tests/syntax_err/*.loke")
+	check_diagnostics(t, cases, "-dump-ast", `(const names=["sentinel"]`)
 }
 
 @(private)
-check_diagnostics :: proc(t: ^testing.T, pattern: string, mode: string, sentinel: string) {
-	cases, _ := filepath.glob(pattern)
-	testing.expectf(t, len(cases) > 0, "no cases found for %s", pattern)
-	for path in cases {
-		check_one_diagnostic_case(t, path, expected_path(path), mode, sentinel)
+check_diagnostics :: proc(t: ^testing.T, cases: []string, mode: string, sentinel: string) {
+	testing.expect(t, len(cases) > 0, "no diagnostic cases found")
+	jobs := make([]Exec, len(cases), context.temp_allocator)
+	for path, i in cases {
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), path, mode)
+		append(&command, ..extra_flags(path))
+		jobs[i].command = command[:]
+	}
+	exec_all(jobs)
+	for path, i in cases {
+		check_one_diagnostic_case(t, path, expected_path(path), sentinel, jobs[i])
 	}
 }
 
@@ -1456,82 +1484,132 @@ case_directories :: proc(t: ^testing.T, root: string) -> []string {
 	return cases[:]
 }
 
-// One case, whether it is a single file or a package directory: compile, run,
-// and compare stdout.
+// One process the harness waits on; `exec_all` fills in the rest.
 @(private)
-run_one_program :: proc(t: ^testing.T, path, expected_file, exe: string) {
-	expected, has_expected := os.read_entire_file(expected_file)
-	if !testing.expectf(t, has_expected, "%s: missing .expected file", path) {
-		return
-	}
-
-	command := make([dynamic]string, context.temp_allocator)
-	append(&command, compiler_path(), path, "-o", exe)
-	for flag in env_flags() {
-		append(&command, flag)
-	}
-	for flag in extra_flags(path) {
-		append(&command, flag)
-	}
-	state, _, stderr, err := os2.process_exec(os2.Process_Desc{command = command[:]}, context.allocator)
-	if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
-		return
-	}
-	if !testing.expectf(t, state.exit_code == 0, "%s: compile failed\n%s", path, string(stderr)) {
-		return
-	}
-
-	run_state, stdout, run_stderr, run_err := os2.process_exec(
-		os2.Process_Desc{command = []string{launch_path(exe)}},
-		context.allocator,
-	)
-	testing.expectf(t, run_err == nil, "%s: cannot run the produced exe", path)
-	testing.expectf(t, run_state.exit_code == 0, "%s: exited with %d", path, run_state.exit_code)
-	testing.expectf(
-		t,
-		normalise(string(stdout)) == normalise(string(expected)),
-		"%s: expected %q, got %q",
-		path,
-		normalise(string(expected)),
-		normalise(string(stdout)),
-	)
-
-	// stderr is ignored unless the case pins it with a sibling `.expected-err`.
-	// A `core:log` record on the standard sink is what needs that: it is the
-	// logger every unselected build gets, and comparing stdout alone never sees
-	// a line of it.
-	errors, has_errors := os.read_entire_file(fmt.tprintf("%s-err", expected_file))
-	if !has_errors {
-		return
-	}
-	testing.expectf(
-		t,
-		normalise(string(run_stderr)) == normalise(string(errors)),
-		"%s: expected stderr %q, got %q",
-		path,
-		normalise(string(errors)),
-		normalise(string(run_stderr)),
-	)
+Exec :: struct {
+	command: []string,
+	state:   os2.Process_State,
+	stdout:  []byte,
+	stderr:  []byte,
+	err:     os2.Error,
 }
 
-// One case: compile it, then assert the exact diagnostic count plus every
-// listed code, message substring, and `@line:column` span.
+// Runs every command, a core's worth at a time, and returns once all have
+// exited; a job with no command is left alone. The corpora spend their time waiting on processes — a compile, and
+// the first launch of each new executable — so running them one by one is what
+// made the suite slow. Only the processes go to the pool: `testing.expect` logs
+// through the test's own thread, so the caller judges the results afterwards.
+// Nor is the test's allocator safe to share, so the pool and every result use
+// the heap.
 @(private)
-check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, mode, sentinel: string) {
-	expected, has_expected := os.read_entire_file(expected_file)
+exec_all :: proc(jobs: []Exec) {
+	context.allocator = runtime.heap_allocator()
+	pool: thread.Pool
+	thread.pool_init(&pool, context.allocator, os.processor_core_count())
+	defer thread.pool_destroy(&pool)
+	for &job in jobs {
+		if job.command == nil {
+			continue
+		}
+		thread.pool_add_task(&pool, context.allocator, proc(task: thread.Task) {
+			job := (^Exec)(task.data)
+			job.state, job.stdout, job.stderr, job.err = exec(
+				os2.Process_Desc{command = job.command},
+				runtime.heap_allocator(),
+			)
+		}, &job)
+	}
+	thread.pool_start(&pool)
+	thread.pool_finish(&pool)
+}
+
+// One compiled-and-run case, a single file or a package directory. A program is
+// expected to exit 0 and must pin its stdout; a trap is expected to fail and
+// must pin its panic report, which an exit code alone cannot prove.
+@(private)
+Program_Case :: struct {
+	path, expected_file, exe: string,
+}
+
+// Compile every case, run what compiled, and compare what it printed. stderr is
+// compared when the case has a sibling `.expected-err`: a program needs one only
+// for a `core:log` record on the standard sink, the logger every unselected
+// build gets, which comparing stdout alone never sees.
+@(private)
+run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
+	compiles := make([]Exec, len(cases), context.temp_allocator)
+	for c, i in cases {
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), c.path, "-o", c.exe)
+		append(&command, ..env_flags())
+		append(&command, ..extra_flags(c.path))
+		compiles[i].command = command[:]
+	}
+	exec_all(compiles)
+
+	runs := make([]Exec, len(cases), context.temp_allocator)
+	for c, i in cases {
+		job := compiles[i]
+		if !testing.expectf(t, job.err == nil, "%s: cannot run %s", c.path, compiler_path()) {
+			continue
+		}
+		if !testing.expectf(t, job.state.exit_code == 0, "%s: compile failed\n%s", c.path, string(job.stderr)) {
+			continue
+		}
+		runs[i].command = make([]string, 1, context.temp_allocator)
+		runs[i].command[0] = launch_path(c.exe)
+	}
+	exec_all(runs)
+
+	for c, i in cases {
+		run := runs[i]
+		if run.command == nil {
+			continue
+		}
+		testing.expectf(t, run.err == nil, "%s: cannot run the produced exe", c.path)
+		if trap {
+			testing.expectf(t, run.state.exit_code != 0, "%s: expected a runtime failure", c.path)
+		} else {
+			testing.expectf(t, run.state.exit_code == 0, "%s: exited with %d", c.path, run.state.exit_code)
+		}
+
+		expected, has_expected := os.read_entire_file(c.expected_file, context.temp_allocator)
+		testing.expectf(t, has_expected || trap, "%s: missing .expected file", c.path)
+		if has_expected {
+			testing.expectf(
+				t,
+				normalise(string(run.stdout)) == normalise(string(expected)),
+				"%s: expected %q, got %q",
+				c.path,
+				normalise(string(expected)),
+				normalise(string(run.stdout)),
+			)
+		}
+
+		errors, has_errors := os.read_entire_file(fmt.tprintf("%s-err", c.expected_file), context.temp_allocator)
+		testing.expectf(t, has_errors || !trap, "%s: missing .expected-err naming the panic", c.path)
+		if has_errors {
+			testing.expectf(
+				t,
+				normalise(string(run.stderr)) == normalise(string(errors)),
+				"%s: expected stderr %q, got %q",
+				c.path,
+				normalise(string(errors)),
+				normalise(string(run.stderr)),
+			)
+		}
+	}
+}
+
+// One compiled case: assert the exact diagnostic count plus every listed code,
+// message substring, and `@line:column` span.
+@(private)
+check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, sentinel: string, job: Exec) {
+	expected, has_expected := os.read_entire_file(expected_file, context.temp_allocator)
 	if !testing.expectf(t, has_expected, "%s: missing .expected file", path) {
 		return
 	}
-
-	command := make([dynamic]string, context.temp_allocator)
-	append(&command, compiler_path(), path, mode)
-	for flag in extra_flags(path) {
-		append(&command, flag)
-	}
-	state, stdout, stderr, err := os2.process_exec(
-		os2.Process_Desc{command = command[:]},
-		context.allocator,
-	)
+	state, stdout, stderr, err := job.state, job.stdout, job.stderr, job.err
 	if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
 		return
 	}
@@ -1862,7 +1940,7 @@ run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 	) {
 		return false
 	}
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc{
 			command     = []string{"cmd", "/c", ".\\greeting.exe < stdin.txt"},
 			working_dir = dir,
@@ -1953,7 +2031,7 @@ expect_streaming :: proc(
 	for arg in args {
 		append(&command, arg)
 	}
-	state, stdout, stderr, err := os2.process_exec(
+	state, stdout, stderr, err := exec(
 		os2.Process_Desc{command = command[:], working_dir = dir},
 		context.allocator,
 	)
@@ -1987,7 +2065,7 @@ compile_example :: proc(t: ^testing.T, source, exe: string, flags: []string) -> 
 	for flag in flags {
 		append(&command, flag)
 	}
-	state, _, stderr, err := os2.process_exec(
+	state, _, stderr, err := exec(
 		os2.Process_Desc{command = command[:]},
 		context.allocator,
 	)
@@ -2013,7 +2091,7 @@ expect_example_output :: proc(
 	for arg in args {
 		append(&command, arg)
 	}
-	state, stdout, stderr, err := os2.process_exec(
+	state, stdout, stderr, err := exec(
 		os2.Process_Desc{command = command[:], working_dir = working_dir},
 		context.allocator,
 	)
