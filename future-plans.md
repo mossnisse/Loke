@@ -115,13 +115,16 @@ information is a separate backend consumer, and since the backend emits textual
 LLVM it can carry LLVM's debug metadata directly. It should drive any durable
 intermediate representation it actually needs.
 
-`-g` already emits each procedure and each statement's line, as CodeView in a
-PDB, at any `-opt` level, and `-debug` sets `LOKE_DEBUG` on its own
+`-g` already emits each procedure, its locals and their types, and each
+statement's line, as CodeView in a PDB, at any `-opt` level, and `-debug` sets
+`LOKE_DEBUG` on its own
 ([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin)).
 
 Main work:
 
-- describe types and local variables, so a debugger can show ordinary locals;
+- scope each local to its block rather than its whole procedure, so a
+  shadowing name hides the one it shadows, and show a map's entries and an
+  interface view's value rather than only their names and sizes;
 - give a panic a readable Loke stack trace in a `-g` build;
 - give locations finer than a statement where stepping needs them: a loop's
   update, the code after an `if`, and the cleanup a scope runs on exit carry
@@ -226,7 +229,7 @@ compiler task.
 
 ## Suggested order
 
-1. Finish debug information with locals and stack traces, and keep comments in
+1. Finish debug information with stack traces, and keep comments in
    the syntax tree for the formatter and the documentation generator.
 2. Define the reproducible package and dependency workflow, and finish the
    standard-library services required by a compiler-sized program.

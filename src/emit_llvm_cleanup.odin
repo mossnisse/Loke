@@ -186,6 +186,7 @@ unwind_publish_env :: proc(e: ^Emitter, index: int, address: string) {
 @(private)
 bind_local :: proc(e: ^Emitter, symbol_id: Symbol_Id, name: string) {
 	e.names[symbol_id] = name
+	debug_mark_variable(e, symbol_id, name)
 	if symbol_id == INVALID_SYMBOL || !unwind_enabled(e) || e.unwind.env == "" {
 		return
 	}

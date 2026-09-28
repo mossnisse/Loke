@@ -1,11 +1,13 @@
-// Debug information: procedure records and source locations as LLVM metadata.
+// Debug information: procedures, locals, types, and source locations as LLVM
+// metadata.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md. Hundreds of
 // sites write instructions, so none of them spells a location. Under `-g` the
-// emitter writes a marker line after each procedure's `define` and before each
-// statement, and `attach_debug_info` turns the markers into `!dbg` attachments
-// once the module is complete. Without `-g` no marker is written, so the module
-// is unchanged.
+// emitter writes a marker line after each procedure's `define`, before each
+// statement, and where each local gets its address, and `attach_debug_info`
+// turns the markers into `!dbg` attachments and `llvm.dbg.declare` calls once
+// the module is complete. Without `-g` no marker is written, so the module is
+// unchanged.
 package lokec
 
 import "core:fmt"
@@ -17,6 +19,8 @@ import "core:strings"
 PROC_MARKER :: ";dbg.proc "
 @(private = "file")
 LOCATION_MARKER :: ";dbg.loc "
+@(private = "file")
+VARIABLE_MARKER :: ";dbg.var "
 
 // The procedure whose `define` line was just written.
 @(private)
@@ -34,12 +38,21 @@ debug_mark_location :: proc(e: ^Emitter, span: Span) {
 	}
 }
 
+// A local or parameter, now stored at `address`.
+@(private)
+debug_mark_variable :: proc(e: ^Emitter, symbol_id: Symbol_Id, address: string) {
+	if e.c.debug_info && symbol_id != INVALID_SYMBOL {
+		fmt.sbprintfln(&e.b, "%s%d %s", VARIABLE_MARKER, u32(symbol_id), address)
+	}
+}
+
 @(private = "file")
 Debug_Info :: struct {
 	c:         ^Compiler,
 	meta:      strings.Builder,
 	count:     int,
 	files:     map[u32]int,
+	types:     map[Type_Id]int,
 	// By subprogram, line, and column.
 	locations: map[[3]int]int,
 }
@@ -52,9 +65,21 @@ UNIT :: 0
 @(private = "file")
 SUBROUTINE_TYPE :: 3
 
+// The procedure being rewritten, while inside a marked one.
+@(private = "file")
+Debug_Proc :: struct {
+	symbol:     ^Symbol,
+	subprogram: int,
+	location:   int,
+	// One declaration per local: a `defer` body written at two exits binds its
+	// locals twice, and the first address stands for both.
+	declared:   map[Symbol_Id]bool,
+}
+
 // The module with every marker replaced: a marked procedure's `define` and its
-// instructions carry `!dbg`, and the metadata they name follows the module. An
-// unmarked function, such as a thunk, gets none, and markers inside it vanish.
+// instructions carry `!dbg`, its locals are declared where they get their
+// addresses, and the metadata they name follows the module. An unmarked
+// function, such as a thunk, gets none, and markers inside it vanish.
 @(private)
 attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	c := e.c
@@ -63,12 +88,14 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		meta      = strings.builder_make(),
 		count     = SUBROUTINE_TYPE + 1,
 		files     = make(map[u32]int),
+		types     = make(map[Type_Id]int),
 		locations = make(map[[3]int]int),
 	}
 	out := strings.builder_make()
-	subprogram, subprogram_file, location := -1, NO_FILE, -1
+	current: Maybe(Debug_Proc)
 	rest := module
 	for line in strings.split_lines_iterator(&rest) {
+		p, inside := &current.?
 		switch {
 		case strings.has_prefix(line, PROC_MARKER):
 			id, _ := strconv.parse_uint(line[len(PROC_MARKER):])
@@ -76,9 +103,13 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 			if symbol == nil {
 				continue
 			}
-			subprogram_file = symbol.span.file
-			subprogram = debug_subprogram(&d, symbol, e.names[Symbol_Id(id)])
-			location = debug_location(&d, subprogram, symbol.span)
+			subprogram := debug_subprogram(&d, symbol, e.names[Symbol_Id(id)])
+			current = Debug_Proc {
+				symbol     = symbol,
+				subprogram = subprogram,
+				location   = debug_location(&d, subprogram, symbol.span),
+				declared   = make(map[Symbol_Id]bool),
+			}
 			// The `define` line just written ends in ` {`.
 			resize(&out.buf, len(out.buf) - len(" {\n"))
 			fmt.sbprintfln(&out, " !dbg !%d {{", subprogram)
@@ -88,20 +119,25 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 			lo, _ := strconv.parse_uint(fields[1])
 			// A location's file is its subprogram's, so a statement written in
 			// another file keeps the location before it.
-			if subprogram >= 0 && u32(file) == subprogram_file {
-				location = debug_location(&d, subprogram, Span{file = u32(file), lo = u32(lo)})
+			if inside && u32(file) == p.symbol.span.file {
+				p.location = debug_location(&d, p.subprogram, Span{file = u32(file), lo = u32(lo)})
 			}
-		case subprogram >= 0 && strings.has_prefix(line, "  "):
-			fmt.sbprintfln(&out, "%s, !dbg !%d", line, location)
+		case strings.has_prefix(line, VARIABLE_MARKER):
+			if inside {
+				debug_declare(&d, &out, p, line[len(VARIABLE_MARKER):])
+			}
+		case inside && strings.has_prefix(line, "  "):
+			fmt.sbprintfln(&out, "%s, !dbg !%d", line, p.location)
 		case:
 			if line == "}" {
-				subprogram = -1
+				current = nil
 			}
 			fmt.sbprintln(&out, line)
 		}
 	}
 
 	optimized := c.opt_mode != .None
+	fmt.sbprintln(&out, "declare void @llvm.dbg.declare(metadata, metadata, metadata)")
 	fmt.sbprintln(&out, "!llvm.dbg.cu = !{!0}")
 	fmt.sbprintln(&out, "!llvm.module.flags = !{!1, !2}")
 	// Loke has no DWARF language code; C's describes its procedures well enough.
@@ -118,13 +154,53 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	return strings.to_string(out)
 }
 
+// `<symbol> <address>` becomes the local's declaration, at its own line. Every
+// local is scoped to the whole procedure; a shadowing one appears beside the
+// name it shadows.
+@(private = "file")
+debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, marker: string) {
+	space := strings.index_byte(marker, ' ')
+	id, _ := strconv.parse_uint(marker[:space])
+	symbol_id := Symbol_Id(id)
+	symbol := symbol_of(d.c, symbol_id)
+	if symbol == nil || p.declared[symbol_id] || symbol.span.file != p.symbol.span.file {
+		return
+	}
+	p.declared[symbol_id] = true
+	arg := ""
+	for param, index in p.symbol.param_symbols {
+		if param == symbol_id {
+			arg = fmt.aprintf("arg: %d, ", index + 1)
+		}
+	}
+	file := debug_file(d, symbol.span.file)
+	line, _ := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
+	variable := debug_node(
+		d, `!DILocalVariable(name: "%s", %sscope: !%d, file: !%d, line: %d, type: !%d)`,
+		llvm_escape(identifier_text(d.c, symbol.name)), arg, p.subprogram, file, line,
+		debug_type(d, symbol.type),
+	)
+	fmt.sbprintfln(
+		out,
+		"  call void @llvm.dbg.declare(metadata ptr %s, metadata !%d, metadata !DIExpression()), !dbg !%d",
+		marker[space + 1:], variable, debug_location(d, p.subprogram, symbol.span),
+	)
+}
+
 @(private = "file")
 debug_node :: proc(d: ^Debug_Info, format: string, args: ..any) -> int {
 	id := d.count
 	d.count += 1
+	debug_node_at(d, id, format, ..args)
+	return id
+}
+
+// A node whose number was taken before its operands were, so a type can refer
+// to itself through a pointer.
+@(private = "file")
+debug_node_at :: proc(d: ^Debug_Info, id: int, format: string, args: ..any) {
 	fmt.sbprintf(&d.meta, "!%d = ", id)
 	fmt.sbprintfln(&d.meta, format, ..args)
-	return id
 }
 
 @(private = "file")
@@ -163,6 +239,148 @@ debug_location :: proc(d: ^Debug_Info, subprogram: int, span: Span) -> int {
 	id := debug_node(d, "!DILocation(line: %d, column: %d, scope: !%d)", line, column, subprogram)
 	d.locations[key] = id
 	return id
+}
+
+// A type as a debugger shows it, laid out as the program stores it. A type
+// with no closer description, such as a map or an interface view, is a named
+// block of its size.
+@(private = "file")
+debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
+	if id, found := d.types[type]; found {
+		return id
+	}
+	c := d.c
+	id := d.count
+	d.count += 1
+	d.types[type] = id
+	info := type_of(c, type)
+	name := llvm_escape(type_name(c, type))
+	size := type_size(c, type) * 8
+	if info == nil {
+		debug_composite(d, id, "DW_TAG_structure_type", name, size, "")
+		return id
+	}
+	#partial switch info.kind {
+	case .Bool:
+		debug_node_at(d, id, `!DIBasicType(name: "%s", size: 8, encoding: DW_ATE_boolean)`, name)
+	case .Int:
+		encoding := info.signed ? "DW_ATE_signed" : "DW_ATE_unsigned"
+		debug_node_at(d, id, `!DIBasicType(name: "%s", size: %d, encoding: %s)`, name, size, encoding)
+	case .Float:
+		debug_node_at(d, id, `!DIBasicType(name: "%s", size: %d, encoding: DW_ATE_float)`, name, size)
+	case .Rune:
+		debug_node_at(d, id, `!DIBasicType(name: "%s", size: 32, encoding: DW_ATE_UTF)`, name)
+	case .Pointer, .C_Pointer:
+		debug_node_at(d, id, "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !%d, size: 64)", debug_type(d, info.element))
+	case .Raw_Pointer, .CString_View:
+		debug_node_at(d, id, `!DIDerivedType(tag: DW_TAG_pointer_type, name: "%s", baseType: null, size: 64)`, name)
+	case .Proc:
+		debug_node_at(d, id, `!DIDerivedType(tag: DW_TAG_pointer_type, name: "%s", baseType: !%d, size: 64)`, name, SUBROUTINE_TYPE)
+	case .Distinct:
+		debug_node_at(
+			d, id, `!DIDerivedType(tag: DW_TAG_typedef, name: "%s", baseType: !%d)`,
+			name, debug_type(d, info.element),
+		)
+	case .Array:
+		debug_node_at(
+			d, id, "!DICompositeType(tag: DW_TAG_array_type, baseType: !%d, size: %d, elements: !{{!DISubrange(count: %d)}})",
+			debug_type(d, info.element), size, info.count,
+		)
+	case .Enum:
+		enumerators := strings.builder_make()
+		for field, index in info.fields {
+			member := symbol_of(c, field)
+			fmt.sbprintf(
+				&enumerators, "%s!DIEnumerator(name: \"%s\", value: %s%s)",
+				index > 0 ? ", " : "", llvm_escape(identifier_text(c, member.name)),
+				bi_text(c, member.const_value.integer), type_signed(c, type) ? "" : ", isUnsigned: true",
+			)
+		}
+		debug_node_at(
+			d, id, `!DICompositeType(tag: DW_TAG_enumeration_type, name: "%s", baseType: !%d, size: %d, elements: !{{%s})`,
+			name, debug_type(d, info.element), size, strings.to_string(enumerators),
+		)
+	case .Struct:
+		members := strings.builder_make()
+		for field, index in info.fields {
+			member := symbol_of(c, field)
+			debug_member(
+				d, &members, identifier_text(c, member.name), member.type,
+				type_field_offset(c, type, index),
+			)
+		}
+		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
+	case .String, .String_View, .Slice, .Dynamic_Array:
+		// design.md "string type" and "Slices": data first, then its length; a
+		// dynamic array's header adds its capacity.
+		element := info.kind == .String || info.kind == .String_View ? TYPE_U8 : info.element
+		members := strings.builder_make()
+		debug_pointer_member(d, &members, "data", debug_type(d, element), 0)
+		debug_member(d, &members, "len", TYPE_INT, 8)
+		if info.kind == .Dynamic_Array {
+			debug_member(d, &members, "cap", TYPE_INT, 16)
+		}
+		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
+	case .Union:
+		debug_union(d, id, type, name)
+	case:
+		debug_composite(d, id, "DW_TAG_structure_type", name, size, "")
+	}
+	return id
+}
+
+@(private = "file")
+debug_composite :: proc(d: ^Debug_Info, id: int, tag, name: string, size: u64, members: string) {
+	debug_node_at(
+		d, id, `distinct !DICompositeType(tag: %s, name: "%s", size: %d, elements: !{{%s})`,
+		tag, name, size, members,
+	)
+}
+
+// Appends `, !N` for one member at a byte offset.
+@(private = "file")
+debug_member :: proc(d: ^Debug_Info, members: ^strings.Builder, name: string, type: Type_Id, offset: u64) {
+	member := debug_node(
+		d, `!DIDerivedType(tag: DW_TAG_member, name: "%s", baseType: !%d, size: %d, offset: %d)`,
+		llvm_escape(name), debug_type(d, type), type_size(d.c, type) * 8, offset * 8,
+	)
+	fmt.sbprintf(members, "%s!%d", strings.builder_len(members^) > 0 ? ", " : "", member)
+}
+
+@(private = "file")
+debug_pointer_member :: proc(d: ^Debug_Info, members: ^strings.Builder, name: string, pointee: int, offset: u64) {
+	pointer := debug_node(d, "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !%d, size: 64)", pointee)
+	member := debug_node(
+		d, `!DIDerivedType(tag: DW_TAG_member, name: "%s", baseType: !%d, size: 64, offset: %d)`,
+		name, pointer, offset * 8,
+	)
+	fmt.sbprintf(members, "%s!%d", strings.builder_len(members^) > 0 ? ", " : "", member)
+}
+
+// design.md "Unions": the payload overlaps at offset zero, one member per
+// variant that carries one, and the tag, which is the variant's index, follows.
+@(private = "file")
+debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
+	c := d.c
+	info := type_of(c, type)
+	shape := union_layout(c, type)
+	variants := strings.builder_make()
+	for payload, index in info.variants {
+		if payload != TYPE_VOID {
+			debug_member(d, &variants, identifier_text(c, info.variant_names[index]), payload, 0)
+		}
+	}
+	payload := debug_node(d, "distinct !DICompositeType(tag: DW_TAG_union_type, size: %d, elements: !{{%s})",
+		shape.payload_size * 8, strings.to_string(variants))
+	tag := debug_node(d, `!DIBasicType(name: "tag", size: %d, encoding: DW_ATE_unsigned)`, shape.tag_bytes * 8)
+	members := fmt.aprintf(
+		"!%d, !%d",
+		debug_node(d, `!DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !%d, size: %d, offset: 0)`,
+			payload, shape.payload_size * 8),
+		debug_node(d, `!DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !%d, size: %d, offset: %d)`,
+			tag, shape.tag_bytes * 8, shape.tag_offset * 8),
+	)
+	debug_composite(d, id, "DW_TAG_structure_type", name, shape.size * 8, members)
 }
 
 // The name a debugger shows: `@loke.p.core$3afmt.print` is `core:fmt.print`.

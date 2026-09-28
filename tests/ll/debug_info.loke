@@ -2,13 +2,30 @@ package main;
 
 import "core:fmt";
 
-// `-g`: each procedure gets a subprogram, and each statement's instructions
-// the location of the statement's first token.
+// `-g`: each procedure gets a subprogram, each statement's instructions the
+// location of the statement's first token, and each local a declaration whose
+// type is laid out as the program stores it.
+Color :: enum { Red, Green }
+
+Point :: struct {
+	x: int,
+	next: ^Point,
+}
+
+Shape :: union {
+	circle: f64,
+	empty: Unit,
+}
+
 add :: proc(a: int, b: int) -> int {
 	return a + b;
 }
 
 main :: proc() {
 	total := add(40, 2);
-	fmt.println(total);
+	point := Point{x = total, next = nil};
+	color := Color.Green;
+	shape: Shape = .circle(1.5);
+	name := "loke";
+	fmt.println(point.x, color, shape, name);
 }
