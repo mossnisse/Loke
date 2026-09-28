@@ -85,6 +85,17 @@ diagnostics_show_paths_relative_to_the_working_directory :: proc(t: ^testing.T) 
 	testing.expect_value(t, display_path(outside), shown)
 }
 
+// A span running past its line is underlined up to the code, not over a
+// trailing comment; a `//` inside a literal is code.
+@(test)
+diagnostic_underline_stops_before_a_trailing_comment :: proc(t: ^testing.T) {
+	testing.expect_value(t, code_end("\tswitch (x) {  // note"), len("\tswitch (x) {"))
+	testing.expect_value(t, code_end("\tswitch (x) {"), len("\tswitch (x) {"))
+	testing.expect_value(t, code_end(`url := "a//b"; // note`), len(`url := "a//b";`))
+	testing.expect_value(t, code_end(`s := "\"//"; c := '/';`), len(`s := "\"//"; c := '/';`))
+	testing.expect_value(t, code_end("// only a comment"), 0)
+}
+
 @(test)
 deep_type_graphs_have_no_arbitrary_cutoff :: proc(t: ^testing.T) {
 	c: Compiler

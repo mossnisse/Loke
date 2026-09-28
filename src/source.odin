@@ -585,6 +585,26 @@ same_diagnostic :: proc(a, b: Diagnostic) -> bool {
 		a.message == b.message
 }
 
+// The length of `line` without a trailing `//` comment or the blanks before
+// it. Quotes are skipped, so a `//` inside a string or rune literal stays code.
+code_end :: proc(line: string) -> int {
+	quote: u8 = 0
+	for i := 0; i < len(line); i += 1 {
+		ch := line[i]
+		switch {
+		case quote != 0 && ch == '\\' && quote != '`':
+			i += 1
+		case quote != 0:
+			if ch == quote { quote = 0 }
+		case ch == '"' || ch == '\'' || ch == '`':
+			quote = ch
+		case ch == '/' && i + 1 < len(line) && line[i + 1] == '/':
+			return len(strings.trim_right_space(line[:i]))
+		}
+	}
+	return len(line)
+}
+
 @(private = "file")
 render :: proc(c: ^Compiler, d: ^Diagnostic) {
 	severity := d.severity == .Error ? "error" : "warning"
@@ -598,9 +618,10 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 
 		// The snippet drops the line ending, so a span pointing into it lands past
 		// the text; a multi-line span only marks where it starts. Both stay inside.
+		// A trailing comment is not part of what it marks.
 		col = min(col, len(text) + 1)
 		width := max(int(d.span.hi) - int(d.span.lo), 1)
-		width = min(width, max(len(text)-col+1, 1))
+		width = min(width, max(code_end(text)-col+1, 1))
 
 		// The caret line keeps the prefix's tabs, so the marker stays under the
 		// right column whatever the reader's tab width is.

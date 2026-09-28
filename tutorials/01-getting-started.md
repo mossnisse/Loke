@@ -125,7 +125,7 @@ package main;
 import "core:fmt";
 
 main :: proc() {
-	count: int = "three";
+	count: int = "three";  // error: "three" is not an `int`
 	fmt.println(count);
 }
 ```
@@ -137,7 +137,7 @@ main :: proc() {
 error[L0310]: this constant is not a value of `int`
  --> mistake.loke:6:15
    |
-6 | 	count: int = "three";
+6 | 	count: int = "three";  // error: "three" is not an `int`
    | 	             ^^^^^^^
 ```
 

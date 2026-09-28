@@ -211,8 +211,9 @@ false
 
 ## Who owns what
 
-Strings, dynamic arrays, and maps own memory. You never free it yourself: when
-the variable that owns it goes out of scope, the memory is released.
+Strings, dynamic arrays, and maps own memory. You don't need to free it
+yourself: when the variable that owns it goes out of scope, the memory is
+released. `drop(value)` releases it earlier, if you want it back sooner.
 
 What happens when you assign one to another variable depends on the type. A
 `string` cannot change, so a copy can safely share the same text, and copying it
@@ -327,7 +328,7 @@ import "core:fmt";
 main :: proc() {
 	numbers := [dynamic]int{1, 2, 3};
 	first_two: []int = numbers[0:2];
-	numbers.append(4);
+	numbers.append(4);  // error: `first_two` still views `numbers`
 	fmt.println(first_two);
 }
 ```
@@ -336,7 +337,7 @@ main :: proc() {
 error[L0512]: `numbers` cannot be modified here: a read-only slice of it is still in use
  --> invalidate.loke:8:2
    |
-8 | 	numbers.append(4);
+8 | 	numbers.append(4);  // error: `first_two` still views `numbers`
    | 	^^^^^^^^^^^^^^^^^
   = note: invalidate.loke:6:2: `numbers` is the local this slice borrows
   = note: invalidate.loke:7:21: the slice is created here

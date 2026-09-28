@@ -37,6 +37,8 @@ checklist.
 
 ### Fixed
 
+- A diagnostic whose span runs past its first line, such as a `switch` missing
+  a case, no longer underlines a trailing `//` comment on that line.
 - A generic record instance first reached by a hypothetical check, such as an
   overload member whose signature names it, keeps its field errors: a later use
   reports them, instead of the compiler crashing or failing internally.

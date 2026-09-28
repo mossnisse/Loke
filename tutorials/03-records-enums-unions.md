@@ -197,7 +197,7 @@ Direction :: enum { North, East, South, West }
 
 main :: proc() {
 	facing := Direction.West;
-	switch (facing) {
+	switch (facing) {  // error: `West` is not handled
 	case .North: fmt.println("up");
 	case .East:  fmt.println("right");
 	case .South: fmt.println("down");
@@ -209,7 +209,7 @@ main :: proc() {
 error[L0366]: this switch over `Direction` does not cover West
  --> missing_case.loke:9:2
    |
-9 | 	switch (facing) {
+9 | 	switch (facing) {  // error: `West` is not handled
    | 	^^^^^^^^^^^^^^^^^
 ```
 

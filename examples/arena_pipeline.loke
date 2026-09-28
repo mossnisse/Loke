@@ -69,7 +69,7 @@ main :: proc() {
 		samples.append(Sample{i, f64(i) * 1.5});
 	}
 
-	run_batches(samples[:]);
+	run_batches(samples);
 	fmt.println("in frame:", in_frame());
 
 	// The default provider is the system heap, and it is what a container binds

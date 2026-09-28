@@ -57,7 +57,7 @@ main :: proc() {
 	// exist when the call started.
 	counters := [dynamic]Counter{};
 	foreach (event in events) { tally(inout counters, event) += 1; }
-	foreach (counter in counters[:]) { fmt.println(counter.key, counter.hits); }
+	foreach (counter in counters) { fmt.println(counter.key, counter.hits); }
 
 	// One array, two mutable slices of it, alive at the same time. The ranges
 	// are constant and touch at 3, so they are disjoint and each is its own
@@ -68,7 +68,7 @@ main :: proc() {
 	back: []mut int = lanes[3:6];
 	accumulate(front, names[0:3], 2);
 	accumulate(back, names[3:6], 5);
-	fmt.println(total(front), total(back), total(lanes[:]));
+	fmt.println(total(front), total(back), total(lanes));
 
 	// The same rule one level down: distinct constant indices are distinct
 	// places, so both elements are loaned mutably at once.
@@ -81,5 +81,5 @@ main :: proc() {
 	// A read-only loan of the whole array cannot coexist with those, and it
 	// does not have to: both writers are finished above, so the whole root is
 	// readable again here.
-	fmt.println(total(lanes[:]));
+	fmt.println(total(lanes));
 }

@@ -130,7 +130,7 @@ package main;
 import "core:strconv";
 
 main :: proc() {
-	strconv.parse_int("42");
+	strconv.parse_int("42");  // error: the `Result` is ignored
 }
 ```
 
@@ -138,7 +138,7 @@ main :: proc() {
 error[L0612]: this call produces `Result(int, Parse_Error)`, which must be used or discarded with `_ = ...`
  --> ignored.loke:6:2
    |
-6 | 	strconv.parse_int("42");
+6 | 	strconv.parse_int("42");  // error: the `Result` is ignored
    | 	^^^^^^^^^^^^^^^^^^^^^^^
 ```
 
@@ -212,7 +212,7 @@ average :: proc(values: []int) -> int {
 
 main :: proc() {
 	fmt.println(average([]int{3, 4, 8}));
-	fmt.println(average([]int{}));
+	fmt.println(average([]int{}));  // panics: the assert fails
 	fmt.println("not reached");
 }
 ```

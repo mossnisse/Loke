@@ -99,7 +99,7 @@ main :: proc() {
 	{
 		reader := Reader.init("settings.ini");
 		good := [?]string_view{ "width=1280", "height=720", "depth=32" };
-		err := load(inout reader, good[:], inout settings);
+		err := load(inout reader, good, inout settings);
 		fmt.println("error:", describe(err));
 		fmt.println("width:", settings["width"]);
 	} // `reader` is closed here, at the brace
@@ -109,7 +109,7 @@ main :: proc() {
 		defer fmt.println("leaving the broken load");
 
 		bad := [?]string_view{ "colour=blue", "height=1080" };
-		err := load(inout reader, bad[:], inout settings);
+		err := load(inout reader, bad, inout settings);
 		fmt.println("error:", describe(err));
 		// The load stopped at the first bad line, so the second never arrived.
 		fmt.println("height still:", settings["height"]);

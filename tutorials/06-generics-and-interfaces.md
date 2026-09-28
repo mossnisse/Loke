@@ -211,7 +211,7 @@ describe :: proc(shape: $T) where Shape(T) {
 }
 
 main :: proc() {
-	describe(Line{length = 3});
+	describe(Line{length = 3});  // error: `Line` has no `area` method
 }
 ```
 
@@ -219,7 +219,7 @@ main :: proc() {
 error[L0444]: `Line` does not satisfy `Shape(Line)`
   --> unsatisfied.loke:21:2
     |
-21 | 	describe(Line{length = 3});
+21 | 	describe(Line{length = 3});  // error: `Line` has no `area` method
     | 	^^^^^^^^^^^^^^^^^^^^^^^^^^
   = note: unsatisfied.loke:7:2: this requirement does not hold: `Line` has no method `area` with this signature
   = note: unsatisfied.loke:21:2: while instantiating `describe(Line)`

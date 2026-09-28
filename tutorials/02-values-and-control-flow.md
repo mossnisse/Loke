@@ -76,7 +76,7 @@ main :: proc() {
 	if (length_of_day() > 12) {
 		message = "long day";
 	}
-	fmt.println(message);
+	fmt.println(message);  // error: `message` may have no value here
 }
 
 length_of_day :: proc() -> int { return 14; }
@@ -86,7 +86,7 @@ length_of_day :: proc() -> int { return 14; }
 error[L0500]: `message` cannot be used here: it is live on only some of the paths that reach this point
   --> dead.loke:10:14
     |
-10 | 	fmt.println(message);
+10 | 	fmt.println(message);  // error: `message` may have no value here
     | 	            ^^^^^^^
 ```
 
@@ -144,7 +144,7 @@ main :: proc() {
 	count: i8 = 126;
 	count += 1;
 	fmt.println(count);
-	count += 1;
+	count += 1;  // panics: 128 does not fit in an `i8`
 	fmt.println(count);
 }
 ```
@@ -387,7 +387,7 @@ double_in_place :: proc(value: inout int) {
 
 main :: proc() {
 	n := 21;
-	double_in_place(n);
+	double_in_place(n);  // error: the call must say `inout n`
 	fmt.println(n);
 }
 ```
@@ -396,7 +396,7 @@ main :: proc() {
 error[L0370]: this parameter is `inout`; write `inout` at the call site
   --> marker.loke:11:18
     |
-11 | 	double_in_place(n);
+11 | 	double_in_place(n);  // error: the call must say `inout n`
     | 	                ^
 ```
 

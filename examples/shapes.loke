@@ -79,7 +79,7 @@ main :: proc() {
 		(dyn Shape)(&square),
 		(dyn Shape)(&wide),
 	};
-	fmt.println("total area:", total_area(shapes[:]));
+	fmt.println("total area:", total_area(shapes));
 
 	// Only the concrete type has the method the interface never mentioned.
 	fmt.println("square is square:", square.is_square());
