@@ -143,6 +143,25 @@ lets source import `"vendor:package_name"`. Collection paths supplied on the
 command line are relative to the shell's working directory; relative imports
 in source are resolved from the importing file.
 
+#### Projects
+
+A `loke.project` file names the directories a program's collections come from,
+so a build needs no `-collection` flags. `lokec` reads the nearest one at or
+above its input:
+
+```text
+# Each line: require <name> <path>. The path is relative to this file.
+require shapes ../shapes
+require json vendor/json
+```
+
+Source then imports `"shapes:area"` as if `-collection shapes=../shapes` had
+been passed. A dependency's own `loke.project` is read too, and one name must
+name one directory across all of them. A `-collection` for a name replaces the
+project's directory for it, which is how a dependency is patched or vendored.
+`base` and `core` are always the bundled library. Dependencies are local
+directories for now (comments.md "Package and import versioning").
+
 #### Default allocator and logger
 
 The root package keeps its allocator and logger choices in source. The value

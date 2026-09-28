@@ -1,0 +1,6 @@
+package length;
+
+@(public)
+centimetres :: proc(decimetres: int) -> int {
+	return decimetres * 10;
+}

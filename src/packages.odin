@@ -244,8 +244,9 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 			c,
 			imported.span,
 			"L0329",
-			"no collection is registered for `%s`; pass `-collection %s=<path>`",
+			"no collection is registered for `%s`; add `require %s <path>` to loke.project, or pass `-collection %s=<path>`",
 			path,
+			collection_prefix(path),
 			collection_prefix(path),
 		)
 		return
@@ -515,7 +516,6 @@ is_directory :: proc(path: string) -> bool {
 }
 
 // Produces a temporary absolute, cleaned, `/`-separated path.
-@(private = "file")
 canonical_dir :: proc(path: string) -> string {
 	absolute, ok := filepath.abs(path, context.temp_allocator)
 	cleaned := filepath.clean(ok ? absolute : path, context.temp_allocator)
@@ -524,7 +524,6 @@ canonical_dir :: proc(path: string) -> string {
 }
 
 // Windows paths are case-insensitive, so package identity must be too.
-@(private = "file")
 dir_key :: proc(dir: string, allocator := context.temp_allocator) -> string {
 	return strings.to_lower(dir, allocator)
 }

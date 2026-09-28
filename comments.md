@@ -6,6 +6,25 @@ Decisions that are deliberately not yet made are recorded here rather than left 
 
 Should import paths encode package versions, and should a package declaration remain mandatory in every file? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
 
+Decided so far, and built as `loke.project` (readme.md "Projects"):
+
+- Imports carry no version and no location. A project gives each dependency a
+  name, and the name is a collection prefix: `import "json:parse";`. Where
+  `json` comes from is the project's business, so moving or vendoring it
+  changes one manifest line and no source.
+- One name names one directory in the whole program, across every
+  dependency's manifest. A conflict is an error rather than two copies of a
+  package, because two copies would give one type two identities. The names
+  are one flat space, so a program can import a dependency of a dependency
+  without requiring it; a later version may require the direct `require`.
+- The manifest is plain `require <name> <path>` lines, trivial to parse now and
+  in a self-hosted compiler.
+- Dependencies are local directories. When versioned sources arrive (a git
+  URL and tag, fetched into a cache outside the compiler front end), the
+  version chosen is the highest minimum any manifest asks for, as Go's minimal
+  version selection does: deterministic without a solver, so a lock file only
+  has to record checksums.
+
 ## package header files
 
 I am not happy with the package level encapsulation, one idea is

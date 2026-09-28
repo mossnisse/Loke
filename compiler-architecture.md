@@ -52,7 +52,8 @@ source lookup or repair incomplete semantic state.
 
 `main` in `src/main.odin` calls the file-private `run`, which seeds immutable
 build configuration, collection roots, panic strategy, optimization mode, and
-build mode before source discovery begins.
+build mode before source discovery begins. `register_project` in
+`src/project.odin` then adds the collections `loke.project` files require.
 
 The normal compilation path is:
 
@@ -349,7 +350,7 @@ be file-private.
 | --- | --- |
 | `main.odin`, `build_config.odin`, `providers.odin` | CLI options, build constants, provider selection, top-level phase order, and exit codes. |
 | `stack.odin` | The 64 MB compiler stack reservation that bounds nesting (`MAX_NEST`) and compile-time recursion. |
-| `install.odin`, `packages.odin`, `select.odin` | Installation-relative roots, package loading/import graph, dependency order, and `when` selection. |
+| `install.odin`, `packages.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, and `when` selection. |
 | `source.odin` | `Compiler`, source buffers, spans, and the diagnostics engine. Start here when locating global state; `destroy_compilation` is `semantic.odin`'s. |
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |

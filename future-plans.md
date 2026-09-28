@@ -53,13 +53,17 @@ project workflow without coupling source imports to one registry. Settle the
 package and import versioning questions tracked in [comments.md](comments.md)
 before freezing a manifest format.
 
+`loke.project` (readme.md "Projects") names each dependency's directory and
+registers it as a collection, following each dependency's own manifest, with
+`-collection` as the override. The decisions behind it are in
+[comments.md "Package and import versioning"](comments.md#package-and-import-versioning).
+
 Main work:
 
-- define a project manifest, dependency identity, version-selection rules, and a
-  lock format;
-- preserve local path dependencies and explicit collection overrides for
-  development and vendoring;
-- specify cache layout, offline builds, checksums, and conflict diagnostics;
+- add versioned sources: a git URL and tag per dependency, fetched by a
+  separate `lokec` step into a cache, and chosen by minimal version selection;
+- add a lock format holding each fetched dependency's checksum, and specify
+  cache layout and offline builds;
 - decide how compiler, language, runtime, and standard-library versions declare
   compatibility;
 - keep fetching and registry policy outside the compiler front end unless a

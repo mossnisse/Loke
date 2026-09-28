@@ -1,0 +1,9 @@
+package main;
+
+import "core:fmt";
+// `units` comes from the shapes library's own loke.project.
+import "shapes:area";
+
+main :: proc() {
+	fmt.println(area.square(3));
+}

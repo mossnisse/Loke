@@ -192,6 +192,10 @@ run :: proc() -> int {
 		return 0
 	}
 
+	if !register_project(&c, opts.input) {
+		report(&c)
+		return 1
+	}
 	package_id, compiled := compile_program(&c, opts.input)
 	if compiled {
 		// An object build accepts any root package: its foreign

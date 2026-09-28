@@ -1,0 +1,8 @@
+package main;
+
+import "core:fmt";
+import "units:length";
+
+main :: proc() {
+	fmt.println(length.centimetres(3));
+}

@@ -1,0 +1,5 @@
+require a a
+require b b
+needs x
+require gone nowhere
+require core a

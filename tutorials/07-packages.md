@@ -127,7 +127,10 @@ subdirectories on its own: `stock` is compiled because `main.loke` imports it.
 `import "stock";` names a directory relative to the file that imports it. The
 package is then used through its name, as in `stock.Shelf`. An import with a
 prefix, such as `"core:fmt"`, comes from a *collection* instead: `core:` and
-`base:` are the libraries that come with the compiler.
+`base:` are the libraries that come with the compiler. A library of your own that
+lives elsewhere gets a name the same way: a `loke.project` file beside
+`main.loke` with the line `require shapes ../shapes` lets any file import
+`"shapes:area"` (readme.md "Projects").
 
 Every file in a package starts with the same `package` line, and each file lists
 its own imports: `report.loke` imports `core:fmt` because it uses it, and

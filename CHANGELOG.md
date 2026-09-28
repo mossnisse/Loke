@@ -40,6 +40,11 @@ checklist.
   declaration's signature, without procedure bodies or private struct fields,
   and the comments directly above it. It needs no `main`, and documents a
   standard-library directory such as `core\strings` as the package importers see.
+- A `loke.project` file at or above the input lists `require <name> <path>`
+  lines, and each name becomes a collection, so `import "shapes:area";` builds
+  without `-collection` flags. Dependencies' own `loke.project` files are read
+  too; one name naming two directories is an error, and `-collection` overrides
+  a name (readme.md "Projects").
 - `lokec -debug` sets `LOKE_DEBUG` to `true`; it used to be `false` always.
 - A fixed array `[N]T` converts implicitly to a read-only `[]T` of its
   elements, as a `[dynamic]T` already did, so `total(primes)` needs no

@@ -1,0 +1,8 @@
+package area;
+
+import "units:length";
+
+@(public)
+square :: proc(side: int) -> int {
+	return length.centimetres(side) * length.centimetres(side);
+}

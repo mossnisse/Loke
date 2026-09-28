@@ -1,0 +1,11 @@
+L0398
+@3:1
+a `loke.project` line is `require <name> <path>`
+L0399
+@4:1
+dependency `gone` names
+L0399
+@5:1
+`core` is the library bundled with the compiler
+L0399
+`shared` is already required as another directory

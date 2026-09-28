@@ -1,0 +1,2 @@
+# Each dependency is a collection: `shapes:area` is shapes/area.
+require shapes shapes
