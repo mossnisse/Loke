@@ -124,7 +124,8 @@ executable prints its Loke frames; and `-debug` sets `LOKE_DEBUG` on its own
 ([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin),
 [runtime/trace.c](runtime/trace.c)). `lokec <package> -doc` prints a checked
 package's public API as Markdown, each declaration with the comments directly
-above it ([src/doc.odin](src/doc.odin)).
+above it ([src/doc.odin](src/doc.odin)), and `lokec -fmt` lays out source by the
+rules in [comments.md "Formatting"](comments.md#formatting).
 
 Main work:
 
@@ -136,7 +137,8 @@ Main work:
   the line of the last statement emitted before them today;
 - preserve useful source locations through generated cleanup, specialization,
   and compile-time expansion;
-- build a deterministic formatter over the real syntax tree;
+- align columns automatically in `-fmt`, once hand-kept alignment proves a
+  burden;
 - give `-doc` what a real library shows it needs: struct-field and package
   comments, and a page for each package of a multi-package project;
 - integrate formatting, documentation, and debugging metadata with editor tools
@@ -232,8 +234,8 @@ compiler task.
 
 ## Suggested order
 
-1. Build the formatter over the syntax tree and its comments, and finish the
-   smaller debug-information and documentation items.
+1. Finish the smaller debug-information, documentation, and formatting items as
+   real programs ask for them.
 2. Define the reproducible package and dependency workflow, and finish the
    standard-library services required by a compiler-sized program.
 3. Build the compiler services without changing command-line compilation

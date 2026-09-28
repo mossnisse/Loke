@@ -299,7 +299,7 @@ impl Quaternion(f64) {
 	// the scalar floating rule rather than a special case.
 	inverse :: proc(self) -> Quaternion(f64) {
 		scale := max(max(abs(self.real), abs(self.i)),
-		             max(abs(self.j), abs(self.k)));
+			max(abs(self.j), abs(self.k)));
 		real := self.real/scale;
 		i := self.i/scale;
 		j := self.j/scale;
@@ -322,7 +322,7 @@ impl Quaternion(f32) {
 
 	inverse :: proc(self) -> Quaternion(f32) {
 		scale := max(max(abs_f32(self.real), abs_f32(self.i)),
-		             max(abs_f32(self.j), abs_f32(self.k)));
+			max(abs_f32(self.j), abs_f32(self.k)));
 		real := self.real/scale;
 		i := self.i/scale;
 		j := self.j/scale;

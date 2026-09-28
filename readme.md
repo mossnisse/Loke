@@ -100,6 +100,7 @@ Compile examples individually: `examples/` contains separate programs, not one m
 | `-build-mode=exe\|obj` | Produce an executable (default) or one relocatable object. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
+| `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (comments.md "Formatting"); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
 | `-doc` | Print the package's public API as Markdown and stop: each public declaration's signature, with the comments directly above it. A standard-library directory works too: `lokec core\strings -doc`. |
 | `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement. An executable gets a `.pdb` beside it, and a panic prints the Loke call stack after its report. |
 | `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |

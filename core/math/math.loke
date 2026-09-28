@@ -175,7 +175,7 @@ clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces
 // rather than wrap; nothing in the body needs its bit operations.
 to :: proc($To: type, value: $From) -> Option(To)
 	where interfaces.Integral(From), interfaces.Ordered(From),
-	      interfaces.Integral(To), interfaces.Ordered(To) {
+	interfaces.Integral(To), interfaces.Ordered(To) {
 	converted := To(value);
 	if (From(converted) != value) { return .none; }
 	if ((value < From(0)) != (converted < To(0))) { return .none; }

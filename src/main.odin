@@ -34,6 +34,10 @@ options:
                   (file inputs only)
     -check-layout compare every folded size/alignment/offset with LLVM's own
     -doc          print the root package's public API as Markdown and stop
+    -fmt          rewrite the input file, or a directory's .loke files, in
+                  the canonical layout, and stop
+    -fmt-check    list the files -fmt would change, exit 1 if there are any,
+                  and stop
     -collection name=path
     -collection:name=path
                   register an import-path prefix; base: and core: are seeded
@@ -75,6 +79,8 @@ Options :: struct {
 	dump_ast:   bool,
 	check_layout: bool,
 	doc:        bool,
+	fmt:        bool,
+	fmt_check:  bool,
 	defines:    [dynamic]string,
 	collections: [dynamic]string,
 	copy_cost:         u64,
@@ -153,6 +159,11 @@ run :: proc() -> int {
 	if !register_collections(&c, opts.collections[:]) {
 		report(&c)
 		return 1
+	}
+	if opts.fmt || opts.fmt_check {
+		status := format_files(&c, opts.input, opts.fmt_check)
+		report(&c)
+		return status
 	}
 	if opts.parse_only || opts.dump_ast {
 		if is_directory(opts.input) {
@@ -252,6 +263,10 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.check_layout = true
 		case arg == "-doc":
 			opts.doc = true
+		case arg == "-fmt":
+			opts.fmt = true
+		case arg == "-fmt-check":
+			opts.fmt_check = true
 		case arg == "-g":
 			opts.debug_info = true
 		case arg == "-debug":

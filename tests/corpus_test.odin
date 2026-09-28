@@ -918,6 +918,61 @@ package_keys_come_from_the_directory :: proc(t: ^testing.T) {
 	)
 }
 
+// comments.md "Formatting". The library is kept formatted, and every program
+// the corpora hold formats without a refusal or a changed token, to a layout
+// that formats to itself: a copy of each directory is formatted, then checked.
+@(test)
+formatting_settles_and_keeps_tokens :: proc(t: ^testing.T) {
+	jobs := make([dynamic]Exec, context.temp_allocator)
+	for root in ([]string{"core", "base"}) {
+		walk_directories(root, &jobs)
+	}
+	for corpus in ([]string{"tests/run", "tests/syntax", "tests/ll", "tests/trap", "tests/layout", "examples"}) {
+		copy := fmt.tprintf("%s/fmt/%s", TMP, filepath.base(corpus))
+		os2.remove_all(copy)
+		os2.make_directory_all(copy)
+		sources, _ := filepath.glob(fmt.tprintf("%s/*.loke", corpus), context.temp_allocator)
+		for source in sources {
+			text, _ := os.read_entire_file(source, context.temp_allocator)
+			os.write_entire_file(fmt.tprintf("%s/%s", copy, filepath.base(source)), text)
+		}
+		formatted, _, stderr, err := exec(
+			os2.Process_Desc{command = []string{compiler_path(), copy, "-fmt"}},
+			context.allocator,
+		)
+		testing.expectf(t, err == nil && formatted.exit_code == 0, "%s: -fmt failed\n%s", corpus, string(stderr))
+		append(&jobs, format_check(copy))
+	}
+	exec_all(jobs[:])
+	for job in jobs {
+		testing.expectf(
+			t,
+			job.err == nil && job.state.exit_code == 0,
+			"`%s` is not formatted, or its second formatting changed it:\n%s%s",
+			job.command[1], string(job.stdout), string(job.stderr),
+		)
+	}
+}
+
+// A `[]string{...}` literal lives on the stack, and these outlive the caller.
+@(private)
+format_check :: proc(dir: string) -> Exec {
+	command := make([]string, 3, context.temp_allocator)
+	command[0], command[1], command[2] = compiler_path(), dir, "-fmt-check"
+	return Exec{command = command}
+}
+
+@(private)
+walk_directories :: proc(dir: string, jobs: ^[dynamic]Exec) {
+	append(jobs, format_check(dir))
+	entries, _ := os2.read_all_directory_by_path(dir, context.temp_allocator)
+	for entry in entries {
+		if entry.type == .Directory {
+			walk_directories(fmt.tprintf("%s/%s", dir, entry.name), jobs)
+		}
+	}
+}
+
 // `-doc` prints the package's public API, each declaration with the comments
 // directly above it, and must match `<case>.expected` exactly.
 @(test)

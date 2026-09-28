@@ -31,6 +31,11 @@ checklist.
   debugger can set a source breakpoint, show a Loke call stack, and inspect
   locals. An executable gets a `.pdb` beside it, and a panic in it prints each
   Loke frame, newest first, with its procedure, file, and line.
+- `lokec -fmt` rewrites a file, or a directory's `.loke` files, in one layout:
+  tabs by nesting, the author's line breaks, and one space where the rules put
+  one (comments.md "Formatting"). It changes whitespace only and refuses a file
+  that does not parse. `-fmt-check` lists the files it would change and exits 1,
+  for CI.
 - `lokec -doc` prints a package's public API as Markdown: each public
   declaration's signature, without procedure bodies or private struct fields,
   and the comments directly above it. It needs no `main`, and documents a

@@ -491,6 +491,41 @@ if the answer changes.
   would make an erased slice's type depend on where it lands. The rule stays:
   one extra binding is a small price for a slice type that does not change.
 
+## Formatting
+
+`lokec -fmt` ([src/formatter.odin](src/formatter.odin)) settles the layout
+`core/` already used, and changes whitespace only. The rules:
+
+- **Line breaks are the author's.** It never joins or splits a line, and a run
+  of blank lines becomes one. Wrapping at a width was rejected: it is most of a
+  formatter's code, and a renamed identifier would re-flow its neighbours in a
+  diff.
+- **Tabs, one per enclosing bracket** opened on an earlier line, however many
+  opened together. A `case` sits at its `switch`'s level, and a line that
+  continues an unfinished statement outside any `(` or `[` goes one deeper. A
+  file-scope `when` body stays at column zero when written there, as `core/`'s
+  long platform blocks are.
+- **Spacing between tokens** is one space after a comma, around `::`, `:=`,
+  assignment, comparison, logical, range, and arrow operators, and none inside
+  brackets, before `,`, `;`, `)`, and `]`, or after a prefix operator. An
+  arithmetic or bitwise operator written with no space on either side stays
+  tight, because `core/` writes `a*b + c*d` by precedence; one written with a
+  space on either side gets one on both.
+- **Extra spaces inside a line are kept.** `core/` aligns field types and
+  trailing comments with them. Only the leading indentation is recomputed.
+
+It works on the real lexer's tokens rather than printing the syntax tree:
+keeping the author's breaks leaves nothing for a tree printer to decide, and a
+token stream cannot lose or reorder syntax. The parser still runs, so a file
+that does not parse is refused, and each result is lexed again and must hold
+the input's tokens exactly, or the formatter reports an internal error instead
+of writing. tests/corpus_test.odin keeps `core/` and `base/` formatted and
+formats every program corpus to a layout that formats to itself.
+
+Open: aligning columns automatically, as `gofmt` does, so a renamed field
+does not leave its neighbours misaligned; and indenting a continued line
+inside brackets, which `core/` leaves at the bracket's level.
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

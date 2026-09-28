@@ -353,6 +353,7 @@ be file-private.
 | `source.odin` | `Compiler`, source buffers, spans, and the diagnostics engine. Start here when locating global state; `destroy_compilation` is `semantic.odin`'s. |
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
+| `formatter.odin` | `-fmt` and `-fmt-check`: whitespace-only layout over the lexer's tokens and comments, refused for a file that does not parse and checked to keep every token. |
 | `doc.odin` | `-doc`: the checked root package's public API as Markdown, with the comments above each declaration. |
 | `semantic.odin`, `universe.odin` | Stable IDs, symbols, types, scopes, packages, type interning, and predeclared names. |
 

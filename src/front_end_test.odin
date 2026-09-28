@@ -785,6 +785,86 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 	testing.expectf(t, len(tokens) == 8, "expected seven literals, got %d tokens", len(tokens) - 1)
 }
 
+// comments.md "Formatting": each rule, from input the formatter must change to
+// the layout it must produce, which formats to itself again.
+@(test)
+formatter_lays_out_source :: proc(t: ^testing.T) {
+	input := `package main;
+
+
+// Spaces become tabs, and a `+"`case`"+` sits at its `+"`switch`"+`'s level.
+Point :: struct {
+    x: int,   // alignment after a token stays
+    y: int,
+}
+@(align=8)
+Pair :: struct { a, b: int }
+
+main :: proc() {
+  x:=1+2;
+  y := x*2 + x*3;
+  z := x+ 1;
+  n := - x;
+  p := & &x;
+  when (LOKE_DEBUG) { }
+  switch (x) {
+      case 1: y = 2;
+      case:
+          y = 3 ;
+  }
+  total := x +
+  y;
+  foreach (i in 0..<3) { f(i ,x); }
+}
+
+rt :: proc "c"(code: i32) -> ! ---;
+`
+	want := `package main;
+
+// Spaces become tabs, and a `+"`case`"+` sits at its `+"`switch`"+`'s level.
+Point :: struct {
+	x: int,   // alignment after a token stays
+	y: int,
+}
+@(align=8)
+Pair :: struct { a, b: int }
+
+main :: proc() {
+	x := 1+2;
+	y := x*2 + x*3;
+	z := x + 1;
+	n := -x;
+	p := & &x;
+	when (LOKE_DEBUG) { }
+	switch (x) {
+	case 1: y = 2;
+	case:
+		y = 3;
+	}
+	total := x +
+		y;
+	foreach (i in 0 ..< 3) { f(i, x); }
+}
+
+rt :: proc "c" (code: i32) -> ! ---;
+`
+	for text, pass in ([]string{input, want}) {
+		c := test_compiler(text)
+		defer destroy_compilation(&c)
+		got, ok := format_source(&c, 0)
+		defer delete(got)
+		if !testing.expectf(t, ok, "pass %d: the formatter refused valid source", pass) {
+			continue
+		}
+		testing.expectf(t, got == want, "pass %d: got\n%s\nwant\n%s", pass, got, want)
+	}
+
+	broken := test_compiler("package main; main :: proc() {")
+	defer destroy_compilation(&broken)
+	_, ok := format_source(&broken, 0)
+	testing.expect(t, !ok, "the formatter wrote source that does not parse")
+}
+
 // The token stream leaves comments out, and the source keeps each one's span in
 // order: a line comment without its line ending, a nested block comment whole,
 // and nothing for a `//` inside a string. Lexing again replaces the list.
