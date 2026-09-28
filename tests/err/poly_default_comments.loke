@@ -1,0 +1,13 @@
+package main;
+
+// Comment text cannot introduce a binding and defer an invalid default.
+block_comment :: proc(x: ^/* $BlockMissing */$T, $N: int = BlockMissing) {}
+line_comment :: proc(x: [ // $LineMissing
+    1]$T, $N: int = LineMissing) {}
+nested_comment :: proc(x: ^/* outer /* $NestedMissing */ end */$T, $N: int = NestedMissing) {}
+
+// Nor can a fictitious binding hide an ordinary constant's type error.
+Wrong :: "text";
+shadowed :: proc(x: ^/* $Wrong */$T, $N: int = Wrong) {}
+
+main :: proc() {}

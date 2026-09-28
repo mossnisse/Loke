@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- Comments inside generic parameter types no longer introduce fictitious `$`
+  bindings or hide real ones. Invalid independent defaults that were accepted
+  because of comment text are now diagnosed at the declaration. Define the
+  referenced name in the declaration's scope or correct the default; a `$name`
+  written only in a comment does not declare a parameter.
 - Two generic `impl` blocks that both give one instance a member of the same
   name, where neither block is more specialized, are an error (`L0409`); the
   first block's member used to win silently. Remove one member, or make one

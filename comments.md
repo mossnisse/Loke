@@ -440,13 +440,377 @@ rather than a wrong answer; the wrong answers it found are in
   like) each recurse through a `#partial switch` of their own, so a form one of
   them forgets is skipped silently, as `first_unresolved_name` skipped slices,
   ranges, `or_else`, and `.(T)` until the review;
-  `declare_poly_stand_ins` scans source text for `$` names instead of walking
-  the parsed `Type_Poly` nodes. Should these recurse through one exhaustive
-  child enumeration?
+  default checking now collects parsed `Type_Poly` names through
+  `pattern_shape`, after a raw-source scan let comments change acceptance (A2
+  below). Should the remaining queries recurse through one exhaustive child
+  enumeration?
 - **The runtime ABI is written twice.** `runtime/loke_rt.h` and the `declare`
   lines in `emit_llvm_runtime.odin` are kept in step by hand. With opaque
   pointers a mismatched parameter list is a silent miscompile, not a link error.
   Generate one from the other, or compare them in a test?
+
+## Compiler architecture audit (2026-09-28)
+
+Reviewed revision `b2cc712`. This is a source-wide structural inventory and a
+targeted trace of the driver, checking/CTFE/generics, ownership/provenance,
+semantic finalization, LLVM emission, runtime interface, and test/build
+harnesses. It is not a proof of every language rule or a full audit of the C
+runtime. The implementation guide remains
+[compiler-architecture.md](compiler-architecture.md).
+
+The architecture fits the current whole-program Windows x64 compiler. Stable
+IDs, arena ownership, one annotated AST, explicit call operations, shared
+constant operations, and a separate toolchain layer are useful decisions.
+The main weakness is that the documented phase contracts are stronger than
+their enforcement. Several consumers still complete semantic state, and
+several temporary states depend on every caller remembering the same rules.
+Strengthening those boundaries has a clearer benefit than adding another IR
+or splitting the whole compiler into Odin packages.
+
+The inventory contains 81 production Odin files and 64,235 physical lines,
+including comments and blank lines, plus six unit-test files. A declaration
+scan found 2,189 production procedures, of which 1,194 are file-private.
+`Compiler` has 107 fields. These are navigation and coupling indicators, not
+defect counts. In particular, the large exhaustive dispatches in the parser,
+checker, clone operation, and backend are not automatically abstractions to
+replace.
+
+| Area | Assessment |
+| --- | --- |
+| Source, parsing, AST | Explicit error nodes, spans, nesting limits, and clone-field classification give a sound foundation. Small semantic queries still use independent partial walks; the raw-source binding scanner found here was removed in A2. |
+| Checker and language features | Central overload ranking and recorded `Call_Operation` variants avoid backend resolution. Positional state and speculative mutation remain distributed across callers. |
+| Generics and CTFE | Definition-site scopes, syntax cloning, and shared constant operations are appropriate. Instance caching, diagnostic rollback, and eager member installation have different commitment rules. |
+| Ownership and provenance | The finite dataflow analyses and dependency worklist are substantial strengths. Rebuilt graphs, retained iteration storage, and cleanup identities carry hidden coupling. |
+| LLVM emission | The file split follows responsibilities and the backend has useful negative tests. Its claimed read-only semantic boundary is currently violated on an ordinary program. |
+| Runtime and toolchain | The versioned C interface and artifact/process separation are appropriate. ABI declarations and runtime-cache identity need stronger validation. |
+| Verification | The corpus covers success, errors, traps, LLVM validity, layout, C hosts, packages, examples, and tutorials. Some architecture tests exercise only part of the real pipeline. |
+
+The following priorities distinguish observed failures from structural risks.
+P1 is the first reliability issue to address; P2 is focused corrective work.
+Previously recorded findings are explicitly identified, rather than counted
+as new discoveries.
+
+### A1 — P1: Constant construction bypasses the evaluator's resource bounds
+
+**Existing defect; allocation paths rechecked.** The large-array failures in
+[known-gaps.md "Gaps"](known-gaps.md#gaps) remain an architectural problem:
+the bounded interpreter is only one way the compiler constructs constants.
+`check_array_literal` builds a full-length expression vector and passes it to
+`fold_aggregate`; `zero_const` and `capacity_const` likewise allocate
+`info.count` constant elements directly in semantic storage, all in
+[src/check_expr.odin](src/check_expr.odin). Those paths do not pass through
+`eval_elements` or the 64 MB scratch budget in [src/eval.odin](src/eval.odin).
+
+Consequently, the compiler can exhaust memory or spend unbounded time before
+the evaluator's safeguards apply. A layout-size limit alone also does not
+bound the much larger host representation of each constant element. The
+documented billion-element crash and maximal-array hang were not rerun during
+this audit.
+
+**Next change:** validate array layout before materialization, check allocation
+failure, and place a checked construction limit at the shared aggregate
+construction boundary. Dense constants that are mostly zero should eventually
+retain a zero/repeat representation instead of manufacturing one host object
+per element. Keep this focused on real constant constructors, not a new
+compiler-wide allocator framework. Verify both direct literals and evaluated
+equivalents, and preserve the existing reproduction until fixed.
+
+### A2 — resolved: Semantic binding was rediscovered from raw source text
+
+**New correctness reproduction of a previously recorded structural concern.**
+`declare_poly_stand_ins` in [src/generic.odin](src/generic.odin) scanned a type's
+source span for `$name`, skipping literals but not comments. The audit
+confirmed that the following unused procedure was accepted:
+
+```odin
+package main;
+f :: proc(x: ^/* $Missing */$T, $N: int = Missing) {}
+main :: proc() {}
+```
+
+Removing only the comment changed compilation from exit 0 to exit 1 with
+`L0315`. The scanner created a fictitious parameter, so
+`check_independent_poly_defaults` treated an erroneous independent default as
+dependent, contrary to [design.md "Default values"](design.md#default-values).
+
+**Fixed:** the source scanner was deleted. Default checking now collects actual
+`Type_Poly` bindings through the existing `pattern_shape` traversal, preserving
+the same pattern forms that inference recognizes. Regression cases in
+[tests/err/poly_default_comments.loke](tests/err/poly_default_comments.loke)
+cover block, line, and nested comments and a fictitious binding shadowing a
+constant. [tests/run/poly_default_binding.loke](tests/run/poly_default_binding.loke)
+covers quotes in comments and dependent defaults through pointers, arrays,
+maps/slices, generic applications, and procedure parameter/result types.
+
+The broader traversal concern remains: `first_unresolved_name`,
+`type_syntax_names`, and `pattern_shape` still implement their own partial
+syntax walks in [src/select.odin](src/select.odin),
+[src/erased.odin](src/erased.odin), and [src/generic.odin](src/generic.odin).
+Use a small exhaustive child enumeration where these queries really share
+traversal; preserve their different stopping and binding rules. Evaluation,
+checking, and control-flow construction need their own traversal semantics.
+Verification should include comments inside types, nested type forms, and
+defaults that genuinely depend on an earlier parameter.
+
+### A3 — P2: LLVM emission still creates semantic symbols
+
+**New, reproduced on the ordinary production pipeline.**
+[compiler-architecture.md "LLVM and toolchain"](compiler-architecture.md#llvm-and-toolchain)
+says that `emit_llvm_module` creates no types or symbols and only mutates the
+layout cache. However, `define_struct` in
+[src/emit_llvm_abi.odin](src/emit_llvm_abi.odin) calls
+`ensure_any_view_fields`, which calls `new_field` twice and writes
+`Type_Info.fields` and `backend_label` in [src/erased.odin](src/erased.odin).
+
+A temporary in-package probe compiled `package main; main :: proc() {}` with
+`compile_program`, validated its entry and exports, and ran
+`finalize_semantics`. The subsequent successful `emit_llvm_module` changed
+the symbol count from **206 to 208** and `any_view`'s field count from **0 to
+2**. No malformed state was injected for this observation.
+
+This is a phase-contract violation, not a demonstrated wrong executable.
+The current layering checks cannot catch it: the emitter calls a semantic
+helper that performs the writes without naming `Checker`. The layout helper
+also has `ensure_*_fields` calls, so checking only direct backend calls would
+leave another route.
+
+**Next change:** install carrier fields during semantic initialization or
+finalization, then make emitter access validate and consume them. Add a
+before/after semantic-state assertion around emission, allowing the documented
+layout cache and diagnostics but excluding new symbols, types, members, or
+registry entries. Repeated identical IR alone is insufficient: the first
+emission can repair state and all later emissions can agree.
+
+### A4 — P2: The emission validator does not establish phase completion
+
+**New, reproduced with deliberate state probes.**
+`validate_emission_dependencies` in
+[src/emission_contract.odin](src/emission_contract.odin) checks existing
+formatter entries but never requires `formatters_ready`; an empty unfinished
+registry passes. It checks `error_count` but not `held_diagnostics`, whose
+errors are deliberately excluded from that count. After compiling and
+finalizing the minimal program, the audit independently observed:
+
+```text
+formatters_ready = false                         -> validation succeeds
+one held error, error_count = 0                  -> validation succeeds
+```
+
+The normal driver currently discovers formatters and releases held
+diagnostics in the correct order. These probes demonstrate missing boundary
+guards, not acceptance of either state through the current CLI. There is also
+no completion fact for the entire provenance/contract analysis. The
+`check_for_emission` unit-test fixture in
+[src/emit_llvm_test.odin](src/emit_llvm_test.odin) checks bodies and the entry
+but omits the whole-program provenance stage and held-diagnostic release.
+Thus successful emission tests do not all establish the production preconditions.
+
+**Next change:** reject unfinished formatter discovery and pending held
+diagnostics; record and require completion of the whole-program semantic
+analyses at the checked-program boundary. Let ordinary emission fixtures run
+those stages, while tests of low-level emitter helpers can construct their
+explicit smaller inputs. Add negative tests for the missing completion facts.
+One clear readiness contract is enough; separate wrapper types for every
+pipeline phase would add little here.
+
+### A5 — P2: Speculation has multiple, incompatible commitment policies
+
+**Existing concern, confirmed in the current call path.**
+`begin_probe`/`end_probe` pair a counter with diagnostic rollback in
+[src/source.odin](src/source.odin), but do not undo semantic mutations.
+`build_generic_candidate` in [src/overload.odin](src/overload.odin) calls
+`instantiate_generic(..., report = false)` without opening that boundary.
+A rejected signature can then truncate diagnostics at depth zero while its
+instance stays cached. `diagnostics_provisional` separately scans silent
+instantiation frames. CTFE's `ensure_proc_typed_for_eval` adds a third policy:
+temporarily commit at depth zero and hold the resulting diagnostics aside.
+
+These rules explain why adding one counter check at a new enrollment site is
+not a complete fix. They also conflict with the implementation guide's blanket
+statement that all diagnostic truncation occurs under speculation. The
+previously fixed enrollment bugs and `probe_emission_state` test are documented
+under [Open questions in the compiler's structure](#open-questions-in-the-compilers-structure).
+
+**Next change:** make signature-cache commitment explicit and distinct from
+runtime dependency enrollment. Keep rollback ownership next to the operation
+that can reject a candidate, and centralize the few enrollment operations
+instead of adding more scattered counter tests. Preserve CTFE's intentional
+body commitment and diagnostics. Test rejected candidates followed by selected
+uses in both orders, with lifecycle contributions, attributes, and defaults.
+A general mutation journal should wait until these narrower rules prove
+insufficient.
+
+### A6 — P2: Region fixed-point iterations retain whole superseded graphs
+
+**New structural finding; no timing or memory regression measured.**
+`build_flow_graph` in [src/cfg.odin](src/cfg.odin) repeatedly calls
+`build_flow_pass` until region facts stop growing. Every graph is allocated in
+the same analysis arena. Replacing the local `graph` pointer does not reclaim
+the preceding graph; `summarize_body` and `analyze_provenance` in
+[src/borrow.odin](src/borrow.odin) reset the arena only after the entire call.
+`prov_seed_regions` in
+[src/cfg_provenance.odin](src/cfg_provenance.odin) also retains projection-path
+slices from the preceding graph, so an early reset would currently be unsafe.
+
+For P graph-building passes, peak scratch retains the sum of all P graphs,
+not just the final one. The work is repeated when global effects, result
+summaries, and final diagnostics each request provenance graphs. This makes
+the documentation's disposable-graph model less memory-bounded than it sounds.
+
+**Next change:** first measure pass counts and peak scratch on a reverse-order
+region-propagation chain. If significant, carry only owned region facts across
+iterations and reclaim the superseded graph storage, or settle those facts on
+one topology. Preserve the monotone fixed point; an arbitrary iteration cap
+would change analysis results. There is no evidence here that a durable MIR
+is necessary.
+
+### A7 — P2: Cleanup identity depends on matching traversal order
+
+**Existing concern, rechecked.** `provider_region_end` in
+[src/cfg.odin](src/cfg.odin) identifies an implicit cleanup by procedure,
+symbol, and an incrementing per-symbol ordinal. The lifecycle mode records
+`cleanup_reset_dead`; provenance rebuilds the walk and expects the same key.
+Explicit reset calls use node identity. Missing keys assert, which is useful,
+but the assertion proves existence rather than that an ordinal still means
+the same exit event after a traversal change.
+
+**Next change:** give cleanup occurrences an explicit identity shared by the
+consumers, or keep the relevant topology long enough to run both analyses on
+it. Start with this specific interface. Separating every CFG event producer
+into a general pass framework would be a much larger change. Verification
+needs multiple exits, nested defers, provider moves, and unreachable paths,
+where one local has several cleanup occurrences.
+
+### A8 — P2: Runtime function signatures have two handwritten authorities
+
+**Existing concern; no ABI mismatch demonstrated.**
+[runtime/loke_rt.h](runtime/loke_rt.h) specifies the C ABI, while
+[src/emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) separately spells
+LLVM declarations. Header static assertions check several C record sizes;
+the layout corpus checks compiler/LLVM agreement. Neither establishes that
+every runtime function's LLVM declaration matches the C compiler's lowering
+of the header. Separate object linking does not supply that signature check.
+
+**Next change:** add one ABI-conformance check using clang's lowering of a
+small C translation unit that references the runtime entry points. Compare
+return types, parameter types, and ABI-relevant attributes against the emitted
+declarations, accounting for the target's aggregate lowering. Add record field
+offset checks where only total size is currently pinned. Start with validation;
+a new interface-definition language or broad binding generator is unnecessary.
+
+### A9 — P2: The runtime-object cache omits build inputs from its identity
+
+**New source-confirmed risk; no stale-cache failure forced.**
+`prebuilt_runtime_objects` in
+[src/emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) selects a directory
+using only `opts.opt_mode`. `prebuilt_current` checks runtime source/header
+timestamps against object timestamps. Compilation also depends on
+`find_clang`, the discovered MSVC/SDK include paths, and the compiler-owned C
+flags, none of which participate in cache validation. Changing `LOKE_CLANG`
+can therefore build the new LLVM module with one compiler while reusing
+runtime objects from another, without any cache miss.
+
+**Next change:** store a small manifest of the effective C build inputs beside
+each cached set and rebuild when it changes. Include the compiler identity,
+target, relevant toolchain roots, flags, and runtime input identity. Keep the
+existing staging/install behavior and the custom-runtime fallback. Verify
+invalidation when the tool override or effective flags change; this does not
+require a general-purpose build cache.
+
+### A10 — P2: Generic member installation commits before applicability settles
+
+**Existing language defects with a common structural cause.** The two generic
+`impl` reproductions in [known-gaps.md "Gaps"](known-gaps.md#gaps) expose eager
+member installation in `install_generic_impls`, `install_one_generic_impl`,
+and `declare_instance_impl_members` in
+[src/generic.odin](src/generic.odin). An instance can exist during package
+`when` selection, before later applicable blocks are registered. Installation
+then treats competing members as declaration conflicts, although the language
+requires specificity and ambiguity to be decided for a use.
+
+**Next change:** retain applicable member candidates until the declaration set
+is stable and resolve their conflicts at the semantic point the spec defines.
+Reuse the existing overload/specificity machinery. Verify both source orders,
+an instance created from a `when`, an unused ambiguous member, and a called
+ambiguous member. Reordering files or rewriting the specification would leave
+the premature commitment intact.
+
+### Structure and simplification work with lower urgency
+
+- **Narrow mutation access before splitting packages.** The single `lokec`
+  package is deliberate, and many file boundaries are already useful. The 107
+  fields of `Compiler` combine build options, source/diagnostics, stores,
+  speculative state, analysis registries, and allocation domains. Small
+  operations for enrollment and finalization would make the important writes
+  auditable. Merely moving those fields into nested records would improve
+  navigation without enforcing a boundary. Keep the current package until a
+  concrete independent consumer justifies an exported API.
+- **Make positional expression inputs explicit.** `Body_Context` and
+  `Function_State` are improvements worth preserving. `in_callee`,
+  `place_position`, and `insert_position` still travel through mutable checker
+  state; `emit_unwind_thunk` also saves and restores a selected subset of
+  emitter fields manually. Narrow parameters for expression position and a
+  documented replay-state boundary would reduce restoration obligations.
+- **Keep one copy of process waiting when that code next changes.**
+  `run_process`/`drain` in
+  [src/emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) and `exec`/`drain`
+  in [tests/corpus_test.odin](tests/corpus_test.odin) duplicate roughly 65 lines
+  of pipe draining and process waiting. A shared internal helper can remove
+  one copy, less package/import overhead, without adding a dependency. The
+  documented busy-loop behavior is a reason to retain the current waiting
+  semantics, not to substitute `os2.process_exec` blindly.
+- **Repair comments that describe removed representations.**
+  [src/ast.odin](src/ast.odin) still describes `.as(T)` as yielding `(T, bool)`
+  immediately above the correct `Option(T)` metadata;
+  [src/slice.odin](src/slice.odin), [src/container.odin](src/container.odin),
+  and [src/erased.odin](src/erased.odin) still warn about pointers into a growing
+  type store, although entries now have stable allocations. Some "first use"
+  comments contradict constructors that already install fields. These are
+  misleading maintenance instructions. Heading-citation checks cannot detect
+  semantic drift inside otherwise valid comments.
+
+There is no evidence for removing a backend abstraction layer, replacing the
+Odin standard library, or adding a compiler framework. The arbitrary-precision
+integer wrapper already delegates to `core:math/big`. Most small feature files
+represent real language rules, not speculative extension points. The concrete
+deletions are the raw-source binding scanner (removed in A2), backend semantic
+repair calls, and one duplicated process runner; their replacements require code, so
+a larger net line-saving estimate would be speculative. No dependency removal
+was identified.
+
+### Recommended order and verification record
+
+1. Address the known constant-allocation failure with focused correctness
+   regressions. The comment/default bug is now fixed with its regressions (A2).
+2. Close emission preparation: settle carrier fields, require completed
+   phases, and test that emission cannot add semantic entities. Include the
+   real production pipeline in that check.
+3. Clarify generic commitment and member applicability, retaining the existing
+   overload engine and CTFE behavior.
+4. Measure graph iteration/storage before changing analysis topology; then
+   improve cleanup identity and scratch ownership where the evidence warrants.
+5. Add the runtime ABI check and cache-input manifest. Do the smaller state,
+   duplication, and comment cleanups alongside relevant changes.
+
+Validation performed on the reviewed implementation:
+
+- `test-all.ps1` passed: **1,010 specification citations**, both layering
+  checks, **100 compiler unit tests** with memory tracking, the vetted compiler
+  build, and **33 integration test functions**. Those integration functions
+  execute the larger case corpora; 33 is not the number of Loke programs.
+- The integration harness reported NASM unavailable and skipped its assembly
+  link coverage. The mutation fuzzer was skipped because `LOKE_TEST_FULL` was
+  unset. The optimization matrix and full fuzzer were not run locally.
+- The two comment/default programs were compiled separately with `-emit-ll`,
+  confirming exit 0 with the comment and exit 1 without it.
+- One temporary in-package audit test ran the actual compilation/finalization
+  path and reported the symbol/field mutation and the two accepted incomplete
+  states described above. It passed with memory tracking and was removed
+  after the observations were recorded. Its successful result confirms the
+  observations, not that those states satisfy the intended contract.
+
+The original audit changed documentation only. A2 was fixed in the follow-up
+described above; the other findings remain open.
 
 ## Open checker-fuzzer findings
 

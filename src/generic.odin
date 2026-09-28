@@ -270,7 +270,11 @@ check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter) {
 		for entry in parameter.names {
 			declare_stand_in(k, stand_ins, entry.name.text, entry.name.span)
 		}
-		declare_poly_stand_ins(k, stand_ins, expr_span(parameter.type))
+		bindings := make([dynamic]Name, context.temp_allocator)
+		pattern_shape(parameter.type, &bindings)
+		for name in bindings {
+			declare_stand_in(k, stand_ins, name.text, name.span)
+		}
 	}
 	for parameter in params {
 		poly := false
@@ -319,39 +323,6 @@ check_poly_default :: proc(k: ^Checker, default: Expr, wanted: Type_Id) {
 declare_stand_in :: proc(k: ^Checker, scope: ^Scope, name: string, span: Span) {
 	id := intern_identifier(k.c, name)
 	scope.names[id] = new_symbol(k.c, Symbol{name = id, span = span, pkg = k.pkg})
-}
-
-// Every `$name` written in `span`. A `$` outside a string or rune literal
-// always binds a name, so spelling is exact here.
-@(private = "file")
-declare_poly_stand_ins :: proc(k: ^Checker, scope: ^Scope, span: Span) {
-	if span.file == NO_FILE || int(span.file) >= len(k.c.sources) {
-		return
-	}
-	text := k.c.sources[span.file].text
-	i, hi := int(span.lo), min(int(span.hi), len(text))
-	for i < hi {
-		ch := text[i]
-		switch {
-		case ch == '"' || ch == '\'' || ch == '`':
-			i += 1
-			for i < hi && text[i] != ch {
-				i += ch != '`' && text[i] == '\\' ? 2 : 1
-			}
-			i += 1
-		case ch == '$':
-			i += 1
-			start := i
-			for i < hi && (text[i] == '_' || ('a' <= text[i] && text[i] <= 'z') || ('A' <= text[i] && text[i] <= 'Z') || ('0' <= text[i] && text[i] <= '9')) {
-				i += 1
-			}
-			if i > start {
-				declare_stand_in(k, scope, text[start:i], Span{file = span.file, lo = u32(start), hi = u32(i)})
-			}
-		case:
-			i += 1
-		}
-	}
 }
 
 // A declaration is a template when its signature binds a `$` name, or when its
@@ -550,8 +521,10 @@ compare_generic_specificity :: proc(a, b: ^Generic_Template) -> int {
 	return 0
 }
 
+// Also collects the parsed bindings for default checking (design.md "Default values"),
+// so comments and literal text cannot introduce parameter names.
 @(private = "file")
-pattern_shape :: proc(e: Expr) -> (specificity: int, has_poly: bool) {
+pattern_shape :: proc(e: Expr, bindings: ^[dynamic]Name = nil) -> (specificity: int, has_poly: bool) {
 	if e == nil {
 		return 0, false
 	}
@@ -559,6 +532,9 @@ pattern_shape :: proc(e: Expr) -> (specificity: int, has_poly: bool) {
 	parts.allocator = context.temp_allocator
 	#partial switch v in e {
 	case ^Type_Poly:
+		if bindings != nil {
+			append(bindings, v.name)
+		}
 		return 0, true
 	case ^Type_Pointer:
 		append(&parts, v.elem)
@@ -587,13 +563,13 @@ pattern_shape :: proc(e: Expr) -> (specificity: int, has_poly: bool) {
 		for arg in v.args {
 			append(&parts, arg.value)
 		}
-		_, has_poly = pattern_shape(v.callee)
+		_, has_poly = pattern_shape(v.callee, bindings)
 	case:
 		return 1, false
 	}
 	specificity = 1
 	for part in parts {
-		part_specificity, part_poly := pattern_shape(part)
+		part_specificity, part_poly := pattern_shape(part, bindings)
 		specificity += part_specificity
 		has_poly ||= part_poly
 	}

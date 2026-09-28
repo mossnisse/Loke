@@ -20,7 +20,23 @@ named :: proc(x: $T, $N: int = LIMIT, $K: type = Point) -> int { return N + size
 Pair :: struct { T: int }
 field :: proc(x: $T, $N: int = Pair{T = 3}.T + size_of(proc(T: int))) -> int { return N; }
 
+// Parsed bindings survive quotes in comments and nested type patterns.
+pointed :: proc(x: ^/* ' */$T, $N: int = size_of(T)) -> int { return N; }
+array_width :: proc(x: [$Count]$T, $N: int = Count * size_of(T)) -> int { return N; }
+map_width :: proc(x: map[$K][]$V, $N: int = size_of(K) + size_of(V)) -> int { return N; }
+Box :: struct($T: type) { value: T }
+boxed_width :: proc(x: Box($T), $N: int = size_of(T)) -> int { return N; }
+callback_width :: proc(f: proc(x: $T) -> $U, $N: int = size_of(T) + size_of(U)) -> int { return N; }
+to_byte :: proc(x: int) -> u8 { return u8(x); }
+
 main :: proc() {
+	value := 1;
+	assert(pointed(&value) == 8);
+	assert(array_width([3]u8{1, 2, 3}) == 3);
+	lookup: map[int][]u8 = {};
+	assert(map_width(lookup) == 9);
+	assert(boxed_width(Box(u8){1}) == 1);
+	assert(callback_width(to_byte) == 9);
 	fmt.println(calls(1), calls(1, 5));
 	fmt.println(per_type(1), per_type(u8(1)), per_type(1));
 	fmt.println(width(1), width(u8(1)), named(1), spelled(1), field(1));
