@@ -157,21 +157,13 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 		if !type_is_supported(e.c, type) || slice_abi_type(e.c, type) != type {
 			return
 		}
-		ensure_slice_fields(e.c, type)
-		info = type_of(e.c, type)
 	} else if info.kind == .Dyn {
 		// The same for a dyn view: one struct per interface application, named by
 		// the read-only variant, whatever capabilities the program spells.
 		if dyn_abi_type(e.c, type) != type {
 			return
 		}
-	} else if info.kind == .Any_View {
-		// A program that imports `core:fmt` without formatting anything never asks
-		// for an `any_view` value, so its two members are still uninstalled when
-		// `core:fmt`'s own body — which does use them — is emitted.
-		ensure_any_view_fields(e.c)
-		info = type_of(e.c, type)
-	} else if info.kind != .Struct && info.kind != .Dyn {
+	} else if info.kind != .Struct && info.kind != .Any_View {
 		return
 	}
 	emitted[type] = true

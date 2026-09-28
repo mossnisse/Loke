@@ -577,7 +577,7 @@ checking, and control-flow construction need their own traversal semantics.
 Verification should include comments inside types, nested type forms, and
 defaults that genuinely depend on an earlier parameter.
 
-### A3 — P2: LLVM emission still creates semantic symbols
+### A3 — resolved: LLVM emission created semantic symbols
 
 **New, reproduced on the ordinary production pipeline.**
 [compiler-architecture.md "LLVM and toolchain"](compiler-architecture.md#llvm-and-toolchain)
@@ -606,7 +606,19 @@ layout cache and diagnostics but excluding new symbols, types, members, or
 registry entries. Repeated identical IR alone is insufficient: the first
 emission can repair state and all later emissions can agree.
 
-### A4 — P2: The emission validator does not establish phase completion
+**Fixed:** slices and containers already install their fields when interned;
+`finalize_semantics` now installs `any_view`'s, and `define_struct` no longer
+calls either installer. `validate_emission_dependencies` requires every
+carrier's fields, so the installers that layout and `zero_const` still reach
+during emission find nothing to do. `emit_llvm_module` compares
+`semantic_extent` (symbols, types, instances, synthesized procedures,
+witnesses, materialized constants, typeids, formatters, lifecycle records, and
+key and ordering policies) before and after, and fails emission when it grew.
+Every emitting test and corpus program now runs under that check; the
+`carrier` case of `emission_rejects_incomplete_registries` covers missing
+fields.
+
+### A4 — resolved: The emission validator did not establish phase completion
 
 **New, reproduced with deliberate state probes.**
 `validate_emission_dependencies` in
@@ -637,6 +649,14 @@ those stages, while tests of low-level emitter helpers can construct their
 explicit smaller inputs. Add negative tests for the missing completion facts.
 One clear readiness contract is enough; separate wrapper types for every
 pipeline phase would add little here.
+
+**Fixed:** `finish_program_analysis` runs the whole-program provenance and
+provider analyses and releases held diagnostics, then records
+`program_analyzed`; `compile_program` and the `check_for_emission` fixture
+both call it, so emission tests now run the production tail. The validator
+rejects a missing `program_analyzed`, an unfinished `formatters_ready`, and any
+held diagnostic. `emission_rejects_incomplete_registries` has a negative case
+for each.
 
 ### A5 — P2: Speculation has multiple, incompatible commitment policies
 
@@ -799,7 +819,7 @@ Odin standard library, or adding a compiler framework. The arbitrary-precision
 integer wrapper already delegates to `core:math/big`. Most small feature files
 represent real language rules, not speculative extension points. The concrete
 deletions are the raw-source binding scanner (removed in A2), backend semantic
-repair calls, and one duplicated process runner; their replacements require code, so
+repair calls (removed in A3), and one duplicated process runner; their replacements require code, so
 a larger net line-saving estimate would be speculative. No dependency removal
 was identified.
 
@@ -810,7 +830,7 @@ was identified.
    with their regressions.
 2. Close emission preparation: settle carrier fields, require completed
    phases, and test that emission cannot add semantic entities. Include the
-   real production pipeline in that check.
+   real production pipeline in that check. Done (A3, A4).
 3. Clarify generic commitment and member applicability, retaining the existing
    overload engine and CTFE behavior.
 4. Measure graph iteration/storage before changing analysis topology; then
@@ -835,7 +855,7 @@ Validation performed on the reviewed implementation:
   after the observations were recorded. Its successful result confirms the
   observations, not that those states satisfy the intended contract.
 
-The original audit changed documentation only. A1 and A2 were fixed in the
+The original audit changed documentation only. A1–A4 were fixed in the
 follow-ups described above; the other findings remain open.
 
 ## Open checker-fuzzer findings

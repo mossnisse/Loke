@@ -74,10 +74,12 @@ The normal compilation path is:
    over the completed program. `resolve_provider_factories` then resolves the
    selected providers' factory signatures, once every package has been checked.
    Last, diagnostics held aside during checking rejoin the list.
+   `finish_program_analysis` runs this step and records `program_analyzed`.
 5. The driver validates the executable entry point and exported names. Then
    `finalize_semantics` freezes runtime `typeid` values, discovers the coherent
-   formatter for each concrete type, and finalizes immutable
-   lifecycle-operation records. Each step is idempotent.
+   formatter for each concrete type, finalizes immutable
+   lifecycle-operation records, and installs `any_view`'s fields, the one
+   carrier whose fields cannot be made with its type. Each step is idempotent.
 6. `emit_package` calls `emit_llvm_module`, which first runs
    `validate_emission_dependencies` to reject an incomplete checked state before
    an emitter is allocated, then produces one textual LLVM module containing
@@ -312,7 +314,10 @@ rediscover during lowering:
 - lifecycle finalization snapshots clone/drop classification and hook IDs.
 
 `emission_contract.odin` verifies that these registries are closed and mutually
-consistent. It never invokes the checker or fills missing state. Local emitter
+consistent, and that the stages feeding them finished: the whole-program
+analyses (`program_analyzed`), formatter discovery, the release of held
+diagnostics, and every carrier's fields. It never invokes the checker or fills
+missing state. Local emitter
 assertions remain a second line of defense, and failed emission returns no
 partial module.
 
@@ -418,7 +423,8 @@ be file-private.
 `emit_llvm_module` is an artifact boundary: it consumes a checked compilation
 and returns module text in memory. It creates no types or symbols; the only
 semantic state it writes is the layout cache `layout.odin` shares with the
-checker. Filesystem and process policy
+checker. It compares `semantic_extent` before and after, so a new symbol, type,
+or registry entry fails emission instead of repairing the program. Filesystem and process policy
 belongs in `emit_llvm_toolchain.odin`. Backend names and temporary values belong
 to `Emitter`, never to semantic symbols: the checker records identities (an
 instance's template and arguments, a compiler-made type's `backend_label`, a

@@ -75,9 +75,14 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 }
 
 // The whole checked program as one LLVM module, in memory.
-emit_llvm_module :: proc(c: ^Compiler) -> (string, bool) {
+emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	context.allocator = virtual.arena_allocator(&c.emission_arena)
 	if !validate_emission_dependencies(c) { return "", false }
+	// Emission reads the checked program; only the layout cache may change.
+	before := semantic_extent(c)
+	defer if ok && semantic_extent(c) != before {
+		module, ok = "", emission_contract_error(c, "emission added to the checked program")
+	}
 	e := make_emitter(c)
 
 	emit_preamble(&e)

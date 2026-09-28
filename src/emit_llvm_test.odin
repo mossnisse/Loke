@@ -27,6 +27,8 @@ check_for_emission :: proc(p: ^Checked, source: string, key := "", mode := Build
 	}
 	check_package_bodies(&k, p.pkg)
 	check_pending_impl_instances(&k)
+	// The production pipeline's own tail, so emission sees what the driver's does.
+	finish_program_analysis(&k)
 	if p.c.build_mode == .Exe && p.c.error_count == 0 { validate_executable(&p.c, p.pkg) }
 }
 
@@ -367,6 +369,10 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		{"lifecycle_incomplete", "no finalized lifecycle operations"},
 		{"lifecycle_hook", "lifecycle hook has no checked procedure"},
 		{"lifecycle_hook_owner", "lifecycle hook has no checked procedure"},
+		{"held", "diagnostics are still held aside"},
+		{"unanalyzed", "whole-program analyses have not completed"},
+		{"formatters", "formatter discovery has not completed"},
+		{"carrier", "carrier type has no installed fields"},
 	}
 	for entry in cases {
 		broken, message := entry[0], entry[1]
@@ -374,6 +380,7 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		c.build_mode = .Obj
 		init_semantic_stores(&c)
 		request_typeid(&c, TYPE_INT)
+		c.program_analyzed = true
 		finalize_semantics(&c)
 		switch broken {
 		case "unfrozen": c.typeid_frozen = false
@@ -408,6 +415,12 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 			operations := c.lifecycle_operations[TYPE_INT]
 			operations.custom_drop = new_symbol(&c, Symbol{kind = .Proc, is_foreign = true, proc_type = TYPE_INT, owner_type = TYPE_BOOL})
 			c.lifecycle_operations[TYPE_INT] = operations
+		case "held":
+			// Out of `error_count`, so only the held list shows it.
+			append(&c.held_diagnostics, Diagnostic{severity = .Error, code = "L0000"})
+		case "unanalyzed": c.program_analyzed = false
+		case "formatters": c.formatters_ready = false
+		case "carrier": type_of(&c, TYPE_ANY_VIEW).fields = nil
 		}
 		testing.expectf(t, !validate_emission_dependencies(&c), "%s registry was accepted at the emission boundary", broken)
 		expect_rejection(t, &c, message)
@@ -514,6 +527,7 @@ main :: proc() {
 		               operations.clone_disabled == type_clone_disabled(c, type),
 		               "the snapshot changed lifecycle semantics")
 	}
+	finalize_semantics(c)
 	before, emitted := emit_llvm_module(c)
 	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
 	// Without the lazy lifecycle sources the IR must not change.

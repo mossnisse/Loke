@@ -56,10 +56,17 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		check_package_bodies(&k, id)
 		check_pending_impl_instances(&k)
 	}
-	analyze_program_provenance(&k)
-	resolve_provider_factories(&k)
-	release_held_diagnostics(c)
+	finish_program_analysis(&k)
 	return root, c.error_count == 0
+}
+
+// The whole-program analyses that follow checking every body. The emission
+// boundary requires the completion fact this records.
+finish_program_analysis :: proc(k: ^Checker) {
+	analyze_program_provenance(k)
+	resolve_provider_factories(k)
+	release_held_diagnostics(k.c)
+	k.c.program_analyzed = true
 }
 
 // Makes a checked program ready for emission. Each step is idempotent.
@@ -67,6 +74,9 @@ finalize_semantics :: proc(c: ^Compiler) {
 	freeze_typeids(c)
 	discover_formatters(c)
 	_ = finalize_lifecycle_operations(c)
+	// The one carrier whose fields cannot be made when its type is: the
+	// predeclared table runs before any symbol exists.
+	ensure_any_view_fields(c)
 }
 
 // ------------------------------------------------------------------ loading --

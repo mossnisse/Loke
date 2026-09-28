@@ -12,6 +12,25 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 	if c.speculation_depth != 0 {
 		return emission_contract_error(c, "emission was requested during speculative checking")
 	}
+	// A held error is out of `error_count` until it is released.
+	if len(c.held_diagnostics) != 0 {
+		return emission_contract_error(c, "diagnostics are still held aside from checking")
+	}
+	if !c.program_analyzed {
+		return emission_contract_error(c, "the whole-program analyses have not completed")
+	}
+	if !c.formatters_ready {
+		return emission_contract_error(c, "formatter discovery has not completed")
+	}
+	// The emitter reads carrier fields; it never installs them.
+	for info in c.types {
+		#partial switch info.kind {
+		case .Any_View, .Slice, .Dynamic_Array, .Map:
+			if len(info.fields) == 0 {
+				return emission_contract_error(c, "a carrier type has no installed fields")
+			}
+		}
+	}
 	if c.build_mode == .Exe && !emission_procedure_available(c, c.entry_point) {
 		return emission_contract_error(c, "an executable has no validated entry procedure")
 	}
@@ -143,6 +162,23 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 		}
 	}
 	return true
+}
+
+// How much the checked program holds: a new symbol (every field and member is
+// one), type, or registry entry changes it.
+Semantic_Extent :: struct {
+	symbols, types, instances, synthesized, witnesses, materialized,
+	typeids, formatters, lifecycle, map_keys, orders: int,
+}
+
+semantic_extent :: proc(c: ^Compiler) -> Semantic_Extent {
+	return {
+		symbols = len(c.symbols), types = len(c.types), instances = len(c.procedure_instances),
+		synthesized = len(c.synth_procs), witnesses = len(c.witness_order),
+		materialized = len(c.materialized_order), typeids = len(c.typeid_order),
+		formatters = len(c.formatters), lifecycle = len(c.lifecycle_operations),
+		map_keys = len(c.map_key_policies), orders = len(c.order_policies),
+	}
 }
 
 @(private = "file")

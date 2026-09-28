@@ -195,6 +195,9 @@ Compiler :: struct {
 	// member selection is allowed through this interface.
 	lifecycle_operations:       map[Type_Id]Lifecycle_Operations,
 	lifecycle_operations_ready: bool,
+	// Set by `finish_program_analysis` once every body is checked and the
+	// whole-program provenance and provider analyses have run.
+	program_analyzed: bool,
 	// An option rather than a rule, because it is target-specific and not part of
 	// the language (design.md "Copy-cost diagnostics"). A copy site reports when it
 	// duplicates at least this many inline bytes, or when its clone may allocate.
