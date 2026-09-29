@@ -1,7 +1,51 @@
-// design.md "String format printing": an `any_view` carries only a pointer and a
-// `typeid`, so erased printing has one formatter per concrete type — the type's
-// own `format` from its owning package, or a compiler-generated one.
+// design.md "String format printing": generated format members and the ordinary
+// Formattable witnesses that erased arguments recover through their typeid.
 package lokec
+
+// A generated method is an ordinary slot candidate. Hypothetical requirements
+// may create its signature, but only a real use enrolls its body and typeid.
+ensure_format_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
+	if identifier_text(k.c, name) != "format" || !type_is_printable(k.c, type) || type_is_untyped(k.c, type) {
+		return
+	}
+	writer, options: Type_Id
+	for pkg in k.c.packages {
+		if pkg.key != STD_FMT { continue }
+		writer, _ = package_type_named(k, package_of(k.c, pkg.id), "Writer")
+		options, _ = package_type_named(k, package_of(k.c, pkg.id), "Options")
+		break
+	}
+	if writer == INVALID_TYPE || options == INVALID_TYPE { return }
+	k.c.runtime_types["Writer"], k.c.runtime_types["Options"] = writer, options
+	id := INVALID_SYMBOL
+	for member in type_of(k.c, type).members {
+		if sym := symbol_of(k.c, member); sym != nil && sym.name == name {
+			if sym.synth != .Standard_Format { return }
+			id = member
+			break
+		}
+	}
+	if id == INVALID_SYMBOL {
+		id = synth_proc(k.c, "format", .Standard_Format, type,
+			[]Type_Id{type, writer, options}, []Param_Mode{.Borrow, .Value, .Value}, INVALID_TYPE, enroll = false)
+		sym := symbol_of(k.c, id)
+		sym.has_receiver, sym.receiver = true, .Borrow
+		add_members(k.c, type, []Symbol_Id{id})
+	}
+	if k.c.speculation_depth == 0 {
+		k.c.format_requested = true
+		request_typeid(k.c, type)
+		info := type_of(k.c, type)
+		if .Format_Enrolled not_in info.contributed {
+			info.contributed += {.Format_Enrolled}
+			append(&k.c.synth_procs, id)
+		}
+	}
+}
+
+type_is_printable :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return type != INVALID_TYPE && type_is_supported(c, type) && !type_is_compile_time_only(c, type)
+}
 
 // A type's inherent `format`, or INVALID_SYMBOL when the compiler generates one.
 @(private = "file")
@@ -12,10 +56,10 @@ formatter_of :: proc(c: ^Compiler, type, writer, options: Type_Id, reported: ^ma
 	}
 	for member in info.members {
 		sym := symbol_of(c, member)
-		if sym == nil || sym.synth != .None || sym.generic || identifier_text(c, sym.name) != "format" {
+		if sym == nil || sym.synth != .None || sym.bound_excluded || identifier_text(c, sym.name) != "format" {
 			continue
 		}
-		if formatter_signature_ok(sym, type, writer, options) {
+		if formatter_signature_ok(c, sym, type, writer, options) {
 			return member
 		}
 		// design.md gives the name to the protocol, so a `format` that cannot
@@ -51,21 +95,38 @@ discover_formatters :: proc(c: ^Compiler) {
 	reported := make(map[Span]bool, context.temp_allocator)
 	for index in 0 ..< len(c.types) {
 		type := Type_Id(index)
-		if hook := formatter_of(c, type, writer, options, &reported); hook != INVALID_SYMBOL {
-			c.formatters[type] = hook
+		_ = formatter_of(c, type, writer, options, &reported)
+	}
+	k := Checker{c = c}
+	defer delete(k.nil_uses)
+	for pkg in c.packages {
+		if pkg.key != STD_FMT { continue }
+		k.pkg, k.lookup_pkg, k.scope = pkg.id, pkg.id, pkg.scope
+		view, exists := package_type_named(&k, package_of(c, pkg.id), "Format_View")
+		if !exists { return }
+		c.runtime_types["Format_View"] = view
+		dyn := underlying_info(c, view)
+		iface := interface_info_for(&k, dyn.dyn_interface)
+		for type in c.typeid_order {
+			if !type_is_printable(c, type) { continue }
+			c.formatters[type] = request_witness(&k, iface, type, nil, no_span())
 		}
+		break
 	}
 }
 
 // The thunk passes the caller's own storage, so the receiver must be a borrow
 // of the type itself, and nothing is given back.
 @(private = "file")
-formatter_signature_ok :: proc(sym: ^Symbol, subject, writer, options: Type_Id) -> bool {
-	if !sym.has_receiver || (sym.receiver != .Borrow && sym.receiver != .Value) {
+formatter_signature_ok :: proc(c: ^Compiler, sym: ^Symbol, subject, writer, options: Type_Id) -> bool {
+	if sym.generic || !sym.has_receiver || (sym.receiver != .Borrow && sym.receiver != .Value) {
 		return false
 	}
+	info := type_of(c, sym.proc_type)
+	if info == nil || info.convention != "" { return false }
 	return len(sym.params) == 3 && sym.result == INVALID_TYPE &&
-		sym.params[0] == subject && sym.params[1] == writer && sym.params[2] == options
+		sym.params[0] == subject && sym.params[1] == writer && sym.params[2] == options &&
+		symbol_param_mode(c, sym, 1) == .Value && symbol_param_mode(c, sym, 2) == .Value
 }
 
 // The compiler-owned half of `core:fmt`, reachable only from inside it:
@@ -73,7 +134,7 @@ formatter_signature_ok :: proc(sym: ^Symbol, subject, writer, options: Type_Id) 
 //   stdout_writer() -> Writer
 //   stderr_writer() -> Writer
 //   write_bytes(w: Writer, text: string_view)
-//   format_any(value: any_view, w: Writer, options: Options)
+//   format_view(value: any_view) -> dyn Formattable
 check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
 	writer, has_writer := local_type_named(k, "Writer")
@@ -92,8 +153,10 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		result = writer
 	case .Fmt_Write_Bytes:
 		wanted = []Type_Id{writer, TYPE_STRING_VIEW}
-	case .Fmt_Format_Any:
-		wanted = []Type_Id{TYPE_ANY_VIEW, writer, options}
+	case .Fmt_Format_View:
+		wanted = []Type_Id{TYPE_ANY_VIEW}
+		result, _ = local_type_named(k, "Format_View")
+		k.c.runtime_types["Format_View"] = result
 		if k.c.speculation_depth == 0 {
 			k.c.format_requested = true
 		}

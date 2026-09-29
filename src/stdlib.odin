@@ -90,16 +90,16 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// (design.md "`unsafe.transmute`"):
 		contribute_builtin(c, pkg, "transmute", .Unsafe_Transmute)
 	case STD_FMT:
-		// design.md "String format printing": the library owns the protocol,
+		// design.md "String format printing": the library owns Formattable,
 		// writer, options, and `print` family. The compiler owns the process sinks
-		// and the erased per-`typeid` dispatch — the one thing a Loke procedure
+		// and recovering a witness by `typeid` — the one thing a Loke procedure
 		// can't express, since an `any_view` carries only a pointer and a `typeid`.
 		// Package-private, because `core:fmt` names them unqualified and nothing
 		// outside it should reach the dispatch table.
 		contribute_builtin(c, pkg, "stdout_writer", .Fmt_Stdout_Writer, public = false)
 		contribute_builtin(c, pkg, "stderr_writer", .Fmt_Stderr_Writer, public = false)
 		contribute_builtin(c, pkg, "write_bytes", .Fmt_Write_Bytes, public = false)
-		contribute_builtin(c, pkg, "format_any", .Fmt_Format_Any, public = false)
+		contribute_builtin(c, pkg, "format_view", .Fmt_Format_View, public = false)
 		// `fmt.to_string(allocator, ...)` needs the same primitive `core:strings`
 		// gets below. Contributed twice rather than imported because `core:fmt` is
 		// in almost every program: importing `core:strings` for one call measured

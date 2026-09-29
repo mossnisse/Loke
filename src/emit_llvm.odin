@@ -31,9 +31,6 @@ Emitter :: struct {
 	pending: [dynamic]string,
 	// Thunks generated mid-body, flushed at the end of the module.
 	pending_thunks: [dynamic]string,
-	// The spilled `format_any` writer and options, shared by nested dispatch.
-	fmt_writer:  string,
-	fmt_options: string,
 	// Interned per type or per name, so each is emitted once.
 	container_ops: map[Type_Id]string,
 	// The same tables with no element clone: an owned element relocates in.

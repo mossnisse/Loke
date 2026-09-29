@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- An inherent `format` must match `fmt.Formattable`'s concrete slot. Generic
+  format methods and methods borrowing or mutating the writer/options arguments
+  are now diagnosed. Use `proc(self: ^, writer: fmt.Writer, options: fmt.Options)`;
+  plain `self` remains accepted. Previously these could silently use default
+  formatting or emit an invalid call.
 - Comments inside generic parameter types no longer introduce fictitious `$`
   bindings or hide real ones. Invalid independent defaults that were accepted
   because of comment text are now diagnosed at the declaration. Define the
@@ -42,6 +47,9 @@ checklist.
 
 ### Added
 
+- `fmt.Formattable` is the structural interface used by printing. Custom and
+  compiler-generated `format` methods support generic constraints and borrowed
+  `dyn fmt.Formattable` views; mixed variadic arguments keep their existing API.
 - Six tutorial lessons cover borrowing and lifetimes, compile-time evaluation,
   allocator use, resource ownership, default allocator providers, and reflection
   with custom formatting. The core route reaches a command-line tool before

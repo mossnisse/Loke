@@ -465,7 +465,15 @@ Low-level string indices are byte offsets throughout; Unicode procedures state t
 
 #### String format printing
 
-Printing uses the library protocol `value.format(writer, options)`. A type may define how it is printed by declaring an inherent `format` method in the same package as the type:
+Printing uses `core:fmt`'s structural `Formattable` interface:
+
+```odin
+Formattable :: interface($Self: type) {
+	slot format: proc(self: ^, writer: Writer, options: Options);
+}
+```
+
+The slot borrows the receiver without copying or consuming it. An inherent method with plain `self` or `self: ^` satisfies it. A type may define how it is printed by declaring that method in the same package as the type:
 
 ```odin
 Suit :: enum { Clubs, Diamonds, Hearts, Spades }
@@ -480,7 +488,11 @@ impl Card {
 fmt.println(Card{7, .Hearts}); // 7 of Hearts
 ```
 
-Each concrete type has one printed form throughout the program. Declaring more than one eligible inherent `format` method for a type is an error; the compiler provides the format for other printable types. An extension in another package may declare and call its own `format` method, but `print` does not use it.
+Each concrete type has one printed form throughout the program. Declaring more than one eligible inherent `format` method for a type is an error; the compiler provides a default `format` method for other printable runtime types, including scalars and aggregates. These methods satisfy `fmt.Formattable(T)` and support ordinary `dyn fmt.Formattable` views. A generated struct formatter prints only public fields. An extension in another package may declare and call its own `format` method, but `print` does not use it.
+
+The print procedures accept mixed `..any_view` arguments. For each non-nil erased argument, they recover the concrete type's `Formattable` witness and call its `format` slot with the borrowed value, writer, and options. The same method is selected by an explicit `(dyn fmt.Formattable)(&value)` conversion. A nil `any_view` prints `<nil>`.
+
+For ordinary member lookup, a visible local extension named `format` takes precedence over the generated default. Interface slot selection remains independent of the caller's extensions. An inherent `format` must match the slot, including the writer and options parameter modes; a generic method does not supply this concrete slot.
 
 ### String views
 
@@ -2888,7 +2900,7 @@ Growable_Sequence :: interface($Self: type) {
 - `Mutable_Iterable` describes mutable traversal, met by a container's `iter_mut(self: inout)` and a mutable view's `iter_mut(self)` alike. Generic indexed mutation uses `Mutable_Sequence`.
 - An owned iterator has `Item = Element`, so `Iterator(Self.Iterator, Self.Iterator.Item)` also accepts it.
 
-Three capabilities have no catalogue interface. Formatting is the `value.format(writer, options)` protocol in `core:fmt`. UTF-8 text is its concrete `string`/`string_view` type. Maps are constrained by their concrete `map[K]V` shape: a map's `Element` is its `(key: K, value: V)` entry, so a map satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet.
+Formatting has its own `Formattable` interface in `core:fmt`, described under [String format printing](#string-format-printing). Two capabilities have no catalogue interface. UTF-8 text is its concrete `string`/`string_view` type. Maps are constrained by their concrete `map[K]V` shape: a map's `Element` is its `(key: K, value: V)` entry, so a map satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet.
 
 Built-in satisfaction follows the operations the language already defines:
 

@@ -84,8 +84,10 @@ make these compile-time descriptors runtime values.
 ## Give a type a printed representation
 
 A custom format method avoids exposing fields merely to make them printable.
-It uses the same structural approach as interfaces: provide the required
-signature, and `fmt` finds it.
+`fmt` defines a structural interface named `Formattable`, with one slot:
+`format(self: ^, writer: fmt.Writer, options: fmt.Options)`. Providing that
+method satisfies the interface; no registration or explicit implementation
+declaration is needed.
 
 ```odin file=custom_format.loke
 package main;
@@ -95,19 +97,29 @@ import "core:fmt";
 Vector :: struct { x, y: f64 }
 
 impl Vector {
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) {
 		fmt.concat_to(writer, "(", self.x, ", ", self.y, ")");
 	}
 }
 
 main :: proc() {
-	fmt.println("position:", Vector{3, 4});
+	static_assert(fmt.Formattable(Vector));
+	position := Vector{3, 4};
+	fmt.println("position:", position);
+	view := (dyn fmt.Formattable)(&position);
+	fmt.println("through the interface:", view);
 }
 ```
 
 ```text output=custom_format
 position: (3, 4)
+through the interface: (3, 4)
 ```
+
+`self: ^` borrows the vector without copying it. Plain `self` also satisfies
+this slot. The `dyn` view borrows `position`, so it cannot outlive that value.
+Both calls reach the same method: `println` accepts mixed arguments as
+`any_view`, then uses each concrete type's `Formattable` interface to print it.
 
 `writer` is a borrowed output destination. Write to it so the method works
 whether `fmt` targets a terminal, a string, or another sink. Calling
@@ -119,7 +131,14 @@ default formatting for its coordinates and ignores `options`; a type needing
 caller-controlled numeric formatting can forward those options through the
 library's `*_with` procedures.
 
-The format protocol itself is distinct from an interface declaration. See
+The compiler supplies default `format` methods for other printable types,
+so `fmt.Formattable(int)` is true too. A default struct formatter prints only
+public fields. Custom formatting belongs in the type's own package so that
+every caller sees the same representation.
+
+You can also constrain a generic procedure with `where fmt.Formattable(T)`
+and call its `format` slot, just as with the interfaces in the generics lesson.
+See
 [standard-library.md "core:fmt"](../standard-library.md#corefmt) for the exact
 signature and formatting options, and
 [design.md "Compile-time reflection"](../design.md#compile-time-reflection)

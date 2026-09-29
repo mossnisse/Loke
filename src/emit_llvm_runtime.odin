@@ -4,10 +4,10 @@ package lokec
 import "core:fmt"
 import "core:strings"
 
-// design.md "String format printing": formatter thunks per `typeid`, kept out of
-// the public `Type_Info` so `base:runtime` needs no `core:fmt`.
-FMT_THUNKS :: "@.loke.fmt_thunks"
-FMT_THUNK_COUNT :: "@.loke.fmt_thunks.count"
+// design.md "String format printing": Formattable witnesses per typeid. A
+// formatted panic without core:fmt uses primitive thunks and needs no import.
+FMT_ENTRIES :: "@.loke.formatters"
+FMT_ENTRY_COUNT :: "@.loke.formatters.count"
 TYPE_NAMES :: "@.loke.type_names"
 
 @(private)
@@ -393,8 +393,8 @@ fmt_thunk_name :: proc(e: ^Emitter, type: Type_Id) -> string {
 	return fmt.aprintf("@loke.f.%d", typeid_value(e.c, type))
 }
 
-// One generated formatter per requested printable type, then the table that
-// dispatches an erased value to it.
+// Runtime-ABI wrappers for recursive aggregate formatting, and a table of
+// ordinary Formattable witnesses (primitive thunks without core:fmt).
 @(private)
 emit_format_thunks :: proc(e: ^Emitter) {
 	if !e.c.format_requested {
@@ -411,7 +411,8 @@ emit_format_thunks :: proc(e: ^Emitter) {
 			continue
 		}
 		emit_one_format_thunk(e, type)
-		entries[id] = fmt_thunk_name(e, type)
+		witness := e.c.formatters[type]
+		entries[id] = witness != nil ? e.witness_names[witness] : fmt_thunk_name(e, type)
 	}
 
 	// Private `typeid` names, so printing needs no `base:runtime` import.
@@ -424,7 +425,7 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	}
 
 	b := strings.builder_make()
-	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x ptr] [", FMT_THUNKS, count + 1)
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x ptr] [", FMT_ENTRIES, count + 1)
 	for entry, index in entries {
 		if index > 0 {
 			strings.write_string(&b, ",")
@@ -432,7 +433,7 @@ emit_format_thunks :: proc(e: ^Emitter) {
 		fmt.sbprintf(&b, " ptr %s", entry)
 	}
 	strings.write_string(&b, " ]\n")
-	fmt.sbprintf(&b, "%s = private unnamed_addr constant i64 %d\n", FMT_THUNK_COUNT, count)
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant i64 %d\n", FMT_ENTRY_COUNT, count)
 	strings.write_string(&b, strings.concatenate({
 		PANIC_OPTIONS, " = private unnamed_addr constant { i64, i8, [7 x i8] } { i64 10, i8 0, [7 x i8] zeroinitializer }\n",
 	}))
@@ -462,7 +463,11 @@ emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	defer finish_pending_thunk(e, frame)
 
 	open_function(e, "define private void %s(ptr %%data, ptr %%w, ptr %%o)", fmt_thunk_name(e, type))
-	emit_format_body(e, type, "%data")
+	if witness := e.c.formatters[type]; witness != nil {
+		emit_format_witness_call(e, e.witness_names[witness], "%data", "%w", "%o")
+	} else {
+		emit_format_body(e, type, "%data")
+	}
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
@@ -472,12 +477,6 @@ emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 emit_format_literal :: proc(e: ^Emitter, text: string) {
 	global := text_literal_global(e, text)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %d)", global, len(text))
-}
-
-// A compile-time-only type has no runtime value to print.
-@(private = "file")
-type_is_printable :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type != INVALID_TYPE && type_is_supported(c, type) && !type_is_compile_time_only(c, type)
 }
 
 @(private = "file")
@@ -491,25 +490,6 @@ emit_format_call :: proc(e: ^Emitter, type: Type_Id, address: string) {
 
 @(private = "file")
 emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
-	// A `format` declared in the type's own package is its formatter.
-	if hook := e.c.formatters[type]; hook != INVALID_SYMBOL {
-		receiver_type, receiver := "ptr", address
-		if hook_sym := symbol_of(e.c, hook);
-		   hook_sym == nil || !param_mode_is_pointer(symbol_param_mode(e.c, hook_sym, 0)) {
-			receiver_type = llvm_type(e, type)
-			receiver = load(e, receiver_type, address)
-		}
-		writer := load_place(e, e.c.runtime_types["Writer"], "%w")
-		options := load_place(e, e.c.runtime_types["Options"], "%o")
-		fmt.sbprintfln(
-			&e.b, "  call void %s(%s %s, %s %s, %s %s)",
-			symbol_name(e, hook),
-			receiver_type, receiver,
-			llvm_type(e, e.c.runtime_types["Writer"]), writer,
-			llvm_type(e, e.c.runtime_types["Options"]), options,
-		)
-		return
-	}
 	// A `distinct` type prints as the shape it wraps.
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
@@ -638,7 +618,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 		if variant != TYPE_VOID {
 			emit_format_literal(e, "(")
 			payload := gep_field(e, llvm_type(e, under), slot, 0)
-			emit_format_body(e, variant, payload)
+			emit_format_call(e, variant, payload)
 			emit_format_literal(e, ")")
 		}
 		branch(e, done)
@@ -651,7 +631,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 // A `typeid` prints its type's name, or its number when it has none.
 @(private = "file")
 emit_format_type_name :: proc(e: ^Emitter, id: string) {
-	safe, _ := typeid_index(e, id, FMT_THUNK_COUNT)
+	safe, _ := typeid_index(e, id, FMT_ENTRY_COUNT)
 	view := gep_at(e, STRING_VIEW_TYPE, TYPE_NAMES, safe)
 	data := load(e, "ptr", view)
 	stride := gep_field(e, STRING_VIEW_TYPE, view, STRING_LEN)
@@ -865,27 +845,24 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 %s)", writer, data, length)
 		return "0"
 
-	case .Fmt_Format_Any:
+	case .Fmt_Format_View:
 		view := emit_expr(e, v.bound[0])
 		storage := llvm_type(e, TYPE_ANY_VIEW)
 		data := extract(e, storage, view, ANY_VIEW_DATA)
 		id := extract(e, storage, view, ANY_VIEW_ID)
-		writer := spill_value(e, e.c.runtime_types["Writer"], emit_expr(e, v.bound[1]))
-		options := spill_value(e, e.c.runtime_types["Options"], emit_expr(e, v.bound[2]))
-		saved_w, saved_o := e.fmt_writer, e.fmt_options
-		e.fmt_writer, e.fmt_options = writer, options
-		emit_format_dispatch_at(e, data, id, writer, options)
-		e.fmt_writer, e.fmt_options = saved_w, saved_o
-		return "0"
+		safe, _ := typeid_index(e, id, FMT_ENTRY_COUNT)
+		witness := load(e, "ptr", gep_at(e, "ptr", FMT_ENTRIES, safe))
+		first := insert(e, llvm_type(e, v.type), "undef", "ptr", data, DYN_DATA)
+		return insert(e, llvm_type(e, v.type), first, "ptr", witness, DYN_WITNESS)
 	}
 	return "0"
 }
 
-// Dispatches an erased value to its thunk, printing `<nil>` for no thunk.
+// Dispatches an erased value through the table, printing `<nil>` for no entry.
 @(private = "file")
 emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) {
-	safe, _ := typeid_index(e, id, FMT_THUNK_COUNT)
-	thunk := load(e, "ptr", gep_at(e, "ptr", FMT_THUNKS, safe))
+	safe, _ := typeid_index(e, id, FMT_ENTRY_COUNT)
+	thunk := load(e, "ptr", gep_at(e, "ptr", FMT_ENTRIES, safe))
 	missing := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, thunk)
 	none, call, done := new_label(e, "fmt.none"), new_label(e, "fmt.call"), new_label(e, "fmt.done")
@@ -895,9 +872,24 @@ emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) 
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 5)", writer, nil_text)
 	branch(e, done)
 	place_label(e, call)
-	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)", thunk, data, writer, options)
+	if _, uses_interface := e.c.runtime_types["Format_View"]; uses_interface {
+		emit_format_witness_call(e, thunk, data, writer, options)
+	} else {
+		fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)", thunk, data, writer, options)
+	}
 	branch(e, done)
 	place_label(e, done)
+}
+
+// The same slot ABI ordinary dyn calls use, with the C runtime's spilled
+// writer/options loaded back into Loke values.
+@(private = "file")
+emit_format_witness_call :: proc(e: ^Emitter, witness, data, writer, options: string) {
+	target := emit_witness_slot(e, witness, 0)
+	w, o := e.c.runtime_types["Writer"], e.c.runtime_types["Options"]
+	w_value, o_value := load_place(e, w, writer), load_place(e, o, options)
+	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, %s %s, %s %s)", target, data,
+		llvm_type(e, w), w_value, llvm_type(e, o), o_value)
 }
 
 @(private = "file")
@@ -1197,6 +1189,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_adapter(e, symbol, name)
 		case .Standard_Len, .Standard_Cap, .Standard_Hash:
 			emit_synth_standard_customization(e, symbol, name)
+		case .Standard_Format:
+			emit_synth_format(e, symbol, name)
 		case .Range_Iter, .Range_Iter_Reverse,
 		     .Array_Iter, .Array_Iter_Reverse,
 		     .Dynamic_Iter, .Dynamic_Iter_Reverse, .Map_Iter,
@@ -1232,6 +1226,21 @@ emit_synth_procs :: proc(e: ^Emitter) {
 		}
 		fmt.sbprintln(&e.b, "")
 	}
+}
+
+@(private = "file")
+emit_synth_format :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	w, o := llvm_type(e, symbol.params[1]), llvm_type(e, symbol.params[2])
+	open_function(e, "define %svoid %s(ptr %%data, %s %%writer, %s %%options)", llvm_linkage(name), name, w, o)
+	fmt.sbprintfln(&e.b, "  %%w = alloca %s", w)
+	fmt.sbprintfln(&e.b, "  %%o = alloca %s", o)
+	store(e, symbol.params[1], "%writer", "%w")
+	store(e, symbol.params[2], "%options", "%o")
+	emit_format_body(e, symbol.owner_type, "%data")
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
 }
 
 // `U.name` as a value. The payload arrives owned, so it becomes the variant

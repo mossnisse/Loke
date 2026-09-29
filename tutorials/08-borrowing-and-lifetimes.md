@@ -132,7 +132,7 @@ main :: proc() {
 error[L0526]: this pointer cannot be returned: `local` ends when this procedure returns
  --> escaping_local.loke:5:9
    |
-5 | 	return &local;
+5 | 	return &local; // error, local would go out of scope
    | 	       ^^^^^^
   = note: escaping_local.loke:4:2: `local` is declared here
   = note: escaping_local.loke:5:9: the pointer is created here

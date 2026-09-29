@@ -1,0 +1,20 @@
+package main;
+import "core:fmt";
+
+// A format method must match the interface, including parameter modes.
+Mutable_Writer :: struct {}
+impl Mutable_Writer {
+	format :: proc(self, writer: inout fmt.Writer, options: fmt.Options) {}
+}
+Borrowed_Options :: struct {}
+impl Borrowed_Options {
+	format :: proc(self, writer: fmt.Writer, options: ^fmt.Options) {}
+}
+Generic_Method :: struct {}
+impl Generic_Method {
+	format :: proc(self, writer: fmt.Writer, options: $T) {}
+}
+
+main :: proc() {
+	fmt.println(Mutable_Writer{}, Borrowed_Options{}, Generic_Method{});
+}

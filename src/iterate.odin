@@ -57,6 +57,7 @@ Synth_Kind :: enum {
 	Standard_Len,
 	Standard_Cap,
 	Standard_Hash,
+	Standard_Format,
 	Range_Iter,
 	Range_Iter_Reverse,
 	Range_Next,

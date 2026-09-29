@@ -3255,6 +3255,9 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
+		case .Fmt_Format_View:
+			// The interface view borrows exactly what the erased input borrows.
+			return walk_flow_expr(graph, v.bound[0])
 		case .New, .New_Clone, .Try_New, .Try_New_Clone:
 			for argument in v.bound {
 				if argument != nil {

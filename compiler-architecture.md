@@ -77,7 +77,7 @@ The normal compilation path is:
    `finish_program_analysis` runs this step and records `program_analyzed`.
 5. The driver validates the executable entry point and exported names. Then
    `finalize_semantics` freezes runtime `typeid` values, discovers the coherent
-   formatter for each concrete type, finalizes immutable
+   `fmt.Formattable` witness for each printable concrete type, finalizes immutable
    lifecycle-operation records, and installs `any_view`'s fields, the one
    carrier whose fields cannot be made with its type. Each step is idempotent.
 6. `emit_package` calls `emit_llvm_module`, which first runs
@@ -317,7 +317,8 @@ rediscover during lowering:
 - erased interface witnesses store concrete slot targets;
 - runtime type identities are requested symbolically and numbered by
   `freeze_typeids`;
-- formatter discovery selects one coherent formatter per concrete type;
+- formatter discovery records the ordinary `fmt.Formattable` witness for each
+  printable concrete type; generated defaults are ordinary synthesized methods;
 - lifecycle finalization snapshots clone/drop classification and hook IDs.
 
 `emission_contract.odin` verifies that these registries are closed and mutually

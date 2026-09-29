@@ -403,6 +403,10 @@ Writer :: dyn mut Sink;
 Options :: struct { base: int, uppercase: bool }
 DEFAULT_OPTIONS :: Options{10, false};
 
+Formattable :: interface($Self: type) {
+	slot format: proc(self: ^, writer: Writer, options: Options);
+}
+
 print(args: ..any_view)
 println(args: ..any_view)
 eprint(args: ..any_view)
@@ -418,6 +422,19 @@ to_string(allocator: Allocator, args: ..any_view) -> string
 A `Writer` borrows its sink: any record with a `write(self: inout, bytes:
 []u8)` becomes one with `(fmt.Writer)(&mut sink)`, and the process streams are
 `stdout()` and `stderr()`. Formatting through a nil `Writer` panics.
+
+`Formattable` describes a value's printed representation. Declare an inherent
+`format(self, writer: fmt.Writer, options: fmt.Options)` method, or use
+`self: ^` to make the borrow explicit. The compiler supplies defaults for other
+printable runtime types, so both custom methods and defaults satisfy
+`fmt.Formattable(T)`. A `(dyn fmt.Formattable)(&value)` view borrows the value
+and exposes the same slot that printing calls. Formatting does not copy or
+consume the receiver, including a move-only value.
+
+The variadic procedures retain `..any_view` so callers can mix types and forward
+arguments. Internally each erased value becomes a `dyn Formattable` view and
+is formatted through its slot. A nil `any_view` prints `<nil>`. Extensions in
+other packages do not change a type's printed representation.
 
 Arguments are separated by one space, except by `concat_to`, which writes them
 back to back for a `format` method or a line whose punctuation is its own.

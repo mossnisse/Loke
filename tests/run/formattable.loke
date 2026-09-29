@@ -1,0 +1,57 @@
+package main;
+
+import "core:fmt";
+
+// design.md "String format printing": defaults and custom methods satisfy the
+// same interface, including constraints, explicit views, and erased printing.
+Point :: struct { @(public) x: int, hidden: int }
+Token :: move_only struct { number: int }
+
+impl Token {
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) {
+		fmt.concat_to(writer, "#");
+		fmt.format_to_with(writer, options, self.number);
+	}
+}
+
+Label :: struct { number: int }
+Result :: union { value: Label, absent: }
+impl Label {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.concat_to(writer, "label:");
+		fmt.format_to_with(writer, options, self.number);
+	}
+}
+
+show :: proc(value: ^$T) where fmt.Formattable(T) {
+	value^.format(fmt.stdout(), fmt.DEFAULT_OPTIONS);
+	fmt.println("");
+}
+
+forward :: proc(args: ..any_view) { fmt.println(..args); }
+
+main :: proc() {
+	static_assert(fmt.Formattable(int));
+	static_assert(fmt.Formattable(Point));
+	static_assert(fmt.Formattable(Token));
+	number := 42;
+	point := Point{3, 9};
+	token := Token{255};
+	show(&number);
+	show(&point);
+	show(&token);
+	view := (dyn fmt.Formattable)(&token);
+	view.format(fmt.stdout(), fmt.Options{base = 16, uppercase = true});
+	fmt.println("");
+	fmt.println(view, token, point);
+	default_view := (dyn fmt.Formattable)(&number);
+	fmt.println(default_view);
+	forward("mixed", token, Label{7});
+	erased: any_view = token;
+	fmt.println(erased);
+	fmt.println([?]Label{{1}, {2}});
+	result: Result = .value(Label{8});
+	fmt.println(result);
+	empty: any_view = {};
+	fmt.println(empty);
+}

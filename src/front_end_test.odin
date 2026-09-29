@@ -315,6 +315,8 @@ interface_probes_do_not_register_emission_dependencies :: proc(t: ^testing.T) {
 import "base:runtime";
 Writer :: struct {}
 Options :: struct {}
+Formattable :: interface($Self: type) { slot format: proc(self: ^, writer: Writer, options: Options); }
+Format_View :: dyn Formattable;
 Record :: struct { value: int }
 Tag :: struct { label: string }
 Sized :: interface($T: type) { slot size: proc(self) -> int; }
@@ -324,6 +326,7 @@ TABLE :: [2]int{1, 2};
 identity :: proc(value: $T) -> typeid { return typeid_of(T); }
 call_with :: proc(value: Record, f: proc(x: int) -> int) -> int { return f(value.value); }
 Probe :: interface($T: type) {
+    Formattable(T);
     (value: T) identity(value) -> typeid;
     (tag: Tag) tag.clone() -> Tag;
     (value: T) call_with(value, proc(x: int) -> int { hits: static int = 0; hits += x; a: Tag = {}; b := a; return hits; }) -> int;
@@ -331,7 +334,7 @@ Probe :: interface($T: type) {
     &TABLE -> ^[2]int;
     typeid_of(T) -> typeid;
     type_info_of(typeid_of(T)) -> _;
-    (value: any_view, writer: Writer, options: Options) format_any(value, writer, options) -> _;
+    (value: any_view) format_view(value) -> Format_View;
 }
 Nested :: interface($T: type) { Probe(T); }
 Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
@@ -383,7 +386,8 @@ use_dependencies :: proc(value: ^Record, erased: any_view, writer: Writer, optio
     view := (dyn Sized)(value);
     address := &TABLE;
     info := type_info_of(typeid_of(Record));
-    format_any(erased, writer, options);
+    view_to_format := format_view(erased);
+    value^.format(writer, options);
 }`
 	file_id := add_source(&p.c, "<real-use>", real_source)
 	tokens := lex(&p.c, file_id)
@@ -405,6 +409,8 @@ use_dependencies :: proc(value: ^Record, erased: any_view, writer: Writer, optio
 	               "a real call did not commit the probed generic body and its caller")
 	testing.expect(t, after.format_requested && after.type_info_requested,
 	               "real uses did not request the formatter and reflection tables")
+	testing.expect(t, after.synth_procs == before.synth_procs + 1,
+	               "a real format call did not enroll its probed default method")
 }
 
 @(test)

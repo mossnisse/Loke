@@ -812,6 +812,7 @@ check_slot_requirement :: proc(
 // extensions from `owner_pkg`, the slot's interface package. Shared with witness
 // construction so `dyn` selects what satisfaction promised.
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
+	ensure_format_member(k, subject, name)
 	ensure_iteration_members(k, subject)
 	ensure_item_member(k, subject)
 	ensure_lifecycle_members(k, subject, name)

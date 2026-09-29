@@ -1,10 +1,13 @@
-@.loke.fmt_thunks = private unnamed_addr constant [4 x ptr] [ ptr null, ptr @loke.f.1, ptr @loke.f.2, ptr @loke.f.3 ]
-@.loke.fmt_thunks.count = private unnamed_addr constant i64 3
+@.loke.formatters = private unnamed_addr constant [4 x ptr] [ ptr null, ptr @loke.w.Formattable.Money, ptr @loke.w.Formattable.Point, ptr @loke.w.Formattable.int ]
+@.loke.formatters.count = private unnamed_addr constant i64 3
 @.loke.type_names = private unnamed_addr constant [4 x %loke.string_view] [ %loke.string_view zeroinitializer, %loke.string_view { ptr @.str.10, i64 5 }, %loke.string_view { ptr @.str.3, i64 5 }, %loke.string_view { ptr @.str.11, i64 3 } ]
 define private void @loke.f.1(ptr %data, ptr %w, ptr %o) {
 define private void @loke.f.2(ptr %data, ptr %w, ptr %o) {
 define private void @loke.f.3(ptr %data, ptr %w, ptr %o) {
 call void @loke.p.Money.format(%struct.Money.* %t
-%t* = load i64, ptr @.loke.fmt_thunks.count
-%t* = getelementptr inbounds ptr, ptr @.loke.fmt_thunks, i64 %t*
+%t* = load i64, ptr @.loke.formatters.count
+%t* = getelementptr inbounds ptr, ptr @.loke.formatters, i64 %t*
+define private void @loke.w.Formattable.int.thunk.0(ptr %arg0,
+define private void @loke.w.Formattable.Point.thunk.0(ptr %arg0,
+define private void @loke.w.Formattable.Money.thunk.0(ptr %arg0,
 declare void @loke_rt_v1_fmt_bytes(ptr, ptr, i64)

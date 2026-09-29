@@ -223,11 +223,11 @@ Compiler :: struct {
 	// design.md "`type` and `typeid`": whether this program asked for runtime
 	// metadata at all. The dense table is emitted only when it did.
 	type_info_requested: bool,
-	// Whether the erased formatter table is needed. `core:fmt` asks for it by
-	// naming its dispatch intrinsic; nothing else can.
+	// Whether formatting needs the per-type dispatch table: requested by
+	// core:fmt, a generated format method, or a formatted panic/assert.
 	format_requested:    bool,
-	// Each type's own `format`, set once by `discover_formatters`.
-	formatters:          map[Type_Id]Symbol_Id,
+	// The ordinary Formattable witness recovered from an erased value's typeid.
+	formatters:          map[Type_Id]^Witness,
 	formatters_ready:    bool,
 	// The `base:runtime` types the compiler needs to build that table, resolved
 	// through the import that made them nameable so there is one identity.

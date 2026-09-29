@@ -124,6 +124,7 @@ Contribution :: enum u8 {
 	// The compiler-owned canonical receiver members: `len`, `cap`, and `hash` on
 	// the built-in types that provide them.
 	Standard_Customization,
+	Format_Enrolled,
 	// design.md "Dynamic arrays" and "Maps": the operation set that makes
 	// `xs.append(1)` an ordinary method call.
 	Container,
@@ -443,7 +444,7 @@ Builtin_Kind :: enum {
 	Fmt_Stdout_Writer,
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
-	Fmt_Format_Any,
+	Fmt_Format_View,
 	// `core:slice`'s typed comparator bridge to the shared runtime introsort. The
 	// comparator pointer is used synchronously and never retained.
 	Slice_Sort_By,
@@ -758,7 +759,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.validated_attributes = make(map[u64]bool, c.semantic_allocator)
 	c.lifecycle_operations = make(map[Type_Id]Lifecycle_Operations, c.semantic_allocator)
 	c.runtime_types = make(map[string]Type_Id, c.semantic_allocator)
-	c.formatters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
+	c.formatters = make(map[Type_Id]^Witness, c.semantic_allocator)
 	c.result_summary_dependencies = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.reset_dead = make(map[^Expr_Call]Reset_Liveness, c.semantic_allocator)
 	c.cleanup_reset_dead = make(map[Cleanup_Reset_Key]Reset_Liveness, c.semantic_allocator)

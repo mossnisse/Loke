@@ -1,0 +1,9 @@
+L0572
+@7:2
+`format` on `Mutable_Writer` is what erased printing calls
+L0572
+@11:2
+`format` on `Borrowed_Options` is what erased printing calls
+L0572
+@15:2
+`format` on `Generic_Method` is what erased printing calls

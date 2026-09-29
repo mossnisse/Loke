@@ -393,7 +393,7 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		case "order":
 			c.order_policies[TYPE_INT] = Order_Policy{kind = .Inherent, less = Symbol_Id(len(c.symbols) + 1)}
 		case "formatter":
-			c.formatters[TYPE_INT] = Symbol_Id(len(c.symbols) + 1)
+			c.formatters[TYPE_INT] = new(Witness, c.semantic_allocator)
 		case "instance":
 			instance := new(Instance, c.semantic_allocator)
 			instance.body_checked = true

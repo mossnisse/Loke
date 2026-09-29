@@ -330,6 +330,7 @@ lookup_package :: proc(k: ^Checker) -> Package_Id {
 // same set.
 @(private = "file")
 ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
+	ensure_format_member(k, type, name)
 	ensure_standard_customization_members(k, type)
 	ensure_iteration_members(k, type)
 	ensure_mutable_iteration_members(k, type)
@@ -389,6 +390,16 @@ member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 	// A member whose `where` bound failed is not part of this instantiation.
 	if sym.bound_excluded {
 		return false
+	}
+	// A generated formatting default is a fallback for ordinary member lookup.
+	// Local extensions remain callable; interface slots bypass this visibility
+	// rule and retain the concrete type's coherent printed representation.
+	if sym.synth == .Standard_Format {
+		if pkg := package_of(k.c, lookup_package(k)); pkg != nil {
+			if visible_member_named(k, pkg.extensions[sym.owner_type], sym.name) != INVALID_SYMBOL {
+				return false
+			}
+		}
 	}
 	return sym.pkg == lookup_package(k) || sym.public
 }

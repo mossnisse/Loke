@@ -103,7 +103,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return "0"
 		case .Type_Info_Of:
 			return emit_type_info_of(e, v)
-		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
+		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_View:
 			return emit_fmt_builtin(e, v, symbol.builtin)
 		case .Strings_Allocate:
 			return emit_strings_allocate(e, v, as_type)[0]

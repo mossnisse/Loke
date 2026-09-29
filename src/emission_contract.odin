@@ -90,9 +90,9 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 			return emission_contract_error(c, "a resolved ordering operation has no checked procedure")
 		}
 	}
-	// A discovered `format`; INVALID_SYMBOL means a generated formatter.
-	for _, hook in c.formatters {
-		if hook != INVALID_SYMBOL && !emission_procedure_available(c, hook) {
+	// Erased formatting uses the same witness as an explicit interface view.
+	for _, witness in c.formatters {
+		if witness == nil || len(witness.slots) != 1 || !emission_procedure_available(c, witness.slots[0].target) {
 			return emission_contract_error(c, "a discovered formatter has no checked procedure")
 		}
 	}

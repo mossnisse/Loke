@@ -1,9 +1,8 @@
 package main;
 
-// The shape of coherent formatting: one private thunk per printable concrete
-// type, a table of them keyed by the frozen `typeid`, the parallel table of
-// names a `typeid` prints as, and one checked indexed dispatch per erased
-// argument (m6a-plan step 5).
+// The shape of coherent formatting: ordinary Formattable witnesses keyed by
+// frozen typeid, runtime-ABI wrappers for aggregates, and a checked lookup for
+// each erased argument. Defaults and custom methods use the same slot ABI.
 
 import "core:fmt";
 

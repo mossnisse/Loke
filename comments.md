@@ -305,6 +305,15 @@ file-scope assertion stays a check rather than a registry.
 
 ## Printed form of built-in types
 
+Formatting uses a real `fmt.Formattable` interface so a custom representation
+can be checked by a generic constraint and borrowed through `dyn`, as other
+capabilities can. Generated defaults supply the same slot for built-in types
+and aggregates. The print family keeps `..any_view`: it permits mixed arguments
+and existing forwarding wrappers without implicit interface conversions.
+A private compiler primitive recovers a concrete witness from an erased
+value's `typeid`; the library then calls the ordinary interface slot.
+Definition-site slot selection preserves one printed representation per type.
+
 design.md "String format printing" says the compiler provides the format for a
 type without its own, but not what that format is. Two choices in it may
 surprise a reader:
