@@ -173,4 +173,4 @@ is to be used by others.
 
 [design.md "Packages"](../design.md#packages) has the full rules.
 
-Next: [A command-line tool](08-a-command-line-tool.md).
+Next: [A command-line tool](07-a-command-line-tool.md).

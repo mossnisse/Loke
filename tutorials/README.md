@@ -1,7 +1,12 @@
 # Loke tutorials
 
-These pages teach Loke from a first program to a small program split into
-packages. Read them in order: each one uses what the earlier ones explained.
+These pages assume you have programmed in another language and know variables,
+loops, and functions. They focus on Loke's syntax and semantics, from a first
+program to a small program split into packages, then explicit memory management
+and compile-time programming. The first seven pages form the core route to a
+working tool. The later pages build on that foundation.
+
+## Build a useful program
 
 1. [Getting started](01-getting-started.md): install the compiler, then write,
    build, and run a first program.
@@ -13,15 +18,36 @@ packages. Read them in order: each one uses what the earlier ones explained.
    and who owns what.
 5. [Errors](05-errors.md): `Option`, `Result`, `or_return`, `or_else`, and
    panics.
-6. [Generics and interfaces](06-generics-and-interfaces.md): code that works
-   for many types.
-7. [Packages](07-packages.md): a program in several packages, and what each
+6. [Packages](06-packages.md): a program in several packages, and what each
    one shows the others.
-8. [A command-line tool](08-a-command-line-tool.md): arguments, files, and exit
+7. [A command-line tool](07-a-command-line-tool.md): arguments, files, and exit
    codes, put together in one program.
-9. [Calling C](09-calling-c.md): foreign procedures from a C library.
 
-The pages teach by example and leave the full rules to the language
+## Understand storage and compile-time code
+
+8. [Borrowing and lifetimes](08-borrowing-and-lifetimes.md): choose parameter
+   forms, return views, and understand overlapping borrows.
+9. [Compile-time programming](09-compile-time.md): ordinary procedures evaluated
+   by the compiler, tables, `static_assert`, `when`, and build configuration.
+10. [Generics and interfaces](10-generics-and-interfaces.md): reusable code,
+    structural requirements, and dynamic dispatch.
+11. [Choosing an allocator](11-allocators.md): `via`, arena and scratch storage,
+    reset lifetimes, and recoverable allocation failure.
+12. [Owning resources](12-owning-resources.md): explicit allocation, move-only
+    types, cleanup hooks, and fallible close operations.
+
+## Extend and integrate
+
+13. [Calling C](13-calling-c.md): foreign procedures, callbacks, and linking.
+14. [Allocator providers](14-allocator-providers.md): select a bounded default
+    provider and understand its lifetime and implementation contract.
+15. [Reflection and formatting](15-reflection-and-formatting.md): static field
+    and enum expansion, then a custom printed representation.
+
+Each lesson introduces a concrete use, shows a complete program and its output,
+and explains the rules that make it work. Rejected examples show the limits.
+
+The pages leave the full rules to the language
 specification, [design.md](../design.md), which they link to section by
 section. The library is described in
 [standard-library.md](../standard-library.md).

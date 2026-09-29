@@ -156,11 +156,8 @@ lokec squares.loke
 A `.lib` library file works the same way. [design.md "Foreign system"](../design.md#foreign-system)
 has the full rules, including exporting Loke procedures for C to call.
 
-## Where to go next
+The [borrowing lesson](08-borrowing-and-lifetimes.md) explains the checked
+pointer forms used here. Foreign code crosses that checking boundary, so the
+binding must accurately describe the C API's types and lifetime expectations.
 
-That is the end of the tutorials. From here:
-
-- [examples/](../examples/README.md) has longer programs, each using one part of
-  the language in more depth.
-- [standard-library.md](../standard-library.md) describes every library package.
-- [design.md](../design.md) is the full language specification.
+Next: [Allocator providers](14-allocator-providers.md).

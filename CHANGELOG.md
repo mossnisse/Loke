@@ -31,6 +31,9 @@ checklist.
 
 ### Changed
 
+- Tutorials assume prior programming experience and focus on Loke's syntax,
+  borrowing, and mutation rules. They distinguish runes from displayed
+  characters and clarify panic cleanup and generic type inference.
 - Assigning or binding a place whose copy allocates, such as a `[dynamic]T` or
   `map[K]V`, copies it again, from the destination's `via` or the default
   allocator; 0.7.1 rejected it (`L0504`). A copy at a local's last use is a
@@ -39,6 +42,10 @@ checklist.
 
 ### Added
 
+- Six tutorial lessons cover borrowing and lifetimes, compile-time evaluation,
+  allocator use, resource ownership, default allocator providers, and reflection
+  with custom formatting. The core route reaches a command-line tool before
+  generics; examples remain executable tests, without learning exercises.
 - `lokec -g` emits debug information at any `-opt` level: each procedure, its
   parameters and locals with their types, and the line of each statement, so a
   debugger can set a source breakpoint, show a Loke call stack, and inspect
@@ -70,6 +77,10 @@ checklist.
 
 ### Fixed
 
+- Tutorial examples reject negative time components and report overflowing
+  expense totals as input errors. The command-line tutorial accepts long
+  category names without panicking; its output now uses one space between
+  names and amounts. Checked examples cover these cases and integer limits.
 - A variable or composite literal whose type's layout is past the maximum
   size, such as `c: [9223372036854775807]int;`, is an error (`L0364`) where it
   is written; it was accepted, or with `= {}` never finished compiling.

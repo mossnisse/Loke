@@ -1,12 +1,11 @@
 # Values and control flow
 
-This page covers the everyday parts of a program: variables and their types,
-constants, arithmetic, decisions, loops, and procedures.
+This page introduces Loke's declarations, control-flow syntax, and procedure
+calls, with particular attention to initialization, conversions, and mutation.
 
 ## Variables
 
-`name := value` declares a variable and gives it a value. The type comes from
-the value; write it out with `name: Type = value` when you want a different one.
+`name := value` infers a variable's type; `name: Type = value` specifies it.
 
 ```odin file=variables.loke
 package main;
@@ -14,7 +13,7 @@ package main;
 import "core:fmt";
 
 main :: proc() {
-	apples := 7;            // an `int`, because 7 is a whole number
+	apples := 7;            // inferred as `int`
 	price: f64 = 2.5;       // the type written out
 	name := "Ada";          // a `string`
 	hungry := true;         // a `bool`
@@ -38,9 +37,6 @@ hungry: true
 -3 -1
 ```
 
-`=` assigns a new value to a variable that exists, and `+=`, `-=`, `*=`, and
-`/=` update it in place. `//` starts a comment that runs to the end of the line.
-
 Loke never converts between number types behind your back: `apples * price`
 would be an error, because one is an `int` and the other an `f64`. `f64(apples)`
 converts explicitly. Dividing two integers gives an integer, rounded toward
@@ -50,17 +46,17 @@ The common types are:
 
 | Type | Holds |
 | --- | --- |
-| `int` | a whole number; 64 bits on 64-bit Windows |
-| `i8`, `i16`, `i32`, `i64` | a whole number of that many bits |
-| `u8`, `u16`, `u32`, `u64`, `uint` | a whole number that is never negative |
+| `int` | signed integer; 64 bits on 64-bit Windows |
+| `i8`, `i16`, `i32`, `i64`, `i128` | signed integer of that many bits |
+| `u8`, `u16`, `u32`, `u64`, `u128`, `uint` | unsigned integer; `uint` has the width of `int` |
 | `f32`, `f64` | a floating-point number |
 | `bool` | `true` or `false` |
 | `string` | text, always valid UTF-8 |
-| `rune` | one Unicode character, written `'a'` |
+| `rune` | one Unicode scalar value, written `'a'` |
 
 [design.md "Primitive types"](../design.md#primitive-types) lists every type.
 
-## Every variable has a value before it is read
+## Every variable must have a value before it is read
 
 A variable can be declared without a value, as `message: string;`, and given
 one later. Until then it has none, and the compiler rejects any read that might
@@ -161,9 +157,8 @@ than an `i32` can hold. [Errors](05-errors.md) says more about panics.
 
 ## Decisions
 
-`if` takes a condition in parentheses and a body in braces, and may continue
-with `else if` and `else`. The braces are always written, even for one
-statement.
+`if`, `else if`, and `else` use mandatory parentheses around conditions and
+braces around bodies, even for one statement.
 
 ```odin file=ifs.loke
 package main;
@@ -197,9 +192,8 @@ take a coat
 3 apples
 ```
 
-The comparison operators are `==`, `!=`, `<`, `<=`, `>`, and `>=`, and
-conditions combine with `&&` (and), `||` (or), and `!` (not). A condition must
-be a `bool`: `if (count)` is an error, where C would test for zero.
+Comparisons and `&&`, `||`, and `!` use C-style syntax. A condition must be a
+`bool`: `if (count)` is an error, where C would test for zero.
 `x if condition else y` chooses between two values in the middle of an
 expression.
 
@@ -240,10 +234,8 @@ before `b`, and `a ..= b` includes it.
 
 ## Loops
 
-`foreach` runs its body once for each value of something that can be walked
-through: a range, an array, a string, and the containers on the next pages.
-`for` repeats while a condition holds, with an optional first statement and a
-statement to run after each round, as in C:
+`foreach` iterates ranges and containers. `for` supports both a C-style
+three-part header and a condition alone; there is no separate `while` keyword.
 
 ```odin file=loops.loke
 package main;
@@ -251,18 +243,11 @@ package main;
 import "core:fmt";
 
 main :: proc() {
-	// Count from 1 through 15, replacing multiples of 3 and 5.
-	foreach (n in 1 ..= 15) {
-		if (n % 15 == 0) {
-			fmt.println("FizzBuzz");
-		} else if (n % 3 == 0) {
-			fmt.println("Fizz");
-		} else if (n % 5 == 0) {
-			fmt.println("Buzz");
-		} else {
-			fmt.println(n);
-		}
+	sum := 0;
+	foreach (n in 1 ..= 5) {
+		sum += n;
 	}
+	fmt.println("sum:", sum);
 
 	// Halve a number until it reaches 1.
 	steps := 0;
@@ -281,21 +266,7 @@ main :: proc() {
 ```
 
 ```text output=loops
-1
-2
-Fizz
-4
-Buzz
-Fizz
-7
-8
-Fizz
-Buzz
-11
-Fizz
-13
-14
-FizzBuzz
+sum: 15
 halvings: 5
 first power of two past 1000: 1024
 ```
@@ -306,8 +277,9 @@ value, write `_`: `foreach (_ in 0 ..< 3)` runs its body three times.
 
 ## Procedures
 
-A procedure takes parameters and may return a result. A parameter cannot be
-changed inside the procedure; copy it into a variable when you need to.
+Procedures use `proc`. An ordinary parameter binding is immutable; copy it
+into a local variable to reassign it. An `inout` parameter instead borrows the
+caller's variable for mutation.
 
 ```odin file=procedures.loke
 package main;
@@ -372,9 +344,8 @@ A few things to notice:
 - `+` joins strings.
 - Procedures can be declared in any order; `main` may call one written below it.
 
-An `inout` parameter is the one way a procedure changes a variable it was given,
-and the call must say so too. Leaving out the marker is an error, so a reader of
-the call can always see which arguments may change:
+An `inout` parameter requires `inout` at the call site too. Leaving out the
+marker is an error:
 
 ```odin file=marker.loke
 package main;
@@ -402,5 +373,45 @@ error[L0370]: this parameter is `inout`; write `inout` at the call site
 
 [design.md "Procedures"](../design.md#procedures) has the rest: variadic
 parameters, procedure values, and overloading.
+
+## Pointers and mutation
+
+An immutable parameter binding can still hold a mutable pointer: the pointer
+cannot be reassigned, but the value it points to can change. `^T` is a read-only
+pointer, and `^mut T` permits writing. `&value` and `&mut value` borrow a value
+with those capabilities; postfix `^` dereferences the pointer.
+
+```odin file=pointers.loke
+package main;
+
+import "core:fmt";
+
+read :: proc(value: ^int) -> int {
+	return value^;
+}
+
+increment :: proc(value: ^mut int) {
+	value^ += 1;
+}
+
+main :: proc() {
+	count := 4;
+	fmt.println(read(&count));
+	increment(&mut count);
+	fmt.println(count);
+}
+```
+
+```text output=pointers
+4
+5
+```
+
+`inout` exposes the caller's variable directly; `^mut T` exposes it through a
+pointer. Both borrow existing storage without allocating it. The compiler
+checks that a borrow does not outlive its owner or conflict with another use.
+Mutable slices follow the same distinction for elements, as
+[Arrays and slices](04-strings-and-containers.md#arrays-and-slices) shows.
+[design.md "Pointers"](../design.md#pointers) gives the full pointer rules.
 
 Next: [Records, enums, and unions](03-records-enums-unions.md).

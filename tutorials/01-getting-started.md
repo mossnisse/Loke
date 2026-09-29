@@ -1,6 +1,6 @@
 # Getting started
 
-This page installs the compiler, then builds and runs a first program.
+This page tells how to install the compiler, then how to build and runs a first program.
 
 ## What you need
 

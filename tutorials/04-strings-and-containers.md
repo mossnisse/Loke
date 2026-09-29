@@ -7,7 +7,7 @@ value is copied, when it is shared, and when it is cleaned up.
 
 A `string` is text, always valid UTF-8, and it cannot be changed once made.
 Operations on it say which unit they count in: `len` is in bytes, and
-`rune_count` is in characters.
+`rune_count` is in Unicode scalar values, called *runes*.
 
 ```odin file=text.loke
 package main;
@@ -17,15 +17,19 @@ import "core:strings";
 
 main :: proc() {
 	city := "Göteborg";
-	fmt.println(city.len(), "bytes,", city.rune_count(), "characters");
+	fmt.println(city.len(), "bytes,", city.rune_count(), "runes");
 
-	// Each character, with the byte offset where it starts.
+	// Each rune, with the byte offset where it starts.
 	foreach (letter, offset in city.rune_offsets()) {
 		fmt.println(offset, letter);
 	}
 
 	first_two := city[0:3];             // a view of bytes 0, 1, and 2
 	fmt.println(first_two);
+
+	combined := "o\u0308";             // o followed by a combining diaeresis
+	fmt.println(combined.len(), "bytes,", combined.rune_count(), "runes");
+	fmt.println(combined[0:1]);        // a valid slice between the two runes
 
 	greeting := "Hej, " + city + "!";
 	fmt.println(greeting);
@@ -46,7 +50,7 @@ main :: proc() {
 ```
 
 ```text output=text
-9 bytes, 8 characters
+9 bytes, 8 runes
 0 G
 1 ö
 3 t
@@ -56,6 +60,8 @@ main :: proc() {
 7 r
 8 g
 Gö
+3 bytes, 2 runes
+o
 Hej, Göteborg!
 true ABC
 red
@@ -64,12 +70,16 @@ blue
 step 1, step 2, step 3
 ```
 
-- `ö` takes two bytes, so the string is 9 bytes but 8 characters. A `foreach`
-  over a string gives characters, as `rune` values. `rune_offsets()` adds the
+- `ö` takes two bytes, so the string is 9 bytes but 8 runes. A `foreach`
+  over a string gives `rune` values. `rune_offsets()` adds the
   byte offset where each one starts.
 - `city[0:3]` is a *view*: it points into `city` rather than copying it. The
-  bounds are byte offsets, and must fall between characters; `city[0:2]` would
+  bounds are byte offsets, and must fall between runes; `city[0:2]` would
   cut `ö` in half and panic.
+- A displayed character (a *grapheme cluster*) may contain several runes.
+  `"o\u0308"` displays as an o with a diaeresis, but has two runes. Slicing
+  between them is valid UTF-8 and leaves just `o`; rune counts and boundaries
+  do not describe displayed characters.
 - `+` makes a new string. For text built from many pieces, a
   `String_Builder` is faster: `append` adds to it and `finish` returns the
   string.
@@ -101,6 +111,12 @@ total :: proc(values: []int) -> int {
 	return sum;
 }
 
+add_bonus :: proc(values: []mut int) {
+	foreach (&value in values) {
+		value += 5;
+	}
+}
+
 main :: proc() {
 	// A fixed array: the length is part of the type.
 	primes := [5]int{2, 3, 5, 7, 11};
@@ -120,10 +136,8 @@ main :: proc() {
 	middle := primes[1:4];
 	fmt.println(middle, total(primes), total(scores));
 
-	// `&` in a `foreach` changes each element in place.
-	foreach (&score in scores) {
-		score += 5;
-	}
+	// The parameter's `[]mut int` type selects a mutable slice.
+	add_bonus(scores[:]);
 	foreach (score, index in scores.indexed()) {
 		fmt.println(index, score);
 	}
@@ -146,7 +160,14 @@ main :: proc() {
 - `total` takes a `[]int`, so it accepts a slice, and also a fixed or dynamic
   array, which converts to a slice of all its elements.
 - A `foreach` over a container gives each element without copying it. Write
-  `&score` to change the elements, and `.indexed()` to number them.
+  `&value` to change the elements, and `.indexed()` to number them.
+
+`[]int` has read-only elements; `[]mut int` permits changing them. `add_bonus`
+borrows a mutable slice of `scores` and changes its elements without `inout`:
+the parameter binding stays immutable while the elements it views are mutable.
+The parameter type selects the capability of `scores[:]`. A slice cannot grow
+the array; a procedure that appends to the caller's array takes
+`inout [dynamic]int` instead.
 
 ## Maps
 

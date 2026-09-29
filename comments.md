@@ -2,6 +2,36 @@
 
 Decisions that are deliberately not yet made are recorded here rather than left implicit in normative prose. [`design.md`](design.md) defines the rules implementations must follow for the current language version; these questions concern possible later changes.
 
+## Tutorial review resolution
+
+The 2026-09-29 review assumed readers already know another programming language.
+Its eight follow-ups are resolved: the tutorials shorten basic control-flow
+explanations, introduce pointer and slice mutation, distinguish runes from
+grapheme clusters, and qualify panic cleanup and generic type inference.
+The time parser rejects negative components. The command-line example checks
+both running totals before printing and uses space-separated output without a
+category-width limit. Regression examples live in the tutorial pages and run
+through `tutorials_compile_and_run`; the language rules did not change.
+
+## Tutorial learning progression
+
+The follow-up pedagogical review on 2026-09-29 led to a fifteen-lesson
+[reading order](tutorials/README.md). The first seven pages reach a working
+command-line tool before introducing generics and dynamic dispatch. Later
+lessons cover borrowing, compile-time execution, local allocators, resource
+ownership, C calls, default providers, and reflection. Custom formatting now
+follows those foundations instead of appearing in the first methods example.
+
+Each lesson uses complete, checked examples and explains their constraints.
+Learning exercises were explicitly excluded by the user; the earlier exercise
+suggestion and the command-line page's exercises are removed. Runtime tests
+verify examples, not learning outcomes.
+
+The provider lesson selects a built-in arena with process-lifetime storage.
+Implementing a new allocation algorithm currently requires the runtime ABI,
+so it links the authoritative header and explains the callback obligations
+instead of teaching a duplicate ABI declaration as ordinary Loke code.
+
 ## Package and import versioning
 
 Should import paths encode package versions, and should a package declaration remain mandatory in every file? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.

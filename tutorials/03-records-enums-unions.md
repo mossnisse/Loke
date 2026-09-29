@@ -51,8 +51,9 @@ The last two lines show something that surprises most people once. A field is
 private to the package that declares it unless it is marked `@(public)`, and
 `fmt` is a different package, so it sees none of `Point`'s fields and prints
 `Point{}`. `Size` marks its fields public, so they print. The other way to
-choose how a type prints is to give it a `format` method, as the next section
-does. [Packages](07-packages.md) explains what else `@(public)` controls.
+choose how a type prints is a `format` method, covered later in
+[Reflection and formatting](15-reflection-and-formatting.md#give-a-type-a-printed-representation).
+[Packages](06-packages.md) explains what else `@(public)` controls.
 
 ## Methods
 
@@ -66,7 +67,8 @@ package main;
 import "core:fmt";
 
 Vector :: struct {
-	x, y: f64,
+	@(public) x: f64,
+	@(public) y: f64,
 }
 
 impl Vector {
@@ -93,12 +95,6 @@ impl Vector {
 	add :: operator(+) proc(left, right: Vector) -> Vector {
 		return {left.x + right.x, left.y + right.y};
 	}
-
-	// How `fmt` prints a `Vector`. `concat_to` writes its arguments with
-	// nothing between them, where `format_to` would put spaces.
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		fmt.concat_to(writer, "(", self.x, ", ", self.y, ")");
-	}
 }
 
 main :: proc() {
@@ -115,9 +111,9 @@ main :: proc() {
 ```
 
 ```text output=methods
-(3, 4) 25
-(6, 8)
-(7, 9)
+Vector{x = 3, y = 4} 25
+Vector{x = 6, y = 8}
+Vector{x = 7, y = 9}
 130
 ```
 
@@ -127,8 +123,6 @@ main :: proc() {
 - `v.length_squared()` and `Vector.length_squared(v)` are the same call.
 - `operator(+)` makes `a + b` call `add`. The operators a type may define are
   listed in [design.md "Operator declarations"](../design.md#operator-declarations).
-- A `format` method with exactly this signature decides how `fmt` prints the
-  type, in every package.
 - The literal `{value, value}` needs no type name: the result type says it is a
   `Vector`. The same shorthand works wherever the type is already known.
 

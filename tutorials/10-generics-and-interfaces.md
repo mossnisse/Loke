@@ -2,8 +2,9 @@
 
 A generic procedure or type is written once and works for many types. An
 interface names what a type must be able to do, so generic code can say what it
-needs. This page covers both, and `dyn`, which chooses the type at run time
-instead.
+needs. The [previous lesson](09-compile-time.md) introduced compile-time
+values; here types and values parameterize reusable code. The final section
+uses `dyn` to dispatch to a concrete type's methods at run time.
 
 ## Generic procedures
 
@@ -26,7 +27,7 @@ largest :: proc(values: []$T) -> T where interfaces.Ordered(T) {
 	return best;
 }
 
-// `$N` and `$T` are passed explicitly, and are known while compiling.
+// `$N` is explicit; `$T` is inferred from `value`, which may be a runtime value.
 filled :: proc($N: int, value: $T) -> [N]T {
 	result: [N]T = {};
 	foreach (i in 0 ..< N) {
@@ -229,4 +230,4 @@ error[L0444]: `Line` does not satisfy `Shape(Line)`
 [design.md "Interfaces and polymorphism"](../design.md#interfaces-and-polymorphism)
 cover specialization, operator requirements, and the rest.
 
-Next: [Packages](07-packages.md).
+Next: [Choosing an allocator](11-allocators.md).

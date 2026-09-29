@@ -2,7 +2,7 @@
 
 Loke has no exceptions and no special error values. A procedure that may have
 no answer returns an `Option`, and one that may fail returns a `Result`. Both are
-ordinary unions, and two operators, `or_else` and `or_return`, make them short to
+ordinary unions, and two operators, `or_else` and `or_return`, make them easy to
 use. A *panic* is for the other kind of failure: a bug that stops the program.
 
 ## Option: a value that may be absent
@@ -75,7 +75,7 @@ parse_time :: proc(text: string_view) -> Result(Time, Time_Error) {
 	parts := strings.cut(text, ":").ok_or(Time_Error.Missing_Colon) or_return;
 	hours := parse_number(parts.before) or_return;
 	minutes := parse_number(parts.after) or_return;
-	if (hours > 23 || minutes > 59) {
+	if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
 		return .err(.Out_Of_Range);
 	}
 	return .ok({hours, minutes});
@@ -89,7 +89,7 @@ parse_number :: proc(text: string_view) -> Result(int, Time_Error) {
 }
 
 main :: proc() {
-	foreach (text in []string_view{"09:30", "9.30", "25:00", "12:xx"}) {
+	foreach (text in []string_view{"09:30", "00:00", "23:59", "9.30", "25:00", "12:xx", "-1:30", "12:-1"}) {
 		switch (outcome in parse_time(text)) {
 		case .ok:
 			fmt.println(text, "is", outcome.hours * 60 + outcome.minutes, "minutes after midnight");
@@ -102,9 +102,13 @@ main :: proc() {
 
 ```text output=results
 09:30 is 570 minutes after midnight
+00:00 is 0 minutes after midnight
+23:59 is 1439 minutes after midnight
 9.30 is not a time: Missing_Colon
 25:00 is not a time: Out_Of_Range
 12:xx is not a time: Not_A_Number
+-1:30 is not a time: Out_Of_Range
+12:-1 is not a time: Out_Of_Range
 ```
 
 `or_return` is the operator that makes this readable. `parse_number(...)
@@ -151,8 +155,9 @@ error type in one step.
 ## Cleaning up with `defer`
 
 Containers and files clean themselves up when their variables go out of scope.
-For anything else that must happen on the way out, `defer` runs a statement when
-the enclosing block ends, however it ends:
+For other scope-exit work, `defer` runs a statement when the enclosing block
+ends, including an early `return`. Panic cleanup depends on the build's
+strategy, described below.
 
 ```odin file=cleanup.loke
 package main;
@@ -223,9 +228,13 @@ loke: panic: average of no values
 loke: panicked
 ```
 
-A panic cannot be caught. Before the program stops, pending `defer` statements
-run and owned memory is released, as on a normal return. Use a `Result` for
-anything that can go wrong in a correct program, such as a missing file or bad
-input, and keep panics for mistakes in the program itself.
+A panic cannot be caught. With the default `-panic=unwind` build, the panicking
+thread runs pending `defer` statements and drops live local owners before the
+program stops. `-panic=abort` skips cleanup. A second panic during unwinding
+also stops immediately, skipping the cleanup still pending; see
+[design.md "Panic strategy"](../design.md#panic-strategy).
 
-Next: [Generics and interfaces](06-generics-and-interfaces.md).
+Use a `Result` for anything that can go wrong in a correct program, such as a
+missing file or bad input, and keep panics for mistakes in the program itself.
+
+Next: [Packages](06-packages.md).
