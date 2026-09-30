@@ -16,3 +16,8 @@ answer :: proc "c" () -> i32 {
 
 @(export)
 widget_counter: i32 = 7;
+
+Status :: enum i32 { Ready = 37 }
+
+@(export)
+widget_echo_enum :: proc "c" (value: Status) -> Status { return value; }

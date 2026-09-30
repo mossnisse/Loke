@@ -1,0 +1,47 @@
+L0619
+a foreign parameter is not ABI-safe: `Empty` is a zero-sized record
+@10:14
+
+L0619
+a foreign result is not ABI-safe: `Empty` is a zero-sized record
+@10:14
+
+L0619
+`Aligned` is a zero-sized record
+@11:16
+
+L0619
+`Zero_Array` is a zero-sized record
+@12:14
+
+L0619
+member `carriers.empty` of `Nested` is a zero-sized record
+@13:15
+
+L0619
+a foreign parameter is not ABI-safe: `Empty`
+@14:30
+
+L0619
+a foreign result is not ABI-safe: `Empty`
+@14:30
+
+L0619
+member `empty` of `Late` is a zero-sized record
+@15:22
+
+L0619
+a foreign global is not ABI-safe: `Empty`
+@19:2
+
+L0619
+a foreign global is not ABI-safe: member `empty` of `Carrier`
+@20:2
+
+L0619
+a C-variadic argument is not ABI-safe: `Empty`
+@24:31
+
+L0619
+a C-variadic argument is not ABI-safe: member `empty` of `Carrier`
+@24:40

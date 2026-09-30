@@ -1,0 +1,15 @@
+L0619
+an exported global is not ABI-safe: `Wide` is an integer wider than 64 bits
+@9:11
+
+L0619
+an exported global is not ABI-safe: `Implicit` is an enum without an explicit integer backing type
+@10:11
+
+L0619
+an exported global is not ABI-safe: `Empty` is a zero-sized record
+@11:11
+
+L0619
+an exported global is not ABI-safe: member `empty` of `Nested` is a zero-sized record
+@12:11

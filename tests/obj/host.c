@@ -7,6 +7,8 @@
 int widget_add(int a, int b);
 int widget_answer(void);
 extern int widget_counter;
+enum Widget_Status { Widget_Ready = 37 };
+enum Widget_Status widget_echo_enum(enum Widget_Status value);
 
 void loke_rt_v1_thread_attach(void);
 void loke_rt_v1_thread_detach(void);
@@ -15,6 +17,7 @@ int main(void) {
 	int status;
 	loke_rt_v1_thread_attach();
 	status = widget_add(3, 4) + widget_answer() + widget_counter;
+	status += widget_echo_enum(Widget_Ready) == Widget_Ready ? 0 : 1000;
 	widget_counter = 1;
 	status += widget_counter;
 	loke_rt_v1_thread_detach();

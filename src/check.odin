@@ -987,6 +987,7 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 		info.element = backing
 		info.bits = u16(type_bits(k.c, backing))
 		info.signed = type_signed(k.c, backing)
+		info.enum_backing_explicit = value.backing != nil
 	}
 
 	members := make([dynamic]Symbol_Id, 0, len(value.fields), k.c.semantic_allocator)

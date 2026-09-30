@@ -1,0 +1,55 @@
+L0619
+a foreign parameter is not ABI-safe: `Wide` is an integer wider than 64 bits
+@11:14
+
+L0619
+a foreign result is not ABI-safe: `Wide` is an integer wider than 64 bits
+@11:14
+
+L0619
+`Unsigned` is an integer wider than 64 bits
+@12:17
+
+L0619
+`Implicit` is an enum without an explicit integer backing type
+@13:17
+
+L0619
+`Alias` is an integer wider than 64 bits
+@14:14
+
+L0619
+`Implicit_Alias` is an enum without an explicit integer backing type
+@14:14
+
+L0619
+member `values` of `Nested` is an integer wider than 64 bits
+@15:15
+
+L0619
+a foreign parameter is not ABI-safe: `Wide`
+@17:8
+
+L0619
+a foreign result is not ABI-safe: `Implicit`
+@18:12
+
+L0619
+a foreign global is not ABI-safe: `Wide`
+@23:2
+
+L0619
+a foreign global is not ABI-safe: `Implicit`
+@24:2
+
+L0619
+a C-variadic argument is not ABI-safe: `Wide`
+@28:31
+
+L0619
+a C-variadic argument is not ABI-safe: `Unsigned`
+@28:39
+
+L0619
+a C-variadic argument is not ABI-safe: `Implicit`
+@28:51

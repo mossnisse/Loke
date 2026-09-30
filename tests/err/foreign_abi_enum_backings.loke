@@ -1,0 +1,28 @@
+package main;
+
+// design.md "Foreign-ABI-safe types": enum backings are explicit and ABI-safe.
+Wide :: enum i128 { A = 123 }
+Unsigned :: enum u128 { A = 123 }
+Implicit :: enum { A }
+Alias :: distinct Wide;
+Implicit_Alias :: distinct Implicit;
+Nested :: struct { values: [2]Wide }
+
+bad_value :: proc "c" (value: Wide) -> Wide { return value; }
+bad_unsigned :: proc "stdcall" (value: Unsigned) {}
+bad_implicit :: proc "c" (value: Implicit) {}
+bad_alias :: proc "c" (a: Alias, b: Implicit_Alias) {}
+bad_nested :: proc "c" (value: Nested) {}
+Callbacks :: struct {
+	wide: proc "c" (value: Wide),
+	implicit: proc "c" () -> Implicit,
+}
+
+foreign import crt "system:msvcrt.lib";
+foreign crt {
+	wide_global: Wide;
+	implicit_global: Implicit;
+	printf :: proc(format: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+}
+
+main :: proc() { printf("%d", Wide.A, Unsigned.A, Implicit.A); }

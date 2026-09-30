@@ -1,0 +1,14 @@
+package main;
+
+// design.md "Foreign-ABI-safe types": exported globals use the same safety rule.
+Wide :: enum i128 { A = 123 }
+Implicit :: enum { A }
+Empty :: struct {}
+Nested :: struct { empty: Empty, marker: i32 }
+
+@(export) exported_wide: Wide = .A;
+@(export) exported_implicit: Implicit = .A;
+@(export) exported_empty: Empty;
+@(export) exported_nested: Nested;
+
+main :: proc() {}

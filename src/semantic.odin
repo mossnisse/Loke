@@ -143,6 +143,7 @@ Type_Info :: struct {
 	// enum backing; `signed` distinguishes `i32` from `u32`.
 	bits:       u16,
 	signed:     bool,
+	enum_backing_explicit: bool,
 	mutable:    bool,
 	// Struct fields and enum members, in declaration order.
 	fields:     []Symbol_Id,

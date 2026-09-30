@@ -1,0 +1,24 @@
+package main;
+
+// design.md "Foreign-ABI-safe types": zero-sized records have no Win64 C layout.
+Empty :: struct {}
+Aligned :: struct @(align=8) {}
+Zero_Array :: struct { items: [0]i32 }
+Carrier :: struct { empty: Empty, marker: i32 }
+Nested :: struct { carriers: [2]Carrier }
+
+bad_empty :: proc "c" (value: Empty) -> Empty { return value; }
+bad_aligned :: proc "stdcall" (value: Aligned) {}
+bad_array :: proc "c" (value: Zero_Array) {}
+bad_nested :: proc "c" (value: Nested) {}
+Callbacks :: struct { empty: proc "c" (value: Empty) -> Empty }
+Late :: struct { cb: proc "c" (value: Late), empty: Empty }
+
+foreign import crt "system:msvcrt.lib";
+foreign crt {
+	empty_global: Empty;
+	carrier_global: Carrier;
+	printf :: proc(format: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+}
+
+main :: proc() { printf("%d", Empty{}, Carrier{}); }

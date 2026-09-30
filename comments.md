@@ -1169,6 +1169,23 @@ inventing a printable letter. The explicit contract is in
 [standard-library.md "Raw mode and key events"](standard-library.md#raw-mode-and-key-events),
 with Ctrl+C/I/M regressions in [tests/run/lib_term_console.loke](tests/run/lib_term_console.loke).
 
+## Foreign ABI validation
+
+The Win64 boundary checks an enum's written backing rather than assuming every
+enum is a supported scalar. Zero-sized records are rejected recursively:
+Loke's empty record occupies no bytes, while Clang's Windows C extension gives
+it four, changing both enclosing field offsets and argument classification.
+Pointers remain permitted under [design.md "Foreign-ABI-safe types"](design.md#foreign-abi-safe-types).
+[Enum](tests/err/foreign_abi_enum_backings.loke),
+[empty-record](tests/err/foreign_abi_empty_records.loke), and
+[export](tests/err/foreign_abi_exports.loke) regressions cover the shared rule;
+[tests/obj/host.c](tests/obj/host.c) checks a valid enum against a C caller.
+
+Completed, acyclic safety answers are cached within one traversal. Cycles and
+unresolved fields remain provisional, and a fixed array's placement is checked
+before consulting the cache. [src/front_end_test.odin](src/front_end_test.odin)
+checks shared record graphs and the array placement rule.
+
 ## Compiler architecture audit (2026-09-28)
 
 The audit reviewed revision `b2cc712`, tracing the driver, checking, CTFE,

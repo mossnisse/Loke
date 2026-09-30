@@ -1,0 +1,26 @@
+package main;
+import "core:fmt";
+
+// design.md "Foreign-ABI-safe types": backing aliases work; pointees need not be safe.
+Code :: enum i32 { Good = 37 }
+Backing :: distinct i32;
+Alias_Code :: enum Backing { Good = 37 }
+Empty :: struct {}
+Wide :: enum i128 { A = 123 }
+Implicit :: enum { A }
+
+echo :: proc "c" (value: Code) -> Code { return value; }
+echo_alias :: proc "stdcall" (value: Alias_Code) -> Alias_Code { return value; }
+echo_anonymous :: proc "c" (value: enum i32 { Good = 37 }) -> i32 { return i32(value); }
+borrow :: proc "c" (a: ^Empty, b: inout Empty, c: ^Wide, d: ^Implicit) {}
+
+main :: proc() {
+	fmt.println(i32(echo(.Good)));
+	fmt.println(i32(echo_alias(.Good)));
+	fmt.println(echo_anonymous(.Good));
+	a, b: Empty = {}, {};
+	c := Wide.A;
+	d := Implicit.A;
+	borrow(&a, inout b, &c, &d);
+	fmt.println("pointers accepted");
+}

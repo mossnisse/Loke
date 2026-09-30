@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- Foreign boundaries reject enums without a written backing type, enums backed
+  by `i128` or `u128`, and zero-sized records, including nested fields (`L0619`).
+  These could use incompatible C layouts or calling conventions. Write the
+  backing type matching the foreign declaration, such as `enum i32`; pass
+  unsupported types through pointers or an explicit compatible representation.
 - Unmatched UTF-16 surrogates in `Raw_Mode.read_key` now return `Invalid_Data`
   for `Read_Key` instead of dropping a high half or producing a non-scalar
   character. Handle this error when processing injected console input. A valid
@@ -116,6 +121,9 @@ checklist.
 
 ### Fixed
 
+- Foreign ABI checks reuse completed type checks within a traversal, avoiding
+  exponential work on shared record types while preserving cycle handling and
+  deferred signatures.
 - Fixed arrays with copy hooks generate linear-size failure cleanup instead of
   quadratic cleanup, avoiding compiler stalls on large arrays.
 - Invalid index conversions stop before bounds checking, avoiding cascading

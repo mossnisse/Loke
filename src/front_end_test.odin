@@ -8,6 +8,7 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // Recursive errors keep recognizable instance names within a bounded width.
 @(test)
@@ -446,6 +447,45 @@ foreign_abi_walk_defers_by_value_cycles_to_size_check :: proc(t: ^testing.T) {
 	type_of(&c, record).fields = fields
 	safe, _ := foreign_abi_safe(&c, record)
 	testing.expect(t, safe, "ABI traversal diagnosed or recursed before finite-size checking")
+}
+
+@(test)
+foreign_abi_shared_records_finish_within_budget :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	root := new_type(&c, Type_Info{kind = .Int, bits = 32, signed = true})
+	for _ in 0 ..< 26 {
+		fields := make([]Symbol_Id, 2, c.semantic_allocator)
+		for index in 0 ..< 2 {
+			fields[index] = new_symbol(&c, Symbol{kind = .Var, type = root})
+		}
+		root = new_type(&c, Type_Info{kind = .Struct, fields = fields})
+		_ = type_is_managed(&c, root)
+	}
+	started := time.now()
+	safe, _ := foreign_abi_safe(&c, root)
+	elapsed := time.since(started)
+	testing.expect(t, safe)
+	testing.expectf(t, elapsed < 2 * time.Second,
+		"27 shared types should not expand into millions of checks: %v", elapsed)
+}
+
+@(test)
+foreign_abi_cached_array_field_cannot_be_a_parameter :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	element := new_type(&c, Type_Info{kind = .Int, bits = 32, signed = true})
+	array := array_of(&c, element, 2)
+	fields := make([]Symbol_Id, 1, c.semantic_allocator)
+	fields[0] = new_symbol(&c, Symbol{kind = .Var, type = array})
+	holder := new_type(&c, Type_Info{kind = .Struct, fields = fields})
+	params := make([]Type_Id, 2, c.semantic_allocator)
+	params[0], params[1] = holder, array
+	callback := new_type(&c, Type_Info{kind = .Proc, convention = "c", parameters = params, result = INVALID_TYPE})
+	safe, reason := foreign_abi_safe(&c, callback)
+	testing.expect(t, !safe && strings.contains(reason, "fixed array"), reason)
 }
 
 @(test)
