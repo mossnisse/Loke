@@ -1,7 +1,7 @@
 package main; import "core:fmt";
 
-// A literal past the constant budget is built at run time with zeroed
-// omitted fields (comments.md A1).
+// open-questions.md "Compiler architecture audit (2026-09-28)" (A1):
+// Literals past the constant budget are built at run time with zeroed omitted fields.
 Record :: struct { bytes: [900000]u8, tag: int }
 
 main :: proc() {

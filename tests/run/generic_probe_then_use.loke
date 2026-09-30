@@ -1,8 +1,8 @@
 package main; import "core:fmt";
 
-// comments.md A5: an overload candidate instantiates a generic signature as a
-// probe. A later use of the same instance still gets its default, its clone
-// contribution, and its attribute checks, whichever comes first.
+// open-questions.md "Compiler architecture audit (2026-09-28)" (A5):
+// Candidate signatures are probes. Later uses retain defaults, clone
+// contributions, and attribute checks, whichever comes first.
 Res :: struct { v: int }
 impl Res {
 	copy_owned :: hook(copy) proc(self, a: Allocator) -> Result(Res, Allocator_Error) {

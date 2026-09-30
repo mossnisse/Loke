@@ -27,7 +27,10 @@ To try it, install a release and follow
 [tutorials](tutorials/README.md); to work on the compiler, build it from source
 as [below](#building-from-source).
 
-The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
+The normative language specification is in [design.md](design.md), and its grammar
+in [grammar.md](grammar.md). Differences from Odin and non-normative design
+motivations are collected in [comments.md](comments.md). Open questions and
+unresolved findings are in [open-questions.md](open-questions.md).
 
 ## The compiler
 
@@ -160,7 +163,7 @@ been passed. A dependency's own `loke.project` is read too, and one name must
 name one directory across all of them. A `-collection` for a name replaces the
 project's directory for it, which is how a dependency is patched or vendored.
 `base` and `core` are always the bundled library. Dependencies are local
-directories for now (comments.md "Package and import versioning").
+directories for now ([open-questions.md "Package and import versioning"](open-questions.md#package-and-import-versioning)).
 
 #### Default allocator and logger
 

@@ -11,7 +11,8 @@ true. Keep it short: point to a document rather than repeat it.
 | --- | --- |
 | What the language means | [design.md](design.md) (normative) |
 | What parses | [grammar.md](grammar.md) (normative) |
-| Why a choice was made, open questions, differences from Odin | [comments.md](comments.md) |
+| Why a choice was made, differences from Odin | [comments.md](comments.md) |
+| Open questions and unresolved findings | [open-questions.md](open-questions.md) |
 | How the compiler is built, and how to change it | [compiler-architecture.md](compiler-architecture.md) |
 | Where the compiler disagrees with the spec | [known-gaps.md](known-gaps.md) |
 | Standard library design and APIs | [standard-library.md](standard-library.md) |
@@ -30,13 +31,14 @@ a minimal reproduction; never reword the spec to match a bug.
 - Source comments cite spec sections by exact heading: `design.md "Maps"`.
   Renaming a heading is an interface change; `check-citations.ps1` finds the
   citations it breaks.
-- Rationale belongs in `comments.md`, not in normative text.
+- Rationale belongs in `comments.md` and open questions in `open-questions.md`,
+  not in normative text.
 - A user-visible change adds a line under **Unreleased** in `CHANGELOG.md` in
   the same commit, and a breaking one also adds an upgrade note there
   (`releasing.md` "Upgrade notes").
 - Findings from a review or audit end up in the repository: fixed ones in the
   commit message and a regression test, open ones in `known-gaps.md` or
-  `comments.md`. Agent memory is not project documentation.
+  `open-questions.md`. Agent memory is not project documentation.
 - Link repository files by relative path and heading, not by absolute path or
   line number.
 

@@ -19,7 +19,7 @@ runs every program on the pages. Keep them current as the language grows:
 - add a page when a later initiative changes how a new user works, such as the
   package workflow or debugging;
 - revisit the workarounds the pages use for the gaps listed in
-  [comments.md "Found by writing the tutorials"](comments.md#found-by-writing-the-tutorials).
+  [open-questions.md "Found by writing the tutorials"](open-questions.md#found-by-writing-the-tutorials).
 
 ## Standard-library maturity
 
@@ -31,7 +31,7 @@ constraints remain in [standard-library.md](standard-library.md).
 Main work:
 
 - settle width and precision in `fmt` together, once a program needs both
-  ([comments.md "Width and precision in `fmt`"](comments.md#width-and-precision-in-fmt));
+  ([open-questions.md "Width and precision in `fmt`"](open-questions.md#width-and-precision-in-fmt));
 - implement process creation with explicit argument, environment, pipe, handle,
   and lifetime rules;
 - provide the testing and binary/text facilities needed to express the compiler
@@ -50,13 +50,13 @@ compiler need no private substitute for a missing foundational library service.
 
 Turn the current explicit `-collection name=path` mechanism into a reproducible
 project workflow without coupling source imports to one registry. Settle the
-package and import versioning questions tracked in [comments.md](comments.md)
+package and import versioning questions tracked in [open-questions.md](open-questions.md)
 before freezing a manifest format.
 
 `loke.project` (readme.md "Projects") names each dependency's directory and
 registers it as a collection, following each dependency's own manifest, with
 `-collection` as the override. The decisions behind it are in
-[comments.md "Package and import versioning"](comments.md#package-and-import-versioning).
+[open-questions.md "Package and import versioning"](open-questions.md#package-and-import-versioning).
 
 Main work:
 
@@ -231,7 +231,7 @@ on the bootstrap implementation used.
 
 ## Open language questions
 
-[comments.md](comments.md) is the canonical backlog for possible language
+[open-questions.md](open-questions.md) is the canonical backlog for possible language
 changes. Keep proposals there until a concrete use case and implementation plan
 make them roadmap candidates; do not silently turn an open question into a
 compiler task.

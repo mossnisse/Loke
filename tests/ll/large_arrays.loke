@@ -1,7 +1,7 @@
 package main;
 
-// comments.md A1: a zero value is written whole, and a literal past the
-// constant budget is built at run time, not folded one element at a time.
+// open-questions.md "Compiler architecture audit (2026-09-28)" (A1):
+// Zero values are written whole; literals past the budget are built at run time.
 buffer: [16777216]u8;
 grid: [1024][1024][1024]u8;
 

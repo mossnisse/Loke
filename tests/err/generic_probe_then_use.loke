@@ -1,7 +1,7 @@
 package main; import "core:fmt";
 
-// comments.md A5: a signature an overload candidate rejected as a probe keeps
-// its cause, so a direct use reports it in either order.
+// open-questions.md "Compiler architecture audit (2026-09-28)" (A5):
+// A later direct use reports a rejected signature's cause in either order.
 Bad :: struct($T: type) { a: [size_of(T) - 2]int }
 wrap :: proc(x: $T) -> Bad(T) { return {}; }
 keep :: proc(x: u8) -> int { return 2; }

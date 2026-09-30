@@ -1,6 +1,10 @@
 # Loke language design
 
-This document is the normative specification of Loke v1. [grammar.md](grammar.md) defines the formal syntax, [comments.md](comments.md) collects open questions and non-normative design rationale, and [known-gaps.md](known-gaps.md) records where the current compiler does not yet implement what is written here.
+This document is the normative specification of Loke v1.
+[grammar.md](grammar.md) defines the formal syntax, [comments.md](comments.md)
+collects non-normative design rationale, [open-questions.md](open-questions.md)
+records open questions and unresolved findings, and [known-gaps.md](known-gaps.md)
+records where the current compiler does not yet implement what is written here.
 
 Headings here are cited by name from source comments and checked by `check-citations.ps1`, so renaming or removing one is an interface change.
 
