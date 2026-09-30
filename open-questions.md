@@ -109,6 +109,29 @@ reactive evaluation, and clearer contracts on operations such as `hash` and
 is allowed local mutation and result allocation. It is not required by the
 current compile-time or interface design.
 
+## Callable records, procedures, and closures
+
+The current [callback convention](comments.md#build-selected-services-and-explicit-runtime-state)
+uses a record with a `call` method. `slice.sort_by` also accepts an ordinary
+procedure through a library wrapper. Possible extensions remain exploratory:
+
+- Should every procedure type gain a compiler-contributed `call` member, so one
+  generic signature accepts both procedures and callable records? One standard
+  API uses this convention today; the library wrapper covers it without a new
+  language rule.
+- How should an API infer a callable record's result type? `Result.map_error`
+  currently matches `proc(error: move E) -> $F`. Supporting records would need
+  a way to derive the result from `call`, as an iterator derives `Iterator`
+  from `iter`, and a rule for an overloaded `call`.
+- Would closure syntax usefully abbreviate that record and method? Written
+  captures, mutation, allocation, and escape rules need deciding together with
+  the two questions above. No closure syntax is committed.
+
+A callable that outlives its creation scope is a separate ownership question.
+`fmt.Writer` and `log.Logger` do not establish a need for one: a formatter lends
+its sink for the call, and a logger lends process-lifetime storage, both through
+[`dyn mut` views](comments.md#formatting-and-logging-sinks-are-dyn-views).
+
 ## Owning runtime polymorphism
 
 Borrowed `dyn Interface` views are now defined. Should a later version add an

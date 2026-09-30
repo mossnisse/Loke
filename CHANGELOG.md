@@ -212,6 +212,10 @@ checklist.
 
 ### Documentation
 
+- [comments.md](comments.md) separates current rationale from design history and
+  compiler notes, explains borrow-checking terms, and corrects stale pointer,
+  map, and `Option` descriptions. Callable proposals are in
+  [open-questions.md](open-questions.md#callable-records-procedures-and-closures).
 - Stale open questions are removed or corrected against the current compiler
   and tutorials. The completed compiler audit is recorded in
   [comments.md](comments.md#compiler-architecture-audit-2026-09-28), with its
