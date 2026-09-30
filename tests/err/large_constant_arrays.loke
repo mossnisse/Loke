@@ -1,6 +1,6 @@
 package main;
 
-// open-questions.md "Compiler architecture audit (2026-09-28)" (A1):
+// comments.md "Compiler architecture audit (2026-09-28)" (A1):
 // The evaluator's budget bounds constants; oversized layouts are rejected.
 Table :: [2000000]u8{1};
 

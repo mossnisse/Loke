@@ -1,6 +1,6 @@
 package main;
 
-// open-questions.md "Compiler architecture audit (2026-09-28)" (A1):
+// comments.md "Compiler architecture audit (2026-09-28)" (A1):
 // Zero values are written whole; literals past the budget are built at run time.
 buffer: [16777216]u8;
 grid: [1024][1024][1024]u8;

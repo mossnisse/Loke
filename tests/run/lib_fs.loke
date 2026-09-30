@@ -57,6 +57,11 @@ main :: proc() {
 	fmt.println(succeeded(fs.write_text(file, "första\n")));
 	// An existing file is not an already-satisfied directory creation.
 	fmt.println(io.is(failure_of(fs.create_directories(file)), .Already_Exists));
+	// A file is not a removable directory: keep ERROR_DIRECTORY's path identity.
+	switch (error in fs.remove_directory(file)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(error, .Invalid_Path), io.operation_of(error) == .Remove_Directory, io.native_code_of(error) == 267);
+	}
 	switch (text in fs.read_text(file)) {
 	case .ok:
 		fmt.println(true);

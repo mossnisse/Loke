@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- `get_environment`, `set_environment`, and `unset_environment` reject empty
+  names or names containing `=` as `Invalid_Data` before calling the platform.
+  An invalid-name lookup previously looked like a missing variable, while
+  setters reported `Other`. Validate input names and handle `Invalid_Data`.
 - A union's `impl` or `extend` block can no longer declare a member named `as`,
   which is now the compiler-defined `value.as(.name)`. Rename the member.
 - An inherent `format` must match `fmt.Formattable`'s concrete slot. Generic
@@ -97,6 +101,11 @@ checklist.
 
 ### Fixed
 
+- `path.volume` includes the server and share in extended UNC roots, so
+  `base` and `directory` stop at the share and `fs.create_directories` begins
+  below it. Extended paths remain unchanged by `clean`.
+- Windows path errors 161 and 267 now normalize to `Invalid_Path` consistently
+  in process and filesystem operations, retaining their native error numbers.
 - A bare payload variant passed to a call that is itself being called, as in
   `pick(.io)(3)`, is rejected (`L0425`) as it is anywhere else; it compiled to
   a wrong value.
@@ -172,6 +181,10 @@ checklist.
 
 ### Documentation
 
+- Stale open questions are removed or corrected against the current compiler
+  and tutorials. The completed compiler audit is recorded in
+  [comments.md](comments.md#compiler-architecture-audit-2026-09-28), with its
+  regression citations updated.
 - [tutorials/](tutorials/README.md): nine pages that teach Loke from installing
   it to a program in several packages and a call into C. The test suite builds
   and runs every program on them and checks what the page says it prints.

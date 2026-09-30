@@ -306,22 +306,11 @@ profiles contain.
 
 ## Open questions in `core:os`
 
-- An environment name that is empty or contains `=` fails `set_environment`
-  and `unset_environment` as `Other` (Windows error 87), while
-  `get_environment` answers `.none` for it. Should the portable layer reject
-  such names as `Invalid_Data` on every call, as POSIX `setenv` does?
 - `from_last_error` is written three times, in `core:os`, `core:fs`, and
-  `core:term`, with different tables. `core:os` maps less: error 161 is
-  `Invalid_Path` from `fs` but `Other` from `os`, and 267 (a file given as the
-  new working directory) is `Other` in both.
-
-## Open questions in `core:path`
-
-- `path.volume("\\?\UNC\server\share\x")` is `\\?\UNC`, not
-  `\\?\UNC\server\share`, so `fs.create_directories` on such a path tries to
-  create `\\?\UNC\server` and fails. `clean` already declines extended-length
-  paths. Should `volume` understand `\\?\UNC\`, or should extended-length paths
-  be documented as unsupported by the walking operations?
+  `core:term`, with different tables. Process and filesystem path errors now
+  agree, but should shared mappings be checked together or factored into one
+  helper? The input and path-error decisions are recorded in
+  [comments.md "Portable process input and path errors"](comments.md#portable-process-input-and-path-errors).
 
 ## Open questions in `core:strconv`
 
@@ -397,25 +386,16 @@ An architecture review of `src/` left these open. Each is a structural risk
 rather than a wrong answer; the wrong answers it found are in
 [known-gaps.md](known-gaps.md).
 
-- **Hypothetical checks are a counter, not a boundary.** A probe runs the
-  ordinary checker with `speculation_depth` raised, each registry that must not
-  remember the probe checks the counter itself, and rollback removes only
-  diagnostics. Enrollments reached from a procedure literal inside a probe have
-  missed the check four times: hoisting, `checked_bodies`, static locals, and
-  contributed lifecycle members (all fixed; `probe_emission_state` in
-  `src/front_end_test.odin` probes such a literal and counts each registry,
-  `synth_procs` included). `begin_probe`/`end_probe`
-  now pair the depth with the rollback, but the silent probe in
-  `build_generic_candidate` still truncates diagnostics at depth zero, which
-  compiler-architecture.md "Checking and overload resolution" rules out: its
-  instance is cached for every later call, so running it inside a probe would
-  drop what a signature that holds records. A generic record instance is cached
-  the same way, and one first made where its field errors will be rolled back
-  was left looking valid; it is now rejected with its head diagnostic
-  (`diagnostics_provisional` in `src/generic.odin`), as a silently rejected
-  signature is. Should
-  registry writes made under speculation be journaled and rolled back with the
-  diagnostics, or should a probe stop before body-level work?
+- **Should probes have a stronger mutation boundary?** `begin_probe` and
+  `end_probe` pair speculation with diagnostic rollback, and registry writes
+  share the `committing(c)` gate. Silent generic instantiation uses this probe
+  protocol and retains a rejected signature's head diagnostic for later use;
+  it no longer rolls back at depth zero. The current contract and regression
+  coverage are described in
+  [Checking and overload resolution](compiler-architecture.md#checking-and-overload-resolution).
+  The remaining structural question is whether registry writes should be
+  journaled for rollback, or probes should stop before body-level work, rather
+  than requiring each write to use the gate.
 - **Lifecycle and provenance meet through shared keys.** The dead owners at
   each reset point reach the provenance walk through `reset_dead` and
   `cleanup_reset_dead`, keyed by a `Reset_Key` both walks build alike: the
@@ -439,70 +419,10 @@ rather than a wrong answer; the wrong answers it found are in
   them forgets is skipped silently, as `first_unresolved_name` skipped slices,
   ranges, `or_else`, and `.(T)` until the review;
   default checking now collects parsed `Type_Poly` names through
-  `pattern_shape`, after a raw-source scan let comments change acceptance (A2
-  below). Should the remaining queries recurse through one exhaustive child
+  `pattern_shape`, after a raw-source scan let comments change acceptance. That
+  bug is fixed; should the remaining queries recurse through one exhaustive child
   enumeration?
-- **The runtime ABI is written twice.** `runtime/loke_rt.h` and the `declare`
-  lines in `emit_llvm_runtime.odin` are kept in step by hand. With opaque
-  pointers a mismatched parameter list is a silent miscompile, not a link error.
-  Generate one from the other, or compare them in a test?
-
-## Compiler architecture audit (2026-09-28)
-
-Reviewed revision `b2cc712`. This is a source-wide structural inventory and a
-targeted trace of the driver, checking/CTFE/generics, ownership/provenance,
-semantic finalization, LLVM emission, runtime interface, and test/build
-harnesses. It is not a proof of every language rule or a full audit of the C
-runtime. The implementation guide remains
-[compiler-architecture.md](compiler-architecture.md).
-
-The architecture fits the current whole-program Windows x64 compiler. Stable
-IDs, arena ownership, one annotated AST, explicit call operations, shared
-constant operations, and a separate toolchain layer are useful decisions.
-The main weakness is that the documented phase contracts are stronger than
-their enforcement. Several consumers still complete semantic state, and
-several temporary states depend on every caller remembering the same rules.
-Strengthening those boundaries has a clearer benefit than adding another IR
-or splitting the whole compiler into Odin packages.
-
-The inventory contains 81 production Odin files and 64,235 physical lines,
-including comments and blank lines, plus six unit-test files. A declaration
-scan found 2,189 production procedures, of which 1,194 are file-private.
-`Compiler` has 107 fields. These are navigation and coupling indicators, not
-defect counts. In particular, the large exhaustive dispatches in the parser,
-checker, clone operation, and backend are not automatically abstractions to
-replace.
-
-| Area | Assessment |
-| --- | --- |
-| Source, parsing, AST | Explicit error nodes, spans, nesting limits, and clone-field classification give a sound foundation. Small semantic queries still use independent partial walks; the raw-source binding scanner found here was removed in A2. |
-| Checker and language features | Central overload ranking and recorded `Call_Operation` variants avoid backend resolution. Positional state and speculative mutation remain distributed across callers. |
-| Generics and CTFE | Definition-site scopes, syntax cloning, and shared constant operations are appropriate. Instance caching, diagnostic rollback, and eager member installation have different commitment rules. |
-| Ownership and provenance | The finite dataflow analyses and dependency worklist are substantial strengths. Rebuilt graphs, retained iteration storage, and cleanup identities carry hidden coupling. |
-| LLVM emission | The file split follows responsibilities and the backend has useful negative tests. Its claimed read-only semantic boundary is currently violated on an ordinary program. |
-| Runtime and toolchain | The versioned C interface and artifact/process separation are appropriate. ABI declarations and runtime-cache identity need stronger validation. |
-| Verification | The corpus covers success, errors, traps, LLVM validity, layout, C hosts, packages, examples, and tutorials. Some architecture tests exercise only part of the real pipeline. |
-
-The following priorities distinguish observed failures from structural risks.
-P1 is the first reliability issue to address; P2 is focused corrective work.
-Previously recorded findings are explicitly identified, rather than counted
-as new discoveries.
-
-### Structure and simplification work with lower urgency
-
-- **Narrow mutation access before splitting packages.** The single `lokec`
-  package is deliberate, and many file boundaries are already useful. The 107
-  fields of `Compiler` combine build options, source/diagnostics, stores,
-  speculative state, analysis registries, and allocation domains. Small
-  operations for enrollment and finalization would make the important writes
-  auditable. Merely moving those fields into nested records would improve
-  navigation without enforcing a boundary. Keep the current package until a
-  concrete independent consumer justifies an exported API.
-  *Status:* the enrollment writes now share one gate, `committing(c)` (A5),
-  and emission cannot add to the registries (A3). A wrapper per registry
-  would add code without a failure it prevents, so it waits for one.
-- **Keep one copy of process waiting when that code next changes.** Open, as
-  its own condition says.
+- **Keep one copy of process waiting when that code next changes.**
   `run_process`/`drain` in
   [src/emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) and `exec`/`drain`
   in [tests/corpus_test.odin](tests/corpus_test.odin) duplicate roughly 65 lines
@@ -511,51 +431,8 @@ as new discoveries.
   documented busy-loop behavior is a reason to retain the current waiting
   semantics, not to substitute `os2.process_exec` blindly.
 
-There is no evidence for removing a backend abstraction layer, replacing the
-Odin standard library, or adding a compiler framework. The arbitrary-precision
-integer wrapper already delegates to `core:math/big`. Most small feature files
-represent real language rules, not speculative extension points. The concrete
-deletions are the raw-source binding scanner (removed in A2), backend semantic
-repair calls (removed in A3), and one duplicated process runner; their replacements require code, so
-a larger net line-saving estimate would be speculative. No dependency removal
-was identified.
-
-### Recommended order and verification record
-
-1. Address the known constant-allocation failure with focused correctness
-   regressions. Both it (A1) and the comment/default bug (A2) are now fixed
-   with their regressions.
-2. Close emission preparation: settle carrier fields, require completed
-   phases, and test that emission cannot add semantic entities. Include the
-   real production pipeline in that check. Done (A3, A4).
-3. Clarify generic commitment and member applicability, retaining the existing
-   overload engine and CTFE behavior. Done (A10, A5).
-4. Measure graph iteration/storage before changing analysis topology; then
-   improve cleanup identity and scratch ownership where the evidence warrants.
-   Done (A6, A7).
-5. Add the runtime ABI check and cache-input manifest. Do the smaller state,
-   duplication, and comment cleanups alongside relevant changes. Done (A8,
-   A9); the smaller cleanups remain.
-
-Validation performed on the reviewed implementation:
-
-- `test-all.ps1` passed: **1,010 specification citations**, both layering
-  checks, **100 compiler unit tests** with memory tracking, the vetted compiler
-  build, and **33 integration test functions**. Those integration functions
-  execute the larger case corpora; 33 is not the number of Loke programs.
-- The integration harness reported NASM unavailable and skipped its assembly
-  link coverage. The mutation fuzzer was skipped because `LOKE_TEST_FULL` was
-  unset. The optimization matrix and full fuzzer were not run locally.
-- The two comment/default programs were compiled separately with `-emit-ll`,
-  confirming exit 0 with the comment and exit 1 without it.
-- One temporary in-package audit test ran the actual compilation/finalization
-  path and reported the symbol/field mutation and the two accepted incomplete
-  states described above. It passed with memory tracking and was removed
-  after the observations were recorded. Its successful result confirms the
-  observations, not that those states satisfy the intended contract.
-
-The original audit changed documentation only. A1–A10 were fixed in the
-follow-ups described above; the lower-urgency structure items remain open.
+The completed audit and its decisions are recorded in
+[comments.md "Compiler architecture audit (2026-09-28)"](comments.md#compiler-architecture-audit-2026-09-28).
 
 ## Open checker-fuzzer findings
 
@@ -568,12 +445,12 @@ fails one of the fuzzer's checks under some seed.
   time.** `arr := [N]Value{Value{1}};`, where `Value` has a copy hook, takes
   2.4 s at N = 1024 and 9.4 s at N = 2048; without the hook, N = 65536 takes
   2 s. The fuzzer reports it as a hang at N = 65536.
-- **An error in a generic record's field type is repeated per instance without
-  saying which.** For `Sized :: struct($V: [2]int) { items: [V[18446744073709551616]]int }`
-  and two instances, `L0352` is reported twice, identically, with no
-  "while instantiating" note; the `L0361` that follows each is a cascade from
-  the same unrepresentable constant, and the note names the instance
-  `Sized({0,1:1,1:9})` rather than `Sized([2]int{1, 9})`.
+- **Errors in a generic record's field type repeat and cascade.** For
+  `Sized :: struct($V: [2]int) { items: [V[18446744073709551616]]int }`
+  and two instances, each reports `L0352` followed by `L0361` for the same
+  unrepresentable constant. The primary error has no "while instantiating"
+  note; only the cascade identifies the instance, using `Sized({0,1:1,1:9})`
+  rather than `Sized([2]int{1, 9})`.
 
 ## Open generics findings
 
@@ -601,20 +478,17 @@ the specification as written.
 
 ## Found by writing the tutorials
 
-Writing [tutorials/](tutorials/README.md) found these, besides the ones since
-fixed. The pages work around both, so each workaround marks a place to revisit
-if the answer changes.
+Writing [tutorials/](tutorials/README.md) raised this remaining question, besides
+the ones since fixed.
 
-- **Column widths.** `fmt` has no width, so the tool in tutorials/08 pads with
-  `strings.repeat`. Widths wait for [Width and precision in
-  `fmt`](#width-and-precision-in-fmt), to be settled together with precision
-  when a program needs both; the workaround is two lines.
 - **Two slices of one local array in one call.** `fmt.println(primes[1:4],
   total(primes[:]))` is rejected (`L0511`): slicing a mutable local gives
   `[]mut int`, which keeps that type inside the `any_view`, so the second slice
   conflicts with it. That follows design.md "Slices", and an extracted
   `[]mut int` could indeed write. But a reader who only prints has to write
-  `middle := primes[1:4];` first (tutorials/04). Erasing a fresh slice into an
+  `middle := primes[1:4];` first, as in
+  [Arrays and slices](tutorials/04-strings-and-containers.md#arrays-and-slices).
+  Erasing a fresh slice into an
   `any_view` could settle it read-only, as a `[]T` destination does, but that
   would make an erased slice's type depend on where it lands. The rule stays:
   one extra binding is a small price for a slice type that does not change.

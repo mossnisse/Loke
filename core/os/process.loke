@@ -19,9 +19,12 @@ import "core:unsafe";
 // A name or value that is not valid Unicode is `Invalid_Data`: the library's
 // contract is UTF-8, and a native string that cannot be represented is reported
 // rather than silently changed.
+// All environment operations reject an empty name, `=`, or U+0000 before the
+// platform call (standard-library "`core:os` additions").
 get_environment :: proc(
 	name: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(Option(string), io.Error) {
+	validate_environment_name(name) or_return;
 	return get_environment_native(name, allocator);
 }
 
@@ -30,11 +33,24 @@ get_environment :: proc(
 // than "set to nothing". That is the platform's behavior, not this library's
 // choice.
 set_environment :: proc(name: string_view, value: string_view) -> Result(Unit, io.Error) {
+	validate_environment_name(name) or_return;
 	return set_environment_native(name, value);
 }
 
 unset_environment :: proc(name: string_view) -> Result(Unit, io.Error) {
+	validate_environment_name(name) or_return;
 	return unset_environment_native(name);
+}
+
+@(private)
+validate_environment_name :: proc(name: string_view) -> Result(Unit, io.Error) {
+	if (name.len() == 0) { return .err(io.make_error(.Invalid_Data, .Environment)); }
+	foreach (byte in name.bytes()) {
+		if (byte == 0 || byte == u8('=')) {
+			return .err(io.make_error(.Invalid_Data, .Environment));
+		}
+	}
+	return .ok;
 }
 
 working_directory :: proc(
@@ -82,7 +98,7 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 	if (native == 2 || native == 3 || native == u32(ERROR_ENVVAR_NOT_FOUND)) { code = .Not_Found; }
 	else if (native == 5) { code = .Permission_Denied; }
 	else if (native == 8 || native == 14) { code = .Out_Of_Memory; }
-	else if (native == 123 || native == 206) { code = .Invalid_Path; }
+	else if (native == 123 || native == 161 || native == 206 || native == 267) { code = .Invalid_Path; }
 	return io.make_error(code, operation, native);
 }
 

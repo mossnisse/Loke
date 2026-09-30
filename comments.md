@@ -1051,3 +1051,85 @@ of writing. tests/corpus_test.odin keeps `core/` and `base/` formatted and
 formats every program corpus to a layout that formats to itself.
 
 Possible refinements are recorded in [open-questions.md "Formatting"](open-questions.md#formatting).
+
+## Extended UNC volume boundaries
+
+Extended UNC paths use the same server/share boundary as ordinary UNC paths,
+after the `\\?\UNC\` marker. Recognizing that boundary in `path.volume` fixes
+every lexical operation that stops at a root and lets `fs.create_directories`
+begin below the share. It does not normalize the path: [Windows's extended-path
+rules](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
+require preserving its text, so `clean` continues to return it unchanged.
+The contract is in [standard-library.md "`core:path`"](standard-library.md#corepath),
+with regression cases in [tests/run/lib_path.loke](tests/run/lib_path.loke).
+
+## Portable process input and path errors
+
+Environment names are non-empty and exclude `=` and U+0000. Rejecting them
+before a platform call gives reads, writes, and removals the same `Invalid_Data`
+answer without confusing an invalid name with a missing variable. The existing
+`Result(Option(string), io.Error)` already separates those outcomes; no API
+signature change or native allocation is needed for validation.
+
+Windows [path errors](https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-)
+123, 161, 206, and 267 normalize to `Invalid_Path` in both process and filesystem
+operations. In particular, giving an existing file to an operation requiring a
+directory preserves that identity and the native code instead of reporting
+`Other`. The contracts are in [standard-library.md "`core:os` additions"](standard-library.md#coreos-additions)
+and ["`core:fs`"](standard-library.md#corefs); regressions live in
+[tests/run/lib_process.loke](tests/run/lib_process.loke) and
+[tests/run/lib_fs.loke](tests/run/lib_fs.loke). The separate native translation
+tables remain an [open question](open-questions.md#open-questions-in-coreos).
+
+## Compiler architecture audit (2026-09-28)
+
+The audit reviewed revision `b2cc712`, tracing the driver, checking, CTFE,
+generics, ownership, emission, runtime interface, and test harnesses. Its
+corrective findings A1–A10 have since been addressed. Their original priority
+order is no longer a work list; the current contracts are in
+[compiler-architecture.md](compiler-architecture.md), and the remaining
+structural questions are in
+[open-questions.md](open-questions.md#open-questions-in-the-compilers-structure).
+
+The review favored enforcing the existing phase boundaries over adding an IR
+or splitting the compiler into packages. Stable IDs, arena ownership, one
+annotated AST, explicit call operations, shared constant operations, and a
+separate toolchain layer already fit the compiler. The completed follow-ups:
+
+- **A1: Bound constant construction.** Literal folding and zero values use the
+  CTFE element budget, while large runtime literals need no eager constant.
+  Regressions include [large constant arrays](tests/err/large_constant_arrays.loke),
+  [runtime literals](tests/run/large_literal_runtime.loke), and
+  [LLVM arrays](tests/ll/large_arrays.loke).
+- **A2: Collect generic bindings from syntax.** `pattern_shape` replaced the
+  raw-source scanner, so comments cannot introduce or hide bindings.
+- **A3–A4: Close the emission boundary.** Carrier fields and semantic registries
+  are settled before emission; the backend validates them and checks that
+  emission cannot grow semantic state. Tests in
+  [src/emit_llvm_test.odin](src/emit_llvm_test.odin) cover the production path
+  and reject incomplete phase state.
+- **A5: Centralize speculative commitment.** Enrollment uses `committing(c)`;
+  probe rollback and cached rejection diagnostics follow the same protocol.
+  [src/front_end_test.odin](src/front_end_test.odin) checks registry isolation,
+  and [generic probe then use](tests/run/generic_probe_then_use.loke) and its
+  [error cases](tests/err/generic_probe_then_use.loke) cover later real uses.
+- **A6–A7: Fix analysis storage and reset identities.** Superseded provenance
+  graphs are reclaimed, and reset points retain the exit and `defer` expansion
+  identity needed to check owners live at each exit.
+- **A8–A9: Validate runtime ABI and cache inputs.** `runtime_abi_matches_header`
+  lowers the C header with clang and compares signatures, calling-convention
+  attributes, and record layouts with LLVM emission. `runtime_cache_follows_build_inputs`
+  checks reuse and invalidation of prebuilt objects. Both live in
+  [tests/runtime_test.odin](tests/runtime_test.odin).
+- **A10: Resolve generic member applicability consistently.** Specialization
+  and ambiguity use the overload rules, including instances created before a
+  more specialized block is registered.
+
+The original review's quick gate passed 1,010 specification citations, 100
+compiler unit tests, the vetted build, and 33 integration functions. NASM was
+unavailable; the optimization matrix and mutation fuzzer were not run locally.
+Those counts describe the reviewed revision, not the current test inventory.
+
+No registry wrapper or package split was justified after centralizing the
+mutation gate and enforcing the emission boundary. Revisit one when a concrete
+failure or independent consumer requires it.

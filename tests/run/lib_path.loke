@@ -78,4 +78,22 @@ main :: proc() {
 	// `..` is the parent, not a file named `.` with the extension `.`.
 	fmt.println(path.extension("a\\..").len());
 	fmt.println(path.stem(".."));
+
+	// Extended UNC roots include the server and share, not only the UNC marker.
+	// The same volume boundary keeps filesystem creation below the share.
+	root: string_view = "\\\\?\\UNC\\server\\share.txt";
+	child: string_view = "\\\\?\\UNC\\server\\share.txt\\child";
+	fmt.println(path.volume(child) == root, path.is_absolute(child));
+	fmt.println(path.base(root).len() == 0, path.extension(root).len() == 0);
+	fmt.println(path.directory(root) == root, path.directory(child) == root + "\\");
+	fmt.println(path.volume(root + "\\") == root, path.base(root + "\\").len() == 0);
+	fmt.println(path.volume("\\\\?\\unc\\server\\share\\child") == "\\\\?\\unc\\server\\share");
+	fmt.println(path.volume("\\\\?\\UnC\\sérver\\共有\\child") == "\\\\?\\UnC\\sérver\\共有");
+	fmt.println(path.volume("\\\\?\\UNC\\server").len() == 0);
+	fmt.println(path.volume("\\\\?\\UNC\\\\share").len() == 0);
+	fmt.println(path.volume("\\\\?\\UNC\\server\\").len() == 0);
+	fmt.println(path.volume("\\\\?\\UNC").len() == 0);
+	fmt.println(path.volume("\\\\?\\unc").len() == 0);
+	fmt.println(path.volume("\\\\?\\C:\\child") == "\\\\?\\C:");
+	fmt.println(path.clean(child + "\\..\\leaf") == child + "\\..\\leaf");
 }

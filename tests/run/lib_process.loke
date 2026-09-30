@@ -47,14 +47,14 @@ main :: proc() {
 	// The success path, which the arena above deliberately never reaches: a value
 	// set and read back is the same value, and a name that was never set is
 	// `.none` rather than an error.
-	switch (_ in os.set_environment(name, "round trip")) {
+	switch (_ in os.set_environment(name, "round=trip")) {
 	case .ok:
 	case .err: fmt.println("set failed");
 	}
 	switch (found in os.get_environment(name)) {
 	case .ok:
 		switch (text in found) {
-		case .some: fmt.println(text == "round trip");
+		case .some: fmt.println(text == "round=trip");
 		case .none: fmt.println("unexpectedly none");
 		}
 	case .err: fmt.println("get failed");
@@ -84,6 +84,24 @@ main :: proc() {
 	case .err: fmt.println("get failed");
 	}
 
+	// Invalid names fail before reaching the platform, including read and remove.
+	zero_name := string.from_utf8(zero[:]) or_else "";
+	invalid_names := [?]string_view{"", "LOKE_BAD=NAME_7E2C", "=C:", zero_name};
+	foreach (invalid in invalid_names) {
+		switch (error in os.get_environment(invalid)) {
+		case .ok:  fmt.println(false);
+		case .err: fmt.println(io.is(error, .Invalid_Data), io.operation_of(error) == .Environment, io.native_code_of(error) == 0);
+		}
+		switch (error in os.set_environment(invalid, "value")) {
+		case .ok:  fmt.println(false);
+		case .err: fmt.println(io.is(error, .Invalid_Data), io.operation_of(error) == .Environment, io.native_code_of(error) == 0);
+		}
+		switch (error in os.unset_environment(invalid)) {
+		case .ok:  fmt.println(false);
+		case .err: fmt.println(io.is(error, .Invalid_Data), io.operation_of(error) == .Environment, io.native_code_of(error) == 0);
+		}
+	}
+
 	// The working directory round trip. Printed as booleans, so the case does not
 	// depend on where the harness runs it from.
 	start := "";
@@ -104,7 +122,18 @@ main :: proc() {
 
 	// The executable is always an absolute path to a real file.
 	switch (exe in os.executable_path()) {
-	case .ok:  fmt.println(exe.len() > 0, path.is_absolute(exe), path.base(exe).len() > 0);
+	case .ok:
+		fmt.println(exe.len() > 0, path.is_absolute(exe), path.base(exe).len() > 0);
+		// An existing file cannot be the working directory: ERROR_DIRECTORY.
+		switch (error in os.set_working_directory(exe)) {
+		case .ok:  fmt.println(false);
+		case .err: fmt.println(io.is(error, .Invalid_Path), io.operation_of(error) == .Working_Directory, io.native_code_of(error) == 267);
+		}
 	case .err: fmt.println("exe failed");
+	}
+	// An incomplete extended UNC path keeps its path error and native code.
+	switch (error in os.set_working_directory("\\\\?\\UNC\\")) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(error, .Invalid_Path), io.operation_of(error) == .Working_Directory, io.native_code_of(error) != 0);
 	}
 }

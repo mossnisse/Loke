@@ -465,7 +465,7 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 	else if (native == 109 || native == 232) { code = .Broken_Pipe; }
 	else if (native == 112) { code = .Out_Of_Space; }
 	else if (native == 145) { code = .Directory_Not_Empty; }
-	else if (native == 123 || native == 161 || native == 206) { code = .Invalid_Path; }
+	else if (native == 123 || native == 161 || native == 206 || native == 267) { code = .Invalid_Path; }
 	else if (native == 995) { code = .Interrupted; }
 	else if (native == 50 || native == 1) { code = .Unsupported; }
 	return io.make_error(code, operation, native);

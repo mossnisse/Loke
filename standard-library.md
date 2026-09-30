@@ -901,6 +901,8 @@ existing directory and a volume root such as `C:\` are not failures, while an
 existing file is `Already_Exists`. A path ending in a drive's colon, such as
 `C:`, names that drive's current directory for `read_directory` as for every
 other operation.
+Removing an existing file with `remove_directory` is `Invalid_Path`; the
+operation requires a directory and preserves the native error number.
 
 `exists` answers `.ok(false)` only for a definite not-found result; permission
 and I/O failures remain errors. `Metadata` holds `kind` (`File`, `Directory`,
@@ -928,6 +930,11 @@ clean(path: string_view, allocator := mem.default_allocator()) -> string
 create or remove — `C:` is a drive and a UNC prefix is a share — so a caller
 walking a path has to know where the walkable part starts. `fs.create_directories`
 is the one that needs it.
+On Windows an extended UNC volume includes the complete server and share:
+`\\?\UNC\server\share\child` has volume `\\?\UNC\server\share`, with a
+case-insensitive `UNC` marker. Both server and share must be non-empty.
+`base` and `directory` stop at that boundary as they do for ordinary UNC roots,
+and `fs.create_directories` begins below the share.
 
 `join` and `clean` return owning storage, so they take an allocator like every
 other such procedure. The allocator takes their scratch as well as their result,
@@ -1078,7 +1085,13 @@ present empty value, except that on Windows setting a variable to the empty
 string removes it; that is the platform's behavior, documented at the call. Its
 owning result uses the supplied allocator. Environment
 names and values must become valid UTF-8 or the operation returns invalid data.
-A name, value, or path passed in containing U+0000 is invalid data as well.
+A name must be non-empty and contain neither `=` nor U+0000. All three
+environment operations reject such names as `Invalid_Data`, with operation
+`Environment` and native code zero, before consulting the platform.
+A value or path passed in containing U+0000 is invalid data as well.
+`set_working_directory` given an existing file returns `Invalid_Path`,
+preserving the native error number. In Windows process and
+filesystem calls, path errors 123, 161, 206, and 267 all have that code.
 A process-spawning API is deferred until handle inheritance, quoting, environment
 replacement, and pipe ownership are designed together.
 
