@@ -1,0 +1,26 @@
+package main; import "core:mem"; import "core:fmt";
+
+// design.md "Allocator regions and region provenance": only an owning value has
+// region provenance. A plain value read out of a container backed by a local
+// arena is a copy that depends on no region, so it may be returned directly.
+
+Pair :: struct { a, b: int }
+
+first :: proc() -> int {
+	arena := mem.Arena.init();
+	ys: [dynamic]int via arena.allocator() = {};
+	ys.append(7);
+	return ys[0];
+}
+
+first_pair :: proc() -> Pair {
+	arena := mem.Arena.init();
+	ps: [dynamic]Pair via arena.allocator() = {};
+	ps.append(Pair{1, 2});
+	return ps[0];
+}
+
+main :: proc() {
+	pair := first_pair();
+	fmt.println(first(), pair.a, pair.b);
+}

@@ -7,23 +7,7 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-- **A plain element returned straight out of a region-backed container is
-  rejected.** design.md "Allocator regions and region provenance" gives region
-  provenance to an owning value, so an `int` read from a container backed by a
-  local arena may be returned. `lokec` reports `L0592` ("this result is backed
-  by `arena`...") for the direct `return`, and accepts the same value bound to a
-  local first:
-
-  ```loke
-  package main; import "core:mem"; import "core:fmt";
-  first :: proc() -> int {
-  	arena := mem.Arena.init();
-  	ys: [dynamic]int via arena.allocator() = {};
-  	ys.append(7);
-  	return ys[0]; // L0592; `n := ys[0]; return n;` compiles
-  }
-  main :: proc() { fmt.println(first()); }
-  ```
+None recorded.
 
 ## Not gaps
 

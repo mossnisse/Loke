@@ -1,0 +1,23 @@
+package main; import "core:mem";
+
+// design.md "Allocator regions and region provenance": an element read out of
+// a container backed by a local arena keeps the region of what it holds. An
+// `Allocator` handle, or a record holding one, may still name the arena.
+
+Holder :: struct { alloc: Allocator, n: int }
+
+handle :: proc() -> Allocator {
+	arena := mem.Arena.init();
+	hs: [dynamic]Allocator via arena.allocator() = {};
+	hs.append(arena.allocator());
+	return hs[0];
+}
+
+holder :: proc() -> Holder {
+	arena := mem.Arena.init();
+	hs: [dynamic]Holder via arena.allocator() = {};
+	hs.append(Holder{arena.allocator(), 1});
+	return hs[0];
+}
+
+main :: proc() {}

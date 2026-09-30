@@ -94,6 +94,10 @@ checklist.
 
 ### Fixed
 
+- A plain value read out of a container backed by a local arena, such as
+  `return ys[0];` for a `[dynamic]int`, can be returned directly; it was
+  rejected (`L0592`) as if it were backed by the arena, while the same value
+  bound to a local first was accepted.
 - The runtime objects `lokec` caches beside itself are rebuilt when the C
   build that made them changes, such as a new `LOKE_CLANG`, a reinstalled
   clang, or different MSVC or Windows SDK headers; they used to be reused

@@ -1610,9 +1610,47 @@ prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	})
 }
 
+// Whether a value of `type` can depend on an allocator region: somewhere in it
+// is an owner, a view, an `Allocator`, or a provider (design.md "Allocator
+// regions and region provenance"). An `int` read out of a region-backed
+// container has no region.
+@(private = "file")
+prov_type_has_region :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
+	if depth > 8 {
+		return true
+	}
+	if type_is_managed(c, type) || type_is_carrier(c, type) || type_underlying(c, type) == TYPE_ALLOCATOR {
+		return true
+	}
+	info := underlying_info(c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && prov_type_has_region(c, sym.type, depth + 1) {
+				return true
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			if variant != TYPE_VOID && prov_type_has_region(c, variant, depth + 1) {
+				return true
+			}
+		}
+	case .Array:
+		return prov_type_has_region(c, info.element, depth + 1)
+	}
+	return false
+}
+
 @(private = "file")
 prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 	c := graph.k.c
+	if base := expr_base(e); base != nil && base.type != INVALID_TYPE && !prov_type_has_region(c, base.type) {
+		return Region_Set{}
+	}
 	// design.md "Allocators": a nil `Allocator` is the default provider.
 	if base := expr_base(e); base != nil && base.is_const && base.const_value.kind == .Nil &&
 	   type_underlying(c, base.type) == TYPE_ALLOCATOR {
