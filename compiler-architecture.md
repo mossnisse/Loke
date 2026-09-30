@@ -353,12 +353,14 @@ owns or that Loke cannot express, such as atomic instructions, erased formatting
 dispatch, allocator-aware string allocation, and selected provider access.
 
 An executable build links the generated module with the compiled C runtime.
-`prebuilt_runtime_objects` keeps one object set per optimization mode under
-`runtime/prebuilt/<mode>/` and recompiles it when a `runtime/*.c` or `*.h` is
-newer than a cached object, or when the C build differs from the one recorded
-in the set's `build-inputs.txt`: the clang command (the clang path, the flags,
-and the MSVC and SDK include roots) and the clang binary's modification time.
-The first build after editing `runtime/` or changing `LOKE_CLANG` is slow by
+`prebuilt_runtime_objects` keeps compiled runtime objects under
+`runtime/prebuilt/<mode>-<hash>/`, one set per C build. The hash is of the
+set's `build-inputs.txt`: the clang command (the clang path, the flags, and the
+MSVC and SDK include roots), the clang binary's modification time, and each
+`runtime/*.c` and `*.h` file's name, size, and modification time. A changed
+input names a new set rather than replacing one a parallel link may be reading;
+an installed set is never modified, and superseded sets are left in place. The
+first build after editing `runtime/` or changing `LOKE_CLANG` is slow by
 design, and the rest are not. An object build emits one
 relocatable compiler module and leaves its runtime and foreign references for
 the host to supply.
@@ -555,8 +557,9 @@ lowers `runtime/loke_rt.h` for the compiler's target, and every literal
 `declare` or `define` of a `loke_rt_v1_` function in `src/emit_llvm*.odin`, the
 default allocator record, and the string and container records a module
 carries must match that lowering, including argument-passing attributes. It
-also checks that a changed `LOKE_CLANG` rebuilds the prebuilt runtime objects,
-on a private copy of the compiler and runtime.
+also checks, on a private copy of the compiler and runtime, that a changed
+`LOKE_CLANG` gets its own prebuilt runtime objects, installed by eight parallel
+links without any losing its objects, and that the first set is reused after.
 
 `tests/tutorial_test.odin` checks the pages under `tutorials/` from their own
 text, so a reader copies exactly what was compiled. A fenced block whose info

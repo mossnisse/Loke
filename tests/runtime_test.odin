@@ -8,6 +8,7 @@ import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "core:thread"
 import "core:time"
 
 // The compiler's carrier types and the C records they are passed as.
@@ -183,11 +184,12 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 	}
 }
 
-// The bundled runtime's prebuilt objects are reused only while the C build
-// that made them is unchanged. Naming the same clang by another spelling in
-// `LOKE_CLANG` is a different build; naming it as before again is too. A
-// private copy of the compiler and runtime keeps these rebuilds away from the
-// objects the corpus links against.
+// The bundled runtime's prebuilt objects are reused only by a link with the
+// same C build. Naming the same clang by another spelling in `LOKE_CLANG` is a
+// different build and gets a set of its own, which parallel links install
+// without taking objects from one another; naming it as before reuses the
+// first set. A private copy of the compiler and runtime keeps these builds away
+// from the objects the corpus links against.
 @(test)
 runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	clang, _, found := host_toolchain()
@@ -222,29 +224,66 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	if respelled == clang {
 		respelled, _ = strings.replace_all(clang, "/", "\\", context.temp_allocator)
 	}
-	object := fmt.tprintf("%s/runtime/prebuilt/None/alloc.o", root)
-	// When the one link through `clang` built the object it links.
-	built := proc(t: ^testing.T, compiler, root, object: string, env: []string) -> time.Time {
-		state, _, stderr, err := exec(
-			os2.Process_Desc {
-				command = []string {
-					compiler, "examples/hello.loke", "-o", fmt.tprintf("%s/hello.exe", root),
-					"-collection", "base=base", "-collection", "core=core",
-				},
-				env = env,
-			},
-			context.allocator,
-		)
-		testing.expectf(t, err == nil && state.exit_code == 0, "the link failed:\n%s", string(stderr))
-		stamp, _ := os2.modification_time_by_path(object)
+	// Links through the private compiler, `count` at once, and answers whether
+	// every one succeeded.
+	Link :: struct {
+		command: []string,
+		env:     []string,
+		ok:      bool,
+		stderr:  string,
+	}
+	link_all :: proc(t: ^testing.T, compiler, root: string, env: []string, count: int) -> bool {
+		links := make([]Link, count, context.temp_allocator)
+		threads := make([]^thread.Thread, count, context.temp_allocator)
+		for &link, index in links {
+			link.env = env
+			// Its own array: a slice literal here would share one per iteration.
+			command := make([dynamic]string, context.temp_allocator)
+			append(&command, compiler, "examples/hello.loke", "-o", fmt.tprintf("%s/hello%d.exe", root, index))
+			append(&command, "-collection", "base=base", "-collection", "core=core")
+			link.command = command[:]
+			threads[index] = thread.create_and_start_with_poly_data(&link, proc(link: ^Link) {
+				state, _, stderr, err := exec(os2.Process_Desc{command = link.command, env = link.env}, context.allocator)
+				link.ok, link.stderr = err == nil && state.exit_code == 0, string(stderr)
+			})
+		}
+		all := true
+		for worker, index in threads {
+			thread.join(worker)
+			thread.destroy(worker)
+			all &&= testing.expectf(t, links[index].ok, "link %d of %d failed:\n%s", index + 1, count, links[index].stderr)
+		}
+		return all
+	}
+	// The installed sets, and when the one for `name` built its first object.
+	sets :: proc(root: string) -> []os2.File_Info {
+		entries, _ := os2.read_all_directory_by_path(fmt.tprintf("%s/runtime/prebuilt", root), context.temp_allocator)
+		out := make([dynamic]os2.File_Info, context.temp_allocator)
+		for entry in entries {
+			if entry.type == .Directory && !strings.has_prefix(entry.name, ".") {
+				append(&out, entry)
+			}
+		}
+		return out[:]
+	}
+	built_at :: proc(set: os2.File_Info) -> time.Time {
+		stamp, _ := os2.modification_time_by_path(fmt.tprintf("%s/alloc.o", set.fullpath))
 		return stamp
 	}
-	first := built(t, compiler, root, object, with_clang(inherited, clang))
-	testing.expect(t, first != {}, "the first link built no runtime object")
-	testing.expect(t, built(t, compiler, root, object, with_clang(inherited, clang)) == first, "an unchanged build rebuilt the runtime")
-	second := built(t, compiler, root, object, with_clang(inherited, respelled))
-	testing.expectf(t, second != first, "a `LOKE_CLANG` of `%s` reused objects built by `%s`", respelled, clang)
-	testing.expect(t, built(t, compiler, root, object, with_clang(inherited, clang)) != second, "returning to the first clang reused the other's objects")
+
+	if !link_all(t, compiler, root, with_clang(inherited, clang), 1) || !testing.expect(t, len(sets(root)) == 1, "the first link installed no set") {
+		return
+	}
+	first := sets(root)[0]
+	first_built := built_at(first)
+	link_all(t, compiler, root, with_clang(inherited, clang), 1)
+	testing.expect(t, len(sets(root)) == 1 && built_at(first) == first_built, "an unchanged build rebuilt the runtime")
+	// Every link needs the new set at once, as a parallel corpus does after an
+	// input changes; none may lose the objects it links against.
+	link_all(t, compiler, root, with_clang(inherited, respelled), 8)
+	testing.expectf(t, len(sets(root)) == 2, "a `LOKE_CLANG` of `%s` did not get a set of its own", respelled)
+	link_all(t, compiler, root, with_clang(inherited, clang), 1)
+	testing.expect(t, len(sets(root)) == 2 && built_at(first) == first_built, "returning to the first clang did not reuse its set")
 }
 
 // A `declare`/`define` of a runtime function that starts a string literal or

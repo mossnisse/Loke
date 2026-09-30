@@ -889,6 +889,21 @@ corpus links. An unchanged link reuses the set, a `LOKE_CLANG` spelling the
 same clang differently rebuilds it, and so does switching back. The test
 failed against the previous cache.
 
+**Follow-up, found by the full suite:** replacing a stale set was racy. Every
+parallel link saw the stale set and compiled its own; the rename onto the
+existing directory failed on Windows, so each link deleted the directory and
+renamed its own in, sometimes deleting the set another link was already
+linking against (`lld-link: could not open .../prebuilt/Size/alloc.o`). This
+predates the manifest, which only made every existing set stale at once. A set
+now lives in `prebuilt/<mode>-<hash of its manifest>/`, and the manifest also
+names each runtime source and header by name, size, and modification time, so
+any changed input names a new directory. An installed set is never modified
+or deleted; a link that loses the install race uses the winner's copy.
+Superseded sets are left behind (about 100 KB each). Twelve parallel links
+after an input change failed 2 of 12 with the old install and none with the new
+one. The test now installs a new set with eight parallel links and expects
+switching back to reuse the first set.
+
 ### A10 — resolved: Generic member installation committed before applicability settled
 
 **Existing language defects with a common structural cause.** The two generic

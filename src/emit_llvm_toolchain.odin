@@ -5,6 +5,7 @@ package lokec
 
 import "base:runtime"
 import "core:fmt"
+import "core:hash"
 import "core:mem/virtual"
 import "core:os"
 import "core:path/filepath"
@@ -307,24 +308,31 @@ replace_ext :: proc(path: string, ext: string) -> string {
 	return strings.concatenate({path, ext})
 }
 
-// The bundled runtime's objects, compiled once per optimization mode (the host
-// is the only target) and reused by later links while the C build that made
-// them is unchanged. A custom `-runtime=<dir>` is never written to. A new set
-// is compiled in a private staging directory and renamed into place, so no link
-// sees a partial set.
+// The bundled runtime's objects, compiled once per C build (the host is the
+// only target) and reused by later links. A custom `-runtime=<dir>` is never
+// written to. Each set lives in a directory named by a hash of everything that
+// decides it, so a changed input makes a new set instead of replacing one a
+// concurrent link may be reading. A set is compiled in a private staging
+// directory and renamed into place, and an installed set is never modified.
+// ponytail: superseded sets are left behind (about 100 KB each); a sweep
+// would need to know no link still reads them.
 @(private = "file")
 prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opts: Options) -> []string {
 	if opts.runtime_dir != "" {
 		return nil
 	}
-	dir := filepath.join({runtime_dir, "prebuilt", fmt.tprintf("%v", opts.opt_mode)})
+	command := runtime_compile_command(runtime_dir, sources, opts)
+	manifest, identified := runtime_build_manifest(runtime_dir, command)
+	if !identified {
+		return nil
+	}
+	name := fmt.tprintf("%v-%16x", opts.opt_mode, hash.fnv64a(transmute([]byte)manifest))
+	dir := filepath.join({runtime_dir, "prebuilt", name})
 	objects := make([]string, len(sources))
 	for source, index in sources {
 		objects[index] = filepath.join({dir, replace_ext(filepath.base(source), ".o")})
 	}
-	command := runtime_compile_command(runtime_dir, sources, opts)
-	manifest := runtime_build_manifest(command)
-	if prebuilt_current(runtime_dir, dir, objects, manifest) {
+	if prebuilt_current(dir, objects, manifest) {
 		return objects
 	}
 	staging := filepath.join({runtime_dir, "prebuilt", fmt.tprintf(".staging-%d", os2.get_pid())})
@@ -338,27 +346,23 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opts: O
 	if !os.write_entire_file(filepath.join({staging, RUNTIME_MANIFEST}), transmute([]byte)manifest) {
 		return nil
 	}
-	if os2.rename(staging, dir) != nil {
-		// A concurrent link that installed first may be using its set: keep it.
-		if prebuilt_current(runtime_dir, dir, objects, manifest) {
-			return objects
-		}
-		os2.remove_all(dir)
-		if os2.rename(staging, dir) != nil {
-			return nil
-		}
+	// A concurrent link that installed the same set first wins; either copy
+	// serves. Anything else leaves the link to compile the sources itself.
+	if os2.rename(staging, dir) != nil && !prebuilt_current(dir, objects, manifest) {
+		return nil
 	}
 	return objects
 }
 
-// Beside a prebuilt set: the C build that made it.
+// Beside a prebuilt set: what it was built from.
 RUNTIME_MANIFEST :: "build-inputs.txt"
 
-// What decides the objects besides the runtime's own files: the clang command,
-// which names the compiler, the flags, and the MSVC and SDK include roots, and
-// the clang binary's modification time, which a reinstall changes.
+// Everything that decides the objects: the clang command, which names the
+// compiler, the flags, and the MSVC and SDK include roots; the clang binary's
+// modification time, which a reinstall changes; and each runtime source and
+// header's name, size, and modification time.
 @(private = "file")
-runtime_build_manifest :: proc(command: []string) -> string {
+runtime_build_manifest :: proc(runtime_dir: string, command: []string) -> (manifest: string, ok: bool) {
 	b := strings.builder_make()
 	for word in command {
 		strings.write_string(&b, word)
@@ -366,36 +370,28 @@ runtime_build_manifest :: proc(command: []string) -> string {
 	}
 	stamp, _ := os2.modification_time_by_path(command[0])
 	fmt.sbprintfln(&b, "clang modified %d", time.to_unix_nanoseconds(stamp))
-	return strings.to_string(b)
+	entries, err := os2.read_all_directory_by_path(runtime_dir, context.temp_allocator)
+	if err != nil {
+		return "", false
+	}
+	slice.sort_by(entries, proc(a, b: os2.File_Info) -> bool { return a.name < b.name })
+	for entry in entries {
+		if strings.has_suffix(entry.name, ".c") || strings.has_suffix(entry.name, ".h") {
+			fmt.sbprintfln(&b, "%s %d %d", entry.name, entry.size, time.to_unix_nanoseconds(entry.modification_time))
+		}
+	}
+	return strings.to_string(b), true
 }
 
-// Every object present and no older than any runtime source or header, and made
-// by the build `manifest` describes.
+// Every object present, in a set made from `manifest`.
 @(private = "file")
-prebuilt_current :: proc(runtime_dir, dir: string, objects: []string, manifest: string) -> bool {
+prebuilt_current :: proc(dir: string, objects: []string, manifest: string) -> bool {
 	recorded, found := os.read_entire_file(filepath.join({dir, RUNTIME_MANIFEST}), context.temp_allocator)
 	if !found || string(recorded) != manifest {
 		return false
 	}
-	newest: time.Time
-	for pattern in ([]string{"*.c", "*.h"}) {
-		matches, err := filepath.glob(filepath.join({runtime_dir, pattern}))
-		if err != nil {
-			return false
-		}
-		for match in matches {
-			stamp, stamp_err := os2.modification_time_by_path(match)
-			if stamp_err != nil {
-				return false
-			}
-			if time.diff(newest, stamp) > 0 {
-				newest = stamp
-			}
-		}
-	}
 	for object in objects {
-		stamp, err := os2.modification_time_by_path(object)
-		if err != nil || time.diff(newest, stamp) < 0 {
+		if !os.exists(object) {
 			return false
 		}
 	}

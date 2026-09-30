@@ -105,6 +105,11 @@ checklist.
   build that made them changes, such as a new `LOKE_CLANG`, a reinstalled
   clang, or different MSVC or Windows SDK headers; they used to be reused
   whenever they were newer than the runtime sources.
+- Several builds running at once after the runtime changed no longer fail at
+  the link with `could not open .../runtime/prebuilt/.../alloc.o`: each
+  runtime build keeps its own cached set, which is never replaced while
+  another build may read it. The old `runtime/prebuilt/<mode>` directories are
+  no longer used and can be deleted.
 - A deferred `drop(arena)` or `free_all(arena.allocator())` is checked at each
   exit with the owners live at that exit. An owner of the region still live at
   one exit was missed when another exit, such as an early `return` after
