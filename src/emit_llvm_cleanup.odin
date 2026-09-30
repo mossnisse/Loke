@@ -868,8 +868,14 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 		// Drop the parts already built, in reverse; later ones are still zero.
 		place_label(e, unwind)
-		for done := index - 1; done >= 0; done -= 1 {
-			emit_drop_record_part(e, subject, out, done)
+		if info := underlying_info(e.c, subject); info != nil && info.kind == .Array {
+			// One runtime loop, rather than re-emitting every earlier element at
+			// each failure point (compiler-architecture.md "LLVM and toolchain").
+			emit_drop_prefix_elements(e, info.element, out, fmt.aprintf("%d", index))
+		} else {
+			for done := index - 1; done >= 0; done -= 1 {
+				emit_drop_record_part(e, subject, out, done)
+			}
 		}
 		emit_ret(e, result, emit_alloc_result(e, result, "true", error = error))
 		e.terminated = true

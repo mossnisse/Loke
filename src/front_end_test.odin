@@ -9,6 +9,27 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 
+// Recursive errors keep recognizable instance names within a bounded width.
+@(test)
+recursive_generic_diagnostics_bound_instance_names :: proc(t: ^testing.T) {
+	p: Checked
+	check_source(&p, `package main;
+deep :: proc(value: $T) -> int { return deep([1]T{value}); }
+main :: proc() { _ = deep(1); }
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 1) { report(&p.c); return }
+	diagnostic := p.c.diagnostics[0]
+	testing.expect_value(t, diagnostic.code, "L0436")
+	testing.expect(t, strings.contains(diagnostic.message, "..."))
+	testing.expect(t, len(diagnostic.message) < 200)
+	for note in diagnostic.notes {
+		if strings.has_prefix(note.message, "while instantiating `") {
+			testing.expect(t, len(note.message) < 110 && strings.contains(note.message, "..."))
+		}
+	}
+}
+
 // The body of the file's `main :: proc() { ... }`.
 @(private = "file")
 main_body :: proc(f: ^File) -> ^Block {

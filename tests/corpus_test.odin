@@ -1531,6 +1531,24 @@ diagnostics_reported :: proc(t: ^testing.T) {
 	check_diagnostics(t, cases, "-emit-ll", "")
 }
 
+@(test)
+generic_errors_keep_unique_instantiation_contexts :: proc(t: ^testing.T) {
+	state, _, stderr, err := exec(
+		os2.Process_Desc{command = []string{compiler_path(), "tests/err/generic_field_diagnostics.loke", "-emit-ll"}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 1, "generic field errors were not reported") { return }
+	instances := []string{
+		"Sized([2]int{1, 9})", "Sized([2]int{3, 7})",
+		"Sized([2]int{2, 8})", "Sized([2]int{4, 6})", "Outer(1)", "Outer(2)",
+	}
+	for instance in instances {
+		note := fmt.tprintf("while instantiating `%s`", instance)
+		testing.expectf(t, strings.count(string(stderr), note) == 2,
+			"each field error should name %s once:\n%s", instance, string(stderr))
+	}
+}
+
 // Syntax errors are reported by the parser, so these run in `-dump-ast` mode:
 // the dump is printed before the diagnostics are, which is what lets the test
 // assert the file's trailing sentinel survived recovery.

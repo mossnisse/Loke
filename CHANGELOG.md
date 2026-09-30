@@ -116,6 +116,14 @@ checklist.
 
 ### Fixed
 
+- Fixed arrays with copy hooks generate linear-size failure cleanup instead of
+  quadratic cleanup, avoiding compiler stalls on large arrays.
+- Invalid index conversions stop before bounds checking, avoiding cascading
+  diagnostics. Generic field errors include every instantiation's context,
+  repeated causes print once, value arguments use readable spellings, and long
+  instantiation names are abbreviated.
+- The terminal contract now specifies control-character values for Ctrl+letter
+  keys, with regressions for Ctrl+C, Ctrl+I, and Ctrl+M.
 - `path.volume` includes the server and share in extended UNC roots, so
   `base` and `directory` stop at the share and `fs.create_directories` begins
   below it. Extended paths remain unchanged by `clean`.

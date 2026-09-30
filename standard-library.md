@@ -1060,6 +1060,11 @@ carries a control character. A key the decoder has no name for is `.Unknown`.
 Modifiers are explicit flags, so Shift, Ctrl, or Alt pressed alone is no event.
 Key releases, mouse, focus, and resize records are skipped. A held key's repeat count becomes that many events, in order.
 
+Ctrl+letter input uses the reported control character as `value`, with
+`control` set. With `interrupt_as_key`, Ctrl+C is `.Character` with `value == 3`.
+Ctrl+I and Ctrl+M are likewise `.Character` with values 9 and 13; physical Tab
+and Enter retain their named events.
+
 `read_key` combines UTF-16 surrogate pairs into one scalar. A low half without
 a preceding high half, or a high half followed by another key's unit that is
 not a low half, returns `Invalid_Data` with operation `Read_Key` and native code

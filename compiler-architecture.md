@@ -273,6 +273,13 @@ recognition, inference, specialization, `where` evaluation, instance caching,
 and body commitment. Lookup inside an instance is definition-site lookup, so a
 caller's local extension cannot change the meaning of a specialization.
 
+Human-readable generic arguments are separate from `const_key_text` cache
+encodings. Aggregates display their types and elements; diagnostic instantiation
+names have bounded width. Each error from resolving a generic record's fields
+receives its instantiation context, and rendering merges identical causes while
+retaining their additional notes. Diagnostic storage remains intact for probes
+and error accounting.
+
 ### Ownership, lifecycle, and provenance
 
 Managed values have language-defined clone, move, and drop behavior.
@@ -455,6 +462,11 @@ No non-test backend file
 file other than the driver, `main.odin`, calls a procedure an `emit_llvm*.odin`
 file defines: a helper both sides need lives with its semantic owner.
 `test-all.ps1` enforces both.
+
+Fixed-array clone failure paths use a reverse-prefix drop loop, keeping cleanup
+IR linear in the array length while destroying only the elements already built.
+`fixed_array_clone_ir_grows_linearly` checks that doubling an array stays below
+three times the emitted module size, and the run corpus checks cleanup order.
 
 Implicit conversions use `emit_expr_at` with an explicit effective type; address
 and value helpers carry that type without changing the checker's AST annotations.

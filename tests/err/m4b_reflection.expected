@@ -23,4 +23,5 @@ needs a struct type
 L0452
 @27:25
 this descriptor does not describe `Colour`
-L0452
+in static expansion 0, for `x`
+in static expansion 1, for `y`

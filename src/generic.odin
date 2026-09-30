@@ -764,16 +764,68 @@ generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gen
 		if index > 0 {
 			strings.write_string(&b, ", ")
 		}
-		if binding.arg.is_type {
-			strings.write_string(&b, type_name(c, binding.arg.type))
-		} else if binding.arg.value.kind == .String {
-			strings.write_quoted_string(&b, binding.arg.value.text)
-		} else {
-			strings.write_string(&b, const_key_text(c, binding.arg.value))
-		}
+		strings.write_string(&b, generic_argument_text(c, binding.arg))
 	}
 	strings.write_string(&b, ")")
 	return strings.to_string(b)
+}
+
+// Human-readable arguments are separate from cache and backend identity.
+generic_argument_text :: proc(c: ^Compiler, arg: Generic_Arg) -> string {
+	return arg.is_type ? type_name(c, arg.type) : generic_value_text(c, arg.value)
+}
+
+@(private = "file")
+generic_value_text :: proc(c: ^Compiler, value: Const_Value, depth := 0) -> string {
+	switch value.kind {
+	case .String:
+		return fmt.aprintf("%q", value.text, allocator = c.semantic_allocator)
+	case .Nil:
+		return "nil"
+	case .Float:
+		if value.float != value.float {
+			return fmt.aprintf("NaN(f%d, 0x%x)", value.float_bits, value.float_raw, allocator = c.semantic_allocator)
+		}
+		if value.float == 0 { return value.float_raw == 0 ? "0.0" : "-0.0" }
+		return const_display_text(c, value)
+	case .Aggregate:
+		aggregate := value.aggregate
+		if aggregate == nil { return "{}" }
+		if depth >= 4 { return "..." }
+		b := strings.builder_make(c.semantic_allocator)
+		strings.write_string(&b, type_name(c, aggregate.type))
+		info := underlying_info(c, aggregate.type)
+		if info != nil && info.kind == .Union {
+			strings.write_string(&b, ".")
+			strings.write_string(&b, identifier_text(c, info.variant_names[aggregate.variant]))
+			if info.variants[aggregate.variant] == TYPE_VOID { return strings.to_string(b) }
+			strings.write_string(&b, "(")
+		} else {
+			strings.write_string(&b, "{")
+		}
+		for element, index in aggregate.elements {
+			if index > 0 { strings.write_string(&b, ", ") }
+			if index == 8 { strings.write_string(&b, "..."); break }
+			strings.write_string(&b, generic_value_text(c, element, depth + 1))
+		}
+		strings.write_string(&b, info != nil && info.kind == .Union ? ")" : "}")
+		return strings.to_string(b)
+	case .Invalid:
+		return "<invalid value>"
+	case .Integer, .Boolean, .Rune, .Type:
+		return const_display_text(c, value)
+	}
+	return "<value>"
+}
+
+// Keep the beginning and end of deep instance names without cutting UTF-8.
+@(private = "file")
+short_instantiation_name :: proc(c: ^Compiler, name: string) -> string {
+	if len(name) <= 80 { return name }
+	end, start := 64, len(name) - 12
+	for end > 0 && name[end] & 0xC0 == 0x80 { end -= 1 }
+	for start < len(name) && name[start] & 0xC0 == 0x80 { start += 1 }
+	return fmt.aprintf("%s...%s", name[:end], name[start:], allocator = c.semantic_allocator)
 }
 
 // ---------------------------------------------------------- instance scope --
@@ -1380,7 +1432,7 @@ instantiate_generic :: proc(
 				span,
 				"L0436",
 				"instantiating `%s` exceeds the compiler's generic instantiation limit (%d deep, %d instances)",
-				generic_instance_name(k.c, template.symbol, bindings),
+				short_instantiation_name(k.c, generic_instance_name(k.c, template.symbol, bindings)),
 				MAX_INSTANTIATION_DEPTH,
 				MAX_INSTANTIATIONS,
 			)
@@ -1492,7 +1544,7 @@ report_instantiation_cycle :: proc(k: ^Checker, span: Span, template: ^Generic_T
 		span,
 		"L0436",
 		"`%s` is being instantiated in terms of itself",
-		generic_instance_name(k.c, template.symbol, bindings),
+		short_instantiation_name(k.c, generic_instance_name(k.c, template.symbol, bindings)),
 	)
 	note_instantiation_stack(k)
 }
@@ -1500,26 +1552,33 @@ report_instantiation_cycle :: proc(k: ^Checker, span: Span, template: ^Generic_T
 // The innermost frames name a recursion; the rest are counted.
 NOTED_INSTANTIATION_FRAMES :: 4
 
-note_instantiation_stack :: proc(k: ^Checker) {
+note_instantiation_stack :: proc(k: ^Checker, from := -1) {
 	// Every unwinding level sees the same diagnostic; note the stack once.
-	if len(k.c.diagnostics) == 0 || k.c.last_noted_diagnostic == len(k.c.diagnostics) {
+	if len(k.c.diagnostics) == 0 || (from < 0 && k.c.last_noted_diagnostic == len(k.c.diagnostics)) {
 		return
 	}
 	k.c.last_noted_diagnostic = len(k.c.diagnostics)
-	shown := 0
-	#reverse for frame in k.c.instantiation_stack {
-		if shown >= NOTED_INSTANTIATION_FRAMES {
-			add_notef(
-				k.c,
-				no_span(),
-				"and %d more instantiation%s",
-				len(k.c.instantiation_stack) - shown,
-				len(k.c.instantiation_stack) - shown == 1 ? "" : "s",
-			)
-			return
+	context.allocator = diagnostic_allocator(k.c)
+	for index := from < 0 ? len(k.c.diagnostics) - 1 : from; index < len(k.c.diagnostics); index += 1 {
+		diagnostic := &k.c.diagnostics[index]
+		if diagnostic.severity != .Error { continue }
+		noted := false
+		for note in diagnostic.notes { noted ||= strings.has_prefix(note.message, "while instantiating `") }
+		if noted { continue }
+		shown := 0
+		#reverse for frame in k.c.instantiation_stack {
+			if shown >= NOTED_INSTANTIATION_FRAMES {
+				append(&diagnostic.notes, Note{span = no_span(), message = fmt.aprintf(
+					"and %d more instantiation%s", len(k.c.instantiation_stack) - shown,
+					len(k.c.instantiation_stack) - shown == 1 ? "" : "s",
+				)})
+				break
+			}
+			append(&diagnostic.notes, Note{span = frame.span, message = fmt.aprintf(
+				"while instantiating `%s`", short_instantiation_name(k.c, frame.description),
+			)})
+			shown += 1
 		}
-		add_notef(k.c, frame.span, "while instantiating `%s`", frame.description)
-		shown += 1
 	}
 }
 
@@ -1609,7 +1668,7 @@ instantiate_record_body :: proc(
 	apply_type_metadata(k, clone, type)
 	clone.sig_state = .Checked
 	if report && len(k.c.diagnostics) > before {
-		note_instantiation_stack(k)
+		note_instantiation_stack(k, before)
 	}
 	// Errors an enclosing probe will roll back would leave a broken instance in
 	// the cache that no later use reports, so the instance is rejected and keeps
@@ -1795,7 +1854,7 @@ convert_generic_value :: proc(k: ^Checker, value: Const_Value, value_type, wante
 	if !fits {
 		return {}, fmt.aprintf(
 			"`%s` is not representable by the generic parameter's type `%s`",
-			const_key_text(k.c, value), type_name(k.c, wanted), allocator = k.c.semantic_allocator,
+			generic_value_text(k.c, value), type_name(k.c, wanted), allocator = k.c.semantic_allocator,
 		)
 	}
 	return converted, ""

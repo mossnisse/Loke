@@ -144,7 +144,7 @@ check_simd_index :: proc(
 	if check_single_expr(k, v.indices[0], TYPE_INT) == INVALID_TYPE {
 		return
 	}
-	materialize(k, v.indices[0], TYPE_INT)
+	if !materialize(k, v.indices[0], TYPE_INT) { return }
 	index := expr_base(v.indices[0])
 	if index == nil {
 		return

@@ -346,11 +346,6 @@ text than was asked for.
 
 ## Open questions in `core:term`
 
-- A Ctrl+letter key arrives as `.Character` with the control character in
-  `value` (Ctrl+C is `3`, with `control` set), because that is what the console
-  reports. Some libraries report the letter instead and leave the control
-  character to the flag. standard-library.md does not say which one `value`
-  holds.
 - Every console test writes records into the console the test run is using,
   because Windows 10 cannot allocate a hidden console. Anything typed into that
   console while `tests/run/lib_term_console` runs is read along with the
@@ -431,52 +426,17 @@ rather than a wrong answer; the wrong answers it found are in
 The completed audit and its decisions are recorded in
 [comments.md "Compiler architecture audit (2026-09-28)"](comments.md#compiler-architecture-audit-2026-09-28).
 
-## Open checker-fuzzer findings
-
-The checker fuzzer (`tests/checker_fuzz_test.odin`) found these with
-`LOKE_FUZZ_SEED=1 LOKE_FUZZ_MUTANTS=10`. They break no rule of the
-specification, so they are not in [known-gaps.md](known-gaps.md), but each
-fails one of the fuzzer's checks under some seed.
-
-- **A copyable fixed array with a `hook(copy)` element compiles in quadratic
-  time.** `arr := [N]Value{Value{1}};`, where `Value` has a copy hook, takes
-  2.4 s at N = 1024 and 9.4 s at N = 2048; without the hook, N = 65536 takes
-  2 s. The fuzzer reports it as a hang at N = 65536.
-- **Errors in a generic record's field type repeat and cascade.** For
-  `Sized :: struct($V: [2]int) { items: [V[18446744073709551616]]int }`
-  and two instances, each reports `L0352` followed by `L0361` for the same
-  unrepresentable constant. The primary error has no "while instantiating"
-  note; only the cascade identifies the instance, using `Sized({0,1:1,1:9})`
-  rather than `Sized([2]int{1, 9})`.
-
 ## Open generics findings
 
 A review of the generics implementation left these open. None breaks a rule of
 the specification as written.
 
-- **Generic arguments print badly in diagnostics.** A floating argument prints
-  its bits (`Tag(f64:8000000000000000)`), an aggregate prints its cache key (see
-  the fuzzer finding above), an argument with no type prints `f(<invalid>)`
-  under a misleading "`$T` is not bound here", and the instantiation-limit
-  error (`L0436`) prints every nested type in full on each of its notes, so
-  `deep([1]T{x})` spells `[1]` 64 times per line.
-
-## Found by writing the tutorials
-
-Writing [tutorials/](tutorials/README.md) raised this remaining question, besides
-the ones since fixed.
-
-- **Two slices of one local array in one call.** `fmt.println(primes[1:4],
-  total(primes[:]))` is rejected (`L0511`): slicing a mutable local gives
-  `[]mut int`, which keeps that type inside the `any_view`, so the second slice
-  conflicts with it. That follows design.md "Slices", and an extracted
-  `[]mut int` could indeed write. But a reader who only prints has to write
-  `middle := primes[1:4];` first, as in
-  [Arrays and slices](tutorials/04-strings-and-containers.md#arrays-and-slices).
-  Erasing a fresh slice into an
-  `any_view` could settle it read-only, as a `[]T` destination does, but that
-  would make an erased slice's type depend on where it lands. The rule stays:
-  one extra binding is a small price for a slice type that does not change.
+- **Explain an unavailable generic argument type at its source.** An argument
+  with no type can print `f(<invalid>)` under a misleading "`$T` is not bound
+  here". Establish a minimal reproduction before changing inference recovery.
+  Readable value arguments, bounded instantiation notes, and the fixed fuzzer
+  findings are recorded in
+  [comments.md "Compiler regression fixes"](comments.md#compiler-regression-fixes).
 
 ## Formatting
 

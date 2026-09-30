@@ -597,16 +597,28 @@ report :: proc(c: ^Compiler) {
 		return a.span.lo < b.span.lo
 	})
 	previous: ^Diagnostic
+	reported_notes: [dynamic]Note
+	defer delete(reported_notes)
 	for &d in c.diagnostics {
 		// One mistake reported twice is one diagnostic: two blocks left open by the
-		// same missing brace both run out of input at the same span. A repeat that
-		// carries a note still renders, since the note is something new.
-		if previous != nil && len(d.notes) == 0 && same_diagnostic(previous^, d) {
+		// same missing brace both run out of input at the same span. A repeated
+		// generic error contributes its new context without repeating the cause.
+		if previous != nil && same_diagnostic(previous^, d) {
+			for note in d.notes {
+				if !slice.contains(reported_notes[:], note) {
+					render_note(c, note)
+					append(&reported_notes, note)
+				}
+			}
 			continue
 		}
+		if previous != nil { fmt.eprintln() }
 		render(c, &d)
 		previous = &d
+		clear(&reported_notes)
+		append(&reported_notes, ..d.notes[:])
 	}
+	if previous != nil { fmt.eprintln() }
 }
 
 @(private = "file")
@@ -676,13 +688,17 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 	}
 
 	for note in d.notes {
-		if note.span.file != NO_FILE && int(note.span.file) < len(c.sources) {
-			src := &c.sources[note.span.file]
-			line, col := line_col(src, note.span.lo)
-			fmt.eprintf("  = note: %s:%d:%d: %s\n", display_path(src.path), line, col, note.message)
-		} else {
-			fmt.eprintf("  = note: %s\n", note.message)
-		}
+		render_note(c, note)
 	}
-	fmt.eprintln()
+}
+
+@(private = "file")
+render_note :: proc(c: ^Compiler, note: Note) {
+	if note.span.file != NO_FILE && int(note.span.file) < len(c.sources) {
+		src := &c.sources[note.span.file]
+		line, col := line_col(src, note.span.lo)
+		fmt.eprintf("  = note: %s:%d:%d: %s\n", display_path(src.path), line, col, note.message)
+	} else {
+		fmt.eprintf("  = note: %s\n", note.message)
+	}
 }

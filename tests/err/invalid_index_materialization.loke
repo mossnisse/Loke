@@ -1,0 +1,16 @@
+package main;
+
+import "core:unsafe";
+
+main :: proc() {
+	array: [2]int = {};
+	view := array[:];
+	items: [dynamic]int = {};
+	pointer: [^]int = nil;
+	lanes: Simd(int, 2) = {};
+	_ = array[18446744073709551616];
+	_ = view[18446744073709551616];
+	_ = items[18446744073709551616];
+	_ = pointer[18446744073709551616];
+	_ = lanes[18446744073709551616];
+}

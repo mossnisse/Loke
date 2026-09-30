@@ -1,0 +1,46 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Lifecycle hooks and resource types": a failed array clone drops
+// exactly its completed prefix in reverse and leaves the source alive.
+Huge :: struct { pad: [4611686018427387904]u8 }
+rejected, copies, original_drops, order: int;
+
+Value :: struct { id: int }
+impl Value {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
+		copies += 1;
+		if (self.id == rejected) {
+			p := try_new(Huge, allocator) or_return;
+			free(p, allocator);
+		}
+		return .ok(Value{self.id + 100});
+	}
+	release :: hook(drop) proc(self: inout Value) {
+		if (self.id >= 100) { order = order * 10 + self.id - 100; }
+		else if (self.id != 0) { original_drops += 1; }
+		self.id = 0;
+	}
+}
+
+main :: proc() {
+	source := [4]Value{Value{1}, Value{2}, Value{3}, Value{4}};
+	for (attempt := 0; attempt <= 4; attempt += 1) {
+		rejected = attempt;
+		copies = 0;
+		order = 0;
+		switch (cloned in source.try_clone()) {
+		case .ok:
+			assert(attempt == 0);
+			for (i := 0; i < 4; i += 1) { assert(cloned[i].id == i + 101); }
+		case .err:
+			assert(attempt != 0);
+		}
+		for (i := 0; i < 4; i += 1) { assert(source[i].id == i + 1); }
+		assert(original_drops == 0);
+		fmt.println(attempt, copies, order);
+	}
+	drop(source);
+	assert(original_drops == 4);
+}

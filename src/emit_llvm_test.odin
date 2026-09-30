@@ -487,6 +487,34 @@ main :: proc() { assert(lookup() == 7); }
 	if !testing.expect(t, emitted && c.error_count == 0, "LLVM repeated member lookup") { report(c) }
 }
 
+// Failure cleanup must not emit a separate copy of every earlier array part.
+@(test)
+fixed_array_clone_ir_grows_linearly :: proc(t: ^testing.T) {
+	sizes: [2]int
+	counts := [2]int{128, 256}
+	for count, index in counts {
+		p: Checked
+		source, _ := strings.replace_all(`package main;
+Value :: struct { id: int }
+impl Value {
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
+        return .ok(Value{self.id});
+    }
+    release :: hook(drop) proc(self: inout Value) { self.id = 0; }
+}
+main :: proc() { items := [ARRAY_COUNT]Value{Value{1}}; }
+`, "ARRAY_COUNT", fmt.aprintf("%d", count, allocator = context.temp_allocator), context.temp_allocator)
+		check_for_emission(&p, source)
+		defer destroy_checked(&p)
+		if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+		finalize_semantics(&p.c)
+		module, emitted := emit_llvm_module(&p.c)
+		if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+		sizes[index] = len(module)
+	}
+	testing.expectf(t, sizes[1] < 3 * sizes[0], "doubling an array grew its IR from %d to %d bytes", sizes[0], sizes[1])
+}
+
 @(test)
 lifecycle_consumers_use_finalized_operations :: proc(t: ^testing.T) {
 	p: Checked

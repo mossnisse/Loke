@@ -1,0 +1,17 @@
+package main;
+
+// Each invalid literal has one cause, with every distinct inner/outer context.
+Sized :: struct($V: [2]int) {
+	items: [V[18446744073709551616]]int,
+	other: [V[18446744073709551617]]int,
+}
+
+Outer :: struct($N: int) {
+	one: Sized([2]int{N, 10 - N}),
+	two: Sized([2]int{N + 2, 8 - N}),
+}
+
+main :: proc() {
+	a: Outer(1) = {};
+	b: Outer(2) = {};
+}

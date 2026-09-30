@@ -34,6 +34,7 @@ foreign kernel32 {
 STD_INPUT :: 0xFFFFFFF6;
 VIRTUAL_TERMINAL_INPUT :: u32(0x0200);
 SHIFT :: u32(0x0010);
+CTRL :: u32(0x0008);
 
 // `INPUT_RECORD` with its `KEY_EVENT_RECORD` arm, as `core:term` reads it.
 Record :: struct {
@@ -97,10 +98,11 @@ main :: proc() {
 	// as the characters of an escape sequence.
 	set_console_mode(console, original | VIRTUAL_TERMINAL_INPUT);
 	{
-		raw := term.begin_raw() or_else panic("no raw mode");
+		raw := term.begin_raw(options = term.Raw_Options{interrupt_as_key = true}) or_else panic("no raw mode");
 		mode: u32 = 0;
 		get_console_mode(console, &mut mode);
 		fmt.println((mode & VIRTUAL_TERMINAL_INPUT) != 0);
+		assert((mode & u32(0x0001)) == 0);
 
 		press(console, 16, 0, SHIFT);         // Shift alone: no event
 		press(console, 65, 'A', SHIFT);
@@ -110,6 +112,13 @@ main :: proc() {
 		press(console, 0, 0xDE00);
 		press(console, 20, 0);                // Caps Lock has no name
 		for (i := 0; i < 7; i += 1) { show(raw.read_key()); }
+
+		// standard-library "Raw mode and key events": Ctrl+letter carries the
+		// control character. Ctrl+I and Ctrl+M are characters, unlike Tab/Enter.
+		press(console, 67, 3, CTRL);
+		press(console, 73, 9, CTRL);
+		press(console, 77, 13, CTRL);
+		for (i := 0; i < 3; i += 1) { show(raw.read_key()); }
 
 		// Lone low surrogates are errors, even on a named key, not invalid runes.
 		press(console, 0, 0xDC00);

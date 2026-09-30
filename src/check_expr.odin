@@ -1063,7 +1063,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 		#partial switch info.kind {
 		case .C_Pointer:
 			// Unchecked, and writable exactly as `p^` is (design.md "C pointers").
-			check_integer_index(k, v.indices[0])
+			if !check_integer_index(k, v.indices[0]) { v.type = INVALID_TYPE; return }
 			if !require_unsafe_import(k, v.span, "indexing a C pointer") {
 				v.type = INVALID_TYPE
 				return
@@ -1076,7 +1076,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 		case .Slice:
 			// The element lives in the slice's root, so `[]mut T` decides the write,
 			// not whether the slice variable itself is assignable.
-			check_integer_index(k, v.indices[0])
+			if !check_integer_index(k, v.indices[0]) { v.type = INVALID_TYPE; return }
 			v.type = info.element
 			v.value_category = .Place
 			v.addressable = true
@@ -1086,7 +1086,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 		case .Dynamic_Array:
 			// The element lives in the container's allocation, so it has the
 			// container's capability (design.md "Dynamic arrays").
-			check_integer_index(k, v.indices[0])
+			if !check_integer_index(k, v.indices[0]) { v.type = INVALID_TYPE; return }
 			v.type = info.element
 			v.value_category = .Place
 			v.addressable = true
@@ -1123,7 +1123,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 		return
 	}
 
-	check_integer_index(k, v.indices[0])
+	if !check_integer_index(k, v.indices[0]) { v.type = INVALID_TYPE; return }
 	v.type = info.element
 	v.value_category = .Place
 	inherit_capability(&v.base, operand_base, through_pointer, pointer_mutable)
@@ -1165,15 +1165,16 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 
 // An index into a built-in sequence: an integer, `int` when unfixed.
 @(private = "file")
-check_integer_index :: proc(k: ^Checker, e: Expr) {
+check_integer_index :: proc(k: ^Checker, e: Expr) -> bool {
 	type := check_single_expr(k, e, TYPE_INT)
-	if type == INVALID_TYPE {
-		return
+	if type == INVALID_TYPE || !materialize(k, e, TYPE_INT) {
+		return false
 	}
-	materialize(k, e, TYPE_INT)
 	if !type_is_integer(k.c, expr_base(e).type) {
 		errorf(k.c, expr_span(e), "L0362", "an index must be an integer, found `%s`", type_name(k.c, type))
+		return false
 	}
+	return true
 }
 
 // `ok := key in m` (design.md "Maps").

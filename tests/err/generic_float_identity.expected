@@ -1,9 +1,9 @@
 L0363
 @16:2
-`Pair(f64:0, f64:8000000000000000)` has no field or member `same`
+`Pair(0.0, -0.0)` has no field or member `same`
 L0363
 @18:2
-`Arrays({0,5:f64:0}, {0,20:f64:8000000000000000})` has no field or member `same`
+`Arrays([1]f64{0.0}, [1]f64{-0.0})` has no field or member `same`
 L0310
 @21:31
-cannot initialise `dyn Marked(-0)` with `dyn mut Marked(0)`
+cannot initialise `dyn Marked(-0.0)` with `dyn mut Marked(0.0)`

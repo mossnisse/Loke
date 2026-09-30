@@ -8,6 +8,9 @@ Character 120 false false false
 Character 120 false false false
 Character 128512 false false false
 Unknown 0 false false false
+Character 3 false true false
+Character 9 false true false
+Character 13 false true false
 Read_Key failed: Invalid_Data
 Character 97 false false false
 Read_Key failed: Invalid_Data

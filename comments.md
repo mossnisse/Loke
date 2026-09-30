@@ -1128,6 +1128,47 @@ in [standard-library.md "Raw mode and key events"](standard-library.md#raw-mode-
 with injected-input regressions in
 [tests/run/lib_term_console.loke](tests/run/lib_term_console.loke).
 
+## Two slices of one local array in one call
+
+`fmt.println(primes[1:4], total(primes[:]))` is rejected (`L0511`): slicing a
+mutable local gives `[]mut int`, which keeps that type inside the `any_view`,
+so the second slice conflicts with it. That follows [design.md "Slices"](design.md#slices),
+and an extracted `[]mut int` could indeed write. A reader who only prints binds
+`middle := primes[1:4];` first, as in
+[Arrays and slices](tutorials/04-strings-and-containers.md#arrays-and-slices).
+
+Erasing a fresh slice into an `any_view` could settle it read-only, as a `[]T`
+destination does, but that would make an erased slice's type depend on where
+it lands. The rule stays: one extra binding is a small price for a slice type
+that does not change.
+
+## Compiler regression fixes
+
+The checker fuzzer's fixed-array slowdown came from emitting every earlier
+element's cleanup separately at every possible copy failure. The backend now
+uses its existing reverse-prefix drop loop at each failure point, so generated
+cleanup grows linearly with array length. This preserves the completed-prefix
+and reverse-order guarantees in [design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types).
+[src/emit_llvm_test.odin](src/emit_llvm_test.odin) checks IR growth and
+[tests/run/fixed_array_clone_failure.loke](tests/run/fixed_array_clone_failure.loke)
+checks success and failures at each element.
+
+An index whose integer conversion failed previously continued into the bounds
+check. Returning immediately preserves its `L0352` cause and avoids a false
+`L0361` follow-on. Every field error receives its instantiation context; the
+reporter prints an identical cause once with the additional contexts. Human
+argument spellings are separate from cache keys: arrays print their type and
+elements, signed zeros remain distinct, and NaNs retain their encoding in the
+display. Instantiation notes abbreviate long names at UTF-8 boundaries.
+Regressions include [generic field errors](tests/err/generic_field_diagnostics.loke),
+[index conversion errors](tests/err/invalid_index_materialization.loke), and
+[floating generic identities](tests/err/generic_float_identity.loke).
+
+Ctrl+letter key events retain the console's control character rather than
+inventing a printable letter. The explicit contract is in
+[standard-library.md "Raw mode and key events"](standard-library.md#raw-mode-and-key-events),
+with Ctrl+C/I/M regressions in [tests/run/lib_term_console.loke](tests/run/lib_term_console.loke).
+
 ## Compiler architecture audit (2026-09-28)
 
 The audit reviewed revision `b2cc712`, tracing the driver, checking, CTFE,

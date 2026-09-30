@@ -18,8 +18,8 @@ runs every program on the pages. Keep them current as the language grows:
   [Standard-library maturity](#standard-library-maturity));
 - add a page when a later initiative changes how a new user works, such as the
   package workflow or debugging;
-- revisit the workarounds the pages use for the gaps listed in
-  [open-questions.md "Found by writing the tutorials"](open-questions.md#found-by-writing-the-tutorials).
+- keep the explanation of borrowing patterns consistent with
+  [comments.md "Two slices of one local array in one call"](comments.md#two-slices-of-one-local-array-in-one-call).
 
 ## Standard-library maturity
 

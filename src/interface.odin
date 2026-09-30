@@ -471,16 +471,7 @@ interface_application_text :: proc(c: ^Compiler, info: ^Interface_Info, args: []
 }
 
 interface_argument_text :: proc(c: ^Compiler, arg: Generic_Arg) -> string {
-	if arg.is_type {
-		return type_name(c, arg.type)
-	}
-	if arg.value.kind == .String {
-		return fmt.aprintf("%q", arg.value.text, allocator = c.semantic_allocator)
-	}
-	if arg.value.kind == .Aggregate {
-		return const_key_text(c, arg.value)
-	}
-	return const_display_text(c, arg.value)
+	return generic_argument_text(c, arg)
 }
 
 // Stops an interface whose composition names itself.

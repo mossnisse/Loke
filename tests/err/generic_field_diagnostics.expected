@@ -1,0 +1,13 @@
+L0352
+@5:12
+18446744073709551616 is not representable by `int`
+while instantiating `Sized([2]int{1, 9})`
+while instantiating `Sized([2]int{3, 7})`
+while instantiating `Sized([2]int{2, 8})`
+while instantiating `Sized([2]int{4, 6})`
+while instantiating `Outer(1)`
+while instantiating `Outer(2)`
+L0352
+@6:12
+18446744073709551617 is not representable by `int`
+!L0361
