@@ -117,7 +117,6 @@ collect_call_arguments :: proc(
 		if arg.name.text != "" {
 			info.name = intern_identifier(k.c, arg.name.text)
 		}
-		k.place_position, k.insert_position = arg.mode == .Inout, false
 		expected := INVALID_TYPE
 		if argument_needs_context(arg.value) {
 			context_candidates := candidates
@@ -128,8 +127,7 @@ collect_call_arguments :: proc(
 			}
 			expected = common_argument_type(k, context_candidates, info.name, index + offset)
 		}
-		info.type = check_single_expr(k, arg.value, expected)
-		k.place_position, k.insert_position = false, false
+		info.type = check_single_expr(k, arg.value, expected, arg.mode == .Inout ? .Place : .Value)
 		if info.type == INVALID_TYPE {
 			ok = false
 		} else if base := expr_base(arg.value); base != nil {

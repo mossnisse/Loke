@@ -146,9 +146,6 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 		if info.kind == .Any_View {
 			ensure_any_view_fields(c)
 		}
-		ensure_slice_fields(c, type)
-		ensure_container_fields(c, type)
-		info = type_of(c, type)
 		offsets = make([]u64, len(info.fields), c.semantic_allocator)
 		cursor := u64(0)
 		for field, index in info.fields {

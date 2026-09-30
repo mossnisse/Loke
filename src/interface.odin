@@ -512,11 +512,9 @@ interface_check :: proc(
 	scope := interface_scope(k, info, args)
 
 	saved := save_checker_location(k)
-	saved_place := k.place_position
 	k.interface_depth += 1
 	defer {
 		restore_checker_location(k, saved)
-		k.place_position = saved_place
 		k.interface_depth -= 1
 	}
 	k.body = {}
@@ -560,18 +558,15 @@ interface_predicates_check :: proc(
 	}
 
 	saved := save_checker_location(k)
-	saved_place := k.place_position
 	probe := begin_probe(k.c)
 	k.interface_depth += 1
 	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
 	k.body = {}
-	k.place_position = false
 	if info.file_node != nil {
 		k.file, k.file_node = info.file, info.file_node
 	}
 	defer {
 		restore_checker_location(k, saved)
-		k.place_position = saved_place
 		k.interface_depth -= 1
 		end_probe(k.c, probe, keep = true)
 	}
@@ -663,9 +658,7 @@ check_one_requirement :: proc(
 	errors := k.c.error_count
 	// `-> inout T` asks for a place, which selects an `inout` `operator([])`
 	// (design.md "Indexing and slicing").
-	k.place_position = requirement.result_inout
-	type := check_expr(k, requirement.expr)
-	k.place_position = false
+	type := check_expr(k, requirement.expr, position = requirement.result_inout ? .Place : .Value)
 	captured := k.c.error_count > errors
 	// The captured diagnostic says exactly what did not compile.
 	reason := "this expression does not compile for these arguments"

@@ -50,8 +50,8 @@ map_of :: proc(c: ^Compiler, key: Type_Id, value: Type_Id) -> Type_Id {
 	return type
 }
 
-// Installed on first use, since interning runs where making a symbol is not yet
-// safe. Idempotent.
+// Installed as the type is interned (`dynamic_array_of`, `map_of`).
+@(private = "file")
 ensure_container_fields :: proc(c: ^Compiler, type: Type_Id) {
 	info := type_of(c, type)
 	if info == nil || len(info.fields) > 0 {
@@ -71,8 +71,6 @@ ensure_container_fields :: proc(c: ^Compiler, type: Type_Id) {
 	fields[CONTAINER_LEN] = new_field(c, "len", TYPE_INT, CONTAINER_LEN)
 	fields[CONTAINER_CAP] = new_field(c, "cap", TYPE_INT, CONTAINER_CAP)
 	fields[CONTAINER_ALLOC] = new_field(c, "allocator", TYPE_ALLOCATOR, CONTAINER_ALLOC)
-	// A `^Type_Info` points into the growing type store, so it is never held
-	// across the field symbols being made.
 	type_of(c, type).fields = fields
 }
 
@@ -537,29 +535,27 @@ require_nested_map_key_policies_inner :: proc(k: ^Checker, type: Type_Id, span: 
 	seen[type] = true
 	info := type_of(k.c, type)
 	if info == nil { return true }
-	// Keep a value snapshot: resolving an operation can grow the type store.
-	shape := info^
-	#partial switch shape.kind {
+	#partial switch info.kind {
 	case .Map:
 		if !require_map_key_policy(k, type, span) { return false }
-		if !require_nested_map_key_policies_inner(k, shape.key, span, seen) { return false }
-		return require_nested_map_key_policies_inner(k, shape.element, span, seen)
+		if !require_nested_map_key_policies_inner(k, info.key, span, seen) { return false }
+		return require_nested_map_key_policies_inner(k, info.element, span, seen)
 	case .Array, .Dynamic_Array, .Slice, .Pointer, .C_Pointer, .Distinct:
-		return require_nested_map_key_policies_inner(k, shape.element, span, seen)
+		return require_nested_map_key_policies_inner(k, info.element, span, seen)
 	case .Struct:
-		for field in shape.fields {
+		for field in info.fields {
 			if sym := symbol_of(k.c, field); sym != nil &&
 			   !require_nested_map_key_policies_inner(k, sym.type, span, seen) { return false }
 		}
 	case .Union:
-		for variant in shape.variants {
+		for variant in info.variants {
 			if !require_nested_map_key_policies_inner(k, variant, span, seen) { return false }
 		}
 	case .Proc:
-		for parameter in shape.parameters {
+		for parameter in info.parameters {
 			if !require_nested_map_key_policies_inner(k, parameter, span, seen) { return false }
 		}
-		if shape.result != INVALID_TYPE && !require_nested_map_key_policies_inner(k, shape.result, span, seen) {
+		if info.result != INVALID_TYPE && !require_nested_map_key_policies_inner(k, info.result, span, seen) {
 			return false
 		}
 	}

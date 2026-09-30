@@ -50,9 +50,8 @@ slice_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	return readonly
 }
 
-// Installed on first use rather than at intern time, same as `any_view`'s: a
-// field is a symbol, and interning runs where making one isn't yet safe.
-// Idempotent, so every entry point may ask.
+// Installed as the type is interned (`intern_slice`).
+@(private = "file")
 ensure_slice_fields :: proc(c: ^Compiler, type: Type_Id) {
 	if info := type_of(c, type); info == nil || info.kind != .Slice || len(info.fields) > 0 {
 		return
@@ -60,8 +59,6 @@ ensure_slice_fields :: proc(c: ^Compiler, type: Type_Id) {
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
 	fields[SLICE_DATA] = new_field(c, "data", TYPE_RAWPTR, SLICE_DATA)
 	fields[SLICE_LEN] = new_field(c, "len", TYPE_INT, SLICE_LEN)
-	// A `^Type_Info` points into the growing type store, so it is never held
-	// across the field symbols being made.
 	type_of(c, type).fields = fields
 }
 

@@ -6,6 +6,10 @@ package main;
 Parse_Error :: enum { Bad_Digit, Empty }
 App_Error   :: union { parse: Parse_Error, io: int }
 
+Handler :: proc(code: int);
+handle :: proc(code: int) {}
+pick :: proc(error: App_Error) -> Handler { return handle; }
+
 main :: proc() {
 	// The destination does not choose the union.
 	contextual: proc(payload: move Parse_Error) -> App_Error = .parse;
@@ -14,4 +18,9 @@ main :: proc() {
 	make := App_Error.parse;
 	error := Parse_Error.Empty;
 	_ = make(error);
+
+	// Only a call's own callee is in callee position: an argument of a call that
+	// is itself a callee is an ordinary value, so the bare payload variant is
+	// incomplete there too.
+	pick(.io)(3);
 }

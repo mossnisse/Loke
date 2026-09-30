@@ -294,15 +294,16 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	if len(u.actions) == 0 {
 		return
 	}
-	// Unlike `begin_function_emission`, this keeps the parent's unwind state and
-	// result slot: it replays the parent's own actions.
-	saved_body, saved_terminated := e.b, e.terminated
-	saved_cleanups, saved_prologue := e.cleanups, e.prologue
-	saved_large_taken, saved_large_marks, saved_large_free := e.large_taken, e.large_marks, e.large_free
-	saved_live := u.live
+	// Unlike `begin_function_emission`, this keeps the parent's function state,
+	// its unwind actions and result slot among it, since it replays the parent's
+	// own actions. What it emits into starts empty, and the whole state is put
+	// back afterwards. It runs once the parent's body is done, with no
+	// temporary frame open.
+	parent, parent_body := e.fn, e.b
 	e.b = strings.builder_make()
 	e.terminated = false
 	e.cleanups = make([dynamic]Cleanup_Scope)
+	e.temporaries = make([dynamic][dynamic]Deferred)
 	e.prologue = nil
 	e.large_taken, e.large_marks, e.large_free = nil, nil, nil
 	u.replaying = true
@@ -322,9 +323,8 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	// The `%deferN` flags are parent allocas the thunk cannot reach. Each gets a
 	// local stand-in seeded `true`: an action only runs where its live byte
 	// already says so.
-	saved_flags := e.defer_flags
-	e.defer_flags = make([]string, len(saved_flags))
-	for index in 0 ..< len(saved_flags) {
+	e.defer_flags = make([]string, len(parent.defer_flags))
+	for index in 0 ..< len(parent.defer_flags) {
 		flag := fmt.aprintf("%%udefer%d.%d", index, next_id(e))
 		alloca_named(e, flag, "i1")
 		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
@@ -366,11 +366,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 		e.names[binding.symbol] = saved_names[index]
 	}
 	append(&e.pending, splice_prologue(e, strings.to_string(e.b), e.prologue[:]))
-	u.replaying = false
-	u.live = saved_live
-	e.b, e.terminated, e.cleanups = saved_body, saved_terminated, saved_cleanups
-	e.prologue, e.defer_flags = saved_prologue, saved_flags
-	e.large_taken, e.large_marks, e.large_free = saved_large_taken, saved_large_marks, saved_large_free
+	e.fn, e.b = parent, parent_body
 }
 
 // Registers a partially constructed compiler-owned value for panic replay only;

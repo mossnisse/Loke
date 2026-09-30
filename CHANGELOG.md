@@ -94,6 +94,9 @@ checklist.
 
 ### Fixed
 
+- A bare payload variant passed to a call that is itself being called, as in
+  `pick(.io)(3)`, is rejected (`L0425`) as it is anywhere else; it compiled to
+  a wrong value.
 - A plain value read out of a container backed by a local arena, such as
   `return ys[0];` for a `[dynamic]int`, can be returned directly; it was
   rejected (`L0592`) as if it were backed by the arena, while the same value

@@ -14,7 +14,27 @@ import "core:strings"
 import "core:unicode/utf8"
 
 // The type a use site wants, or INVALID_TYPE when nothing constrains it.
-check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Type_Id {
+// Where an expression sits. Only the node it is given for reads it: its
+// operands and indices are ordinary value positions.
+Expr_Position :: enum u8 {
+	Value,
+	// The callee of a call: a method selector or a payload variant is about to
+	// be called rather than used as a value.
+	Callee,
+	// design.md "Indexing and slicing": a place position requires an `inout`
+	// `operator([])`.
+	Place,
+	// design.md "Maps": the destination of a plain assignment, the one place
+	// where `m[key]` may create an entry.
+	Insert,
+}
+
+check_expr :: proc(
+	k: ^Checker,
+	e: Expr,
+	expected: Type_Id = INVALID_TYPE,
+	position := Expr_Position.Value,
+) -> Type_Id {
 	if e == nil {
 		return INVALID_TYPE
 	}
@@ -24,11 +44,6 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	}
 	base.immutable = .Not_A_Place
 
-	// A place position belongs to this node alone: its operands and indices are
-	// ordinary value positions.
-	place := k.place_position
-	k.place_position = false
-
 	switch v in e {
 	case ^Expr_Error:
 		v.type = INVALID_TYPE
@@ -37,17 +52,13 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_literal(k, v, expected)
 
 	case ^Expr_Ident:
-		check_ident(k, v)
+		check_ident(k, v, position == .Callee)
 
 	case ^Expr_Selector:
-		// `m[key].x = v` reaches the index as a place but never inserts
-		// (design.md "Maps").
-		k.place_position, k.insert_position = place, false
-		check_selector(k, v, expected)
-		k.place_position = false
+		check_selector(k, v, expected, position)
 
 	case ^Expr_Index:
-		check_index(k, v, place)
+		check_index(k, v, position)
 
 	case ^Expr_Slice:
 		check_slice(k, v, expected)
@@ -121,8 +132,13 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 }
 
 // One value, exactly: rejects a call to a procedure with no result.
-check_single_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Type_Id {
-	type := check_expr(k, e, expected)
+check_single_expr :: proc(
+	k: ^Checker,
+	e: Expr,
+	expected: Type_Id = INVALID_TYPE,
+	position := Expr_Position.Value,
+) -> Type_Id {
+	type := check_expr(k, e, expected, position)
 	base := expr_base(e)
 	// design.md "Diverging procedures": a call that never returns stands in
 	// for a value of whatever type is expected.
@@ -403,7 +419,7 @@ immutable_name_reason :: proc(sym: ^Symbol) -> Immutable_Reason {
 }
 
 @(private = "file")
-check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
+check_ident :: proc(k: ^Checker, v: ^Expr_Ident, callee: bool) {
 	name_id := v.name_id
 	if name_id == INVALID_IDENTIFIER {
 		name_id = intern_identifier(k.c, v.name)
@@ -471,13 +487,13 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 		return
 	}
 
-	annotate_symbol_use(k, &v.base, symbol_id, v.name)
+	annotate_symbol_use(k, &v.base, symbol_id, v.name, callee)
 }
 
 // Writes what a resolved symbol means onto the node that named it, for both
 // `name` and `package.name`.
 @(private = "file")
-annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, name: string) {
+annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, name: string, callee: bool) {
 	sym := symbol_of(k.c, symbol_id)
 	if sym == nil {
 		v.type = INVALID_TYPE
@@ -507,7 +523,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.const_value = type_const(sym.type)
 
 	case .Proc:
-		if sym.hook != .None && !k.in_callee {
+		if sym.hook != .None && !callee {
 			reject_direct_hook_call(k, v.span, symbol_id)
 			v.type = INVALID_TYPE
 			return
@@ -582,14 +598,15 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 // -------------------------------------------------------------- selectors --
 
 @(private = "file")
-check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
+check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, position: Expr_Position) {
 	v.value_category = .Value
+	callee := position == .Callee
 
 	// `.Member`: the implicit enum selector and the payloadless union variant,
 	// both of which take their type from the expected one.
 	if v.operand == nil {
-		if check_union_variant_selector(k, v, expected) {
-			if v.resolution.kind == .Union_Variant && !k.in_callee {
+		if check_union_variant_selector(k, v, expected, callee) {
+			if v.resolution.kind == .Union_Variant && !callee {
 				reject_incomplete_variant(k, v)
 				v.type = INVALID_TYPE
 			}
@@ -633,16 +650,15 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 	if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
 		alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
 		if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
-			check_package_selector(k, v, ident, alias)
+			check_package_selector(k, v, ident, alias, callee)
 			return
 		}
 	}
 
-	// The operand is not itself in callee position, whatever this selector is.
-	callee_position := k.in_callee
-	k.in_callee = false
-	operand := check_single_expr(k, v.operand)
-	k.in_callee = callee_position
+	// The operand is not in callee position, whatever this selector is. It is
+	// a place when this is: `m[key].x = v` reaches the index as a place, but
+	// never inserts (design.md "Maps").
+	operand := check_single_expr(k, v.operand, position = position == .Place || position == .Insert ? .Place : .Value)
 	if operand == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
@@ -652,10 +668,10 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 	// A named union type selects its own variant: `Option.none`, `Result.ok`.
 	// Outside a call, a payload variant is its constructor procedure.
 	if operand_base.value_category == .Type &&
-	   check_union_variant_selector(k, v, operand_base.denoted_type) {
-		if v.resolution.kind == .Union_Variant && !callee_position {
+	   check_union_variant_selector(k, v, operand_base.denoted_type, callee) {
+		if v.resolution.kind == .Union_Variant && !callee {
 			constructor := variant_constructor(k.c, v.variant_union, v.variant_index)
-			annotate_symbol_use(k, &v.base, constructor, v.name.text)
+			annotate_symbol_use(k, &v.base, constructor, v.name.text, callee)
 		}
 		return
 	}
@@ -678,7 +694,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		}
 		// design.md: associated procedures and constants without `self` are
 		// accessed through the type name, and so is `Type.method(value)`.
-		if select_associated_member(k, v, subject) {
+		if select_associated_member(k, v, subject, callee) {
 			return
 		}
 		errorf(k.c, v.span, "L0408", "`%s` has no member `%s`", type_name(k.c, subject), v.name.text)
@@ -739,10 +755,10 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		// A pointer may declare inherent methods of its own. Preserve that lookup
 		// first; implicit dereference is the fallback when the pointer type itself
 		// has no matching receiver.
-		if select_method(k, v, operand, callee_position) {
+		if select_method(k, v, operand, callee) {
 			return
 		}
-		if through_pointer && select_method(k, v, pointee_type, callee_position) {
+		if through_pointer && select_method(k, v, pointee_type, callee) {
 			v.operand = implicit_pointer_deref(k, v.operand, pointee_type, pointer_mutable)
 			return
 		}
@@ -756,7 +772,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 					v.type = INVALID_TYPE
 					return
 				}
-				if select_method(k, v, materialized, callee_position) {
+				if select_method(k, v, materialized, callee) {
 					return
 				}
 			}
@@ -891,7 +907,7 @@ implicit_pointer_deref :: proc(
 // reached through the type name.
 @(private = "file")
 select_associated_member :: proc(
-	k: ^Checker, v: ^Expr_Selector, subject: Type_Id,
+	k: ^Checker, v: ^Expr_Selector, subject: Type_Id, callee: bool,
 ) -> bool {
 	member := find_member(k, subject, intern_identifier(k.c, v.name.text))
 	if member == INVALID_SYMBOL {
@@ -907,7 +923,7 @@ select_associated_member :: proc(
 			check_symbol_decl_in_place(k, member, subject)
 		}
 	}
-	annotate_symbol_use(k, &v.base, member, v.name.text)
+	annotate_symbol_use(k, &v.base, member, v.name.text, callee)
 	return true
 }
 
@@ -960,7 +976,7 @@ method_candidates :: proc(k: ^Checker, receiver: Type_Id, name: Identifier_Id) -
 
 // `alias.name`. Only the target package's own scope is searched — never its
 // parents — and only a `@(public)` declaration is visible from outside.
-check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Ident, alias: Symbol_Id) {
+check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Ident, alias: Symbol_Id, callee: bool) {
 	alias_symbol := symbol_of(k.c, alias)
 	ident.symbol = alias
 	ident.resolution = Resolution{kind = .Package, symbol = alias}
@@ -992,20 +1008,18 @@ check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Iden
 	   (symbol.kind == .Const || symbol.kind == .Var) {
 		check_symbol_decl_in_place(k, symbol_id)
 	}
-	annotate_symbol_use(k, &v.base, symbol_id, v.name.text)
+	annotate_symbol_use(k, &v.base, symbol_id, v.name.text, callee)
 }
 
 // ---------------------------------------------------------------- indexing --
 
 @(private = "file")
-check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
+check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 	v.value_category = .Value
+	place, inserts := position == .Place || position == .Insert, position == .Insert
 	// In `outer[key][i] = v` only the last index may insert; `outer[key]` must
 	// already exist (design.md "Maps").
-	inserts := place && k.insert_position
-	k.place_position, k.insert_position = place, false
-	operand := check_single_expr(k, v.operand)
-	k.place_position = false
+	operand := check_single_expr(k, v.operand, position = place ? .Place : .Value)
 	if operand == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
@@ -1576,10 +1590,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 
 	if v.op == .Amp {
 		// A place position that never inserts.
-		saved_insert := k.insert_position
-		k.place_position, k.insert_position = true, false
-		operand := check_single_expr(k, v.operand, pointee_of(k.c, expected))
-		k.place_position, k.insert_position = false, saved_insert
+		operand := check_single_expr(k, v.operand, pointee_of(k.c, expected), .Place)
 		if operand == INVALID_TYPE {
 			v.type = INVALID_TYPE
 			return
@@ -2763,9 +2774,6 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 			return Const_Value{}, false
 		}
 		// All-zero fields: a nil view or slice, or an empty container.
-		ensure_slice_fields(c, under)
-		ensure_container_fields(c, under)
-		info = type_of(c, under)
 		elements: []Const_Value
 		if build {
 			elements = make([]Const_Value, len(info.fields), c.semantic_allocator)

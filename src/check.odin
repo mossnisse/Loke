@@ -25,15 +25,6 @@ Checker :: struct {
 	// The `impl` subject whose block is being checked, which is what an
 	// untyped `self` receiver takes its type from.
 	impl_type:  Type_Id,
-	// Set while the callee of a call is being checked, so a method selector knows
-	// it is about to be called rather than used as a value.
-	in_callee:  bool,
-	// design.md "Indexing and slicing": a place position requires an `inout`
-	// `operator([])`. Consumed by the node it is set for.
-	place_position: bool,
-	// design.md "Maps": set only for the destination of a plain assignment, the
-	// one position where `m[key]` may create an entry.
-	insert_position: bool,
 	// How many generic instantiations enclose the code being checked.
 	generic_depth:  int,
 	// How deep interface requirement checking is, so an interface that composes
@@ -1623,7 +1614,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if ident, is_ident := value.operand.(^Expr_Ident); is_ident {
 			alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
 			if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
-				check_package_selector(k, value, ident, alias)
+				check_package_selector(k, value, ident, alias, false)
 				return value.value_category == .Type ? value.denoted_type : INVALID_TYPE
 			}
 		}
@@ -2916,9 +2907,7 @@ check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id, inserts :=
 		ident.value_category = .Invalid
 		return from == INVALID_TYPE ? TYPE_VOID : from
 	}
-	k.place_position, k.insert_position = true, inserts
-	type := check_single_expr(k, target)
-	k.place_position, k.insert_position = false, false
+	type := check_single_expr(k, target, position = inserts ? .Insert : .Place)
 	if type == INVALID_TYPE {
 		return INVALID_TYPE
 	}

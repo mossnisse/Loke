@@ -187,13 +187,10 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 // ones. Field GEP indices
 // equal the logical field index in every form, so field walks are unchanged.
 @(private = "file")
-struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
-	// The cached alignment and size are read below, so layout is computed first;
-	// computing a field's layout can grow the type store, so `info` is
-	// reacquired before its fields are read.
-	natural := record_natural_align(e.c, info_in)
+struct_body :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> string {
+	// The cached alignment and size are read below, so layout is computed first.
+	natural := record_natural_align(e.c, info)
 	type_size(e.c, type)
-	info := type_of(e.c, type)
 	packed := info.packed
 	over_aligned := info.align > natural
 	if !packed && !over_aligned {

@@ -104,7 +104,6 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	case .To_Runes:
 		// An owner, so its lifecycle members must exist before it is built.
 		v.type = dynamic_array_of(k.c, TYPE_RUNE)
-		ensure_container_fields(k.c, v.type)
 		ensure_container_members(k, v.type)
 		contribute_lifecycle_members(k, v.type)
 	}

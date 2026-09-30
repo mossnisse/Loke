@@ -2451,8 +2451,7 @@ register_instance_extension_name :: proc(
 		sym.members = members
 		return
 	}
-	// The first instance's member: the two become a group. `new_symbol` may move
-	// the store, so `sym` is not read after it.
+	// The first instance's member: the two become a group.
 	if sym.kind != .Proc || instance_template_of(k.c, sym.owner_type) != block.template {
 		return
 	}

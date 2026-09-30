@@ -468,11 +468,6 @@ rather than a wrong answer; the wrong answers it found are in
   `rhs_clones`) and reports copy costs, so the disposable view writes
   annotations the backend reads. Should topology construction be separated from
   the per-mode consumers?
-- **Positional flags are saved by hand.** The body context is one
-  `Body_Context` record, replaced and restored whole, but `in_callee`,
-  `place_position`, and `insert_position` are still set before a `check_expr`
-  and restored at each site that needs them. Passed as parameters, they would
-  leave nothing to restore.
 - **Query walkers are partial.** The main passes switch over `Expr`
   exhaustively, but the smaller walkers that ask one question of a subtree
   (`first_unresolved_name`, `type_syntax_names`, `pattern_shape`, and the
@@ -946,13 +941,23 @@ reach from one package.
   auditable. Merely moving those fields into nested records would improve
   navigation without enforcing a boundary. Keep the current package until a
   concrete independent consumer justifies an exported API.
-- **Make positional expression inputs explicit.** `Body_Context` and
+  *Status:* the enrollment writes now share one gate, `committing(c)` (A5),
+  and emission cannot add to the registries (A3). A wrapper per registry
+  would add code without a failure it prevents, so it waits for one.
+- **Make positional expression inputs explicit.** Done. `Body_Context` and
   `Function_State` are improvements worth preserving. `in_callee`,
-  `place_position`, and `insert_position` still travel through mutable checker
-  state; `emit_unwind_thunk` also saves and restores a selected subset of
-  emitter fields manually. Narrow parameters for expression position and a
-  documented replay-state boundary would reduce restoration obligations.
-- **Keep one copy of process waiting when that code next changes.**
+  `place_position`, and `insert_position` travelled through mutable checker
+  state, and `emit_unwind_thunk` saved and restored a selected subset of
+  emitter fields by hand. They are now one `Expr_Position` parameter of
+  `check_expr` (`Value`, `Callee`, `Place`, `Insert`), which only the node it
+  is passed for reads. The flag was a real defect: `in_callee` stayed set while
+  a nested call's arguments were checked, so `pick(.io)(3)` accepted a bare
+  payload variant as an argument and compiled it to a wrong value
+  ([tests/err/variant_constructor.loke](tests/err/variant_constructor.loke)).
+  The thunk now saves the whole `Function_State`, emits into fresh
+  containers, and restores the state whole.
+- **Keep one copy of process waiting when that code next changes.** Open, as
+  its own condition says.
   `run_process`/`drain` in
   [src/emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) and `exec`/`drain`
   in [tests/corpus_test.odin](tests/corpus_test.odin) duplicate roughly 65 lines
@@ -960,7 +965,14 @@ reach from one package.
   one copy, less package/import overhead, without adding a dependency. The
   documented busy-loop behavior is a reason to retain the current waiting
   semantics, not to substitute `os2.process_exec` blindly.
-- **Repair comments that describe removed representations.**
+- **Repair comments that describe removed representations.** Done: the
+  `.as(T)` comment, the seven warnings that `type_of`/`symbol_of` pointers move
+  as the stores grow (each entry is its own allocation), and the "installed on
+  first use" comments for slice and container fields, which are installed as
+  the type is interned. The redundant `ensure_slice_fields` and
+  `ensure_container_fields` calls and the pointer re-fetches those comments
+  justified are gone; the two procedures are now private to their
+  constructors.
   [src/ast.odin](src/ast.odin) still describes `.as(T)` as yielding `(T, bool)`
   immediately above the correct `Option(T)` metadata;
   [src/slice.odin](src/slice.odin), [src/container.odin](src/container.odin),

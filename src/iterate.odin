@@ -467,8 +467,7 @@ iter_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner, iterato
 	return id
 }
 
-// Appends to a type's members. The info pointer is taken fresh: the type store
-// may have grown while the symbols were made.
+// Appends to a type's members.
 add_members :: proc(c: ^Compiler, type: Type_Id, added: []Symbol_Id) {
 	info := type_of(c, type)
 	if info == nil || len(added) == 0 {

@@ -96,15 +96,12 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		}
 	}
 
-	outer_callee := k.in_callee
-	k.in_callee = true
 	// A bare `.name(payload)` takes its union from the expected type.
 	callee_expected := INVALID_TYPE
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand == nil {
 		callee_expected = expected
 	}
-	callee_type := check_expr(k, v.callee, callee_expected)
-	k.in_callee = outer_callee
+	callee_type := check_expr(k, v.callee, callee_expected, .Callee)
 	callee_base := expr_base(v.callee)
 	if callee_base == nil {
 		v.type = INVALID_TYPE
@@ -617,9 +614,7 @@ bind_written_argument :: proc(
 check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id, inout_argument := false) -> (Expr, bool) {
 	// design.md "Indexing and slicing" and "Maps": an `inout` argument selects an
 	// `inout` indexing overload, which never inserts.
-	k.place_position, k.insert_position = inout_argument, false
-	type := check_single_expr(k, e, target)
-	k.place_position, k.insert_position = false, false
+	type := check_single_expr(k, e, target, inout_argument ? .Place : .Value)
 	if type == INVALID_TYPE || target == INVALID_TYPE {
 		return e, false
 	}

@@ -156,8 +156,6 @@ union_layout :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) 
 		out.payload_size = max(out.payload_size, type_size(c, variant, span))
 		out.align = max(out.align, type_align(c, variant, span))
 	}
-	// Laying out a variant can grow the type store, so `info` is fetched again.
-	info = type_of(c, type)
 	out.tag_bytes = union_tag_bytes(len(info.variants))
 	// A written `@(align=N)` and a tag wider than every payload only raise it.
 	out.align = max(out.align, info.written_align, out.tag_bytes)
@@ -226,7 +224,7 @@ type_is_union :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // complete constant, a payload one is finished by `check_union_construct`.
 // False when `subject` has no such variant, so the selector keeps its ordinary
 // meaning.
-check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: Type_Id) -> bool {
+check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: Type_Id, callee: bool) -> bool {
 	if subject == INVALID_TYPE || !type_is_union(k.c, type_underlying(k.c, subject)) {
 		return false
 	}
@@ -240,7 +238,7 @@ check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: 
 	sel.variant_index = index
 	// A `Unit` payload has one value, so outside a call the bare `.ok` is complete.
 	payload := union_variant_payload(k.c, subject, index)
-	unit_payload := payload == k.c.unit_type && !k.in_callee
+	unit_payload := payload == k.c.unit_type && !callee
 	if payload != TYPE_VOID && !unit_payload {
 		sel.resolution = Resolution{kind = .Union_Variant}
 		return true
@@ -400,7 +398,7 @@ check_union_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, subject:
 		errorf(k.c, v.span, "L0425", "`as` on a union names one variant as `.name`")
 		return true
 	}
-	if !check_union_variant_selector(k, variant, subject) {
+	if !check_union_variant_selector(k, variant, subject, false) {
 		errorf(k.c, variant.span, "L0425", "`%s` has no variant `%s`", type_name(k.c, subject), variant.name.text)
 		return true
 	}

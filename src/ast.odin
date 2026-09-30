@@ -106,7 +106,7 @@ Expr_Selector :: struct {
 	variant_index: int,
 }
 
-// `x.(T)` traps and yields one value; `x.as(T)` yields `(T, bool)`.
+// `x.(T)` traps and yields one value; `x.as(T)` yields `Option(T)`.
 Extract_Mode :: enum {
 	Trap,
 	Optional,

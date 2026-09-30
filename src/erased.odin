@@ -26,9 +26,6 @@ ensure_any_view_fields :: proc(c: ^Compiler) {
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
 	fields[ANY_VIEW_DATA] = new_field(c, "data", TYPE_RAWPTR, ANY_VIEW_DATA)
 	fields[ANY_VIEW_ID] = new_field(c, "id", TYPE_TYPEID, ANY_VIEW_ID)
-	// A `^Type_Info` points into the growing type store, so it is never held
-	// across the field symbols being made.
-	info = type_of(c, TYPE_ANY_VIEW)
 	info.fields = fields
 	info.backend_label = "any_view"
 }
@@ -1064,9 +1061,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 		filled[slot] = true
 		append(&order, slot)
 		want := params[slot]
-		k.place_position, k.insert_position = modes[slot] == .Inout, false
-		checked := check_single_expr(k, arg.value, want)
-		k.place_position, k.insert_position = false, false
+		checked := check_single_expr(k, arg.value, want, modes[slot] == .Inout ? .Place : .Value)
 		if checked == INVALID_TYPE || !materialize_argument(k, arg.value, want) {
 			v.type = INVALID_TYPE
 			return true
