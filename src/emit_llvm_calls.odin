@@ -41,6 +41,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			value = resized
 		}
 		return emit_option_value(e, as_type, present, value)
+	case Call_Union_As:
+		return emit_union_as(e, v, operation.index, as_type)
 	case Call_Extract:
 		return emit_any_view_extract(e, operation.node, operation.node.type)[0]
 	case Call_Dyn_Slot:
@@ -1285,4 +1287,33 @@ emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 		payload = emit_clone_value(e, expr_base(v.bound[0]).type, payload)
 	}
 	return emit_union_value(e, as_type, operation.index, payload)
+}
+
+// `u.as(.name)` borrows `u`: the payload is cloned only once the tag matched,
+// and the option is written only on that path.
+@(private = "file")
+emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) -> string {
+	subject := type_underlying(e.c, expr_base(v.bound[0]).type)
+	value := emit_borrowed_operand(e, v.bound[0])
+	tag := emit_union_tag(e, subject, value)
+	matched := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, union_layout(e.c, subject).tag_bytes * 8, tag, index)
+
+	slot := alloca(e, llvm_type(e, as_type))
+	store(e, as_type, emit_union_value(e, as_type, union_index_of(e.c, as_type, "none"), ""), slot)
+	then_label, done_label := new_label(e, "unionas.match"), new_label(e, "unionas.done")
+	branch_if(e, matched, then_label, done_label)
+	place_label(e, then_label)
+	payload_type := option_payload(e.c, as_type)
+	payload := "zeroinitializer"
+	if union_variant_payload(e.c, subject, index) != TYPE_VOID {
+		payload = emit_union_payload(e, subject, payload_type, emit_union_spill(e, subject, value))
+		if emit_lifecycle(e, payload_type).managed {
+			payload = emit_clone_value(e, payload_type, payload)
+		}
+	}
+	store(e, as_type, emit_union_value(e, as_type, union_index_of(e.c, as_type, "some"), payload), slot)
+	branch(e, done_label)
+	place_label(e, done_label)
+	return load_place(e, as_type, slot)
 }

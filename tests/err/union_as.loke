@@ -1,0 +1,14 @@
+package main;
+// design.md "Inspecting a union": `u.as(.name)` names one variant and copies its payload.
+Handle :: move_only struct { id: int }
+Shape :: union { circle: f64, open: Handle, empty: }
+impl Shape {
+    as :: proc(self) -> int { return 0; }
+}
+main :: proc() {
+    s: Shape = .circle(1);
+    _ = s.as(.missing);
+    _ = s.as(f64);
+    _ = s.as();
+    _ = s.as(.open);
+}

@@ -1696,6 +1696,13 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		return nil
 	case Call_Extract:
 		return walk_flow_expr(graph, operation.node)
+	case Call_Union_As:
+		// Both unions keep their payloads below one wildcard.
+		loans := walk_flow_expr(graph, v.bound[0])
+		if graph.mode == .Lifecycle {
+			return nil
+		}
+		return prov_project_content(graph, loans, expr_base(v.bound[0]).type, nil, v.type, v.span)
 	case Call_Union_Construct:
 		loans: []int
 		if len(v.bound) == 1 {

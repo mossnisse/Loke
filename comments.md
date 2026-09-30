@@ -1643,6 +1643,13 @@ cases are variant names and which the compiler requires to be exhaustive. A
 branch pattern such as `.some(value)` exposes the payload only in the arm that
 has already checked that variant. There is no spelling that reads one variant's
 payload while another is active.
+
+`value.as(.name)` is the checked read for code that wants one variant without a
+switch. It tests the tag and yields an `Option`, the union counterpart of
+`view.as(T)` and `Enum.from_int`, so `or_else`, `or_return`, and a switch on the
+`Option` all apply. It copies rather than borrows because an `Option` cannot
+hold a borrow, which is why a move-only payload still needs a switch. There is
+no panicking `value.(.name)`: `or_else` makes the safe form just as short.
 Interpreting the wrong payload as an owning type can manufacture a container
 header from unrelated bits and later pass an invalid pointer to `drop`.
 `unsafe.transmute` and raw storage in `core:unsafe` remain available for explicit

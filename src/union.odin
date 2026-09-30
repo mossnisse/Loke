@@ -383,6 +383,48 @@ reject_incomplete_variant :: proc(k: ^Checker, sel: ^Expr_Selector) {
 	)
 }
 
+// design.md "Inspecting a union": `u.as(.name)` borrows `u` and yields
+// `Option(P)`, a copy of the payload when `name` is active and `.none`
+// otherwise. A payloadless variant yields `Option(Unit)`.
+// ponytail: a temporary operand is copied from too, so a move-only payload is
+// rejected even there; move it out instead if that case matters.
+check_union_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, subject: Type_Id) -> bool {
+	v.value_category = .Value
+	v.resolution = Resolution{kind = .Builtin_Operator}
+	v.type = INVALID_TYPE
+	variant: ^Expr_Selector
+	if len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value {
+		variant, _ = v.args[0].value.(^Expr_Selector)
+	}
+	if variant == nil || variant.operand != nil {
+		errorf(k.c, v.span, "L0425", "`as` on a union names one variant as `.name`")
+		return true
+	}
+	if !check_union_variant_selector(k, variant, subject) {
+		errorf(k.c, variant.span, "L0425", "`%s` has no variant `%s`", type_name(k.c, subject), variant.name.text)
+		return true
+	}
+	index := variant.variant_index
+	payload := union_variant_payload(k.c, subject, index)
+	if payload == TYPE_VOID {
+		payload = k.c.unit_type
+	}
+	if type_clone_disabled(k.c, payload) {
+		errorf(
+			k.c, v.span, "L0503",
+			"`%s` is move-only, so `as` cannot copy it out of the union; use a `switch`",
+			type_name(k.c, payload),
+		)
+		return true
+	}
+	contribute_lifecycle_members(k, payload)
+	v.operation = Call_Union_As{index = index}
+	v.bound = make([]Expr, 1, k.c.semantic_allocator)
+	v.bound[0] = sel.operand
+	v.type = option_type(k, payload, v.span)
+	return true
+}
+
 union_const :: proc(c: ^Compiler, union_type: Type_Id, index: int, payload: Const_Value) -> Const_Value {
 	aggregate := new(Const_Aggregate, c.semantic_allocator)
 	aggregate.type = union_type

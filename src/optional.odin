@@ -31,7 +31,7 @@ check_extract_of :: proc(k: ^Checker, v: ^Expr_Checked_Extract, operand: Type_Id
 			k.c,
 			v.span,
 			"L0425",
-			"`%s` is a union: match its variants with a `switch (p in value)` whose cases are `.name`",
+			"`%s` is a union: read one variant with `value.as(.name)`, or match them with a `switch`",
 			type_name(k.c, operand),
 		)
 		v.type = INVALID_TYPE

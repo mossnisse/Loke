@@ -1591,6 +1591,14 @@ A switch with a case for every variant is **exhaustive**: some case always runs,
 
 Writing `_` as the binding name acquires no binding.
 
+`value.as(.name)` reads one variant without a switch. It yields `Option(P)`, where `P` is that variant's payload type, or `Unit` for a payloadless variant: `.some` holding a copy of the payload when `name` is the active variant, and `.none` otherwise. It borrows `value` as a comparison does, so a place keeps its value and a temporary lives until the end of its complete expression. A move-only payload cannot be copied out and is rejected; match it with a `switch`. The argument is always an implicit selector naming a variant of `value`'s union, and no `impl` or `extend` member of a union may be named `as`.
+
+```odin
+radius := shape.as(.circle) or_else 0;
+if (shape.as(.empty) != .none) { return 0; }
+n := shape.as(.count) or_return;    // in a procedure returning an Option
+```
+
 #### Switch ownership
 
 A switch over a **place** borrows it: a payload binding is immutable and non-owning, and the place keeps its value.

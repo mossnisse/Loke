@@ -48,7 +48,7 @@ L0425
 `Three_Way.c` carries no payload: write `c` without a call
 L0425
 @50:7
-`Value` is a union: match its variants with a `switch (p in value)` whose cases are `.name`
+`Value` is a union: read one variant with `value.as(.name)`, or match them with a `switch`
 L0426
 @54:15
 a type switch needs a union or an `any_view`, found `int`

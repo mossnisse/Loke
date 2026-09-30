@@ -197,6 +197,7 @@ Call_Operation :: union {
 	Call_Text,
 	Call_Enum_From_Int,
 	Call_Union_Construct,
+	Call_Union_As,
 	Call_Extract,
 	Call_Text_Conversion,
 	Call_Atomic,
@@ -219,6 +220,8 @@ Call_Reflect :: struct { op: Reflect_Op, field: Symbol_Id }
 Call_Text :: struct { op: Text_Op }
 Call_Enum_From_Int :: struct { type: Type_Id }
 Call_Union_Construct :: struct { index: int, clone: bool }
+// `u.as(.name)`: the variant tested and copied out.
+Call_Union_As :: struct { index: int }
 // The same checked extraction node used by the postfix spelling.
 Call_Extract :: struct { node: ^Expr_Checked_Extract }
 Call_Text_Conversion :: struct { op: Text_Conversion }

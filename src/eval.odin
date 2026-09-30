@@ -1898,6 +1898,20 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		}
 		value.type = operation.type
 		return eval_named_union(ev, v.type, "some", value)
+	case Call_Union_As:
+		value, ok := eval_expr(ev, v.bound[0])
+		if !ok { return Eval_Value{}, false }
+		if value.variant != operation.index {
+			return eval_named_union(ev, v.type, "none", Eval_Value{})
+		}
+		payload: Eval_Value
+		if union_variant_payload(ev.k.c, expr_base(v.bound[0]).type, operation.index) == TYPE_VOID {
+			payload, ok = zero_value(ev, ev.k.c.unit_type)
+		} else {
+			payload, ok = copy_value(ev, value.elements[0])
+		}
+		if !ok { return Eval_Value{}, false }
+		return eval_named_union(ev, v.type, "some", payload)
 	case Call_Conversion, Call_Dyn_Conversion:
 		return eval_conversion(ev, v)
 	case Call_Union_Construct:

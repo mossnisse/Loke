@@ -10,6 +10,8 @@ checklist.
 
 ### Breaking changes
 
+- A union's `impl` or `extend` block can no longer declare a member named `as`,
+  which is now the compiler-defined `value.as(.name)`. Rename the member.
 - An inherent `format` must match `fmt.Formattable`'s concrete slot. Generic
   format methods and methods borrowing or mutating the writer/options arguments
   are now diagnosed. Use `proc(self: ^, writer: fmt.Writer, options: fmt.Options)`;
@@ -51,6 +53,9 @@ checklist.
 
 ### Added
 
+- `value.as(.name)` reads one union variant without a `switch`: it yields
+  `Option(P)` holding a copy of the payload when `name` is active, and `.none`
+  otherwise, so `shape.as(.circle) or_else 0` works.
 - `fmt.Formattable` is the structural interface used by printing. Custom and
   compiler-generated `format` methods support generic constraints and borrowed
   `dyn fmt.Formattable` views; mixed variadic arguments keep their existing API.

@@ -901,8 +901,8 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 }
 
 // design.md "any_view type": `view.as(T)` becomes the same checked extraction
-// node as `view.(T)`. Only an `any_view` receiver takes it; any other type keeps
-// its own `as` member.
+// node as `view.(T)`. A union receiver takes `u.as(.name)` (design.md
+// "Inspecting a union"); any other type keeps its own `as` member.
 check_any_view_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 	if sel.name.text != "as" {
 		return false
@@ -914,7 +914,11 @@ check_any_view_as :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bo
 			return false
 		}
 	}
-	if check_single_expr(k, sel.operand) != TYPE_ANY_VIEW {
+	subject := check_single_expr(k, sel.operand)
+	if type_is_union(k.c, type_underlying(k.c, subject)) {
+		return check_union_as(k, v, sel, subject)
+	}
+	if subject != TYPE_ANY_VIEW {
 		return false
 	}
 

@@ -7,10 +7,10 @@ L0428
 `or_else` needs a union with a designated failure variant on its left, found `int`
 L0425
 @26:7
-`Value` is a union: match its variants with a `switch (p in value)` whose cases are `.name`
-L0363
+`Value` is a union: read one variant with `value.as(.name)`, or match them with a `switch`
+L0425
 @27:7
-`Value` has no field or member `as`
+`as` on a union names one variant as `.name`
 L0363
 @31:7
 `Plain` has no field or member `lookup_value`

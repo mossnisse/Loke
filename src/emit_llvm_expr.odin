@@ -604,7 +604,7 @@ hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: 
 // An operand read by value that its operation never owns, such as a comparison
 // side or a text operation's receiver. An owned managed temporary lives until
 // its full expression ends, so a view into it stays valid that long.
-@(private = "file")
+@(private)
 emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 	value := emit_expr(e, expr)
 	base := expr_base(expr)

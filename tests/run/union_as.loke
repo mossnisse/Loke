@@ -1,0 +1,71 @@
+package main;
+import "core:fmt";
+
+// design.md "Inspecting a union": `u.as(.name)` borrows `u` and yields a copy of
+// that variant's payload as an `Option`, or `.none` when another is active.
+
+copies, drops: int;
+
+Owned :: struct { id: int }
+impl Owned {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
+		copies += 1;
+		return .ok(Owned{self.id});
+	}
+	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
+}
+
+Shape :: union {
+	circle:    f64,
+	rectangle: (width: f64, height: f64),
+	test:      int,
+	empty:,
+}
+
+Boxed :: union { held: Owned, text: string, none_here: }
+
+area :: proc(shape: Shape) -> f64 {
+	if (shape.as(.empty) != .none) { return 0; }
+	radius := shape.as(.circle) or_else 0;
+	sides := shape.as(.rectangle) or_else {width = 0, height = 0};
+	return 3 * radius * radius + sides.width * sides.height;
+}
+
+doubled :: proc(shape: Shape) -> Option(int) {
+	n := shape.as(.test) or_return;
+	return .some(n * 2);
+}
+
+held :: proc(id: int) -> Boxed { return .held(Owned{id}); }
+
+static_assert(area(.circle(2)) == 12);
+static_assert((Shape.test(21).as(.test) or_else 0) == 21);
+static_assert(Shape.circle(1).as(.test) == .none);
+
+main :: proc() {
+	fmt.println(area(.circle(1)), area(.rectangle({width = 2, height = 3})), area(.empty));
+	fmt.println(doubled(.test(21)), doubled(.circle(1)));
+
+	shapes := [3]Shape{.test(1), .empty, .test(3)};
+	total := 0;
+	foreach (shape in shapes) {
+		total += shape.as(.test) or_else 100;
+	}
+	fmt.println(total);
+
+	// A place keeps its value; the payload is a copy.
+	box := held(7);
+	{
+		copy := box.as(.held) or_else Owned{0};
+		fmt.println(copy.id, copies);
+	}
+	fmt.println(drops, box.as(.text) == .none);
+
+	// A temporary is dropped at the end of its full expression.
+	id := (held(8).as(.held) or_else Owned{0}).id;
+	fmt.println(id, copies, drops);
+
+	text: Boxed = .text("hello");
+	fmt.println(text.as(.text) or_else "");
+	fmt.println(text.as(.none_here) == .none, Boxed.none_here.as(.none_here) != .none);
+}

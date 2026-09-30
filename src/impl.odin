@@ -158,7 +158,8 @@ declare_impl_member :: proc(
 			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
-		if type_is_enum(k.c, item.subject) && enum_builtin_member(name.text) {
+		if (type_is_enum(k.c, item.subject) && enum_builtin_member(name.text)) ||
+		   (type_is_union(k.c, type_underlying(k.c, item.subject)) && name.text == "as") {
 			errorf(
 				k.c, name.span, "L0409",
 				"`%s` already has a built-in member `%s`", type_name(k.c, item.subject), name.text,
