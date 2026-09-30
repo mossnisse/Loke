@@ -287,8 +287,8 @@ Compiler :: struct {
 	// An explicitly dropped owner is dead and no longer blocks reset (design.md).
 	// Liveness answers that a pass earlier than the reset check, so the dead owners
 	// at each call or cleanup are recorded here (`src/lifecycle.odin`, `src/cfg.odin`).
-	reset_dead:               map[^Expr_Call]Reset_Liveness,
-	cleanup_reset_dead:       map[Cleanup_Reset_Key]Reset_Liveness,
+	reset_dead:               map[Reset_Key]Reset_Liveness,
+	cleanup_reset_dead:       map[Reset_Key]Reset_Liveness,
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
 	semantic_arena:       virtual.Arena,

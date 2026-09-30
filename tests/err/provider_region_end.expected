@@ -31,3 +31,9 @@ assigning into `env` would end the region backing `xs`, which is still live here
 L0537
 @103:2
 removing from `all` would end the region backing `xs`, which is still live here
+L0537
+@112:8
+dropping `arena` would end the region backing `xs`, which is still live here
+L0537
+@123:8
+this reset would end the region backing `xs`, which is still live here

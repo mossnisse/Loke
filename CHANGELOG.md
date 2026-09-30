@@ -94,6 +94,14 @@ checklist.
 
 ### Fixed
 
+- A deferred `drop(arena)` or `free_all(arena.allocator())` is checked at each
+  exit with the owners live at that exit. An owner of the region still live at
+  one exit was missed when another exit, such as an early `return` after
+  `drop(xs)`, had it dead; the reset is now reported (`L0537`).
+- A procedure whose allocator-region facts take many passes to settle, such as
+  a loop assigning a long chain of allocator handles in reverse order, keeps
+  one analysis graph in memory instead of one per pass: a 128-handle chain
+  used 100 MB of scratch and now uses under 1 MB.
 - Tutorial examples reject negative time components and report overflowing
   expense totals as input errors. The command-line tutorial accepts long
   category names without panicking; its output now uses one space between

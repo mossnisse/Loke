@@ -104,4 +104,28 @@ cleared_from_container :: proc() {
 	fmt.println(xs.len());
 }
 
+// A deferred end runs at every exit, each with its own live owners: `xs` is
+// dead at the `return`, but live where the scope ends.
+deferred_drop_at_two_exits :: proc(flag: bool) {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	if (flag) {
+		drop(xs);
+		return;
+	}
+	xs.append(1);
+}
+
+deferred_reset_at_two_exits :: proc(flag: bool) {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer free_all(arena.allocator());
+	if (flag) {
+		drop(xs);
+		return;
+	}
+	xs.append(1);
+}
+
 main :: proc() {}

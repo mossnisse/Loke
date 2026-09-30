@@ -235,7 +235,7 @@ compute_global_writes :: proc(k: ^Checker) {
 		if !body.clean {
 			continue
 		}
-		graph := build_flow_graph(k, body.literal, c.analysis_allocator, .Prov_Summary)
+		graph := build_flow_graph(k, body.literal, .Prov_Summary)
 		effects := Body_Effects{symbol = body.literal.symbol}
 		if sym := symbol_of(c, body.literal.symbol); sym != nil {
 			effects.type = sym.proc_type

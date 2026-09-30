@@ -7,6 +7,7 @@ package lokec
 
 import "core:fmt"
 import "core:mem"
+import "core:mem/virtual"
 import "core:slice"
 
 Block_Id :: distinct int
@@ -38,23 +39,30 @@ Flow_Event :: struct {
 	name:          string,
 	assign:        ^Stmt_Assign,
 	target:        int,
-	// `Reset_Point`: the resetting call, or the provider end's key.
+	// `Reset_Point`: where it is, and the resetting call, if it is one.
+	reset:         Reset_Key,
 	call:          ^Expr_Call,
-	cleanup_reset: Cleanup_Reset_Key,
 	// The attempted operation, for diagnostics.
 	verb:          string,
 }
 
-// Where a local holding a provider ends. A `drop`, `move`, or assignment is
-// keyed by its node. A cleanup can be expanded at several exits, so each is
-// numbered per symbol in walk order instead: both passes number the same
-// symbols' cleanups the same way, whatever other roots only one of them
-// registers.
-Cleanup_Reset_Key :: struct {
-	body:    ^Expr_Proc,
-	symbol:  Symbol_Id,
-	ordinal: int,
-	node:    rawptr,
+// A point where a region may end, named alike by the lifecycle walk, which
+// records who is dead there, and the provenance walk, which reads it. `node` is
+// the resetting call, the `drop`, `move`, `exchange`, or assignment, or the
+// jump whose cleanups end `symbol`'s region; nil where its scope ends. A
+// deferred statement is walked once per exit, so `expansion` names the walk.
+Reset_Key :: struct {
+	body:      ^Expr_Proc,
+	node:      rawptr,
+	symbol:    Symbol_Id,
+	expansion: Defer_Expansion,
+}
+
+// One walk of a `defer` body: the deferred statement and the exit running it,
+// nil at its scope's end.
+Defer_Expansion :: struct {
+	deferred: ^Stmt_Defer,
+	exit:     rawptr,
 }
 
 // The owners dead at one reset point. Lifecycle registers every point it walks
@@ -109,11 +117,11 @@ Flow_Scope :: struct {
 // Locals and defers share one cleanup order: a deferred read is valid only if
 // every local it names is still live where it runs.
 Flow_Cleanup :: struct {
-	kind: Flow_Cleanup_Kind,
-	slot: int,
-	stmt: Stmt,
-	root: Root_Id,
-	span: Span,
+	kind:     Flow_Cleanup_Kind,
+	slot:     int,
+	deferred: ^Stmt_Defer,
+	root:     Root_Id,
+	span:     Span,
 }
 
 Tracked_Local :: struct {
@@ -158,7 +166,8 @@ Flow_Graph :: struct {
 	// where each scope starts.
 	in_scope:       [dynamic]Flow_Cleanup,
 	scopes:         [dynamic]Flow_Scope,
-	cleanup_resets: map[Symbol_Id]int,
+	// The `defer` body being walked, if any.
+	expansion:      Defer_Expansion,
 	loop_depth:     int,
 	// Where an abrupt exit lands, and how far down `in_scope` it unwinds.
 	break_block:    Block_Id,
@@ -247,34 +256,35 @@ Prov_State :: struct {
 
 NO_BLOCK :: Block_Id(-1)
 
-// Lifecycle mode returns nil for a body with nothing to track; a provenance mode
-// always builds one.
-build_flow_graph :: proc(
-	k: ^Checker,
-	literal: ^Expr_Proc,
-	allocator: mem.Allocator,
-	mode := Flow_Mode.Lifecycle,
-) -> ^Flow_Graph {
-	graph := build_flow_pass(k, literal, allocator, mode, nil)
-	if mode == .Lifecycle {
-		return graph
+// Built in the analysis arena, which the caller frees. Lifecycle mode returns
+// nil for a body with nothing to track; a provenance mode always builds one.
+build_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, mode := Flow_Mode.Lifecycle) -> ^Flow_Graph {
+	allocator := k.c.analysis_allocator
+	if mode == .Lifecycle || literal == nil || literal.body == nil {
+		return build_flow_pass(k, literal, allocator, mode, nil)
 	}
 	// design.md "Allocator regions and region provenance": region facts are
 	// flow-insensitive, but a pass reads them while it walks, so a fact written
 	// later in a loop body reaches an earlier read only on the next pass. Facts
-	// only grow, so the passes stop.
-	for graph != nil {
+	// only grow, so the passes stop. A pass that added facts is reclaimed once
+	// they are copied out, so scratch holds one graph, not one per pass.
+	carry_arena: virtual.Arena
+	defer virtual.arena_destroy(&carry_arena)
+	carry: ^Flow_Graph
+	seeded := 0
+	for {
+		temp := virtual.arena_temp_begin(&k.c.analysis_arena)
+		graph := build_flow_pass(k, literal, allocator, mode, carry)
 		weight := prov_region_weight(graph)
-		if weight == 0 {
+		if weight == seeded {
+			virtual.arena_temp_ignore(temp)
 			return graph
 		}
-		next := build_flow_pass(k, literal, allocator, mode, graph)
-		if prov_region_weight(next) == weight {
-			return next
-		}
-		graph = next
+		free_all(virtual.arena_allocator(&carry_arena))
+		carry = prov_carry_regions(graph, virtual.arena_allocator(&carry_arena))
+		virtual.arena_temp_end(temp)
+		seeded = weight
 	}
-	return graph
 }
 
 @(private = "file")
@@ -298,7 +308,6 @@ build_flow_pass :: proc(
 	graph.by_symbol = make(map[Symbol_Id]int, 8, allocator)
 	graph.scopes = make([dynamic]Flow_Scope, allocator)
 	graph.in_scope = make([dynamic]Flow_Cleanup, allocator)
-	graph.cleanup_resets = make(map[Symbol_Id]int, 4, allocator)
 	graph.held = make([dynamic]int, allocator)
 	graph.lent = make(map[int]bool, 4, allocator)
 	graph.last_uses = make([dynamic]Last_Use, allocator)
@@ -502,7 +511,7 @@ enter_flow_scope :: proc(graph: ^Flow_Graph) {
 @(private = "file")
 leave_flow_scope :: proc(graph: ^Flow_Graph) {
 	scope := pop(&graph.scopes)
-	emit_cleanups(graph, scope.cleanups)
+	emit_cleanups(graph, scope.cleanups, nil)
 	resize(&graph.in_scope, scope.cleanups)
 	resize(&graph.owners_in_scope, scope.owners)
 }
@@ -515,9 +524,9 @@ walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
 }
 
 // Cleanup events for every registration above `down_to`, innermost first
-// (design.md).
+// (design.md). `exit` is the jump that runs them, nil at a scope's end.
 @(private = "file")
-emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
+emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr) {
 	for index := len(graph.in_scope) - 1; index >= down_to; index -= 1 {
 		action := graph.in_scope[index]
 		switch action.kind {
@@ -528,20 +537,23 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 			// the entries are saved, not the header.
 			tail := slice.clone(graph.in_scope[index:], graph.alloc)
 			owners := len(graph.owners_in_scope)
+			outer := graph.expansion
+			graph.expansion = {action.deferred, exit}
 			resize(&graph.in_scope, index)
-			walk_flow_stmt(graph, action.stmt)
+			walk_flow_stmt(graph, action.deferred.stmt)
+			graph.expansion = outer
 			resize(&graph.in_scope, index)
 			append(&graph.in_scope, ..tail)
 			resize(&graph.owners_in_scope, owners)
 		case .Prov_Root:
-			provider_region_end(graph, graph.roots[int(action.root)].symbol, action.span)
+			provider_region_end(graph, graph.roots[int(action.root)].symbol, action.span, exit)
 			prov_drop_use(graph, graph.roots[int(action.root)].symbol, action.span, at_scope_exit = true)
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
 		case .Local:
 			id := graph.tracked[action.slot].symbol
 			sym := symbol_of(graph.k.c, id)
 			span := sym == nil ? no_span() : sym.span
-			provider_region_end(graph, id, span)
+			provider_region_end(graph, id, span, exit)
 			if graph.mode != .Lifecycle {
 				prov_drop_use(graph, id, span, at_scope_exit = true)
 			}
@@ -557,11 +569,11 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 
 // A local holding a provider ends its region when it is cleaned up, dropped,
 // moved anywhere but a new local or a result, or assigned over; every owner the
-// region backs must be dead by then (design.md "Allocators"). `node` keys a
-// written end; a cleanup passes nil. `ends` names a written end for the
-// diagnostic.
+// region backs must be dead by then (design.md "Allocators"). `node` is the
+// written end, or for a cleanup, the jump running it or nil; `ends` names a
+// written end for the diagnostic.
 @(private)
-provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node: rawptr = nil, ends := "", path: []Proj_Step = nil) {
+provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node: rawptr, ends := "", path: []Proj_Step = nil) {
 	sym := symbol_of(graph.k.c, id)
 	if sym == nil || sym.kind != .Var || sym.duration != .None || !type_carries_provider(graph.k.c, sym.type) {
 		return
@@ -570,14 +582,10 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 	if sym.borrowed_binding != .None {
 		return
 	}
-	key := Cleanup_Reset_Key{graph.literal, id, 0, node}
-	if node == nil {
-		graph.cleanup_resets[id] += 1
-		key.ordinal = graph.cleanup_resets[id]
-	}
+	key := Reset_Key{graph.literal, node, id, graph.expansion}
 	if graph.mode == .Lifecycle {
 		graph.k.c.cleanup_reset_dead[key] = {}
-		emit(graph, Flow_Event{kind = .Reset_Point, cleanup_reset = key, span = span})
+		emit(graph, Flow_Event{kind = .Reset_Point, reset = key, span = span})
 		return
 	}
 	live, found := graph.k.c.cleanup_reset_dead[key]
@@ -695,10 +703,10 @@ provider_place_end :: proc(graph: ^Flow_Graph, place: Expr, node: rawptr, span: 
 // was ever lent mutably, so the regions of all of those in scope end here.
 @(private = "file")
 provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb: string) {
-	key := Cleanup_Reset_Key{graph.literal, INVALID_SYMBOL, 0, node}
+	key := Reset_Key{graph.literal, node, INVALID_SYMBOL, graph.expansion}
 	if graph.mode == .Lifecycle {
 		graph.k.c.cleanup_reset_dead[key] = {}
-		emit(graph, Flow_Event{kind = .Reset_Point, cleanup_reset = key, span = span})
+		emit(graph, Flow_Event{kind = .Reset_Point, reset = key, span = span})
 		return
 	}
 	live, found := graph.k.c.cleanup_reset_dead[key]
@@ -843,7 +851,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 		walk_flow_switch(graph, s)
 
 	case ^Stmt_Defer:
-		append(&graph.in_scope, Flow_Cleanup{kind = .Defer, stmt = s.stmt})
+		append(&graph.in_scope, Flow_Cleanup{kind = .Defer, deferred = s})
 
 	case ^Stmt_Return:
 		if s.value != nil && !s.value.is_inout {
@@ -876,7 +884,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 				})
 				held = prov_hold_result(graph, sources, result_type, expr_span(value.expr))
 			}
-			emit_cleanups(graph, 0)
+			emit_cleanups(graph, 0, s)
 			if len(held) > 0 {
 				prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = expr_span(s.value.expr)})
 			}
@@ -902,15 +910,15 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 				walk_flow_expr(graph, value.expr)
 			}
 		}
-		emit_cleanups(graph, 0)
+		emit_cleanups(graph, 0, s)
 		graph.current = NO_BLOCK
 
 	case ^Stmt_Branch:
 		if s.kind == .Break {
-			emit_cleanups(graph, graph.break_depth)
+			emit_cleanups(graph, graph.break_depth, s)
 			link(graph, graph.current, graph.break_block)
 		} else {
-			emit_cleanups(graph, graph.continue_depth)
+			emit_cleanups(graph, graph.continue_depth, s)
 			link(graph, graph.current, graph.continue_block)
 		}
 		graph.current = NO_BLOCK
@@ -1502,7 +1510,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 					held = prov_hold_result(graph, escaping, proc_symbol.result, v.span)
 				}
 			}
-			emit_cleanups(graph, 0)
+			emit_cleanups(graph, 0, v)
 			if len(held) > 0 {
 				prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = v.span})
 			}
@@ -1824,12 +1832,13 @@ call_is_reset :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 // After the arguments, which may themselves move an owner out.
 @(private = "file")
 note_reset_point :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
-	if !call_is_reset(graph.k.c, v) {
+	if graph.mode != .Lifecycle || !call_is_reset(graph.k.c, v) {
 		return
 	}
-	graph.k.c.reset_dead[v] = {}
+	key := Reset_Key{graph.literal, v, INVALID_SYMBOL, graph.expansion}
+	graph.k.c.reset_dead[key] = {}
 	if len(graph.tracked) > 0 {
-		emit(graph, Flow_Event{kind = .Reset_Point, span = v.span, call = v})
+		emit(graph, Flow_Event{kind = .Reset_Point, span = v.span, reset = key, call = v})
 	}
 }
 

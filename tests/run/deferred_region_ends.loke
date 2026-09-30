@@ -1,0 +1,56 @@
+package main; import "core:mem"; import "core:fmt";
+
+// design.md "Allocators": a deferred reset runs at every exit, and each exit
+// is checked with the owners live there. Here every exit has `xs` cleaned up
+// or dropped first, so none of them is an error.
+
+several_exits :: proc(n: int) -> int {
+	arena := mem.Arena.init();
+	defer free_all(arena.allocator());
+	xs: [dynamic]int via arena.allocator() = {};
+	for (i := 0; i < 10; i += 1) {
+		if (i == n) {
+			break;
+		}
+		xs.append(i);
+	}
+	if (n < 0) {
+		drop(xs);
+		return -1;
+	}
+	if (n > 5) {
+		return xs.len();
+	}
+	return xs.len() + 100;
+}
+
+dropped_before_one_exit :: proc(flag: bool) -> int {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	xs.append(1);
+	if (flag) {
+		drop(xs);
+		return 1;
+	}
+	drop(xs);
+	return 2;
+}
+
+moved_on_one_path :: proc(flag: bool) -> int {
+	arena := mem.Arena.init();
+	if (flag) {
+		other := move(arena);
+		ys: [dynamic]int via other.allocator() = {};
+		ys.append(7);
+		first := ys[0];
+		return first;
+	}
+	return 0;
+}
+
+main :: proc() {
+	fmt.println(several_exits(-1), several_exits(3), several_exits(8));
+	fmt.println(dropped_before_one_exit(true), dropped_before_one_exit(false));
+	fmt.println(moved_on_one_path(true), moved_on_one_path(false));
+}

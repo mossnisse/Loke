@@ -1176,7 +1176,7 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 		return false
 	}
 	defer free_all(k.c.analysis_allocator)
-	graph := build_flow_graph(k, literal, k.c.analysis_allocator, .Prov_Summary)
+	graph := build_flow_graph(k, literal, .Prov_Summary)
 	if graph == nil {
 		return false
 	}
@@ -1444,7 +1444,7 @@ merge_param_paths :: proc(
 // One concrete body's root and region diagnostics.
 analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	defer free_all(k.c.analysis_allocator)
-	graph := build_flow_graph(k, literal, k.c.analysis_allocator, .Prov_Diagnose)
+	graph := build_flow_graph(k, literal, .Prov_Diagnose)
 	if graph == nil {
 		return
 	}

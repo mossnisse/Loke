@@ -452,10 +452,10 @@ rather than a wrong answer; the wrong answers it found are in
   signature is. Should
   registry writes made under speculation be journaled and rolled back with the
   diagnostics, or should a probe stop before body-level work?
-- **Lifecycle and provenance meet through walk-order keys.** The dead owners at
+- **Lifecycle and provenance meet through shared keys.** The dead owners at
   each reset point reach the provenance walk through `reset_dead` and
-  `cleanup_reset_dead`, keyed by node or by a cleanup ordinal that both walks
-  must count identically in different `Flow_Mode`s. Lifecycle registers every
+  `cleanup_reset_dead`, keyed by a `Reset_Key` both walks build alike: the
+  ending node or exit, the local, and the `defer` expansion. Lifecycle registers every
   point it walks, marks the ones its solve reaches, and a key the provenance walk
   does not find is an assertion failure rather than "nothing to check". The
   coupling remains: should liveness at reset points be solved on the provenance
@@ -740,7 +740,7 @@ and [tests/err/generic_probe_then_use.loke](tests/err/generic_probe_then_use.lok
 pin the orders above. Centralizing the remaining depth-zero enrollment tests
 behind one operation is left for when another is added.
 
-### A6 — P2: Region fixed-point iterations retain whole superseded graphs
+### A6 — resolved: Region fixed-point iterations retained whole superseded graphs
 
 **New structural finding; no timing or memory regression measured.**
 `build_flow_graph` in [src/cfg.odin](src/cfg.odin) repeatedly calls
@@ -764,7 +764,19 @@ one topology. Preserve the monotone fixed point; an arbitrary iteration cap
 would change analysis results. There is no evidence here that a durable MIR
 is necessary.
 
-### A7 — P2: Cleanup identity depends on matching traversal order
+**Measured and fixed:** a loop whose body assigns `h1 = h0` after
+`h2 = h1` and so on down a chain of N allocator handles takes N + 2 passes in
+each provenance mode. Peak analysis scratch was 0.9 MB at N = 8, 6.5 MB at
+N = 32, and 100 MB at N = 128, growing with the square of N. `build_flow_graph`
+in [src/cfg.odin](src/cfg.odin) now builds each pass inside an arena
+watermark: a pass that added facts has them copied into a small carry arena
+(`prov_carry_regions`) and is rolled back, and the next pass is seeded from
+the carry. `prov_seed_regions` copies projection paths instead of sharing
+them. The fixed point and the stopping test are unchanged; only the final pass
+stays in the analysis arena. At N = 128 the compiler's peak working set went
+from 114 MB to 35 MB. The passes still cost quadratic time on such a chain.
+
+### A7 — resolved: Cleanup identity depended on matching traversal order
 
 **Existing concern, rechecked.** `provider_region_end` in
 [src/cfg.odin](src/cfg.odin) identifies an implicit cleanup by procedure,
@@ -780,6 +792,24 @@ it. Start with this specific interface. Separating every CFG event producer
 into a general pass framework would be a much larger change. Verification
 needs multiple exits, nested defers, provider moves, and unreachable paths,
 where one local has several cleanup occurrences.
+
+**Fixed, with a real defect behind it:** a deferred `drop(arena)` or
+`free_all(arena.allocator())` is walked once per exit, but its node key named
+all those walks alike, so the last exit lifecycle solved decided the dead
+owners at every other. With `xs` dropped before an early `return` and live at
+the scope's end, the region reset at the scope's end went unreported. Every
+reset point is now named by a `Reset_Key` in [src/cfg.odin](src/cfg.odin): the
+body, the ending node (the call, `drop`, `move`, `exchange`, or assignment, or
+the `return`, `break`, `continue`, or `or_return` whose cleanups run it; nil at
+the scope's end), the local, and the `defer` expansion being walked (the
+deferred statement and the exit running it). Both walks build the key from what
+they are at, not from a count, so there is no per-symbol ordinal left. Nested
+defers do not exist (`L0369`). The provenance walk no longer clears an
+explicit reset's recorded liveness either. The two new cases in
+[tests/err/provider_region_end.loke](tests/err/provider_region_end.loke) failed
+before the fix; [tests/run/deferred_region_ends.loke](tests/run/deferred_region_ends.loke)
+covers a `break`, several returns, a provider moved on one path, and a
+deferred reset at every exit.
 
 ### A8 — P2: Runtime function signatures have two handwritten authorities
 
@@ -914,6 +944,7 @@ was identified.
    overload engine and CTFE behavior. Done (A10; A5 in part).
 4. Measure graph iteration/storage before changing analysis topology; then
    improve cleanup identity and scratch ownership where the evidence warrants.
+   Done (A6, A7).
 5. Add the runtime ABI check and cache-input manifest. Do the smaller state,
    duplication, and comment cleanups alongside relevant changes.
 
@@ -934,8 +965,8 @@ Validation performed on the reviewed implementation:
   after the observations were recorded. Its successful result confirms the
   observations, not that those states satisfy the intended contract.
 
-The original audit changed documentation only. A1–A4 and A10 were fixed, and
-A5 in part, in the follow-ups described above; the other findings remain open.
+The original audit changed documentation only. A1–A4, A6, A7, and A10 were
+fixed, and A5 in part, in the follow-ups described above; the other findings remain open.
 
 ## Open checker-fuzzer findings
 

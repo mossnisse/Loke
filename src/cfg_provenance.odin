@@ -5,6 +5,7 @@ package lokec
 
 import "core:fmt"
 import "core:math/bits"
+import "core:mem"
 import "core:slice"
 
 // ------------------------------------------------------ provenance events --
@@ -1261,7 +1262,7 @@ prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set)
 }
 
 // Starts a pass from the previous pass's region facts, copied so this pass's
-// merges leave them alone.
+// merges leave them alone and the previous pass can be reclaimed.
 @(private)
 prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
 	for id, set in seed.region_of {
@@ -1278,11 +1279,27 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
 	for id, content in seed.region_content {
 		copied := make([]Prov_Region_Content, len(content), graph.alloc)
 		for entry, index in content {
-			copied[index] = Prov_Region_Content{path = entry.path, region = prov_empty_region(graph)}
+			copied[index] = Prov_Region_Content{path = slice.clone(entry.path, graph.alloc), region = prov_empty_region(graph)}
 			region_merge(&copied[index].region, entry.region)
 		}
 		graph.region_content[id] = copied
 	}
+}
+
+// A pass's region facts alone, in `allocator`, to seed the next pass after this
+// one's graph is reclaimed.
+@(private)
+prov_carry_regions :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Flow_Graph {
+	carry := new(Flow_Graph, allocator)
+	carry.alloc = allocator
+	carry.prov = new(Prov_State, allocator)
+	carry.param_count = graph.param_count
+	carry.region_of = make(map[Symbol_Id]Region_Set, len(graph.region_of), allocator)
+	carry.provider_parents = make(map[Symbol_Id]Region_Set, len(graph.provider_parents), allocator)
+	carry.lent_locals = make(map[Symbol_Id]bool, len(graph.lent_locals), allocator)
+	carry.region_content = make(map[Symbol_Id][]Prov_Region_Content, len(graph.region_content), allocator)
+	prov_seed_regions(carry, graph)
+	return carry
 }
 
 // How many region facts a pass holds. They only grow, so a pass that ends with
@@ -1966,7 +1983,7 @@ prov_reset :: proc(
 	// dropped owner no longer blocks (design.md).
 	dead := cleanup_dead
 	if at != nil {
-		live, found := graph.k.c.reset_dead[at]
+		live, found := graph.k.c.reset_dead[Reset_Key{graph.literal, at, INVALID_SYMBOL, graph.expansion}]
 		assert(found, "the provenance walk reached a reset the lifecycle walk did not")
 		dead = live.dead
 	}
