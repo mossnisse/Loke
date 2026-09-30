@@ -63,6 +63,18 @@ try {
         throw "front-end files call an emitter procedure"
     }
 
+    # Whether a check's findings belong to the program is one question,
+    # `committing` in source.odin; a raw depth test elsewhere is how an
+    # enrollment used to slip through a probe (compiler-architecture.md
+    # "Checking and overload resolution").
+    $depth = Get-ChildItem src/*.odin |
+        Where-Object { $_.Name -notlike '*_test.odin' -and $_.Name -ne 'source.odin' } |
+        Select-String -Pattern '\bspeculation_depth\b' -CaseSensitive
+    if ($depth) {
+        $depth | ForEach-Object { Write-Host "$($_.Filename):$($_.LineNumber): $($_.Line.Trim())" }
+        throw "speculation_depth is read outside source.odin; ask committing(c)"
+    }
+
     # Memory tracking stays on here: the unit tests are where a leak in the
     # compiler shows up, and it costs a fraction of a second. Vet covers the test
     # code too; `-vet-packages` keeps it out of Odin's own `core:testing`.

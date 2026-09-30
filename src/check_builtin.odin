@@ -192,7 +192,7 @@ check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, ki
 			check_message_arg(k, arg.value, formatted = true)
 		case:
 			bound[index], _ = check_argument_value(k, arg.value, TYPE_ANY_VIEW)
-			if k.c.speculation_depth == 0 {
+			if committing(k.c) {
 				k.c.format_requested = true
 			}
 		}
@@ -1142,7 +1142,7 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if k.c.speculation_depth == 0 {
+	if committing(k.c) {
 		k.c.type_info_requested = true
 	}
 	bound := make([]Expr, 1, k.c.semantic_allocator)
@@ -1184,7 +1184,7 @@ runtime_type_named :: proc(k: ^Checker, name: string) -> (Type_Id, bool) {
 			)
 			// A speculative check's diagnostic is rolled back, so only a real one
 			// may settle the answer.
-			if k.c.speculation_depth > 0 {
+			if !committing(k.c) {
 				return INVALID_TYPE, true
 			}
 			type = INVALID_TYPE

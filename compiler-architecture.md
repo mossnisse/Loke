@@ -234,13 +234,19 @@ final program.
 Rolling back a check removes only its diagnostics, so **any check whose
 diagnostics may be truncated runs with `speculation_depth` raised**:
 `begin_probe` raises it and marks the diagnostics, and `end_probe` rolls them
-back before lowering it again. Report-once
-caches (map-key and sort-order policies, validated attributes) and hoisted
-procedures are gated on it; a rollback outside speculation lets a cache record a
-report that no longer exists. The one sanctioned commit from inside speculation
-is `ensure_proc_typed_for_eval`, which checks a body for compile-time execution
-at depth zero and holds that body's diagnostics aside (`hold_diagnostics`), so a
-later rollback cannot take them. Held errors are left out of `error_count` until
+back before lowering it again. Whether what a check finds belongs to the
+program is one question, `committing(c)` in `source.odin`, and every write it
+decides asks it: enrollment in the registries emission reads (checked and
+hoisted bodies, generic bodies, witnesses, synthesized procedures, static
+locals, materialized globals, type IDs, the format and type-info requests),
+report-once caches (map-key and sort-order policies, validated attributes,
+runtime types), and the last-use annotations the backend reads. A rollback
+outside speculation would let a cache record a report that no longer exists.
+`test-all.ps1` rejects a read of `speculation_depth` outside `source.odin`. The
+one sanctioned commit from inside speculation is `ensure_proc_typed_for_eval`,
+which checks a body for compile-time execution between `begin_commit` and
+`end_commit`, at depth zero, and holds that body's diagnostics aside
+(`hold_diagnostics`), so a later rollback cannot take them. Held errors are left out of `error_count` until
 `release_held_diagnostics` returns them at the end of `compile_program`.
 
 A call usually probes a generic instance's `where` bounds speculatively first.

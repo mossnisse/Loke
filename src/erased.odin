@@ -705,7 +705,7 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	}
 	restore_checker_location(k, saved)
 	witness.slots = slots
-	if k.c.speculation_depth == 0 {
+	if committing(k.c) {
 		k.c.witnesses[key] = witness
 		append(&k.c.witness_order, witness)
 	}

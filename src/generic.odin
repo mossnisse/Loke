@@ -1467,7 +1467,7 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 // compile-time evaluation beneath it runs at depth zero, so its frame is asked.
 @(private = "file")
 diagnostics_provisional :: proc(k: ^Checker) -> bool {
-	if k.c.speculation_depth > 0 {
+	if !committing(k.c) {
 		return true
 	}
 	for frame in k.c.instantiation_stack {
@@ -1856,7 +1856,7 @@ instantiate_procedure_signature :: proc(
 // with its defining package's items.
 promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	// Speculation must not commit a body whose dependencies it suppressed.
-	if k.c.speculation_depth > 0 || instance == nil || instance.body_checked || !instance.signature_ok {
+	if !committing(k.c) || instance == nil || instance.body_checked || !instance.signature_ok {
 		return
 	}
 	instance.body_checked = true

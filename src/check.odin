@@ -2377,7 +2377,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	analyze_ownership(k, literal)
 	// Provenance runs later, once every body's summary is settled. A probe's body
 	// is not part of the program, as its literal is not hoisted.
-	if k.c.speculation_depth == 0 {
+	if committing(k.c) {
 		append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
 	}
 	literal.defer_count = k.defer_slots
@@ -2473,7 +2473,7 @@ check_scoped_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 // `impl` method) is hoisted like a literal.
 hoist_body_local_proc :: proc(k: ^Checker, d: ^Decl) {
 	literal := decl_proc_literal(d)
-	if literal == nil || k.c.speculation_depth != 0 || len(d.symbols) == 0 {
+	if literal == nil || !committing(k.c) || len(d.symbols) == 0 {
 		return
 	}
 	if d.symbols[0] == INVALID_SYMBOL || symbol_is_generic(k, d.symbols[0]) {

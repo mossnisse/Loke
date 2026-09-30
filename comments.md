@@ -697,7 +697,7 @@ rejects a missing `program_analyzed`, an unfinished `formatters_ready`, and any
 held diagnostic. `emission_rejects_incomplete_registries` has a negative case
 for each.
 
-### A5 — resolved in part: Speculation had multiple commitment policies
+### A5 — resolved: Speculation had multiple commitment policies
 
 **Existing concern, confirmed in the current call path.**
 `begin_probe`/`end_probe` pair a counter with diagnostic rollback in
@@ -737,8 +737,18 @@ CTFE's depth-zero body commitment is unchanged, which is why
 `diagnostics_provisional` still asks the instantiation frames.
 [tests/run/generic_probe_then_use.loke](tests/run/generic_probe_then_use.loke)
 and [tests/err/generic_probe_then_use.loke](tests/err/generic_probe_then_use.loke)
-pin the orders above. Centralizing the remaining depth-zero enrollment tests
-behind one operation is left for when another is added.
+pin the orders above.
+
+The scattered counter tests are now one operation. `committing(c)` in
+[src/source.odin](src/source.odin), beside `begin_probe`/`end_probe`, answers
+whether what the checker finds belongs to the program. The 22 sites that tested
+`speculation_depth` directly ask it instead: registry enrollment, report-once
+caches, the last-use annotation, and the finalization and emission guards.
+CTFE's commit uses `begin_commit`/`end_commit` instead of assigning the counter.
+`test-all.ps1` fails when a file other than `source.odin` names
+`speculation_depth`, so a new enrollment site cannot test the counter its own
+way. Behaviour is unchanged. The general journal of speculative writes is
+still not needed.
 
 ### A6 — resolved: Region fixed-point iterations retained whole superseded graphs
 
@@ -978,7 +988,7 @@ was identified.
    phases, and test that emission cannot add semantic entities. Include the
    real production pipeline in that check. Done (A3, A4).
 3. Clarify generic commitment and member applicability, retaining the existing
-   overload engine and CTFE behavior. Done (A10; A5 in part).
+   overload engine and CTFE behavior. Done (A10, A5).
 4. Measure graph iteration/storage before changing analysis topology; then
    improve cleanup identity and scratch ownership where the evidence warrants.
    Done (A6, A7).
@@ -1003,9 +1013,8 @@ Validation performed on the reviewed implementation:
   after the observations were recorded. Its successful result confirms the
   observations, not that those states satisfy the intended contract.
 
-The original audit changed documentation only. A1–A4 and A6–A10 were fixed,
-and A5 in part, in the follow-ups described above; the lower-urgency structure
-items remain open.
+The original audit changed documentation only. A1–A10 were fixed in the
+follow-ups described above; the lower-urgency structure items remain open.
 
 ## Open checker-fuzzer findings
 

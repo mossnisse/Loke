@@ -526,6 +526,27 @@ end_probe :: proc(c: ^Compiler, probe: Probe, keep := false) {
 	c.speculation_depth -= 1
 }
 
+// Whether what the checker finds now belongs to the program. Outside every
+// probe it does; inside one, its diagnostics may be rolled back and its
+// candidate discarded, so nothing is enrolled for emission, no answer is cached
+// with a diagnostic, and nothing written is left for the backend to read. Every
+// such write asks this, and nothing else reads `speculation_depth`.
+committing :: proc(c: ^Compiler) -> bool {
+	return c.speculation_depth == 0
+}
+
+// The one sanctioned commit from inside a probe: `ensure_proc_typed_for_eval`
+// checks a body compile-time evaluation will execute, which is a real use.
+begin_commit :: proc(c: ^Compiler) -> (saved: int) {
+	saved = c.speculation_depth
+	c.speculation_depth = 0
+	return
+}
+
+end_commit :: proc(c: ^Compiler, saved: int) {
+	c.speculation_depth = saved
+}
+
 // Moves every diagnostic past `length`, with its share of `error_count`, out of
 // `truncate_diagnostics`' reach until `release_held_diagnostics`.
 // Whether an error was reported since `mark`, a length of `c.diagnostics`.

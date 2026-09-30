@@ -1853,7 +1853,7 @@ LAST_USE_VERB :: "moved by its last use"
 // stay in place, with the move's `Kill` where its `Use` was, so the forward
 // solve that follows sees the local end there.
 settle_last_uses :: proc(graph: ^Flow_Graph) {
-	if len(graph.last_uses) == 0 || graph.k.c.speculation_depth > 0 {
+	if len(graph.last_uses) == 0 || !committing(graph.k.c) {
 		return
 	}
 	tracked := len(graph.tracked)

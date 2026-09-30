@@ -113,7 +113,7 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 		return
 	}
 	// A speculative check discards its diagnostics, so it must not claim the list.
-	if k.c.speculation_depth == 0 {
+	if committing(k.c) {
 		first := attributes[0].span
 		key := u64(first.file) << 32 | u64(first.lo)
 		if k.c.validated_attributes[key] {

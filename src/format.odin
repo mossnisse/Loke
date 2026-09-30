@@ -32,7 +32,7 @@ ensure_format_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 		sym.has_receiver, sym.receiver = true, .Borrow
 		add_members(k.c, type, []Symbol_Id{id})
 	}
-	if k.c.speculation_depth == 0 {
+	if committing(k.c) {
 		k.c.format_requested = true
 		request_typeid(k.c, type)
 		info := type_of(k.c, type)
@@ -157,7 +157,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		wanted = []Type_Id{TYPE_ANY_VIEW}
 		result, _ = local_type_named(k, "Format_View")
 		k.c.runtime_types["Format_View"] = result
-		if k.c.speculation_depth == 0 {
+		if committing(k.c) {
 			k.c.format_requested = true
 		}
 	}

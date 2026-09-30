@@ -2273,7 +2273,7 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	symbol.proc_literal = v
 	v.type = symbol.proc_type
 	// Not while speculatively checking an interface requirement.
-	if pkg := package_of(k.c, k.pkg); pkg != nil && k.c.speculation_depth == 0 {
+	if pkg := package_of(k.c, k.pkg); pkg != nil && committing(k.c) {
 		append(&pkg.hoisted_procs, v)
 	}
 	check_proc_body(k, v)

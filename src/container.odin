@@ -466,7 +466,7 @@ require_sort_order_policy :: proc(k: ^Checker, chosen: ^Symbol, span: Span) -> b
 		k.c.order_policies[element] = policy
 		return true
 	}
-	if k.c.speculation_depth == 0 {
+	if committing(k.c) {
 		k.c.order_policies[element] = Order_Policy{kind = .Unordered}
 	}
 	errorf(
@@ -489,7 +489,7 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		return policy.kind != .Unresolved
 	}
 	// A speculative probe's diagnostics are rolled back, so it must not cache one.
-	if k.c.speculation_depth == 0 {
+	if committing(k.c) {
 		k.c.map_key_policies[key] = Key_Policy{}
 	}
 	// Keys are copied in and out.

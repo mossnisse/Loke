@@ -137,14 +137,13 @@ eval_root :: proc(ev: ^Evaluator, e: Expr, code, format: string) -> (Eval_Value,
 // Checks a procedure on demand, so a constant may call one not reached yet.
 ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	// Executing a declaration is a real use, even from a `where` predicate.
-	saved_speculation := k.c.speculation_depth
-	k.c.speculation_depth = 0
+	saved_speculation := begin_commit(k.c)
 	// The same holds for what the check reports: a passing `where` bound rolls
 	// back everything after its mark, and this body is never checked again.
 	mark := len(k.c.diagnostics)
 	defer {
 		hold_diagnostics(k.c, mark)
-		k.c.speculation_depth = saved_speculation
+		end_commit(k.c, saved_speculation)
 	}
 	if instance, found := k.c.procedure_instances[symbol_id]; found {
 		promote_generic_instance(k, instance, no_span())

@@ -61,7 +61,7 @@ request_materialization :: proc(k: ^Checker, e: Expr) -> bool {
 	if symbol == INVALID_SYMBOL {
 		return false
 	}
-	if k.c.speculation_depth > 0 {
+	if !committing(k.c) {
 		return true
 	}
 	if _, found := k.c.materialized[symbol]; found {

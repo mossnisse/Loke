@@ -37,7 +37,7 @@ Lifecycle_Operations :: struct {
 finalize_lifecycle_operations :: proc(c: ^Compiler) -> bool {
 	if c.lifecycle_operations_ready { return true }
 	if c.error_count != 0 { return false }
-	if c.speculation_depth != 0 {
+	if !committing(c) {
 		return emission_contract_error(c, "lifecycle operations cannot be finalized during speculation")
 	}
 	// Creates no types, symbols, or procedures; every entry point already exists.
@@ -371,13 +371,13 @@ contribute_distinct_copy_members :: proc(k: ^Checker, written, under: Type_Id) {
 // one only once enrolled.
 @(private = "file")
 lifecycle_settled :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
-	return (c.speculation_depth == 0 ? Contribution.Lifecycle_Enrolled : .Lifecycle) in info.contributed
+	return (committing(c) ? Contribution.Lifecycle_Enrolled : .Lifecycle) in info.contributed
 }
 
 @(private = "file")
 enroll_lifecycle_members :: proc(c: ^Compiler, type: Type_Id) {
 	info := type_of(c, type)
-	if c.speculation_depth != 0 || .Lifecycle_Enrolled in info.contributed { return }
+	if !committing(c) || .Lifecycle_Enrolled in info.contributed { return }
 	info.contributed += {.Lifecycle_Enrolled}
 	for id in info.members {
 		sym := symbol_of(c, id)

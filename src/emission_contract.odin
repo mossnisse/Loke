@@ -9,7 +9,7 @@ emission_contract_error :: proc(c: ^Compiler, message: string) -> bool {
 
 validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 	if c.error_count != 0 { return false }
-	if c.speculation_depth != 0 {
+	if !committing(c) {
 		return emission_contract_error(c, "emission was requested during speculative checking")
 	}
 	// A held error is out of `error_count` until it is released.

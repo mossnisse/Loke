@@ -253,7 +253,7 @@ const_names_type :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> boo
 }
 
 request_typeid :: proc(c: ^Compiler, type: Type_Id) {
-	if type == INVALID_TYPE || c.speculation_depth > 0 {
+	if type == INVALID_TYPE || !committing(c) {
 		return
 	}
 	if _, seen := c.typeid_requested[type]; seen {
