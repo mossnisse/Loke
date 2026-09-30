@@ -94,6 +94,10 @@ checklist.
 
 ### Fixed
 
+- The runtime objects `lokec` caches beside itself are rebuilt when the C
+  build that made them changes, such as a new `LOKE_CLANG`, a reinstalled
+  clang, or different MSVC or Windows SDK headers; they used to be reused
+  whenever they were newer than the runtime sources.
 - A deferred `drop(arena)` or `free_all(arena.allocator())` is checked at each
   exit with the owners live at that exit. An owner of the region still live at
   one exit was missed when another exit, such as an early `return` after

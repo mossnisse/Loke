@@ -811,7 +811,7 @@ before the fix; [tests/run/deferred_region_ends.loke](tests/run/deferred_region_
 covers a `break`, several returns, a provider moved on one path, and a
 deferred reset at every exit.
 
-### A8 — P2: Runtime function signatures have two handwritten authorities
+### A8 — resolved: Runtime function signatures had two unchecked handwritten authorities
 
 **Existing concern; no ABI mismatch demonstrated.**
 [runtime/loke_rt.h](runtime/loke_rt.h) specifies the C ABI, while
@@ -828,7 +828,28 @@ declarations, accounting for the target's aggregate lowering. Add record field
 offset checks where only total size is currently pinned. Start with validation;
 a new interface-definition language or broad binding generator is unnecessary.
 
-### A9 — P2: The runtime-object cache omits build inputs from its identity
+**Fixed as validation:** `runtime_abi_matches_header` in
+[tests/runtime_test.odin](tests/runtime_test.odin) collects every literal
+`declare`/`define` of a `loke_rt_v1_` function in `src/emit_llvm*.odin`, has
+clang lower a translation unit that references each one the header declares,
+for the triple the compiler emits, and compares return and parameter types
+plus the attributes that change passing (`signext`, `zeroext`, `inreg`,
+`byval`, `sret`, `byref`, `inalloca`). The same unit instantiates
+`loke_rt_string_v1`, `loke_rt_dynamic_v1`, `loke_rt_map_v1`, and
+`loke_rt_container_ops_v1`; their lowered structs must equal the
+`%loke.string`, `%loke.container`, and `%loke.container_ops` types every module
+carries, and the default allocator's record must equal the compiler's
+`external global` type. A formatted runtime declaration fails the test, since
+it could not be checked; a compiler `declare` absent from the header fails too;
+a compiler `define` the header lacks (`loke_rt_v1_program_init`) is skipped. No
+mismatch was found. Mutating a parameter width, a carrier field, and the
+allocator record's field order (same size) each failed the test.
+`fmt.Options` is a Loke-declared record whose LLVM spelling (`{ i64, i1 }`)
+differs from the C one without differing in layout, so the header now pins
+`offsetof(loke_rt_options_v1, uppercase) == 8` instead. The other runtime
+records passed by pointer are all pointer-sized fields or runtime-private.
+
+### A9 — resolved: The runtime-object cache omitted build inputs from its identity
 
 **New source-confirmed risk; no stale-cache failure forced.**
 `prebuilt_runtime_objects` in
@@ -846,6 +867,22 @@ target, relevant toolchain roots, flags, and runtime input identity. Keep the
 existing staging/install behavior and the custom-runtime fallback. Verify
 invalidation when the tool override or effective flags change; this does not
 require a general-purpose build cache.
+
+**Fixed:** `prebuilt_runtime_objects` in
+[src/emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) builds the runtime
+compile command once and writes it, one argument per line, to
+`build-inputs.txt` inside the staged set, followed by the clang binary's
+modification time. The command names the clang path, the optimization flag,
+and the runtime and MSVC/SDK include roots; the host target is clang's
+default, so the clang identity covers it. `prebuilt_current` requires the
+recorded manifest to equal the current one, as well as the existing timestamp
+check. A set cached before this change has no manifest and is rebuilt once.
+`runtime_cache_follows_build_inputs` in
+[tests/runtime_test.odin](tests/runtime_test.odin) links through a private
+copy of the compiler and runtime, so its rebuilds never touch the objects the
+corpus links. An unchanged link reuses the set, a `LOKE_CLANG` spelling the
+same clang differently rebuilds it, and so does switching back. The test
+failed against the previous cache.
 
 ### A10 — resolved: Generic member installation committed before applicability settled
 
@@ -946,7 +983,8 @@ was identified.
    improve cleanup identity and scratch ownership where the evidence warrants.
    Done (A6, A7).
 5. Add the runtime ABI check and cache-input manifest. Do the smaller state,
-   duplication, and comment cleanups alongside relevant changes.
+   duplication, and comment cleanups alongside relevant changes. Done (A8,
+   A9); the smaller cleanups remain.
 
 Validation performed on the reviewed implementation:
 
@@ -965,8 +1003,9 @@ Validation performed on the reviewed implementation:
   after the observations were recorded. Its successful result confirms the
   observations, not that those states satisfy the intended contract.
 
-The original audit changed documentation only. A1–A4, A6, A7, and A10 were
-fixed, and A5 in part, in the follow-ups described above; the other findings remain open.
+The original audit changed documentation only. A1–A4 and A6–A10 were fixed,
+and A5 in part, in the follow-ups described above; the lower-urgency structure
+items remain open.
 
 ## Open checker-fuzzer findings
 

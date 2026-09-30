@@ -10,11 +10,14 @@
  *
  * The public Loke-side declarations of these layouts live in `base/runtime` and
  * `core/mem`; the two sides are verified against each other by the compiler's
- * layout assertions and by this file's static assertions.
+ * layout assertions and by this file's static assertions. The functions and
+ * the records the compiler spells itself are checked against clang's lowering
+ * of this file by `tests/runtime_abi_test.odin`.
  */
 #ifndef LOKE_RT_H
 #define LOKE_RT_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define LOKE_RT_ABI_VERSION 1u
@@ -484,6 +487,8 @@ typedef struct loke_rt_options_v1 {
 
 LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_writer_v1) == 16, writer_size);
 LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_options_v1) == 16, options_size);
+/* The size alone would allow `uppercase` anywhere in the second word. */
+LOKE_RT_STATIC_ASSERT(offsetof(loke_rt_options_v1, uppercase) == 8, options_uppercase_offset);
 
 /* The two process sinks. `state` carries the stream selector, so one `write`
  * implementation serves both and `core:fmt` needs no foreign declarations. */

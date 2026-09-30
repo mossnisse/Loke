@@ -348,9 +348,12 @@ dispatch, allocator-aware string allocation, and selected provider access.
 
 An executable build links the generated module with the compiled C runtime.
 `prebuilt_runtime_objects` keeps one object set per optimization mode under
-`runtime/prebuilt/<mode>/` and recompiles it only when a `runtime/*.c` or
-`*.h` is newer than a cached object, so the first build after editing
-`runtime/` is slow by design and the rest are not. An object build emits one
+`runtime/prebuilt/<mode>/` and recompiles it when a `runtime/*.c` or `*.h` is
+newer than a cached object, or when the C build differs from the one recorded
+in the set's `build-inputs.txt`: the clang command (the clang path, the flags,
+and the MSVC and SDK include roots) and the clang binary's modification time.
+The first build after editing `runtime/` or changing `LOKE_CLANG` is slow by
+design, and the rest are not. An object build emits one
 relocatable compiler module and leaves its runtime and foreign references for
 the host to supply.
 
@@ -540,6 +543,14 @@ becomes a `tests/err/` or `tests/run/` case with the fix. The fixed run is
 deterministic, and each program's mutants come from a seed of its own, so a new
 `tests/run/` case leaves every other program's mutants unchanged;
 `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` (per program) explore further.
+
+`tests/runtime_test.odin` checks the runtime as the driver links it. clang
+lowers `runtime/loke_rt.h` for the compiler's target, and every literal
+`declare` or `define` of a `loke_rt_v1_` function in `src/emit_llvm*.odin`, the
+default allocator record, and the string and container records a module
+carries must match that lowering, including argument-passing attributes. It
+also checks that a changed `LOKE_CLANG` rebuilds the prebuilt runtime objects,
+on a private copy of the compiler and runtime.
 
 `tests/tutorial_test.odin` checks the pages under `tutorials/` from their own
 text, so a reader copies exactly what was compiled. A fenced block whose info

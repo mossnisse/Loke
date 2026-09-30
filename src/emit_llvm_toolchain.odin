@@ -308,9 +308,10 @@ replace_ext :: proc(path: string, ext: string) -> string {
 }
 
 // The bundled runtime's objects, compiled once per optimization mode (the host
-// is the only target) and reused by later links. A custom `-runtime=<dir>` is
-// never written to. A new set is compiled in a private staging directory and
-// renamed into place, so no link sees a partial set.
+// is the only target) and reused by later links while the C build that made
+// them is unchanged. A custom `-runtime=<dir>` is never written to. A new set
+// is compiled in a private staging directory and renamed into place, so no link
+// sees a partial set.
 @(private = "file")
 prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opts: Options) -> []string {
 	if opts.runtime_dir != "" {
@@ -321,7 +322,9 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opts: O
 	for source, index in sources {
 		objects[index] = filepath.join({dir, replace_ext(filepath.base(source), ".o")})
 	}
-	if prebuilt_current(runtime_dir, objects) {
+	command := runtime_compile_command(runtime_dir, sources, opts)
+	manifest := runtime_build_manifest(command)
+	if prebuilt_current(runtime_dir, dir, objects, manifest) {
 		return objects
 	}
 	staging := filepath.join({runtime_dir, "prebuilt", fmt.tprintf(".staging-%d", os2.get_pid())})
@@ -329,12 +332,15 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opts: O
 	if os2.make_directory_all(staging) != nil {
 		return nil
 	}
-	if !compile_runtime_sources(runtime_dir, sources, staging, opts) {
+	if !compile_runtime_sources(command, staging) {
+		return nil
+	}
+	if !os.write_entire_file(filepath.join({staging, RUNTIME_MANIFEST}), transmute([]byte)manifest) {
 		return nil
 	}
 	if os2.rename(staging, dir) != nil {
 		// A concurrent link that installed first may be using its set: keep it.
-		if prebuilt_current(runtime_dir, objects) {
+		if prebuilt_current(runtime_dir, dir, objects, manifest) {
 			return objects
 		}
 		os2.remove_all(dir)
@@ -345,9 +351,32 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opts: O
 	return objects
 }
 
-// Every object present and no older than any runtime source or header.
+// Beside a prebuilt set: the C build that made it.
+RUNTIME_MANIFEST :: "build-inputs.txt"
+
+// What decides the objects besides the runtime's own files: the clang command,
+// which names the compiler, the flags, and the MSVC and SDK include roots, and
+// the clang binary's modification time, which a reinstall changes.
 @(private = "file")
-prebuilt_current :: proc(runtime_dir: string, objects: []string) -> bool {
+runtime_build_manifest :: proc(command: []string) -> string {
+	b := strings.builder_make()
+	for word in command {
+		strings.write_string(&b, word)
+		strings.write_byte(&b, '\n')
+	}
+	stamp, _ := os2.modification_time_by_path(command[0])
+	fmt.sbprintfln(&b, "clang modified %d", time.to_unix_nanoseconds(stamp))
+	return strings.to_string(b)
+}
+
+// Every object present and no older than any runtime source or header, and made
+// by the build `manifest` describes.
+@(private = "file")
+prebuilt_current :: proc(runtime_dir, dir: string, objects: []string, manifest: string) -> bool {
+	recorded, found := os.read_entire_file(filepath.join({dir, RUNTIME_MANIFEST}), context.temp_allocator)
+	if !found || string(recorded) != manifest {
+		return false
+	}
 	newest: time.Time
 	for pattern in ([]string{"*.c", "*.h"}) {
 		matches, err := filepath.glob(filepath.join({runtime_dir, pattern}))
@@ -376,12 +405,7 @@ prebuilt_current :: proc(runtime_dir: string, objects: []string) -> bool {
 // One clang process; `-c` with several inputs writes each object into the
 // working directory.
 @(private = "file")
-compile_runtime_sources :: proc(
-	runtime_dir: string,
-	sources: []string,
-	staging: string,
-	opts: Options,
-) -> bool {
+runtime_compile_command :: proc(runtime_dir: string, sources: []string, opts: Options) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, find_clang(), "-c")
 	for source in sources {
@@ -389,8 +413,13 @@ compile_runtime_sources :: proc(
 	}
 	append(&command, opt_clang_flag(opts.opt_mode))
 	append_c_includes(&command, runtime_dir)
+	return command[:]
+}
+
+@(private = "file")
+compile_runtime_sources :: proc(command: []string, staging: string) -> bool {
 	state, _, _, err := run_process(
-		os2.Process_Desc{command = command[:], working_dir = staging},
+		os2.Process_Desc{command = command, working_dir = staging},
 		context.allocator,
 	)
 	// Not reported: the link then compiles the sources and clang explains.

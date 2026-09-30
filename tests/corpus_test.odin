@@ -43,7 +43,7 @@
 //
 // Run with:  odin build src -out:lokec.exe  &&  odin test tests
 //
-// Three tests need a tool this repository does not ship — nasm, and a clang or
+// Some tests need a tool this repository does not ship — nasm, clang, or an
 // MSVC toolset for a C host — and note what they skipped when it is missing.
 // `LOKE_TEST_REQUIRE_TOOLS=1` (or `.\test-all.ps1 -RequireTools`) turns those
 // notes into failures, so a machine meant to have the toolchain cannot lose that
