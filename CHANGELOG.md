@@ -10,6 +10,21 @@ checklist.
 
 ### Breaking changes
 
+- Unmatched UTF-16 surrogates in `Raw_Mode.read_key` now return `Invalid_Data`
+  for `Read_Key` instead of dropping a high half or producing a non-scalar
+  character. Handle this error when processing injected console input. A valid
+  following key, its modifiers, and all repeats remain available.
+- Generic argument matching now follows cache identity: the converted argument
+  type and value. Floating arguments use their exact IEEE-754 encoding,
+  including inside aggregates and `dyn` applications. A repeated name requires
+  the same converted type and no longer matches `0.0` with `-0.0`; use distinct
+  names and a numeric `where` comparison when that equality is intended. NaNs
+  with identical encodings now match, and different payloads or signalling bits
+  retain distinct instances.
+- Colon annotations on inferred generic bindings, such as `x: $T: []int`, are
+  rejected (`L0258`); their constraints were silently ignored. Write `x: []int`
+  for a fixed element type, `x: []$E` to infer the element, or `x: $T` with a
+  `where` bound. Explicit parameters such as `$T: type` are unchanged.
 - `get_environment`, `set_environment`, and `unset_environment` reject empty
   names or names containing `=` as `Invalid_Data` before calling the platform.
   An invalid-name lookup previously looked like a missing variable, while

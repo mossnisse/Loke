@@ -1,0 +1,9 @@
+package main;
+
+// design.md "Inferred generic parameters": constraints use a shape or `where`.
+ignored :: proc(x: $T: []int) -> bool { return true; }
+nested :: proc(values: []$E: int) {}
+callback :: proc(f: proc(value: $T: int) -> T) {}
+
+main :: proc() { ignored(3.5); }
+sentinel :: proc() {}

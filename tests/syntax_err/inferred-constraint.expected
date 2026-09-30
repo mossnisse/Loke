@@ -1,0 +1,8 @@
+L0258
+@4:20
+L0258
+@5:26
+L0258
+@6:33
+an inferred `$` binding cannot have a `:` annotation
+write the shape directly or use a `where` clause

@@ -407,11 +407,10 @@ Type_Type :: struct {
 	using base: Expr_Base,
 }
 
-// `$T` and `$T: Constraint`.
+// An inferred specialization binding, `$T`.
 Type_Poly :: struct {
 	using base: Expr_Base,
 	name:       Name,
-	constraint: Expr,
 }
 
 // `Borrow` is a `self: ^` receiver, or a synthesized member's read-only receiver:

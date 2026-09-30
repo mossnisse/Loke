@@ -2704,6 +2704,9 @@ An `interface` gives a name to a reusable compile-time predicate over types and 
 
 The first generic parameter is the interface's **subject** and must have type `type`. Later parameters use the ordinary generic-argument rules: a parameter of type `type` receives a type, and every other parameter receives a compile-time constant converted to its declared type. The converted value is part of the application's identity, so `I(T, 2 + 2)` and `I(T, 4)` are the same application, and diagnostics display the converted value.
 
+Application identity follows [Generic argument identity](#generic-argument-identity),
+including representation identity for floating arguments.
+
 An interface may put a [`where`](#where-clauses) clause between its parameters and body. These expressions are compile-time Boolean predicates, evaluated before the body requirements for every application, so they suit a restriction that should be tested first:
 
 ```odin
@@ -4473,6 +4476,23 @@ Generics are compile-time constructs and are **not part of an ABI**. A generic p
 
 Each concrete instantiation follows the normal ABI rules. To expose generic behavior to foreign code, wrap a concrete instantiation in a [foreign-ABI-safe](#foreign-abi-safe-types) procedure.
 
+### Generic argument identity
+
+An instantiation is identified by its declaration and ordered generic
+arguments. A type argument uses type identity. A value argument uses its
+declared parameter type and the constant after conversion to that type.
+
+A floating argument uses its exact IEEE-754 encoding at the converted width.
+`0.0` and `-0.0` therefore identify different specializations; two NaNs with
+the same encoding identify the same specialization, while different signs,
+payloads, or quiet/signalling bits distinguish them. Aggregate arguments apply
+this rule recursively to their elements and include the active union variant.
+
+The same identity rule compares repeated pattern bindings and concrete
+arguments in a generic `impl` subject, and identifies interface applications,
+`dyn` types, and their witnesses. Ordinary floating-point `==` still uses
+numeric equality.
+
 ### Explicit generic parameters
 
 An explicit generic parameter is supplied by the caller. A parameter of type `type` receives a type; other parameter types receive compile-time constant values.
@@ -4533,6 +4553,12 @@ Record and union generic parameters always require `$`, like compile-time proced
 ### Inferred generic parameters
 
 An inferred generic parameter is bound from the type or shape of a runtime argument. In this case `$` appears at the binding position inside the parameter type.
+
+An inferred binding is written `$name` without a colon annotation:
+`x: $T: Shape` is invalid. Put a structural pattern in the parameter type,
+such as `x: []$E`, or constrain `x: $T` with a [where clause](#where-clauses).
+An explicit generic parameter such as `$T: type` has its type declared by the
+parameter-list colon.
 
 #### Procedures with inferred generic parameters
 

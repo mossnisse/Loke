@@ -267,7 +267,7 @@ Type = "^" "mut"? Type                                   // pointer
      | Proc_Type
      | Type_Definition
      | Interface_Definition                              // inline, as a reflection argument
-     | "$" Identifier (":" Type)?                        // specialization binding
+     | "$" Identifier                                    // specialization binding
      | Record_Type                                       // anonymous structural record
      | Type_Name Type_Arguments?
 
@@ -290,6 +290,11 @@ capability modifier, written on a slice, a pointer, a `dyn` view, or a unary
 also carries specialization patterns such as `^Table($Key, $Value)`, since
 `$Name` is itself a `Type`. A generic argument is positional: it takes no
 `name =`, `inout`, or `..`.
+
+An inferred `$Name` has no colon annotation. Structural shapes are written
+around the binding, as in `[]$Element`, and Boolean constraints use a
+`Where_Clause`. An explicit generic parameter's `$Name: Type` is declared by
+the parameter-list production; see [Generics](design.md#generics).
 
 The single selector in `Type_Name` is classified during name resolution. It is
 either a package-qualified type such as `interfaces.Sequence` or an associated

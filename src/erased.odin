@@ -313,21 +313,7 @@ dyn_same_application :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
 		return false
 	}
 	for arg, index in a.dyn_args {
-		other := b.dyn_args[index]
-		if arg.is_type != other.is_type {
-			return false
-		}
-		if arg.is_type {
-			if arg.type != other.type {
-				return false
-			}
-			continue
-		}
-		if arg.value_type != other.value_type {
-			return false
-		}
-		equal, comparable := const_equal(c, arg.value, other.value)
-		if !comparable || !equal {
+		if !generic_arg_equal(c, arg, b.dyn_args[index]) {
 			return false
 		}
 	}
@@ -586,8 +572,6 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 		return false
 	case ^Expr_Operator:
 		return type_syntax_names(v.value, name)
-	case ^Type_Poly:
-		return type_syntax_names(v.constraint, name)
 	case ^Type_Proc:
 		for parameter in v.params {
 			if type_syntax_names(parameter.type, name) || type_syntax_names(parameter.default, name) {

@@ -981,6 +981,8 @@ the handles are redirected to pipes or files.
 `read_line` reads a real console through `ReadConsoleW` and a redirected handle
 through `io.read_line`, so typed non-ASCII text arrives intact. Ctrl+Z at the
 start of a console line is `End_Of_Input`, as the end of a redirected stream is.
+Malformed UTF-16 console text or UTF-8 redirected text returns `Invalid_Data`
+with operation `Read_Line` and native code zero.
 The raw `Input.read` stream is bytes through `ReadFile` either way, and one call
 moves at most `0x3FFFFFFF` bytes, as `core:fs` does.
 
@@ -1057,6 +1059,14 @@ leaves `value` zero, and is preferred when a key such as Enter or Tab also
 carries a control character. A key the decoder has no name for is `.Unknown`.
 Modifiers are explicit flags, so Shift, Ctrl, or Alt pressed alone is no event.
 Key releases, mouse, focus, and resize records are skipped. A held key's repeat count becomes that many events, in order.
+
+`read_key` combines UTF-16 surrogate pairs into one scalar. A low half without
+a preceding high half, or a high half followed by another key's unit that is
+not a low half, returns `Invalid_Data` with operation `Read_Key` and native code
+zero. A high half still pending at end of input returns the same error. Skipped
+records do not break a pair. After an unmatched high half, the following key
+remains available to the next call, with its modifiers and repeats; another
+high half is retained to begin a new pair.
 
 By default Ctrl+C keeps interrupting the process; `Raw_Options{interrupt_as_key =
 true}` delivers it as a key event instead, and the program then terminates

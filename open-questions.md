@@ -351,9 +351,6 @@ text than was asked for.
   reports. Some libraries report the letter instead and leave the control
   character to the flag. standard-library.md does not say which one `value`
   holds.
-- A high surrogate that is not followed by a low one is dropped from `read_key`,
-  while `read_line` answers `Invalid_Data` for the same units. A keyboard cannot
-  send one, but a program writing console input can. Should it be U+FFFD?
 - Every console test writes records into the console the test run is using,
   because Windows 10 cannot allocate a hidden console. Anything typed into that
   console while `tests/run/lib_term_console` runs is read along with the
@@ -457,20 +454,8 @@ fails one of the fuzzer's checks under some seed.
 A review of the generics implementation left these open. None breaks a rule of
 the specification as written.
 
-- **`$T: Type` in a type position has no meaning.** grammar.md "Types" lists
-  `"$" Identifier (":" Type)?` as a specialization binding, and the parser keeps
-  the part after `:`, but design.md never says what it means and the checker
-  ignores it: `f :: proc(x: $T: []int)` accepts `f(3.5)` with `T` bound to
-  `f64`. Give it a meaning, such as requiring `T` to match the shape, or remove
-  it from the grammar and reject it.
-- **What identifies a floating generic argument.** An instance's cache key uses
-  the value's bits, so `Tag(0.0)` and `Tag(-0.0)` are different types, while
-  `bind_pattern_name` compares with `const_equal`, under which they are equal.
-  design.md "Interfaces as reusable constraints" says the converted value is
-  part of an application's identity without saying whether that is value or
-  representation equality.
 - **Generic arguments print badly in diagnostics.** A floating argument prints
-  its bits (`Tag(0h8000000000000000)`), an aggregate prints its cache key (see
+  its bits (`Tag(f64:8000000000000000)`), an aggregate prints its cache key (see
   the fuzzer finding above), an argument with no type prints `f(<invalid>)`
   under a misleading "`$T` is not bound here", and the instantiation-limit
   error (`L0436`) prints every nested type in full on each of its notes, so

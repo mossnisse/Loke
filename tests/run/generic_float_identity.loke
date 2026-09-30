@@ -1,0 +1,56 @@
+package main;
+import "core:fmt";
+import "core:unsafe";
+
+// design.md "Generic argument identity": identity uses converted float bits,
+// including within aggregates, repeated bindings, and interface applications.
+NAN :: unsafe.transmute(f64, u64(0x7ff8000000000001));
+OTHER_NAN :: unsafe.transmute(f64, u64(0x7ff8000000000002));
+NEGATIVE_NAN :: unsafe.transmute(f64, u64(0xfff8000000000001));
+SNAN32 :: unsafe.transmute(f32, u32(0x7f800001));
+QNAN32 :: unsafe.transmute(f32, u32(0x7fc00001));
+SNAN16 :: unsafe.transmute(f16, u16(0x7c01));
+QNAN16 :: unsafe.transmute(f16, u16(0x7e01));
+
+Tag :: struct($V: f64) {}
+impl Tag(0.0) { tag :: proc(self) -> int { return 1; } }
+impl Tag(-0.0) { tag :: proc(self) -> int { return 2; } }
+impl Tag(NAN) { tag :: proc(self) -> int { return 3; } }
+
+Narrow :: struct($V: f32) {}
+impl Narrow(0.1) { tag :: proc(self) -> int { return 4; } }
+Half :: struct($V: f16) {}
+
+Pair :: struct($A, $B: f64) {}
+impl Pair($V, $V) { same :: proc(self) -> bool { return true; } }
+Arrays :: struct($A, $B: [2]f64) {}
+impl Arrays($V, $V) { same :: proc(self) -> bool { return true; } }
+
+bits32 :: proc($V: f32) -> u32 { return unsafe.transmute(u32, V); }
+bits16 :: proc($V: f16) -> u16 { return unsafe.transmute(u16, V); }
+
+Marked :: interface($Self: type, $V: f64) { slot tag: proc(self) -> int; }
+Value :: struct {}
+impl Value { tag :: proc(self) -> int { return 7; } }
+
+main :: proc() {
+	fmt.println(0.0 == -0.0, NAN == NAN);
+	fmt.println(Tag(0.0) == Tag(-0.0), Tag(NAN) == Tag(NAN));
+	fmt.println(Tag(NAN) == Tag(OTHER_NAN), Tag(NAN) == Tag(NEGATIVE_NAN));
+	fmt.println(Narrow(SNAN32) == Narrow(QNAN32), Half(SNAN16) == Half(QNAN16));
+	fmt.println(Narrow(0.1) == Narrow(f64(f32(0.1))));
+	positive: Tag(0.0) = {};
+	negative: Tag(-0.0) = {};
+	nan: Tag(NAN) = {};
+	narrow: Narrow(0.1) = {};
+	fmt.println(positive.tag(), negative.tag(), nan.tag(), narrow.tag());
+	pair: Pair(NAN, NAN) = {};
+	arrays: Arrays([2]f64{NAN, -0.0}, [2]f64{NAN, -0.0}) = {};
+	fmt.println(pair.same(), arrays.same());
+	fmt.println(bits32(SNAN32) == u32(0x7f800001), bits32(QNAN32) == u32(0x7fc00001));
+	fmt.println(bits16(SNAN16) == u16(0x7c01), bits16(QNAN16) == u16(0x7e01));
+	value := Value{};
+	mutable := (dyn mut Marked(NAN))(&mut value);
+	readonly: dyn Marked(NAN) = mutable;
+	fmt.println(readonly.tag());
+}

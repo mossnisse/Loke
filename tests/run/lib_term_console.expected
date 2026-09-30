@@ -8,6 +8,18 @@ Character 120 false false false
 Character 120 false false false
 Character 128512 false false false
 Unknown 0 false false false
+Read_Key failed: Invalid_Data
+Character 97 false false false
+Read_Key failed: Invalid_Data
+Read_Key failed: Invalid_Data
+Character 98 true false false
+Character 98 true false false
+Character 98 true false false
+Read_Key failed: Invalid_Data
+Up 0 false false false
+Read_Key failed: Invalid_Data
+Character 1114111 false false false
+Character 65536 true false false
 .err(Terminal_Mode failed: Already_Exists)
 true
 .err(Terminal_Mode failed: Already_Exists)

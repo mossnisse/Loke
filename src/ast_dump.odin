@@ -604,11 +604,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, "(type)")
 
 	case ^Type_Poly:
-		fmt.sbprintf(b, "(poly %q", node.name.text)
-		if node.constraint != nil {
-			dump_child(b, node.constraint, depth)
-		}
-		fmt.sbprint(b, ")")
+		fmt.sbprintf(b, "(poly %q)", node.name.text)
 
 	case ^Type_Proc:
 		fmt.sbprint(b, "(proc-type")

@@ -450,6 +450,10 @@ impl Raw_Mode {
 				return .err(from_last_error(.Read_Key));
 			}
 			if (read == 0) {
+				if (self.pending != 0) {
+					self.pending = 0;
+					return .err(io.make_error(.Invalid_Data, .Read_Key));
+				}
 				return .err(io.make_error(.End_Of_Input, .Read_Key));
 			}
 			if (record.event_type != u16(KEY_EVENT) || record.key_down == 0) {
@@ -459,21 +463,35 @@ impl Raw_Mode {
 			if (vk == u16(VK_SHIFT) || vk == u16(VK_CONTROL) || vk == u16(VK_MENU)) {
 				continue;
 			}
+			// standard-library "Raw mode and key events": malformed UTF-16 is
+			// Invalid_Data. Retain the following valid key in the repeat buffer.
+			low := record.unicode_char >= 0xDC00 && record.unicode_char <= 0xDFFF;
+			if (low && self.pending == 0) {
+				return .err(io.make_error(.Invalid_Data, .Read_Key));
+			}
+			unmatched := self.pending != 0 && !low;
+			if (unmatched) { self.pending = 0; }
 			switch (event in decode_record(inout self, record)) {
 			case .some:
-				if (record.repeat_count > 1) {
-					self.repeats = record.repeat_count - 1;
+				if (record.repeat_count > 1 || unmatched) {
+					self.repeats = record.repeat_count;
+					if (self.repeats == 0) { self.repeats = 1; }
+					if (!unmatched) { self.repeats -= 1; }
 					self.repeated = event;
 				}
-				return .ok(event);
+				if (!unmatched) { return .ok(event); }
 			case .none:
+			}
+			if (unmatched) {
+				return .err(io.make_error(.Invalid_Data, .Read_Key));
 			}
 		}
 	}
 }
 
 // One native record to one event, or `.none` when the record was only half of a
-// surrogate pair and the other half has still to arrive.
+// surrogate pair and the other half has still to arrive. `read_key` validates
+// UTF-16 first, so a pending high half here always has a matching low half.
 @(private)
 decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> Option(Key_Event) {
 	event: Key_Event = {};
@@ -486,12 +504,10 @@ decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> Option(Key_
 	if (mode.pending != 0) {
 		high := mode.pending;
 		mode.pending = 0;
-		if (unit >= 0xDC00 && unit <= 0xDFFF) {
-			combined := 0x10000 + ((int(high) - 0xD800) << 10) + (int(unit) - 0xDC00);
-			event.key = .Character;
-			event.value = rune(combined);
-			return .some(event);
-		}
+		combined := 0x10000 + ((int(high) - 0xD800) << 10) + (int(unit) - 0xDC00);
+		event.key = .Character;
+		event.value = rune(combined);
+		return .some(event);
 	}
 	if (unit >= 0xD800 && unit <= 0xDBFF) {
 		mode.pending = unit;

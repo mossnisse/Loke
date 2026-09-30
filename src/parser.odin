@@ -2350,16 +2350,22 @@ parse_type :: proc(p: ^Parser) -> Expr {
 	case .Dollar:
 		advance(p)
 		name, ok := expect(p, .Ident, "L0230", "a name after `$`")
-		constraint: Expr
 		if allow(p, .Colon) {
-			constraint = parse_type(p)
+			// design.md "Inferred generic parameters": the binding has no
+			// colon annotation. Consume its type to recover the signature.
+			parse_type(p)
+			span := span_to_here(p, t)
+			parse_error(
+				p, span, "L0258", "unsupported inferred constraint",
+				"an inferred `$` binding cannot have a `:` annotation; write the shape directly or use a `where` clause",
+			)
+			return error_expr(p, span)
 		}
 		n := new_expr(p, Type_Poly, lo)
 		if ok {
 			n.name = name_of(p, name)
 		}
-		n.constraint = constraint
-		n.has_error = !ok || expr_has_error(constraint)
+		n.has_error = !ok
 		return n
 
 	case .Proc:

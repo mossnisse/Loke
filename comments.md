@@ -402,6 +402,39 @@ between monomorphization and dictionary passing an implementation detail with no
 observable consequence, and keeps the foreign boundary defined over concrete
 types only.
 
+### Colon annotations on inferred generic bindings
+
+The parser used to accept `x: $T: Shape`, but the checker bound `T` without
+checking `Shape`; even `x: $T: []int` accepted `3.5`. The specification gave
+the annotation no meaning. It is now rejected (`L0258`) at the declaration,
+including an unused generic, rather than carrying an unenforced constraint.
+
+[Specialization](design.md#specialization) already writes the shape in the
+parameter type, such as `[]$Element`, and [where clauses](design.md#where-clauses)
+filter inferred types by compile-time predicates. A fixed `[]int` parameter
+needs no generic binding. Explicit parameters such as `$T: type` keep their
+ordinary parameter-list type annotation. A new annotation would need a defined
+matching and conversion rule before it could add anything to those mechanisms.
+The parser recovery regression is
+[tests/syntax_err/inferred-constraint.loke](tests/syntax_err/inferred-constraint.loke).
+
+### Floating generic arguments use representation identity
+
+The converted IEEE-754 encoding identifies a floating generic argument. Generic
+code can observe a zero's sign through division or inspect a NaN's payload with
+`unsafe.transmute`, so merging numerically equal arguments would let the first
+instantiation's value replace the next caller's. Numeric equality also fails to
+identify a NaN with itself, making it unsuitable for repeated bindings.
+
+Instance and witness keys use the constant's retained encoding at its converted
+width, and repeated bindings, concrete `impl` arguments, and `dyn` conversions
+compare that same key. Using the widened numeric field alone lost the signalling
+bit of an `f32` NaN and could merge distinct arguments. The rule applies inside
+aggregates too; ordinary numeric comparisons keep their floating-point semantics.
+See [Generic argument identity](design.md#generic-argument-identity) and the
+[run](tests/run/generic_float_identity.loke) and
+[error](tests/err/generic_float_identity.loke) regressions.
+
 ### Constraint entailment in overload resolution
 
 An earlier draft let [the specialization tie-breaker](design.md#operator-lookup-and-overload-resolution)
@@ -1080,6 +1113,20 @@ and ["`core:fs`"](standard-library.md#corefs); regressions live in
 [tests/run/lib_process.loke](tests/run/lib_process.loke) and
 [tests/run/lib_fs.loke](tests/run/lib_fs.loke). The separate native translation
 tables remain an [open question](open-questions.md#open-questions-in-coreos).
+
+## Malformed console input
+
+Programs can write arbitrary UTF-16 units into the console input buffer.
+`read_key` reports unmatched surrogates as `Invalid_Data`, matching `read_line`
+and letting callers decide how to recover. This keeps character events valid
+Unicode scalars without silently replacing or dropping malformed input.
+
+The existing repeat buffer holds a valid key following an unmatched high half,
+so reporting the error preserves that key's order, modifiers, and repeats.
+Another high half remains pending and can begin a valid pair. The contract is
+in [standard-library.md "Raw mode and key events"](standard-library.md#raw-mode-and-key-events),
+with injected-input regressions in
+[tests/run/lib_term_console.loke](tests/run/lib_term_console.loke).
 
 ## Compiler architecture audit (2026-09-28)
 

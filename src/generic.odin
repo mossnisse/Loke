@@ -708,7 +708,9 @@ const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 	case .Boolean:
 		return value.boolean ? "true" : "false"
 	case .Float:
-		return fmt.aprintf("%h", value.float, allocator = c.semantic_allocator)
+		// design.md "Generic argument identity": keep the converted encoding,
+		// including signalling NaNs the widened numeric field cannot preserve.
+		return fmt.aprintf("f%d:%x", value.float_bits, value.float_raw, allocator = c.semantic_allocator)
 	case .String:
 		return value.text
 	case .Type:
@@ -731,6 +733,18 @@ const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 		return strings.to_string(b)
 	}
 	return "?"
+}
+
+// Compare the same type and value identity encoded by instance and witness keys
+// (design.md "Generic argument identity"), including aggregate elements.
+generic_arg_equal :: proc(c: ^Compiler, a, b: Generic_Arg) -> bool {
+	if a.is_type != b.is_type {
+		return false
+	}
+	if a.is_type {
+		return a.type == b.type
+	}
+	return a.value_type == b.value_type && const_key_text(c, a.value) == const_key_text(c, b.value)
 }
 
 // A readable `Table(string, int)` for diagnostics.
@@ -1015,14 +1029,7 @@ bind_pattern_name :: proc(
 			continue
 		}
 		// `proc(a, b: [2]$E)` binds `E` twice: the two argument types must agree.
-		if existing.arg.is_type != arg.is_type {
-			return false
-		}
-		if arg.is_type {
-			return existing.arg.type == arg.type
-		}
-		equal, comparable := const_equal(k.c, existing.arg.value, arg.value)
-		return comparable && equal
+		return generic_arg_equal(k.c, existing.arg, arg)
 	}
 	binding := Generic_Binding{name = id, span = name.span, arg = arg}
 	append(out, binding)
@@ -2173,13 +2180,15 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		probe := begin_probe(k.c)
 		if check_single_expr(k, written, bound.value_type) != INVALID_TYPE {
 			folded, evaluated = require_const(k, written, "a generic argument", "L0432")
+			if evaluated {
+				folded, evaluated = convert_const(k.c, folded, bound.value_type, false)
+			}
 		}
 		end_probe(k.c, probe)
 		if !evaluated {
 			return
 		}
-		equal, comparable := const_equal(k.c, folded, bound.value)
-		if !comparable || !equal {
+		if !generic_arg_equal(k.c, Generic_Arg{value = folded, value_type = bound.value_type}, bound) {
 			return
 		}
 	}

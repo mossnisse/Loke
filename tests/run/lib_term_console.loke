@@ -61,6 +61,18 @@ show :: proc(event: Result(term.Key_Event, io.Error)) {
 	}
 }
 
+invalid :: proc(event: Result(term.Key_Event, io.Error)) {
+	switch (error in event) {
+	case .ok: panic("expected Invalid_Data for malformed UTF-16");
+	case .err:
+		if (!io.is(error, .Invalid_Data) || io.operation_of(error) != .Read_Key ||
+			io.native_code_of(error) != 0) {
+				panic("wrong malformed key error");
+			}
+		fmt.println(error);
+	}
+}
+
 main :: proc() {
 	console := open_input();
 	if (console == -1) {
@@ -98,6 +110,37 @@ main :: proc() {
 		press(console, 0, 0xDE00);
 		press(console, 20, 0);                // Caps Lock has no name
 		for (i := 0; i < 7; i += 1) { show(raw.read_key()); }
+
+		// Lone low surrogates are errors, even on a named key, not invalid runes.
+		press(console, 0, 0xDC00);
+		press(console, 65, 'a');
+		invalid(raw.read_key());
+		show(raw.read_key());
+		press(console, 13, 0xDFFF);
+		invalid(raw.read_key());
+
+		// An unmatched high half reports an error without losing the next key's
+		// character, modifiers, repeat count, or name.
+		press(console, 0, 0xD800);
+		press(console, 66, 'b', SHIFT, 3);
+		invalid(raw.read_key());
+		for (i := 0; i < 3; i += 1) { show(raw.read_key()); }
+		press(console, 0, 0xDBFF);
+		press(console, 38, 0);
+		invalid(raw.read_key());
+		show(raw.read_key());
+
+		// The second high half can still begin a valid pair. Both scalar limits
+		// decode, including across skipped releases and a lone modifier.
+		press(console, 0, 0xD800);
+		press(console, 0, 0xDBFF);
+		press(console, 0, 0xDFFF);
+		invalid(raw.read_key());
+		show(raw.read_key());
+		press(console, 0, 0xD800);
+		press(console, 16, 0, SHIFT);
+		press(console, 0, 0xDC00, SHIFT);
+		show(raw.read_key());
 
 		fmt.println(term.begin_raw());
 	}

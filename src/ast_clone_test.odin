@@ -49,7 +49,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Type_Distinct, "elem", ""},
 		{Type_Dyn, "mutable interface_expr", ""},
 		{Type_Type, "", ""},
-		{Type_Poly, "name constraint", ""},
+		{Type_Poly, "name", ""},
 		{Type_Proc, "convention params result", ""},
 		{Type_Record, "kind move_only generic_params attributes where_clauses fields variants", ""},
 		{Type_Anon_Record, "fields", ""},

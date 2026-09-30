@@ -380,7 +380,6 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 	case ^Type_Poly:
 		n := new_clone(c, Type_Poly, &v.base)
 		n.name = v.name
-		n.constraint = clone_expr(c, v.constraint)
 		return n
 
 	case ^Type_Proc:

@@ -1,0 +1,24 @@
+package main;
+
+// design.md "Generic argument identity": signed zeros have distinct generic
+// identities, even when compared inside an aggregate or interface application.
+Pair :: struct($A, $B: f64) {}
+impl Pair($V, $V) { same :: proc(self) -> bool { return true; } }
+Arrays :: struct($A, $B: [1]f64) {}
+impl Arrays($V, $V) { same :: proc(self) -> bool { return true; } }
+
+Marked :: interface($Self: type, $V: f64) { slot tag: proc(self) -> int; }
+Value :: struct {}
+impl Value { tag :: proc(self) -> int { return 7; } }
+
+different :: proc() {
+	pair: Pair(0.0, -0.0) = {};
+	pair.same();
+	arrays: Arrays([1]f64{0.0}, [1]f64{-0.0}) = {};
+	arrays.same();
+	value := Value{};
+	mutable := (dyn mut Marked(0.0))(&mut value);
+	readonly: dyn Marked(-0.0) = mutable;
+}
+
+main :: proc() {}
