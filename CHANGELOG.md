@@ -36,6 +36,10 @@ checklist.
 
 ### Changed
 
+- `Enum.from_int` accepts an argument of any integer type, including a
+  `distinct` integer, so `Suit.from_int(code)` works with a `code: int` and a
+  `Suit :: enum u8`. A value the backing type can't hold gives `.none`, as any
+  other undeclared value does.
 - Tutorials assume prior programming experience and focus on Loke's syntax,
   borrowing, and mutation rules. They distinguish runes from displayed
   characters and clarify panic cleanup and generic type inference.

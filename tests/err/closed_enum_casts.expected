@@ -1,10 +1,10 @@
 L0410
 L0410
 L0410
-L0310
+L0410
 L0310
 L0352
 an enum is closed
 an enum requires a variant
-cannot initialize `u8` with `int`
+`E.from_int` takes an integer, found `bool`
 256 is not representable by `u8`

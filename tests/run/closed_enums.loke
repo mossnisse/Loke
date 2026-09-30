@@ -46,6 +46,8 @@ static_assert(validate(99) == 0);
 static_assert((No_Zero.from_int(255) or_else No_Zero.One) == .Last);
 static_assert((Wide.from_int(18446744073709551617) or_else Wide.Small) == .Huge);
 static_assert(Empty.from_int(0) == .none);
+static_assert(No_Zero.from_int(i64(256)) == .none);
+static_assert((Sparse.from_int(u64(100)) or_else Sparse.Zero) == .High);
 static_assert(absent(0));
 static_assert(!absent(1));
 static_assert(Payloadless.first == Payloadless.first);
@@ -90,7 +92,15 @@ main :: proc() {
 	wide -= 1;
 	assert(Wide.from_int(wide) == .none);
 	wire := Wire(255);
-	assert((No_Zero.from_int(u8(wire)) or_else No_Zero.One) == .Last);
+	assert((No_Zero.from_int(wire) or_else No_Zero.One) == .Last);
+	// Any integer type: a value neither width can hold is simply absent.
+	foreach (n in [4]int{-1, 1, 255, 256}) {
+		fmt.println(No_Zero.from_int(n) != .none);
+	}
+	byte: u8 = 249;
+	assert(Sparse.from_int(byte) == .none);
+	assert((Sparse.from_int(i64(-7)) or_else Sparse.Zero) == .Negative);
+	assert((Wide.from_int(i8(1)) or_else Wide.Huge) == .Small);
 	empty_input := 42;
 	assert(Empty.from_int(empty_input) == .none);
 	fmt.println("closed");

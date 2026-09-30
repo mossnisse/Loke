@@ -1744,6 +1744,12 @@ The former unchecked integer conversion made member coverage weaker than value
 coverage. [`Enum.from_int`](design.md#integer-conversion) now validates the
 backing integer and returns `Option(Enum)`. Foreign APIs and wire formats keep
 unknown numbers in an integer or `distinct` integer wrapper until validated.
+Its argument may be any integer type: validation, not the argument's type,
+decides membership, so demanding the backing type only moved a narrowing
+conversion, which is what `from_int` exists to avoid, onto the caller. It also
+keeps a small explicit backing type (`enum u8`) cheap to choose, which is why
+the default stays `int` rather than shrinking to fit the members and tying the
+enum's layout to its member list.
 An enum without a variant represented by zero has no zero value, and that
 restriction propagates through aggregates just as it does for unions.
 

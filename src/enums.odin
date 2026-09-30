@@ -30,11 +30,20 @@ check_enum_from_int :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> 
 		return false
 	}
 	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
-		errorf(k.c, v.span, "L0410", "`%s.from_int` takes exactly one plain backing integer argument", type_name(k.c, subject))
+		errorf(k.c, v.span, "L0410", "`%s.from_int` takes exactly one plain integer argument", type_name(k.c, subject))
 		v.type = INVALID_TYPE
 		return true
 	}
-	if !check_value_expr(k, v.args[0].value, underlying_info(k.c, subject).element, "initialize") {
+	// Any integer type; an untyped constant takes the backing type.
+	arg := v.args[0].value
+	backing := underlying_info(k.c, subject).element
+	arg_type := check_single_expr(k, arg, backing)
+	if arg_type == INVALID_TYPE || (type_is_untyped(k.c, arg_type) && !materialize(k, arg, backing)) {
+		v.type = INVALID_TYPE
+		return true
+	}
+	if !type_is_integer(k.c, expr_base(arg).type) {
+		errorf(k.c, expr_span(arg), "L0410", "`%s.from_int` takes an integer, found `%s`", type_name(k.c, subject), type_name(k.c, arg_type))
 		v.type = INVALID_TYPE
 		return true
 	}

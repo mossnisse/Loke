@@ -1665,7 +1665,7 @@ Enum members are named constants, not numbers with a name: they may have holes, 
 
 #### Integer conversion
 
-`Enum.from_int(value) -> Option(Enum)` validates membership. It takes one plain argument of the enum's backing integer type; an untyped integer constant must fit that type. A declared representation produces `.some(variant)` and every other backing value produces `.none`. The argument is evaluated once, and validation works identically at compile time and runtime. It neither panics nor silently narrows its input.
+`Enum.from_int(value) -> Option(Enum)` validates membership. It takes one plain argument of any integer type, including a `distinct` integer; an untyped integer constant takes the backing type and must fit it. An argument whose value is a declared representation produces `.some(variant)`, and every other value produces `.none`, including one the backing type cannot hold. The argument is evaluated once, and validation works identically at compile time and runtime. It neither panics nor silently narrows its input.
 
 ```odin
 Http_Status :: enum { Ok = 200, Not_Found = 404, Teapot = 418 }

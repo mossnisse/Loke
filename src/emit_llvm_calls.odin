@@ -12,13 +12,19 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	}
 	switch operation in v.operation {
 	case Call_Enum_From_Int:
+		// Compare at the argument's width; a member it cannot hold never matches.
+		source := expr_base(v.bound[0]).type
+		bits, signed := type_bits(e.c, source), type_signed(e.c, source)
 		value := emit_expr(e, v.bound[0])
 		present := "false"
 		for member in underlying_info(e.c, operation.type).fields {
 			sym := symbol_of(e.c, member)
+			if !bi_fits(e.c, sym.const_value.integer, bits, signed) {
+				continue
+			}
 			matches := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", matches,
-				llvm_type(e, operation.type), value, bi_text(e.c, sym.const_value.integer))
+			fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %s", matches,
+				bits, value, bi_text(e.c, sym.const_value.integer))
 			if present == "false" {
 				present = matches
 			} else {
@@ -26,6 +32,13 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 				fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", joined, present, matches)
 				present = joined
 			}
+		}
+		// A matching value fits both widths, so the resize is exact when it counts.
+		if backing_bits := type_bits(e.c, operation.type); backing_bits != bits {
+			resized := temp(e)
+			op := backing_bits < bits ? "trunc" : (signed ? "sext" : "zext")
+			fmt.sbprintfln(&e.b, "  %s = %s i%d %s to i%d", resized, op, bits, value, backing_bits)
+			value = resized
 		}
 		return emit_option_value(e, as_type, present, value)
 	case Call_Extract:
