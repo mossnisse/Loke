@@ -1,0 +1,12 @@
+L0418
+@8:9
+so it returns a place
+L0418
+@12:9
+so `return` takes no `inout`
+L0418
+@16:15
+exactly `[]int`, found `[1]int`
+L0418
+@20:15
+exactly `string_view`, found `string`

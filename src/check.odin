@@ -3525,25 +3525,46 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 	}
 
 	value := s.value
-	if !check_value_expr(k, value.expr, k.result_type, "return") {
+	// design.md "`inout` results": the mode is decided before anything else, so a
+	// value is never read where a place is returned, or the reverse.
+	if value.is_inout != k.result_inout {
+		if k.result_inout {
+			errorf(
+				k.c, value.span, "L0418",
+				"this procedure returns `inout %s`, so it returns a place: `return inout place`",
+				type_name(k.c, k.result_type),
+			)
+		} else {
+			errorf(k.c, value.span, "L0418", "this procedure returns a value, so `return` takes no `inout`")
+		}
+		check_expr(k, value.expr)
 		return terminated
 	}
-	classify_return_value(k, value, k.result_type)
-	// design.md "`inout` results": an assignable place of exactly the result type.
-	if k.result_inout {
-		base := expr_base(value.expr)
-		switch {
-		case base == nil || !base.addressable:
-			errorf(k.c, expr_span(value.expr), "L0418", "an `inout` result must return a place")
-		case !base.assignable:
-			report_not_assignable(k, base, "returned as `inout`")
-		case base.type != k.result_type:
-			errorf(
-				k.c, expr_span(value.expr), "L0418",
-				"an `inout` result must return a place of exactly `%s`, found `%s`",
-				type_name(k.c, k.result_type), type_name(k.c, base.type),
-			)
+	if !k.result_inout {
+		if check_value_expr(k, value.expr, k.result_type, "return") {
+			classify_return_value(k, value, k.result_type)
 		}
+		return terminated
+	}
+	// An assignable place of exactly the result type, checked as written: no
+	// conversion may turn it into a temporary.
+	if check_single_expr(k, value.expr, k.result_type) == INVALID_TYPE {
+		return terminated
+	}
+	base := expr_base(value.expr)
+	switch {
+	case base == nil || !base.addressable:
+		errorf(k.c, expr_span(value.expr), "L0418", "an `inout` result must return a place")
+	case !base.assignable:
+		report_not_assignable(k, base, "returned as `inout`")
+	case base.type != k.result_type:
+		errorf(
+			k.c, expr_span(value.expr), "L0418",
+			"an `inout` result must return a place of exactly `%s`, found `%s`",
+			type_name(k.c, k.result_type), type_name(k.c, base.type),
+		)
+	case:
+		classify_return_value(k, value, k.result_type)
 	}
 	return terminated
 }

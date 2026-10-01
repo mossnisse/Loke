@@ -1,0 +1,23 @@
+package main;
+
+// design.md "`inout` results": `return inout place` returns a place of exactly
+// the declared type, and only an `inout` result is returned that way. Neither
+// the mode nor a conversion may turn one into the other.
+missing :: proc() -> inout int {
+	local := 42;
+	return local;
+}
+
+extra :: proc(value: inout int) -> int {
+	return inout value;
+}
+
+converted :: proc(value: inout [1]int) -> inout []int {
+	return inout value;
+}
+
+viewed :: proc(text: inout string) -> inout string_view {
+	return inout text;
+}
+
+main :: proc() {}

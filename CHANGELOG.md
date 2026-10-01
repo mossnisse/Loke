@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- `return` must match the result's mode (`L0418`): an `inout` result needs
+  `return inout place`, and a value result takes no `inout`. An `inout` place
+  must also have exactly the result type before any conversion, so returning an
+  `inout [N]T` as `inout []T` or an `inout string` as `inout string_view` is
+  rejected. These returned a value or the address of a frame temporary.
 - A record field of type `type`, or a procedure literal whose signature
   contains `type`, is an error (`L0378`), as a variable or named procedure
   already was. The literal compiled `type` arguments to `0`.

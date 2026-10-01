@@ -233,41 +233,6 @@ equivalent empty map followed by two indexed assignments is accepted.
 record field names, so literal values are joined into every entry. Reuse
 `prov_map_entry_step` and the existing key/value projections.
 
-### Return checking does not enforce the declared `inout` mode before conversion
-
-[design.md "`inout` results"](design.md#inout-results) requires
-`return inout place`, with exactly the declared storage type and no result
-conversion. Two invalid programs are accepted:
-
-```odin
-package main;
-bad :: proc() -> inout int {
-    local := 42;
-    return local;
-}
-main :: proc() {}
-```
-
-The emitter returns `local`'s address because the signature is `inout`, but
-the provenance walker reads the value because the return lacks that marker.
-Adding the marker correctly reports L0526. `check_return` must validate the
-return mode before classification and provenance analysis.
-
-```odin
-package main;
-bad :: proc(value: inout [1]int) -> inout []int {
-    return inout value;
-}
-main :: proc() {}
-```
-
-`check_return` calls `check_value_expr`, which converts the array expression
-to a slice before the exact-type check. The expression retains its place
-flags; LLVM materializes a slice in a frame-local temporary and returns that
-temporary's address, which becomes invalid when the procedure returns.
-`inout string` returned as `inout string_view` is also accepted. Check the
-original place type without materializing a value conversion.
-
 ### A `foreach` cannot destructure a record with padding
 
 [design.md "Destructuring"](design.md#destructuring) applies to `foreach`
