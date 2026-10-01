@@ -1268,3 +1268,11 @@ Those counts describe the reviewed revision, not the current test inventory.
 No registry wrapper or package split was justified after centralizing the
 mutation gate and enforcing the emission boundary. Revisit one when a concrete
 failure or independent consumer requires it.
+
+The query walkers it named (`first_unresolved_name`, `type_syntax_names`,
+`pattern_shape`) now switch exhaustively rather than sharing one child
+enumeration. Each deliberately covers different positions: value and type
+names, every name, or pattern layers. A shared enumeration would have made
+them all descend everywhere. Making `first_unresolved_name` exhaustive found
+that it skipped anonymous-record field types and `move`
+([tests/run/when_anonymous_record_condition.loke](tests/run/when_anonymous_record_condition.loke)).

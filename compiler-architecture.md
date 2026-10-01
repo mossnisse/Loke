@@ -496,7 +496,12 @@ Use the narrowest path that preserves the phase contracts:
    dump, `ast_clone.odin`, and syntax recovery fixtures together. A new node
    kind fails to compile until it has a clone case, and a new field on a node
    fails `ast_clone_classifies_every_node_field` until it is listed as copied
-   or dropped; a written field must also be copied by the clone.
+   or dropped; a written field must also be copied by the clone. A walker that
+   asks one question of a whole subtree (`first_unresolved_name`,
+   `type_syntax_names`, `pattern_shape`) switches exhaustively, so a new
+   expression form fails to compile there too until the walker says whether it
+   descends into it. A walker that follows one place path (`place_root_symbol`
+   and the `prov_` place walkers) stays `#partial`.
 2. Settle the language decision in `design.md` first, then put it in the
    checker or the relevant semantic feature module. Record the chosen symbol,
    type, operation, conversion, or policy on the AST or in a semantic registry.

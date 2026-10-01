@@ -1,0 +1,11 @@
+// A file-scope `when` condition naming a type through an anonymous record's
+// field waits for the branch that declares it, as `size_of([]Later)` does,
+// rather than reporting the name unknown a round early.
+package main;
+
+import "core:fmt";
+
+when (size_of((a: Later)) == 8) { X :: 1; } else { X :: 2; }
+when (true) { Later :: struct { x: int }; }
+
+main :: proc() { fmt.println(X); }

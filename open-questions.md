@@ -422,16 +422,6 @@ rather than a wrong answer; the wrong answers it found are in
   `rhs_clones`) and reports copy costs, so the disposable view writes
   annotations the backend reads. Should topology construction be separated from
   the per-mode consumers?
-- **Query walkers are partial.** The main passes switch over `Expr`
-  exhaustively, but the smaller walkers that ask one question of a subtree
-  (`first_unresolved_name`, `type_syntax_names`, `pattern_shape`, and the
-  like) each recurse through a `#partial switch` of their own, so a form one of
-  them forgets is skipped silently, as `first_unresolved_name` skipped slices,
-  ranges, `or_else`, and `.(T)` until the review;
-  default checking now collects parsed `Type_Poly` names through
-  `pattern_shape`, after a raw-source scan let comments change acceptance. That
-  bug is fixed; should the remaining queries recurse through one exhaustive child
-  enumeration?
 - **Keep one copy of process waiting when that code next changes.**
   `run_process`/`drain` in
   [src/emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) and `exec`/`drain`
@@ -443,18 +433,6 @@ rather than a wrong answer; the wrong answers it found are in
 
 The completed audit and its decisions are recorded in
 [comments.md "Compiler architecture audit (2026-09-28)"](comments.md#compiler-architecture-audit-2026-09-28).
-
-## Open generics findings
-
-A review of the generics implementation left these open. None breaks a rule of
-the specification as written.
-
-- **Explain an unavailable generic argument type at its source.** An argument
-  with no type can print `f(<invalid>)` under a misleading "`$T` is not bound
-  here". Establish a minimal reproduction before changing inference recovery.
-  Readable value arguments, bounded instantiation notes, and the fixed fuzzer
-  findings are recorded in
-  [comments.md "Compiler regression fixes"](comments.md#compiler-regression-fixes).
 
 ## Platform selection in `core:thread`
 

@@ -498,10 +498,10 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 	if e == nil {
 		return false
 	}
-	#partial switch v in e {
+	switch v in e {
 	case ^Expr_Ident:
 		return v.name_id == name
-	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Expr_Proc_Group:
+	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly, ^Expr_Proc_Group:
 		return false
 	case ^Type_Pointer:
 		return type_syntax_names(v.elem, name)

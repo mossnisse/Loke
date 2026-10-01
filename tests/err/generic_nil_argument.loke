@@ -1,0 +1,14 @@
+// `nil` gives a generic parameter nothing to infer, and says so at the call
+// rather than reporting `$T` unbound in an instance named `f(<invalid>)`.
+package main;
+
+f :: proc(x: $T) -> T { return x; }
+g :: proc(x: ^$T) {}
+h :: proc(x: $T, y: T) {}
+
+main :: proc() {
+	y := f(nil);
+	g(nil);
+	a: ^int = nil;
+	h(a, nil); // `T` comes from `a`, so this `nil` converts
+}

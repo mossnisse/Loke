@@ -547,7 +547,7 @@ pattern_shape :: proc(e: Expr, bindings: ^[dynamic]Name = nil) -> (specificity: 
 	}
 	parts: [dynamic]Expr
 	parts.allocator = context.temp_allocator
-	#partial switch v in e {
+	switch v in e {
 	case ^Type_Poly:
 		if bindings != nil {
 			append(bindings, v.name)
@@ -581,7 +581,12 @@ pattern_shape :: proc(e: Expr, bindings: ^[dynamic]Name = nil) -> (specificity: 
 			append(&parts, arg.value)
 		}
 		_, has_poly = pattern_shape(v.callee, bindings)
-	case:
+	// One layer each, holding no pattern: a name, a value, or a declared body. An
+	// anonymous record's fields are not matched, so a `$` there binds nothing.
+	case ^Expr_Error, ^Expr_Literal, ^Expr_Ident, ^Expr_Selector, ^Expr_Checked_Extract, ^Expr_Index,
+	     ^Expr_Slice, ^Expr_Postfix, ^Expr_Unary, ^Expr_Binary, ^Expr_Range, ^Expr_Or_Else, ^Expr_Cond,
+	     ^Expr_Move, ^Expr_Composite, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator, ^Type_Type,
+	     ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 		return 1, false
 	}
 	specificity = 1
@@ -905,7 +910,12 @@ match_type_pattern :: proc(
 	case ^Type_Poly:
 		// An untyped constant binds a generic parameter at its default type: `$T`
 		// stands for a real type, and `untyped int` is not one a body could use.
-		return bind_pattern_name(k, v.name, Generic_Arg{is_type = true, type = default_type(k.c, actual)}, scope, out)
+		// `nil` has no default type, so it binds nothing.
+		bound := default_type(k.c, actual)
+		if bound == INVALID_TYPE {
+			return false
+		}
+		return bind_pattern_name(k, v.name, Generic_Arg{is_type = true, type = bound}, scope, out)
 
 	case ^Type_Pointer:
 		if info.kind != .Pointer {
@@ -1211,6 +1221,14 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 				// pattern binding parts of the argument's type.
 				if !match_type_pattern(k, parameter.type, arg.type, scope, &bindings) &&
 				   !match_array_as_view(k, parameter.type, arg.type, scope, &bindings) {
+					if arg.type == TYPE_UNTYPED_NIL {
+						result.reason = fmt.aprintf(
+							"`nil` has no type to infer parameter %d from",
+							position,
+							allocator = k.c.semantic_allocator,
+						)
+						return result
+					}
 					result.reason = fmt.aprintf(
 						"`%s` does not match the shape of parameter %d",
 						type_name(k.c, arg.type),

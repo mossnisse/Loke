@@ -294,15 +294,16 @@ callee_is_builtin :: proc(k: ^Checker, callee: Expr, kind: Builtin_Kind) -> bool
 // Type syntax is walked for the same reason expression syntax is: `size_of(^T)`
 // depends on `T` exactly as `size_of(T)` does, and answering "" for it would
 // evaluate the condition a round before the branch that supplies `T` is
-// selected. The forms covered are the composable ones `pattern_shape` walks; a
+// selected. An anonymous record's field types are names like any other; a
 // record, enum, or interface written inside a `when` condition declares its own
-// members rather than naming an outer one.
+// members rather than naming an outer one. The switch is exhaustive, so a new
+// form must say which it is.
 @(private = "file")
 first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 	if e == nil {
 		return ""
 	}
-	#partial switch v in e {
+	switch v in e {
 	case ^Type_Pointer:
 		return first_unresolved_name(k, v.elem)
 	case ^Type_C_Pointer:
@@ -426,6 +427,17 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 				return missing
 			}
 		}
+	case ^Expr_Move:
+		return first_unresolved_name(k, v.value)
+	case ^Type_Anon_Record:
+		for field in v.fields {
+			if missing := first_unresolved_name(k, field.type); missing != "" {
+				return missing
+			}
+		}
+	// Nothing a condition waits on: no name, or a body checked on its own.
+	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly, ^Expr_Proc, ^Expr_Proc_Group,
+	     ^Expr_Operator, ^Type_Record, ^Type_Enum, ^Type_Interface:
 	}
 	return ""
 }

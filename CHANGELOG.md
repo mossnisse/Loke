@@ -168,6 +168,12 @@ checklist.
 
 ### Fixed
 
+- `nil` passed where a generic parameter must infer its type, as in `f(nil)`
+  for `f :: proc(x: $T)`, says `nil` has no type to infer it from, instead of
+  "`$T` is not bound here" in an instance named `f(<invalid>)`.
+- A file-scope `when` condition that names a type only through an anonymous
+  record's field, as in `size_of((a: Later))`, waits for the branch declaring
+  it instead of reporting the name unknown.
 - A diagnostic on a line that is not valid UTF-8 shows each run of bad bytes as
   U+FFFD instead of echoing them, so diagnostics are always UTF-8 text.
 - A temporary made in an operand that may not run (the right of `&&` or `||`,
