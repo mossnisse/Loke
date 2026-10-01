@@ -1977,6 +1977,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		{"arena_pipeline", .Output},
 		{"compile_time",   .Output},
 		{"config_parser",  .Output},
+		{"corpus_runner",  .Driven},
 		{"game_of_life",   .Output},
 		{"greeting",       .Driven},
 		{"hello",          .Output},
@@ -2198,6 +2199,51 @@ example_streaming_reads_its_input :: proc(t: ^testing.T) {
 	expect_streaming(t, dir, exe, []string{"three.txt"}, 0, "bytes: 17\nlines: 3", "", "a readable file")
 	expect_streaming(t, dir, exe, []string{"nope.txt"}, 1, "", "Not_Found", "a missing file")
 	expect_streaming(t, dir, exe, []string{"big.txt"}, 1, "", "Limit_Exceeded", "a file past the read limit")
+}
+
+// `corpus_runner` is a test harness in Loke, so it runs a corpus of its own:
+// in tests/examples/corpus_runner/, a passing case, one built with its `.flags`,
+// one whose output is wrong, and under `-trap` one that must panic.
+@(test)
+example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	scratch, scratch_ok := filepath.abs(fmt.tprintf("%s/example-corpus_runner", TMP), context.allocator)
+	exe, exe_ok := filepath.abs(fmt.tprintf("%s/example-corpus_runner.exe", TMP), context.allocator)
+	compiler, compiler_ok := filepath.abs(compiler_path(), context.allocator)
+	if !testing.expect(t, scratch_ok && exe_ok && compiler_ok, "cannot resolve the corpus_runner paths") {
+		return
+	}
+	os.make_directory(scratch)
+	if !compile_example(t, "examples/corpus_runner.loke", exe, nil) {
+		return
+	}
+	Run :: struct {
+		corpus, flag, stdout: string,
+		exit_code:            int,
+	}
+	runs := []Run {
+		{"run", "", "ok   flagged.loke\nok   pass.loke\nFAIL wrong.loke - stdout differs\n2 passed, 1 failed\n", 1},
+		{"trap", "-trap", "ok   panics.loke\n1 passed, 0 failed\n", 0},
+	}
+	for run in runs {
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, launch_path(exe), compiler, fmt.tprintf("tests/examples/corpus_runner/%s", run.corpus), scratch)
+		if run.flag != "" {
+			append(&command, run.flag)
+		}
+		state, stdout, stderr, err := exec(os2.Process_Desc{command = command[:]}, context.allocator)
+		if !testing.expectf(t, err == nil, "corpus_runner on %s: cannot run", run.corpus) {
+			continue
+		}
+		testing.expectf(
+			t, state.exit_code == run.exit_code,
+			"corpus_runner on %s: exited with %d, expected %d\n%s", run.corpus, state.exit_code, run.exit_code, string(stderr),
+		)
+		testing.expectf(
+			t, normalise(string(stdout)) == normalise(run.stdout),
+			"corpus_runner on %s: expected %q, got %q", run.corpus, run.stdout, normalise(string(stdout)),
+		)
+	}
 }
 
 // stdout is compared whole; stderr only has to carry the reason, so the exact

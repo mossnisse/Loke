@@ -110,7 +110,10 @@ checklist.
   or a pipe; `Child` has `wait`, `kill`, `id`, and the pipes, and `run` spawns
   and waits. A name is found on `PATH` only, each argument reaches the child as
   given, and the child inherits its three standard handles and nothing else.
-  `io.Operation` gains `Spawn`, `Wait`, and `Kill`.
+  `io.Operation` gains `Spawn`, `Wait`, and `Kill`. `output` runs a command
+  and collects its status, stdout, and stderr, reading both pipes at once.
+- `examples/corpus_runner.loke` is the run and trap corpus harness written in
+  Loke: it compiles each case, runs it, and compares its output.
 - `value.as(.name)` reads one union variant without a `switch`: it yields
   `Option(P)` holding a copy of the payload when `name` is active, and `.none`
   otherwise, so `shape.as(.circle) or_else 0` works.

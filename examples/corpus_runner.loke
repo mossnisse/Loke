@@ -1,0 +1,132 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:mem";
+import "core:os";
+import "core:path";
+import "core:process";
+import "core:slice";
+import "core:strings";
+
+// A test harness in Loke: the shape of the Odin suite's run and trap corpora.
+// For each `<case>.loke` in a directory it compiles the case, runs it, and
+// compares its stdout with `<case>.expected` and its stderr with
+// `<case>.expected-err` when there is one. A case must exit 0, or under
+// `-trap` must fail, with a `.expected-err` naming how; there `.expected` is
+// optional. A `<case>.flags` file adds one compiler flag per line.
+//
+// Usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap]
+
+main :: proc() {
+	trap := os.args.len() == 5 && os.args[4] == "-trap";
+	if (os.args.len() != 4 && !trap) {
+		fmt.eprintln("usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap]");
+		os.exit(2);
+	}
+	compiler, corpus, scratch := os.args[1], os.args[2], os.args[3];
+	cases: [dynamic]string = {};
+	switch (listed in sources(corpus)) {
+	case .ok:  cases = move(listed);
+	case .err:
+		fmt.eprintln("cannot read", corpus, "-", listed);
+		os.exit(2);
+	}
+	passed, failed := 0, 0;
+	foreach (name in cases) {
+		switch (check(compiler, corpus, scratch, path.stem(name), trap)) {
+		case .ok:
+			fmt.println("ok  ", name);
+			passed += 1;
+		case .err(reason):
+			fmt.println("FAIL", name, "-", reason);
+			failed += 1;
+		}
+	}
+	fmt.println(passed, "passed,", failed, "failed");
+	if (failed > 0) { os.exit(1); }
+}
+
+// The directory's `.loke` files, by name, so every run reports in one order.
+sources :: proc(directory: string_view) -> Result([dynamic]string, io.Error) {
+	reader := fs.read_directory(directory) or_return;
+	names: [dynamic]string = {};
+	for (;;) {
+		switch (reader.next() or_return) {
+		case .some(entry):
+			if (entry.kind == .File && path.extension(entry.name) == ".loke") {
+				names.append(strings.copy(entry.name));
+			}
+		case .none:
+			slice.sort(names[:]);
+			return .ok(move(names));
+		}
+	}
+}
+
+// One case: why it failed, or nothing.
+check :: proc(
+	compiler: string_view, corpus: string_view, scratch: string_view, name: string_view, trap: bool,
+) -> Result(Unit, string) {
+	source := sibling(corpus, name, ".loke");
+	exe := sibling(scratch, name, ".exe");
+	arguments := [dynamic]string_view{source, "-o", exe};
+	flags := read(sibling(corpus, name, ".flags")) or_else "";
+	foreach (flag in strings.lines(flags)) {
+		if (strings.trim_space(flag).len() > 0) { arguments.append(strings.trim_space(flag)); }
+	}
+
+	built := run(process.Command{program = compiler, arguments = arguments[:]}) or_return;
+	if (built.status != 0) {
+		return .err(fmt.to_string(mem.default_allocator(), "does not compile:", text(built.stderr[:])));
+	}
+	ran := run(process.Command{program = exe}) or_return;
+
+	expected := read(sibling(corpus, name, ".expected"));
+	expected_err := read(sibling(corpus, name, ".expected-err"));
+	if (trap && ran.status == 0) { return .err("exited 0"); }
+	if (trap && expected_err == .none) { return .err("has no .expected-err naming the failure"); }
+	if (!trap && ran.status != 0) { return .err(fmt.to_string(mem.default_allocator(), "exited with", ran.status)); }
+	if (!trap && expected == .none) { return .err("has no .expected"); }
+	switch (wanted in expected) {
+	case .some:
+		if (normalise(text(ran.stdout[:])) != normalise(wanted)) { return .err("stdout differs"); }
+	case .none:
+	}
+	switch (wanted in expected_err) {
+	case .some:
+		if (normalise(text(ran.stderr[:])) != normalise(wanted)) { return .err("stderr differs"); }
+	case .none:
+	}
+	return .ok;
+}
+
+run :: proc(command: process.Command) -> Result(process.Output, string) {
+	switch (outcome in process.output(command)) {
+	case .ok:  return .ok(move(outcome));
+	case .err: return .err(fmt.to_string(mem.default_allocator(), "cannot run", command.program, "-", outcome));
+	}
+}
+
+sibling :: proc(directory: string_view, name: string_view, extension: string_view) -> string {
+	file := strings.join([]string_view{name, extension}, "");
+	return path.join([]string_view{directory, file});
+}
+
+// A file's text, or `.none` when it cannot be read.
+read :: proc(file: string_view) -> Option(string) {
+	switch (outcome in fs.read_text(file)) {
+	case .ok:  return .some(outcome);
+	case .err: return .none;
+	}
+}
+
+text :: proc(bytes: []u8) -> string_view {
+	return string_view.from_utf8(bytes) or_else "<not UTF-8>";
+}
+
+// Line endings are the platform's, so the comparison ignores them.
+normalise :: proc(output: string_view) -> string {
+	return strings.replace(output, "\r\n", "\n");
+}

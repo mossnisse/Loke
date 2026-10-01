@@ -50,6 +50,12 @@ child :: proc(mode: string_view) {
 		}
 	} else if (mode == "stderr") {
 		fmt.eprintln("to stderr");
+	} else if (mode == "flood") {
+		// Far more than a pipe holds, to both streams.
+		for (index := 0; index < 20000; index += 1) {
+			fmt.eprintln("0123456789");
+		}
+		fmt.println("out");
 	} else if (mode == "wait") {
 		// Blocks on input that never comes, until it is killed.
 		input_stream := term.stdin();
@@ -106,6 +112,12 @@ parent :: proc(exe: string_view) {
 	{
 		waiting := spawned(process.Command{program = exe, arguments = []string_view{"wait"}, stdin = .Pipe});
 		fmt.println(waiting.kill(), waiting.wait(), waiting.kill());
+	}
+
+	// `output` reads both pipes at once, so a child flooding stderr finishes.
+	switch (out in process.output(process.Command{program = exe, arguments = []string_view{"flood"}})) {
+	case .ok:  fmt.println(out.status, out.stdout.len(), out.stderr.len());
+	case .err: fmt.println("output failed", out);
 	}
 
 	fmt.println(failure(process.Command{program = "loke_no_such_program_4A19"}));

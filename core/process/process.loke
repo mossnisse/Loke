@@ -15,6 +15,7 @@ import "core:io";
 import "core:mem";
 import "core:os";
 import "core:strings";
+import "core:thread";
 import "core:unsafe";
 
 Stdio :: enum {Inherit, Null, Pipe}
@@ -149,6 +150,64 @@ foreign loke_runtime {
 run :: proc(command: Command) -> Result(i32, io.Error) {
 	child := spawn(command) or_return;
 	return child.wait();
+}
+
+// What `output` collects from a finished child.
+Output :: struct {
+	status: i32,
+	stdout: [dynamic]u8,
+	stderr: [dynamic]u8,
+}
+
+// Runs `command` with its stdout and stderr piped, reads both to their end, and
+// waits. stderr is read on a thread of its own, so a child filling either pipe
+// while the other is read cannot deadlock.
+output :: proc(command: Command) -> Result(Output, io.Error) {
+	piped := command;
+	piped.stdout = .Pipe;
+	piped.stderr = .Pipe;
+	child := spawn(piped) or_return;
+	collected := shared(thread.Mutex(Collected){value = {}});
+	result: Output = {};
+	{
+		reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), collected.clone()});
+		switch (bytes in io.read_to_end(inout child.stdout)) {
+		case .ok:  result.stdout = move(bytes);
+		case .err: return .err(bytes);
+		}
+	}
+	{
+		guard := collected.get().lock();
+		switch (failure in guard.get().failure) {
+		case .some: return .err(failure);
+		case .none:
+		}
+		result.stderr = exchange(inout guard.get().bytes, {});
+	}
+	result.status = child.wait() or_return;
+	return .ok(move(result));
+}
+
+@(private)
+Collected :: struct {
+	bytes:   [dynamic]u8,
+	failure: Option(io.Error),
+}
+
+@(private)
+Collecting :: struct {
+	pipe: Pipe,
+	into: shared(thread.Mutex(Collected)),
+}
+
+@(private)
+collect :: proc(job: move Collecting) {
+	outcome := io.read_to_end(inout job.pipe);
+	guard := job.into.get().lock();
+	switch (bytes in move(outcome)) {
+	case .ok:  guard.get().bytes = move(bytes);
+	case .err: guard.get().failure = .some(bytes);
+	}
 }
 
 // The `core:os` name rules, and each name once, ignoring ASCII case, since

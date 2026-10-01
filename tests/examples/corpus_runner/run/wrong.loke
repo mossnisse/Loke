@@ -1,0 +1,6 @@
+// Prints something other than its `.expected`, so the runner reports it.
+package main;
+
+import "core:fmt";
+
+main :: proc() { fmt.println("actual"); }

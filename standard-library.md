@@ -1144,8 +1144,15 @@ Child :: move_only struct {
 
 Pipe :: move_only struct { /* private */ }
 
+Output :: struct {
+	status: i32,
+	stdout: [dynamic]u8,
+	stderr: [dynamic]u8,
+}
+
 spawn(command: Command) -> Result(Child, io.Error)
 run(command: Command) -> Result(i32, io.Error)
+output(command: Command) -> Result(Output, io.Error)
 Child.id(self) -> u32
 Child.wait(self: inout Child) -> Result(i32, io.Error)
 Child.kill(self: inout Child) -> Result(Unit, io.Error)
@@ -1190,7 +1197,9 @@ did not ask for:
   its input finishes, then blocks until the child exits and returns its exit
   status. Waiting again returns the same status. On Windows the status is the
   exit code reinterpreted as `i32`, so a crash shows as its negative `NTSTATUS`.
-  `run` spawns, waits, and returns the status.
+  `run` spawns, waits, and returns the status. `output` pipes stdout and
+  stderr, reads both to their end at once, stderr on a thread of its own so
+  neither pipe can fill and deadlock, and waits.
 - **Lifetime.** `kill` ends the child at once, with status 1 on Windows, and
   succeeds if the child has already exited. Dropping a `Child` closes its pipes
   and its handle to the process without waiting or killing: the child runs on,

@@ -1,0 +1,6 @@
+// Built with the flag its `.flags` file names.
+package main;
+
+import "core:fmt";
+
+main :: proc() { fmt.println("flagged"); }
