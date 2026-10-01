@@ -1,0 +1,16 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Comparison operators": either operand may be assignable to the
+// other, so a `^mut T` weakens to the `^T` it meets, in either order and in a
+// conditional expression's arms.
+same :: proc(a: ^mut int, b: ^int) -> bool { return a == b || b == a; }
+pick :: proc(flag: bool, a: ^mut int, b: ^int) -> ^int { return a if flag else b; }
+
+main :: proc() {
+	x := 1;
+	y := 2;
+	z := 3;
+	fmt.println(same(&mut x, &y), pick(true, &mut x, &y)^, pick(false, &mut z, &y)^);
+}

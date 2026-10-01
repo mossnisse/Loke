@@ -777,21 +777,3 @@ Expected: accepted; the address names `cell`'s ordinary storage. Actual:
 L0614 calls `pointer` a packed field. First copying `p.pointer` to `q` and
 using `&q.value` succeeds. Packed ancestry must stop when a dereference enters
 separate storage, rather than following the pointer's source field.
-
-### Compatible mutable and read-only pointers fail comparison unification
-
-[design.md "Comparison operators"](design.md#comparison-operators) permits
-comparison when either operand is assignable to the other:
-
-```odin
-package main;
-same :: proc(a: ^mut int, b: ^int) -> bool { return a == b; }
-main :: proc() {}
-```
-
-Actual: L0354, although `^mut int` implicitly weakens to `^int`. An explicit
-local `view: ^int = a` followed by `view == b` succeeds. `unify_operands`
-handles unfixed operands, procedure contracts, and text, but no common
-pointer capability. The same helper also rejects `a if flag else b` in a
-`^int` result context. Apply the permitted weakening when choosing the common
-operand type.

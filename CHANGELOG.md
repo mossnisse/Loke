@@ -180,6 +180,9 @@ checklist.
 
 ### Fixed
 
+- `a == b` with `a: ^mut T` and `b: ^T`, and `a if flag else b`, weaken the
+  mutable pointer to `^T` (design.md "Comparison operators"). They reported
+  `L0354`.
 - A user `operator([:])` gives its endpoints their expected type, so
   `box[.Start:.End]` resolves the implicit selectors. It reported `L0385`.
 - A built-in index may be a rune, as in `xs[index]` for `index: rune`

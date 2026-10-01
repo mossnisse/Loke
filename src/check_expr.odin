@@ -2157,6 +2157,16 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, 
 			return TYPE_STRING_VIEW, true
 		}
 	}
+	// design.md "Comparison operators": either operand may be assignable to the
+	// other, so a `^mut T` weakens to the `^T` beside it.
+	if kind := type_kind(k.c, lt); (kind == .Pointer || kind == .C_Pointer) && type_kind(k.c, rt) == kind {
+		if assignable(k.c, lt, rt) && materialize(k, lhs, rt) {
+			return rt, true
+		}
+		if assignable(k.c, rt, lt) && materialize(k, rhs, lt) {
+			return lt, true
+		}
+	}
 	operand_mismatch(k, op_span, lt, rt)
 	return INVALID_TYPE, false
 }
