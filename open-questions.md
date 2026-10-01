@@ -449,3 +449,19 @@ The current formatter rules and rationale are in [comments.md "Formatting"](comm
 Open: aligning columns automatically, as `gofmt` does, so a renamed field
 does not leave its neighbours misaligned; and indenting a continued line
 inside brackets, which `core/` leaves at the bracket's level.
+
+## Keywords reserved in every position
+
+[grammar.md "Keywords"](grammar.md#keywords) reserves 36 words in every
+position, and only a few (`self`, `slot`, `using`, `delegate`, the `hook` roles)
+are contextual. Some reserved words are also common names: writing
+`examples/lexer.loke`, a procedure could not be called `operator`. A
+self-hosted compiler would meet this throughout. Counting declarations that use
+one as a name (`name :=`, `name:`, `name,`) in the Odin compiler's `src/`:
+`type` about 970, `hook` 27, `operator` 20, `in` 16, `dyn` 11, `via` 9.
+
+Should words that only begin a construct in one position, such as `operator`,
+`hook`, `via`, `where`, and perhaps `type`, become contextual, like `delegate`
+already is? The cost is parser lookahead and error recovery that has to tell a
+name from the keyword, and diagnostics that can no longer say "expected a name,
+found keyword" there.
