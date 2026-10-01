@@ -1,0 +1,24 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Distinct types" and "Type conversion": a constant aggregate
+// converts to its own type, and between a distinct type and its underlying
+// one, keeping its value.
+Wrapped :: distinct [2]int;
+Point :: struct { x: int, y: int }
+Place :: distinct Point;
+Choice :: union { left:, right: int }
+
+BASE :: [2]int{1, 2};
+ORIGIN :: Point{3, 4};
+CHOSEN :: Choice.right(5);
+WRAPPED :: Wrapped(BASE);
+
+main :: proc() {
+	wrapped := Wrapped(BASE);
+	back := ([2]int)(WRAPPED);
+	place := Place(ORIGIN);
+	choice := Choice(CHOSEN);
+	fmt.println(([2]int)(wrapped)[1], back[0], place.y, choice.as(.right) or_else 0);
+}

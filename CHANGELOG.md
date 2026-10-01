@@ -194,6 +194,9 @@ checklist.
 
 ### Fixed
 
+- A constant array, struct, or union converts to its own type and between a
+  distinct type and its underlying one, as in `Wrapped(BASE)` and
+  `Choice(CHOSEN)`. They reported `L0373`.
 - An explicit conversion of a typed integer constant keeps its low bits, as at
   run time: `u8(i32(300))` is 44. It reported `L0373`. An unfixed constant
   such as `u8(300)` must still fit.

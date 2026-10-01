@@ -3132,6 +3132,8 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
+	case .Union:
+		return retype_aggregate(c, value, target, explicit, storage)
 	case .Simd:
 		// design.md "SIMD vectors": each lane converts as a scalar would, and a
 		// scalar splats into every lane.
@@ -3164,15 +3166,33 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil && type_is_shared_handle(c, target) {
 			return zero_const(c, target)
 		}
-		if value.kind == .Aggregate && value.aggregate != nil && value.aggregate.type == target {
-			return value, true
-		}
+		return retype_aggregate(c, value, target, explicit, storage)
 	case .Type:
 		if value.kind == .Type {
 			return value, true
 		}
 	}
 	return value, false
+}
+
+// A struct, array, or union constant keeps its representation when it converts
+// to its own type or, written out, between a distinct type and its underlying
+// one (design.md "Distinct types").
+@(private = "file")
+retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool, storage: mem.Allocator) -> (Const_Value, bool) {
+	if value.kind != .Aggregate || value.aggregate == nil {
+		return value, false
+	}
+	source := value.aggregate.type
+	if source == target {
+		return value, true
+	}
+	if !explicit || type_underlying(c, source) != type_underlying(c, target) {
+		return value, false
+	}
+	retyped := new_clone(value.aggregate^, storage)
+	retyped.type = target
+	return Const_Value{kind = .Aggregate, aggregate = retyped}, true
 }
 
 // Is a value of `from` acceptable where `to` is wanted, with no written

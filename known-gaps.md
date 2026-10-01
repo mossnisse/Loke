@@ -573,34 +573,6 @@ expression type to the vector after merely materializing the scalar as a
 lane. Reuse `materialize_value_expr` to validate that lane before recording
 the splat conversion.
 
-### Constant aggregate conversions reject valid identity and distinct conversions
-
-[design.md "Distinct types"](design.md#distinct-types) preserves representation
-when converting to the underlying type or back:
-
-```odin
-package main;
-Wrapped :: distinct [2]int;
-BASE :: [2]int{1, 2};
-main :: proc() { wrapped := Wrapped(BASE); _ = wrapped; }
-```
-
-Actual: L0373; a runtime array operand works. `convert_const` accepts a struct
-or array aggregate only when its recorded type exactly equals the target,
-omitting the valid distinct conversion.
-
-```odin
-package main;
-Choice :: union { left:, right: }
-CHOSEN :: Choice.right;
-main :: proc() { choice := Choice(CHOSEN); _ = choice; }
-```
-
-Actual: L0373 says `Choice` cannot convert to `Choice`; a runtime operand
-works under [design.md "Type conversion"](design.md#type-conversion).
-The constant union conversion case accepts only nil and has no aggregate
-identity path. Preserve constant aggregate values in both valid conversions.
-
 ### Designated fixed-array initializers are rejected
 
 [design.md "Fixed arrays"](design.md#fixed-arrays) permits element indices
