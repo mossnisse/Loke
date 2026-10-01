@@ -1,0 +1,16 @@
+package main;
+
+import "core:fmt";
+
+// design.md "@(packed)": an element of an array inside a packed struct is as
+// unaligned as the array, so it is stored and loaded with `align 1`, and an
+// `any_view` of it views an aligned copy.
+Packed :: struct @(packed) { tag: u8, data: [2]int }
+
+main :: proc() {
+	p := Packed{1, {42, 43}};
+	p.data[1] = 7;
+	i := 1;
+	p.data[i] += 1;
+	fmt.println(p.data[0]);
+}

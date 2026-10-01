@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- `&p.data[0]` and `p.data[:]` are errors (`L0614`) when `data` is an array
+  inside a `@(packed)` struct, as `&p.data` already was: the element may be
+  misaligned. Copy the array out first.
 - A destination type no longer picks between operator overloads that differ
   in a floating operand: `chosen: f32 = 1.0 + marker` with `f32` and `f64`
   overloads is ambiguous (`L0391`), as the inferred form already was. Write the
@@ -218,6 +221,10 @@ checklist.
 
 ### Fixed
 
+- `&p.pointer.value` is accepted when `pointer` is a field of a packed struct:
+  the address is in the pointer's target, not the packed record. Elements of an
+  array in a packed struct are loaded and stored unaligned, and an `any_view`
+  of an unaligned packed place views an aligned copy.
 - A fixed-array literal accepts designated elements by index and index range,
   as in `[?]string{0 = "Raven", 3..=5 = "Frog"}`, after any positional ones;
   omitted elements are zero. They reported `L0372`.

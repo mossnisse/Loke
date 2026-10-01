@@ -1451,6 +1451,11 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 		errorf(k.c, v.span, "L0477", "`%s` has no storage to slice; bind it to a variable first", type_name(k.c, operand))
 		ok = false
 	}
+	// A slice's elements are ordinary, aligned places (design.md "@(packed)").
+	if field, packed := packed_field_reached(k, v.operand); packed && info.kind == .Array {
+		errorf(k.c, v.span, "L0614", "cannot slice `%s`: it is reached through a packed struct", field)
+		ok = false
+	}
 	v.value_category = .Value
 	v.immutable = .Temporary
 	if info.kind == .C_Pointer && !require_unsafe_import(k, v.span, "slicing a C pointer") {
@@ -1565,6 +1570,14 @@ packed_field_reached :: proc(k: ^Checker, operand: Expr) -> (string, bool) {
 		#partial switch v in cur {
 		case ^Expr_Selector:
 			name, next = v.name.text, v.operand
+		case ^Expr_Index:
+			// An embedded array's element shares the array's storage; any other
+			// indexed container is separate storage.
+			if base := expr_base(v.operand); base == nil || underlying_kind(k.c, base.type) != .Array {
+				return "", false
+			}
+			cur = v.operand
+			continue
 		case ^Expr_Call:
 			// `field.get(value)` selects from what `value` points at.
 			reflect, is_reflect := v.operation.(Call_Reflect)
@@ -1578,14 +1591,21 @@ packed_field_reached :: proc(k: ^Checker, operand: Expr) -> (string, bool) {
 			return "", false
 		}
 		base := expr_base(next)
-		if base != nil {
-			struct_type := type_underlying(k.c, base.type)
-			if info := type_of(k.c, struct_type); info != nil && info.kind == .Pointer {
-				struct_type = type_underlying(k.c, info.element)
-			}
-			if info := type_of(k.c, struct_type); info != nil && info.kind == .Struct && info.packed {
-				return name, true
-			}
+		if base == nil {
+			return "", false
+		}
+		struct_type := type_underlying(k.c, base.type)
+		through_pointer := false
+		if info := type_of(k.c, struct_type); info != nil && info.kind == .Pointer {
+			struct_type = type_underlying(k.c, info.element)
+			through_pointer = true
+		}
+		if info := type_of(k.c, struct_type); info != nil && info.kind == .Struct && info.packed {
+			return name, true
+		}
+		// A pointer's target is separate storage, aligned for its own type.
+		if through_pointer {
+			return "", false
 		}
 		cur = next
 	}

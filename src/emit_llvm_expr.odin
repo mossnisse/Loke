@@ -571,6 +571,10 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			"  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %s",
 			out, llvm_type(e, base_type), base_address, index,
 		)
+		// An element of an array inside a packed struct is as unaligned as it.
+		if align, known := e.place_align[base_address]; known && align < type_align(e.c, info.element) {
+			e.place_align[out] = align
+		}
 		return out
 
 	case ^Expr_Composite:
@@ -828,6 +832,13 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	// A value becoming an `any_view`: its address plus the frozen `typeid`.
 	if from := base.erased_from; from != INVALID_TYPE && as_type == TYPE_ANY_VIEW {
 		address := spill_iterable_at(e, expr, from)
+		// A view reads its target at the type's alignment, which a packed place
+		// may not have (design.md "@(packed)"), so it views an aligned copy.
+		if align, known := e.place_align[address]; known && align < type_align(e.c, from) {
+			aligned := temporary_slot(e, from)
+			copy_bytes(e, aligned, address, type_size(e.c, from))
+			address = aligned
+		}
 		return emit_any_view_value(e, address, from)
 	}
 	// A `string` borrowed as a `string_view`: the owning word is dropped, and

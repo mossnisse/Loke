@@ -1,0 +1,19 @@
+package main;
+
+import "core:fmt";
+
+// design.md "@(packed)": array elements reached through a packed struct are
+// read and written in place, unaligned. A pointer field's target is separate,
+// aligned storage, so its fields have ordinary addresses.
+Cell :: struct { value: int }
+Packed :: struct @(packed) { tag: u8, data: [2]int, pointer: ^Cell }
+
+main :: proc() {
+	cell := Cell{42};
+	p := Packed{1, {5, 6}, &cell};
+	p.data[1] = 7;
+	i := 0;
+	p.data[i] += 1;
+	pointer := &p.pointer.value;
+	fmt.println(p.data[0], p.data[1], pointer^);
+}

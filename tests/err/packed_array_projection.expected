@@ -1,0 +1,9 @@
+L0614
+@9:13
+cannot take the address of `data`
+L0614
+@10:12
+cannot take the address of `nested`
+L0614
+@11:10
+cannot slice `data`

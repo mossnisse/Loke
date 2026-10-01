@@ -1,0 +1,15 @@
+package main;
+
+// design.md "@(packed)" and "Address operator": an element of an array inside
+// a packed struct may be misaligned, so neither `&` nor slicing exposes it.
+Packed :: struct @(packed) { tag: u8, data: [1]int, nested: [1][1]int }
+
+main :: proc() {
+	p := Packed{1, {42}, {{7}}};
+	element := &p.data[0];
+	deeper := &p.nested[0][0];
+	view := p.data[:];
+	_ = element;
+	_ = deeper;
+	_ = view;
+}
