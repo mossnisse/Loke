@@ -104,6 +104,13 @@ checklist.
 
 ### Added
 
+- `core:process` starts child processes: `spawn` takes a `Command` naming the
+  program, its arguments, an inherited or replaced environment, a working
+  directory, and whether each standard handle is inherited, the null device,
+  or a pipe; `Child` has `wait`, `kill`, `id`, and the pipes, and `run` spawns
+  and waits. A name is found on `PATH` only, each argument reaches the child as
+  given, and the child inherits its three standard handles and nothing else.
+  `io.Operation` gains `Spawn`, `Wait`, and `Kill`.
 - `value.as(.name)` reads one union variant without a `switch`: it yields
   `Option(P)` holding a copy of the payload when `name` is active, and `.none`
   otherwise, so `shape.as(.circle) or_else 0` works.

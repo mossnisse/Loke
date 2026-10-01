@@ -1,0 +1,668 @@
+// Child processes and their pipes (standard-library "`core:process`").
+//
+// Every rule a child is started under is one the caller can read off the
+// `Command`: the program is a path or a `PATH` lookup, the arguments arrive
+// as given, the environment is the parent's or exactly the one supplied, and
+// the child inherits its three standard handles and nothing else.
+//
+// Everything platform-specific sits behind `when (LOKE_OS == .Windows)` in this
+// one file, as in `core:fs`.
+@(public)
+package process;
+
+import "core:encoding/utf16";
+import "core:io";
+import "core:mem";
+import "core:os";
+import "core:strings";
+import "core:unsafe";
+
+Stdio :: enum {Inherit, Null, Pipe}
+
+Variable :: struct {
+	name:  string_view,
+	value: string_view,
+}
+
+Command :: struct {
+	// A path when it contains `/` or `\`; otherwise a name looked up on `PATH`.
+	program:     string_view,
+	// What follows the program, which the child sees as its first argument.
+	arguments:   []string_view,
+	// `.none` copies the parent's environment; `.some` is the whole of the
+	// child's.
+	environment: Option([]Variable),
+	// Empty keeps the parent's working directory.
+	directory:   string_view,
+	stdin:       Stdio,
+	stdout:      Stdio,
+	stderr:      Stdio,
+}
+
+// A running or finished child. Each pipe is open only when the command asked
+// for it. Dropping a `Child` closes its pipes and its handle to the process,
+// and the child runs on, detached.
+Child :: move_only struct {
+	stdin:  Pipe,
+	stdout: Pipe,
+	stderr: Pipe,
+	@(private) handle:     Handle,
+	@(private) process_id: u32,
+}
+
+impl Child {
+	release :: hook(drop) proc(self: inout Child) {
+		if (self.handle != NO_HANDLE) {
+			close_handle(self.handle);
+			self.handle = NO_HANDLE;
+		}
+	}
+
+	id :: proc(self) -> u32 { return self.process_id; }
+
+	// Closes `stdin` first, so a child reading to the end of its input
+	// finishes, then blocks until the child exits.
+	wait :: proc(self: inout Child) -> Result(i32, io.Error) {
+		_ = self.stdin.close();
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Wait));
+		}
+		return wait_native(self.handle);
+	}
+
+	// Succeeds when the child has already exited.
+	kill :: proc(self: inout Child) -> Result(Unit, io.Error) {
+		if (self.handle == NO_HANDLE) {
+			return .err(io.make_error(.Closed, .Kill));
+		}
+		return kill_native(self.handle);
+	}
+}
+
+// One end of a pipe to a child: written for its `stdin`, read for the others.
+// The zero value is closed, and `drop` closes a live one.
+Pipe :: move_only struct {
+	@(private) handle: Handle,
+	@(private) writes: bool,
+}
+
+impl Pipe {
+	release :: hook(drop) proc(self: inout Pipe) {
+		if (self.handle != NO_HANDLE) {
+			close_handle(self.handle);
+			self.handle = NO_HANDLE;
+		}
+	}
+
+	// Idempotent: the value is left inert even when the close itself failed.
+	close :: proc(self: inout Pipe) -> Result(Unit, io.Error) {
+		if (self.handle == NO_HANDLE) { return .ok; }
+		handle := self.handle;
+		self.handle = NO_HANDLE;
+		if (!close_handle(handle)) {
+			return .err(from_last_error(.Close));
+		}
+		return .ok;
+	}
+
+	is_open :: proc(self) -> bool { return self.handle != NO_HANDLE; }
+
+	read :: proc(self: inout Pipe, destination: []mut u8) -> Result(int, io.Error) {
+		if (destination.len() == 0) { return .ok(0); }
+		if (self.handle == NO_HANDLE) { return .err(io.make_error(.Closed, .Read)); }
+		if (self.writes) { return .err(io.make_error(.Unsupported, .Read)); }
+		return read_native(self.handle, destination);
+	}
+
+	write :: proc(self: inout Pipe, source: []u8) -> Result(int, io.Error) {
+		if (source.len() == 0) { return .ok(0); }
+		if (self.handle == NO_HANDLE) { return .err(io.make_error(.Closed, .Write)); }
+		if (!self.writes) { return .err(io.make_error(.Unsupported, .Write)); }
+		return write_native(self.handle, source);
+	}
+}
+
+spawn :: proc(command: Command) -> Result(Child, io.Error) {
+	if (strings.contains(command.program, "\"")) {
+		return .err(io.make_error(.Invalid_Data, .Spawn));
+	}
+	switch (variables in command.environment) {
+	case .some:
+		validate_environment(variables) or_return;
+	case .none:
+	}
+	program := find_program(command.program) or_return;
+	// `core:fmt` buffers standard output, so what it holds is written first;
+	// otherwise a child writing to an inherited stdout comes out of order.
+	rt_flush_stdout();
+	return spawn_native(command, program);
+}
+
+// The seed runtime is part of every link, as `core:term` relies on too.
+@(private)
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_flush_stdout")
+	rt_flush_stdout :: proc "c" () ---;
+}
+
+// Spawns `command`, waits for it, and returns its exit status.
+run :: proc(command: Command) -> Result(i32, io.Error) {
+	child := spawn(command) or_return;
+	return child.wait();
+}
+
+// The `core:os` name rules, and each name once, ignoring ASCII case, since
+// Windows ignores case in names.
+@(private)
+validate_environment :: proc(variables: []Variable) -> Result(Unit, io.Error) {
+	foreach (variable, index in variables.indexed()) {
+		if (variable.name.len() == 0 || strings.contains(variable.name, "=")) {
+			return .err(io.make_error(.Invalid_Data, .Spawn));
+		}
+		foreach (earlier in variables[0:index]) {
+			if (same_name(earlier.name, variable.name)) {
+				return .err(io.make_error(.Invalid_Data, .Spawn));
+			}
+		}
+	}
+	return .ok;
+}
+
+@(private)
+same_name :: proc(a: string_view, b: string_view) -> bool {
+	if (a.len() != b.len()) { return false; }
+	for (index := 0; index < a.len(); index += 1) {
+		if (ascii_lower(a.bytes()[index]) != ascii_lower(b.bytes()[index])) { return false; }
+	}
+	return true;
+}
+
+@(private)
+ascii_lower :: proc(byte: u8) -> u8 {
+	if (byte >= u8('A') && byte <= u8('Z')) { return byte + 32; }
+	return byte;
+}
+
+// A path is used as written. A name is tried in each `PATH` directory, as
+// written and then with `.exe` when it has no extension; the working directory
+// is not searched.
+@(private)
+find_program :: proc(program: string_view) -> Result(string, io.Error) {
+	if (program.len() == 0) {
+		return .err(io.make_error(.Invalid_Path, .Spawn));
+	}
+	if (strings.contains(program, "/") || strings.contains(program, "\\")) {
+		return .ok(strings.copy(program));
+	}
+	path := "";
+	switch (found in os.get_environment("PATH")) {
+	case .ok:
+		path = found or_else "";
+	case .err:
+	}
+	foreach (entry in strings.split(path, ";")) {
+		directory := strings.trim(entry, "\"");
+		if (directory.len() == 0) { continue; }
+		separator: string_view = "" if strings.ends_with(directory, "\\") || strings.ends_with(directory, "/") else "\\";
+		candidate := strings.join([]string_view{directory, program}, separator);
+		if (is_file(candidate)) { return .ok(candidate); }
+		if (!strings.contains(program, ".")) {
+			with_extension := strings.join([]string_view{candidate, ".exe"}, "");
+			if (is_file(with_extension)) { return .ok(with_extension); }
+		}
+	}
+	return .err(io.make_error(.Not_Found, .Spawn));
+}
+
+// The program as the child's first argument, then each argument, quoted so
+// `CommandLineToArgvW` and the C runtime parse back exactly what was given: a
+// run of backslashes is doubled only where a quote follows it.
+@(private)
+command_line :: proc(command: Command) -> string {
+	line: strings.String_Builder = {};
+	line.append("\"");
+	line.append(command.program);
+	line.append("\"");
+	foreach (argument in command.arguments) {
+		line.append(" ");
+		quote_argument(inout line, argument);
+	}
+	return line.finish();
+}
+
+@(private)
+quote_argument :: proc(line: inout strings.String_Builder, argument: string_view) {
+	plain := argument.len() > 0;
+	foreach (character in argument) {
+		if (character == ' ' || character == '\t' || character == '\n' || character == '\v' || character == '"') {
+			plain = false;
+		}
+	}
+	if (plain) {
+		line.append(argument);
+		return;
+	}
+	line.append("\"");
+	backslashes := 0;
+	foreach (character in argument) {
+		if (character == '\\') {
+			backslashes += 1;
+			continue;
+		}
+		// Backslashes before a quote escape themselves and it.
+		if (character == '"') {
+			backslashes = backslashes * 2 + 1;
+		}
+		for (; backslashes > 0; backslashes -= 1) { line.append("\\"); }
+		line.append(character);
+	}
+	// And before the closing quote, themselves.
+	for (; backslashes > 0; backslashes -= 1) { line.append("\\\\"); }
+	line.append("\"");
+}
+
+when (LOKE_OS == .Windows) {
+
+foreign import kernel32 "system:kernel32.lib";
+
+@(private)
+foreign kernel32 {
+	@(link_name="CreateProcessW")
+	rt_create_process :: proc "stdcall" (
+		application: [^]u16, command_line: [^]u16, process_security: rawptr, thread_security: rawptr,
+		inherit: i32, flags: u32, environment: rawptr, directory: [^]u16, startup: rawptr, information: rawptr,
+	) -> i32 ---;
+	@(link_name="CreatePipe")
+	rt_create_pipe :: proc "stdcall" (read: ^mut int, write: ^mut int, security: rawptr, size: u32) -> i32 ---;
+	@(link_name="SetHandleInformation")
+	rt_set_handle_information :: proc "stdcall" (handle: int, mask: u32, flags: u32) -> i32 ---;
+	@(link_name="GetStdHandle")
+	rt_get_std_handle :: proc "stdcall" (which: u32) -> int ---;
+	@(link_name="GetCurrentProcess")
+	rt_current_process :: proc "stdcall" () -> int ---;
+	@(link_name="DuplicateHandle")
+	rt_duplicate_handle :: proc "stdcall" (
+		source_process: int, source: int, target_process: int, target: ^mut int,
+		access: u32, inherit: i32, options: u32,
+	) -> i32 ---;
+	@(link_name="CreateFileW")
+	rt_create_file :: proc "stdcall" (
+		path: [^]u16, access: u32, share: u32, security: rawptr,
+		disposition: u32, flags: u32, template: int,
+	) -> int ---;
+	@(link_name="InitializeProcThreadAttributeList")
+	rt_initialize_attributes :: proc "stdcall" (list: rawptr, count: u32, flags: u32, size: ^mut int) -> i32 ---;
+	@(link_name="UpdateProcThreadAttribute")
+	rt_update_attribute :: proc "stdcall" (
+		list: rawptr, flags: u32, attribute: int, value: rawptr, size: int, previous: rawptr, returned: rawptr,
+	) -> i32 ---;
+	@(link_name="DeleteProcThreadAttributeList")
+	rt_delete_attributes :: proc "stdcall" (list: rawptr) ---;
+	@(link_name="WaitForSingleObject")
+	rt_wait :: proc "stdcall" (handle: int, milliseconds: u32) -> u32 ---;
+	@(link_name="GetExitCodeProcess")
+	rt_exit_code :: proc "stdcall" (handle: int, code: ^mut u32) -> i32 ---;
+	@(link_name="TerminateProcess")
+	rt_terminate :: proc "stdcall" (handle: int, code: u32) -> i32 ---;
+	@(link_name="GetFileAttributesW")
+	rt_file_attributes :: proc "stdcall" (path: [^]u16) -> u32 ---;
+	@(link_name="ReadFile")
+	rt_read_file :: proc "stdcall" (
+		handle: int, buffer: [^]u8, count: u32, read: ^mut u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="WriteFile")
+	rt_write_file :: proc "stdcall" (
+		handle: int, buffer: [^]u8, count: u32, written: ^mut u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="CloseHandle")
+	rt_close_handle :: proc "stdcall" (handle: int) -> i32 ---;
+	@(link_name="GetLastError")
+	rt_last_error :: proc "stdcall" () -> u32 ---;
+}
+
+@(private) Handle :: int;
+@(private) NO_HANDLE :: 0;
+@(private) INVALID_HANDLE :: -1;
+
+// `SECURITY_ATTRIBUTES`: 24 bytes.
+@(private)
+Security_Attributes :: struct {
+	length:     u32,
+	descriptor: rawptr,
+	inherit:    i32,
+}
+
+// `STARTUPINFOEXW`: 112 bytes, a `STARTUPINFOW` and the attribute list.
+@(private)
+Startup_Info :: struct {
+	size:            u32,
+	reserved:        rawptr,
+	desktop:         rawptr,
+	title:           rawptr,
+	x:               u32,
+	y:               u32,
+	width:           u32,
+	height:          u32,
+	columns:         u32,
+	rows:            u32,
+	fill_attribute:  u32,
+	flags:           u32,
+	show_window:     u16,
+	reserved2_size:  u16,
+	reserved2:       rawptr,
+	stdin:           int,
+	stdout:          int,
+	stderr:          int,
+	attribute_list:  rawptr,
+}
+
+// `PROCESS_INFORMATION`: 24 bytes.
+@(private)
+Process_Information :: struct {
+	process:   int,
+	thread:    int,
+	id:        u32,
+	thread_id: u32,
+}
+
+@(private) STARTF_USESTDHANDLES :: 0x100;
+@(private) EXTENDED_STARTUPINFO_PRESENT :: 0x80000;
+@(private) CREATE_UNICODE_ENVIRONMENT :: 0x400;
+@(private) PROC_THREAD_ATTRIBUTE_HANDLE_LIST :: 0x20002;
+@(private) HANDLE_FLAG_INHERIT :: 1;
+@(private) DUPLICATE_SAME_ACCESS :: 2;
+@(private) GENERIC_READ :: 0x80000000;
+@(private) GENERIC_WRITE :: 0x40000000;
+@(private) SHARE_READ_WRITE :: 3;
+@(private) OPEN_EXISTING :: 3;
+@(private) INFINITE :: 0xFFFFFFFF;
+@(private) WAIT_OBJECT_0 :: 0;
+@(private) WAIT_FAILED :: 0xFFFFFFFF;
+@(private) INVALID_FILE_ATTRIBUTES :: 0xFFFFFFFF;
+@(private) FILE_ATTRIBUTE_DIRECTORY :: 0x10;
+// `STD_INPUT_HANDLE` and the next two, as the `DWORD`s -10, -11, and -12.
+@(private) STD_HANDLES :: [3]u32{0xFFFFFFF6, 0xFFFFFFF5, 0xFFFFFFF4};
+
+// The ends the child gets, and the ends the parent keeps, for each of its three
+// standard handles. A child end is inheritable; a parent end never is.
+@(private)
+Handles :: struct {
+	child:  [3]Handle,
+	parent: [3]Handle,
+}
+
+@(private)
+spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io.Error) {
+	application := wide(program) or_return;
+	line := wide(command_line(command)) or_return;
+	directory: [dynamic]u16 = {};
+	if (command.directory.len() > 0) {
+		directory = wide(command.directory) or_return;
+	}
+	environment: [dynamic]u16 = {};
+	flags := u32(EXTENDED_STARTUPINFO_PRESENT);
+	switch (variables in command.environment) {
+	case .some:
+		environment = environment_block(variables) or_return;
+		flags |= u32(CREATE_UNICODE_ENVIRONMENT);
+	case .none:
+	}
+
+	handles: Handles = {};
+	modes := [3]Stdio{command.stdin, command.stdout, command.stderr};
+	foreach (mode, index in modes[:].indexed()) {
+		switch (opened in standard_handle(mode, index)) {
+		case .ok:
+			handles.child[index] = opened[0];
+			handles.parent[index] = opened[1];
+		case .err:
+			close_all(handles);
+			return .err(opened);
+		}
+	}
+
+	// The child inherits exactly the handles in this list, whatever else the
+	// parent has marked inheritable.
+	inherited: [3]Handle = {};
+	count := 0;
+	foreach (handle in handles.child) {
+		if (handle != NO_HANDLE) {
+			inherited[count] = handle;
+			count += 1;
+		}
+	}
+	size := 0;
+	_ = rt_initialize_attributes(nil, 1, 0, &mut size);
+	attributes := make([dynamic]u64, size / 8 + 1);
+	list := unsafe.raw_data(attributes);
+	if (rt_initialize_attributes(list, 1, 0, &mut size) == 0) {
+		error := from_last_error(.Spawn);
+		close_all(handles);
+		return .err(error);
+	}
+	defer rt_delete_attributes(list);
+	if (count > 0 && rt_update_attribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &mut inherited, count * 8, nil, nil) == 0) {
+		error := from_last_error(.Spawn);
+		close_all(handles);
+		return .err(error);
+	}
+
+	startup: Startup_Info = {};
+	startup.size = u32(size_of(Startup_Info));
+	startup.flags = u32(STARTF_USESTDHANDLES);
+	startup.stdin = handles.child[0];
+	startup.stdout = handles.child[1];
+	startup.stderr = handles.child[2];
+	startup.attribute_list = list;
+	information: Process_Information = {};
+	created := rt_create_process(
+		unsafe.raw_data(application), unsafe.raw_data(line), nil, nil, 1 if count > 0 else 0, flags,
+		unsafe.raw_data(environment) if environment.len() > 0 else nil,
+		unsafe.raw_data(directory) if directory.len() > 0 else nil,
+		&mut startup, &mut information,
+	);
+	error := from_last_error(.Spawn);
+	foreach (handle in handles.child) {
+		if (handle != NO_HANDLE) { close_handle(handle); }
+	}
+	if (created == 0) {
+		foreach (handle in handles.parent) {
+			if (handle != NO_HANDLE) { close_handle(handle); }
+		}
+		return .err(error);
+	}
+	close_handle(information.thread);
+	return .ok(Child{
+		Pipe{handles.parent[0], true},
+		Pipe{handles.parent[1], false},
+		Pipe{handles.parent[2], false},
+		information.process,
+		information.id,
+	});
+}
+
+// The child's end and the parent's end of standard handle `index`, either of
+// which may be none.
+@(private)
+standard_handle :: proc(mode: Stdio, index: int) -> Result([2]Handle, io.Error) {
+	security := Security_Attributes{u32(size_of(Security_Attributes)), nil, 1};
+	switch (mode) {
+	case .Inherit:
+		own := rt_get_std_handle(STD_HANDLES[index]);
+		if (own == NO_HANDLE || own == INVALID_HANDLE) {
+			return .ok([2]Handle{NO_HANDLE, NO_HANDLE});
+		}
+		// A copy marked inheritable, so the parent's own handle keeps its flags.
+		copy: Handle = NO_HANDLE;
+		process := rt_current_process();
+		if (rt_duplicate_handle(process, own, process, &mut copy, 0, 1, DUPLICATE_SAME_ACCESS) == 0) {
+			return .err(from_last_error(.Spawn));
+		}
+		return .ok([2]Handle{copy, NO_HANDLE});
+	case .Null:
+		name := wide("NUL") or_return;
+		device := rt_create_file(
+			unsafe.raw_data(name), u32(GENERIC_READ) | u32(GENERIC_WRITE), SHARE_READ_WRITE,
+			&mut security, OPEN_EXISTING, 0, 0,
+		);
+		if (device == INVALID_HANDLE) {
+			return .err(from_last_error(.Spawn));
+		}
+		return .ok([2]Handle{device, NO_HANDLE});
+	case .Pipe:
+		read: Handle = NO_HANDLE;
+		write: Handle = NO_HANDLE;
+		if (rt_create_pipe(&mut read, &mut write, &mut security, 0) == 0) {
+			return .err(from_last_error(.Spawn));
+		}
+		// The child reads its `stdin` and writes the other two.
+		child, parent := read, write;
+		if (index != 0) { child, parent = write, read; }
+		if (rt_set_handle_information(parent, HANDLE_FLAG_INHERIT, 0) == 0) {
+			error := from_last_error(.Spawn);
+			close_handle(read);
+			close_handle(write);
+			return .err(error);
+		}
+		return .ok([2]Handle{child, parent});
+	}
+}
+
+@(private)
+close_all :: proc(handles: Handles) {
+	foreach (handle in handles.child) {
+		if (handle != NO_HANDLE) { close_handle(handle); }
+	}
+	foreach (handle in handles.parent) {
+		if (handle != NO_HANDLE) { close_handle(handle); }
+	}
+}
+
+// `name=value`, each zero-terminated, then one more zero. An empty block is
+// two zeros.
+//
+// ponytail: in the caller's order, not sorted as Windows documents for a block;
+// no `CreateProcessW` or lookup depends on the order. Sort here if a consumer
+// is found that does.
+@(private)
+environment_block :: proc(variables: []Variable) -> Result([dynamic]u16, io.Error) {
+	block: [dynamic]u16 = {};
+	foreach (variable in variables) {
+		entry := strings.join([]string_view{variable.name, variable.value}, "=");
+		units := wide(entry) or_return;
+		foreach (unit in units) { block.append(unit); }
+	}
+	if (variables.len() == 0) { block.append(0); }
+	block.append(0);
+	return .ok(move(block));
+}
+
+@(private)
+wait_native :: proc(handle: Handle) -> Result(i32, io.Error) {
+	if (rt_wait(handle, INFINITE) == WAIT_FAILED) {
+		return .err(from_last_error(.Wait));
+	}
+	code: u32 = 0;
+	if (rt_exit_code(handle, &mut code) == 0) {
+		return .err(from_last_error(.Wait));
+	}
+	return .ok(i32(code));
+}
+
+@(private)
+kill_native :: proc(handle: Handle) -> Result(Unit, io.Error) {
+	if (rt_terminate(handle, 1) == 0) {
+		error := from_last_error(.Kill);
+		// Access is denied to a process that has already exited.
+		if (rt_wait(handle, 0) == WAIT_OBJECT_0) { return .ok; }
+		return .err(error);
+	}
+	return .ok;
+}
+
+@(private)
+is_file :: proc(path: string_view) -> bool {
+	switch (units in utf16.encode(path, mem.default_allocator())) {
+	case .ok:
+		attributes := rt_file_attributes(unsafe.raw_data(units));
+		return attributes != INVALID_FILE_ATTRIBUTES && (attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) == 0;
+	case .err:
+		return false;
+	}
+}
+
+@(private)
+close_handle :: proc(handle: Handle) -> bool {
+	return rt_close_handle(handle) != 0;
+}
+
+@(private)
+read_native :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Error) {
+	wanted := destination.len();
+	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
+	read: u32 = 0;
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, nil) == 0) {
+		error := from_last_error(.Read);
+		// The child closing its end is the end of input, not a fault.
+		if (io.is(error, .Broken_Pipe)) {
+			return .err(io.make_error(.End_Of_Input, .Read));
+		}
+		return .err(error);
+	}
+	if (read == 0) {
+		return .err(io.make_error(.End_Of_Input, .Read));
+	}
+	return .ok(int(read));
+}
+
+@(private)
+write_native :: proc(handle: Handle, source: []u8) -> Result(int, io.Error) {
+	wanted := source.len();
+	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
+	written: u32 = 0;
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
+		return .err(from_last_error(.Write));
+	}
+	return .ok(int(written));
+}
+
+// One call moves at most this many bytes: the count is a `DWORD`.
+@(private) MAX_CHUNK :: 0x3FFFFFFF;
+
+// UTF-8 in, zero-terminated UTF-16 out; text containing U+0000 is
+// `Invalid_Data`.
+@(private)
+wide :: proc(text: string_view) -> Result([dynamic]u16, io.Error) {
+	switch (units in utf16.encode(text, mem.default_allocator())) {
+	case .ok:
+		return .ok(move(units));
+	case .err:
+		code := io.Code.Invalid_Data if units == .Contains_Zero else io.Code.Out_Of_Memory;
+		return .err(io.make_error(code, .Spawn));
+	}
+}
+
+// `core:fs`'s mapping, for the codes a process or a pipe reports.
+@(private)
+from_last_error :: proc(operation: io.Operation) -> io.Error {
+	native := rt_last_error();
+	code := io.Code.Other;
+	if (native == 2 || native == 3) { code = .Not_Found; }
+	else if (native == 5 || native == 32) { code = .Permission_Denied; }
+	else if (native == 8 || native == 14) { code = .Out_Of_Memory; }
+	else if (native == 109 || native == 232) { code = .Broken_Pipe; }
+	else if (native == 123 || native == 161 || native == 206 || native == 267) { code = .Invalid_Path; }
+	else if (native == 193 || native == 216) { code = .Invalid_Data; }
+	else if (native == 50 || native == 1) { code = .Unsupported; }
+	return io.make_error(code, operation, native);
+}
+
+} else {
+
+// No non-Windows backend exists yet: `LOKE_OS` is a fixed `.Windows`, so this
+// branch is never selected, and it holds only the names the portable half
+// above spells out.
+@(private) Handle :: int;
+@(private) NO_HANDLE :: 0;
+
+}

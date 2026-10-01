@@ -19,8 +19,6 @@ Main work:
 
 - settle width and precision in `fmt` together, once a program needs both
   ([open-questions.md "Width and precision in `fmt`"](open-questions.md#width-and-precision-in-fmt));
-- implement process creation with explicit argument, environment, pipe, handle,
-  and lifetime rules;
 - provide the testing and binary/text facilities needed to express the compiler
   and its test harness in Loke;
 - validate that the shipped collections, paths, filesystem, formatting, and

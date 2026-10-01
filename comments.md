@@ -71,6 +71,23 @@ mutex take read-only receivers, so they are not writes and need no exemption.
 It is a warning because it sees only globals and cannot prove that a global is
 written only before a thread starts or after it is joined.
 
+### Child processes
+
+`core:process` was deferred until handle inheritance, quoting, environment
+replacement, and pipe ownership could be decided together, because on Windows
+each default is something the caller did not ask for. `CreateProcessW` searches
+the working directory before `PATH`, which runs whatever a downloaded folder
+names `git.exe`; a child given `bInheritHandles` gets every inheritable handle
+in the parent, including another thread's pipe; and the command line is one
+string that the child splits by rules no caller should have to know. So a name
+is looked up on `PATH` alone, the arguments are quoted to come back exactly as
+given, and the handle list names the three standard handles and nothing else.
+
+Dropping a `Child` detaches it, where dropping a `Thread` joins it. A thread
+shares the parent's memory, so it must not outlive its owner, but a child shares
+nothing and is often meant to outlive it. Waiting in `drop` would hide a block,
+and killing would hide a lost result, so both are calls.
+
 ### Managed lexical storage
 
 Strings, dynamic arrays, maps, and user resource types are owning values with

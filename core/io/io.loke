@@ -68,6 +68,9 @@ Operation :: enum {
 	Environment,
 	Working_Directory,
 	Executable_Path,
+	Spawn,
+	Wait,
+	Kill,
 	Other,
 }
 

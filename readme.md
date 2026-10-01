@@ -316,6 +316,7 @@ core:log              logging through the build-selected provider
 core:math             elementary functions, complex numbers, and quaternions
 core:mem              allocators, arenas, and scratch regions
 core:os               arguments, exit, environment, and process state
+core:process          child processes and their pipes
 core:path             lexical path operations
 core:simd             cross-lane SIMD operations
 core:slice            slice algorithms

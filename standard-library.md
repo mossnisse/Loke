@@ -137,6 +137,7 @@ core:path             lexical path operations
 core:fs               files, directories, and file metadata
 core:term             standard streams and terminal key input
 core:os               arguments, exit, environment, process state
+core:process          child processes and their pipes
 ```
 
 A package marked `*` is specified by `design.md`, in the section its source
@@ -204,6 +205,9 @@ Operation :: enum {
 	Environment,
 	Working_Directory,
 	Executable_Path,
+	Spawn,
+	Wait,
+	Kill,
 	Other,
 }
 
@@ -1107,8 +1111,93 @@ A value or path passed in containing U+0000 is invalid data as well.
 `set_working_directory` given an existing file returns `Invalid_Path`,
 preserving the native error number. In Windows process and
 filesystem calls, path errors 123, 161, 206, and 267 all have that code.
-A process-spawning API is deferred until handle inheritance, quoting, environment
-replacement, and pipe ownership are designed together.
+Starting another process is [`core:process`](#coreprocess).
+
+## `core:process`
+
+A child process is started from a `Command` and owned by the `Child` it returns:
+
+```odin
+Stdio :: enum {Inherit, Null, Pipe}
+
+Variable :: struct {
+	name:  string_view,
+	value: string_view,
+}
+
+Command :: struct {
+	program:     string_view,
+	arguments:   []string_view,
+	environment: Option([]Variable),
+	directory:   string_view,
+	stdin:       Stdio,
+	stdout:      Stdio,
+	stderr:      Stdio,
+}
+
+Child :: move_only struct {
+	stdin:  Pipe,
+	stdout: Pipe,
+	stderr: Pipe,
+	// and the process, private to the package
+}
+
+Pipe :: move_only struct { /* private */ }
+
+spawn(command: Command) -> Result(Child, io.Error)
+run(command: Command) -> Result(i32, io.Error)
+Child.id(self) -> u32
+Child.wait(self: inout Child) -> Result(i32, io.Error)
+Child.kill(self: inout Child) -> Result(Unit, io.Error)
+Pipe.read / write / close / is_open
+```
+
+The rules, each one explicit so that a child never gets something the parent
+did not ask for:
+
+- **Program.** A `program` that contains `/` or `\` is a path, relative to
+  the parent's working directory, and is used as written. Any other name is
+  looked up in each directory of the parent's `PATH`, in order, as written and
+  then with `.exe` added when it has no extension. The working directory and
+  the parent's own directory are not searched. A name found nowhere is
+  `Not_Found`.
+- **Arguments.** `arguments` follow the program, which the child sees as its
+  first argument, as given. Each argument reaches the child unchanged: on
+  Windows they are quoted by the rules `CommandLineToArgvW` and the C runtime
+  parse back, and a program containing `"` cannot be quoted, so it is
+  `Invalid_Data`. Text containing U+0000 is `Invalid_Data` as well.
+- **Environment.** `.none` gives the child a copy of the parent's environment
+  when it starts; `.some(variables)` gives it exactly those, and an empty slice
+  gives it none. Names follow the `core:os` rules, and a name given twice,
+  ignoring ASCII case, is `Invalid_Data`.
+- **Directory.** An empty `directory` keeps the parent's working directory;
+  any other is the child's.
+- **Standard handles.** Each of `stdin`, `stdout`, and `stderr` is the parent's
+  own stream (`Inherit`), the null device (`Null`), or a new pipe whose other
+  end is the `Child`'s field of that name (`Pipe`). A parent with no such
+  stream gives the child none. The child inherits those three handles and no
+  other: a file or pipe the parent has open never leaks into it. `spawn` first
+  writes out what `core:fmt` holds for standard output, so a child writing to
+  an inherited stdout comes after it.
+- **Pipes.** A `Pipe` is an `io.Reader` and an `io.Writer`, owned like an
+  `fs.File`: its zero value is closed, `close` reports a failure, and `drop`
+  closes it. `stdin` is written and the other two are read; the other direction
+  is `Unsupported`, and a field the command did not pipe is closed. A read
+  after the child has closed its end is `End_Of_Input`. Pipes are not
+  buffered without bound: a parent that waits for a child, or reads one pipe to
+  its end, while the child fills the other can deadlock.
+- **Waiting.** `wait` first closes `stdin`, so a child reading to the end of
+  its input finishes, then blocks until the child exits and returns its exit
+  status. Waiting again returns the same status. On Windows the status is the
+  exit code reinterpreted as `i32`, so a crash shows as its negative `NTSTATUS`.
+  `run` spawns, waits, and returns the status.
+- **Lifetime.** `kill` ends the child at once, with status 1 on Windows, and
+  succeeds if the child has already exited. Dropping a `Child` closes its pipes
+  and its handle to the process without waiting or killing: the child runs on,
+  detached.
+
+`spawn` fails with operation `Spawn`, `wait` with `Wait`, and `kill` with
+`Kill`. `run` reports either of the first two.
 
 ## `core:math`
 
@@ -1161,7 +1250,6 @@ into a panic.
 - Unicode normalization and grapheme segmentation;
 - globbing and regular expressions;
 - memory-mapped files and file locking;
-- subprocess creation;
 - automatic serialization;
 - a universal `Result`, `Option`, or exception hierarchy; and
 - a broad `core:util` package.

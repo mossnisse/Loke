@@ -1,0 +1,24 @@
+[plain]
+[two words]
+[]
+[quote"inside]
+[trail\]
+[back\\"slash]
+[tab	here]
+[naïve ✓] .ok(0)
+exit status: .ok(7)
+HELLO PIPE .ok(0)
+inherited true .ok(0)
+replaced false .ok(0)
+true .ok(0)
+to stderr .ok(0)
+before
+[inherited]
+.ok(0)
+null:  .ok(0)
+Unsupported Unsupported Closed
+.ok(Unit{}) .ok(1) .ok(Unit{})
+Not_Found
+Invalid_Data
+Invalid_Data
+Invalid_Data

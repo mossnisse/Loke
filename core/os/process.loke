@@ -2,8 +2,7 @@
 // own path (standard-library "`core:os` additions").
 //
 // Files are **not** here. `core:os` is process state; opening a file is
-// `core:fs.open`. A process-spawning API is deferred until handle inheritance,
-// quoting, environment replacement, and pipe ownership can be designed together.
+// `core:fs.open`. Starting another process is `core:process`.
 @(public)
 package os;
 

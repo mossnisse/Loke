@@ -1,0 +1,151 @@
+// standard-library "`core:process`": the program runs itself as its child, in
+// the mode its first argument names, so every rule is checked against a child
+// whose behavior the test controls.
+package main;
+
+import "core:fmt";
+import "core:io";
+import "core:mem";
+import "core:os";
+import "core:path";
+import "core:process";
+import "core:strings";
+import "core:term";
+
+main :: proc() {
+	if (os.args.len() > 1) {
+		child(os.args[1]);
+		return;
+	}
+	switch (exe in os.executable_path()) {
+	case .ok:  parent(exe);
+	case .err: fmt.println("no executable path");
+	}
+}
+
+child :: proc(mode: string_view) {
+	if (mode == "args") {
+		for (index := 2; index < os.args.len(); index += 1) {
+			fmt.concat_to(fmt.stdout(), "[", os.args[index], "]\n");
+		}
+	} else if (mode == "exit") {
+		os.exit(7);
+	} else if (mode == "echo") {
+		// Upper-cases its input until the parent closes it.
+		input_stream := term.stdin();
+		switch (input in io.read_to_end(inout input_stream)) {
+		case .ok:
+			foreach (byte in input) {
+				fmt.concat_to(fmt.stdout(), rune(byte - 32) if byte >= u8('a') && byte <= u8('z') else rune(byte));
+			}
+			fmt.println();
+		case .err: fmt.println("read failed");
+		}
+	} else if (mode == "env") {
+		fmt.println(show(os.get_environment("LOKE_CHILD")), show(os.get_environment("PATH")) != "unset");
+	} else if (mode == "cwd") {
+		switch (directory in os.working_directory()) {
+		case .ok:  fmt.println(directory == os.args[2]);
+		case .err: fmt.println("cwd failed");
+		}
+	} else if (mode == "stderr") {
+		fmt.eprintln("to stderr");
+	} else if (mode == "wait") {
+		// Blocks on input that never comes, until it is killed.
+		input_stream := term.stdin();
+		_ = io.read_to_end(inout input_stream);
+	}
+}
+
+show :: proc(value: Result(Option(string), io.Error)) -> string {
+	switch (found in value) {
+	case .ok:  return found or_else "unset";
+	case .err: return "error";
+	}
+}
+
+parent :: proc(exe: string_view) {
+	// Each argument arrives as given, however it has to be quoted.
+	arguments := []string_view{"args", "plain", "two words", "", "quote\"inside", "trail\\", "back\\\\\"slash", "tab\there", "naïve ✓"};
+	fmt.println(captured(process.Command{program = exe, arguments = arguments, stdout = .Pipe}));
+
+	fmt.println("exit status:", process.run(process.Command{program = exe, arguments = []string_view{"exit"}}));
+
+	// Input reaches the child through its pipe, and `wait` closes it.
+	{
+		echo := spawned(process.Command{program = exe, arguments = []string_view{"echo"}, stdin = .Pipe, stdout = .Pipe});
+		_ = echo.stdin.write("hello pipe".bytes());
+		_ = echo.stdin.close();
+		fmt.println(strings.trim_right_space(text(inout echo.stdout)), echo.wait());
+	}
+
+	// The parent's environment, or exactly the one given.
+	_ = os.set_environment("LOKE_CHILD", "inherited");
+	fmt.println(captured(process.Command{program = exe, arguments = []string_view{"env"}, stdout = .Pipe}));
+	replaced := []process.Variable{process.Variable{name = "LOKE_CHILD", value = "replaced"}};
+	fmt.println(captured(process.Command{program = exe, arguments = []string_view{"env"}, environment = .some(replaced), stdout = .Pipe}));
+
+	directory := path.directory(exe);
+	fmt.println(captured(process.Command{program = exe, arguments = []string_view{"cwd", directory}, directory = directory, stdout = .Pipe}));
+
+	fmt.println(captured(process.Command{program = exe, arguments = []string_view{"stderr"}, stderr = .Pipe}, stderr = true));
+	// An inherited stdout is the parent's own, written in turn.
+	fmt.println("before");
+	fmt.println(process.run(process.Command{program = exe, arguments = []string_view{"args", "inherited"}}));
+	fmt.println("null:", captured(process.Command{program = exe, arguments = []string_view{"args", "unseen"}, stdout = .Null}));
+
+	// A pipe only reads or only writes, and one not asked for is closed.
+	{
+		piped := spawned(process.Command{program = exe, arguments = []string_view{"exit"}, stdin = .Pipe, stdout = .Pipe});
+		buffer: [4]u8 = {};
+		fmt.println(code(piped.stdin.read(buffer[:])), code(piped.stdout.write("x".bytes())), code(piped.stderr.read(buffer[:])));
+		_ = piped.wait();
+	}
+
+	// A killed child exits with status 1, and killing it again succeeds.
+	{
+		waiting := spawned(process.Command{program = exe, arguments = []string_view{"wait"}, stdin = .Pipe});
+		fmt.println(waiting.kill(), waiting.wait(), waiting.kill());
+	}
+
+	fmt.println(failure(process.Command{program = "loke_no_such_program_4A19"}));
+	fmt.println(failure(process.Command{program = "a\"b"}));
+	duplicated := []process.Variable{process.Variable{name = "Name", value = "1"}, process.Variable{name = "NAME", value = "2"}};
+	fmt.println(failure(process.Command{program = exe, environment = .some(duplicated)}));
+	fmt.println(failure(process.Command{program = exe, arguments = []string_view{"a\x00b"}}));
+}
+
+spawned :: proc(command: process.Command) -> process.Child {
+	switch (child in process.spawn(command)) {
+	case .ok:  return move(child);
+	case .err: panic("spawn failed");
+	}
+}
+
+// What the child wrote to its piped stdout, or stderr, then its exit status.
+captured :: proc(command: process.Command, stderr: bool = false) -> string {
+	child := spawned(command);
+	output := text(inout child.stderr) if stderr else text(inout child.stdout);
+	return fmt.to_string(mem.default_allocator(), strings.trim_right_space(output), child.wait());
+}
+
+text :: proc(pipe: inout process.Pipe) -> string {
+	switch (bytes in io.read_to_end(inout pipe)) {
+	case .ok:  return string.from_utf8(bytes[:]) or_else "not UTF-8";
+	case .err: return "";
+	}
+}
+
+code :: proc(outcome: Result(int, io.Error)) -> io.Code {
+	switch (error in outcome) {
+	case .ok:  return .Other;
+	case .err: return io.code_of(error);
+	}
+}
+
+failure :: proc(command: process.Command) -> io.Code {
+	switch (error in process.spawn(command)) {
+	case .ok:  return .Other;
+	case .err: return io.code_of(error);
+	}
+}
