@@ -342,10 +342,7 @@ number_end :: proc(src: []u8, lo: int, at: int, kind: Kind, found: inout [dynami
 	return {.Error, lo, ident_end(src, at)};
 }
 
-// Where an escape sequence ends, and whether it is valid.
-Escape :: struct { end: int, valid: bool }
-
-escape :: proc(src: []u8, lo: int, found: inout [dynamic]Diagnostic) -> Escape {
+escape :: proc(src: []u8, lo: int, found: inout [dynamic]Diagnostic) -> (end: int, valid: bool) {
 	at := lo + 1; // the backslash
 	// A line ending is not something a backslash escapes. Leaving it unconsumed
 	// is what lets the caller end the literal here instead of scanning into the
@@ -360,9 +357,7 @@ escape :: proc(src: []u8, lo: int, found: inout [dynamic]Diagnostic) -> Escape {
 	case 'a', 'b', 'e', 'f', 'n', 'r', 't', 'v', '\\', '"', '\'':
 		return {at, true};
 	case 'x', 'u', 'U':
-		count := 8;
-		if (ch == 'x') { count = 2; }
-		if (ch == 'u') { count = 4; }
+		count := 2 if ch == 'x' else (4 if ch == 'u' else 8);
 		value: u32 = 0;
 		for (i := 0; i < count; i += 1) {
 			if (!is_hex(peek(src, at))) {
@@ -394,16 +389,13 @@ string_literal :: proc(src: []u8, lo: int, found: inout [dynamic]Diagnostic) -> 
 			error(inout found, "L0104", lo);
 			return {.Error, lo, at};
 		}
-		if (src[at] == '"') {
-			if (valid) { return {.String, lo, at + 1}; }
-			return {.Error, lo, at + 1};
-		}
+		if (src[at] == '"') { return {Kind.String if valid else .Error, lo, at + 1}; }
 		if (src[at] == '\\') {
-			escaped := escape(src, at, inout found);
-			at = escaped.end;
-			valid = escaped.valid && valid;
+			end, escaped := escape(src, at, inout found);
+			at = end;
+			valid = escaped && valid;
 			// The escape already diagnosed the literal ending.
-			if (!escaped.valid && at_literal_end(src, at)) { return {.Error, lo, at}; }
+			if (!escaped && at_literal_end(src, at)) { return {.Error, lo, at}; }
 		} else {
 			at += 1;
 		}
@@ -434,9 +426,7 @@ rune_literal :: proc(src: []u8, lo: int, found: inout [dynamic]Diagnostic) -> To
 
 	valid := true;
 	if (src[at] == '\\') {
-		escaped := escape(src, at, inout found);
-		at = escaped.end;
-		valid = escaped.valid;
+		at, valid = escape(src, at, inout found);
 	} else {
 		// One Unicode scalar: step over a whole UTF-8 sequence.
 		at += 1;
@@ -453,8 +443,7 @@ rune_literal :: proc(src: []u8, lo: int, found: inout [dynamic]Diagnostic) -> To
 		}
 		return {.Error, lo, at};
 	}
-	if (valid) { return {.Rune, lo, at + 1}; }
-	return {.Error, lo, at + 1};
+	return {Kind.Rune if valid else .Error, lo, at + 1};
 }
 
 Spelling :: struct { text: string_view, kind: Kind }
