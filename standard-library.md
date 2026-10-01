@@ -1170,7 +1170,8 @@ did not ask for:
 - **Program.** A `program` that contains `/` or `\` is a path, relative to
   the parent's working directory, and is used as written. Any other name is
   looked up in each directory of the parent's `PATH`, in order, as written and
-  then with `.exe` added when it has no extension. The working directory and
+  then with `.exe` added when it has no extension (`core:path.extension`, so
+  a leading dot alone is not one). The working directory and
   the parent's own directory are not searched. A name found nowhere is
   `Not_Found`.
 - **Arguments.** `arguments` follow the program, which the child sees as its
@@ -1203,8 +1204,9 @@ did not ask for:
   status. Waiting again returns the same status. On Windows the status is the
   exit code reinterpreted as `i32`, so a crash shows as its negative `NTSTATUS`.
   `run` spawns, waits, and returns the status. `output` pipes stdout and
-  stderr, reads both to their end at once, stderr on a thread of its own so
-  neither pipe can fill and deadlock, and waits.
+  stderr, closes a piped stdin, reads both to their end at once, stderr on a
+  thread of its own so neither pipe can fill and deadlock, and waits. When
+  either read fails, `output` kills the child and returns that error.
 - **Lifetime.** `kill` ends the child at once, with status 1 on Windows, and
   succeeds if the child has already exited. Dropping a `Child` closes its pipes
   and its handle to the process without waiting or killing: the child runs on,

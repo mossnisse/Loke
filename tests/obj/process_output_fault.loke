@@ -1,0 +1,39 @@
+// standard-library "`core:process`": when `output` fails to collect stdout, it
+// returns that error rather than hanging. The child writes 1 MiB to stdout and
+// so blocks once the parent stops reading; the parent's allocator refuses the
+// 64 KiB block collecting it needs. `corpus_test.odin` builds the allocator from
+// `process_output_fault.c` into the object imported below, and fails this
+// program if it does not exit 0 in time.
+package main;
+
+import "core:io";
+import "core:os";
+import "core:process";
+import "core:term";
+
+foreign import fault "../tmp/process-output-fault.obj";
+
+foreign fault {
+	install_fault :: proc "c" () ---;
+}
+
+main :: proc() {
+	if (os.args.len() > 1) {
+		stream := term.stdout();
+		bytes: [4096]u8 = {};
+		for (i := 0; i < 256; i += 1) {
+			switch (_ in io.write_all(inout stream, bytes[:])) {
+			case .ok:
+			case .err: return;
+			}
+		}
+		return;
+	}
+	install_fault();
+	exe := os.executable_path() or_else "";
+	switch (out in process.output(process.Command{program = exe, arguments = []string_view{"child"}, stdin = .Null})) {
+	case .ok: os.exit(1);
+	case .err:
+		if (io.code_of(out) != .Out_Of_Memory) { os.exit(2); }
+	}
+}

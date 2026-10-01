@@ -33,6 +33,8 @@
 //   tests/os/environment.{loke,    a program run with an environment block the
 //     expected}                    program could not create for itself: a
 //                                  variable whose value is the empty string
+//   tests/obj/process_output_      a program linked with a C allocator that
+//     fault.{loke,c}               fails, run under a time limit
 //
 // Any case may sit beside a `.flags` file of extra compiler options, one per
 // line, which is how `-define` and `-collection` are exercised.
@@ -1435,6 +1437,48 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 		"an atomic invariant did not hold under contention: failure %d (see `conc_check`)",
 		run_state.exit_code,
 	)
+}
+
+// standard-library "`core:process`": `output` that fails to collect stdout
+// returns the error, rather than joining a stderr reader that the child,
+// blocked writing stdout, never lets finish. The program exits 0 when it gets
+// `Out_Of_Memory` from its failing allocator; a hang is killed and fails.
+@(test)
+output_returns_a_failed_collection :: proc(t: ^testing.T) {
+	clang, include_flags, found := host_toolchain()
+	if !found {
+		skipped_capability(t, "no clang or MSVC toolset, so the failing allocator is never built")
+		return
+	}
+	os.make_directory(TMP)
+	// The path `process_output_fault.loke` imports.
+	obj := fmt.tprintf("%s/process-output-fault.obj", TMP)
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, clang, "-c", "tests/obj/process_output_fault.c", "-I", "runtime", "-o", obj)
+	append(&command, ..include_flags)
+	cc_state, _, cc_stderr, cc_err := exec(os2.Process_Desc{command = command[:]}, context.allocator)
+	if !testing.expectf(t, cc_err == nil && cc_state.exit_code == 0, "cannot compile the allocator:\n%s", string(cc_stderr)) {
+		return
+	}
+	exe := fmt.tprintf("%s/process-output-fault.exe", TMP)
+	state, _, stderr, err := exec(
+		os2.Process_Desc{command = []string{compiler_path(), "tests/obj/process_output_fault.loke", "-o", exe}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "cannot build the program:\n%s", string(stderr)) {
+		return
+	}
+	process, start_err := os2.process_start(os2.Process_Desc{command = []string{launch_path(exe)}})
+	if !testing.expectf(t, start_err == nil, "cannot run %s", exe) {
+		return
+	}
+	run_state, wait_err := os2.process_wait(process, 60 * time.Second)
+	if wait_err != nil {
+		_ = os2.process_kill(process)
+		_, _ = os2.process_wait(process)
+	}
+	testing.expectf(t, wait_err == nil, "`output` hung after its stdout collection failed")
+	testing.expectf(t, wait_err != nil || run_state.exit_code == 0, "`output` returned the wrong outcome (exit %d)", run_state.exit_code)
 }
 
 // design.md "Build modes" and "Build-selected providers": an

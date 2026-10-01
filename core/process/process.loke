@@ -14,6 +14,7 @@ import "core:encoding/utf16";
 import "core:io";
 import "core:mem";
 import "core:os";
+import "core:path";
 import "core:strings";
 import "core:thread";
 import "core:unsafe";
@@ -124,7 +125,8 @@ impl Pipe {
 }
 
 spawn :: proc(command: Command) -> Result(Child, io.Error) {
-	if (strings.contains(command.program, "\"")) {
+	// Checked before the `PATH` lookup, which would report U+0000 as not found.
+	if (strings.contains(command.program, "\"") || strings.contains(command.program, "\x00")) {
 		return .err(io.make_error(.Invalid_Data, .Spawn));
 	}
 	switch (variables in command.environment) {
@@ -161,25 +163,34 @@ Output :: struct {
 
 // Runs `command` with its stdout and stderr piped, reads both to their end, and
 // waits. stderr is read on a thread of its own, so a child filling either pipe
-// while the other is read cannot deadlock.
+// while the other is read cannot deadlock. A failed read ends the child.
 output :: proc(command: Command) -> Result(Output, io.Error) {
 	piped := command;
 	piped.stdout = .Pipe;
 	piped.stderr = .Pipe;
 	child := spawn(piped) or_return;
+	// Nothing is written to a piped stdin, so a child reading it to its end
+	// finishes rather than waiting on the parent.
+	_ = child.stdin.close();
 	collected := shared(thread.Mutex(Collected){value = {}});
 	result: Output = {};
-	{
-		reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), collected.clone()});
-		switch (bytes in io.read_to_end(inout child.stdout)) {
-		case .ok:  result.stdout = move(bytes);
-		case .err: return .err(bytes);
-		}
+	reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), collected.clone()});
+	switch (bytes in io.read_to_end(inout child.stdout)) {
+	case .ok:  result.stdout = move(bytes);
+	case .err:
+		// The child may be blocked writing stdout, and then never closes
+		// stderr, so it is ended before the stderr reader is joined.
+		_ = child.kill();
+		reader.join();
+		return .err(bytes);
 	}
+	reader.join();
 	{
 		guard := collected.get().lock();
 		switch (failure in guard.get().failure) {
-		case .some: return .err(failure);
+		case .some:
+			_ = child.kill();
+			return .err(failure);
 		case .none:
 		}
 		result.stderr = exchange(inout guard.get().bytes, {});
@@ -253,19 +264,19 @@ find_program :: proc(program: string_view) -> Result(string, io.Error) {
 	if (strings.contains(program, "/") || strings.contains(program, "\\")) {
 		return .ok(strings.copy(program));
 	}
-	path := "";
+	directories := "";
 	switch (found in os.get_environment("PATH")) {
 	case .ok:
-		path = found or_else "";
+		directories = found or_else "";
 	case .err:
 	}
-	foreach (entry in strings.split(path, ";")) {
+	foreach (entry in strings.split(directories, ";")) {
 		directory := strings.trim(entry, "\"");
 		if (directory.len() == 0) { continue; }
 		separator: string_view = "" if strings.ends_with(directory, "\\") || strings.ends_with(directory, "/") else "\\";
 		candidate := strings.join([]string_view{directory, program}, separator);
 		if (is_file(candidate)) { return .ok(candidate); }
-		if (!strings.contains(program, ".")) {
+		if (path.extension(program).len() == 0) {
 			with_extension := strings.join([]string_view{candidate, ".exe"}, "");
 			if (is_file(with_extension)) { return .ok(with_extension); }
 		}

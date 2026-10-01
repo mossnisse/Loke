@@ -4,6 +4,7 @@
 package main;
 
 import "core:fmt";
+import "core:fs";
 import "core:io";
 import "core:mem";
 import "core:os";
@@ -119,9 +120,27 @@ parent :: proc(exe: string_view) {
 	case .ok:  fmt.println(out.status, out.stdout.len(), out.stderr.len());
 	case .err: fmt.println("output failed", out);
 	}
+	// `output` writes nothing to a piped stdin, so it closes it at once and a
+	// child reading to its end finishes.
+	switch (out in process.output(process.Command{program = exe, arguments = []string_view{"echo"}, stdin = .Pipe})) {
+	case .ok:  fmt.println(out.status, out.stdout.len(), out.stderr.len());
+	case .err: fmt.println("output failed", out);
+	}
+
+	// A leading dot names a hidden file, not an extension, so `.exe` is tried.
+	{
+		hidden := path.join([]string_view{directory, ".loke_hidden_child.exe"});
+		_ = fs.write_bytes(hidden, fs.read_bytes(exe) or_else {});
+		saved := show(os.get_environment("PATH"));
+		_ = os.set_environment("PATH", directory);
+		fmt.println("hidden:", process.run(process.Command{program = ".loke_hidden_child", arguments = []string_view{"exit"}}));
+		_ = os.set_environment("PATH", saved);
+		_ = fs.remove(hidden);
+	}
 
 	fmt.println(failure(process.Command{program = "loke_no_such_program_4A19"}));
 	fmt.println(failure(process.Command{program = "a\"b"}));
+	fmt.println(failure(process.Command{program = "cmd\x00junk"}));
 	duplicated := []process.Variable{process.Variable{name = "Name", value = "1"}, process.Variable{name = "NAME", value = "2"}};
 	fmt.println(failure(process.Command{program = exe, environment = .some(duplicated)}));
 	fmt.println(failure(process.Command{program = exe, arguments = []string_view{"a\x00b"}}));

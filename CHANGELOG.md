@@ -116,7 +116,8 @@ checklist.
   and waits. A name is found on `PATH` only, each argument reaches the child as
   given, and the child inherits its three standard handles and nothing else.
   `io.Operation` gains `Spawn`, `Wait`, and `Kill`. `output` runs a command
-  and collects its status, stdout, and stderr, reading both pipes at once.
+  and collects its status, stdout, and stderr, reading both pipes at once; it
+  closes a piped stdin, and a failed read ends the child and returns the error.
 - `examples/corpus_runner.loke` is the compiler's corpus harness written in
   Loke: it compiles each case, a file or a package directory, runs it, and
   compares its output, or under `-diagnostics` and `-syntax` checks what its
