@@ -20,7 +20,7 @@ in_region :: proc(allocator: Allocator) -> Result(Unit, Allocator_Error) {
 }
 
 main :: proc() {
-	if (in_region(mem.default_allocator()) == nil) {
+	if (in_region(mem.default_allocator()) == .ok) {
 		fmt.println(0);
 	}
 }
