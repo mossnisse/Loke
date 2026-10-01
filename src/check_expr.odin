@@ -1901,6 +1901,10 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		v.type = TYPE_STRING
 	}
 
+	if constant_zero_divisor(k, v.op, v.op_span, v.rhs) {
+		v.type = INVALID_TYPE
+		return
+	}
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
 	if !left.is_const || !right.is_const {
 		return
@@ -1912,6 +1916,18 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 	v.is_const = true
 	v.const_value = folded
+}
+
+// design.md "Integer operators": a constant zero divisor is an error even when
+// the dividend is only known at run time.
+constant_zero_divisor :: proc(k: ^Checker, op: Token_Kind, op_span: Span, divisor: Expr) -> bool {
+	value := expr_base(divisor)
+	if (op != .Slash && op != .Percent) || !value.is_const ||
+	   value.const_value.kind != .Integer || !bi_is_zero(value.const_value.integer) {
+		return false
+	}
+	errorf(k.c, op_span, "L0319", "division by zero")
+	return true
 }
 
 // `a && b` evaluates to `b` if `a` else `false` (design.md), so the right

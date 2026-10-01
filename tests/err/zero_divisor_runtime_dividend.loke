@@ -1,0 +1,19 @@
+package main;
+
+// design.md "Integer operators": a constant zero divisor is an error even when
+// the dividend is only known at run time.
+quotient :: proc(value: int) -> int { return value / 0; }
+remainder :: proc(value: int) -> int { return value % 0; }
+compound :: proc(value: int) -> int {
+	v := value;
+	v /= 0;
+	v %= 0;
+	return v;
+}
+// Floating division by zero is IEEE-754, not an error.
+floating :: proc(value: f64) -> f64 {
+	v := value;
+	v /= 0;
+	return value / 0;
+}
+main :: proc() {}

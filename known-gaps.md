@@ -836,20 +836,3 @@ handles unfixed operands, procedure contracts, and text, but no common
 pointer capability. The same helper also rejects `a if flag else b` in a
 `^int` result context. Apply the permitted weakening when choosing the common
 operand type.
-
-### A constant zero divisor is accepted when the dividend is not constant
-
-[design.md "Integer operators"](design.md#integer-operators) forbids a
-constant zero divisor:
-
-```odin
-package main;
-bad :: proc(value: int) -> int { return value / 0; }
-main :: proc() {}
-```
-
-Actual: accepted; `value % 0` and `value /= 0` are also accepted.
-`1 / 0` correctly reports L0319. `check_binary` detects zero only through
-`fold_arithmetic`, reached when both operands are constant; compound
-assignment omits that check too. Validate the constant integer divisor
-independently of whether the whole operation can fold.

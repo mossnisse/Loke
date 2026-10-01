@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A constant zero integer divisor is an error (`L0319`) even when the dividend
+  is not constant, as in `value / 0`, `value % 0`, and `value /= 0`. These
+  compiled to a run-time panic; remove the division, or divide by a variable.
 - An `inout` marker on an argument to a variadic parameter, as in
   `fmt.println("a", inout n)`, is an error (`L0370`). It was accepted and
   ignored; delete the marker, since a variadic pack receives a copy.

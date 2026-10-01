@@ -2819,6 +2819,9 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	} else if !check_value_expr(k, s.rhs[0], type, "assign") {
 		return
 	}
+	if type_is_integer(k.c, type) && constant_zero_divisor(k, op, s.op_span, s.rhs[0]) {
+		return
+	}
 	if !compound_applies(k.c, op, type) {
 		errorf(
 			k.c,
