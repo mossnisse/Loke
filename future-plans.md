@@ -8,19 +8,6 @@ Later work should extend the existing architecture without weakening
 diagnostics, semantic consistency, and reproducibility. Each
 initiative below should receive a detailed implementation plan when work begins.
 
-## Tutorials
-
-[tutorials/](tutorials/README.md) teaches Loke from installing it to a program in
-several packages and a call into C, and `tests/tutorial_test.odin` builds and
-runs every program on the pages. Keep them current as the language grows:
-
-- add a page on testing once Loke has a test facility (see
-  [Standard-library maturity](#standard-library-maturity));
-- add a page when a later initiative changes how a new user works, such as the
-  package workflow or debugging;
-- keep the explanation of borrowing patterns consistent with
-  [comments.md "Two slices of one local array in one call"](comments.md#two-slices-of-one-local-array-in-one-call).
-
 ## Standard-library maturity
 
 Complete the library capabilities required by real applications and by a
