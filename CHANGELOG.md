@@ -67,6 +67,11 @@ checklist.
 
 ### Changed
 
+- Debug builds preserve outputs ending in `.ll` or `.natvis`, including case
+  variants. Deferred locals remain visible at every emitted exit, exported
+  names stay literal, and `else if` conditions have their own source locations.
+  Debuggers show 128-bit integers and enums as exact `low` and `high` words
+  rather than saturating wide enum constants.
 - Open questions and unresolved findings now live in
   [open-questions.md](open-questions.md); [comments.md](comments.md) keeps design
   rationale and differences from Odin.

@@ -40,6 +40,102 @@ expect_rejection :: proc(t: ^testing.T, c: ^Compiler, message: string, loc := #c
 }
 
 @(test)
+debug_defer_copies_bind_each_local_address :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+stop :: proc() {}
+work :: proc(early: bool) {
+    seed := 42;
+    defer {
+        deferred := seed;
+        stop();
+        assert(deferred == 42);
+    }
+    if (early) { return; }
+}
+main :: proc() { work(false); }
+`)
+	defer destroy_checked(&p)
+	c := &p.c
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	c.debug_info = true
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	start := strings.index(module, "define internal void @loke.p.work(")
+	if !testing.expect(t, start >= 0) { return }
+	body := module[start:]
+	end := strings.index(body, "\n}\n")
+	if !testing.expect(t, end >= 0) { return }
+	body = body[:end]
+	copies := 0
+	for raw in strings.split_lines(body, context.temp_allocator) {
+		line := strings.trim_space(raw)
+		if !strings.has_prefix(line, "%deferred.") || !strings.contains(line, " = alloca ") { continue }
+		address := line[:strings.index(line, " = ")]
+		copies += 1
+		testing.expectf(t, strings.contains(body, fmt.tprintf("@llvm.dbg.declare(metadata ptr %s,", address)),
+		                "cleanup storage %s has no debug binding", address)
+	}
+	testing.expect(t, copies == 2, "the regression must cover both cleanup exits")
+}
+
+@(test)
+debug_exports_preserve_literal_link_names :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+@(export, link_name = "payment$41")
+answer :: proc "c" () -> i32 { return 7; }
+@(export, link_name = "loke.p.payment$41")
+prefixed :: proc "c" () -> i32 { return 8; }
+main :: proc() { _ = answer(); _ = prefixed(); }
+`)
+	defer destroy_checked(&p)
+	c := &p.c
+	check_exports(c)
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	c.debug_info = true
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	for name in ([]string{"payment$41", "loke.p.payment$41"}) {
+		testing.expectf(t, strings.contains(module, fmt.tprintf(`!DISubprogram(name: "%s",`, name)),
+		                "literal export %q was changed in debug metadata", name)
+	}
+}
+
+@(test)
+debug_wide_enums_expose_exact_storage :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+Wide :: enum u128 { Small = 1, Huge = 18446744073709551617 }
+Negative :: enum i128 { Huge = -(1 << 100) }
+main :: proc() {
+    unsigned := Wide.Huge;
+    signed := Negative.Huge;
+    integer: u128 = 1 << 100;
+}
+`)
+	defer destroy_checked(&p)
+	c := &p.c
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	c.debug_info = true
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	for name in ([]string{"Wide", "Negative", "u128"}) {
+		testing.expectf(t, strings.contains(module,
+		                fmt.tprintf(`!DICompositeType(tag: DW_TAG_structure_type, name: "%s", size: 128,`, name)),
+		                "wide type %q has no exact storage description", name)
+	}
+	testing.expect(t, !strings.contains(module, `!DIEnumerator(name: "Huge",`),
+	               "a wide enumerator can be saturated by CodeView")
+	testing.expect(t, strings.contains(module, `name: "low", baseType: !`) &&
+	               strings.contains(module, `name: "high", baseType: !`) &&
+	               strings.contains(module, "size: 64, offset: 64)"), "wide storage has no two-word layout")
+}
+
+@(test)
 checked_call_operations_are_cleared_by_syntax_cloning :: proc(t: ^testing.T) {
 	p: Checked
 	check_for_emission(&p, `package main;
@@ -748,4 +844,50 @@ nesting_below_the_limit_is_compiled :: proc(t: ^testing.T) {
 	finalize_semantics(&p.c)
 	_, emitted := emit_llvm_module(&p.c)
 	testing.expect(t, emitted, "deep nesting did not emit")
+}
+
+@(test)
+debug_else_if_conditions_keep_their_source_locations :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+choose :: proc(x: int) -> int {
+    if (x == 1) {
+        return 10;
+    }
+    else if (
+        y := x;
+        y == 2
+    ) {
+        return 20;
+    }
+    else {
+        return 30;
+    }
+}
+main :: proc() { assert(choose(2) == 20); }
+`)
+	defer destroy_checked(&p)
+	c := &p.c
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	c.debug_info = true
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	start := strings.index(module, "define internal i64 @loke.p.choose(")
+	if !testing.expect(t, start >= 0) { return }
+	tail := module[start:]
+	end := strings.index(tail, "\n}\n")
+	if !testing.expect(t, end >= 0) { return }
+	expected := [2]int{3, 8}
+	conditions := 0
+	for line in strings.split_lines(tail[:end], context.temp_allocator) {
+		if !strings.contains(line, " = icmp eq i64 ") { continue }
+		if !testing.expect(t, conditions < len(expected)) { return }
+		_, _, location := strings.partition(line, ", !dbg ")
+		definition := fmt.tprintf("\n%s = !DILocation(line: %d,", location, expected[conditions])
+		testing.expectf(t, location != "" && strings.contains(module, definition),
+		                "condition %d has no location on source line %d:\n%s", conditions + 1, expected[conditions], line)
+		conditions += 1
+	}
+	testing.expectf(t, conditions == len(expected), "expected two conditions, got %d", conditions)
 }

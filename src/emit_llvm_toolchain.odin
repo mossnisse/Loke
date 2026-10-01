@@ -108,11 +108,11 @@ emit_package :: proc(c: ^Compiler, opts: Options) -> int {
 		fmt.printfln("wrote %s", ll_path)
 		return 0
 	}
-	// With `-o <path>.ll` the module is the artifact, so it must stay.
-	defer if !opts.keep_temps && ll_path != opts.output {
+	// Windows paths ignore case; a temporary may name the requested artifact.
+	defer if !opts.keep_temps && !strings.equal_fold(ll_path, opts.output) {
 		os.remove(ll_path)
 	}
-	defer if !opts.keep_temps && natvis_path != "" {
+	defer if !opts.keep_temps && natvis_path != "" && !strings.equal_fold(natvis_path, opts.output) {
 		os.remove(natvis_path)
 	}
 

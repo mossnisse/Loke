@@ -1185,6 +1185,26 @@ unresolved fields remain provisional, and a fixed array's placement is checked
 before consulting the cache. [src/front_end_test.odin](src/front_end_test.odin)
 checks shared record graphs and the array placement rule.
 
+### Debug build regression fixes
+
+The debug-code review found five correctness bugs. Temporary cleanup now
+preserves output paths that alias `.ll` or `.natvis`, including Windows case
+variants. Every emitted deferred block binds its locals to that copy's storage
+and scope. Exported debug names use the literal linker name, while internal
+names use Loke's decoder. Statement locations belong to the shared emitter
+entry, and conditions restore their own locations after initializers.
+
+LLVM's CodeView writer saturates enum constants above 64 bits. Representing
+128-bit integers and enums as `low` and `high` unsigned words preserves their
+exact bits without changing language types or adding a second debug backend.
+[src/emit_llvm_test.odin](src/emit_llvm_test.odin) checks deferred bindings,
+literal names, wide storage, and actual condition locations;
+[tests/corpus_test.odin](tests/corpus_test.odin) runs outputs whose names alias
+the temporary extensions.
+
+The gate also exposed two example tests compiling the same executable in
+parallel. The driven corpus runner now uses a separate output path.
+
 ### Compiler architecture audit (2026-09-28)
 
 The audit reviewed revision `b2cc712`, tracing the driver, checking, CTFE,

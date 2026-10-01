@@ -108,6 +108,10 @@ Compile examples individually: `examples/` contains separate programs, not one m
 | `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement, loop update, and block's closing `}`. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and the value an `any_view` or `dyn` points at in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
 | `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |
 
+Under `-g`, 128-bit integers and enums are shown as two unsigned 64-bit fields,
+`low` and `high`. Signed values use two's complement; this avoids CodeView's
+64-bit enumerator limit.
+
 For an optimized executable:
 
 ```powershell

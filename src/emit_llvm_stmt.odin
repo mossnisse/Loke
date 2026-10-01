@@ -34,7 +34,6 @@ emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
 		// A block statement's full-expression boundary; initial statements and loop
 		// updates declare their own.
 		push_temporaries(e)
-		debug_mark_location(e, stmt_span(stmt))
 		emit_stmt(e, stmt)
 		pop_temporaries(e)
 	}
@@ -42,6 +41,7 @@ emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
 
 @(private)
 emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
+	debug_mark_location(e, stmt_span(stmt))
 	switch s in stmt {
 	case ^Stmt_Error:
 
@@ -450,6 +450,7 @@ emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 	if s.init != nil {
 		emit_stmt(e, s.init)
 	}
+	debug_mark_location(e, expr_span(s.cond))
 	// The condition's temporaries end before either branch runs.
 	push_temporaries(e)
 	cond := emit_expr(e, s.cond)
@@ -515,7 +516,6 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 
 	place_label(e, post)
 	if s.post != nil {
-		debug_mark_location(e, stmt_span(s.post))
 		push_temporaries(e)
 		emit_stmt(e, s.post)
 		pop_temporaries(e)
@@ -537,6 +537,7 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	if s.init != nil {
 		emit_stmt(e, s.init)
 	}
+	debug_mark_location(e, expr_span(s.subject))
 	subject_type := expr_base(s.subject).type
 	subject := emit_expr(e, s.subject)
 	done := new_label(e, "switch.done")
@@ -616,6 +617,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	if s.init != nil {
 		emit_stmt(e, s.init)
 	}
+	debug_mark_location(e, expr_span(s.subject))
 	union_type := expr_base(s.subject).type
 	erased := union_type == TYPE_ANY_VIEW
 	consumes := false

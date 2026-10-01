@@ -463,6 +463,12 @@ file other than the driver, `main.odin`, calls a procedure an `emit_llvm*.odin`
 file defines: a helper both sides need lives with its semantic owner.
 `test-all.ps1` enforces both.
 
+Debug locations start in `emit_stmt`, including direct statement emission;
+conditions and switch subjects restore their own locations after initializers.
+Each emitted copy of a deferred local has its own debug declaration and scope.
+CodeView's enumerator limit requires 128-bit integers and enums to expose their
+two 64-bit words; see [readme.md "Common options"](readme.md#common-options).
+
 Fixed-array clone failure paths use a reverse-prefix drop loop, keeping cleanup
 IR linear in the array length while destroying only the elements already built.
 `fixed_array_clone_ir_grows_linearly` checks that doubling an array stays below

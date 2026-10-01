@@ -597,7 +597,6 @@ run_one_cleanup :: proc(e: ^Emitter, entry: Deferred) {
 	if entry.stmt != nil {
 		// A deferred statement steps at its own line, then the exit continues.
 		exit := e.debug_span
-		debug_mark_location(e, stmt_span(entry.stmt))
 		emit_stmt(e, entry.stmt)
 		debug_mark_location(e, exit)
 		return

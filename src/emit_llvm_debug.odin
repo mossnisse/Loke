@@ -1,19 +1,7 @@
-// Debug information: procedures, blocks, locals, types, and source locations as
-// LLVM metadata.
-//
-// Part of the textual LLVM backend; see compiler-architecture.md. Hundreds of
-// sites write instructions, so none of them spells a location. Under `-g` the
-// emitter writes a marker line after each procedure's `define`, before each
-// statement, a loop's condition and update, and the code a block runs at its
-// closing `}`, where each scope opens and closes, and where each local gets its
-// address, and `attach_debug_info` turns the markers into `!dbg` attachments and `llvm.dbg.declare` calls once
-// the module is complete. Without `-g` no marker is written, so the module is
-// unchanged.
-//
-// A debugger finds a map's entries, and the value an `any_view` or `dyn` points
-// at, only at run time, which metadata cannot describe, so `-g` also writes
-// `Compiler.natvis`: rules the linker stores in the PDB, for Visual Studio and
-// WinDbg.
+// Markers keep source tracking out of individual instruction-emission sites;
+// they are resolved once the module is complete. See compiler-architecture.md
+// "LLVM and toolchain". Natvis follows runtime map entries and erased values
+// that LLVM metadata cannot describe.
 package lokec
 
 import "core:fmt"
@@ -32,7 +20,6 @@ OPEN_MARKER :: ";dbg.open"
 @(private = "file")
 CLOSE_MARKER :: ";dbg.close"
 
-// The procedure whose `define` line was just written.
 @(private)
 debug_mark_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	if e.c.debug_info {
@@ -40,7 +27,6 @@ debug_mark_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	}
 }
 
-// The statement whose instructions follow.
 @(private)
 debug_mark_location :: proc(e: ^Emitter, span: Span) {
 	if e.c.debug_info && span.file != NO_FILE {
@@ -58,7 +44,6 @@ debug_mark_end :: proc(e: ^Emitter, span: Span) {
 	}
 }
 
-// A scope opens or closes; its locals belong to it.
 @(private)
 debug_mark_scope :: proc(e: ^Emitter, open: bool) {
 	if e.c.debug_info {
@@ -66,7 +51,6 @@ debug_mark_scope :: proc(e: ^Emitter, open: bool) {
 	}
 }
 
-// A local or parameter, now stored at `address`.
 @(private)
 debug_mark_variable :: proc(e: ^Emitter, symbol_id: Symbol_Id, address: string) {
 	if e.c.debug_info && symbol_id != INVALID_SYMBOL {
@@ -113,9 +97,6 @@ Debug_Proc :: struct {
 	// The open scopes, innermost last: each one's `DILexicalBlock`, or -1 until
 	// a local is declared in it, so a scope without locals adds no block.
 	blocks:     [dynamic]int,
-	// One declaration per local: a `defer` body written at two exits binds its
-	// locals twice, and the first address stands for both.
-	declared:   map[Symbol_Id]bool,
 }
 
 // The module with every marker replaced: a marked procedure's `define` and its
@@ -157,7 +138,6 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 				subprogram = subprogram,
 				location   = debug_location(&d, subprogram, symbol.span),
 				span       = symbol.span,
-				declared   = make(map[Symbol_Id]bool),
 			}
 			// The `define` line just written ends in ` {`.
 			resize(&out.buf, len(out.buf) - len(" {\n"))
@@ -263,10 +243,9 @@ debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, mar
 	id, _ := strconv.parse_uint(marker[:space])
 	symbol_id := Symbol_Id(id)
 	symbol := symbol_of(d.c, symbol_id)
-	if symbol == nil || p.declared[symbol_id] || symbol.span.file != p.symbol.span.file {
+	if symbol == nil || symbol.span.file != p.symbol.span.file {
 		return
 	}
-	p.declared[symbol_id] = true
 	if len(p.blocks) > 0 && p.blocks[len(p.blocks) - 1] < 0 {
 		line, column := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
 		p.blocks[len(p.blocks) - 1] = debug_node(
@@ -330,11 +309,12 @@ debug_file :: proc(d: ^Debug_Info, file: u32) -> int {
 debug_subprogram :: proc(d: ^Debug_Info, symbol: ^Symbol, llvm_name: string) -> int {
 	file := debug_file(d, symbol.span.file)
 	line, _ := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
+	name := symbol.exported ? symbol.link_name : debug_proc_name(llvm_name)
 	flags := d.c.opt_mode != .None ? "DISPFlagDefinition | DISPFlagOptimized" : "DISPFlagDefinition"
 	return debug_node(
 		d,
 		`distinct !DISubprogram(name: "%s", scope: !%d, file: !%d, line: %d, type: !%d, scopeLine: %d, spFlags: %s, unit: !%d)`,
-		llvm_escape(debug_proc_name(llvm_name)), file, file, line, SUBROUTINE_TYPE, line, flags, UNIT,
+		llvm_escape(name), file, file, line, SUBROUTINE_TYPE, line, flags, UNIT,
 	)
 }
 
@@ -366,6 +346,14 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 	size := type_size(c, type) * 8
 	if info == nil {
 		debug_composite(d, id, "DW_TAG_structure_type", name, size, "")
+		return id
+	}
+	// CodeView clamps wide enumerators; expose their exact stored bits.
+	if (info.kind == .Int || info.kind == .Enum) && size == 128 {
+		members := strings.builder_make()
+		debug_member(d, &members, "low", TYPE_U64, 0)
+		debug_member(d, &members, "high", TYPE_U64, 8)
+		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
 		return id
 	}
 	#partial switch info.kind {
@@ -457,7 +445,6 @@ debug_composite :: proc(d: ^Debug_Info, id: int, tag, name: string, size: u64, m
 	)
 }
 
-// Appends `, !N` for one member at a byte offset.
 @(private = "file")
 debug_member :: proc(d: ^Debug_Info, members: ^strings.Builder, name: string, type: Type_Id, offset: u64) {
 	member := debug_node(

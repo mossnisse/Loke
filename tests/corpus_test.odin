@@ -480,25 +480,29 @@ expect_diagnostic_env :: proc(t: ^testing.T, command: []string, env: []string, e
 	)
 }
 
-// `-o` chooses the artifact path, and `.ll` is a legal thing to call an
-// executable. The generated module is derived from that same path, so the
-// build must not take its own output for a temporary and delete it.
+// Temporary extensions can name the requested executable on Windows.
 @(test)
-a_dot_ll_output_survives_its_own_build :: proc(t: ^testing.T) {
+a_temporary_path_alias_preserves_the_output :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	out := fmt.tprintf("%s/dot-ll-output.ll", TMP)
-	os.remove(out)
-	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-o", out}},
-		context.allocator,
-	)
-	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
-		return
+	for extension, index in ([]string{"ll", "LL", "natvis", "NATVIS"}) {
+		out := fmt.tprintf("%s/path-alias-output-%d.%s", TMP, index, extension)
+		os.remove(out)
+		state, _, stderr, err := exec(
+			os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-g", "-o", out}},
+			context.allocator,
+		)
+		if !testing.expectf(t, err == nil && state.exit_code == 0, "building to %s failed:\n%s", out, string(stderr)) {
+			continue
+		}
+		if !testing.expectf(t, os.is_file(out), "the build reported success and left no %s", out) {
+			continue
+		}
+		run_state, stdout, run_stderr, run_err := exec(
+			os2.Process_Desc{command = []string{launch_path(out)}}, context.allocator,
+		)
+		testing.expectf(t, run_err == nil && run_state.exit_code == 0, "cannot run %s:\n%s", out, string(run_stderr))
+		testing.expectf(t, normalise(string(stdout)) == "The answer is 42", "%s printed %q", out, string(stdout))
 	}
-	if !testing.expectf(t, state.exit_code == 0, "building to %s failed:\n%s", out, string(stderr)) {
-		return
-	}
-	testing.expectf(t, os.is_file(out), "the build reported success and left no %s", out)
 }
 
 // `-g` writes natvis rules for a map's entries and an `any_view`'s value, and
@@ -2208,7 +2212,7 @@ example_streaming_reads_its_input :: proc(t: ^testing.T) {
 example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	scratch, scratch_ok := filepath.abs(fmt.tprintf("%s/example-corpus_runner", TMP), context.allocator)
-	exe, exe_ok := filepath.abs(fmt.tprintf("%s/example-corpus_runner.exe", TMP), context.allocator)
+	exe, exe_ok := filepath.abs(fmt.tprintf("%s/example-corpus_runner-driven.exe", TMP), context.allocator)
 	compiler, compiler_ok := filepath.abs(compiler_path(), context.allocator)
 	if !testing.expect(t, scratch_ok && exe_ok && compiler_ok, "cannot resolve the corpus_runner paths") {
 		return
