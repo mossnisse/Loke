@@ -1,0 +1,18 @@
+package main;
+
+// design.md "Construction and conversion": a splatted scalar must be a valid
+// lane of the vector, as it would be in a scalar assignment.
+bad :: proc(value: f32) -> Simd(i32, 4) {
+	lanes: Simd(i32, 4) = value;
+	return lanes;
+}
+
+good :: proc(value: f32) -> Simd(f32, 4) {
+	lanes: Simd(f32, 4) = value;
+	return lanes;
+}
+
+main :: proc() {
+	_ = bad(1.0);
+	_ = good(1.0);
+}

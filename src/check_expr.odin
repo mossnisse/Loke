@@ -2873,7 +2873,8 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// design.md "SIMD vectors": a runtime scalar splats; a constant folds below.
 	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && !base.is_const {
 		element := type_of(k.c, type_underlying(k.c, target)).element
-		if base.type != element && !materialize(k, e, element) {
+		// The scalar must be a valid lane before it becomes the vector.
+		if base.type != element && !materialize_value_expr(k, e, element, "splat") {
 			return false
 		}
 		base.splat_from = expr_base(e).type

@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A run-time scalar splatted into a SIMD vector must be a valid lane, as in a
+  scalar assignment: `lanes: Simd(i32, 4) = value` with `value: f32` reports
+  `L0310`. It passed the checker and failed in Clang with `L0403`; convert
+  the scalar first, as in `i32(value)`.
 - An unfixed float no longer converts implicitly to an integer even when it is
   integral, as in `value: int = 1.0` (`L0353`). Write `int(1.0)`, or the
   integer literal `1`.

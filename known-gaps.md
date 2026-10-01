@@ -534,27 +534,6 @@ Actual: accepted, calling `add32`; changing the destination to `f64` calls
 `check_binary`'s hint causes `check_literal` to give the argument a concrete
 type before ranking. Keep destination conversion after operator selection.
 
-### Runtime SIMD splats skip scalar-lane type validation
-
-[design.md "Construction and conversion"](design.md#construction-and-conversion)
-requires a scalar compatible with the vector's lane type:
-
-```odin
-package main;
-bad :: proc(value: f32) -> Simd(i32, 4) {
-    lanes: Simd(i32, 4) = value;
-    return lanes;
-}
-main :: proc() { _ = bad(1.0); }
-```
-
-Actual: checking accepts it; a full build fails in Clang with L0403 because
-LLVM inserts a `float` operand into an `i32` vector. The scalar assignment
-`lane: i32 = value` correctly reports L0310. `materialize` rewrites the
-expression type to the vector after merely materializing the scalar as a
-lane. Reuse `materialize_value_expr` to validate that lane before recording
-the splat conversion.
-
 ### Designated fixed-array initializers are rejected
 
 [design.md "Fixed arrays"](design.md#fixed-arrays) permits element indices
