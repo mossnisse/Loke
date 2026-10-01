@@ -30,3 +30,12 @@ distinct !DILexicalBlock(scope: !*, file: !*, line: 42, column: 7)
 !DILocalVariable(name: "i", scope: !*, line: 38, type: !
 !DILocalVariable(name: "i", scope: !*, line: 42, type: !
 !DILocalVariable(name: "step", scope: !*, line: 43, type: !
+retainedTypes: !
+!DILocalVariable(name: "ages", scope: !*, line: 52, type: !
+distinct !DICompositeType(tag: DW_TAG_structure_type, name: "loke_rt_map_table_v1", size: 576, elements: !
+!DIDerivedType(tag: DW_TAG_member, name: "table", baseType: !
+!DIDerivedType(tag: DW_TAG_typedef, name: "map$*$key", baseType: !
+!DIDerivedType(tag: DW_TAG_typedef, name: "map$*$value", baseType: !
+distinct !DICompositeType(tag: DW_TAG_structure_type, name: "any_view", size: 128, elements: !
+!DIBasicType(name: "typeid", size: 64, encoding: DW_ATE_unsigned)
+!DIDerivedType(tag: DW_TAG_typedef, name: "typeid$*", baseType: !

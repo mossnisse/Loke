@@ -105,7 +105,7 @@ Compile examples individually: `examples/` contains separate programs, not one m
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
 | `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (comments.md "Formatting"); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
 | `-doc` | Print the package's public API as Markdown and stop: each public declaration's signature, with the comments directly above it. A standard-library directory works too: `lokec core\strings -doc`. |
-| `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement. An executable gets a `.pdb` beside it, and a panic prints the Loke call stack after its report. |
+| `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and an `any_view`'s value in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
 | `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |
 
 For an optimized executable:
@@ -192,7 +192,7 @@ package. An `obj` build selects the same way.
 | `-parse-only` | Lex and parse one source file, then stop. No import discovery, type checking, or executable. |
 | `-dump-ast` | Print that file's syntax tree, then stop at the same stage. |
 | `-emit-ll` | Check the program and write LLVM IR, without invoking Clang or linking. The `.ll` path is derived from `-o`. |
-| `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, and any object NASM assembled for a `.asm` foreign import. Normally both are removed after the Clang step. |
+| `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, the `-g` natvis rules, and any object NASM assembled for a `.asm` foreign import. Normally they are removed after the Clang step. |
 | `-check-layout` | Build and run an LLVM layout probe and compare sizes, alignments, and field offsets with the compiler's calculations. Requires the native toolchain. |
 | `-print-toolchain` | Print the Clang, MSVC toolset, and `-isystem`/`-L` flags a link would use on this machine, and whether one could run at all (`ready=yes`), then stop. Takes no input. |
 

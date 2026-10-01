@@ -28,7 +28,7 @@ main :: proc() {
 	shape: Shape = .circle(1.5);
 	name := "loke";
 	fmt.println(point.x, color, shape, name);
-	fmt.println(steps(3));
+	fmt.println(steps(3), lookup());
 }
 
 // Each loop's `i` and `step` belong to that loop's block, so the two never
@@ -44,4 +44,13 @@ steps :: proc(n: int) -> int {
 		sum += step;
 	}
 	return sum;
+}
+
+// A map and an `any_view` are described by their headers, and natvis is given
+// a typedef for each type its rules cast to (see -g's `.natvis`).
+lookup :: proc() -> int {
+	ages := map[string]int{"Bob" = 2};
+	view: any_view = ages["Bob"];
+	fmt.println(view);
+	return ages.len();
 }

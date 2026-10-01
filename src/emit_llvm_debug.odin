@@ -9,6 +9,10 @@
 // turns the markers into `!dbg` attachments and `llvm.dbg.declare` calls once
 // the module is complete. Without `-g` no marker is written, so the module is
 // unchanged.
+//
+// A debugger finds a map's entries and an `any_view`'s value only at run time,
+// which metadata cannot describe, so `-g` also writes `Compiler.natvis`: rules
+// the linker stores in the PDB, for Visual Studio and WinDbg.
 package lokec
 
 import "core:fmt"
@@ -68,6 +72,10 @@ Debug_Info :: struct {
 	types:     map[Type_Id]int,
 	// By scope, line, and column.
 	locations: map[[3]int]int,
+	// Types only natvis names, kept by the compile unit.
+	retained:  [dynamic]int,
+	map_table: int,
+	natvis:    strings.Builder,
 }
 
 // Metadata `!0` to `!3` are fixed: the unit, the two module flags, and the one
@@ -108,7 +116,9 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		files     = make(map[u32]int),
 		types     = make(map[Type_Id]int),
 		locations = make(map[[3]int]int),
+		natvis    = strings.builder_make(),
 	}
+	strings.write_string(&d.natvis, NATVIS_HEADER)
 	out := strings.builder_make()
 	current: Maybe(Debug_Proc)
 	rest := module
@@ -166,6 +176,18 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		}
 	}
 
+	debug_any_view_natvis(&d)
+	strings.write_string(&d.natvis, "</AutoVisualizer>\n")
+	c.natvis = strings.to_string(d.natvis)
+	retained := ""
+	if len(d.retained) > 0 {
+		nodes := strings.builder_make()
+		for node, index in d.retained {
+			fmt.sbprintf(&nodes, "%s!%d", index > 0 ? ", " : "", node)
+		}
+		retained = fmt.aprintf(", retainedTypes: !%d", debug_node(&d, "!{{%s}", strings.to_string(nodes)))
+	}
+
 	optimized := c.opt_mode != .None
 	fmt.sbprintln(&out, "declare void @llvm.dbg.declare(metadata, metadata, metadata)")
 	fmt.sbprintln(&out, "!llvm.dbg.cu = !{!0}")
@@ -173,8 +195,8 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	// Loke has no DWARF language code; C's describes its procedures well enough.
 	fmt.sbprintfln(
 		&out,
-		`!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !%d, producer: "lokec %s", isOptimized: %v, runtimeVersion: 0, emissionKind: FullDebug)`,
-		debug_file(&d, package_of(c, c.root_package).files[0].file), LOKE_VERSION_STRING, optimized,
+		`!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !%d, producer: "lokec %s", isOptimized: %v, runtimeVersion: 0, emissionKind: FullDebug%s)`,
+		debug_file(&d, package_of(c, c.root_package).files[0].file), LOKE_VERSION_STRING, optimized, retained,
 	)
 	fmt.sbprintln(&out, `!1 = !{i32 2, !"Debug Info Version", i32 3}`)
 	// Windows debuggers read CodeView, in a PDB the linker writes.
@@ -293,8 +315,7 @@ debug_location :: proc(d: ^Debug_Info, scope: int, span: Span) -> int {
 }
 
 // A type as a debugger shows it, laid out as the program stores it. A type
-// with no closer description, such as a map or an interface view, is a named
-// block of its size.
+// with no closer description is a named block of its size.
 @(private = "file")
 debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 	if id, found := d.types[type]; found {
@@ -321,6 +342,8 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 		debug_node_at(d, id, `!DIBasicType(name: "%s", size: %d, encoding: DW_ATE_float)`, name, size)
 	case .Rune:
 		debug_node_at(d, id, `!DIBasicType(name: "%s", size: 32, encoding: DW_ATE_UTF)`, name)
+	case .Typeid:
+		debug_node_at(d, id, `!DIBasicType(name: "%s", size: %d, encoding: DW_ATE_unsigned)`, name, size)
 	case .Pointer, .C_Pointer:
 		debug_node_at(d, id, "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !%d, size: 64)", debug_type(d, info.element))
 	case .Raw_Pointer, .CString_View:
@@ -351,7 +374,7 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 			d, id, `!DICompositeType(tag: DW_TAG_enumeration_type, name: "%s", baseType: !%d, size: %d, elements: !{{%s})`,
 			name, debug_type(d, info.element), size, strings.to_string(enumerators),
 		)
-	case .Struct:
+	case .Struct, .Any_View, .Dyn:
 		members := strings.builder_make()
 		for field, index in info.fields {
 			member := symbol_of(c, field)
@@ -374,6 +397,8 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
 	case .Union:
 		debug_union(d, id, type, name)
+	case .Map:
+		debug_map(d, id, type)
 	case:
 		debug_composite(d, id, "DW_TAG_structure_type", name, size, "")
 	}
@@ -432,6 +457,108 @@ debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 			tag, shape.tag_bytes * 8, shape.tag_offset * 8),
 	)
 	debug_composite(d, id, "DW_TAG_structure_type", name, shape.size * 8, members)
+}
+
+// Natvis reads `{expr}` in display text and parses C++ type names in casts,
+// so the rules below are templates filled by replacement rather than `fmt`.
+@(private = "file")
+NATVIS_HEADER :: `<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="string">
+    <DisplayString>{data,[len]s8}</DisplayString>
+  </Type>
+  <Type Name="string_view">
+    <DisplayString>{data,[len]s8}</DisplayString>
+  </Type>
+`
+
+@(private = "file")
+NATVIS_MAP :: `  <Type Name="@MAP@">
+    <DisplayString>{{ len={len} }}</DisplayString>
+    <Expand>
+      <Item Name="[len]">len</Item>
+      <Item Name="[allocator]">allocator</Item>
+      <CustomListItems Condition="table != 0">
+        <Variable Name="slot" InitialValue="0"/>
+        <Loop Condition="slot &lt; table->slot_count">
+          <If Condition="*((unsigned char*)table + table->controls_offset + slot) == 2">
+            <Item Name="[{*(@MAP@$key*)((char*)table + table->keys_offset + slot * @KEY_SIZE@)}]">*(@MAP@$value*)((char*)table + table->values_offset + slot * @VALUE_SIZE@)</Item>
+          </If>
+          <Exec>slot++</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+`
+
+// A typedef natvis can cast to: `[]u8` or `map[string]int` is no C++ name.
+@(private = "file")
+debug_natvis_type :: proc(d: ^Debug_Info, name: string, type: Type_Id) {
+	append(&d.retained, debug_node(d, `!DIDerivedType(tag: DW_TAG_typedef, name: "%s", baseType: !%d)`, name, debug_type(d, type)))
+}
+
+// A map's header, named `map$<type>` for natvis to match, and a rule listing
+// its occupied slots. The table is `loke_rt_map_table_v1` in
+// runtime/loke_rt.h: a header, then control bytes, keys, and values, each at
+// an offset the header stores.
+@(private = "file")
+debug_map :: proc(d: ^Debug_Info, id: int, type: Type_Id) {
+	c := d.c
+	info := type_of(c, type)
+	if d.map_table == 0 {
+		d.map_table = d.count
+		d.count += 1
+		header := strings.builder_make()
+		for field, index in ([]string{"slot_count", "occupied", "tombstones"}) {
+			debug_member(d, &header, field, TYPE_INT, u64(index) * 8)
+		}
+		for field, index in ([]string{"seed", "controls_offset", "keys_offset", "values_offset", "block_size", "block_align"}) {
+			debug_member(d, &header, field, TYPE_U64, u64(index + 3) * 8)
+		}
+		debug_composite(d, d.map_table, "DW_TAG_structure_type", "loke_rt_map_table_v1", 9 * 64, strings.to_string(header))
+	}
+	name := fmt.aprintf("map$%d", u32(type))
+	members := strings.builder_make()
+	debug_pointer_member(d, &members, "table", d.map_table, 0)
+	debug_member(d, &members, "len", TYPE_INT, 8)
+	debug_member(d, &members, "cap", TYPE_INT, 16)
+	debug_member(d, &members, "allocator", TYPE_ALLOCATOR, 24)
+	debug_composite(d, id, "DW_TAG_structure_type", name, type_size(c, type) * 8, strings.to_string(members))
+
+	debug_natvis_type(d, fmt.aprintf("%s$key", name), info.key)
+	debug_natvis_type(d, fmt.aprintf("%s$value", name), info.element)
+	rule, _ := strings.replace_all(NATVIS_MAP, "@MAP@", name)
+	rule, _ = strings.replace_all(rule, "@KEY_SIZE@", fmt.aprint(type_size(c, info.key)))
+	rule, _ = strings.replace_all(rule, "@VALUE_SIZE@", fmt.aprint(type_size(c, info.element)))
+	strings.write_string(&d.natvis, rule)
+}
+
+// design.md "any_view type": `data` points at a value of the type `id` names,
+// so the rule shows that value, with a case for every type that has a typeid.
+@(private = "file")
+debug_any_view_natvis :: proc(d: ^Debug_Info) {
+	if TYPE_ANY_VIEW not_in d.types {
+		return
+	}
+	shown := strings.builder_make()
+	expanded := strings.builder_make()
+	for type in d.c.typeid_order {
+		value := typeid_value(d.c, type)
+		if value == 0 || type_size(d.c, type) == 0 {
+			continue
+		}
+		name := fmt.aprintf("typeid$%d", value)
+		debug_natvis_type(d, name, type)
+		condition := fmt.aprintf(`Condition="id == %d"`, value)
+		strings.write_string(&shown, strings.concatenate({"    <DisplayString ", condition, ">{*(", name, "*)data}</DisplayString>\n"}))
+		strings.write_string(&expanded, strings.concatenate({"      <ExpandedItem ", condition, ">*(", name, "*)data</ExpandedItem>\n"}))
+	}
+	strings.write_string(&d.natvis, "  <Type Name=\"any_view\">\n")
+	strings.write_string(&d.natvis, "    <DisplayString Condition=\"data == 0\">nil</DisplayString>\n")
+	strings.write_string(&d.natvis, strings.to_string(shown))
+	strings.write_string(&d.natvis, "    <DisplayString>{{ id={id} }}</DisplayString>\n    <Expand>\n")
+	strings.write_string(&d.natvis, strings.to_string(expanded))
+	strings.write_string(&d.natvis, "    </Expand>\n  </Type>\n")
 }
 
 // The name a debugger shows: `@loke.p.core$3afmt.print` is `core:fmt.print`.

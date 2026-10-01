@@ -96,6 +96,14 @@ emit_package :: proc(c: ^Compiler, opts: Options) -> int {
 		errorf(c, no_span(), "L0401", "cannot write `%s`", ll_path)
 		return 2
 	}
+	natvis_path := ""
+	if c.natvis != "" && c.build_mode == .Exe {
+		natvis_path = replace_ext(opts.output, ".natvis")
+		if !os.write_entire_file(natvis_path, transmute([]u8)c.natvis) {
+			errorf(c, no_span(), "L0401", "cannot write `%s`", natvis_path)
+			return 2
+		}
+	}
 	if opts.emit_ll {
 		fmt.printfln("wrote %s", ll_path)
 		return 0
@@ -104,11 +112,14 @@ emit_package :: proc(c: ^Compiler, opts: Options) -> int {
 	defer if !opts.keep_temps && ll_path != opts.output {
 		os.remove(ll_path)
 	}
+	defer if !opts.keep_temps && natvis_path != "" {
+		os.remove(natvis_path)
+	}
 
 	if c.build_mode == .Obj {
 		return compile_object(c, ll_path, opts.output, opts)
 	}
-	return link(c, ll_path, opts.output, opts)
+	return link(c, ll_path, natvis_path, opts.output, opts)
 }
 
 // design.md "Build modes": one relocatable object, with runtime and foreign
@@ -235,7 +246,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 	defer if !opts.keep_temps {
 		os.remove(ll_path)
 	}
-	if code := link(c, ll_path, opts.output, opts); code != 0 {
+	if code := link(c, ll_path, "", opts.output, opts); code != 0 {
 		return code
 	}
 	defer if !opts.keep_temps {
@@ -426,7 +437,7 @@ compile_runtime_sources :: proc(command: []string, staging: string) -> bool {
 // (decisions A5, A7). Outside a developer prompt it cannot find the MSVC
 // toolset, so its headers and libraries are located here.
 @(private = "file")
-link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> int {
+link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Options) -> int {
 	clang := find_clang()
 
 	runtime_dir := resolved_runtime_dir(opts)
@@ -463,6 +474,9 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	// the PDB.
 	if c.debug_info {
 		append(&command, "-g")
+	}
+	if natvis_path != "" {
+		append(&command, fmt.aprintf("-Wl,/NATVIS:%s", natvis_path))
 	}
 	runtime_inputs := sources
 	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, opts); prebuilt != nil {

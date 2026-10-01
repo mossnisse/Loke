@@ -215,6 +215,8 @@ Compiler :: struct {
 	build_mode:          Build_Mode,
 	// `-g`: emit debug information (`emit_llvm_debug.odin`).
 	debug_info:          bool,
+	// Under `-g`, the natvis rules emission wrote for the linker to put in the PDB.
+	natvis:              string,
 	// `-debug`, the value `LOKE_DEBUG` is predeclared with.
 	debug:               bool,
 	// The build-configuration enum types, synthesized once and shared by the

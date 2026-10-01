@@ -501,6 +501,35 @@ a_dot_ll_output_survives_its_own_build :: proc(t: ^testing.T) {
 	testing.expectf(t, os.is_file(out), "the build reported success and left no %s", out)
 }
 
+// `-g` writes natvis rules for a map's entries and an `any_view`'s value, and
+// the linker stores them in the PDB, where Visual Studio and WinDbg find them.
+// No debugger runs here, so this pins the rules and their delivery only.
+@(test)
+a_debug_build_carries_its_natvis :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so nothing is linked")
+		return
+	}
+	os.make_directory(TMP)
+	out := fmt.tprintf("%s/natvis.exe", TMP)
+	state, _, stderr, err := exec(
+		os2.Process_Desc{command = []string{compiler_path(), "tests/ll/debug_info.loke", "-g", "-keep-temps", "-o", out}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "the -g build failed:\n%s", string(stderr)) {
+		return
+	}
+	natvis, has_natvis := os.read_entire_file(fmt.tprintf("%s/natvis.natvis", TMP), context.allocator)
+	if !testing.expect(t, has_natvis, "-g -keep-temps left no .natvis") {
+		return
+	}
+	for rule in ([]string{`<Type Name="string">`, `<Type Name="map$`, `$key*)((char*)table + table->keys_offset + slot * 24)`, `<Type Name="any_view">`, `{*(typeid$`}) {
+		testing.expectf(t, strings.contains(string(natvis), rule), "the .natvis has no `%s`:\n%s", rule, string(natvis))
+	}
+	pdb, has_pdb := os.read_entire_file(fmt.tprintf("%s/natvis.pdb", TMP), context.allocator)
+	testing.expect(t, has_pdb && strings.contains(string(pdb), "<CustomListItems"), "the PDB does not carry the natvis rules")
+}
+
 // Every diagnostic code the compiler can write is pinned by a case somewhere,
 // so a new one arrives with the fixture that demonstrates it rather than
 // silently unpinned. The exceptions are listed here rather than discovered: an

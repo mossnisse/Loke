@@ -123,8 +123,9 @@ The lexer keeps every comment's span on its `Source`, in source order, for the
 formatter, the documentation generator, and hover to find by position.
 
 `-g` already emits each procedure, its locals and their types scoped to their
-blocks, and each statement's line, as CodeView in a PDB, at any `-opt` level; a
-panic in a `-g` executable prints its Loke frames; and `-debug` sets
+blocks, and each statement's line, as CodeView in a PDB, at any `-opt` level,
+with natvis rules for a string's text, a map's entries, and an `any_view`'s
+value; a panic in a `-g` executable prints its Loke frames; and `-debug` sets
 `LOKE_DEBUG` on its own
 ([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin),
 [runtime/trace.c](runtime/trace.c)). `lokec <package> -doc` prints a checked
@@ -134,8 +135,10 @@ rules in [comments.md "Formatting"](comments.md#formatting).
 
 Main work:
 
-- show a map's entries and an interface view's value rather than only their
-  names and sizes;
+- show a `dyn` value's referent: its witness table is a private constant
+  with no `typeid`, so natvis cannot tell the concrete type; check the
+  natvis rules for maps and `any_view` in Visual Studio and WinDbg, which no
+  test here can run;
 - give locations finer than a statement where stepping needs them: a loop's
   update, the code after an `if`, and the cleanup a scope runs on exit carry
   the line of the last statement emitted before them today;

@@ -445,7 +445,7 @@ be file-private.
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
 | `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
-| `emit_llvm_debug.odin` | `-g`: procedure, statement, scope, and local markers, turned into `!dbg` attachments, `llvm.dbg.declare` calls, and debug metadata once the module is complete. |
+| `emit_llvm_debug.odin` | `-g`: procedure, statement, scope, and local markers, turned into `!dbg` attachments, `llvm.dbg.declare` calls, and debug metadata once the module is complete, and the natvis rules the linker puts in the PDB. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |
 
 `emit_llvm_module` is an artifact boundary: it consumes a checked compilation
@@ -654,8 +654,8 @@ ordering drift that successful execution may hide.
 - The compiler remains in Odin; v1 has no self-hosting path (future-plans.md
   sketches one).
 - Debug information covers procedures, statement lines, and locals scoped to
-  their blocks; a map, an interface view, and the other runtime
-  headers are described only by name and size.
+  their blocks. Natvis rules in the PDB show a map's entries and an
+  `any_view`'s value; a `dyn` value shows only its data and witness pointers.
 - Non-Windows targets, recoverable panic, macros, owning type
   erasure, and a GC allocator are not part of v1.
 - Raw-pointer provenance, `core:unsafe`, foreign retention/aliasing, and
