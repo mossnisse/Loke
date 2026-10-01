@@ -470,6 +470,98 @@ The correctness findings and reproductions are in
   when repairing call reborrows: call arguments need their own derived slots,
   rather than merely having no destination.
 
+## Review cleanup in `check.odin`
+
+The confirmed specification divergences and reproductions are in
+[known-gaps.md](known-gaps.md). The remaining recommendations concern
+[src/check.odin](src/check.odin):
+
+- Keep the existing sections, `Checker_Location`, and `Body_Context` save/restore
+  units. Share signature guards between named and anonymous procedures, and
+  declaration validation between ordinary and destructured initialization.
+  Small shared checks address the divergent paths; another checker abstraction
+  or a file split by size is unnecessary.
+- Replace `field_initialized_attribute` with the existing
+  `find_attribute(attributes, "initialized")`. Remove the empty `!evaluated`
+  branch in `resolve_enum_members` by checking `evaluated` positively.
+- Correct the receiver comment after `resolve_proc_signature`: `self: ^T`
+  can be a receiver; `self: ^mut T` is the excluded form. Replace
+  `report_unresolved_type`'s claim that `resolve_type_syntax` reports nothing:
+  several resolution paths do report diagnostics.
+- Remove obvious helper synopses, such as `check_proc_body`'s, and shorten the
+  failed-initializer comment to why an erroneous initializer cannot be
+  evaluated. Keep comments about partial record resolution, store reacquisition,
+  selection phases, and body-context restoration. Replace generic `design.md:`
+  references with exact section headings, as required by [AGENTS.md](AGENTS.md).
+
+Three consistency questions remain:
+
+- **Foreign bindings and exported definitions use separate symbol tables.**
+  `check_exports` checks exports against exports and foreign bindings against
+  foreign bindings, without comparing the two sets:
+
+  ```odin
+  package main;
+  foreign import system "system:kernel32.lib";
+  foreign system {
+      @(link_name="answer") other :: proc() -> f64 ---;
+  }
+  @(export) answer :: proc "c" () -> i32 { return 7; }
+  main :: proc() { _ = other(); }
+  ```
+
+  This compiles and emits `define i32 @answer()` with `call double @answer()`.
+  Matching signatures compile; two incompatible foreign bindings for the same
+  name report L0600. Should compatible foreign bindings resolve to an exported
+  definition, with incompatible ones rejected in the same whole-program pass?
+  [design.md "@(export)"](design.md#export) and
+  [design.md "Foreign system"](design.md#foreign-system) should specify this
+  boundary.
+- **Variadic position is enforced only on named declarations.**
+  `bad: proc(nums: ..int, tail: int);` is accepted, while
+  `bad :: proc(nums: ..int, tail: int) {}` reports L0574. The existing
+  [variadic shape regression](tests/err/m6a_variadic_shape.loke) states the
+  intended trailing-only rule, but
+  [design.md "Variadic parameters"](design.md#variadic-parameters) and
+  [grammar.md "Procedures"](grammar.md#procedures) do not state it explicitly.
+  Specify the restriction and reuse the declaration check for procedure types.
+- **Field visibility conflicts differ from declaration conflicts.**
+  `field_is_public` accepts a field with `@(public, private)` as public, while
+  `declaration_is_public` reports L0332 for that combination. Both attributes
+  apply to fields under [design.md "Attributes"](design.md#attributes).
+  Clarify the conflict rule and share its validation.
+
+## Review cleanup in `check_expr.odin`
+
+The new correctness findings and reproductions are in
+[known-gaps.md](known-gaps.md). The existing anonymous-procedure signature
+finding from the `check.odin` review also applies here. Recommendations for
+[src/check_expr.odin](src/check_expr.odin):
+
+- Keep the current feature sections and the `select_field`/`inherit_capability`
+  split. Reuse `materialize_value_expr` for SIMD lane validation and
+  `index_arguments`' candidate context for slicing. Share the packed-storage
+  check with slicing and its existing borrow callers; no general conversion
+  abstraction is needed.
+- Delete the misplaced expected-type comment above `Expr_Position`. Correct
+  `promoted_field_path`'s "same level" claim: competing promotion routes are
+  ambiguous even at different depths, under
+  [design.md "Promoted struct fields"](design.md#promoted-struct-fields).
+- Describe `materialize` briefly as recording implicit conversions for the
+  emitter and provenance walker. Its current "untyped node" description misses
+  typed views, erasure, and splats. Correct the `convert_const` comment when
+  repairing float-to-integer conversion; an exact implicit conversion is still
+  forbidden. Remove the stale "M2" and "M4" stage labels.
+- Shorten `select_slicers`' comment to why expected capability filters
+  candidates before ranking. Explain packed ancestry in terms of alignment
+  within the same storage, rather than "anywhere in the selector chain".
+  Keep the contextual comments about materialized constants, interface
+  diagnostics, evaluator budgets, and `zero_const(build=false)`.
+- Update shift-count comments to the current
+  [design.md "Arithmetic operators"](design.md#arithmetic-operators) rule:
+  typed signed counts are accepted and read as unsigned. Replace generic
+  `design.md` references with exact headings, as [AGENTS.md](AGENTS.md) requires.
+
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md "Formatting"](comments.md#formatting).

@@ -232,3 +232,624 @@ equivalent empty map followed by two indexed assignments is accepted.
 `prov_composite_content` asks `prov_element_step` to interpret map keys as
 record field names, so literal values are joined into every entry. Reuse
 `prov_map_entry_step` and the existing key/value projections.
+
+### Return checking does not enforce the declared `inout` mode before conversion
+
+[design.md "`inout` results"](design.md#inout-results) requires
+`return inout place`, with exactly the declared storage type and no result
+conversion. Two invalid programs are accepted:
+
+```odin
+package main;
+bad :: proc() -> inout int {
+    local := 42;
+    return local;
+}
+main :: proc() {}
+```
+
+The emitter returns `local`'s address because the signature is `inout`, but
+the provenance walker reads the value because the return lacks that marker.
+Adding the marker correctly reports L0526. `check_return` must validate the
+return mode before classification and provenance analysis.
+
+```odin
+package main;
+bad :: proc(value: inout [1]int) -> inout []int {
+    return inout value;
+}
+main :: proc() {}
+```
+
+`check_return` calls `check_value_expr`, which converts the array expression
+to a slice before the exact-type check. The expression retains its place
+flags; LLVM materializes a slice in a frame-local temporary and returns that
+temporary's address, which becomes invalid when the procedure returns.
+`inout string` returned as `inout string_view` is also accepted. Check the
+original place type without materializing a value conversion.
+
+### Entry-point validation accepts incompatible result modes and conventions
+
+[design.md "Program entry and exit"](design.md#program-entry-and-exit)
+requires an ordinary `loke` procedure returning nothing or an `i32` value:
+
+```odin
+package main;
+code: static i32 = 0;
+main :: proc() -> inout i32 { return inout code; }
+```
+
+Actual: accepted. `validate_executable` checks the result type but ignores
+its mode. LLVM defines a pointer-returning `main`, while the startup wrapper
+calls it as returning `i32`, producing an address-derived exit status.
+`main :: proc "c" () {}` is also incorrectly accepted. Validate both the
+result mode and calling convention before publishing the entry point.
+
+### Unnamed padding fields disappear from record layout
+
+[grammar.md "Records"](grammar.md#records) defines `_` fields as unnamed
+padding:
+
+```odin
+package main;
+Padded :: struct { first: u8, _: [7]u8, last: u8 }
+static_assert(size_of(Padded) == 9);
+static_assert(offset_of(Padded, last) == 8);
+main :: proc() {}
+```
+
+Actual: both assertions fail; size 2 and offset 1 pass instead.
+`resolve_struct_fields` uses `new_binding_symbol`, which treats `_` as a
+discard, then omits its invalid symbol from the record's fields. Preserve
+the padding's storage without exposing a name.
+
+### Destructured static-duration variables lose their initializers or reinitialize
+
+[design.md "Destructuring"](design.md#destructuring) projects each field,
+and [design.md "Storage modifiers"](design.md#storage-modifiers) requires
+static-duration initialization before code runs:
+
+```odin
+package main;
+Pair :: struct { first: int, second: int }
+a, b := Pair{1, 2};
+main :: proc() -> i32 { return i32(a * 10 + b); }
+```
+
+Actual: exit status 0, expected 12. The checker records a destructuring plan
+without individual constant field values; global emission initializes both
+variables to zero.
+
+```odin
+package main;
+Pair :: struct { first: int, second: int }
+next :: proc() -> int {
+    a, b: static = Pair{1, 2};
+    a += 1;
+    return a + b;
+}
+main :: proc() -> i32 {
+    first := next();
+    second := next();
+    return i32(first * 10 + second);
+}
+```
+
+Actual: 44, expected 45. `emit_local_decl` sends the destructuring plan to
+runtime initialization before its ordinary static-duration guard. Preserve
+each field's constant initializer and honor its storage duration.
+
+### Destructuring bypasses constant-initialization and written-type validation
+
+[design.md "Storage modifiers"](design.md#storage-modifiers) requires
+constant initializers:
+
+```odin
+package main;
+Pair :: struct { first: int, second: int }
+seed: int = 3;
+make_pair :: proc() -> Pair { return Pair{seed, seed + 1}; }
+a, b := make_pair();
+main :: proc() {}
+```
+
+Actual: accepted. Binding the whole result instead correctly reports L0341
+because compile-time evaluation cannot read mutable `seed`. The destructuring
+branch returns from `check_decl_inner` before `require_const`.
+
+```odin
+package main;
+Pair :: struct { first: string, second: bool }
+main :: proc() {
+    a, b: int = Pair{"hello", true};
+    _ = a;
+    _ = b;
+}
+```
+
+Actual: accepted; `a` becomes `string` and `b` becomes `bool`, ignoring `int`.
+[design.md "Destructuring"](design.md#destructuring) specifies the inferred
+`:=` declaration form; the checker must reject this spelling or apply the
+written destination type, rather than silently replace it. Keep declaration
+validation common to destructured and ordinary initializers.
+
+### Local static-duration initializers do not request compile-time evaluation
+
+[design.md "Storage modifiers"](design.md#storage-modifiers) permits
+compile-time constant initialization, including evaluated procedure calls:
+
+```odin
+package main;
+answer :: proc() -> int { return 7; }
+main :: proc() -> i32 {
+    n: static int = answer();
+    return i32(n);
+}
+```
+
+Actual: L0506; the equivalent file-scope initializer is accepted.
+`check_decl_inner` requests `require_const` only for file-scope variables;
+`record_static_local` later tests the unevaluated expression's `is_const`
+flag. Use the same compile-time evaluation path for local `static` and
+`thread_local` initialization.
+
+### Required-result diagnostics run before the surrounding `when` scope is complete
+
+[design.md "when statement"](design.md#when-statement) gives the selected
+branch no scope, and [design.md "@(require_results)"](design.md#require_results)
+allows a later read of the binding:
+
+```odin
+package main;
+@(require_results) counted :: proc() -> int { return 1; }
+main :: proc() {
+    when (true) { value := counted(); }
+    _ = value;
+}
+```
+
+Expected: accepted. Actual: L0698 claims `value` is never used.
+`check_when_stmt` checks its selected block with `check_stmts`, which reports
+unread results before the following statements are checked. A binding of a
+`Result` value has the same failure. Report after the complete lexical scope
+has been checked, including selected branches.
+
+### Required results bound in control-flow headers are never checked
+
+[design.md "@(require_results)"](design.md#require_results) also applies to
+local bindings in headers:
+
+```odin
+package main;
+@(require_results) counted :: proc() -> int { return 1; }
+main :: proc() { if (value := counted(); true) {} }
+```
+
+Actual: accepted, although `value` is never read. An unused initializer
+binding in `for` or `switch` is also accepted. `report_unread_required_results`
+visits only declarations directly in statement sequences; header initializers
+are checked individually and never reach that report. Include them when their
+header scope finishes; an equivalent unused block declaration reports L0698.
+
+### Compile-time-only types reach runtime records and anonymous procedures
+
+[design.md "`type` and `typeid`"](design.md#type-and-typeid) prohibits runtime
+record storage and procedure values containing `type`. Both programs are
+accepted:
+
+```odin
+package main;
+Item :: struct { value: type }
+main :: proc() { value: Item = {}; }
+```
+
+`resolve_struct_fields` does not reject compile-time-only field types, and
+the ordinary storage gate accepts a record containing `type`. Validate fields
+where their types are resolved.
+
+```odin
+package main;
+main :: proc() {
+    f := proc(t: type) {};
+    f(int);
+}
+```
+
+LLVM emits a runtime lambda taking `i64` and passes `0` for `int`.
+The named equivalent correctly reports L0378. `check_proc_literal` calls
+`check_proc_body` directly, bypassing `check_proc`'s signature-error and
+compile-time-only component guards. Share those guards before checking or
+hoisting either form.
+
+### Compound indexed assignment omits the computed-setter fallback
+
+[design.md "Indexing and slicing"](design.md#indexing-and-slicing) requires
+compound assignment through `operator([])` and `operator([]=)` when the
+container has no place-returning index operator:
+
+```odin
+package main;
+Box :: struct { value: int }
+impl Box {
+    get :: operator([]) proc(self: Box, index: int) -> int {
+        return self.value;
+    }
+    set :: operator([]=) proc(self: inout Box, index, value: int) {
+        self.value = value;
+    }
+}
+main :: proc() { box := Box{3}; box[0] += 4; }
+```
+
+Actual: L0419; `box[0] = box[0] + 4` is accepted. `check_compound_assign`
+requires an assignable place before considering the setter path used by
+ordinary assignment. Implement the specified fallback while evaluating the
+receiver and indices only once.
+
+### A bare non-receiver parameter inherits its enclosing `impl` type
+
+[grammar.md "Procedures"](grammar.md#procedures) allows an omitted type and
+default only for `self`; see also
+[design.md "Receiver forms"](design.md#receiver-forms):
+
+```odin
+package main;
+Counter :: struct { n: int }
+impl Counter {
+    read :: proc(other) -> int { return other.n; }
+}
+main :: proc() { assert(Counter.read(Counter{7}) == 7); }
+```
+
+Actual: accepted, with `other` inferred as `Counter`. `resolve_proc_signature`
+and `normalize_signature_parameter` allow inference for the first parameter
+without requiring its name to be `self`. Require the actual receiver form;
+`other: Counter` is a valid explicit parameter.
+
+### Floating literals round through `f64` before their destination width
+
+[design.md "Number literals"](design.md#number-literals) requires one
+round-to-nearest, ties-to-even conversion from the unfixed value:
+
+```odin
+package main;
+Actual :: f32(1.0000000596046448);
+Expected :: f32(1.00000011920928955078125);
+static_assert(Actual == Expected);
+main :: proc() {}
+```
+
+Actual: L0387; `Actual` is 1.0. The decimal exceeds the exact midpoint
+1.000000059604644775390625 and must round upward. `check_literal` first uses
+`parse_f64`, which rounds it to that midpoint; the later `f32` conversion
+rounds down. The nearby decimal 1.0000000596046449 passes. Preserve the unfixed
+literal's precision until the destination conversion.
+
+### Destination context rounds unfixed floating arithmetic before its result
+
+[design.md "Number literals"](design.md#number-literals) keeps an unfixed
+expression unfixed until conversion:
+
+```odin
+package main;
+VALUE: f32 : 16777217.0 - 16777216.0;
+static_assert(VALUE == 1.0);
+main :: proc() {}
+```
+
+Actual: L0387; `VALUE` is 0. `check_binary` passes the destination hint to
+both literals, and `check_literal` converts each to `f32` before subtraction.
+Computing an inferred constant first, then converting its result to `f32`,
+correctly produces 1. Preserve unfixed operands until a concrete operand or
+the final destination requires conversion.
+
+### A destination type selects a floating operator overload
+
+[design.md "Operator lookup and overload resolution"](design.md#operator-lookup-and-overload-resolution)
+requires selection to depend on arguments, never the destination:
+
+```odin
+package main;
+Marker :: struct {}
+impl Marker {
+    add32 :: operator(+) proc(left: f32, right: Marker) -> f32 {
+        return left;
+    }
+    add64 :: operator(+) proc(left: f64, right: Marker) -> f64 {
+        return left;
+    }
+}
+main :: proc() {
+    marker: Marker = {};
+    chosen: f32 = 1.0 + marker;
+    _ = chosen;
+}
+```
+
+Actual: accepted, calling `add32`; changing the destination to `f64` calls
+`add64`. The inferred declaration correctly reports L0391 ambiguity.
+`check_binary`'s hint causes `check_literal` to give the argument a concrete
+type before ranking. Keep destination conversion after operator selection.
+
+### Qualified associated constants bypass dependency-cycle diagnostics
+
+[design.md "Constant declarations"](design.md#constant-declarations)
+rejects constant dependency cycles:
+
+```odin
+package main;
+Item :: struct {}
+impl Item { Count :: Item.Count; }
+main :: proc() {}
+```
+
+Actual: accepted. Using `Item.Count` in `main` instead produces internal
+backend error L0405, rather than a cycle diagnostic. Ordinary `Count :: Count`
+reports L0324; an acyclic associated constant works.
+`select_associated_member` handles `.Unchecked` declarations but annotates
+ones already `.Checking`. Apply the same cycle handling as ordinary names.
+
+### Runtime SIMD splats skip scalar-lane type validation
+
+[design.md "Construction and conversion"](design.md#construction-and-conversion)
+requires a scalar compatible with the vector's lane type:
+
+```odin
+package main;
+bad :: proc(value: f32) -> Simd(i32, 4) {
+    lanes: Simd(i32, 4) = value;
+    return lanes;
+}
+main :: proc() { _ = bad(1.0); }
+```
+
+Actual: checking accepts it; a full build fails in Clang with L0403 because
+LLVM inserts a `float` operand into an `i32` vector. The scalar assignment
+`lane: i32 = value` correctly reports L0310. `materialize` rewrites the
+expression type to the vector after merely materializing the scalar as a
+lane. Reuse `materialize_value_expr` to validate that lane before recording
+the splat conversion.
+
+### Integral unfixed floats implicitly convert to integers
+
+[design.md "Number literals"](design.md#number-literals) and
+[design.md "Implicit type conversions"](design.md#implicit-type-conversions)
+prohibit this conversion:
+
+```odin
+package main;
+main :: proc() { value: int = 1.0; _ = value; }
+```
+
+Actual: accepted. `convert_const` allows an implicit float-to-integer
+conversion when truncation is exact. Require an explicit conversion; the
+valid `int(1.0)` control works. The current
+[scalar corpus](tests/run/m2_scalars.loke) asserts the obsolete implicit rule
+and must change with the implementation.
+
+### Typed constant integer conversions do not preserve wrapping semantics
+
+[design.md "Type conversion"](design.md#type-conversion) keeps the low bits
+when converting between integer types:
+
+```odin
+package main;
+BASE :: i32(300);
+main :: proc() -> i32 { value := u8(BASE); return i32(value); }
+```
+
+Expected: 44. Actual: L0373; an equivalent runtime variable converts
+successfully. `convert_const` requires the mathematical value to fit even
+for this explicit typed conversion. Preserve source-type information so
+typed integer conversions wrap while unfixed constants retain their
+representability checks.
+
+### Constant aggregate conversions reject valid identity and distinct conversions
+
+[design.md "Distinct types"](design.md#distinct-types) preserves representation
+when converting to the underlying type or back:
+
+```odin
+package main;
+Wrapped :: distinct [2]int;
+BASE :: [2]int{1, 2};
+main :: proc() { wrapped := Wrapped(BASE); _ = wrapped; }
+```
+
+Actual: L0373; a runtime array operand works. `convert_const` accepts a struct
+or array aggregate only when its recorded type exactly equals the target,
+omitting the valid distinct conversion.
+
+```odin
+package main;
+Choice :: union { left:, right: }
+CHOSEN :: Choice.right;
+main :: proc() { choice := Choice(CHOSEN); _ = choice; }
+```
+
+Actual: L0373 says `Choice` cannot convert to `Choice`; a runtime operand
+works under [design.md "Type conversion"](design.md#type-conversion).
+The constant union conversion case accepts only nil and has no aggregate
+identity path. Preserve constant aggregate values in both valid conversions.
+
+### `nil` manufactures a union value without a nil state
+
+[design.md "Zero values and @(zero=)"](design.md#zero-values-and-zero)
+gives unions no nil state:
+
+```odin
+package main;
+Choice :: union { value: int }
+main :: proc() { choice: Choice = nil; _ = choice; }
+```
+
+Actual: accepted, although `{}` correctly reports L0424 because the union
+has no designated zero. `assignable` and `convert_const` include unions among
+nil-compatible types. Reject nil regardless of whether a union designates
+a zero variant; its zero is that variant, not nil.
+
+### Designated fixed-array initializers are rejected
+
+[design.md "Fixed arrays"](design.md#fixed-arrays) permits element indices
+and index ranges as initializer keys:
+
+```odin
+package main;
+main :: proc() { values := [3]int{2 = 9}; _ = values; }
+```
+
+Expected: `[0, 0, 9]`. Actual: L0372 says the literal is positional.
+`check_array_literal` rejects every keyed element. The positional equivalent
+works; implement the specified designated forms and zero only omitted slots.
+
+### Wide runtime indices and slice bounds are truncated before validation
+
+[design.md "Fixed arrays"](design.md#fixed-arrays) and
+[design.md "Slices"](design.md#slices) require checked bounds:
+
+```odin
+package main;
+import "core:fmt";
+main :: proc() {
+    xs := [dynamic]int{42};
+    index: u128 = 18446744073709551616;
+    fmt.println(xs[index]);
+}
+```
+
+Actual: prints 42; expected: bounds panic. `check_integer_index` preserves
+the valid `u128` type, but `emit_index_below` truncates it to `i64` before
+comparing with the length. Slice indexing uses the same helper. Fixed-array
+indexing correctly checks the original width first.
+
+```odin
+package main;
+import "core:fmt";
+main :: proc() {
+    xs := [1]int{42};
+    lo: u128 = 18446744073709551616;
+    hi: u128 = 18446744073709551617;
+    fmt.println(xs[lo:hi]);
+}
+```
+
+Actual: prints `[42]`; expected: bounds panic. `emit_slice_bounds` also
+truncates before validation. Preserve full-width comparisons before narrowing
+valid indices or endpoints for address formation in
+[src/emit_llvm_expr.odin](src/emit_llvm_expr.odin).
+
+### Packed-storage address checks miss array projections and follow unrelated pointers
+
+[design.md "@(packed)"](design.md#packed) and
+[design.md "Address operator"](design.md#address-operator) prohibit exposing
+misaligned packed fields as ordinary addresses:
+
+```odin
+package main;
+Packed :: struct @(packed) { tag: u8, data: [1]int }
+main :: proc() {
+    p := Packed{1, {42}};
+    pointer := &p.data[0];
+    assert(pointer^ == 42);
+}
+```
+
+Actual: accepted; `&p.data` correctly reports L0614. Slicing `p.data[:]`
+also succeeds and exposes the same offset-1 storage. `packed_field_reached`
+stops at an index, and built-in slicing never checks packed ancestry. The
+emitter then uses ordinary aligned integer loads. Trace embedded array
+projections, apply the borrow check to slicing, and retain alignment when
+lowering direct packed element accesses.
+
+```odin
+package main;
+Cell :: struct { value: int }
+Packed :: struct @(packed) { tag: u8, pointer: ^Cell }
+main :: proc() {
+    cell := Cell{42};
+    p := Packed{1, &cell};
+    pointer := &p.pointer.value;
+    assert(pointer^ == 42);
+}
+```
+
+Expected: accepted; the address names `cell`'s ordinary storage. Actual:
+L0614 calls `pointer` a packed field. First copying `p.pointer` to `q` and
+using `&q.value` succeeds. Packed ancestry must stop when a dereference enters
+separate storage, rather than following the pointer's source field.
+
+### Typed rune indices are rejected for fixed arrays
+
+[design.md "Fixed arrays"](design.md#fixed-arrays) explicitly permits an
+integer or rune index:
+
+```odin
+package main;
+main :: proc() {
+    xs := [2]int{10, 20};
+    index: rune = '\x01';
+    assert(xs[index] == 20);
+}
+```
+
+Actual: L0362; an `int` index works. `check_integer_index` accepts only
+`type_is_integer`. Include runes and extend constant-index handling beyond
+the `.Integer` constant kind.
+
+### User slicing discards the endpoint types supplied by its candidates
+
+[design.md "Implicit selector expression"](design.md#implicit-selector-expression)
+and [design.md "Indexing and slicing"](design.md#indexing-and-slicing) allow
+the selected signature to supply endpoint context:
+
+```odin
+package main;
+Endpoint :: enum { Start, End }
+Box :: struct { value: int }
+impl Box {
+    span :: operator([:]) proc(self: Box, lo, hi: Endpoint) -> int {
+        return self.value;
+    }
+}
+main :: proc() { box := Box{42}; assert(box[.Start:.End] == 42); }
+```
+
+Actual: L0385 for both endpoints; qualified `Endpoint.Start` and `Endpoint.End`
+work. `check_slice` calls `index_arguments` without its selected `slicers`,
+so `agreed_index_param` has no context. Pass the candidates as user indexing
+already does.
+
+### Compatible mutable and read-only pointers fail comparison unification
+
+[design.md "Comparison operators"](design.md#comparison-operators) permits
+comparison when either operand is assignable to the other:
+
+```odin
+package main;
+same :: proc(a: ^mut int, b: ^int) -> bool { return a == b; }
+main :: proc() {}
+```
+
+Actual: L0354, although `^mut int` implicitly weakens to `^int`. An explicit
+local `view: ^int = a` followed by `view == b` succeeds. `unify_operands`
+handles unfixed operands, procedure contracts, and text, but no common
+pointer capability. The same helper also rejects `a if flag else b` in a
+`^int` result context. Apply the permitted weakening when choosing the common
+operand type.
+
+### A constant zero divisor is accepted when the dividend is not constant
+
+[design.md "Integer operators"](design.md#integer-operators) forbids a
+constant zero divisor:
+
+```odin
+package main;
+bad :: proc(value: int) -> int { return value / 0; }
+main :: proc() {}
+```
+
+Actual: accepted; `value % 0` and `value /= 0` are also accepted.
+`1 / 0` correctly reports L0319. `check_binary` detects zero only through
+`fold_arithmetic`, reached when both operands are constant; compound
+assignment omits that check too. Validate the constant integer divisor
+independently of whether the whole operation can fold.
