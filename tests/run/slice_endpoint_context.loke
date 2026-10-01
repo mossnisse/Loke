@@ -1,0 +1,20 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Indexing and slicing": the selected `operator([:])` gives its
+// endpoints their expected type, so `.Start` resolves as `counts[.North]` does.
+Endpoint :: enum { Start, Middle, End }
+
+Box :: struct { value: int }
+
+impl Box {
+	span :: operator([:]) proc(self: Box, lo, hi: Endpoint) -> int {
+		return self.value * 10 + int(hi) - int(lo);
+	}
+}
+
+main :: proc() {
+	box := Box{4};
+	fmt.println(box[.Start:.End], box[.Middle:.End]);
+}

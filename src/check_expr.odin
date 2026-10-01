@@ -1356,7 +1356,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 	}
 	endpoints := make([]Expr, 2, k.c.semantic_allocator)
 	endpoints[0], endpoints[1] = v.lo, v.hi
-	args, ok := index_arguments(k, v.operand, endpoints)
+	args, ok := index_arguments(k, v.operand, endpoints, slicers)
 	if !ok {
 		if length_omitted && expr_base(v.hi).type == INVALID_TYPE {
 			add_notef(k.c, v.span, "an omitted high endpoint is the operand's `len()`")

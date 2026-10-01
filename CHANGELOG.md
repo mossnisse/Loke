@@ -180,6 +180,8 @@ checklist.
 
 ### Fixed
 
+- A user `operator([:])` gives its endpoints their expected type, so
+  `box[.Start:.End]` resolves the implicit selectors. It reported `L0385`.
 - A built-in index may be a rune, as in `xs[index]` for `index: rune`
   (design.md "Fixed arrays"). It reported `L0362`.
 - A field, an index, or a built-in method applied to a parenthesized

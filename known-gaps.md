@@ -778,29 +778,6 @@ L0614 calls `pointer` a packed field. First copying `p.pointer` to `q` and
 using `&q.value` succeeds. Packed ancestry must stop when a dereference enters
 separate storage, rather than following the pointer's source field.
 
-### User slicing discards the endpoint types supplied by its candidates
-
-[design.md "Implicit selector expression"](design.md#implicit-selector-expression)
-and [design.md "Indexing and slicing"](design.md#indexing-and-slicing) allow
-the selected signature to supply endpoint context:
-
-```odin
-package main;
-Endpoint :: enum { Start, End }
-Box :: struct { value: int }
-impl Box {
-    span :: operator([:]) proc(self: Box, lo, hi: Endpoint) -> int {
-        return self.value;
-    }
-}
-main :: proc() { box := Box{42}; assert(box[.Start:.End] == 42); }
-```
-
-Actual: L0385 for both endpoints; qualified `Endpoint.Start` and `Endpoint.End`
-work. `check_slice` calls `index_arguments` without its selected `slicers`,
-so `agreed_index_param` has no context. Pass the candidates as user indexing
-already does.
-
 ### Compatible mutable and read-only pointers fail comparison unification
 
 [design.md "Comparison operators"](design.md#comparison-operators) permits
