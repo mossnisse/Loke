@@ -120,31 +120,6 @@ Holder` call variant also demonstrates the omission. `prov_retain_into_self`
 adds a loan of the destination's own root but discards the incoming content
 dependencies. Preserve those dependencies as well as the self-storage loan.
 
-### An unrelated non-escaping argument erases a callback result's unknown provenance
-
-[design.md "Temporaries and procedure boundaries"](design.md#temporaries-and-procedure-boundaries)
-requires an erased callback result to retain unknown provenance when no
-escaping argument establishes its root:
-
-```odin
-package main;
-source: thread_local int = 1;
-kept: static ^int = nil;
-get :: proc(@(escape=none) scratch: ^int) -> ^int { return &source; }
-main :: proc() {
-    action: proc(@(escape=none) scratch: ^int) -> ^int = get;
-    value := 2;
-    kept = action(&value);
-}
-```
-
-Actual: accepted, allowing a thread-local pointer into process-lifetime
-storage. Expected: L0647. Both `action(nil)` and the direct `get(&value)`
-correctly reject that retention. `prov_call_result` synthesizes an unknown
-loan only when both escaping result sources and all borrowed arguments are
-empty; the unrelated `escape=none` argument disables the fallback. Determine
-the fallback from result dependencies, independently of call-only borrows.
-
 ### A marked allocator alternative covers an unrelated unknown reset
 
 [design.md "Allocator regions and region provenance"](design.md#allocator-regions-and-region-provenance)

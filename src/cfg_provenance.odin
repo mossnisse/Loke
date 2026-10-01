@@ -3524,7 +3524,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		if len(borrowed) > 0 {
 			prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 		}
-		return prov_store_call_results(graph, v, actuals, borrowed)
+		return prov_store_call_results(graph, v, actuals)
 	}
 	actuals := make([][]int, len(v.bound), graph.alloc)
 	borrowed: []int
@@ -3694,7 +3694,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
-	return prov_store_call_results(graph, v, actuals, borrowed)
+	return prov_store_call_results(graph, v, actuals)
 }
 
 // design.md "Weakening and reborrows": a mutable carrier lent to a call is
@@ -4126,14 +4126,14 @@ prov_carries_borrow :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 @(private = "file")
-prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int, borrowed: []int) -> []int {
+prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) -> []int {
 	// A diverging call's value is never produced (design.md "Diverging
 	// procedures"), so it contributes no sources.
 	if v.type == TYPE_VOID || v.type == INVALID_TYPE || call_diverges(graph.k.c, v) {
 		return nil
 	}
 	result := Prov_Call_Result {
-		loans          = prov_call_result(graph, v, actuals, borrowed, v.type),
+		loans          = prov_call_result(graph, v, actuals, v.type),
 		region         = prov_call_region(graph, v, v.type),
 		region_content = prov_call_region_content(graph, v),
 	}
@@ -4168,7 +4168,6 @@ prov_call_result :: proc(
 	graph: ^Flow_Graph,
 	v: ^Expr_Call,
 	actuals: [][]int,
-	borrowed: []int,
 	result_type: Type_Id,
 ) -> []int {
 	c := graph.k.c
@@ -4220,7 +4219,10 @@ prov_call_result :: proc(
 		if _, is_call := v.operation.(Call_Procedure); is_call && symbol_of(c, callee) == nil {
 			append(&graph.plain_calls, v)
 		}
-		if len(out) == 0 && len(borrowed) == 0 {
+		// design.md "Temporaries and procedure boundaries": with no escaping
+		// argument to derive from, the result's root is unknown. An argument
+		// borrowed only for the call establishes nothing.
+		if len(out) == 0 {
 			out = prov_synthetic_borrow(graph, v, .Unknown, result_type)
 		}
 	}

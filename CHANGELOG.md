@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- The result of a call through a procedure value has unknown provenance when no
+  escaping argument establishes its root, even if another argument is borrowed
+  for the call, so `kept = action(&value)` with an `escape=none` parameter
+  cannot store it in `static` storage (`L0647`).
 - A map literal whose key borrows a local, as in `map[^int]int{&local = 1}`,
   can no longer escape the local (`L0526`), as an inserted key already could
   not.
