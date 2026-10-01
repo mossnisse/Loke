@@ -67,56 +67,6 @@ evaluating the second element. Saving `p` in a separate variable before the
 exchange produces L0526. Capture each evaluated value's provenance before
 subsequent effects, retaining the source identity needed for reborrow checks.
 
-### Allocators in ordinary record fields lose their region dependencies
-
-[design.md "Allocator regions and region provenance"](design.md#allocator-regions-and-region-provenance)
-requires an owner's region to outlive it:
-
-```odin
-package main;
-import "core:mem";
-Holder :: struct { allocator: Allocator }
-bad :: proc() -> [dynamic]int {
-    arena := mem.Arena.init();
-    holder := Holder{arena.allocator()};
-    xs: [dynamic]int via holder.allocator = {};
-    xs.append(42);
-    return xs;
-}
-main :: proc() {}
-```
-
-Actual: accepted, letting an owner escape the arena that backs it. Expected:
-L0592, as already reported when `via arena.allocator()` is written directly.
-`prov_declare_region` skips the non-managed `Holder`, while the selector's
-`prov_region_content_at` finds no field region. `prov_store_region` also skips
-non-managed allocator handles. Preserve allocator dependencies through
-aggregate initialization and stores, using the existing region-bearing type
-classification rather than management alone.
-
-### A marked allocator alternative covers an unrelated unknown reset
-
-[design.md "Allocator regions and region provenance"](design.md#allocator-regions-and-region-provenance)
-requires every received region that may be reset to have the reset promise:
-
-```odin
-package main;
-bad :: proc(@(allocator_reset) allowed: Allocator, erased: any_view) {
-    selected := erased.as(Allocator) or_else allowed;
-    free_all(selected);
-}
-main :: proc() {}
-```
-
-Actual: accepted. Expected: L0538 because extraction from `any_view` can
-select an unknown, unpromised allocator. Replacing `allowed` with `nil`
-correctly produces L0538. `prov_reset_promise` examines parameter bits, and
-`prov_reset` treats one marked parameter as coverage even when the set also
-contains an unknown or default alternative. Coverage must include every
-non-local alternative. A conditional selecting a marked parameter or an
-allocator in another parameter's record field is also accepted and can reset
-a caller's live owner backed by the unmarked region.
-
 ### Read-only call arguments do not reborrow existing mutable carriers
 
 [design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)

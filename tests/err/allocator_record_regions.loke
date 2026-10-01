@@ -1,0 +1,27 @@
+package main;
+
+import "core:mem";
+
+// design.md "Allocator regions and region provenance": an allocator held in an
+// ordinary record keeps its region, whether the record was initialised with it
+// or it was stored into a field, so an owner backed by it cannot outlive it.
+Holder :: struct { allocator: Allocator }
+
+initialised :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	holder := Holder{arena.allocator()};
+	xs: [dynamic]int via holder.allocator = {};
+	xs.append(42);
+	return xs;
+}
+
+stored :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	holder: Holder = {};
+	holder.allocator = arena.allocator();
+	xs: [dynamic]int via holder.allocator = {};
+	xs.append(42);
+	return xs;
+}
+
+main :: proc() {}

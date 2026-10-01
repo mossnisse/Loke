@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- An allocator kept in an ordinary record, as in `Holder{arena.allocator()}`,
+  keeps its region: an owner allocated `via holder.allocator` cannot outlive
+  `arena` (`L0592`). A reset through a selection that may be an unknown or
+  default allocator, or one in another parameter's record field, needs that
+  allocator's promise too (`L0538`), even when another alternative is an
+  `@(allocator_reset)` parameter.
 - After a call that may store an `escape=stored` argument into itself, every
   part of the argument may hold what any part borrowed: reading `h.right` after
   `copy(inout h)` stored `h.left`'s borrow of an ended local is `L0513`.

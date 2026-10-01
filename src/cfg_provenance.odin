@@ -1705,7 +1705,13 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 			return prov_call_node_region(graph, call)
 		}
 		if root, path, ok := prov_place_of(graph, e); ok {
-			return prov_region_content_at(graph, root, path)
+			set := prov_region_content_at(graph, root, path)
+			// An allocator no write named, such as one in a received record's
+			// field, is one the analysis cannot name.
+			if region_is_empty(set) && type_underlying(c, expr_base(e).type) == TYPE_ALLOCATOR {
+				set.unknown = true
+			}
+			return set
 		}
 		return prov_read_region(graph, e)
 	case ^Expr_Binary, ^Expr_Unary, ^Expr_Slice:
@@ -1991,6 +1997,12 @@ prov_reset_promise :: proc(graph: ^Flow_Graph, set: Region_Set) -> (covered: boo
 		}
 		covered = true
 	}
+	// Every alternative that is not this body's own needs the promise; the
+	// default or an unknown allocator, such as one extracted from an `any_view`,
+	// never has it.
+	if set.default || set.unknown {
+		return false, ""
+	}
 	return covered, ""
 }
 
@@ -2243,7 +2255,14 @@ prov_store_loans :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, span:
 // written through one. `element` stores into a container's elements.
 @(private)
 prov_store_region :: proc(graph: ^Flow_Graph, destination: Expr, value: Expr, element := false) {
-	if value == nil || !type_is_managed(graph.k.c, expr_base(value).type) {
+	if value == nil {
+		return
+	}
+	// An owner, an allocator handle, or a record holding either.
+	c := graph.k.c
+	type := expr_base(value).type
+	if !type_is_managed(c, type) && type_underlying(c, type) != TYPE_ALLOCATOR &&
+	   (type_is_carrier(c, type) || !prov_type_has_region(c, type)) {
 		return
 	}
 	prov_store_region_set(graph, destination, prov_result_region(graph, value), prov_owner_name(graph, value), element)
@@ -2961,7 +2980,11 @@ prov_declare_region :: proc(
 		}
 		return
 	}
-	if !type_is_managed(graph.k.c, sym.type) {
+	// A record holding an allocator handle keeps its region as an owner does
+	// (design.md "Allocator regions and region provenance"), but owns nothing a
+	// reset would strand.
+	managed := type_is_managed(graph.k.c, sym.type)
+	if !managed && !prov_type_has_region(graph.k.c, sym.type) {
 		return
 	}
 	set := prov_empty_region(graph)
@@ -2987,7 +3010,7 @@ prov_declare_region :: proc(
 	}
 	// Every lexical owner registers for reset checks (design.md); its region may
 	// be learned from a later assignment.
-	if sym.duration == .None {
+	if sym.duration == .None && managed {
 		append(&graph.owners_in_scope, id)
 	}
 }
