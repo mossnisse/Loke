@@ -2950,6 +2950,13 @@ report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 			type_name(k.c, target),
 		)
 	case .Float:
+		if type_is_integer(k.c, target) {
+			errorf(
+				k.c, base.span, "L0353", "a float does not convert implicitly to `%s`; an explicit `%s(...)` truncates it",
+				type_name(k.c, target), type_name(k.c, target),
+			)
+			return
+		}
 		errorf(k.c, base.span, "L0353", "%v is not representable by `%s`", base.const_value.float, type_name(k.c, target))
 	case .Nil:
 		errorf(k.c, base.span, "L0310", "`nil` is not a value of `%s`", type_name(k.c, target))
@@ -3048,14 +3055,19 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			}
 			return Const_Value{kind = .Integer, integer = value.integer}, true
 		case .Float:
+			// design.md "Implicit type conversions": a float never becomes an
+			// integer implicitly, even when it is integral.
+			if !explicit {
+				return value, false
+			}
 			// The interval the runtime conversion checks (design.md "Type
 			// conversion"); NaN and infinities fail it.
 			limit := power_of_two(int(bits) - (signed ? 1 : 0))
 			if !(value.float >= (signed ? -limit : 0) && value.float < limit) {
 				return value, false
 			}
-			truncated, exact, ok := bi_from_f64_trunc(storage, value.float)
-			if !ok || (!explicit && !exact) {
+			truncated, _, ok := bi_from_f64_trunc(storage, value.float)
+			if !ok {
 				return value, false
 			}
 			if !bi_fits(storage, truncated, bits, signed) {

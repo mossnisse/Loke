@@ -1,6 +1,6 @@
 L0353
 @10:18
-1.5 is not representable by `int`
+a float does not convert implicitly to `int`
 L0351
 @11:17
 `1e400` is not a valid floating-point literal

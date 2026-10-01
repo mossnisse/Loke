@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- An unfixed float no longer converts implicitly to an integer even when it is
+  integral, as in `value: int = 1.0` (`L0353`). Write `int(1.0)`, or the
+  integer literal `1`.
 - `main` with an `inout` result or a foreign calling convention, as in
   `main :: proc "c" ()`, is an error (`L0303`). An `inout i32` result exited
   with an address-derived status; return the status by value from a `loke`

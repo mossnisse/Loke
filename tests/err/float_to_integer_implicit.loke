@@ -1,0 +1,15 @@
+package main;
+
+// design.md "Implicit type conversions": an unfixed float never becomes an
+// integer implicitly, even when it is integral.
+Count: int : 2.0;
+
+take :: proc(n: u8) -> u8 { return n; }
+
+main :: proc() {
+	value: int = 1.0;
+	_ = take(3.0);
+	explicit := int(1.0);
+	_ = value;
+	_ = explicit;
+}

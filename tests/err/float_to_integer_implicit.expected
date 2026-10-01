@@ -1,0 +1,8 @@
+L0353
+@5:14
+a float does not convert implicitly to `int`
+L0353
+@10:15
+L0353
+@11:11
+a float does not convert implicitly to `u8`

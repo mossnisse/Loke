@@ -51,7 +51,7 @@ main :: proc() {
 	s: rawptr = nil;
 	fmt.println(1 if s == nil else 0);
 
-	// An untyped float constant materialises as an integer when it is exact.
-	exact_float: int = 1.0;
+	// An unfixed float becomes an integer only through a written conversion.
+	exact_float := int(1.0);
 	fmt.println(exact_float);
 }

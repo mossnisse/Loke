@@ -573,23 +573,6 @@ expression type to the vector after merely materializing the scalar as a
 lane. Reuse `materialize_value_expr` to validate that lane before recording
 the splat conversion.
 
-### Integral unfixed floats implicitly convert to integers
-
-[design.md "Number literals"](design.md#number-literals) and
-[design.md "Implicit type conversions"](design.md#implicit-type-conversions)
-prohibit this conversion:
-
-```odin
-package main;
-main :: proc() { value: int = 1.0; _ = value; }
-```
-
-Actual: accepted. `convert_const` allows an implicit float-to-integer
-conversion when truncation is exact. Require an explicit conversion; the
-valid `int(1.0)` control works. The current
-[scalar corpus](tests/run/m2_scalars.loke) asserts the obsolete implicit rule
-and must change with the implementation.
-
 ### Typed constant integer conversions do not preserve wrapping semantics
 
 [design.md "Type conversion"](design.md#type-conversion) keeps the low bits
