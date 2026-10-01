@@ -95,6 +95,8 @@ checklist.
 - Under `-g`, the cleanup a block runs on exit has the line of its closing
   `}`, and a `for` loop's condition and update, and a `foreach` loop's step,
   have the loop header's line, rather than the last statement's.
+- Under `-g`, a deferred statement has its own line when the scope exit runs
+  it, rather than the exit's.
 
 ### Added
 

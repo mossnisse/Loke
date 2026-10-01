@@ -22,6 +22,8 @@ Emitter :: struct {
 	struct_names: map[Type_Id]string,
 	// Every witness table's global, numbered in commit order (`name_witnesses`).
 	witness_names: map[^Witness]string,
+	// Under `-g`, the span the last location marker named.
+	debug_span:   Span,
 	// design.md "@(packed)": a place's alignment, by pointer temporary, when it is
 	// below the pointee's natural one.
 	place_align:  map[string]u64,

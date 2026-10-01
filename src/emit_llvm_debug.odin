@@ -45,6 +45,7 @@ debug_mark_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 debug_mark_location :: proc(e: ^Emitter, span: Span) {
 	if e.c.debug_info && span.file != NO_FILE {
 		fmt.sbprintfln(&e.b, "%s%d %d", LOCATION_MARKER, span.file, span.lo)
+		e.debug_span = span
 	}
 }
 

@@ -655,8 +655,9 @@ ordering drift that successful execution may hide.
   parallel package compilation.
 - The compiler remains in Odin; v1 has no self-hosting path (future-plans.md
   sketches one).
-- Debug information covers procedures, statement lines, a loop header's and a
-  closing `}`'s lines, and locals scoped to their blocks. Natvis rules in the PDB show a map's entries and the value an
+- Debug information covers procedures, statement lines, a loop header's, a
+  closing `}`'s, and a deferred statement's lines, and locals scoped to their
+  blocks; compiler-provided members such as iterators and `clone` have none. Natvis rules in the PDB show a map's entries and the value an
   `any_view` or `dyn` points at.
 - Non-Windows targets, recoverable panic, macros, owning type
   erasure, and a GC allocator are not part of v1.

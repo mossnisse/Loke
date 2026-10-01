@@ -47,10 +47,11 @@ steps :: proc(n: int) -> int {
 }
 
 // A map and an `any_view` are described by their headers, and natvis is given
-// a typedef for each type its rules cast to (see -g's `.natvis`).
+// a typedef for each type its rules cast to (see -g's `.natvis`). The deferred
+// print steps at its own line when the procedure returns.
 lookup :: proc() -> int {
 	ages := map[string]int{"Bob" = 2};
 	view: any_view = ages["Bob"];
-	fmt.println(view);
+	defer fmt.println(view);
 	return ages.len();
 }

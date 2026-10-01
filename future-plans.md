@@ -110,10 +110,11 @@ The lexer keeps every comment's span on its `Source`, in source order, for the
 formatter, the documentation generator, and hover to find by position.
 
 `-g` already emits each procedure, its locals and their types scoped to their
-blocks, and the line of each statement, loop header, and closing `}`, as
-CodeView in a PDB, at any `-opt` level, with natvis rules for a string's text, a
-map's entries, and the value an `any_view` or `dyn` points at; a panic in a `-g`
-executable prints its Loke frames; and `-debug` sets `LOKE_DEBUG` on its own
+blocks, and the line of each statement, loop header, closing `}`, and deferred
+statement, through specialization and static expansion, as CodeView in a PDB,
+at any `-opt` level, with natvis rules for a string's text, a map's entries, and
+the value an `any_view` or `dyn` points at; a panic in a `-g` executable prints
+its Loke frames; and `-debug` sets `LOKE_DEBUG` on its own
 ([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin),
 [runtime/trace.c](runtime/trace.c)). `lokec <package> -doc` prints a checked
 package's public API as Markdown, each declaration with the comments directly
@@ -122,8 +123,6 @@ rules in [comments.md "Formatting"](comments.md#formatting).
 
 Main work:
 
-- preserve useful source locations through generated cleanup, specialization,
-  and compile-time expansion;
 - align columns automatically in `-fmt`, once hand-kept alignment proves a
   burden;
 - give `-doc` what a real library shows it needs: struct-field and package
