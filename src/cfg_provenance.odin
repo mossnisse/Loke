@@ -3891,9 +3891,13 @@ prov_retain_into_self :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, car
 	if !ok {
 		return
 	}
+	// design.md "Escape levels": the callee may store any of the argument's
+	// content into any compatible part of it, so each part keeps its own
+	// sources, gains every other part's, and borrows the argument's own root.
 	for slot in prov_content_at(graph, root, path) {
 		own := prov_borrow(graph, root, path, true, v.span, "borrow")
-		prov_define_one_content(graph, slot, prov_join(graph, prov_one(graph, slot), own), v.span)
+		kept := prov_join(graph, prov_one(graph, slot), carrier)
+		prov_define_one_content(graph, slot, prov_join(graph, kept, own), v.span)
 	}
 }
 

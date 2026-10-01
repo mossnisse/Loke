@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- After a call that may store an `escape=stored` argument into itself, every
+  part of the argument may hold what any part borrowed: reading `h.right` after
+  `copy(inout h)` stored `h.left`'s borrow of an ended local is `L0513`.
 - The result of a call through a procedure value has unknown provenance when no
   escaping argument establishes its root, even if another argument is borrowed
   for the call, so `kept = action(&value)` with an `escape=none` parameter

@@ -94,32 +94,6 @@ non-managed allocator handles. Preserve allocator dependencies through
 aggregate initialization and stores, using the existing region-bearing type
 classification rather than management alone.
 
-### Self-retaining call arguments lose dependencies between their fields
-
-[design.md "Escape levels"](design.md#escape-levels) models `stored` retention
-into every compatible writable destination, including the source argument:
-
-```odin
-package main;
-Holder :: struct { left: []int, right: []int }
-copy :: proc(@(escape=stored) h: inout Holder) { h.right = h.left; }
-main :: proc() {
-    h: Holder = {};
-    {
-        data := [1]int{42};
-        h.left = data[:];
-        copy(inout h);
-    }
-    assert(h.right[0] == 42);
-}
-```
-
-Actual: accepted. Expected: L0513 when `right` is read after `data` ends.
-Replacing the call with `h.right = h.left` gives that diagnostic; a `^mut
-Holder` call variant also demonstrates the omission. `prov_retain_into_self`
-adds a loan of the destination's own root but discards the incoming content
-dependencies. Preserve those dependencies as well as the self-storage loan.
-
 ### A marked allocator alternative covers an unrelated unknown reset
 
 [design.md "Allocator regions and region provenance"](design.md#allocator-regions-and-region-provenance)

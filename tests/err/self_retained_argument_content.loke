@@ -1,0 +1,28 @@
+package main;
+
+// design.md "Escape levels": a `stored` argument may be stored into any
+// writable part of itself, so `right` may hold what `left` borrowed, for an
+// `inout` record and for one reached through `^mut`.
+Holder :: struct { left: []int, right: []int }
+
+copy :: proc(@(escape=stored) h: inout Holder) { h.right = h.left; }
+copy_through :: proc(@(escape=stored) h: ^mut Holder) { h.right = h.left; }
+
+main :: proc() {
+	h: Holder = {};
+	{
+		data := [1]int{42};
+		h.left = data[:];
+		copy(inout h);
+		assert(h.right[0] == 42);
+	}
+	assert(h.right[0] == 42);
+
+	g: Holder = {};
+	{
+		data := [1]int{42};
+		g.left = data[:];
+		copy_through(&mut g);
+	}
+	assert(g.right[0] == 42);
+}
