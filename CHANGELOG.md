@@ -124,7 +124,8 @@ checklist.
 - `examples/corpus_runner.loke` is the compiler's corpus harness written in
   Loke: it compiles each case, a file or a package directory, runs it, and
   compares its output, or under `-diagnostics` and `-syntax` checks what its
-  errors say, or under `-ir` checks the shapes its LLVM IR holds, running a case
+  errors say, or under `-ir` checks the shapes its LLVM IR holds and, when
+  `lokec -print-toolchain` finds clang, that LLVM assembles it, running a case
   per processor at once.
 - `thread.processor_count` answers how many threads can run at once.
 - `value.as(.name)` reads one union variant without a `switch`: it yields

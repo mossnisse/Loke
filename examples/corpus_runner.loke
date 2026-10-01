@@ -21,7 +21,8 @@ import "core:thread";
 // lists what the diagnostics say (`diagnosed`); `-syntax` is the same for a
 // parse, which must also recover as far as the file's trailing `sentinel`.
 // Under `-ir` a case must compile, and each line of its `.expected` is a shape
-// its LLVM IR must contain (`ir_contains`). A `<case>.flags` file adds one
+// its LLVM IR must contain (`ir_contains`), and LLVM must assemble the IR when
+// the compiler's `-print-toolchain` finds clang. A `<case>.flags` file adds one
 // compiler flag per line. Cases run on a thread per processor, and are reported
 // in name order once all have finished.
 //
@@ -47,13 +48,18 @@ main :: proc() {
 		fmt.eprintln("cannot read", corpus, "-", listed);
 		os.exit(2);
 	}
+	clang: Option(string) = .none;
+	if (mode == .Ir) {
+		clang = assembler(compiler);
+		if (clang == .none) { fmt.eprintln("no usable clang, so the IR is not assembled"); }
+	}
 	reasons: [dynamic]Option(string) = {};
 	reasons.resize(cases.len());
 	board := shared(thread.Mutex(Board){value = {reasons = move(reasons)}});
 	{
 		workers: [dynamic]thread.Thread = {};
 		for (i := 0; i < thread.processor_count() && i < cases.len(); i += 1) {
-			workers.append(thread.spawn(work, Job{compiler, corpus, scratch, cases.clone(), mode, board.clone()}));
+			workers.append(thread.spawn(work, Job{compiler, corpus, scratch, cases.clone(), mode, clang, board.clone()}));
 		}
 	} // dropping a worker joins it
 	passed, failed := 0, 0;
@@ -97,6 +103,8 @@ Job :: struct {
 	compiler, corpus, scratch: string,
 	cases: [dynamic]string,
 	mode:  Mode,
+	// What assembles an IR case's module, when there is one.
+	clang: Option(string),
 	board: shared(thread.Mutex(Board)),
 }
 
@@ -111,7 +119,7 @@ work :: proc(job: move Job) {
 			guard.get().next += 1;
 		}
 		if (index >= job.cases.len()) { return; }
-		switch (check(job.compiler, job.corpus, job.scratch, job.cases[index], job.mode)) {
+		switch (check(job.compiler, job.corpus, job.scratch, job.cases[index], job.mode, job.clang)) {
 		case .ok:
 		case .err(reason):
 			guard := job.board.get().lock();
@@ -143,6 +151,7 @@ sources :: proc(directory: string_view) -> Result([dynamic]string, io.Error) {
 // One case: why it failed, or nothing.
 check :: proc(
 	compiler: string_view, corpus: string_view, scratch: string_view, entry: string_view, mode: Mode,
+	clang: Option(string),
 ) -> Result(Unit, string) {
 	name := path.stem(entry);
 	source := path.join([]string_view{corpus, entry});
@@ -163,7 +172,7 @@ check :: proc(
 	if (mode == .Diagnostics || mode == .Syntax || mode == .Ir) {
 		switch (wanted in expected) {
 		case .some:
-			if (mode == .Ir) { return shaped(sibling(scratch, name, ".ll"), built, wanted); }
+			if (mode == .Ir) { return shaped(sibling(scratch, name, ".ll"), built, wanted, clang); }
 			// The AST is printed before the diagnostics, so the sentinel's node in
 			// it shows the parser recovered past every error to the end.
 			if (mode == .Syntax && !strings.contains(text(built.stdout[:]), "(const names=[\"sentinel\"]")) {
@@ -239,11 +248,11 @@ diagnosed :: proc(
 	return .ok;
 }
 
-// An IR case compiles, and its module holds every line of `.expected`.
-//
-// ponytail: the Odin suite also assembles each module with clang, since a shape
-// can match IR LLVM rejects; this harness would need clang found first.
-shaped :: proc(ll: string_view, built: process.Output, expected: string_view) -> Result(Unit, string) {
+// An IR case compiles, its module holds every line of `.expected`, and clang
+// assembles it: a shape can match IR that LLVM rejects.
+shaped :: proc(
+	ll: string_view, built: process.Output, expected: string_view, clang: Option(string),
+) -> Result(Unit, string) {
 	if (built.status != 0) {
 		return .err(fmt.to_string(mem.default_allocator(), "does not compile:", text(built.stderr[:])));
 	}
@@ -255,7 +264,34 @@ shaped :: proc(ll: string_view, built: process.Output, expected: string_view) ->
 			return .err(fmt.to_string(mem.default_allocator(), "IR does not contain", line));
 		}
 	}
+	switch (program in clang) {
+	case .some:
+		object := strings.join([]string_view{ll, ".o"}, "");
+		assembled := run(process.Command{program = program, arguments = []string_view{"-x", "ir", "-c", ll, "-o", object}}) or_return;
+		if (assembled.status != 0) {
+			return .err(fmt.to_string(mem.default_allocator(), "LLVM rejects the IR:", text(assembled.stderr[:])));
+		}
+	case .none:
+	}
 	return .ok;
+}
+
+// The clang the compiler would link with, as the Odin suite finds it: from
+// `-print-toolchain`, and only when that says a link can run here.
+assembler :: proc(compiler: string_view) -> Option(string) {
+	switch (printed in process.output(process.Command{program = compiler, arguments = []string_view{"-print-toolchain"}})) {
+	case .ok:
+		found: Option(string) = .none;
+		ready := false;
+		foreach (line in strings.lines(text(printed.stdout[:]))) {
+			trimmed := strings.trim_space(line);
+			if (strings.starts_with(trimmed, "clang=")) { found = .some(strings.copy(trimmed[6:])); }
+			if (trimmed == "ready=yes") { ready = true; }
+		}
+		if (ready) { return found; }
+		return .none;
+	case .err: return .none;
+	}
 }
 
 // A `*` in a shape matches any run of characters within one IR line, so a shape

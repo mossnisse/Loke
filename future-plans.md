@@ -22,8 +22,8 @@ Main work:
 - provide the testing and binary/text facilities needed to express the compiler
   and its test harness in Loke. `examples/corpus_runner.loke` checks the run,
   trap, diagnostic, syntax-error, IR, and package corpora, which needed
-  `process.output` and `thread.processor_count`; it does not yet find clang to
-  assemble the IR it checks, as the Odin suite does;
+  `process.output` and `thread.processor_count`, and assembles the IR it checks
+  with the clang `lokec -print-toolchain` finds, as the Odin suite does;
 - validate that the shipped collections, paths, filesystem, formatting, and
   allocation APIs scale to a compiler-sized program;
 - prioritize `core:bytes`, time, random, buffered I/O, and higher-level encodings

@@ -2253,7 +2253,9 @@ example_streaming_reads_its_input :: proc(t: ^testing.T) {
 // in tests/examples/corpus_runner/, a passing case, one built with its `.flags`,
 // a package directory, and one whose output is wrong; under `-trap` one that
 // must panic; and under each of `-diagnostics`, `-syntax`, and `-ir` one case
-// that passes and one the runner must fail.
+// that passes and one the runner must fail. A clang that rejects every module
+// fails the `-ir` case whose shapes match: the runner itself stands in for one,
+// since its usage error exits 2.
 @(test)
 example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -2297,6 +2299,26 @@ example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 			"corpus_runner on %s: expected %q, got %q", run.corpus, run.stdout, normalise(string(stdout)),
 		)
 	}
+
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable toolchain, so the runner never assembles IR")
+		return
+	}
+	inherited, environ_err := os2.environ(context.allocator)
+	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
+		return
+	}
+	state, stdout, _, err := exec(
+		os2.Process_Desc {
+			command = []string{launch_path(exe), compiler, "tests/examples/corpus_runner/ir", scratch, "-ir"},
+			env = append_env(inherited, fmt.tprintf("LOKE_CLANG=%s", exe)),
+		},
+		context.allocator,
+	)
+	testing.expectf(
+		t, err == nil && state.exit_code == 1 && strings.contains(string(stdout), "FAIL shaped.loke - LLVM rejects the IR: usage:"),
+		"corpus_runner did not report the rejected IR:\n%s", string(stdout),
+	)
 }
 
 // stdout is compared whole; stderr only has to carry the reason, so the exact
