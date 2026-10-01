@@ -25,3 +25,8 @@ call void @llvm.dbg.declare(metadata ptr %total.*, metadata !*, metadata !DIExpr
 !DIDerivedType(tag: DW_TAG_member, name: "len", baseType: !*, size: 64, offset: 64)
 call void @loke_rt_v1_enable_panic_trace()
 call void @loke.p.main() noinline
+distinct !DILexicalBlock(scope: !*, file: !*, line: 38, column: 7)
+distinct !DILexicalBlock(scope: !*, file: !*, line: 42, column: 7)
+!DILocalVariable(name: "i", scope: !*, line: 38, type: !
+!DILocalVariable(name: "i", scope: !*, line: 42, type: !
+!DILocalVariable(name: "step", scope: !*, line: 43, type: !

@@ -82,6 +82,8 @@ checklist.
   allocator; 0.7.1 rejected it (`L0504`). A copy at a local's last use is a
   move instead, so `b := a` costs nothing when `a` is not used afterwards
   (design.md "Last-use transfer"). Every program 0.7.1 accepted means the same.
+- Under `-g`, a debugger shows each local only inside the block that declares
+  it, so two loops that each declare `i` no longer show two `i`s at once.
 
 ### Added
 

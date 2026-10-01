@@ -483,6 +483,7 @@ push_scope :: proc(e: ^Emitter, b: ^Block) {
 @(private)
 push_scope_stmts :: proc(e: ^Emitter, stmts: []Stmt) {
 	append(&e.cleanups, Cleanup_Scope{entries = make([dynamic]Deferred)})
+	debug_mark_scope(e, true)
 	reset_defer_flags(e, stmts)
 }
 
@@ -525,6 +526,7 @@ pop_scope :: proc(e: ^Emitter) {
 		run_cleanups(e, len(e.cleanups) - 1)
 	}
 	pop(&e.cleanups)
+	debug_mark_scope(e, false)
 }
 
 // Runs every scope above `down_to`, innermost first and in reverse registration

@@ -1,10 +1,11 @@
-// Debug information: procedures, locals, types, and source locations as LLVM
-// metadata.
+// Debug information: procedures, blocks, locals, types, and source locations as
+// LLVM metadata.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md. Hundreds of
 // sites write instructions, so none of them spells a location. Under `-g` the
 // emitter writes a marker line after each procedure's `define`, before each
-// statement, and where each local gets its address, and `attach_debug_info`
+// statement, where each scope opens and closes, and where each local gets its
+// address, and `attach_debug_info`
 // turns the markers into `!dbg` attachments and `llvm.dbg.declare` calls once
 // the module is complete. Without `-g` no marker is written, so the module is
 // unchanged.
@@ -21,6 +22,10 @@ PROC_MARKER :: ";dbg.proc "
 LOCATION_MARKER :: ";dbg.loc "
 @(private = "file")
 VARIABLE_MARKER :: ";dbg.var "
+@(private = "file")
+OPEN_MARKER :: ";dbg.open"
+@(private = "file")
+CLOSE_MARKER :: ";dbg.close"
 
 // The procedure whose `define` line was just written.
 @(private)
@@ -35,6 +40,14 @@ debug_mark_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 debug_mark_location :: proc(e: ^Emitter, span: Span) {
 	if e.c.debug_info && span.file != NO_FILE {
 		fmt.sbprintfln(&e.b, "%s%d %d", LOCATION_MARKER, span.file, span.lo)
+	}
+}
+
+// A scope opens or closes; its locals belong to it.
+@(private)
+debug_mark_scope :: proc(e: ^Emitter, open: bool) {
+	if e.c.debug_info {
+		fmt.sbprintln(&e.b, open ? OPEN_MARKER : CLOSE_MARKER)
 	}
 }
 
@@ -53,7 +66,7 @@ Debug_Info :: struct {
 	count:     int,
 	files:     map[u32]int,
 	types:     map[Type_Id]int,
-	// By subprogram, line, and column.
+	// By scope, line, and column.
 	locations: map[[3]int]int,
 }
 
@@ -71,6 +84,11 @@ Debug_Proc :: struct {
 	symbol:     ^Symbol,
 	subprogram: int,
 	location:   int,
+	// The statement `location` names.
+	span:       Span,
+	// The open scopes, innermost last: each one's `DILexicalBlock`, or -1 until
+	// a local is declared in it, so a scope without locals adds no block.
+	blocks:     [dynamic]int,
 	// One declaration per local: a `defer` body written at two exits binds its
 	// locals twice, and the first address stands for both.
 	declared:   map[Symbol_Id]bool,
@@ -108,6 +126,7 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 				symbol     = symbol,
 				subprogram = subprogram,
 				location   = debug_location(&d, subprogram, symbol.span),
+				span       = symbol.span,
 				declared   = make(map[Symbol_Id]bool),
 			}
 			// The `define` line just written ends in ` {`.
@@ -120,7 +139,18 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 			// A location's file is its subprogram's, so a statement written in
 			// another file keeps the location before it.
 			if inside && u32(file) == p.symbol.span.file {
-				p.location = debug_location(&d, p.subprogram, Span{file = u32(file), lo = u32(lo)})
+				p.span = Span{file = u32(file), lo = u32(lo)}
+				p.location = debug_location(&d, debug_scope(p), p.span)
+			}
+		case line == OPEN_MARKER:
+			if inside {
+				append(&p.blocks, -1)
+			}
+		case line == CLOSE_MARKER:
+			// The code after a scope keeps its statement's line, outside the scope.
+			if inside && len(p.blocks) > 0 {
+				pop(&p.blocks)
+				p.location = debug_location(&d, debug_scope(p), p.span)
 			}
 		case strings.has_prefix(line, VARIABLE_MARKER):
 			if inside {
@@ -154,9 +184,21 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	return strings.to_string(out)
 }
 
-// `<symbol> <address>` becomes the local's declaration, at its own line. Every
-// local is scoped to the whole procedure; a shadowing one appears beside the
-// name it shadows.
+// The innermost open scope with a block, or the procedure.
+@(private = "file")
+debug_scope :: proc(p: ^Debug_Proc) -> int {
+	#reverse for block in p.blocks {
+		if block >= 0 {
+			return block
+		}
+	}
+	return p.subprogram
+}
+
+// `<symbol> <address>` becomes the local's declaration, at its own line, in the
+// innermost open scope, so two sibling scopes' locals of one name never appear
+// side by side. That scope's block starts here: the code before a local's
+// declaration does not see it.
 @(private = "file")
 debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, marker: string) {
 	space := strings.index_byte(marker, ' ')
@@ -167,6 +209,15 @@ debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, mar
 		return
 	}
 	p.declared[symbol_id] = true
+	if len(p.blocks) > 0 && p.blocks[len(p.blocks) - 1] < 0 {
+		line, column := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
+		p.blocks[len(p.blocks) - 1] = debug_node(
+			d, "distinct !DILexicalBlock(scope: !%d, file: !%d, line: %d, column: %d)",
+			debug_scope(p), debug_file(d, symbol.span.file), line, column,
+		)
+		p.location = debug_location(d, debug_scope(p), p.span)
+	}
+	scope := debug_scope(p)
 	arg := ""
 	for param, index in p.symbol.param_symbols {
 		if param == symbol_id {
@@ -177,13 +228,13 @@ debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, mar
 	line, _ := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
 	variable := debug_node(
 		d, `!DILocalVariable(name: "%s", %sscope: !%d, file: !%d, line: %d, type: !%d)`,
-		llvm_escape(identifier_text(d.c, symbol.name)), arg, p.subprogram, file, line,
+		llvm_escape(identifier_text(d.c, symbol.name)), arg, scope, file, line,
 		debug_type(d, symbol.type),
 	)
 	fmt.sbprintfln(
 		out,
 		"  call void @llvm.dbg.declare(metadata ptr %s, metadata !%d, metadata !DIExpression()), !dbg !%d",
-		marker[space + 1:], variable, debug_location(d, p.subprogram, symbol.span),
+		marker[space + 1:], variable, debug_location(d, scope, symbol.span),
 	)
 }
 
@@ -230,13 +281,13 @@ debug_subprogram :: proc(d: ^Debug_Info, symbol: ^Symbol, llvm_name: string) -> 
 }
 
 @(private = "file")
-debug_location :: proc(d: ^Debug_Info, subprogram: int, span: Span) -> int {
+debug_location :: proc(d: ^Debug_Info, scope: int, span: Span) -> int {
 	line, column := line_col(&d.c.sources[span.file], span.lo)
-	key := [3]int{subprogram, line, column}
+	key := [3]int{scope, line, column}
 	if id, found := d.locations[key]; found {
 		return id
 	}
-	id := debug_node(d, "!DILocation(line: %d, column: %d, scope: !%d)", line, column, subprogram)
+	id := debug_node(d, "!DILocation(line: %d, column: %d, scope: !%d)", line, column, scope)
 	d.locations[key] = id
 	return id
 }

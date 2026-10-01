@@ -122,9 +122,10 @@ intermediate representation it actually needs.
 The lexer keeps every comment's span on its `Source`, in source order, for the
 formatter, the documentation generator, and hover to find by position.
 
-`-g` already emits each procedure, its locals and their types, and each
-statement's line, as CodeView in a PDB, at any `-opt` level; a panic in a `-g`
-executable prints its Loke frames; and `-debug` sets `LOKE_DEBUG` on its own
+`-g` already emits each procedure, its locals and their types scoped to their
+blocks, and each statement's line, as CodeView in a PDB, at any `-opt` level; a
+panic in a `-g` executable prints its Loke frames; and `-debug` sets
+`LOKE_DEBUG` on its own
 ([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin),
 [runtime/trace.c](runtime/trace.c)). `lokec <package> -doc` prints a checked
 package's public API as Markdown, each declaration with the comments directly
@@ -133,9 +134,8 @@ rules in [comments.md "Formatting"](comments.md#formatting).
 
 Main work:
 
-- scope each local to its block rather than its whole procedure, so a
-  shadowing name hides the one it shadows, and show a map's entries and an
-  interface view's value rather than only their names and sizes;
+- show a map's entries and an interface view's value rather than only their
+  names and sizes;
 - give locations finer than a statement where stepping needs them: a loop's
   update, the code after an `if`, and the cleanup a scope runs on exit carry
   the line of the last statement emitted before them today;
