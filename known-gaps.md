@@ -253,20 +253,6 @@ pattern walkers in `iterate.odin` and `emit_llvm_iteration.odin` pair bindings
 with fields by position; they must map each binding to its named field's slot,
 as declaration destructuring does.
 
-### Designated fixed-array initializers are rejected
-
-[design.md "Fixed arrays"](design.md#fixed-arrays) permits element indices
-and index ranges as initializer keys:
-
-```odin
-package main;
-main :: proc() { values := [3]int{2 = 9}; _ = values; }
-```
-
-Expected: `[0, 0, 9]`. Actual: L0372 says the literal is positional.
-`check_array_literal` rejects every keyed element. The positional equivalent
-works; implement the specified designated forms and zero only omitted slots.
-
 ### Packed-storage address checks miss array projections and follow unrelated pointers
 
 [design.md "@(packed)"](design.md#packed) and

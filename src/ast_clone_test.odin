@@ -36,7 +36,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Expr_Or_Else, "value fallback", "borrows fallback_clone"},
 		{Expr_Cond, "then cond otherwise", "then_clone else_clone"},
 		{Expr_Move, "value", "implicit"},
-		{Expr_Composite, "type_expr elements", "field_indices element_clones backing via"},
+		{Expr_Composite, "type_expr elements", "field_indices slot_ends element_clones backing via"},
 		{Expr_Proc, "signature where_clauses body bodiless", "symbol defer_count generic_instance"},
 		{Expr_Proc_Group, "names", ""},
 		{Expr_Operator, "symbol symbol_span hook value", ""},

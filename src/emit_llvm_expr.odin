@@ -1022,9 +1022,21 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 		if index < len(v.element_clones) && v.element_clones[index] {
 			value = emit_clone_value(e, element_type, value)
 		}
-		field_address := gep_field(e, llvm_type(e, as_type), address, slot)
-		record_field_align(e, as_type, address, field_address, element_type)
-		store(e, element_type, value, field_address)
+		// A designated index range stores one evaluation in every slot; each
+		// slot after the first owns a copy.
+		end := slot + 1
+		if info.kind == .Array {
+			slot, end = composite_element_slots(v, index)
+		}
+		for target in slot ..< end {
+			stored := value
+			if target > slot && emit_lifecycle(e, element_type).managed {
+				stored = emit_clone_value(e, element_type, value)
+			}
+			field_address := gep_field(e, llvm_type(e, as_type), address, target)
+			record_field_align(e, as_type, address, field_address, element_type)
+			store(e, element_type, stored, field_address)
+		}
 	}
 }
 

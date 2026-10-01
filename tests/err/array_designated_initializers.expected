@@ -1,0 +1,17 @@
+L0372
+@7:25
+a positional element cannot follow a designated one
+L0376
+@8:29
+element 1 of `[3]int` is set twice
+L0361
+@9:20
+L0372
+@10:20
+must be a constant integer
+L0372
+@11:19
+this index range is empty
+L0372
+@12:24
+lists its elements positionally

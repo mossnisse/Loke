@@ -218,6 +218,9 @@ checklist.
 
 ### Fixed
 
+- A fixed-array literal accepts designated elements by index and index range,
+  as in `[?]string{0 = "Raven", 3..=5 = "Frog"}`, after any positional ones;
+  omitted elements are zero. They reported `L0372`.
 - An index or slice bound wider than 64 bits into a slice, dynamic array, or
   string is checked at its full width: a `u128` index of 2^64 panics instead of
   reading element 0.

@@ -522,17 +522,17 @@ prov_element_step :: proc(
 	index: int,
 ) -> (Proj_Step, bool) {
 	key := v.elements[index].key
+	if is_array {
+		// design.md "Fixed arrays": a designated element fills its index range.
+		lo, hi := composite_element_slots(v, index)
+		return proj_range(i64(lo), i64(hi)), true
+	}
 	if key == nil {
-		if is_array {
-			return proj_range(i64(index), i64(index) + 1), true
+		// Positional elements skip padding, so the checked slot is the field.
+		if index < len(v.field_indices) && v.field_indices[index] >= 0 {
+			return proj_field(v.field_indices[index]), true
 		}
 		return proj_field(index), true
-	}
-	if is_array {
-		if constant, ok := prov_const_int(graph, key); ok {
-			return proj_range(constant, constant + 1), true
-		}
-		return proj_wild(), false
 	}
 	name, is_ident := key.(^Expr_Ident)
 	if !is_ident {

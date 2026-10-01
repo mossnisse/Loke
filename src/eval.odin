@@ -991,11 +991,12 @@ eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool)
 		return Eval_Value{}, false
 	}
 	for element, index in v.elements {
-		slot := index
+		slot, end := composite_element_slots(v, index)
 		if info.kind == .Struct {
 			slot = index < len(v.field_indices) ? v.field_indices[index] : -1
+			end = slot + 1
 		}
-		if slot < 0 || slot >= len(value.elements) {
+		if slot < 0 || end > len(value.elements) {
 			eval_fail(ev, v.span, "L0405", "a literal element has no checked field")
 			return Eval_Value{}, false
 		}
@@ -1003,11 +1004,14 @@ eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool)
 		if !ok {
 			return Eval_Value{}, false
 		}
-		copied, copied_ok := copy_value(ev, computed)
-		if !copied_ok {
-			return Eval_Value{}, false
+		// A designated index range fills each of its slots with a copy.
+		for target in slot ..< end {
+			copied, copied_ok := copy_value(ev, computed)
+			if !copied_ok {
+				return Eval_Value{}, false
+			}
+			value.elements[target] = copied
 		}
-		value.elements[slot] = copied
 	}
 	return value, true
 }

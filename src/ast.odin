@@ -336,13 +336,25 @@ Element :: struct {
 	value: Expr,
 }
 
+// The array slots one literal element fills: its position, or the index or
+// index range its key designates.
+composite_element_slots :: proc(v: ^Expr_Composite, index: int) -> (lo, hi: int) {
+	if index < len(v.slot_ends) && index < len(v.field_indices) {
+		return v.field_indices[index], v.slot_ends[index]
+	}
+	return index, index + 1
+}
+
 // `T{...}`, or `{...}` taking its type from context when `type` is nil.
 Expr_Composite :: struct {
 	using base: Expr_Base,
 	type_expr:  Expr,
 	elements:   []Element,
-	// Struct field slots in source order, resolved during checking.
+	// Struct field slots in source order, resolved during checking. For a fixed
+	// array, each element's first slot, with `slot_ends` its exclusive end
+	// (design.md "Fixed arrays": `2 = x`, `3..=5 = y`).
 	field_indices: []int,
+	slot_ends:     []int,
 	// Per element: a borrowed managed element is cloned, not moved.
 	element_clones: []bool,
 	// A slice literal's hidden `[N]T` storage; INVALID_TYPE otherwise.

@@ -2344,7 +2344,16 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 			v.type = INVALID_TYPE
 			return
 		}
-		array.denoted_type = array_of(k.c, element, u64(len(v.elements)))
+		length := len(v.elements)
+		if composite_is_designated(v) {
+			needed, resolved := resolve_array_slots(k, v)
+			if !resolved {
+				v.type = INVALID_TYPE
+				return
+			}
+			length = needed
+		}
+		array.denoted_type = array_of(k.c, element, u64(length))
 		array.resolution.kind = .Type
 		target = array.denoted_type
 	} else if v.type_expr != nil {
@@ -2575,36 +2584,146 @@ reject_keyed_element :: proc(k: ^Checker, element: Element, target: Type_Id) {
 @(private = "file")
 check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
 	count := int(info.count)
-	if len(v.elements) < count && !require_type_has_zero(k, info.element, v.span, "omitted array elements") {
+	designated := composite_is_designated(v)
+	// design.md "SIMD vectors": one element per lane, positionally.
+	if designated && info.kind == .Simd {
+		for element in v.elements {
+			if element.key != nil {
+				reject_keyed_element(k, element, target)
+				break
+			}
+		}
 		v.type = INVALID_TYPE
 		return
 	}
-	// Only the written elements: `fold_aggregate` zeroes the rest.
-	values := make([]Expr, min(len(v.elements), count), k.c.semantic_allocator)
+	if designated && v.slot_ends == nil {
+		if _, resolved := resolve_array_slots(k, v); !resolved {
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+	values := make([]Expr, count, k.c.semantic_allocator)
+	filled := 0
 	ok := true
 	for element, index in v.elements {
-		if element.key != nil {
-			if ok {
-				reject_keyed_element(k, element, target)
+		lo, hi := composite_element_slots(v, index)
+		if hi > count {
+			if designated {
+				errorf(
+					k.c, expr_span(element.key != nil ? element.key : element.value), "L0361",
+					"index %d is out of range for `%s`", hi - 1, type_name(k.c, target),
+				)
+			} else {
+				errorf(k.c, element.span, "L0376", "`%s` holds %d element%s", type_name(k.c, target), count, count == 1 ? "" : "s")
 			}
 			ok = false
 			continue
 		}
-		if index >= count {
-			errorf(k.c, element.span, "L0376", "`%s` holds %d element%s", type_name(k.c, target), count, count == 1 ? "" : "s")
-			ok = false
-			continue
+		for slot in lo ..< hi {
+			if values[slot] != nil {
+				errorf(k.c, element.span, "L0376", "element %d of `%s` is set twice", slot, type_name(k.c, target))
+				ok = false
+				break
+			}
+			values[slot] = element.value
+			filled += 1
 		}
-		values[index] = element.value
 		if !check_value_expr(k, element.value, info.element, "initialise") {
 			ok = false
 		} else {
 			classify_composite_element(k, v, index, info.element)
 		}
 	}
-	if ok {
-		fold_aggregate(k, v, target, values, nil)
+	if !ok {
+		return
 	}
+	if filled < count && !require_type_has_zero(k, info.element, v.span, "omitted array elements") {
+		v.type = INVALID_TYPE
+		return
+	}
+	fold_aggregate(k, v, target, values, nil)
+}
+
+composite_is_designated :: proc(v: ^Expr_Composite) -> bool {
+	for element in v.elements {
+		if element.key != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// design.md "Fixed arrays": positional elements first, then elements keyed by
+// a constant index or index range. Records each element's slots and returns
+// the length they need.
+@(private = "file")
+resolve_array_slots :: proc(k: ^Checker, v: ^Expr_Composite) -> (int, bool) {
+	v.field_indices = make([]int, len(v.elements), k.c.semantic_allocator)
+	v.slot_ends = make([]int, len(v.elements), k.c.semantic_allocator)
+	needed := 0
+	ok := true
+	keyed := false
+	for element, index in v.elements {
+		lo, hi := index, index + 1
+		if element.key == nil {
+			if keyed {
+				errorf(k.c, element.span, "L0372", "a positional element cannot follow a designated one")
+				ok = false
+				continue
+			}
+		} else {
+			keyed = true
+			resolved: bool
+			lo, hi, resolved = array_key_slots(k, element.key)
+			if !resolved {
+				ok = false
+				continue
+			}
+		}
+		v.field_indices[index], v.slot_ends[index] = lo, hi
+		needed = max(needed, hi)
+	}
+	return needed, ok
+}
+
+// A designated key: a constant integer or rune index, or a constant range of
+// them, `lo ..= hi` or `lo ..< hi`. The range is matching syntax, not a value.
+@(private = "file")
+array_key_slots :: proc(k: ^Checker, key: Expr) -> (lo, hi: int, ok: bool) {
+	bound :: proc(k: ^Checker, e: Expr) -> (int, bool) {
+		if check_single_expr(k, e, TYPE_INT) == INVALID_TYPE || !materialize(k, e, TYPE_INT) {
+			return 0, false
+		}
+		base := expr_base(e)
+		if !base.is_const || (base.const_value.kind != .Integer && base.const_value.kind != .Rune) {
+			errorf(k.c, expr_span(e), "L0372", "an array element index must be a constant integer")
+			return 0, false
+		}
+		value, fits := bi_to_i64(k.c, base.const_value.integer)
+		if !fits || value < 0 || value > i64(MAX_CONST_ELEMENTS) {
+			errorf(k.c, expr_span(e), "L0361", "index %s is out of range", bi_text(k.c, base.const_value.integer))
+			return 0, false
+		}
+		return int(value), true
+	}
+	range, is_range := key.(^Expr_Range)
+	if !is_range {
+		index := bound(k, key) or_return
+		return index, index + 1, true
+	}
+	range.type = TYPE_INT
+	if range.op != .Range_Incl && range.op != .Range_Excl {
+		errorf(k.c, range.op_span, "L0372", "an index range is written `lo ..= hi` or `lo ..< hi`")
+		return 0, 0, false
+	}
+	first := bound(k, range.lo) or_return
+	last := bound(k, range.hi) or_return
+	end := range.op == .Range_Incl ? last + 1 : last
+	if end <= first {
+		errorf(k.c, range.op_span, "L0372", "this index range is empty")
+		return 0, 0, false
+	}
+	return first, end, true
 }
 
 // design.md "Dynamic arrays": a literal allocates, so only the empty one is a

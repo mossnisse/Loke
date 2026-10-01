@@ -1,0 +1,33 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Fixed arrays": designated initializers set elements by index or
+// index range, after any positional ones, and the rest are zero. A range
+// evaluates its value once and stores a copy in each element.
+TABLE :: [5]int{1 = 7, 3..=4 = 2};
+
+calls: static int = 0;
+
+numbers :: proc() -> [dynamic]int {
+	calls += 1;
+	return [dynamic]int{1};
+}
+
+main :: proc() {
+	values := [3]int{2 = 9};
+	animals := [?]string{
+		0 = "Raven",
+		1 = "Zebra",
+		2 = "Spider",
+		3..=5 = "Frog",
+		6..<8 = "Cat",
+	};
+	mixed := [4]int{5, 6, 3 = 8};
+	n := 4;
+	filled := [3]int{1..=2 = n};
+	lists := [3][dynamic]int{0..<3 = numbers()};
+	lists[0].append(2);
+	fmt.println(values, animals.len(), animals[4], animals[7], mixed, filled, TABLE);
+	fmt.println(lists[0].len(), lists[1].len(), lists[2].len(), calls);
+}
