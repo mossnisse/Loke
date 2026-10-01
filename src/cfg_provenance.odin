@@ -64,6 +64,7 @@ Prov_Event :: struct {
 	name:    string,
 	// `Retain`: the destination's storage kind; `verb` names it.
 	retain: Retain_Kind,
+	// `Escape`: borrows reached through the returned value.
 	// `Retain`/`Publish`: the carrier a destination was written through, whose
 	// loans the solver resolves to roots. `Load`: the addressing carriers, with
 	// `path` below their pointees and `slot` the content.
@@ -74,6 +75,7 @@ Prov_Event :: struct {
 	// `Reset`: whether its promise is written. `access` is `Invalidate` for a
 	// direct `free_all`, `Write` for handing an allocator onward.
 	reset_covered: bool,
+	provider_end: bool, // ends the control block as well as its allocations
 	owner_span:    Span,
 	// `Reset`: the written operation ending a provider, such as "dropping `a`".
 	ends:          string,
@@ -1336,7 +1338,7 @@ region_weight :: proc(set: Region_Set) -> int {
 prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := false) -> Region_Set {
 	out := prov_empty_region(graph)
 	sym := symbol_of(graph.k.c, id)
-	carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type)
+	carrier := sym != nil && type_is_carrier(graph.k.c, sym.type) && !type_is_region_provider(graph.k.c, sym.type) && type_underlying(graph.k.c, sym.type) != TYPE_ALLOCATOR
 	if direct, found := graph.region_of[id]; found && (viewed || !carrier) {
 		region_merge(&out, direct)
 	}
@@ -1741,6 +1743,9 @@ prov_call_node_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Region_Set {
 @(private = "file")
 prov_storage_region :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 	c := graph.k.c
+	if base := expr_base(e); base != nil && type_underlying(c, base.type) == TYPE_ALLOCATOR {
+		return prov_region_of(graph, e)
+	}
 	if base := expr_base(e); base != nil && type_is_carrier(c, base.type) && !type_is_region_provider(c, base.type) {
 		return prov_viewed_region(graph, e)
 	}
@@ -1999,6 +2004,7 @@ prov_reset :: proc(
 	cleanup_dead: []Symbol_Id = nil,
 	ends := "",
 	ending := INVALID_SYMBOL,
+	provider_end := false,
 ) {
 	// A region the analysis cannot name, such as an allocator in a received
 	// record's field, is pre-existing: it stays uncovered.
@@ -2015,6 +2021,7 @@ prov_reset :: proc(
 		region        = set,
 		reset_covered = unmarked == "" && covered,
 		ends          = ends,
+		provider_end  = provider_end,
 	}
 	// A live owner in an overlapping region blocks the reset, since its cleanup
 	// still runs. Liveness is lifecycle's answer, recorded one pass earlier; a
@@ -3210,7 +3217,7 @@ prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]in
 
 // What is stored behind `carriers`, `from` loads down and at every depth below:
 // what a callee may hand back or keep from the storage an argument reaches.
-@(private = "file")
+@(private)
 prov_load_deep :: proc(graph: ^Flow_Graph, carriers: []int, span: Span, from := 1) -> []int {
 	if len(carriers) == 0 {
 		return nil
@@ -3314,9 +3321,10 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// The interface view borrows exactly what the erased input borrows.
 			return walk_flow_expr(graph, v.bound[0])
 		case .New, .New_Clone, .Try_New, .Try_New_Clone:
-			for argument in v.bound {
+			actuals := make([][]int, len(v.bound), graph.alloc)
+			for argument, index in v.bound {
 				if argument != nil {
-					walk_flow_expr(graph, argument)
+					actuals[index] = walk_flow_expr(graph, argument)
 				}
 			}
 			root := prov_new_root(graph, .Allocation, v.span, "this allocation")
@@ -3326,9 +3334,16 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			region := prov_empty_region(graph)
 			region.default = true
 			operands := sym.builtin == .New || sym.builtin == .Try_New ? 0 : 1
+			allocation := v.operation.(Call_Allocation)
+			contents := prov_temp_content(graph, allocation.type)
+			graph.roots[int(root)].contents = contents
+			if operands == 1 {
+				prov_define_content(graph, contents, actuals[0], v.span)
+			}
 			if len(v.bound) > operands {
 				allocator := v.bound[operands]
 				region = prov_region_of(graph, allocator)
+				graph.roots[int(root)].dependencies = actuals[operands]
 				append(&graph.allocation_region_sources, Prov_Allocation_Region_Source {
 					root = root,
 					value = allocator,
@@ -3336,6 +3351,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			}
 			graph.roots[int(root)].region = region
 			return prov_borrow(graph, root, nil, true, v.span, "pointer")
+		case .Default_Allocator:
+			return prov_synthetic_borrow(graph, v, .Static, TYPE_ALLOCATOR)
 		case .Unsafe_Free:
 			// design.md "What is not checked": the operands are only read.
 			for bound in v.bound {
@@ -3424,6 +3441,36 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			}
 			return nil
 		}
+	}
+	if call_provider_op(c, v) == .Handle && len(v.bound) > 0 {
+		// design.md "Allocators": the control block follows the region's
+		// lifecycle, independently of its movable owner's inline storage.
+		receiver := v.bound[0]
+		held := walk_flow_expr(graph, receiver)
+		region, _ := prov_handle_region(graph, v)
+		root: Root_Id
+		if place, path, ok := prov_place_of(graph, receiver); ok {
+			provider := graph.roots[int(place)]
+			if provider.kind == .Local {
+				root = prov_new_root(graph, .Provider, expr_span(receiver), "this allocator control block")
+				graph.roots[int(root)].region = region
+			} else {
+				return prov_join(graph, held, prov_borrow(graph, place, path, false, v.span, "allocator handle"))
+			}
+		} else if prov_expr_is_temporary(receiver) {
+			root = prov_temp_root(graph, expr_span(receiver))
+		} else {
+			return held
+		}
+		return prov_join(graph, held, prov_borrow(graph, root, nil, false, v.span, "allocator handle"))
+	}
+	#partial switch call_provider_op(c, v) {
+	case .Open, .Try_Open, .Open_Fixed:
+		held: []int
+		for argument in v.bound {
+			if argument != nil { held = prov_join(graph, held, walk_flow_expr(graph, argument)) }
+		}
+		return prov_value_content(graph, held, v.type, v.span)
 	}
 	receiver := Param_Mode.Value
 	has_receiver := false
@@ -4230,6 +4277,32 @@ prov_substitute_result :: proc(
 				call = v,
 				summary = dependencies.fresh_region,
 			})
+			if summary := dependencies.fresh_contents; summary != nil {
+				inner_roots := make(map[Root_Kind]Root_Id, graph.alloc)
+				content := prov_temp_content(graph, summary.content_type)
+				if len(content) == 0 { content = prov_one(graph, prov_temp_slot(graph)) }
+				for slot in content {
+					sources: []int
+					if len(summary.content) == 0 {
+						sources = prov_substitute_result(graph, v, actuals, summary.dependencies, graph.prov_slots[slot].content_type, &inner_roots)
+					} else {
+						for path in summary.content {
+							if paths_overlap(graph.prov_slots[slot].path, path.path.steps) {
+								sources = prov_join(graph, sources, prov_substitute_result(graph, v, actuals, path.dependencies, graph.prov_slots[slot].content_type, &inner_roots))
+							}
+						}
+					}
+					prov_define_one_content(graph, slot, sources, v.span)
+				}
+				graph.roots[int(root)].contents = prov_join(graph, graph.roots[int(root)].contents, content)
+			}
+			if summary := dependencies.fresh_dependencies; summary != nil {
+				inner_roots := make(map[Root_Kind]Root_Id, graph.alloc)
+				sources := prov_substitute_result(graph, v, actuals, summary^, INVALID_TYPE, &inner_roots)
+				slot := prov_temp_slot(graph)
+				prov_define_one_content(graph, slot, sources, v.span)
+				graph.roots[int(root)].dependencies = prov_join(graph, graph.roots[int(root)].dependencies, prov_one(graph, slot))
+			}
 		}
 		out = prov_join(graph, out, prov_borrow(
 			graph, root, nil, type_carries_borrow(graph.k.c, type).mutable,

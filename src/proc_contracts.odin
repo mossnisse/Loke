@@ -180,6 +180,8 @@ dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 	if (a.static && !b.static) || (a.thread && !b.thread) || (a.fresh && !b.fresh) ||
 	   (a.local && !b.local) || (a.unknown && !b.unknown) { return false }
 	if a.fresh && !region_contract_within(a.fresh_region, b.fresh_region) { return false }
+	if a.fresh_contents != nil && (b.fresh_contents == nil || !result_contract_within(a.fresh_contents^, b.fresh_contents^)) { return false }
+	if a.fresh_dependencies != nil && (b.fresh_dependencies == nil || !dependency_contract_within(a.fresh_dependencies^, b.fresh_dependencies^)) { return false }
 	for depths, index in a.param_loads {
 		if depths != 0 && (index >= len(b.param_loads) || depths & ~b.param_loads[index] != 0) { return false }
 	}

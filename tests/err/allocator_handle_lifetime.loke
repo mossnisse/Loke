@@ -1,0 +1,54 @@
+package main;
+import "core:mem";
+
+// design.md "Allocators": handles borrow the provider's stable control block.
+after_drop :: proc() {
+	owner := mem.Arena.init();
+	allocator := owner.allocator();
+	drop(owner);
+	p := new(int, allocator);
+	p^ = 42;
+}
+
+after_overwrite :: proc() {
+	owner := mem.Scratch.init();
+	allocator := owner.allocator();
+	owner = mem.Scratch.init();
+	p := new(int, allocator);
+	p^ = 42;
+}
+
+temporary_handle :: proc() {
+	allocator := mem.Arena.init().allocator();
+	p := new(int, allocator);
+	p^ = 42;
+}
+
+temporary_allocation :: proc() {
+	p := new(int, mem.Arena.init().allocator());
+	p^ = 42;
+}
+
+temporary_parent :: proc() {
+	child := mem.Scratch.init(mem.Arena.init().allocator());
+	p := new(int, child.allocator());
+	p^ = 42;
+}
+
+forward :: proc(allocator: Allocator) -> Allocator { return allocator; }
+Holder :: struct { allocator: Allocator }
+
+forwarded :: proc() {
+	owner := mem.Arena.init();
+	holder := Holder{forward(owner.allocator())};
+	drop(owner);
+	p := new(int, holder.allocator);
+	p^ = 42;
+}
+
+escaped :: proc() -> Allocator {
+	owner := mem.Arena.init();
+	return owner.allocator();
+}
+
+main :: proc() {}

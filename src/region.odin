@@ -76,10 +76,17 @@ type_is_region_provider :: proc(c: ^Compiler, id: Type_Id) -> bool {
 
 // Whether a value of this type holds a provider by value, so ending the value
 // ends that provider's region.
-type_carries_provider :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
-	if type == INVALID_TYPE || depth > 8 {
+type_carries_provider :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
+	return provider_reach_walk(c, type, &visited)
+}
+
+@(private = "file")
+provider_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool) -> bool {
+	if type == INVALID_TYPE || visited[type] {
 		return false
 	}
+	visited[type] = true
 	if type_is_region_provider(c, type) {
 		return true
 	}
@@ -90,18 +97,18 @@ type_carries_provider :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
 	#partial switch info.kind {
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && type_carries_provider(c, sym.type, depth + 1) {
+			if sym := symbol_of(c, field); sym != nil && provider_reach_walk(c, sym.type, visited) {
 				return true
 			}
 		}
 	case .Union:
 		for payload in info.variants {
-			if payload != TYPE_VOID && type_carries_provider(c, payload, depth + 1) {
+			if payload != TYPE_VOID && provider_reach_walk(c, payload, visited) {
 				return true
 			}
 		}
 	case .Array, .Dynamic_Array, .Map:
-		return type_carries_provider(c, info.element, depth + 1) || type_carries_provider(c, info.key, depth + 1)
+		return provider_reach_walk(c, info.element, visited) || provider_reach_walk(c, info.key, visited)
 	}
 	return false
 }

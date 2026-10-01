@@ -3127,12 +3127,12 @@ A `return` evaluates and transfers its result before scope-exit actions run; a d
 
 A variable holds a value, not a reference to one. Copying an owning value produces an independent value, and sharing is written rather than inferred: a pointer, slice, or view is the explicit opt-out, and a [clone is ownership-recursive, not deep](#lifecycle-hooks-and-resource-types) — it duplicates owned storage and stops at the first borrow it reaches. The sharing that is not written belongs to the *type*: [`string`](#string-type) and [`shared(T)`](#shared-ownership) retain their storage when copied, because each is immutable or explicitly shared and carries the handle count that makes retention safe.
 
-One rule covers every context that takes a value. **A place stays live: it is borrowed wherever a borrow is indistinguishable from a copy, and copied otherwise. A temporary, or `move(x)`, transfers.** Making a borrow indistinguishable from a copy is what [Borrows and lifetimes](#borrows-and-lifetimes) is for — it is why an ordinary parameter can share a managed owner for the call without either side being able to tell.
+**A place is borrowed wherever borrowing is indistinguishable from copying, and copied otherwise. A temporary or `move(x)` transfers when the operation takes ownership; an ordinary parameter borrows it for the call.** [Borrows and lifetimes](#borrows-and-lifetimes) ensures that sharing a managed owner for an ordinary call cannot be distinguished from copying it. The table below distinguishes the contexts; [last-use transfer](#last-use-transfer) can replace an eligible binding or assignment clone.
 
 | context | a place | a temporary, or `move(x)` |
 | --- | --- | --- |
 | [binding and assignment](#assignment-statements) | cloned | transferred |
-| ordinary parameter `value: T` | borrowed for the call; nothing derived from it outlives the call | borrowed; the temporary is destroyed after the full expression |
+| ordinary parameter [`value: T`](#parameter-semantics-and-abi-lowering) | borrowed for the call; borrows of its own storage cannot escape | borrowed; the temporary is destroyed after the full expression |
 | a [`self: ^`](#receiver-forms) receiver | aliases the caller's storage | borrowed for the full expression |
 | `inout T` parameter | exclusive mutable borrow | not accepted: `inout` names a caller's variable |
 | `move T` parameter | transferred, and written `move(x)` at the call | transferred, with no marker |
@@ -3146,11 +3146,11 @@ One rule covers every context that takes a value. **A place stays live: it is bo
 
 [Iteration](#borrowing-iteration) holds its root for the complete statement and borrows stored elements; [`copied()`](#iteration-adapters) is the written clone. `move(place)` can transfer the collection into that statement-owned root, but does not transfer its elements individually.
 
-Whether a place is copied or a temporary transferred changes what an expression costs, never what it computes, apart from the copy hooks a [last-use transfer](#last-use-transfer) does not run. [Copy-cost diagnostics](#copy-cost-diagnostics) reports the copies.
+Whether a place is copied or a temporary transferred changes what an expression costs, never what it computes, apart from the copy hooks a [last-use transfer](#last-use-transfer) does not run. Optional [copy-cost diagnostics](#copy-cost-diagnostics) can report costly copies.
 
 #### Last-use transfer
 
-Copying an owner is implicit, so a program may copy one it is about to discard. It pays nothing for that: **a copy of a local at its last use is a move.** When a binding or an assignment would clone a whole local variable or `move` parameter whose copy may allocate — a `[dynamic]T` or `map[K]V`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — and no path from there reads the local again before it is assigned anew or its scope ends, the local is transferred exactly as `move(x)` would transfer it, and is dead afterwards.
+**An eligible last-use copy of a local transfers ownership.** This applies when a binding or assignment would clone a whole local variable or `move` parameter whose copy may allocate — a `[dynamic]T` or `map[K]V`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — and no path reads the local again before reassignment or scope exit. Subject to the exclusions below, the value transfers as with `move(x)`, leaving the source dead.
 
 ```odin
 first := [dynamic]int{1, 2, 3};
@@ -4219,7 +4219,7 @@ The source-level parameter mode is decided before ABI lowering:
 
 | Parameter form | Source-level meaning |
 | --- | --- |
-| `value: T` | Immutable value; no ownership transfer. Nothing borrowed from it outlives the call |
+| `value: T` | Immutable value; no ownership transfer. Its own storage is borrowed only for the call |
 | `value: []T` | Immutable borrowed view with read-only elements |
 | `value: []mut T` | Immutable borrowed view whose elements may be modified |
 | `value: ^T` | Read-only pointer; the caller writes `&` |
@@ -4227,21 +4227,15 @@ The source-level parameter mode is decided before ABI lowering:
 | `value: inout T` | Exclusive mutable borrow of the caller's variable |
 | `value: move T` | Ownership transfer from caller to callee |
 
-A `value: T` parameter is a value for every `T`; its machine representation never makes it `inout`. A borrow of it — of its own bytes, or of storage a managed owner holds, such as a `string`'s characters or a dynamic array's elements — ends with the call and cannot be returned or retained. A result never derives from a `value: T` argument, though a borrow the value *contains*, such as a slice field, keeps its own provenance.
+A `value: T` parameter is a value for every `T`; its machine representation never makes it `inout`. Borrows of its own bytes or owned backing storage, such as a `string`'s characters or a dynamic array's elements, end with the call and cannot be returned or retained. A borrow the value already contains, such as a slice field, keeps the provenance of the storage it refers to; see [Values that contain borrows](#values-that-contain-borrows).
 
 The implementation need not copy the argument. A managed owner is shared with the caller for the call, cloning nothing and transferring nothing, and the caller's argument stays borrowed until the call returns, so the difference cannot be observed.
 
-A procedure that hands out a view of its argument says so in its signature: it takes the view (`[]T`, `string_view`) or a pointer, `^T` or a `self: ^` receiver. Whether a borrow can escape therefore never depends on what the argument's type contains.
+To return a view of an ordinary argument's own storage, a procedure must accept a view (`[]T`, `string_view`) or a pointer (`^T` or a `self: ^` receiver). [Procedure result contracts](#procedure-result-contracts) describe which storage the result may borrow.
 
 Returning such a borrowed parameter by value performs a logical clone, since the callee owns nothing to move out: a mutable owner clones into `mem.default_allocator()` unless the procedure constructs the result with another allocator, while `string` and `shared(T)` retain their shared allocation. Returning a borrowed value whose clone is disabled is a compile-time error. Returning a managed local, temporary, or `move` parameter instead transfers ownership without cloning. A procedure needing allocator-controlled result storage takes an allocator parameter and constructs against it.
 
-Machine-level argument passing does not grant extra ownership, mutation, or lifetime rights. A foreign procedure follows its declared foreign ABI.
-
-#### Copy-cost diagnostics
-
-Copying a large aggregate or managed owner is valid, but tools may warn wherever [the ownership rule](#value-semantics-and-the-ownership-rule) copies a place rather than borrowing or transferring it: a binding, an assignment, a parameter, a return, a place operand or fallback of [`or_else` or `or_return`](#operator-ownership), an [aggregate literal](#struct-literals) element, a [variant](#unions) payload, a [container insertion](#container-insertion), a variadic pack element, and an explicit `clone` or [`copied()`](#iteration-adapters). Every context in that table is asked, because a copy written as construction is the easiest one to miss.
-
-Building a destination by *converting* the operand is not a copy of it and is not reported: `print(count)` erases an `int` into a borrowing `any_view`, duplicating nothing. An ordinary `value: T` parameter shares a managed owner for the call and is not a copy site either. Use `move` for ownership transfer and `inout` only when mutation is intended.
+An ordinary parameter borrows its argument:
 
 ```odin
 sum :: proc(values: [dynamic]int) -> int {
@@ -4254,7 +4248,7 @@ sum :: proc(values: [dynamic]int) -> int {
 }
 ```
 
-`sum(values)` borrows, while `local := values` clones. When two names must share one value, use a pointer or `shared(T)`; when the source is finished, use `move`.
+`sum(values)` borrows the argument; [copying a value parameter to a local](#local-copies-of-parameters) clones it. To share a value explicitly, use a pointer or `shared(T)`.
 
 Use `inout` for a mutable borrow and `move` when a procedure must take ownership:
 
@@ -4272,9 +4266,9 @@ sort_in_place(inout numbers);
 process_owned(move(numbers));
 ```
 
-**The `inout` and `move` modes are required at the call site, not just at the declaration.** An argument to an `inout` parameter must be written `inout expr`, and a *place* given to a `move` parameter must be written `move(expr)`. Omitting the marker is an error naming the parameter and the mode it needs, so a reader sees at the call which arguments may be modified and which are given away.
+**Argument modes must be written at the call site.** An `inout` parameter requires `inout expr`; a place passed to a `move` parameter requires `move(expr)`. Omitting the marker is an error naming the parameter and required mode.
 
-**A temporary is passed to a `move` parameter directly.** It owns its value already and leaves no lexical owner dead, so there is nothing for a marker to announce — the same rule [`unsafe.forget`](#unsafeforget) follows, and what lets an ordinary library call take an owning temporary exactly as [built-in insertion](#container-insertion) does:
+**A temporary needs no `move` marker.** It already owns its value, and transferring it leaves no named source dead. This is also the rule for [`unsafe.forget`](#unsafeforget) and [built-in insertion](#container-insertion):
 
 ```odin
 connections.append(connect("a.example"));   // a temporary: no marker
@@ -4282,11 +4276,19 @@ c := connect("b.example");
 connections.append(move(c));                // a place: written out, `c` is dead after the call
 ```
 
-Ownership therefore also selects. A candidate whose parameter is `move` is reachable only from an argument that already owns its value — a written `move(expr)` or a temporary — and passing such an argument to an ordinary value parameter is not a mismatch either, since it transfers ownership instead of cloning into it. Both directions are viable, so [tie-breaker 1](#operator-lookup-and-overload-resolution) decides for the consuming one: `values.append(move(f))` and `values.append(make_token())` pick a group's consuming member, and `values.append(token)` its ordinary one. The marker's job is to announce that a named place dies; which member runs follows from whether the argument owns its value, as initialization and [built-in insertion](#container-insertion) already do. A [consuming receiver](#methods-and-abstractions) follows the same rule, so `move(value).method()` and `make_value().method()` both prefer a consuming member of a group, and `value.method()` cannot reach one.
+Ownership also affects overload selection. A `move` parameter accepts a temporary or `move(expr)`, but not an unmarked place. An ordinary value parameter can borrow those same owning arguments. When viable candidates have identical conversion ranks, [tie-breaker 1](#operator-lookup-and-overload-resolution) prefers the consuming member: `values.append(move(f))` and `values.append(make_token())` select it, while `values.append(token)` selects the ordinary member. [Consuming receivers](#methods-and-abstractions) follow the same rule: `move(value).method()` and `make_value().method()` prefer a consuming member, while `value.method()` cannot select one.
 
 `move(x)` is an [expression](#assignment-statements) that transfers `x` and marks it dead. It may be used in assignments, returns, arguments, and consuming method calls such as `move(value).method()`. It cannot target static-duration storage.
 
 `inout x` is a parameter-mode marker, not a value expression. It appears on arguments and `inout` results. Method syntax supplies it implicitly for a `self: inout` receiver, so `numbers.sort()` needs no extra marker. Other mutable arguments must write `inout` explicitly. See [Borrows and lifetimes](#borrows-and-lifetimes).
+
+Machine-level argument passing does not grant extra ownership, mutation, or lifetime rights. A foreign procedure follows its declared foreign ABI.
+
+#### Copy-cost diagnostics
+
+Tools may warn about costly copies of aggregates and managed owners. These warnings are optional and may use a cost threshold. When enabled, the warning policy applies to all copy contexts under [the ownership rule](#value-semantics-and-the-ownership-rule): bindings, assignments, argument copies, returns, place operands and fallbacks of [`or_else` or `or_return`](#operator-ownership), [aggregate literal](#struct-literals) elements, [variant](#unions) payloads, [container insertion](#container-insertion), variadic pack elements, and explicit `clone` or [`copied()`](#iteration-adapters) calls.
+
+Converting an operand to a destination type is not itself a copy: `print(count)` erases an `int` into a borrowing `any_view`, duplicating nothing. Ordinary `value: T` parameters borrow managed owners for the call and are not copy sites either.
 
 #### Local copies of parameters
 
@@ -4631,7 +4633,7 @@ halve :: proc(value: int) -> f64 { return f64(value) / 2; }
 half := apply(7, halve);   // U is f64
 ```
 
-The pattern binds types only. The argument must still convert to the parameter type it produces, so its parameter modes, calling convention, and effects must match, as for any conversion between [procedure types](#procedure-type).
+The pattern binds types only. The argument must still convert to the parameter type it produces, following the mode, calling-convention, type-level effect, and result-contract rules for [procedure types](#procedure-type). Inferred [global write effects](#global-write-effects) are not part of type compatibility.
 
 A parameter written this way is more specific than an unconstrained `$T`, which is what tie-breaker 5 of [overload resolution](#operator-lookup-and-overload-resolution) selects on. Specialization is therefore how a procedure group narrows one of its members to a shape.
 
@@ -4754,6 +4756,7 @@ A **borrow carrier** is a value that refers to another root without owning that 
 - `^T` and `^mut T`, immutable and mutable single-value pointers;
 - `[]T` and `[]mut T`, immutable and mutable slices;
 - `string_view`, `cstring_view`, and `any_view`;
+- `Allocator` handles, which borrow their provider's control block;
 - `dyn Interface` and `dyn mut Interface` views, and compiler-known iterators;
 - default and `inout` parameter access paths for the duration of a call;
 - an [`inout` result](#inout-results), a mutable borrow returned to the caller.
@@ -5080,7 +5083,7 @@ make_holder :: proc() -> Holder {
 
 #### Global write effects
 
-A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through anything it calls. A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:
+A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through calls. Writes by foreign code or implicitly invoked hooks, and writes through pointers or views stored in globals, are excluded; see [What is not checked](#what-is-not-checked). A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:
 
 ```odin
 cache: [dynamic]int;
@@ -5691,7 +5694,7 @@ case .err: fmt.println("no memory for an int");
 }
 ```
 
-- `new_clone(value, allocator := mem.default_allocator()) -> ^mut T` creates an allocation containing a clone. It has the same provenance and release rules as `new`.
+- `new_clone(value, allocator := mem.default_allocator()) -> ^mut T` creates an allocation containing a clone. It has the same provenance and release rules as `new`. Borrows in the clone keep their source lifetimes; allocating the clone does not extend them.
 
 ```odin
 x: int = 123;
@@ -6279,7 +6282,7 @@ Where this specification rejects a program, it often also says what the message 
 | A runtime value reaches a compile-time context | the runtime binding that prevented evaluation ([§](#compile-time-phases)) |
 | Compile-time evaluation exceeds a resource limit | the limit — evaluation never silently moves to runtime ([§](#compile-time-procedure-evaluation)) |
 | An error occurs inside a static `foreach` | the element and its source descriptor or index ([§](#static-foreach-expansion)) |
-| An `inout` or `move` marker is missing at a call | the parameter and the mode it needs ([§](#copy-cost-diagnostics)) |
+| An `inout` or `move` marker is missing at a call | the parameter and the mode it needs ([§](#parameter-semantics-and-abi-lowering)) |
 | A `where`-excluded method is called | the ordinary missing-member error, with a note pointing at the bound that did not hold ([§](#where-clauses)) |
 | An analysis budget forces a rejection | that budget limit, and the dependency as possible rather than certain ([§](#minimum-provenance-precision)) |
 | A suspended carrier is used during a reborrow | both ends: where the reborrow was taken, and the later use keeping it live ([§](#weakening-and-reborrows)) |
@@ -6289,7 +6292,7 @@ Where this specification rejects a program, it often also says what the message 
 | Signed arithmetic overflows at compile time | the mathematical result, and the type it does not fit ([§](#integer-overflow)) |
 | Two `@(export)` declarations use one symbol name | both declarations ([§](#export)) |
 
-Two more are continuous rather than triggered: [copy-cost diagnostics](#copy-cost-diagnostics) report every context where the ownership rule copies a place instead of borrowing or transferring it, and [`@(require_results)`](#require_results) reports a result that is neither read nor explicitly discarded.
+[`@(require_results)`](#require_results) also requires a diagnostic for a result that is neither read nor explicitly discarded. [Copy-cost diagnostics](#copy-cost-diagnostics) are optional; when enabled, their warning policy applies to all applicable copy contexts.
 
 ## Glossary
 

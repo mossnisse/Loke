@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- Allocator lifetime checks reject handles used after their provider ends,
+  including handles derived from temporary providers. Bind the provider to a
+  local that outlives its handles, allocations, and child providers. `new_clone`
+  also rejects escaped or stale borrows hidden in its allocation; keep the
+  borrowed source alive or clone an owning value instead.
 - Foreign boundaries reject enums without a written backing type, enums backed
   by `i128` or `u128`, and zero-sized records, including nested fields (`L0619`).
   These could use incompatible C layouts or calling conventions. Write the
@@ -121,6 +126,12 @@ checklist.
 
 ### Fixed
 
+- Provider lifetime checks follow nested and recursive record/container types
+  without dropping dependencies beyond eight levels. Handles remain usable
+  after moving a provider or resetting it with `free_all`.
+- Allocations preserve the borrows stored in their pointees, including through
+  helper procedures and `try_new_clone`, while retaining field precision and
+  the allocation-base provenance needed by checked `free`.
 - Foreign ABI checks reuse completed type checks within a traversal, avoiding
   exponential work on shared record types while preserving cycle handling and
   deferred signatures.
@@ -212,6 +223,10 @@ checklist.
 
 ### Documentation
 
+- [design.md](design.md) qualifies ownership and last-use transfer summaries,
+  groups argument modes under parameter semantics, and makes copy-cost warnings
+  explicitly optional. It distinguishes parameter storage from carried borrows
+  and procedure-type effects from inferred global writes.
 - [comments.md](comments.md) separates current rationale from design history and
   compiler notes, explains borrow-checking terms, and corrects stale pointer,
   map, and `Option` descriptions. Callable proposals are in

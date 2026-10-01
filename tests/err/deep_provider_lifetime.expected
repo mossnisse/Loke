@@ -1,0 +1,3 @@
+L0537
+@19:2
+dropping `owner` would end an allocator control block whose handle is still in use

@@ -1,0 +1,111 @@
+package main;
+import "core:fmt";
+import "core:mem";
+
+forward :: proc(allocator: Allocator) -> Allocator { return allocator; }
+clone_parameter :: proc(value: ^int) -> ^mut ^int { return new_clone(value); }
+clone_slice :: proc(values: []int) -> ^mut []int { return new_clone(values); }
+View :: struct { values: []int }
+clone_view :: proc(values: []int) -> ^mut View { return new_clone(View{values}); }
+clone_nested :: proc(value: ^int) -> ^mut ^mut ^int {
+	return new_clone(new_clone(value));
+}
+Pair :: struct { left: ^int, right: ^int }
+clone_pair :: proc(value: Pair) -> ^mut Pair { return new_clone(value); }
+
+handles :: proc() {
+	owner := mem.Arena.init();
+	handle := forward(owner.allocator());
+	moved := move(owner);
+	free_all(handle);
+	p := new_clone(42, handle);
+	fmt.println(p^);
+	free(p, handle);
+	free_all(handle);
+	p = new(int, handle);
+	p^ = 7;
+	fmt.println(p^);
+	free(p, handle);
+	drop(moved);
+}
+
+clones :: proc() {
+	value := 42;
+	p := new_clone(&value);
+	fmt.println(p^^);
+	free(p);
+	p = clone_parameter(&value);
+	fmt.println(p^^);
+	free(p);
+	values := [2]int{3, 7};
+	view: []int = values[:];
+	s := clone_slice(view);
+	fmt.println(s^[1]);
+	free(s);
+	r := clone_view(view);
+	fmt.println(r.values[0]);
+	free(r);
+	fallible := try_new_clone(&value) or_else nil;
+	fmt.println(fallible^^);
+	free(fallible);
+	inner := new_clone(&value);
+	outer := new_clone(inner);
+	fmt.println(outer^^^);
+	free(outer);
+	free(inner);
+	outer = clone_nested(&value);
+	fmt.println(outer^^^);
+	inner = outer^;
+	free(outer);
+	free(inner);
+}
+
+separate_fields :: proc() {
+	value := 7;
+	p: ^mut Pair = nil;
+	{
+		short := 3;
+		p = clone_pair(Pair{&short, &value});
+		fmt.println(p.left^);
+	}
+	fmt.println(p.right^);
+	free(p);
+}
+
+L0 :: struct { inner: mem.Arena }
+L1 :: struct { inner: L0 }
+L2 :: struct { inner: L1 }
+L3 :: struct { inner: L2 }
+L4 :: struct { inner: L3 }
+L5 :: struct { inner: L4 }
+L6 :: struct { inner: L5 }
+L7 :: struct { inner: L6 }
+L8 :: struct { inner: L7 }
+
+deep :: proc() {
+	owner := L8{L7{L6{L5{L4{L3{L2{L1{L0{mem.Arena.init()}}}}}}}}};
+	handle := owner.inner.inner.inner.inner.inner.inner.inner.inner.inner.allocator();
+	p := new_clone(11, handle);
+	fmt.println(p^);
+	free(p, handle);
+	drop(owner);
+}
+
+// Recursive container types terminate the provider reachability walk.
+Node :: struct { children: [dynamic]Node, arena: mem.Arena }
+recursive :: proc() {
+	node := Node{{}, mem.Arena.init()};
+	handle := node.arena.allocator();
+	p := new_clone(9, handle);
+	fmt.println(p^);
+	free(p, handle);
+	drop(node);
+}
+
+main :: proc() {
+	handles();
+	clones();
+	separate_fields();
+	deep();
+	recursive();
+}

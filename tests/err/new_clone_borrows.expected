@@ -1,0 +1,27 @@
+L0526
+@6:9
+this pointer cannot be returned: `value` ends
+L0526
+@12:9
+this slice cannot be returned: `values` ends
+L0526
+@18:9
+this slice cannot be returned: `values` ends
+L0526
+@23:9
+this pointer cannot be returned: `value` ends
+L0526
+@29:9
+this pointer cannot be returned: `value` ends
+L0513
+@38:9
+this pointer is used after `value`, the local it borrows, has ended
+L0526
+@44:9
+this pointer cannot be returned: `value` ends
+L0526
+@54:9
+this pointer cannot be returned: `value` ends
+L0644
+@57:34
+`value` is written `@(escape=none)`, but the result of `no_escape` may borrow it

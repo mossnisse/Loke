@@ -30,6 +30,7 @@ Root_Kind :: enum u8 {
 	Thread_Local, // outlives every frame on its own thread, nothing on another
 	Materialized,
 	Allocation,
+	Provider, // stable control block; moving its owner does not end it
 	Param,
 	Unknown,
 }
@@ -38,7 +39,7 @@ Root_Kind :: enum u8 {
 // storage both do; `root_satisfies_retention` tells them apart.
 root_outlives_body :: proc(kind: Root_Kind) -> bool {
 	#partial switch kind {
-	case .Local, .Slice_Literal, .Temporary:
+	case .Local, .Slice_Literal, .Temporary, .Provider:
 		return false
 	}
 	return true
@@ -76,6 +77,7 @@ root_kind_text :: proc(kind: Root_Kind) -> string {
 	case .Thread_Local:  return "thread-duration storage"
 	case .Materialized:  return "materialized constant"
 	case .Allocation:    return "allocation"
+	case .Provider:      return "allocator control block"
 	case .Param:         return "caller storage"
 	case .Unknown:       return "unknown storage"
 	}
@@ -96,6 +98,10 @@ Prov_Root :: struct {
 	// `Allocation`: the region the storage came from. Empty means unrecorded,
 	// which every reset reaches.
 	region: Region_Set,
+	// Anonymous allocations hold shaped pointee borrows and separate allocator
+	// dependencies, so loading or freeing a pointer keeps its own provenance.
+	contents: []int,
+	dependencies: []int,
 }
 
 // ---------------------------------------------------------- projections --
@@ -229,14 +235,15 @@ Prov_Reborrow :: struct {
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
-// checked provenance. A region provider is a carrier because an arena over a
+// checked provenance. An Allocator borrows its provider's control block.
+// A region provider is a carrier because an arena over a
 // caller's buffer holds that buffer; a compiler-known view (a map view or
 // iterator) holds only a raw pointer, so its marker is what makes it followed.
 type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
-	if type_is_region_provider(c, type) {
+	if type_is_region_provider(c, type) || type_underlying(c, type) == TYPE_ALLOCATOR {
 		return true
 	}
 	if info := underlying_info(c, type); info != nil && info.is_view {
@@ -284,7 +291,7 @@ Retain_Kind :: enum u8 {
 // `@(escape)` contract, and unknown provenance proves nothing.
 root_satisfies_retention :: proc(kind: Root_Kind, into: Retain_Kind) -> bool {
 	#partial switch kind {
-	case .Local, .Slice_Literal, .Temporary, .Allocation:
+	case .Local, .Slice_Literal, .Temporary, .Allocation, .Provider:
 		return false
 	case .Static, .Materialized:
 		return true
@@ -741,6 +748,9 @@ Result_Dependencies :: struct {
 	thread:       bool,
 	fresh:        bool, // a fresh allocation, which lets a returned pointer reach `free`
 	fresh_region: Region_Set,
+	// Pointee fields and allocator dependencies stay distinct from the base.
+	fresh_contents: ^Result_Provenance,
+	fresh_dependencies: ^Result_Dependencies,
 	local:        bool, // already an error in the callee
 	unknown:      bool,
 }
@@ -748,6 +758,8 @@ Result_Dependencies :: struct {
 // Whether a result may depend on a parameter: borrow it, or hold what its
 // storage holds.
 result_uses_param :: proc(dependencies: Result_Dependencies, index: int) -> bool {
+	if dependencies.fresh_contents != nil && result_uses_param(dependencies.fresh_contents.dependencies, index) { return true }
+	if dependencies.fresh_dependencies != nil && result_uses_param(dependencies.fresh_dependencies^, index) { return true }
 	return index < len(dependencies.params) && (dependencies.params[index] || dependencies.param_loads[index] != 0)
 }
 
@@ -925,6 +937,24 @@ joined_result_summary :: proc(c: ^Compiler, members: []Symbol_Id) -> (Result_Pro
 @(private = "file")
 merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_Dependencies) {
 	merge_provenance(into, from)
+	if source := from.fresh_contents; source != nil {
+		if into.fresh_contents == nil {
+			into.fresh_contents = new(Result_Provenance, c.semantic_allocator)
+			into.fresh_contents^ = new_result_provenance(c, len(into.params), source.content_type, len(source.content) > 0)
+		}
+		merge_result_dependencies(c, &into.fresh_contents.dependencies, source.dependencies)
+		for &content, position in into.fresh_contents.content {
+			selected := position < len(source.content) && len(source.content) == len(into.fresh_contents.content) ? source.content[position].dependencies : source.dependencies
+			merge_result_dependencies(c, &content.dependencies, selected)
+		}
+	}
+	if source := from.fresh_dependencies; source != nil {
+		if into.fresh_dependencies == nil {
+			into.fresh_dependencies = new(Result_Dependencies, c.semantic_allocator)
+			into.fresh_dependencies^ = new_result_dependencies(c, len(into.params))
+		}
+		merge_result_dependencies(c, into.fresh_dependencies, source^)
+	}
 	merge_precision(&into.precision, from.precision)
 	for depths, index in from.param_loads {
 		if index < len(into.param_loads) {
@@ -1350,7 +1380,7 @@ paths_equal :: proc(a, b: []Proj_Step) -> bool {
 }
 
 @(private = "file")
-merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, index: int) -> bool {
+merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, index: int, depth := 0) -> bool {
 	loan := state.graph.loans[index]
 	root := state.graph.roots[int(loan.root)]
 	one := Result_Dependencies{}
@@ -1378,12 +1408,67 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, in
 	case .Allocation:
 		one.fresh = true
 		one.fresh_region = root.region
-	case .Local, .Slice_Literal, .Temporary:
+		if depth <= CARRIER_DEPTH {
+			changed := merge_provenance(into, one)
+			if len(root.contents) > 0 {
+				if into.fresh_contents == nil {
+					into.fresh_contents = new(Result_Provenance, state.k.c.semantic_allocator)
+					into.fresh_contents^ = new_result_provenance(state.k.c, state.graph.param_count, state.graph.prov_slots[root.contents[0]].content_shape, true)
+				}
+				content := into.fresh_contents
+				changed = merge_allocation_contents(state, &content.dependencies, root.contents, depth + 1) || changed
+				for &path in content.content {
+					selected := make([dynamic]int, 0, len(root.contents), context.temp_allocator)
+					for slot in root.contents {
+						entry := state.graph.prov_slots[slot]
+						if entry.content_shape != content.content_type || paths_overlap(entry.path, path.path.steps) { append(&selected, slot) }
+					}
+					changed = merge_allocation_contents(state, &path.dependencies, selected[:], depth + 1) || changed
+				}
+			}
+			if len(root.dependencies) > 0 {
+				if into.fresh_dependencies == nil {
+					into.fresh_dependencies = new(Result_Dependencies, state.k.c.semantic_allocator)
+					into.fresh_dependencies^ = new_result_dependencies(state.k.c, state.graph.param_count)
+				}
+				changed = merge_allocation_contents(state, into.fresh_dependencies, root.dependencies, depth + 1) || changed
+			}
+			return changed
+		}
+	case .Local, .Slice_Literal, .Temporary, .Provider:
 		one.local = true
 	case .Unknown:
 		one.unknown = true
 	}
 	return merge_provenance(into, one)
+}
+
+// Nested allocations keep their contents through the public precision budget;
+// deeper or cyclic contents merge transitively instead of losing a lifetime.
+@(private = "file")
+merge_allocation_contents :: proc(state: ^Prov_State, into: ^Result_Dependencies, slots: []int, depth: int) -> bool {
+	if len(slots) == 0 { return false }
+	pending := make([dynamic]int, 0, len(slots), context.temp_allocator)
+	append(&pending, ..slots)
+	visited := make([]bool, state.loans, context.temp_allocator)
+	changed := false
+	if depth > CARRIER_DEPTH { changed = merge_precision(&into.precision, {.Depth}) }
+	for head := 0; head < len(pending); head += 1 {
+		slot := pending[head]
+		changed = merge_precision(&into.precision, state.precision[slot]) || changed
+		row := reach_row(state, state.reach, slot)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || visited[index] { continue }
+			visited[index] = true
+			changed = merge_loan_provenance(state, into, index, depth) || changed
+			if depth > CARRIER_DEPTH {
+				root := state.graph.roots[int(state.graph.loans[index].root)]
+				append(&pending, ..root.contents)
+				append(&pending, ..root.dependencies)
+			}
+		}
+	}
+	return changed
 }
 
 // Narrows a parameter dependency to the shape paths the loan overlaps, so a
@@ -1723,7 +1808,7 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 	for carrier in event.into {
 		row := reach_row(state, reach, carrier)
 		for index in 0 ..< state.loans {
-			if bit_get(row, index) && !load_through_loan(state, index, event.path, reach, &loss, reads) {
+			if bit_get(row, index) && !load_through_loan(state, index, event.path, reach, &loss, reads, event.deep) {
 				loss |= state.precision[carrier]
 			}
 		}
@@ -1736,7 +1821,7 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 				if !expanded[index] && bit_get(state.merged, index) {
 					expanded[index] = true
 					grew = true
-					load_through_loan(state, index, nil, reach, &loss, reads)
+					load_through_loan(state, index, nil, reach, &loss, reads, true)
 				}
 			}
 		}
@@ -1756,14 +1841,23 @@ load_through_loan :: proc(
 	reach: []u8,
 	loss: ^Precision_Loss,
 	reads: ^[dynamic]int,
+	with_dependencies := false,
 ) -> bool {
 	graph := state.graph
 	loan := graph.loans[loan_index]
 	root := graph.roots[int(loan.root)]
+	if with_dependencies {
+		for slot in root.dependencies {
+			loss^ |= state.precision[slot]
+			bytes_or(state.merged, reach_row(state, reach, slot))
+			if reads != nil && !slice.contains(reads[:], slot) { append(reads, slot) }
+		}
+	}
 	sym := symbol_of(graph.k.c, root.symbol)
 	found := false
-	if sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(graph.k.c, sym.type))) {
-		slots := graph.content_by_symbol[root.symbol]
+	if len(root.contents) > 0 || (sym != nil && !(root.kind == .Param && (loan.content || type_is_carrier(graph.k.c, sym.type)))) {
+		slots := root.contents
+		if sym != nil { slots = graph.content_by_symbol[root.symbol] }
 		bare: [1]int
 		if index, exists := graph.slot_by_symbol[root.symbol]; exists {
 			bare[0] = index
@@ -1801,9 +1895,11 @@ load_through_loan :: proc(
 // mutation before `p^.view` conflicts with the borrow held in the pointee.
 @(private = "file")
 resolve_content_reads :: proc(state: ^Prov_State) {
-	if !state.graph.has_content_load {
-		return
+	has_dependencies := false
+	for root in state.graph.roots {
+		if len(root.dependencies) > 0 { has_dependencies = true; break }
 	}
+	if !state.graph.has_content_load && !has_dependencies { return }
 	for block in state.graph.blocks {
 		if !block.prov_visited {
 			continue
@@ -1817,6 +1913,24 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 				load_pointee_content(state, event, state.reach, &reads)
 				event.sources = reads[:]
 				prov_reborrow_loaded(state.graph, event)
+			} else if event.kind == .Live && has_dependencies {
+				reads := make([dynamic]int, 0, len(event.sources), state.graph.alloc)
+				append(&reads, ..event.sources)
+				for head := 0; head < len(reads); head += 1 {
+					// Returned holds already contain the dependencies; adding their
+					// original slots would duplicate the frame-escape diagnostic.
+					if state.graph.prov_slots[reads[head]].returned { continue }
+					row := reach_row(state, state.reach, reads[head])
+					for index in 0 ..< state.loans {
+						if !bit_get(row, index) { continue }
+						root := state.graph.roots[int(state.graph.loans[index].root)]
+						for dependency in root.dependencies {
+							if !slice.contains(reads[:], dependency) { append(&reads, dependency) }
+						}
+					}
+				}
+				event.sources = reads[:]
+				run_prov_event(state, event, state.reach, state.ended)
 			} else {
 				run_prov_event(state, event, state.reach, state.ended)
 			}
@@ -1874,6 +1988,13 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan: Prov_Loan) {
 	graph := state.graph
 	root := graph.roots[int(loan.root)]
+	for index in root.contents {
+		slot := graph.prov_slots[index]
+		if paths_overlap(slot.path, loan.path) {
+			bytes_or(reach_row(state, reach, index), state.merged)
+			state.precision[index] |= state.merged_precision | slot.precision | path_precision(loan.path)
+		}
+	}
 	if root.symbol == INVALID_SYMBOL {
 		return
 	}
@@ -1956,10 +2077,11 @@ report_provenance :: proc(state: ^Prov_State) {
 }
 
 // Whether a reset ends storage rooted here: an allocation in a region the reset
-// may name, or one whose region was never recorded.
+// may name, or one whose region was never recorded. Only provider destruction
+// ends a control block; `free_all` leaves handles usable.
 @(private = "file")
 reset_ends_root :: proc(root: Prov_Root, event: Prov_Event) -> bool {
-	if root.kind != .Allocation {
+	if root.kind != .Allocation && !(root.kind == .Provider && event.provider_end) {
 		return false
 	}
 	return region_is_empty(root.region) || regions_may_overlap(root.region, event.region)
@@ -2023,10 +2145,11 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			return
 		}
 	case .Escape:
+		sources := prov_join(graph, event.sources, event.into)
 		// A result backed by a region created here, as an owner or an allocation.
 		escape_region := Region_Set{params = make([]bool, max(graph.param_count, 1), graph.alloc)}
 		region_merge(&escape_region, event.region)
-		for source in event.sources {
+		for source in sources {
 			row := reach_row(state, state.reach, source)
 			for index in 0 ..< state.loans {
 				if !bit_get(row, index) || state.ended[index] {
@@ -2058,7 +2181,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			return
 		}
 		// A borrow of storage that ends with the frame.
-		for source in event.sources {
+		for source in sources {
 			row := reach_row(state, state.reach, source)
 			for index in 0 ..< state.loans {
 				if !bit_get(row, index) || state.ended[index] {
@@ -2239,13 +2362,11 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 		if graph.prov_slots[slot].returned && region_is_local_only(root.region) {
 			continue
 		}
-		errorf(
-			state.k.c,
-			event.span,
-			"L0537",
-			"this reset ends every allocation in the region, but a %s of one of them is still in use",
-			loan.what,
-		)
+		if root.kind == .Provider {
+			errorf(state.k.c, event.span, "L0537", "%s would end an allocator control block whose handle is still in use", event.ends != "" ? event.ends : "this cleanup")
+		} else {
+			errorf(state.k.c, event.span, "L0537", "this reset ends every allocation in the region, but a %s of one of them is still in use", loan.what)
+		}
 		state.diagnostic_precision |= state.precision[slot]
 		add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
 		add_use_note(state, uses[slot])

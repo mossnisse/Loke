@@ -600,7 +600,7 @@ provider_region_end :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, node:
 		return
 	}
 	region := path == nil ? prov_provider_region(graph, id) : prov_provider_region_at(graph, id, path)
-	prov_reset(graph, region, span, true, nil, live.dead, ends, id)
+	prov_reset(graph, region, span, true, nil, live.dead, ends, id, provider_end = true)
 }
 
 // A `move` out of a local ends what it holds, unless the move is into a new
@@ -728,7 +728,7 @@ provider_indirect_end :: proc(graph: ^Flow_Graph, node: rawptr, span: Span, verb
 		return
 	}
 	ends := fmt.aprintf("%s through a pointer or slice", verb, allocator = graph.alloc)
-	prov_reset(graph, set, span, true, nil, live.dead, ends)
+	prov_reset(graph, set, span, true, nil, live.dead, ends, provider_end = true)
 }
 
 // Assigning into a provider inside a local drops the provider there before.
@@ -873,16 +873,18 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 				if sym := symbol_of(graph.k.c, graph.literal.symbol); sym != nil {
 					result_type = sym.result
 				}
+				contents := prov_load_deep(graph, sources, expr_span(value.expr))
 				prov_emit(graph, Prov_Event {
 					kind           = .Escape,
 					sources        = sources,
+					into           = contents,
 					span           = expr_span(value.expr),
 					region         = escaping,
 					region_content = prov_result_region_fields(graph, value.expr, result_type),
 					// The frame's regions end here, so the diagnostic names them.
 					name           = prov_region_name(graph, escaping),
 				})
-				held = prov_hold_result(graph, sources, result_type, expr_span(value.expr))
+				held = prov_hold_result(graph, prov_join(graph, sources, contents), result_type, expr_span(value.expr))
 			}
 			emit_cleanups(graph, 0, s)
 			if len(held) > 0 {
@@ -1504,10 +1506,11 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 							)
 						}
 					}
+					contents := prov_load_deep(graph, escaping, v.span)
 					prov_emit(graph, Prov_Event {
-						kind = .Escape, sources = escaping, span = v.span,
+						kind = .Escape, sources = escaping, into = contents, span = v.span,
 					})
-					held = prov_hold_result(graph, escaping, proc_symbol.result, v.span)
+					held = prov_hold_result(graph, prov_join(graph, escaping, contents), proc_symbol.result, v.span)
 				}
 			}
 			emit_cleanups(graph, 0, v)

@@ -1,0 +1,21 @@
+L0537
+@8:2
+dropping `owner` would end an allocator control block whose handle is still in use
+L0537
+@16:2
+assigning over `owner` would end an allocator control block whose handle is still in use
+L0513
+@23:16
+this allocator handle is used after this temporary has ended
+L0513
+@29:2
+this allocator handle is used after this temporary has ended
+L0513
+@34:16
+this allocator handle is used after this temporary has ended
+L0537
+@44:2
+dropping `owner` would end an allocator control block whose handle is still in use
+L0592
+@51:9
+this result is backed by `owner`, an allocator region that ends when this procedure returns
