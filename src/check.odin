@@ -740,6 +740,10 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		if field.type != nil && field_type == INVALID_TYPE && k.c.error_count == before {
 			report_unresolved_type(k, field.type)
 		}
+		// design.md "`type` and `typeid`": a record is runtime storage.
+		if offender := compile_time_only_component(k.c, field_type); offender != INVALID_TYPE {
+			report_compile_time_only(k, offender, field.span)
+		}
 		bindings := make([dynamic]Symbol_Id, 0, len(field.names), k.c.semantic_allocator)
 		// design.md "Compile-time reflection": fields have visibility too.
 		public := field_is_public(k, field.attributes)
@@ -2366,18 +2370,24 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 			return
 		}
 	}
-	if symbol.signature_error {
-		return // resolving the signature already said what is wrong with it
-	}
-	// `type` is a supported shape for `$` parameters, but never a runtime one.
-	if offender := compile_time_only_component(k.c, symbol.proc_type); offender != INVALID_TYPE {
-		report_compile_time_only(k, offender, literal.span)
-		return
-	}
-	if !gate_type(k, symbol.proc_type, literal.span) {
+	if !runtime_signature_ok(k, symbol, literal.span) {
 		return
 	}
 	check_proc_body(k, literal)
+}
+
+// Shared by named procedures and procedure literals: whether the signature can
+// be a runtime procedure value at all.
+runtime_signature_ok :: proc(k: ^Checker, symbol: ^Symbol, span: Span) -> bool {
+	if symbol.signature_error {
+		return false // resolving the signature already said what is wrong with it
+	}
+	// `type` is a supported shape for `$` parameters, but never a runtime one.
+	if offender := compile_time_only_component(k.c, symbol.proc_type); offender != INVALID_TYPE {
+		report_compile_time_only(k, offender, span)
+		return false
+	}
+	return gate_type(k, symbol.proc_type, span)
 }
 
 // Installs parameters, checks the body, and demands a return on every path that

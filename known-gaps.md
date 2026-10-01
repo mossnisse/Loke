@@ -288,36 +288,6 @@ pattern walkers in `iterate.odin` and `emit_llvm_iteration.odin` pair bindings
 with fields by position; they must map each binding to its named field's slot,
 as declaration destructuring does.
 
-### Compile-time-only types reach runtime records and anonymous procedures
-
-[design.md "`type` and `typeid`"](design.md#type-and-typeid) prohibits runtime
-record storage and procedure values containing `type`. Both programs are
-accepted:
-
-```odin
-package main;
-Item :: struct { value: type }
-main :: proc() { value: Item = {}; }
-```
-
-`resolve_struct_fields` does not reject compile-time-only field types, and
-the ordinary storage gate accepts a record containing `type`. Validate fields
-where their types are resolved.
-
-```odin
-package main;
-main :: proc() {
-    f := proc(t: type) {};
-    f(int);
-}
-```
-
-LLVM emits a runtime lambda taking `i64` and passes `0` for `int`.
-The named equivalent correctly reports L0378. `check_proc_literal` calls
-`check_proc_body` directly, bypassing `check_proc`'s signature-error and
-compile-time-only component guards. Share those guards before checking or
-hoisting either form.
-
 ### Compound indexed assignment omits the computed-setter fallback
 
 [design.md "Indexing and slicing"](design.md#indexing-and-slicing) requires

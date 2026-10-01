@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A record field of type `type`, or a procedure literal whose signature
+  contains `type`, is an error (`L0378`), as a variable or named procedure
+  already was. The literal compiled `type` arguments to `0`.
 - A `@(require_results)` value bound in an `if`, `for`, or `switch` header and
   never read is an error (`L0698`), as one bound in a block already was. Read
   it, or discard it with `_ = ...`.

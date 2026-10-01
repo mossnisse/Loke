@@ -2319,6 +2319,11 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	}
 	symbol.proc_literal = v
 	v.type = symbol.proc_type
+	// design.md "`type` and `typeid`": a literal is always a runtime value.
+	if !runtime_signature_ok(k, symbol, v.span) {
+		v.type = INVALID_TYPE
+		return
+	}
 	// Not while speculatively checking an interface requirement.
 	if pkg := package_of(k.c, k.pkg); pkg != nil && committing(k.c) {
 		append(&pkg.hoisted_procs, v)

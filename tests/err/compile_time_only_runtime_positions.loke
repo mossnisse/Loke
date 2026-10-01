@@ -1,0 +1,13 @@
+package main;
+
+// design.md "`type` and `typeid`": a `type` value cannot be stored in a
+// runtime record or be part of a procedure value, a literal included.
+Item :: struct { value: type }
+Items :: struct { values: [2]type }
+
+main :: proc() {
+	f := proc(t: type) {};
+	g := proc() -> type { return int; };
+	_ = f;
+	_ = g;
+}
