@@ -278,7 +278,7 @@ Known divergences between the specification and the compiler are recorded in
 [known-gaps.md](known-gaps.md), each with a reproduction. The test corpus does
 not cover them, which is why they are written down.
 
-Add `-RequireTools` on a machine that has nasm
+Add `-RequireTools` on a machine that has nasm, cdb,
 and a C host toolset, so tests that would skip for a missing tool fail instead.
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs
 `.\test-all.ps1 -Full -RequireTools` on Windows x64 for every push to `main` and every

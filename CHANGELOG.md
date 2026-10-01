@@ -86,7 +86,8 @@ checklist.
   it, so two loops that each declare `i` no longer show two `i`s at once.
 - Under `-g`, the PDB carries natvis rules, so Visual Studio and WinDbg show a
   string's text, a map's entries, and an `any_view`'s value. A map's debug type
-  is named `map$<n>` so the rules can match it, and `-keep-temps` keeps the
+  is named `map$<n>` so the rules can match it, `string`'s is `string$` because
+  WinDbg ignores natvis for a type named `string`, and `-keep-temps` keeps the
   `.natvis` file.
 
 ### Added

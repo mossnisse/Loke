@@ -123,9 +123,7 @@ rules in [comments.md "Formatting"](comments.md#formatting).
 Main work:
 
 - show a `dyn` value's referent: its witness table is a private constant
-  with no `typeid`, so natvis cannot tell the concrete type; check the
-  natvis rules for maps and `any_view` in Visual Studio and WinDbg, which no
-  test here can run;
+  with no `typeid`, so natvis cannot tell the concrete type;
 - give locations finer than a statement where stepping needs them: a loop's
   update, the code after an `if`, and the cleanup a scope runs on exit carry
   the line of the last statement emitted before them today;

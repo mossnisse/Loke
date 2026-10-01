@@ -523,11 +523,60 @@ a_debug_build_carries_its_natvis :: proc(t: ^testing.T) {
 	if !testing.expect(t, has_natvis, "-g -keep-temps left no .natvis") {
 		return
 	}
-	for rule in ([]string{`<Type Name="string">`, `<Type Name="map$`, `$key*)((char*)table + table->keys_offset + slot * 24)`, `<Type Name="any_view">`, `{*(typeid$`}) {
+	for rule in ([]string{`<Type Name="string$">`, `<Type Name="map$`, `$key*)((char*)table + table->keys_offset + slot * 24)`, `<Type Name="any_view">`, `{*(typeid$`}) {
 		testing.expectf(t, strings.contains(string(natvis), rule), "the .natvis has no `%s`:\n%s", rule, string(natvis))
 	}
 	pdb, has_pdb := os.read_entire_file(fmt.tprintf("%s/natvis.pdb", TMP), context.allocator)
 	testing.expect(t, has_pdb && strings.contains(string(pdb), "<CustomListItems"), "the PDB does not carry the natvis rules")
+}
+
+// The same rules read by a real debugger: cdb, from WinDbg or the Windows SDK,
+// stops in `stop` and prints the caller's locals. `LOKE_CDB` names it; else it
+// is `cdb` or WinDbg's `cdbX64` alias on PATH, or the SDK's own copy.
+@(test)
+a_debugger_shows_values :: proc(t: ^testing.T) {
+	cdb := os.get_env("LOKE_CDB", context.temp_allocator)
+	candidates := cdb != "" ? []string{cdb} : []string{"cdb", "cdbX64", `C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe`}
+	cdb = ""
+	for candidate in candidates {
+		if state, _, _, err := exec(os2.Process_Desc{command = []string{candidate, "-version"}}, context.allocator); err == nil && state.exit_code == 0 {
+			cdb = candidate
+			break
+		}
+	}
+	if cdb == "" {
+		skipped_capability(t, "no cdb, so no debugger reads the natvis rules")
+		return
+	}
+	os.make_directory(TMP)
+	dir, _ := filepath.abs(TMP, context.temp_allocator)
+	exe := fmt.tprintf("%s\\debugger_values.exe", dir)
+	state, _, stderr, err := exec(
+		os2.Process_Desc{command = []string{compiler_path(), "tests/debugger/values.loke", "-g", "-o", exe}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "the -g build failed:\n%s", string(stderr)) {
+		return
+	}
+	commands := "ld debugger_values; bp debugger_values!stop; g; .frame 1; dv /t; dx ages; dx ids; q"
+	run, stdout, stderr2, err2 := exec(
+		os2.Process_Desc{command = []string{cdb, "-lines", "-y", dir, "-c", commands, exe}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err2 == nil && run.exit_code == 0, "%s failed:\n%s", cdb, string(stderr2)) {
+		return
+	}
+	for shown in ([]string{
+		`string$ name = "loke"`,
+		`string_view view = "loke"`,
+		`ages = { len=1 }`,
+		`["[\"Bob\"]"]`,
+		`"seven" [Type: map$`,
+		`any_view count = 2`,
+		`any_view text = "seven"`,
+	}) {
+		testing.expectf(t, strings.contains(string(stdout), shown), "cdb does not show `%s`:\n%s", shown, string(stdout))
+	}
 }
 
 // Every diagnostic code the compiler can write is pinned by a case somewhere,

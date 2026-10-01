@@ -1,0 +1,18 @@
+package main;
+
+import "core:fmt";
+
+// tests/corpus_test.odin `a_debugger_shows_values` stops here and reads the
+// caller's locals through the natvis rules -g puts in the PDB.
+stop :: proc() {}
+
+main :: proc() {
+	name := "loke";
+	view: string_view = name;
+	ages := map[string]int{"Bob" = 2};
+	ids := map[int]string{7 = "seven"};
+	count: any_view = ages["Bob"];
+	text: any_view = ids[7];
+	stop();
+	fmt.println(name, view, count, text);
+}

@@ -621,11 +621,13 @@ launch, in the harness and in `lokec`, waits without spinning: Odin's
 `os2.process_exec` polls its pipes in a busy loop, which held a core per waiting
 process and starved the parallel compiles it was waiting for.
 
-Three tests need a tool this repository does not ship — nasm, and a clang or MSVC
-toolset to link a C host — and record what they skipped when it is absent. Pass
+Four tests need a tool this repository does not ship — nasm, cdb (from WinDbg
+or the Windows SDK's debugging tools, or named by `LOKE_CDB`), and a clang or
+MSVC toolset to link a C host — and record what they skipped when it is absent. Pass
 `-RequireTools` (or set `LOKE_TEST_REQUIRE_TOOLS=1`) on a machine that is
 supposed to have them: the skips become failures, so the assembly link, the
-object-build host link and the IR validation cannot go missing on a green run.
+object-build host link, the IR validation and the debugger's reading of `-g`
+cannot go missing on a green run.
 
 `perf.ps1` records performance rather than testing it. For every program in
 `examples/` and `bench/` it takes the front end's time (`-emit-ll`, which stops

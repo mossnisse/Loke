@@ -394,6 +394,10 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 		if info.kind == .Dynamic_Array {
 			debug_member(d, &members, "cap", TYPE_INT, 16)
 		}
+		// WinDbg shows a type named `string` its own way and ignores natvis for it.
+		if type == TYPE_STRING {
+			name = "string$"
+		}
 		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
 	case .Union:
 		debug_union(d, id, type, name)
@@ -464,11 +468,11 @@ debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 @(private = "file")
 NATVIS_HEADER :: `<?xml version="1.0" encoding="utf-8"?>
 <AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
-  <Type Name="string">
-    <DisplayString>{data,[len]s8}</DisplayString>
+  <Type Name="string$">
+    <DisplayString>{(char*)data,[len]s8}</DisplayString>
   </Type>
   <Type Name="string_view">
-    <DisplayString>{data,[len]s8}</DisplayString>
+    <DisplayString>{(char*)data,[len]s8}</DisplayString>
   </Type>
 `
 
