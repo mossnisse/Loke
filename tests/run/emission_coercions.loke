@@ -16,7 +16,7 @@ text_length :: proc(value: string_view) -> int { return value.len(); }
 lanes_equal :: proc(value: Simd(int, 4), expected: int) -> bool {
     return simd.all(value == expected);
 }
-place :: proc(value: inout int) -> inout int { return value; }
+place :: proc(value: inout int) -> inout int { return inout value; }
 
 main :: proc() {
     n := 7;
