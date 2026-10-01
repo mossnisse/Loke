@@ -1045,6 +1045,10 @@ declared_initializer :: proc(d: ^Decl, symbol_index: int) -> (initializer: Expr,
 
 @(private = "file")
 walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
+	if s.lowered != nil {
+		walk_flow_block(graph, s.lowered)
+		return
+	}
 	// A provider moved into a local's storage goes on backing its owners there.
 	if s.op == .Assign && !s.destructure.active {
 		for target, index in s.lhs {

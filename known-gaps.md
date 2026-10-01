@@ -288,31 +288,6 @@ pattern walkers in `iterate.odin` and `emit_llvm_iteration.odin` pair bindings
 with fields by position; they must map each binding to its named field's slot,
 as declaration destructuring does.
 
-### Compound indexed assignment omits the computed-setter fallback
-
-[design.md "Indexing and slicing"](design.md#indexing-and-slicing) requires
-compound assignment through `operator([])` and `operator([]=)` when the
-container has no place-returning index operator:
-
-```odin
-package main;
-Box :: struct { value: int }
-impl Box {
-    get :: operator([]) proc(self: Box, index: int) -> int {
-        return self.value;
-    }
-    set :: operator([]=) proc(self: inout Box, index, value: int) {
-        self.value = value;
-    }
-}
-main :: proc() { box := Box{3}; box[0] += 4; }
-```
-
-Actual: L0419; `box[0] = box[0] + 4` is accepted. `check_compound_assign`
-requires an assignable place before considering the setter path used by
-ordinary assignment. Implement the specified fallback while evaluating the
-receiver and indices only once.
-
 ### Floating literals round through `f64` before their destination width
 
 [design.md "Number literals"](design.md#number-literals) requires one

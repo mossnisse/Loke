@@ -1,0 +1,42 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Indexing and slicing": with no `operator([])` returning `inout`,
+// a compound assignment reads through `operator([])` and writes back through
+// `operator([]=)`. design.md "Evaluation order": the receiver and indices are
+// evaluated once, then the right operand, then the read and the write.
+Grid :: struct { cells: [4]f32 }
+
+impl Grid {
+	get :: operator([]) proc(self: Grid, x, y: int) -> f32 {
+		return self.cells[y * 2 + x];
+	}
+	set :: operator([]=) proc(self: inout Grid, x, y: int, value: f32) {
+		self.cells[y * 2 + x] = value;
+	}
+}
+
+Scaled :: struct { value: f32 }
+
+impl Scaled {
+	add :: operator(+) proc(left: f32, right: Scaled) -> f32 { return left + right.value * 10; }
+}
+
+calls: static int = 0;
+
+pick :: proc(n: int) -> int {
+	calls += 1;
+	return n;
+}
+
+main :: proc() {
+	grid := Grid{};
+	grid[1, 0] += 4;
+	grid[1, 0] *= 2.5;
+	grid[pick(0), pick(1)] += 3;
+	grid[0, 1] += Scaled{0.5};
+	grids := [2]Grid{};
+	grids[pick(1)][1, 1] -= 1;
+	fmt.println(grid[1, 0], grid[0, 1], grids[1][1, 1], calls);
+}

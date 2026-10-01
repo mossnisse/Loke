@@ -209,6 +209,10 @@ checklist.
 
 ### Fixed
 
+- A compound assignment such as `box[i] += v` on a type with
+  `operator([])` and `operator([]=)` but no `inout` index reads through the
+  one and writes through the other, evaluating the receiver and indices once.
+  It reported `L0419`.
 - A required result bound in a selected `when` branch and read after it is
   accepted; it reported `L0698` before the read was checked.
 - A destructured file-scope, `static`, or `thread_local` binding starts with

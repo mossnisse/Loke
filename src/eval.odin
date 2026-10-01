@@ -2657,6 +2657,9 @@ eval_destructure :: proc(ev: ^Evaluator, plan: ^Destructure, operand: Expr) -> (
 
 @(private = "file")
 eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
+	if s.lowered != nil {
+		return eval_block(ev, s.lowered)
+	}
 	if s.operator != INVALID_SYMBOL || s.place_setter != INVALID_SYMBOL {
 		eval_fail(ev, s.op_span, "L0341", "a user operator has no compile-time meaning yet")
 		return .Fail

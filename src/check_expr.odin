@@ -1413,7 +1413,6 @@ select_slicers :: proc(k: ^Checker, all: []Symbol_Id, expected: Type_Id) -> []Sy
 
 // A variable, a field path, or a dereference: evaluating one twice reads the same
 // place and runs nothing.
-@(private = "file")
 is_effect_free_place :: proc(e: Expr) -> bool {
 	#partial switch v in e {
 	case ^Expr_Ident:
@@ -1806,7 +1805,6 @@ check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
 // ----------------------------------------------------------------- binary --
 
 // A bare `.Member` with no operand — the implicit enum selector.
-@(private = "file")
 is_implicit_selector :: proc(e: Expr) -> bool {
 	sel, ok := e.(^Expr_Selector)
 	return ok && sel.operand == nil

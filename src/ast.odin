@@ -757,6 +757,9 @@ Stmt_Assign :: struct {
 	// `grid[x, y] = v` through `operator([]=)`, bound in parameter order.
 	place_setter:    Symbol_Id,
 	setter_bound:    []Expr,
+	// `grid[x, y] += v` through `operator([])` and `operator([]=)`: the checked
+	// block later phases run instead of this statement.
+	lowered:         ^Block,
 }
 
 Stmt_If :: struct {

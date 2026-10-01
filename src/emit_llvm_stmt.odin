@@ -305,6 +305,10 @@ declare_local :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 // address, then the writes.
 @(private = "file")
 emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
+	if s.lowered != nil {
+		emit_scoped_block(e, s.lowered)
+		return
+	}
 	if s.op != .Assign {
 		emit_compound_assign(e, s)
 		return

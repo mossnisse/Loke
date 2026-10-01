@@ -3,6 +3,7 @@
 // Annotations are written back onto the AST nodes (decision A1).
 package lokec
 
+import "core:strconv"
 import "core:strings"
 
 Checker :: struct {
@@ -2780,15 +2781,11 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 		return false
 	}
 	operands := []Type_Id{operand}
-	setters := operator_candidates_for_receiver(k, "[]=", operand)
-	if len(setters) == 0 {
+	// Otherwise it can hand out a location, so an ordinary store applies.
+	if !uses_place_setter(k, operand) {
 		return false
 	}
-	for candidate in operator_candidates_for_receiver(k, "[]", operand) {
-		if operator_result_is_place(k, candidate) {
-			return false // it can hand out a location, so an ordinary store applies
-		}
-	}
+	setters := operator_candidates_for_receiver(k, "[]=", operand)
 	args, ok := index_and_value_arguments(k, target, value)
 	if !ok {
 		return true
@@ -2799,6 +2796,151 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 	}
 	s.place_setter = chosen
 	s.setter_bound = bound
+	return true
+}
+
+// design.md "Indexing and slicing": with no location to hand out, `box[i] += v`
+// reads through `operator([])` and writes back through `operator([]=)`. It is
+// checked as the block
+//
+//     { r := &mut box; i0 := i; v0 := v; r^[i0] = r^[i0] + v0; }
+//
+// so the receiver and indices are evaluated once, then the right operand
+// (design.md "Evaluation order"). A temporary is left out where evaluating the
+// expression twice is the same: a variable or field path receiver, and a
+// literal, implicit selector, name, or constant.
+@(private = "file")
+lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index) -> bool {
+	op := compound_operator(s.op)
+	operand := check_single_expr(k, target.operand)
+	if operand == INVALID_TYPE || op == .EOF || !uses_place_setter(k, operand) {
+		return false
+	}
+	// A constant right operand keeps its unfixed type for the operator to settle.
+	probe := clone_expr(k.c, s.rhs[0])
+	if check_single_expr(k, probe) == INVALID_TYPE {
+		return true
+	}
+	span := s.span
+	stmts := make([dynamic]Stmt, 0, len(target.indices) + 3, k.c.semantic_allocator)
+	shared := !is_effect_free_place(target.operand)
+	if shared {
+		address := new(Expr_Unary, k.c.semantic_allocator)
+		address.span = span
+		address.op = .Amp
+		address.op_span = span
+		address.mutable = true
+		address.operand = clone_expr(k.c, target.operand)
+		append(&stmts, lowered_temporary(k, "compound$receiver", address, span))
+	}
+	index_names := make([]string, len(target.indices), k.c.semantic_allocator)
+	for index, position in target.indices {
+		if !lowered_pure(index) {
+			digits: [20]u8
+			index_names[position] = strings.concatenate(
+				{"compound$index", strconv.itoa(digits[:], position)}, k.c.semantic_allocator,
+			)
+			append(&stmts, lowered_temporary(k, index_names[position], clone_expr(k.c, index), span))
+		}
+	}
+	value := clone_expr(k.c, s.rhs[0])
+	if !is_const_expr(probe) && !lowered_pure(s.rhs[0]) {
+		append(&stmts, lowered_temporary(k, "compound$value", value, span))
+		value = lowered_name(k, "compound$value", span)
+	}
+
+	read := lowered_index(k, target, index_names, shared, span)
+	combined := new(Expr_Binary, k.c.semantic_allocator)
+	combined.span = span
+	combined.op = op
+	combined.op_span = s.op_span
+	combined.lhs = read
+	combined.rhs = value
+	assign := new(Stmt_Assign, k.c.semantic_allocator)
+	assign.span = span
+	assign.op = .Assign
+	assign.op_span = s.op_span
+	assign.lhs = make([]Expr, 1, k.c.semantic_allocator)
+	assign.lhs[0] = lowered_index(k, target, index_names, shared, span)
+	assign.rhs = make([]Expr, 1, k.c.semantic_allocator)
+	assign.rhs[0] = combined
+	append(&stmts, assign)
+
+	block := new(Block, k.c.semantic_allocator)
+	block.span = span
+	block.stmts = stmts[:]
+	s.lowered = block
+	check_scoped_block(k, block)
+	return true
+}
+
+@(private = "file")
+lowered_pure :: proc(e: Expr) -> bool {
+	#partial switch _ in e {
+	case ^Expr_Literal, ^Expr_Ident:
+		return true
+	}
+	return is_implicit_selector(e)
+}
+
+@(private = "file")
+lowered_name :: proc(k: ^Checker, name: string, span: Span) -> Expr {
+	ident := new(Expr_Ident, k.c.semantic_allocator)
+	ident.span = span
+	ident.name = name
+	ident.name_id = intern_identifier(k.c, name)
+	return ident
+}
+
+@(private = "file")
+lowered_temporary :: proc(k: ^Checker, name: string, value: Expr, span: Span) -> Stmt {
+	d := new(Decl, k.c.semantic_allocator)
+	d.span = span
+	d.kind = .Var
+	d.names = make([]Name, 1, k.c.semantic_allocator)
+	d.names[0] = Name{text = name, span = span, id = intern_identifier(k.c, name)}
+	d.values = make([]Expr, 1, k.c.semantic_allocator)
+	d.values[0] = value
+	return d
+}
+
+// `r^[i0]`, or the written receiver and indices where they were not bound.
+@(private = "file")
+lowered_index :: proc(k: ^Checker, target: ^Expr_Index, index_names: []string, shared: bool, span: Span) -> Expr {
+	out := new(Expr_Index, k.c.semantic_allocator)
+	out.span = target.span
+	if shared {
+		deref := new(Expr_Postfix, k.c.semantic_allocator)
+		deref.span = span
+		deref.op = .Caret
+		deref.op_span = span
+		deref.operand = lowered_name(k, "compound$receiver", span)
+		out.operand = deref
+	} else {
+		out.operand = clone_expr(k.c, target.operand)
+	}
+	out.indices = make([]Expr, len(target.indices), k.c.semantic_allocator)
+	for index, position in target.indices {
+		if index_names[position] == "" {
+			out.indices[position] = clone_expr(k.c, index)
+		} else {
+			out.indices[position] = lowered_name(k, index_names[position], span)
+		}
+	}
+	return out
+}
+
+// `operator([]=)` applies where no `operator([])` returns a location.
+@(private = "file")
+uses_place_setter :: proc(k: ^Checker, operand: Type_Id) -> bool {
+	if len(operator_candidates_for_receiver(k, "[]=", operand)) == 0 {
+		return false
+	}
+	for candidate in operator_candidates_for_receiver(k, "[]", operand) {
+		if operator_result_is_place(k, candidate) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -2827,6 +2969,9 @@ index_and_value_arguments :: proc(k: ^Checker, target: ^Expr_Index, value: Expr)
 check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	if len(s.lhs) != 1 || len(s.rhs) != 1 {
 		errorf(k.c, s.op_span, "L0360", "a compound assignment takes one destination and one value")
+		return
+	}
+	if indexed, is_index := s.lhs[0].(^Expr_Index); is_index && lower_compound_setter(k, s, indexed) {
 		return
 	}
 	// design.md "Maps": `m[key] += 1` reads and writes one element, so the entry
