@@ -1,0 +1,36 @@
+package main;
+
+// design.md "Evaluation order": a value is evaluated before later expressions
+// or writes change its source, so it keeps what its carriers held then.
+STABLE :: [1]int{7};
+SCALAR :: int(7);
+
+zero :: proc(@(escape=none) value: ^[1]int) -> int { return 0; }
+last :: proc(@(escape=none) previous: ^int) -> ^int { return &SCALAR; }
+
+Pair :: struct { first: ^int, second: ^int }
+
+// Every value, then every write: `b` takes `a`'s old value.
+swapped :: proc(input: []int) -> []int {
+	local := [1]int{42};
+	a := local[:];
+	b := input;
+	a, b = b, a;
+	return b;
+}
+
+// `p` is read before the index changes it.
+indexed :: proc() -> ^int {
+	local := [1]int{42};
+	p := &local;
+	return &p^[zero(exchange(inout p, &STABLE))];
+}
+
+// The first element is read before the second changes `p`.
+composed :: proc() -> Pair {
+	local := 42;
+	p := &local;
+	return Pair{p, last(exchange(inout p, &SCALAR))};
+}
+
+main :: proc() {}

@@ -1,0 +1,25 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": every value is evaluated before any write, so
+// a multiple assignment swaps carriers, mutable ones included.
+kept :: proc(input: []int) -> []int {
+	local := [1]int{42};
+	a := local[:];
+	b := input;
+	a, b = b, a;
+	_ = b;
+	return a;
+}
+
+main :: proc() {
+	x := [2]int{1, 2};
+	y := [2]int{3, 4};
+	p: []mut int = x[:];
+	q: []mut int = y[:];
+	p, q = q, p;
+	p[0] = 9;
+	q[1] = 8;
+	fmt.println(x, y, kept(x[:])[0]);
+}

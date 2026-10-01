@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- Borrow checking takes a value's borrows when it is evaluated, not after later
+  parts of the statement run: `a, b = b, a` gives `b` what `a` borrowed, and
+  an index or later literal element that changes a pointer no longer hides what
+  an earlier read of it borrowed. Programs that returned a local this way are
+  rejected (`L0526`).
 - A `[]mut T`, `^mut T`, or other mutable carrier passed where a read-only one is
   wanted is reborrowed until the call returns, so a later argument of the same
   call cannot use it (`L0641`): `observe(source, bump(source))` and

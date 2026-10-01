@@ -491,6 +491,11 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 			continue
 		}
 		loans := walk_flow_expr(graph, element.value)
+		// A later element may write what this one read (design.md "Evaluation
+		// order").
+		if index + 1 < len(v.elements) && len(loans) > 0 && prov_elements_may_write(v.elements[index + 1:]) {
+			loans = prov_capture(graph, loans, expr_span(element.value))
+		}
 		prefix, known := prov_element_prefix(graph, v, index)
 		append(&parts, Part{loans, prefix, expr_base(element.value).type, known})
 	}
@@ -513,6 +518,19 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		prov_define_one_content(graph, slot, sources, v.span)
 	}
 	return content
+}
+
+@(private = "file")
+prov_elements_may_write :: proc(elements: []Element) -> bool {
+	for element in elements {
+		if element.key != nil && !is_const_expr(element.key) && !is_effect_free_place(element.key) {
+			return true
+		}
+		if element.value != nil && !is_const_expr(element.value) && !is_effect_free_place(element.value) {
+			return true
+		}
+	}
+	return false
 }
 
 // The path one literal element's value fills: a field, an index range, or a
@@ -915,6 +933,43 @@ prov_hold_result :: proc(graph: ^Flow_Graph, sources: []int, result_type: Type_I
 	prov_reborrow(graph, sources, result_type, held, span)
 	prov_emit(graph, Prov_Event{kind = .Def, slot = held, loan = NO_LOAN, sources = sources, span = span})
 	return prov_one(graph, held)
+}
+
+// design.md "Evaluation order": a value is evaluated before the expressions
+// after it, and keeps what its carriers held then, whatever those expressions
+// write. A mutable carrier is reborrowed into a derived slot, which keeps the
+// source suspended as storing it would; any other slot is copied into a
+// temporary.
+@(private = "file")
+prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span) -> []int {
+	out := make([dynamic]int, 0, len(slots), graph.alloc)
+	for slot in slots {
+		if prov_slot_is_mutable_carrier(graph, slot) {
+			append(&out, ..prov_reborrow_traversal(graph, prov_one(graph, slot), span, true))
+			continue
+		}
+		held := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = held, loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
+		append(&out, held)
+	}
+	return out[:]
+}
+
+// The slots among `slots` that a later write in the same evaluation will
+// redefine, each replaced by a temporary holding what it holds now.
+@(private = "file")
+prov_capture_slots :: proc(graph: ^Flow_Graph, slots: []int, rewritten: []int, span: Span) -> []int {
+	out := make([dynamic]int, 0, len(slots), graph.alloc)
+	for slot in slots {
+		if !slice.contains(rewritten, slot) {
+			append(&out, slot)
+			continue
+		}
+		held := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = held, loan = NO_LOAN, sources = prov_one(graph, slot), span = span})
+		append(&out, held)
+	}
+	return out[:]
 }
 
 @(private = "file")
@@ -2510,12 +2565,18 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []
 		kind := underlying_kind(graph.k.c, expr_base(v.operand).type)
 		if kind == .Slice || kind == .Pointer || kind == .C_Pointer {
 			carriers := walk_flow_expr(graph, v.operand)
+			if prov_indices_may_write(v.indices) {
+				carriers = prov_capture(graph, carriers, v.span)
+			}
 			for index in v.indices {
 				walk_flow_expr(graph, index)
 			}
 			return carriers, nil, true
 		}
 		if carriers, path, ok := prov_read_through_carrier(graph, v.operand); ok {
+			if prov_indices_may_write(v.indices) {
+				carriers = prov_capture(graph, carriers, v.span)
+			}
 			for index in v.indices {
 				walk_flow_expr(graph, index)
 			}
@@ -2523,6 +2584,18 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []
 		}
 	}
 	return nil, nil, false
+}
+
+// An index that is not a constant or a plain read may call something that
+// writes the carrier being indexed.
+@(private = "file")
+prov_indices_may_write :: proc(indices: []Expr) -> bool {
+	for index in indices {
+		if !is_const_expr(index) && !is_effect_free_place(index) {
+			return true
+		}
+	}
+	return false
 }
 
 // The root and projection a place names, or none when it goes through a carrier;
@@ -3039,6 +3112,27 @@ prov_destructure_field :: proc(
 
 @(private)
 prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
+	// design.md "Evaluation order": every value is evaluated before any write,
+	// so a value read from a variable this statement also writes, as in
+	// `a, b = b, a`, keeps what the variable held then.
+	value_loans := value_loans
+	if len(s.lhs) > 1 && !s.destructure.active && value_loans != nil {
+		written := make([dynamic]int, 0, len(s.lhs), graph.alloc)
+		for target in s.lhs {
+			if ident, is_ident := target.(^Expr_Ident); is_ident {
+				if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
+					append(&written, slot)
+				}
+			}
+		}
+		if len(written) > 0 {
+			captured := make([][]int, len(value_loans), graph.alloc)
+			for loans, index in value_loans {
+				captured[index] = prov_capture_slots(graph, loans, written[:], s.op_span)
+			}
+			value_loans = captured
+		}
+	}
 	for target, index in s.lhs {
 		sources: []int
 		value: Expr
