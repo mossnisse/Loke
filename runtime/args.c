@@ -10,6 +10,9 @@
  */
 #include "loke_rt.h"
 
+#include <fcntl.h>
+#include <io.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -56,9 +59,17 @@ static char *to_utf8(const uint16_t *wide) {
 	return out;
 }
 
-/* Called from the generated `wmain` before the initial thread attaches. */
+/* Called from the generated `wmain` before the initial thread attaches.
+ *
+ * It also puts the C library's stdout and stderr, which `core:fmt` and panics
+ * write through, in binary mode: the UCRT opens them in text mode, which turns
+ * each `\n` into `\r\n`, while `core:term` writes the handles directly. Binary
+ * keeps both writers' bytes as given, as on every other platform
+ * (standard-library.md "Standard byte streams and line input"). */
 void loke_rt_v1_args_init(int32_t argc, const uint16_t **argv) {
 	int32_t index;
+	_setmode(_fileno(stdout), _O_BINARY);
+	_setmode(_fileno(stderr), _O_BINARY);
 	if (argc < 0) {
 		argc = 0;
 	}

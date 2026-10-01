@@ -1,10 +1,10 @@
-[plain]
-[two words]
-[]
-[quote"inside]
-[trail\]
-[back\\"slash]
-[tab	here]
+[plain]
+[two words]
+[]
+[quote"inside]
+[trail\]
+[back\\"slash]
+[tab	here]
 [naïve ✓] .ok(0)
 exit status: .ok(7)
 HELLO PIPE .ok(0)
@@ -18,8 +18,8 @@ before
 null:  .ok(0)
 Unsupported Unsupported Closed
 .ok(Unit{}) .ok(1) .ok(Unit{})
-0 5 240000
-0 2 0
+0 4 220000
+0 1 0
 hidden: .ok(7)
 Not_Found
 Invalid_Data

@@ -958,6 +958,17 @@ collision: the membership loop is `for ((key in counts))`.
 
 ## Features kept close to Odin
 
+### Standard output is binary
+
+Odin writes its standard handles without translation, and so does Loke. The C
+library opens `stdout` and `stderr` in text mode on Windows, which turned each
+`\n` that `core:fmt` printed into `\r\n` while `core:term` wrote the handles
+directly, so one redirected stream could mix both endings and `fmt` could not
+print a bare `\n`. Text mode for both would instead make a program's bytes
+depend on the platform, which Linux support would then have to undo. The
+runtime sets both streams to binary at startup; an object build leaves them to
+its host.
+
 ### Foreign declarations
 
 The foreign system intentionally remains close enough to Odin that maintained

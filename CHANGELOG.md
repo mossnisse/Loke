@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- Standard output and standard error are binary on Windows: `fmt.println` and
+  panic reports end lines with `\n`, as `term.stdout()` already did, instead of
+  `\r\n`. A program whose output must end lines with `\r\n` writes them.
 - Allocator lifetime checks reject handles used after their provider ends,
   including handles derived from temporary providers. Bind the provider to a
   local that outlives its handles, allocations, and child providers. `new_clone`

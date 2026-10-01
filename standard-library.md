@@ -987,6 +987,10 @@ prompt(label: string_view, allocator := mem.default_allocator(),
 values do not own and cannot close the process standard handles. They work when
 the handles are redirected to pipes or files.
 
+Standard output and standard error carry exactly the bytes a program writes,
+whether through `term`, `core:fmt`, or a panic report: `\n` is never turned
+into `\r\n`, on any platform. A program that wants `\r\n` writes it.
+
 `read_line` reads a real console through `ReadConsoleW` and a redirected handle
 through `io.read_line`, so typed non-ASCII text arrives intact. Ctrl+Z at the
 start of a console line is `End_Of_Input`, as the end of a redirected stream is.
