@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A map literal whose key borrows a local, as in `map[^int]int{&local = 1}`,
+  can no longer escape the local (`L0526`), as an inserted key already could
+  not.
 - `&p.data[0]` and `p.data[:]` are errors (`L0614`) when `data` is an array
   inside a `@(packed)` struct, as `&p.data` already was: the element may be
   misaligned. Copy the array out first.
@@ -221,6 +224,9 @@ checklist.
 
 ### Fixed
 
+- A map literal keeps each constant key's value separate for borrow checking,
+  so reading `values[1]` of `map[int]^int{1 = incoming, 2 = &local}` no longer
+  counts as borrowing `local`.
 - `&p.pointer.value` is accepted when `pointer` is a field of a packed struct:
   the address is in the pointer's target, not the packed record. Elements of an
   array in a packed struct are loaded and stored unaligned, and an `any_view`

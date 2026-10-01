@@ -307,13 +307,14 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 			if matched { return out }
 		}
 	case ^Expr_Composite:
-		value_type := v.type
-		is_array := underlying_kind(graph.k.c, value_type) == .Array
 		out := prov_empty_region(graph)
-		for _, index in v.elements {
-			step, known := prov_element_step(graph, v, value_type, is_array, index)
-			if known && paths_overlap({step}, path[:1]) && v.elements[index].value != nil {
-				region_merge(&out, prov_result_region_at(graph, v.elements[index].value, path[1:]))
+		for element, index in v.elements {
+			prefix, known := prov_element_prefix(graph, v, index)
+			if !known || element.value == nil || len(path) < len(prefix) {
+				continue
+			}
+			if paths_overlap(prefix, path[:len(prefix)]) {
+				region_merge(&out, prov_result_region_at(graph, element.value, path[len(prefix):]))
 			}
 		}
 		return out
@@ -469,46 +470,65 @@ prov_existing_content_root :: proc(graph: ^Flow_Graph, sym: ^Symbol) -> Root_Id 
 // can't be resolved joins into every path.
 @(private)
 prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: []int) -> []int {
-	value_type := v.type
-	is_array := underlying_kind(graph.k.c, value_type) == .Array
-	per_element := make([][]int, len(v.elements), graph.alloc)
-	steps := make([]Proj_Step, len(v.elements), graph.alloc)
-	known := make([]bool, len(v.elements), graph.alloc)
-	joined: []int
-	is_map := underlying_kind(graph.k.c, value_type) == .Map
+	// One part per element value, and for a map one more per key (design.md
+	// "Values that contain borrows": a map carries its keys' borrows too).
+	Part :: struct {
+		loans:  []int,
+		prefix: []Proj_Step,
+		type:   Type_Id,
+		known:  bool,
+	}
+	parts := make([dynamic]Part, 0, 2 * len(v.elements), graph.alloc)
+	is_map := underlying_kind(graph.k.c, v.type) == .Map
 	for element, index in v.elements {
 		if is_map {
-			walk_flow_expr(graph, element.key)
+			loans := walk_flow_expr(graph, element.key)
+			entry := prov_extend(graph, nil, prov_map_entry_step(graph, v.type, element.key))
+			key_type := expr_base(element.key).type
+			append(&parts, Part{loans, prov_extend(graph, entry, proj_field(PROJ_MAP_KEY)), key_type, true})
 		}
 		if element.value == nil {
 			continue
 		}
 		loans := walk_flow_expr(graph, element.value)
-		per_element[index] = loans
-		joined = prov_join(graph, joined, loans)
-		steps[index], known[index] = prov_element_step(graph, v, value_type, is_array, index)
+		prefix, known := prov_element_prefix(graph, v, index)
+		append(&parts, Part{loans, prefix, expr_base(element.value).type, known})
 	}
 	for slot in content {
 		sources: []int
-		for loans, index in per_element {
-			if len(loans) == 0 {
+		for part in parts {
+			if len(part.loans) == 0 {
 				continue
 			}
-			if !known[index] {
-				sources = prov_join(graph, sources, loans)
+			if !part.known {
+				sources = prov_join(graph, sources, part.loans)
 				continue
 			}
-			prefix := prov_extend(graph, nil, steps[index])
-			if paths_overlap(graph.prov_slots[slot].path, prefix) {
+			if paths_overlap(graph.prov_slots[slot].path, part.prefix) {
 				path := graph.prov_slots[slot].path
-				suffix := path[min(len(prefix), len(path)):]
-				child_type := expr_base(v.elements[index].value).type
-				sources = prov_join(graph, sources, prov_select_content(graph, loans, child_type, suffix))
+				suffix := path[min(len(part.prefix), len(path)):]
+				sources = prov_join(graph, sources, prov_select_content(graph, part.loans, part.type, suffix))
 			}
 		}
 		prov_define_one_content(graph, slot, sources, v.span)
 	}
 	return content
+}
+
+// The path one literal element's value fills: a field, an index range, or a
+// map entry's value under its key's entry.
+@(private = "file")
+prov_element_prefix :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, index: int) -> ([]Proj_Step, bool) {
+	#partial switch underlying_kind(graph.k.c, v.type) {
+	case .Map:
+		entry := prov_extend(graph, nil, prov_map_entry_step(graph, v.type, v.elements[index].key))
+		return prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE)), true
+	case .Array:
+		step, known := prov_element_step(graph, v, v.type, true, index)
+		return prov_extend(graph, nil, step), known
+	}
+	step, known := prov_element_step(graph, v, v.type, false, index)
+	return prov_extend(graph, nil, step), known
 }
 
 // Which slot one literal element fills. Array elements and fields use different

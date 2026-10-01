@@ -67,26 +67,6 @@ evaluating the second element. Saving `p` in a separate variable before the
 exchange produces L0526. Capture each evaluated value's provenance before
 subsequent effects, retaining the source identity needed for reborrow checks.
 
-### Map literals discard their keys' borrows
-
-[design.md "Values that contain borrows"](design.md#values-that-contain-borrows)
-requires a map to carry its keys' dependencies as well as its values':
-
-```odin
-package main;
-bad :: proc() -> map[^int]int {
-    local := 42;
-    return map[^int]int{&local = 1};
-}
-main :: proc() {}
-```
-
-Actual: accepted. Expected: L0526 because the returned map contains a pointer
-to a local. `prov_composite_content` walks the key but discards its returned
-loans. Creating an empty map and inserting the same key by indexed assignment
-correctly rejects the return. Literal construction must define both key and
-value paths.
-
 ### Allocators in ordinary record fields lose their region dependencies
 
 [design.md "Allocator regions and region provenance"](design.md#allocator-regions-and-region-provenance)
@@ -211,27 +191,6 @@ correctly gives L0641. `prov_call` supplies no destination to `prov_reborrow`,
 which does not link an existing carrier in that case; only mutable parameter
 types subsequently receive a call reborrow. Create the read-only call reborrow
 before evaluating later arguments and keep it live through the call.
-
-### Map literals merge distinct supported constant keys below the precision budget
-
-[design.md "Minimum provenance precision"](design.md#minimum-provenance-precision)
-requires these two integer keys and their single value path to remain distinct:
-
-```odin
-package main;
-good :: proc(incoming: ^int) -> ^int {
-    local := 42;
-    values := map[int]^int{1 = incoming, 2 = &local};
-    return values[1];
-}
-main :: proc() {}
-```
-
-Expected: accepted. Actual: L0526 claims the result borrows `local`. The
-equivalent empty map followed by two indexed assignments is accepted.
-`prov_composite_content` asks `prov_element_step` to interpret map keys as
-record field names, so literal values are joined into every entry. Reuse
-`prov_map_entry_step` and the existing key/value projections.
 
 ### A `foreach` cannot destructure a record with padding
 

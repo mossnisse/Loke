@@ -1,0 +1,17 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Minimum provenance precision": distinct constant keys of a map
+// literal keep separate value paths, so reading entry 1 does not borrow the
+// local stored at entry 2.
+pick :: proc(incoming: ^int) -> ^int {
+	local := 42;
+	values := map[int]^int{1 = incoming, 2 = &local};
+	return values[1];
+}
+
+main :: proc() {
+	n := 7;
+	fmt.println(pick(&n)^);
+}

@@ -1,0 +1,17 @@
+package main;
+
+// design.md "Values that contain borrows": a map carries its keys' borrows as
+// well as its values', whether it was built by a literal or by insertion.
+literal :: proc() -> map[^int]int {
+	local := 42;
+	return map[^int]int{&local = 1};
+}
+
+inserted :: proc() -> map[^int]int {
+	local := 42;
+	values: map[^int]int = {};
+	values[&local] = 1;
+	return values;
+}
+
+main :: proc() {}
