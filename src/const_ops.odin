@@ -40,6 +40,9 @@ Const_Value :: struct {
 	// `unsafe.transmute(u32, x)` would not answer the bits it was handed.
 	float_raw:  u64,
 	boolean:    bool,
+	// A String's text, or an unfixed Float literal's decimal spelling, kept so
+	// a narrower destination rounds the exact value once (design.md "Number
+	// literals").
 	text:       string,
 	type_value: Type_Id,
 	aggregate:  ^Const_Aggregate,

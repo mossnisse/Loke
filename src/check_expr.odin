@@ -248,14 +248,12 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 			v.type = INVALID_TYPE
 			return
 		}
+		// design.md "Number literals": unfixed until a destination or a concrete
+		// operand converts it, which rounds the exact decimal value once.
 		v.type = TYPE_UNTYPED_FLOAT
 		v.is_const = true
 		v.const_value = float_const(value, 64)
-		// Rounded at the destination width now: rounding an `f32` expression's
-		// operands only later can disagree with the same expression at runtime.
-		if type_is_float(k.c, expected) && !type_is_untyped(k.c, expected) && !materialize(k, v, expected) {
-			v.type = INVALID_TYPE
-		}
+		v.const_value.text = text
 
 	case .Rune:
 		value, ok := decode_rune_literal(v.text)
@@ -1696,6 +1694,9 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	case .Minus:
 		if value.kind == .Float {
 			folded = float_const(-value.float, value.float_bits)
+			if value.text != "" && value.text[0] != '-' {
+				folded.text = strings.concatenate({"-", value.text}, k.c.semantic_allocator)
+			}
 		} else {
 			folded = Const_Value{kind = value.kind, integer = bi_neg(k.c, value.integer)}
 		}
@@ -3122,8 +3123,11 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 				return value, true
 			}
 			// design.md "Number literals": a finite constant may not round to an
-			// infinity.
+			// infinity. A literal's decimal value is rounded once, not through f64.
 			converted := float_const(value.float, info.bits)
+			if exact, exact_ok := decimal_to_float(storage, value.text, info.bits); exact_ok {
+				converted = float_const(exact, info.bits)
+			}
 			return converted, !math.is_inf(converted.float) || math.is_inf(value.float)
 		case .Integer, .Rune:
 			converted, fits := bi_to_float(storage, value.integer, info.bits)

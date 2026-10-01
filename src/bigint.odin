@@ -6,6 +6,7 @@ package lokec
 import "core:math"
 import big "core:math/big"
 import "core:mem"
+import "core:strconv"
 import "core:strings"
 
 Big_Int :: big.Int
@@ -310,6 +311,75 @@ bi_to_float :: proc(c: Value_Storage, v: Big_Int, bits: u16) -> (result: f64, ok
 		result = -result
 	}
 	return result, !math.is_inf(result, 0)
+}
+
+// A decimal literal's spelling, `digits[.digits][e[+-]digits]`, rounded once to
+// a 16- or 32-bit float. `ok` is false for any other width or spelling, where
+// the caller's binary64 value already is the single rounding.
+decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: f64, ok: bool) {
+	if (bits != 16 && bits != 32) || text == "" {
+		return 0, false
+	}
+	negative := text[0] == '-'
+	digits := make([dynamic]u8, 0, len(text), arena(c))
+	exponent := 0
+	index := negative ? 1 : 0
+	point := false
+	for ; index < len(text); index += 1 {
+		ch := text[index]
+		switch {
+		case ch >= '0' && ch <= '9':
+			append(&digits, ch)
+			if point {
+				exponent -= 1
+			}
+		case ch == '.':
+			point = true
+		case ch == 'e' || ch == 'E':
+			written, parsed := strconv.parse_int(text[index + 1:], 10)
+			if !parsed {
+				return 0, false
+			}
+			exponent += written
+			index = len(text)
+		case:
+			return 0, false
+		}
+	}
+	significand, parsed := bi_parse_int_literal(c, string(digits[:]))
+	if !parsed {
+		return 0, false
+	}
+	if bi_is_zero(significand) {
+		return negative ? math.copy_sign(f64(0), -1) : 0, true
+	}
+	ten := bi_from_i64(c, 10)
+	power := bi_from_i64(c, 1)
+	for _ in 0 ..< abs(exponent) {
+		power = bi_mul(c, power, ten)
+	}
+	magnitude: f64
+	if exponent >= 0 {
+		magnitude, ok = bi_to_float(c, bi_mul(c, significand, power), bits)
+		if !ok {
+			return 0, false
+		}
+	} else {
+		// `significand / power`, scaled so the quotient keeps one correct rounding
+		// and a sticky bit for the remainder, as `bi_to_float` keeps for its own.
+		keep := bits == 16 ? 11 + 2 : 24 + 2
+		scale := max(keep + 2 + bi_magnitude_bits(c, power) - bi_magnitude_bits(c, significand), 0)
+		scaled := bi_shl(c, significand, scale)
+		quotient := bi_quo(c, scaled, power)
+		shift := max(bi_magnitude_bits(c, quotient) - keep, 0)
+		top := bi_shr(c, quotient, shift)
+		high, _ := bi_to_u64(c, top)
+		if !bi_is_zero(bi_rem(c, scaled, power)) || bi_cmp(c, bi_shl(c, top, shift), quotient) != 0 {
+			high |= 1
+		}
+		magnitude = round_float(math.ldexp(f64(high), shift - scale), bits)
+	}
+	return negative ? -magnitude : magnitude, true
 }
 
 // Orders an integer against a float that is not NaN, exactly.

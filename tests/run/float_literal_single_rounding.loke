@@ -1,0 +1,28 @@
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+// design.md "Number literals": an unfixed floating constant is converted to
+// its destination by rounding the exact value once, and an unfixed expression
+// stays unfixed until then.
+
+// Above the f32 midpoint 1.000000059604644775390625, which binary64 rounds to.
+ABOVE: f32 : 1.0000000596046448;
+BELOW: f32 : 1.0000000596046447;
+static_assert(ABOVE == f32(1.00000011920928955078125));
+static_assert(BELOW == 1.0);
+
+// Computed unfixed, then rounded: not `f32(16777217.0) - f32(16777216.0)`.
+DIFFERENCE: f32 : 16777217.0 - 16777216.0;
+static_assert(DIFFERENCE == 1.0);
+
+main :: proc() {
+	tiny: f32 = 1e-45;
+	under: f32 = 7e-46;
+	negative: f32 = -1.0000000596046448;
+	half: f16 = 2049.0;
+	widest: f16 = 65519.0;
+	fmt.println(unsafe.transmute(u32, ABOVE), unsafe.transmute(u32, tiny), unsafe.transmute(u32, under));
+	fmt.println(unsafe.transmute(u32, negative), unsafe.transmute(u16, half), unsafe.transmute(u16, widest));
+}

@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A destination type no longer picks between operator overloads that differ
+  in a floating operand: `chosen: f32 = 1.0 + marker` with `f32` and `f64`
+  overloads is ambiguous (`L0391`), as the inferred form already was. Write the
+  operand's type, as in `f32(1.0) + marker`.
 - `return` must match the result's mode (`L0418`): an `inout` result needs
   `return inout place`, and a value result takes no `inout`. An `inout` place
   must also have exactly the result type before any conversion, so returning an
@@ -214,6 +218,10 @@ checklist.
 
 ### Fixed
 
+- A floating literal converted to `f32` or `f16` rounds its exact decimal value
+  once: `f32(1.0000000596046448)` is the next float above 1.0, not 1.0. An
+  unfixed expression such as `16777217.0 - 16777216.0` is computed before an
+  `f32` destination rounds it, giving 1.0 rather than 0.
 - A compound assignment such as `box[i] += v` on a type with
   `operator([])` and `operator([]=)` but no `inout` index reads through the
   one and writes through the other, evaluating the receiver and indices once.

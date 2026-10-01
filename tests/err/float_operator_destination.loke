@@ -1,0 +1,21 @@
+package main;
+
+// design.md "Operator lookup and overload resolution": selection reads only
+// the arguments. An unfixed float matches both overloads equally, whatever
+// the destination's type.
+Marker :: struct {}
+
+impl Marker {
+	add32 :: operator(+) proc(left: f32, right: Marker) -> f32 { return left; }
+	add64 :: operator(+) proc(left: f64, right: Marker) -> f64 { return left; }
+}
+
+main :: proc() {
+	marker: Marker = {};
+	chosen: f32 = 1.0 + marker;
+	inferred := 1.0 + marker;
+	written := f32(1.0) + marker;
+	_ = chosen;
+	_ = inferred;
+	_ = written;
+}
