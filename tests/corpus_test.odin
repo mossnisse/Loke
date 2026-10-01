@@ -2207,7 +2207,8 @@ example_streaming_reads_its_input :: proc(t: ^testing.T) {
 
 // `corpus_runner` is a test harness in Loke, so it runs a corpus of its own:
 // in tests/examples/corpus_runner/, a passing case, one built with its `.flags`,
-// one whose output is wrong, and under `-trap` one that must panic.
+// one whose output is wrong, under `-trap` one that must panic, and under
+// `-diagnostics` one whose errors are listed and one with an error unlisted.
 @(test)
 example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -2228,6 +2229,7 @@ example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 	runs := []Run {
 		{"run", "", "ok   flagged.loke\nok   pass.loke\nFAIL wrong.loke - stdout differs\n2 passed, 1 failed\n", 1},
 		{"trap", "-trap", "ok   panics.loke\n1 passed, 0 failed\n", 0},
+		{"diagnostics", "-diagnostics", "ok   reported.loke\nFAIL uncounted.loke - has 2 errors, not 1\n1 passed, 1 failed\n", 1},
 	}
 	for run in runs {
 		command := make([dynamic]string, context.temp_allocator)

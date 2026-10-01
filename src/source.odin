@@ -681,7 +681,9 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 
 		fmt.eprintf("%*s--> %s:%d:%d\n", gutter, "", display_path(src.path), line, col)
 		fmt.eprintf("%*s |\n", gutter + 1, "")
-		fmt.eprintf("%d | %s\n", line, text)
+		// Diagnostics are text, so a line that is not valid UTF-8, which L0003
+		// reports, shows each run of bad bytes as one U+FFFD rather than echoing it.
+		fmt.eprintf("%d | %s\n", line, strings.to_valid_utf8(text, "�", context.temp_allocator))
 		fmt.eprintf("%*s | %s%s", gutter + 1, "", indent, strings.repeat("^", width, context.temp_allocator))
 		if d.label != "" {
 			fmt.eprintf(" %s", d.label)

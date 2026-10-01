@@ -1,3 +1,4 @@
 L0003
 @6:5
 source is not valid UTF-8
+6 | 	// �

@@ -18,7 +18,7 @@ different part of the language:
 - `shapes.loke` — interfaces dispatched two ways: specialized generics and erased `dyn`.
 - `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, lifecycle hooks, and `indexed()`.
 - `tokens.loke` — declaring a union, variant switches, and `case` lists that match ranges.
-- `corpus_runner.loke` — a test harness: child processes, captured output, directory listing, sorting, and a pool of threads sharing a `Mutex`. It compiles and runs each case in a corpus directory, as the compiler's own run and trap suites do.
+- `corpus_runner.loke` — a test harness: child processes, captured output, directory listing, sorting, and a pool of threads sharing a `Mutex`. It compiles and runs each case in a corpus directory, as the compiler's own run and trap suites do, or under `-diagnostics` checks each case's compile errors, as the diagnostic suite does.
 - `compile_time.loke` — ordinary procedures run during compilation, `build_config`, `static_assert`, `when`, static expansion over reflection, and folded layout.
 
 From the repository root, compile and run any example with:

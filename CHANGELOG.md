@@ -117,9 +117,10 @@ checklist.
   given, and the child inherits its three standard handles and nothing else.
   `io.Operation` gains `Spawn`, `Wait`, and `Kill`. `output` runs a command
   and collects its status, stdout, and stderr, reading both pipes at once.
-- `examples/corpus_runner.loke` is the run and trap corpus harness written in
-  Loke: it compiles each case, runs it, and compares its output, running a
-  case per processor at once.
+- `examples/corpus_runner.loke` is the run, trap, and diagnostic corpus harness
+  written in Loke: it compiles each case, runs it, and compares its output, or
+  under `-diagnostics` checks what its compile errors say, running a case per
+  processor at once.
 - `thread.processor_count` answers how many threads can run at once.
 - `value.as(.name)` reads one union variant without a `switch`: it yields
   `Option(P)` holding a copy of the payload when `name` is active, and `.none`
@@ -162,6 +163,8 @@ checklist.
 
 ### Fixed
 
+- A diagnostic on a line that is not valid UTF-8 shows each run of bad bytes as
+  U+FFFD instead of echoing them, so diagnostics are always UTF-8 text.
 - A temporary made in an operand that may not run (the right of `&&` or `||`,
   a conditional expression's arm, an `or_else` fallback) is dropped only when
   it was made. `count == 5 && name() == "x"` released a `string` that was never

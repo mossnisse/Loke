@@ -16,15 +16,23 @@ import "core:thread";
 // compares its stdout with `<case>.expected` and its stderr with
 // `<case>.expected-err` when there is one. A case must exit 0, or under
 // `-trap` must fail, with a `.expected-err` naming how; there `.expected` is
-// optional. A `<case>.flags` file adds one compiler flag per line. Cases run on
-// a thread per processor, and are reported in name order once all have finished.
+// optional. Under `-diagnostics` a case must not compile, and its `.expected`
+// lists what the diagnostics say (`diagnosed`). A `<case>.flags` file adds one
+// compiler flag per line. Cases run on a thread per processor, and are reported
+// in name order once all have finished.
 //
-// Usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap]
+// Usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap | -diagnostics]
+
+Mode :: enum { Run, Trap, Diagnostics }
 
 main :: proc() {
-	trap := os.args.len() == 5 && os.args[4] == "-trap";
-	if (os.args.len() != 4 && !trap) {
-		fmt.eprintln("usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap]");
+	mode := Mode.Run;
+	if (os.args.len() == 5 && os.args[4] == "-trap") {
+		mode = .Trap;
+	} else if (os.args.len() == 5 && os.args[4] == "-diagnostics") {
+		mode = .Diagnostics;
+	} else if (os.args.len() != 4) {
+		fmt.eprintln("usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap | -diagnostics]");
 		os.exit(2);
 	}
 	compiler, corpus, scratch := os.args[1], os.args[2], os.args[3];
@@ -41,7 +49,7 @@ main :: proc() {
 	{
 		workers: [dynamic]thread.Thread = {};
 		for (i := 0; i < thread.processor_count() && i < cases.len(); i += 1) {
-			workers.append(thread.spawn(work, Job{compiler, corpus, scratch, cases.clone(), trap, board.clone()}));
+			workers.append(thread.spawn(work, Job{compiler, corpus, scratch, cases.clone(), mode, board.clone()}));
 		}
 	} // dropping a worker joins it
 	passed, failed := 0, 0;
@@ -71,7 +79,7 @@ Board :: struct {
 Job :: struct {
 	compiler, corpus, scratch: string,
 	cases: [dynamic]string,
-	trap:  bool,
+	mode:  Mode,
 	board: shared(thread.Mutex(Board)),
 }
 
@@ -86,7 +94,7 @@ work :: proc(job: move Job) {
 			guard.get().next += 1;
 		}
 		if (index >= job.cases.len()) { return; }
-		switch (check(job.compiler, job.corpus, job.scratch, path.stem(job.cases[index]), job.trap)) {
+		switch (check(job.compiler, job.corpus, job.scratch, path.stem(job.cases[index]), job.mode)) {
 		case .ok:
 		case .err(reason):
 			guard := job.board.get().lock();
@@ -114,17 +122,25 @@ sources :: proc(directory: string_view) -> Result([dynamic]string, io.Error) {
 
 // One case: why it failed, or nothing.
 check :: proc(
-	compiler: string_view, corpus: string_view, scratch: string_view, name: string_view, trap: bool,
+	compiler: string_view, corpus: string_view, scratch: string_view, name: string_view, mode: Mode,
 ) -> Result(Unit, string) {
 	source := sibling(corpus, name, ".loke");
 	exe := sibling(scratch, name, ".exe");
 	arguments := [dynamic]string_view{source, "-o", exe};
+	if (mode == .Diagnostics) { arguments.append("-emit-ll"); }
 	flags := read(sibling(corpus, name, ".flags")) or_else "";
 	foreach (flag in strings.lines(flags)) {
 		if (strings.trim_space(flag).len() > 0) { arguments.append(strings.trim_space(flag)); }
 	}
 
 	built := run(process.Command{program = compiler, arguments = arguments[:]}) or_return;
+	if (mode == .Diagnostics) {
+		switch (wanted in read(sibling(corpus, name, ".expected"))) {
+		case .some: return diagnosed(source, text(built.stderr[:]), built.status, wanted);
+		case .none: return .err("has no .expected");
+		}
+	}
+	trap := mode == .Trap;
 	if (built.status != 0) {
 		return .err(fmt.to_string(mem.default_allocator(), "does not compile:", text(built.stderr[:])));
 	}
@@ -147,6 +163,66 @@ check :: proc(
 	case .none:
 	}
 	return .ok;
+}
+
+// The Odin suite's rules for a diagnostic case: the compile exits 1, and each
+// line of `.expected` is in its diagnostics, except that one starting `!` must
+// not be, `@line:column` is a span they contain, and `@no-span` means they have
+// none. The errors, and the warnings located in the case's own file, number
+// exactly the lines starting `L0` and `warning[`.
+diagnosed :: proc(
+	source: string_view, diagnostics: string_view, status: i32, expected: string_view,
+) -> Result(Unit, string) {
+	if (status != 1) { return .err(fmt.to_string(mem.default_allocator(), "exited with", status, "not 1")); }
+	output := normalise(diagnostics);
+	wanted := normalise(expected);
+	errors, warnings := 0, 0;
+	foreach (raw in strings.lines(wanted)) {
+		line := strings.trim_space(raw);
+		if (line.len() == 0) { continue; }
+		if (strings.starts_with(line, "!")) {
+			if (strings.contains(output, line[1:])) {
+				return .err(fmt.to_string(mem.default_allocator(), "mentions", line[1:]));
+			}
+		} else if (line == "@no-span") {
+			if (strings.contains(output, " --> ")) { return .err("has a span"); }
+		} else if (strings.starts_with(line, "@")) {
+			if (!strings.contains(output, strings.join([]string_view{":", line[1:]}, ""))) {
+				return .err(fmt.to_string(mem.default_allocator(), "has no span", line[1:]));
+			}
+		} else {
+			if (strings.starts_with(line, "L0")) { errors += 1; }
+			if (strings.starts_with(line, "warning[")) { warnings += 1; }
+			if (!strings.contains(output, line)) {
+				return .err(fmt.to_string(mem.default_allocator(), "does not mention", line));
+			}
+		}
+	}
+	if (strings.count(output, "error[L") != errors) {
+		return .err(fmt.to_string(mem.default_allocator(), "has", strings.count(output, "error[L"), "errors, not", errors));
+	}
+	if (own_warnings(output, source) != warnings) {
+		return .err(fmt.to_string(mem.default_allocator(), "has", own_warnings(output, source), "warnings, not", warnings));
+	}
+	return .ok;
+}
+
+// Warnings located in `source`. One raised inside `core` or `base`, as
+// `-copy-cost=1` raises for every copy a program makes, is not the case's to list.
+own_warnings :: proc(output: string_view, source: string_view) -> int {
+	file := strings.replace(source, "\\", "/");
+	count := 0;
+	pending := false;
+	foreach (raw in strings.lines(output)) {
+		line := strings.trim_space(raw);
+		if (strings.starts_with(line, "warning[")) {
+			pending = true;
+		} else if (pending && strings.starts_with(line, "--> ")) {
+			if (strings.contains(strings.replace(line, "\\", "/"), file)) { count += 1; }
+			pending = false;
+		}
+	}
+	return count;
 }
 
 run :: proc(command: process.Command) -> Result(process.Output, string) {
