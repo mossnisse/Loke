@@ -1,0 +1,19 @@
+package main;
+
+// design.md "Weakening and reborrows": an existing mutable carrier passed where
+// a read-only one is wanted is reborrowed until the call returns, so a later
+// argument cannot use it, as with an explicit read-only binding.
+bump :: proc(xs: []mut int) -> int { xs[0] = 99; return 0; }
+observe :: proc(xs: []int, ignored: int) { _ = xs[0]; }
+both :: proc(left: []int, right: []int) -> bool { return left[0] == right[0]; }
+
+main :: proc() {
+	storage := [1]int{1};
+	source: []mut int = storage[:];
+	observe(source, bump(source));
+	_ = both(source, source);
+	view: []int = source;
+	_ = both(view, view);
+	observe(source, 0);
+	_ = bump(source);
+}

@@ -139,10 +139,15 @@ main :: proc() {
 	fmt.println(slice.index_of(s, 8));
 	fmt.println(slice.min(s), slice.max(s));
 	fmt.println(slice.min(empty), slice.max(empty));
-	fmt.println(slice.equal(s, s), slice.equal(s, r));
+	// design.md "Weakening and reborrows": passing a `[]mut` where a `[]T` is
+	// wanted reborrows it for the call, so the same one cannot also be the
+	// other argument; a read-only view can be both.
+	same: []int = s;
+	fmt.println(slice.equal(same, same), slice.equal(s, r));
 	// Different lengths are unequal before any element is looked at, which is the
 	// only reason `equal` can index `right` with `left`'s indices at all.
-	fmt.println(slice.equal(s, one), slice.equal(one, s), slice.equal(empty, empty));
+	none: []int = empty;
+	fmt.println(slice.equal(s, one), slice.equal(one, s), slice.equal(none, none));
 
 	// design.md "Slice queries and copies": equal elements keep the earliest, so
 	// the signed zeros show which one won, and a NaN wins only from index 0.

@@ -927,7 +927,8 @@ prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
 // reborrows"). A fresh mutable loan weakens to a read-only destination, which
 // settles both the loan and its access. An existing mutable carrier is instead
 // reborrowed, read-only or mutably, and suspended while `into` is live. `into`
-// is -1 for a call argument, whose reborrow cannot outlive the call.
+// is -1 for a call argument, which `prov_call` instead gives derived slots of
+// its own, live until the call returns.
 @(private = "file")
 prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, into := -1, span := Span{}) {
 	if !type_is_carrier(graph.k.c, destination) {
@@ -3707,6 +3708,11 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		// it returns are done with it, so no other argument may use it meanwhile.
 		if carrier_is_mutable(c, param_type) && !(index == 0 && has_receiver) {
 			actuals[index] = prov_lend_carrier(graph, actuals[index], borrowed, expr_span(argument))
+		} else if type_is_carrier(c, param_type) && !(index == 0 && has_receiver) {
+			// design.md "Weakening and reborrows": an existing mutable carrier
+			// weakened to a read-only parameter is reborrowed for the call, which
+			// suspends it while later arguments are evaluated.
+			actuals[index] = prov_reborrow_traversal(graph, actuals[index], expr_span(argument), false)
 		}
 		borrowed = prov_join(graph, borrowed, actuals[index])
 	}

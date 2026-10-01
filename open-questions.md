@@ -448,8 +448,6 @@ The correctness findings and reproductions are in
 [known-gaps.md](known-gaps.md). The remaining recommendations concern
 [src/cfg_provenance.odin](src/cfg_provenance.odin):
 
-- Delete `prov_composite_content`'s `joined` accumulator. It repeatedly
-  allocates joined source lists that are never consumed.
 - Remove the repeated `level < .Stored` guard in `prov_call_retention`;
   the earlier guard already excludes it. Resolve the procedure type's info
   once in that helper.
@@ -466,9 +464,7 @@ The correctness findings and reproductions are in
 - Keep comments explaining return holds across cleanup, capability weakening,
   provider tokens, summary fixed points, and lifecycle's reset facts. Remove
   comments that only repeat helper names, such as the case payload and
-  destructured field wrappers. Update `prov_reborrow`'s call-argument comment
-  when repairing call reborrows: call arguments need their own derived slots,
-  rather than merely having no destination.
+  destructured field wrappers.
 
 ## Review cleanup in `check.odin`
 
@@ -585,3 +581,20 @@ Should words that only begin a construct in one position, such as `operator`,
 already is? The cost is parser lookahead and error recovery that has to tell a
 name from the keyword, and diagnostics that can no longer say "expected a name,
 found keyword" there.
+
+## Read-only reborrows of one carrier in one call
+
+[design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)
+suspends a mutable carrier while a read-only reborrow of it is live, and a
+suspended carrier may not be used at all. A `[]mut T` passed where a `[]T` is
+wanted is such a reborrow for the duration of the call, so
+`slice.equal(s, s)` with `s: []mut int` is rejected (`L0641`) although both
+arguments only read: the second argument uses `s` while the first argument's
+reborrow is live. Binding a read-only view first, `view: []int = s;
+slice.equal(view, view)`, is accepted.
+
+Should a suspended carrier allow uses that are themselves read-only reborrows
+or plain reads, so only writes and mutable reborrows conflict? That matches
+the rule's purpose, that no mutable alias writes behind the reborrow, but it
+changes the rule for explicit bindings too: `view: []int = source; x :=
+source[1];` is rejected today.

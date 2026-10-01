@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A `[]mut T`, `^mut T`, or other mutable carrier passed where a read-only one is
+  wanted is reborrowed until the call returns, so a later argument of the same
+  call cannot use it (`L0641`): `observe(source, bump(source))` and
+  `slice.equal(s, s)` with `s: []mut int` are rejected. Bind a read-only view
+  first, as in `view: []int = s`, and pass that.
 - An allocator kept in an ordinary record, as in `Holder{arena.allocator()}`,
   keeps its region: an owner allocated `via holder.allocator` cannot outlive
   `arena` (`L0592`). A reset through a selection that may be an unknown or

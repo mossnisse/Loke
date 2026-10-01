@@ -67,30 +67,6 @@ evaluating the second element. Saving `p` in a separate variable before the
 exchange produces L0526. Capture each evaluated value's provenance before
 subsequent effects, retaining the source identity needed for reborrow checks.
 
-### Read-only call arguments do not reborrow existing mutable carriers
-
-[design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)
-requires weakening an existing mutable carrier to suspend it while the
-read-only reborrow is live:
-
-```odin
-package main;
-bump :: proc(xs: []mut int) -> int { xs[0] = 99; return 0; }
-observe :: proc(xs: []int, ignored: int) { _ = xs[0]; }
-main :: proc() {
-    storage := [1]int{1};
-    source: []mut int = storage[:];
-    observe(source, bump(source));
-}
-```
-
-Actual: accepted. Expected: a reborrow conflict while evaluating the second
-argument. First assigning `view: []int = source` and passing `view` instead
-correctly gives L0641. `prov_call` supplies no destination to `prov_reborrow`,
-which does not link an existing carrier in that case; only mutable parameter
-types subsequently receive a call reborrow. Create the read-only call reborrow
-before evaluating later arguments and keep it live through the call.
-
 ### A `foreach` cannot destructure a record with padding
 
 [design.md "Destructuring"](design.md#destructuring) applies to `foreach`
