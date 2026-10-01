@@ -486,26 +486,6 @@ requires an assignable place before considering the setter path used by
 ordinary assignment. Implement the specified fallback while evaluating the
 receiver and indices only once.
 
-### A bare non-receiver parameter inherits its enclosing `impl` type
-
-[grammar.md "Procedures"](grammar.md#procedures) allows an omitted type and
-default only for `self`; see also
-[design.md "Receiver forms"](design.md#receiver-forms):
-
-```odin
-package main;
-Counter :: struct { n: int }
-impl Counter {
-    read :: proc(other) -> int { return other.n; }
-}
-main :: proc() { assert(Counter.read(Counter{7}) == 7); }
-```
-
-Actual: accepted, with `other` inferred as `Counter`. `resolve_proc_signature`
-and `normalize_signature_parameter` allow inference for the first parameter
-without requiring its name to be `self`. Require the actual receiver form;
-`other: Counter` is a valid explicit parameter.
-
 ### Floating literals round through `f64` before their destination width
 
 [design.md "Number literals"](design.md#number-literals) requires one

@@ -1,0 +1,13 @@
+package main;
+
+// grammar.md "Procedures": only the receiver `self` may omit its type and
+// default; any other bare parameter is an error, not an implicit `impl` type.
+Counter :: struct { n: int }
+
+impl Counter {
+	read :: proc(other) -> int { return 0; }
+	pair :: proc(self, other) -> int { return self.n; }
+	fine :: proc(self, other: Counter) -> int { return self.n + other.n; }
+}
+
+main :: proc() {}

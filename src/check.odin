@@ -1052,6 +1052,13 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 
 // A receiver-aware signature reads `proc(self, values: ..int)` as an implicit
 // receiver followed by a typed parameter. Plain procedure types do not split.
+// design.md "Receiver forms": only the receiver `self` may omit its type and
+// default, taking the enclosing `impl` type.
+parameter_is_bare_self :: proc(parameter: Parameter, position: int) -> bool {
+	return position == 0 && parameter.type == nil && parameter.default == nil && len(parameter.names) == 1 &&
+		parameter.names[0].name.text == "self"
+}
+
 parameter_splits_receiver :: proc(parameter: Parameter, position: int) -> bool {
 	return position == 0 && (parameter.type != nil || parameter.default != nil) && len(parameter.names) > 1 &&
 		parameter.names[0].name.text == "self"
@@ -1069,7 +1076,7 @@ normalize_signature_parameter :: proc(
 	type, mode = written, parameter.mode
 	if receiver != INVALID_TYPE && position == 0 && name_index == 0 {
 		split_receiver = parameter_splits_receiver(parameter, position)
-		if (parameter.type == nil && parameter.default == nil) || split_receiver { type = receiver }
+		if parameter_is_bare_self(parameter, position) || split_receiver { type = receiver }
 		if split_receiver { mode = .Value }
 		// design.md "Receiver forms": `self: ^Self` is received by address. The
 		// body sees the pointer; callers pass the receiver as for any borrowing
@@ -1184,9 +1191,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			// design.md "Default values": `name := default` takes the default's type.
 			parameter_type = infer_param_default_type(k, literal, position)
 		} else if parameter.type == nil {
-			// design.md "Receiver forms": a parameter with no type is the receiver
-			// `self`, whose type comes from the enclosing `impl` block.
-			if position == 0 && k.impl_type != INVALID_TYPE && parameter.default == nil {
+			if k.impl_type != INVALID_TYPE && parameter_is_bare_self(parameter, position) {
 				parameter_type = k.impl_type
 			} else {
 				errorf(k.c, parameter.span, "L0408", "a parameter needs a type or a default; only the receiver `self` may omit both")

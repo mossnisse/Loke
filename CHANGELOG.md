@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A parameter other than `self` with no type and no default, as in
+  `read :: proc(other) -> int` inside an `impl`, is an error (`L0408`). It
+  took the `impl` type; write it, as in `other: Counter`.
 - `nil` is not a union value (`L0310`, or `L0373` for `U(nil)`), even for a
   union with `@(zero=name)`. `result == nil` used to compare with the all-zero
   first variant. Name the variant instead: `result == .ok` for a
