@@ -19,8 +19,8 @@ a built-in takes value arguments only
 @29:14
 
 L0372
-a `[3]int` literal lists its elements positionally
-@33:16
+a `Simd(int, 4)` literal lists its elements positionally
+@33:22
 
 L0630
 a procedure value needs a body
