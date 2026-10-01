@@ -97,6 +97,10 @@ checklist.
   have the loop header's line, rather than the last statement's.
 - Under `-g`, a deferred statement has its own line when the scope exit runs
   it, rather than the exit's.
+- `-doc` opens a package's page with the comments above its `package` clauses,
+  shows a public struct field's comments, and adds a page for each package of
+  the project the root imports. A declaration or package clause with
+  attributes now gets the comment above them; it used to get none.
 
 ### Added
 

@@ -1,9 +1,12 @@
 # package shapes
 
+A package comment opens the package's page.
+
 ## Point
 
 ```odin
 Point :: struct {
+	// Across, in metres.
 	x: f64,
 	y: f64,
 	// and fields private to the package
@@ -57,6 +60,9 @@ limit := 10
 square_area :: proc(side: f64) -> f64
 ```
 
+The area of a square with `side`.
+It is always non-negative.
+
 ## Point.sum
 
 ```odin
@@ -64,3 +70,24 @@ sum :: proc(self) -> f64
 ```
 
 The sum of the coordinates.
+
+## LONGEST
+
+```odin
+LONGEST :: units.METRE * MAX_SIDE
+```
+
+The longest side, in metres.
+
+# package units (`./units`)
+
+Lengths, in metres. `-doc` gives each package of the project its own page,
+after the root's.
+
+## METRE
+
+```odin
+METRE :: 1.0
+```
+
+One metre.

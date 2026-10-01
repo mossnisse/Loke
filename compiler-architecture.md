@@ -390,7 +390,7 @@ be file-private.
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
 | `formatter.odin` | `-fmt` and `-fmt-check`: whitespace-only layout over the lexer's tokens and comments, refused for a file that does not parse and checked to keep every token. |
-| `doc.odin` | `-doc`: the checked root package's public API as Markdown, with the comments above each declaration. |
+| `doc.odin` | `-doc`: the public API of the checked root package and each project package it imports, as Markdown, with the comments above each package clause, declaration, and struct field. |
 | `semantic.odin`, `universe.odin` | Stable IDs, symbols, types, scopes, packages, type interning, and predeclared names. |
 
 ### Checking and language features

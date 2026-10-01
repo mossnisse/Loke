@@ -1,9 +1,12 @@
-// A package comment is not any declaration's doc comment.
+// A package comment opens the package's page.
 @(public)
 package shapes;
 
+import "./units";
+
 // A point on the plane.
 Point :: struct {
+	// Across, in metres.
 	x: f64,
 	y: f64,
 	@(private) cached_length: f64,
@@ -45,3 +48,6 @@ impl Point {
 	@(private)
 	scratch :: proc(self) {}
 }
+
+// The longest side, in metres.
+LONGEST :: units.METRE * MAX_SIDE;

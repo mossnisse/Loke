@@ -1,39 +1,67 @@
-// `-doc`: the root package's public API as Markdown, from its checked public
-// declarations and the comments written directly above them.
+// `-doc`: the public API of the root package, and of each package of the
+// project it imports, as Markdown, from their checked public declarations and
+// the comments written directly above them.
 package lokec
 
 import "core:fmt"
 import "core:strings"
 
-// Every public declaration, in file and source order: its signature, then its
-// doc comment. A procedure is shown without its body and a struct with only
-// its public fields; everything else is shown as written.
-document_package :: proc(c: ^Compiler, id: Package_Id) -> string {
-	pkg := package_of(c, id)
+// The root package's page, then one for each project package, in the order
+// they were loaded. A project package is one whose key names no collection.
+document_project :: proc(c: ^Compiler, root: Package_Id) -> string {
 	b := strings.builder_make()
-	fmt.sbprintfln(&b, "# package %s", identifier_text(c, pkg.name))
+	document_package(c, &b, root)
+	for &pkg in c.packages[1:] {
+		if pkg.id != root && !strings.contains_rune(pkg.key, ':') {
+			strings.write_byte(&b, '\n')
+			document_package(c, &b, pkg.id)
+		}
+	}
+	return strings.to_string(b)
+}
+
+// The comments above each file's package clause, a paragraph per file, then
+// every public declaration, in file and source order: its signature, then its
+// doc comment. A procedure is shown without its body and a struct with only
+// its public fields and their comments; everything else is shown as written.
+@(private = "file")
+document_package :: proc(c: ^Compiler, b: ^strings.Builder, id: Package_Id) {
+	pkg := package_of(c, id)
+	if pkg.key == "" || strings.contains_rune(pkg.key, ':') {
+		fmt.sbprintfln(b, "# package %s", identifier_text(c, pkg.name))
+	} else {
+		fmt.sbprintfln(b, "# package %s (`./%s`)", identifier_text(c, pkg.name), pkg.key)
+	}
+	for file in pkg.files {
+		// The clause's span is its name's.
+		text := c.sources[file.file].text
+		keyword := u32(strings.last_index(text[:file.package_span.lo], "package"))
+		start := written_start(text, keyword, file.attributes)
+		if doc := doc_comment(c, Span{file = file.file, lo = start}); doc != "" {
+			fmt.sbprintfln(b, "\n%s", doc)
+		}
+	}
 	for file in pkg.files {
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
-				document_decl(c, &b, v, "")
+				document_decl(c, b, v, "")
 			case ^Item_Foreign_Block:
 				for member in v.members {
 					if d, is_decl := member.(^Decl); is_decl {
-						document_decl(c, &b, d, "")
+						document_decl(c, b, d, "")
 					}
 				}
 			case ^Item_Impl:
 				owner := source_text(c, v.type)
 				for member in v.members {
 					if d, is_decl := member.(^Decl); is_decl {
-						document_decl(c, &b, d, owner)
+						document_decl(c, b, d, owner)
 					}
 				}
 			}
 		}
 	}
-	return strings.to_string(b)
 }
 
 @(private = "file")
@@ -45,10 +73,7 @@ document_decl :: proc(c: ^Compiler, b: ^strings.Builder, d: ^Decl, owner: string
 		return
 	}
 	text := c.sources[d.span.file].text
-	start := d.names[0].span.lo
-	for attribute in d.attributes {
-		start = min(start, attribute.span.lo)
-	}
+	start := written_start(text, d.names[0].span.lo, d.attributes)
 
 	name := d.names[0].text
 	if owner != "" {
@@ -81,7 +106,19 @@ document_decl :: proc(c: ^Compiler, b: ^strings.Builder, d: ^Decl, owner: string
 	}
 }
 
-// `Name :: struct { ... }` with only its public fields, one to a line.
+// Where something written at `lo` starts, counting its attributes: each one's
+// span is its name's, after the `@(`.
+@(private = "file")
+written_start :: proc(text: string, lo: u32, attributes: []Attribute) -> u32 {
+	start := lo
+	for attribute in attributes {
+		start = min(start, u32(strings.last_index_byte(text[:attribute.span.lo], '@')))
+	}
+	return start
+}
+
+// `Name :: struct { ... }` with only its public fields, one to a line, each
+// after its doc comment.
 @(private = "file")
 public_struct :: proc(c: ^Compiler, written: string, record: ^Type_Record) -> string {
 	b := strings.builder_make()
@@ -94,6 +131,11 @@ public_struct :: proc(c: ^Compiler, written: string, record: ^Type_Record) -> st
 			continue
 		}
 		if symbol := symbol_of(c, field.symbols[0]); symbol != nil && symbol.public {
+			if doc := doc_comment(c, field.span); doc != "" {
+				for line in strings.split_lines(doc) {
+					fmt.sbprintln(&b, strings.trim_right_space(fmt.tprintf("\t// %s", line)))
+				}
+			}
 			fmt.sbprintfln(&b, "\t%s,", strings.trim_right(text[field.span.lo:field.span.hi], ","))
 		} else {
 			hidden = true

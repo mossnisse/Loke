@@ -1,0 +1,7 @@
+// Lengths, in metres. `-doc` gives each package of the project its own page,
+// after the root's.
+@(public)
+package units;
+
+// One metre.
+METRE :: 1.0;

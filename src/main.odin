@@ -211,7 +211,7 @@ run :: proc() -> int {
 		return 1
 	}
 	if opts.doc {
-		fmt.print(document_package(&c, package_id))
+		fmt.print(document_project(&c, package_id))
 		report(&c) // warnings
 		return 0
 	}

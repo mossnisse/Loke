@@ -117,16 +117,15 @@ the value an `any_view` or `dyn` points at; a panic in a `-g` executable prints
 its Loke frames; and `-debug` sets `LOKE_DEBUG` on its own
 ([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin),
 [runtime/trace.c](runtime/trace.c)). `lokec <package> -doc` prints a checked
-package's public API as Markdown, each declaration with the comments directly
-above it ([src/doc.odin](src/doc.odin)), and `lokec -fmt` lays out source by the
+package's public API as Markdown, its package comments, each declaration and
+public struct field with the comments directly above it, and a page for each
+project package it imports ([src/doc.odin](src/doc.odin)), and `lokec -fmt` lays out source by the
 rules in [comments.md "Formatting"](comments.md#formatting).
 
 Main work:
 
 - align columns automatically in `-fmt`, once hand-kept alignment proves a
   burden;
-- give `-doc` what a real library shows it needs: struct-field and package
-  comments, and a page for each package of a multi-package project;
 - integrate formatting, documentation, and debugging metadata with editor tools
   without teaching them a second language front end.
 
