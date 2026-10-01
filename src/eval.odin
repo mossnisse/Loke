@@ -2232,7 +2232,7 @@ eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		}
 		operand = frozen
 	}
-	converted, fits := convert_const(c, operand, v.type, true, ev.alloc)
+	converted, fits := convert_const(c, wrap_typed_integer(c, operand, source.type, v.type, ev.alloc), v.type, true, ev.alloc)
 	if !fits {
 		eval_fail(ev, v.span, "L0341", "this conversion has no compile-time value")
 		return Eval_Value{}, false

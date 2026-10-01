@@ -1,0 +1,22 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Type conversion": a typed integer constant converts to another
+// integer type by keeping its low bits, as a run-time value does.
+BASE :: i32(300);
+NEGATIVE :: i32(-1);
+WIDE :: u8(200);
+LETTER :: 'Ā'; // U+0100
+
+static_assert(u8(BASE) == 44);
+static_assert(u32(NEGATIVE) == 4294967295);
+static_assert(i8(WIDE) == -56);
+
+folded :: proc() -> u8 { return u8(BASE) + u8(rune(LETTER)); }
+FOLDED :: folded();
+
+main :: proc() {
+	value := u8(BASE);
+	fmt.println(value, u32(NEGATIVE), i8(WIDE), FOLDED);
+}

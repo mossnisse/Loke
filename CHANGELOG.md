@@ -194,6 +194,9 @@ checklist.
 
 ### Fixed
 
+- An explicit conversion of a typed integer constant keeps its low bits, as at
+  run time: `u8(i32(300))` is 44. It reported `L0373`. An unfixed constant
+  such as `u8(300)` must still fit.
 - `a == b` with `a: ^mut T` and `b: ^T`, and `a if flag else b`, weaken the
   mutable pointer to `^T` (design.md "Comparison operators"). They reported
   `L0354`.

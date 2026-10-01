@@ -573,23 +573,6 @@ expression type to the vector after merely materializing the scalar as a
 lane. Reuse `materialize_value_expr` to validate that lane before recording
 the splat conversion.
 
-### Typed constant integer conversions do not preserve wrapping semantics
-
-[design.md "Type conversion"](design.md#type-conversion) keeps the low bits
-when converting between integer types:
-
-```odin
-package main;
-BASE :: i32(300);
-main :: proc() -> i32 { value := u8(BASE); return i32(value); }
-```
-
-Expected: 44. Actual: L0373; an equivalent runtime variable converts
-successfully. `convert_const` requires the mathematical value to fit even
-for this explicit typed conversion. Preserve source-type information so
-typed integer conversions wrap while unfixed constants retain their
-representability checks.
-
 ### Constant aggregate conversions reject valid identity and distinct conversions
 
 [design.md "Distinct types"](design.md#distinct-types) preserves representation
