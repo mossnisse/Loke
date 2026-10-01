@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- `nil` is not a union value (`L0310`, or `L0373` for `U(nil)`), even for a
+  union with `@(zero=name)`. `result == nil` used to compare with the all-zero
+  first variant. Name the variant instead: `result == .ok` for a
+  `Result(Unit, E)`, `option == .none` for an `Option`.
 - A constant zero integer divisor is an error (`L0319`) even when the dividend
   is not constant, as in `value / 0`, `value % 0`, and `value /= 0`. These
   compiled to a run-time panic; remove the division, or divide by a variable.

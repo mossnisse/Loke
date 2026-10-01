@@ -278,7 +278,7 @@ shrink_below_top :: proc() {
 	xs.append(1);
 	ys: [dynamic]u8 via arena.allocator() = {};
 	n := 1024;
-	for (ys.try_reserve(n) != nil) { n -= 1; }
+	for (ys.try_reserve(n) != .ok) { n -= 1; }
 	xs.shrink();
 	fmt.println(xs.cap(), xs[0]);
 }

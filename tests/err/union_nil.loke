@@ -1,0 +1,17 @@
+package main;
+
+// design.md "Zero values and @(zero=)": a union has no nil state, whether or
+// not it designates a zero variant.
+Choice :: union { value: int }
+Maybe :: union @(zero=none) { none:, some: int }
+
+main :: proc() {
+	choice: Choice = nil;
+	maybe: Maybe = nil;
+	converted := Maybe(nil);
+	empty: Maybe = {};
+	_ = choice;
+	_ = maybe;
+	_ = converted;
+	_ = empty;
+}

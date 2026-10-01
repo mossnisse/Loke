@@ -3099,7 +3099,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
-	case .Union, .Dyn, .Any_View, .Slice:
+	case .Dyn, .Any_View, .Slice:
 		// Every other value of these is built at run time.
 		if value.kind == .Nil {
 			return nil_const(), true
@@ -3160,7 +3160,8 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch underlying_kind(c, to) {
 		// design.md "Zero values"; a nil `Allocator_Error` is success.
-		case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice, .Typeid,
+		// A union has no nil state, even with a designated zero variant.
+		case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Dyn, .Any_View, .Slice, .Typeid,
 		     .String_View, .CString_View, .Allocator, .Allocator_Error:
 			return true
 		}

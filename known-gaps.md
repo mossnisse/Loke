@@ -672,22 +672,6 @@ works under [design.md "Type conversion"](design.md#type-conversion).
 The constant union conversion case accepts only nil and has no aggregate
 identity path. Preserve constant aggregate values in both valid conversions.
 
-### `nil` manufactures a union value without a nil state
-
-[design.md "Zero values and @(zero=)"](design.md#zero-values-and-zero)
-gives unions no nil state:
-
-```odin
-package main;
-Choice :: union { value: int }
-main :: proc() { choice: Choice = nil; _ = choice; }
-```
-
-Actual: accepted, although `{}` correctly reports L0424 because the union
-has no designated zero. `assignable` and `convert_const` include unions among
-nil-compatible types. Reject nil regardless of whether a union designates
-a zero variant; its zero is that variant, not nil.
-
 ### Designated fixed-array initializers are rejected
 
 [design.md "Fixed arrays"](design.md#fixed-arrays) permits element indices

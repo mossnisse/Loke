@@ -16,8 +16,8 @@ main :: proc() {
 	fmt.println("printed by fmt first");
 
 	out := term.stdout();
-	fmt.println(io.write_string(inout out, "written through term.stdout\n") == nil);
-	fmt.println(io.write_formatted_line(inout out, "formatted:", 42, true) == nil);
+	fmt.println(io.write_string(inout out, "written through term.stdout\n") == .ok);
+	fmt.println(io.write_formatted_line(inout out, "formatted:", 42, true) == .ok);
 
 	// A zero-length write succeeds immediately and moves nothing.
 	empty: [0]u8 = {};
@@ -27,5 +27,5 @@ main :: proc() {
 
 	// Standard error is a second, independent handle.
 	problem := term.stderr();
-	fmt.println(io.write_string(inout problem, "") == nil);
+	fmt.println(io.write_string(inout problem, "") == .ok);
 }

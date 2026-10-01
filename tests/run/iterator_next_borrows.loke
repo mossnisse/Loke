@@ -17,7 +17,7 @@ main :: proc() {
 	first := it.next() or_else nil;
 	fmt.println(first^);
 	advance(inout it);
-	fmt.println(it.next() == nil);
+	fmt.println(it.next() == .none);
 	// An owned result does not extend the source's loan past the final call.
 	back := xs.reversed().copied().iter();
 	last := back.next();

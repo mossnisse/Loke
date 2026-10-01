@@ -31,9 +31,9 @@ main :: proc() {
 		one := Res{1};
 		three := Res{3};
 		spread := [1]Res{Res{4}};
-		failed := items.try_append(one, Res{2}, three, ..spread[:]) != nil;
+		failed := items.try_append(one, Res{2}, three, ..spread[:]) != .ok;
 		fmt.println(failed, items.len(), drops);
 	}
 	fmt.println(drops);
-	fmt.println(items.try_append(Res{7}) == nil, items[0].id);
+	fmt.println(items.try_append(Res{7}) == .ok, items[0].id);
 }
