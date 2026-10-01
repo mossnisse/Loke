@@ -9,6 +9,9 @@ import "core:fmt"
 emit_scoped_block :: proc(e: ^Emitter, b: ^Block) {
 	push_scope(e, b)
 	emit_block_statements(e, b)
+	if b != nil {
+		debug_mark_end(e, b.span)
+	}
 	pop_scope(e)
 }
 
@@ -466,6 +469,7 @@ emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 		branch(e, done_label)
 	}
 	place_label(e, done_label)
+	debug_mark_end(e, s.span)
 	pop_scope(e)
 }
 
@@ -495,6 +499,7 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 
 	place_label(e, head)
 	if s.cond != nil {
+		debug_mark_location(e, expr_span(s.cond))
 		// A boundary per evaluation, since the temporaries' storage is reused.
 		push_temporaries(e)
 		cond := emit_expr(e, s.cond)
@@ -510,6 +515,7 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 
 	place_label(e, post)
 	if s.post != nil {
+		debug_mark_location(e, stmt_span(s.post))
 		push_temporaries(e)
 		emit_stmt(e, s.post)
 		pop_temporaries(e)
@@ -517,6 +523,7 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 	branch(e, head)
 
 	place_label(e, done)
+	debug_mark_end(e, s.span)
 	pop_scope(e)
 }
 
@@ -566,6 +573,7 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	}
 
 	place_label(e, done)
+	debug_mark_end(e, s.span)
 	pop_scope(e)
 }
 
@@ -667,6 +675,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	}
 
 	place_label(e, done)
+	debug_mark_end(e, s.span)
 	pop_scope(e)
 }
 

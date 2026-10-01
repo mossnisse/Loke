@@ -43,7 +43,6 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		e.break_depth, e.continue_depth = outer_break_depth, outer_continue_depth
 	}
 	push_scope(e, nil)
-	defer pop_scope(e)
 	// `break` lands in the loop scope, whose exit disposes of the iterator once.
 	e.break_depth = len(e.cleanups)
 
@@ -57,6 +56,8 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	case:
 		emit_indexed_foreach(e, s)
 	}
+	debug_mark_end(e, s.span)
+	pop_scope(e)
 }
 
 @(private = "file")
@@ -91,6 +92,8 @@ finish_step :: proc(e: ^Emitter, s: ^Stmt_Foreach, loop: Loop_Labels) {
 	pop_scope(e)
 	branch(e, loop.post)
 	place_label(e, loop.post)
+	// The step to the next element is the header's.
+	debug_mark_location(e, s.span)
 }
 
 @(private = "file")

@@ -92,6 +92,9 @@ checklist.
 - Under `-g`, a debugger shows the value a `dyn` view points at. Each witness
   table is a `witness$<n>` global in the PDB, and a `dyn` type is named
   `dyn$<n>` so the natvis rules can match it.
+- Under `-g`, the cleanup a block runs on exit has the line of its closing
+  `}`, and a `for` loop's condition and update, and a `foreach` loop's step,
+  have the loop header's line, rather than the last statement's.
 
 ### Added
 

@@ -31,8 +31,8 @@ main :: proc() {
 	fmt.println(steps(3), lookup());
 }
 
-// Each loop's `i` and `step` belong to that loop's block, so the two never
-// appear side by side.
+// Each loop's `i` and `step` belong to that loop's block, and its condition,
+// update, and closing `}` each have a location of their own.
 steps :: proc(n: int) -> int {
 	sum := 0;
 	for (i := 0; i < n; i += 1) {

@@ -4,9 +4,9 @@
 // Part of the textual LLVM backend; see compiler-architecture.md. Hundreds of
 // sites write instructions, so none of them spells a location. Under `-g` the
 // emitter writes a marker line after each procedure's `define`, before each
-// statement, where each scope opens and closes, and where each local gets its
-// address, and `attach_debug_info`
-// turns the markers into `!dbg` attachments and `llvm.dbg.declare` calls once
+// statement, a loop's condition and update, and the code a block runs at its
+// closing `}`, where each scope opens and closes, and where each local gets its
+// address, and `attach_debug_info` turns the markers into `!dbg` attachments and `llvm.dbg.declare` calls once
 // the module is complete. Without `-g` no marker is written, so the module is
 // unchanged.
 //
@@ -45,6 +45,15 @@ debug_mark_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 debug_mark_location :: proc(e: ^Emitter, span: Span) {
 	if e.c.debug_info && span.file != NO_FILE {
 		fmt.sbprintfln(&e.b, "%s%d %d", LOCATION_MARKER, span.file, span.lo)
+	}
+}
+
+// The code a statement or block runs as it ends, such as its scope's cleanup,
+// at its closing `}`.
+@(private)
+debug_mark_end :: proc(e: ^Emitter, span: Span) {
+	if span.hi > span.lo {
+		debug_mark_location(e, Span{file = span.file, lo = span.hi - 1})
 	}
 }
 
@@ -167,7 +176,7 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 				append(&p.blocks, -1)
 			}
 		case line == CLOSE_MARKER:
-			// The code after a scope keeps its statement's line, outside the scope.
+			// The code after a scope keeps its location's line, outside the scope.
 			if inside && len(p.blocks) > 0 {
 				pop(&p.blocks)
 				p.location = debug_location(&d, debug_scope(p), p.span)
