@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- `main` with an `inout` result or a foreign calling convention, as in
+  `main :: proc "c" ()`, is an error (`L0303`). An `inout i32` result exited
+  with an address-derived status; return the status by value from a `loke`
+  `main`.
 - A parameter other than `self` with no type and no default, as in
   `read :: proc(other) -> int` inside an `impl`, is an error (`L0408`). It
   took the `impl` type; write it, as in `other: Counter`.

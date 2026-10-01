@@ -322,6 +322,9 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 		errorf(c, span, "L0303", "`main` must be a procedure: `%s`", "main :: proc() { ... }")
 	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || (info.result != INVALID_TYPE && info.result != TYPE_I32) {
 		errorf(c, symbol.span, "L0303", "`main` takes no parameters and returns nothing or an `i32` status: `%s`", "main :: proc() -> i32 { ... }")
+	} else if info.result_inout || convention_is_foreign(info.convention) {
+		// The startup wrapper calls an ordinary `loke` procedure for an `i32` value.
+		errorf(c, symbol.span, "L0303", "`main` is an ordinary `loke` procedure returning its status by value: `%s`", "main :: proc() -> i32 { ... }")
 	} else if c.error_count == errors_before {
 		c.entry_point = entry
 	}

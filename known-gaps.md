@@ -268,23 +268,6 @@ temporary's address, which becomes invalid when the procedure returns.
 `inout string` returned as `inout string_view` is also accepted. Check the
 original place type without materializing a value conversion.
 
-### Entry-point validation accepts incompatible result modes and conventions
-
-[design.md "Program entry and exit"](design.md#program-entry-and-exit)
-requires an ordinary `loke` procedure returning nothing or an `i32` value:
-
-```odin
-package main;
-code: static i32 = 0;
-main :: proc() -> inout i32 { return inout code; }
-```
-
-Actual: accepted. `validate_executable` checks the result type but ignores
-its mode. LLVM defines a pointer-returning `main`, while the startup wrapper
-calls it as returning `i32`, producing an address-derived exit status.
-`main :: proc "c" () {}` is also incorrectly accepted. Validate both the
-result mode and calling convention before publishing the entry point.
-
 ### Unnamed padding fields disappear from record layout
 
 [grammar.md "Records"](grammar.md#records) defines `_` fields as unnamed

@@ -1,0 +1,6 @@
+package main;
+
+// design.md "Program entry and exit": `main` returns its status by value; the
+// startup wrapper would read an `inout` result's address as the status.
+code: static i32 = 0;
+main :: proc() -> inout i32 { return inout code; }

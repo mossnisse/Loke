@@ -1,0 +1,4 @@
+package main;
+
+// design.md "Program entry and exit": `main` uses the `loke` calling convention.
+main :: proc "c" () {}
