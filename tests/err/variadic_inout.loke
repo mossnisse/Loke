@@ -1,0 +1,22 @@
+package main;
+import "core:fmt";
+
+// A variadic pack receives copies, so an `inout` marker on one of its arguments
+// is an error, as it is for an ordinary value parameter and a C-variadic call.
+// A method call reports it as a candidate that does not apply.
+
+total :: proc(values: ..int) -> int { return values.len(); }
+
+Bag :: struct { n: int }
+
+impl Bag {
+	add :: proc(self: inout Bag, values: ..int) { self.n += values.len(); }
+}
+
+main :: proc() {
+	n := 3;
+	fmt.println("a", inout n);
+	_ = total(1, inout n);
+	bag := Bag{};
+	bag.add(inout n);
+}

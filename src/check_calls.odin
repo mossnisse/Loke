@@ -1064,6 +1064,11 @@ bind_variadic_arguments :: proc(
 			ok = ok && passed
 			continue
 		}
+		if arg.mode == .Inout {
+			errorf(k.c, arg.span, "L0370", "a variadic argument is passed by value, so it cannot be `inout`")
+			ok = false
+			continue
+		}
 		value, passed := pass_argument(k, arg.value, element, prechecked)
 		append(&elements, value)
 		append(&order, false)

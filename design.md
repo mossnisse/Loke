@@ -4266,7 +4266,7 @@ sort_in_place(inout numbers);
 process_owned(move(numbers));
 ```
 
-**Argument modes must be written at the call site.** An `inout` parameter requires `inout expr`; a place passed to a `move` parameter requires `move(expr)`. Omitting the marker is an error naming the parameter and required mode.
+**Argument modes must be written at the call site.** An `inout` parameter requires `inout expr`; a place passed to a `move` parameter requires `move(expr)`. Omitting the marker is an error naming the parameter and required mode. An `inout` marker on any other argument is an error too, including an argument to a variadic pack, which receives a copy.
 
 **A temporary needs no `move` marker.** It already owns its value, and transferring it leaves no named source dead. This is also the rule for [`unsafe.forget`](#unsafeforget) and [built-in insertion](#container-insertion):
 

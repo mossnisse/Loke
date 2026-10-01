@@ -1,0 +1,7 @@
+L0370
+@18:19
+L0370
+@19:15
+a variadic argument is passed by value, so it cannot be `inout`
+L0392
+@21:2

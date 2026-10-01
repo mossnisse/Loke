@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- An `inout` marker on an argument to a variadic parameter, as in
+  `fmt.println("a", inout n)`, is an error (`L0370`). It was accepted and
+  ignored; delete the marker, since a variadic pack receives a copy.
 - Standard output and standard error are binary on Windows: `fmt.println` and
   panic reports end lines with `\n`, as `term.stdout()` already did, instead of
   `\r\n`. A program whose output must end lines with `\r\n` writes them.
