@@ -358,26 +358,6 @@ Actual: accepted; `a` becomes `string` and `b` becomes `bool`, ignoring `int`.
 written destination type, rather than silently replace it. Keep declaration
 validation common to destructured and ordinary initializers.
 
-### Local static-duration initializers do not request compile-time evaluation
-
-[design.md "Storage modifiers"](design.md#storage-modifiers) permits
-compile-time constant initialization, including evaluated procedure calls:
-
-```odin
-package main;
-answer :: proc() -> int { return 7; }
-main :: proc() -> i32 {
-    n: static int = answer();
-    return i32(n);
-}
-```
-
-Actual: L0506; the equivalent file-scope initializer is accepted.
-`check_decl_inner` requests `require_const` only for file-scope variables;
-`record_static_local` later tests the unevaluated expression's `is_const`
-flag. Use the same compile-time evaluation path for local `static` and
-`thread_local` initialization.
-
 ### Required-result diagnostics run before the surrounding `when` scope is complete
 
 [design.md "when statement"](design.md#when-statement) gives the selected

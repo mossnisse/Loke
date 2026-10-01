@@ -198,6 +198,9 @@ checklist.
 
 ### Fixed
 
+- A local `static` or `thread_local` initializer is evaluated at compile time,
+  as a file-scope one is, so `n: static int = answer();` works. It reported
+  `L0506`; a run-time initializer now says what has no compile-time value.
 - A `_` record field is unnamed padding that keeps its storage, as grammar.md
   "Records" says: `struct { first: u8, _: [7]u8, last: u8 }` is 9 bytes with
   `last` at offset 8. The field was dropped from the layout. Positional

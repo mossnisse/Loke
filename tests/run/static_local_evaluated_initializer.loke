@@ -1,0 +1,22 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Storage modifiers": a local `static` or `thread_local` initializer
+// is a compile-time constant, which may be an evaluated procedure call, as at
+// file scope.
+answer :: proc() -> int { return 7; }
+square :: proc(n: int) -> int { return n * n; }
+
+next :: proc() -> int {
+	count: static int = answer();
+	scale: thread_local int = square(3);
+	count += 1;
+	return count * scale;
+}
+
+main :: proc() {
+	first := next();
+	second := next();
+	fmt.println(first, second);
+}

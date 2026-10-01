@@ -37,9 +37,9 @@ L0498
 L0498
 @100:12
 `move` cannot be applied to `thread_local` storage, which is always live
-L0506
+L0344
 @101:18
-a `static` declaration is initialised once, before any code runs, so its initialiser must be a compile-time constant
+`borrow` cannot be called at compile time
 L0500
 @108:14
 `d` cannot be used here: it is live on only some of the paths that reach this point

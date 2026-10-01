@@ -606,6 +606,7 @@ UNPINNED :: []string {
 	// evaluator reports first.
 	"L0311",
 	"L0325",
+	"L0506",
 	"L0340",
 	// Invariant guards: an emission contract violation, and `unsupported_construct`
 	// — every arm that used to reach it was given an honest diagnostic in M7.

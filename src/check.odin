@@ -2262,8 +2262,12 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		}
 
 		// The codes here are `require_const`'s fallback, unpinned by design.
+		// design.md "Storage modifiers": a local `static` or `thread_local` is
+		// initialised before code runs, as a file-scope variable is.
 		if d.top_level && d.kind == .Var && evaluable {
 			require_const(k, value, "a file-scope initializer", "L0325")
+		} else if d.duration != .None && d.kind == .Var && evaluable {
+			require_const(k, value, d.duration == .Static ? "a `static` initializer" : "a `thread_local` initializer", "L0506")
 		}
 
 		bind_literal_allocator(k.c, value, symbol_id)

@@ -540,14 +540,8 @@ record_static_local :: proc(k: ^Checker, d: ^Decl) {
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
+		// Compile-time evaluation of the initializer already said why it failed.
 		if index < len(d.values) && d.values[index] != nil && !is_const_expr(d.values[index]) {
-			errorf(
-				k.c,
-				expr_span(d.values[index]),
-				"L0506",
-				"a `%s` declaration is initialised once, before any code runs, so its initialiser must be a compile-time constant",
-				d.duration == .Static ? "static" : "thread_local",
-			)
 			continue
 		}
 		if committing(k.c) {

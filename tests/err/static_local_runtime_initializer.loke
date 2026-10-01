@@ -1,0 +1,13 @@
+package main;
+
+// design.md "Storage modifiers": a local `static` or `thread_local` initializer
+// is evaluated at compile time, so it cannot read run-time values.
+seed: int = 3;
+
+next :: proc(start: int) -> int {
+	a: static int = start;
+	b: thread_local int = seed;
+	return a + b;
+}
+
+main :: proc() { _ = next(1); }
