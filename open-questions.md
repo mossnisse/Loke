@@ -442,6 +442,34 @@ a `when (LOKE_OS == ...)`, and `core:fs`, `core:os`, `core:path`,
 implementation directly. Should it gain the `when`, or should the convention let
 a package with one target skip it?
 
+## Review cleanup in `cfg_provenance.odin`
+
+The correctness findings and reproductions are in
+[known-gaps.md](known-gaps.md). The remaining recommendations concern
+[src/cfg_provenance.odin](src/cfg_provenance.odin):
+
+- Delete `prov_composite_content`'s `joined` accumulator. It repeatedly
+  allocates joined source lists that are never consumed.
+- Remove the repeated `level < .Stored` guard in `prov_call_retention`;
+  the earlier guard already excludes it. Resolve the procedure type's info
+  once in that helper.
+- Keep graph construction's mutation contract accurate. The construction
+  comment says the typed AST is never written, but `prov_owner_view` and
+  `walk_flow_expr_erased` temporarily change and restore conversion fields and
+  expression types. Prefer passing the source type into the walk when that
+  code changes, or explicitly document this temporary exception in
+  [compiler-architecture.md "Disposable control-flow graphs"](compiler-architecture.md#disposable-control-flow-graphs).
+- Give `prov_call` visible phase boundaries using small helpers for builtin
+  calls and argument preparation, following its existing `prov_text_call`
+  pattern. Its current dispatch, evaluation, borrow creation, and effect
+  application occupy one procedure of roughly 360 lines.
+- Keep comments explaining return holds across cleanup, capability weakening,
+  provider tokens, summary fixed points, and lifecycle's reset facts. Remove
+  comments that only repeat helper names, such as the case payload and
+  destructured field wrappers. Update `prov_reborrow`'s call-argument comment
+  when repairing call reborrows: call arguments need their own derived slots,
+  rather than merely having no destination.
+
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md "Formatting"](comments.md#formatting).
