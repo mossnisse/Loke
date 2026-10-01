@@ -156,6 +156,8 @@ checklist.
   a conditional expression's arm, an `or_else` fallback) is dropped only when
   it was made. `count == 5 && name() == "x"` released a `string` that was never
   written when `count` was not 5, and crashed.
+- A program can import both `core:fs` and `core:thread`: the two declared
+  `CloseHandle` with different types, which failed with `L0600`.
 
 - Provider lifetime checks follow nested and recursive record/container types
   without dropping dependencies beyond eight levels. Handles remain usable

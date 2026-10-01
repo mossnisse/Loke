@@ -1,0 +1,20 @@
+// core:fs and core:thread both declare `CloseHandle`; a foreign symbol two
+// packages declare must have one type, or importing both does not compile
+// (L0600).
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:thread";
+
+work :: proc() {}
+
+main :: proc() {
+	worker := thread.spawn(work);
+	worker.join();
+	switch (outcome in fs.remove("lib_fs_with_thread_no_such_file_4A19")) {
+	case .ok:  fmt.println("removed");
+	case .err: fmt.println(io.code_of(outcome));
+	}
+}

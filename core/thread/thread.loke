@@ -13,17 +13,19 @@ import "core:unsafe";
 
 foreign import kernel32 "system:kernel32.lib";
 
+// A handle is an `int`, as in `core:fs` and `core:process`: a symbol two packages
+// declare must have one type, or a program importing both does not compile.
 @(private)
 foreign kernel32 {
 	@(link_name="CreateThread")
 	rt_create_thread :: proc "stdcall" (
 		attributes: rawptr, stack_size: uint, start: proc "stdcall" (parameter: rawptr) -> u32,
 		parameter: rawptr, flags: u32, thread_id: rawptr,
-	) -> rawptr ---;
+	) -> int ---;
 	@(link_name="WaitForSingleObject")
-	rt_wait :: proc "stdcall" (handle: rawptr, milliseconds: u32) -> u32 ---;
+	rt_wait :: proc "stdcall" (handle: int, milliseconds: u32) -> u32 ---;
 	@(link_name="CloseHandle")
-	rt_close :: proc "stdcall" (handle: rawptr) -> i32 ---;
+	rt_close :: proc "stdcall" (handle: int) -> i32 ---;
 	@(link_name="AcquireSRWLockExclusive")
 	rt_lock :: proc "stdcall" (lock: rawptr) ---;
 	@(link_name="ReleaseSRWLockExclusive")
@@ -46,17 +48,17 @@ foreign loke_runtime {
 // A running thread. Dropping one joins it, so a thread never outlives the owner
 // of its handle; `join` says so at the point it happens.
 Thread :: move_only struct {
-	@(private) handle: rawptr,
+	@(private) handle: int,
 }
 
 impl Thread {
 	// Waits for the thread to return. Its writes, and its `thread_local` drops,
 	// happen before this returns.
 	join :: proc(self: inout) {
-		if (self.handle == nil) { return; }
+		if (self.handle == 0) { return; }
 		rt_wait(self.handle, INFINITE);
 		rt_close(self.handle);
-		self.handle = nil;
+		self.handle = 0;
 	}
 
 	@(private)
@@ -112,7 +114,7 @@ spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) ->
 	unsafe.write(block^.arg[0], move(arg));
 	block^.live = 1;
 	handle := rt_create_thread(nil, 0, thread_main, rawptr(block), 0, nil);
-	if (handle == nil) { panic("thread creation failed"); }
+	if (handle == 0) { panic("thread creation failed"); }
 	return Thread{handle};
 }
 
