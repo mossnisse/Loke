@@ -1596,7 +1596,9 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	}
 
 	place_label(e, rhs_label)
+	begin_conditional(e)
 	rhs := emit_expr(e, v.rhs)
+	end_conditional(e)
 	rhs_exit := new_label(e, "sc.rhs.exit")
 	branch(e, rhs_exit)
 	place_label(e, rhs_exit)
@@ -1624,10 +1626,12 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 	branch_if(e, cond, then_label, else_label)
 
 	place_label(e, then_label)
+	begin_conditional(e)
 	then_value := emit_expr(e, v.then)
 	if v.then_clone {
 		then_value = emit_clone_value(e, as_type, then_value)
 	}
+	end_conditional(e)
 	if joined != "" {
 		store(e, as_type, then_value, joined)
 	}
@@ -1637,10 +1641,12 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 	branch(e, done_label)
 
 	place_label(e, else_label)
+	begin_conditional(e)
 	else_value := emit_expr(e, v.otherwise)
 	if v.else_clone {
 		else_value = emit_clone_value(e, as_type, else_value)
 	}
+	end_conditional(e)
 	if joined != "" {
 		store(e, as_type, else_value, joined)
 	}

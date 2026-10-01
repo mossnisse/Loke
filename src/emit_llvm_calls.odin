@@ -611,10 +611,12 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	   !v.borrows && emit_lifecycle(e, failure_type).managed {
 		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
 	}
+	begin_conditional(e)
 	fallback := emit_expr(e, v.fallback)
 	if v.fallback_clone {
 		fallback = emit_clone_value(e, payload_type, fallback)
 	}
+	end_conditional(e)
 	if joined_slot != "" {
 		store(e, payload_type, fallback, joined_slot)
 	}

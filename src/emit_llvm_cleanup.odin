@@ -405,15 +405,29 @@ register_scope_place :: proc(e: ^Emitter, type: Type_Id, place: string) {
 	if !emit_lifecycle(e, type).managed || len(e.cleanups) == 0 {
 		return
 	}
-	append(&e.cleanups[len(e.cleanups) - 1].entries, begin_temporary_drop(e, type, place))
+	entry := begin_temporary_drop(e, type, place)
+	entry.flag = conditional_flag(e)
+	append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
 }
 
 @(private)
 drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
 	if entry.place == "" { return }
+	skip := ""
+	if entry.flag != "" {
+		run := new_label(e, "temp.made")
+		skip = new_label(e, "temp.done")
+		branch_if(e, load(e, "i1", entry.flag), run, skip)
+		place_label(e, run)
+		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", entry.flag)
+	}
 	// Clear before invoking a user drop hook, which can itself panic.
 	finish_temporary_drop(e, entry)
 	emit_drop_place(e, entry.type, entry.place)
+	if skip != "" {
+		branch(e, skip)
+		place_label(e, skip)
+	}
 }
 
 // ------------------------------------------------ full-expression frames --
@@ -470,8 +484,30 @@ register_temporary_place :: proc(e: ^Emitter, type: Type_Id, place: string) {
 		return
 	}
 	entry := begin_temporary_drop(e, type, place)
+	entry.flag = conditional_flag(e)
 	append(&e.temporaries[len(e.temporaries) - 1], entry)
 }
+
+// A temporary made in an operand that may not run is dropped only if it was
+// made: its flag is false from the entry block, set here, and cleared by the
+// drop, so a later pass through the same code starts false again.
+@(private = "file")
+conditional_flag :: proc(e: ^Emitter) -> string {
+	if e.conditional == 0 {
+		return ""
+	}
+	flag := fmt.aprintf("%%made%d", next_id(e))
+	alloca_named(e, flag, "i1")
+	append(&e.prologue, fmt.aprintf("  store i1 false, ptr %s", flag))
+	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+	return flag
+}
+
+// Brackets an operand that may not run (`conditional`).
+@(private)
+begin_conditional :: proc(e: ^Emitter) { e.conditional += 1 }
+@(private)
+end_conditional :: proc(e: ^Emitter) { e.conditional -= 1 }
 
 // -------------------------------------------------------------- cleanups --
 
@@ -546,6 +582,8 @@ run_cleanups :: proc(e: ^Emitter, down_to: int) {
 			skip := new_label(e, "defer.skip")
 			branch_if(e, flag, run, skip)
 			place_label(e, run)
+			// A conditional temporary's flag is set again only if it is made again.
+			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", entry.flag)
 			run_one_cleanup(e, entry)
 			branch(e, skip)
 			place_label(e, skip)

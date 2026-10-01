@@ -1,0 +1,43 @@
+// design.md "Borrows and lifetimes": a temporary lives to the end of its full
+// expression, but one made in an operand that may not run — the right of `&&`
+// or `||`, a conditional's arm, an `or_else` fallback — is dropped only when it
+// was made. A `string` compared there used to be released on every path, so a
+// skipped operand released storage that was never written.
+package main;
+
+import "core:fmt";
+
+Noisy :: struct { id: int }
+
+impl Noisy {
+	release :: hook(drop) proc(self: inout Noisy) {
+		fmt.println("drop", self.id);
+	}
+}
+
+make :: proc(id: int) -> Noisy { return Noisy{id}; }
+positive :: proc(value: Noisy) -> bool { return value.id > 0; }
+id_of :: proc(value: Noisy) -> int { return value.id; }
+found :: proc(present: bool) -> Option(int) { return .some(9) if present else .none; }
+name :: proc() -> string { return "owned"; }
+
+main :: proc() {
+	// Each pass makes the right operand on only some passes, so a flag left set
+	// by one pass would drop again on the next.
+	foreach (pass in 0 ..< 3) {
+		fmt.println("pass", pass);
+		both := pass == 1 && positive(make(10 + pass));
+		either := pass == 1 || positive(make(20 + pass));
+		chosen := id_of(make(30 + pass)) if pass == 2 else 0;
+		fallback := found(pass == 0) or_else id_of(make(40 + pass));
+		fmt.println(both, either, chosen, fallback);
+	}
+	// The crash this fixes: a `string` compared in a skipped operand was
+	// released though it was never made.
+	foreach (pass in 0 ..< 3) {
+		matched := pass == 1 && name() == "owned";
+		missed := pass == 1 || name() == "other";
+		picked := name().len() if pass == 2 else 0;
+		fmt.println(matched, missed, picked);
+	}
+}

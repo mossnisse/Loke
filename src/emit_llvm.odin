@@ -157,6 +157,9 @@ Function_State :: struct {
 	// design.md "Borrows and lifetimes": one frame per full expression, since a
 	// value temporary dies at its end.
 	temporaries: [dynamic][dynamic]Deferred,
+	// How many operands that may not run enclose the code being written: the
+	// right of `&&` and `||`, a conditional's arms, an `or_else` fallback.
+	conditional: int,
 	break_label:    string,
 	continue_label: string,
 	break_depth:    int,

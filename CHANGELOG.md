@@ -152,6 +152,11 @@ checklist.
 
 ### Fixed
 
+- A temporary made in an operand that may not run (the right of `&&` or `||`,
+  a conditional expression's arm, an `or_else` fallback) is dropped only when
+  it was made. `count == 5 && name() == "x"` released a `string` that was never
+  written when `count` was not 5, and crashed.
+
 - Provider lifetime checks follow nested and recursive record/container types
   without dropping dependencies beyond eight levels. Handles remain usable
   after moving a provider or resetting it with `free_all`.

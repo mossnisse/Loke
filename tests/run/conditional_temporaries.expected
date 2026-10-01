@@ -1,0 +1,15 @@
+pass 0
+drop 20
+false true 0 9
+pass 1
+drop 11
+drop 41
+true true 0 41
+pass 2
+drop 22
+drop 32
+drop 42
+false true 32 42
+false false 0
+true true 0
+false false 5
