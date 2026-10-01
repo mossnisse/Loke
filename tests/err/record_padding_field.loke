@@ -9,7 +9,7 @@ main :: proc() {
 	keyed := Padded{_ = 1};
 	a, b, c := Padded{};
 	items := [1]Padded{};
-	foreach (first, last in items) {}
+	foreach (first, _, last in items) {}
 	_ = extra;
 	_ = keyed;
 }

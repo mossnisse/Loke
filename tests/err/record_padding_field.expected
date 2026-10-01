@@ -9,4 +9,4 @@ L0308
 fills 2 bindings, not 3
 L0459
 @12:11
-has padding fields
+`Padded` has 2 fields, so this `foreach` pattern needs 1 or 2 parts, not 3

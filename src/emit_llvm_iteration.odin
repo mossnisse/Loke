@@ -160,7 +160,9 @@ bind_foreach_pattern :: proc(
 	parts := foreach_field_children(e, logical, source)
 	logical_info := type_of(e.c, type_underlying(e.c, logical))
 	item_info := type_of(e.c, type_underlying(e.c, item))
-	for binding, index in bindings {
+	for binding, position in bindings {
+		// A padding field fills no binding, so each binding takes its field's slot.
+		index := named_field_slot(e.c, logical_info, position)
 		field := symbol_of(e.c, logical_info.fields[index])
 		projected := INVALID_TYPE
 		if item_info != nil && item_info.kind == .Struct && index < len(item_info.fields) {

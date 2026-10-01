@@ -972,15 +972,8 @@ check_foreach_pattern :: proc(
 		return bind_pattern_leaf(k, s, &bindings[0], logical, item)
 	}
 	info := underlying_info(k.c, logical)
-	// known-gaps.md "A `foreach` cannot destructure a record with padding".
-	if info != nil && info.kind == .Struct && len(named_fields(k.c, info)) != len(info.fields) {
-		errorf(
-			k.c, bindings[0].name.span, "L0459",
-			"`%s` has padding fields, so a `foreach` binds the whole element", type_name(k.c, logical),
-		)
-		return false
-	}
-	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
+	// A padding field fills no binding (design.md "Destructuring").
+	if info == nil || info.kind != .Struct || len(named_fields(k.c, info)) != len(bindings) {
 		report_pattern_arity(k, bindings, logical, info, raw_data(bindings) == raw_data(s.bindings))
 		return false
 	}
@@ -993,8 +986,9 @@ check_foreach_pattern :: proc(
 		field := symbol_of(k.c, fields[index])
 		if field == nil { return false }
 		projected := INVALID_TYPE
-		if item_info != nil && item_info.kind == .Struct && index < len(item_info.fields) {
-			if projected_field := symbol_of(k.c, item_info.fields[index]); projected_field != nil {
+		slot := int(field.index)
+		if item_info != nil && item_info.kind == .Struct && slot < len(item_info.fields) {
+			if projected_field := symbol_of(k.c, item_info.fields[slot]); projected_field != nil {
 				projected = projected_field.type
 			}
 		}
@@ -1079,7 +1073,7 @@ bind_pattern_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Bindi
 @(private = "file")
 report_pattern_arity :: proc(k: ^Checker, bindings: []Foreach_Binding, element: Type_Id, info: ^Type_Info, header: bool) {
 	span := len(bindings) > 0 ? bindings[0].name.span : no_span()
-	count := info != nil && info.kind == .Struct ? len(info.fields) : 0
+	count := info != nil && info.kind == .Struct ? len(named_fields(k.c, info)) : 0
 	errorf(
 		k.c, span, "L0459", "`%s` has %d fields, so this `foreach` pattern needs 1 or %d parts, not %d",
 		type_name(k.c, element), count, count, len(bindings),
