@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A destructuring declaration with a written type, as in
+  `a, b: int = pair`, is an error (`L0308`); the bindings took the fields'
+  types and ignored `int`. Write `a, b := pair`. A destructured file-scope or
+  static-duration initializer must be a compile-time constant, as a single
+  binding's is.
 - A run-time scalar splatted into a SIMD vector must be a valid lane, as in a
   scalar assignment: `lanes: Simd(i32, 4) = value` with `value: f32` reports
   `L0310`. It passed the checker and failed in Clang with `L0403`; convert
@@ -198,6 +203,10 @@ checklist.
 
 ### Fixed
 
+- A destructured file-scope, `static`, or `thread_local` binding starts with
+  its field of the constant record and is initialised once: `a, b := Pair{1, 2}`
+  at file scope gave both zero, and a local `a, b: static = ...` was rebuilt on
+  every call.
 - A local `static` or `thread_local` initializer is evaluated at compile time,
   as a file-scope one is, so `n: static int = answer();` works. It reported
   `L0506`; a run-time initializer now says what has no compile-time value.

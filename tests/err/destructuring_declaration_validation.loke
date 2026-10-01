@@ -1,0 +1,24 @@
+package main;
+
+// design.md "Storage modifiers": a destructured file-scope or static binding
+// needs a constant initializer, as a single binding does. design.md
+// "Destructuring": each binding takes its field's type, so none is written.
+Pair :: struct { first: int, second: int }
+Mixed :: struct { first: string, second: bool }
+
+seed: int = 3;
+make_pair :: proc() -> Pair { return Pair{seed, seed + 1}; }
+
+a, b := make_pair();
+
+next :: proc() -> int {
+	x, y: static = make_pair();
+	return x + y;
+}
+
+main :: proc() {
+	c, d: int = Mixed{"hello", true};
+	_ = c;
+	_ = d;
+	_ = next();
+}

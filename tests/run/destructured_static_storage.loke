@@ -1,0 +1,26 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Destructuring" and "Storage modifiers": each destructured
+// static-duration binding starts with its own field of the constant record and
+// is initialised once, before code runs.
+Pair :: struct { first: int, second: int }
+Named :: struct { label: string, count: int }
+
+a, b := Pair{1, 2};
+label, count := Named{"seed", 3};
+
+next :: proc() -> int {
+	x, y: static = Pair{1, 2};
+	t, _: thread_local = Pair{10, 20};
+	x += 1;
+	t += 1;
+	return x + y + t;
+}
+
+main :: proc() {
+	first := next();
+	second := next();
+	fmt.println(a * 10 + b, label, count, first, second);
+}

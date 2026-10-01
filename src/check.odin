@@ -2161,8 +2161,27 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	}
 	// `a, b := record;`
 	if len(d.values) == 1 && len(d.names) > 1 && d.values[0] != nil {
+		value_mark := len(k.c.diagnostics)
 		check_expr(k, d.values[0])
 		if base := expr_base(d.values[0]); base != nil && type_is_destructurable(k.c, base.type) {
+			// design.md "Destructuring": each binding takes its field's type, so a
+			// written type would be ignored.
+			if d.declared_type != nil {
+				errorf(
+					k.c, d.span, "L0308",
+					"a destructuring declaration takes each binding's type from its field; write `%s`",
+					"a, b := record",
+				)
+				return
+			}
+			// design.md "Storage modifiers": static storage starts with a constant,
+			// as a single binding's would.
+			if (d.top_level || d.duration != .None) && !errors_since(k.c, value_mark) {
+				what := d.top_level ? "a file-scope initializer" : "a static-duration initializer"
+				if _, evaluated := require_const(k, d.values[0], what, d.top_level ? "L0325" : "L0506"); !evaluated {
+					return
+				}
+			}
 			if fields, ok := destructure_fields(
 				k, base.type, len(d.names), expr_span(d.values[0]), "L0308", "bound by a destructuring declaration",
 			); ok {

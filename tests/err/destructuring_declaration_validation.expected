@@ -1,0 +1,8 @@
+L0341
+@12:9
+cannot be read at compile time
+L0341
+@15:17
+L0308
+@20:2
+takes each binding's type from its field

@@ -3452,6 +3452,28 @@ is_const_expr :: proc(e: Expr) -> bool {
 	return base != nil && base.is_const
 }
 
+// The constant a static-duration binding starts with: its own initializer, or
+// for `a, b := record` its field of the folded record (design.md
+// "Destructuring").
+binding_initial_const :: proc(c: ^Compiler, d: ^Decl, position: int) -> (Const_Value, bool) {
+	if !d.destructure.active {
+		if position < len(d.values) && d.values[position] != nil && is_const_expr(d.values[position]) {
+			return const_value_of(d.values[position]), true
+		}
+		return {}, false
+	}
+	if len(d.values) != 1 || !is_const_expr(d.values[0]) || position >= len(d.destructure.fields) {
+		return {}, false
+	}
+	record := const_value_of(d.values[0])
+	field := symbol_of(c, d.destructure.fields[position])
+	if record.kind != .Aggregate || record.aggregate == nil || field == nil ||
+	   int(field.index) >= len(record.aggregate.elements) {
+		return {}, false
+	}
+	return record.aggregate.elements[field.index], true
+}
+
 const_value_of :: proc(e: Expr) -> Const_Value {
 	base := expr_base(e)
 	return base == nil ? Const_Value{} : base.const_value

@@ -211,10 +211,12 @@ emit_static_locals :: proc(e: ^Emitter) {
 			value = zero
 		}
 		if sym.decl != nil {
-			for initialiser, position in sym.decl.values {
-				if position < len(sym.decl.symbols) && sym.decl.symbols[position] == symbol_id &&
-				   initialiser != nil && is_const_expr(initialiser) {
-					value = llvm_const(e, const_value_of(initialiser), sym.type)
+			for binding, position in sym.decl.symbols {
+				if binding != symbol_id {
+					continue
+				}
+				if initial, ok := binding_initial_const(e.c, sym.decl, position); ok {
+					value = llvm_const(e, initial, sym.type)
 				}
 			}
 		}
@@ -258,8 +260,8 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 		}
 		name := symbol_name(e, symbol_id)
 		value := ""
-		if i < len(d.values) && d.values[i] != nil && is_const_expr(d.values[i]) {
-			value = llvm_const(e, const_value_of(d.values[i]), sym.type)
+		if initial, constant := binding_initial_const(e.c, d, i); constant {
+			value = llvm_const(e, initial, sym.type)
 		} else {
 			zero, ok := llvm_zero(e, sym.type)
 			if !ok {

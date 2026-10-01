@@ -120,7 +120,8 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 
 @(private = "file")
 emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
-	if d.destructure.active {
+	// Static storage lives at module level, already initialised.
+	if d.destructure.active && d.duration == .None {
 		emit_destructure_decl(e, d)
 		return
 	}
