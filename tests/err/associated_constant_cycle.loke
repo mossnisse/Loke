@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Constant declarations": a cycle through a qualified associated
+// constant is reported like one through a plain name, and its use does not
+// reach the backend.
+Item :: struct {}
+
+impl Item {
+	Count :: Item.Count;
+	Other :: Item.Third;
+	Third :: Item.Other;
+	Fine :: Item.Base + 1;
+	Base :: 2;
+}
+
+main :: proc() { _ = Item.Count; _ = Item.Fine; }

@@ -1,0 +1,6 @@
+L0324
+@9:11
+constant initialisation cycle involving `Count`
+L0324
+@11:11
+constant initialisation cycle involving `Other`

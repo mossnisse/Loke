@@ -919,8 +919,15 @@ select_associated_member :: proc(
 	k.impl_type = subject
 	defer k.impl_type = outer
 	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Const && sym.decl != nil {
-		if sym.decl.check_state == .Unchecked {
+		switch sym.decl.check_state {
+		case .Unchecked:
 			check_symbol_decl_in_place(k, member, subject)
+		case .Checking:
+			// design.md "Constant declarations", as for an unqualified name.
+			errorf(k.c, v.span, "L0324", "constant initialisation cycle involving `%s`", v.name.text)
+			v.type = INVALID_TYPE
+			return true
+		case .Checked:
 		}
 	}
 	annotate_symbol_use(k, &v.base, member, v.name.text, callee)

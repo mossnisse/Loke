@@ -534,24 +534,6 @@ Actual: accepted, calling `add32`; changing the destination to `f64` calls
 `check_binary`'s hint causes `check_literal` to give the argument a concrete
 type before ranking. Keep destination conversion after operator selection.
 
-### Qualified associated constants bypass dependency-cycle diagnostics
-
-[design.md "Constant declarations"](design.md#constant-declarations)
-rejects constant dependency cycles:
-
-```odin
-package main;
-Item :: struct {}
-impl Item { Count :: Item.Count; }
-main :: proc() {}
-```
-
-Actual: accepted. Using `Item.Count` in `main` instead produces internal
-backend error L0405, rather than a cycle diagnostic. Ordinary `Count :: Count`
-reports L0324; an acyclic associated constant works.
-`select_associated_member` handles `.Unchecked` declarations but annotates
-ones already `.Checking`. Apply the same cycle handling as ordinary names.
-
 ### Runtime SIMD splats skip scalar-lane type validation
 
 [design.md "Construction and conversion"](design.md#construction-and-conversion)

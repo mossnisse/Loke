@@ -194,6 +194,9 @@ checklist.
 
 ### Fixed
 
+- A cycle through a qualified associated constant, as in
+  `impl Item { Count :: Item.Count; }`, reports `L0324`. It was accepted, and
+  using the constant failed in the backend with `L0405`.
 - A constant array, struct, or union converts to its own type and between a
   distinct type and its underlying one, as in `Wrapped(BASE)` and
   `Choice(CHOSEN)`. They reported `L0373`.
