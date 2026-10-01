@@ -656,8 +656,8 @@ ordering drift that successful execution may hide.
 - The compiler remains in Odin; v1 has no self-hosting path (future-plans.md
   sketches one).
 - Debug information covers procedures, statement lines, and locals scoped to
-  their blocks. Natvis rules in the PDB show a map's entries and an
-  `any_view`'s value; a `dyn` value shows only its data and witness pointers.
+  their blocks. Natvis rules in the PDB show a map's entries and the value an
+  `any_view` or `dyn` points at.
 - Non-Windows targets, recoverable panic, macros, owning type
   erasure, and a GC allocator are not part of v1.
 - Raw-pointer provenance, `core:unsafe`, foreign retention/aliasing, and

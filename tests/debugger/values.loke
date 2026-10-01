@@ -2,6 +2,15 @@ package main;
 
 import "core:fmt";
 
+Sized :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+Box :: struct { width: int, height: int }
+impl Box {
+	size :: proc(self) -> int { return self.width * self.height; }
+}
+
 // tests/corpus_test.odin `a_debugger_shows_values` stops here and reads the
 // caller's locals through the natvis rules -g puts in the PDB.
 stop :: proc() {}
@@ -13,6 +22,8 @@ main :: proc() {
 	ids := map[int]string{7 = "seven"};
 	count: any_view = ages["Bob"];
 	text: any_view = ids[7];
+	box := Box{width = 3, height = 4};
+	shape := (dyn Sized)(&box);
 	stop();
-	fmt.println(name, view, count, text);
+	fmt.println(name, view, count, text, shape.size());
 }

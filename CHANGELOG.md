@@ -89,6 +89,9 @@ checklist.
   is named `map$<n>` so the rules can match it, `string`'s is `string$` because
   WinDbg ignores natvis for a type named `string`, and `-keep-temps` keeps the
   `.natvis` file.
+- Under `-g`, a debugger shows the value a `dyn` view points at. Each witness
+  table is a `witness$<n>` global in the PDB, and a `dyn` type is named
+  `dyn$<n>` so the natvis rules can match it.
 
 ### Added
 

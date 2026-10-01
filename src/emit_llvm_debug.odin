@@ -10,9 +10,10 @@
 // the module is complete. Without `-g` no marker is written, so the module is
 // unchanged.
 //
-// A debugger finds a map's entries and an `any_view`'s value only at run time,
-// which metadata cannot describe, so `-g` also writes `Compiler.natvis`: rules
-// the linker stores in the PDB, for Visual Studio and WinDbg.
+// A debugger finds a map's entries, and the value an `any_view` or `dyn` points
+// at, only at run time, which metadata cannot describe, so `-g` also writes
+// `Compiler.natvis`: rules the linker stores in the PDB, for Visual Studio and
+// WinDbg.
 package lokec
 
 import "core:fmt"
@@ -76,6 +77,11 @@ Debug_Info :: struct {
 	retained:  [dynamic]int,
 	map_table: int,
 	natvis:    strings.Builder,
+	// Each witness table's global by its LLVM name, and the `witness$<n>`
+	// variables their definitions carry.
+	witnesses: map[string]int,
+	globals:   [dynamic]int,
+	dyns:      [dynamic]Type_Id,
 }
 
 // Metadata `!0` to `!3` are fixed: the unit, the two module flags, and the one
@@ -117,6 +123,10 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		types     = make(map[Type_Id]int),
 		locations = make(map[[3]int]int),
 		natvis    = strings.builder_make(),
+		witnesses = make(map[string]int),
+	}
+	for witness, index in c.witness_order {
+		d.witnesses[e.witness_names[witness]] = index
 	}
 	strings.write_string(&d.natvis, NATVIS_HEADER)
 	out := strings.builder_make()
@@ -168,6 +178,13 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 			}
 		case inside && strings.has_prefix(line, "  "):
 			fmt.sbprintfln(&out, "%s, !dbg !%d", line, p.location)
+		case strings.has_prefix(line, "@loke.w."):
+			name := line[:strings.index(line, " = ")]
+			if index, found := d.witnesses[name]; found {
+				fmt.sbprintfln(&out, "%s, !dbg !%d", line, debug_witness(&d, index))
+			} else {
+				fmt.sbprintln(&out, line)
+			}
 		case:
 			if line == "}" {
 				current = nil
@@ -177,6 +194,7 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	}
 
 	debug_any_view_natvis(&d)
+	debug_dyn_natvis(&d)
 	strings.write_string(&d.natvis, "</AutoVisualizer>\n")
 	c.natvis = strings.to_string(d.natvis)
 	retained := ""
@@ -187,6 +205,14 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		}
 		retained = fmt.aprintf(", retainedTypes: !%d", debug_node(&d, "!{{%s}", strings.to_string(nodes)))
 	}
+	globals := ""
+	if len(d.globals) > 0 {
+		nodes := strings.builder_make()
+		for node, index in d.globals {
+			fmt.sbprintf(&nodes, "%s!%d", index > 0 ? ", " : "", node)
+		}
+		globals = fmt.aprintf(", globals: !%d", debug_node(&d, "!{{%s}", strings.to_string(nodes)))
+	}
 
 	optimized := c.opt_mode != .None
 	fmt.sbprintln(&out, "declare void @llvm.dbg.declare(metadata, metadata, metadata)")
@@ -195,8 +221,8 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	// Loke has no DWARF language code; C's describes its procedures well enough.
 	fmt.sbprintfln(
 		&out,
-		`!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !%d, producer: "lokec %s", isOptimized: %v, runtimeVersion: 0, emissionKind: FullDebug%s)`,
-		debug_file(&d, package_of(c, c.root_package).files[0].file), LOKE_VERSION_STRING, optimized, retained,
+		`!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !%d, producer: "lokec %s", isOptimized: %v, runtimeVersion: 0, emissionKind: FullDebug%s%s)`,
+		debug_file(&d, package_of(c, c.root_package).files[0].file), LOKE_VERSION_STRING, optimized, retained, globals,
 	)
 	fmt.sbprintln(&out, `!1 = !{i32 2, !"Debug Info Version", i32 3}`)
 	// Windows debuggers read CodeView, in a PDB the linker writes.
@@ -375,6 +401,10 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 			name, debug_type(d, info.element), size, strings.to_string(enumerators),
 		)
 	case .Struct, .Any_View, .Dyn:
+		if info.kind == .Dyn {
+			name = fmt.aprintf("dyn$%d", u32(type))
+			append(&d.dyns, type)
+		}
 		members := strings.builder_make()
 		for field, index in info.fields {
 			member := symbol_of(c, field)
@@ -563,6 +593,48 @@ debug_any_view_natvis :: proc(d: ^Debug_Info) {
 	strings.write_string(&d.natvis, "    <DisplayString>{{ id={id} }}</DisplayString>\n    <Expand>\n")
 	strings.write_string(&d.natvis, strings.to_string(expanded))
 	strings.write_string(&d.natvis, "    </Expand>\n  </Type>\n")
+}
+
+// design.md "Borrowed dynamic interface values": a witness table's global, as
+// `witness$<n>` for natvis to compare a view's `witness` with, and the type its
+// views point at, as `witness$<n>$type`.
+@(private = "file")
+debug_witness :: proc(d: ^Debug_Info, index: int) -> int {
+	witness := d.c.witness_order[index]
+	debug_natvis_type(d, fmt.aprintf("witness$%d$type", index), witness.concrete)
+	variable := debug_node(
+		d, `distinct !DIGlobalVariable(name: "witness$%d", scope: !%d, type: !%d, isLocal: true, isDefinition: true)`,
+		index, UNIT, debug_type(d, TYPE_RAWPTR),
+	)
+	expression := debug_node(d, "!DIGlobalVariableExpression(var: !%d, expr: !DIExpression())", variable)
+	append(&d.globals, expression)
+	return expression
+}
+
+// A `dyn` view shows the value its witness table's type says `data` points at.
+// A table without slots may share its address with another, so it tells none.
+@(private = "file")
+debug_dyn_natvis :: proc(d: ^Debug_Info) {
+	for type in d.dyns {
+		info := type_of(d.c, type)
+		shown := strings.builder_make()
+		expanded := strings.builder_make()
+		for witness, index in d.c.witness_order {
+			if witness.interface_symbol != info.dyn_interface || len(witness.slots) == 0 {
+				continue
+			}
+			name := fmt.aprintf("witness$%d", index)
+			condition := strings.concatenate({`Condition="witness == &amp;`, name, `"`})
+			strings.write_string(&shown, strings.concatenate({"    <DisplayString ", condition, ">{*(", name, "$type*)data}</DisplayString>\n"}))
+			strings.write_string(&expanded, strings.concatenate({"      <ExpandedItem ", condition, ">*(", name, "$type*)data</ExpandedItem>\n"}))
+		}
+		fmt.sbprintfln(&d.natvis, `  <Type Name="dyn$%d">`, u32(type))
+		strings.write_string(&d.natvis, "    <DisplayString Condition=\"data == 0\">nil</DisplayString>\n")
+		strings.write_string(&d.natvis, strings.to_string(shown))
+		strings.write_string(&d.natvis, "    <DisplayString>{{ data={data} }}</DisplayString>\n    <Expand>\n")
+		strings.write_string(&d.natvis, strings.to_string(expanded))
+		strings.write_string(&d.natvis, "    </Expand>\n  </Type>\n")
+	}
 }
 
 // The name a debugger shows: `@loke.p.core$3afmt.print` is `core:fmt.print`.

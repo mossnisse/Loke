@@ -39,3 +39,7 @@ distinct !DICompositeType(tag: DW_TAG_structure_type, name: "loke_rt_map_table_v
 distinct !DICompositeType(tag: DW_TAG_structure_type, name: "any_view", size: 128, elements: !
 !DIBasicType(name: "typeid", size: 64, encoding: DW_ATE_unsigned)
 !DIDerivedType(tag: DW_TAG_typedef, name: "typeid$*", baseType: !
+@loke.w.Sink.Collector = private unnamed_addr constant [1 x ptr] [ ptr @loke.w.Sink.Collector.thunk.0 ], !dbg !
+globals: !
+distinct !DIGlobalVariable(name: "witness$*", scope: !0, type: !*, isLocal: true, isDefinition: true)
+!DIDerivedType(tag: DW_TAG_typedef, name: "witness$*$type", baseType: !

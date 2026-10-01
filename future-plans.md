@@ -111,8 +111,8 @@ formatter, the documentation generator, and hover to find by position.
 
 `-g` already emits each procedure, its locals and their types scoped to their
 blocks, and each statement's line, as CodeView in a PDB, at any `-opt` level,
-with natvis rules for a string's text, a map's entries, and an `any_view`'s
-value; a panic in a `-g` executable prints its Loke frames; and `-debug` sets
+with natvis rules for a string's text, a map's entries, and the value an
+`any_view` or `dyn` points at; a panic in a `-g` executable prints its Loke frames; and `-debug` sets
 `LOKE_DEBUG` on its own
 ([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin),
 [runtime/trace.c](runtime/trace.c)). `lokec <package> -doc` prints a checked
@@ -122,8 +122,6 @@ rules in [comments.md "Formatting"](comments.md#formatting).
 
 Main work:
 
-- show a `dyn` value's referent: its witness table is a private constant
-  with no `typeid`, so natvis cannot tell the concrete type;
 - give locations finer than a statement where stepping needs them: a loop's
   update, the code after an `if`, and the cleanup a scope runs on exit carry
   the line of the last statement emitted before them today;
