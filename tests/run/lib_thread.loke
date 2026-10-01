@@ -1,7 +1,8 @@
 // design.md "Concurrency and the memory model", through `core:thread`: a moved
 // argument reaches the new thread, `join` orders the thread's writes and its
 // `thread_local` drops before what follows, dropping an unjoined `Thread` joins
-// it, and a `Mutex` and an `Atomic` keep two writers from racing.
+// it, a `Mutex` and an `Atomic` keep two writers from racing, and
+// `processor_count` is never less than one.
 package main;
 
 import "core:fmt";
@@ -78,6 +79,8 @@ main :: proc() {
 
 	// A borrow of process-lifetime storage may travel; a string literal is one.
 	named := thread.spawn(say, "literal");
+	named.join();
+	fmt.println(thread.processor_count() >= 1);
 }
 
 say :: proc(text: move string_view) {

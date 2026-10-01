@@ -118,7 +118,9 @@ checklist.
   `io.Operation` gains `Spawn`, `Wait`, and `Kill`. `output` runs a command
   and collects its status, stdout, and stderr, reading both pipes at once.
 - `examples/corpus_runner.loke` is the run and trap corpus harness written in
-  Loke: it compiles each case, runs it, and compares its output.
+  Loke: it compiles each case, runs it, and compares its output, running a
+  case per processor at once.
+- `thread.processor_count` answers how many threads can run at once.
 - `value.as(.name)` reads one union variant without a `switch`: it yields
   `Option(P)` holding a copy of the payload when `name` is active, and `.none`
   otherwise, so `shape.as(.circle) or_else 0` works.

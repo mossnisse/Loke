@@ -9,13 +9,15 @@ import "core:path";
 import "core:process";
 import "core:slice";
 import "core:strings";
+import "core:thread";
 
 // A test harness in Loke: the shape of the Odin suite's run and trap corpora.
 // For each `<case>.loke` in a directory it compiles the case, runs it, and
 // compares its stdout with `<case>.expected` and its stderr with
 // `<case>.expected-err` when there is one. A case must exit 0, or under
 // `-trap` must fail, with a `.expected-err` naming how; there `.expected` is
-// optional. A `<case>.flags` file adds one compiler flag per line.
+// optional. A `<case>.flags` file adds one compiler flag per line. Cases run on
+// a thread per processor, and are reported in name order once all have finished.
 //
 // Usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap]
 
@@ -33,19 +35,64 @@ main :: proc() {
 		fmt.eprintln("cannot read", corpus, "-", listed);
 		os.exit(2);
 	}
+	reasons: [dynamic]Option(string) = {};
+	reasons.resize(cases.len());
+	board := shared(thread.Mutex(Board){value = {reasons = move(reasons)}});
+	{
+		workers: [dynamic]thread.Thread = {};
+		for (i := 0; i < thread.processor_count() && i < cases.len(); i += 1) {
+			workers.append(thread.spawn(work, Job{compiler, corpus, scratch, cases.clone(), trap, board.clone()}));
+		}
+	} // dropping a worker joins it
 	passed, failed := 0, 0;
-	foreach (name in cases) {
-		switch (check(compiler, corpus, scratch, path.stem(name), trap)) {
-		case .ok:
+	guard := board.get().lock();
+	foreach (name, index in cases.indexed()) {
+		switch (reason in guard.get().reasons[index]) {
+		case .none:
 			fmt.println("ok  ", name);
 			passed += 1;
-		case .err(reason):
+		case .some:
 			fmt.println("FAIL", name, "-", reason);
 			failed += 1;
 		}
 	}
 	fmt.println(passed, "passed,", failed, "failed");
 	if (failed > 0) { os.exit(1); }
+}
+
+// What the workers share: the next case to take, and each case's outcome.
+Board :: struct {
+	next:    int,
+	// Why each case failed; `.none` once it passed.
+	reasons: [dynamic]Option(string),
+}
+
+// One worker's copy of the run, which a thread must own.
+Job :: struct {
+	compiler, corpus, scratch: string,
+	cases: [dynamic]string,
+	trap:  bool,
+	board: shared(thread.Mutex(Board)),
+}
+
+// Takes cases until none are left. A case's processes are what take the time,
+// so holding the lock only to take a case and to record it is enough.
+work :: proc(job: move Job) {
+	for (;;) {
+		index := 0;
+		{
+			guard := job.board.get().lock();
+			index = guard.get().next;
+			guard.get().next += 1;
+		}
+		if (index >= job.cases.len()) { return; }
+		switch (check(job.compiler, job.corpus, job.scratch, path.stem(job.cases[index]), job.trap)) {
+		case .ok:
+		case .err(reason):
+			guard := job.board.get().lock();
+			guard.get().reasons[index] = .some(reason);
+		}
+	}
 }
 
 // The directory's `.loke` files, by name, so every run reports in one order.

@@ -30,6 +30,8 @@ foreign kernel32 {
 	rt_lock :: proc "stdcall" (lock: rawptr) ---;
 	@(link_name="ReleaseSRWLockExclusive")
 	rt_unlock :: proc "stdcall" (lock: rawptr) ---;
+	@(link_name="GetActiveProcessorCount")
+	rt_processor_count :: proc "stdcall" (group: u16) -> u32 ---;
 }
 
 // A spawned thread attaches to the runtime's panic state first, and detaching
@@ -44,6 +46,14 @@ foreign loke_runtime {
 }
 
 @(private) INFINITE :: u32(0xFFFFFFFF);
+@(private) ALL_PROCESSOR_GROUPS :: u16(0xFFFF);
+
+// How many threads can run at once on this machine: its logical processors, in
+// every processor group, and never less than one.
+processor_count :: proc() -> int {
+	count := int(rt_processor_count(ALL_PROCESSOR_GROUPS));
+	return count if count > 0 else 1;
+}
 
 // A running thread. Dropping one joins it, so a thread never outlives the owner
 // of its handle; `join` says so at the point it happens.

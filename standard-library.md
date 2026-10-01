@@ -370,6 +370,7 @@ spawn(entry: proc()) -> Thread
 Thread.join(self: inout)
 Mutex(T).lock(self: ^) -> Guard(T)
 Guard(T).get(self: inout) -> inout T
+processor_count() -> int
 ```
 
 `spawn` runs `entry(arg)` on a new thread. The argument is moved in, and any
@@ -392,6 +393,10 @@ unlock happens before the next lock. `lock` takes a read-only receiver, as the
 storage still locks. The field `value` is public for a caller that owns the
 mutex outright, before spawning or after joining. Locking a mutex the thread
 already holds never returns. `Mutex` is move-only.
+
+`processor_count` is how many threads can run at once: the machine's logical
+processors, at least one. A program that divides work among threads, such as a
+test harness running a case per thread, sizes its pool by it.
 
 The compiler warns when a spawned entry writes file-scope or `static` storage
 (design.md "Global write effects"). Storage behind a `Mutex` or an `Atomic`, and
