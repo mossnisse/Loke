@@ -25,7 +25,9 @@ Main work:
   `process.output` and `thread.processor_count`, and assembles the IR it checks
   with the clang `lokec -print-toolchain` finds, as the Odin suite does;
 - validate that the shipped collections, paths, filesystem, formatting, and
-  allocation APIs scale to a compiler-sized program;
+  allocation APIs scale to a compiler-sized program. `examples/lexer.loke` is
+  the compiler's lexer in Loke, checked against `lokec -dump-tokens`, and lexes
+  the repository's sources in under a second; the parser is the next slice;
 - prioritize `core:bytes`, time, random, buffered I/O, and higher-level encodings
   only when a concrete program establishes their contracts;
 - add examples and allocator-failure, cleanup, Unicode, and platform-conformance

@@ -195,6 +195,7 @@ package. An `obj` build selects the same way.
 | --- | --- |
 | `-parse-only` | Lex and parse one source file, then stop. No import discovery, type checking, or executable. |
 | `-dump-ast` | Print that file's syntax tree, then stop at the same stage. |
+| `-dump-tokens` | Print that file's tokens, one `lo hi Kind` line each with the byte span, then stop after lexing. |
 | `-emit-ll` | Check the program and write LLVM IR, without invoking Clang or linking. The `.ll` path is derived from `-o`. |
 | `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, the `-g` natvis rules, and any object NASM assembled for a `.asm` foreign import. Normally they are removed after the Clang step. |
 | `-check-layout` | Build and run an LLVM layout probe and compare sizes, alignments, and field offsets with the compiler's calculations. Requires the native toolchain. |
@@ -205,6 +206,7 @@ The parsing modes take a **file**, not a package directory:
 ```powershell
 .\lokec.exe examples\hello.loke -parse-only
 .\lokec.exe examples\hello.loke -dump-ast
+.\lokec.exe examples\hello.loke -dump-tokens
 .\lokec.exe examples\hello.loke -emit-ll -o hello.exe  # writes hello.ll only
 .\lokec.exe tests\layout\types.loke -check-layout
 ```

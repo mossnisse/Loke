@@ -19,6 +19,7 @@ different part of the language:
 - `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, lifecycle hooks, and `indexed()`.
 - `tokens.loke` — declaring a union, variant switches, and `case` lists that match ranges.
 - `corpus_runner.loke` — a test harness: child processes, captured output, directory listing, sorting, and a pool of threads sharing a `Mutex`. It compiles and runs each case in a corpus directory, a file or a package directory, as the compiler's own run, trap, and package suites do, or checks each case's errors (`-diagnostics`, `-syntax`) or generated IR (`-ir`, assembled with the clang `lokec -print-toolchain` finds), as the diagnostic, syntax-error, and IR suites do.
+- `lexer.loke` — the compiler's lexer in Loke: byte scanning, enums, a constant table, `inout` parameters, and a recursive directory walk. It agrees with `lokec -dump-tokens` on every token's kind and span.
 - `compile_time.loke` — ordinary procedures run during compilation, `build_config`, `static_assert`, `when`, static expansion over reflection, and folded layout.
 
 From the repository root, compile and run any example with:

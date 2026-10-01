@@ -112,6 +112,11 @@ checklist.
 
 ### Added
 
+- `lokec <file> -dump-tokens` prints the file's tokens, one `lo hi Kind` line
+  each with the byte span, and stops after lexing.
+- `examples/lexer.loke` is the compiler's lexer written in Loke. It prints a
+  file's tokens as `-dump-tokens` does, and agrees with it token for token, or
+  lexes every `.loke` file beneath a directory and prints the totals.
 - `core:process` starts child processes: `spawn` takes a `Command` naming the
   program, its arguments, an inherited or replaced environment, a working
   directory, and whether each standard handle is inherited, the null device,

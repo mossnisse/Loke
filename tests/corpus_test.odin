@@ -58,6 +58,7 @@ import "core:log"
 import "core:os"
 import os2 "core:os/os2"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:thread"
@@ -2030,6 +2031,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		{"greeting",       .Driven},
 		{"hello",          .Output},
 		{"keys",           .Interactive},
+		{"lexer",          .Driven},
 		{"shapes",         .Output},
 		{"streaming",      .Driven},
 		{"tokens",         .Output},
@@ -2319,6 +2321,73 @@ example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 		t, err == nil && state.exit_code == 1 && strings.contains(string(stdout), "FAIL shaped.loke - LLVM rejects the IR: usage:"),
 		"corpus_runner did not report the rejected IR:\n%s", string(stdout),
 	)
+}
+
+// `lexer` is src/lexer.odin ported to Loke, so it must agree with
+// `lokec -dump-tokens` on every token's kind and span, the exit status, and the
+// diagnostic codes, over the lexical-error cases and every example. Given a
+// directory it lexes everything beneath it, and the standard library has no
+// lexical errors.
+@(test)
+example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/example-lexer-driven.exe", TMP)
+	if !compile_example(t, "examples/lexer.loke", exe, nil) {
+		return
+	}
+	files := make([dynamic]string, context.temp_allocator)
+	patterns := []string{"tests/err/lex_*.loke", "tests/syntax_err/unterminated-literals.loke", "examples/*.loke"}
+	for pattern in patterns {
+		found, _ := filepath.glob(pattern, context.temp_allocator)
+		append(&files, ..found)
+	}
+	append(&files, "tests/err/byte_order_mark.loke", "tests/err/invalid_utf8.loke")
+	jobs := make([]Exec, 2 * len(files) + 1, context.temp_allocator)
+	// Allocated: a `[]string{...}` literal is stack storage this loop reuses.
+	for file, i in files {
+		jobs[2 * i].command = slice.clone([]string{compiler_path(), file, "-dump-tokens"}, context.temp_allocator)
+		jobs[2 * i + 1].command = slice.clone([]string{launch_path(exe), file}, context.temp_allocator)
+	}
+	jobs[len(jobs) - 1].command = slice.clone([]string{launch_path(exe), "core"}, context.temp_allocator)
+	exec_all(jobs)
+	for file, i in files {
+		want, got := jobs[2 * i], jobs[2 * i + 1]
+		if !testing.expectf(t, want.err == nil && got.err == nil, "%s: cannot run", file) {
+			continue
+		}
+		testing.expectf(t, string(want.stdout) == string(got.stdout), "%s: the tokens differ", file)
+		testing.expectf(
+			t, want.state.exit_code == got.state.exit_code,
+			"%s: lokec exits %d, the lexer %d", file, want.state.exit_code, got.state.exit_code,
+		)
+		testing.expectf(
+			t, diagnostic_codes(string(want.stderr)) == diagnostic_codes(string(got.stderr)),
+			"%s: lokec reports %s, the lexer %s",
+			file, diagnostic_codes(string(want.stderr)), diagnostic_codes(string(got.stderr)),
+		)
+	}
+	library := jobs[len(jobs) - 1]
+	testing.expectf(
+		t, library.err == nil && library.state.exit_code == 0 && strings.has_suffix(normalise(string(library.stdout)), " 0 diagnostics"),
+		"the lexer over core/: %s%s", string(library.stdout), string(library.stderr),
+	)
+}
+
+// Each `L0nnn` code in `text`, in order, space-separated.
+@(private)
+diagnostic_codes :: proc(text: string) -> string {
+	codes := strings.builder_make(context.temp_allocator)
+	rest := text
+	for {
+		at := strings.index(rest, "L0")
+		if at < 0 || at + 5 > len(rest) {
+			break
+		}
+		strings.write_string(&codes, rest[at:at + 5])
+		strings.write_byte(&codes, ' ')
+		rest = rest[at + 5:]
+	}
+	return strings.to_string(codes)
 }
 
 // stdout is compared whole; stderr only has to carry the reason, so the exact

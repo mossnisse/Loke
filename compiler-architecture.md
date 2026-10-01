@@ -88,8 +88,8 @@ The normal compilation path is:
    relocatable `.obj`, or links an executable with the C runtime and foreign
    inputs.
 
-`-parse-only` and `-dump-ast` deliberately take a shorter path through source
-loading, lexing, and parsing for one file. `-check-layout` stops after the
+`-parse-only`, `-dump-ast`, and `-dump-tokens` deliberately take a shorter path
+through source loading, lexing, and parsing for one file. `-check-layout` stops after the
 semantic closure passes and compares the compiler's layout facts with LLVM.
 
 ## Core representations and ownership

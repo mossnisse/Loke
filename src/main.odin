@@ -32,6 +32,8 @@ options:
     -parse-only   stop after lexing and parsing (file inputs only)
     -dump-ast     print a deterministic syntax tree and stop after parsing
                   (file inputs only)
+    -dump-tokens  print each token's byte span and kind and stop after lexing
+                  (file inputs only)
     -check-layout compare every folded size/alignment/offset with LLVM's own
     -doc          print the root package's public API as Markdown and stop
     -fmt          rewrite the input file, or a directory's .loke files, in
@@ -77,6 +79,7 @@ Options :: struct {
 	keep_temps: bool,
 	parse_only: bool,
 	dump_ast:   bool,
+	dump_tokens: bool,
 	check_layout: bool,
 	doc:        bool,
 	fmt:        bool,
@@ -165,9 +168,9 @@ run :: proc() -> int {
 		report(&c)
 		return status
 	}
-	if opts.parse_only || opts.dump_ast {
+	if opts.parse_only || opts.dump_ast || opts.dump_tokens {
 		if is_directory(opts.input) {
-			mode := opts.dump_ast ? "-dump-ast" : "-parse-only"
+			mode := opts.dump_tokens ? "-dump-tokens" : opts.dump_ast ? "-dump-ast" : "-parse-only"
 			fmt.eprintfln("error: %s needs a file input", mode)
 			return 2
 		}
@@ -178,6 +181,13 @@ run :: proc() -> int {
 		}
 		tokens := lex(&c, file)
 		defer delete(tokens)
+		if opts.dump_tokens {
+			for token in tokens {
+				fmt.printfln("%d %d %v", token.lo, token.hi, token.kind)
+			}
+			report(&c)
+			return c.error_count > 0 ? 1 : 0
+		}
 		ast := parse(&c, file, tokens)
 		defer destroy_ast(&ast)
 		if opts.dump_ast {
@@ -263,6 +273,8 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.parse_only = true
 		case arg == "-dump-ast":
 			opts.dump_ast = true
+		case arg == "-dump-tokens":
+			opts.dump_tokens = true
 		case arg == "-check-layout":
 			opts.check_layout = true
 		case arg == "-doc":
