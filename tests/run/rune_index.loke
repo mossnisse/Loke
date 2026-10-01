@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Fixed arrays": an index has an integer or rune type.
+TABLE :: [3]int{1, 2, 3};
+
+main :: proc() {
+	xs := [3]int{10, 20, 30};
+	index: rune = '\x01';
+	fmt.println(xs[index], xs['\x02'], TABLE['\x02']);
+	view := xs[:];
+	grown := [dynamic]int{5, 6};
+	fmt.println(view[index], grown[index]);
+}

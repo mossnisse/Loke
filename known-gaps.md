@@ -778,24 +778,6 @@ L0614 calls `pointer` a packed field. First copying `p.pointer` to `q` and
 using `&q.value` succeeds. Packed ancestry must stop when a dereference enters
 separate storage, rather than following the pointer's source field.
 
-### Typed rune indices are rejected for fixed arrays
-
-[design.md "Fixed arrays"](design.md#fixed-arrays) explicitly permits an
-integer or rune index:
-
-```odin
-package main;
-main :: proc() {
-    xs := [2]int{10, 20};
-    index: rune = '\x01';
-    assert(xs[index] == 20);
-}
-```
-
-Actual: L0362; an `int` index works. `check_integer_index` accepts only
-`type_is_integer`. Include runes and extend constant-index handling beyond
-the `.Integer` constant kind.
-
 ### User slicing discards the endpoint types supplied by its candidates
 
 [design.md "Implicit selector expression"](design.md#implicit-selector-expression)

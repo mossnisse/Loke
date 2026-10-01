@@ -1138,7 +1138,8 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 			v.immutable = .Read_Only
 		}
 	}
-	if index_base != nil && index_base.is_const && index_base.const_value.kind == .Integer {
+	if index_base != nil && index_base.is_const &&
+	   (index_base.const_value.kind == .Integer || index_base.const_value.kind == .Rune) {
 		index_value, ok := bi_to_i64(k.c, index_base.const_value.integer)
 		if !ok || index_value < 0 || u64(index_value) >= info.count {
 			errorf(
@@ -1170,8 +1171,9 @@ check_integer_index :: proc(k: ^Checker, e: Expr) -> bool {
 	if type == INVALID_TYPE || !materialize(k, e, TYPE_INT) {
 		return false
 	}
-	if !type_is_integer(k.c, expr_base(e).type) {
-		errorf(k.c, expr_span(e), "L0362", "an index must be an integer, found `%s`", type_name(k.c, type))
+	// design.md "Fixed arrays": an index has an integer or rune type.
+	if index_type := expr_base(e).type; !type_is_integer(k.c, index_type) && !type_is_rune(k.c, index_type) {
+		errorf(k.c, expr_span(e), "L0362", "an index must be an integer or rune, found `%s`", type_name(k.c, type))
 		return false
 	}
 	return true

@@ -180,6 +180,8 @@ checklist.
 
 ### Fixed
 
+- A built-in index may be a rune, as in `xs[index]` for `index: rune`
+  (design.md "Fixed arrays"). It reported `L0362`.
 - A field, an index, or a built-in method applied to a parenthesized
   `or_return`, as in `(items() or_return).len()`, reads the payload. It used to
   emit a nil check on the carrier itself, and LLVM rejected the IR.
