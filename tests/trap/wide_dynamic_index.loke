@@ -1,0 +1,14 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Slices": a `u128` index of 2^64 is out of range, not truncated to
+// 0. A wide index that fits still reads its element.
+main :: proc() {
+	xs := [dynamic]int{42, 43};
+	small: u128 = 1;
+	view := xs[:];
+	fmt.println(xs[small], view[small]);
+	index: u128 = 18446744073709551616;
+	fmt.println(xs[index]);
+}

@@ -624,7 +624,7 @@ emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 // Unsigned, so a negative index fails the same comparison as an oversized one.
 @(private = "file")
 emit_index_below :: proc(e: ^Emitter, v: ^Expr_Index, length: string) -> string {
-	index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
+	index := checked_index_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
 	out_of_range := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
 	panic_if(e, out_of_range, "bounds", "index out of range")
@@ -678,11 +678,11 @@ emit_nil_check :: proc(e: ^Emitter, pointer: string) {
 emit_slice_bounds :: proc(e: ^Emitter, v: ^Expr_Slice, length, message: string) -> (low, high: string) {
 	low = "0"
 	if v.lo != nil {
-		low = widen_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
+		low = checked_index_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
 	}
 	high = length
 	if v.hi != nil {
-		high = widen_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
+		high = checked_index_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
 	}
 	reversed, past_end, bad := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", reversed, low, high)
@@ -776,6 +776,22 @@ emit_bounds_check :: proc(e: ^Emitter, index: string, index_type: Type_Id, count
 	)
 	panic_if(e, out_of_range, "bounds", "index out of range")
 	return wide ? widen_to_i64(e, index, index_type) : compared
+}
+
+// An index or slice bound about to be compared, unsigned, with a length. A
+// value wider than 64 bits that does not fit saturates to all ones, which no
+// length reaches, instead of truncating into range (design.md "Slices").
+@(private = "file")
+checked_index_to_i64 :: proc(e: ^Emitter, value: string, type: Type_Id) -> string {
+	bits := type_bits(e.c, type)
+	if bits <= 64 {
+		return widen_to_i64(e, value, type)
+	}
+	oversized, truncated, out := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i%d %s, 18446744073709551615", oversized, bits, value)
+	fmt.sbprintfln(&e.b, "  %s = trunc i%d %s to i64", truncated, bits, value)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 -1, i64 %s", out, oversized, truncated)
+	return out
 }
 
 @(private)

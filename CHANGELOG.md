@@ -218,6 +218,9 @@ checklist.
 
 ### Fixed
 
+- An index or slice bound wider than 64 bits into a slice, dynamic array, or
+  string is checked at its full width: a `u128` index of 2^64 panics instead of
+  reading element 0.
 - A floating literal converted to `f32` or `f16` rounds its exact decimal value
   once: `f32(1.0000000596046448)` is the next float above 1.0, not 1.0. An
   unfixed expression such as `16777217.0 - 16777216.0` is computed before an

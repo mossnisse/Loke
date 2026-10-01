@@ -267,42 +267,6 @@ Expected: `[0, 0, 9]`. Actual: L0372 says the literal is positional.
 `check_array_literal` rejects every keyed element. The positional equivalent
 works; implement the specified designated forms and zero only omitted slots.
 
-### Wide runtime indices and slice bounds are truncated before validation
-
-[design.md "Fixed arrays"](design.md#fixed-arrays) and
-[design.md "Slices"](design.md#slices) require checked bounds:
-
-```odin
-package main;
-import "core:fmt";
-main :: proc() {
-    xs := [dynamic]int{42};
-    index: u128 = 18446744073709551616;
-    fmt.println(xs[index]);
-}
-```
-
-Actual: prints 42; expected: bounds panic. `check_integer_index` preserves
-the valid `u128` type, but `emit_index_below` truncates it to `i64` before
-comparing with the length. Slice indexing uses the same helper. Fixed-array
-indexing correctly checks the original width first.
-
-```odin
-package main;
-import "core:fmt";
-main :: proc() {
-    xs := [1]int{42};
-    lo: u128 = 18446744073709551616;
-    hi: u128 = 18446744073709551617;
-    fmt.println(xs[lo:hi]);
-}
-```
-
-Actual: prints `[42]`; expected: bounds panic. `emit_slice_bounds` also
-truncates before validation. Preserve full-width comparisons before narrowing
-valid indices or endpoints for address formation in
-[src/emit_llvm_expr.odin](src/emit_llvm_expr.odin).
-
 ### Packed-storage address checks miss array projections and follow unrelated pointers
 
 [design.md "@(packed)"](design.md#packed) and

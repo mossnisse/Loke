@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Slices": slice bounds wider than 64 bits are compared at their
+// full width, so 2^64 and 2^64 + 1 do not truncate into range.
+main :: proc() {
+	xs := [2]int{42, 43};
+	lo: i128 = 1;
+	hi: i128 = 2;
+	fmt.println(xs[lo:hi]);
+	wide_lo: u128 = 18446744073709551616;
+	wide_hi: u128 = 18446744073709551617;
+	fmt.println(xs[wide_lo:wide_hi]);
+}
