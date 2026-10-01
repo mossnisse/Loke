@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A `@(require_results)` value bound in an `if`, `for`, or `switch` header and
+  never read is an error (`L0698`), as one bound in a block already was. Read
+  it, or discard it with `_ = ...`.
 - A destructuring declaration with a written type, as in
   `a, b: int = pair`, is an error (`L0308`); the bindings took the fields'
   types and ignored `int`. Write `a, b := pair`. A destructured file-scope or
@@ -203,6 +206,8 @@ checklist.
 
 ### Fixed
 
+- A required result bound in a selected `when` branch and read after it is
+  accepted; it reported `L0698` before the read was checked.
 - A destructured file-scope, `static`, or `thread_local` binding starts with
   its field of the constant record and is initialised once: `a, b := Pair{1, 2}`
   at file scope gave both zero, and a local `a, b: static = ...` was rebuilt on

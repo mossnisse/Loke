@@ -272,6 +272,11 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
 
+	// design.md "@(require_results)": a header binding's scope ends with the
+	// statement.
+	defer if s.init != nil {
+		report_unread_required_results(k, []Stmt{s.init})
+	}
 	if s.init != nil {
 		check_stmt(k, s.init)
 	}

@@ -2439,6 +2439,15 @@ check_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 
 // The combined flow of a statement sequence: a block's, or one switch case's.
 check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
+	flow := check_stmt_sequence(k, stmts)
+	report_unread_required_results(k, stmts)
+	return flow
+}
+
+// A sequence that does not end a scope: a selected `when` branch, whose
+// bindings the enclosing sequence reports.
+@(private = "file")
+check_stmt_sequence :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 	flow := FLOWS
 	for stmt in stmts {
 		result := check_stmt(k, stmt)
@@ -2447,15 +2456,20 @@ check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 		flow.continues ||= result.continues
 		flow.can_fall_through = flow.can_fall_through && result.can_fall_through
 	}
-	report_unread_required_results(k, stmts)
 	return flow
 }
 
 // design.md "@(require_results)": a required result bound and never read.
 // Asked after the whole sequence is checked, in source order.
-@(private = "file")
 report_unread_required_results :: proc(k: ^Checker, stmts: []Stmt) {
 	for stmt in stmts {
+		// design.md "when statement": the selected branch has no scope of its own.
+		if w, is_when := stmt.(^Stmt_When); is_when {
+			if selected := when_selected_block(w); selected != nil {
+				report_unread_required_results(k, selected.stmts)
+			}
+			continue
+		}
 		d, is_decl := stmt.(^Decl)
 		if !is_decl || d.kind != .Var {
 			continue
@@ -2614,7 +2628,7 @@ check_when_stmt :: proc(k: ^Checker, s: ^Stmt_When) -> Flow_Info {
 	}
 	if value {
 		s.selected = s.then
-		return check_block(k, s.then)
+		return s.then == nil ? FLOWS : check_stmt_sequence(k, s.then.stmts)
 	}
 	#partial switch otherwise in s.otherwise {
 	case ^Stmt_When:
@@ -2623,7 +2637,7 @@ check_when_stmt :: proc(k: ^Checker, s: ^Stmt_When) -> Flow_Info {
 		return flow
 	case ^Block:
 		s.selected = otherwise
-		return check_block(k, otherwise)
+		return check_stmt_sequence(k, otherwise.stmts)
 	}
 	return FLOWS
 }
@@ -3041,6 +3055,11 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
 
+	// design.md "@(require_results)": a header binding's scope ends with the
+	// statement.
+	defer if s.init != nil {
+		report_unread_required_results(k, []Stmt{s.init})
+	}
 	if s.init != nil {
 		check_stmt(k, s.init)
 	}
@@ -3084,6 +3103,11 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
 
+	// design.md "@(require_results)": a header binding's scope ends with the
+	// statement.
+	defer if s.init != nil {
+		report_unread_required_results(k, []Stmt{s.init})
+	}
 	if s.init != nil {
 		check_stmt(k, s.init)
 	}
@@ -3112,6 +3136,11 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
 
+	// design.md "@(require_results)": a header binding's scope ends with the
+	// statement.
+	defer if s.init != nil {
+		report_unread_required_results(k, []Stmt{s.init})
+	}
 	if s.init != nil {
 		check_stmt(k, s.init)
 	}

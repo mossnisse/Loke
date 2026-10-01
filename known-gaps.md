@@ -288,44 +288,6 @@ pattern walkers in `iterate.odin` and `emit_llvm_iteration.odin` pair bindings
 with fields by position; they must map each binding to its named field's slot,
 as declaration destructuring does.
 
-### Required-result diagnostics run before the surrounding `when` scope is complete
-
-[design.md "when statement"](design.md#when-statement) gives the selected
-branch no scope, and [design.md "@(require_results)"](design.md#require_results)
-allows a later read of the binding:
-
-```odin
-package main;
-@(require_results) counted :: proc() -> int { return 1; }
-main :: proc() {
-    when (true) { value := counted(); }
-    _ = value;
-}
-```
-
-Expected: accepted. Actual: L0698 claims `value` is never used.
-`check_when_stmt` checks its selected block with `check_stmts`, which reports
-unread results before the following statements are checked. A binding of a
-`Result` value has the same failure. Report after the complete lexical scope
-has been checked, including selected branches.
-
-### Required results bound in control-flow headers are never checked
-
-[design.md "@(require_results)"](design.md#require_results) also applies to
-local bindings in headers:
-
-```odin
-package main;
-@(require_results) counted :: proc() -> int { return 1; }
-main :: proc() { if (value := counted(); true) {} }
-```
-
-Actual: accepted, although `value` is never read. An unused initializer
-binding in `for` or `switch` is also accepted. `report_unread_required_results`
-visits only declarations directly in statement sequences; header initializers
-are checked individually and never reach that report. Include them when their
-header scope finishes; an equivalent unused block declaration reports L0698.
-
 ### Compile-time-only types reach runtime records and anonymous procedures
 
 [design.md "`type` and `typeid`"](design.md#type-and-typeid) prohibits runtime

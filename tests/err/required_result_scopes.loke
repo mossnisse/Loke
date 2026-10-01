@@ -1,0 +1,16 @@
+package main;
+
+// design.md "@(require_results)": a required result bound in a control-flow
+// header, or in a selected `when` branch, is reported once its scope ends. A
+// `when` branch has no scope of its own, so a later read counts.
+@(require_results) counted :: proc() -> int { return 1; }
+
+main :: proc() {
+	if (value := counted(); true) {}
+	for (index := counted(); false;) {}
+	switch (choice := counted(); 1) { case: }
+	when (true) { kept := counted(); }
+	when (true) { read := counted(); }
+	_ = read;
+	if (used := counted(); used > 0) {}
+}
