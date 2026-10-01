@@ -508,9 +508,12 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return "null"
 
 	case ^Expr_Postfix:
-		pointer := emit_expr(e, v.operand)
-		emit_nil_check(e, pointer)
-		return pointer
+		// `x or_return` is a value, materialised below like any other.
+		if v.op == .Caret {
+			pointer := emit_expr(e, v.operand)
+			emit_nil_check(e, pointer)
+			return pointer
+		}
 
 	case ^Expr_Selector:
 		// `pkg.name` is another package's global, not a field of the alias.

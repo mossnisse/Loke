@@ -1,0 +1,32 @@
+package main;
+import "core:fmt";
+
+// `(x or_return)` is a value, so a field access, an index, or a built-in method
+// on it reads a temporary holding the payload. Its address used to be taken as
+// if `or_return` were `^`, which emitted a nil check on the carrier itself and
+// IR that LLVM rejected.
+
+Tracked :: struct { n: int }
+
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.n); }
+}
+
+items :: proc(ok: bool) -> Option([dynamic]int) {
+	if (!ok) { return .none; }
+	return .some({4, 5, 6});
+}
+
+tracked :: proc() -> Result(Tracked, string_view) { return .ok({7}); }
+
+length :: proc(ok: bool) -> Option(int) { return .some((items(ok) or_return).len()); }
+
+second :: proc() -> Option(int) { return .some((items(true) or_return)[1]); }
+
+field :: proc() -> Result(int, string_view) { return .ok((tracked() or_return).n); }
+
+main :: proc() {
+	fmt.println(length(true) or_else -1, length(false) or_else -1);
+	fmt.println(second() or_else -1);
+	fmt.println(field() or_else -1);
+}

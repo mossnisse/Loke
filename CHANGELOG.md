@@ -169,6 +169,9 @@ checklist.
 
 ### Fixed
 
+- A field, an index, or a built-in method applied to a parenthesized
+  `or_return`, as in `(items() or_return).len()`, reads the payload. It used to
+  emit a nil check on the carrier itself, and LLVM rejected the IR.
 - `nil` passed where a generic parameter must infer its type, as in `f(nil)`
   for `f :: proc(x: $T)`, says `nil` has no type to infer it from, instead of
   "`$T` is not bound here" in an instance named `f(<invalid>)`.
