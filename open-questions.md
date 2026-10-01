@@ -461,28 +461,13 @@ the specification as written.
   findings are recorded in
   [comments.md "Compiler regression fixes"](comments.md#compiler-regression-fixes).
 
-## Review cleanup in `core:process`
+## Platform selection in `core:thread`
 
-The correctness findings are fixed. The remaining structure and comment recommendations concern
-[core/process/process.loke](core/process/process.loke):
-
-- Store the worker's existing `Result([dynamic]u8, io.Error)` in the mutex
-  instead of splitting it into `Collected.bytes` and `Collected.failure`.
-  Initialize it explicitly, move the outcome into it, and consume it after
-  joining; the separate error state and conversion switch are unnecessary.
-- Register one deferred `close_all(handles)` after initializing `Handles` in
-  `spawn_native`, and clear the parent ends when transferring them to `Child`.
-  This replaces repeated cleanup calls and loops and covers unwinding after
-  native handles open. Deferred arguments read their final values
-  ([design.md "defer statement"](design.md#defer-statement)).
-- Shorten the introductory contract recap and remove comments that merely
-  restate the small `run` and `Output` definitions. Keep context about buffered
-  stdout, handle inheritance, quoting, detached child lifetime, and why Windows
-  API strings need zero-terminated UTF-16.
-- Remove the unused non-Windows branch and its surrounding `when`. Windows is
-  the only target, and the branch supplies no backend. `core:thread` already
-  declares its Windows implementation directly; add another backend when a
-  target actually needs it.
+[standard-library.md](standard-library.md) says every platform call sits behind
+a `when (LOKE_OS == ...)`, and `core:fs`, `core:os`, `core:path`,
+`core:process`, and `core:term` follow it. `core:thread` declares its Windows
+implementation directly. Should it gain the `when`, or should the convention let
+a package with one target skip it?
 
 ## Formatting
 

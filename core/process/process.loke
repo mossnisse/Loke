@@ -1,10 +1,5 @@
 // Child processes and their pipes (standard-library "`core:process`").
 //
-// Every rule a child is started under is one the caller can read off the
-// `Command`: the program is a path or a `PATH` lookup, the arguments arrive
-// as given, the environment is the parent's or exactly the one supplied, and
-// the child inherits its three standard handles and nothing else.
-//
 // Everything platform-specific sits behind `when (LOKE_OS == .Windows)` in this
 // one file, as in `core:fs`.
 @(public)
@@ -148,13 +143,11 @@ foreign loke_runtime {
 	rt_flush_stdout :: proc "c" () ---;
 }
 
-// Spawns `command`, waits for it, and returns its exit status.
 run :: proc(command: Command) -> Result(i32, io.Error) {
 	child := spawn(command) or_return;
 	return child.wait();
 }
 
-// What `output` collects from a finished child.
 Output :: struct {
 	status: i32,
 	stdout: [dynamic]u8,
@@ -172,7 +165,7 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 	// Nothing is written to a piped stdin, so a child reading it to its end
 	// finishes rather than waiting on the parent.
 	_ = child.stdin.close();
-	collected := shared(thread.Mutex(Collected){value = {}});
+	collected := shared(thread.Mutex(Collected){value = .ok({})});
 	result: Output = {};
 	reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), collected.clone()});
 	switch (bytes in io.read_to_end(inout child.stdout)) {
@@ -187,23 +180,19 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 	reader.join();
 	{
 		guard := collected.get().lock();
-		switch (failure in guard.get().failure) {
-		case .some:
+		switch (bytes in exchange(inout guard.get(), .ok({}))) {
+		case .ok:  result.stderr = move(bytes);
+		case .err:
 			_ = child.kill();
-			return .err(failure);
-		case .none:
+			return .err(bytes);
 		}
-		result.stderr = exchange(inout guard.get().bytes, {});
 	}
 	result.status = child.wait() or_return;
 	return .ok(move(result));
 }
 
 @(private)
-Collected :: struct {
-	bytes:   [dynamic]u8,
-	failure: Option(io.Error),
-}
+Collected :: Result([dynamic]u8, io.Error);
 
 @(private)
 Collecting :: struct {
@@ -215,10 +204,7 @@ Collecting :: struct {
 collect :: proc(job: move Collecting) {
 	outcome := io.read_to_end(inout job.pipe);
 	guard := job.into.get().lock();
-	switch (bytes in move(outcome)) {
-	case .ok:  guard.get().bytes = move(bytes);
-	case .err: guard.get().failure = .some(bytes);
-	}
+	guard.get() = move(outcome);
 }
 
 // The `core:os` name rules, and each name once, ignoring ASCII case, since
@@ -479,15 +465,16 @@ spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io
 	}
 
 	handles: Handles = {};
+	// Reads `handles` at scope exit, when the parent ends a `Child` took are
+	// cleared: everything else opened here is closed on every path.
+	defer close_all(handles);
 	modes := [3]Stdio{command.stdin, command.stdout, command.stderr};
 	foreach (mode, index in modes[:].indexed()) {
 		switch (opened in standard_handle(mode, index)) {
 		case .ok:
 			handles.child[index] = opened[0];
 			handles.parent[index] = opened[1];
-		case .err:
-			close_all(handles);
-			return .err(opened);
+		case .err: return .err(opened);
 		}
 	}
 
@@ -506,15 +493,11 @@ spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io
 	attributes := make([dynamic]u64, size / 8 + 1);
 	list := unsafe.raw_data(attributes);
 	if (rt_initialize_attributes(list, 1, 0, &mut size) == 0) {
-		error := from_last_error(.Spawn);
-		close_all(handles);
-		return .err(error);
+		return .err(from_last_error(.Spawn));
 	}
 	defer rt_delete_attributes(list);
 	if (count > 0 && rt_update_attribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &mut inherited, count * 8, nil, nil) == 0) {
-		error := from_last_error(.Spawn);
-		close_all(handles);
-		return .err(error);
+		return .err(from_last_error(.Spawn));
 	}
 
 	startup: Startup_Info = {};
@@ -531,24 +514,19 @@ spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io
 		unsafe.raw_data(directory) if directory.len() > 0 else nil,
 		&mut startup, &mut information,
 	);
-	error := from_last_error(.Spawn);
-	foreach (handle in handles.child) {
-		if (handle != NO_HANDLE) { close_handle(handle); }
-	}
 	if (created == 0) {
-		foreach (handle in handles.parent) {
-			if (handle != NO_HANDLE) { close_handle(handle); }
-		}
-		return .err(error);
+		return .err(from_last_error(.Spawn));
 	}
 	close_handle(information.thread);
-	return .ok(Child{
+	child := Child{
 		Pipe{handles.parent[0], true},
 		Pipe{handles.parent[1], false},
 		Pipe{handles.parent[2], false},
 		information.process,
 		information.id,
-	});
+	};
+	handles.parent = {};
+	return .ok(move(child));
 }
 
 // The child's end and the parent's end of standard handle `index`, either of
