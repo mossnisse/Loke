@@ -194,7 +194,8 @@ emit_destructure_fields :: proc(
 		if field == nil {
 			continue
 		}
-		value := extract(e, aggregate, record, index)
+		// A padding field fills no binding, so the field's own slot is read.
+		value := extract(e, aggregate, record, int(field.index))
 		retained := index < len(plan.retained) && plan.retained[index]
 		if retained && index < len(plan.clones) && plan.clones[index] {
 			value = emit_clone_value(

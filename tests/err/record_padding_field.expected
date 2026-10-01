@@ -1,0 +1,12 @@
+L0376
+@8:24
+`Padded` has 2 fields
+L0363
+@9:18
+`Padded` has no field `_`
+L0308
+@10:13
+fills 2 bindings, not 3
+L0459
+@12:11
+has padding fields

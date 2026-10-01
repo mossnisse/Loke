@@ -1,0 +1,15 @@
+package main;
+
+// grammar.md "Records": a `_` field is unnamed padding, so nothing can name or
+// fill it.
+Padded :: struct { first: u8, _: [7]u8, last: u8 }
+
+main :: proc() {
+	extra := Padded{1, 2, 3};
+	keyed := Padded{_ = 1};
+	a, b, c := Padded{};
+	items := [1]Padded{};
+	foreach (first, last in items) {}
+	_ = extra;
+	_ = keyed;
+}

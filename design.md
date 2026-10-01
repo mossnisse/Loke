@@ -1410,7 +1410,7 @@ A parenthesized group is a record type only when it is **labeled**. `(T)` in exp
 
 #### Destructuring
 
-Two or more bindings on the left of `:=` or `=`, with one record on the right, project that record's fields positionally. A single binding takes the whole value. `foreach`'s binding list is the same rule.
+Two or more bindings on the left of `:=` or `=`, with one record on the right, project that record's fields positionally. A single binding takes the whole value. `foreach`'s binding list is the same rule. A `_` padding field has no name, so it fills no binding.
 
 ```odin
 q, r := divmod(17, 5);
@@ -1458,6 +1458,8 @@ v = Vector3{};           // zero value
 v = Vector3{1, 4, 9};
 v = Vector3{1, y = 4};   // positional first, then named; `z` zero-fills
 ```
+
+A `_` padding field takes no element: positional elements fill the named fields in order, and the padding is zero.
 
 A positional element is allowed only in the package that declares the struct's fields; elsewhere, as with [destructuring](#destructuring), every element names its field, so a reordering in the declaring package cannot silently move a value into another field of the same type. `geom.Point{3, 4}` is an error outside `geom`, and `geom.Point{x = 3, y = 4}` is the literal.
 

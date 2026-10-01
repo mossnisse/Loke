@@ -1,0 +1,26 @@
+package main;
+
+import "core:fmt";
+
+// grammar.md "Records": a `_` field is unnamed padding. It keeps its storage,
+// takes no literal element, fills no destructuring binding, and is not
+// reflected or printed.
+Padded :: struct { first: u8, _: [7]u8, last: u8 }
+Twice :: struct { _: u16, a: u8, _: u8, b: u8 }
+
+static_assert(size_of(Padded) == 9);
+static_assert(offset_of(Padded, last) == 8);
+static_assert(size_of(Twice) == 6);
+static_assert(offset_of(Twice, b) == 4);
+static_assert(fields_of(Padded).len() == 2);
+
+CONSTANT :: Padded{3, 4};
+
+main :: proc() {
+	p := Padded{1, 2};
+	named := Padded{last = 5};
+	first, last := p;
+	t := Twice{6, 7};
+	fmt.println(p.first, p.last, named.last, first, last, t.a, t.b, CONSTANT.last);
+	fmt.println(p == Padded{1, 2});
+}

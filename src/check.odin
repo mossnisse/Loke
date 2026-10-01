@@ -751,10 +751,16 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 				continue
 			}
 			binding := new_binding_symbol(k, name, .Field)
+			// grammar.md "Records": `_` is unnamed padding. It keeps its storage
+			// under no name, and nothing outside the record sees it.
+			padding := name.text == "_"
+			if padding {
+				binding = new_symbol(k.c, Symbol{span = name.span, kind = .Field, pkg = k.pkg})
+			}
 			if bound := symbol_of(k.c, binding); bound != nil {
 				bound.type = field_type
 				bound.index = u32(len(members))
-				bound.public = public
+				bound.public = public && !padding
 				bound.is_using = field.is_using
 			}
 			append(&bindings, binding)
@@ -898,16 +904,18 @@ destructure_fields :: proc(
 		)
 		return nil, false
 	}
-	if len(info.fields) != count {
+	// A padding field fills no binding.
+	fields := named_fields(k.c, info)
+	if len(fields) != count {
 		errorf(
 			k.c, span, code,
 			"`%s` has %d field%s, so it fills %d binding%s, not %d",
-			type_name(k.c, record), len(info.fields), len(info.fields) == 1 ? "" : "s",
-			len(info.fields), len(info.fields) == 1 ? "" : "s", count,
+			type_name(k.c, record), len(fields), len(fields) == 1 ? "" : "s",
+			len(fields), len(fields) == 1 ? "" : "s", count,
 		)
 		return nil, false
 	}
-	for field in info.fields {
+	for field in fields {
 		if !require_visible_field(k, span, record, field, code, action) {
 			return nil, false
 		}
@@ -921,7 +929,7 @@ destructure_fields :: proc(
 		add_notef(k.c, span, "bind the whole value and select its fields by name; that package may reorder them")
 		return nil, false
 	}
-	return info.fields, true
+	return fields, true
 }
 
 // design.md "Destructuring": a nominal record's field order belongs to the

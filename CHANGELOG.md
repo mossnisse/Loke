@@ -198,6 +198,10 @@ checklist.
 
 ### Fixed
 
+- A `_` record field is unnamed padding that keeps its storage, as grammar.md
+  "Records" says: `struct { first: u8, _: [7]u8, last: u8 }` is 9 bytes with
+  `last` at offset 8. The field was dropped from the layout. Positional
+  literals and destructuring skip it.
 - A cycle through a qualified associated constant, as in
   `impl Item { Count :: Item.Count; }`, reports `L0324`. It was accepted, and
   using the constant failed in the backend with `L0405`.

@@ -1340,6 +1340,24 @@ type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 // A distinct type answers structural questions through what it wraps, so these
 // two are the pairing almost every query wants.
+// grammar.md "Records": a `_` field is padding, a member with no name.
+field_is_padding :: proc(c: ^Compiler, field: Symbol_Id) -> bool {
+	sym := symbol_of(c, field)
+	return sym != nil && sym.kind == .Field && sym.name == INVALID_IDENTIFIER
+}
+
+// A record's fields without its padding: what a literal's positional elements,
+// destructuring, and reflection see.
+named_fields :: proc(c: ^Compiler, info: ^Type_Info) -> []Symbol_Id {
+	out := make([dynamic]Symbol_Id, 0, len(info.fields), c.semantic_allocator)
+	for field in info.fields {
+		if !field_is_padding(c, field) {
+			append(&out, field)
+		}
+	}
+	return out[:]
+}
+
 underlying_info :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
 	return type_of(c, type_underlying(c, id))
 }

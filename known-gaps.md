@@ -268,23 +268,25 @@ temporary's address, which becomes invalid when the procedure returns.
 `inout string` returned as `inout string_view` is also accepted. Check the
 original place type without materializing a value conversion.
 
-### Unnamed padding fields disappear from record layout
+### A `foreach` cannot destructure a record with padding
 
-[grammar.md "Records"](grammar.md#records) defines `_` fields as unnamed
-padding:
+[design.md "Destructuring"](design.md#destructuring) applies to `foreach`
+bindings, and a `_` padding field fills no binding:
 
 ```odin
 package main;
 Padded :: struct { first: u8, _: [7]u8, last: u8 }
-static_assert(size_of(Padded) == 9);
-static_assert(offset_of(Padded, last) == 8);
-main :: proc() {}
+main :: proc() {
+    items := [1]Padded{};
+    foreach (first, last in items) {}
+}
 ```
 
-Actual: both assertions fail; size 2 and offset 1 pass instead.
-`resolve_struct_fields` uses `new_binding_symbol`, which treats `_` as a
-discard, then omits its invalid symbol from the record's fields. Preserve
-the padding's storage without exposing a name.
+Actual: L0459 says `Padded` has padding fields. Binding the whole element and
+selecting its fields works, as does `first, last := items[0]`. The `foreach`
+pattern walkers in `iterate.odin` and `emit_llvm_iteration.odin` pair bindings
+with fields by position; they must map each binding to its named field's slot,
+as declaration destructuring does.
 
 ### Destructured static-duration variables lose their initializers or reinitialize
 

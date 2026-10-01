@@ -180,7 +180,7 @@ fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Cons
 	}
 	descriptor := meta_field_type(k.c)
 	elements := make([dynamic]Const_Value, 0, len(info.fields), k.c.semantic_allocator)
-	for member in info.fields {
+	for member in named_fields(k.c, info) {
 		sym := symbol_of(k.c, member)
 		if sym == nil || !member_is_visible(k, sym) {
 			continue

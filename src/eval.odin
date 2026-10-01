@@ -2628,7 +2628,7 @@ eval_destructure :: proc(ev: ^Evaluator, plan: ^Destructure, operand: Expr) -> (
 	if !ok {
 		return nil, false
 	}
-	if record.kind != .Aggregate || len(record.elements) != len(plan.fields) {
+	if record.kind != .Aggregate || len(record.elements) < len(plan.fields) {
 		eval_fail(ev, expr_span(operand), "L0341", "this value has no compile-time fields to destructure")
 		return nil, false
 	}
@@ -2640,11 +2640,13 @@ eval_destructure :: proc(ev: ^Evaluator, plan: ^Destructure, operand: Expr) -> (
 		if index < len(plan.retained) && !plan.retained[index] {
 			continue
 		}
+		// A padding field fills no binding, so the field's own slot is read.
+		slot := int(symbol_of(ev.k.c, plan.fields[index]).index)
 		if !plan.from_place {
-			values[index] = record.elements[index]
+			values[index] = record.elements[slot]
 			continue
 		}
-		copied, copied_ok := copy_value(ev, record.elements[index])
+		copied, copied_ok := copy_value(ev, record.elements[slot])
 		if !copied_ok {
 			return nil, false
 		}

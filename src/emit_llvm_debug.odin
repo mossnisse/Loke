@@ -406,6 +406,9 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 		members := strings.builder_make()
 		for field, index in info.fields {
 			member := symbol_of(c, field)
+			if field_is_padding(c, field) {
+				continue
+			}
 			debug_member(
 				d, &members, identifier_text(c, member.name), member.type,
 				type_field_offset(c, type, index),

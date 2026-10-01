@@ -2985,7 +2985,12 @@ prov_destructure_field :: proc(
 	if len(sources) == 0 {
 		return nil
 	}
-	return prov_project_content(graph, sources, plan.record, {proj_field(index)}, field_type, span)
+	// A padding field fills no binding, so the field's own slot is projected.
+	slot := index
+	if field := symbol_of(graph.k.c, plan.fields[index]); field != nil {
+		slot = int(field.index)
+	}
+	return prov_project_content(graph, sources, plan.record, {proj_field(slot)}, field_type, span)
 }
 
 @(private)

@@ -2447,6 +2447,8 @@ check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 @(private = "file")
 check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
 	count := len(info.fields)
+	// Positional elements fill the named fields; padding stays zero.
+	positional := named_fields(k.c, info)
 	values := make([]Expr, count, k.c.semantic_allocator)
 	seen := make([]bool, count, k.c.semantic_allocator)
 	v.field_indices = make([]int, len(v.elements), k.c.semantic_allocator)
@@ -2494,13 +2496,14 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 			ok = false
 			continue
 		}
-		if index >= count {
-			errorf(k.c, element.span, "L0376", "`%s` has %d field%s", type_name(k.c, target), count, count == 1 ? "" : "s")
+		if index >= len(positional) {
+			named_count := len(positional)
+			errorf(k.c, element.span, "L0376", "`%s` has %d field%s", type_name(k.c, target), named_count, named_count == 1 ? "" : "s")
 			ok = false
 			continue
 		}
 		// Supplying an inaccessible field is rejected; omitting one is not.
-		if !require_visible_field(k, element.span, target, info.fields[index], "L0474", "initialised positionally") {
+		if !require_visible_field(k, element.span, target, positional[index], "L0474", "initialised positionally") {
 			ok = false
 			continue
 		}
@@ -2515,16 +2518,17 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 				)
 				add_notef(
 					k.c, element.span, "write `%s = ...`; that package may reorder its fields",
-					identifier_text(k.c, symbol_of(k.c, info.fields[index]).name),
+					identifier_text(k.c, symbol_of(k.c, positional[index]).name),
 				)
 			}
 			ok = false
 			continue
 		}
-		symbol := symbol_of(k.c, info.fields[index])
-		seen[index] = true
-		values[index] = element.value
-		v.field_indices[index] = index
+		symbol := symbol_of(k.c, positional[index])
+		slot := int(symbol.index)
+		seen[slot] = true
+		values[slot] = element.value
+		v.field_indices[index] = slot
 		if !check_value_expr(k, element.value, symbol.type, "initialise") {
 			ok = false
 		} else {

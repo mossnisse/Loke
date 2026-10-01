@@ -972,6 +972,14 @@ check_foreach_pattern :: proc(
 		return bind_pattern_leaf(k, s, &bindings[0], logical, item)
 	}
 	info := underlying_info(k.c, logical)
+	// known-gaps.md "A `foreach` cannot destructure a record with padding".
+	if info != nil && info.kind == .Struct && len(named_fields(k.c, info)) != len(info.fields) {
+		errorf(
+			k.c, bindings[0].name.span, "L0459",
+			"`%s` has padding fields, so a `foreach` binds the whole element", type_name(k.c, logical),
+		)
+		return false
+	}
 	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
 		report_pattern_arity(k, bindings, logical, info, raw_data(bindings) == raw_data(s.bindings))
 		return false

@@ -21,6 +21,9 @@ Handle :: distinct ^Pair;
 
 Callback :: proc(a: int) -> int;
 
+// grammar.md "Records": `_` fields are unnamed padding that keeps its storage.
+Padded :: struct { first: u8, _: [7]u8, last: u8, _: u16 }
+
 main :: proc() {
 	// Named uses, so nothing above is dropped before the probe runs.
 	p: Pair;
@@ -32,6 +35,8 @@ main :: proc() {
 	h: Handle;
 	f: Callback;
 	e: Empty;
+	d: Padded = {};
+	_ = d;
 	fmt.println(size_of(Pair) + align_of(Mixed) + offset_of(Nested, tail) + c.grid.len());
 	fmt.println(size_of(p) + size_of(m) + size_of(n) + size_of(s) + size_of(w) + size_of(h) + size_of(f) + size_of(e));
 }
