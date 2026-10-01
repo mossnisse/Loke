@@ -1,0 +1,3 @@
+package main;
+
+greeting :: proc() -> string_view { return "joined"; }

@@ -1,0 +1,2 @@
+define internal i64 @loke.p.add(i64 %arg0, i64 %arg1)
+call i64 @loke.p.add(* 3)

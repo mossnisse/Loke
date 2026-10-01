@@ -1,0 +1,6 @@
+// A package case: a directory whose files are compiled as one package.
+package main;
+
+import "core:fmt";
+
+main :: proc() { fmt.println(greeting()); }

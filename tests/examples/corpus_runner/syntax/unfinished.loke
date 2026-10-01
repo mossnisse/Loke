@@ -1,0 +1,4 @@
+// No sentinel, so nothing shows recovery reached the end.
+package main;
+
+broken :: 1 + ;

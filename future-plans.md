@@ -20,11 +20,10 @@ Main work:
 - settle width and precision in `fmt` together, once a program needs both
   ([open-questions.md "Width and precision in `fmt`"](open-questions.md#width-and-precision-in-fmt));
 - provide the testing and binary/text facilities needed to express the compiler
-  and its test harness in Loke. The run, trap, and diagnostic harness is
-  `examples/corpus_runner.loke`, which needed `process.output`, and runs a case
-  per processor with `thread.processor_count`; porting the IR and package
-  corpora, whose cases are directories and pattern files, will show what else
-  is missing;
+  and its test harness in Loke. `examples/corpus_runner.loke` checks the run,
+  trap, diagnostic, syntax-error, IR, and package corpora, which needed
+  `process.output` and `thread.processor_count`; it does not yet find clang to
+  assemble the IR it checks, as the Odin suite does;
 - validate that the shipped collections, paths, filesystem, formatting, and
   allocation APIs scale to a compiler-sized program;
 - prioritize `core:bytes`, time, random, buffered I/O, and higher-level encodings

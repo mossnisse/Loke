@@ -1,0 +1,6 @@
+// The parser reports the missing operand and recovers to the end.
+package main;
+
+broken :: 1 + ;
+
+sentinel :: proc() { }

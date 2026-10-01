@@ -117,10 +117,11 @@ checklist.
   given, and the child inherits its three standard handles and nothing else.
   `io.Operation` gains `Spawn`, `Wait`, and `Kill`. `output` runs a command
   and collects its status, stdout, and stderr, reading both pipes at once.
-- `examples/corpus_runner.loke` is the run, trap, and diagnostic corpus harness
-  written in Loke: it compiles each case, runs it, and compares its output, or
-  under `-diagnostics` checks what its compile errors say, running a case per
-  processor at once.
+- `examples/corpus_runner.loke` is the compiler's corpus harness written in
+  Loke: it compiles each case, a file or a package directory, runs it, and
+  compares its output, or under `-diagnostics` and `-syntax` checks what its
+  errors say, or under `-ir` checks the shapes its LLVM IR holds, running a case
+  per processor at once.
 - `thread.processor_count` answers how many threads can run at once.
 - `value.as(.name)` reads one union variant without a `switch`: it yields
   `Option(P)` holding a copy of the payload when `name` is active, and `.none`

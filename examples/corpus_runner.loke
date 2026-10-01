@@ -11,29 +11,33 @@ import "core:slice";
 import "core:strings";
 import "core:thread";
 
-// A test harness in Loke: the shape of the Odin suite's run and trap corpora.
-// For each `<case>.loke` in a directory it compiles the case, runs it, and
-// compares its stdout with `<case>.expected` and its stderr with
+// A test harness in Loke: the shape of the Odin suite's corpora. A case is a
+// `<case>.loke` file in the corpus directory, or a `<case>` package directory
+// with a `<case>.expected` beside it. The harness compiles each case, runs it,
+// and compares its stdout with `<case>.expected` and its stderr with
 // `<case>.expected-err` when there is one. A case must exit 0, or under
 // `-trap` must fail, with a `.expected-err` naming how; there `.expected` is
 // optional. Under `-diagnostics` a case must not compile, and its `.expected`
-// lists what the diagnostics say (`diagnosed`). A `<case>.flags` file adds one
+// lists what the diagnostics say (`diagnosed`); `-syntax` is the same for a
+// parse, which must also recover as far as the file's trailing `sentinel`.
+// Under `-ir` a case must compile, and each line of its `.expected` is a shape
+// its LLVM IR must contain (`ir_contains`). A `<case>.flags` file adds one
 // compiler flag per line. Cases run on a thread per processor, and are reported
 // in name order once all have finished.
 //
-// Usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap | -diagnostics]
+// Usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap | -diagnostics | -syntax | -ir]
 
-Mode :: enum { Run, Trap, Diagnostics }
+Mode :: enum { Run, Trap, Diagnostics, Syntax, Ir }
 
 main :: proc() {
 	mode := Mode.Run;
-	if (os.args.len() == 5 && os.args[4] == "-trap") {
-		mode = .Trap;
-	} else if (os.args.len() == 5 && os.args[4] == "-diagnostics") {
-		mode = .Diagnostics;
+	if (os.args.len() == 5) {
+		switch (named in mode_named(os.args[4])) {
+		case .some: mode = named;
+		case .none: usage();
+		}
 	} else if (os.args.len() != 4) {
-		fmt.eprintln("usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap | -diagnostics]");
-		os.exit(2);
+		usage();
 	}
 	compiler, corpus, scratch := os.args[1], os.args[2], os.args[3];
 	cases: [dynamic]string = {};
@@ -68,6 +72,19 @@ main :: proc() {
 	if (failed > 0) { os.exit(1); }
 }
 
+mode_named :: proc(flag: string_view) -> Option(Mode) {
+	if (flag == "-trap") { return .some(.Trap); }
+	if (flag == "-diagnostics") { return .some(.Diagnostics); }
+	if (flag == "-syntax") { return .some(.Syntax); }
+	if (flag == "-ir") { return .some(.Ir); }
+	return .none;
+}
+
+usage :: proc() {
+	fmt.eprintln("usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap | -diagnostics | -syntax | -ir]");
+	os.exit(2);
+}
+
 // What the workers share: the next case to take, and each case's outcome.
 Board :: struct {
 	next:    int,
@@ -94,7 +111,7 @@ work :: proc(job: move Job) {
 			guard.get().next += 1;
 		}
 		if (index >= job.cases.len()) { return; }
-		switch (check(job.compiler, job.corpus, job.scratch, path.stem(job.cases[index]), job.mode)) {
+		switch (check(job.compiler, job.corpus, job.scratch, job.cases[index], job.mode)) {
 		case .ok:
 		case .err(reason):
 			guard := job.board.get().lock();
@@ -103,14 +120,17 @@ work :: proc(job: move Job) {
 	}
 }
 
-// The directory's `.loke` files, by name, so every run reports in one order.
+// The directory's cases, by name, so every run reports in one order. A
+// directory with no `.expected` beside it is not a case but something one
+// imports, as `tests/trap/providers` is.
 sources :: proc(directory: string_view) -> Result([dynamic]string, io.Error) {
 	reader := fs.read_directory(directory) or_return;
 	names: [dynamic]string = {};
 	for (;;) {
 		switch (reader.next() or_return) {
 		case .some(entry):
-			if (entry.kind == .File && path.extension(entry.name) == ".loke") {
+			file := entry.kind == .File && path.extension(entry.name) == ".loke";
+			if (file || entry.kind == .Directory && (fs.exists(sibling(directory, entry.name, ".expected")) or_else false)) {
 				names.append(strings.copy(entry.name));
 			}
 		case .none:
@@ -122,21 +142,34 @@ sources :: proc(directory: string_view) -> Result([dynamic]string, io.Error) {
 
 // One case: why it failed, or nothing.
 check :: proc(
-	compiler: string_view, corpus: string_view, scratch: string_view, name: string_view, mode: Mode,
+	compiler: string_view, corpus: string_view, scratch: string_view, entry: string_view, mode: Mode,
 ) -> Result(Unit, string) {
-	source := sibling(corpus, name, ".loke");
+	name := path.stem(entry);
+	source := path.join([]string_view{corpus, entry});
 	exe := sibling(scratch, name, ".exe");
 	arguments := [dynamic]string_view{source, "-o", exe};
-	if (mode == .Diagnostics) { arguments.append("-emit-ll"); }
+	if (mode == .Syntax) {
+		arguments.append("-dump-ast");
+	} else if (mode != .Run && mode != .Trap) {
+		arguments.append("-emit-ll");
+	}
 	flags := read(sibling(corpus, name, ".flags")) or_else "";
 	foreach (flag in strings.lines(flags)) {
 		if (strings.trim_space(flag).len() > 0) { arguments.append(strings.trim_space(flag)); }
 	}
 
 	built := run(process.Command{program = compiler, arguments = arguments[:]}) or_return;
-	if (mode == .Diagnostics) {
-		switch (wanted in read(sibling(corpus, name, ".expected"))) {
-		case .some: return diagnosed(source, text(built.stderr[:]), built.status, wanted);
+	expected := read(sibling(corpus, name, ".expected"));
+	if (mode == .Diagnostics || mode == .Syntax || mode == .Ir) {
+		switch (wanted in expected) {
+		case .some:
+			if (mode == .Ir) { return shaped(sibling(scratch, name, ".ll"), built, wanted); }
+			// The AST is printed before the diagnostics, so the sentinel's node in
+			// it shows the parser recovered past every error to the end.
+			if (mode == .Syntax && !strings.contains(text(built.stdout[:]), "(const names=[\"sentinel\"]")) {
+				return .err("recovery did not reach the trailing sentinel");
+			}
+			return diagnosed(source, text(built.stderr[:]), built.status, wanted);
 		case .none: return .err("has no .expected");
 		}
 	}
@@ -146,7 +179,6 @@ check :: proc(
 	}
 	ran := run(process.Command{program = exe}) or_return;
 
-	expected := read(sibling(corpus, name, ".expected"));
 	expected_err := read(sibling(corpus, name, ".expected-err"));
 	if (trap && ran.status == 0) { return .err("exited 0"); }
 	if (trap && expected_err == .none) { return .err("has no .expected-err naming the failure"); }
@@ -205,6 +237,46 @@ diagnosed :: proc(
 		return .err(fmt.to_string(mem.default_allocator(), "has", own_warnings(output, source), "warnings, not", warnings));
 	}
 	return .ok;
+}
+
+// An IR case compiles, and its module holds every line of `.expected`.
+//
+// ponytail: the Odin suite also assembles each module with clang, since a shape
+// can match IR LLVM rejects; this harness would need clang found first.
+shaped :: proc(ll: string_view, built: process.Output, expected: string_view) -> Result(Unit, string) {
+	if (built.status != 0) {
+		return .err(fmt.to_string(mem.default_allocator(), "does not compile:", text(built.stderr[:])));
+	}
+	ir := read(ll) or_else "";
+	wanted := normalise(expected);
+	foreach (raw in strings.lines(wanted)) {
+		line := strings.trim_space(raw);
+		if (line.len() > 0 && !ir_contains(ir, line)) {
+			return .err(fmt.to_string(mem.default_allocator(), "IR does not contain", line));
+		}
+	}
+	return .ok;
+}
+
+// A `*` in a shape matches any run of characters within one IR line, so a shape
+// need not quote a numbered type name, and cannot be made of two instructions.
+ir_contains :: proc(ir: string_view, shape: string_view) -> bool {
+	if (!strings.contains(shape, "*")) { return strings.contains(ir, shape); }
+	foreach (line in strings.lines(ir)) {
+		if (line_matches(line, shape)) { return true; }
+	}
+	return false;
+}
+
+line_matches :: proc(line: string_view, shape: string_view) -> bool {
+	at := 0;
+	foreach (segment in strings.split(shape, "*")) {
+		switch (strings.index(line[at:], segment)) {
+		case .some(found): at += found + segment.len();
+		case .none:        return false;
+		}
+	}
+	return true;
 }
 
 // Warnings located in `source`. One raised inside `core` or `base`, as
