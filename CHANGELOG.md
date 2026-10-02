@@ -256,6 +256,8 @@ checklist.
 
 ### Fixed
 
+- `@(require_results)` on an associated or method procedure group applies to
+  calls through it, such as `Box.group(1)`, as it did for a free group.
 - A variadic spread is evaluated before the default of a fixed parameter it
   skips, as in `use(..spread())` for
   `use :: proc(first: int = mark(1), rest: ..int)`.

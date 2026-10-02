@@ -250,7 +250,7 @@ required_result_of_call :: proc(k: ^Checker, call: ^Expr_Call) -> (name: string,
 	if selected := symbol_of(k.c, call.resolution.chosen_overload); selected != nil && selected.require_results {
 		return identifier_text(k.c, selected.name), true
 	}
-	if group := symbol_of(k.c, callee_group(k, call.callee)); group != nil && group.require_results {
+	if group := symbol_of(k.c, call.group); group != nil && group.require_results {
 		return identifier_text(k.c, group.name), true
 	}
 	return "", type_requires_results(k.c, call.type)
@@ -376,6 +376,10 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	}
 	if len(candidates) > 1 {
 		v.overload_members = candidates
+	}
+	group := find_member(k, receiver_base.type, intern_identifier(k.c, sel.name.text))
+	if named := symbol_of(k.c, group); named != nil && named.kind == .Proc_Group {
+		v.group = group
 	}
 	chosen := symbol_of(k.c, cand.symbol)
 	if reject_direct_hook_call(k, v.span, cand.symbol) {
@@ -518,6 +522,9 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 	}
 	if len(members) > 1 {
 		v.overload_members = members
+	}
+	if sym.kind == .Proc_Group {
+		v.group = group
 	}
 	annotate_chosen_callee(k, v, cand.symbol)
 	if !bind_chosen_call(k, v, cand) {

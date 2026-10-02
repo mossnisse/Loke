@@ -46,3 +46,16 @@ impl Meters {
 	@(bogus_delegate) delegate(+);
 	@(public) delegate(-);
 }
+
+// A group's policy reaches a call through an associated or method group too.
+Box :: struct {}
+impl Box {
+	produce :: proc(value: int) -> int { return value; }
+	take :: proc(self, value: int) -> int { return value; }
+	@(require_results) group :: proc{produce};
+	@(require_results) methods :: proc{take};
+}
+grouped :: proc() {
+	Box.group(1);
+	Box{}.methods(2);
+}

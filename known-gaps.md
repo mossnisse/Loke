@@ -1599,30 +1599,6 @@ compile-time evaluator, and lifecycle graph all use `call_slot_at` or
 analysis. Preserve supplied candidate slots in written order, then append
 omitted defaults in parameter order when binding the chosen procedure.
 
-### Associated procedure groups lose required-result policy
-
-[design.md "@(require_results)"](design.md#require_results) applies a group's
-requirement to calls through that group. `required_result_of_call` in
-[src/check_calls.odin](src/check_calls.odin) looks up groups only with
-`callee_group`, whose name lookup recognizes free and package-qualified
-groups, but not associated groups:
-
-```odin
-package main;
-Box :: struct {}
-impl Box {
-    produce :: proc(value: int) -> int { return value; }
-    @(require_results) group :: proc{produce};
-}
-main :: proc() { Box.group(1); }
-```
-
-This compiles and discards the result instead of reporting `L0612`. The same
-attribute on a free group rejects the call correctly. Preserve the
-originating group's result policy when selecting a candidate, including
-associated and method groups, rather than recovering it later from only a
-subset of callee spellings.
-
 ### Type-qualified container calls bypass operation-specific checks
 
 [design.md "Zero values"](design.md#zero-values) requires a zero value for
@@ -1673,7 +1649,7 @@ changing the pointer's declared capability. Validate source/target
 conversion rules before folding concrete typed constants, while preserving
 the separate contextual conversion rules for untyped literals.
 
-These six call-checking gaps were reproduced with a compiler rebuilt from
+These five call-checking gaps were reproduced with a compiler rebuilt from
 the source tree on 2026-10-02. All 108 compiler unit tests pass with memory
 tracking and compiler vets enabled; those tests do not cover these
 reproductions.

@@ -250,6 +250,9 @@ Expr_Call :: struct {
 	// The members overload resolution chose among, when there were several; only
 	// diagnostics read it.
 	overload_members: []Symbol_Id,
+	// The procedure group the call selected through, whose attributes, such as
+	// `@(require_results)`, still apply once the callee names the member.
+	group: Symbol_Id,
 	// `variadic_slot` is the packed parameter, or -1. `variadic_forwards` passes
 	// one spread slice through; otherwise elements and spreads are concatenated
 	// in `variadic_order` (true = next spread, false = next element).

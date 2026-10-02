@@ -46,4 +46,12 @@ L0607
 `@(public)` cannot appear on a `delegate`
 @47:4
 
+L0612
+the result of `group` must be used or discarded with `_ = ...`
+@59:2
+
+L0612
+the result of `methods` must be used or discarded with `_ = ...`
+@60:2
+
 warning[L0611]: `g` is deprecated: use `g2` instead
