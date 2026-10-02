@@ -1,0 +1,34 @@
+// design.md "`inout` results": a call returning `inout T` is a place, also in
+// compile-time evaluation, whether it is written as a call or reached through
+// a user `operator([])`.
+package main;
+import "core:fmt";
+
+pick :: proc(x: inout int) -> inout int { return inout x; }
+assigned :: proc() -> int {
+	x := 1;
+	pick(inout x) = 9;
+	pick(inout x) += 1;
+	return x * 10 + pick(inout x);
+}
+
+Cells :: struct { data: [2]int }
+impl Cells {
+	slot :: operator([]) proc(self: inout Cells, index: int) -> inout int {
+		return inout self.data[index];
+	}
+}
+filled :: proc() -> int {
+	cells := Cells{};
+	cells[1] = 7;
+	cells[0] += 2;
+	return cells.data[0] * 10 + cells.data[1];
+}
+
+ASSIGNED :: assigned();
+FILLED :: filled();
+
+main :: proc() {
+	fmt.println(ASSIGNED, assigned());
+	fmt.println(FILLED, filled());
+}

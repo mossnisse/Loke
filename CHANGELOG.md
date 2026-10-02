@@ -264,9 +264,11 @@ checklist.
 
 ### Fixed
 
+- A call returning `inout T`, and a user `operator([])` returning one, are
+  places in compile-time evaluation too, so `pick(inout x) = 9;` can be folded;
+  it reported `L0341`.
 - Indexing a value with a user `operator([])` during compile-time evaluation
   calls the operator, with every index; it read the operand's fields instead.
-  A place through such an operator stops evaluation with `L0341`.
 - A multiple assignment that inserts several keys into one map, as in
   `m[1], m[2] = 10, 20;`, keeps every write when evaluated at compile time; only
   the last survived.

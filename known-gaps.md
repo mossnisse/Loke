@@ -219,30 +219,6 @@ inspecting the remaining component. Use type-identity cycle detection rather
 than treating every sufficiently deep shape as supported; the related invalid
 component and compile-time-only component walks need the same treatment.
 
-### Compile-time calls cannot supply an inout result as a place
-
-[design.md "`inout` results"](design.md#inout-results) makes a call returning
-`inout T` a place, including during
-["Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation).
-`src/eval.odin` copies the returned expression as an ordinary value and has no
-call case in its place evaluator. This program fails with `L0341`, "this
-expression is not compile-time storage":
-
-```odin
-package main;
-pick :: proc(x: inout int) -> inout int { return inout x; }
-compute :: proc() -> int {
-	x := 1;
-	pick(inout x) = 9;
-	return x;
-}
-VALUE :: compute();
-main :: proc() { }
-```
-
-It should compile with `VALUE` equal to `9`. Removing `VALUE` and calling
-`compute()` at runtime succeeds and returns `9`.
-
 ### Read-only aliases lose their source's suspension
 
 [design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)

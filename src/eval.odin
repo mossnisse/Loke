@@ -54,6 +54,8 @@ Eval_Frame :: struct {
 	// A nil slot means no result.
 	result:      Eval_Value,
 	result_slot: ^Eval_Value,
+	// The storage a `return inout` named (design.md "`inout` results").
+	result_place: ^Eval_Value,
 	// Set by a failing `or_return`; the enclosing statement turns it into `.Return`.
 	returning:    bool,
 }
@@ -1589,10 +1591,16 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 		}
 		return eval_field(ev, v, base.elements)
 
+	case ^Expr_Call:
+		target, ok := eval_call_target(ev, v)
+		if !ok {
+			return nil, false
+		}
+		return eval_call_place(ev, target, v.bound, v.span, v.bound_order)
+
 	case ^Expr_Index:
 		if v.resolution.kind == .User_Operator {
-			eval_fail(ev, v.span, "L0341", "a user operator has no compile-time meaning yet")
-			return nil, false
+			return eval_call_place(ev, v.resolution.symbol, v.bound, v.span)
 		}
 		base, ok := eval_aggregate_place(ev, v.operand)
 		if !ok {
@@ -2101,7 +2109,10 @@ eval_call_target :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Symbol_Id, bool) {
 // Binds arguments, runs the body, unwinds `defer`, and hands back the one
 // declared result, or an invalid value when the procedure has none.
 @(private = "file")
-eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil, order: []int = nil) -> (out: Eval_Value, success: bool) {
+eval_invoke :: proc(
+	ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil, order: []int = nil,
+	result_place: ^^Eval_Value = nil,
+) -> (out: Eval_Value, success: bool) {
 	defer { if !eval_memory_ok(ev) { success = false } }
 	symbol := symbol_of(ev.k.c, symbol_id)
 	if symbol == nil {
@@ -2211,7 +2222,29 @@ eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Sp
 	if flow == .Fail {
 		return Eval_Value{}, false
 	}
+	if result_place != nil {
+		result_place^ = frame.result_place
+	}
 	return frame.result, true
+}
+
+// design.md "`inout` results": a call returning `inout T` is a place, the
+// storage its `return inout` named.
+@(private = "file")
+eval_call_place :: proc(ev: ^Evaluator, target: Symbol_Id, args: []Expr, site: Span, order: []int = nil) -> (^Eval_Value, bool) {
+	if symbol := symbol_of(ev.k.c, target); symbol == nil || !symbol.result_inout {
+		eval_fail(ev, site, "L0341", "this expression is not compile-time storage")
+		return nil, false
+	}
+	place: ^Eval_Value
+	if _, ok := eval_invoke(ev, target, args, site, order = order, result_place = &place); !ok {
+		return nil, false
+	}
+	if place == nil {
+		eval_fail(ev, site, "L0341", "this call returned no storage")
+		return nil, false
+	}
+	return place, true
 }
 
 @(private = "file")
@@ -3225,9 +3258,20 @@ eval_return :: proc(ev: ^Evaluator, s: ^Stmt_Return) -> Eval_Flow {
 	if s.value == nil {
 		return .Return
 	}
-	computed, ok := eval_expr(ev, s.value.expr)
-	if !ok {
-		return .Fail
+	computed: Eval_Value
+	if s.value.is_inout {
+		place, place_ok := eval_place(ev, s.value.expr)
+		if !place_ok {
+			return .Fail
+		}
+		frame.result_place = place
+		computed = place^
+	} else {
+		value, ok := eval_expr(ev, s.value.expr)
+		if !ok {
+			return .Fail
+		}
+		computed = value
 	}
 	copied, copied_ok := copy_value(ev, computed)
 	if !copied_ok {
