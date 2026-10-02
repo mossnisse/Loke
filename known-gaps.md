@@ -259,35 +259,10 @@ required drop too. With an allocating resource, this leaks the old value.
 The expansion states must be reconciled with a runtime flag where they differ,
 or retained separately for emission at their respective exits.
 
-### Diverging calls leave a fallthrough path in the lifecycle graph
-
-[design.md "Diverging procedures"](design.md#diverging-procedures) ends
-reachable execution at a direct `-> !` call. `walk_flow_call` in
-[src/cfg.odin](src/cfg.odin) walks such a call without terminating the graph's
-current path, so the branch containing it still reaches the merge:
-
-```odin
-package main;
-import "core:fmt";
-import "core:os";
-stop :: proc() -> ! { os.exit(0); }
-check :: proc(done: bool) {
-    value: int;
-    if (done) { stop(); } else { value = 7; }
-    fmt.println(value);
-}
-main :: proc() { check(false); }
-```
-
-This wrongly reports `L0500`, claiming that `value` is live on only some
-paths. Every path that reaches the print has initialized it. Both lifecycle
-and provenance graphs must stop fallthrough after a diverging call while
-preserving the call's argument effects and any applicable unwind behavior.
-
-These five CFG gaps were reproduced with a compiler built from the source
-tree on 2026-10-02. The two invalid or rejected-program cases were checked
-with `-emit-ll`; the deferred-copy, for-condition, and deferred-assignment
-cases were also compiled and executed. All 108 compiler unit tests pass
+These four CFG gaps were reproduced with a compiler built from the source
+tree on 2026-10-02. The invalid-program case was checked with `-emit-ll`;
+the deferred-copy, for-condition, and deferred-assignment cases were also
+compiled and executed. All 108 compiler unit tests pass
 without covering these cases.
 
 ### Aggregate equality bypasses nested comparison overloads

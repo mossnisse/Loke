@@ -504,6 +504,29 @@ track_move_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 	}
 }
 
+// The locals a panic's unwind drops where a path ends in a diverging call. The
+// unwind replays registered `defer` statements by their runtime registration,
+// so they are not walked here.
+@(private = "file")
+emit_unwind_cleanups :: proc(graph: ^Flow_Graph) {
+	if graph.mode != .Lifecycle {
+		return
+	}
+	for index := len(graph.in_scope) - 1; index >= 0; index -= 1 {
+		action := graph.in_scope[index]
+		if action.kind != .Local {
+			continue
+		}
+		sym := symbol_of(graph.k.c, graph.tracked[action.slot].symbol)
+		emit(graph, Flow_Event {
+			kind = .Cleanup,
+			slot = action.slot,
+			span = sym == nil ? no_span() : sym.span,
+			name = sym == nil ? "" : identifier_text(graph.k.c, sym.name),
+		})
+	}
+}
+
 @(private = "file")
 enter_flow_scope :: proc(graph: ^Flow_Graph) {
 	append(
@@ -1443,7 +1466,15 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		walk_flow_expr(graph, v.value)
 
 	case ^Expr_Call:
-		return walk_flow_call(graph, v)
+		loans := walk_flow_call(graph, v)
+		// design.md "Diverging procedures": once its operands are evaluated, a
+		// diverging call ends the path, so nothing after it is reached. A panic's
+		// unwind still drops each live local, so the end is their cleanup point.
+		if call_diverges(graph.k.c, v) {
+			emit_unwind_cleanups(graph)
+			graph.current = NO_BLOCK
+		}
+		return loans
 
 	case ^Expr_Binary:
 		if prov && v.resolution.kind == .User_Operator {

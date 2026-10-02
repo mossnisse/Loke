@@ -1,0 +1,28 @@
+package main;
+import "core:fmt";
+import "core:os";
+
+// design.md "Diverging procedures": a direct call to a `-> !` procedure, or
+// `panic`, ends the path that reaches it, so definite initialization only
+// considers the paths that continue past it.
+
+stop :: proc() -> ! { os.exit(0); }
+
+check :: proc(done: bool) {
+    value: int;
+    if (done) { stop(); } else { value = 7; }
+    fmt.println(value);
+}
+
+guarded :: proc(bad: bool) -> int {
+    result: int;
+    if (bad) { panic("bad input"); } else { result = 9; }
+    return result;
+}
+
+main :: proc() {
+    check(false);
+    fmt.println(guarded(false));
+    check(true);
+    fmt.println("not reached");
+}

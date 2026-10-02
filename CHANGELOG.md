@@ -294,6 +294,9 @@ checklist.
 
 ### Fixed
 
+- A branch that ends in `panic` or a call to a `-> !` procedure no longer
+  counts as reaching the code after it, so a local initialized on every
+  other path is not rejected there with `L0500`.
 - A deferred statement can read a scalar local that the procedure returns,
   as in `defer fmt.println(value); return value;`; returning it was taken
   as a move and the read was rejected with `L0500`.
