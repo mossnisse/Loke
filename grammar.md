@@ -249,7 +249,9 @@ omitted initializer to the zero value; these are semantic restrictions.
 
 A brace-bodied constant ends at its outer `}`, and a following `;` is a separate
 empty item. An expression constant always requires `;`, even when it ends in a
-composite literal.
+composite literal. A procedure literal with a body is a `Proc_Definition` here,
+so no call or other suffix follows its `}`: a constant that calls one
+parenthesizes it, as in `VALUE :: (proc() -> int { return 7; })();`.
 
 # Types
 

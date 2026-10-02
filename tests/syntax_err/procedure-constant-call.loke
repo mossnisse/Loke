@@ -1,0 +1,6 @@
+package main;
+// grammar.md "Declarations": a procedure constant ends at its body's `}`, so
+// calling the literal in place needs parentheses.
+VALUE :: proc() -> int { return 7; }();
+CALLED :: (proc() -> int { return 7; })();
+sentinel :: proc() { }

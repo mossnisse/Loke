@@ -30,25 +30,6 @@ overload. Records and arrays containing such a distinct type also receive
 structural equality. Comparison availability must preserve the distinct
 identity, while layout and lowering may still query its representation.
 
-### Procedure-literal calls are rejected in constant initializers
-
-[grammar.md "Declarations"](grammar.md#declarations) permits an expression
-constant, and ["Primary expressions"](grammar.md#primary-expressions) permits
-a procedure literal followed by call suffixes. `parse_constant_value` in
-[src/parser.odin](src/parser.odin) returns immediately after parsing the
-procedure body, so this valid program fails with `L0206` at the call's `(`:
-
-```odin
-package main;
-VALUE :: proc() -> int { return 7; }();
-main :: proc() { }
-```
-
-It should compile with `VALUE` equal to `7`. Writing
-`VALUE :: (proc() -> int { return 7; })();` works, and the unparenthesized
-call also works as a variable initializer. A constant initializer must keep
-parsing expression suffixes after its procedure literal.
-
 ### Aggregate equality bypasses nested comparison overloads
 
 [design.md "Comparison operators"](design.md#comparison-operators) makes

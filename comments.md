@@ -905,6 +905,13 @@ statement block. A block-closing `}` terminates that form; a trailing semicolon
 is accepted only as a separate empty statement. This keeps termination
 deterministic without requiring a redundant `;` after a block.
 
+A procedure constant therefore ends at its body's `}`, and calling the literal
+in place needs parentheses: `VALUE :: (proc() -> int { return 7; })();`.
+Continuing into a call suffix would make the statement after a local
+procedure constant ambiguous: in `f :: proc() { }` followed by `(p)^ = 3;`, the
+`(` would call `f`. Odin avoids this through newline-based semicolon insertion,
+which Loke does not have.
+
 ### `transmute` is a procedure in `core:unsafe`, not an operator
 
 Odin spells a bit cast `transmute(T)value`, which needs a reserved word and its

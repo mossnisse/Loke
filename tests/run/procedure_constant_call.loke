@@ -1,0 +1,9 @@
+package main;
+import "core:fmt";
+// grammar.md "Declarations": a constant calls a procedure literal through
+// parentheses, since its body's `}` ends the literal.
+VALUE :: (proc() -> int { return 7; })();
+main :: proc() {
+    LOCAL :: (proc(x: int) -> int { return x * 2; })(VALUE);
+    fmt.println(VALUE, LOCAL);
+}
