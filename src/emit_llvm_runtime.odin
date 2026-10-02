@@ -1382,9 +1382,16 @@ emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		return "zeroinitializer"
 	}
 	data := emit_expr(e, v.bound[0])
+	// design.md "Borrowed dynamic interface values": a pointer that is nil at
+	// run time gives the nil view, which retains no witness.
+	is_nil, witness := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, data)
+	fmt.sbprintfln(
+		&e.b, "  %s = select i1 %s, ptr null, ptr %s",
+		witness, is_nil, e.witness_names[v.operation.(Call_Dyn_Conversion).witness],
+	)
 	first := insert(e, storage, "undef", "ptr", data, DYN_DATA)
-	out := insert(e, storage, first, "ptr", e.witness_names[v.operation.(Call_Dyn_Conversion).witness], DYN_WITNESS)
-	return out
+	return insert(e, storage, first, "ptr", witness, DYN_WITNESS)
 }
 
 // A slot call: load the thunk from the witness table, trapping first if the

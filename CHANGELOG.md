@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- Converting a pointer that is nil at run time to `dyn I` yields the nil view:
+  it compares equal to `nil`, and a slot call through it panics. The view kept
+  the concrete witness, so the call ran the method on a null receiver.
 - A variant constructor of a union larger than 4096 bytes, taken as a
   procedure value as in `construct := Value.big;`, returns through caller
   storage like any large result; it failed with `L0403`.

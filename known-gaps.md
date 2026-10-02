@@ -605,41 +605,10 @@ module declares ordinary globals and its TLS cleanup body is empty. File-scope
 TLS must use LLVM thread-local storage and participate in the same ordered
 teardown as local TLS.
 
-### Converting a runtime nil pointer retains a dyn witness
-
-[design.md "Borrowed dynamic interface values"](design.md#borrowed-dynamic-interface-values)
-requires conversion of a nil concrete pointer to produce a nil view with no
-witness, and a slot call on that view to panic. `emit_dyn_value` in
-[src/emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) checks only whether
-the checker supplied a witness, which recognizes an untyped literal `nil`.
-A typed pointer that is nil at runtime still gets the concrete witness:
-
-```odin
-package main;
-import "core:fmt";
-Reader :: interface($Self: type) { slot read: proc(self: ^) -> int; }
-Box :: struct {}
-impl Box { read :: proc(self: ^) -> int { return 7; } }
-erase :: proc(pointer: ^Box) -> dyn Reader {
-    return (dyn Reader)(pointer);
-}
-main :: proc() {
-    pointer: ^Box = nil;
-    view := erase(pointer);
-    fmt.println(view == nil);
-    fmt.println(view.read());
-}
-```
-
-This prints `false` and `7` and exits successfully. It must print `true` and
-then panic on the slot call. A method that accesses its receiver can instead
-read through the null data pointer, because slot dispatch checks only the
-witness. Conversion must clear the witness when its evaluated pointer is nil.
-
-These two runtime-emission gaps were reproduced with a compiler built from
+This runtime-emission gap was reproduced with a compiler built from
 the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
-without covering them.
+without covering it.
 
 ### Variadic packs accumulate stack storage in loops
 

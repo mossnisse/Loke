@@ -1,0 +1,19 @@
+// design.md "Borrowed dynamic interface values": converting a pointer that is
+// nil at run time yields the nil view with no witness, so it compares equal to
+// `nil` and a slot call through it panics.
+package main;
+import "core:fmt";
+Reader :: interface($Self: type) { slot read: proc(self: ^) -> int; }
+Box :: struct {}
+impl Box { read :: proc(self: ^) -> int { return 7; } }
+erase :: proc(pointer: ^Box) -> dyn Reader {
+    return (dyn Reader)(pointer);
+}
+main :: proc() {
+    pointer: ^Box = nil;
+    view := erase(pointer);
+    fmt.println(view == nil);
+    box := Box{};
+    fmt.println(erase(&box) == nil, erase(&box).read());
+    fmt.println(view.read());
+}
