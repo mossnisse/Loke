@@ -294,6 +294,9 @@ checklist.
 
 ### Fixed
 
+- A deferred statement can read a scalar local that the procedure returns,
+  as in `defer fmt.println(value); return value;`; returning it was taken
+  as a move and the read was rejected with `L0500`.
 - Using a managed `move` parameter after moving or dropping it reports that it
   was already moved, dropped, or released, rather than that it has no value
   yet.

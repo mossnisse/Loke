@@ -259,30 +259,6 @@ required drop too. With an allocating resource, this leaks the old value.
 The expansion states must be reconciled with a runtime flag where they differ,
 or retained separately for emission at their respective exits.
 
-### Returning a scalar kills the local before deferred reads
-
-[design.md "Parameter semantics and ABI lowering"](design.md#parameter-semantics-and-abi-lowering)
-transfers managed locals into a result; returning an ordinary scalar copies
-its value. ["defer statement"](design.md#defer-statement) runs deferred code
-after the result is taken. The return branch in `walk_flow_stmt` in
-[src/cfg.odin](src/cfg.odin) emits a `Kill` for every bare tracked local whose
-return needs no clone, including an `int`:
-
-```odin
-package main;
-import "core:fmt";
-check :: proc() -> int {
-    value := 7;
-    defer fmt.println(value);
-    return value;
-}
-main :: proc() { fmt.println(check()); }
-```
-
-This wrongly reports `L0500` at the deferred read. It should print `7` twice.
-LLVM emission already restricts the implicit return kill to managed values;
-the lifecycle walk must follow the same rule.
-
 ### Diverging calls leave a fallthrough path in the lifecycle graph
 
 [design.md "Diverging procedures"](design.md#diverging-procedures) ends
@@ -308,8 +284,8 @@ paths. Every path that reaches the print has initialized it. Both lifecycle
 and provenance graphs must stop fallthrough after a diverging call while
 preserving the call's argument effects and any applicable unwind behavior.
 
-These six CFG gaps were reproduced with a compiler built from the source
-tree on 2026-10-02. The three invalid or rejected-program cases were checked
+These five CFG gaps were reproduced with a compiler built from the source
+tree on 2026-10-02. The two invalid or rejected-program cases were checked
 with `-emit-ll`; the deferred-copy, for-condition, and deferred-assignment
 cases were also compiled and executed. All 108 compiler unit tests pass
 without covering these cases.

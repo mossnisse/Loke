@@ -1,0 +1,31 @@
+package main;
+import "core:fmt";
+
+// design.md "defer statement": deferred code runs after the result is taken.
+// Returning a scalar local copies it, so a deferred read still sees it; only
+// a managed local transfers into the result.
+
+check :: proc() -> int {
+    value := 7;
+    defer fmt.println("deferred", value);
+    return value;
+}
+
+changed :: proc() -> int {
+    value := 1;
+    defer value += 10;
+    defer fmt.println("before", value);
+    return value;
+}
+
+text :: proc() -> string {
+    owned := "moved";
+    defer fmt.println("text deferred");
+    return owned;
+}
+
+main :: proc() {
+    fmt.println(check());
+    fmt.println(changed());
+    fmt.println(text());
+}
