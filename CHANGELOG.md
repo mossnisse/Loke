@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- Default formatting of a `@(packed)` struct passes each byte-aligned field
+  to its formatter as an aligned copy, and reads an `@(initialized)` count
+  with `align 1`; the emitted LLVM promised the field type's alignment.
 - Viewing a `string` or `[dynamic]T` field of a `@(packed)` struct as a
   `string_view` or `[]T` reads its header with `align 1`; the emitted LLVM
   promised the header's natural alignment.

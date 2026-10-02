@@ -727,36 +727,7 @@ disagrees with the indirect call's result ABI. It should print `0`. The
 constructor must use the common result-signature and return helpers, including
 `sret_param` and `emit_ret`.
 
-### Default struct formatting loses packed-field alignment
-
-[design.md "@(packed)"](design.md#packed) permits byte-aligned fields, and
-["String format printing"](design.md#string-format-printing) supplies default
-formatting for public fields. `emit_format_struct` in
-[src/emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) passes a packed
-field's address directly to its ordinary type formatter, whose raw loads
-assume the type's ABI alignment:
-
-```odin
-package main;
-import "core:fmt";
-Packed :: struct @(packed) {
-    @(public) tag: u8,
-    @(public) value: u64,
-}
-main :: proc() { value := Packed{1, 123}; fmt.println(value); }
-```
-
-The generated packed-record formatter passes its field at byte offset 1 to
-the `u64` formatter, which emits `load i64, ptr %data` without `align 1`.
-An omitted load alignment promises ABI alignment; overstating alignment is
-undefined behavior under the
-[LLVM load contract](https://llvm.org/docs/LangRef.html#load-instruction).
-The reproduction currently prints `Packed{tag = 1, value = 123}`; this finding
-is the incorrect LLVM alignment contract, not an observed runtime failure.
-Copy under-aligned fields to aligned storage before calling their formatters,
-and preserve alignment for live-prefix counter reads and array elements too.
-
-These five runtime-emission gaps were reproduced with a compiler built from
+These four runtime-emission gaps were reproduced with a compiler built from
 the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering them.

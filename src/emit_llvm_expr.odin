@@ -468,7 +468,7 @@ align_suffix :: proc(e: ^Emitter, address: string, type: Type_Id) -> string {
 
 // Records a field address's effective alignment, which is 1 through a packed
 // struct, so nested access stays unaligned.
-@(private = "file")
+@(private)
 record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_address: string, field_type: Type_Id) {
 	base_info := underlying_info(e.c, base_type)
 	base_align := place_align_of(e, base_address, base_type)

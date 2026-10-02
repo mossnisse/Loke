@@ -776,12 +776,19 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 		emit_format_literal(e, identifier_text(e.c, sym.name))
 		emit_format_literal(e, " = ")
 		slot := gep_field(e, llvm_type(e, under), address, index)
+		// A formatter reads its value at the type's alignment, which a packed
+		// field may not have (design.md "@(packed)"), so it reads an aligned copy.
+		record_field_align(e, under, address, slot, sym.type)
+		if _, unaligned := e.place_align[slot]; unaligned {
+			aligned := alloca(e, llvm_type(e, sym.type))
+			copy_bytes(e, aligned, slot, type_size(e.c, sym.type))
+			slot = aligned
+		}
 		// Only the live prefix of an `@(initialized)` array holds values.
 		if counter := symbol_of(e.c, sym.initialized_by); counter != nil {
-			count := load(
-				e, llvm_type(e, counter.type),
-				gep_field(e, llvm_type(e, under), address, int(counter.index)),
-			)
+			counter_slot := gep_field(e, llvm_type(e, under), address, int(counter.index))
+			record_field_align(e, under, address, counter_slot, counter.type)
+			count := load_place(e, counter.type, counter_slot)
 			element := underlying_info(e.c, sym.type).element
 			emit_format_sequence(e, element, slot, count)
 			continue
