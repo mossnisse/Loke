@@ -1038,11 +1038,12 @@ emit_bound_call :: proc(
 	if callee_type == nil {
 		return nil
 	}
-	// Defaults can read parameters already bound to their left.
+	// A default reads the parameters already bound to its left; a written
+	// argument sees only the bindings of the default it is written in, if any.
 	outer_params := e.param_values
-	e.param_values = make(map[Symbol_Id]string)
+	own_params := make(map[Symbol_Id]string)
 	defer {
-		delete(e.param_values)
+		delete(own_params)
 		e.param_values = outer_params
 	}
 
@@ -1065,10 +1066,13 @@ emit_bound_call :: proc(
 	for step in 0 ..< len(bound) {
 		index := call_node != nil ? call_slot_at(call_node, step) : step
 		argument := bound[index]
+		is_default := symbol != nil && argument != nil && index < len(symbol.param_defaults) &&
+			argument == symbol.param_defaults[index]
+		e.param_values = is_default ? own_params : outer_params
 		if index == 0 && receiver != "" {
 			operands[0] = receiver
 			if symbol != nil && len(symbol.param_symbols) > 0 && symbol.param_symbols[0] != INVALID_SYMBOL {
-				e.param_values[symbol.param_symbols[0]] = receiver
+				own_params[symbol.param_symbols[0]] = receiver
 			}
 			continue
 		}
@@ -1112,9 +1116,10 @@ emit_bound_call :: proc(
 			}
 		}
 		if symbol != nil && index < len(symbol.param_symbols) && symbol.param_symbols[index] != INVALID_SYMBOL {
-			e.param_values[symbol.param_symbols[index]] = operands[index]
+			own_params[symbol.param_symbols[index]] = operands[index]
 		}
 	}
+	e.param_values = outer_params
 
 	// A consumed pack transfers to the callee.
 	if consumed >= 0 && consumed == pack && pack_cleanup.array_cleanup {

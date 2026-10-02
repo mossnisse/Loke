@@ -285,6 +285,11 @@ checklist.
 
 ### Fixed
 
+- A call inside a parameter default, as in `b: int = identity(a)`, reads the
+  parameters to the default's left; the build failed with `L0403`. A written
+  argument no longer reads the parameter a call has just bound, so
+  `return countdown(a + 1, a);` inside `countdown` passes its own `a`, not
+  `a + 1`.
 - A `foreach` whose only `$` bindings are inside a group, as in
   `foreach (($first, $second) in PAIRS)`, expands at compile time; it ran as
   a runtime loop, so `static_assert(first == 7)` reported `L0341`.

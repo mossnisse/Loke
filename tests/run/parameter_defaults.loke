@@ -12,6 +12,17 @@ window :: proc(title: string, x := 0, width := x + 854, scale := 1.5, monitor: ^
 
 sized :: proc(n: int, allocator := mem.default_allocator()) -> int { return n; }
 
+// A call inside a default still sees the parameters to the default's left.
+identity :: proc(x: int) -> int { return x; }
+choose :: proc(a: int, b: int = identity(a)) -> int { return b; }
+
+// A written argument reads its own scope, even when the call binds a parameter
+// of the same procedure first.
+countdown :: proc(a: int, b: int = 0) -> int {
+	if (a > 3) { return b; }
+	return countdown(a + 1, a);
+}
+
 Counter :: struct { v: int }
 impl Counter {
 	make :: proc(v := 7) -> Counter { return {v}; }
@@ -25,4 +36,5 @@ main :: proc() {
 	fmt.println(sized(3));
 	c := Counter.make();
 	fmt.println(c.v, c.add(), c.add(by = 5));
+	fmt.println(choose(7), countdown(1));
 }

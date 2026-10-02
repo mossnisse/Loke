@@ -891,29 +891,6 @@ the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering them.
 
-### Nested calls in defaults lose earlier parameter bindings
-
-[design.md "Default values"](design.md#default-values) and
-["Evaluation order"](design.md#evaluation-order) allow a default to read a
-parameter to its left. `emit_bound_call` in
-[src/emit_llvm_calls.odin](src/emit_llvm_calls.odin) replaces `e.param_values`
-before evaluating a nested call's supplied arguments, hiding the enclosing
-call's already-bound parameters:
-
-```odin
-package main;
-import "core:fmt";
-identity :: proc(x: int) -> int { return x; }
-choose :: proc(a: int, b: int = identity(a)) -> int { return b; }
-main :: proc() { fmt.println(choose(7)); }
-```
-
-This should print `7`. `-emit-ll` succeeds, but the default's `a` becomes a
-load from `choose`'s local `%p0` inside `main`; LLVM rejects the undefined
-value and the executable build reports `L0403`. Preserve the enclosing
-bindings while evaluating nested supplied arguments, and keep each call's
-default bindings scoped to that call.
-
 ### Variadic packs accumulate stack storage in loops
 
 [design.md "Variadic parameters"](design.md#variadic-parameters) permits
@@ -1006,7 +983,7 @@ reports `L0403`. Large fixed-array map keys also use this hashing path.
 Read elements through their addresses when the array uses the large-value
 representation, including nested large arrays.
 
-These four call-emission gaps were reproduced with a compiler built from
+These three call-emission gaps were reproduced with a compiler built from
 the source tree on 2026-10-02. All 24 tests in `src/emit_llvm_test.odin` pass
 with memory tracking and both compiler vets enabled; they do not cover these
 reproductions.
