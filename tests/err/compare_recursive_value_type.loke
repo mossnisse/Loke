@@ -1,0 +1,7 @@
+package main;
+
+// Comparing a record diagnosed as containing itself reports the cycle rather
+// than recursing through it.
+Node :: struct { self: Node }
+equal :: proc(a, b: Node) -> bool { return a == b; }
+main :: proc() {}

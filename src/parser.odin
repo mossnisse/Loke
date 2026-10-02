@@ -37,6 +37,9 @@ Parser :: struct {
 	type_value:     bool,
 	// Silences diagnostics while frames unwind from the depth limit.
 	suppress:       bool,
+	// A procedure literal an argument's type probe already parsed, handed to
+	// the expression reparse so nested literals are not parsed exponentially.
+	probed:         Probed_Literal,
 	allocator:      mem.Allocator,
 }
 
@@ -2126,7 +2129,16 @@ parse_argument :: proc(p: ^Parser) -> Argument {
 	return a
 }
 
+@(private = "file")
+Probed_Literal :: struct {
+	index: int, // where the literal starts
+	end:   int,
+	last:  Token,
+	expr:  Expr,
+}
+
 // Proc and composite literals are reparsed as expressions after a type probe.
+// A probed procedure literal is reused there rather than parsed again.
 @(private = "file")
 parse_argument_value :: proc(p: ^Parser) -> Expr {
 	if !starts_type(current(p).kind) {
@@ -2156,13 +2168,23 @@ parse_argument_value :: proc(p: ^Parser) -> Expr {
 		return candidate
 	}
 
+	// A probe that reached the depth limit is parsed again from scratch, so its
+	// suppressed diagnostics are reported.
+	reuse := proc_literal && p.suppress == suppress && p.depth_reported == depth_reported
+	if reuse {
+		p.probed = {index, p.index, p.last, candidate}
+	} else {
+		truncate_diagnostics(p.c, diagnostic_count)
+	}
+
 	// Roll back the type probe before parsing the complete expression.
 	p.index = index
 	p.last = last
 	p.suppress = suppress
 	p.depth_reported = depth_reported
-	truncate_diagnostics(p.c, diagnostic_count)
-	return parse_expr(p)
+	value := parse_expr(p)
+	p.probed = {}
+	return value
 }
 
 @(private = "file")
@@ -2289,6 +2311,14 @@ starts_type :: proc(kind: Token_Kind) -> bool {
 
 @(private = "file")
 parse_type :: proc(p: ^Parser) -> Expr {
+	if p.probed.expr != nil && p.probed.index == p.index {
+		e := p.probed.expr
+		p.index = p.probed.end
+		p.last = p.probed.last
+		p.probed = {}
+		return e
+	}
+
 	p.depth += 1
 	defer p.depth -= 1
 	if p.depth > MAX_NEST {

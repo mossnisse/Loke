@@ -1457,6 +1457,15 @@ type_is_aggregate :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // design.md "Comparison operators". Aggregates are comparable when every leaf
 // is; that recursion is what the backend then generates.
 type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	seen: Type_Walk
+	defer delete(seen)
+	return type_is_comparable_walk(c, id, &seen)
+}
+
+// The walk is guarded because a record that contains itself by value is
+// diagnosed but still reaches body checking.
+@(private = "file")
+type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
 	// design.md "Comparison operators": a type's own `==` makes it comparable,
 	// whatever its fields are.
 	if type_own_equality(c, id) != INVALID_SYMBOL {
@@ -1466,6 +1475,9 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	info := type_of(c, under)
 	if info == nil {
 		return false
+	}
+	if !type_walk_enter(seen, under, info) {
+		return true
 	}
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .C_Pointer, .Proc, .Enum,
@@ -1491,11 +1503,11 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	case .Type, .Typeid:
 		return true
 	case .Array:
-		return type_is_comparable(c, info.element)
+		return type_is_comparable_walk(c, info.element, seen)
 	case .Struct:
 		for field in info.fields {
 			symbol := symbol_of(c, field)
-			if symbol == nil || !type_is_comparable(c, symbol.type) {
+			if symbol == nil || !type_is_comparable_walk(c, symbol.type, seen) {
 				return false
 			}
 		}
@@ -1504,7 +1516,7 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 		// Comparable against nil always, and against another value of the same
 		// union when every variant is itself comparable.
 		for variant in info.variants {
-			if !type_is_comparable(c, variant) {
+			if !type_is_comparable_walk(c, variant, seen) {
 				return false
 			}
 		}

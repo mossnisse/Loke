@@ -130,26 +130,36 @@ type_own_equality :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 // Every type within `type`, itself included, that compares by its own `==`;
 // structural comparison does not look inside one.
 own_equalities_within :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id) {
+	seen: Type_Walk
+	defer delete(seen)
+	own_equalities_walk(c, type, out, &seen)
+}
+
+// Guarded because a record diagnosed as containing itself still reaches
+// body checking.
+@(private = "file")
+own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, seen: ^Type_Walk) {
 	if type_own_equality(c, type) != INVALID_SYMBOL {
 		append(out, type)
 		return
 	}
-	info := type_of(c, type_underlying(c, type))
-	if info == nil {
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info == nil || !type_walk_enter(seen, under, info) {
 		return
 	}
 	#partial switch info.kind {
 	case .Array:
-		own_equalities_within(c, info.element, out)
+		own_equalities_walk(c, info.element, out, seen)
 	case .Struct:
 		for field in info.fields {
 			if sym := symbol_of(c, field); sym != nil {
-				own_equalities_within(c, sym.type, out)
+				own_equalities_walk(c, sym.type, out, seen)
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			own_equalities_within(c, variant, out)
+			own_equalities_walk(c, variant, out, seen)
 		}
 	}
 }

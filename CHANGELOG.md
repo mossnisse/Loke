@@ -323,6 +323,10 @@ checklist.
 
 ### Fixed
 
+- Comparing or `switch`ing on a record that contains itself by value reports
+  `L0364` instead of crashing the compiler with a stack overflow.
+- Nested procedure-literal arguments, as `sink(proc() { sink(proc() { ... }); });`,
+  are parsed once each; time and memory grew exponentially with the nesting.
 - An owned `foreach` leaf is a local of its step: `move` or `drop` on it
   cancels the step's drop, which used to run again on the inert value left
   behind, and a use after the move is `L0500`. A part a record `Item` hands

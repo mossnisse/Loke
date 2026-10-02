@@ -55,6 +55,8 @@ check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	rebuild_active_items(c, package_of(c, pkg_id))
 	prepare_package(&k, pkg_id)
 	check_package_bodies(&k, pkg_id)
+	// Checking is complete here, as `finish_program_analysis` would find it.
+	release_held_diagnostics(c)
 }
 
 // A single-file program, filled in place because packages keep `&f`.
@@ -1756,4 +1758,37 @@ main :: proc() {}`
 	if !testing.expect(t, ok, "build config constants disagree with the driver") {
 		report(&p.c)
 	}
+}
+
+// A body checked during a compile-time call holds its diagnostics; the helper
+// must report them as the compiler does.
+@(test)
+held_body_errors_reach_frontend_assertions :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
+candidate :: proc(value: $T) -> int where calculate() { return 1; }
+fallback :: proc(value: int) -> int { return 2; }
+choose :: proc{candidate, fallback};
+main :: proc() { _ = choose(1); }
+calculate :: proc() -> bool {
+    if (false) { x := 1; y := move(x); _ = x; }
+    return true;
+}
+`)
+	testing.expect_value(t, p.c.error_count, 1)
+}
+
+// Each nested procedure-literal argument is parsed once, not once per probe.
+@(test)
+nested_procedure_literal_arguments_parse_linearly :: proc(t: ^testing.T) {
+	body := "sink();"
+	for _ in 0 ..< 16 {
+		body = strings.concatenate({"sink(proc() { ", body, " });"}, context.temp_allocator)
+	}
+	p: Checked
+	defer destroy_checked(&p)
+	parse_source(&p, strings.concatenate({"package main; main :: proc() { ", body, " }"}, context.temp_allocator))
+	testing.expect_value(t, p.c.error_count, 0)
+	testing.expect(t, p.f.arena.total_used < 1 << 20)
 }
