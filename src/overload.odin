@@ -736,9 +736,14 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 	}
 	count := len(sym.params)
 	bound := make([]Expr, count, k.c.semantic_allocator)
+	// design.md "Evaluation order": written arguments first, then defaults.
+	order := make([dynamic]int, 0, count, k.c.semantic_allocator)
+	in_order := true
 	ok := true
 	for arg, index in cand.args {
 		slot := cand.slots[index]
+		in_order = in_order && slot == len(order)
+		append(&order, slot)
 		value := arg.expr
 		mode := proc_parameter_mode(k.c, sym.proc_type, slot)
 		if mode == .Borrow && !arg.is_receiver && pointer_to_element(k.c, arg.type) == sym.params[slot] {
@@ -756,9 +761,14 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 	for slot in 0 ..< count {
 		if !cand.filled[slot] && slot < len(sym.param_defaults) {
 			bound[slot] = substitute_caller_location(k, sym.param_defaults[slot], v.span)
+			in_order = in_order && slot == len(order)
+			append(&order, slot)
 		}
 	}
 	v.bound = bound
+	if !in_order {
+		v.bound_order = order[:]
+	}
 	require_argument_ownership(k, v, cand.symbol)
 	return ok
 }

@@ -1386,31 +1386,6 @@ promise. A mutating method on a record in the same packed position is
 correctly rejected. Apply packed-place validation to every `inout` binding,
 including elements reached through a packed array field.
 
-### Overload and method binding loses named-argument evaluation order
-
-[design.md "Evaluation order"](design.md#evaluation-order) evaluates supplied
-arguments in written order. `check_group_call` and `check_method_call` in
-[src/check_calls.odin](src/check_calls.odin) use `bind_chosen_call` in
-[src/overload.odin](src/overload.odin), which fills parameter slots without
-recording `bound_order`:
-
-```odin
-package main;
-import "core:fmt";
-mark :: proc(value: int) -> int { fmt.println(value); return value; }
-use :: proc(first, second: int) { fmt.println(first, second); }
-group :: proc{use};
-main :: proc() { group(second = mark(2), first = mark(1)); }
-```
-
-This prints `1`, `2`, and `1 2`; the first two lines should be `2` and `1`.
-Calling `use` directly produces the required order. A method with the same
-two named parameters also evaluates them in parameter order. The backend,
-compile-time evaluator, and lifecycle graph all use `call_slot_at` or
-`bound_order`, so the missing order affects side effects and borrow/liveness
-analysis. Preserve supplied candidate slots in written order, then append
-omitted defaults in parameter order when binding the chosen procedure.
-
 ### Constant pointer conversions bypass capability checks
 
 [design.md "Pointers"](design.md#pointers) forbids strengthening `^T` to
@@ -1434,7 +1409,7 @@ changing the pointer's declared capability. Validate source/target
 conversion rules before folding concrete typed constants, while preserving
 the separate contextual conversion rules for untyped literals.
 
-These four call-checking gaps were reproduced with a compiler rebuilt from
+These three call-checking gaps were reproduced with a compiler rebuilt from
 the source tree on 2026-10-02. All 108 compiler unit tests pass with memory
 tracking and compiler vets enabled; those tests do not cover these
 reproductions.

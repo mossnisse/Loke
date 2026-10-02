@@ -271,6 +271,9 @@ checklist.
 
 ### Fixed
 
+- Named arguments to an overloaded group or a method, as in
+  `group(second = f(), first = g())`, are evaluated in written order, then
+  the omitted defaults; they ran in parameter order.
 - An omitted `$` argument whose parameter type is itself generic, as in
   `identity :: proc($N: $I = 3) -> I` called as `identity()`, binds that type
   from its default; it reported `L0437`.

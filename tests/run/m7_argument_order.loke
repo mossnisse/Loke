@@ -20,7 +20,13 @@ Runner :: interface($Self: type) {
 Machine :: struct {}
 impl Machine {
 	run :: proc(self, a: int, b: int) -> int { return a * 1000 + b; }
+	pick :: proc(self, a: int, b: int, c: int = bump(9)) -> int { return take(a, b, c); }
+	picks :: proc{pick};
 }
+
+// An overloaded group and a method bind their chosen candidate in the same
+// written order.
+grouped :: proc{take};
 
 // The compile-time evaluator runs the same schedule.
 step :: proc(n: int, seen: int) -> int { return n * 100 + seen; }
@@ -52,6 +58,15 @@ main :: proc() {
 	machine := Machine{};
 	view := (dyn Runner)(&machine);
 	fmt.println(view.run(b = bump(2), a = bump(1)));
+
+	tick = 0;
+	fmt.println(grouped(b = bump(2), a = bump(1)));
+	tick = 0;
+	fmt.println(machine.pick(b = bump(2), a = bump(1)));
+	tick = 0;
+	fmt.println(machine.picks(c = bump(3), b = bump(2), a = bump(1)));
+	tick = 0;
+	fmt.println(Machine.pick(machine, b = bump(2), a = bump(1)));
 
 	tick = 0;
 	fmt.println(packed(..[]int{bump(1)}));
