@@ -247,6 +247,8 @@ checklist.
 
 ### Fixed
 
+- A call of a procedure literal inside parentheses, as in
+  `(proc() -> int { return 7; }())`, parses; it reported `L0219`.
 - A trailing comma after an untyped receiver, as in `proc(self,)`, parses; it
   reported `L0237`.
 - A map literal keeps each constant key's value separate for borrow checking,

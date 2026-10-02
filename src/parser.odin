@@ -2230,11 +2230,12 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 		p.no_composite = false
 		inner: Expr
 		kind := current(p).kind
-		if starts_type(kind) && kind != .Lbracket && kind != .Map {
+		if starts_type(kind) && kind != .Lbracket && kind != .Map && kind != .Proc {
 			inner = parse_type(p)
 		} else {
-			// Bracket and map types may continue into literals or conversions.
-			p.type_value = kind == .Lbracket || kind == .Map
+			// Bracket and map types may continue into literals or conversions,
+			// and a procedure literal into a call.
+			p.type_value = kind == .Lbracket || kind == .Map || kind == .Proc
 			inner = parse_expr(p)
 		}
 		expect(p, .Rparen, "L0219", "`)` to close the parenthesised expression")

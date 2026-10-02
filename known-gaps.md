@@ -469,25 +469,6 @@ It should compile with `VALUE` equal to `7`. Writing
 call also works as a variable initializer. A constant initializer must keep
 parsing expression suffixes after its procedure literal.
 
-### Parentheses reject a call of a procedure literal
-
-[grammar.md "Primary expressions"](grammar.md#primary-expressions) permits
-parentheses around any expression, including a call of a procedure literal.
-The parenthesis branch in `parse_primary` in
-[src/parser.odin](src/parser.odin) parses a leading `proc` only as a type or
-literal and then expects `)`, leaving its call suffix unconsumed:
-
-```odin
-package main;
-main :: proc() {
-	value := (proc() -> int { return 7; }());
-}
-```
-
-This fails with `L0219`, followed by `L0209` and `L0220`. It should compile
-with `value` equal to `7`; removing the outer parentheses works. Type
-disambiguation must preserve the complete expression inside the group.
-
 ### Generic impl patterns ignore nested concrete arguments
 
 [design.md "Generic types"](design.md#generic-types) and
