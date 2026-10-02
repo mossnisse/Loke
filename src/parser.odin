@@ -2765,9 +2765,11 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 		}
 		entry.name = name_of(p, name)
 		append(&names, entry)
-		if !allow(p, .Comma) {
+		// A comma before `)` is the list's trailing comma, not another name.
+		if !at(p, .Comma) || peek_token(p, 1).kind == .Rparen {
 			break
 		}
+		advance(p)
 	}
 	param.names = names[:]
 

@@ -247,6 +247,8 @@ checklist.
 
 ### Fixed
 
+- A trailing comma after an untyped receiver, as in `proc(self,)`, parses; it
+  reported `L0237`.
 - A map literal keeps each constant key's value separate for borrow checking,
   so reading `values[1]` of `map[int]^int{1 = incoming, 2 = &local}` no longer
   counts as borrowing `local`.

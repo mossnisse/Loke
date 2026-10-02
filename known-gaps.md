@@ -488,23 +488,6 @@ This fails with `L0219`, followed by `L0209` and `L0220`. It should compile
 with `value` equal to `7`; removing the outer parentheses works. Type
 disambiguation must preserve the complete expression inside the group.
 
-### A trailing comma after a plain receiver is rejected
-
-[grammar.md "Procedures"](grammar.md#procedures) permits a trailing comma
-in `Parameter_List`, including after the untyped receiver `self`.
-`parse_parameter` in [src/parser.odin](src/parser.odin) consumes that comma
-as part of its name group, then requires another name at `)`:
-
-```odin
-package main;
-Box :: struct { }
-impl Box { method :: proc(self,) { } }
-main :: proc() { Box{}.method(); }
-```
-
-This fails with `L0237`. Removing the comma compiles successfully. A comma
-before the list's closing parenthesis must be left for `Parameter_List`.
-
 ### Generic impl patterns ignore nested concrete arguments
 
 [design.md "Generic types"](design.md#generic-types) and

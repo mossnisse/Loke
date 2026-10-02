@@ -1,7 +1,8 @@
 // Spellings grammar.md allows that the parser used to reject: `using` on a
 // field named `type`, a keyed literal naming that field, a storage modifier
 // before a record type, and a type-only type in a comparison once
-// parenthesised. `static(int)` still names a type.
+// parenthesised, and a trailing comma after a plain receiver. `static(int)`
+// still names a type.
 package main;
 
 import "core:fmt";
@@ -16,6 +17,8 @@ count :: proc() -> int {
 	n.calls += 1;
 	return n.calls;
 }
+
+impl A { plus :: proc(self,) -> int { return self.x + 1; } }
 
 pointer_only :: proc(x: $T) -> bool where T == (^int) { return true; }
 
@@ -35,4 +38,6 @@ main :: proc() {
 	y := 1;
 	fmt.println(pointer_only(&y));
 	static_assert(type_of(&y) == (^int));
+
+	fmt.println(A{4}.plus());
 }
