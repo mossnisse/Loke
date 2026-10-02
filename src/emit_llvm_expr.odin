@@ -2021,6 +2021,11 @@ reinterpret_bits :: proc(e: ^Emitter, source, target: Type_Id, from, to, value: 
 		fmt.sbprintfln(&e.b, "  %s = ptrtoint %s %s to %s", out, from, value, to)
 	case target_ptr && from[0] == 'i':
 		fmt.sbprintfln(&e.b, "  %s = inttoptr %s %s to %s", out, from, value, to)
+	case is_large_value(e, target):
+		// Both sides are addresses; the copy is aligned for `target`.
+		slot := temporary_slot(e, target)
+		copy_bytes(e, slot, value, type_size(e.c, target))
+		return slot
 	case bitcastable(e.c, source) && bitcastable(e.c, target):
 		fmt.sbprintfln(&e.b, "  %s = bitcast %s %s to %s", out, from, value, to)
 	case:

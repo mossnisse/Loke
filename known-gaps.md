@@ -501,33 +501,6 @@ with `-emit-ll`; the deferred-copy, for-condition, and deferred-assignment
 cases were also compiled and executed. All 108 compiler unit tests pass
 without covering these cases.
 
-### Large transmutation treats address values as aggregate registers
-
-[design.md "`unsafe.transmute`"](design.md#unsafetransmute) also permits this
-equal-size conversion between two array layouts:
-
-```odin
-package main;
-import "core:fmt";
-import "core:unsafe";
-words_of :: proc(a: [1024]u64) -> [2048]u32 {
-    return unsafe.transmute([2048]u32, a);
-}
-main :: proc() {
-    a: [1024]u64 = {};
-    a[0] = 1;
-    b := words_of(a);
-    fmt.println(b[0]);
-}
-```
-
-It should print `1`. Large values are represented by snapshot addresses, but
-`reinterpret_bits` in [src/emit_llvm_expr.odin](src/emit_llvm_expr.odin) writes
-the source with a raw aggregate `store`. Clang rejects the instruction because
-its value is a `ptr`, not `[1024 x i64]`. The subsequent raw aggregate load
-also fails to preserve the address representation of the destination. The
-storage path must use the same typed large-value helpers as ordinary expressions.
-
 ### Packed/aligned equality reads discarded capacity
 
 [design.md "Uninitialized capacity"](design.md#uninitialized-capacity) says
@@ -696,7 +669,7 @@ need the alignment-aware place helper. The program currently prints `hello 4`
 at both the default optimization level and `-opt=speed`; the gap is the
 incorrect LLVM alignment contract, not a reproduced runtime failure.
 
-These six expression-emission gaps were confirmed with a compiler built
+These five expression-emission gaps were confirmed with a compiler built
 from the source tree on 2026-10-02, using Clang builds, runtime probes, and
 inspection of emitted LLVM as described above. All 108 compiler unit tests
 pass without covering these cases.

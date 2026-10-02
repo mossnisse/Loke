@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- `unsafe.transmute` between two types larger than 4096 bytes, such as
+  `[1024]u64` to `[2048]u32`, builds; it stored the source's address as an
+  aggregate and failed with `L0403`.
 - `unsafe.transmute` between a pointer and a non-integer type of the same
   size, such as `[8]u8` or `f64`, builds; it emitted an invalid `ptrtoint` or
   `inttoptr` and failed with `L0403`.

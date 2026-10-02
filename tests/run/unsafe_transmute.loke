@@ -129,4 +129,10 @@ main :: proc() {
 	pointer_float := unsafe.transmute(f64, address);
 	fmt.println(pointer_bytes[0], pointer_float, unsafe.transmute(rawptr, pointer_float) == nil);
 
+	// A large value is an address on both sides of the reinterpretation.
+	quads: [1024]u64 = {};
+	quads[0] = 1;
+	quads[1023] = 0x0000000300000002;
+	words := unsafe.transmute([2048]u32, quads);
+	fmt.println(words[0], words[1], words[2046], words[2047]);
 }
