@@ -2583,6 +2583,15 @@ eval_local_decl :: proc(ev: ^Evaluator, d: ^Decl) -> Eval_Flow {
 		eval_fail(ev, d.span, "L0341", "a declaration needs a compile-time frame")
 		return .Fail
 	}
+	// design.md "Storage modifiers": the storage persists between calls, so it
+	// is runtime state that evaluation can neither read nor modify.
+	if d.duration != .None {
+		eval_fail(
+			ev, d.span, "L0341", "a `%s` local has no compile-time meaning",
+			d.duration == .Static ? "static" : "thread_local",
+		)
+		return .Fail
+	}
 	if d.destructure.active {
 		values, ok := eval_destructure(ev, &d.destructure, d.values[0])
 		if !ok {

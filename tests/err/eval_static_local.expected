@@ -1,0 +1,6 @@
+L0341
+@13:10
+a `static` local has no compile-time meaning
+L0341
+@14:10
+a `thread_local` local has no compile-time meaning

@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Storage modifiers": static and thread-local locals persist between
+// calls, so compile-time evaluation can neither read nor modify them.
+
+next :: proc() -> int {
+	n: static int = 0;
+	n += 1;
+	return n;
+}
+scale :: proc() -> int { m: thread_local int = 4; return m; }
+
+VALUE :: next() + next();
+OTHER :: scale();
+
+main :: proc() { _ = next(); _ = scale(); }

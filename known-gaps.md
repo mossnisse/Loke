@@ -267,30 +267,6 @@ main :: proc() { fmt.println(VALUE, compute()); }
 Both results should be `1020`. Prepared map destinations must continue to name
 the live entries after later destination evaluation grows the same map.
 
-### Compile-time evaluation treats static storage as lexical locals
-
-[design.md "Storage modifiers"](design.md#storage-modifiers) gives `static`
-and `thread_local` bindings persistent storage. Such mutable runtime state
-cannot be read or modified during
-["Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation).
-`src/eval.odin` ignores the duration of a local declaration, allocates a fresh
-slot in each call, and accepts this program, which prints `2 3`:
-
-```odin
-package main;
-import "core:fmt";
-next :: proc() -> int {
-	n: static int = 0;
-	n += 1;
-	return n;
-}
-VALUE :: next() + next();
-main :: proc() { fmt.println(VALUE, next() + next()); }
-```
-
-`VALUE` must be rejected because its evaluation modifies and reads `n`.
-The same declaration path also handles `thread_local` bindings.
-
 ### Compile-time calls cannot supply an inout result as a place
 
 [design.md "`inout` results"](design.md#inout-results) makes a call returning

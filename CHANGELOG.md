@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A procedure that reaches a `static` or `thread_local` local cannot run in a
+  compile-time evaluation (`L0341`): that storage persists between calls, and
+  evaluation gave each call a fresh copy. Compute the constant without it.
 - A procedure group cannot name a lifecycle or conversion hook (`L0412`), which
   let the group call the hook directly. Use the language operation, such as
   `drop(value)`, instead.
