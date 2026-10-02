@@ -101,41 +101,7 @@ Its staged values and those of `try_insert` similarly need protection across
 later key callbacks. Register transferred arguments and completed staged
 clones until insertion commits or explicit failure cleanup destroys them.
 
-### Map literals clone elements through the default allocator
-
-[design.md "Maps"](design.md#maps) constructs a map literal using its
-destination allocator, including a declaration's `via` policy. Borrowed
-elements must clone through that allocator, as dynamic-array literal elements
-do. `emit_map_literal_into` in
-[src/emit_llvm_containers.odin](src/emit_llvm_containers.odin) instead calls
-`emit_clone_value` without supplying the map's bound allocator:
-
-```odin
-package main;
-import "core:fmt";
-import "core:mem";
-Res :: struct { id: int }
-impl Res {
-    copy_res :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
-        fmt.println(allocator == mem.default_allocator());
-        return .ok(Res{self.id});
-    }
-}
-main :: proc() {
-    arena := mem.Arena.init();
-    value := Res{7};
-    m: map[int]Res via arena.allocator() = {1 = value};
-    xs: [dynamic]Res via arena.allocator() = {value};
-    fmt.println(value.id, m[1].id, xs[0].id);
-}
-```
-
-This prints `true`, `false`, and `7 7 7`; both clone calls should print
-`false`. The map's table uses the arena, but its element clone uses the
-default provider, violating the allocator selection for nested allocations
-and their failure policy. Pass the map's allocator to the element clone.
-
-These four container-emission findings were reproduced with a compiler built
+These three container-emission findings were reproduced with a compiler built
 from the source tree on 2026-10-02 at the default optimization level. All 108
 compiler unit tests pass with memory tracking and both compiler vets enabled;
 the current fixtures do not cover these cases.

@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- A borrowed element of a map literal is cloned through the map's allocator,
+  including a declaration's `via` provider, as a dynamic-array literal's is; it
+  used the default allocator.
 - A variadic call with a `..` spread releases its pack's stack storage at the
   end of its full expression, so calling it in a long loop no longer overflows
   the stack. A managed pack without a spread keeps its cleanup flags in the

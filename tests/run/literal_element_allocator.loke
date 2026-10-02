@@ -1,0 +1,20 @@
+// design.md "Maps": a container literal is built with its destination's
+// allocator, so a borrowed element is cloned through the declaration's `via`
+// provider in a map literal, as in a dynamic-array literal.
+package main;
+import "core:fmt";
+import "core:mem";
+Res :: struct { id: int }
+impl Res {
+    copy_res :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+        fmt.println(allocator == mem.default_allocator());
+        return .ok(Res{self.id});
+    }
+}
+main :: proc() {
+    arena := mem.Arena.init();
+    value := Res{7};
+    m: map[int]Res via arena.allocator() = {1 = value};
+    xs: [dynamic]Res via arena.allocator() = {value};
+    fmt.println(value.id, m[1].id, xs[0].id);
+}

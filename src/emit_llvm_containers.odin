@@ -511,6 +511,8 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		emit_store_via(e, address, v.via)
 	}
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_map_bind(ptr %s)", address)
+	// design.md "Maps": a borrowed element clones through the map's own provider.
+	provider := load(e, "ptr", gep_field(e, CONTAINER_TYPE, address, CONTAINER_ALLOC))
 	reserved := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call i32 @loke_rt_v1_map_reserve(ptr %s, ptr %s, i64 %d)",
@@ -524,7 +526,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		key_slot, key_cleanup := emit_map_key_slot(e, written.key, as_type)
 		value := emit_expr(e, written.value)
 		if index < len(v.element_clones) && v.element_clones[index] {
-			value = emit_clone_value(e, element, value)
+			value = emit_clone_value(e, element, value, provider)
 		}
 		place, inserted := emit_map_entry(e, ops, address, key_slot)
 		missing := temp(e)
