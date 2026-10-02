@@ -1,0 +1,27 @@
+// design.md "Indexing and slicing": an evaluated indexing expression calls its
+// resolved `operator([])`, with every index, at compile time as at run time.
+package main;
+import "core:fmt";
+
+Box :: struct { value: int }
+impl Box {
+	get :: operator([]) proc(self: Box, index: int) -> int {
+		return self.value + index + 100;
+	}
+}
+
+Grid :: struct { cells: [4]int }
+impl Grid {
+	at :: operator([]) proc(self: Grid, row, col: int) -> int { return self.cells[row * 2 + col]; }
+}
+
+offset :: proc() -> int { box := Box{3}; return box[0]; }
+pick :: proc() -> int { grid := Grid{{1, 2, 3, 4}}; return grid[1, 0]; }
+
+OFFSET :: offset();
+PICK :: pick();
+
+main :: proc() {
+	fmt.println(OFFSET, offset());
+	fmt.println(PICK, pick());
+}

@@ -541,6 +541,11 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 		return field^, true
 
 	case ^Expr_Index:
+		// design.md "Indexing and slicing": a user `operator([])` is called with
+		// the arguments the checker bound, receiver first.
+		if v.resolution.kind == .User_Operator {
+			return eval_invoke(ev, v.resolution.symbol, v.bound, v.span)
+		}
 		operand, ok := eval_aggregate_value(ev, v.operand)
 		if !ok {
 			return Eval_Value{}, false
@@ -1585,6 +1590,10 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 		return eval_field(ev, v, base.elements)
 
 	case ^Expr_Index:
+		if v.resolution.kind == .User_Operator {
+			eval_fail(ev, v.span, "L0341", "a user operator has no compile-time meaning yet")
+			return nil, false
+		}
 		base, ok := eval_aggregate_place(ev, v.operand)
 		if !ok {
 			return nil, false

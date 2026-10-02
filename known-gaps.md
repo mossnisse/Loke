@@ -219,31 +219,6 @@ inspecting the remaining component. Use type-identity cycle detection rather
 than treating every sufficiently deep shape as supported; the related invalid
 component and compile-time-only component walks need the same treatment.
 
-### Compile-time indexing bypasses user operators
-
-[design.md "Indexing and slicing"](design.md#indexing-and-slicing) and
-["Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation)
-require an evaluated indexing expression to call its resolved operator.
-`src/eval.odin` instead indexes the receiver's stored fields, ignoring the
-operator and any additional indices. This program prints `3 103`:
-
-```odin
-package main;
-import "core:fmt";
-Box :: struct { value: int }
-impl Box {
-	get :: operator([]) proc(self: Box, index: int) -> int {
-		return self.value + index + 100;
-	}
-}
-compute :: proc() -> int { box := Box{3}; return box[0]; }
-VALUE :: compute();
-main :: proc() { fmt.println(VALUE, compute()); }
-```
-
-Both results should be `103`. The evaluator must dispatch the checked indexing
-operator rather than treat its receiver as a built-in sequence.
-
 ### Compile-time calls cannot supply an inout result as a place
 
 [design.md "`inout` results"](design.md#inout-results) makes a call returning
