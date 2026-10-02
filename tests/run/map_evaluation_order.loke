@@ -1,0 +1,13 @@
+// design.md "Evaluation order": `key in m` evaluates the key before the map.
+package main;
+import "core:fmt";
+
+key :: proc() -> string { fmt.println("key"); return "a"; }
+table :: proc() -> map[string]int {
+	fmt.println("table");
+	return map[string]int{"a" = 7};
+}
+
+main :: proc() {
+	fmt.println(key() in table());
+}

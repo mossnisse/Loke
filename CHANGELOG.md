@@ -247,6 +247,7 @@ checklist.
 
 ### Fixed
 
+- `key in m` evaluates the key before the map.
 - A call of a procedure literal inside parentheses, as in
   `(proc() -> int { return 7; }())`, parses; it reported `L0219`.
 - A trailing comma after an untyped receiver, as in `proc(self,)`, parses; it

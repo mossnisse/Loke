@@ -169,31 +169,7 @@ This prints `true`, `false`, and `7 7 7`; both clone calls should print
 default provider, violating the allocator selection for nested allocations
 and their failure policy. Pass the map's allocator to the element clone.
 
-### Map membership reverses operand evaluation
-
-[design.md "Evaluation order"](design.md#evaluation-order) evaluates a
-binary expression's left operand before its right operand.
-`emit_map_membership` in
-[src/emit_llvm_containers.odin](src/emit_llvm_containers.odin) evaluates the
-right-hand map before the left-hand key:
-
-```odin
-package main;
-import "core:fmt";
-key :: proc() -> int { fmt.println("key"); return 1; }
-table :: proc() -> map[int]int {
-    fmt.println("table");
-    return map[int]int{1 = 7};
-}
-main :: proc() { fmt.println(key() in table()); }
-```
-
-This prints `table`, `key`, and `true`; it should print `key`, `table`, and
-`true`. Side effects and which operand's panic runs first are therefore
-reversed. Evaluate and protect the key before evaluating the map, then
-perform the lookup using the captured operands.
-
-These six container-emission findings were reproduced with a compiler built
+These five container-emission findings were reproduced with a compiler built
 from the source tree on 2026-10-02 at the default optimization level. All 108
 compiler unit tests pass with memory tracking and both compiler vets enabled;
 the current fixtures do not cover these cases.

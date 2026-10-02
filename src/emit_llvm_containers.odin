@@ -1079,13 +1079,14 @@ emit_drop_run :: proc(e: ^Emitter, element: Type_Id, data, count: string) {
 	place_label(e, done)
 }
 
-// `key in m`: one probe, no insertion and no value.
+// `key in m`: one probe, no insertion and no value. The key is evaluated, and
+// its temporary protected, before the map (design.md "Evaluation order").
 @(private)
 emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	container := expr_base(v.rhs).type
 	ops := container_ops_global(e, container)
-	header := emit_address(e, v.rhs)
 	key_slot, cleanup := emit_map_key_slot(e, v.lhs, container)
+	header := emit_address(e, v.rhs)
 	found, out := temp(e), temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
