@@ -1,0 +1,6 @@
+worker 20
+drop 22
+drop 21
+drop 2
+main 10 1 0
+drop 1

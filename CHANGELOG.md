@@ -308,6 +308,11 @@ checklist.
 
 ### Fixed
 
+- A file-scope `thread_local` has one instance per thread, and each thread's
+  managed ones drop when it returns, together with its procedure-local
+  `thread_local` values, in reverse order of package path, file path, and
+  source position. File-scope ones were one global every thread shared, and
+  never dropped.
 - A generic parameter whose type names an earlier parameter, as `$V: [N]int`
   does, checks each application's or call's argument against that
   application's own `N`. The first application's type was reused, so a later

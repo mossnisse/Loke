@@ -207,55 +207,6 @@ from the source tree on 2026-10-02, using Clang builds, runtime probes, and
 inspection of emitted LLVM as described above. All 108 compiler unit tests
 pass without covering these cases.
 
-### File-scope thread-local values use shared globals and receive no teardown
-
-[design.md "Storage modifiers"](design.md#storage-modifiers) creates one
-`thread_local` instance per thread, and
-["Values that outlive every scope"](design.md#values-that-outlive-every-scope)
-drops managed TLS on normal thread return. `emit_global` in
-[src/emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) emits every file-scope
-binding as an ordinary LLVM `global`, ignoring its duration.
-`emit_thread_local_teardown` also omits these bindings because it walks only
-the compiler's list of static-duration locals:
-
-```odin
-package main;
-import "core:fmt";
-import "core:thread";
-Tracked :: struct { id: int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) {
-        if (self.id != 0) { fmt.println("drop", self.id); }
-    }
-}
-counter: thread_local int;
-resource: thread_local Tracked;
-worker :: proc() {
-    counter = 20;
-    resource = Tracked{2};
-    fmt.println("worker", counter);
-}
-main :: proc() {
-    counter = 10;
-    resource = Tracked{1};
-    child := thread.spawn(worker);
-    child.join();
-    fmt.println("main", counter);
-}
-```
-
-Expected output is `worker 20`, `drop 2`, `main 10`, `drop 1`. Actual output
-is `drop 1`, `worker 20`, `main 20`: the worker overwrites the main thread's
-instances, and neither thread receives its required teardown. The emitted
-module declares ordinary globals and its TLS cleanup body is empty. File-scope
-TLS must use LLVM thread-local storage and participate in the same ordered
-teardown as local TLS.
-
-This runtime-emission gap was reproduced with a compiler built from
-the source tree on 2026-10-02, using executable builds and LLVM inspection.
-All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
-without covering it.
-
 ### A moved owned foreach leaf is dropped again at the end of its step
 
 [design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types)

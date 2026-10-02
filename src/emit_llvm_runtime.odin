@@ -2,6 +2,7 @@
 package lokec
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 
 // design.md "String format printing": Formattable witnesses per typeid. A
@@ -238,20 +239,71 @@ emit_thread_local_teardown :: proc(e: ^Emitter) {
 	defer finish_function_emission(e, function)
 	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() {")
 	fmt.sbprintln(&e.b, "entry:")
-	for index := len(e.c.static_locals) - 1; index >= 0; index -= 1 {
-		symbol_id := e.c.static_locals[index]
-		sym := symbol_of(e.c, symbol_id)
-		if sym == nil || sym.duration != .Thread_Local {
-			continue
-		}
-		if !emit_lifecycle(e, sym.type).managed {
-			continue
-		}
-		emit_drop_place(e, sym.type, symbol_name(e, symbol_id))
+	owners := thread_local_owners(e)
+	for index := len(owners) - 1; index >= 0; index -= 1 {
+		sym := symbol_of(e.c, owners[index].symbol)
+		emit_drop_place(e, sym.type, symbol_name(e, owners[index].symbol))
 	}
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
+}
+
+@(private = "file")
+Thread_Local_Owner :: struct {
+	symbol:   Symbol_Id,
+	pkg_key:  string,
+	file:     int, // the position in its package's files, which are sorted by path
+	position: u32,
+}
+
+// design.md "Values that outlive every scope": every managed `thread_local`,
+// at file scope or in a procedure, in initialization order: by package path,
+// then file path, then source position.
+@(private = "file")
+thread_local_owners :: proc(e: ^Emitter) -> []Thread_Local_Owner {
+	owners := make([dynamic]Thread_Local_Owner, context.temp_allocator)
+	add := proc(e: ^Emitter, owners: ^[dynamic]Thread_Local_Owner, symbol_id: Symbol_Id) {
+		sym := symbol_of(e.c, symbol_id)
+		if sym == nil || sym.kind != .Var || sym.duration != .Thread_Local {
+			return
+		}
+		if !emit_lifecycle(e, sym.type).managed {
+			return
+		}
+		pkg := package_of(e.c, sym.pkg)
+		file := 0
+		for candidate, index in pkg.files {
+			if candidate.file == sym.span.file {
+				file = index
+			}
+		}
+		append(owners, Thread_Local_Owner{symbol_id, pkg.key, file, sym.span.lo})
+	}
+	for symbol_id in e.c.static_locals {
+		add(e, &owners, symbol_id)
+	}
+	for index in 1 ..< len(e.c.packages) {
+		for file in package_of(e.c, Package_Id(index)).files {
+			for item in file.active_items {
+				if d, ok := item.(^Decl); ok && decl_proc_literal(d) == nil {
+					for symbol_id in d.symbols {
+						add(e, &owners, symbol_id)
+					}
+				}
+			}
+		}
+	}
+	slice.sort_by(owners[:], proc(a, b: Thread_Local_Owner) -> bool {
+		if a.pkg_key != b.pkg_key {
+			return a.pkg_key < b.pkg_key
+		}
+		if a.file != b.file {
+			return a.file < b.file
+		}
+		return a.position < b.position
+	})
+	return owners[:]
 }
 
 emit_global :: proc(e: ^Emitter, d: ^Decl) {
@@ -272,7 +324,8 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 			}
 			value = zero
 		}
-		fmt.sbprintfln(&e.b, "%s = global %s %s", name, llvm_type(e, sym.type), value)
+		qualifier := sym.duration == .Thread_Local ? "thread_local " : ""
+		fmt.sbprintfln(&e.b, "%s = %sglobal %s %s", name, qualifier, llvm_type(e, sym.type), value)
 	}
 	fmt.sbprintln(&e.b, "")
 }

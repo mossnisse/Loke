@@ -1,0 +1,34 @@
+package main;
+import "core:fmt";
+import "core:thread";
+// design.md "Storage modifiers": a file-scope `thread_local` has one instance per
+// thread. design.md "Values that outlive every scope": each thread's managed
+// ones drop at its return, file-scope and local together, in reverse source
+// order.
+Tracked :: struct { id: int }
+impl Tracked {
+    release :: hook(drop) proc(self: inout Tracked) {
+        if (self.id != 0) { fmt.println("drop", self.id); }
+    }
+}
+counter: thread_local int;
+resource: thread_local Tracked;
+remember :: proc(id: int) {
+    local: thread_local Tracked;
+    local = Tracked{id};
+}
+later: thread_local Tracked;
+worker :: proc() {
+    counter = 20;
+    resource = Tracked{2};
+    remember(21);
+    later = Tracked{22};
+    fmt.println("worker", counter);
+}
+main :: proc() {
+    counter = 10;
+    resource = Tracked{1};
+    child := thread.spawn(worker);
+    child.join();
+    fmt.println("main", counter, resource.id, later.id);
+}
