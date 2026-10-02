@@ -1,0 +1,6 @@
+L0432
+@8:18
+not representable by the generic parameter's type `[3]int`
+L0392
+@10:10
+no overload of `first` applies

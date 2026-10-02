@@ -113,38 +113,6 @@ It should compile with `VALUE` equal to `7`. Writing
 call also works as a variable initializer. A constant initializer must keep
 parsing expression suffixes after its procedure literal.
 
-### Dependent generic parameter types retain another instance's annotations
-
-[design.md "Generic data types"](design.md#generic-data-types) and
-["Generic argument identity"](design.md#generic-argument-identity) require
-each value argument to use its parameter type after the preceding arguments
-have bound. The compiler rejects the second application here with `L0432`,
-claiming that its `[3]int` argument must fit `[2]int`:
-
-```odin
-package main;
-import "core:fmt";
-Buffer :: struct($N: int, $V: [N]int) { values: [N]int }
-main :: proc() {
-    a: Buffer(2, [2]int{1, 2}) = {};
-    b: Buffer(3, [3]int{3, 4, 5}) = {};
-    fmt.println(a.values.len(), b.values.len());
-}
-```
-
-It should compile and print `2 3`; the second application compiles in isolation.
-Conversely, after the first application, an invalid
-`Buffer(3, [2]int{3, 4})` is accepted. `instantiate_record_application` in
-[src/generic.odin](src/generic.odin) resolves the template's shared parameter
-syntax, whose `[N]int` node caches its first `denoted_type`. Resolving a fresh
-copy for each application would keep the parameter type specific to its
-bindings. Procedure inference shares this defect: successive calls to
-`proc($N: int, $V: [N]int)` also reuse the first array length.
-
-This generic gap was confirmed with a compiler built from the source
-tree on 2026-10-02, using `-emit-ll`. All 108 compiler unit tests pass without
-covering it.
-
 ### Aggregate equality bypasses nested comparison overloads
 
 [design.md "Comparison operators"](design.md#comparison-operators) makes

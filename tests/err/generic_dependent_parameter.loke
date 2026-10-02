@@ -1,0 +1,11 @@
+package main;
+// design.md "Generic argument identity": an earlier application must not fix
+// the type a later one checks its argument against.
+Buffer :: struct($N: int, $V: [N]int) { values: [N]int }
+first :: proc($N: int, $V: [N]int) -> int { return N; }
+main :: proc() {
+    a: Buffer(2, [2]int{1, 2}) = {};
+    b: Buffer(3, [2]int{3, 4}) = {};
+    x := first(2, [2]int{1, 2});
+    y := first(3, [2]int{3, 4});
+}

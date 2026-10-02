@@ -1249,7 +1249,8 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 					return result
 				}
 			}
-			wanted := resolve_type_syntax(k, parameter.type)
+			// A copy, so `[N]int` names this call's `N` and not a cached earlier one.
+			wanted := resolve_type_syntax(k, clone_expr(k.c, parameter.type))
 			bound, bound_ok := bind_compile_time_argument(k, entry.name, arg, wanted, scope, &bindings)
 			if !bound_ok {
 				result.reason = bound
@@ -1753,7 +1754,8 @@ instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Ge
 	for parameter, index in template.params {
 		arg := v.args[index]
 		k.scope = scope
-		wanted := resolve_type_syntax(k, parameter.type_syntax)
+		// A copy, so `[N]int` names this application's `N` and not a cached earlier one.
+		wanted := resolve_type_syntax(k, clone_expr(k.c, parameter.type_syntax))
 		k.scope = saved_scope
 		bound, bound_ok := bind_record_argument(k, parameter, arg, wanted, scope, &bindings, report)
 		if !bound_ok {

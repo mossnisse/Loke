@@ -1,0 +1,12 @@
+package main;
+import "core:fmt";
+// design.md "Generic argument identity": each application binds its own `N`
+// before checking the argument whose type names it.
+Buffer :: struct($N: int, $V: [N]int) { values: [N]int }
+first :: proc($N: int, $V: [N]int) -> int { return V[0] + N; }
+main :: proc() {
+    a: Buffer(2, [2]int{1, 2}) = {};
+    b: Buffer(3, [3]int{3, 4, 5}) = {};
+    fmt.println(a.values.len(), b.values.len());
+    fmt.println(first(2, [2]int{1, 2}), first(3, [3]int{3, 4, 5}));
+}

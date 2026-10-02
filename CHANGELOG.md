@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A generic argument whose parameter's type names an earlier parameter must
+  fit that application's own type: after `Buffer(2, [2]int{1, 2})`, the
+  mismatched `Buffer(3, [2]int{3, 4})` is `L0432` (and the same call of a
+  procedure finds no overload), where it was accepted. Write an argument of
+  the right length.
 - A `for` condition that may move or drop a local, as
   `for (ready && consume(move(xs)))` does, leaves it dead in the body and
   after the loop (`L0500`): the condition's effects reached neither. Give the
@@ -303,6 +308,10 @@ checklist.
 
 ### Fixed
 
+- A generic parameter whose type names an earlier parameter, as `$V: [N]int`
+  does, checks each application's or call's argument against that
+  application's own `N`. The first application's type was reused, so a later
+  valid `Buffer(3, [3]int{...})` was rejected.
 - A copy in a `defer` becomes a move of its source only when no exit the
   `defer` runs at reads the source again. One exit that qualified moved the
   source at every exit, so code after the block saw it empty.
