@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A copy of a read-only reborrow, or an element pointer taken through one,
+  keeps the mutable source suspended while it is live (`L0641`), as the
+  reborrow itself does: `copy := view; source[0] = 9;` was accepted, and an
+  append through the source could leave such a pointer dangling. End the
+  copy's last use before using the source again.
 - A generic argument whose parameter's type names an earlier parameter must
   fit that application's own type: after `Buffer(2, [2]int{1, 2})`, the
   mismatched `Buffer(3, [2]int{3, 4})` is `L0432` (and the same call of a

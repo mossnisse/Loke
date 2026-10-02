@@ -1002,12 +1002,18 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 			continue
 		}
 		// Storing a carrier into itself, as `xs = xs[1:]`, suspends nothing. A
-		// traversal's reborrow passes on to what is taken from its elements.
-		if into < 0 || into == slot ||
-		   !(prov_slot_is_mutable_carrier(graph, slot) || prov_slot_is_reborrow(graph, slot) || prov_slot_is_loaded_mutable(graph, slot)) {
+		// reborrow passes on to its copies and to what is taken from its elements.
+		if into < 0 || into == slot {
 			continue
 		}
-		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = into, span = span, mutable = !weakens})
+		mutable_source := prov_slot_is_mutable_carrier(graph, slot) || prov_slot_is_loaded_mutable(graph, slot)
+		reborrowed := prov_slot_is_reborrow(graph, slot)
+		if !mutable_source && !reborrowed {
+			continue
+		}
+		// A named read-only reborrow is not itself suspended by its copies.
+		passes_on := !mutable_source && graph.prov_slots[slot].symbol != INVALID_SYMBOL
+		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = into, span = span, mutable = !weakens, passes_on = passes_on})
 	}
 }
 
@@ -1060,12 +1066,9 @@ prov_reborrow_traversal :: proc(graph: ^Flow_Graph, sources: []int, span: Span, 
 	return out[:]
 }
 
-// A traversal's unnamed reborrow of a carrier.
+// A reborrow of a carrier, named or a traversal's, whose copies extend it.
 @(private = "file")
 prov_slot_is_reborrow :: proc(graph: ^Flow_Graph, slot: int) -> bool {
-	if graph.prov_slots[slot].symbol != INVALID_SYMBOL {
-		return false
-	}
 	for reborrow in graph.reborrows {
 		if reborrow.derived == slot {
 			return true

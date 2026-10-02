@@ -30,35 +30,6 @@ overload. Records and arrays containing such a distinct type also receive
 structural equality. Comparison availability must preserve the distinct
 identity, while layout and lowering may still query its representation.
 
-### Read-only aliases lose their source's suspension
-
-[design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)
-requires the mutable source to stay suspended while a read-only reborrow, or a
-copy of it, is live. The compiler accepts this program, although the write to
-`source` must be rejected:
-
-```odin
-package main;
-import "core:fmt";
-
-main :: proc() {
-    xs := [4]int{1, 2, 3, 4};
-    source: []mut int = xs[:];
-    view: []int = source;
-    copy := view;
-    source[0] = 9;
-    fmt.println(copy[0]);
-}
-```
-
-Using `view[0]` directly after the write produces `L0641`, but copying `view`
-ends its slot's liveness without extending the reborrow to `copy`.
-`live_reborrow_of` in [src/borrow.odin](src/borrow.odin) follows only explicit
-reborrow edges, so it misses live read-only aliases. Taking an element pointer
-through a read-only pointer reborrow has the same problem: a later
-`source^.append(...)` can reallocate storage that the element pointer still
-names.
-
 ### Publishing a mutable carrier does not suspend it
 
 [design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)
@@ -90,8 +61,8 @@ The append may reallocate the array and leave `element` dangling. Replacing
 loans into the resolved destination slots, but does not connect those slots
 to the mutable source's reborrow lifetime.
 
-Both reproductions were confirmed with a compiler built from the source tree
-on 2026-10-02, using `-emit-ll`; both wrongly exit successfully. The 108
+This reproduction was confirmed with a compiler built from the source tree
+on 2026-10-02, using `-emit-ll`; it wrongly exits successfully. The 108
 compiler unit tests pass without covering these cases.
 
 ### Procedure-literal calls are rejected in constant initializers

@@ -232,6 +232,8 @@ Prov_Reborrow :: struct {
 	derived: int,
 	span:    Span,
 	mutable: bool,
+	// Only extends the reborrow `source` belongs to: its copies do not suspend it.
+	passes_on: bool,
 }
 
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
@@ -2263,7 +2265,7 @@ live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool) -> (Prov
 	visited := make(map[int]bool, 8, context.temp_allocator)
 	pending := make([dynamic]int, 0, 8, context.temp_allocator)
 	for reborrow in graph.reborrows {
-		if reborrow.source != source {
+		if reborrow.source != source || reborrow.passes_on {
 			continue
 		}
 		clear(&pending)

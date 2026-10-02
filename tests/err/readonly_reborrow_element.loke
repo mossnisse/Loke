@@ -1,0 +1,12 @@
+package main;
+import "core:fmt";
+// design.md "Weakening and reborrows": an element pointer taken through a
+// read-only pointer reborrow keeps its mutable source suspended.
+main :: proc() {
+    xs := [dynamic]int{1};
+    source := &mut xs;
+    view: ^[dynamic]int = source;
+    element := &view^[0];
+    source^.append(2);
+    fmt.println(element^);
+}

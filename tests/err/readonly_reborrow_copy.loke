@@ -1,0 +1,12 @@
+package main;
+import "core:fmt";
+// design.md "Weakening and reborrows": a copy of a read-only reborrow keeps its
+// mutable source suspended.
+main :: proc() {
+    xs := [4]int{1, 2, 3, 4};
+    source: []mut int = xs[:];
+    view: []int = source;
+    copy := view;
+    source[0] = 9;
+    fmt.println(copy[0]);
+}
