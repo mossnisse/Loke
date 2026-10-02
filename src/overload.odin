@@ -85,6 +85,10 @@ resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Pro
 			errorf(k.c, name.span, "L0393", "`%s` is not a procedure, so it cannot be a group member", name.text)
 			continue
 		}
+		// A group would make the hook an ordinary callable operation.
+		if reject_direct_hook_call(k, name.span, member) {
+			continue
+		}
 		if slice.contains(members[:], member) {
 			errorf(k.c, name.span, "L0394", "`%s` is already a member of this group", name.text)
 			continue

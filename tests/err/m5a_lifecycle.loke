@@ -38,6 +38,7 @@ Resource :: struct { live: bool }
 impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { self.live = false; }
 	release_again :: hook(drop) proc(self: inout Resource) { self.live = false; }
+	exposed :: proc{release};
 }
 
 main :: proc() {

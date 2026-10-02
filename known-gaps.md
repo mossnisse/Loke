@@ -1503,38 +1503,6 @@ source tree on 2026-10-02. The existing `m4b_foreach`, `m6b_iteration`,
 `derived_iterator`, `readonly_iteration`, and `mutable_iteration` run cases
 all compile and match their expected output without covering these cases.
 
-### Procedure groups allow direct lifecycle-hook calls
-
-[design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types)
-and ["Conversion hooks"](design.md#conversion-hooks) reserve hooks for their
-corresponding language operations. `check_group_call` in
-[src/check_calls.odin](src/check_calls.odin) selects and binds a candidate
-without applying `reject_direct_hook_call`, although direct calls and method
-calls apply that check:
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: struct { id: int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) {
-        if (self.id != 0) { fmt.println("drop", self.id); }
-    }
-    again :: proc{release};
-}
-main :: proc() {
-    value := Tracked{7};
-    Tracked.again(inout value);
-    fmt.println("after", value.id);
-}
-```
-
-This should reject access to the hook. Instead it prints `drop 7`, `after 7`,
-and `drop 7`: the group invokes the hook without the language's drop
-bookkeeping, leaving the same initialization eligible for automatic drop.
-Reject a selected hook on the group-call path before binding it, and prevent
-procedure groups from exposing hooks as ordinary callable operations.
-
 ### Inout arguments undergo value conversions
 
 [design.md "Parameter semantics and ABI lowering"](design.md#parameter-semantics-and-abi-lowering)
@@ -1728,7 +1696,7 @@ changing the pointer's declared capability. Validate source/target
 conversion rules before folding concrete typed constants, while preserving
 the separate contextual conversion rules for untyped literals.
 
-These eight call-checking gaps were reproduced with a compiler rebuilt from
+These seven call-checking gaps were reproduced with a compiler rebuilt from
 the source tree on 2026-10-02. All 108 compiler unit tests pass with memory
 tracking and compiler vets enabled; those tests do not cover these
 reproductions.

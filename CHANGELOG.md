@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A procedure group cannot name a lifecycle or conversion hook (`L0412`), which
+  let the group call the hook directly. Use the language operation, such as
+  `drop(value)`, instead.
 - A `foreach` binding follows the rules for other locals: two bindings with
   the same name are `L0304`, and one that hides an outer local or parameter is
   `L0305`. Rename the binding.

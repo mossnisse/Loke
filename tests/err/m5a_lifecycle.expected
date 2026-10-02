@@ -16,21 +16,24 @@ a `move_only` type cannot also declare `hook(copy)`
 L0488
 @40:2
 duplicate `hook(drop)` for `Resource`
+L0412
+@41:18
+`release` implements `hook(drop)` and is not directly accessible; use `drop(value)`
 L0698
-@46:2
+@47:2
 `bad` holds a `Result(^mut Move_Only, Allocator_Error)` that is never used
 L0491
-@46:23
+@47:23
 `Move_Only` is move-only, so it cannot be cloned into a new allocation
 L0412
-@48:2
+@49:2
 `release` implements `hook(drop)` and is not directly accessible; use `drop(value)`
 L0490
-@51:13
+@52:13
 `try_new` takes an operand and an optional allocator
 L0490
-@52:12
+@53:12
 `default_allocator` takes no arguments
 L0496
-@53:2
+@54:2
 `drop` takes one argument, the variable being cleaned up
