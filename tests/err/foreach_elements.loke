@@ -63,4 +63,7 @@ main :: proc() {
 	// indexed(Triple) has the two fields `value` and `index`; the wrapped
 	// record's own arity must not leak through the adapter.
 	foreach ($a, $b, $c in BAD_TRIPLES.indexed()) { fmt.println(a); }
+
+	// A nested `$` makes the whole pattern static, so every leaf carries it.
+	foreach (($a, b, $c) in BAD_TRIPLES) { fmt.println(a); }
 }

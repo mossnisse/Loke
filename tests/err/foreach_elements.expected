@@ -40,3 +40,6 @@ has no field or member `values`
 L0454
 @65:12
 has 2 fields, so a static `foreach` over it binds 1 or 2 names, not 3
+L0454
+@68:16
+`b` is a runtime binding in a static expansion

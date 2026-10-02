@@ -2613,16 +2613,25 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		return check_when_stmt(k, s)
 
 	case ^Stmt_Foreach:
-		// A `$` binding makes this a compile-time expansion.
-		for binding in s.bindings {
-			if binding.is_static {
-				return check_static_foreach(k, s)
-			}
+		// A `$` binding, at any depth of the pattern, makes this a compile-time
+		// expansion.
+		if any_static_binding(s.bindings) {
+			return check_static_foreach(k, s)
 		}
 		return check_runtime_foreach(k, s)
 	}
 	unsupported_construct(k, stmt_span(stmt))
 	return FLOWS
+}
+
+@(private = "file")
+any_static_binding :: proc(bindings: []Foreach_Binding) -> bool {
+	for binding in bindings {
+		if binding.is_static || any_static_binding(binding.group) {
+			return true
+		}
+	}
+	return false
 }
 
 // A procedure-scope `when` introduces no scope: the selected branch behaves as

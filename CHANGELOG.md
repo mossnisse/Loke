@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- A `foreach` whose only `$` bindings are inside a group, as in
+  `foreach (($first, $second) in PAIRS)`, expands at compile time; it ran as
+  a runtime loop, so `static_assert(first == 7)` reported `L0341`.
 - Named arguments to an overloaded group or a method, as in
   `group(second = f(), first = g())`, are evaluated in written order, then
   the omitted defaults; they ran in parameter order.

@@ -1281,34 +1281,6 @@ Enforce the consuming-destructure restriction at each owned record that a
 pattern splits, including nested records, while allowing borrowed records
 to be projected without consuming them.
 
-### Nested static foreach bindings are dispatched as runtime loops
-
-[design.md "Static `foreach` expansion"](design.md#static-foreach-expansion)
-requires `$` bindings to expand at compile time; the
-["Element bindings"](design.md#element-bindings) pattern may nest.
-The foreach dispatch in [src/check.odin](src/check.odin) inspects only
-top-level bindings' `is_static`, although the parser stores each nested
-leaf's marker inside its group:
-
-```odin
-package main;
-import "core:fmt";
-Pair :: struct { first: int, second: int }
-PAIRS :: [1]Pair{{7, 9}};
-main :: proc() {
-    foreach (($first, $second) in PAIRS) {
-        static_assert(first == 7);
-        fmt.println(first + second);
-    }
-}
-```
-
-This should expand once and print `16`. Instead it enters
-`check_runtime_foreach` and reports `L0341` on the static assertion because
-`first` is a runtime variable. Inspect static markers recursively before
-dispatching, so the existing recursive static-pattern validation also
-handles nested mixed-mode and reference markers.
-
 These iteration findings were reproduced with a compiler built from the
 source tree on 2026-10-02. The existing `m4b_foreach`, `m6b_iteration`,
 `foreach_elements`, `foreach_regressions`, `iteration_ownership`,

@@ -161,4 +161,9 @@ main :: proc() {
 	}
 	foreach ($v in static_values().reversed()) { fmt.println(v); }
 	foreach ($v in STATIC_INTS[1:].reversed()) { fmt.println(v); }
+	// A `$` inside a group alone makes the loop a static expansion.
+	foreach (($a, $b, $c) in STATIC_TRIPLES) {
+		static_assert(a == 7);
+		fmt.println(a * 100 + b * 10 + c);
+	}
 }
