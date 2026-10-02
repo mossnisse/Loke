@@ -1111,8 +1111,17 @@ bind_loop_name :: proc(
 		return INVALID_SYMBOL
 	}
 	id := name_identifier(k.c, binding.name)
+	// The checks `declare_all` gives a local (design.md "Variable declarations").
+	if _, ok := k.scope.names[id]; ok {
+		errorf(k.c, binding.name.span, "L0304", "`%s` is already declared in this scope", binding.name.text)
+		return INVALID_SYMBOL
+	}
 	if reject_reserved_name(k, id, binding.name.span) {
 		return INVALID_SYMBOL
+	}
+	outer, owner := lookup_symbol_with_scope(k.scope.parent, id)
+	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
+		errorf(k.c, binding.name.span, "L0305", "`%s` shadows an outer declaration", binding.name.text)
 	}
 	symbol := new_symbol(k.c, Symbol {
 		name      = id,

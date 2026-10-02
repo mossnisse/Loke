@@ -6,4 +6,9 @@ main :: proc() {
 		x := 2;
 		fmt.println(x);
 	}
+	// A foreach binding is a local too: unique, and never hiding another.
+	values := [1]int{7};
+	foreach (same, same in values.indexed()) { fmt.println(same); }
+	foreach (x in values) { fmt.println(x); }
+	foreach ((y, x), z in values.indexed().indexed()) { fmt.println(y, z); }
 }

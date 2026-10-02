@@ -1379,30 +1379,6 @@ from the source tree on 2026-10-02. All 108 compiler unit tests pass with
 memory tracking and compiler vets enabled; those tests do not cover these
 reproductions.
 
-### Foreach bindings bypass duplicate-name and shadowing checks
-
-[design.md "Variable declarations"](design.md#variable-declarations) requires
-unique names in each local scope and rejects shadowing an outer local or
-parameter. `bind_loop_name` in [src/iterate.odin](src/iterate.odin) checks
-reserved names but inserts a symbol into the scope without either check:
-
-```odin
-package main;
-import "core:fmt";
-main :: proc() {
-    values := [1]int{7};
-    foreach (same, same in values.indexed()) { fmt.println(same); }
-    name := 42;
-    foreach (name in values) { fmt.println(name); }
-    fmt.println(name);
-}
-```
-
-Both headers should be diagnosed. Instead this compiles and prints `0`, `7`,
-and `42`: the second `same` silently replaces the first binding in lookup,
-and the loop's `name` hides the outer local. Apply the declaration checks to
-every non-discard leaf, including nested binding groups.
-
 ### Mixed record yields mark owned leaves as borrowed
 
 [design.md "Yield modes"](design.md#yield-modes) and

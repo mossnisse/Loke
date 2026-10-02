@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A `foreach` binding follows the rules for other locals: two bindings with
+  the same name are `L0304`, and one that hides an outer local or parameter is
+  `L0305`. Rename the binding.
 - An empty string slice whose bound falls inside a UTF-8 sequence, such as
   `text[1:1]` of `"é"`, panics, as a nonempty one already did; at compile time
   it is `L0343`.
