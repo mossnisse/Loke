@@ -220,9 +220,21 @@ write_field_bytes :: proc(e: ^Emitter, b: ^strings.Builder, value: Const_Value, 
 	write_byte_array_constant(b, bytes)
 }
 
-// Missing elements and nil values are all-zero, which `out` already is.
+// A pointer inside a constant's byte image, at `offset` from its start.
 @(private = "file")
-write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type_Id) -> bool {
+Const_Relocation :: struct {
+	offset: int,
+	target: string,
+}
+
+// Missing elements and nil values are all-zero, which `out` already is. With
+// `relocations`, a pointer to module storage is recorded there instead of
+// failing; `at` is `out`'s offset in the whole image.
+@(private = "file")
+write_const_bytes :: proc(
+	e: ^Emitter, out: []u8, value: Const_Value, type: Type_Id,
+	relocations: ^[dynamic]Const_Relocation = nil, at := 0,
+) -> bool {
 	if value.kind == .Invalid || value.kind == .Nil {
 		return true
 	}
@@ -274,7 +286,7 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 			if value.aggregate != nil && index < len(value.aggregate.elements) {
 				element = value.aggregate.elements[index]
 			}
-			if !write_const_bytes(e, out[start:end], element, info.element) {
+			if !write_const_bytes(e, out[start:end], element, info.element, relocations, at + start) {
 				return false
 			}
 		}
@@ -294,7 +306,7 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 			if value.aggregate != nil && index < len(value.aggregate.elements) {
 				element = value.aggregate.elements[index]
 			}
-			if !write_const_bytes(e, out[start:end], element, symbol.type) {
+			if !write_const_bytes(e, out[start:end], element, symbol.type, relocations, at + start) {
 				return false
 			}
 		}
@@ -311,7 +323,7 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 		payload := len(value.aggregate.elements) > 0 ? value.aggregate.elements[0] : Const_Value{}
 		payload_type := info.variants[index]
 		payload_size := int(type_size(e.c, payload_type))
-		if payload_size > 0 && !write_const_bytes(e, out[:payload_size], payload, payload_type) {
+		if payload_size > 0 && !write_const_bytes(e, out[:payload_size], payload, payload_type, relocations, at) {
 			return false
 		}
 		for byte_index in 0 ..< int(shape.tag_bytes) {
@@ -328,11 +340,182 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 			out[index] = u8(id >> u64(index * 8))
 		}
 		return true
-	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .CString_View:
+	case .String, .String_View, .CString_View, .Slice:
+		// Literal text and a slice literal's backing array are module storage, so
+		// an image holds a relocation to them.
+		if relocations == nil {
+			return false
+		}
+		target, count, flags := "", 0, 0
+		switch {
+		case info.kind == .Slice:
+			if value.aggregate == nil || len(value.aggregate.elements) == 0 {
+				return true
+			}
+			target, count = slice_literal_storage(e, value, info), len(value.aggregate.elements)
+		case value.kind != .String:
+			return false
+		case value.text == "" && info.kind != .CString_View:
+			return true
+		case:
+			target, count = text_literal_global(e, value.text), len(value.text)
+			flags = info.kind == .String ? STRING_STATIC : 0
+		}
+		append(relocations, Const_Relocation{at, target})
+		// The pointer comes first, then the length and a string's owner flags.
+		if info.kind != .CString_View {
+			write_u64_bytes(out[8:16], u64(count))
+		}
+		if info.kind == .String {
+			write_u64_bytes(out[16:24], u64(flags))
+		}
+		return true
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc:
 		// Their only byte-serializable value is nil, handled above.
 		return false
 	}
 	return false
+}
+
+@(private = "file")
+write_u64_bytes :: proc(out: []u8, value: u64) {
+	for _, index in out {
+		out[index] = u8(value >> u64(index * 8))
+	}
+}
+
+// design.md "Unions": a union payload, and a field of a combined packed/aligned
+// record, is a byte image, which in its declared LLVM type cannot hold a pointer
+// to module storage. A constant containing one is emitted whole as an image.
+const_needs_image :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> bool {
+	info := type_of(e.c, type_underlying(e.c, default_type(e.c, type)))
+	if info == nil || value.kind != .Aggregate || value.aggregate == nil {
+		return false
+	}
+	elements := value.aggregate.elements
+	#partial switch info.kind {
+	case .Union:
+		index := value.aggregate.variant
+		return index >= 0 && index < len(info.variants) && len(elements) > 0 &&
+			const_has_pointer(e, elements[0], info.variants[index])
+	case .Struct:
+		if info.packed && info.align > record_natural_align(e.c, info) {
+			return const_has_pointer(e, value, type)
+		}
+		for field, index in info.fields {
+			if index < len(elements) && const_needs_image(e, elements[index], symbol_of(e.c, field).type) {
+				return true
+			}
+		}
+	case .Array, .Simd:
+		for element in elements {
+			if const_needs_image(e, element, info.element) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+@(private = "file")
+const_has_pointer :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> bool {
+	info := type_of(e.c, type_underlying(e.c, type))
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .String, .String_View:
+		return value.kind == .String && value.text != ""
+	case .CString_View:
+		return value.kind == .String
+	}
+	if value.kind != .Aggregate || value.aggregate == nil {
+		return false
+	}
+	elements := value.aggregate.elements
+	#partial switch info.kind {
+	case .Slice:
+		return len(elements) > 0
+	case .Union:
+		index := value.aggregate.variant
+		return index >= 0 && index < len(info.variants) && len(elements) > 0 &&
+			const_has_pointer(e, elements[0], info.variants[index])
+	case .Struct:
+		for field, index in info.fields {
+			if index < len(elements) && const_has_pointer(e, elements[index], symbol_of(e.c, field).type) {
+				return true
+			}
+		}
+	case .Array, .Simd:
+		for element in elements {
+			if const_has_pointer(e, element, info.element) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// `values` of `type`, one after another, as an LLVM packed struct of byte runs
+// and pointers: its type, then its value.
+const_image :: proc(e: ^Emitter, values: []Const_Value, type: Type_Id) -> (string, string) {
+	stride := int(type_size(e.c, type))
+	bytes := make([]u8, stride * len(values), context.temp_allocator)
+	relocations := make([dynamic]Const_Relocation, context.temp_allocator)
+	for value, index in values {
+		start := index * stride
+		if !write_const_bytes(e, bytes[start:start + stride], value, type, &relocations, start) {
+			backend_fail(e, fmt.aprintf("a constant cannot be represented as an image: %s", type_name(e.c, type)))
+		}
+	}
+	types, parts := strings.builder_make(), strings.builder_make()
+	members := 0
+	next := proc(types, parts: ^strings.Builder, members: ^int) {
+		strings.write_string(types, members^ == 0 ? "<{ " : ", ")
+		strings.write_string(parts, members^ == 0 ? "<{ " : ", ")
+		members^ += 1
+	}
+	cursor := 0
+	for relocation in relocations {
+		if relocation.offset > cursor {
+			next(&types, &parts, &members)
+			fmt.sbprintf(&types, "[%d x i8]", relocation.offset - cursor)
+			write_byte_array_constant(&parts, bytes[cursor:relocation.offset])
+		}
+		next(&types, &parts, &members)
+		strings.write_string(&types, "ptr")
+		fmt.sbprintf(&parts, "ptr %s", relocation.target)
+		cursor = relocation.offset + 8
+	}
+	if cursor < len(bytes) {
+		next(&types, &parts, &members)
+		fmt.sbprintf(&types, "[%d x i8]", len(bytes) - cursor)
+		write_byte_array_constant(&parts, bytes[cursor:])
+	}
+	strings.write_string(&types, " }>")
+	strings.write_string(&parts, " }>")
+	return strings.to_string(types), strings.to_string(parts)
+}
+
+// A global's value type and initializer, and the alignment an image needs.
+global_initializer :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> (string, string, string) {
+	if const_needs_image(e, value, type) {
+		image_type, image := const_image(e, {value}, type)
+		return image_type, image, fmt.aprintf(", align %d", type_align(e.c, type))
+	}
+	return llvm_type(e, type), llvm_const(e, value, type), ""
+}
+
+// A constant operand in a body; an image is loaded from a private global.
+@(private = "file")
+const_operand :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
+	if !const_needs_image(e, value, type) {
+		return llvm_const(e, value, type)
+	}
+	image_type, image, align := global_initializer(e, value, type)
+	name := fmt.aprintf("@.image.%d", len(e.globals))
+	append(&e.globals, fmt.aprintf("%s = private unnamed_addr constant %s %s%s\n", name, image_type, image, align))
+	return load(e, llvm_type(e, type), name)
 }
 
 // Every float constant is spelled as its bit pattern, since LLVM's decimal
@@ -884,7 +1067,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	}
 	if base.is_const && base.const_value.kind != .Invalid {
 		emit_const_len_receiver(e, expr)
-		return llvm_const(e, base.const_value, as_type)
+		return const_operand(e, base.const_value, as_type)
 	}
 
 	switch v in expr {
@@ -892,7 +1075,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return "0"
 
 	case ^Expr_Literal:
-		return llvm_const(e, v.const_value, as_type)
+		return const_operand(e, v.const_value, as_type)
 
 	case ^Expr_Ident:
 		if name, ok := e.param_values[v.symbol]; ok {

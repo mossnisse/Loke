@@ -318,6 +318,10 @@ checklist.
 
 ### Fixed
 
+- A constant union whose payload holds a pointer to literal storage, such as
+  `label: Label = .text("hi");`, and a combined `@(packed, align=N)` record
+  holding one, now compile at file scope, as `static` values, as named
+  constants, and in slice literals. They failed with an internal `L0405`.
 - A file-scope `thread_local` has one instance per thread, and each thread's
   managed ones drop when it returns, together with its procedure-local
   `thread_local` values, in reverse order of package path, file path, and

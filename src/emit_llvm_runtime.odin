@@ -127,19 +127,38 @@ slice_literal_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info
 	if count == 0 {
 		return "zeroinitializer"
 	}
-	element := llvm_type(e, info.element)
-	b := strings.builder_make()
-	fmt.sbprintf(&b, "[%d x %s] [", count, element)
-	for slot, index in value.aggregate.elements {
-		fmt.sbprintf(&b, "%s %s %s", index > 0 ? "," : "", element, llvm_const(e, slot, info.element))
+	return slice_constant(slice_literal_storage(e, value, info), count)
+}
+
+// The global backing array of a slice literal with at least one element.
+@(private)
+slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
+	count := len(value.aggregate.elements)
+	imaged := false
+	for slot in value.aggregate.elements {
+		imaged ||= const_needs_image(e, slot, info.element)
 	}
-	strings.write_string(&b, " ]")
+	contents, align := "", ""
+	if imaged {
+		image_type, image := const_image(e, value.aggregate.elements, info.element)
+		contents = fmt.aprintf("%s %s", image_type, image)
+		align = fmt.aprintf(", align %d", type_align(e.c, info.element))
+	} else {
+		element := llvm_type(e, info.element)
+		b := strings.builder_make()
+		fmt.sbprintf(&b, "[%d x %s] [", count, element)
+		for slot, index in value.aggregate.elements {
+			fmt.sbprintf(&b, "%s %s %s", index > 0 ? "," : "", element, llvm_const(e, slot, info.element))
+		}
+		strings.write_string(&b, " ]")
+		contents = strings.to_string(b)
+	}
 	name := fmt.aprintf("@.slice.%d", len(e.globals))
 	append(&e.globals, fmt.aprintf(
-		"%s = private %s %s\n",
-		name, info.mutable ? "global" : "unnamed_addr constant", strings.to_string(b),
+		"%s = private %s %s%s\n",
+		name, info.mutable ? "global" : "unnamed_addr constant", contents, align,
 	))
-	return slice_constant(name, count)
+	return name
 }
 
 // `{ ptr name, i64 count }`, concatenated because `{` is a core:fmt directive.
@@ -209,7 +228,7 @@ emit_static_locals :: proc(e: ^Emitter) {
 		}
 		name := fmt.aprintf("@loke.s.%d.%s", index, llvm_safe(identifier_text(e.c, sym.name)))
 		e.names[symbol_id] = name
-		value := "zeroinitializer"
+		value_type, value, align := llvm_type(e, sym.type), "zeroinitializer", ""
 		if zero, ok := llvm_zero(e, sym.type); ok {
 			value = zero
 		}
@@ -219,12 +238,12 @@ emit_static_locals :: proc(e: ^Emitter) {
 					continue
 				}
 				if initial, ok := binding_initial_const(e.c, sym.decl, position); ok {
-					value = llvm_const(e, initial, sym.type)
+					value_type, value, align = global_initializer(e, initial, sym.type)
 				}
 			}
 		}
 		qualifier := sym.duration == .Thread_Local ? "thread_local " : ""
-		fmt.sbprintfln(&e.b, "%s = %sglobal %s %s", name, qualifier, llvm_type(e, sym.type), value)
+		fmt.sbprintfln(&e.b, "%s = %sglobal %s %s%s", name, qualifier, value_type, value, align)
 	}
 	if len(e.c.static_locals) > 0 {
 		fmt.sbprintln(&e.b, "")
@@ -313,9 +332,9 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 			continue
 		}
 		name := symbol_name(e, symbol_id)
-		value := ""
+		value_type, value, align := llvm_type(e, sym.type), "", ""
 		if initial, constant := binding_initial_const(e.c, d, i); constant {
-			value = llvm_const(e, initial, sym.type)
+			value_type, value, align = global_initializer(e, initial, sym.type)
 		} else {
 			zero, ok := llvm_zero(e, sym.type)
 			if !ok {
@@ -325,7 +344,7 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 			value = zero
 		}
 		qualifier := sym.duration == .Thread_Local ? "thread_local " : ""
-		fmt.sbprintfln(&e.b, "%s = %sglobal %s %s", name, qualifier, llvm_type(e, sym.type), value)
+		fmt.sbprintfln(&e.b, "%s = %sglobal %s %s%s", name, qualifier, value_type, value, align)
 	}
 	fmt.sbprintln(&e.b, "")
 }
@@ -1476,11 +1495,8 @@ emit_materialized_constants :: proc(e: ^Emitter) {
 		return
 	}
 	for entry in e.c.materialized_order {
-		fmt.sbprintfln(
-			&e.b,
-			"%s = private constant %s %s",
-			entry.name, llvm_type(e, entry.type), llvm_const(e, entry.value, entry.type),
-		)
+		value_type, value, align := global_initializer(e, entry.value, entry.type)
+		fmt.sbprintfln(&e.b, "%s = private constant %s %s%s", entry.name, value_type, value, align)
 	}
 	fmt.sbprintln(&e.b, "")
 }

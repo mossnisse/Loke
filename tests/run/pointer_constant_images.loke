@@ -1,0 +1,27 @@
+package main;
+import "core:fmt";
+// design.md "Unions" and "String views": a statically initialized union or
+// combined packed/aligned record may hold a view of literal storage.
+Label :: union { text: string_view, number: int }
+Owned :: union { name: string, raw: cstring_view, list: []int }
+Packed :: struct @(packed, align=8) { tag: u8, text: string_view }
+Outer :: struct { id: int, label: Label }
+
+label: Label = .text("hi");
+packed: Packed = {1, "packed"};
+outer: Outer = {7, .text("nested")};
+LABELS :: []Label{.text("a"), .number(2), .text("c")};
+owned: Owned = .name("owned");
+raw: Owned = .raw("raw");
+list: Owned = .list([]int{4, 5});
+
+main :: proc() {
+    s: static Label = .text("static");
+    fixed := Label.text("local");
+    p: Packed = {2, "local packed"};
+    fmt.println(label, packed.tag, packed.text, outer.id, outer.label);
+    fmt.println(LABELS[0], LABELS[1], LABELS[2], s, fixed, p.tag, p.text);
+    fmt.println(owned, raw, list);
+    label = .number(3);
+    fmt.println(label);
+}

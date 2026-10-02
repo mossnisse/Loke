@@ -106,43 +106,6 @@ operator. Arrays and union payloads follow the same query. Comparison
 availability and the selected nested operation must both be resolved in the
 checker, with the current package's operator visibility.
 
-### Pointer-bearing union and packed/aligned constants are not emitted
-
-[design.md "Unions"](design.md#unions) and
-["String views"](design.md#string-views) permit a statically initialized union
-containing a view of literal storage:
-
-```odin
-package main;
-import "core:fmt";
-Label :: union { text: string_view, number: int }
-label: Label = .text("hi");
-main :: proc() { fmt.println(label); }
-```
-
-It should compile, but fails with `L0405`, "a union payload constant cannot be
-represented as bytes: string_view in Label". A combined packed/aligned record
-has the same failure:
-
-```odin
-package main;
-import "core:fmt";
-Label :: struct @(packed, align=8) { tag: u8, text: string_view }
-label: Label = {1, "hi"};
-main :: proc() { fmt.println(label.text); }
-```
-
-The diagnostic is "a combined packed/aligned constant has a value that cannot
-be represented as bytes". `union_constant` and `write_field_bytes` in
-[src/emit_llvm_expr.odin](src/emit_llvm_expr.odin) require a plain byte image,
-but `write_const_bytes` cannot represent a relocation to literal storage.
-These layouts need constant emission that preserves pointer relocations.
-
-These two expression-emission gaps were confirmed with a compiler built
-from the source tree on 2026-10-02, using Clang builds, runtime probes, and
-inspection of emitted LLVM as described above. All 108 compiler unit tests
-pass without covering these cases.
-
 ### A moved owned foreach leaf is dropped again at the end of its step
 
 [design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types)

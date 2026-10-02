@@ -1,0 +1,4 @@
+.text(hi) 1 packed 7 .text(nested)
+.text(a) .number(2) .text(c) .text(static) .text(local) 2 local packed
+.name(owned) .raw(raw) .list([4, 5])
+.number(3)
