@@ -881,27 +881,6 @@ be represented as bytes". `union_constant` and `write_field_bytes` in
 but `write_const_bytes` cannot represent a relocation to literal storage.
 These layouts need constant emission that preserves pointer relocations.
 
-### Empty string slices bypass UTF-8 endpoint validation
-
-[design.md "String views"](design.md#string-views) requires each slice bound
-to fall at a UTF-8 sequence start or the text's end, even when the slice is
-empty. This program puts both bounds inside a two-byte sequence:
-
-```odin
-package main;
-import "core:fmt";
-main :: proc() {
-    text: string_view = "\u00e9";
-    offset := 1;
-    fmt.println(text[offset:offset].len());
-}
-```
-
-It should panic, but prints `0` and exits successfully. `emit_text_subrange`
-in [src/emit_llvm_expr.odin](src/emit_llvm_expr.odin) validates only the bytes
-of the resulting view; the UTF-8 validator accepts any empty range. Endpoint
-validation must also reject an empty view whose offset is a continuation byte.
-
 ### Packed owner-to-view conversions lose field alignment
 
 [design.md "@(packed)"](design.md#packed) permits reading fields with byte
@@ -929,7 +908,7 @@ need the alignment-aware place helper. The program currently prints `hello 4`
 at both the default optimization level and `-opt=speed`; the gap is the
 incorrect LLVM alignment contract, not a reproduced runtime failure.
 
-These eight expression-emission gaps were confirmed with a compiler built
+These seven expression-emission gaps were confirmed with a compiler built
 from the source tree on 2026-10-02, using Clang builds, runtime probes, and
 inspection of emitted LLVM as described above. All 108 compiler unit tests
 pass without covering these cases.

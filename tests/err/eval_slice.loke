@@ -4,10 +4,13 @@ package main;
 // compilation error, and slicing panics where it would at run time.
 
 cut :: proc(text: string_view, n: int) -> string_view { return text[n:]; }
+empty :: proc(text: string_view, n: int) -> int { return text[n:n].len(); }
 part :: proc(n: int) -> int { a := [3]int{1, 2, 3}; return a[1:n].len(); }
 
 A :: cut("héllo", 2);
 B :: part(5);
 C :: part(0);
+D :: empty("héllo", 2);
+E :: empty("héllo", 6);
 
 main :: proc() {}

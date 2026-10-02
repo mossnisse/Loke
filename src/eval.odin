@@ -1690,7 +1690,9 @@ eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (Eval_Value, bool) {
 	}
 	if operand.kind == .String {
 		text := operand.text[low:high]
-		if !utf8.valid_string(text) {
+		// An empty slice still needs its bound at a sequence start or the end.
+		split := low < i64(len(operand.text)) && !utf8.rune_start(operand.text[low])
+		if split || !utf8.valid_string(text) {
 			eval_fail(ev, v.span, "L0343", "string slice bounds split a code point")
 			return Eval_Value{}, false
 		}

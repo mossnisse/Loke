@@ -1,0 +1,10 @@
+package main; import "core:fmt";
+
+// design.md "String views": an empty slice's bound must still start a code
+// point. Empty slices at the start and the end are valid.
+main :: proc() {
+	text: string_view = "é";
+	fmt.println(text[0:0].len(), text[2:2].len());
+	offset := 1;
+	fmt.println(text[offset:offset].len());
+}

@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- An empty string slice whose bound falls inside a UTF-8 sequence, such as
+  `text[1:1]` of `"é"`, panics, as a nonempty one already did; at compile time
+  it is `L0343`.
 - Borrow checking takes a value's borrows when it is evaluated, not after later
   parts of the statement run: `a, b = b, a` gives `b` what `a` borrowed, and
   an index or later literal element that changes a pointer no longer hides what
