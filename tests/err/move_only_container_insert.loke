@@ -12,4 +12,10 @@ main :: proc() {
 	d.append(r);
 	d.append(..d[:]);
 	_ = m.lookup_value("a");
+	// A type-qualified call, and the operation taken as a value, follow the
+	// same rules.
+	_ = (map[string]Res).lookup_value(m, "a");
+	_ = (map[string]Res).try_insert(inout m, "a", r);
+	(map[string]Res).find_or_insert(inout m, "a", r);
+	look := (map[string]Res).lookup_value;
 }

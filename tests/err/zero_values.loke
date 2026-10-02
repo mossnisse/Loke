@@ -44,6 +44,8 @@ main :: proc() {
 	ys: [dynamic]Choice = {};
 	ys.reserve(4);
 	ys.resize(4);
+	([dynamic]Choice).resize(inout ys, 4);
+	grow := ([dynamic]Choice).resize;
 
 	// A local with no initialiser starts dead, so it needs no zero; `---` asks
 	// for the storage alone and goes unchecked as well. Neither is used below.

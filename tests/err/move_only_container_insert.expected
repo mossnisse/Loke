@@ -16,3 +16,15 @@ L0503
 L0491
 @14:6
 `Res` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows
+L0491
+@17:6
+`Res` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows
+L0491
+@18:6
+`Res` is move-only, and `try_insert` copies its element so a failure leaves it with the caller
+L0503
+@19:48
+`Res` is move-only, so this insertion cannot copy it; write `move(...)` to transfer ownership instead
+L0491
+@20:10
+`Res` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows

@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A container operation named through its type, as in
+  `([dynamic]Choice).resize(inout values, 1)`, or taken as a procedure value,
+  meets the same element requirements as the method call: growth needs a zero
+  value (`L0424`), and `lookup_value` and the `try_` insertions need a
+  copyable element (`L0491`). Use the forms the method call allows.
 - A procedure that reaches a `static` or `thread_local` local cannot run in a
   compile-time evaluation (`L0341`): that storage persists between calls, and
   evaluation gave each call a fresh copy. Compute the constant without it.

@@ -174,6 +174,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		v, info.result, info.result_inout,
 		result_written_but_unresolved(symbol_of(k.c, declaration)),
 	)
+	check_container_call(k, v, symbol_of(k.c, declaration))
 }
 
 // Whether a procedure wrote a result that did not resolve. `Symbol.result` is
@@ -413,28 +414,30 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	}
 	set_call_result(v, chosen.result, chosen.result_inout, result_written_but_unresolved(chosen))
 	// Reported after the result shape is settled, so a destructuring keeps its arity.
+	if !check_container_call(k, v, chosen) {
+		return
+	}
+	require_sort_order_policy(k, chosen, v.span)
+	fold_standard_customization_call(k, v, chosen)
+}
+
+// The requirements of a container operation, whichever spelling called it:
+// `values.resize(1)`, `([dynamic]T).resize(inout values, 1)`, or a group. False
+// when the call was rejected.
+@(private = "file")
+check_container_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) -> bool {
+	if chosen == nil {
+		return true
+	}
+	if !check_container_element(k, v.span, chosen) {
+		v.type = INVALID_TYPE
+		return false
+	}
+	element := container_element(k.c, len(chosen.params) > 0 ? chosen.params[0] : INVALID_TYPE)
 	#partial switch chosen.container_op {
-	case .Resize:
-		// design.md "Zero values": growth fills new slots with the element's zero.
-		require_type_has_zero(
-			k, container_element(k.c, chosen.params[0]), v.span, "growing a container",
-		)
-	case .Map_Lookup_Value:
-		element := container_element(k.c, chosen.params[0])
-		if type_clone_disabled(k.c, element) {
-			errorf(
-				k.c, v.span, "L0491",
-				"`%s` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows",
-				type_name(k.c, element),
-			)
-		}
 	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
 		// design.md "Container insertion": taken like an initialization, so a
 		// borrowed place is copied and a move-only one needs `move(...)`.
-		element := container_element(k.c, chosen.params[0])
-		if reject_move_only_try(k, v, chosen, element) {
-			return
-		}
 		if len(v.bound) > 2 {
 			classify_copy_cost(k, v.bound[2], element, .Insertion)
 			if type_clone_disabled(k.c, element) {
@@ -444,10 +447,6 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	case .Append:
 		// A lone spread lends its slice instead of building a pack, and `append`
 		// would keep the elements.
-		element := container_element(k.c, chosen.params[0])
-		if reject_move_only_try(k, v, chosen, element) {
-			return
-		}
 		if type_clone_disabled(k.c, element) && v.variadic_forwards && len(v.bound) > 1 {
 			errorf(
 				k.c, expr_span(v.bound[1]), "L0503",
@@ -456,8 +455,42 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 			)
 		}
 	}
-	require_sort_order_policy(k, chosen, v.span)
-	fold_standard_customization_call(k, v, chosen)
+	return true
+}
+
+// What a container operation requires of its element type alone, so it holds
+// for a call and for the operation taken as a procedure value. False when the
+// operation cannot be used at all.
+check_container_element :: proc(k: ^Checker, span: Span, chosen: ^Symbol) -> bool {
+	if chosen.container_op == .None || len(chosen.params) == 0 {
+		return true
+	}
+	element := container_element(k.c, chosen.params[0])
+	#partial switch chosen.container_op {
+	case .Resize:
+		// design.md "Zero values": growth fills new slots with the element's zero.
+		require_type_has_zero(k, element, span, "growing a container")
+	case .Map_Lookup_Value:
+		if type_clone_disabled(k.c, element) {
+			errorf(
+				k.c, span, "L0491",
+				"`%s` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows",
+				type_name(k.c, element),
+			)
+		}
+	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert, .Append:
+		// design.md "Container insertion": a `try_` form copies its element, so a
+		// move-only one, which cannot be copied, has none.
+		if container_member_is_try(k.c, chosen) && type_clone_disabled(k.c, element) {
+			errorf(
+				k.c, span, "L0491",
+				"`%s` is move-only, and `%s` copies its element so a failure leaves it with the caller; reserve capacity with `try_reserve`, then insert with `move(...)`",
+				type_name(k.c, element), identifier_text(k.c, chosen.name),
+			)
+			return false
+		}
+	}
+	return true
 }
 
 // A fixed array's or vector's `len()` is constant, though the receiver is still
@@ -533,6 +566,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 	}
 	chosen := symbol_of(k.c, cand.symbol)
 	set_call_result(v, chosen.result, chosen.result_inout, result_written_but_unresolved(chosen))
+	check_container_call(k, v, chosen)
 }
 
 // Every call spelling passes a `self: ^` receiver by address, including
@@ -1159,18 +1193,3 @@ check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechec
 	return arg.value, true
 }
 
-// design.md "Container insertion": a `try_` form copies its element, so a
-// move-only one, which cannot be copied, has none.
-@(private = "file")
-reject_move_only_try :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol, element: Type_Id) -> bool {
-	if !container_member_is_try(k.c, chosen) || !type_clone_disabled(k.c, element) {
-		return false
-	}
-	errorf(
-		k.c, v.span, "L0491",
-		"`%s` is move-only, and `%s` copies its element so a failure leaves it with the caller; reserve capacity with `try_reserve`, then insert with `move(...)`",
-		type_name(k.c, element), identifier_text(k.c, chosen.name),
-	)
-	v.type = INVALID_TYPE
-	return true
-}

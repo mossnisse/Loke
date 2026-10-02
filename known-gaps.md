@@ -1552,33 +1552,6 @@ compile-time evaluator, and lifecycle graph all use `call_slot_at` or
 analysis. Preserve supplied candidate slots in written order, then append
 omitted defaults in parameter order when binding the chosen procedure.
 
-### Type-qualified container calls bypass operation-specific checks
-
-[design.md "Zero values"](design.md#zero-values) requires a zero value for
-operations that manufacture one. In
-[src/check_calls.odin](src/check_calls.odin), the zero-value requirement for
-container growth is applied only by `check_method_call`:
-
-```odin
-package main;
-import "core:fmt";
-Choice :: union { number: int, flag: bool }
-main :: proc() {
-    values: [dynamic]Choice = {};
-    ([dynamic]Choice).resize(inout values, 1);
-    fmt.println(values.len(), values[0]);
-}
-```
-
-This prints `1 .number(0)`, although `Choice` has no zero value. The method
-spelling `values.resize(1)` correctly reports `L0424`. The same bypass
-affects the move-only requirement for `lookup_value`: a type-qualified call
-on a `map[int]Token` with a move-only `Token` is accepted, then aborts at
-runtime with `a move-only value was copied` when the key exists.
-Apply container-specific operation constraints when resolving the operation
-through any call spelling or exposing it as a procedure value, including
-the move-only restrictions on copying insertion forms.
-
 ### Constant pointer conversions bypass capability checks
 
 [design.md "Pointers"](design.md#pointers) forbids strengthening `^T` to
@@ -1602,7 +1575,7 @@ changing the pointer's declared capability. Validate source/target
 conversion rules before folding concrete typed constants, while preserving
 the separate contextual conversion rules for untyped literals.
 
-These five call-checking gaps were reproduced with a compiler rebuilt from
+These four call-checking gaps were reproduced with a compiler rebuilt from
 the source tree on 2026-10-02. All 108 compiler unit tests pass with memory
 tracking and compiler vets enabled; those tests do not cover these
 reproductions.
