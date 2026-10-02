@@ -173,46 +173,9 @@ still contain `[1]` on the continuing path. Last-use eligibility must account
 for every expansion of the same copy site before changing the shared node,
 and the lifecycle events must agree with the resulting operation.
 
-### Deferred assignments share the last expansion's destination liveness
-
-[design.md "Managed values and storage"](design.md#managed-values-and-storage)
-and ["Assignment statements"](design.md#assignment-statements) require an
-assignment to drop its destination's previous value only when that value is
-live. `emit_cleanups` in [src/cfg.odin](src/cfg.odin) reuses one deferred
-assignment node across exits. `report_events` in
-[src/lifecycle.odin](src/lifecycle.odin) overwrites that node's
-`destination_live` with each expansion's state, so the last reported state
-controls emission at every exit:
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: struct { id: int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) {
-        fmt.println("drop", self.id);
-    }
-}
-check :: proc(early: bool) {
-    value := Tracked{1};
-    {
-        defer value = Tracked{2};
-        if (early) { drop(value); return; }
-    }
-}
-main :: proc() { check(false); }
-```
-
-This prints only `drop 2`; it must print `drop 1` before `drop 2`. The return
-expansion sees the destination dead and suppresses the continuing path's
-required drop too. With an allocating resource, this leaks the old value.
-The expansion states must be reconciled with a runtime flag where they differ,
-or retained separately for emission at their respective exits.
-
-These two CFG gaps were reproduced with a compiler built from the source
-tree on 2026-10-02. The deferred-copy and deferred-assignment cases were
-compiled and executed. All 108 compiler unit tests pass without covering
-these cases.
+This CFG gap was reproduced with a compiler built from the source tree on
+2026-10-02, and the case was compiled and executed. All 108 compiler unit
+tests pass without covering it.
 
 ### Aggregate equality bypasses nested comparison overloads
 

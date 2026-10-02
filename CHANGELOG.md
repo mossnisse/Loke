@@ -303,6 +303,9 @@ checklist.
 
 ### Fixed
 
+- A deferred assignment drops its destination's old value at each exit where
+  that value is live. When one exit's path had already moved or dropped the
+  destination, the old value was skipped at every exit, and leaked.
 - A multiple assignment whose later destination moves an earlier one, as in
   `held, xs[take(move(held))] = Res{2}, 5;`, leaves the earlier one live
   after the statement; it was rejected as moved.

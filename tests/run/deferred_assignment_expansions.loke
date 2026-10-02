@@ -1,0 +1,18 @@
+package main;
+import "core:fmt";
+// design.md "Assignment statements": each exit a deferred assignment expands
+// at drops the old value only where it is live.
+Tracked :: struct { id: int }
+impl Tracked {
+    release :: hook(drop) proc(self: inout Tracked) {
+        fmt.println("drop", self.id);
+    }
+}
+check :: proc(early: bool) {
+    value := Tracked{1};
+    {
+        defer value = Tracked{2};
+        if (early) { drop(value); return; }
+    }
+}
+main :: proc() { check(false); fmt.println("--"); check(true); }

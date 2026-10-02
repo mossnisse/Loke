@@ -740,14 +740,22 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 
 	// A second walk with the fixed point in hand: this is where the events that
 	// need an answer — a use, a cleanup point — read their state.
+	assigned := make(map[Assigned_Destination]bool, allocator = graph.alloc)
 	for block in graph.blocks {
 		if !block.visited {
 			continue
 		}
 		mem.zero_slice(state)
 		copy(state, block.entry_state)
-		report_events(k, graph, block, state)
+		report_events(k, graph, block, state, &assigned)
 	}
+}
+
+// One destination of an assignment node, which a `defer` expands at each exit.
+@(private = "file")
+Assigned_Destination :: struct {
+	assign: ^Stmt_Assign,
+	target: int,
 }
 
 @(private = "file")
@@ -776,7 +784,10 @@ run_events :: proc(block: ^Flow_Block, state: []Liveness) {
 
 // The diagnostics and the cleanup obligations, with the solved entry state.
 @(private = "file")
-report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness) {
+report_events :: proc(
+	k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness,
+	assigned: ^map[Assigned_Destination]bool,
+) {
 	for event in block.events {
 		if event.kind == .Reset_Point {
 			record_reset_liveness(k, graph, event, state)
@@ -790,10 +801,20 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 		case .Assign:
 			// design.md: assignment drops the destination's previous value, so what
 			// the emitter needs here is the state on the way in, not on the way out.
+			// A deferred assignment's expansions share one node, so the state it
+			// keeps is the join of every expansion's, and a disagreement needs the
+			// runtime flag.
+			destination_state := state[event.slot]
 			if event.assign != nil && event.target < len(event.assign.destination_live) {
-				event.assign.destination_live[event.target] = state[event.slot]
+				key := Assigned_Destination{event.assign, event.target}
+				recorded := &event.assign.destination_live[event.target]
+				if key in assigned {
+					destination_state = join(recorded^, destination_state)
+				}
+				recorded^ = destination_state
+				assigned[key] = true
 			}
-			if state[event.slot] == .Conditional {
+			if destination_state == .Conditional {
 				local.conditional_assign = true
 			}
 			local.ever_written = true
