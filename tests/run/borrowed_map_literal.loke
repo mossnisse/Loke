@@ -1,0 +1,17 @@
+// design.md "Evaluation order": an owned temporary is destroyed at the end of
+// its complete expression. A map literal that membership or an index only
+// borrows is one, as a returned map is.
+package main;
+import "core:fmt";
+Res :: struct { id: int }
+impl Res {
+    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+make :: proc() -> map[int]Res { return {1 = Res{9}}; }
+main :: proc() {
+    fmt.println(1 in map[int]Res{1 = Res{7}});
+    fmt.println(map[int]Res{1 = Res{8}}[1].id);
+    fmt.println(make()[1].id);
+    fmt.println(1 in make());
+    fmt.println("done");
+}

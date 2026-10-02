@@ -7,35 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Borrowed map literal receivers are never dropped
-
-[design.md "Evaluation order"](design.md#evaluation-order) destroys owned
-temporaries at the end of their complete expression. Membership and index
-reads borrow their maps, so a literal used as the receiver still owes cleanup:
-
-```odin
-package main;
-import "core:fmt";
-Res :: struct { id: int }
-impl Res {
-    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
-}
-main :: proc() {
-    fmt.println(1 in map[int]Res{1 = Res{7}});
-    fmt.println(map[int]Res{1 = Res{8}}[1].id);
-    fmt.println("done");
-}
-```
-
-This prints `true`, `8`, and `done`, omitting both `drop 7` and `drop 8`.
-`emit_map_membership` and `emit_map_element_address` in
-[src/emit_llvm_containers.odin](src/emit_llvm_containers.odin) materialize the
-receiver with `emit_address`, but its composite branch does not register
-cleanup. The literal builder clears its partial-construction registration
-after completion, leaving no owner of the completed map. Register an owned
-literal receiver for complete-expression cleanup when borrowing it, as the
-ordinary borrowed-receiver call path does.
-
 ### Map literal values lack unwind protection before insertion
 
 [design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not)
@@ -101,7 +72,7 @@ Its staged values and those of `try_insert` similarly need protection across
 later key callbacks. Register transferred arguments and completed staged
 clones until insertion commits or explicit failure cleanup destroys them.
 
-These three container-emission findings were reproduced with a compiler built
+These two container-emission findings were reproduced with a compiler built
 from the source tree on 2026-10-02 at the default optimization level. All 108
 compiler unit tests pass with memory tracking and both compiler vets enabled;
 the current fixtures do not cover these cases.

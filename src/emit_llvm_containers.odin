@@ -1081,7 +1081,7 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	container := expr_base(v.rhs).type
 	ops := container_ops_global(e, container)
 	key_slot, cleanup := emit_map_key_slot(e, v.lhs, container)
-	header := emit_address(e, v.rhs)
+	header := emit_borrowed_map(e, v.rhs)
 	found, out := temp(e), temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
@@ -1089,6 +1089,17 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	drop_temporary_value(e, cleanup)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", out, found)
 	return out
+}
+
+// The address of a map a read only borrows. A literal is an owned temporary
+// that lives until its full expression ends (design.md "Evaluation order").
+@(private = "file")
+emit_borrowed_map :: proc(e: ^Emitter, operand: Expr) -> string {
+	header := emit_address(e, operand)
+	if _, composite := operand.(^Expr_Composite); composite {
+		hold_addressed_temporary(e, operand, expr_base(operand).type, header)
+	}
+	return header
 }
 
 // The map's own provider, or the build-selected default when it is unbound.
@@ -1138,7 +1149,7 @@ Map_Assignment_Destination :: struct {
 @(private)
 prepare_map_assignment :: proc(e: ^Emitter, v: ^Expr_Index, snapshot_key: bool) -> Map_Assignment_Destination {
 	container := expr_base(v.operand).type
-	header := emit_address(e, v.operand)
+	header := emit_borrowed_map(e, v.operand)
 	key_slot, cleanup := emit_map_key_slot(e, v.indices[0], container)
 	key := container_key(e.c, container)
 	// An earlier destination of a multiple assignment may overwrite the variable
@@ -1179,7 +1190,7 @@ emit_map_insert_store :: proc(e: ^Emitter, destination: Map_Assignment_Destinati
 emit_map_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	container := expr_base(v.operand).type
 	ops := container_ops_global(e, container)
-	header := emit_address(e, v.operand)
+	header := emit_borrowed_map(e, v.operand)
 	key_slot, cleanup := emit_map_key_slot(e, v.indices[0], container)
 
 	found := temp(e)
