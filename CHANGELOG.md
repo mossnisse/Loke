@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- A destructuring `foreach` cannot take apart a record that a protocol
+  `next` hands over when that record has a custom `hook(copy)` or
+  `hook(drop)`, at any depth of the pattern (`L0508`), as a destructuring
+  declaration already could not: the hook was skipped. Bind the whole element
+  and read its fields. A record a traversal lends, or copies out of storage,
+  can still be destructured.
 - An `inout` argument must have exactly the parameter's type (`L0310`). A
   scalar passed to `inout Simd(T, N)` wrote a temporary the caller never saw,
   a `^mut T` passed to `inout ^T` could be overwritten with a read-only

@@ -916,13 +916,15 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	s.iterator_type = iterator
 	s.iter_symbol = iter
 	s.next_symbol = next
-	return check_foreach_body(k, s)
+	return check_foreach_body(k, s, effective_yield)
 }
 
 // design.md "Element bindings": the one binder for every value loop. One name
-// binds the whole `Element`; more destructure a record positionally.
+// binds the whole `Element`; more destructure a record positionally. `yield`
+// is how a protocol `next` hands the element over; a built-in traversal lends
+// it, or copies it field by field.
 @(private = "file")
-check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
+check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, yield := Yield_Desc{kind = .Borrowed}) -> Flow_Info {
 	element := s.element_type
 	if !gate_type(k, element, expr_span(s.iterable)) {
 		return FLOWS
@@ -949,7 +951,7 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		contribute_lifecycle_members(k, element)
 	}
 	// A value loop has no `&` leaf to check.
-	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type, Yield_Desc{kind = .Borrowed}) { return FLOWS }
+	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type, yield) { return FLOWS }
 	return check_foreach_block(k, s)
 }
 
@@ -981,6 +983,12 @@ check_foreach_pattern :: proc(
 		k, logical, len(bindings), bindings[0].name.span, "L0459", "bound by a `foreach`",
 	)
 	if !eligible { return false }
+	// design.md "Destructuring": an owned record that `next` hands over is taken
+	// apart, which a custom hook forbids. A lent or copied one is projected.
+	if desc.kind == .Owned && s.kind == .Protocol && !foreach_is_place_loop(s) &&
+	   reject_hooked_destructure(k, logical, bindings[0].name.span) {
+		return false
+	}
 	item_info := underlying_info(k.c, item)
 	for &binding, index in bindings {
 		field := symbol_of(k.c, fields[index])

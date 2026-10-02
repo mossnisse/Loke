@@ -1,0 +1,52 @@
+package main;
+import "core:fmt";
+
+// design.md "Destructuring", applied to "Element bindings": a record that
+// `next` hands over is taken apart by a destructuring `foreach`, which a
+// custom copy or drop hook forbids, at any depth of the pattern. A lent record
+// is only projected, and a copying traversal clones each field from storage.
+
+Guarded :: struct { first: int, second: int }
+impl Guarded {
+    release :: hook(drop) proc(self: inout Guarded) { fmt.println("drop", self.first); }
+}
+Outer :: struct { inner: Guarded, tag: int }
+
+Owning :: struct {}
+Owning_Cursor :: struct { done: bool }
+impl Owning {
+    Element :: Guarded;
+    iter :: proc(self) -> Owning_Cursor { return {}; }
+}
+impl Owning_Cursor {
+    next :: proc(self: inout Owning_Cursor) -> Option(Guarded) {
+        if (self.done) { return .none; }
+        self.done = true;
+        return .some(Guarded{7, 9});
+    }
+}
+
+Nesting :: struct {}
+Nesting_Cursor :: struct { done: bool }
+impl Nesting {
+    Element :: Outer;
+    iter :: proc(self) -> Nesting_Cursor { return {}; }
+}
+impl Nesting_Cursor {
+    next :: proc(self: inout Nesting_Cursor) -> Option(Outer) {
+        if (self.done) { return .none; }
+        self.done = true;
+        return .some(Outer{Guarded{1, 2}, 3});
+    }
+}
+
+main :: proc() {
+    foreach (first, second in Owning{}) { fmt.println(first + second); }
+    foreach ((first, second), tag in Nesting{}) { fmt.println(first + second + tag); }
+
+    // Allowed: the whole value, an unhooked outer record, and copied elements.
+    foreach (whole in Owning{}) { fmt.println(whole.first); }
+    foreach (inner, tag in Nesting{}) { fmt.println(inner.first + tag); }
+    stored := [1]Guarded{Guarded{4, 5}};
+    foreach (first, second in stored) { fmt.println(first + second); }
+}

@@ -967,17 +967,25 @@ plan_destructure :: proc(
 		retained   = retained,
 	}
 	if !plan.from_place {
-		if life := lifecycle_of(k.c, record); life != nil &&
-		   (life.custom_drop != INVALID_SYMBOL || life.custom_try_clone != INVALID_SYMBOL) {
-			errorf(
-				k.c, expr_span(operand), "L0508",
-				"`%s` has a custom `hook(copy)` or `hook(drop)`, so it cannot be taken apart by a destructure",
-				type_name(k.c, record),
-			)
-			add_notef(k.c, expr_span(operand), "bind the whole value, or give the type a procedure that decomposes it")
-		}
+		reject_hooked_destructure(k, record, expr_span(operand))
 	}
 	return plan
+}
+
+// design.md "Destructuring": an owned value whose type has a custom copy or
+// drop hook is never taken apart, since its hook would be skipped.
+reject_hooked_destructure :: proc(k: ^Checker, record: Type_Id, span: Span) -> bool {
+	life := lifecycle_of(k.c, record)
+	if life == nil || (life.custom_drop == INVALID_SYMBOL && life.custom_try_clone == INVALID_SYMBOL) {
+		return false
+	}
+	errorf(
+		k.c, span, "L0508",
+		"`%s` has a custom `hook(copy)` or `hook(drop)`, so it cannot be taken apart by a destructure",
+		type_name(k.c, record),
+	)
+	add_notef(k.c, span, "bind the whole value, or give the type a procedure that decomposes it")
+	return true
 }
 
 // design.md: an enum's members are named constants that need not be

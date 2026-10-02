@@ -525,50 +525,8 @@ Preserve the yield descriptor through recursive binding and classify each
 leaf separately; owned fields must remain movable and droppable even when
 their siblings borrow.
 
-### Owned foreach destructuring bypasses custom lifecycle hooks
-
-[design.md "Destructuring"](design.md#destructuring), applied to
-["Element bindings"](design.md#element-bindings), rejects consuming a record
-with a custom copy or drop hook by taking its fields apart.
-`check_foreach_pattern` in [src/iterate.odin](src/iterate.odin) checks only
-field shape and visibility, omitting the lifecycle restriction for an owned
-yield:
-
-```odin
-package main;
-import "core:fmt";
-Guarded :: struct { first: int, second: int }
-impl Guarded {
-    release :: hook(drop) proc(self: inout Guarded) { fmt.println("drop", self.first); }
-}
-Sequence :: struct {}
-Cursor :: struct { done: bool }
-impl Sequence {
-    Element :: Guarded;
-    iter :: proc(self) -> Cursor { return {}; }
-}
-impl Cursor {
-    next :: proc(self: inout Cursor) -> Option(Guarded) {
-        if (self.done) { return .none; }
-        self.done = true;
-        return .some(Guarded{7, 9});
-    }
-}
-main :: proc() {
-    foreach (first, second in Sequence{}) { fmt.println(first + second); }
-    fmt.println("done");
-}
-```
-
-The header should be rejected. Instead it compiles and prints `16` and
-`done`, silently skipping `Guarded.release`. Binding `whole` and reading
-`whole.first + whole.second` instead prints `16`, `drop 7`, and `done`.
-Enforce the consuming-destructure restriction at each owned record that a
-pattern splits, including nested records, while allowing borrowed records
-to be projected without consuming them.
-
-These iteration findings were reproduced with a compiler built from the
+This iteration finding was reproduced with a compiler built from the
 source tree on 2026-10-02. The existing `m4b_foreach`, `m6b_iteration`,
 `foreach_elements`, `foreach_regressions`, `iteration_ownership`,
 `derived_iterator`, `readonly_iteration`, and `mutable_iteration` run cases
-all compile and match their expected output without covering these cases.
+all compile and match their expected output without covering it.
