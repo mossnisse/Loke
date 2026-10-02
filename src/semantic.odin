@@ -1457,6 +1457,11 @@ type_is_aggregate :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // design.md "Comparison operators". Aggregates are comparable when every leaf
 // is; that recursion is what the backend then generates.
 type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	// design.md "Comparison operators": a type's own `==` makes it comparable,
+	// whatever its fields are.
+	if type_own_equality(c, id) != INVALID_SYMBOL {
+		return true
+	}
 	under := type_underlying(c, id)
 	info := type_of(c, under)
 	if info == nil {

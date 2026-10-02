@@ -1,0 +1,45 @@
+package main;
+import "core:fmt";
+// design.md "Comparison operators": a field, element, or payload whose type
+// declares its own `==` is compared by it, at run time and at compile time.
+Key :: struct { id, annotation: int }
+impl Key {
+    equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+}
+Holder :: struct { value: Key }
+Choice :: union { key: Key, number: int }
+Box :: struct { items: [dynamic]int }
+impl Box {
+    equal :: operator(==) proc(a, b: Box) -> bool {
+        return a.items.len() == b.items.len();
+    }
+}
+Outer :: struct { box: Box }
+Alias :: distinct Key;
+Wrap :: struct($T: type) { value: T, noise: int }
+impl Wrap($T) {
+    equal :: operator(==) proc(a, b: Wrap(T)) -> bool { return a.value == b.value; }
+}
+Pair :: struct { left: Wrap(int) }
+SAME :: (proc() -> bool { return Holder{Key{1, 2}} == Holder{Key{1, 3}}; })();
+FOLDED :: Holder{Key{1, 2}} == Holder{Key{1, 3}};
+main :: proc() {
+    a := Key{1, 2}; b := Key{1, 3};
+    aa := [1]Key{a}; bb := [1]Key{b};
+    ah := Holder{a}; bh := Holder{b};
+    fmt.println(a == b, aa == bb, ah == bh, ah != bh);
+    fmt.println(Choice.key(a) == Choice.key(b), Choice.key(a) == Choice.number(1));
+    fmt.println(Alias(a) == Alias(b), [2]Holder{ah, ah} == [2]Holder{bh, bh});
+    big_a, big_b: [40]Key = {}, {};
+    big_b[39].annotation = 9;
+    fmt.println(big_a == big_b);
+    x, y: Outer = {}, {};
+    y.box.items.append(4);
+    fmt.println(x.box == y.box, x == y);
+    switch (ah) {
+    case Holder{Key{1, 99}}: fmt.println("matched");
+    case: fmt.println("no match");
+    }
+    fmt.println(SAME, FOLDED);
+    fmt.println(Pair{Wrap(int){5, 1}} == Pair{Wrap(int){5, 2}});
+}

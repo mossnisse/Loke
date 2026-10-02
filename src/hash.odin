@@ -113,6 +113,47 @@ inherent_member_named :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symb
 	return INVALID_SYMBOL
 }
 
+// design.md "Comparison operators": the `==` a type declares for itself, or a
+// distinct type's underlying type does. A value of the type compares by it
+// wherever it is nested, as a map key does.
+type_own_equality :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
+	if found := inherent_operator_named(c, type, "=="); found != INVALID_SYMBOL {
+		return found
+	}
+	under := type_underlying(c, type)
+	if under == type {
+		return INVALID_SYMBOL
+	}
+	return inherent_operator_named(c, under, "==")
+}
+
+// Every type within `type`, itself included, that compares by its own `==`;
+// structural comparison does not look inside one.
+own_equalities_within :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id) {
+	if type_own_equality(c, type) != INVALID_SYMBOL {
+		append(out, type)
+		return
+	}
+	info := type_of(c, type_underlying(c, type))
+	if info == nil {
+		return
+	}
+	#partial switch info.kind {
+	case .Array:
+		own_equalities_within(c, info.element, out)
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				own_equalities_within(c, sym.type, out)
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			own_equalities_within(c, variant, out)
+		}
+	}
+}
+
 @(private = "file")
 inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string) -> Symbol_Id {
 	info := type_of(c, type)

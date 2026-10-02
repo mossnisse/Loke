@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- Comparing a struct, array, or union that holds a value of another
+  package's type whose inherent `==` is not `@(public)` is `L0355`, in an
+  expression or a value `switch`, as comparing that value directly already
+  was: field-wise comparison would be a second equality for the type. Ask
+  for the operator to be exported, or compare the visible fields by hand.
 - A mutable carrier stored through a pointer, as `target.view = source` with
   `target := &mut holder`, is suspended while what holds it is used
   (`L0641`), as one stored directly into `holder.view` already was: appending
@@ -318,6 +323,11 @@ checklist.
 
 ### Fixed
 
+- A struct, array, or union comparison, a value `switch`, and compile-time
+  evaluation compare a part whose type declares its own `==` with that
+  operator; it was compared field by field. Such a part also makes its
+  container comparable, so a struct holding a record whose `==` compares a
+  `[dynamic]` field is no longer rejected with `L0355`.
 - A constant union whose payload holds a pointer to literal storage, such as
   `label: Label = .text("hi");`, and a combined `@(packed, align=N)` record
   holding one, now compile at file scope, as `static` values, as named

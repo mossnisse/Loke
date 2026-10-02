@@ -3447,6 +3447,7 @@ The equality operators `==` and `!=` apply to operands that are comparable. The 
 - Struct values are comparable if all their fields are comparable or a visible comparison overload is provided.
 - Union values are comparable if all their variants are comparable or a visible comparison overload is provided.
 - Array values are comparable if values of the element type are comparable.
+- Structural comparison compares a struct field by field, an array element by element, and a union by its active payload. A part whose type declares its own `==` inherently, or whose underlying type does, is compared by that operator, and is comparable through it whatever its own fields are; any other part is compared structurally. An extension `==` is never used for a part, so a type has the same equality wherever it is nested. Comparing a value is an error where a part's inherent `==` is not visible.
 - typeid is comparable.
 - Slices, dynamic arrays, maps, and `dyn Interface` views are **not** comparable. A slice or `dyn Interface` may be tested only against `nil`; a dynamic array or map has no nil value (its zero is `{}`), so emptiness is `value.len() == 0`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
 

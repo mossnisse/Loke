@@ -1,0 +1,9 @@
+package keys;
+
+// An equality only this package may use.
+@(public)
+Key :: struct { @(public) id: int, @(public) annotation: int }
+
+impl Key {
+	equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+}

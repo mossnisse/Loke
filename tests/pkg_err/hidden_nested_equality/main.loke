@@ -1,0 +1,14 @@
+package main;
+import "./keys";
+
+// design.md "Comparison operators": a field compares by its type's own `==`,
+// so one this package cannot see makes the record not comparable here.
+Holder :: struct { value: keys.Key }
+
+main :: proc() {
+	a, b: Holder = {}, {};
+	same := a == b;
+	switch (a) {
+	case: same = true;
+	}
+}

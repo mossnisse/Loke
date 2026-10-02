@@ -7,63 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Aggregate equality bypasses nested comparison overloads
-
-[design.md "Comparison operators"](design.md#comparison-operators) makes
-array equality element-wise, and
-["Operator lookup and overload resolution"](design.md#operator-lookup-and-overload-resolution)
-uses default structural equality only when no viable explicit overload exists.
-This program defines an equality that deliberately ignores an annotation:
-
-```odin
-package main;
-import "core:fmt";
-Key :: struct { id, annotation: int }
-impl Key {
-    equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
-}
-Holder :: struct { value: Key }
-main :: proc() {
-    a := Key{1, 2}; b := Key{1, 3};
-    aa := [1]Key{a}; bb := [1]Key{b};
-    ah := Holder{a}; bh := Holder{b};
-    fmt.println(a == b, aa == bb, ah == bh);
-}
-```
-
-Expected output is `true true true`; actual output is `true false false`.
-The recursive calls in `emit_equal` in
-[src/emit_llvm_expr.odin](src/emit_llvm_expr.odin) always compare a nested
-record structurally, bypassing its `==` overload. Union payload comparisons
-use the same recursion. Nested comparison choices need to be resolved during
-checking and honored by emission.
-
-The checker also rejects a valid aggregate comparison when a nested type's
-overload makes otherwise non-comparable fields comparable:
-
-```odin
-package main;
-Box :: struct { items: [dynamic]int }
-impl Box {
-    equal :: operator(==) proc(a, b: Box) -> bool {
-        return a.items.len() == b.items.len();
-    }
-}
-Outer :: struct { box: Box }
-main :: proc() {
-    a, b: Outer = {}, {};
-    assert(a.box == b.box);
-    assert(a == b);
-}
-```
-
-The direct `Box` comparison is accepted, but the `Outer` comparison reports
-`L0355`. `type_is_comparable` in [src/semantic.odin](src/semantic.odin)
-recurses into the dynamic array instead of considering the visible `Box`
-operator. Arrays and union payloads follow the same query. Comparison
-availability and the selected nested operation must both be resolved in the
-checker, with the current package's operator visibility.
-
 ### A moved owned foreach leaf is dropped again at the end of its step
 
 [design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types)

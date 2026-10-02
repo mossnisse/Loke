@@ -289,7 +289,7 @@ container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
 // One typed operand of a direct call from a thunk to `hook`, given the address
 // the C runtime handed over: that address for a pointer-mode parameter, and
 // otherwise the value in the parameter ABI, where a large one stays an address.
-@(private = "file")
+@(private)
 hook_argument :: proc(e: ^Emitter, hook: Symbol_Id, index: int, type: Type_Id, address: string) -> string {
 	mode := symbol_param_mode(e.c, symbol_of(e.c, hook), index)
 	if param_mode_is_pointer(mode) {

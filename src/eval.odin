@@ -937,6 +937,17 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 		if op != .Eq_Eq && op != .Not_Eq {
 			return false, false
 		}
+		// design.md "Comparison operators": a part with its own `==` runs it.
+		if equal := type_own_equality(ev.k.c, a.type); equal != INVALID_SYMBOL {
+			if !ensure_proc_typed_for_eval(ev.k, equal) {
+				return false, eval_fail(ev, ev.origin, "L0341", "this equality cannot be evaluated")
+			}
+			result, ok := eval_invoke(ev, equal, nil, ev.origin, []Eval_Value{a, b})
+			if !ok || result.kind != .Boolean {
+				return false, false
+			}
+			return result.boolean == (op == .Eq_Eq), true
+		}
 		// As `aggregate_equal`: counts match, and a union's variants too.
 		equal := len(a.elements) == len(b.elements)
 		if type_is_union(ev.k.c, a.type) {

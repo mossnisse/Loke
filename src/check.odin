@@ -3334,6 +3334,11 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		errorf(k.c, expr_span(s.subject), "L0355", "`%s` is not comparable", type_name(k.c, subject))
 		return Flow_Info{}
 	}
+	owned := make([dynamic]Type_Id, context.temp_allocator)
+	own_equalities_within(k.c, subject, &owned)
+	if !own_equalities_visible(k, owned[:], subject, expr_span(s.subject)) {
+		return Flow_Info{}
+	}
 
 	seen := make([dynamic]Const_Value, 0, 8, context.temp_allocator)
 	covered := make(map[u32]bool, 0, context.temp_allocator)

@@ -2132,8 +2132,18 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id, ni
 		return
 	}
 
+	owned := make([dynamic]Type_Id, context.temp_allocator)
+	if !ordered {
+		own_equalities_within(k.c, operand_type, &owned)
+		if !own_equalities_visible(k, owned[:], operand_type, v.op_span) {
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
-	if left.is_const && right.is_const {
+	// A user `==` runs when the program does, not while it is checked.
+	if left.is_const && right.is_const && len(owned) == 0 {
 		result, ok := fold_comparison(k.c, v.op, left.const_value, right.const_value)
 		if ok {
 			v.type = TYPE_UNTYPED_BOOL
@@ -2143,6 +2153,24 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id, ni
 		}
 	}
 	v.type = TYPE_BOOL
+}
+
+// design.md "Maps": one type has one equality, so a part whose inherent `==` is
+// not `@(public)` cannot be compared field-wise from here either.
+own_equalities_visible :: proc(k: ^Checker, owned: []Type_Id, compared: Type_Id, span: Span) -> bool {
+	for part in owned {
+		sym := symbol_of(k.c, type_own_equality(k.c, part))
+		if sym == nil || member_is_visible(k, sym) {
+			continue
+		}
+		errorf(
+			k.c, span, "L0355",
+			"`%s` holds `%s`, whose inherent `==` is not `@(public)`, so this package cannot compare it",
+			type_name(k.c, compared), type_name(k.c, part),
+		)
+		return false
+	}
+	return true
 }
 
 // One untyped operand takes the other's concrete type; two untyped operands

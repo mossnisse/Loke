@@ -1547,6 +1547,9 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 // shows up in a profile.
 @(private)
 emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
+	if equal := type_own_equality(e.c, type); equal != INVALID_SYMBOL {
+		return emit_own_equal(e, equal, type, lhs, rhs)
+	}
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
 	if info == nil {
@@ -1608,6 +1611,24 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		return result
 	}
 	return emit_compare(e, .Eq_Eq, type, lhs, rhs)
+}
+
+// design.md "Comparison operators": a part with its own `==` is compared by it.
+// A large value is already an address; a small one is spilled to pass one.
+@(private = "file")
+emit_own_equal :: proc(e: ^Emitter, equal: Symbol_Id, type: Type_Id, lhs, rhs: string) -> string {
+	left, right := lhs, rhs
+	if !is_large_value(e, type) {
+		left, right = alloca(e, llvm_type(e, type)), alloca(e, llvm_type(e, type))
+		store(e, type, lhs, left)
+		store(e, type, rhs, right)
+	}
+	out := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i1 %s(%s, %s)", out, symbol_name(e, equal),
+		hook_argument(e, equal, 0, type, left), hook_argument(e, equal, 1, type, right),
+	)
+	return out
 }
 
 // A large value is an address, so its parts are compared in place: a record
