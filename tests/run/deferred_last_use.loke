@@ -1,0 +1,26 @@
+package main;
+import "core:fmt";
+// design.md "Last-use transfer": a deferred copy moves its source only when no
+// exit it runs at reads the source again.
+Noisy :: struct { id: int }
+impl Noisy {
+    duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Noisy, Allocator_Error) {
+        fmt.println("clone", self.id);
+        return .ok(Noisy{self.id});
+    }
+}
+check :: proc(early: bool) {
+    value := Noisy{1};
+    {
+        defer { copy := value; fmt.println("copy", copy.id); }
+        if (early) { return; }
+    }
+    fmt.println("source", value.id);
+}
+moved :: proc(early: bool) {
+    value := Noisy{2};
+    defer { copy := value; fmt.println("copy", copy.id); }
+    if (early) { return; }
+    fmt.println("before", value.id);
+}
+main :: proc() { check(false); check(true); moved(false); moved(true); }

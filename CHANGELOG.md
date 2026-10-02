@@ -303,6 +303,9 @@ checklist.
 
 ### Fixed
 
+- A copy in a `defer` becomes a move of its source only when no exit the
+  `defer` runs at reads the source again. One exit that qualified moved the
+  source at every exit, so code after the block saw it empty.
 - A deferred assignment drops its destination's old value at each exit where
   that value is live. When one exit's path had already moved or dropped the
   destination, the old value was skipped at every exit, and leaked.

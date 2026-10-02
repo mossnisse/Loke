@@ -1934,25 +1934,38 @@ settle_last_uses :: proc(graph: ^Flow_Graph) {
 			}
 		}
 	}
+	// A deferred copy is one node at every exit it expands at, so it becomes a
+	// move only when no expansion's source is read again.
+	kept := make(map[^bool]bool, allocator = graph.alloc)
 	for use in graph.last_uses {
 		site, clone, via := last_use_site(graph, use)
 		if site == nil || !clone^ || via {
 			continue
 		}
-		event := &graph.blocks[use.block].events[use.event]
-		if graph.lent[event.slot] {
-			continue
-		}
+		event := graph.blocks[use.block].events[use.event]
 		reads_at_exit(graph, read_in, use.block, reads)
 		reads_before(graph.blocks[use.block].events[:], use.event + 1, reads)
-		if reads[event.slot] {
+		if graph.lent[event.slot] || reads[event.slot] {
+			kept[clone] = true
+		}
+	}
+	for use in graph.last_uses {
+		site, clone, via := last_use_site(graph, use)
+		if site == nil || via || clone in kept {
+			continue
+		}
+		event := &graph.blocks[use.block].events[use.event]
+		// The verb stays the copy's, so a liveness error reads as the use written.
+		if !clone^ {
+			if moved, is_move := site^.(^Expr_Move); is_move && moved.implicit {
+				event.kind = .Kill // an earlier expansion already made it a move
+			}
 			continue
 		}
 		ident := site^.(^Expr_Ident)
 		if !clone_may_allocate(graph.k.c, ident.type) {
 			continue
 		}
-		// The verb stays the copy's, so a liveness error reads as the use written.
 		event.kind = .Kill
 		clone^ = false
 		moved := new(Expr_Move, graph.k.c.semantic_allocator)

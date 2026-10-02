@@ -145,38 +145,6 @@ This generic gap was confirmed with a compiler built from the source
 tree on 2026-10-02, using `-emit-ll`. All 108 compiler unit tests pass without
 covering it.
 
-### A last-use transfer in one defer expansion changes every exit
-
-[design.md "Last-use transfer"](design.md#last-use-transfer) requires a copy
-to remain a clone if any path reads its source again. `emit_cleanups` in
-[src/cfg.odin](src/cfg.odin) walks one deferred AST at each exit, but
-`settle_last_uses` rewrites that shared AST as soon as one expansion qualifies
-for a move. Other expansions still have their original lifecycle `Use` event
-even though emission now moves the source at those exits too:
-
-```odin
-package main;
-import "core:fmt";
-check :: proc(early: bool) {
-    xs := [dynamic]int{1};
-    {
-        defer { copy := xs; fmt.println("copy", copy); }
-        if (early) { return; }
-    }
-    fmt.println("source", xs);
-}
-main :: proc() { check(false); }
-```
-
-This compiles and prints `copy [1]` followed by `source []`; the source must
-still contain `[1]` on the continuing path. Last-use eligibility must account
-for every expansion of the same copy site before changing the shared node,
-and the lifecycle events must agree with the resulting operation.
-
-This CFG gap was reproduced with a compiler built from the source tree on
-2026-10-02, and the case was compiled and executed. All 108 compiler unit
-tests pass without covering it.
-
 ### Aggregate equality bypasses nested comparison overloads
 
 [design.md "Comparison operators"](design.md#comparison-operators) makes
