@@ -267,29 +267,6 @@ main :: proc() { fmt.println(VALUE, compute()); }
 Both results should be `1020`. Prepared map destinations must continue to name
 the live entries after later destination evaluation grows the same map.
 
-### Compile-time map literals evaluate values before keys
-
-[design.md "Evaluation order"](design.md#evaluation-order) requires literal
-elements to evaluate in source order. `src/eval.odin` evaluates and copies a
-map entry's value before evaluating its key; runtime emission evaluates the
-key first. This program prints `1 20`:
-
-```odin
-package main;
-import "core:fmt";
-next :: proc(n: inout int) -> int { n += 1; return n; }
-compute :: proc() -> int {
-	n := 0;
-	m := map[int]int{next(inout n) = next(inout n)};
-	return (m.lookup_value(1) or_else 0) * 10 +
-	       (m.lookup_value(2) or_else 0);
-}
-VALUE :: compute();
-main :: proc() { fmt.println(VALUE, compute()); }
-```
-
-Both results should be `20`: the key is `1` and its value is `2`.
-
 ### Compile-time evaluation treats static storage as lexical locals
 
 [design.md "Storage modifiers"](design.md#storage-modifiers) gives `static`

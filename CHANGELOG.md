@@ -247,6 +247,8 @@ checklist.
 
 ### Fixed
 
+- A map literal evaluated at compile time evaluates each entry's key before
+  its value, as at run time.
 - `key in m` evaluates the key before the map.
 - A call of a procedure literal inside parentheses, as in
   `(proc() -> int { return 7; }())`, parses; it reported `L0219`.

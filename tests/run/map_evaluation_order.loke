@@ -1,4 +1,6 @@
-// design.md "Evaluation order": `key in m` evaluates the key before the map.
+// design.md "Evaluation order": `key in m` evaluates the key before the map, and
+// a map literal evaluates each entry's key before its value, at compile time as
+// at run time.
 package main;
 import "core:fmt";
 
@@ -8,6 +10,15 @@ table :: proc() -> map[string]int {
 	return map[string]int{"a" = 7};
 }
 
+bump :: proc(n: inout int) -> int { n += 1; return n; }
+keyed :: proc() -> int {
+	n := 0;
+	m := map[int]int{bump(inout n) = bump(inout n)};
+	return (m.lookup_value(1) or_else 0) * 10 + (m.lookup_value(2) or_else 0);
+}
+KEYED :: keyed();
+
 main :: proc() {
 	fmt.println(key() in table());
+	fmt.println(KEYED, keyed());
 }

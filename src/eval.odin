@@ -1048,7 +1048,21 @@ eval_container_literal :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Valu
 		return Eval_Value{}, false
 	}
 	written := 0
+	// A map entry's key is evaluated before its value (design.md "Evaluation
+	// order"), and each is copied before later elements can change its source.
 	for element in v.elements {
+		key_copy: Eval_Value
+		if is_map {
+			key, key_ok := eval_expr(ev, element.key)
+			if !key_ok {
+				return Eval_Value{}, false
+			}
+			key_copied: bool
+			key_copy, key_copied = copy_value(ev, key)
+			if !key_copied {
+				return Eval_Value{}, false
+			}
+		}
 		value, ok := eval_expr(ev, element.value)
 		if !ok {
 			return Eval_Value{}, false
@@ -1061,14 +1075,6 @@ eval_container_literal :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Valu
 			elements[written] = copied
 			written += 1
 			continue
-		}
-		key, key_ok := eval_expr(ev, element.key)
-		if !key_ok {
-			return Eval_Value{}, false
-		}
-		key_copy, key_copied := copy_value(ev, key)
-		if !key_copied {
-			return Eval_Value{}, false
 		}
 		elements[written + MAP_ENTRY_KEY] = key_copy
 		elements[written + MAP_ENTRY_VALUE] = copied
