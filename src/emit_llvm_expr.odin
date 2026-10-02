@@ -2017,9 +2017,9 @@ reinterpret_bits :: proc(e: ^Emitter, source, target: Type_Id, from, to, value: 
 	switch {
 	case source_ptr && target_ptr:
 		return value // one opaque `ptr` under two Loke spellings
-	case source_ptr:
+	case source_ptr && to[0] == 'i':
 		fmt.sbprintfln(&e.b, "  %s = ptrtoint %s %s to %s", out, from, value, to)
-	case target_ptr:
+	case target_ptr && from[0] == 'i':
 		fmt.sbprintfln(&e.b, "  %s = inttoptr %s %s to %s", out, from, value, to)
 	case bitcastable(e.c, source) && bitcastable(e.c, target):
 		fmt.sbprintfln(&e.b, "  %s = bitcast %s %s to %s", out, from, value, to)

@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- `unsafe.transmute` between a pointer and a non-integer type of the same
+  size, such as `[8]u8` or `f64`, builds; it emitted an invalid `ptrtoint` or
+  `inttoptr` and failed with `L0403`.
 - A call inside a parameter default, as in `b: int = identity(a)`, reads the
   parameters to the default's left; the build failed with `L0403`. A written
   argument no longer reads the parameter a call has just bound, so

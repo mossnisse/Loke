@@ -123,4 +123,10 @@ main :: proc() {
 	// A `rawptr` destination: unchecked, and here only observed as a pattern.
 	address := unsafe.transmute(rawptr, uint(0));
 	fmt.println(unsafe.transmute(uint, address));
+	// A pointer pattern with a non-integer type on the other side goes through
+	// storage: `ptrtoint` and `inttoptr` need an integer.
+	pointer_bytes := unsafe.transmute([8]u8, address);
+	pointer_float := unsafe.transmute(f64, address);
+	fmt.println(pointer_bytes[0], pointer_float, unsafe.transmute(rawptr, pointer_float) == nil);
+
 }

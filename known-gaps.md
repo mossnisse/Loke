@@ -501,30 +501,6 @@ with `-emit-ll`; the deferred-copy, for-condition, and deferred-assignment
 cases were also compiled and executed. All 108 compiler unit tests pass
 without covering these cases.
 
-### Pointer transmutation emits integer casts for non-integer types
-
-[design.md "`unsafe.transmute`"](design.md#unsafetransmute) permits equal-size,
-bitwise-copyable representations, including arrays and unchecked pointers.
-This valid program passes checking but fails in Clang with `L0403`:
-
-```odin
-package main;
-import "core:fmt";
-import "core:unsafe";
-bytes_of :: proc(p: rawptr) -> [8]u8 {
-    return unsafe.transmute([8]u8, p);
-}
-main :: proc() { fmt.println(bytes_of(nil)[0]); }
-```
-
-On the 64-bit target it should print `0`. `reinterpret_bits` in
-[src/emit_llvm_expr.odin](src/emit_llvm_expr.odin) emits
-`ptrtoint ptr ... to [8 x i8]`, although that instruction requires an integer
-destination. Transmuting the pointer to `f64` likewise emits an invalid
-`ptrtoint ... to double`; the reverse path selects `inttoptr` without requiring
-an integer source. These shapes need storage reinterpretation or an intermediate
-integer of the pointer's width.
-
 ### Large transmutation treats address values as aggregate registers
 
 [design.md "`unsafe.transmute`"](design.md#unsafetransmute) also permits this
@@ -720,7 +696,7 @@ need the alignment-aware place helper. The program currently prints `hello 4`
 at both the default optimization level and `-opt=speed`; the gap is the
 incorrect LLVM alignment contract, not a reproduced runtime failure.
 
-These seven expression-emission gaps were confirmed with a compiler built
+These six expression-emission gaps were confirmed with a compiler built
 from the source tree on 2026-10-02, using Clang builds, runtime probes, and
 inspection of emitted LLVM as described above. All 108 compiler unit tests
 pass without covering these cases.
