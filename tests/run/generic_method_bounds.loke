@@ -1,0 +1,16 @@
+// design.md "where clauses": a generic method in a generic `impl` evaluates its
+// bounds when a call instantiates it, so a bound may name the method's own
+// parameters beside the block's.
+package main;
+import "core:fmt";
+
+Box :: struct($T: type) { value: T }
+impl Box($T) {
+	echo :: proc(self, value: $U) -> U where size_of(U) > 0 { return value; }
+	wider :: proc(self, value: $U) -> int where size_of(U) > size_of(T) { return size_of(U); }
+}
+
+main :: proc() {
+	b: Box(u8) = {};
+	fmt.println(b.echo(7), b.wider(7));
+}

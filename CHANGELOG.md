@@ -264,6 +264,10 @@ checklist.
 
 ### Fixed
 
+- A generic method in a generic `impl` whose `where` bound names its own
+  parameters, as in `echo :: proc(self, value: $U) -> U where size_of(U) > 0`,
+  is checked when a call instantiates it; the block's instantiation reported
+  `L0315` for `U`.
 - A call returning `inout T`, and a user `operator([])` returning one, are
   places in compile-time evaluation too, so `pick(inout x) = 9;` can be folded;
   it reported `L0341`.

@@ -1,0 +1,14 @@
+package main;
+
+// design.md "where clauses": a generic method's bound that names both its own
+// and its block's parameters is checked at the instantiating call.
+
+Box :: struct($T: type) { value: T }
+impl Box($T) {
+	wider :: proc(self, value: $U) -> int where size_of(U) > size_of(T) { return 1; }
+}
+
+main :: proc() {
+	b: Box(u8) = {};
+	_ = b.wider(u8(1));
+}

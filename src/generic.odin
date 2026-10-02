@@ -2300,6 +2300,12 @@ exclude_member_on_failed_bound :: proc(k: ^Checker, d: ^Decl) {
 	if literal == nil || len(literal.where_clauses) == 0 {
 		return
 	}
+	// A method with its own generic parameters is a generic procedure, whose
+	// bounds may name those parameters; they are evaluated when a call
+	// instantiates it.
+	if proc_signature_is_generic(literal) {
+		return
+	}
 	if len(d.symbols) == 0 || d.symbols[0] == INVALID_SYMBOL {
 		return
 	}

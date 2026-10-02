@@ -1,0 +1,3 @@
+L0434
+@13:6
+`Box(u8).wider(u8)` does not satisfy the bound `size_of(U) > size_of(T)`

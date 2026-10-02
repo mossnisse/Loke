@@ -328,31 +328,6 @@ The call must report a missing member. `install_one_generic_impl` in
 procedure overload ranking, which impl installation never performs. The same
 path lets `impl Box(Pair(int, $T))` apply to `Box(Pair(bool, int))`.
 
-### Generic method bounds are checked before their parameters bind
-
-[design.md "where clauses"](design.md#where-clauses) evaluates a generic
-procedure's bounds when that procedure is instantiated. The compiler rejects
-this program with `L0315`, "unknown name `U`", while instantiating `Box(int)`:
-
-```odin
-package main;
-import "core:fmt";
-Box :: struct($T: type) { value: T }
-impl Box($T) {
-    echo :: proc(self, value: $U) -> U where size_of(U) > 0 { return value; }
-}
-main :: proc() {
-    b: Box(int) = {};
-    fmt.println(b.echo(7));
-}
-```
-
-It should compile: `U` is `int` at the method call. The equivalent method in
-an ordinary, non-generic impl compiles. `exclude_member_on_failed_bound` in
-[src/generic.odin](src/generic.odin) checks every method's bounds during block
-installation, including methods that still need their own generic arguments.
-Such dependent bounds must wait for method instantiation.
-
 ### Omitted compile-time defaults do not infer their type binding
 
 [design.md "Default values"](design.md#default-values) requires an omitted
@@ -400,7 +375,7 @@ copy for each application would keep the parameter type specific to its
 bindings. Procedure inference shares this defect: successive calls to
 `proc($N: int, $V: [N]int)` also reuse the first array length.
 
-These four generic gaps were confirmed with a compiler built from the source
+These three generic gaps were confirmed with a compiler built from the source
 tree on 2026-10-02, using `-emit-ll`. All 108 compiler unit tests pass without
 covering these cases.
 
