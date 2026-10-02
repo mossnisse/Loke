@@ -1,0 +1,3 @@
+load %loke.string, ptr %t*, align 1
+store %loke.string %t*, ptr %t*, align 1
+store i64 %t*, ptr %t*, align 1

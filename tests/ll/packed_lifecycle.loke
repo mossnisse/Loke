@@ -1,0 +1,14 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Record layout attributes": a generated clone copies a packed
+// struct's fields with `align 1`, and dropping its `string` field reads the
+// header with `align 1` too.
+Packed :: struct @(packed) { tag: u8, text: string, value: int }
+
+main :: proc() {
+	value := Packed{3, "hello" + " world", 7};
+	cloned := value.clone();
+	fmt.println(cloned.text, cloned.value, value.value);
+}

@@ -773,6 +773,11 @@ gep_field :: proc(e: ^Emitter, aggregate: string, address: string, index: int) -
 gep_at :: proc(e: ^Emitter, element: string, address: string, index: string) -> string {
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", out, element, address, index)
+	// An element of under-aligned storage, such as an array in a packed struct,
+	// is as unaligned as the storage.
+	if align, known := e.place_align[address]; known {
+		e.place_align[out] = align
+	}
 	return out
 }
 

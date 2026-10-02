@@ -973,38 +973,7 @@ arrays and initialized prefixes. Preserve cleanup progress so that a
 first panic still releases pending fields or elements without replaying
 the hook that raised it.
 
-### Lifecycle operations lose packed-field alignment
-
-[design.md "Record layout attributes"](design.md#record-layout-attributes)
-requires packed fields to load and store unaligned. `element_address` in
-[src/emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) computes field
-addresses without recording their effective alignment, so generated
-field-wise cloning uses ordinary ABI-aligned loads and stores. Intrinsic
-string dropping also uses `load` rather than `load_place`:
-
-```odin
-package main;
-import "core:fmt";
-Packed :: struct @(packed) { tag: u8, text: string, value: int }
-main :: proc() {
-    value := Packed{3, "hello" + " world", 7};
-    cloned := value.clone();
-    fmt.println(cloned.text, cloned.value, value.value);
-}
-```
-
-With `-emit-ll`, `Packed.try_clone` loads and stores `%loke.string` at field
-offset 1 and `i64` at offset 25 without `align 1`. Both ordinary scope exit
-and the unwind thunk also load the string at offset 1 without `align 1`.
-An omitted alignment means the loaded type's ABI alignment, eight bytes
-here; overstating it is undefined behavior under the
-[LLVM load contract](https://llvm.org/docs/LangRef.html#load-instruction).
-The executable prints `hello world 7 7` at `-opt=speed` on Windows x64, but
-that does not make the emitted alignment guarantees valid. Carry packed
-alignment through lifecycle field and element addresses and use place-aware
-loads and stores, including intrinsic drops.
-
-These five cleanup-emission gaps were reproduced with a compiler rebuilt
+These four cleanup-emission gaps were reproduced with a compiler rebuilt
 from the source tree on 2026-10-02. All 108 compiler unit tests pass with
 memory tracking and compiler vets enabled; those tests do not cover these
 reproductions.

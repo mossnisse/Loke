@@ -1074,12 +1074,21 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %d",
 			out, llvm_type(e, owner), base, index,
 		)
+		if align, known := e.place_align[base]; known {
+			e.place_align[out] = align
+		}
 		return out
 	}
 	fmt.sbprintfln(
 		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
 		out, llvm_type(e, owner), base, index,
 	)
+	// design.md "@(packed)": a packed field is loaded and stored unaligned.
+	if info != nil && info.kind == .Struct && index < len(info.fields) {
+		if field := symbol_of(e.c, info.fields[index]); field != nil {
+			record_field_align(e, owner, base, out, field.type)
+		}
+	}
 	return out
 }
 
@@ -1211,7 +1220,7 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		return
 	}
 	if operations.intrinsic {
-		value := load(e, STRING_TYPE, address)
+		value := load_place(e, type, address)
 		owner := extract(e, STRING_TYPE, value, STRING_OWNER)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_release(i64 %s)", owner)
 		return

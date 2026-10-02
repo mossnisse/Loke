@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- A generated clone or drop of a `@(packed)` struct loads and stores its
+  fields, and the elements of its array fields, with `align 1`; the emitted
+  LLVM promised each field type's alignment.
 - Default formatting of a `@(packed)` struct passes each byte-aligned field
   to its formatter as an aligned copy, and reads an `@(initialized)` count
   with `align 1`; the emitted LLVM promised the field type's alignment.
