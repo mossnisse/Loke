@@ -244,29 +244,6 @@ main :: proc() { fmt.println(VALUE, compute()); }
 Both results should be `103`. The evaluator must dispatch the checked indexing
 operator rather than treat its receiver as a built-in sequence.
 
-### Compile-time multiple map assignment loses earlier writes
-
-[design.md "Evaluation order"](design.md#evaluation-order) requires all
-assignment destinations to be prepared before any write. Preparing an absent
-map key in `src/eval.odin` replaces the map's element storage, leaving a
-previously prepared destination pointing into the old storage. This program
-prints `20 1020`:
-
-```odin
-package main;
-import "core:fmt";
-compute :: proc() -> int {
-	m: map[int]int = {};
-	m[1], m[2] = 10, 20;
-	return m[1] * 100 + m[2];
-}
-VALUE :: compute();
-main :: proc() { fmt.println(VALUE, compute()); }
-```
-
-Both results should be `1020`. Prepared map destinations must continue to name
-the live entries after later destination evaluation grows the same map.
-
 ### Compile-time calls cannot supply an inout result as a place
 
 [design.md "`inout` results"](design.md#inout-results) makes a call returning

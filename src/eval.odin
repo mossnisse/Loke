@@ -2694,21 +2694,25 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 			return .Fail
 		}
 		// design.md "Assignment statements": values, then destinations, then writes.
-		slots, slot_err := make([]^Eval_Value, len(s.lhs), ev.alloc)
-		if slot_err != nil {
+		destinations, destination_err := make([]Eval_Destination, len(s.lhs), ev.alloc)
+		if destination_err != nil {
 			return .Fail
 		}
 		for target, index in s.lhs {
 			if is_discard(target) {
 				continue
 			}
-			slot, place_ok := eval_place(ev, target)
+			destination, place_ok := eval_destination(ev, target)
 			if !place_ok {
 				return .Fail
 			}
-			slots[index] = slot
+			destinations[index] = destination
 		}
-		for slot, index in slots {
+		for destination, index in destinations {
+			slot, slot_ok := destination_slot(ev, destination)
+			if !slot_ok {
+				return .Fail
+			}
 			if slot != nil {
 				slot^ = values[index]
 			}
@@ -2728,16 +2732,20 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 		}
 		values[index] = copied
 	}
-	slots, slot_err := make([]^Eval_Value, len(s.lhs), ev.alloc)
-	if slot_err != nil { return .Fail }
+	destinations, destination_err := make([]Eval_Destination, len(s.lhs), ev.alloc)
+	if destination_err != nil { return .Fail }
 	for target, index in s.lhs {
-		slot, ok := eval_place(ev, target)
+		destination, ok := eval_destination(ev, target)
 		if !ok {
 			return .Fail
 		}
-		slots[index] = slot
+		destinations[index] = destination
 	}
-	for slot, index in slots {
+	for destination, index in destinations {
+		slot, slot_ok := destination_slot(ev, destination)
+		if !slot_ok {
+			return .Fail
+		}
 		if index < len(values) {
 			retyped := values[index]
 			retyped.type = slot.type != INVALID_TYPE ? slot.type : retyped.type
@@ -2745,6 +2753,44 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 		}
 	}
 	return .Normal
+}
+
+// A prepared assignment destination. `m[key] = elem` keeps its map and key and
+// inserts in the write phase, as at run time, so the insertion cannot move an
+// entry that another destination already names.
+@(private = "file")
+Eval_Destination :: struct {
+	slot:   ^Eval_Value,
+	map_of: ^Eval_Value,
+	key:    Eval_Value,
+}
+
+@(private = "file")
+eval_destination :: proc(ev: ^Evaluator, target: Expr) -> (Eval_Destination, bool) {
+	if index, is_index := target.(^Expr_Index); is_index && index.map_inserts {
+		base, ok := eval_aggregate_place(ev, index.operand)
+		if !ok {
+			return {}, false
+		}
+		if type_is_map(ev.k.c, base.type) {
+			key, key_ok := eval_expr(ev, index.indices[0])
+			if !key_ok {
+				return {}, false
+			}
+			copied, copied_ok := copy_value(ev, key)
+			return Eval_Destination{map_of = base, key = copied}, copied_ok
+		}
+	}
+	slot, ok := eval_place(ev, target)
+	return Eval_Destination{slot = slot}, ok
+}
+
+@(private = "file")
+destination_slot :: proc(ev: ^Evaluator, destination: Eval_Destination) -> (^Eval_Value, bool) {
+	if destination.map_of != nil {
+		return map_entry_place(ev, destination.map_of, destination.key)
+	}
+	return destination.slot, true
 }
 
 @(private = "file")

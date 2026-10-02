@@ -259,6 +259,9 @@ checklist.
 
 ### Fixed
 
+- A multiple assignment that inserts several keys into one map, as in
+  `m[1], m[2] = 10, 20;`, keeps every write when evaluated at compile time; only
+  the last survived.
 - `@(require_results)` on an associated or method procedure group applies to
   calls through it, such as `Box.group(1)`, as it did for a free group.
 - A variadic spread is evaluated before the default of a fixed parameter it

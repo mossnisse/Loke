@@ -1,6 +1,7 @@
-// design.md "Evaluation order": `key in m` evaluates the key before the map, and
-// a map literal evaluates each entry's key before its value, at compile time as
-// at run time.
+// design.md "Evaluation order": `key in m` evaluates the key before the map, a
+// map literal evaluates each entry's key before its value, and a multiple
+// assignment prepares every destination before inserting any key, at compile
+// time as at run time.
 package main;
 import "core:fmt";
 
@@ -18,7 +19,17 @@ keyed :: proc() -> int {
 }
 KEYED :: keyed();
 
+Pair :: struct { a, b: int }
+grown :: proc() -> int {
+	m: map[int]int = {};
+	m[1], m[2] = 10, 20;
+	m[3], m[4] = Pair{30, 40};
+	return m[1] * 1000000 + m[2] * 10000 + m[3] * 100 + m[4];
+}
+GROWN :: grown();
+
 main :: proc() {
 	fmt.println(key() in table());
 	fmt.println(KEYED, keyed());
+	fmt.println(GROWN, grown());
 }
