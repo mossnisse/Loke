@@ -1258,12 +1258,15 @@ emit_synth_format :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_variant_construct :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	result := llvm_type(e, symbol.result)
-	open_function(e, "define %s%s %s(%s %%arg0)", llvm_linkage(name), result, name, synth_param_llvm(e, symbol, 0))
+	// A large union returns through storage the caller passes first.
+	open_function(
+		e, "define %s%s %s(%s%s %%arg0)", llvm_linkage(name), llvm_result_type(e, symbol.result), name,
+		sret_param(e, symbol.result), synth_param_llvm(e, symbol, 0),
+	)
 	e.terminated = false
 	index := union_variant_index(e.c, symbol.result, symbol.name)
 	variant := emit_union_value(e, symbol.result, index, synth_receiver_value(e, symbol))
-	fmt.sbprintfln(&e.b, "  ret %s %s", result, variant)
+	emit_ret(e, symbol.result, variant)
 	fmt.sbprintln(&e.b, "}")
 }
 

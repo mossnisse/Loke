@@ -1,0 +1,22 @@
+// design.md "Constructing a variant": `U.name` is a procedure value of type
+// `proc(payload: move P) -> U`. When `U` is over 4096 bytes it returns through
+// storage the caller passes, like any procedure with a large result.
+package main;
+import "core:fmt";
+Big :: struct { values: [1024]int }
+Value :: union { big: Big, absent: }
+main :: proc() {
+    construct := Value.big;
+    payload := Big{};
+    payload.values[0] = 4;
+    value := construct(move(payload));
+    switch (inner in value) {
+    case .big: fmt.println(inner.values[0]);
+    case .absent: fmt.println(-1);
+    }
+    direct := Value.big(Big{});
+    switch (inner in direct) {
+    case .big: fmt.println(inner.values[0]);
+    case .absent: fmt.println(-1);
+    }
+}

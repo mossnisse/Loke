@@ -636,37 +636,7 @@ then panic on the slot call. A method that accesses its receiver can instead
 read through the null data pointer, because slot dispatch checks only the
 witness. Conversion must clear the witness when its evaluated pointer is nil.
 
-### Large variant constructors used as procedure values omit the result ABI
-
-[design.md "Constructing a variant"](design.md#constructing-a-variant) makes
-a payload variant's `U.name` a procedure value of type
-`proc(payload: move P) -> U`. `emit_synth_variant_construct` in
-[src/emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) always declares a
-direct aggregate return and emits raw `ret`, even when the union is large
-and must return through a leading `sret` pointer:
-
-```odin
-package main;
-import "core:fmt";
-Big :: struct { values: [1024]int }
-Value :: union { big: Big, absent: }
-main :: proc() {
-    construct := Value.big;
-    value := construct(Big{});
-    switch (payload in value) {
-    case .big: fmt.println(payload.values[0]);
-    case .absent: fmt.println(-1);
-    }
-}
-```
-
-This valid program fails with `L0403`: the constructor returns its pointer
-snapshot as though it were a `%union.Value` aggregate. Its declaration also
-disagrees with the indirect call's result ABI. It should print `0`. The
-constructor must use the common result-signature and return helpers, including
-`sret_param` and `emit_ret`.
-
-These three runtime-emission gaps were reproduced with a compiler built from
+These two runtime-emission gaps were reproduced with a compiler built from
 the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering them.

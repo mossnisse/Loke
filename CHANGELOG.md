@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- A variant constructor of a union larger than 4096 bytes, taken as a
+  procedure value as in `construct := Value.big;`, returns through caller
+  storage like any large result; it failed with `L0403`.
 - Extracting a value larger than 4096 bytes from an `any_view`, with
   `view.(T)` or `view.as(T)`, builds; it loaded the payload as an LLVM
   aggregate and failed with `L0403`.
