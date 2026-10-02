@@ -1,0 +1,20 @@
+package main;
+import "core:fmt";
+
+// design.md "Variable declarations", "Parameter semantics and ABI lowering":
+// `move` and `drop` kill a `move` parameter whatever its type, and the
+// diagnostic says it lost the value it arrived with.
+
+dropped :: proc(value: move int) { drop(value); fmt.println(value); }
+moved :: proc(text: move string) { kept := move(text); fmt.println(kept, text); }
+revived :: proc(value: move int) {
+    other := move(value);
+    value = other + 1;
+    fmt.println(value);
+}
+
+main :: proc() {
+    dropped(7);
+    moved("a");
+    revived(1);
+}

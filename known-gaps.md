@@ -259,26 +259,6 @@ required drop too. With an allocating resource, this leaks the old value.
 The expansion states must be reconciled with a runtime flag where they differ,
 or retained separately for emission at their respective exits.
 
-### Non-managed move parameters are not tracked for liveness
-
-[design.md "Variable declarations"](design.md#variable-declarations) and
-["Parameter semantics and ABI lowering"](design.md#parameter-semantics-and-abi-lowering)
-make a moved or dropped variable dead regardless of its type.
-`track_move_parameters` in [src/cfg.odin](src/cfg.odin) registers only managed
-parameters, so consuming a non-managed `move` parameter produces no lifecycle
-kill event:
-
-```odin
-package main;
-import "core:fmt";
-check :: proc(value: move int) { drop(value); fmt.println(value); }
-main :: proc() { check(7); }
-```
-
-This wrongly compiles. The same use of a dropped ordinary `int` local is
-rejected. Every `move` parameter needs liveness tracking; only managed ones
-need an automatic cleanup registration.
-
 ### Returning a scalar kills the local before deferred reads
 
 [design.md "Parameter semantics and ABI lowering"](design.md#parameter-semantics-and-abi-lowering)
@@ -328,8 +308,8 @@ paths. Every path that reaches the print has initialized it. Both lifecycle
 and provenance graphs must stop fallthrough after a diverging call while
 preserving the call's argument effects and any applicable unwind behavior.
 
-These seven CFG gaps were reproduced with a compiler built from the source
-tree on 2026-10-02. The four invalid or rejected-program cases were checked
+These six CFG gaps were reproduced with a compiler built from the source
+tree on 2026-10-02. The three invalid or rejected-program cases were checked
 with `-emit-ll`; the deferred-copy, for-condition, and deferred-assignment
 cases were also compiled and executed. All 108 compiler unit tests pass
 without covering these cases.

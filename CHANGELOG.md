@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A `move` parameter of any type is dead after `move` or `drop`, so reading
+  a dropped `move` parameter of type `int` is `L0500`, as it is for a local.
+  Read the value before consuming it, or assign it a new one first.
 - A destructuring `foreach` cannot take apart a record that a protocol
   `next` hands over when that record has a custom `hook(copy)` or
   `hook(drop)`, at any depth of the pattern (`L0508`), as a destructuring
@@ -291,6 +294,9 @@ checklist.
 
 ### Fixed
 
+- Using a managed `move` parameter after moving or dropping it reports that it
+  was already moved, dropped, or released, rather than that it has no value
+  yet.
 - Replacing a map entry's value, by `m[key] = value`, `try_insert`, or a
   map literal's repeated key, stores the new value before the old one drops.
   An old value whose drop hook panicked stayed in the map and was dropped a

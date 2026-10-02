@@ -488,14 +488,18 @@ track_move_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 		if parameter.mode != .Move {
 			continue
 		}
+		// Every `move` parameter is followed, since `move` and `drop` kill it;
+		// only a managed one is cleaned up (design.md "Variable declarations").
 		for id in parameter.symbols {
 			sym := symbol_of(graph.k.c, id)
-			if sym == nil || !type_is_managed(graph.k.c, sym.type) {
+			if sym == nil {
 				continue
 			}
-			append(&graph.tracked, Tracked_Local{symbol = id, live_on_entry = true})
+			append(&graph.tracked, Tracked_Local{symbol = id, live_on_entry = true, ever_written = true})
 			graph.by_symbol[id] = len(graph.tracked) - 1
-			append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = len(graph.tracked) - 1})
+			if type_is_managed(graph.k.c, sym.type) {
+				append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = len(graph.tracked) - 1})
+			}
 		}
 	}
 }
