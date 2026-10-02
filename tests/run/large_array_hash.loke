@@ -1,0 +1,26 @@
+package main;
+import "core:fmt";
+
+// design.md "Standard interface catalogue": a fixed array of hashable elements
+// is `Hashable` at any size. One over 4096 bytes is an address in the backend,
+// so its elements are hashed in place, nested large arrays included.
+main :: proc() {
+	key: [513]int = {};
+	other := key;
+	fmt.println(key.hash(1) == other.hash(1));
+	other[512] = 1;
+	fmt.println(key.hash(1) == other.hash(1));
+
+	nested: [3][513]int = {};
+	copy := nested;
+	fmt.println(nested.hash(7) == copy.hash(7));
+	copy[2][0] = 4;
+	fmt.println(nested.hash(7) == copy.hash(7));
+
+	// Hashing in place agrees with hashing each element in order.
+	bytes: [4097]u8 = {};
+	bytes[0] = 9;
+	seed: uint = 3;
+	foreach (byte in bytes) { seed = byte.hash(seed); }
+	fmt.println(bytes.hash(3) == seed);
+}

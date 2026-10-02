@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- Hashing a fixed array larger than 4096 bytes, as `key.hash(seed)` or as a
+  map key, builds; it read the array as an LLVM aggregate and failed with
+  `L0403`.
 - A generated clone or drop of a `@(packed)` struct loads and stores its
   fields, and the elements of its array fields, with `align 1`; the emitted
   LLVM promised each field type's alignment.

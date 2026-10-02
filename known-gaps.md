@@ -801,30 +801,7 @@ owns leak. `try_new_clone` shares these paths. Register owned source
 temporaries before evaluating the allocator or invoking the copy hook, and
 clean them up on both normal completion and unwinding.
 
-### Hashing large fixed arrays violates the address representation
-
-[design.md "Standard interface catalogue"](design.md#standard-interface-catalogue)
-makes fixed arrays of hashable elements `Hashable`.
-`emit_hash_value` in [src/emit_llvm_calls.odin](src/emit_llvm_calls.odin)
-unconditionally uses `extractvalue` for an array, but backend values larger
-than 4096 bytes are represented by an address:
-
-```odin
-package main;
-import "core:fmt";
-main :: proc() {
-    key: [513]int = {};
-    fmt.println(key.hash(0));
-}
-```
-
-This should compile and print the array's hash. Instead LLVM rejects
-`extractvalue [513 x i64] %t, 0` because `%t` has type `ptr`, and the build
-reports `L0403`. Large fixed-array map keys also use this hashing path.
-Read elements through their addresses when the array uses the large-value
-representation, including nested large arrays.
-
-These three call-emission gaps were reproduced with a compiler built from
+These two call-emission gaps were reproduced with a compiler built from
 the source tree on 2026-10-02. All 24 tests in `src/emit_llvm_test.odin` pass
 with memory tracking and both compiler vets enabled; they do not cover these
 reproductions.

@@ -161,6 +161,32 @@ emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
+	if info != nil && info.kind == .Array && is_large_value(e, under) {
+		// A large array is an address, so its elements are hashed in place, in a
+		// loop rather than unrolled.
+		element_llvm := llvm_type(e, info.element)
+		state, cursor := alloca(e, "i64"), alloca(e, "i64")
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", seed, state)
+		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+		head := new_label(e, "hash.large.head")
+		body, done := new_label(e, "hash.large.body"), new_label(e, "hash.large.done")
+		branch(e, head)
+		place_label(e, head)
+		at := load(e, "i64", cursor)
+		more := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %d", more, at, info.count)
+		branch_if(e, more, body, done)
+		place_label(e, body)
+		element := load_temporary(e, info.element, gep_at(e, element_llvm, value, at))
+		next := emit_hash_value(e, info.element, element, load(e, "i64", state))
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, state)
+		step := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", step, at)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", step, cursor)
+		branch(e, head)
+		place_label(e, done)
+		return load(e, "i64", state)
+	}
 	if info != nil && info.kind == .Array {
 		current := seed
 		for index in 0 ..< int(info.count) {
