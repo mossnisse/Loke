@@ -477,52 +477,6 @@ the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering it.
 
-### Generated clones omit panic cleanup for completed parts
-
-[design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not)
-requires partial construction to release resources whose initialization
-completed. Copy hooks may panic for ordinary faults under
-["Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types).
-`emit_synth_try_clone` in
-[src/emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) cleans earlier
-parts when a later hook returns `.err`, but creates no unwind frame or
-registrations for a panic raised by that hook:
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: struct { id: int }
-impl Tracked {
-    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
-        fmt.println("copy", self.id);
-        if (self.id == 2) { panic("copy failed"); }
-        return .ok(Tracked{self.id + 100});
-    }
-    release :: hook(drop) proc(self: inout Tracked) {
-        if (self.id != 0) { fmt.println("drop", self.id); }
-    }
-}
-Pair :: struct { first: Tracked, second: Tracked }
-main :: proc() {
-    source := Pair{Tracked{1}, Tracked{2}};
-    cloned := source.clone();
-    fmt.println(cloned.first.id);
-}
-```
-
-This prints `copy 1`, `copy 2`, `drop 2`, and `drop 1`, omitting `drop 101`
-before the source's drops. The successfully cloned first field leaks.
-Fixed-array and initialized-prefix clones share the absence of panic
-registration. Register completed destination parts for unwinding and
-transfer or clear those registrations only after completion or explicit
-failure cleanup; the incomplete containing record's custom drop must not
-run.
-
-This cleanup-emission gap was reproduced with a compiler rebuilt from the
-source tree on 2026-10-02. All 108 compiler unit tests pass with memory
-tracking and compiler vets enabled; those tests do not cover the
-reproduction.
-
 ### Mixed record yields mark owned leaves as borrowed
 
 [design.md "Yield modes"](design.md#yield-modes) and

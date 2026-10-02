@@ -285,6 +285,10 @@ checklist.
 
 ### Fixed
 
+- A generated `clone` or `try_clone` whose copy hook panics part-way drops
+  the parts it already copied, without running the incomplete result's own
+  drop hook; they leaked. A fixed array's copied elements and an
+  `@(initialized)` field's copied prefix are dropped the same way.
 - A value handed to a container's `insert`, `find_or_insert`, or `try_insert`
   is dropped when the operation panics before the container holds it, as an
   out-of-range `insert` index or a key's `hash` or `==` that panics does; it

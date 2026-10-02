@@ -1,0 +1,26 @@
+// design.md "What the unwind runs, and what it does not": a generated clone
+// that panics part-way releases the parts it completed, and never runs the
+// incomplete result's own drop. A fixed array's completed elements are
+// released as one prefix.
+package main;
+import "core:fmt";
+Tracked :: struct { id: int }
+impl Tracked {
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+        fmt.println("copy", self.id);
+        if (self.id == 3) { panic("copy failed"); }
+        return .ok(Tracked{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Tracked) {
+        if (self.id != 0) { fmt.println("drop", self.id); }
+    }
+}
+Holder :: struct { first: Tracked, items: [3]Tracked, last: Tracked }
+impl Holder {
+    release :: hook(drop) proc(self: inout Holder) { fmt.println("drop holder"); }
+}
+main :: proc() {
+    source := Holder{Tracked{1}, {Tracked{2}, Tracked{3}, Tracked{4}}, Tracked{5}};
+    cloned := source.clone();
+    fmt.println(cloned.first.id);
+}

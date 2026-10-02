@@ -1,0 +1,25 @@
+// design.md "What the unwind runs, and what it does not": a generated clone
+// that panics inside an `@(initialized)` field drops the elements of the
+// prefix it already copied and the parts before that field.
+package main;
+import "core:fmt";
+import "core:unsafe";
+Tracked :: struct { id: int }
+impl Tracked {
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+        fmt.println("copy", self.id);
+        if (self.id == 7) { panic("copy failed"); }
+        return .ok(Tracked{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Tracked) {
+        if (self.id != 0) { fmt.println("drop", self.id); }
+    }
+}
+Holder :: struct { first: Tracked, count: int, @(initialized=count) live: [4]Tracked }
+main :: proc() {
+    source := Holder{ first = Tracked{1} };
+    unsafe.write(source.live[0], Tracked{6});
+    unsafe.write(source.live[1], Tracked{7});
+    source.count = 2;
+    cloned := source.clone();
+}

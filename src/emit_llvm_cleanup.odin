@@ -22,9 +22,9 @@ Deferred :: struct {
 	place_symbol:    Symbol_Id,
 	type:  Type_Id,
 	// A compiler-owned variadic buffer with per-element flags, or, with no
-	// flags, the first `count` elements of an array that a drop is working
-	// through. The env indices serve the unwind thunk; the direct names serve
-	// normal cleanup.
+	// flags, the first `count` elements of an array that a drop or a clone is
+	// working through. The env indices serve the unwind thunk; the direct names
+	// serve normal cleanup.
 	array_cleanup:  bool,
 	array_buffer:   string,
 	array_flags:    string,
@@ -959,11 +959,26 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	// Both sides live in memory: a failure path drops what the destination holds,
 	// and it starts zeroed so every hook sees the inert value, never garbage.
+	// A panicking hook leaves the completed parts to the unwind, apart from the
+	// incomplete result, whose own drop hook must not run.
+	header := begin_generated_frame(e, name)
 	self := alloca(e, value_type)
 	out := temp(e)
 	store(e, subject, subject_value, self)
 	alloca_named(e, out, value_type)
 	store(e, subject, "zeroinitializer", out)
+	guards := make([]Deferred, clone_part_count(e.c, subject))
+	for &guard in guards {
+		guard.slot = -1
+	}
+	// An array's completed elements are one prefix, counted as they are built.
+	built_count := ""
+	array_guard := Deferred{slot = -1}
+	if info := underlying_info(e.c, subject); info != nil && info.kind == .Array {
+		built_count = alloca(e, "i64")
+		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", built_count)
+		array_guard = register_array_cleanup(e, info.element, out, "", built_count)
+	}
 
 	for index in 0 ..< clone_part_count(e.c, subject) {
 		part := clone_part(e.c, subject, index)
@@ -973,7 +988,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// An unmanaged `@(initialized)` field is copied whole as bytes below.
 		if field, counter, prefixed := record_prefix_part(e, subject, index); prefixed &&
 		   part_operations.managed {
-			emit_clone_prefix(e, subject, self, out, field, counter, index, result)
+			guards[index] = emit_clone_prefix(e, subject, self, out, field, counter, index, result, guards)
 			continue
 		}
 		if !part_operations.managed {
@@ -984,6 +999,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		if !part_operations.clone_fallible {
 			loaded := load_place(e, part, source)
 			store(e, part, emit_clone_value(e, part, loaded, "%arg1"), destination)
+			guard_built_part(e, subject, out, index, built_count, guards)
 			continue
 		}
 		cloned, failed, error := emit_part_clone(e, part, source)
@@ -995,11 +1011,10 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		if info := underlying_info(e.c, subject); info != nil && info.kind == .Array {
 			// One runtime loop, rather than re-emitting every earlier element at
 			// each failure point (compiler-architecture.md "LLVM and toolchain").
+			finish_temporary_drop(e, array_guard)
 			emit_drop_prefix_elements(e, info.element, out, fmt.aprintf("%d", index))
 		} else {
-			for done := index - 1; done >= 0; done -= 1 {
-				emit_drop_record_part(e, subject, out, done)
-			}
+			drop_built_parts(e, subject, out, guards[:index])
 		}
 		emit_ret(e, result, emit_alloc_result(e, result, "true", error = error))
 		e.terminated = true
@@ -1007,11 +1022,38 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// beside an error cannot leak it into the temporary.
 		place_label(e, ok)
 		store(e, part, cloned, destination)
+		guard_built_part(e, subject, out, index, built_count, guards)
 	}
 
+	finish_temporary_drop(e, array_guard)
+	for guard in guards {
+		finish_temporary_drop(e, guard)
+	}
 	built := load_temporary(e, subject, out)
 	emit_ret(e, result, emit_alloc_result(e, result, "false", built))
 	fmt.sbprintln(&e.b, "}")
+	end_generated_frame(e, header)
+}
+
+// Publishes one completed part to the unwind: an array counts it into its
+// built prefix, and a record registers it on its own.
+@(private = "file")
+guard_built_part :: proc(e: ^Emitter, subject: Type_Id, out: string, index: int, built_count: string, guards: []Deferred) {
+	if built_count != "" {
+		fmt.sbprintfln(&e.b, "  store i64 %d, ptr %s", index + 1, built_count)
+		return
+	}
+	guards[index] = guard_record_part(e, subject, out, index)
+}
+
+// Drops a record's completed parts, last first, each unregistered just before
+// its drop, so a panic in one still leaves the others to the unwind.
+@(private = "file")
+drop_built_parts :: proc(e: ^Emitter, record: Type_Id, out: string, guards: []Deferred) {
+	for done := len(guards) - 1; done >= 0; done -= 1 {
+		finish_temporary_drop(e, guards[done])
+		emit_drop_record_part(e, record, out, done)
+	}
 }
 
 // design.md "Uninitialized capacity": `@(initialized = count)` makes only the
@@ -1187,7 +1229,8 @@ emit_clone_prefix :: proc(
 	field, counter: ^Symbol,
 	index: int,
 	result: Type_Id,
-) {
+	guards: []Deferred,
+) -> Deferred {
 	element := underlying_info(e.c, field.type).element
 	element_llvm := llvm_type(e, element)
 	source := element_address(e, record, self, int(field.index))
@@ -1198,6 +1241,11 @@ emit_clone_prefix :: proc(
 
 	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	// The cursor counts the completed elements, so it is also their registration.
+	guard := Deferred{slot = -1}
+	if emit_lifecycle(e, element).managed {
+		guard = register_array_cleanup(e, element, destination, "", cursor)
+	}
 	head := new_label(e, "prefix.clone.head")
 	body, done := new_label(e, "prefix.clone.body"), new_label(e, "prefix.clone.done")
 	branch(e, head)
@@ -1218,10 +1266,9 @@ emit_clone_prefix :: proc(
 		fail, ok := new_label(e, "prefix.clone.fail"), new_label(e, "prefix.clone.ok")
 		branch_if(e, failed, fail, ok)
 		place_label(e, fail)
+		finish_temporary_drop(e, guard)
 		emit_drop_prefix_elements(e, element, destination, at)
-		for earlier := index - 1; earlier >= 0; earlier -= 1 {
-			emit_drop_record_part(e, record, out, earlier)
-		}
+		drop_built_parts(e, record, out, guards[:index])
 		emit_ret(e, result, emit_alloc_result(e, result, "true", error = error))
 		e.terminated = true
 		place_label(e, ok)
@@ -1233,6 +1280,7 @@ emit_clone_prefix :: proc(
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
 	branch(e, head)
 	place_label(e, done)
+	return guard
 }
 
 // The address of part `index`: a struct field or an array element.
