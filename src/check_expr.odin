@@ -13,7 +13,6 @@ import "core:strconv"
 import "core:strings"
 import "core:unicode/utf8"
 
-// The type a use site wants, or INVALID_TYPE when nothing constrains it.
 // Where an expression sits. Only the node it is given for reads it: its
 // operands and indices are ordinary value positions.
 Expr_Position :: enum u8 {
@@ -690,8 +689,9 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 				return
 			}
 		}
-		// design.md: associated procedures and constants without `self` are
-		// accessed through the type name, and so is `Type.method(value)`.
+		// design.md "Methods and implementation blocks": associated procedures and
+		// constants without `self` are accessed through the type name, and so is
+		// `Type.method(value)`.
 		if select_associated_member(k, v, subject, callee) {
 			return
 		}
@@ -748,7 +748,8 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 			return
 		}
 	}
-	// A field always wins over method-call sugar with the same name (design.md).
+	// A field always wins over method-call sugar with the same name
+	// (design.md "Methods and implementation blocks").
 	if field == INVALID_SYMBOL {
 		// A pointer may declare inherent methods of its own. Preserve that lookup
 		// first; implicit dereference is the fallback when the pointer type itself
@@ -839,8 +840,10 @@ inherit_capability :: proc(v, operand: ^Expr_Base, through_pointer, pointer_muta
 }
 
 // The `using` fields leading from `record` to a field named `name`, ending with
-// that field. A field declared at a level hides deeper ones; two matches at the
-// same level are ambiguous. Only a by-value struct field promotes.
+// that field. A field declared on a struct hides those promoted into it; two
+// `using` fields that each lead to the name are ambiguous, whatever their
+// depths (design.md "Promoted struct fields"). Only a by-value struct field
+// promotes.
 @(private = "file")
 promoted_field_path :: proc(
 	c: ^Compiler, record: Type_Id, name: Identifier_Id, path: ^[dynamic]Symbol_Id, depth: int,
@@ -1400,10 +1403,9 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 	}
 }
 
-// design.md "Indexing and slicing": a `[]mut T` destination is a place position
-// for slicing, so it takes the overload yielding `[]mut T`; any other position
-// prefers one yielding `[]T`. Either falls back to every overload when its kind
-// has none, and the destination then reports the mismatch.
+// design.md "Indexing and slicing": the destination's capability filters the
+// candidates before ranking, so a `[]mut T` destination selects the overload
+// yielding `[]mut T`.
 @(private = "file")
 select_slicers :: proc(k: ^Checker, all: []Symbol_Id, expected: Type_Id) -> []Symbol_Id {
 	wants_mutable := slice_is_mutable(k.c, expected)
@@ -1566,8 +1568,8 @@ agreed_index_param :: proc(k: ^Checker, candidates: []Symbol_Id, position: int, 
 
 // ------------------------------------------------------------------ unary --
 
-// design.md "@(packed)": the name of a field reached through a packed struct
-// anywhere in the selector chain.
+// design.md "@(packed)": the name of a field that may be misaligned because
+// it, or a field holding it in the same storage, sits in a packed struct.
 @(private)
 packed_field_reached :: proc(k: ^Checker, operand: Expr) -> (string, bool) {
 	cur := operand
@@ -1764,8 +1766,8 @@ check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) -> bool 
 	return true
 }
 
-// design.md: `!=` falls back to `!(left == right)` when `==` is available and no
-// more specific `!=` overload exists.
+// design.md "Operator declarations": `!=` falls back to `!(left == right)`
+// when `==` is available and no more specific `!=` overload exists.
 @(private = "file")
 check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bool {
 	symbol := operator_text(v.op)
@@ -1965,8 +1967,9 @@ constant_zero_divisor :: proc(k: ^Checker, op: Token_Kind, op_span: Span, diviso
 	return true
 }
 
-// `a && b` evaluates to `b` if `a` else `false` (design.md), so the right
-// operand is checked but only the selected value is folded.
+// `a && b` evaluates to `b` if `a` else `false` (design.md "Logical
+// operators"), so the right operand is checked but only the selected value is
+// folded.
 @(private = "file")
 check_logical :: proc(k: ^Checker, v: ^Expr_Binary) {
 	lhs := check_single_expr(k, v.lhs, TYPE_BOOL)
@@ -2005,9 +2008,10 @@ check_logical :: proc(k: ^Checker, v: ^Expr_Binary) {
 	}
 }
 
-// design.md "Arithmetic operators": the shift count is an unsigned integer or
-// an untyped constant representable by one, and an untyped left operand first
-// takes the type it would have on its own.
+// design.md "Arithmetic operators": the shift count is an integer, a signed one
+// read as unsigned, or an untyped constant representable by an unsigned
+// integer; an untyped left operand first takes the type it would have on its
+// own.
 @(private = "file")
 check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, rhs: Type_Id) {
 	lhs := left_type
@@ -2053,9 +2057,8 @@ check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, 
 
 // The same rule for `a << b` and `a <<= b`: a typed integer count, read as
 // unsigned (design.md "Integer operators"), or an untyped constant a typed
-// unsigned integer could represent. The compound form
-// checks its own operand here rather than against the destination's type, which
-// would happily accept a signed one.
+// unsigned integer could represent. The compound form checks its own operand
+// here rather than against the destination's type.
 check_shift_count :: proc(k: ^Checker, e: Expr) -> bool {
 	type := check_single_expr(k, e)
 	if type == INVALID_TYPE {
@@ -2930,7 +2933,7 @@ const_element_count :: proc(c: ^Compiler, type: Type_Id) -> u64 {
 	return 1
 }
 
-// The compile-time zero value of every runtime M2 type (design.md "Zero
+// The compile-time zero value of every runtime type (design.md "Zero
 // values"). Recursive for aggregates. Without `build`, only whether one exists
 // is answered, and an aggregate comes back as an empty `.Aggregate`; with it,
 // an aggregate past `MAX_CONST_ELEMENTS` is not built and reports false.
@@ -3028,9 +3031,10 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 
 // -------------------------------------------------------------- materialise --
 
-// Rewrites an untyped node so it carries `target` and a constant folded at that
-// width. Reports the representability failure itself; returns false only when
-// the value cannot live in the target type.
+// Records the implicit conversion of `e` to `target` for the emitter and the
+// provenance walker: an untyped constant folded at the target's width, a typed
+// view, an erasure, or a splat. Reports a representability failure itself and
+// returns false only when the value cannot live in the target type.
 materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	base := expr_base(e)
 	if base == nil || target == INVALID_TYPE || base.type == INVALID_TYPE {
@@ -3454,7 +3458,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	return false
 }
 
-// Is `T(v)` legal? Built-in conversions only; user conversions are M4.
+// Is `T(v)` legal? Built-in conversions only.
 convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if assignable(c, from, to) {
 		return true

@@ -44,7 +44,8 @@ Checker :: struct {
 Body_Context :: struct {
 	// The procedure being checked, and so the frame a name may come from.
 	proc_literal: ^Expr_Proc,
-	// design.md: at most one result. INVALID_TYPE means the procedure has none.
+	// design.md "One result": at most one result. INVALID_TYPE means the
+	// procedure has none.
 	result_type:  Type_Id,
 	// Whether the result was declared `inout`, so `return` must hand out a place.
 	result_inout: bool,
@@ -142,7 +143,8 @@ impl_subject_package :: proc(k: ^Checker, item: ^Item_Impl) -> Package_Id {
 	return sym != nil && sym.kind == .Package_Alias ? sym.pkg : k.pkg
 }
 
-// design.md: an import name is a lexical alias for a `Package_Id`, nothing more.
+// design.md "Import statement": an import name is a lexical alias for a
+// `Package_Id`, nothing more.
 @(private = "file")
 bind_import_aliases :: proc(k: ^Checker, pkg: ^Package) {
 	// Only the edges a previous round did not reach, so a collision reports once.
@@ -805,7 +807,7 @@ resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Re
 		return
 	}
 	for &field in value.fields {
-		attribute, written := field_initialized_attribute(field.attributes)
+		attribute, written := find_attribute(field.attributes, "initialized")
 		if !written {
 			continue
 		}
@@ -850,16 +852,6 @@ resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Re
 			symbol.initialized_by = counter
 		}
 	}
-}
-
-@(private = "file")
-field_initialized_attribute :: proc(attributes: []Attribute) -> (Attribute, bool) {
-	for attribute in attributes {
-		if len(attribute.path) == 1 && attribute.path[0].text == "initialized" {
-			return attribute, true
-		}
-	}
-	return {}, false
 }
 
 // `(name: Type, ...)`, interned while checking so the type exists before
@@ -1000,7 +992,7 @@ reject_hooked_destructure :: proc(k: ^Checker, record: Type_Id, span: Span) -> b
 	return true
 }
 
-// design.md: an enum's members are named constants that need not be
+// design.md "Enumerations": an enum's members are named constants that need not be
 // contiguous. An omitted value continues from the previous member.
 resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 	backing := TYPE_INT
@@ -1033,20 +1025,21 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 		if field.value != nil {
 			if check_single_expr(k, field.value, backing) != INVALID_TYPE {
 				folded, evaluated := require_const(k, field.value, "an enum member's value", "L0380")
-				if !evaluated {
-				} else if folded.kind != .Integer && folded.kind != .Rune {
-					errorf(k.c, expr_span(field.value), "L0380", "an enum member's value must be a constant integer")
-				} else if !bi_fits(k.c, folded.integer, type_bits(k.c, backing), type_signed(k.c, backing)) {
-					errorf(
-						k.c,
-						expr_span(field.value),
-						"L0352",
-						"%s is not representable by `%s`",
-						bi_text(k.c, folded.integer),
-						type_name(k.c, backing),
-					)
-				} else {
-					discriminant = folded.integer
+				if evaluated {
+					if folded.kind != .Integer && folded.kind != .Rune {
+						errorf(k.c, expr_span(field.value), "L0380", "an enum member's value must be a constant integer")
+					} else if !bi_fits(k.c, folded.integer, type_bits(k.c, backing), type_signed(k.c, backing)) {
+						errorf(
+							k.c,
+							expr_span(field.value),
+							"L0352",
+							"%s is not representable by `%s`",
+							bi_text(k.c, folded.integer),
+							type_name(k.c, backing),
+						)
+					} else {
+						discriminant = folded.integer
+					}
 				}
 			}
 		}
@@ -1346,7 +1339,8 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.param_defaults = defaults[:]
 	symbol.proc_type = proc_type
 	symbol.signature_error = k.c.error_count > reported
-	// design.md "Receiver forms": a `self: ^T` is not a receiver.
+	// design.md "Receiver forms": `self: ^T` is a receiver taken by address;
+	// `self: ^mut T` is an ordinary first parameter.
 	symbol.has_receiver = has_receiver
 	symbol.receiver = receiver_mode
 	literal.type = proc_type
@@ -1960,8 +1954,9 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
-	// design.md: an interface declaration is compile-time metadata and cannot be
-	// a variable, field, parameter, or result type. `dyn I` is the erased type.
+	// design.md "Interfaces as reusable constraints": an interface declaration
+	// is compile-time metadata and cannot be a variable, field, parameter, or
+	// result type. `dyn I` is the erased type.
 	if type_is_interface(k.c, type) {
 		errorf(
 			k.c,
@@ -2013,8 +2008,8 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 	return INVALID_TYPE
 }
 
-// Says why a written type did not resolve. `resolve_type_syntax` is also a
-// probe, so it reports nothing itself.
+// Says why a written type did not resolve, for the paths where
+// `resolve_type_syntax` reported nothing itself.
 report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	// The parser already reported it.
 	if _, is_error := syntax.(^Expr_Error); is_error {
@@ -2275,10 +2270,8 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 
 		value_mark := len(k.c.diagnostics)
 		type := check_single_expr(k, value, declared)
-		// A literal with an unknown field still has a type, but an initializer
-		// that reported an error is never evaluated: its nodes may carry no
-		// resolution. A variable keeps the type; a constant, which would have no
-		// value, is left invalid, so its uses report nothing further.
+		// An initializer that reported an error may have unresolved nodes, so it
+		// is never evaluated; a constant without a value stays invalid.
 		evaluable := !errors_since(k.c, value_mark)
 		if type == INVALID_TYPE || (d.kind == .Const && !evaluable) {
 			if symbol := symbol_of(k.c, symbol_id); symbol != nil {
@@ -2415,8 +2408,6 @@ runtime_signature_ok :: proc(k: ^Checker, symbol: ^Symbol, span: Span) -> bool {
 	return gate_type(k, symbol.proc_type, span)
 }
 
-// Installs parameters, checks the body, and demands a return on every path that
-// can fall out of a result-bearing procedure.
 check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	symbol := symbol_of(k.c, literal.symbol)
 	if symbol == nil {
@@ -2804,9 +2795,10 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	}
 }
 
-// design.md: `operator([]=)` is for containers that have no location to hand
-// out. It is reached only when no `operator([])` returning `inout` exists, so a
-// type that can supply an address still gets an ordinary store.
+// design.md "Indexing and slicing": `operator([]=)` is for containers that
+// have no location to hand out. It is reached only when no `operator([])`
+// returning `inout` exists, so a type that can supply an address still gets an
+// ordinary store.
 @(private = "file")
 check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, value: Expr) -> bool {
 	operand := check_single_expr(k, target.operand)

@@ -139,7 +139,6 @@ prov_payload_content :: proc(
 	return prov_project_content(graph, loans, subject_type, {proj_wild()}, payload_type, span)
 }
 
-// A case binding holds the subject's content, or one variant's payload.
 @(private)
 prov_case_payload :: proc(
 	graph: ^Flow_Graph, s: ^Stmt_Switch, entry: Switch_Case, subject: []int,
@@ -213,8 +212,10 @@ prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Expr) 
 
 // ------------------------------------------------- provenance construction --
 
-// Pure graph construction for the lattices in `src/borrow.odin`: allocates in
-// the graph's arena and reads the typed AST, but never writes it or reports.
+// Graph construction for the lattices in `src/borrow.odin`: allocates in the
+// graph's arena and reads the typed AST without reporting. `prov_owner_view`
+// and `walk_flow_expr_erased` alone write it, clearing a conversion while
+// they walk its source and restoring it before they return.
 
 @(private)
 prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
@@ -3092,7 +3093,6 @@ prov_declare_region :: proc(
 	}
 }
 
-// A destructured binding takes only its own field's sources.
 @(private = "file")
 prov_destructure_field :: proc(
 	graph: ^Flow_Graph,
@@ -3851,12 +3851,12 @@ prov_lend_carrier :: proc(graph: ^Flow_Graph, carriers, held: []int, span: Span)
 @(private = "file")
 prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
 	proc_type := call_proc_type(graph.k.c, v)
-	if underlying_info(graph.k.c, proc_type) == nil {
+	info := underlying_info(graph.k.c, proc_type)
+	if info == nil {
 		return
 	}
 	prov_call_written_regions(graph, v, proc_type)
 	destinations: []int
-	info := underlying_info(graph.k.c, proc_type)
 	for held, index in actuals {
 		level := proc_param_escape(graph.k.c, proc_type, index)
 		if level >= .Stored && index < len(info.param_modes) && info.param_modes[index] == .Move {
@@ -3876,9 +3876,6 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 				retain  = .Process,
 				verb    = prov_parameter_label(graph, v, index),
 			})
-		}
-		if level < .Stored {
-			continue
 		}
 		if destinations == nil {
 			destinations = prov_writable_arguments(graph, v, proc_type)
