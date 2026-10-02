@@ -1,0 +1,11 @@
+package main;
+import "core:fmt";
+consume :: proc(xs: move [dynamic]int) -> bool { return false; }
+// design.md "Variable declarations": a condition that may consume `xs` leaves
+// it dead on the loop's exit, as on its body.
+main :: proc() {
+    xs := [dynamic]int{1};
+    ready := true;
+    for (ready && consume(move(xs))) { break; }
+    fmt.println(xs);
+}

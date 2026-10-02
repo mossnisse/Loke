@@ -173,32 +173,6 @@ still contain `[1]` on the continuing path. Last-use eligibility must account
 for every expansion of the same copy site before changing the shared node,
 and the lifecycle events must agree with the resulting operation.
 
-### A split for condition loses its effects before the body and exit
-
-[design.md "Variable declarations"](design.md#variable-declarations) requires
-a local to be live on every path to a use. In `walk_flow_for` in
-[src/cfg.odin](src/cfg.odin), walking a short-circuit, conditional, or
-`or_else` condition can advance `graph.current` to a new block, but the body
-and done edges still leave the original `head`. Effects in the newly created
-condition blocks do not reach either successor:
-
-```odin
-package main;
-import "core:fmt";
-consume :: proc(xs: move [dynamic]int) -> bool { return false; }
-main :: proc() {
-    xs := [dynamic]int{1};
-    ready := true;
-    for (ready && consume(move(xs))) { }
-    fmt.println(xs);
-}
-```
-
-This compiles and prints `[]`. The use after the loop must be rejected: the
-condition may have consumed `xs`. Both edges must leave the block reached
-after evaluating the condition, preserving its lifecycle and provenance
-events, rather than bypassing those blocks.
-
 ### Deferred assignments share the last expansion's destination liveness
 
 [design.md "Managed values and storage"](design.md#managed-values-and-storage)
@@ -235,10 +209,10 @@ required drop too. With an allocating resource, this leaks the old value.
 The expansion states must be reconciled with a runtime flag where they differ,
 or retained separately for emission at their respective exits.
 
-These three CFG gaps were reproduced with a compiler built from the source
-tree on 2026-10-02. The deferred-copy, for-condition, and deferred-assignment
-cases were compiled and executed. All 108 compiler unit tests pass
-without covering these cases.
+These two CFG gaps were reproduced with a compiler built from the source
+tree on 2026-10-02. The deferred-copy and deferred-assignment cases were
+compiled and executed. All 108 compiler unit tests pass without covering
+these cases.
 
 ### Aggregate equality bypasses nested comparison overloads
 

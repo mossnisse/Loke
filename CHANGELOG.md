@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A `for` condition that may move or drop a local, as
+  `for (ready && consume(move(xs)))` does, leaves it dead in the body and
+  after the loop (`L0500`): the condition's effects reached neither. Give the
+  local a new value before reading it again.
 - A multiple assignment cannot read, in a later destination, a local that an
   earlier destination of the same statement initializes, as in
   `index, xs[index] = 0, 1;` with `index` unset (`L0500`): every destination

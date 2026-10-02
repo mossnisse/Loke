@@ -1207,14 +1207,16 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 	link(graph, graph.current, head)
 	graph.current = head
 	walk_flow_expr(graph, s.cond)
+	// A condition can split into blocks of its own; both edges leave the last.
+	tested := graph.current
 	done := new_flow_block(graph)
 	if s.cond != nil {
-		link(graph, head, done)
+		link(graph, tested, done)
 	}
 	post := new_flow_block(graph)
 
 	body := new_flow_block(graph)
-	link(graph, head, body)
+	link(graph, tested, body)
 	graph.current = body
 	walk_flow_loop_body(graph, s.body, post, done)
 	link(graph, graph.current, post)
