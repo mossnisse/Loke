@@ -610,40 +610,6 @@ the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering it.
 
-### Variadic packs accumulate stack storage in loops
-
-[design.md "Variadic parameters"](design.md#variadic-parameters) permits
-mixed scalar and spread arguments. `emit_variadic_pack` in
-[src/emit_llvm_calls.odin](src/emit_llvm_calls.odin) emits runtime-sized
-`alloca` instructions at the call site without releasing their stack storage
-after the call. A loop therefore retains every iteration's pack until its
-containing procedure returns:
-
-```odin
-package main;
-import "core:fmt";
-sum :: proc(values: ..int) -> int {
-    result := 0;
-    foreach (v in values) { result += v; }
-    return result;
-}
-main :: proc() {
-    values := [2]int{2, 3};
-    total := 0;
-    for (i := 0; i < 200000; i += 1) {
-        total += sum(1, ..values[:]);
-    }
-    fmt.println(total);
-}
-```
-
-At the default optimization level on Windows x64 this exits with stack
-overflow (`0xC00000FD`) instead of printing `1200000`. The same program with
-1000 iterations prints `6000`. Managed packs also allocate their cleanup
-flags at the call site, including packs without spreads. Reclaim runtime
-pack storage after its last use and cleanup, and hoist fixed-size flags into
-the entry block.
-
 ### Allocation cloning skips the source temporary's cleanup
 
 [design.md "Allocators"](design.md#allocators) requires `new_clone` to
@@ -679,10 +645,9 @@ owns leak. `try_new_clone` shares these paths. Register owned source
 temporaries before evaluating the allocator or invoking the copy hook, and
 clean them up on both normal completion and unwinding.
 
-These two call-emission gaps were reproduced with a compiler built from
-the source tree on 2026-10-02. All 24 tests in `src/emit_llvm_test.odin` pass
-with memory tracking and both compiler vets enabled; they do not cover these
-reproductions.
+This call-emission gap was reproduced with a compiler built from the source
+tree on 2026-10-02. All 24 tests in `src/emit_llvm_test.odin` pass with memory
+tracking and both compiler vets enabled; they do not cover the reproduction.
 
 ### Explicit drop remains registered while its hook runs
 

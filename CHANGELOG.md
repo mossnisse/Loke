@@ -285,6 +285,10 @@ checklist.
 
 ### Fixed
 
+- A variadic call with a `..` spread releases its pack's stack storage at the
+  end of its full expression, so calling it in a long loop no longer overflows
+  the stack. A managed pack without a spread keeps its cleanup flags in the
+  entry block.
 - Converting a pointer that is nil at run time to `dyn I` yields the nil view:
   it compares equal to `nil`, and a slot call through it panics. The view kept
   the concrete witness, so the call ran the method on a null receiver.

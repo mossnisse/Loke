@@ -174,6 +174,9 @@ Function_State :: struct {
 	large_taken: [dynamic]Large_Slot,
 	large_marks: [dynamic]int,
 	large_free:  [dynamic]Large_Slot,
+	// Per open full expression, the slot holding the stack pointer saved before
+	// its first runtime-sized alloca, or "" while it has none.
+	stack_saves: [dynamic]string,
 }
 
 @(private)

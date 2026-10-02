@@ -306,6 +306,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	e.temporaries = make([dynamic][dynamic]Deferred)
 	e.prologue = nil
 	e.large_taken, e.large_marks, e.large_free = nil, nil, nil
+	e.stack_saves = nil
 	u.replaying = true
 
 	open_function(e, "define private void %s(ptr %%ctx)", u.thunk)
@@ -440,6 +441,7 @@ drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
 push_temporaries :: proc(e: ^Emitter) {
 	append(&e.temporaries, make([dynamic]Deferred))
 	append(&e.large_marks, len(e.large_taken))
+	append(&e.stack_saves, "")
 }
 
 @(private)
@@ -457,6 +459,41 @@ pop_temporaries :: proc(e: ^Emitter) {
 	mark := pop(&e.large_marks)
 	append(&e.large_free, ..e.large_taken[mark:])
 	resize(&e.large_taken, mark)
+	// Runtime-sized storage, such as a variadic pack's, ends here too, so a loop
+	// does not keep every iteration's. The slot is null on paths that took none.
+	if saved := pop(&e.stack_saves); saved != "" && !e.terminated {
+		pointer, taken := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", pointer, saved)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", taken, pointer)
+		restore, done := new_label(e, "stack.restore"), new_label(e, "stack.done")
+		branch_if(e, taken, restore, done)
+		place_label(e, restore)
+		fmt.sbprintfln(&e.b, "  call void @llvm.stackrestore.p0(ptr %s)", pointer)
+		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", saved)
+		branch(e, done)
+		place_label(e, done)
+	}
+}
+
+// Saves the stack pointer for the open full expression before a runtime-sized
+// alloca, unless a path through it already has; `pop_temporaries` restores it.
+@(private)
+save_stack_for_expression :: proc(e: ^Emitter) {
+	if len(e.stack_saves) == 0 {
+		return
+	}
+	slot := &e.stack_saves[len(e.stack_saves) - 1]
+	if slot^ == "" {
+		slot^ = temp(e)
+		alloca_named(e, slot^, "ptr")
+		append(&e.prologue, fmt.aprintf("  store ptr null, ptr %s", slot^))
+	}
+	now, held, empty, kept := temp(e), temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call ptr @llvm.stacksave.p0()", now)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", held, slot^)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", empty, held)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", kept, empty, now, held)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", kept, slot^)
 }
 
 // Drops the frames above `down_to`, innermost first, without closing them: an

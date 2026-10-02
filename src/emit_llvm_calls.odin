@@ -864,13 +864,18 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 		too_large := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", too_large, total, limit)
 		panic_if(e, too_large, "variadic.size", "variadic argument pack is too large")
+		save_stack_for_expression(e)
 		alloca_count(e, buffer, element_llvm, total)
 	}
 	final_flags, final_count := "", ""
 	cleanup := Deferred{slot = -1}
 	if managed {
 		final_flags, final_count = temp(e), temp(e)
-		alloca_count(e, final_flags, "i1", total)
+		if len(v.variadic_spreads) == 0 {
+			alloca_named(e, final_flags, fmt.aprintf("[%d x i1]", static_count))
+		} else {
+			alloca_count(e, final_flags, "i1", total)
+		}
 		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", final_flags, total)
 		alloca_named(e, final_count, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", total, final_count)
