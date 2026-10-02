@@ -383,6 +383,49 @@ the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering it.
 
+### A moved owned foreach leaf is dropped again at the end of its step
+
+[design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types)
+runs a drop hook exactly once per initialization that is not transferred.
+`bind_foreach_field` in [src/emit_llvm_iteration.odin](src/emit_llvm_iteration.odin)
+registers an owned loop binding's drop with `register_scope_place`, which
+`move` cannot cancel, and the lifecycle walk does not follow `foreach`
+bindings, so moving one leaves the step's drop in place:
+
+```odin
+package main;
+import "core:fmt";
+Owned :: move_only struct { id: int }
+impl Owned {
+    release :: hook(drop) proc(self: inout Owned) { fmt.println("drop", self.id); }
+}
+Row :: struct { owned: Owned, lent: int }
+Sequence :: struct { n: int }
+Cursor :: struct { at: int, n: int }
+impl Sequence {
+    Element :: Row;
+    iter :: proc(self) -> Cursor { return {0, self.n}; }
+}
+impl Cursor {
+    next :: proc(self: inout Cursor) -> Option(Row) {
+        if (self.at >= self.n) { return .none; }
+        self.at += 1;
+        return .some(Row{Owned{self.at}, 5});
+    }
+}
+take :: proc(value: move Owned) { fmt.println("take", value.id); }
+main :: proc() {
+    foreach (owned, lent in Sequence{1}) { take(move(owned)); }
+}
+```
+
+This prints `take 1`, `drop 1`, and then `drop 0`: the step drops the inert
+value `move` left behind. Owned loop bindings need the liveness tracking and
+cancellable drops a local has. The mixed-yield gap below needs the same.
+
+This iteration-emission gap was reproduced with a compiler built from the
+source tree on 2026-10-02.
+
 ### Mixed record yields mark owned leaves as borrowed
 
 [design.md "Yield modes"](design.md#yield-modes) and
