@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- A drop hook that panics during an explicit `drop(value)` runs once: the
+  unwind no longer replays it on the same value, which panicked again and
+  skipped the remaining drops.
 - A panic while a map literal inserts an entry, in the key's `hash` or
   clone, or in dropping an entry it replaces, drops the value being inserted;
   only the map built so far was dropped.

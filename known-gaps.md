@@ -552,39 +552,6 @@ This call-emission gap was reproduced with a compiler built from the source
 tree on 2026-10-02. All 24 tests in `src/emit_llvm_test.odin` pass with memory
 tracking and both compiler vets enabled; they do not cover the reproduction.
 
-### Explicit drop remains registered while its hook runs
-
-[design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types)
-requires a drop hook to run exactly once per completed initialization.
-`emit_explicit_drop` in
-[src/emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) calls
-`emit_drop_place` before `kill_place` clears the owner's unwind registration:
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: struct { id: int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) {
-        if (self.id == 0) { return; }
-        fmt.println("drop", self.id);
-        if (self.id == 2) { panic("explicit drop failed"); }
-    }
-}
-yes :: proc() -> bool { return true; }
-main :: proc() {
-    first := Tracked{1};
-    second := Tracked{2};
-    if (yes()) { drop(second); }
-}
-```
-
-This prints `drop 2` twice and aborts with `panic while unwinding a panic`,
-skipping `drop 1`. The conditional explicit drop leaves an implicit drop
-needed on the other path, so its live unwind action reenters the same hook.
-Clear that action before invoking the hook, while keeping the value intact
-for the hook to read; write the inert zero after normal completion.
-
 ### Deferred statements leak addressed owning temporaries
 
 [design.md "Evaluation order"](design.md#evaluation-order) requires a
@@ -696,7 +663,7 @@ arrays and initialized prefixes. Preserve cleanup progress so that a
 first panic still releases pending fields or elements without replaying
 the hook that raised it.
 
-These four cleanup-emission gaps were reproduced with a compiler rebuilt
+These three cleanup-emission gaps were reproduced with a compiler rebuilt
 from the source tree on 2026-10-02. All 108 compiler unit tests pass with
 memory tracking and compiler vets enabled; those tests do not cover these
 reproductions.

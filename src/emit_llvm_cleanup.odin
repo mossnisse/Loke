@@ -723,6 +723,11 @@ emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
 	if sym == nil {
 		return
 	}
+	// The owner's unwind action is cleared before the hook runs, so a panicking
+	// hook cannot be replayed on the same value; the hook still reads it intact.
+	if slot, registered := e.unwind.slot_by_symbol[ident.symbol]; registered {
+		unwind_clear(e, slot)
+	}
 	emit_drop_place(e, sym.type, symbol_name(e, ident.symbol))
 	kill_place(e, ident.symbol)
 }

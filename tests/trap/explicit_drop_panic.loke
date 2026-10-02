@@ -1,0 +1,20 @@
+// design.md "Lifecycle hooks and resource types": a drop hook runs once per
+// initialization. An explicit `drop` unregisters the owner before its hook
+// runs, so a hook that panics is not replayed by the unwind, and the other
+// owners are still dropped.
+package main;
+import "core:fmt";
+Tracked :: struct { id: int }
+impl Tracked {
+    release :: hook(drop) proc(self: inout Tracked) {
+        if (self.id == 0) { return; }
+        fmt.println("drop", self.id);
+        if (self.id == 2) { panic("explicit drop failed"); }
+    }
+}
+yes :: proc() -> bool { return true; }
+main :: proc() {
+    first := Tracked{1};
+    second := Tracked{2};
+    if (yes()) { drop(second); }
+}
