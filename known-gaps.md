@@ -590,34 +590,7 @@ be represented as bytes". `union_constant` and `write_field_bytes` in
 but `write_const_bytes` cannot represent a relocation to literal storage.
 These layouts need constant emission that preserves pointer relocations.
 
-### Packed owner-to-view conversions lose field alignment
-
-[design.md "@(packed)"](design.md#packed) permits reading fields with byte
-alignment. Both owner-to-view conversions in this valid program must read
-their headers at that alignment:
-
-```odin
-package main;
-import "core:fmt";
-Packed :: struct @(packed) { tag: u8, text: string, data: [dynamic]int }
-main :: proc() {
-    p := Packed{1, "hello", {3, 4}};
-    text: string_view = p.text;
-    data: []int = p.data;
-    fmt.println(text, data[1]);
-}
-```
-
-`emit_expr_at` in [src/emit_llvm_expr.odin](src/emit_llvm_expr.odin) uses raw
-`load` for the `string` and dynamic-array headers. Their field addresses are
-tracked as byte-aligned, but the emitted loads omit `align 1`, promising LLVM
-the header types' ordinary alignment. The string field starts at byte 1 and
-the dynamic-array field at byte 25 on the tested 64-bit target. These loads
-need the alignment-aware place helper. The program currently prints `hello 4`
-at both the default optimization level and `-opt=speed`; the gap is the
-incorrect LLVM alignment contract, not a reproduced runtime failure.
-
-These three expression-emission gaps were confirmed with a compiler built
+These two expression-emission gaps were confirmed with a compiler built
 from the source tree on 2026-10-02, using Clang builds, runtime probes, and
 inspection of emitted LLVM as described above. All 108 compiler unit tests
 pass without covering these cases.

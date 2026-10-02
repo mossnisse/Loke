@@ -1,0 +1,2 @@
+load %loke.string, ptr %t*, align 1
+load %loke.container, ptr %t*, align 1

@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- Viewing a `string` or `[dynamic]T` field of a `@(packed)` struct as a
+  `string_view` or `[]T` reads its header with `align 1`; the emitted LLVM
+  promised the header's natural alignment.
 - `==` on a struct that is both `@(packed)` and `@(align=N)` compares only the
   live prefix of an `@(initialized)` array, as on other structs, and builds
   when a field is larger than 4096 bytes; it compared discarded capacity, and

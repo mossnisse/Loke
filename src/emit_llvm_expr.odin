@@ -857,7 +857,8 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	// A `string` borrowed as a `string_view`: the owning word is dropped, and
 	// addressing the source keeps an owned temporary alive.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .String_View {
-		value := load(e, STRING_TYPE, emit_address_at(e, expr, from))
+		// A packed field's header may be byte-aligned (design.md "@(packed)").
+		value := load_place(e, from, emit_address_at(e, expr, from))
 		data := extract(e, STRING_TYPE, value, STRING_DATA)
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
@@ -871,7 +872,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	}
 	// A `[dynamic]T` read as a `[]T` of its live elements.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .Slice {
-		value := load(e, CONTAINER_TYPE, emit_address_at(e, expr, from))
+		value := load_place(e, from, emit_address_at(e, expr, from))
 		data := extract(e, CONTAINER_TYPE, value, CONTAINER_STORAGE)
 		length := extract(e, CONTAINER_TYPE, value, CONTAINER_LEN)
 		return emit_slice_value(e, as_type, data, length)
