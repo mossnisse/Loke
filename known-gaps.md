@@ -197,28 +197,6 @@ overload. Records and arrays containing such a distinct type also receive
 structural equality. Comparison availability must preserve the distinct
 identity, while layout and lowering may still query its representation.
 
-### Deep pointer types bypass runtime type validation
-
-[design.md "Interfaces as reusable constraints"](design.md#interfaces-as-reusable-constraints)
-makes an interface declaration compile-time metadata, rather than a runtime
-value type. Adding pointer layers must not turn it into a supported storage
-type. This generates a minimal rejected type inside 33 pointer layers:
-
-```powershell
-$source = 'package main; I :: interface($Self: type) {} ' +
-    'main :: proc() { value: ' + ('^' * 33) + 'I = nil; _ = value; }'
-New-Item -ItemType Directory -Path tests/tmp -Force | Out-Null
-Set-Content -LiteralPath tests/tmp/deep-interface.loke -Value $source -Encoding ASCII
-.\lokec.exe tests/tmp/deep-interface.loke -emit-ll
-```
-
-The compiler accepts it and emits LLVM IR. The same program with 32 pointer
-layers is rejected with `L0350`. `type_is_supported_depth` in
-[src/semantic.odin](src/semantic.odin) returns `true` past depth 32 before
-inspecting the remaining component. Use type-identity cycle detection rather
-than treating every sufficiently deep shape as supported; the related invalid
-component and compile-time-only component walks need the same treatment.
-
 ### Read-only aliases lose their source's suspension
 
 [design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)

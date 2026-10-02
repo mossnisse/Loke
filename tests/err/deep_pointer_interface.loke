@@ -1,0 +1,11 @@
+package main;
+
+// design.md "Interfaces as reusable constraints": an interface is compile-time
+// metadata, so no number of pointer layers makes it a storage type.
+
+I :: interface($Self: type) {}
+
+main :: proc() {
+	value: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^I = nil;
+	_ = value;
+}

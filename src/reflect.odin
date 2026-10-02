@@ -121,12 +121,22 @@ type_is_reflection_value :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // This finds the component to blame, or INVALID_TYPE. Driven off the recorded
 // components rather than an exhaustive kind switch: a kind this misses falls
 // back to the generic gate, which is where it already was.
-compile_time_only_component :: proc(c: ^Compiler, id: Type_Id, depth := 0) -> Type_Id {
-	if id == INVALID_TYPE || depth > 32 {
-		return INVALID_TYPE // a recursive nominal type; its own declaration is checked once
+compile_time_only_component :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
+	seen: Type_Walk
+	defer delete(seen)
+	return compile_time_only_walk(c, id, &seen)
+}
+
+@(private = "file")
+compile_time_only_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> Type_Id {
+	if id == INVALID_TYPE {
+		return INVALID_TYPE
 	}
 	if type_is_compile_time_only(c, id) {
 		return id
+	}
+	if own := type_of(c, id); own == nil || !type_walk_enter(seen, id, own) {
+		return INVALID_TYPE
 	}
 	info := underlying_info(c, id)
 	if info == nil {
@@ -134,17 +144,17 @@ compile_time_only_component :: proc(c: ^Compiler, id: Type_Id, depth := 0) -> Ty
 	}
 	components := [?]Type_Id{info.element, info.key, info.result}
 	for component in components {
-		if found := compile_time_only_component(c, component, depth + 1); found != INVALID_TYPE {
+		if found := compile_time_only_walk(c, component, seen); found != INVALID_TYPE {
 			return found
 		}
 	}
 	for parameter in info.parameters {
-		if found := compile_time_only_component(c, parameter, depth + 1); found != INVALID_TYPE {
+		if found := compile_time_only_walk(c, parameter, seen); found != INVALID_TYPE {
 			return found
 		}
 	}
 	for variant in info.variants {
-		if found := compile_time_only_component(c, variant, depth + 1); found != INVALID_TYPE {
+		if found := compile_time_only_walk(c, variant, seen); found != INVALID_TYPE {
 			return found
 		}
 	}
@@ -154,7 +164,7 @@ compile_time_only_component :: proc(c: ^Compiler, id: Type_Id, depth := 0) -> Ty
 			if sym == nil {
 				continue
 			}
-			if found := compile_time_only_component(c, sym.type, depth + 1); found != INVALID_TYPE {
+			if found := compile_time_only_walk(c, sym.type, seen); found != INVALID_TYPE {
 				return found
 			}
 		}

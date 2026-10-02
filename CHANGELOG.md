@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A type nested more than 32 levels deep is checked all the way down, so an
+  unsupported component, such as an interface behind 33 pointers, is rejected
+  (`L0350`) as it already was at 32.
 - A generic `impl` whose subject pattern has concrete parts applies only to
   instances that match them: `impl Box([2]$E)` no longer gives `Box([3]int)`
   its methods, nor `impl Box(Pair(int, $T))` `Box(Pair(bool, int))`. Calls

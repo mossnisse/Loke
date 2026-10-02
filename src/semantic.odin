@@ -1559,19 +1559,36 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 // "unsupported" so a milestone answer is not reported for a component that was
 // already rejected where it was written.
 type_mentions_invalid :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	return type_contains_invalid(c, id, 0)
+	seen: Type_Walk
+	defer delete(seen)
+	return type_contains_invalid(c, id, &seen)
+}
+
+// The nominal types a walk over a type's components has entered. A recursive
+// type can only refer back to itself through one, so a type met again answers
+// the walk's neutral value: its own declaration is checked once, and a walk
+// stops at its first decisive answer, so a finished visit was neutral too.
+Type_Walk :: map[Type_Id]struct{}
+
+// Whether `id` is new to the walk, recording it when it is nominal.
+type_walk_enter :: proc(seen: ^Type_Walk, id: Type_Id, info: ^Type_Info) -> bool {
+	#partial switch info.kind {
+	case .Struct, .Union, .Distinct:
+		if id in seen {
+			return false
+		}
+		seen[id] = {}
+	}
+	return true
 }
 
 @(private = "file")
-type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
+type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
 	if id == INVALID_TYPE {
 		return true
 	}
-	if depth > 32 {
-		return false // a recursive nominal type; its own declaration is checked once
-	}
 	info := type_of(c, id)
-	if info == nil {
+	if info == nil || !type_walk_enter(seen, id, info) {
 		return false
 	}
 	// Exhaustive on purpose: a new composed `Type_Kind` must not quietly answer
@@ -1587,48 +1604,50 @@ type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 		// No components, so nothing to be invalid below the type itself.
 		return false
 	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Array, .Simd, .Distinct:
-		return type_contains_invalid(c, info.element, depth + 1)
+		return type_contains_invalid(c, info.element, seen)
 	case .Map:
-		return type_contains_invalid(c, info.key, depth + 1) ||
-		       type_contains_invalid(c, info.element, depth + 1)
+		return type_contains_invalid(c, info.key, seen) ||
+		       type_contains_invalid(c, info.element, seen)
 	case .Union:
 		for variant in info.variants {
-			if type_contains_invalid(c, variant, depth + 1) {
+			if type_contains_invalid(c, variant, seen) {
 				return true
 			}
 		}
 	case .Struct:
 		for field in info.fields {
 			symbol := symbol_of(c, field)
-			if symbol == nil || type_contains_invalid(c, symbol.type, depth + 1) {
+			if symbol == nil || type_contains_invalid(c, symbol.type, seen) {
 				return true
 			}
 		}
 	case .Proc:
 		for parameter in info.parameters {
-			if type_contains_invalid(c, parameter, depth + 1) {
+			if type_contains_invalid(c, parameter, seen) {
 				return true
 			}
 		}
 		// design.md: a procedure with no result carries INVALID_TYPE for one, which
 		// is the absence of a result rather than a type that failed to resolve.
-		return info.result != INVALID_TYPE && type_contains_invalid(c, info.result, depth + 1)
+		return info.result != INVALID_TYPE && type_contains_invalid(c, info.result, seen)
 	}
 	return false
 }
 
 type_is_supported :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	return type_is_supported_depth(c, id, 0)
+	seen: Type_Walk
+	defer delete(seen)
+	return type_is_supported_walk(c, id, &seen)
 }
 
 @(private = "file")
-type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
-	if depth > 32 {
-		return true // a recursive nominal type; its own declaration is checked once
-	}
+type_is_supported_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
 	info := type_of(c, id)
 	if info == nil {
 		return false
+	}
+	if !type_walk_enter(seen, id, info) {
+		return true
 	}
 	if info.descriptor {
 		return false // a descriptor exists only during compilation
@@ -1651,44 +1670,44 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 		// `src/borrow.odin` rather than restricted here.
 		return true
 	case .Slice:
-		return type_is_supported_depth(c, info.element, depth + 1)
+		return type_is_supported_walk(c, info.element, seen)
 	case .C_Pointer:
 		// design.md "C pointers": a documented trust boundary, not an unsupported
 		// type — no length, no capability, and no lifetime check after conversion.
-		return type_is_supported_depth(c, info.element, depth + 1)
+		return type_is_supported_walk(c, info.element, seen)
 	case .Interface:
 		return false
 	case .Dynamic_Array:
-		return type_is_supported_depth(c, info.element, depth + 1)
+		return type_is_supported_walk(c, info.element, seen)
 	case .Map:
-		return type_is_supported_depth(c, info.key, depth + 1) &&
-		       type_is_supported_depth(c, info.element, depth + 1)
+		return type_is_supported_walk(c, info.key, seen) &&
+		       type_is_supported_walk(c, info.element, seen)
 	case .Union:
 		for variant in info.variants {
-			if !type_is_supported_depth(c, variant, depth + 1) {
+			if !type_is_supported_walk(c, variant, seen) {
 				return false
 			}
 		}
 		return true
 	case .Pointer, .Array, .Simd, .Distinct:
-		return type_is_supported_depth(c, info.element, depth + 1)
+		return type_is_supported_walk(c, info.element, seen)
 	case .Enum:
 		return true
 	case .Struct:
 		for field in info.fields {
 			symbol := symbol_of(c, field)
-			if symbol == nil || !type_is_supported_depth(c, symbol.type, depth + 1) {
+			if symbol == nil || !type_is_supported_walk(c, symbol.type, seen) {
 				return false
 			}
 		}
 		return true
 	case .Proc:
 		for parameter in info.parameters {
-			if !type_is_supported_depth(c, parameter, depth + 1) {
+			if !type_is_supported_walk(c, parameter, seen) {
 				return false
 			}
 		}
-		if info.result != INVALID_TYPE && !type_is_supported_depth(c, info.result, depth + 1) {
+		if info.result != INVALID_TYPE && !type_is_supported_walk(c, info.result, seen) {
 			return false
 		}
 		return true
