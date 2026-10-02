@@ -21,9 +21,12 @@ cannot initialise `^mut int` with `^int`
 L0373
 @60:23
 `^int` cannot be converted to `^mut int`
+L0373
+@67:23
+`^int` cannot be converted to `^mut int`
 L0639
-@69:7
+@76:7
 `free` needs a mutable allocation pointer, found `^int`
 L0641
-@79:2
+@86:2
 `source` cannot be used here: a read-only reborrow of it is still in use

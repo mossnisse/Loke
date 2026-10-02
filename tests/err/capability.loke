@@ -61,6 +61,13 @@ casts_away_read_only :: proc() {
 	fmt.println(writer^);
 }
 
+// A typed constant keeps its type's capability, even when it is nil.
+EMPTY :: (^int)(nil);
+casts_a_read_only_constant :: proc() {
+	writer := (^mut int)(EMPTY);
+	fmt.println(writer == nil);
+}
+
 // Releasing storage is a write, so `free` needs the write capability.
 frees_a_reader :: proc() {
 	allocated := try_new(int) or_else nil;
@@ -91,6 +98,7 @@ main :: proc() {
 	fmt.println(borrows_a_constant());
 	strengthens();
 	casts_away_read_only();
+	casts_a_read_only_constant();
 	frees_a_reader();
 	uses_a_suspended_carrier();
 }

@@ -1386,30 +1386,7 @@ promise. A mutating method on a record in the same packed position is
 correctly rejected. Apply packed-place validation to every `inout` binding,
 including elements reached through a packed array field.
 
-### Constant pointer conversions bypass capability checks
-
-[design.md "Pointers"](design.md#pointers) forbids strengthening `^T` to
-`^mut T`. `builtin_conversion` in
-[src/check_calls.odin](src/check_calls.odin) folds a constant using its
-value representation before checking `convertible`, so a typed nil skips
-the source/target capability rule:
-
-```odin
-package main;
-empty :: (^int)(nil);
-main :: proc() {
-    mutable := (^mut int)(empty);
-    _ = mutable;
-}
-```
-
-This compiles, whereas the same cast of a `^int` parameter is correctly
-rejected with `L0373`. A constant's nil representation does not authorize
-changing the pointer's declared capability. Validate source/target
-conversion rules before folding concrete typed constants, while preserving
-the separate contextual conversion rules for untyped literals.
-
-These three call-checking gaps were reproduced with a compiler rebuilt from
+These two call-checking gaps were reproduced with a compiler rebuilt from
 the source tree on 2026-10-02. All 108 compiler unit tests pass with memory
 tracking and compiler vets enabled; those tests do not cover these
 reproductions.

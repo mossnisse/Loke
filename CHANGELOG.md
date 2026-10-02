@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- Converting a typed constant follows the rules for a runtime value of its
+  type, so `(^mut int)(EMPTY)` with `EMPTY :: (^int)(nil)` is `L0373`, and an
+  unchecked pointer conversion of one needs `core:unsafe`. Only untyped
+  constants convert by what their value fits. Declare the constant with the
+  type the conversion needs.
 - A type nested more than 32 levels deep is checked all the way down, so an
   unsupported component, such as an interface behind 33 pointers, is rejected
   (`L0350`) as it already was at 32.
