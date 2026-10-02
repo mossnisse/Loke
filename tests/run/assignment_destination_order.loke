@@ -1,0 +1,17 @@
+// design.md "Evaluation order": every destination of a multiple assignment is
+// prepared before any write. A later destination that moves an earlier one
+// leaves it to be revived by that earlier write, so it is live afterwards and
+// its old value is not dropped twice.
+package main;
+import "core:fmt";
+Res :: struct { id: int }
+impl Res {
+    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+take :: proc(value: move Res) -> int { fmt.println("take", value.id); return 0; }
+main :: proc() {
+    held := Res{1};
+    xs := [1]int{0};
+    held, xs[take(move(held))] = Res{2}, 5;
+    fmt.println(held.id, xs[0]);
+}

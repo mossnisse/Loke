@@ -199,30 +199,6 @@ condition may have consumed `xs`. Both edges must leave the block reached
 after evaluating the condition, preserving its lifecycle and provenance
 events, rather than bypassing those blocks.
 
-### Multiple assignment initializes a local before later destinations are prepared
-
-[design.md "Evaluation order"](design.md#evaluation-order) prepares every
-destination before any write, and
-["Variable declarations"](design.md#variable-declarations) forbids reading
-an uninitialized local. `walk_flow_assign` in
-[src/cfg.odin](src/cfg.odin) emits each destination's `Assign` event before
-walking later destination expressions:
-
-```odin
-package main;
-main :: proc() {
-    index: int;
-    xs := [1]int{0};
-    index, xs[index] = 0, 1;
-}
-```
-
-This wrongly compiles. The emitted LLVM loads `index` before its first store,
-but the lifecycle graph treats it as initialized at that load. Conversely,
-a move in a later destination can leave an earlier destination dead in the
-graph even though the subsequent writes revive it. Destination preparation
-must precede every assignment event.
-
 ### Deferred assignments share the last expansion's destination liveness
 
 [design.md "Managed values and storage"](design.md#managed-values-and-storage)
@@ -259,10 +235,9 @@ required drop too. With an allocating resource, this leaks the old value.
 The expansion states must be reconciled with a runtime flag where they differ,
 or retained separately for emission at their respective exits.
 
-These four CFG gaps were reproduced with a compiler built from the source
-tree on 2026-10-02. The invalid-program case was checked with `-emit-ll`;
-the deferred-copy, for-condition, and deferred-assignment cases were also
-compiled and executed. All 108 compiler unit tests pass
+These three CFG gaps were reproduced with a compiler built from the source
+tree on 2026-10-02. The deferred-copy, for-condition, and deferred-assignment
+cases were compiled and executed. All 108 compiler unit tests pass
 without covering these cases.
 
 ### Aggregate equality bypasses nested comparison overloads

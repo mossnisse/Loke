@@ -1,0 +1,11 @@
+package main;
+
+// design.md "Evaluation order": every destination of a multiple assignment is
+// prepared before any write, so a later destination cannot read a local that
+// only an earlier destination of the same statement initializes.
+
+main :: proc() {
+    index: int;
+    xs := [1]int{0};
+    index, xs[index] = 0, 1;
+}

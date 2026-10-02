@@ -1129,27 +1129,39 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		return
 	}
 	classify_assignment_copies(graph.k, s, graph.loop_depth > 0)
+	// design.md "Evaluation order": every destination is prepared before any
+	// write. A write through a field or element is a use of its root.
+	revived := make([]bool, len(s.lhs), graph.alloc)
 	for target, index in s.lhs {
-		// A full assignment revives the variable; a write through a field or
-		// element is a use of its root.
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
-			provider_assign_end(graph, ident)
-			if slot, tracked := graph.by_symbol[ident.symbol]; tracked {
-				emit(graph, Flow_Event {
-					kind   = .Assign,
-					slot   = slot,
-					span   = expr_span(target),
-					name   = ident.name,
-					assign = s,
-					target = index,
-				})
+			if _, tracked := graph.by_symbol[ident.symbol]; tracked {
+				revived[index] = true
 				continue
 			}
+		}
+		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
+			provider_assign_end(graph, ident)
 		}
 		if s.op == .Assign {
 			provider_field_assign_end(graph, target)
 		}
 		walk_flow_expr(graph, target)
+	}
+	// Then the writes, in order: a full assignment revives the variable.
+	for target, index in s.lhs {
+		if !revived[index] {
+			continue
+		}
+		ident := target.(^Expr_Ident)
+		provider_assign_end(graph, ident)
+		emit(graph, Flow_Event {
+			kind   = .Assign,
+			slot   = graph.by_symbol[ident.symbol],
+			span   = expr_span(target),
+			name   = ident.name,
+			assign = s,
+			target = index,
+		})
 	}
 }
 

@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A multiple assignment cannot read, in a later destination, a local that an
+  earlier destination of the same statement initializes, as in
+  `index, xs[index] = 0, 1;` with `index` unset (`L0500`): every destination
+  is prepared before any write, so the read saw no value. Initialize the
+  local first.
 - A `move` parameter of any type is dead after `move` or `drop`, so reading
   a dropped `move` parameter of type `int` is `L0500`, as it is for a local.
   Read the value before consuming it, or assign it a new one first.
@@ -294,6 +299,9 @@ checklist.
 
 ### Fixed
 
+- A multiple assignment whose later destination moves an earlier one, as in
+  `held, xs[take(move(held))] = Res{2}, 5;`, leaves the earlier one live
+  after the statement; it was rejected as moved.
 - A branch that ends in `panic` or a call to a `-> !` procedure no longer
   counts as reaching the code after it, so a local initialized on every
   other path is not rejected there with `L0500`.
