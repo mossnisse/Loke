@@ -1,0 +1,22 @@
+// design.md "Container insertion": `find_or_insert` owns the value it consumes
+// before its first probe, so a key hook that panics there still drops it
+// ("What the unwind runs, and what it does not").
+package main;
+import "core:fmt";
+Res :: struct { id: int }
+impl Res {
+    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+Key :: struct { id: int }
+impl Key {
+    hash :: proc(self, seed: uint) -> uint {
+        if (self.id == 2) { panic("hash failed"); }
+        return self.id.hash(seed);
+    }
+    same :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+}
+main :: proc() {
+    m: map[Key]Res = {};
+    _ = m.find_or_insert(Key{1}, Res{1});
+    _ = m.find_or_insert(Key{2}, Res{7});
+}

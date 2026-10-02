@@ -1,0 +1,14 @@
+// design.md "Container insertion": an insertion argument is handed over at the
+// call. Until the container holds it, a panic in the runtime helper leaves it
+// to the generated body's unwind ("What the unwind runs, and what it does not").
+package main;
+import "core:fmt";
+Res :: struct { id: int }
+impl Res {
+    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+main :: proc() {
+    defer fmt.println("unwound");
+    xs: [dynamic]Res = {};
+    xs.insert(1, Res{7});
+}

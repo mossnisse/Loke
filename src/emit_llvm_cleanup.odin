@@ -288,6 +288,31 @@ emit_unwind_pop :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_frame_pop(ptr %s)", e.unwind.frame)
 }
 
+// design.md "What the unwind runs, and what it does not": a generated body that
+// holds owners registers them as a procedure does. It starts the frame while
+// still in its entry block; what it emits next is written aside, since the
+// prologue depends on all of it. `emit_ret` pops the frame.
+@(private)
+begin_generated_frame :: proc(e: ^Emitter, name: string) -> strings.Builder {
+	begin_unwind_frame(e, name)
+	header := e.b
+	e.b = strings.builder_make()
+	return header
+}
+
+// Called once the body's closing brace is written.
+@(private)
+end_generated_frame :: proc(e: ^Emitter, header: strings.Builder) {
+	body := strings.to_string(e.b)
+	e.b = header
+	emit_unwind_prologue(e)
+	strings.write_string(&e.b, body)
+	emit_unwind_thunk(e)
+	// The thunk is a function of its own, so it waits for the end of the module.
+	append(&e.pending_thunks, ..e.pending[:])
+	clear(&e.pending)
+}
+
 // The generated thunk: replay every still-registered action of one frame,
 // newest first. Emitted into `e.pending` because LLVM functions do not nest.
 @(private)

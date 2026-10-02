@@ -285,6 +285,11 @@ checklist.
 
 ### Fixed
 
+- A value handed to a container's `insert`, `find_or_insert`, or `try_insert`
+  is dropped when the operation panics before the container holds it, as an
+  out-of-range `insert` index or a key's `hash` or `==` that panics does; it
+  leaked. The copy `try_insert` and `find_or_insert` stage for a borrowed
+  value is dropped the same way.
 - A drop hook that panics while a record or a fixed array is dropped, the
   record's own or a part's, leaves the parts not yet dropped to the unwind,
   which drops them in the same reverse order without running the panicking

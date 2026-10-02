@@ -7,42 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Synthesized container insertion loses owners on panic
-
-[design.md "Container insertion"](design.md#container-insertion) transfers
-ordinary insertion arguments at the call boundary.
-["What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not)
-requires the new owner to release them on a panic. Synthesized insertion
-bodies in [src/emit_llvm_containers.odin](src/emit_llvm_containers.odin)
-destroy an unconsumed value only after the C helper returns a failed status:
-
-```odin
-package main;
-import "core:fmt";
-Res :: struct { id: int }
-impl Res {
-    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
-}
-main :: proc() {
-    defer fmt.println("unwound");
-    xs: [dynamic]Res = {};
-    xs.insert(1, Res{7});
-}
-```
-
-The out-of-range insert panics and prints `unwound`, omitting `drop 7`.
-The caller has handed the value over, and the synthesized body has no unwind
-frame or live registration for it. `find_or_insert` also loses its consumed
-value if an inherent key hash panics before the first probe completes.
-Its staged values and those of `try_insert` similarly need protection across
-later key callbacks. Register transferred arguments and completed staged
-clones until insertion commits or explicit failure cleanup destroys them.
-
-This container-emission finding was reproduced with a compiler built from
-the source tree on 2026-10-02 at the default optimization level. All 108
-compiler unit tests pass with memory tracking and both compiler vets enabled;
-the current fixtures do not cover it.
-
 ### Distinct types implicitly inherit comparisons
 
 [design.md "Distinct types"](design.md#distinct-types) says a distinct type

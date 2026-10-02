@@ -708,6 +708,13 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	}
 	open_function(e, ")")
 	e.terminated = false
+	// design.md "Container insertion": a value this body owns stays registered
+	// until the container holds it, since a helper or a key hook can panic first.
+	framed := false
+	frame_header: strings.Builder
+	defer if framed {
+		end_generated_frame(e, frame_header)
+	}
 
 	// A single value entering the container is spilled for the helper to read.
 	value_storage :: proc(e: ^Emitter, element: Type_Id, argument: string) -> string {
@@ -778,11 +785,18 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 
 	case .Insert:
 		slot := value_storage(e, element, "%arg2")
+		guard := Deferred{slot = -1}
+		if moves {
+			framed, frame_header = true, begin_generated_frame(e, name)
+			guard = begin_temporary_drop(e, element, slot)
+		}
 		status = temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_insert(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i64 1)",
 			status, ops, slot,
 		)
+		// The helper takes the value only once nothing can panic.
+		finish_temporary_drop(e, guard)
 		if moves {
 			kept := branch_on_failure(e, status)
 			emit_drop_place(e, element, slot)
@@ -885,7 +899,14 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	case .Map_Find_Or_Insert:
 		// The slot either way. A miss inserts the element, cloned as `try_insert`
 		// clones it or moved in; a move-only element is dropped on a hit.
+		framed, frame_header = true, begin_generated_frame(e, name)
 		key_slot := value_storage(e, container_key(e.c, container), "%arg1")
+		staged := alloca(e, element_llvm)
+		guard := Deferred{slot = -1}
+		if moves {
+			store(e, element, "%arg2", staged)
+			guard = begin_temporary_drop(e, element, staged)
+		}
 		found, present := temp(e), temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %%arg0, ptr %s, ptr %s)", found, ops, key_slot,
@@ -895,20 +916,18 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		branch_if(e, present, hit_label, miss_label)
 		place_label(e, hit_label)
 		if moves {
-			emit_drop_place(e, element, value_storage(e, element, "%arg2"))
+			finish_temporary_drop(e, guard)
+			emit_drop_place(e, element, staged)
 		}
 		emit_map_slot_result(e, symbol.result, result, found, fallible)
 
 		place_label(e, miss_label)
-		staged := alloca(e, element_llvm)
 		cloned := "true"
-		if moves {
-			store(e, element, "%arg2", staged)
-		} else if emit_lifecycle(e, element).managed {
+		if !moves && emit_lifecycle(e, element).managed {
 			cloned = emit_try_clone_into(
 				e, element, staged, value_storage(e, element, "%arg2"), emit_map_allocator(e, "%arg0"),
 			)
-		} else {
+		} else if !moves {
 			store(e, element, "%arg2", staged)
 		}
 		clone_ready, clone_failed := new_label(e, "mfoi.cloned"), new_label(e, "mfoi.clone_failed")
@@ -917,9 +936,13 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		emit_map_slot_failure(e, symbol.result, result, "%arg0", fallible)
 
 		place_label(e, clone_ready)
+		if !moves {
+			guard = begin_temporary_drop(e, element, staged)
+		}
 		place, _ := emit_map_entry(e, ops, "%arg0", key_slot)
 		missing := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
+		finish_temporary_drop(e, guard)
 		entry_failed, entry_ok := new_label(e, "mfoi.failed"), new_label(e, "mfoi.ok")
 		branch_if(e, missing, entry_failed, entry_ok)
 		place_label(e, entry_failed)
@@ -937,6 +960,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		key_type := container_key(e.c, container)
 		// The value is staged before insertion, so a failed clone neither touches
 		// an existing entry nor publishes a key without a value.
+		framed, frame_header = true, begin_generated_frame(e, name)
 		allocator := emit_map_allocator(e, "%arg0")
 		staged := alloca(e, element_llvm)
 		cloned := "true"
@@ -955,12 +979,16 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		e.terminated = true
 
 		place_label(e, clone_ready)
+		// The staged value is this body's until it is stored, across the key's
+		// hooks and the old value's drop.
+		guard := begin_temporary_drop(e, element, staged)
 		key_slot := value_storage(e, key_type, "%arg1")
 		place, inserted := emit_map_entry(e, ops, "%arg0", key_slot)
 		missing, ok_label, failed_label := temp(e), new_label(e, "mins.ok"), new_label(e, "mins.failed")
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
 		branch_if(e, missing, failed_label, ok_label)
 		place_label(e, failed_label)
+		finish_temporary_drop(e, guard)
 		emit_drop_place(e, element, staged)
 		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "true"))
 		e.terminated = true
@@ -968,6 +996,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		place_label(e, ok_label)
 		// No failure point remains between dropping the old value and storing.
 		emit_replace_entry(e, element, place, inserted, "mins")
+		finish_temporary_drop(e, guard)
 		stored := load_place(e, element, staged)
 		store(e, element, stored, place)
 		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "false"))
@@ -1032,6 +1061,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		return
 	}
 	emit_container_policy_failure(e, "%arg0", status)
+	emit_unwind_pop(e)
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 }
@@ -1122,6 +1152,7 @@ emit_map_allocator :: proc(e: ^Emitter, header: string) -> string {
 // `find_or_insert` answers the slot; `try_find_or_insert` answers it as `.ok`.
 @(private = "file")
 emit_map_slot_result :: proc(e: ^Emitter, result_type: Type_Id, result, slot: string, fallible: bool) {
+	emit_unwind_pop(e)
 	if fallible {
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, result_type, "false", slot))
 	} else {
@@ -1134,6 +1165,7 @@ emit_map_slot_result :: proc(e: ^Emitter, result_type: Type_Id, result, slot: st
 @(private = "file")
 emit_map_slot_failure :: proc(e: ^Emitter, result_type: Type_Id, result, header: string, fallible: bool) {
 	if fallible {
+		emit_unwind_pop(e)
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, result_type, "true", "null"))
 		e.terminated = true
 		return

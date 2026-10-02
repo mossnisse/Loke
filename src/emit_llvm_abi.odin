@@ -564,6 +564,7 @@ sret_param :: proc(e: ^Emitter, result: Type_Id, inout := false, last := false) 
 
 @(private)
 emit_ret :: proc(e: ^Emitter, result: Type_Id, value: string) {
+	emit_unwind_pop(e)
 	if returns_sret(e, result, false) {
 		store(e, result, value, "%sret")
 		fmt.sbprintln(&e.b, "  ret void")

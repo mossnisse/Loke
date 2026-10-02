@@ -1,0 +1,26 @@
+// design.md "Container insertion": `try_insert` stages its copy before it
+// inserts the key, and owns that copy until the map holds it. A key hook that
+// panics in between still drops it, and the caller drops its own argument
+// ("What the unwind runs, and what it does not").
+package main;
+import "core:fmt";
+Res :: struct { id: int }
+impl Res {
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+        return .ok(Res{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+Key :: struct { id: int }
+impl Key {
+    hash :: proc(self, seed: uint) -> uint {
+        if (self.id == 2) { panic("hash failed"); }
+        return self.id.hash(seed);
+    }
+    same :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+}
+main :: proc() {
+    m: map[Key]Res = {};
+    value := Res{7};
+    _ = m.try_insert(Key{2}, value);
+}
