@@ -540,27 +540,39 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		place_label(e, fail_label)
 		emit_alloc_failure(e, address)
 		place_label(e, store_label)
-		emit_replace_entry(e, element, place, inserted, "mlit")
-		store(e, element, value, place)
-		finish_temporary_drop(e, guard)
+		emit_store_entry(e, element, place, inserted, value, guard, "mlit")
 		drop_temporary_value(e, key_cleanup)
 	}
 	finish_temporary_drop(e, cleanup)
 }
 
-// A new map entry holds inert bytes; only an existing one holds a live value
-// that must be dropped before it is overwritten.
+// Stores `value` into a map entry, which then owns it in place of `guard`. A
+// new entry holds inert bytes; an existing one's old value is moved out and
+// dropped only once the entry holds the new one, so a panicking drop hook
+// leaves the map no value to drop again (design.md "Lifecycle hooks and
+// resource types").
 @(private = "file")
-emit_replace_entry :: proc(e: ^Emitter, element: Type_Id, place, inserted, prefix: string) {
+emit_store_entry :: proc(
+	e: ^Emitter, element: Type_Id, place, inserted, value: string, guard: Deferred, prefix: string,
+) {
 	is_new := temp(e)
 	replace_label := new_label(e, fmt.tprintf("%s.replace", prefix))
 	write_label := new_label(e, fmt.tprintf("%s.write", prefix))
+	done_label := new_label(e, fmt.tprintf("%s.stored", prefix))
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", is_new, inserted)
 	branch_if(e, is_new, write_label, replace_label)
 	place_label(e, replace_label)
-	emit_drop_place(e, element, place)
-	branch(e, write_label)
+	old := alloca(e, llvm_type(e, element))
+	store(e, element, load_place(e, element, place), old)
+	store(e, element, value, place)
+	finish_temporary_drop(e, guard)
+	emit_drop_place(e, element, old)
+	branch(e, done_label)
 	place_label(e, write_label)
+	store(e, element, value, place)
+	finish_temporary_drop(e, guard)
+	branch(e, done_label)
+	place_label(e, done_label)
 }
 
 // The header's provider applies its own failure policy; it does not return.
@@ -994,11 +1006,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		e.terminated = true
 
 		place_label(e, ok_label)
-		// No failure point remains between dropping the old value and storing.
-		emit_replace_entry(e, element, place, inserted, "mins")
-		finish_temporary_drop(e, guard)
-		stored := load_place(e, element, staged)
-		store(e, element, stored, place)
+		emit_store_entry(e, element, place, inserted, load_place(e, element, staged), guard, "mins")
 		emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "false"))
 		fmt.sbprintln(&e.b, "}")
 		e.terminated = true
@@ -1214,10 +1222,8 @@ emit_map_insert_store :: proc(e: ^Emitter, destination: Map_Assignment_Destinati
 	place_label(e, fail_label)
 	emit_alloc_failure(e, header)
 	place_label(e, store_label)
-	emit_replace_entry(e, element, place, inserted, "mset")
-	store(e, element, value, place)
 	// The map owns the value before a user key destructor can panic.
-	finish_temporary_drop(e, guard)
+	emit_store_entry(e, element, place, inserted, value, guard, "mset")
 	drop_temporary_value(e, destination.key_cleanup)
 }
 

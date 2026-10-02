@@ -1,0 +1,18 @@
+// design.md "Lifecycle hooks and resource types": a drop hook runs once per
+// initialization. A map entry holds its new value before the replaced one
+// drops, so a replaced value whose drop hook panics is not dropped again when
+// the unwind drops the map.
+package main;
+import "core:fmt";
+Res :: struct { id: int }
+impl Res {
+    release :: hook(drop) proc(self: inout Res) {
+        fmt.println("drop", self.id);
+        if (self.id == 1) { panic("drop failed"); }
+    }
+}
+main :: proc() {
+    m: map[int]Res = {};
+    m[0] = Res{1};
+    m[0] = Res{2};
+}

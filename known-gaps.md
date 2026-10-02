@@ -477,43 +477,6 @@ the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering it.
 
-### A panicking drop of a replaced map value runs again
-
-[design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types)
-runs a drop hook once per initialization, and
-["What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not)
-drops the live owners after a panic. `emit_replace_entry` in
-[src/emit_llvm_containers.odin](src/emit_llvm_containers.odin) drops an
-existing entry's value in place before storing the new one. When that drop
-hook panics, the entry still holds the value, and the unwind's drop of the
-map runs the same hook on it again:
-
-```odin
-package main;
-import "core:fmt";
-Res :: struct { id: int }
-impl Res {
-    release :: hook(drop) proc(self: inout Res) {
-        fmt.println("drop", self.id);
-        if (self.id == 1) { panic("drop failed"); }
-    }
-}
-main :: proc() {
-    m: map[int]Res = {};
-    m[0] = Res{1};
-    m[0] = Res{2};
-}
-```
-
-This prints `drop 1`, panics, prints `drop 2` and `drop 1` again, and then
-aborts with `panic while unwinding a panic`, skipping any remaining
-cleanup. The entry must not stay a live map value while its old value
-drops, for example by moving the old value out first. `m[key] = value`,
-`try_insert`, and a map literal's repeated key share this path.
-
-This container-emission gap was reproduced with a compiler built from the
-source tree on 2026-10-02 at the default optimization level.
-
 ### Mixed record yields mark owned leaves as borrowed
 
 [design.md "Yield modes"](design.md#yield-modes) and

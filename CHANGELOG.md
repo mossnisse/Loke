@@ -285,6 +285,10 @@ checklist.
 
 ### Fixed
 
+- Replacing a map entry's value, by `m[key] = value`, `try_insert`, or a
+  map literal's repeated key, stores the new value before the old one drops.
+  An old value whose drop hook panicked stayed in the map and was dropped a
+  second time by the unwind, which aborted it.
 - A generated `clone` or `try_clone` whose copy hook panics part-way drops
   the parts it already copied, without running the incomplete result's own
   drop hook; they leaked. A fixed array's copied elements and an
