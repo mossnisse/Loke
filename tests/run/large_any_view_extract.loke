@@ -1,0 +1,17 @@
+package main;
+import "core:fmt";
+
+// design.md "any_view type": extracting a copyable erased value over 4096 bytes
+// yields the address of a snapshot, as every large value is in the backend,
+// both from a checked extraction and from a wrapped optional one.
+main :: proc() {
+	source: [1024]int = {};
+	source[0] = 7;
+	view: any_view = source;
+	copy := view.([1024]int);
+	fmt.println(copy[0]);
+	found := view.as([1024]int) or_else [1024]int{};
+	fmt.println(found[0]);
+	missing := view.as([4097]u8) or_else [4097]u8{};
+	fmt.println(missing[0]);
+}

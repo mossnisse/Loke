@@ -1330,12 +1330,11 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 	matched := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", matched, id, typeid_value(e.c, v.payload))
 
-	target := llvm_type(e, v.payload)
 	if v.mode == .Trap {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
 		panic_if(e, failed, "anyview.mismatch", "checked extraction failed")
-		out := load(e, target, data)
+		out := load_place(e, v.payload, data)
 		if emit_lifecycle(e, v.payload).managed {
 			out = emit_clone_value(e, v.payload, out)
 		}
@@ -1360,7 +1359,7 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 	then_label, done_label := new_label(e, "anyview.match"), new_label(e, "anyview.done")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", matched, then_label, done_label)
 	fmt.sbprintfln(&e.b, "%s:", then_label)
-	loaded := load(e, target, data)
+	loaded := load_place(e, v.payload, data)
 	if emit_lifecycle(e, v.payload).managed {
 		loaded = emit_clone_value(e, v.payload, loaded)
 	}

@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- Extracting a value larger than 4096 bytes from an `any_view`, with
+  `view.(T)` or `view.as(T)`, builds; it loaded the payload as an LLVM
+  aggregate and failed with `L0403`.
 - Sorting elements larger than 4096 bytes, with `.sort()` or
   `slice.sort_by`, and using such a key in a map, pass each element or key to
   the `<`, comparator, `hash` or `==` procedure as that procedure expects;

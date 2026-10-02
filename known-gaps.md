@@ -636,33 +636,6 @@ then panic on the slot call. A method that accesses its receiver can instead
 read through the null data pointer, because slot dispatch checks only the
 witness. Conversion must clear the witness when its evaluated pointer is nil.
 
-### Large any-view extraction produces aggregate registers instead of snapshots
-
-[design.md "any_view type"](design.md#any_view-type) permits checked extraction
-of a copyable erased value. `emit_any_view_extract` in
-[src/emit_llvm_runtime.odin](src/emit_llvm_runtime.odin) loads the payload with
-raw `load`, bypassing the address representation described by
-[compiler-architecture.md "LLVM and toolchain"](compiler-architecture.md#llvm-and-toolchain):
-
-```odin
-package main;
-import "core:fmt";
-main :: proc() {
-    source: [1024]int = {};
-    source[0] = 7;
-    view: any_view = source;
-    copy := view.([1024]int);
-    fmt.println(copy[0]);
-}
-```
-
-This valid program fails with `L0403`: the emitted `load [1024 x i64]` yields
-an aggregate, but the subsequent large-value `memcpy` requires a pointer.
-Replacing the extraction with
-`view.as([1024]int) or_else [1024]int{}` fails the same way when wrapping its
-success payload. Both paths must use the typed load/snapshot helper; both
-programs should print `7`.
-
 ### Large variant constructors used as procedure values omit the result ABI
 
 [design.md "Constructing a variant"](design.md#constructing-a-variant) makes
@@ -693,7 +666,7 @@ disagrees with the indirect call's result ABI. It should print `0`. The
 constructor must use the common result-signature and return helpers, including
 `sret_param` and `emit_ret`.
 
-These four runtime-emission gaps were reproduced with a compiler built from
+These three runtime-emission gaps were reproduced with a compiler built from
 the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering them.
