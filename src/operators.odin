@@ -413,7 +413,7 @@ check_operator_modes :: proc(k: ^Checker, symbol_id: Symbol_Id, bound: []Expr) -
 		if index >= len(bound) || bound[index] == nil {
 			continue
 		}
-		if !check_bound_argument_mode(k, bound[index], mode, "an `inout` operand") {
+		if !check_bound_argument_mode(k, bound[index], info.parameters[index], mode, "an `inout` operand") {
 			ok = false
 		}
 	}

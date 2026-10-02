@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- An `inout` argument must have exactly the parameter's type (`L0310`). A
+  scalar passed to `inout Simd(T, N)` wrote a temporary the caller never saw,
+  a `^mut T` passed to `inout ^T` could be overwritten with a read-only
+  pointer, and a `[dynamic]T` was accepted by `inout []T`. Declare the
+  variable with the parameter's type, or pass a converted copy by value.
 - An `inout` argument cannot be a field reached through a packed struct,
   including an element of a packed struct's array, on any call path
   (`L0614`), as a mutating method's receiver already could not: its address

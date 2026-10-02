@@ -1,0 +1,37 @@
+package main;
+
+// design.md "Parameter semantics and ABI lowering": `inout` borrows the caller's
+// variable itself, so its type must be the parameter's exactly. A conversion
+// would hand the callee a temporary, or let it store a weaker value.
+global: int = 1;
+fill :: proc(value: inout Simd(i32, 4)) { value = Simd(i32, 4)(9); }
+replace :: proc(value: inout ^int) { value = &global; }
+narrow :: proc(value: inout []int) {}
+replaces :: proc{replace};
+generic :: proc(value: inout []$E) {}
+Reader :: interface($Self: type) {
+	slot replace: proc(self, value: inout ^int);
+}
+Machine :: struct {}
+impl Machine {
+	replace :: proc(self, value: inout ^int) { value = &global; }
+}
+
+main :: proc() {
+	lane: i32 = 7;
+	fill(inout lane);
+	local := 7;
+	pointer := &mut local;
+	replace(inout pointer);
+	replaces(inout pointer);
+	numbers: [dynamic]int = {};
+	narrow(inout numbers);
+	elements: []mut int = numbers[:];
+	generic(inout elements);
+	machine := Machine{};
+	machine.replace(inout pointer);
+	view := (dyn Reader)(&machine);
+	view.replace(inout pointer);
+	value := replace;
+	value(inout pointer);
+}

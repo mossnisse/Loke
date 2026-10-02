@@ -603,7 +603,7 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	v.operation = Call_Procedure{}
 }
 
-check_bound_argument_mode :: proc(k: ^Checker, value: Expr, mode: Param_Mode, subject: string) -> bool {
+check_bound_argument_mode :: proc(k: ^Checker, value: Expr, target: Type_Id, mode: Param_Mode, subject: string) -> bool {
 	if mode == .Borrow {
 		return check_borrow_argument(k, value)
 	}
@@ -619,8 +619,24 @@ check_bound_argument_mode :: proc(k: ^Checker, value: Expr, mode: Param_Mode, su
 		)
 		return false
 	}
-	if base := expr_base(value); base != nil && !base.assignable {
+	base := expr_base(value)
+	if base != nil && !base.assignable {
 		report_not_assignable(k, base, subject)
+		return false
+	}
+	// design.md "Parameter semantics and ABI lowering": the callee writes the
+	// caller's variable itself, so no conversion may stand between them.
+	if base != nil && (base.type != target || expression_converts_storage(value)) {
+		found := base.type
+		for from in ([]Type_Id{base.view_from, base.erased_from, base.splat_from}) {
+			if from != INVALID_TYPE {
+				found = from
+			}
+		}
+		errorf(
+			k.c, expr_span(value), "L0310", "%s must be a `%s`, found `%s`",
+			subject, type_name(k.c, target), type_name(k.c, found),
+		)
 		return false
 	}
 	return true
@@ -654,7 +670,7 @@ bind_written_argument :: proc(
 	if !passed {
 		return value, false
 	}
-	if !check_bound_argument_mode(k, value, expected, "an `inout` argument") {
+	if !check_bound_argument_mode(k, value, target, expected, "an `inout` argument") {
 		return value, false
 	}
 	return value, true
@@ -1015,7 +1031,7 @@ bind_variadic_arguments :: proc(
 		bound[0] = receiver
 		append(&slot_order, 0)
 		if len(info.param_modes) > 0 &&
-		   !check_bound_argument_mode(k, receiver, info.param_modes[0], "an `inout` argument") {
+		   !check_bound_argument_mode(k, receiver, info.parameters[0], info.param_modes[0], "an `inout` argument") {
 			ok = false
 		}
 		first = 1

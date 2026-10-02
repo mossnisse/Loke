@@ -4270,6 +4270,8 @@ process_owned(move(numbers));
 
 **Argument modes must be written at the call site.** An `inout` parameter requires `inout expr`; a place passed to a `move` parameter requires `move(expr)`. Omitting the marker is an error naming the parameter and required mode. An `inout` marker on any other argument is an error too, including an argument to a variadic pack, which receives a copy.
 
+**An `inout` argument has exactly the parameter's type.** The callee writes the caller's variable itself, so no conversion may stand between them: a `[dynamic]T` does not bind `inout []T`, a scalar does not bind `inout Simd(T, N)`, and a `^mut T` variable does not bind `inout ^T`, through which the callee could store a read-only pointer.
+
 **A temporary needs no `move` marker.** It already owns its value, and transferring it leaves no named source dead. This is also the rule for [`unsafe.forget`](#unsafeforget) and [built-in insertion](#container-insertion):
 
 ```odin

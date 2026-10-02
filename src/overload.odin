@@ -753,7 +753,7 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 			ok = false
 			continue
 		}
-		if !check_bound_argument_mode(k, value, mode, "an `inout` argument") {
+		if !check_bound_argument_mode(k, value, sym.params[slot], mode, "an `inout` argument") {
 			ok = false
 		}
 		bound[slot] = value

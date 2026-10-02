@@ -1050,7 +1050,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 			v.type = INVALID_TYPE
 			return true
 		}
-		if modes[slot] == .Inout && !check_bound_argument_mode(k, arg.value, .Inout, "an `inout` argument") {
+		if modes[slot] == .Inout && !check_bound_argument_mode(k, arg.value, want, .Inout, "an `inout` argument") {
 			v.type = INVALID_TYPE
 			return true
 		}

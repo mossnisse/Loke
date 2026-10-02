@@ -1,0 +1,24 @@
+L0310
+@22:13
+an `inout` argument must be a `Simd(i32, 4)`, found `i32`
+L0310
+@25:16
+an `inout` argument must be a `^int`, found `^mut int`
+L0310
+@26:17
+an `inout` argument must be a `^int`, found `^mut int`
+L0310
+@28:15
+an `inout` argument must be a `[]int`, found `[dynamic]int`
+L0310
+@30:16
+an `inout` argument must be a `[]int`, found `[]mut int`
+L0310
+@32:24
+an `inout` argument must be a `^int`, found `^mut int`
+L0310
+@34:21
+an `inout` argument must be a `^int`, found `^mut int`
+L0310
+@36:14
+an `inout` argument must be a `^int`, found `^mut int`
