@@ -2242,6 +2242,17 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 			if !match_generic_arg(k, written, bound, scope, &bindings) {
 				return
 			}
+			// The matcher binds the `$` names and leaves concrete parts to
+			// overload ranking, which installation never reaches: `[2]$E` must not
+			// take `[3]int`, nor `Pair(int, $T)` take `Pair(bool, int)`.
+			if bound.is_type {
+				probe := begin_probe(k.c)
+				resolved := resolve_type_syntax(k, written)
+				end_probe(k.c, probe)
+				if resolved != bound.type {
+					return
+				}
+			}
 			continue
 		}
 		if bound.is_type {

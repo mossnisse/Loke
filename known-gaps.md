@@ -302,32 +302,6 @@ It should compile with `VALUE` equal to `7`. Writing
 call also works as a variable initializer. A constant initializer must keep
 parsing expression suffixes after its procedure literal.
 
-### Generic impl patterns ignore nested concrete arguments
-
-[design.md "Generic types"](design.md#generic-types) and
-["Specialization"](design.md#specialization) restrict a generic `impl` to
-instances matching its subject. The compiler accepts this program and installs
-`only_two` on an instance with three elements:
-
-```odin
-package main;
-import "core:fmt";
-Box :: struct($T: type) { value: T }
-impl Box([2]$E) {
-    only_two :: proc(self) -> int { return 2; }
-}
-main :: proc() {
-    b: Box([3]int) = {};
-    fmt.println(b.only_two());
-}
-```
-
-The call must report a missing member. `install_one_generic_impl` in
-[src/generic.odin](src/generic.odin) accepts a nested pattern as soon as
-`match_generic_arg` succeeds, but that matcher leaves concrete components to
-procedure overload ranking, which impl installation never performs. The same
-path lets `impl Box(Pair(int, $T))` apply to `Box(Pair(bool, int))`.
-
 ### Omitted compile-time defaults do not infer their type binding
 
 [design.md "Default values"](design.md#default-values) requires an omitted
@@ -375,7 +349,7 @@ copy for each application would keep the parameter type specific to its
 bindings. Procedure inference shares this defect: successive calls to
 `proc($N: int, $V: [N]int)` also reuse the first array length.
 
-These three generic gaps were confirmed with a compiler built from the source
+These two generic gaps were confirmed with a compiler built from the source
 tree on 2026-10-02, using `-emit-ll`. All 108 compiler unit tests pass without
 covering these cases.
 

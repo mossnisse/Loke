@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A generic `impl` whose subject pattern has concrete parts applies only to
+  instances that match them: `impl Box([2]$E)` no longer gives `Box([3]int)`
+  its methods, nor `impl Box(Pair(int, $T))` `Box(Pair(bool, int))`. Calls
+  that relied on this report `L0363`; write an `impl` whose subject matches.
 - A container operation named through its type, as in
   `([dynamic]Choice).resize(inout values, 1)`, or taken as a procedure value,
   meets the same element requirements as the method call: growth needs a zero

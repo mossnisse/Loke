@@ -1,0 +1,23 @@
+package main;
+
+// design.md "Specialization": a generic `impl` applies only to instances that
+// match its subject, concrete parts included.
+
+import "core:fmt";
+
+Box :: struct($T: type) { value: T }
+Pair :: struct($A: type, $B: type) { a: A, b: B }
+
+impl Box([2]$E) { only_two :: proc(self) -> int { return 2; } }
+impl Box(Pair(int, $T)) { int_first :: proc(self) -> int { return 1; } }
+
+main :: proc() {
+	two: Box([2]int) = {};
+	int_pair: Box(Pair(int, bool)) = {};
+	fmt.println(two.only_two(), int_pair.int_first());
+
+	three: Box([3]int) = {};
+	fmt.println(three.only_two());
+	bool_pair: Box(Pair(bool, int)) = {};
+	fmt.println(bool_pair.int_first());
+}
