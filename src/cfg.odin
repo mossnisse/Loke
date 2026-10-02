@@ -1299,7 +1299,7 @@ walk_foreach_binding_provenance :: proc(
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
 		prov_bind_element_region(graph, binding.symbol, s.iterable)
 		// A lent or mutable element is the source's storage, not a copy.
-		if s.borrows || foreach_is_place_loop(s) {
+		if sym := symbol_of(graph.k.c, binding.symbol); sym != nil && sym.borrowed_binding != .None {
 			prov_bind_view(graph, binding.symbol, iterated, lends = !foreach_is_place_loop(s))
 		}
 	}
@@ -1318,12 +1318,43 @@ walk_flow_loop_body :: proc(
 	enter_flow_scope(graph)
 	if graph.mode != .Lifecycle {
 		add_foreach_ref_cleanups(graph, bindings, all_step_locals)
+	} else {
+		track_owned_foreach_leaves(graph, bindings)
 	}
 	walk_flow_block(graph, body)
 	leave_flow_scope(graph)
 	graph.loop_depth -= 1
 	graph.break_block, graph.continue_block = outer_break, outer_continue
 	graph.break_depth, graph.continue_depth = outer_break_depth, outer_continue_depth
+}
+
+// design.md "Element bindings": an owned leaf is a managed local of its step,
+// so `move` and `drop` end it as they end any local.
+@(private = "file")
+track_owned_foreach_leaves :: proc(graph: ^Flow_Graph, bindings: []Foreach_Binding) {
+	for binding in bindings {
+		if len(binding.group) > 0 {
+			track_owned_foreach_leaves(graph, binding.group)
+			continue
+		}
+		sym := symbol_of(graph.k.c, binding.symbol)
+		if sym == nil || sym.borrowed_binding != .None || !type_is_managed(graph.k.c, sym.type) {
+			continue
+		}
+		slot, already := graph.by_symbol[binding.symbol]
+		if !already {
+			append(&graph.tracked, Tracked_Local{symbol = binding.symbol})
+			slot = len(graph.tracked) - 1
+			graph.by_symbol[binding.symbol] = slot
+		}
+		append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
+		emit(graph, Flow_Event {
+			kind = .Init,
+			slot = slot,
+			span = sym.span,
+			name = identifier_text(graph.k.c, sym.name),
+		})
+	}
 }
 
 @(private = "file")

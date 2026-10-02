@@ -150,8 +150,7 @@ bind_foreach_pattern :: proc(
 		if projected || len(source.children) > 0 {
 			if projected { bound = item }
 			slot := materialize_foreach_record(e, logical, bound, source)
-			register_scope_place(e, bound, slot)
-			bind_foreach_place(e, bindings[0].symbol, slot)
+			own_foreach_slot(e, bindings[0].symbol, bound, slot)
 			return
 		}
 		bind_foreach_field(e, bindings[0].symbol, source)
@@ -174,8 +173,7 @@ bind_foreach_pattern :: proc(
 			bind_foreach_pattern(e, binding.group, field.type, projected, parts[index])
 		} else if foreach_projected_record(e.c, field.type, projected) {
 			slot := materialize_foreach_record(e, field.type, projected, parts[index])
-			register_scope_place(e, projected, slot)
-			bind_foreach_place(e, binding.symbol, slot)
+			own_foreach_slot(e, binding.symbol, projected, slot)
 		} else {
 			bind_foreach_field(e, binding.symbol, parts[index])
 		}
@@ -246,8 +244,19 @@ bind_foreach_field :: proc(e: ^Emitter, symbol: Symbol_Id, field: Foreach_Field)
 	// Otherwise the binding is the step's own copy, disposed of even if ignored.
 	slot := alloca(e, llvm_type(e, field.type))
 	store(e, field.type, owned_field_value(e, field), slot)
-	register_scope_place(e, field.type, slot)
+	own_foreach_slot(e, symbol, field.type, slot)
+}
+
+// An owned leaf is a local of its step, whose drop `move` and `drop` cancel
+// (design.md "Element bindings"); a discarded or lent one is dropped with it.
+@(private = "file")
+own_foreach_slot :: proc(e: ^Emitter, symbol: Symbol_Id, type: Type_Id, slot: string) {
 	bind_foreach_place(e, symbol, slot)
+	if sym := symbol_of(e.c, symbol); sym != nil && sym.borrowed_binding == .None {
+		register_implicit_drop(e, symbol)
+	} else {
+		register_scope_place(e, type, slot)
+	}
 }
 
 @(private = "file")

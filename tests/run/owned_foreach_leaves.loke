@@ -1,0 +1,92 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Element bindings": an owned leaf is disposed of exactly once, so
+// moving it cancels the step's drop, and an owned part beside a lent one stays
+// owned.
+
+Owned :: move_only struct { id: int }
+
+impl Owned {
+	release :: hook(drop) proc(self: inout Owned) { fmt.println("drop", self.id); }
+}
+
+Row :: struct { owned: Owned, lent: int }
+
+Sequence :: struct { n: int }
+Cursor :: struct { at: int, n: int }
+
+impl Sequence {
+	Element :: Row;
+	iter :: proc(self) -> Cursor { return {0, self.n}; }
+}
+
+impl Cursor {
+	next :: proc(self: inout Cursor) -> Option(Row) {
+		if (self.at >= self.n) { return .none; }
+		self.at += 1;
+		return .some(Row{Owned{self.at}, self.at * 10});
+	}
+}
+
+Mixed :: struct { values: []int }
+Mixed_Cursor :: struct { values: []int, at: int }
+
+impl Mixed {
+	Element :: Row;
+	iter :: proc(self) -> Mixed_Cursor { return {self.values, 0}; }
+}
+
+impl Mixed_Cursor {
+	next :: proc(self: inout Mixed_Cursor) -> Option((owned: Owned, lent: ^int)) {
+		if (self.at >= self.values.len()) { return .none; }
+		p := &self.values[self.at];
+		self.at += 1;
+		return .some({owned = Owned{self.at}, lent = p});
+	}
+}
+
+take :: proc(value: move Owned) { fmt.println("take", value.id); }
+consume :: proc(row: move Row) { fmt.println("consume", row.owned.id); }
+
+first_kept :: proc() -> int {
+	foreach (owned, lent in Sequence{3}) {
+		if (lent == 20) { return owned.id; }
+		take(move(owned));
+	}
+	return 0;
+}
+
+main :: proc() {
+	fmt.println("moved");
+	foreach (owned, lent in Sequence{2}) { take(move(owned)); }
+
+	fmt.println("conditional");
+	foreach (owned, lent in Sequence{3}) {
+		if (lent == 20) { take(move(owned)); }
+	}
+
+	fmt.println("break and continue");
+	foreach (owned, lent in Sequence{4}) {
+		if (lent == 10) { take(move(owned)); continue; }
+		if (lent == 30) { take(move(owned)); break; }
+	}
+
+	fmt.println("return");
+	fmt.println("kept", first_kept());
+
+	fmt.println("whole");
+	foreach (row in Sequence{1}) { consume(move(row)); }
+
+	fmt.println("dropped");
+	foreach (owned, _ in Sequence{2}) { drop(owned); }
+
+	fmt.println("mixed");
+	values := [2]int{7, 8};
+	foreach (owned, lent in Mixed{values[:]}) {
+		if (lent == 7) { take(move(owned)); }
+		fmt.println(lent);
+	}
+	fmt.println("end");
+}

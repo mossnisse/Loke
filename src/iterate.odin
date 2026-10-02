@@ -971,7 +971,7 @@ check_foreach_pattern :: proc(
 			report_immutable_ref_leaf(k, s, bindings[0], desc)
 			return false
 		}
-		return bind_pattern_leaf(k, s, &bindings[0], logical, item)
+		return bind_pattern_leaf(k, s, &bindings[0], logical, item, desc)
 	}
 	info := underlying_info(k.c, logical)
 	// A padding field fills no binding (design.md "Destructuring").
@@ -1013,7 +1013,7 @@ check_foreach_pattern :: proc(
 			report_immutable_ref_leaf(k, s, binding, part)
 			return false
 		}
-		if !bind_pattern_leaf(k, s, &binding, field.type, projected) { return false }
+		if !bind_pattern_leaf(k, s, &binding, field.type, projected, part) { return false }
 	}
 	return true
 }
@@ -1062,9 +1062,12 @@ place_loop_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
 
 // A leaf binds its logical type, or the projected record of pointers when both
 // are records. A place loop's leaves, like a lending loop's, name storage the
-// source still owns.
+// source still owns, except a part `next` hands over owned (design.md "Element
+// bindings"): that leaf owns its value, even beside lent siblings.
 @(private = "file")
-bind_pattern_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Binding, logical, item: Type_Id) -> bool {
+bind_pattern_leaf :: proc(
+	k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Binding, logical, item: Type_Id, part: Yield_Desc,
+) -> bool {
 	bound := logical
 	if item != INVALID_TYPE && item != logical {
 		item_info := underlying_info(k.c, item)
@@ -1074,7 +1077,8 @@ bind_pattern_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Bindi
 		}
 	}
 	if !gate_type(k, bound, expr_span(s.iterable)) { return false }
-	binding.symbol = bind_loop_name(k, binding^, bound, binding.is_ref, s.borrows || foreach_is_place_loop(s))
+	owned := !foreach_is_place_loop(s) && (!s.borrows || part.kind == .Owned)
+	binding.symbol = bind_loop_name(k, binding^, bound, binding.is_ref, !owned)
 	return true
 }
 

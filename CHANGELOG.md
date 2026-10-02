@@ -323,6 +323,11 @@ checklist.
 
 ### Fixed
 
+- An owned `foreach` leaf is a local of its step: `move` or `drop` on it
+  cancels the step's drop, which used to run again on the inert value left
+  behind, and a use after the move is `L0500`. A part a record `Item` hands
+  over owned stays owned beside lent siblings, so `move(owned)` is no longer
+  rejected with `L0690`.
 - A struct, array, or union comparison, a value `switch`, and compile-time
   evaluation compare a part whose type declares its own `==` with that
   operator; it was compared field by field. Such a part also makes its

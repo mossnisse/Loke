@@ -1,0 +1,34 @@
+moved
+take 1
+drop 1
+take 2
+drop 2
+conditional
+drop 1
+take 2
+drop 2
+drop 3
+break and continue
+take 1
+drop 1
+drop 2
+take 3
+drop 3
+return
+take 1
+drop 1
+drop 2
+kept 2
+whole
+consume 1
+drop 1
+dropped
+drop 1
+drop 2
+mixed
+take 1
+drop 1
+7
+8
+drop 2
+end
