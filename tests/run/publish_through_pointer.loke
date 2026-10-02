@@ -1,0 +1,22 @@
+package main;
+import "core:fmt";
+// design.md "Weakening and reborrows": storing carriers through a pointer or
+// directly suspends each source only while its own holder is used.
+Holder :: struct { view: ^mut [dynamic]int }
+
+main :: proc() {
+    xs := [dynamic]int{1};
+    ys := [dynamic]int{5};
+    source := &mut xs;
+    other := &mut ys;
+    holder, spare: Holder = {}, {};
+    target := &mut holder;
+    target.view = source;
+    spare.view = other;
+    element := &holder.view^[0];
+    fmt.println(element^);
+    source^.append(2);
+    fmt.println(spare.view^.len());
+    other^.append(6);
+    fmt.println(xs.len(), ys.len());
+}

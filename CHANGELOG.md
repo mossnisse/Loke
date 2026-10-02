@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A mutable carrier stored through a pointer, as `target.view = source` with
+  `target := &mut holder`, is suspended while what holds it is used
+  (`L0641`), as one stored directly into `holder.view` already was: appending
+  through `source` could leave a pointer taken through `holder.view`
+  dangling. Finish using the holder before using the source again.
 - A copy of a read-only reborrow, or an element pointer taken through one,
   keeps the mutable source suspended while it is live (`L0641`), as the
   reborrow itself does: `copy := view; source[0] = 9;` was accepted, and an

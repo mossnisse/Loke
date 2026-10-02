@@ -1,0 +1,16 @@
+package main;
+import "core:fmt";
+// design.md "Weakening and reborrows": a mutable carrier stored through a
+// pointer is suspended while what holds it is live.
+Holder :: struct { view: ^mut [dynamic]int }
+
+main :: proc() {
+    xs := [dynamic]int{1};
+    source := &mut xs;
+    holder: Holder = {};
+    target := &mut holder;
+    target.view = source;
+    element := &holder.view^[0];
+    source^.append(2);
+    fmt.println(element^);
+}

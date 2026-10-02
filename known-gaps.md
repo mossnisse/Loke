@@ -30,41 +30,6 @@ overload. Records and arrays containing such a distinct type also receive
 structural equality. Comparison availability must preserve the distinct
 identity, while layout and lowering may still query its representation.
 
-### Publishing a mutable carrier does not suspend it
-
-[design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)
-also applies when a mutable carrier is stored in a record field through a
-pointer. The compiler accepts this program, although `source^.append(2)` must
-be rejected while `element` is live:
-
-```odin
-package main;
-import "core:fmt";
-
-Holder :: struct { view: ^mut [dynamic]int }
-
-main :: proc() {
-    xs := [dynamic]int{1};
-    source := &mut xs;
-    holder: Holder = {};
-    target := &mut holder;
-    target.view = source;
-    element := &holder.view^[0];
-    source^.append(2);
-    fmt.println(element^);
-}
-```
-
-The append may reallocate the array and leave `element` dangling. Replacing
-`target.view = source` with `holder.view = source` produces `L0641`.
-`publish_into_loan` in [src/borrow.odin](src/borrow.odin) joins the published
-loans into the resolved destination slots, but does not connect those slots
-to the mutable source's reborrow lifetime.
-
-This reproduction was confirmed with a compiler built from the source tree
-on 2026-10-02, using `-emit-ll`; it wrongly exits successfully. The 108
-compiler unit tests pass without covering these cases.
-
 ### Procedure-literal calls are rejected in constant initializers
 
 [grammar.md "Declarations"](grammar.md#declarations) permits an expression

@@ -3224,7 +3224,16 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				}
 				// design.md "Weakening and reborrows".
 				if len(sources) > 0 && len(through) > 0 {
-					prov_reborrow(graph, sources, expr_base(target).type)
+					stored := expr_base(target).type
+					prov_reborrow(graph, sources, stored)
+					// Which storage `target` names is known only to the solve, so the
+					// carrier reborrows every named slot of its type; one stays
+					// suspended only while it holds the source's loan.
+					for entry, candidate in graph.prov_slots {
+						if entry.symbol != INVALID_SYMBOL && entry.content_type == stored {
+							prov_reborrow(graph, sources, stored, candidate, expr_span(target))
+						}
+					}
 					prov_emit(graph, Prov_Event {
 						kind    = .Publish,
 						span    = expr_span(target),
