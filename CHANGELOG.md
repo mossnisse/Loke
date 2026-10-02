@@ -271,6 +271,9 @@ checklist.
 
 ### Fixed
 
+- An omitted `$` argument whose parameter type is itself generic, as in
+  `identity :: proc($N: $I = 3) -> I` called as `identity()`, binds that type
+  from its default; it reported `L0437`.
 - A generic method in a generic `impl` whose `where` bound names its own
   parameters, as in `echo :: proc(self, value: $U) -> U where size_of(U) > 0`,
   is checked when a call instantiates it; the block's instantiation reported

@@ -1205,9 +1205,8 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 					continue
 				}
 				result.compile_omitted += 1
-				wanted := resolve_type_syntax(k, parameter.type)
 				bound, bound_ok := bind_default_compile_time_argument(
-					k, entry.name, parameter.default, wanted, scope, &bindings,
+					k, entry.name, parameter.default, parameter.type, scope, &bindings,
 				)
 				if !bound_ok {
 					result.reason = bound
@@ -1329,10 +1328,11 @@ bind_default_compile_time_argument :: proc(
 	k: ^Checker,
 	name: Name,
 	default: Expr,
-	wanted: Type_Id,
+	declared: Expr,
 	scope: ^Scope,
 	out: ^[dynamic]Generic_Binding,
 ) -> (string, bool) {
+	wanted := resolve_type_syntax(k, declared)
 	// Evaluated as a written argument is, so a default may call a procedure. The
 	// declaration's syntax is shared by every call and checking annotates it, so
 	// each call checks its own copy: `twice(size_of(T))` resolves per `T`. A
@@ -1349,6 +1349,14 @@ bind_default_compile_time_argument :: proc(
 	end_probe(k.c, probe)
 	if type == INVALID_TYPE {
 		return "its omitted `$` argument's default does not check", false
+	}
+	// `$N: $I = 3` binds `I` from the default's type, as a written argument's
+	// type binds it.
+	if poly, is_poly := declared.(^Type_Poly); is_poly {
+		if !bind_pattern_name(k, poly.name, Generic_Arg{is_type = true, type = default_type(k.c, type)}, scope, out) {
+			return "its generic parameter types do not agree", false
+		}
+		wanted = resolve_type_syntax(k, declared)
 	}
 	arg := Arg_Info {
 		expr        = per_call,

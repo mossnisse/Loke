@@ -1,0 +1,14 @@
+// design.md "Default values": an omitted `$` argument's default is evaluated as
+// a written argument is, so `$N: $I = 3` binds `I` from the default's type.
+package main;
+import "core:fmt";
+
+identity :: proc($N: $I = 3) -> I { return N; }
+scaled :: proc($N: $I = 2.5) -> I { return N * 2; }
+
+main :: proc() {
+	fmt.println(identity(), identity(4));
+	static_assert(type_of(identity()) == int);
+	static_assert(type_of(scaled()) == f64);
+	fmt.println(scaled() > 4.9);
+}

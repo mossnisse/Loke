@@ -280,25 +280,6 @@ It should compile with `VALUE` equal to `7`. Writing
 call also works as a variable initializer. A constant initializer must keep
 parsing expression suffixes after its procedure literal.
 
-### Omitted compile-time defaults do not infer their type binding
-
-[design.md "Default values"](design.md#default-values) requires an omitted
-`$` argument's default to be evaluated like a written argument. The compiler
-rejects this program with `L0437`, "`$I` is not bound here":
-
-```odin
-package main;
-import "core:fmt";
-identity :: proc($N: $I = 3) -> I { return N; }
-main :: proc() { fmt.println(identity(), identity(4)); }
-```
-
-Both calls should compile, with `I` inferred as `int`, and print `3 4`.
-Calling only `identity(4)` compiles. The omitted-argument branch of
-`infer_generic_arguments` in [src/generic.odin](src/generic.odin) binds `N`
-without performing the type inference that its written-argument branch does
-for `$I`.
-
 ### Dependent generic parameter types retain another instance's annotations
 
 [design.md "Generic data types"](design.md#generic-data-types) and
@@ -327,9 +308,9 @@ copy for each application would keep the parameter type specific to its
 bindings. Procedure inference shares this defect: successive calls to
 `proc($N: int, $V: [N]int)` also reuse the first array length.
 
-These two generic gaps were confirmed with a compiler built from the source
+This generic gap was confirmed with a compiler built from the source
 tree on 2026-10-02, using `-emit-ll`. All 108 compiler unit tests pass without
-covering these cases.
+covering it.
 
 ### A last-use transfer in one defer expansion changes every exit
 
