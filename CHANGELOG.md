@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- An `inout` argument cannot be a field reached through a packed struct,
+  including an element of a packed struct's array, on any call path
+  (`L0614`), as a mutating method's receiver already could not: its address
+  may be misaligned. Copy the field to a local, pass that, and store it back.
 - Converting a typed constant follows the rules for a runtime value of its
   type, so `(^mut int)(EMPTY)` with `EMPTY :: (^int)(nil)` is `L0373`, and an
   unchecked pointer conversion of one needs `core:unsafe`. Only untyped

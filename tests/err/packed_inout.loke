@@ -1,0 +1,27 @@
+package main;
+
+// design.md "@(packed)": `inout` passes the place's address, so a field reached
+// through a packed struct cannot be one, on any call path.
+Packed :: struct @(packed) { tag: u8, value: int, items: [2]int }
+set :: proc(value: inout int) { value = 42; }
+Setter :: interface($Self: type) {
+	slot put: proc(self, value: inout int);
+}
+Machine :: struct {}
+impl Machine {
+	put :: proc(self, value: inout int) { value = 1; }
+	puts :: proc{put};
+}
+
+main :: proc() {
+	packed := Packed{1, 7, {}};
+	set(inout packed.value);
+	set(inout packed.items[1]);
+	m := Machine{};
+	m.put(inout packed.value);
+	m.puts(inout packed.value);
+	d := (dyn Setter)(&m);
+	d.put(inout packed.value);
+	f := set;
+	f(inout packed.value);
+}

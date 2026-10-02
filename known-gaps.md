@@ -1359,34 +1359,7 @@ conflict with ["Pointers"](design.md#pointers). Check an `inout` operand's
 original place type without value conversions, and require invariant types
 on direct, overloaded, generic, method, and procedure-value call paths.
 
-### Ordinary inout arguments bypass packed-place validation
-
-[design.md "@(packed)"](design.md#packed) makes a packed field
-non-addressable. `check_bound_argument_mode` in
-[src/check_calls.odin](src/check_calls.odin) validates only assignability for
-an `inout` argument, whereas borrowing arguments and mutating method
-receivers also reject packed projections:
-
-```odin
-package main;
-import "core:fmt";
-Packed :: struct @(packed) { tag: u8, value: int }
-set :: proc(value: inout int) { value = 42; }
-main :: proc() {
-    packed := Packed{1, 7};
-    set(inout packed.value);
-    fmt.println(packed.value);
-}
-```
-
-This compiles and prints `42` instead of reporting `L0614`. Its LLVM call
-passes the field address at byte offset 1 to a callee performing an
-ABI-aligned `store i64`, so the unchecked address is also an invalid alignment
-promise. A mutating method on a record in the same packed position is
-correctly rejected. Apply packed-place validation to every `inout` binding,
-including elements reached through a packed array field.
-
-These two call-checking gaps were reproduced with a compiler rebuilt from
-the source tree on 2026-10-02. All 108 compiler unit tests pass with memory
-tracking and compiler vets enabled; those tests do not cover these
-reproductions.
+This call-checking gap was reproduced with a compiler rebuilt from the
+source tree on 2026-10-02. All 108 compiler unit tests pass with memory
+tracking and compiler vets enabled; those tests do not cover the
+reproduction.

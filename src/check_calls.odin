@@ -611,6 +611,14 @@ check_bound_argument_mode :: proc(k: ^Checker, value: Expr, mode: Param_Mode, su
 		return true
 	}
 	note_unknown_nil_write(k, value)
+	// design.md "@(packed)": `inout` passes the address, which may be misaligned.
+	if field, packed := packed_field_reached(k, value); packed {
+		errorf(
+			k.c, expr_span(value), "L0614",
+			"cannot take the address of `%s`: it is reached through a packed struct", field,
+		)
+		return false
+	}
 	if base := expr_base(value); base != nil && !base.assignable {
 		report_not_assignable(k, base, subject)
 		return false
