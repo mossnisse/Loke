@@ -1,0 +1,15 @@
+package main;
+
+foreign import system "system:kernel32.lib";
+
+// design.md "@(export)": a foreign binding of an exported name links to that
+// definition, so its type must match.
+foreign system {
+	@(link_name="answer") wrong :: proc() -> f64 ---;
+	@(link_name="counter") count: i64;
+}
+
+@(export) answer :: proc "c" () -> i32 { return 7; }
+@(export) counter: i32 = 3;
+
+main :: proc() { _ = wrong(); _ = count; }

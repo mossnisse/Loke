@@ -116,12 +116,17 @@ check_foreign_links :: proc(c: ^Compiler, block: ^Item_Foreign_Block, linked: ^m
 				continue
 			}
 			first := symbol_of(c, first_id)
-			if first.kind != sym.kind || first.proc_type != sym.proc_type || first.type != sym.type {
+			if !foreign_links_agree(first, sym) {
 				errorf(c, sym.span, "L0600", "the foreign symbol `%s` is already declared with a different type", sym.link_name)
 				add_notef(c, first.span, "`%s` is first declared here", sym.link_name)
 			}
 		}
 	}
+}
+
+// Two declarations of one external symbol share one LLVM declaration.
+foreign_links_agree :: proc(a, b: ^Symbol) -> bool {
+	return a.kind == b.kind && a.proc_type == b.proc_type && a.type == b.type
 }
 
 // A foreign global is a bare `x: T;` with an ABI-safe type.

@@ -1,0 +1,17 @@
+package main;
+
+// design.md "@(private)": a field cannot be both public and private, as a
+// declaration cannot.
+Point :: struct {
+	@(public, private) x: int,
+	y: int,
+}
+Box :: struct($T: type) {
+	@(public, private) value: T,
+}
+
+main :: proc() {
+	p: Point = {};
+	a: Box(int) = {};
+	b: Box(bool) = {};
+}

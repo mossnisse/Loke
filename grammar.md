@@ -427,7 +427,8 @@ checker then splits the leading `self` off as a plain value receiver. A receiver
 in another form is written as its own parameter, as in
 `proc(self: inout, allocator: Allocator)`.
 
-`..T` is a variadic parameter. Variadic, `inout`, and `move` parameters take no
+`..T` is a variadic parameter, and only the last parameter of a procedure or
+procedure type may be one. Variadic, `inout`, and `move` parameters take no
 default, and a default may refer only to the receiver and the parameters to its
 left (see [design.md](design.md#default-values)). A result is anonymous, so
 `return` always carries its value. The `---` body marks a foreign declaration.

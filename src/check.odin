@@ -334,7 +334,7 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 // design.md "@(export)": a whole-program pass, so clashing external symbols are
 // reported with locations rather than failing at link time.
 check_exports :: proc(c: ^Compiler) {
-	claimed := make(map[string]Span, 16, context.temp_allocator)
+	claimed := make(map[string]Symbol_Id, 16, context.temp_allocator)
 	linked := make(map[string]Symbol_Id, 16, context.temp_allocator)
 	for id in package_order(c) {
 		pkg := package_of(c, id)
@@ -358,10 +358,23 @@ check_exports :: proc(c: ^Compiler) {
 			}
 		}
 	}
+	// A foreign binding of an exported name links to that definition.
+	for name, bound_id in linked {
+		defined_id, seen := claimed[name]
+		if !seen {
+			continue
+		}
+		bound := symbol_of(c, bound_id)
+		defined := symbol_of(c, defined_id)
+		if !foreign_links_agree(bound, defined) {
+			errorf(c, bound.span, "L0600", "the foreign symbol `%s` is exported with a different type", name)
+			add_notef(c, defined.span, "`%s` is exported here", name)
+		}
+	}
 }
 
 @(private = "file")
-check_export_decl :: proc(c: ^Compiler, d: ^Decl, claimed: ^map[string]Span) {
+check_export_decl :: proc(c: ^Compiler, d: ^Decl, claimed: ^map[string]Symbol_Id) {
 	if !has_attribute(d.attributes, "export") {
 		return
 	}
@@ -397,10 +410,10 @@ check_export_decl :: proc(c: ^Compiler, d: ^Decl, claimed: ^map[string]Span) {
 		}
 		if first, seen := claimed[name]; seen {
 			errorf(c, sym.span, "L0634", "two declarations export the symbol `%s`", name)
-			add_notef(c, first, "`%s` is also exported here", name)
+			add_notef(c, symbol_of(c, first).span, "`%s` is also exported here", name)
 			continue
 		}
-		claimed[name] = sym.span
+		claimed[name] = sid
 		sym.exported = true
 		sym.link_name = name
 	}
@@ -469,28 +482,27 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 // one declaration; `@(public)` on the package clause makes the file's
 // declarations public by default, and `@(private)` opts one back out.
 declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
-	own_public := has_attribute(d.attributes, "public")
-	own_private := has_attribute(d.attributes, "private")
+	return attributes_are_public(k, d.attributes, d.span, "declaration")
+}
+
+// `declaration_is_public`'s rule, for a struct field.
+@(private = "file")
+field_is_public :: proc(k: ^Checker, field: ^Field) -> bool {
+	return attributes_are_public(k, field.attributes, field.span, "field")
+}
+
+@(private = "file")
+attributes_are_public :: proc(k: ^Checker, attributes: []Attribute, span: Span, what: string) -> bool {
+	own_public := has_attribute(attributes, "public")
+	own_private := has_attribute(attributes, "private")
 	if own_public && own_private {
-		errorf(k.c, d.span, "L0332", "this declaration is both `@(public)` and `@(private)`")
+		errorf(k.c, span, "L0332", "this %s is both `@(public)` and `@(private)`", what)
 		return false
 	}
 	if own_public {
 		return true
 	}
 	if own_private {
-		return false
-	}
-	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
-}
-
-// `declaration_is_public`'s rule, for a struct field.
-@(private = "file")
-field_is_public :: proc(k: ^Checker, attributes: []Attribute) -> bool {
-	if has_attribute(attributes, "public") {
-		return true
-	}
-	if has_attribute(attributes, "private") {
 		return false
 	}
 	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
@@ -747,7 +759,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		}
 		bindings := make([dynamic]Symbol_Id, 0, len(field.names), k.c.semantic_allocator)
 		// design.md "Compile-time reflection": fields have visibility too.
-		public := field_is_public(k, field.attributes)
+		public := field_is_public(k, &field)
 		reject_any_view_position(k, field_type, field.span, "a record field")
 		for name in field.names {
 			if name.text != "_" && member_named(k.c, members[:], name_identifier(k.c, name)) != INVALID_SYMBOL {
@@ -1118,9 +1130,9 @@ normalize_signature_parameter :: proc(
 }
 
 @(private = "file")
-variadic_position_ok :: proc(k: ^Checker, literal: ^Expr_Proc, position, name_index: int, span: Span) -> bool {
-	last := &literal.signature.params[len(literal.signature.params) - 1]
-	if position != len(literal.signature.params) - 1 || name_index != len(last.names) - 1 {
+variadic_position_ok :: proc(k: ^Checker, params: []Parameter, position, name_index: int, span: Span) -> bool {
+	last := &params[len(params) - 1]
+	if position != len(params) - 1 || name_index != max(len(last.names), 1) - 1 {
 		errorf(k.c, span, "L0574", "a variadic parameter must be the last one")
 		return false
 	}
@@ -1257,7 +1269,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				!split_receiver
 			resets = allocator_reset_ok(k, resets, written_type, parameter.span)
 			if mode == .Variadic && name_type != INVALID_TYPE {
-				if !variadic_position_ok(k, literal, position, name_index, parameter.span) {
+				if !variadic_position_ok(k, literal.signature.params, position, name_index, parameter.span) {
 					name_type, mode = written_type, .Value
 				}
 			}
@@ -1816,6 +1828,10 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			for name_index in 0 ..< count {
 				marked = allocator_reset_ok(k, marked, written, parameter.span)
 				resolved, mode, _ := normalize_signature_parameter(k.c, parameter, position, name_index, written)
+				if mode == .Variadic && resolved != INVALID_TYPE &&
+				   !variadic_position_ok(k, value.params, position, name_index, parameter.span) {
+					resolved, mode = written, .Value
+				}
 				append(&params, resolved)
 				append(&modes, mode)
 				append(&resets, marked)

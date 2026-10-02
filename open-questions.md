@@ -434,14 +434,6 @@ rather than a wrong answer; the wrong answers it found are in
 The completed audit and its decisions are recorded in
 [comments.md "Compiler architecture audit (2026-09-28)"](comments.md#compiler-architecture-audit-2026-09-28).
 
-## Platform selection in `core:thread`
-
-[standard-library.md](standard-library.md) says every platform call sits behind
-a `when (LOKE_OS == ...)`, and `core:fs`, `core:os`, `core:path`,
-`core:process`, and `core:term` follow it. `core:thread` declares its Windows
-implementation directly. Should it gain the `when`, or should the convention let
-a package with one target skip it?
-
 ## Review cleanup in `cfg_provenance.odin`
 
 The correctness findings and reproductions are in
@@ -489,43 +481,6 @@ The confirmed specification divergences and reproductions are in
   evaluated. Keep comments about partial record resolution, store reacquisition,
   selection phases, and body-context restoration. Replace generic `design.md:`
   references with exact section headings, as required by [AGENTS.md](AGENTS.md).
-
-Three consistency questions remain:
-
-- **Foreign bindings and exported definitions use separate symbol tables.**
-  `check_exports` checks exports against exports and foreign bindings against
-  foreign bindings, without comparing the two sets:
-
-  ```odin
-  package main;
-  foreign import system "system:kernel32.lib";
-  foreign system {
-      @(link_name="answer") other :: proc() -> f64 ---;
-  }
-  @(export) answer :: proc "c" () -> i32 { return 7; }
-  main :: proc() { _ = other(); }
-  ```
-
-  This compiles and emits `define i32 @answer()` with `call double @answer()`.
-  Matching signatures compile; two incompatible foreign bindings for the same
-  name report L0600. Should compatible foreign bindings resolve to an exported
-  definition, with incompatible ones rejected in the same whole-program pass?
-  [design.md "@(export)"](design.md#export) and
-  [design.md "Foreign system"](design.md#foreign-system) should specify this
-  boundary.
-- **Variadic position is enforced only on named declarations.**
-  `bad: proc(nums: ..int, tail: int);` is accepted, while
-  `bad :: proc(nums: ..int, tail: int) {}` reports L0574. The existing
-  [variadic shape regression](tests/err/m6a_variadic_shape.loke) states the
-  intended trailing-only rule, but
-  [design.md "Variadic parameters"](design.md#variadic-parameters) and
-  [grammar.md "Procedures"](grammar.md#procedures) do not state it explicitly.
-  Specify the restriction and reuse the declaration check for procedure types.
-- **Field visibility conflicts differ from declaration conflicts.**
-  `field_is_public` accepts a field with `@(public, private)` as public, while
-  `declaration_is_public` reports L0332 for that combination. Both attributes
-  apply to fields under [design.md "Attributes"](design.md#attributes).
-  Clarify the conflict rule and share its validation.
 
 ## Review cleanup in `check_expr.odin`
 

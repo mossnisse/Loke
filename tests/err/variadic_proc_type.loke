@@ -1,0 +1,9 @@
+package main;
+
+// design.md "Variadic parameters": a procedure type keeps the variadic
+// parameter last, as a declaration does.
+bad: proc(nums: ..int, tail: int);
+Grouped :: proc(a, b: ..int);
+ok: proc(head: int, nums: ..int);
+
+main :: proc() {}

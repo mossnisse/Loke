@@ -10,6 +10,16 @@ checklist.
 
 ### Breaking changes
 
+- A procedure type keeps its variadic parameter last, as a declaration does:
+  `proc(nums: ..int, tail: int)` is `L0574`. Move the variadic parameter to
+  the end.
+- A struct field marked both `@(public)` and `@(private)` is `L0332`, as a
+  declaration so marked already was; it used to be public. Keep the one you
+  mean.
+- A foreign binding whose link name an `@(export)` definition also defines
+  must declare the same kind and type (`L0600`); a mismatch used to compile
+  into a call of the wrong type. Write the binding with the exported
+  signature, or drop it and call the definition directly.
 - Comparing a struct, array, or union that holds a value of another
   package's type whose inherent `==` is not `@(public)` is `L0355`, in an
   expression or a value `switch`, as comparing that value directly already

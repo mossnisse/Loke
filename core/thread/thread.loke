@@ -3,13 +3,15 @@
 //
 // Ordinary Loke over kernel32 and two runtime entry points: `spawn` and `join`
 // supply the thread start and join edges of happens-before, and `Mutex` the
-// unlock-to-lock edge. Windows is the only target, so nothing here is behind a
-// `when (LOKE_OS == ...)`.
+// unlock-to-lock edge. The kernel32 calls sit behind
+// `when (LOKE_OS == .Windows)`, as in `core:process`.
 @(public)
 package thread;
 
 import "core:sync";
 import "core:unsafe";
+
+when (LOKE_OS == .Windows) {
 
 foreign import kernel32 "system:kernel32.lib";
 
@@ -32,6 +34,8 @@ foreign kernel32 {
 	rt_unlock :: proc "stdcall" (lock: rawptr) ---;
 	@(link_name="GetActiveProcessorCount")
 	rt_processor_count :: proc "stdcall" (group: u16) -> u32 ---;
+}
+
 }
 
 // A spawned thread attaches to the runtime's panic state first, and detaching

@@ -1,0 +1,6 @@
+L0600
+@8:24
+the foreign symbol `answer` is exported with a different type
+L0600
+@9:25
+the foreign symbol `counter` is exported with a different type

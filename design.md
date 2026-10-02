@@ -4313,7 +4313,7 @@ countdown :: proc(from: int) {
 
 #### Variadic parameters
 
-A variadic procedure accepts a variable number of arguments:
+A variadic procedure accepts a variable number of arguments. The variadic parameter is the last one, in a procedure type as in a declaration; `proc(nums: ..int, tail: int)` is an error.
 
 ```odin
 sum :: proc(nums: ..int) -> int {
@@ -6080,7 +6080,7 @@ open :: proc() {
 
 Exported procedures must declare a [foreign calling convention](#calling-conventions) and a [foreign-ABI-safe](#foreign-abi-safe-types) signature. Exported variables must also have foreign-ABI-safe types. [Generic](#generics) declarations cannot be exported.
 
-The exported name is the declaration's name or its [`@(link_name)`](#link_namestring). Names are program-wide: duplicates produce a compile-time error identifying both declarations. The `loke_rt_` prefix is reserved for the runtime.
+The exported name is the declaration's name or its [`@(link_name)`](#link_namestring). Names are program-wide: duplicates produce a compile-time error identifying both declarations. The `loke_rt_` prefix is reserved for the runtime. A declaration in a [foreign block](#foreign-system) may bind an exported name; it then refers to the exported definition and must declare the same kind and type, as two foreign declarations of one symbol must.
 
 #### `@(link_name=<string>)`
 
@@ -6100,7 +6100,7 @@ answer :: proc "c" () -> int {
 
 #### `@(private)`
 
-Names package visibility, which is already the default. It applies to top-level declarations and struct fields, takes no argument, and does not create file-private visibility.
+Names package visibility, which is already the default. It applies to top-level declarations and struct fields, takes no argument, and does not create file-private visibility. A declaration, struct field, or foreign block cannot carry both `@(private)` and `@(public)`.
 
 In a file with a [`@(public)`](#public) package declaration, it excludes a declaration from the file-wide public default:
 
