@@ -7,40 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Map literal values lack unwind protection before insertion
-
-[design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not)
-requires every successfully initialized owner to be released on a panic.
-`emit_map_literal_into` in
-[src/emit_llvm_containers.odin](src/emit_llvm_containers.odin) guards the
-partially built map and its temporary key, but leaves the incoming value
-unregistered while `emit_map_entry` hashes or clones the key:
-
-```odin
-package main;
-import "core:fmt";
-Key :: struct { id: int }
-impl Key {
-    hash :: proc(self, seed: uint) -> uint { panic("hash failed"); return 0; }
-    same :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
-}
-Res :: struct { id: int }
-impl Res {
-    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
-}
-main :: proc() {
-    defer fmt.println("unwound");
-    m := map[Key]Res{Key{1} = Res{7}};
-}
-```
-
-With the default panic strategy, this prints `unwound` but omits `drop 7`.
-The map does not yet contain the value, and no other cleanup action owns it.
-The same gap covers a cloned borrowed value, key-clone allocation failure,
-and a panic while dropping an existing entry before replacement. Guard each
-completed incoming value until it has been stored in the map, then clear the
-guard before destroying the temporary key.
-
 ### Synthesized container insertion loses owners on panic
 
 [design.md "Container insertion"](design.md#container-insertion) transfers
@@ -72,10 +38,10 @@ Its staged values and those of `try_insert` similarly need protection across
 later key callbacks. Register transferred arguments and completed staged
 clones until insertion commits or explicit failure cleanup destroys them.
 
-These two container-emission findings were reproduced with a compiler built
-from the source tree on 2026-10-02 at the default optimization level. All 108
+This container-emission finding was reproduced with a compiler built from
+the source tree on 2026-10-02 at the default optimization level. All 108
 compiler unit tests pass with memory tracking and both compiler vets enabled;
-the current fixtures do not cover these cases.
+the current fixtures do not cover it.
 
 ### Distinct types implicitly inherit comparisons
 

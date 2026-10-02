@@ -528,6 +528,10 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		if index < len(v.element_clones) && v.element_clones[index] {
 			value = emit_clone_value(e, element, value, provider)
 		}
+		// design.md "What the unwind runs, and what it does not": the value is
+		// owned here until the map holds it, across the key's hash and clone and
+		// the drop of an entry it replaces.
+		guard := hold_temporary_value(e, element, value)
 		place, inserted := emit_map_entry(e, ops, address, key_slot)
 		missing := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
@@ -538,6 +542,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		place_label(e, store_label)
 		emit_replace_entry(e, element, place, inserted, "mlit")
 		store(e, element, value, place)
+		finish_temporary_drop(e, guard)
 		drop_temporary_value(e, key_cleanup)
 	}
 	finish_temporary_drop(e, cleanup)

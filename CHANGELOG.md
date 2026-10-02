@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- A panic while a map literal inserts an entry, in the key's `hash` or
+  clone, or in dropping an entry it replaces, drops the value being inserted;
+  only the map built so far was dropped.
 - A map literal used directly as the map of `key in` or an index read, as in
   `1 in map[int]Res{1 = Res{7}}`, is dropped at the end of its expression; it
   was never dropped.
