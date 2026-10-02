@@ -7,6 +7,8 @@ package main; import "core:fmt";
 tick: int;
 bump :: proc(n: int) -> int { tick += 1; return n * 100 + tick; }
 take :: proc(a: int, b: int, c: int = bump(9)) -> int { return a * 1000000 + b * 1000 + c; }
+// A spread that skips a defaulted parameter is still written before it.
+packed :: proc(a: int = bump(9), rest: ..int) -> int { return a * 1000 + rest[0]; }
 
 // A struct literal's elements evaluate in source order too, and land in field
 // order.
@@ -50,6 +52,9 @@ main :: proc() {
 	machine := Machine{};
 	view := (dyn Runner)(&machine);
 	fmt.println(view.run(b = bump(2), a = bump(1)));
+
+	tick = 0;
+	fmt.println(packed(..[]int{bump(1)}));
 
 	fmt.println(CONST);
 }

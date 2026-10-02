@@ -256,6 +256,9 @@ checklist.
 
 ### Fixed
 
+- A variadic spread is evaluated before the default of a fixed parameter it
+  skips, as in `use(..spread())` for
+  `use :: proc(first: int = mark(1), rest: ..int)`.
 - A compile-time `foreach` over a range whose high endpoint is far below its
   low one runs no iterations; it ran when the distance did not fit an `i64`.
 - A map literal evaluated at compile time evaluates each entry's key before

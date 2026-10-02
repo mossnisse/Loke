@@ -951,9 +951,11 @@ bind_variadic_arguments :: proc(
 	declared := symbol_of(k.c, declaration)
 	ok := true
 
-	// design.md "Evaluation order": kept only when a name reorders the fixed
-	// parameters, the one case where written and slot order disagree.
+	// design.md "Evaluation order": kept only when written and slot order
+	// disagree, because a name reorders the fixed parameters or an omitted
+	// default must wait for the pack.
 	slot_order := make([dynamic]int, 0, pack + 1, k.c.semantic_allocator)
+	defaulted := false
 	first := 0
 	if receiver != nil {
 		bound[0] = receiver
@@ -1029,8 +1031,9 @@ bind_variadic_arguments :: proc(
 		}
 		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
 		append(&slot_order, index)
+		defaulted = true
 	}
-	if named > 0 {
+	if named > 0 || defaulted {
 		v.bound_order = slot_order[:]
 	}
 

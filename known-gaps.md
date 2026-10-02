@@ -1599,29 +1599,6 @@ compile-time evaluator, and lifecycle graph all use `call_slot_at` or
 analysis. Preserve supplied candidate slots in written order, then append
 omitted defaults in parameter order when binding the chosen procedure.
 
-### A variadic spread runs after an omitted fixed-parameter default
-
-[design.md "Evaluation order"](design.md#evaluation-order) evaluates all
-supplied arguments before omitted defaults. `bind_variadic_arguments` in
-[src/check_calls.odin](src/check_calls.odin) records an order only if named
-arguments occur, even though a spread can skip a defaulted fixed parameter:
-
-```odin
-package main;
-import "core:fmt";
-mark :: proc(value: int) -> int { fmt.println(value); return value; }
-spread :: proc() -> []int { fmt.println(2); return nil; }
-use :: proc(first: int = mark(1), rest: ..int) {
-    fmt.println(first, rest.len());
-}
-main :: proc() { use(..spread()); }
-```
-
-This prints `1`, `2`, and `1 0`; the first two lines should be `2` and `1`.
-With no `bound_order`, parameter-slot order evaluates the default before
-the written spread. Record the pack-before-default order even without a
-name, retaining the existing order among fixed arguments and among spreads.
-
 ### Associated procedure groups lose required-result policy
 
 [design.md "@(require_results)"](design.md#require_results) applies a group's
@@ -1696,7 +1673,7 @@ changing the pointer's declared capability. Validate source/target
 conversion rules before folding concrete typed constants, while preserving
 the separate contextual conversion rules for untyped literals.
 
-These seven call-checking gaps were reproduced with a compiler rebuilt from
+These six call-checking gaps were reproduced with a compiler rebuilt from
 the source tree on 2026-10-02. All 108 compiler unit tests pass with memory
 tracking and compiler vets enabled; those tests do not cover these
 reproductions.
