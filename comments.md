@@ -230,9 +230,13 @@ Built-in operations on built-in types cannot be shadowed. Domain-specific
 behavior over a primitive representation uses a `distinct` type, keeping the
 changed meaning visible at its declaration.
 
-A `distinct` type inherits none of its underlying type's operators — `Meters ::
-distinct f64` starts with no arithmetic at all — which is what stops a unit type
-from silently behaving like its representation. The cost is per-operator
+A `distinct` type inherits none of its underlying type's operators apart from
+comparisons — `Meters :: distinct f64` starts with no arithmetic at all — which
+is what stops a unit type from silently behaving like its representation.
+Comparisons are the exception because they cannot produce a wrong-dimensioned
+value: both operands already have the same distinct type, and the result is a
+`bool`. Requiring `delegate(==, !=, <, ...)` on nearly every identifier and unit
+type would be boilerplate that protects nothing. The cost is per-operator
 boilerplate for numeric newtypes, so `delegate` re-exports a chosen set of the
 underlying operators in one line. It is deliberately a list rather than blanket
 inheritance: `Meters` delegates `+` and `-` but not `*`, because two lengths add

@@ -7,29 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Distinct types implicitly inherit comparisons
-
-[design.md "Distinct types"](design.md#distinct-types) says a distinct type
-inherits no operations; comparisons must be supplied explicitly or through
-`delegate`. This program should therefore reject both comparisons:
-
-```odin
-package main;
-Meters :: distinct int;
-main :: proc() {
-    a, b := Meters(1), Meters(2);
-    assert(a != b);
-    assert(a < b);
-}
-```
-
-It compiles and runs successfully. `type_is_comparable` and `type_is_ordered`
-in [src/semantic.odin](src/semantic.odin) unwrap the nominal type, and
-`check_comparison` accepts their answers even when operator lookup found no
-overload. Records and arrays containing such a distinct type also receive
-structural equality. Comparison availability must preserve the distinct
-identity, while layout and lowering may still query its representation.
-
 ### Aggregate equality bypasses nested comparison overloads
 
 [design.md "Comparison operators"](design.md#comparison-operators) makes

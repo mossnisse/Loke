@@ -630,6 +630,12 @@ checklist.
 
 ### Documentation
 
+- [design.md](design.md#distinct-types) states that a distinct type keeps its
+  underlying type's comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`) while
+  inheriting no other operator, as the compiler already behaved; arithmetic
+  still needs `delegate` or a forwarding overload. A procedure constant ends at
+  its body's `}`, so calling the literal in place is written
+  `VALUE :: (proc() -> int { return 7; })();` ([grammar.md](grammar.md#declarations)).
 - [design.md](design.md) qualifies ownership and last-use transfer summaries,
   groups argument modes under parameter semantics, and makes copy-cost warnings
   explicitly optional. It distinguishes parameter storage from carried borrows

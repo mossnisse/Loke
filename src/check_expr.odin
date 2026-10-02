@@ -1037,8 +1037,9 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 	}
 
 	// Nominal: a `distinct` type inherits none of the underlying type's
-	// operations (design.md "Distinct types"), so it reaches `check_user_index`
-	// below with its own kind rather than the built-in table for free.
+	// operations besides comparisons (design.md "Distinct types"), so it
+	// reaches `check_user_index` below with its own kind rather than the
+	// built-in table for free.
 	base_type := operand
 	operand_base := expr_base(v.operand)
 	through_pointer := false

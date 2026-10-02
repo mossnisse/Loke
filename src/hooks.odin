@@ -340,8 +340,8 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id, requested :=
 	}
 }
 
-// design.md "Distinct types": a `distinct` name inherits no operations, but it
-// is copyable like its underlying type, so it gets its own pair typed in the
+// design.md "Distinct types": a `distinct` name inherits no operations besides
+// comparisons, but it is copyable like its underlying type, so it gets its own pair typed in the
 // name. The bodies copy exactly as the underlying type's do, and the lifecycle
 // entry stays the underlying type's.
 @(private = "file")

@@ -1323,7 +1323,8 @@ static_assert(My_Int != int);
 
 A distinct type may define its own methods, operators, named constructors, conversion hooks, interfaces, and formatting. Compared with its underlying type:
 
-- **Operations** are not inherited: `Meters :: distinct f64` supports no arithmetic until it is given some. Bring them over one at a time with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form.
+- **Comparisons** are inherited: a distinct type is comparable, and ordered, exactly when its underlying type is, and its values compare as the underlying values do. A comparison overload declared for the distinct type takes precedence, as for any user type.
+- **Other operations** are not inherited: `Meters :: distinct f64` supports no arithmetic until it is given some. Bring them over one at a time with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form.
 - **Copy and drop hooks** are record lifecycle roles, so a resource-bearing distinct type wraps a record that owns the lifecycle.
 - **Copying** is not inherited either: a copyable distinct type has its own generated `try_clone` and `clone`, typed in the distinct name and copying as its underlying type does, so it satisfies `Cloneable`.
 - **Converting** between a distinct type and its underlying type keeps the representation, so it follows the ordinary copy rule: a managed operand read from a place is cloned, and `move(x)` or a temporary transfers instead. A move-only operand must be moved.
@@ -1343,14 +1344,14 @@ static_assert(Marker != (struct{}));
 Meters :: distinct f64;
 
 impl Meters {
-	delegate(+, -, ==, !=, <, <=, >, >=);
+	delegate(+, -);
 }
 
 a := Meters(3);
 b := Meters(4);
 c := a + b;      // Meters(7): generated (a, b: Meters) -> Meters
 a += b;          // += follows from + by the compound-assignment fallback
-ok := a < b;     // bool: a comparison result is not wrapped
+ok := a < b;     // inherited: a distinct type keeps its comparisons
 ```
 
 For each listed symbol, `delegate` generates the underlying type's overloads of that operator (fixed at declaration time, so a caller's extensions cannot change them), substituting the distinct type for the underlying type in every operand and result. Each generated overload unwraps its operands, applies the underlying operator, and wraps a result *of the underlying type* back; a result of any other type — a comparison `bool`, a dot-product `f32` — passes through unchanged. Compound-assignment forms follow from their binary operators via the [fallback rule](#operator-declarations), so delegating `+` also gives `+=`.
@@ -3442,6 +3443,7 @@ The equality operators `==` and `!=` apply to operands that are comparable. The 
 - `string` and `string_view` values are comparable and ordered, lexically byte-wise.
 - Pointer and C pointer values are comparable. Equality compares addresses. Ordering compares the addresses as unsigned `uintptr` values, producing a total order within one execution even for pointers to unrelated allocations. Address-space randomization means that this order need not be reproducible between executions. On a target where a pointer cannot be represented losslessly by `uintptr`, ordering pointers is not supported and use of `<`, `<=`, `>`, or `>=` on them is a compile-time error.
 - Enum values are comparable and ordered.
+- Values of a [distinct type](#distinct-types) are comparable, and ordered, when values of its underlying type are.
 - Struct values are comparable if all their fields are comparable or a visible comparison overload is provided.
 - Union values are comparable if all their variants are comparable or a visible comparison overload is provided.
 - Array values are comparable if values of the element type are comparable.

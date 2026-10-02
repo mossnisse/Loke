@@ -1,0 +1,8 @@
+package main;
+// design.md "Distinct types": comparisons are inherited, arithmetic is not.
+Meters :: distinct int;
+main :: proc() {
+    a, b := Meters(1), Meters(2);
+    same := a == b;
+    c := a * b;
+}

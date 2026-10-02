@@ -1,0 +1,21 @@
+package main;
+import "core:fmt";
+import "core:slice";
+// design.md "Distinct types": a distinct type keeps its underlying type's
+// comparisons, and an overload of its own takes precedence.
+Meters :: distinct f64;
+Id :: distinct u32;
+Loose :: distinct int;
+impl Loose {
+    same :: operator(==) proc(a, b: Loose) -> bool { return int(a) / 10 == int(b) / 10; }
+}
+Pair :: struct { id: Id, length: Meters }
+main :: proc() {
+    a, b := Meters(1.5), Meters(2.0);
+    fmt.println(a == b, a != b, a < b, a <= b, a > b, a >= b);
+    fmt.println(Id(3) == Id(3), Pair{Id(1), a} == Pair{Id(1), a});
+    lengths := []mut Meters{Meters(3), Meters(1), Meters(2)};
+    lengths.sort();
+    fmt.println(f64(lengths[0]), slice.contains(lengths, Meters(2)));
+    fmt.println(Loose(11) == Loose(19), Loose(11) == Loose(21));
+}
