@@ -2889,8 +2889,9 @@ eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 	last := bi_sub(ev.alloc, span, bi_from_i64(ev.alloc, 1))
 	count, fits := bi_to_i64(ev.alloc, span)
 	if !fits {
-		// The step limit ends the loop first.
-		count = max(i64)
+		// A high endpoint far below the low one yields nothing; the step limit
+		// ends a very long range first.
+		count = bi_sign(span) < 0 ? 0 : max(i64)
 	}
 	for index in 0 ..< int(min(count, i64(max(int)))) {
 		offset := bi_from_i64(ev.alloc, i64(index))

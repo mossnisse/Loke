@@ -291,30 +291,6 @@ main :: proc() { fmt.println(VALUE, next() + next()); }
 `VALUE` must be rejected because its evaluation modifies and reads `n`.
 The same declaration path also handles `thread_local` bindings.
 
-### Compile-time ranges with very negative lengths are nonempty
-
-[design.md "Ranges"](design.md#ranges) and
-["foreach statement"](design.md#foreach-statement) require a range whose high
-endpoint precedes its low endpoint to yield nothing. In `src/eval.odin`, a
-length that does not fit `i64` is replaced with `max(i64)` regardless of its
-sign. This program prints `1 0`:
-
-```odin
-package main;
-import "core:fmt";
-compute :: proc(lo, hi: u128) -> int {
-	foreach (x in lo ..< hi) { return 1; }
-	return 0;
-}
-VALUE :: compute(1267650600228229401496703205376, 0);
-main :: proc() {
-	fmt.println(VALUE, compute(1267650600228229401496703205376, 0));
-}
-```
-
-Both results should be `0`. Negative lengths must be recognized before the
-fallback for very large positive ranges.
-
 ### Compile-time calls cannot supply an inout result as a place
 
 [design.md "`inout` results"](design.md#inout-results) makes a call returning

@@ -247,6 +247,8 @@ checklist.
 
 ### Fixed
 
+- A compile-time `foreach` over a range whose high endpoint is far below its
+  low one runs no iterations; it ran when the distance did not fit an `i64`.
 - A map literal evaluated at compile time evaluates each entry's key before
   its value, as at run time.
 - `key in m` evaluates the key before the map.
