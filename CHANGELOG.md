@@ -285,6 +285,11 @@ checklist.
 
 ### Fixed
 
+- Sorting elements larger than 4096 bytes, with `.sort()` or
+  `slice.sort_by`, and using such a key in a map, pass each element or key to
+  the `<`, comparator, `hash` or `==` procedure as that procedure expects;
+  sorting crashed with an access violation, and a large key with its own `hash`
+  failed with `L0403`.
 - Hashing a fixed array larger than 4096 bytes, as `key.hash(seed)` or as a
   map key, builds; it read the array as an LLVM aggregate and failed with
   `L0403`.

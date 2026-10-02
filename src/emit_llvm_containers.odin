@@ -245,20 +245,12 @@ sort_by_thunk :: proc(e: ^Emitter, element: Type_Id, method: Symbol_Id) -> strin
 
 	frame := begin_function_emission(e)
 	open_function(e, "define private i32 %s(ptr %%state, ptr %%a, ptr %%b)", name)
-	llvm := llvm_type(e, element)
-	left := load(e, llvm, "%a")
-	right := load(e, llvm, "%b")
 	// A value `self` takes the comparator itself.
-	state_type, state := "ptr", "%state"
-	if sym := symbol_of(e.c, method); !param_mode_is_pointer(symbol_param_mode(e.c, sym, 0)) {
-		state_type = llvm_type(e, sym.params[0])
-		state = load(e, state_type, "%state")
-	}
+	state := hook_argument(e, method, 0, symbol_of(e.c, method).params[0], "%state")
+	left := hook_argument(e, method, 1, element, "%a")
+	right := hook_argument(e, method, 2, element, "%b")
 	before := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i1 %s(%s %s, %s %s, %s %s)",
-		before, symbol_name(e, method), state_type, state, llvm, left, llvm, right,
-	)
+	fmt.sbprintfln(&e.b, "  %s = call i1 %s(%s, %s, %s)", before, symbol_name(e, method), state, left, right)
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, before)
 	fmt.sbprintfln(&e.b, "  ret i32 %s", out)
@@ -275,17 +267,16 @@ container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
 		e, fmt.aprintf("@loke.cless.%d", int(element)), element,
 		"i32", "ptr %a, ptr %b",
 		proc(e: ^Emitter, element: Type_Id) {
-			llvm := llvm_type(e, element)
-			left := load(e, llvm, "%a")
-			right := load(e, llvm, "%b")
 			before := ""
 			if policy := resolved_element_order_policy(e.c, element); policy.kind == .Inherent {
 				before = temp(e)
 				fmt.sbprintfln(
-					&e.b, "  %s = call i1 %s(%s %s, %s %s)",
-					before, symbol_name(e, policy.less), llvm, left, llvm, right,
+					&e.b, "  %s = call i1 %s(%s, %s)", before, symbol_name(e, policy.less),
+					hook_argument(e, policy.less, 0, element, "%a"), hook_argument(e, policy.less, 1, element, "%b"),
 				)
 			} else {
+				left := load_temporary(e, element, "%a")
+				right := load_temporary(e, element, "%b")
 				before = emit_compare(e, .Lt, element, left, right)
 			}
 			out := temp(e)
@@ -293,6 +284,18 @@ container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
 			fmt.sbprintfln(&e.b, "  ret i32 %s", out)
 		},
 	)
+}
+
+// One typed operand of a direct call from a thunk to `hook`, given the address
+// the C runtime handed over: that address for a pointer-mode parameter, and
+// otherwise the value in the parameter ABI, where a large one stays an address.
+@(private = "file")
+hook_argument :: proc(e: ^Emitter, hook: Symbol_Id, index: int, type: Type_Id, address: string) -> string {
+	mode := symbol_param_mode(e.c, symbol_of(e.c, hook), index)
+	if param_mode_is_pointer(mode) {
+		return fmt.aprintf("ptr %s", address)
+	}
+	return fmt.aprintf("%s %s", param_llvm(e, type, mode), load_temporary(e, type, address))
 }
 
 // A memoised private function with one entry block, parked in `e.pending`.
@@ -365,22 +368,15 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 		e, fmt.aprintf("@loke.chash.%d", int(key)), key,
 		"i64", "ptr %p, i64 %seed",
 		proc(e: ^Emitter, key: Type_Id) {
-			value := load_place(e, key, "%p")
 			out := ""
 			if hook := key_policy_member(e, key, false); hook != INVALID_SYMBOL {
-				// An immutable receiver takes the key's address, which is `%p`.
-				receiver_type, receiver := llvm_type(e, key), value
-				if sym := symbol_of(e.c, hook);
-				   sym != nil && param_mode_is_pointer(symbol_param_mode(e.c, sym, 0)) {
-					receiver_type, receiver = "ptr", "%p"
-				}
 				out = temp(e)
 				fmt.sbprintfln(
-					&e.b, "  %s = call i64 %s(%s %s, i64 %%seed)",
-					out, symbol_name(e, hook), receiver_type, receiver,
+					&e.b, "  %s = call i64 %s(%s, i64 %%seed)",
+					out, symbol_name(e, hook), hook_argument(e, hook, 0, key, "%p"),
 				)
 			} else {
-				out = emit_hash_value(e, key, value, "%seed")
+				out = emit_hash_value(e, key, load_temporary(e, key, "%p"), "%seed")
 			}
 			fmt.sbprintfln(&e.b, "  ret i64 %s", out)
 		},
@@ -393,18 +389,15 @@ container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 		e, fmt.aprintf("@loke.cequal.%d", int(key)), key,
 		"i32", "ptr %a, ptr %b",
 		proc(e: ^Emitter, key: Type_Id) {
-			llvm := llvm_type(e, key)
-			left := load(e, llvm, "%a")
-			right := load(e, llvm, "%b")
 			same := ""
 			if hook := key_policy_member(e, key, true); hook != INVALID_SYMBOL {
 				same = temp(e)
 				fmt.sbprintfln(
-					&e.b, "  %s = call i1 %s(%s %s, %s %s)",
-					same, symbol_name(e, hook), llvm, left, llvm, right,
+					&e.b, "  %s = call i1 %s(%s, %s)", same, symbol_name(e, hook),
+					hook_argument(e, hook, 0, key, "%a"), hook_argument(e, hook, 1, key, "%b"),
 				)
 			} else {
-				same = emit_compare(e, .Eq_Eq, key, left, right)
+				same = emit_compare(e, .Eq_Eq, key, load_temporary(e, key, "%a"), load_temporary(e, key, "%b"))
 			}
 			out := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, same)

@@ -7,40 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Container thunks bypass the large-value parameter ABI
-
-[design.md "Parameter semantics and ABI lowering"](design.md#parameter-semantics-and-abi-lowering)
-allows implementation-specific lowering while preserving procedure behavior.
-The backend passes values larger than 4096 bytes by address, but
-`container_less_thunk`, `container_equal_thunk`, and `sort_by_thunk` in
-[src/emit_llvm_containers.odin](src/emit_llvm_containers.odin) load aggregate
-registers and pass their storage types directly to user procedures:
-
-```odin
-package main;
-Big :: struct { id: int, pad: [4096]u8 }
-impl Big {
-    less :: operator(<) proc(a, b: Big) -> bool { return a.id < b.id; }
-}
-main :: proc() {
-    xs := [dynamic]Big{Big{2, {}}, Big{1, {}}};
-    xs.sort();
-    assert(xs[0].id == 1);
-}
-```
-
-This compiles but exits with access violation `0xC0000005`, rather than
-sorting successfully. The thunk calls `Big.less` with two aggregate operands,
-although its definition takes two `ptr` operands. Reducing the padding to
-4088 bytes, making the record exactly 4096 bytes, succeeds. Sorting the
-4104-byte record through `core:slice.sort_by` also crashes.
-
-`container_hash_thunk` has the related mismatch: it obtains an address from
-`load_place` but labels a value receiver with `llvm_type`, so a large map key
-with an inherent value-receiver `hash` fails LLVM validation with `L0403`.
-Use the existing parameter ABI lowering for these direct calls and preserve
-the address representation for large values, including comparator state.
-
 ### Borrowed map literal receivers are never dropped
 
 [design.md "Evaluation order"](design.md#evaluation-order) destroys owned
@@ -169,7 +135,7 @@ This prints `true`, `false`, and `7 7 7`; both clone calls should print
 default provider, violating the allocator selection for nested allocations
 and their failure policy. Pass the map's allocator to the element clone.
 
-These five container-emission findings were reproduced with a compiler built
+These four container-emission findings were reproduced with a compiler built
 from the source tree on 2026-10-02 at the default optimization level. All 108
 compiler unit tests pass with memory tracking and both compiler vets enabled;
 the current fixtures do not cover these cases.
