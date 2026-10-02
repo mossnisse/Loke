@@ -4,6 +4,56 @@ Decisions that are deliberately not yet made are recorded here rather than left 
 
 Design rationale and differences from Odin are recorded in [comments.md](comments.md).
 
+## Exponential support queries on recursive type graphs
+
+Unresolved review finding in [src/semantic.odin](src/semantic.odin):
+`type_is_supported_depth` expands recursive types as a tree until its depth
+limit, revisiting each shared pointer and record for every field. A small,
+valid graph therefore asks exponentially many identical questions:
+
+```odin
+package main;
+Node :: struct { a, b, c, d: ^Node }
+main :: proc() {}
+```
+
+On 2026-10-02, a fresh development build compiling this file with `-emit-ll`
+had not completed after 20 seconds and was terminated. The one-pointer
+version compiled in about 43 milliseconds. An isolated query over an
+equivalent semantic graph measured:
+
+| Recursive pointer fields | Time for one `type_is_supported` call |
+| --- | --- |
+| 1 | 29 microseconds |
+| 2 | 7.7 milliseconds |
+| 3 | 3.38 seconds |
+
+Track visited type identities and memoize results within each query, as the
+type-ID sort-key walk already does. A depth limit alone bounds nesting but
+does not bound repeated work. Per-query state avoids caching answers while
+record fields are still resolving.
+
+## Comparison queries recurse into diagnosed value cycles
+
+Unresolved review finding in [src/semantic.odin](src/semantic.odin):
+`type_is_comparable` recursively follows aggregate fields without checking
+for cycles or the finite-size pass's `.Cyclic` result. The checker continues
+checking procedure bodies after diagnosing an invalid record, so the
+comparison in this malformed program overflows the compiler's stack:
+
+```odin
+package main;
+Node :: struct { self: Node }
+equal :: proc(a, b: Node) -> bool { return a == b; }
+main :: proc() {}
+```
+
+A fresh development build exits with Windows status `0xC00000FD`
+(`-1073741571`), without printing the diagnostic. Replacing `a == b` with
+`true` reports the ordinary `L0364` value-cycle error and exits 1. Reject a
+known cyclic aggregate, or guard the comparison walk by type identity, so
+checking an already invalid type cannot crash the compiler.
+
 ## Package and import versioning
 
 Should import paths encode package versions, and should a package declaration remain mandatory in every file? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
@@ -598,3 +648,92 @@ or plain reads, so only writes and mutable reborrows conflict? That matches
 the rule's purpose, that no mutable alias writes behind the reborrow, but it
 changes the rule for explicit bindings too: `view: []int = source; x :=
 source[1];` is rejected today.
+
+## Repeated parsing of procedure-literal arguments
+
+Unresolved parser finding: `parse_argument_value` in
+[src/parser.odin](src/parser.odin) parses a complete procedure literal as a
+type probe, rewinds the token position, and parses that literal again as an
+expression. Each nested procedure-literal argument repeats the process in
+both passes, so time and syntax-arena allocations grow exponentially. The
+discarded probe nodes remain in the syntax arena. The nesting guard does not
+bound this repeated work.
+
+The following generates a roughly 330-byte file that exercises only parsing:
+
+```powershell
+$body = 'sink();'
+for ($level = 0; $level -lt 16; $level += 1) {
+    $body = 'sink(proc() { ' + $body + ' });'
+}
+$source = 'package main; main :: proc() { ' + $body + ' }'
+New-Item -ItemType Directory -Path tests/tmp -Force | Out-Null
+Set-Content -LiteralPath tests/tmp/parser-probe.loke -Value $source -Encoding ASCII
+.\lokec.exe tests/tmp/parser-probe.loke -parse-only
+```
+
+An in-process probe measured `File.arena.total_used` on 2026-10-02:
+
+| Nested arguments | Source bytes | Syntax-arena bytes |
+| --- | --- | --- |
+| 8 | 184 | 924,240 |
+| 12 | 256 | 14,809,680 |
+| 16 | 328 | 236,976,720 |
+
+Each additional four levels costs about sixteen times as much storage.
+Parenthesizing every argument, `sink((proc() { ... }));`, avoids the type
+probe and uses only 35,696 syntax-arena bytes at 16 levels. The byte counts
+above exclude the file's trailing newline. The original 18-level form also
+parsed successfully but took about 1.7 seconds for a 364-byte source.
+
+Reuse the parsed primary when continuing through postfix expressions, so
+the procedure body is parsed once. Reclaiming probe allocations alone would
+leave the exponential execution time.
+
+## Held diagnostics in the front-end test helper
+
+`check_one_package` in [src/front_end_test.odin](src/front_end_test.odin) stops
+after `check_package_bodies`. Unlike the production pipeline, it does not
+release diagnostics held while a compile-time call checks a procedure body.
+Consequently, tests using `check_source` or `check_parsed` can observe zero
+errors for a program the normal compiler rejects. This affects the diagnostic
+commitment contract under
+[compiler-architecture.md "Checking and overload resolution"](compiler-architecture.md#checking-and-overload-resolution).
+
+The following regression, placed in a compiler unit-test file, currently fails:
+
+```odin
+package lokec
+import "core:testing"
+
+@(test)
+held_body_errors_reach_frontend_assertions :: proc(t: ^testing.T) {
+    p: Checked
+    defer destroy_checked(&p)
+    check_source(&p, `package main;
+candidate :: proc(value: $T) -> int where calculate() { return 1; }
+fallback :: proc(value: int) -> int { return 2; }
+choose :: proc{candidate, fallback};
+main :: proc() { _ = choose(1); }
+calculate :: proc() -> bool {
+    if (false) { x := 1; y := move(x); _ = x; }
+    return true;
+}
+`)
+    testing.expect(t, p.c.error_count == 1)
+}
+```
+
+Confirmed on 2026-10-02: after `check_source`, `error_count` and the visible
+diagnostic count are both zero, while `held_diagnostics` contains one `L0500`.
+Calling `release_held_diagnostics` changes the error count to one. A compiler
+built from the same source rejects the Loke fixture with `L0500` and exits 1.
+The concrete overload succeeds after the generic bound is rejected, so the
+bound's rolled-back diagnostics do not independently fail the fixture.
+
+Release held diagnostics at the helper's completed checking boundary, with
+this regression retained. The helper deliberately omits whole-program
+analysis; tests needing provenance results should continue to invoke that
+analysis explicitly. All 57 existing tests in `front_end_test.odin` pass with
+memory tracking and the repository's vet checks enabled, so their current
+fixtures do not expose the missing diagnostic release.
