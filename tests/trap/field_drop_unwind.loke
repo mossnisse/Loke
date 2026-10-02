@@ -1,0 +1,29 @@
+// design.md "Lifecycle hooks and resource types": fields drop in reverse
+// declaration order. A field's drop hook that panics still leaves the fields
+// and elements after it in that order to the unwind, without replaying the
+// hook that raised it ("What the unwind runs, and what it does not"). An
+// `@(initialized)` field leaves only its live elements.
+package main;
+import "core:fmt";
+import "core:unsafe";
+Tracked :: struct { id: int }
+impl Tracked {
+    release :: hook(drop) proc(self: inout Tracked) {
+        if (self.id == 0) { return; }
+        fmt.println("drop", self.id);
+        if (self.id == 3) { panic("field drop failed"); }
+    }
+}
+Holder :: struct {
+    first: Tracked,
+    count: int,
+    @(initialized=count) live: [4]Tracked,
+    items: [3]Tracked,
+    last: Tracked,
+}
+main :: proc() {
+    source := Holder{ first = Tracked{1}, items = {Tracked{2}, Tracked{3}, Tracked{4}}, last = Tracked{5} };
+    unsafe.write(source.live[0], Tracked{6});
+    unsafe.write(source.live[1], Tracked{7});
+    source.count = 2;
+}

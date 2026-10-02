@@ -554,45 +554,10 @@ transfer or clear those registrations only after completion or explicit
 failure cleanup; the incomplete containing record's custom drop must not
 run.
 
-### A panicking field drop skips the record's remaining fields
-
-[design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types)
-drops fields in reverse declaration order.
-["What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not)
-requires live owners to be cleaned up during a panic. In
-[src/emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin),
-`run_one_cleanup` clears the containing owner's unwind action before
-`emit_drop_place` starts its recursive field drops, and those remaining
-fields have no separate unwind registrations:
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: struct { id: int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) {
-        if (self.id == 0) { return; }
-        fmt.println("drop", self.id);
-        if (self.id == 2) { panic("field drop failed"); }
-    }
-}
-Pair :: struct { first: Tracked, second: Tracked }
-main :: proc() {
-    source := Pair{Tracked{1}, Tracked{2}};
-}
-```
-
-Normal scope exit prints `drop 2`, panics, and terminates without `drop 1`.
-The panic starts during ordinary cleanup, so the rule aborting a second
-panic during panic unwinding does not apply. The same issue affects fixed
-arrays and initialized prefixes. Preserve cleanup progress so that a
-first panic still releases pending fields or elements without replaying
-the hook that raised it.
-
-These two cleanup-emission gaps were reproduced with a compiler rebuilt
-from the source tree on 2026-10-02. All 108 compiler unit tests pass with
-memory tracking and compiler vets enabled; those tests do not cover these
-reproductions.
+This cleanup-emission gap was reproduced with a compiler rebuilt from the
+source tree on 2026-10-02. All 108 compiler unit tests pass with memory
+tracking and compiler vets enabled; those tests do not cover the
+reproduction.
 
 ### Mixed record yields mark owned leaves as borrowed
 

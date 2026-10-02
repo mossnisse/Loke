@@ -1,0 +1,20 @@
+// design.md "Lifecycle hooks and resource types": a record's own drop hook
+// runs before its fields drop. When that hook panics, the unwind still drops
+// every field, and does not run the hook again ("What the unwind runs, and
+// what it does not").
+package main;
+import "core:fmt";
+Tracked :: struct { id: int }
+impl Tracked {
+    release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+Holder :: struct { first: Tracked, second: Tracked }
+impl Holder {
+    release :: hook(drop) proc(self: inout Holder) {
+        fmt.println("drop holder");
+        panic("holder drop failed");
+    }
+}
+main :: proc() {
+    source := Holder{Tracked{1}, Tracked{2}};
+}

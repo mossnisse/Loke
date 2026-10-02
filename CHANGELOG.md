@@ -285,6 +285,11 @@ checklist.
 
 ### Fixed
 
+- A drop hook that panics while a record or a fixed array is dropped, the
+  record's own or a part's, leaves the parts not yet dropped to the unwind,
+  which drops them in the same reverse order without running the panicking
+  hook again; they leaked. The same holds for an `@(initialized)` field's
+  live elements.
 - `new_clone` and `try_new_clone` of an owned temporary, as in
   `new_clone(build())`, drop the temporary at the end of the expression; it
   was neither moved into the clone nor dropped.

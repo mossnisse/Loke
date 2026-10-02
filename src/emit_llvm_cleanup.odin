@@ -21,8 +21,10 @@ Deferred :: struct {
 	place_env:       int,
 	place_symbol:    Symbol_Id,
 	type:  Type_Id,
-	// A compiler-owned variadic buffer with per-element flags. The env indices
-	// serve the unwind thunk; the direct names serve normal cleanup.
+	// A compiler-owned variadic buffer with per-element flags, or, with no
+	// flags, the first `count` elements of an array that a drop is working
+	// through. The env indices serve the unwind thunk; the direct names serve
+	// normal cleanup.
 	array_cleanup:  bool,
 	array_buffer:   string,
 	array_flags:    string,
@@ -117,7 +119,7 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 // Under `-panic=abort` nothing is registered and no thunk is generated.
 @(private = "file")
 unwind_enabled :: proc(e: ^Emitter) -> bool {
-	return e.c.panic_unwind && !e.unwind.replaying
+	return e.c.panic_unwind && !e.unwind.replaying && e.unwind.frame != ""
 }
 
 // Fresh registration state for one procedure. The names are chosen up front
@@ -342,9 +344,13 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", address)
 		if entry.array_cleanup {
 			buffer := unwind_env_load(e, env, entry.array_buffer_env)
-			flags := unwind_env_load(e, env, entry.array_flags_env)
 			count := unwind_env_load(e, env, entry.array_count_env)
-			emit_drop_flagged_array(e, entry.type, buffer, flags, count)
+			if entry.array_flags_env < 0 {
+				emit_drop_prefix_elements(e, entry.type, buffer, load(e, "i64", count))
+			} else {
+				flags := unwind_env_load(e, env, entry.array_flags_env)
+				emit_drop_flagged_array(e, entry.type, buffer, flags, count)
+			}
 		} else if entry.stmt != nil {
 			push_temporaries(e)
 			emit_stmt(e, entry.stmt)
@@ -807,7 +813,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 }
 
 @(private)
-register_variadic_cleanup :: proc(
+register_array_cleanup :: proc(
 	e: ^Emitter, element: Type_Id, buffer, flags, count: string,
 ) -> Deferred {
 	entry := Deferred {
@@ -823,7 +829,9 @@ register_variadic_cleanup :: proc(
 	}
 	if unwind_enabled(e) {
 		entry.array_buffer_env = unwind_reserve_env(e)
-		entry.array_flags_env = unwind_reserve_env(e)
+		if flags != "" {
+			entry.array_flags_env = unwind_reserve_env(e)
+		}
 		entry.array_count_env = unwind_reserve_env(e)
 	}
 	unwind_reserve(e, &entry)
@@ -1006,11 +1014,16 @@ emit_prefix_count :: proc(e: ^Emitter, record: Type_Id, base: string, counter: ^
 	return widen_to_i64(e, load_place(e, counter.type, address), counter.type)
 }
 
-// Drops the live prefix, last element first.
+// Drops the live prefix, last element first. While one element's drop runs,
+// the unwind still owns the elements before it.
 @(private = "file")
 emit_drop_prefix_elements :: proc(e: ^Emitter, element: Type_Id, items, count: string) {
 	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, cursor)
+	guard := Deferred{slot = -1}
+	if drop_may_panic(e, element) {
+		guard = register_array_cleanup(e, element, items, "", cursor)
+	}
 	head := new_label(e, "prefix.drop.head")
 	body, done := new_label(e, "prefix.drop.body"), new_label(e, "prefix.drop.done")
 	branch(e, head)
@@ -1026,6 +1039,91 @@ emit_drop_prefix_elements :: proc(e: ^Emitter, element: Type_Id, items, count: s
 	emit_drop_place(e, element, gep_at(e, llvm_type(e, element), items, index))
 	branch(e, head)
 	place_label(e, done)
+	finish_temporary_drop(e, guard)
+}
+
+// Whether dropping a `type` can run a user hook, and so panic. A container's
+// element hooks run inside the runtime, so one with managed parts counts.
+@(private = "file")
+drop_may_panic :: proc(e: ^Emitter, type: Type_Id) -> bool {
+	operations := emit_lifecycle(e, type)
+	if operations.container {
+		key_managed := type_is_map(e.c, type) && emit_lifecycle(e, container_key(e.c, type)).managed
+		return key_managed || emit_lifecycle(e, container_element(e.c, type)).managed
+	}
+	if !operations.managed || operations.intrinsic || operations.provider {
+		return false
+	}
+	if operations.custom_drop != INVALID_SYMBOL {
+		return true
+	}
+	info := underlying_info(e.c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Array:
+		return drop_may_panic(e, info.element)
+	case .Union:
+		for variant in info.variants {
+			if variant != TYPE_VOID && drop_may_panic(e, variant) {
+				return true
+			}
+		}
+	case .Struct:
+		for index in 0 ..< len(info.fields) {
+			if drop_may_panic(e, clone_part(e.c, type, index)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Registers one completed part of a record for the unwind, apart from the
+// record, whose own hook must not run for it.
+@(private = "file")
+guard_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) -> Deferred {
+	if !unwind_enabled(e) || !emit_lifecycle(e, clone_part(e.c, record, index)).managed {
+		return Deferred{slot = -1}
+	}
+	if field, counter, prefixed := record_prefix_part(e, record, index); prefixed {
+		element := underlying_info(e.c, field.type).element
+		if !emit_lifecycle(e, element).managed {
+			return Deferred{slot = -1}
+		}
+		cursor := alloca(e, "i64")
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", emit_prefix_count(e, record, base, counter), cursor)
+		return register_array_cleanup(e, element, element_address(e, record, base, int(field.index)), "", cursor)
+	}
+	return begin_temporary_drop(e, clone_part(e.c, record, index), element_address(e, record, base, index))
+}
+
+// design.md "What the unwind runs, and what it does not": a panic from the
+// record's hook, or from one part's drop, still leaves the parts not yet
+// dropped to the unwind. Each is registered until its own drop starts.
+@(private = "file")
+guard_record_parts :: proc(e: ^Emitter, record: Type_Id, base: string, hook: bool) -> []Deferred {
+	guards := make([]Deferred, clone_part_count(e.c, record))
+	for &guard in guards {
+		guard.slot = -1
+	}
+	if !unwind_enabled(e) {
+		return guards
+	}
+	at_risk := make([]bool, len(guards))
+	risky := hook
+	for index := len(guards) - 1; index >= 0; index -= 1 {
+		at_risk[index] = risky
+		risky ||= drop_may_panic(e, clone_part(e.c, record, index))
+	}
+	// Registered in declaration order, so the unwind replays them in drop order.
+	for index in 0 ..< len(guards) {
+		if at_risk[index] {
+			guards[index] = guard_record_part(e, record, base, index)
+		}
+	}
+	return guards
 }
 
 @(private = "file")
@@ -1273,15 +1371,40 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_release(i64 %s)", owner)
 		return
 	}
-	if hook := operations.custom_drop; hook != INVALID_SYMBOL {
-		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", symbol_name(e, hook), address)
+	hook := operations.custom_drop
+	info := underlying_info(e.c, type)
+	if info != nil && info.kind == .Array {
+		// One loop over the elements, which the unwind owns while the hook runs.
+		count := fmt.aprintf("%d", info.count)
+		guard := Deferred{slot = -1}
+		if hook != INVALID_SYMBOL && unwind_enabled(e) && emit_lifecycle(e, info.element).managed {
+			cursor := alloca(e, "i64")
+			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, cursor)
+			guard = register_array_cleanup(e, info.element, address, "", cursor)
+		}
+		emit_drop_hook(e, hook, address)
+		finish_temporary_drop(e, guard)
+		if emit_lifecycle(e, info.element).managed {
+			emit_drop_prefix_elements(e, info.element, address, count)
+		}
+		return
 	}
-	if info := underlying_info(e.c, type); info != nil && info.kind == .Union {
+	guards := guard_record_parts(e, type, address, hook != INVALID_SYMBOL)
+	emit_drop_hook(e, hook, address)
+	if info != nil && info.kind == .Union {
 		emit_union_drop(e, type, info, address)
 		return
 	}
-	for index := clone_part_count(e.c, type) - 1; index >= 0; index -= 1 {
+	for index := len(guards) - 1; index >= 0; index -= 1 {
+		finish_temporary_drop(e, guards[index])
 		emit_drop_record_part(e, type, address, index)
+	}
+}
+
+@(private = "file")
+emit_drop_hook :: proc(e: ^Emitter, hook: Symbol_Id, address: string) {
+	if hook != INVALID_SYMBOL {
+		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", symbol_name(e, hook), address)
 	}
 }
 

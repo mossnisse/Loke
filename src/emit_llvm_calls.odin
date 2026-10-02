@@ -815,7 +815,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 		)
 		alloca_named(e, staging_count, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %d, ptr %s", static_count, staging_count)
-		staging_cleanup = register_variadic_cleanup(e, element, staging, staging_flags, staging_count)
+		staging_cleanup = register_array_cleanup(e, element, staging, staging_flags, staging_count)
 	}
 
 	// Spread lengths are collected while evaluating operands in written order.
@@ -882,7 +882,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", final_flags, total)
 		alloca_named(e, final_count, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", total, final_count)
-		cleanup = register_variadic_cleanup(e, element, buffer, final_flags, final_count)
+		cleanup = register_array_cleanup(e, element, buffer, final_flags, final_count)
 	}
 
 	cursor := "0"
