@@ -513,45 +513,6 @@ the source tree on 2026-10-02, using executable builds and LLVM inspection.
 All 108 tracked compiler unit tests and `runtime_abi_matches_header` pass
 without covering it.
 
-### Allocation cloning skips the source temporary's cleanup
-
-[design.md "Allocators"](design.md#allocators) requires `new_clone` to
-construct a clone, while
-["Temporaries and procedure boundaries"](design.md#temporaries-and-procedure-boundaries)
-ends the source temporary's lifetime at the complete expression.
-`emit_allocation_pair` and `emit_new_clone_hook` in
-[src/emit_llvm_calls.odin](src/emit_llvm_calls.odin) evaluate the source with
-`emit_expr` without registering its cleanup:
-
-```odin
-package main;
-import "core:fmt";
-Res :: struct { id: int }
-impl Res {
-    copy_res :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
-        return .ok(Res{self.id + 100});
-    }
-    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
-}
-build :: proc() -> Res { return Res{1}; }
-main :: proc() {
-    p := new_clone(build());
-    fmt.println(p^.id);
-    free(p);
-    fmt.println("done");
-}
-```
-
-This prints `101` and `done`, omitting `drop 1` before `101`. The original
-owner is neither transferred into the clone nor destroyed, so resources it
-owns leak. `try_new_clone` shares these paths. Register owned source
-temporaries before evaluating the allocator or invoking the copy hook, and
-clean them up on both normal completion and unwinding.
-
-This call-emission gap was reproduced with a compiler built from the source
-tree on 2026-10-02. All 24 tests in `src/emit_llvm_test.odin` pass with memory
-tracking and both compiler vets enabled; they do not cover the reproduction.
-
 ### Generated clones omit panic cleanup for completed parts
 
 [design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not)

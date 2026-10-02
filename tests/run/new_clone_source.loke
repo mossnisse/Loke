@@ -1,0 +1,31 @@
+// design.md "Allocators" and "Temporaries and procedure boundaries":
+// `new_clone` clones its source, which it only borrows, so an owned temporary
+// source is dropped at the end of its complete expression, while a named one
+// stays with its scope.
+package main;
+import "core:fmt";
+Res :: struct { id: int }
+impl Res {
+    copy_res :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+        return .ok(Res{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+Text :: struct { name: string }
+build :: proc() -> Res { return Res{1}; }
+main :: proc() {
+    p := new_clone(build());
+    fmt.println(p^.id);
+    free(p);
+    q := try_new_clone(build()) or_else nil;
+    fmt.println(q^.id);
+    free(q);
+    local := Res{2};
+    r := new_clone(local);
+    fmt.println(r^.id);
+    free(r);
+    t := new_clone(Text{"a" + "b"});
+    fmt.println(t^.name);
+    free(t);
+    fmt.println("done");
+}

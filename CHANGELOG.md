@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- `new_clone` and `try_new_clone` of an owned temporary, as in
+  `new_clone(build())`, drop the temporary at the end of the expression; it
+  was neither moved into the clone nor dropped.
 - A deferred statement drops the owned temporaries it creates when it
   finishes, on a normal exit and during a panic's unwind; a temporary whose
   part it addressed, as in `defer fmt.println(build().items[0]);`, leaked.

@@ -367,7 +367,10 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_
 	}
 	value := ""
 	if kind == .New_Clone {
-		value = emit_expr(e, v.bound[0])
+		// The clone only borrows its source; an owned temporary one is dropped at
+		// the end of its full expression (design.md "Temporaries and procedure
+		// boundaries").
+		value = emit_borrowed_operand(e, v.bound[0])
 	}
 	allocator := emit_allocator_operand(e, v, kind == .New ? 0 : 1)
 	size, align := type_size(e.c, checked.type), type_align(e.c, checked.type)
@@ -408,7 +411,7 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_
 @(private = "file")
 emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	checked := v.operation.(Call_Allocation)
-	value := emit_expr(e, v.bound[0])
+	value := emit_borrowed_operand(e, v.bound[0])
 	allocator := emit_allocator_operand(e, v, 1)
 	size, align := type_size(e.c, checked.type), type_align(e.c, checked.type)
 
