@@ -501,58 +501,6 @@ with `-emit-ll`; the deferred-copy, for-condition, and deferred-assignment
 cases were also compiled and executed. All 108 compiler unit tests pass
 without covering these cases.
 
-### Packed/aligned equality reads discarded capacity
-
-[design.md "Uninitialized capacity"](design.md#uninitialized-capacity) says
-that elements outside an `@(initialized)` prefix are storage without values.
-This program removes the sole live element from each buffer before comparing:
-
-```odin
-package main;
-import "core:fmt";
-import "core:unsafe";
-Buf :: struct @(packed, align=8) {
-    count: int,
-    @(initialized=count) items: [4]int,
-}
-main :: proc() {
-    a: Buf = {}; b: Buf = {};
-    unsafe.write(a.items[0], 1); a.count = 1;
-    unsafe.write(b.items[0], 2); b.count = 1;
-    a.count = 0; b.count = 0;
-    left := unsafe.take(a.items[0]);
-    right := unsafe.take(b.items[0]);
-    fmt.println(left, right, a == b);
-}
-```
-
-Expected output is `1 2 true`; actual output is `1 2 false`.
-`emit_byte_member_struct_equal` in
-[src/emit_llvm_expr.odin](src/emit_llvm_expr.odin) compares the entire array
-without consulting `initialized_by`, unlike the ordinary-record paths. With
-owning elements, the discarded bits can refer to storage already released by
-the values taken out. Byte-member records need the same prefix comparison.
-
-### Packed/aligned equality violates the large-value representation
-
-[design.md "Comparison operators"](design.md#comparison-operators) permits
-equality for records containing comparable fixed arrays. This program should
-print `true`:
-
-```odin
-package main;
-import "core:fmt";
-Big :: struct @(packed, align=8) { tag: u8, data: [1024]int }
-main :: proc() { a: Big = {}; b: Big = {}; fmt.println(a == b); }
-```
-
-It instead fails with `L0403`. `emit_byte_member_struct_equal` in
-[src/emit_llvm_expr.odin](src/emit_llvm_expr.odin) loads the 8192-byte field as
-an LLVM aggregate, then passes it to `emit_equal`, whose large-array path
-expects an address. Clang rejects its `getelementptr` because the operand is
-`[1024 x i64]` rather than `ptr`. Large fields must retain their address
-representation through this equality path too.
-
 ### Aggregate equality bypasses nested comparison overloads
 
 [design.md "Comparison operators"](design.md#comparison-operators) makes
@@ -669,7 +617,7 @@ need the alignment-aware place helper. The program currently prints `hello 4`
 at both the default optimization level and `-opt=speed`; the gap is the
 incorrect LLVM alignment contract, not a reproduced runtime failure.
 
-These five expression-emission gaps were confirmed with a compiler built
+These three expression-emission gaps were confirmed with a compiler built
 from the source tree on 2026-10-02, using Clang builds, runtime probes, and
 inspection of emitted LLVM as described above. All 108 compiler unit tests
 pass without covering these cases.

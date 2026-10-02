@@ -1598,27 +1598,42 @@ record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -
 }
 
 // Field-wise equality with each field loaded at its own type through the GEP
-// its byte member occupies.
+// its byte member occupies, at the alignment that member guarantees. A large
+// record or field stays an address, and an `@(initialized)` array compares
+// only its live prefix, as in an ordinary record.
 @(private = "file")
 emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
 	llvm := llvm_type(e, type)
-	left_slot := alloca(e, llvm)
-	right_slot := temp(e)
-	store(e, type, lhs, left_slot)
-	alloca_named(e, right_slot, llvm)
-	store(e, type, rhs, right_slot)
+	left_slot, right_slot := lhs, rhs
+	if !is_large_value(e, type) {
+		left_slot, right_slot = alloca(e, llvm), alloca(e, llvm)
+		store(e, type, lhs, left_slot)
+		store(e, type, rhs, right_slot)
+	}
+	field_value :: proc(e: ^Emitter, record: Type_Id, llvm, slot: string, index: int, type: Type_Id) -> string {
+		address := gep_field(e, llvm, slot, index)
+		record_field_align(e, record, slot, address, type)
+		return load_place(e, type, address)
+	}
 
 	result := "true"
 	for field, index in info.fields {
 		symbol := symbol_of(e.c, field)
-		field_llvm := llvm_type(e, symbol.type)
-		left_ptr := gep_field(e, llvm, left_slot, index)
-		right_ptr := gep_field(e, llvm, right_slot, index)
-		left, right := temp(e), temp(e)
-		// A packed field guarantees no more than byte alignment.
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align 1", left, field_llvm, left_ptr)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align 1", right, field_llvm, right_ptr)
-		result = combine_and(e, result, emit_equal(e, symbol.type, left, right))
+		left := field_value(e, type, llvm, left_slot, index, symbol.type)
+		right := field_value(e, type, llvm, right_slot, index, symbol.type)
+		leaf := ""
+		if counter := symbol_of(e.c, symbol.initialized_by); counter != nil {
+			count := int(counter.index)
+			leaf = emit_prefix_equal(
+				e, counter, symbol.type,
+				field_value(e, type, llvm, left_slot, count, counter.type),
+				field_value(e, type, llvm, right_slot, count, counter.type),
+				left, right,
+			)
+		} else {
+			leaf = emit_equal(e, symbol.type, left, right)
+		}
+		result = combine_and(e, result, leaf)
 	}
 	return result
 }

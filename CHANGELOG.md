@@ -285,6 +285,10 @@ checklist.
 
 ### Fixed
 
+- `==` on a struct that is both `@(packed)` and `@(align=N)` compares only the
+  live prefix of an `@(initialized)` array, as on other structs, and builds
+  when a field is larger than 4096 bytes; it compared discarded capacity, and
+  the large case failed with `L0403`.
 - `unsafe.transmute` between two types larger than 4096 bytes, such as
   `[1024]u64` to `[2048]u32`, builds; it stored the source's address as an
   aggregate and failed with `L0403`.
