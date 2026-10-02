@@ -285,6 +285,9 @@ checklist.
 
 ### Fixed
 
+- A deferred statement drops the owned temporaries it creates when it
+  finishes, on a normal exit and during a panic's unwind; a temporary whose
+  part it addressed, as in `defer fmt.println(build().items[0]);`, leaked.
 - A drop hook that panics during an explicit `drop(value)` runs once: the
   unwind no longer replays it on the same value, which panicked again and
   skipped the remaining drops.

@@ -1,0 +1,22 @@
+// design.md "Evaluation order": a deferred statement is its own complete
+// expression, so its owned temporaries are dropped when it finishes, on a
+// normal exit and during a panic's unwind alike.
+package main;
+import "core:fmt";
+Tracked :: move_only struct { id: int, items: [dynamic]int }
+impl Tracked {
+    release :: hook(drop) proc(self: inout Tracked) {
+        if (self.id != 0) { fmt.println("drop", self.id); }
+    }
+}
+build :: proc(id: int) -> Tracked { return Tracked{id, [dynamic]int{7}}; }
+work :: proc() {
+    earlier := Tracked{1, [dynamic]int{}};
+    defer fmt.println(build(2).items[0]);
+}
+fails :: proc() {
+    earlier := Tracked{3, [dynamic]int{}};
+    defer fmt.println(build(4).items[0]);
+    panic("begin unwinding");
+}
+main :: proc() { work(); fails(); }

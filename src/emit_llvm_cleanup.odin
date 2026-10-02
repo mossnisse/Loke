@@ -346,7 +346,9 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 			count := unwind_env_load(e, env, entry.array_count_env)
 			emit_drop_flagged_array(e, entry.type, buffer, flags, count)
 		} else if entry.stmt != nil {
+			push_temporaries(e)
 			emit_stmt(e, entry.stmt)
+			pop_temporaries(e)
 		} else if entry.temporary_place {
 			emit_drop_place(e, entry.type, unwind_env_load(e, env, entry.place_env))
 		} else if place, bound := e.names[entry.place_symbol]; bound {
@@ -633,8 +635,12 @@ run_one_cleanup :: proc(e: ^Emitter, entry: Deferred) {
 	unwind_clear(e, entry.slot)
 	if entry.stmt != nil {
 		// A deferred statement steps at its own line, then the exit continues.
+		// design.md "Evaluation order": it is its own complete expression, so its
+		// temporaries end with it, before the walk goes on.
 		exit := e.debug_span
+		push_temporaries(e)
 		emit_stmt(e, entry.stmt)
+		pop_temporaries(e)
 		debug_mark_location(e, exit)
 		return
 	}

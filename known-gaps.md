@@ -552,41 +552,6 @@ This call-emission gap was reproduced with a compiler built from the source
 tree on 2026-10-02. All 24 tests in `src/emit_llvm_test.odin` pass with memory
 tracking and both compiler vets enabled; they do not cover the reproduction.
 
-### Deferred statements leak addressed owning temporaries
-
-[design.md "Evaluation order"](design.md#evaluation-order) requires a
-complete expression's temporaries to be destroyed at its end.
-`run_one_cleanup` and `emit_unwind_thunk` in
-[src/emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin) replay deferred
-statements with `emit_stmt` without opening and draining their own temporary
-frame:
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: move_only struct { id: int, items: [dynamic]int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) {
-        if (self.id != 0) { fmt.println("drop", self.id); }
-    }
-}
-build :: proc() -> Tracked { return Tracked{2, [dynamic]int{7}}; }
-work :: proc() {
-    earlier := Tracked{1, [dynamic]int{}};
-    defer fmt.println(build().items[0]);
-}
-main :: proc() { work(); }
-```
-
-This prints `7` and `drop 1`, omitting `drop 2` between them. Addressing the
-temporary's `items` registers its cleanup after the current cleanup walk
-has taken its entries, so that walk never reaches it. During panic replay
-there is no enclosing cleanup scope to register it in at all: replacing
-`work`'s normal exit with `panic("begin unwinding")` also omits `drop 2`.
-Repeated calls leak the temporary's owned array on normal exits. Give each
-replayed deferred statement a complete-expression temporary frame and drain
-it before continuing the surrounding cleanup walk.
-
 ### Generated clones omit panic cleanup for completed parts
 
 [design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not)
@@ -663,7 +628,7 @@ arrays and initialized prefixes. Preserve cleanup progress so that a
 first panic still releases pending fields or elements without replaying
 the hook that raised it.
 
-These three cleanup-emission gaps were reproduced with a compiler rebuilt
+These two cleanup-emission gaps were reproduced with a compiler rebuilt
 from the source tree on 2026-10-02. All 108 compiler unit tests pass with
 memory tracking and compiler vets enabled; those tests do not cover these
 reproductions.
