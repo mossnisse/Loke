@@ -506,3 +506,611 @@ or plain reads, so only writes and mutable reborrows conflict? That matches
 the rule's purpose, that no mutable alias writes behind the reborrow, but it
 changes the rule for explicit bindings too: `view: []int = source; x :=
 source[1];` is rejected today.
+
+## Language design review (2026-10-03)
+
+This is a set of proposals, not an amendment to the normative specification.
+Backward compatibility is deliberately not a constraint. The review examined
+the specification, grammar, rationale, existing open questions, compiler
+architecture, relevant checker/emitter code, standard-library APIs, examples,
+and focused compiler probes. It is not a proof of compiler soundness or a
+performance benchmark.
+
+Loke already has a strong foundation: deterministic evaluation order, lexical
+cleanup, checked indexing and signed arithmetic, closed enums, exhaustive
+union switches, explicit fallibility, definition-site generic lookup, and no
+user-defined implicit conversions. Preserve those. The largest simplification
+would come from making ownership, capability, and safety rules compose with
+fewer exceptions, rather than shortening keywords.
+
+### Recommended order
+
+| Priority | Proposal | Main benefit | Scope |
+| --- | --- | --- | --- |
+| First | Define the contract for elidable copies | Copy hooks preserve logical values when last-use transfer skips them | Lifecycle rules |
+| First | Include implicit hooks in effects | Cleanup cannot silently invalidate a checked borrow | Analysis and specification |
+| First | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
+| First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
+| First | Flow-sensitive fault/result diagnostics | Catch definite failures and overwritten errors | Analysis |
+| Next | Explicit mutable slices and compatible reborrows | Capability no longer depends on expression context | Borrow rules and syntax |
+| Next | Checked disjoint access | Express partitioning and parallel array algorithms | Library primitives and provenance |
+| Next | Fallible insertion of move-only values | Handle allocation failure while transferring resources | Container APIs |
+| Next | Uniform arithmetic policies | Scalar and vector code preserve the same meaning | Numeric APIs and lowering |
+| Next | Compiler-selected ordinary union layout | Compact optionals and nested results | Representation contract |
+| Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
+| Later | Explicit-capture callables and conditional patterns | Shorter callbacks and fallible streaming loops | Small syntax additions |
+| Later | Checked thread transfer and scoped workers | Reduce races and permit borrowed parallel work | Thread APIs and capabilities |
+| Later | Focused syntax and construction cleanup | Remove duplicate forms and accidental zero fields | Grammar and initialization |
+
+The first group should precede a broad syntax rewrite. The next group should
+be tried on concrete programs: a parser, a resource container, a sorting or
+partitioning algorithm, and a parallel numeric kernel.
+
+### Stable ownership costs
+
+[Last-use transfer](design.md#last-use-transfer) changes a binding or assignment
+from a clone to a move when a later use disappears. This affects custom hooks,
+allocator selection, allocation failure, and cleanup timing, not merely the
+number of machine instructions.
+
+The existing [last-use test](tests/run/last_use_transfer.loke) deliberately has
+a copy hook that prints and adds 100 to a field. Running it confirms that a
+last-use binding preserves `1`, while copying a source used later changes `4`
+to `104`. Adding a debug print of the source can therefore change an earlier
+assignment's result. This is permitted by the current specification.
+
+That example identifies a problem with the contract for copy hooks; it does
+not establish that replacing a last-use copy with a move is itself undesirable.
+A value-preserving copy can be expensive, and transferring ownership is useful
+when the source will no longer be used. Requiring explicit clones for every
+owning assignment would remove that convenience without being necessary to
+address the example.
+
+**Proposal:** retain last-use transfer and define an explicit contract for
+elidable implicit copies:
+
+- A copy hook preserves the source's logical value and the type's documented
+  ownership semantics. This does not require identical backing addresses or
+  bit representations. Producing a new logical ID or transformed value belongs
+  in an explicitly named operation, not an implicit copy hook.
+- Program correctness must not depend on how many implicit copy hooks run.
+  Resource bookkeeping must remain balanced when a move skips both a copy and
+  the source's later drop. Diagnostic tracing can reveal the choice, but is
+  not a guaranteed application event.
+- State that an elided copy performs no allocation and therefore cannot fail
+  because of that allocation. Specify allocator selection and cleanup timing
+  under transfer; retain the existing exclusion for a `via` destination whose
+  requested allocator a move would bypass.
+- Explicit `clone` and `try_clone` remain requests for the copy operation and
+  its failure contract. Last-use transfer must not silently reinterpret them
+  as moves. Ordinary as-if optimization still applies when it preserves their
+  specified behavior.
+
+The explicit choices remain available where callers need them:
+
+```odin
+backup := data.clone();       // independent storage, may fail by policy
+queued := move(data);         // ownership transfer, data becomes dead
+```
+
+The compiler generally cannot prove that an arbitrary hook preserves a logical
+value. This is a type-author contract, like coherent equality and hashing,
+rather than a proposed static proof. Identity-sensitive duplication should use
+a move-only type with a named duplication method. The current trace test can
+still illustrate what today's implementation does, but its value-changing hook
+would not be an example of a valid copy under the proposed contract.
+
+Predictable meaning does not imply identical cost after every source edit:
+adding a later read can still make an allocation necessary. That is a separate
+performance concern, best addressed with explicit operations and diagnostics,
+not by forbidding last-use transfer altogether.
+
+Copy-cost diagnostics should distinguish an allocation, recursive element
+cloning, reference-count retention, and inline byte copying. The current
+inline-size threshold cannot communicate the cost of cloning a small header
+that owns a million elements.
+
+### Count implicit hooks as effects
+
+[Global write effects](design.md#global-write-effects) exclude implicitly called
+copy/drop/conversion hooks and formatting methods. Consequently, the following
+program is accepted by the rebuilt compiler, despite the final access depending
+on storage invalidated by the inner scope's cleanup:
+
+```odin
+package main;
+import "core:fmt";
+
+cache: [dynamic]int;
+Guard :: move_only struct { active: bool }
+impl Guard {
+    release :: hook(drop) proc(self: inout) {
+        if (self.active) { cache.clear(); cache.shrink(); }
+    }
+}
+main :: proc() {
+    cache = [dynamic]int{42};
+    view := cache[:];
+    { guard := Guard{true}; }
+    fmt.println(view[0]);
+}
+```
+
+This probe was compiled to LLVM IR, not executed. It demonstrates a documented
+hole in the safety model, not a compiler divergence from the current spec.
+
+**Proposal:** include every implicit invocation in the same transitive effect
+analysis as an explicit call, including nested field cleanup and exceptional
+cleanup. Reject the conflicting cleanup while `view` remains live. Formatting
+must also count: printing a value can execute arbitrary user code.
+
+Where an effect genuinely cannot be established, require an explicit unchecked
+contract at that boundary or conservatively invalidate the relevant facts.
+Do not silently treat an unknown effect as no effect. Begin with statically
+known hooks; solving all foreign aliasing is a separate problem. This improves
+local guarantees without requiring a full Rust-style ownership system.
+
+### Put unchecked obligations at their operation
+
+The current [unsafe boundary](design.md#the-unsafe-package) is mostly a file
+import. Once the file imports `core:unsafe`, unrelated unchecked pointer
+indexing and casts acquire permission too. Two particularly sharp obligations
+do not even need that import:
+
+```odin
+value: int = ---;       // reads are accepted without initialization
+
+Bad :: struct {
+    @(initialized = count) items: [1]string,
+    count: int,
+}
+bad := Bad{count = 2};  // generated lifecycle trusts the count
+```
+
+Both forms compiled in focused probes. They were not executed. The
+[unspecified initializer](design.md#built-in-values) bypasses definite
+initialization; [uninitialized capacity](design.md#uninitialized-capacity)
+allows the programmer's count to govern generated copy and drop.
+
+**Proposal:** retain the package for low-level operations, but add a lexical
+`unsafe { ... }` boundary for unchecked pointer use and unchecked calls.
+An unsafe procedure declaration should mean that its caller owes a stated
+precondition; an ordinary wrapper can establish it internally. The spelling is
+proposed syntax, not syntax accepted today.
+
+Remove `---` as an ordinary initializer. Foreign out-parameters should use a
+small uninitialized-storage API that requires an explicit unsafe assertion
+before the value is read, while normal locals retain definite-assignment
+checking. Such an API need not replace the inline storage representation of
+`Small_Array`.
+
+Mark the declaration and manipulation of `@(initialized=...)` storage as
+unchecked, restrict access to its representation, reject provably invalid
+constant counts, and check `0 <= count <= capacity` before generated lifecycle
+traversals where the count is not statically established. A range check does
+not prove that the prefix was initialized; that remains the container author's
+explicit obligation. Keep that limitation clear.
+
+Raw pointer constness is another useful separation: a C pointer currently
+loses both provenance and read-only capability. Consider `[^]T` for read-only
+foreign access and `[^]mut T` for writing, with an unchecked cast required to
+strengthen capability. Foreign pointer use would still require lifetime and
+bounds obligations; constness alone does not establish either.
+
+### Non-null references and explicit allocation owners
+
+[Pointers](design.md#pointers), procedure values, and `dyn` views all have nil
+states. `Option(^T)` consequently permits three states: absent, present-nil,
+and present-valid. Usually only two are wanted. `new(T)` also returns the same
+pointer shape as a borrow while transferring manual release responsibility
+only by convention ([Owners and drop](design.md#owners-and-drop)).
+
+**Proposal:** make checked `^T`, `^mut T`, procedure values, and `dyn I` non-null.
+Use `Option(...)` for absence. They then have no zero value, which fits the
+existing no-zero-type rules and dead local declarations. Raw C pointers may
+remain nullable for interop. Foreign and unsafe code must validate before
+constructing a checked reference.
+
+Provide a move-only `Box(T)` in the library for an individually allocated
+owning value; it holds its allocator, drops automatically, and lends references.
+Reserve raw allocation/release for allocator and interop code. This does not
+require converting arenas or every allocation into a box.
+
+Tradeoff: more explicit `Option` handling at nullable APIs, and a significant
+library migration. Benefit: fewer runtime nil checks, clearer release
+responsibility, and an unused null representation available for compact
+optionals. Non-nullness does not prove lifetime or exclusivity; those checks
+remain necessary.
+
+### Definite faults and unused results need dataflow
+
+[Nil states](design.md#nil-states) currently inspect writes across the entire
+body. This complete program compiled successfully to IR:
+
+```odin
+package main;
+import "core:fmt";
+main :: proc() {
+    value := 42;
+    p: ^int = nil;
+    fmt.println(p^);  // certainly nil at this point
+    p = &value;       // this later write suppresses the diagnostic
+    fmt.println(p^);
+}
+```
+
+**Proposal:** use flow-sensitive facts at each operation. Diagnose a proven
+nil dereference/call, zero divisor, invalid fixed bound, or impossible checked
+conversion on a reachable path. Refine facts after a guard and discard them
+after writes or calls that can invalidate them. Unknown values still need
+runtime checks; do not make acceptance depend on speculative optimization or
+pretend arbitrary input can be proven valid.
+
+The same principle applies to
+[`require_results`](design.md#require_results). Today this compiles:
+
+```odin
+fail :: proc() -> Result(int, int) { return .err(1); }
+main :: proc() {
+    outcome := fail();
+    _ = outcome;
+    outcome = fail(); // this second result is never inspected or discarded
+}
+```
+
+Track each produced required result, not whether its variable name was ever
+read. An overwrite or scope exit with an unobserved result should be diagnosed;
+an explicit discard consumes the obligation of that particular value. This
+does not require proving that business logic handles every error correctly.
+
+### Make mutable access explicit and permit compatible reads
+
+[Slices](design.md#slices) are read-only under `:=`, but an expected `[]mut T`
+can select mutable slicing. An adapter can also change the outcome:
+
+```odin
+read := a[:];             // read-only
+view := a[:].indexed();   // can retain a mutable view
+```
+
+A probe confirmed that `read` is `[]int`, while `foreach (&value, index in
+view)` mutates `a`. Destination-selected user slicing is an exception to the
+otherwise valuable rule that destinations do not select overloads.
+
+**Proposal:** `a[lo:hi]` always produces a read-only view. Request a writable
+one explicitly through one spelling, for example `a.mut_slice(lo, hi)`.
+The exact spelling is secondary; its meaning should survive adding a type
+annotation or an adapter. Use the same rule for built-in and library containers.
+An adapter preserves the capability it receives and never upgrades it.
+
+Separately, adopt the relaxation discussed under
+[Read-only reborrows](#read-only-reborrows-of-one-carrier-in-one-call): a live
+read-only reborrow forbids writes and mutable reborrows, not another compatible
+read. `slice.equal(xs, xs)` with `xs: []mut int` currently fails with `L0641`;
+binding one read-only view first succeeds. Allow the direct form. Keep the
+stronger exclusion while a mutable child borrow is live. These rules must also
+apply through stored carriers, not only to two arguments of one call.
+
+### Provide checked disjoint access
+
+Two runtime slice ranges conservatively overlap. Creating `left := xs[:mid]`
+and `right := xs[mid:]` as mutable slices is rejected even when they partition
+one sequence; the first reborrow suspends `xs`. This makes sorting, partitioning,
+matrix subviews, and parallel kernels harder to factor into safe helpers.
+
+**Proposal:** add a narrowly specified `slice.split_at_mut(xs, mid)` returning
+`(left: []mut T, right: []mut T)`, after one bounds check. The result paths
+carry a checked disjointness relation, and the source remains suspended until
+both are finished. Add a two-element counterpart only if a real algorithm
+needs it; unequal runtime indices would be validated before lending them.
+
+The compiler must understand the relation: a library wrapper alone cannot
+recover information the analysis currently merges. A few such primitives are
+smaller than a general theorem prover. Their intended acceptance tests should
+also reject overlap, root reallocation, and retained loans beyond the source.
+
+Related expressiveness limits are real but need different tools. A graph or
+arena can use stable integer/generational handles without pervasive pointers.
+A record owning a buffer and views into itself needs address stability and an
+internal-borrow contract; non-null pointers do not solve it. Prefer offsets
+and handles before introducing general pinning or self-referential types.
+
+### Fallible insertion must accept resources
+
+[Container insertion](design.md#container-insertion) allows moving a resource
+into `append`, but `try_append`, `try_insert`, and `try_find_or_insert` copy
+their inputs. `items.try_append(Token{1})` for a move-only `Token` is rejected
+with `L0491`, even though the argument is a temporary. Reserving first and then
+inserting is an existing workaround, but splits one logical operation into a
+capacity protocol and does not generalize cleanly to arbitrary containers.
+
+**Proposal:** add consuming fallible insertion. A representative API is:
+
+```odin
+// Proposed API: failure returns ownership of the uninserted value.
+Insert_Failure :: struct($T: type) {
+    cause: Allocator_Error,
+    value: T,
+}
+// try_push(self: inout, value: move T)
+//     -> Result(Unit, Insert_Failure(T))
+```
+
+On success the container owns the value. On failure the container is unchanged
+and the error owns it. Cleanup drops it if the caller chooses not to retry.
+The input binding is consumed on both paths; this is intentionally a different
+contract from leaving that binding unchanged. Map insertion also needs explicit
+key ownership and replacement semantics.
+
+This makes failure atomicity compatible with move-only resources. First prove
+this API on dynamic arrays and `Small_Array`, then decide whether to collapse
+the broader [op/try_op pairs](#the-optry_op-pair). Do not delete all convenient
+panic-on-OOM methods before callers have a concise replacement.
+
+### One explicit arithmetic policy across scalar and vector code
+
+[Integer overflow](design.md#integer-overflow) traps for signed scalar addition,
+subtraction, multiplication, negation, and division, but signed SIMD arithmetic
+wraps. Signed shifts and integer conversions also truncate. Replacing a scalar
+kernel with SIMD can therefore change correctness at its boundary values.
+
+**Proposal:** preserve checked signed operators as the default for scalars and
+vectors, and provide named `wrapping_add`, `checked_add`, and, where needed,
+`saturating_add` operations, with corresponding multiplication/conversion APIs.
+The names here describe proposed APIs. Let vector implementations use native
+wrapping instructions when wrapping was requested; checked vector operations
+must detect an invalid lane and panic according to a specified rule.
+
+Likewise make a narrowing integer conversion checked by default, retain
+`math.to(T, value)` for recoverable exact conversion, and provide an explicit
+truncating conversion for bit manipulation. Currently a runtime `int` of 300
+converts to `u8` as 44, whereas the unfixed literal `u8(300)` is rejected. Both
+behaviors were verified. Moving a value between a literal, a typed constant,
+and a runtime variable should not silently select input-validation policy.
+
+Checked arithmetic with an error result is particularly useful for parsers:
+the illustrative `digits` in [config_parser](examples/config_parser.loke)
+returns `Result` but accumulates with trapping signed arithmetic, so a long
+digit sequence can terminate the process. The actual `strconv` integer parser
+already checks for overflow; this is an ergonomic gap in expressing the same
+operation, not evidence that all numeric parsing is unsafe.
+
+### Performance opportunities and actual semantic limits
+
+Fast programs are expressible: fixed contiguous arrays, slices, arena-backed
+owners, monomorphized generics, static iteration, explicit moves, and
+`Simd(T, N)` provide the necessary building blocks. However, no benchmark in
+this review establishes that the current compiler achieves C-like performance.
+
+| Area | Current consequence | Recommendation |
+| --- | --- | --- |
+| Bounds/nil/overflow checks | Observable failure constrains motion and speculation | Keep checks; eliminate those proved redundant and expose explicit arithmetic policies |
+| Aliasing | Local exclusivity can help; unknown provenance and hidden effects limit what may be assumed | Repair effect holes first, then emit alias/memory attributes only where their precise obligations hold |
+| Floating-point expressions | Unwritten FMA contraction and reassociation are forbidden | Add explicit `math.fma` and separately named reassociating reductions; keep default arithmetic strict |
+| Ordered reductions | A floating SIMD sum is defined left to right | Retain the ordered form and offer an explicit unordered/tree reduction with documented numerical differences |
+| Custom clone/drop and allocators | Calls may have observable effects or fail | Define which implicit copies may be elided; preserve explicit clone contracts |
+| Dynamic interface dispatch | An unknown witness requires an indirect call | Prefer generic specialization in hot code; devirtualize when a concrete witness is known |
+| Atomic string/shared accounting | Cross-thread sharing requires synchronization | Borrow views in hot paths; consider thread-local ownership only after measurement |
+| Union representation | Fixed payload-plus-tag layout prevents general niche encoding | Give ordinary unions compiler-selected layout; explicit layout only where requested |
+
+An unused representation, or niche, is a bit pattern no valid payload uses.
+With non-null checked references, null could encode `Option(^T).none` without
+another tag. The current Windows x64 compiler reports `size_of(^int) == 8`
+and `size_of(Option(^int)) == 16`. This is a layout measurement, not a speed
+measurement. Nullable `^T` cannot use the same encoding while preserving
+`.some(nil)`, so the type and representation changes belong together.
+
+Make the layout of ordinary unions an implementation choice, while retaining
+accurate `size_of`, alignment, reflection, and consistent ABI within a build.
+An explicit representation contract can preserve a stable tag and field layout
+for serialization or external consumers. Do not expose an unstable optimized
+representation as a wire format. Nested `Result(Option(T), E)` is another
+candidate for compact representation, subject to its actual payload states.
+
+The emitted-IR source does not currently spell general `noalias`/`readonly`
+parameter attributes. That is an implementation opportunity, not evidence that
+LLVM never infers them. Read-only capability alone is insufficient to promise
+memory cannot change: atomic operations intentionally write through read-only
+receivers, and foreign/unchecked aliases need their own contract. Follow
+[LLVM's attribute requirements](https://llvm.org/docs/LangRef.html#parameter-attributes)
+precisely rather than applying them to every `mut` or read-only type.
+
+Some transformations really are forbidden. Turning ordered floating additions
+into a different reduction tree, silently fusing `a*b+c`, or hoisting a possible
+panic ahead of earlier observable writes can change the specified result.
+That does not mean all vectorization is forbidden: independent iterations,
+proofs that checks cannot fail, runtime alias checks, and target-supported
+ordered reductions remain available. LLVM documents these distinctions in its
+[vectorization guide](https://llvm.org/docs/Vectorizers.html).
+
+Do not add a general purity/effect language merely to request faster code.
+Start with the inferred effects already needed for safety, explicit numerical
+operations, and measurements of bounds checks, allocation counts, retained
+strings, generated code, and representative kernels.
+
+### Public borrow contracts should stand on their own
+
+[Procedure result contracts](design.md#procedure-result-contracts) can capture
+precise dependencies, but `type_of(procedure)` ties a public callback contract
+to that procedure's inferred body. A handwritten procedure type loses details;
+`@(escape=none)` excludes whole arguments but cannot name a specific result
+field's source or every allocator dependency.
+
+**Proposal:** add a small written result-source contract, with syntax to be
+designed, that says a result borrows specified parameter paths or is backed by
+a named allocator parameter. Check the body against it. Keep inference as the
+default for local helpers and an IDE/documentation aid.
+
+This lets changing an implementation preserve its declared public contract,
+and permits callbacks without manufacturing a reference implementation solely
+to use its `type_of`. It can also reduce dependence on whole-program inference
+as separate compilation develops. It does not require lifetime variables on
+every local declaration.
+
+The [minimum provenance budgets](design.md#minimum-provenance-precision) are
+another source of surprises: four projection steps, eight distinguished fixed
+array elements, and four constant map keys. A harmless wrapper or extra entry
+can turn accepted code into a conservative rejection. Keep diagnostics naming
+the limit, add acceptance tests just beyond each boundary, and make written
+contracts/disjoint primitives reduce dependence on inferred shape. Raising
+numeric limits alone does not solve this architectural issue.
+
+### Callbacks and fallible loops deserve small conveniences
+
+Two practical workflows are unnecessarily verbose:
+
+- A stateful comparator or error mapper requires a nominal record plus an
+  `impl call`, while ordinary procedures and callable records are not accepted
+  uniformly by every callback API.
+- A `Result(Option(T), E)` stream requires a loop, error propagation, and a
+  switch even for the simple operation "read until the end". This is verbosity,
+  not missing expressive power: `break` already exits the nearest loop through
+  an enclosing switch, so code can continue afterwards without a helper.
+
+For callbacks, first unify the existing callable-record convention in library
+APIs. Then consider an explicit-capture procedure literal that lowers to that
+same record and method. Captures should say whether they copy, borrow, or move;
+escaping a borrowed capture must be checked, and creating a generic stack
+callable should not imply heap allocation. Example *proposed syntax*:
+
+```odin
+less := proc [limit] (a, b: int) -> bool {
+    return (a < limit) && !(b < limit);
+};
+slice.sort_by(values, less);
+```
+
+Specify mutable/consuming captures and callable result inference before making
+this syntax normative. Owning runtime type erasure is a separate question;
+most sorting and mapping callbacks do not need it. This refines
+[Callable records, procedures, and closures](#callable-records-procedures-and-closures).
+
+For streaming, reuse the existing shallow variant pattern in a conditional
+header instead of adding a second fallibility protocol. Example *proposed
+syntax*:
+
+```odin
+for (case .some(entry) = reader.next() or_return) {
+    use(entry);
+}
+continue_after_stream();
+```
+
+The expression is evaluated once per step; a matching payload lives for the
+body, a nonmatching variant ends the loop, and `or_return` handles errors in
+the ordinary way. Borrowed entries must expire before the next call. An `if`
+form can share the same rule. Do not add nested patterns, implicit error
+conversion, and general comprehensions as prerequisites.
+
+### Thread transfer needs a visible contract
+
+[The memory model](design.md#concurrency-and-the-memory-model) deliberately leaves
+data races, thread-affine destruction, and allocator thread compatibility to
+the programmer. An atomic reference count does not make its payload or bound
+allocator safe to use on another thread. The current `thread.spawn` also uses
+`@(escape=static)`, so joining its handle is not sufficient to let a worker
+borrow an ordinary local slice.
+
+**Proposal:** initially make unchecked cross-thread transfer explicit. A later
+checked API can validate recursive transfer/share capabilities, with opt-outs
+for foreign handles and custom lifecycle hooks and an explicit contract for
+allocator deallocation on another thread. A type-only `Send` predicate is not
+enough when two values of the same owning type may use different allocators.
+
+Add scoped workers only with a scope-owned join guarantee, enabling disjoint
+borrowed slices to be processed before the parent continues. That guarantee
+must survive ordinary early exits and leaked/dropped user handles; relying
+solely on a handle's destructor is insufficient when `unsafe.forget` can skip
+it. Process termination may end the guarantee because no parent continues.
+Do not add futures, async syntax, or reactive variables merely to solve this
+borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements).
+
+### Focused syntax and construction cleanup
+
+Prefer changes that remove an ambiguity or semantic exception:
+
+1. **One union matching form.** Keep `switch (value)` with branch-local
+   `.some(payload)` patterns; consider removing `switch (payload in value)`.
+   Grouped arms can inspect the original subject. This removes the grammar's
+   special interpretation of a membership expression and its extra-parenthesis
+   workaround.
+2. **Use `mut` for mutable loop bindings.** A proposed `foreach (&mut value in
+   items)` agrees with `&mut value` elsewhere. Today `&value` means a writable
+   iteration binding but a read-only pointer in an expression.
+3. **Payloadless variants need no dangling colon.** `union { none, some: T }`
+   is an unambiguous proposed spelling. Keep enums for explicit numeric
+   representations; eliminating enums would not eliminate that requirement.
+4. **Use one pattern grammar where destructuring is supported.** Ordinary
+   destructuring is flat but `foreach` nesting is recursive. Either support
+   the same small nested pattern in bindings or explicitly keep this limited;
+   do not grow several subtly different pattern languages.
+5. **Consider a `default:` switch arm.** It names the intent more clearly than
+   bare `case:`. This is a readability preference with lower value than the
+   capability and matching changes.
+6. **Protect important fields from silent zero fill.** Keep explicit `T{}`
+   zero construction for zeroable types, but consider requiring named literals
+   to supply every field unless a field declares a default. An opt-in
+   constructor-only/no-default-initialization record is a smaller alternative.
+   Zero being representable does not mean it satisfies a resource or domain
+   invariant.
+
+Keep the distinction between nominal structs and structural records: privacy,
+hook ownership, and cross-package positional construction have real semantics.
+Share their rules and implementation where possible instead of erasing the
+distinction just to reduce the count of type forms. Likewise, retain named
+record results rather than adding unnamed tuples without a demonstrated need.
+
+There is no compelling reason here to remove `defer`, semicolons, parenthesized
+control-flow headers, explicit overload groups, or hermetic compile-time
+evaluation. `defer` still expresses rollback/restoration and other scoped side
+effects. Requiring a custom resource type for each is more ceremony. Keep
+compile-time file I/O out; an explicit build input mechanism would be easier to
+make reproducible than ambient filesystem access. Package headers should be
+generated documentation or checked API manifests, not a second manually
+maintained declaration source by default.
+
+### Specification consistency and validation
+
+One normative inconsistency was found: [grammar Types](grammar.md#types) limits
+`Type_Name` to one selector and says associated selectors do not chain, while
+[Iteration protocol](design.md#iteration-protocol) explicitly uses
+`S.Iterator.Item`. The rebuilt compiler accepts the chained type in this
+complete probe:
+
+```odin
+package main;
+import "base:interfaces";
+first :: proc(values: $S) -> Option(S.Iterator.Item)
+    where interfaces.Iterable(S) {
+    iterator := values.iter();
+    return iterator.next();
+}
+main :: proc() { _ = first(0..<2); }
+```
+
+Resolve the document conflict deliberately, preferably in favor of ordinary
+chained associated types, and add a grammar regression with that decision.
+Do not advertise this as a missing compiler feature: the probe already works.
+
+Validation performed for this review:
+
+- Rebuilt `lokec.exe` from the workspace with Odin's unused/shadowing vet flags.
+- Compiled the nil, uninitialized-read, implicit-hook, invalid initialized-count,
+  overwritten-result, and chained-associated-type probes to LLVM IR. The
+  potentially invalid memory programs were not executed.
+- Confirmed rejection of repeated read reborrows, simultaneous mutable split
+  slices, and fallible insertion of a move-only temporary.
+- Built and ran the slice-capability and pointer-layout/conversion probes.
+  Observed 8/16-byte pointer/optional sizes and wrapping runtime conversions.
+  Confirmed that the corresponding out-of-range unfixed literal conversions
+  are rejected.
+- Built and ran the existing last-use-transfer example and observed its
+  copy-hook and cleanup trace.
+- Ran the specification citation checker, checked local file links in the
+  edited documents, and ran `git diff --check`; all passed.
+
+These are focused design checks, not the complete integration suite, and no
+optimization-speed or allocation-count measurements were taken. Apart from
+the grammar/document conflict above, the highlighted accepted/rejected cases
+follow the current specification. They are proposed changes to its promises,
+not claimed fixes to undocumented compiler behavior.

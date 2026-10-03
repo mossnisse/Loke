@@ -659,6 +659,9 @@ checklist.
 
 ### Documentation
 
+- [open-questions.md](open-questions.md#language-design-review-2026-10-03)
+  records a language-design review with prioritized proposals, compiler probes,
+  and tradeoffs for ownership, safety, expressiveness, performance, and syntax.
 - [design.md](design.md#distinct-types) states that a distinct type keeps its
   underlying type's comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`) while
   inheriting no other operator, as the compiler already behaved; arithmetic
