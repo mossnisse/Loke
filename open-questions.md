@@ -512,13 +512,13 @@ fewer exceptions, rather than shortening keywords.
 | --- | --- | --- | --- |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
 | Next | Flow-sensitive nil diagnostics | Catch definite nil uses | Analysis |
-| Next | Checked disjoint access | Express partitioning and parallel array algorithms | Library primitives and provenance |
 | Next | Fallible insertion of move-only values | Handle allocation failure while transferring resources | Container APIs |
 | Next | Uniform arithmetic policies | Scalar and vector code preserve the same meaning | Numeric APIs and lowering |
 | Next | Compiler-selected ordinary union layout | Compact optionals and nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
 | Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
 | Later | Explicit-capture callables and conditional patterns | Shorter callbacks and fallible streaming loops | Small syntax additions |
+| Later | Checked disjoint access | Hand mutable halves to parallel workers | One compiler-known slice operation |
 | Later | Checked thread transfer and scoped workers | Reduce races and permit borrowed parallel work | Thread APIs and capabilities |
 | Later | Focused syntax and construction cleanup | Remove duplicate forms and accidental zero fields | Grammar and initialization |
 
@@ -609,21 +609,35 @@ the rest already panics at run time.
 
 ### Provide checked disjoint access
 
-Two runtime slice ranges conservatively overlap. Creating `left := xs[:mid]`
-and `right := xs[mid:]` as mutable slices is rejected even when they partition
-one sequence; the first reborrow suspends `xs`. This makes sorting, partitioning,
-matrix subviews, and parallel kernels harder to factor into safe helpers.
+Two runtime slice ranges conservatively overlap, so two *mutable* halves of
+one sequence cannot be live at once: after `left := &mut xs[:mid]`, the
+reborrow suspends `xs`, and `&mut xs[mid:]` is `L0641`.
 
-**Proposal:** add a narrowly specified `slice.split_at_mut(xs, mid)` returning
-`(left: []mut T, right: []mut T)`, after one bounds check. The result paths
-carry a checked disjointness relation, and the source remains suspended until
-both are finished. Add a two-element counterpart only if a real algorithm
-needs it; unequal runtime indices would be validated before lending them.
+Most algorithms do not need that. A recursive merge sort compiles today:
+recursing on one half and then the other (`sort(&mut xs[:mid]);
+sort(&mut xs[mid:]);`) ends each reborrow before the next, the merge reads
+both halves at once as read-only views (allowed since
+[Weakening and reborrows](design.md#weakening-and-reborrows) lets reads of a
+carrier coexist), and a swap across the halves is `xs.swap(i, j)`. What
+remains impossible is handing each half to its own worker, which needs
+[scoped workers](#thread-transfer-needs-a-visible-contract) first. Do this
+together with them.
 
-The compiler must understand the relation: a library wrapper alone cannot
-recover information the analysis currently merges. A few such primitives are
-smaller than a general theorem prover. Their intended acceptance tests should
-also reject overlap, root reallocation, and retained loans beyond the source.
+**Proposal:** a compiler-known `xs.split_at_mut(mid)` on `[]mut T`, built like
+`swap`: one bounds check, two slice headers, and a result whose two fields are
+one mutable reborrow of `xs`. No disjointness relation needs tracking. The one
+reborrow keeps `xs` suspended until both halves are finished, so the source
+can be neither written nor reallocated meanwhile; writes through the two
+halves do not conflict, because suspension constrains uses of the source and
+not of its reborrows; and copying one half twice is already rejected, as a
+second reborrow of the same field. Acceptance tests should reject a write
+through `xs`, reallocation of its owner, and a half retained beyond `xs`.
+
+A library function cannot provide this. Written with `unsafe.raw_data`, a
+`split_at_mut` compiles and works, but its halves carry no provenance, so
+`values.append(5)` and `xs[0] = 9` are accepted while they are live: a
+use-after-reallocation the compiler cannot see. Written with checked slicing,
+its body needs the two simultaneous reborrows it is meant to provide.
 
 Related expressiveness limits are real but need different tools. A graph or
 arena can use stable integer/generational handles without pervasive pointers.
