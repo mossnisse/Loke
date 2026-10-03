@@ -179,13 +179,16 @@ Implementation order:
    repeated queries without semantic mutation. The API and error/lifetime
    contracts are in [Snapshots and queries](compiler-architecture.md#snapshots-and-queries).
    This milestone is enough to begin the language server.
-3. **Invalidation rules.** Identify inputs to cached results: source contents,
-   imports, manifests, collections, providers, build configuration, compiler
-   release, and target. Account for compile-time evaluation, generic instances,
-   inferred cross-procedure effects, and final semantic registries, following
-   [Driver and phase order](compiler-architecture.md#driver-and-phase-order).
-   Start with conservative invalidation and a whole-program fallback whenever
-   a narrower dependency cannot yet be established safely.
+3. **Invalidation rules — shipped.** `invalidate_session` expires the entire
+   checked result on external input changes, sharing the conservative boundary
+   used by overlays and new checks. The next check reloads and rebuilds the whole
+   program. [Invalidation rules](compiler-architecture.md#invalidation-rules)
+   identify source/discovery, imports, manifests, collections, providers, build
+   configuration, compiler identity, and target inputs, plus the CTFE, generic,
+   inferred-effect, and final-registry dependencies that signatures alone miss.
+   Regression coverage compares edits, failures, and fixes with fresh batches.
+   Narrower reuse remains deferred until its complete dependencies can be
+   established safely.
 4. **Incremental checking.** Cache and reclaim per-package state, invalidate
    changed packages and affected dependents, and rerun required whole-program
    analyses and finalization. Do not introduce separate object compilation as

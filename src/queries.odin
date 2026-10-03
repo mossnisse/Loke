@@ -69,8 +69,9 @@ invalidate_session_snapshot :: proc(s: ^Compilation_Session) {
 // Later calls and every query only read, so several threads may share them;
 // keep it that way (compiler-architecture.md "Snapshots and queries").
 // Returned strings/slices are borrowed and must not be modified. They expire at
-// an overlay edit, the next check, or destruction. Capture diagnostics before
-// emission to obtain checking diagnostics; later emission cannot change them.
+// invalidation, an overlay edit, the next check, or destruction. Capture
+// diagnostics before emission to obtain checking diagnostics; later emission
+// cannot change them.
 session_snapshot :: proc(s: ^Compilation_Session) -> (Compilation_Snapshot, bool) {
 	if !s.initialized || s.snapshot == 0 { return {}, false }
 	if !s.queries_ready {

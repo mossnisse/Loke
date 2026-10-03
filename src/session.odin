@@ -27,8 +27,8 @@ DEFAULT_COMPILATION_CONFIG :: Compilation_Config{
 
 // Fill in place and never copy a live session: its allocators point into it.
 // Compiler data, IDs, diagnostics and emitted text are borrowed until the next
-// overlay edit, check or destruction. Configuration is copied and fixed for
-// the session.
+// invalidation, overlay edit, check or destruction. Configuration is copied and
+// fixed for the session.
 Compilation_Session :: struct {
 	compiler: Compiler,
 	config: Compilation_Config,
@@ -61,6 +61,17 @@ init_session :: proc(s: ^Compilation_Session, config := DEFAULT_COMPILATION_CONF
 	}
 	s.configured = configure_session(s)
 	return s.configured
+}
+
+// External input changes invalidate the whole program. Keep copied configuration
+// and overlays; the next check discards all preceding compilation state and runs
+// the full pipeline (compiler-architecture.md "Invalidation rules"). Callers
+// notify disk/project changes; no watcher or path filter is implied. Requires
+// exclusive use, just like checking and overlay edits.
+invalidate_session :: proc(s: ^Compilation_Session) -> bool {
+	if !s.initialized { return false }
+	invalidate_session_snapshot(s)
+	return true
 }
 
 @(private = "file")

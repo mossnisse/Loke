@@ -527,3 +527,263 @@ session_snapshot_errors_and_stale_handles :: proc(t: ^testing.T) {
 	diagnostics, found = query_diagnostics(&s, failed)
 	testing.expect(t, ok && found && len(diagnostics) == 1 && diagnostics[0].code == "L0388")
 }
+
+@(private = "file")
+expect_session_matches_fresh :: proc(t: ^testing.T, s: ^Compilation_Session, input: string, config: Compilation_Config, expected: bool) -> Compilation_Snapshot {
+	checked := check_session(s, input)
+	if checked != expected { report(&s.compiler) }
+	testing.expect_value(t, checked, expected)
+	fresh: Compilation_Session
+	defer destroy_session(&fresh)
+	if !testing.expect(t, init_session(&fresh, config)) { return {} }
+	testing.expect_value(t, check_session(&fresh, input), checked)
+	expect_session_diagnostics(t, &s.compiler, &fresh.compiler)
+	testing.expect_value(t, semantic_extent(&s.compiler), semantic_extent(&fresh.compiler))
+	ir, emitted := emit_session_ir(s)
+	fresh_ir, fresh_emitted := emit_session_ir(&fresh)
+	testing.expect(t, emitted == checked && fresh_emitted == emitted && ir == fresh_ir, "recheck differs from a fresh batch's IR")
+	snapshot, captured := session_snapshot(s)
+	testing.expect(t, captured)
+	return snapshot
+}
+
+@(test)
+session_explicit_invalidation_rejects_all_cached_views :: proc(t: ^testing.T) {
+	root := session_fixture(t, "invalidate")
+	if root == "" { return }
+	defer os2.remove_all(root)
+	path := filepath.join({root, "main.loke"}, context.temp_allocator)
+	text := "package main; main :: proc() {}"
+	if !write_session_source(t, path, text) { return }
+	s: Compilation_Session
+	defer destroy_session(&s)
+	testing.expect(t, !invalidate_session(&s))
+	config := session_test_config()
+	config.defines = []string{"FEATURE=true"}
+	if !testing.expect(t, init_session(&s, config)) { return }
+	testing.expect(t, invalidate_session(&s))
+	testing.expect(t, set_session_overlay(&s, path, text))
+	snapshot := expect_session_matches_fresh(t, &s, path, config, true)
+	file, found := query_file(&s, snapshot, path)
+	if !testing.expect(t, found) { return }
+	handle := snapshot_test_symbol(t, &s, snapshot, file, "main")
+	symbol, symbol_ok := query_symbol(&s, handle)
+	if !testing.expect(t, symbol_ok) { return }
+	testing.expect(t, s.query_arena.curr_block != nil)
+	testing.expect(t, invalidate_session(&s) && invalidate_session(&s))
+	testing.expect(t, s.query_arena.curr_block == nil && !s.ready && len(s.overlays) == 1 && s.config.defines[0] == "FEATURE=true")
+	_, found = session_snapshot(&s)
+	testing.expect(t, !found)
+	_, found = query_file(&s, snapshot, path)
+	testing.expect(t, !found)
+	_, found = query_source(&s, snapshot, file)
+	testing.expect(t, !found)
+	_, found = query_symbols(&s, snapshot, file)
+	testing.expect(t, !found)
+	_, found = query_symbol(&s, handle)
+	testing.expect(t, !found)
+	_, found = query_type(&s, symbol.type)
+	testing.expect(t, !found)
+	_, found = query_definition(&s, handle)
+	testing.expect(t, !found)
+	_, found = query_references(&s, handle)
+	testing.expect(t, !found)
+	_, found = query_signatures(&s, handle)
+	testing.expect(t, !found)
+	_, found = query_diagnostics(&s, snapshot)
+	testing.expect(t, !found)
+	_, found = query_at(&s, snapshot, file, 14)
+	testing.expect(t, !found)
+	_, found = emit_session_ir(&s)
+	testing.expect(t, !found)
+	testing.expect_value(t, emit_session(&s, Emission_Options{output = "unused.exe"}), 2)
+	new_snapshot := expect_session_matches_fresh(t, &s, path, config, true)
+	testing.expect(t, new_snapshot.id != snapshot.id)
+	destroy_session(&s)
+	testing.expect(t, !invalidate_session(&s))
+}
+
+// Body-only CTFE edits change the selected import graph. Directory membership,
+// nearest-manifest existence, effective collections, and rejected generic
+// instances must also be re-read, even when exported signatures stay the same.
+@(test)
+session_discovery_and_ctfe_changes_match_fresh_checks :: proc(t: ^testing.T) {
+	root := session_fixture(t, "invalidation-discovery")
+	if root == "" { return }
+	defer os2.remove_all(root)
+	for dir in ([]string{"first/feature", "second/feature", "fast", "slow"}) {
+		if !testing.expect(t, os2.make_directory_all(filepath.join({root, dir}, context.temp_allocator)) == nil) { return }
+	}
+	path := filepath.join({root, "main.loke"}, context.temp_allocator)
+	manifest := filepath.join({root, "loke.project"}, context.temp_allocator)
+	first := filepath.join({root, "first", "feature", "feature.loke"}, context.temp_allocator)
+	second := filepath.join({root, "second", "feature", "feature.loke"}, context.temp_allocator)
+	fast := filepath.join({root, "fast", "answer.loke"}, context.temp_allocator)
+	slow := filepath.join({root, "slow", "answer.loke"}, context.temp_allocator)
+	extra := filepath.join({root, "extra.loke"}, context.temp_allocator)
+	feature_false := "package feature; @(public) enabled :: proc() -> bool { return false; } @(public) identity :: proc(value: $T) -> T { return value; }"
+	feature_true, _ := strings.replace_all(feature_false, "return false;", "return true;", context.temp_allocator)
+	text := `package main;
+import "settings:feature";
+when (feature.enabled()) {
+    import "fast";
+    chosen :: proc() -> int { return fast.answer(); }
+} else {
+    import "slow";
+    chosen :: proc() -> int { return slow.answer(); }
+}
+main :: proc() { assert(chosen() > 0); static_assert(feature.identity(7) == 7); }`
+	if !write_session_source(t, path, text) || !write_session_source(t, manifest, "require settings ./first\n") ||
+	   !write_session_source(t, first, feature_false) || !write_session_source(t, second, feature_false) ||
+	   !write_session_source(t, fast, "package fast; @(public) answer :: proc() -> int { return 1; }") ||
+	   !write_session_source(t, slow, "package slow; @(public) answer :: proc() -> int { return 2; }") { return }
+	s: Compilation_Session
+	defer destroy_session(&s)
+	config := session_test_config()
+	if !testing.expect(t, init_session(&s, config)) { return }
+	previous: Compilation_Snapshot
+	for edit in 0 ..< 11 {
+		switch edit {
+		case 1: if !write_session_source(t, first, feature_true) { return }
+		case 2: if !write_session_source(t, extra, "package main; extra :: 3;") { return }
+		case 3: if !testing.expect(t, os2.remove(extra) == nil) { return }
+		case 4: if !write_session_source(t, fast, "package fast; @(public) answer :: proc() -> int { return missing; }") { return }
+		case 5: if !write_session_source(t, fast, "package fast; @(public) answer :: proc() -> int { return 4; }") { return }
+		case 6: if !write_session_source(t, manifest, "require settings ./second\n") { return }
+		case 7: if !testing.expect(t, os2.remove(manifest) == nil) { return }
+		case 8: if !write_session_source(t, manifest, "require settings ./first\n") { return }
+		case 9:
+			bad, _ := strings.replace_all(feature_true, "-> T {", "-> T where false {", context.temp_allocator)
+			if !write_session_source(t, first, bad) { return }
+		case 10: if !write_session_source(t, first, feature_true) { return }
+		}
+		testing.expect(t, invalidate_session(&s))
+		_, old_valid := query_diagnostics(&s, previous)
+		testing.expect(t, !old_valid)
+		expected := edit != 4 && edit != 7 && edit != 9
+		snapshot := expect_session_matches_fresh(t, &s, path, config, expected)
+		if expected {
+			_, fast_loaded := query_file(&s, snapshot, fast)
+			_, slow_loaded := query_file(&s, snapshot, slow)
+			fast_selected := edit != 0 && edit != 6
+			testing.expect(t, fast_loaded == fast_selected && slow_loaded != fast_selected, "obsolete conditional import survived rechecking")
+			// A file root remains standalone; a directory root discovers additions.
+			if edit == 2 || edit == 3 {
+				snapshot = expect_session_matches_fresh(t, &s, root, config, true)
+				_, extra_loaded := query_file(&s, snapshot, extra)
+				testing.expect_value(t, extra_loaded, edit == 2)
+			}
+		}
+		previous = snapshot
+	}
+}
+
+// A dependency's signature alone does not describe its effects or its result's
+// provenance. Change only bodies, make a previously safe caller fail, then fix
+// the body and check that held diagnostics and inferred summaries are rebuilt.
+@(test)
+session_body_effect_changes_match_fresh_checks :: proc(t: ^testing.T) {
+	root := session_fixture(t, "invalidation-effects")
+	if root == "" { return }
+	defer os2.remove_all(root)
+	path := filepath.join({root, "main.loke"}, context.temp_allocator)
+	s: Compilation_Session
+	defer destroy_session(&s)
+	config := session_test_config()
+	if !testing.expect(t, init_session(&s, config)) { return }
+	for scenario in 0 ..< 2 {
+		for edit in 0 ..< 3 {
+			text := ""
+			if scenario == 0 {
+				body := edit == 1 ? "values.clear();" : ""
+				template := `package main;
+values: [dynamic]int;
+reset :: proc() { BODY }
+first :: proc(input: []int) -> int { reset(); return input[0]; }
+main :: proc() { values.append(1); assert(first(values) == 1); }`
+				text, _ = strings.replace_all(template, "BODY", body, context.temp_allocator)
+			} else {
+				result := edit == 1 ? "b" : "a"
+				template := `package main;
+choose :: proc(a, b: []int) -> []int { return RESULT; }
+main :: proc() {
+    left := [dynamic]int{1}; right := [dynamic]int{2};
+    view := choose(left, right); right.clear(); assert(view.len() == 1);
+}`
+				text, _ = strings.replace_all(template, "RESULT", result, context.temp_allocator)
+			}
+			if !write_session_source(t, path, text) { return }
+			testing.expect(t, invalidate_session(&s))
+			snapshot := expect_session_matches_fresh(t, &s, path, config, edit != 1)
+			if edit == 1 {
+				diagnostics, captured := query_diagnostics(&s, snapshot)
+				found_borrow_error := false
+				for diagnostic in diagnostics { found_borrow_error ||= diagnostic.code == "L0512" }
+				testing.expect(t, captured && found_borrow_error)
+			}
+		}
+	}
+}
+
+// Providers are dependencies without source imports. A formatter/drop hook
+// edit keeps the nominal type's declaration intact but changes final registries.
+@(test)
+session_provider_and_registry_changes_match_fresh_checks :: proc(t: ^testing.T) {
+	root := session_fixture(t, "invalidation-registries")
+	if root == "" { return }
+	defer os2.remove_all(root)
+	for dir in ([]string{"provider", "data"}) {
+		if !testing.expect(t, os2.make_directory_all(filepath.join({root, dir}, context.temp_allocator)) == nil) { return }
+	}
+	path := filepath.join({root, "main.loke"}, context.temp_allocator)
+	provider := filepath.join({root, "provider", "provider.loke"}, context.temp_allocator)
+	data := filepath.join({root, "data", "data.loke"}, context.temp_allocator)
+	text := `@(default_allocator = "./provider:factory") package main;
+import "core:fmt"; import "data";
+main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(data.Value)); assert(type_info_of(typeid_of(data.Value)) != nil); }`
+	selected_missing, _ := strings.replace_all(text, "provider:factory", "provider:other", context.temp_allocator)
+	provider_text := "package provider; @(public) factory :: proc() -> Allocator { return {}; }"
+	if !write_session_source(t, path, text) || !write_session_source(t, provider, provider_text) ||
+	   !write_session_source(t, data, "@(public) package data; Value :: struct { item: int }") { return }
+	s: Compilation_Session
+	defer destroy_session(&s)
+	config := session_test_config()
+	if !testing.expect(t, init_session(&s, config)) { return }
+	for edit in 0 ..< 8 {
+		switch edit {
+		case 1:
+			changed := `@(public) package data; import "core:fmt";
+Value :: struct { item: int }
+impl Value {
+    format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) { fmt.concat_to(writer, "changed"); }
+    done :: hook(drop) proc(self: inout) {}
+}`
+			if !write_session_source(t, data, changed) { return }
+		case 2: if !write_session_source(t, path, selected_missing) { return }
+		case 3, 5:
+			if !write_session_source(t, provider, strings.concatenate({provider_text, " @(public) other :: proc() -> Allocator { return {}; }"}, context.temp_allocator)) { return }
+		case 4:
+			if !write_session_source(t, provider, strings.concatenate({provider_text, " @(public) other :: proc() -> int { return 0; }"}, context.temp_allocator)) { return }
+		case 6: if !write_session_source(t, path, "package main; main :: proc() {}") { return }
+		case 7: if !write_session_source(t, path, text) { return }
+		}
+		testing.expect(t, invalidate_session(&s))
+		snapshot := expect_session_matches_fresh(t, &s, path, config, edit != 2 && edit != 4)
+		c := &s.compiler
+		testing.expect_value(t, c.providers[.Allocator].selected, edit != 6)
+		if edit != 2 && edit != 4 {
+			testing.expect(t, c.program_analyzed && c.typeid_frozen && c.formatters_ready && c.lifecycle_operations_ready)
+			_, loaded := query_file(&s, snapshot, provider)
+			testing.expect_value(t, loaded, edit != 6)
+			if edit == 6 {
+				testing.expect(t, !c.format_requested && !c.type_info_requested && len(c.formatters) == 0 && len(c.typeid_order) == 0)
+			} else {
+				factory := symbol_of(c, c.providers[.Allocator].factory)
+				if testing.expect(t, factory != nil) {
+					testing.expect_value(t, identifier_text(c, factory.name), edit >= 3 && edit <= 5 ? "other" : "factory")
+				}
+				testing.expect(t, c.format_requested && c.type_info_requested && len(c.formatters) > 0 && len(c.typeid_order) > 0)
+			}
+		}
+	}
+}

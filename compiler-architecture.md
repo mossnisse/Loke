@@ -107,6 +107,7 @@ filesystem and toolchain policy remain in `src/emit_llvm_toolchain.odin`.
 | `init_session(&s, config)` | Initialize a zeroed session in place. Copy all configuration strings and arrays; the caller can release them immediately. Default to `DEFAULT_COMPILATION_CONFIG`, matching CLI defaults. Return false with diagnostics for invalid configuration; reject reinitializing a live session. |
 | `check_session(&s, input)` | Replace the previous compilation, reload source and project files (using source overlays), and run whole-program checking, entry/export validation, and semantic finalization. Return false for source/configuration errors, retaining diagnostics. The caller can release its input path on return. |
 | `check_session(&s, input, documentation = true)` | Preserve `-doc` behavior: check declarations and exports without requiring executable entry or finalizing emission dependencies. This result cannot be emitted. |
+| `invalidate_session(&s)` | Invalidate the entire checked result after an external input change. Reject old snapshots/handles and emission, release query storage, and keep copied configuration and overlays. The next check reloads and rebuilds the whole program. Return false only for a zeroed/destroyed session; repeated invalidation is safe. Requires exclusive use. |
 | `emit_session_ir(&s)` | Return LLVM module text and a success flag from a successfully finalized check. Create no files and invoke no external tools. Repeated emission consumes the same checked state; each module stays allocated until the next check or destruction. |
 | `emit_session(&s, options)` | Write IR, an object, or an executable using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Return 2 without a diagnostic for an empty output path, so the check can still be emitted; take optimization and build mode from the checked configuration. Return the existing toolchain exit status. |
 | `destroy_session(&s)` | Release all compilation, configuration, scratch, overlay, and query storage. Safe on a zeroed session, after any failure, and repeatedly. |
@@ -119,14 +120,14 @@ fixed until destruction; create a new session to change it.
 
 The current compiler state is available through `s.compiler`. Sources, syntax,
 semantic IDs, diagnostics, and emitted strings are borrowed and remain valid
-until an overlay edit, the next check, or destruction, including when the next
-check fails.
+until explicit invalidation, an overlay edit, the next check, or destruction,
+including when the next check fails.
 Copy data a caller needs longer. Each check destroys the previous compiler and
 scratch arena before loading the new program, so sources, manifest collections,
 generic instances, held diagnostics, and emission state cannot survive an edit.
-This remains batch reuse: every check rebuilds the whole program. Invalidation
-rules and incremental caches remain later milestones in
-[Compiler services](future-plans.md#compiler-services).
+This remains batch reuse: every check rebuilds the whole program, following
+[Invalidation rules](#invalidation-rules). Incremental caches remain a later
+milestone in [Compiler services](future-plans.md#compiler-services).
 
 `session_test.odin` compares reused sessions with fresh sessions after edits to
 generic procedures, dependency manifests, and invalid source. It also covers
@@ -159,8 +160,8 @@ build an index they will not use.
 | `query_diagnostics(&s, snapshot)` | Return captured severity, code, message, label, locations, and notes without rendering or terminating. Capture before emission to obtain checking diagnostics; diagnostics appended by later emission do not change that snapshot's view. |
 
 All operations return a success flag. Every snapshot and symbol/type/location
-handle carries a process-unique snapshot ID. Overlay replacement/removal, every
-new compilation check (even the same bytes or a failed check), and destruction
+handle carries a process-unique snapshot ID. Explicit invalidation, overlay
+replacement/removal, every new compilation check (even the same bytes or a failed check), and destruction
 invalidate the previous snapshot. All query entry points reject stale or foreign snapshot
 IDs and out-of-range IDs rather than using reused semantic IDs. A destroyed and
 reinitialized session cannot resurrect old handles. Overlay edits also disable
@@ -176,8 +177,8 @@ the preceding compiler state.
 Once `session_snapshot` has built a check's views, later `session_snapshot` and
 query calls only read the session, so several threads may run them at once.
 Allocating queries use the calling thread's `context`. That first
-`session_snapshot` call, overlay edits, checks, emission, and destruction need
-exclusive use of the session.
+`session_snapshot` call, invalidation, overlay edits, checks, emission, and
+destruction need exclusive use of the session.
 
 On incomplete or erroneous programs, loaded sources and diagnostics remain
 available. Collected bindings, recorded definitions/references, and checked
@@ -197,6 +198,92 @@ definitions, shadowed bindings, fields, overloads, generic clones, and exclusion
 of inferred bindings at argument positions; and verify stale-handle rejection,
 diagnostic capture, unchanged semantic state under
 repeated queries, and reclamation with memory tracking.
+
+## Invalidation rules
+
+The unit of invalidation is the **whole compilation**. There is no safe
+per-package or per-procedure reuse yet. `invalidate_session(&s)` is the external
+notification boundary for disk/project changes; overlay edits and new checks
+use that same boundary. It expires all snapshot IDs and query views, clears
+emission readiness, and releases the query arena. Configuration and overlays
+remain owned by the session. The next `check_session` destroys the previous
+compiler and scratch storage, reloads the inputs, and runs the entire
+[Driver and phase order](#driver-and-phase-order), including whole-program
+analysis and semantic finalization. A failed check replaces previous results
+with its own diagnostics and partial query views and cannot emit.
+
+Disk changes do not mutate a captured snapshot automatically. A tool must call
+`invalidate_session` when it observes a relevant change, or call `check_session`
+directly when it wants a new result. Until notified/rechecked, a snapshot still
+describes the bytes it checked. Notification alone performs no filesystem reads
+or checking; several events can be followed by one check. Unknown or unclassified
+events take the same whole-program fallback. Do not filter notifications solely
+by `query_file`: a missing file, newly selected import, new package member, or
+new nearer manifest is not necessarily among the previously loaded sources.
+
+Inputs to any future cache must include the following facts. Every change
+currently requires whole-program invalidation; a narrower cache must establish
+and validate all its dependencies before overriding that fallback.
+
+| Input | Facts that affect reuse | Existing reader/consumer |
+| --- | --- | --- |
+| Root and check mode | Input path, file versus directory roots, current directory for relative paths, executable/object mode, and documentation versus finalized checking. A standalone file does not acquire its siblings. Documentation results cannot enable emission. | `check_session`, `register_project`, `load_root_package` |
+| Source contents and membership | Exact source bytes, including comments/locations and invalid UTF-8; normalized path identity; overlay contents/presence; direct `.loke` directory entries, additions, deletions, renames, and read failures. Removing an overlay exposes disk contents. A directory scan and failed lookup are dependencies even when no source was loaded. | `load_source`, `package_sources`, `is_source_directory` |
+| Imports and conditional selection | Written paths/aliases, their resolved packages, visibility, extension/operator sets, and all declarations/CTFE values/configuration used by file/body `when` conditions. Parsed inactive branches can become active after another input changes. | Package/import/`when` discovery fixed point; `src/select.odin` |
+| Project manifests | Existence and contents of the nearest `loke.project` at or above the root and of required dependencies' manifests; searched ancestor directories, including previously absent files; required collection names, paths, and conflicts. | `register_project` in `src/project.odin` |
+| Collections and libraries | Explicit collection entries and precedence over manifests; effective absolute roots; bundled `base:`/`core:` installation roots and their source contents; current directory when entries are relative. The same import spelling can resolve to a different package. | `register_collections`, `install_component`, `resolve_import_path` |
+| Providers | Root package attributes, selected paths/factories, provider package sources, conditional factory declarations, public visibility, handle/signature shape, and destination bindings. Provider packages are dependencies even when no source imports them. | `collect_source_provider_defaults`, `load_provider_packages`, `resolve_provider_factories` |
+| Build configuration | All `Compilation_Config` fields: defines, collections, copy-cost threshold/enabling, panic strategy, optimization/build modes, debug information, `LOKE_DEBUG`, and log level. These affect diagnostics, `LOKE_*` constants, selection, and/or IR. Configuration is copied and fixed; recreate the session to change it. | `configure_session`; `src/build_config.odin` |
+| Compiler identity | Compiler build/release and its checking, builtin, query, and emission rules, including `LOKE_VERSION`; bundled language libraries are also source inputs. Persistent results must not cross compiler builds merely because a release string is unchanged. Use a new compiler process/session after replacing the compiler. | `LOKE_VERSION_STRING`; compiler implementation |
+| Target | Target triple, ABI, integer/pointer widths, scalar alignment and layout rules, OS/architecture/endianness constants. The current API fixes these to Windows x64 (`WINDOWS_X64`); it cannot change a live session's target. | `init_semantic_stores`, `Target_Info`, build constants, layout and lowering |
+
+The dependency closure extends beyond exported signatures:
+
+- **Compile-time evaluation.** A changed callee body, transitive callee, constant,
+  layout/reflection fact, or build value can change a folded value, array bound,
+  static assertion, `when` branch, or static-loop expansion without changing its
+  signature. Discard evaluated constants, declaration/body checked states, held
+  diagnostics, active items, expansions, and any decisions they caused.
+- **Generics and lookup.** Discard positive and negative instance entries,
+  templates/scopes, bounds/probe outcomes, pending generic implementations,
+  selected overloads, witnesses, and contributed members. Instance keys use
+  compilation-local semantic IDs and arguments; they are not cross-check cache
+  keys. A repaired rejected instantiation must be tried again, and changes to
+  bodies, bounds, imports, or implementation candidates can affect a specialization
+  whose parameter/result types did not change.
+- **Inferred effects and provenance.** Recompute global/indirect write sets,
+  result summaries and their dependency solver, written allocator regions,
+  callback contract checks/joins, nil-use facts, liveness, ownership, and borrow
+  analysis. A callee body or a newly reachable indirect/dynamic target can change
+  a caller's legality. The existing result-summary solver edges schedule that
+  analysis within one compilation; they do not establish complete incremental
+  dependencies for source checking.
+- **Final semantic registries.** Rebuild requested/frozen typeids and runtime
+  metadata, formatter discovery, lifecycle classification/final operation
+  snapshots, map-key/order policies, erased witnesses, materialized constants,
+  synthesized procedures, runtime bindings, provider factories, and entry/export
+  validation. Their IDs, pointers, order, readiness flags, and demand sets belong
+  to one compilation. Deleting a use must remove obsolete demands and artifacts.
+  An unchanged type name/signature does not preserve a formatter or drop hook.
+- **Queries, diagnostics, and emission.** Query indexes and borrowed strings,
+  diagnostic spans/notes (including held diagnostics), emitted text, debug data,
+  and artifact readiness belong to the discarded result. No consumer may resolve
+  or finalize its way around invalidation. Recheck and acquire a new snapshot.
+
+Foreign inputs, runtime C/NASM sources, clang/toolchain identity, environment
+used by the toolchain, output path, and artifact options also affect emitted
+objects/executables. They are read by artifact emission, not by source checking;
+there is no reusable artifact cache. Re-emitting for a changed artifact option
+does not make old semantic IDs usable in a new check. A future artifact cache
+must include these inputs in addition to the checked program and target.
+
+The invalidation tests in `src/session_test.odin` compare every reused result's
+diagnostics, semantic registry sizes, and LLVM IR against a fresh session.
+They cover explicit stale-handle rejection, retained overlays/configuration,
+directory additions/deletions, manifest removal/recreation and collection
+retargeting, body-only CTFE/conditional imports, failed generic bounds and fixes,
+global writes and result provenance, provider selection/signature failures and
+fixes, changed formatting/drop hooks, and removal of final registry demands.
 
 ## Core representations and ownership
 

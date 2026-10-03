@@ -324,6 +324,10 @@ checklist.
 
 ### Added
 
+- `invalidate_session` lets compiler-service clients expire snapshots and
+  emission readiness after external file or project changes. The next check
+  rebuilds the whole program under documented conservative
+  [invalidation rules](compiler-architecture.md#invalidation-rules).
 - Compiler sessions accept in-memory source overlays, including new unsaved
   packages, and expose read-only snapshot queries for symbols, types,
   definitions, references, signatures, and diagnostics. Queries retain partial
