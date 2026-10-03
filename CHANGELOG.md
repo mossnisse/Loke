@@ -317,6 +317,11 @@ checklist.
 
 ### Added
 
+- `try_append`, `try_insert`, and `try_find_or_insert` accept a move-only
+  element from a temporary or `move(...)`, as `append` does, instead of
+  rejecting it with `L0491`; a failed insertion leaves the container unchanged
+  and drops the element. `Small_Array` gains the same consuming `try_append`
+  and `try_insert`. A borrowed place is still copied, and kept on failure.
 - `lokec <file> -dump-tokens` prints the file's tokens, one `lo hi Kind` line
   each with the byte span, and stops after lexing.
 - `examples/lexer.loke` is the compiler's lexer written in Loke. It prints a

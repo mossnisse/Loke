@@ -1021,9 +1021,15 @@ consumed_element_slot :: proc(
 		return -1, false
 	}
 	lifecycle := emit_lifecycle(e, container_element(e.c, symbol.params[0]))
-	// A `try_` form copies, so a failure leaves the argument with the caller. A
-	// built pack still goes to the lending body, which copies each element
-	// itself and so reports a failed copy; the caller keeps and drops the pack.
+	// A move-only element is handed over by every form; a failed `try_` form
+	// drops it.
+	if lifecycle.clone_disabled {
+		return slot, false
+	}
+	// A copyable element goes to a `try_` form by copy, so a failure leaves the
+	// argument with the caller. A built pack still goes to the lending body,
+	// which copies each element itself and so reports a failed copy; the caller
+	// keeps and drops the pack.
 	if container_member_is_try(e.c, symbol) {
 		if symbol.container_op != .Append || !lifecycle.managed || call_node == nil ||
 		   !call_node.is_variadic || call_node.variadic_forwards {
@@ -1031,9 +1037,6 @@ consumed_element_slot :: proc(
 		}
 		e.consuming_ops[symbol_id] = true
 		return -1, true
-	}
-	if lifecycle.clone_disabled {
-		return slot, false
 	}
 	if !lifecycle.managed || call_node == nil || slot >= len(call_node.bound) {
 		return -1, false

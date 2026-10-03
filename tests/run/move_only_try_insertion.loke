@@ -1,0 +1,63 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+import "core:mem";
+import "core:unsafe";
+
+// design.md "Container insertion": a `try_` form takes a move-only element from
+// a temporary or `move(...)`, as `append` does, and drops it when it fails.
+
+Token :: move_only struct { id: int }
+
+impl Token {
+	release :: hook(drop) proc(self: inout Token) {
+		if (self.id != 0) { fmt.println("drop", self.id); }
+	}
+}
+
+make_token :: proc(id: int) -> Token { return Token{id}; }
+
+fill :: proc(items: inout [dynamic]Token) -> Result(Unit, Allocator_Error) {
+	items.try_append(make_token(1)) or_return;
+	t := make_token(2);
+	items.try_append(move(t)) or_return;
+	items.try_insert(0, make_token(3)) or_return;
+	return .ok({});
+}
+
+main :: proc() {
+	items: [dynamic]Token = {};
+	fmt.println(fill(inout items) == .ok, items.len(), items[0].id);
+
+	// A fixed buffer runs out, and the token that did not fit is dropped once.
+	// The ones stored are cleared so the output does not depend on growth.
+	{
+		buffer: [256]u8 = ---;
+		arena := mem.Arena.from_buffer(&mut buffer[:]);
+		small := make([dynamic]Token, 0, 0, arena.allocator());
+		failed := false;
+		for (round := 0; round < 100 && !failed; round += 1) {
+			switch (_ in small.try_append(make_token(9))) {
+			case .ok:
+			case .err: failed = true;
+			}
+		}
+		fmt.println("failed", failed, small.len() > 0);
+		foreach (&token in small) { token.id = 0; }
+	}
+
+	table: map[string]Token = {};
+	fmt.println(table.try_insert("a", make_token(4)) == .ok);
+	slot := table.try_find_or_insert("a", make_token(5)) or_else nil;
+	fmt.println(slot^.id);
+
+	// Fixed capacity fails the same way.
+	fixed: container.Small_Array(Token, 2) = {};
+	fmt.println(fixed.try_append(make_token(6)) == .ok);
+	u := make_token(7);
+	fmt.println(fixed.try_insert(0, move(u)) == .ok);
+	fmt.println(fixed.try_append(make_token(8)) == .ok, fixed.len());
+	ints: container.Small_Array(int, 2) = {};
+	fmt.println(ints.try_append(1, 2) == .ok, ints.try_insert(0, 3) == .ok, ints.len());
+}

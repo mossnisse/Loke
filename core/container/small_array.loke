@@ -9,13 +9,13 @@
 // The zero value is a usable, empty array, so `x: Small_Array(int, 8) = {};`
 // needs no construction.
 //
-// A move-only element is held too. The members that copy one — `get`,
-// `append_copied`, `insert_copied`, and the `try_` forms — are bound on
-// `is_copyable(T)`, so they are simply not members of such an instance
-// (design.md "where clauses"). `append` and `insert` are procedure
-// groups whose other member consumes, so `values.append(move(token))` is the
-// way in, just as it is for a dynamic array, and everything that reaches an
-// element without copying it is unchanged.
+// A move-only element is held too. The members that copy one — `get` and the
+// `_copied` insertions — are bound on `is_copyable(T)`, so they are simply not
+// members of such an instance (design.md "where clauses"). `append`, `insert`,
+// and their `try_` forms are procedure groups whose other member consumes, so
+// `values.append(move(token))` is the way in, just as it is for a dynamic
+// array, and everything that reaches an element without copying it is
+// unchanged.
 @(public)
 package container;
 
@@ -152,7 +152,7 @@ impl Small_Array($T, $N) {
 	}
 
 	// Nothing is written unless everything fits, which is the `try_` promise.
-	try_append :: proc(
+	try_append_copied :: proc(
 		self: inout, @(escape=stored) values: ..T,
 	) -> Result(Unit, Capacity_Error) where is_copyable(T) {
 		wanted := self.count + values.len();
@@ -177,7 +177,7 @@ impl Small_Array($T, $N) {
 
 	// Validate the index even when full. Capacity failure leaves the array
 	// untouched; a bad index is always a programmer error.
-	try_insert :: proc(
+	try_insert_copied :: proc(
 		self: inout, index: int, @(escape=stored) value: T,
 	) -> Result(Unit, Capacity_Error) where is_copyable(T) {
 		if (index < 0 || index > self.count) {
@@ -190,16 +190,34 @@ impl Small_Array($T, $N) {
 		return .ok({});
 	}
 
-	// The consuming half of the `append` and `insert` groups below. The copying
-	// members read out of a borrowed argument, which a move-only element cannot
-	// do, so these take theirs with `move`, and an argument that owns its value —
-	// a temporary or `move(...)` — selects them (design.md "Operator lookup and
-	// overload resolution", tie-breaker 1).
-	//
-	// Neither has a `try_` form. A capacity failure would arrive having already
-	// taken the value it could not store, which is the opposite of what this
-	// file's `try_` contract promises; a caller who must not panic asks `space()`
-	// or `is_full()` first, and those are exact.
+	// The consuming half of the insertion groups below. The copying members read
+	// out of a borrowed argument, which a move-only element cannot do, so these
+	// take theirs with `move`, and an argument that owns its value — a temporary
+	// or `move(...)` — selects them (design.md "Operator lookup and overload
+	// resolution", tie-breaker 1). A failed `try_` form drops the value it took,
+	// as built-in insertion does (design.md "Container insertion").
+	try_append_moved :: proc(
+		self: inout, @(escape=stored) value: move T,
+	) -> Result(Unit, Capacity_Error) {
+		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
+		unsafe.write(self.items[self.count], move(value));
+		self.count += 1;
+		return .ok({});
+	}
+
+	try_insert_moved :: proc(
+		self: inout, index: int, @(escape=stored) value: move T,
+	) -> Result(Unit, Capacity_Error) {
+		if (index < 0 || index > self.count) {
+			panic("Small_Array index is out of range");
+		}
+		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
+		unsafe.write(self.items[self.count], move(value));
+		self.count += 1;
+		self.move_last_to(index);
+		return .ok({});
+	}
+
 	append_moved :: proc(self: inout, @(escape=stored) value: move T) {
 		if (self.count == N) { panic("Small_Array is full"); }
 		unsafe.write(self.items[self.count], move(value));
@@ -223,6 +241,8 @@ impl Small_Array($T, $N) {
 	// reads the same here as on `[dynamic]T`.
 	append :: proc{append_one_copied, append_copied, append_moved};
 	insert :: proc{insert_copied, insert_moved};
+	try_append :: proc{try_append_copied, try_append_moved};
+	try_insert :: proc{try_insert_copied, try_insert_moved};
 
 	// The last element, removed, or .none when empty, like a dynamic array.
 	//

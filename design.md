@@ -1002,7 +1002,13 @@ connections.append(c);                      // ERROR: a borrowed move-only value
 
 Ownership passes at the call. When `find_or_insert` finds the key already present it does not store its element and drops it, so every element is dropped exactly once. A `..` spread lends its elements, so spreading a move-only slice into `append` is rejected.
 
-The `try_` forms — `try_append`, `try_insert`, and `try_find_or_insert` — never take ownership: they copy the element in only on success, so a failure leaves the argument exactly as the caller had it, the same promise every `try_` form makes. A move-only element cannot be copied, so calling a `try_` form with one is a compile-time error; reserve capacity with `try_reserve` first, then insert with `move(...)`, which cannot fail for want of space.
+The `try_` forms — `try_append`, `try_insert`, and `try_find_or_insert` — take their element the same way, and a failure leaves the container unchanged. A borrowed place is copied in only on success, so a failure leaves it exactly as the caller had it. An element the call took, a temporary or `move(x)`, is dropped on failure: `move(x)` ends `x` whether or not the insertion succeeds. A move-only element therefore enters a `try_` form exactly as it enters `append`:
+
+```odin
+connections.try_append(connect("c.example")) or_return;  // dropped if the append fails
+```
+
+A caller that must keep the element when space runs out reserves first, with `try_reserve`, and then inserts with `move(...)`, which cannot fail for want of space.
 
 #### Removing from a dynamic array
 

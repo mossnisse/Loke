@@ -512,7 +512,6 @@ fewer exceptions, rather than shortening keywords.
 | --- | --- | --- | --- |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
 | Next | Flow-sensitive nil diagnostics | Catch definite nil uses | Analysis |
-| Next | Fallible insertion of move-only values | Handle allocation failure while transferring resources | Container APIs |
 | Next | Uniform arithmetic policies | Scalar and vector code preserve the same meaning | Numeric APIs and lowering |
 | Next | Compiler-selected ordinary union layout | Compact optionals and nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
@@ -644,38 +643,6 @@ arena can use stable integer/generational handles without pervasive pointers.
 A record owning a buffer and views into itself needs address stability and an
 internal-borrow contract; non-null pointers do not solve it. Prefer offsets
 and handles before introducing general pinning or self-referential types.
-
-### Fallible insertion must accept resources
-
-[Container insertion](design.md#container-insertion) allows moving a resource
-into `append`, but `try_append`, `try_insert`, and `try_find_or_insert` copy
-their inputs. `items.try_append(Token{1})` for a move-only `Token` is rejected
-with `L0491`, even though the argument is a temporary. Reserving first and then
-inserting is an existing workaround, but splits one logical operation into a
-capacity protocol and does not generalize cleanly to arbitrary containers.
-
-**Proposal:** add consuming fallible insertion. A representative API is:
-
-```odin
-// Proposed API: failure returns ownership of the uninserted value.
-Insert_Failure :: struct($T: type) {
-    cause: Allocator_Error,
-    value: T,
-}
-// try_push(self: inout, value: move T)
-//     -> Result(Unit, Insert_Failure(T))
-```
-
-On success the container owns the value. On failure the container is unchanged
-and the error owns it. Cleanup drops it if the caller chooses not to retry.
-The input binding is consumed on both paths; this is intentionally a different
-contract from leaving that binding unchanged. Map insertion also needs explicit
-key ownership and replacement semantics.
-
-This makes failure atomicity compatible with move-only resources. First prove
-this API on dynamic arrays and `Small_Array`, then decide whether to collapse
-the broader [op/try_op pairs](#the-optry_op-pair). Do not delete all convenient
-panic-on-OOM methods before callers have a concise replacement.
 
 ### One explicit arithmetic policy across scalar and vector code
 

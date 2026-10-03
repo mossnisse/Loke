@@ -478,17 +478,6 @@ check_container_element :: proc(k: ^Checker, span: Span, chosen: ^Symbol) -> boo
 				type_name(k.c, element),
 			)
 		}
-	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert, .Append:
-		// design.md "Container insertion": a `try_` form copies its element, so a
-		// move-only one, which cannot be copied, has none.
-		if container_member_is_try(k.c, chosen) && type_clone_disabled(k.c, element) {
-			errorf(
-				k.c, span, "L0491",
-				"`%s` is move-only, and `%s` copies its element so a failure leaves it with the caller; reserve capacity with `try_reserve`, then insert with `move(...)`",
-				type_name(k.c, element), identifier_text(k.c, chosen.name),
-			)
-			return false
-		}
 	}
 	return true
 }

@@ -951,6 +951,16 @@ needs `move(x)` only where any other copy of it would. The operation owns the
 element from the call, so it drops the one it does not store: the duplicate a
 `find_or_insert` hit makes unnecessary, or a pack an allocation failure left out.
 
+The `try_` forms follow the same rule. They once copied even a temporary, so
+that a failure could leave the caller's argument untouched, and so rejected
+every move-only element. That promise only means something for a borrowed
+place, which is still copied: a temporary has no binding to restore, and
+`move(x)` has already ended `x`. So a failed `try_` form drops what it took. The
+alternative, returning the element inside the error, would change the error
+type from `Allocator_Error`, so `or_return` would stop composing with the other
+allocation failures, all to support retrying after running out of memory. A
+caller who wants that reserves first and then moves the element in.
+
 ### `string` borrows as `string_view`
 
 `string` converts implicitly to `string_view`. Without it the two types compete
