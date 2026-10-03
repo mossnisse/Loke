@@ -1,0 +1,14 @@
+L0698
+@14:2
+the result of this call stored in `outcome` is never read before it is overwritten or goes out of scope
+L0698
+@17:2
+the result of this call stored in `first` is never read
+L0698
+@24:2
+the result of `save` stored in `ok` is never read
+L0698
+@27:2
+the result of this call stored in `deferred` is never read
+L0310
+@60:17

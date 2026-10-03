@@ -1,0 +1,61 @@
+package main;
+import "core:fmt";
+
+// design.md "@(require_results)": each required result a call produces must be
+// read before it is overwritten or leaves scope. One read on some path is
+// enough; a later read of the name does not cover an earlier result.
+
+fail :: proc() -> Result(int, int) { return .err(1); }
+@(require_results) save :: proc() -> bool { return true; }
+
+overwritten :: proc() {
+	outcome := fail();
+	_ = outcome;
+	outcome = fail();
+}
+lost_first :: proc() {
+	first := fail();
+	first = fail();
+	fmt.println(first);
+}
+by_declaration :: proc() {
+	ok := save();
+	_ = ok;
+	ok = save();
+}
+before_a_defer :: proc() {
+	deferred := fail();
+	defer _ = deferred;
+	deferred = fail();
+}
+
+// Quiet: read on one path, read by the next iteration, returned, and a value
+// built here rather than produced by a call.
+one_path :: proc(flag: bool) {
+	r := fail();
+	if (flag) { fmt.println(r); }
+	r = fail();
+	_ = r;
+}
+next_iteration :: proc() {
+	r := fail();
+	for (i := 0; i < 3; i += 1) {
+		_ = r;
+		r = fail();
+	}
+}
+returned :: proc() -> Result(int, int) {
+	r := fail();
+	_ = r;
+	r = fail();
+	return r;
+}
+built :: proc() {
+	r := fail();
+	_ = r;
+	r = .err(0);
+}
+
+main :: proc() {
+	missing: int = "not an int";
+}

@@ -183,6 +183,16 @@ Flow_Graph :: struct {
 	held:      [dynamic]int,
 	lent:      map[int]bool,
 	last_uses: [dynamic]Last_Use,
+	// design.md "@(require_results)": the writes of a required result, each
+	// checked for a read before the next write or the scope's end.
+	required:  [dynamic]Required_Write,
+}
+
+Required_Write :: struct {
+	block:  Block_Id,
+	event:  int,
+	// The declaration requiring it, or "" when the result type does.
+	source: string,
 }
 
 // A clone of a local, and the `Use` event that reads it. Whether it clones at
@@ -1034,6 +1044,25 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 			span = sym.span,
 			name = identifier_text(graph.k.c, sym.name),
 		})
+		note_required_write(graph, id, symbol_index < len(d.values) ? initializer : nil)
+	}
+}
+
+// design.md "@(require_results)": the write just emitted stores the required
+// result of a call. A local never named again is the name check's to report.
+@(private = "file")
+note_required_write :: proc(graph: ^Flow_Graph, id: Symbol_Id, value: Expr) {
+	sym := symbol_of(graph.k.c, id)
+	call, is_call := value.(^Expr_Call)
+	if sym == nil || !sym.named || graph.current == NO_BLOCK || !is_call || call.type == INVALID_TYPE {
+		return
+	}
+	if _, built := call.operation.(Call_Union_Construct); built {
+		return // `.err(code)` builds a value; no call produced it
+	}
+	if source, required := required_result_of_call(graph.k, call); required {
+		event := len(graph.blocks[graph.current].events) - 1
+		append(&graph.required, Required_Write{graph.current, event, source})
 	}
 }
 
@@ -1164,6 +1193,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			assign = s,
 			target = index,
 		})
+		note_required_write(graph, ident.symbol, index < len(s.rhs) && len(s.rhs) == len(s.lhs) ? s.rhs[index] : nil)
 	}
 }
 
@@ -1947,7 +1977,7 @@ LAST_USE_VERB :: "moved by its last use"
 // stay in place, with the move's `Kill` where its `Use` was, so the forward
 // solve that follows sees the local end there.
 settle_last_uses :: proc(graph: ^Flow_Graph) {
-	if len(graph.last_uses) == 0 || !committing(graph.k.c) {
+	if (len(graph.last_uses) == 0 && len(graph.required) == 0) || !committing(graph.k.c) {
 		return
 	}
 	tracked := len(graph.tracked)
@@ -1968,6 +1998,23 @@ settle_last_uses :: proc(graph: ^Flow_Graph) {
 				changed = true
 			}
 		}
+	}
+	// design.md "@(require_results)": a required result no path reads before it
+	// is overwritten or leaves scope was dropped unseen. One lent elsewhere may
+	// be read through the borrow.
+	for write in graph.required {
+		event := graph.blocks[write.block].events[write.event]
+		reads_at_exit(graph, read_in, write.block, reads)
+		reads_before(graph.blocks[write.block].events[:], write.event + 1, reads)
+		if reads[event.slot] || graph.lent[event.slot] {
+			continue
+		}
+		what := write.source != "" ? concat(graph.k.c, "the result of `", concat(graph.k.c, write.source, "`")) : "the result of this call"
+		errorf(
+			graph.k.c, event.span, "L0698",
+			"%s stored in `%s` is never read before it is overwritten or goes out of scope: inspect it, or discard it with `_ = ...`",
+			what, event.name,
+		)
 	}
 	// A deferred copy is one node at every exit it expands at, so it becomes a
 	// move only when no expansion's source is read again.

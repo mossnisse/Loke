@@ -528,7 +528,7 @@ fewer exceptions, rather than shortening keywords.
 | Priority | Proposal | Main benefit | Scope |
 | --- | --- | --- | --- |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
-| First | Flow-sensitive fault/result diagnostics | Catch definite failures and overwritten errors | Analysis |
+| Next | Flow-sensitive nil diagnostics | Catch definite nil uses | Analysis |
 | Next | Explicit mutable slices and compatible reborrows | Capability no longer depends on expression context | Borrow rules and syntax |
 | Next | Checked disjoint access | Express partitioning and parallel array algorithms | Library primitives and provenance |
 | Next | Fallible insertion of move-only values | Handle allocation failure while transferring resources | Container APIs |
@@ -593,7 +593,7 @@ responsibility, and an unused null representation available for compact
 optionals. Non-nullness does not prove lifetime or exclusivity; those checks
 remain necessary.
 
-### Definite faults and unused results need dataflow
+### Definite faults need dataflow
 
 [Nil states](design.md#nil-states) currently inspect writes across the entire
 body. This complete program compiled successfully to IR:
@@ -611,28 +611,19 @@ main :: proc() {
 ```
 
 **Proposal:** use flow-sensitive facts at each operation. Diagnose a proven
-nil dereference/call, zero divisor, invalid fixed bound, or impossible checked
-conversion on a reachable path. Refine facts after a guard and discard them
-after writes or calls that can invalidate them. Unknown values still need
-runtime checks; do not make acceptance depend on speculative optimization or
-pretend arbitrary input can be proven valid.
+nil dereference or call on a reachable path. Refine facts after a guard and
+discard them after writes or calls that can invalidate them. Unknown values
+still need runtime checks.
 
-The same principle applies to
-[`require_results`](design.md#require_results). Today this compiles:
-
-```odin
-fail :: proc() -> Result(int, int) { return .err(1); }
-main :: proc() {
-    outcome := fail();
-    _ = outcome;
-    outcome = fail(); // this second result is never inspected or discarded
-}
-```
-
-Track each produced required result, not whether its variable name was ever
-read. An overwrite or scope exit with an unobserved result should be diagnosed;
-an explicit discard consumes the obligation of that particular value. This
-does not require proving that business logic handles every error correctly.
+Decide this after [non-null references](#non-null-references-and-explicit-allocation-owners):
+if checked pointers become non-null, the example above disappears and only
+procedure values and `dyn` remain, which are rarely nil and then used in one
+body. Unlike [`require_results`](design.md#require_results), which reuses the
+backward read analysis of last-use transfer, this needs a new forward
+analysis. Proven zero divisors, invalid fixed bounds, and impossible checked
+conversions through locals were considered and left out: they need constant
+propagation through locals, constant expressions are already diagnosed, and
+the rest already panics at run time.
 
 ### Make mutable access explicit and permit compatible reads
 

@@ -10,6 +10,10 @@ checklist.
 
 ### Breaking changes
 
+- A required result that a call stores in a local and that no path reads
+  before the local is next written or leaves scope is `L0698`, as a binding
+  never read was. Before, one read of the name anywhere covered every result
+  stored in it. Inspect the result, or discard it with `_ = ...`.
 - `x: T = ---` and an `@(initialized = count)` field now need
   `import "core:unsafe"` in the file that writes them (`L0706`), like the
   other unchecked operations: the first leaves reads unchecked, and generated

@@ -622,6 +622,20 @@ low-level work, and the checked extraction that does exist — `view.(T)` on an
 
 ## Changed features
 
+### Each required result is asked about
+
+`@(require_results)` used to ask only whether a binding's name was ever read,
+so `outcome = fail();` after one `_ = outcome` dropped the second error
+unseen, and so did `r := fail(); r = fail(); use(r)`, losing the first. Each
+result a call stores in a local is now asked about. The check reuses the
+backward read analysis last-use transfer already runs, so it cost no new
+analysis. It reports only a result no path reads, the same certainty the nil
+diagnostic asks for: a result read on one branch and not another is quiet,
+because rejecting it would reject a program whose author knows the other path
+cannot fail. A value built in place, such as `.err(0)`, is not asked about; it
+is the program's own value, not a failure handed to it. No program in the
+tree tripped the check.
+
 ### Unchecked operations need the import
 
 design.md [The `unsafe` package](design.md#the-unsafe-package) always said the
