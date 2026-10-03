@@ -14,7 +14,7 @@ PROJECT_FILE :: "loke.project"
 // names one directory in the whole program. A `-collection` for the name wins,
 // which is how a dependency is overridden or vendored.
 register_project :: proc(c: ^Compiler, input: string) -> bool {
-	dir := canonical_dir(is_directory(input) ? input : filepath.dir(input, context.temp_allocator))
+	dir := canonical_dir(is_source_directory(c, input) ? input : filepath.dir(input, context.temp_allocator))
 	for !os.exists(filepath.join({dir, PROJECT_FILE}, context.temp_allocator)) {
 		parent := filepath.dir(dir, context.temp_allocator)
 		if parent == dir {
@@ -77,7 +77,7 @@ register_project :: proc(c: ^Compiler, input: string) -> bool {
 					errorf(c, span, "L0399", "`%s` is already required as another directory; one name names one directory", name)
 					add_notef(c, required_by[name], "`%s` is first required here", name)
 				}
-			case !is_directory(target):
+			case !is_source_directory(c, target):
 				errorf(c, span, "L0399", "dependency `%s` names `%s`, which is not a directory", name, written)
 			case:
 				c.collections[name] = strings.clone(target, c.semantic_allocator)

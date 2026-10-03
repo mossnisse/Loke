@@ -169,12 +169,16 @@ Implementation order:
    manifest edits, checks diagnostics and IR, and tracks repeated creation and
    destruction for leaks. The API and lifetime contract are in
    [Reusable batch sessions](compiler-architecture.md#reusable-batch-sessions).
-2. **Snapshots and queries.** Add in-memory overlays for unsaved sources and
-   read-only queries for symbols, types, definitions, references, signatures,
-   and diagnostics. Specify which queries work on an incomplete or erroneous
-   program. Existing semantic IDs are stable within a compilation; define their
-   snapshot lifetime and reject stale handles instead of assuming they survive
-   an edit. This milestone is enough to begin the language server.
+2. **Snapshots and queries — shipped.** Session-owned overlays supply unsaved
+   sources and new packages through the ordinary loader. Read-only queries
+   expose symbols, types, definitions, references, signatures, and diagnostics
+   from checked results, with partial results on erroneous programs. Snapshot
+   IDs reject stale/foreign handles after edits, checks, or destruction; old
+   query storage is reclaimed rather than retained. Regression coverage checks
+   overlay/disk equivalence, recorded binding identity, errors, lifetimes, and
+   repeated queries without semantic mutation. The API and error/lifetime
+   contracts are in [Snapshots and queries](compiler-architecture.md#snapshots-and-queries).
+   This milestone is enough to begin the language server.
 3. **Invalidation rules.** Identify inputs to cached results: source contents,
    imports, manifests, collections, providers, build configuration, compiler
    release, and target. Account for compile-time evaluation, generic instances,

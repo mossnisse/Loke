@@ -324,6 +324,11 @@ checklist.
 
 ### Added
 
+- Compiler sessions accept in-memory source overlays, including new unsaved
+  packages, and expose read-only snapshot queries for symbols, types,
+  definitions, references, signatures, and diagnostics. Queries retain partial
+  results on erroneous programs and reject stale handles after edits or checks.
+  See [compiler-architecture.md "Snapshots and queries"](compiler-architecture.md#snapshots-and-queries).
 - Reusable compiler sessions own build configuration and compilation state,
   support repeated whole-program checks and in-memory LLVM emission, and back
   the existing `lokec` command-line pipeline. See

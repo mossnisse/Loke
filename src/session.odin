@@ -27,13 +27,19 @@ DEFAULT_COMPILATION_CONFIG :: Compilation_Config{
 
 // Fill in place and never copy a live session: its allocators point into it.
 // Compiler data, IDs, diagnostics and emitted text are borrowed until the next
-// check or destruction. Configuration is copied and fixed for the session.
+// overlay edit, check or destruction. Configuration is copied and fixed for
+// the session.
 Compilation_Session :: struct {
 	compiler: Compiler,
 	config: Compilation_Config,
 	allocator: mem.Allocator,
 	configuration_arena: virtual.Arena,
 	scratch_arena: virtual.Arena,
+	overlays: map[string]Source_Overlay,
+	query_arena: virtual.Arena,
+	snapshot: Snapshot_Id,
+	queries: Snapshot_Queries,
+	queries_ready: bool,
 	initialized, configured, started, ready: bool,
 }
 
@@ -41,6 +47,8 @@ init_session :: proc(s: ^Compilation_Session, config := DEFAULT_COMPILATION_CONF
 	if s.initialized { return false }
 	s.initialized = true
 	s.allocator = context.allocator
+	s.overlays = make(map[string]Source_Overlay, s.allocator)
+	s.snapshot = next_snapshot_id()
 	s.config = config
 	allocator := virtual.arena_allocator(&s.configuration_arena)
 	s.config.defines = make([]string, len(config.defines), allocator)
@@ -65,7 +73,9 @@ configure_session :: proc(s: ^Compilation_Session) -> bool {
 	c.opt_mode, c.build_mode = config.opt_mode, config.build_mode
 	c.debug_info, c.debug = config.debug_info, config.debug
 	c.log_level = config.log_level
-	return seed_defines(c, config.defines) && register_collections(c, config.collections)
+	configured := seed_defines(c, config.defines) && register_collections(c, config.collections)
+	c.source_overlays = s.overlays
+	return configured
 }
 
 // Every check reloads sources, manifests and imports and runs the whole-program
@@ -74,6 +84,11 @@ configure_session :: proc(s: ^Compilation_Session) -> bool {
 check_session :: proc(s: ^Compilation_Session, input: string, documentation := false) -> bool {
 	if !s.initialized || !s.configured { return false }
 	context.allocator = s.allocator
+	// Input may itself be borrowed from the preceding snapshot.
+	input_copy := strings.clone(input)
+	defer delete(input_copy)
+	invalidate_session_snapshot(s)
+	s.snapshot = next_snapshot_id()
 	if s.started {
 		destroy_compilation(&s.compiler)
 		virtual.arena_destroy(&s.scratch_arena)
@@ -83,7 +98,7 @@ check_session :: proc(s: ^Compilation_Session, input: string, documentation := f
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
 	c := &s.compiler
 	// The caller may release its path as soon as this call returns.
-	path := strings.clone(input, c.semantic_allocator)
+	path := strings.clone(input_copy, c.semantic_allocator)
 	if !register_project(c, path) { return false }
 	root, compiled := compile_program(c, path)
 	if compiled {
@@ -122,9 +137,16 @@ emit_session :: proc(s: ^Compilation_Session, opts: Emission_Options) -> int {
 // Safe after a failed initialization/check and on an already destroyed session.
 destroy_session :: proc(s: ^Compilation_Session) {
 	if s.initialized { context.allocator = s.allocator }
+	invalidate_session_snapshot(s)
 	destroy_compilation(&s.compiler)
 	virtual.arena_destroy(&s.scratch_arena)
 	virtual.arena_destroy(&s.configuration_arena)
+	for _, overlay in s.overlays {
+		delete(overlay.key)
+		delete(overlay.path)
+		delete(overlay.text)
+	}
+	delete(s.overlays)
 	s^ = {}
 }
 

@@ -118,7 +118,7 @@ ensure_runtime_bootstrap :: proc(k: ^Checker) {
 // Directory roots include their direct `.loke` files; file roots stand alone.
 @(private = "file")
 load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
-	if is_directory(input) {
+	if is_source_directory(c, input) {
 		c.root_dir = strings.clone(canonical_dir(input), c.semantic_allocator)
 		return load_package_dir(c, input, "", no_span())
 	}
@@ -140,7 +140,7 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 	if existing, found := c.package_by_dir[dir_key(canonical)]; found {
 		return existing, true
 	}
-	if !is_directory(canonical) {
+	if !is_source_directory(c, canonical) {
 		errorf(c, at, "L0327", "cannot find package `%s`", written == "" ? dir : written)
 		return INVALID_PACKAGE, false
 	}
@@ -188,13 +188,24 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 @(private = "file")
 package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 	entries, err := os2.read_all_directory_by_path(dir, context.temp_allocator)
-	if err != nil {
+	if err != nil && len(c.source_overlays) == 0 {
 		return nil
 	}
 	paths := make([dynamic]string, 0, len(entries), c.semantic_allocator)
+	seen: map[string]bool
+	if len(c.source_overlays) > 0 { seen = make(map[string]bool, context.temp_allocator) }
 	for entry in entries {
 		if entry.type == .Regular && strings.to_lower(filepath.ext(entry.name), context.temp_allocator) == ".loke" {
 			append(&paths, strings.clone(entry.fullpath, c.semantic_allocator))
+			if len(c.source_overlays) > 0 { seen[dir_key(canonical_dir(entry.fullpath))] = true }
+		}
+	}
+	if len(c.source_overlays) > 0 {
+		key := dir_key(canonical_dir(dir))
+		for path, overlay in c.source_overlays {
+			if !seen[path] && dir_key(canonical_dir(filepath.dir(overlay.path, context.temp_allocator))) == key {
+				append(&paths, strings.clone(overlay.path, c.semantic_allocator))
+			}
 		}
 	}
 	slice.sort(paths[:])

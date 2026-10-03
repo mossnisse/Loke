@@ -4,6 +4,7 @@
 package lokec
 
 import "core:fmt"
+import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
 
@@ -1777,6 +1778,11 @@ PREDECLARED_NAMES := [int(FIRST_DYNAMIC_TYPE)]string {
 }
 
 type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
+	return type_name_alloc(c, id, c.semantic_allocator)
+}
+
+// Queries format names in their own arena without allocating semantic state.
+type_name_alloc :: proc(c: ^Compiler, id: Type_Id, allocator: mem.Allocator) -> string {
 	if int(id) < len(PREDECLARED_NAMES) && PREDECLARED_NAMES[id] != "" {
 		return PREDECLARED_NAMES[id]
 	}
@@ -1789,21 +1795,21 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 	}
 	#partial switch info.kind {
 	case .Pointer:
-		return fmt.aprintf("^%s%s", info.mutable ? "mut " : "", type_name(c, info.element), allocator = c.semantic_allocator)
+		return fmt.aprintf("^%s%s", info.mutable ? "mut " : "", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .C_Pointer:
-		return fmt.aprintf("[^]%s", type_name(c, info.element), allocator = c.semantic_allocator)
+		return fmt.aprintf("[^]%s", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Array:
-		return fmt.aprintf("[%d]%s", info.count, type_name(c, info.element), allocator = c.semantic_allocator)
+		return fmt.aprintf("[%d]%s", info.count, type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Simd:
-		return fmt.aprintf("Simd(%s, %d)", type_name(c, info.element), info.count, allocator = c.semantic_allocator)
+		return fmt.aprintf("Simd(%s, %d)", type_name_alloc(c, info.element, allocator), info.count, allocator = allocator)
 	case .Slice:
-		return fmt.aprintf("[]%s%s", info.mutable ? "mut " : "", type_name(c, info.element), allocator = c.semantic_allocator)
+		return fmt.aprintf("[]%s%s", info.mutable ? "mut " : "", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Dynamic_Array:
-		return fmt.aprintf("[dynamic]%s", type_name(c, info.element), allocator = c.semantic_allocator)
+		return fmt.aprintf("[dynamic]%s", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Map:
-		return fmt.aprintf("map[%s]%s", type_name(c, info.key), type_name(c, info.element), allocator = c.semantic_allocator)
+		return fmt.aprintf("map[%s]%s", type_name_alloc(c, info.key, allocator), type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Distinct:
-		return fmt.aprintf("distinct %s", type_name(c, info.element), allocator = c.semantic_allocator)
+		return fmt.aprintf("distinct %s", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Struct:
 		return "struct"
 	case .Enum:
@@ -1813,14 +1819,14 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 	case .Interface:
 		return "interface"
 	case .Proc:
-		return proc_type_name(c, info)
+		return proc_type_name(c, info, allocator)
 	}
 	return "<type>"
 }
 
 @(private = "file")
-proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
-	b := strings.builder_make(c.semantic_allocator)
+proc_type_name :: proc(c: ^Compiler, info: ^Type_Info, allocator: mem.Allocator) -> string {
+	b := strings.builder_make(allocator)
 	strings.write_string(&b, "proc")
 	// A foreign convention is part of the type, so a `loke` and a `"c"` signature
 	// that otherwise match must not print the same.
@@ -1852,7 +1858,7 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 			case .Move:   strings.write_string(&b, "move ")
 			}
 		}
-		strings.write_string(&b, type_name(c, parameter))
+		strings.write_string(&b, type_name_alloc(c, parameter, allocator))
 	}
 	strings.write_string(&b, ")")
 	if info.result != INVALID_TYPE {
@@ -1860,7 +1866,7 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 		if info.result_inout {
 			strings.write_string(&b, "inout ")
 		}
-		strings.write_string(&b, type_name(c, info.result))
+		strings.write_string(&b, type_name_alloc(c, info.result, allocator))
 	}
 	if sym := symbol_of(c, info.proc_contract); sym != nil {
 		fmt.sbprintf(&b, " [result contract: %s]", identifier_text(c, sym.name))

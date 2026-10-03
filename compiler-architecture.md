@@ -98,18 +98,18 @@ semantic closure passes and compares the compiler's layout facts with LLVM.
 
 `src/session.odin` is the reusable orchestration boundary in the existing Odin
 `lokec` package. A session owns one `Compiler`, a copied `Compilation_Config`,
-and configuration and scratch arenas. CLI presentation, option parsing, and
-exit handling remain in `src/main.odin`; filesystem and toolchain policy remain
-in `src/emit_llvm_toolchain.odin`.
+and configuration, scratch, and query arenas, plus copied source overlays. CLI
+presentation, option parsing, and exit handling remain in `src/main.odin`;
+filesystem and toolchain policy remain in `src/emit_llvm_toolchain.odin`.
 
 | Operation | Contract |
 | --- | --- |
 | `init_session(&s, config)` | Initialize a zeroed session in place. Copy all configuration strings and arrays; the caller can release them immediately. Default to `DEFAULT_COMPILATION_CONFIG`, matching CLI defaults. Return false with diagnostics for invalid configuration; reject reinitializing a live session. |
-| `check_session(&s, input)` | Replace the previous compilation, reload source and project files, and run whole-program checking, entry/export validation, and semantic finalization. Return false for source/configuration errors, retaining diagnostics. The caller can release its input path on return. |
+| `check_session(&s, input)` | Replace the previous compilation, reload source and project files (using source overlays), and run whole-program checking, entry/export validation, and semantic finalization. Return false for source/configuration errors, retaining diagnostics. The caller can release its input path on return. |
 | `check_session(&s, input, documentation = true)` | Preserve `-doc` behavior: check declarations and exports without requiring executable entry or finalizing emission dependencies. This result cannot be emitted. |
 | `emit_session_ir(&s)` | Return LLVM module text and a success flag from a successfully finalized check. Create no files and invoke no external tools. Repeated emission consumes the same checked state. |
 | `emit_session(&s, options)` | Write IR, an object, or an executable using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Require an explicit output path; take optimization and build mode from the checked configuration. Return the existing toolchain exit status. |
-| `destroy_session(&s)` | Release all compilation, configuration, and scratch storage. Safe on a zeroed session, after any failure, and repeatedly. |
+| `destroy_session(&s)` | Release all compilation, configuration, scratch, overlay, and query storage. Safe on a zeroed session, after any failure, and repeatedly. |
 
 Do not copy a live session or its `Compiler`: their allocators contain pointers
 into those structs. Use one operation at a time on a session. Its allocator is
@@ -118,18 +118,78 @@ fixed until destruction; create a new session to change it.
 
 The current compiler state is available through `s.compiler`. Sources, syntax,
 semantic IDs, diagnostics, and emitted strings are borrowed and remain valid
-until the next check or destruction, including when the next check fails.
+until an overlay edit, the next check, or destruction, including when the next
+check fails.
 Copy data a caller needs longer. Each check destroys the previous compiler and
 scratch arena before loading the new program, so sources, manifest collections,
 generic instances, held diagnostics, and emission state cannot survive an edit.
-This is batch reuse; overlays, snapshot handles, queries, and incremental caches
-remain later milestones in [Compiler services](future-plans.md#compiler-services).
+This remains batch reuse: every check rebuilds the whole program. Invalidation
+rules and incremental caches remain later milestones in
+[Compiler services](future-plans.md#compiler-services).
 
 `session_test.odin` compares reused sessions with fresh sessions after edits to
 generic procedures, dependency manifests, and invalid source. It also covers
 configuration/input ownership, repeated emission, documentation and object
 entry policy, recovery after an emission error, and repeated creation/destruction
 with memory tracking and virtual-arena release checks.
+
+## Snapshots and queries
+
+`src/overlays.odin` supplies unsaved `.loke` sources to the ordinary loader;
+`src/queries.odin` exposes read-only views of recorded checking results.
+`src/query_index.odin` walks checked syntax and committed generic/static-loop
+clones. Queries never resolve names, instantiate generics, check bodies, or
+enroll semantic/backend artifacts. The index and formatted type names are
+created once, lazily, in a separate query arena, so CLI compilations do not
+build an index they will not use.
+
+| Operation | Contract |
+| --- | --- |
+| `set_session_overlay(&s, path, text)` | Copy a `.loke` path and its text, replacing any overlay for that path. Normalize absolute paths, separators, and case as package loading does on Windows. Empty text still replaces disk contents. Accept new unsaved files and directories, including imported packages and manifest-selected dependencies; package directories include only their direct `.loke` children. Do not write to disk. Return false for an uninitialized session or an invalid path/extension. |
+| `remove_session_overlay(&s, path)` | Remove an overlay and restore disk loading. Return false for an absent overlay without invalidating the current result. Removing a new unsaved file removes it from package discovery. |
+| `session_snapshot(&s)` | Return the current `Compilation_Snapshot` and a success flag, including after failed initialization/checking. Capture diagnostics and build query views on first use. Return false on a zeroed/destroyed session or after an overlay edit until a check runs. |
+| `query_file(&s, snapshot, path)` / `query_source(&s, snapshot, file)` | Find a loaded file by normalized path; return its path, text, and byte offsets of line starts. Includes loaded project manifests. Reject missing files and invalid file IDs. |
+| `query_symbols(&s, snapshot, file)` / `query_symbol(&s, handle)` | List source-backed bindings once per written definition, including locals, parameters, fields, and enum members; inspect a binding's name, kind, type, visibility, generic status, and definition. |
+| `query_at(&s, snapshot, file, offset)` | Return the narrowest written node's available symbol/type at a half-open byte offset. An identifier may denote a type rather than a value. Calls expose the recorded selected overload or generic instance. A symbol or type can be absent independently. |
+| `query_type(&s, handle)` | Inspect a type's name, kind, scalar/aggregate properties, element/key/result types, fields, members, and parameter types/modes. IDs of zero mean unavailable. |
+| `query_definition(&s, handle)` | Return the written definition's snapshot-scoped location, including across packages. Return false for builtins/synthetic bindings without a source definition. |
+| `query_references(&s, handle, include_definition = false)` | Return recorded named uses of the exact binding, including field keys and selected overload calls. Group generic/static-loop clones by written binding and deduplicate locations. Exclude implicit/generated operations. Optionally include the definition. The caller owns this array and must `delete` it with the allocator used for the query. |
+| `query_signatures(&s, handle)` | Return available procedure signatures, or the available members of a procedure group, with written text, parameter names/types/modes/default flags, result type, and result/termination properties. A generic template returns written syntax with `complete = false`; a concrete instance has typed parameters/results. |
+| `query_diagnostics(&s, snapshot)` | Return captured severity, code, message, label, locations, and notes without rendering or terminating. Capture before emission to obtain checking diagnostics; diagnostics appended by later emission do not change that snapshot's view. |
+
+All operations return a success flag. Every snapshot and symbol/type/location
+handle carries a process-unique snapshot ID. Overlay replacement/removal, every
+new compilation check (even the same bytes or a failed check), and destruction
+invalidate the previous snapshot. All query entry points reject stale or foreign snapshot
+IDs and out-of-range IDs rather than using reused semantic IDs. A destroyed and
+reinitialized session cannot resurrect old handles. Overlay edits also disable
+emission until a successful check. Overlays persist across checks; manifests,
+imports, configuration, and the whole semantic state are reloaded/rechecked.
+
+Except for the owned reference array, returned strings and slices are borrowed,
+must not be modified or deleted, and expire on invalidation. Copy needed data
+before editing/checking. Keeping a token does not retain an older compilation;
+invalidation releases its query arena immediately and the next check releases
+the preceding compiler state. Use one operation at a time on a session.
+
+On incomplete or erroneous programs, loaded sources and diagnostics remain
+available. Collected bindings, recorded definitions/references, and checked
+types remain queryable where checking reached them. Uncollected declarations,
+unresolved names, and inactive `when` branches supply no semantic result;
+signature queries omit erroneous signatures. Position queries do not fall back
+to an enclosing expression when the narrowest node is unresolved. If checked specializations at a written
+position disagree on a binding or type, that part is unavailable; shared binding
+identity and references still work when only the types differ. Reference results
+on a failed check are partial, and generic templates expose only written syntax
+until instantiated. No query repairs missing information by running the checker.
+
+The snapshot tests in `src/session_test.odin` compare overlays with a fresh disk
+compilation's diagnostics and IR; cover new unsaved packages, path aliases,
+removal/recovery, caller-owned storage, broken syntax/UTF-8/signatures, cross-package
+definitions, shadowed bindings, fields, overloads, generic clones, and exclusion
+of inferred bindings at argument positions; and verify stale-handle rejection,
+diagnostic capture, unchanged semantic state under
+repeated queries, and reclamation with memory tracking.
 
 ## Core representations and ownership
 
