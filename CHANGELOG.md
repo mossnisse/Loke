@@ -10,6 +10,13 @@ checklist.
 
 ### Breaking changes
 
+- An integer conversion `T(v)` keeps the value or panics: a narrowing that
+  would lose bits, or a negative value converted to an unsigned type, used to
+  keep the low bits silently. A constant that does not fit is `L0712`, typed or
+  not, and so is one in compile-time evaluation. `Simd(U, N)(v)` checks each
+  lane. Write `math.wrap(T, v)` where the low bits are wanted, `math.to(T, v)`
+  to test whether a value fits, and `math.wrapping_add(a, b)` for the old
+  signed-wrap idiom `i8(u8(a) + b)`.
 - A slice expression `a[lo:hi]` is always a read-only `[]T`. A mutable slice
   is written `&mut a[lo:hi]`, as a mutable pointer is written `&mut x`; the
   destination no longer chooses. Passing `buffer[:]` to a `[]mut T` parameter,
@@ -317,6 +324,10 @@ checklist.
 
 ### Added
 
+- `core:math` adds `wrap(T, value)`, a compiler-known conversion that keeps an
+  integer's low bits, and `wrapping_add`, `wrapping_sub`, `wrapping_mul`,
+  `checked_add`, `checked_sub`, and `checked_mul` for signed and unsigned
+  integers.
 - `try_append`, `try_insert`, and `try_find_or_insert` accept a move-only
   element from a temporary or `move(...)`, as `append` does, instead of
   rejecting it with `L0491`; a failed insertion leaves the container unchanged

@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Type conversion": an integer converts only to a type that holds
+// its value. A conversion that fits is unchanged; one that does not panics,
+// however it lost the value: narrowing, or crossing between signed and unsigned.
+main :: proc() {
+	fits := 255;
+	negative := -1;
+	fmt.println(u8(fits), i64(u32(fits)), u64(i8(-1) + 1));
+	big := u32(4294967295);
+	fmt.println(i64(big));
+	fmt.println(u32(negative));
+}

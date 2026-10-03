@@ -432,6 +432,9 @@ Builtin_Kind :: enum {
 	// design.md "`unsafe.transmute`": its first argument is a *type*, and
 	// reinterpretation is not a universally valid conversion.
 	Unsafe_Transmute,
+	// design.md "Type conversion": `math.wrap(T, value)` keeps the low bits of an
+	// integer, the one integer conversion that may change the value.
+	Math_Wrap,
 	// design.md "SIMD vectors": the `core:simd` operations a constant lane index
 	// makes unwritable as a loop. `Simd_Reduce` takes the fold as a constant
 	// parameter, exactly as an atomic takes its ordering.

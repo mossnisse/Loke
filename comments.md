@@ -769,19 +769,43 @@ already did where a value does not fit — `u32(-0.5)` panics, while
 So signed `+`, `-`, `*`, `/`, and unary `-` panic when the mathematical result
 does not fit, at every optimization level, and are a diagnostic (L0397) where
 they are evaluated at compile time. Unsigned arithmetic stays modular, since
-hashing and bit manipulation are written in it, and signed wrap is spelled by
-computing in the unsigned type and converting back, which keeps the low bits.
+hashing and bit manipulation are written in it, and signed wrap is asked for
+by name, with `math.wrapping_add` and its siblings.
 The exceptions each keep an existing definition: `<<` is a bit operation whose
 limit is already defined for every count; `%` cannot overflow; a SIMD lane has
 no per-lane overflow flag to test; an atomic `add` is a hardware
-read-modify-write whose other readers have already seen the result; and integer
-conversion is the explicit wrap.
+read-modify-write whose other readers have already seen the result.
 
 The cost is a checked operation, `llvm.sadd.with.overflow` and its siblings, per
 signed arithmetic step, much of it removed where loop bounds already prove the
 range. It returns part of what wrapping cost: on the path that continues, the
 result is known to be in range, so the optimizer may widen induction variables
 the old rule forbade it to.
+
+### Integer conversions keep the value
+
+`T(v)` between integer types used to keep the low bits, so a runtime `int` of
+300 became a `u8` of 44, while the constant `u8(300)` was rejected and a float
+out of range panicked. Which policy applied depended on whether the operand was
+a literal, a typed constant, or a variable, and moving a value between those
+silently changed it. Converting is now one rule: the value is kept or the
+program stops, at compile time where it can.
+
+Wrapping is still needed, so it got a name, `math.wrap`, rather than staying
+the meaning of the shortest spelling. Measuring before the change, a compiler
+that panicked on every lossy integer conversion ran all 276 run programs and
+every example. Three stopped: `math.to`, whose body was the round trip it now
+writes with `wrap`, and two tests of the old signed-wrap idiom
+`i8(u8(b) + 1)`. The hashing, UTF-8, `strconv`, and formatting code they run
+through already did its bit work in unsigned types. Masking first, as in
+`u8(x & 0xFF)`, needs no `wrap`, and the optimizer removes the check.
+
+With conversion no longer wrapping, `i8(u8(b) + 1)` has no meaning left, so the
+policies for signed arithmetic are named too: `wrapping_add`, `wrapping_sub`,
+and `wrapping_mul` keep the low bits; `checked_add`, `checked_sub`, and
+`checked_mul` answer `Option(T)`, which is what a parser accumulating digits
+wants. They are ordinary library procedures over `math.wrap`, computing in
+`u128`. A saturating family was left out until a caller needs one.
 
 ### `in` is a comparison, not an additive operator
 

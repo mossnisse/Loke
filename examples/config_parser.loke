@@ -1,5 +1,6 @@
 package main;
 import "core:fmt";
+import "core:math";
 
 // Failure and cleanup, which in Loke are the same subject.
 //
@@ -37,7 +38,10 @@ digits :: proc(text: string_view) -> Result(int, Error) {
 	// input rather than only for ASCII.
 	foreach (ch in text) {
 		if (ch < '0' || ch > '9') { return .err(.Bad_Number); }
-		value = value * 10 + int(ch - '0');
+		// `value * 10` would panic on a long digit string; the checked forms
+		// make that a parse error instead.
+		value = math.checked_mul(value, 10).ok_or(Error.Bad_Number) or_return;
+		value = math.checked_add(value, int(ch - '0')).ok_or(Error.Bad_Number) or_return;
 	}
 	return .ok(value);
 }

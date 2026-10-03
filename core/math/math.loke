@@ -162,24 +162,74 @@ clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces
 
 // `value` as a `To`, or `.none` when `To` cannot represent it exactly.
 //
-// An ordinary integer conversion keeps the low bits (design.md "Type
-// conversion"), so a `u16` of 256 becomes a `u8` of 0 and an `i32` of -1
-// becomes a large `u32`. That is the right default for bit manipulation and the
-// wrong one for validating input, which is what this is for. It is the scalar
-// twin of `Enum.from_int`: it neither traps nor silently narrows.
+// `To(value)` panics when the value does not fit (design.md "Type
+// conversion"), and the compiler-contributed `wrap(To, value)` keeps its low
+// bits instead. This asks, which is what validating input wants. It is the
+// scalar twin of `Enum.from_int`: it neither traps nor silently narrows.
 //
 // The check is a round trip plus a sign comparison. The round trip alone is not
 // enough, because between two types of the same width it always succeeds —
-// `i32(-1)` converts to `u32` and back unchanged — and only the sign test
-// catches that. `Integral` is here to exclude floats, whose conversions round
-// rather than wrap; nothing in the body needs its bit operations.
+// `i32(-1)` wraps to `u32` and back unchanged — and only the sign test catches
+// that. `Integral` is here to exclude floats, whose conversions round rather
+// than wrap; nothing in the body needs its bit operations.
 to :: proc($To: type, value: $From) -> Option(To)
 	where interfaces.Integral(From), interfaces.Ordered(From),
 	interfaces.Integral(To), interfaces.Ordered(To) {
-	converted := To(value);
-	if (From(converted) != value) { return .none; }
+	converted := wrap(To, value);
+	if (wrap(From, converted) != value) { return .none; }
 	if ((value < From(0)) != (converted < To(0))) { return .none; }
 	return .some(converted);
+}
+
+// --------------------------------------------- integer arithmetic policies --
+//
+// Signed `+`, `-`, and `*` panic on overflow (design.md "Integer overflow").
+// The `wrapping_` forms keep the low bits instead, as unsigned arithmetic
+// always does, and the `checked_` forms answer `.none` where the operator would
+// panic. Unsigned operands are accepted too, so generic code needs no split.
+//
+// The low bits of a sum, difference, or product depend only on the low bits of
+// its operands, so the wrapping forms compute in `u128`, which holds every
+// integer's bits, and wrap back. The optimizer narrows the arithmetic again.
+
+wrapping_add :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+	return wrap(T, wrap(u128, a) + wrap(u128, b));
+}
+
+wrapping_sub :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+	return wrap(T, wrap(u128, a) - wrap(u128, b));
+}
+
+wrapping_mul :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+	return wrap(T, wrap(u128, a) * wrap(u128, b));
+}
+
+// An overflowing sum wraps past the end that `b`'s sign points to, so it lands
+// on the wrong side of `a`.
+checked_add :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
+	sum := wrapping_add(a, b);
+	if ((b < T(0)) != (sum < a)) { return .none; }
+	return .some(sum);
+}
+
+checked_sub :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
+	difference := wrapping_sub(a, b);
+	if ((b < T(0)) != (a < difference)) { return .none; }
+	return .some(difference);
+}
+
+// A product overflowed exactly when dividing it by `a` does not give back `b`.
+// For a signed `a` of -1 that division could itself overflow, at the minimum,
+// the one value whose negation does not fit — and there the product is `b`.
+checked_mul :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
+	product := wrapping_mul(a, b);
+	if (a == T(0)) { return .some(product); }
+	if (a < T(0) && a == T(0) - T(1)) {
+		if (b != T(0) && product == b) { return .none; }
+		return .some(product);
+	}
+	if (product / a != b) { return .none; }
+	return .some(product);
 }
 
 // ------------------------------------------------ platform math bindings --

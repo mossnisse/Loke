@@ -45,6 +45,8 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_capacity_builtin(k, v, sym.builtin)
 	case .Unsafe_Transmute:
 		check_transmute_builtin(k, v, ident)
+	case .Math_Wrap:
+		check_wrap_builtin(k, v)
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
 	case .Strings_Allocate:
@@ -713,6 +715,68 @@ check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) 
 	v.bound = bound
 	v.type = target
 	fold_transmute(k, v, source, target)
+}
+
+// design.md "Type conversion": `math.wrap(T, value)` converts between integer
+// types, or between integer vectors of one lane count, keeping the low bits.
+@(private = "file")
+check_wrap_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
+	v.value_category = .Value
+	v.type = INVALID_TYPE
+	if len(v.args) != 2 {
+		errorf(
+			k.c, v.span, "L0712",
+			"`math.wrap` takes a destination type and a value, found %d argument%s",
+			len(v.args), len(v.args) == 1 ? "" : "s",
+		)
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
+		return
+	}
+	target := resolve_type_syntax(k, v.args[0].value)
+	if target == INVALID_TYPE {
+		errorf(k.c, expr_span(v.args[0].value), "L0712", "`math.wrap` names the destination type first")
+		return
+	}
+	source := check_single_expr(k, v.args[1].value)
+	if source == INVALID_TYPE || !materialize(k, v.args[1].value, default_type(k.c, source)) {
+		return
+	}
+	source = expr_base(v.args[1].value).type
+	if !wrap_operands_ok(k.c, source, target) {
+		errorf(
+			k.c, v.span, "L0712",
+			"`math.wrap` converts an integer to an integer type; found `%s` to `%s`",
+			type_name(k.c, source), type_name(k.c, target),
+		)
+		return
+	}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = v.args[1].value
+	v.bound = bound
+	v.type = target
+	if base := expr_base(v.args[1].value); base.is_const && (base.const_value.kind == .Integer || base.const_value.kind == .Rune) {
+		v.is_const = true
+		v.const_value = base.const_value
+		v.const_value.kind = type_is_rune(k.c, target) ? .Rune : .Integer
+		v.const_value.integer = wrap_to_type(k.c, base.const_value.integer, target)
+		v.bound = nil
+	}
+}
+
+// An enum source wraps its backing value; a destination is a plain integer.
+wrap_operands_ok :: proc(c: ^Compiler, source, target: Type_Id) -> bool {
+	from, to := type_underlying(c, source), type_underlying(c, target)
+	if type_is_simd(c, from) && type_is_simd(c, to) {
+		left, right := type_of(c, from), type_of(c, to)
+		if left.count != right.count {
+			return false
+		}
+		from, to = type_underlying(c, left.element), type_underlying(c, right.element)
+	}
+	integral := type_is_integer(c, from) || type_is_rune(c, from) || underlying_kind(c, from) == .Enum
+	return integral && (type_is_integer(c, to) || type_is_rune(c, to))
 }
 
 // A managed side could duplicate or forge an owner, and a borrow carrier a loan

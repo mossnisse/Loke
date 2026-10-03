@@ -1,0 +1,7 @@
+44 4294967295 -56 44
+.none .some(44) 255
+-128 .none .some(126)
+127 .none .none
+.none .none .some(-128)
+-2 .none
+.some(18446744073709551615) .some(-5)

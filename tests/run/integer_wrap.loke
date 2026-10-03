@@ -1,0 +1,33 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+
+// design.md "Type conversion": `math.wrap` keeps the low bits, of a typed
+// constant at compile time as of a run-time value; `T(v)` would reject these.
+BASE :: i32(300);
+NEGATIVE :: i32(-1);
+WIDE :: u8(200);
+LETTER :: 'Ā'; // U+0100
+
+static_assert(math.wrap(u8, BASE) == 44);
+static_assert(math.wrap(u32, NEGATIVE) == 4294967295);
+static_assert(math.wrap(i8, WIDE) == -56);
+
+folded :: proc() -> u8 { return math.wrap(u8, BASE) + math.wrap(u8, rune(LETTER)); }
+FOLDED :: folded();
+
+main :: proc() {
+	base := BASE;
+	value := math.wrap(u8, base);
+	fmt.println(value, math.wrap(u32, NEGATIVE), math.wrap(i8, WIDE), FOLDED);
+	fmt.println(math.to(u8, base), math.to(u8, value), u8(i32(255)));
+
+	// design.md "Integer overflow": the named policies for signed arithmetic.
+	big := i8(127);
+	fmt.println(math.wrapping_add(big, 1), math.checked_add(big, 1), math.checked_add(big, -1));
+	fmt.println(math.wrapping_sub(i8(-128), 1), math.checked_sub(i8(-128), 1), math.checked_sub(u8(0), 1));
+	fmt.println(math.checked_mul(i8(-1), -128), math.checked_mul(i8(-128), -1), math.checked_mul(i8(-16), 8));
+	fmt.println(math.wrapping_mul(i64(9223372036854775807), 2), math.checked_mul(u64(4294967296), 4294967296));
+	fmt.println(math.checked_add(u64(18446744073709551615), 0), math.checked_mul(i128(-1), 5));
+}

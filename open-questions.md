@@ -512,7 +512,7 @@ fewer exceptions, rather than shortening keywords.
 | --- | --- | --- | --- |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
 | Next | Flow-sensitive nil diagnostics | Catch definite nil uses | Analysis |
-| Next | Uniform arithmetic policies | Scalar and vector code preserve the same meaning | Numeric APIs and lowering |
+| Next | Checked signed SIMD lanes | Scalar and vector code preserve the same meaning | SIMD lowering |
 | Next | Compiler-selected ordinary union layout | Compact optionals and nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
 | Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
@@ -644,33 +644,28 @@ A record owning a buffer and views into itself needs address stability and an
 internal-borrow contract; non-null pointers do not solve it. Prefer offsets
 and handles before introducing general pinning or self-referential types.
 
-### One explicit arithmetic policy across scalar and vector code
+### Signed SIMD lanes should follow the scalar rule
 
-[Integer overflow](design.md#integer-overflow) traps for signed scalar addition,
-subtraction, multiplication, negation, and division, but signed SIMD arithmetic
-wraps. Signed shifts and integer conversions also truncate. Replacing a scalar
-kernel with SIMD can therefore change correctness at its boundary values.
+[Integer overflow](design.md#integer-overflow) panics for signed scalar `+`,
+`-`, `*`, `/`, and unary `-`, but signed [SIMD lanes](design.md#lane-wise-operators)
+wrap. Replacing a scalar kernel with SIMD can therefore change its results at
+the boundary values. Integer conversions, scalar and vector, are already
+checked, with `math.wrap` for the low bits, and the named `math.wrapping_*` and
+`math.checked_*` operations exist for scalars.
 
-**Proposal:** preserve checked signed operators as the default for scalars and
-vectors, and provide named `wrapping_add`, `checked_add`, and, where needed,
-`saturating_add` operations, with corresponding multiplication/conversion APIs.
-The names here describe proposed APIs. Let vector implementations use native
-wrapping instructions when wrapping was requested; checked vector operations
-must detect an invalid lane and panic according to a specified rule.
+**Proposal:** check signed lanes as scalars are checked: a lane that overflows
+panics the whole operation, as a zero divisor lane already does. LLVM's
+`*.with.overflow` intrinsics take vectors, so the check is one OR across the
+lanes and a branch per operation. Extend `math.wrapping_add`, `wrapping_sub`,
+and `wrapping_mul` to vectors, lowered to the plain instruction, so a kernel
+that wants wrapping says so in one call. Unsigned lanes are unaffected. Look at
+the generated code for a representative kernel before deciding, since SIMD code
+exists to be fast.
 
-Likewise make a narrowing integer conversion checked by default, retain
-`math.to(T, value)` for recoverable exact conversion, and provide an explicit
-truncating conversion for bit manipulation. Currently a runtime `int` of 300
-converts to `u8` as 44, whereas the unfixed literal `u8(300)` is rejected. Both
-behaviors were verified. Moving a value between a literal, a typed constant,
-and a runtime variable should not silently select input-validation policy.
-
-Checked arithmetic with an error result is particularly useful for parsers:
-the illustrative `digits` in [config_parser](examples/config_parser.loke)
-returns `Result` but accumulates with trapping signed arithmetic, so a long
-digit sequence can terminate the process. The actual `strconv` integer parser
-already checks for overflow; this is an ergonomic gap in expressing the same
-operation, not evidence that all numeric parsing is unsafe.
+Shifts and atomic `add`/`sub` stay modular and are not part of this question.
+A shift is a bit operation whose limit is defined for every count, and an
+atomic read-modify-write has already published its result before anything
+could panic.
 
 ### Performance opportunities and actual semantic limits
 

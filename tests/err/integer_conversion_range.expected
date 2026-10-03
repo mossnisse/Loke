@@ -1,0 +1,18 @@
+L0712
+@10:11
+the value 300 does not fit `u8`; `math.wrap` keeps its low bits
+L0712
+@13:6
+the value 300 does not fit `u8`; `math.wrap(u8, value)` keeps its low bits
+L0712
+@14:6
+the value 300 does not fit `u8`
+L0712
+@15:6
+the value -1 does not fit `u32`
+L0712
+@17:6
+`math.wrap` converts an integer to an integer type; found `f64` to `u8`
+L0712
+@18:6
+`math.wrap` takes a destination type and a value, found 1 argument

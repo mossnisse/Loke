@@ -1,0 +1,19 @@
+package main;
+
+import "core:math";
+
+// design.md "Type conversion": an integer constant that its destination cannot
+// hold is rejected, as a run-time one would panic; `math.wrap` says the low
+// bits are wanted.
+WIDE :: i32(300);
+narrow :: proc(value: i32) -> u8 { return u8(value); }
+FOLDED :: narrow(WIDE);
+
+main :: proc() {
+	_ = u8(300);
+	_ = u8(WIDE);
+	_ = u32(i8(-1));
+	_ = math.wrap(u8, WIDE);
+	_ = math.wrap(u8, 1.5);
+	_ = math.wrap(u8);
+}

@@ -3232,24 +3232,24 @@ report_invalid_utf8 :: proc(k: ^Checker, span: Span, target: Type_Id) {
 	)
 }
 
-// Converts a constant to a target type. An `explicit` `T(v)` truncates a float
-// to an integer; an implicit conversion needs it exact.
-// design.md "Type conversion": a typed integer converts to another integer type
-// by keeping its low bits, at compile time as at run time. An unfixed constant
-// is left to `convert_const`, which requires it to be representable.
-wrap_typed_integer :: proc(c: ^Compiler, value: Const_Value, source, target: Type_Id, allocator: mem.Allocator = {}) -> Const_Value {
-	integral :: proc(c: ^Compiler, type: Type_Id) -> bool {
-		return type_is_integer(c, type) || type_is_rune(c, type)
+// design.md "Type conversion": an integer constant converts only to a type that
+// holds it, where a runtime one would panic. False when `value` is not an
+// integer bound for an integer type, which is some other conversion's failure.
+report_constant_out_of_range :: proc(c: ^Compiler, span: Span, value: Const_Value, target: Type_Id, allocator: mem.Allocator = {}) -> bool {
+	if (value.kind != .Integer && value.kind != .Rune) ||
+	   !(type_is_integer(c, target) || type_is_rune(c, target)) || type_is_untyped(c, target) {
+		return false
 	}
-	if (value.kind != .Integer && value.kind != .Rune) || type_is_untyped(c, source) ||
-	   !integral(c, source) || !integral(c, target) {
-		return value
-	}
-	wrapped := value
-	wrapped.integer = wrap_to_type(c, value.integer, target, allocator)
-	return wrapped
+	errorf(
+		c, span, "L0712",
+		"the value %s does not fit `%s`; `math.wrap(%s, value)` keeps its low bits, and `math.to` tests whether it fits",
+		bi_text(value_allocator(c, allocator), value.integer), type_name(c, target), type_name(c, target),
+	)
+	return true
 }
 
+// Converts a constant to a target type. An `explicit` `T(v)` truncates a float
+// to an integer; an implicit conversion needs it exact.
 convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool, allocator: mem.Allocator = {}) -> (Const_Value, bool) {
 	storage := value_allocator(c, allocator)
 	info := underlying_info(c, target)

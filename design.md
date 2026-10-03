@@ -354,7 +354,17 @@ A conversion that validates its input and can fail is instead a named constructo
 
 Assigning between different types requires an explicit conversion unless an implicit conversion rule applies.
 
-An integer converts to another integer type by keeping the low bits of its two's-complement representation, the same wrap unsigned [arithmetic](#integer-overflow) defines, so a narrowing or a negative-to-unsigned conversion is defined rather than a fault. That is the conversion bit manipulation wants and the wrong one for validating input, so `math.to(T, value)` returns `Option(T)`: the value when `T` represents it exactly, and `.none` when the wrap would have changed it. It is the integer twin of [`Enum.from_int`](#integer-conversion).
+An integer, rune, or enum value converts to an integer or rune type only when that type holds it: a narrowing that would lose bits, or a negative value converted to an unsigned type, [panics](#panics-and-unwinding), as an out-of-range floating-point conversion does. A constant one is a compilation diagnostic instead, and so is one in [compile-time evaluation](#compile-time-procedure-evaluation). A `Simd(U, N)(v)` applies the rule per lane, and one invalid lane faults the whole conversion.
+
+`math.wrap(T, value)` is the conversion that keeps the low bits of the two's-complement representation instead, the same wrap unsigned [arithmetic](#integer-overflow) defines; it is what bit manipulation, hashing, and reinterpreting a sign want. Its destination is an integer or rune type, its value an integer, rune, or enum, and it converts vectors of one lane count lane by lane. It folds when its value is constant. To validate input instead, `math.to(T, value)` returns `Option(T)`: the value when `T` represents it exactly, and `.none` otherwise. It is the integer twin of [`Enum.from_int`](#integer-conversion).
+
+```odin
+count := 300;
+byte := u8(count);              // panics: 300 does not fit `u8`
+low := math.wrap(u8, count);    // 44
+checked := math.to(u8, count);  // .none
+masked := u8(count & 0xFF);     // 44: the masked value fits, so nothing is lost
+```
 
 A floating-point value converts to an integer type only when it is in range: at least the destination's minimum, and less than one past its maximum. The value is then truncated toward zero. A NaN, an infinity, or a value outside that interval [panics](#panics-and-unwinding), and a constant one is a compilation diagnostic instead. The interval's endpoints are powers of two, which every floating-point format represents exactly, so a fractional value just past one of them panics even though truncating first would have fit: `u32(-0.5)` is out of range rather than zero. A `Simd(U, N)(v)` applies this rule per lane, and one invalid lane faults the whole conversion, because a panic is not lane-wise.
 
@@ -3640,12 +3650,15 @@ Every signed integer uses two’s-complement representation. For a signed type, 
 
 ```odin
 count: i32 = 2147483647;
-wrapped := i32(u32(count) + 1);  // -2147483648: wrap is spelled in the unsigned type
-count += 1;                      // panics: signed integer overflow
+wrapped := math.wrapping_add(count, 1);  // -2147483648: wrap is asked for by name
+none := math.checked_add(count, 1);      // .none
+count += 1;                              // panics: signed integer overflow
 LIMIT :: i8(127) + 1;            // ERROR: the result 128 does not fit `i8`
 ```
 
-These operations stay modular for signed operands: `<<`, which keeps the low bits exactly as for an unsigned type; `%`, which cannot overflow (`MIN % -1` is 0); [SIMD lanes](#lane-wise-operators); atomic `add` and `sub`; and integer [conversion](#type-conversion), which keeps the low bits. On the path that continues past a checked operation it did not overflow, so the optimizer may assume that result is in range.
+These operations stay modular for signed operands: `<<`, which keeps the low bits exactly as for an unsigned type; `%`, which cannot overflow (`MIN % -1` is 0); [SIMD lanes](#lane-wise-operators); atomic `add` and `sub`; and [`math.wrap`](#type-conversion). On the path that continues past a checked operation it did not overflow, so the optimizer may assume that result is in range.
+
+`core:math` names the two other policies for `+`, `-`, and `*`. `math.wrapping_add`, `wrapping_sub`, and `wrapping_mul` keep the low bits of the result; `math.checked_add`, `checked_sub`, and `checked_mul` return `Option(T)`, `.none` where the operator would panic. Each takes two operands of one integer type, signed or unsigned, and the second may be an unfixed constant that takes the first's type.
 
 ### Floating-point operators
 

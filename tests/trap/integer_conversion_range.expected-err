@@ -1,0 +1,2 @@
+loke: panic: an integer outside the destination type's range; `math.wrap` keeps the low bits
+loke: panicked

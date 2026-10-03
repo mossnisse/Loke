@@ -1222,8 +1222,11 @@ did not ask for:
 ## `core:math`
 
 `design.md` "Library numeric types" makes `Complex(T)` and `Quaternion(T)`
-ordinary records, and `design.md` "Type conversion" specifies the checked
-integer conversion `math.to(T, value)`.
+ordinary records. `design.md` "Type conversion" specifies `math.wrap(T, value)`,
+which keeps an integer's low bits, and `math.to(T, value)`, which returns
+`Option(T)`; `design.md` "Integer overflow" specifies `wrapping_add`,
+`wrapping_sub`, `wrapping_mul`, `checked_add`, `checked_sub`, and
+`checked_mul`.
 
 For any `interfaces.Numeric(T)`, `Complex(T)` has the fields `real` and
 `imaginary`, and `Quaternion(T)` has `real`, `i`, `j`, and `k`. Both have

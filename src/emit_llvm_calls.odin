@@ -98,6 +98,9 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return emit_unsafe_builtin(e, v, symbol.builtin, as_type)[0]
 		case .Unsafe_Transmute:
 			return emit_transmute(e, v, as_type)
+		case .Math_Wrap:
+			source := expr_base(v.bound[0]).type
+			return emit_value_conversion(e, emit_expr(e, v.bound[0]), source, as_type, checked = false)
 		case .Unsafe_Take:
 			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:
@@ -1244,9 +1247,18 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 	if v.operation.(Call_Conversion).clones {
 		value = emit_clone_value(e, source, value)
 	}
+	return emit_value_conversion(e, value, source, target, checked = true)
+}
 
+// A built-in conversion of an evaluated value. `checked` is `T(v)`'s promise
+// that an integer keeps its value; `math.wrap` keeps the low bits instead.
+@(private = "file")
+emit_value_conversion :: proc(e: ^Emitter, value: string, source, target: Type_Id, checked: bool) -> string {
 	from := type_underlying(e.c, source)
 	to := type_underlying(e.c, target)
+	if checked {
+		guard_integer_conversion(e, value, from, to)
+	}
 	if llvm_type(e, from) == llvm_type(e, to) {
 		return value
 	}
@@ -1282,6 +1294,66 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, operation, llvm_type(e, from), value, llvm_type(e, to))
 	return out
+}
+
+// design.md "Type conversion": an integer converts only to a type that holds its
+// value, checked in the source type against the destination's bounds. A vector
+// is checked lane-wise and, as a panic is not lane-wise, fails as a whole.
+@(private = "file")
+guard_integer_conversion :: proc(e: ^Emitter, value: string, from, to: Type_Id) {
+	from_lane, to_lane := from, to
+	lanes := type_is_simd(e.c, from) && type_is_simd(e.c, to)
+	info := type_of(e.c, from)
+	if lanes {
+		from_lane = type_underlying(e.c, info.element)
+		to_lane = type_underlying(e.c, type_of(e.c, to).element)
+	}
+	integral :: proc(c: ^Compiler, type: Type_Id) -> bool {
+		return type_is_integer(c, type) || type_is_rune(c, type) || underlying_kind(c, type) == .Enum
+	}
+	if !integral(e.c, from_lane) || !integral(e.c, to_lane) {
+		return
+	}
+	from_bits, to_bits := type_bits(e.c, from_lane), type_bits(e.c, to_lane)
+	from_signed := type_signed(e.c, from_lane) || type_is_rune(e.c, from_lane)
+	to_signed := type_signed(e.c, to_lane) || type_is_rune(e.c, to_lane)
+	from_max := bi_sub(e.c, bi_pow2(e.c, from_bits - (from_signed ? 1 : 0)), bi_from_i64(e.c, 1))
+	to_max := bi_sub(e.c, bi_pow2(e.c, to_bits - (to_signed ? 1 : 0)), bi_from_i64(e.c, 1))
+	to_min := to_signed ? bi_neg(e.c, bi_pow2(e.c, to_bits - 1)) : bi_zero(e.c)
+	// Only a bound the source can pass needs a test.
+	test_high := bi_cmp(e.c, to_max, from_max) < 0
+	test_low := from_signed && (!to_signed || to_bits < from_bits)
+	if !test_high && !test_low {
+		return
+	}
+	llvm := llvm_type(e, from)
+	predicate := lanes ? fmt.aprintf("<%d x i1>", info.count) : "i1"
+	bound :: proc(e: ^Emitter, info: ^Type_Info, lanes: bool, value: Big_Int) -> string {
+		text := bi_text(e.c, value)
+		return lanes ? simd_repeated(e, info, text) : text
+	}
+	bad := ""
+	if test_high {
+		bad = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = icmp %s %s %s, %s", bad, from_signed ? "sgt" : "ugt", llvm, value, bound(e, info, lanes, to_max),
+		)
+	}
+	if test_low {
+		under := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, %s", under, llvm, value, bound(e, info, lanes, to_min))
+		if bad == "" {
+			bad = under
+		} else {
+			joined := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = or %s %s, %s", joined, predicate, bad, under)
+			bad = joined
+		}
+	}
+	if lanes {
+		bad = simd_any_lane(e, info, bad)
+	}
+	panic_if(e, bad, "cast.int", "an integer outside the destination type's range; `math.wrap` keeps the low bits")
 }
 
 // Guard LLVM float-to-integer casts from poison on invalid inputs.

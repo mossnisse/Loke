@@ -25,6 +25,7 @@ STD_THREAD :: "core:thread"
 STD_SIMD :: "core:simd"
 STD_LOG :: "core:log"
 STD_META :: "base:meta"
+STD_MATH :: "core:math"
 
 // Called once per package, right after its scope exists and before any of its
 // own declarations are collected, so a source declaration colliding with a
@@ -140,6 +141,10 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "simd_cast", .Simd_Cast, public = false)
 		contribute_builtin(c, pkg, "simd_select", .Simd_Select, public = false)
 		contribute_builtin(c, pkg, "simd_reduce", .Simd_Reduce, public = false)
+	case STD_MATH:
+		// design.md "Type conversion": a checked `T(value)` cannot keep the low
+		// bits, so the conversion that does is compiler-known.
+		contribute_builtin(c, pkg, "wrap", .Math_Wrap)
 	case STD_LOG:
 		// design.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
 		// `Level` must be one type, or a caller could not compare them. Allocated

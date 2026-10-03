@@ -2297,7 +2297,15 @@ eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		}
 		operand = frozen
 	}
-	converted, fits := convert_const(c, wrap_typed_integer(c, operand, source.type, v.type, ev.alloc), v.type, true, ev.alloc)
+	converted, fits := convert_const(c, operand, v.type, true, ev.alloc)
+	if !fits && (operand.kind == .Integer || operand.kind == .Rune) && (type_is_integer(c, v.type) || type_is_rune(c, v.type)) {
+		// design.md "Type conversion": where a run would panic.
+		eval_fail(
+			ev, v.span, "L0712", "the value %s does not fit `%s`; `math.wrap` keeps its low bits",
+			bi_text(ev.alloc, operand.integer), type_name(c, v.type),
+		)
+		return Eval_Value{}, false
+	}
 	if !fits {
 		eval_fail(ev, v.span, "L0341", "this conversion has no compile-time value")
 		return Eval_Value{}, false
@@ -2395,6 +2403,20 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 			return Eval_Value{}, false
 		}
 		return void, true
+
+	case .Math_Wrap:
+		operand, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		if operand.kind != .Integer && operand.kind != .Rune {
+			eval_fail(ev, v.span, "L0341", "this conversion has no compile-time value")
+			return Eval_Value{}, false
+		}
+		wrapped := const_of(operand)
+		wrapped.kind = type_is_rune(ev.k.c, v.type) ? .Rune : .Integer
+		wrapped.integer = wrap_to_type(ev.k.c, wrapped.integer, v.type, ev.alloc)
+		return scalar(wrapped, v.type), true
 
 	case .Unsafe_Transmute:
 		// The checker's fold, for an operand that is a local.

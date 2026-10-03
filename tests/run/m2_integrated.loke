@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:math";
 
 Colour :: enum { Red, Green = 5, Blue }
 
@@ -37,9 +37,9 @@ main :: proc() {
 	fmt.println(Total);
 	fmt.println(global_counter);
 
-	// scalar widths and wrapping, which for a signed type is spelled unsigned
+	// scalar widths and wrapping, which for a signed type is named
 	small: i8 = 127;
-	small = i8(u8(small) + 1);
+	small = math.wrapping_add(small, 1);
 	fmt.println(int(small));
 
 	u: u8 = 1;
