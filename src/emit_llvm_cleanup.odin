@@ -1076,9 +1076,19 @@ record_prefix_part :: proc(
 }
 
 @(private = "file")
-emit_prefix_count :: proc(e: ^Emitter, record: Type_Id, base: string, counter: ^Symbol) -> string {
+emit_prefix_count :: proc(e: ^Emitter, record: Type_Id, base: string, counter: ^Symbol, array: Type_Id) -> string {
 	address := element_address(e, record, base, int(counter.index))
-	return widen_to_i64(e, load_place(e, counter.type, address), counter.type)
+	count := widen_to_i64(e, load_place(e, counter.type, address), counter.type)
+	emit_prefix_count_check(e, count, array)
+	return count
+}
+
+// A count outside `0 ..= N` panics before a traversal reads past the array. It
+// cannot show that the prefix holds values; that stays the author's promise.
+emit_prefix_count_check :: proc(e: ^Emitter, count: string, array: Type_Id) {
+	out_of_range := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", out_of_range, count, underlying_info(e.c, array).count)
+	panic_if(e, out_of_range, "prefix.count", "an `@(initialized)` count is outside its array")
 }
 
 // Drops the live prefix, last element first. While one element's drop runs,
@@ -1160,7 +1170,7 @@ guard_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int
 			return Deferred{slot = -1}
 		}
 		cursor := alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", emit_prefix_count(e, record, base, counter), cursor)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", emit_prefix_count(e, record, base, counter, field.type), cursor)
 		return register_array_cleanup(e, element, element_address(e, record, base, int(field.index)), "", cursor)
 	}
 	return begin_temporary_drop(e, clone_part(e.c, record, index), element_address(e, record, base, index))
@@ -1200,7 +1210,7 @@ emit_drop_prefix :: proc(e: ^Emitter, record: Type_Id, base: string, field, coun
 		return
 	}
 	items := element_address(e, record, base, int(field.index))
-	count := emit_prefix_count(e, record, base, counter)
+	count := emit_prefix_count(e, record, base, counter, field.type)
 	emit_drop_prefix_elements(e, element, items, count)
 }
 
@@ -1236,7 +1246,7 @@ emit_clone_prefix :: proc(
 	source := element_address(e, record, self, int(field.index))
 	destination := element_address(e, record, out, int(field.index))
 	built := element_address(e, record, out, int(counter.index))
-	total := emit_prefix_count(e, record, self, counter)
+	total := emit_prefix_count(e, record, self, counter, field.type)
 	store(e, counter.type, total, built)
 
 	cursor := alloca(e, "i64")

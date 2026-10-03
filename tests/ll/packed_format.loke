@@ -1,6 +1,6 @@
 package main;
 
-import "core:fmt";
+import "core:fmt"; import "core:unsafe";
 
 // design.md "@(packed)" and "String format printing": a type's formatter reads
 // its value at the type's alignment, so the record formatter hands a packed

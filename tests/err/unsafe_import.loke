@@ -3,8 +3,8 @@ package main;
 import "core:fmt";
 
 // design.md "The `unsafe` package": this file does not import `core:unsafe`,
-// so every operation that gives an unchecked address a usable shape is
-// rejected, and every one that only loses provenance is not.
+// so every unchecked operation is rejected, and every one that only loses
+// provenance is not.
 
 Handle :: move_only struct { id: int }
 
@@ -37,12 +37,15 @@ allowed :: proc(value: ^mut int) {
 	raw: rawptr = value;
 	c := ([^]int)(value);
 	read := (^int)(value);
-	plain: [4]u8 = ---;
-	loose: rawptr = ---;
-	fmt.println(raw == nil, c == nil, read^, plain[0] == 0, loose == nil);
+	fmt.println(raw == nil, c == nil, read^);
 }
 
+// Plain data may be left uninitialised, but only where `core:unsafe` is
+// imported; managed and borrowing types never may.
 uninitialised :: proc() {
+	plain: [4]u8 = ---;
+	loose: rawptr = ---;
+	fmt.println(plain[0] == 0, loose == nil);
 	d: [dynamic]int = ---;
 	p: ^int = ---;
 	h: Handle = ---;
@@ -56,4 +59,11 @@ main :: proc() {
 	accesses(nil);
 	allowed(&mut value);
 	uninitialised();
+}
+
+// Generated copy and drop trust an `@(initialized)` count, so declaring one is
+// unchecked too.
+Counted :: struct {
+	@(initialized = count) items: [1]string,
+	count: int,
 }

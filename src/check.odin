@@ -799,7 +799,8 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 }
 
 // design.md "Uninitialized capacity": `@(initialized = count)` names the sibling
-// `int` field counting a fixed array's live prefix. Only its shape is checked.
+// `int` field counting a fixed array's live prefix. Only its shape is checked,
+// so declaring one is unchecked.
 @(private = "file")
 resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	info := type_of(k.c, type)
@@ -811,6 +812,7 @@ resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Re
 		if !written {
 			continue
 		}
+		_ = require_unsafe_import(k, attribute.span, "trusting an `@(initialized)` count")
 		for binding in field.symbols {
 			symbol := symbol_of(k.c, binding)
 			if symbol == nil {
@@ -2261,6 +2263,8 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 					type_is_managed(k.c, declared) ? "has a lifecycle" : "is or contains a reference",
 				)
 				add_notef(k.c, d.span, "declare it without an initializer, or give it `%s` or `nil`", "{}")
+			} else {
+				_ = require_unsafe_import(k, d.span, "leaving a variable uninitialised with `---`")
 			}
 			if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 				symbol.type = declared

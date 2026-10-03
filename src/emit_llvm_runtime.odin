@@ -862,7 +862,8 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 		if counter := symbol_of(e.c, sym.initialized_by); counter != nil {
 			counter_slot := gep_field(e, llvm_type(e, under), address, int(counter.index))
 			record_field_align(e, under, address, counter_slot, counter.type)
-			count := load_place(e, counter.type, counter_slot)
+			count := widen_to_i64(e, load_place(e, counter.type, counter_slot), counter.type)
+			emit_prefix_count_check(e, count, sym.type)
 			element := underlying_info(e.c, sym.type).element
 			emit_format_sequence(e, element, slot, count)
 			continue

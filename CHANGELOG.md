@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- `x: T = ---` and an `@(initialized = count)` field now need
+  `import "core:unsafe"` in the file that writes them (`L0706`), like the
+  other unchecked operations: the first leaves reads unchecked, and generated
+  copy and drop trust the second's count. Add the import. Generated copy, drop,
+  equality, and formatting also panic on a count outside `0 ..= N` instead of
+  reading past the array.
 - A `hook(copy)` that writes a file-scope, `static`, or `thread_local`
   variable, directly or through a call, is `L0711`: how many copies run is
   unspecified, and such a write could invalidate a live borrow unchecked.

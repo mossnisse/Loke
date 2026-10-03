@@ -1,0 +1,10 @@
+// design.md "Uninitialized capacity": a count outside `0 ..= N` panics before
+// generated drop, copy, equality, or formatting reads past the array.
+package main;
+import "core:fmt";
+import "core:unsafe";
+Bad :: struct { @(initialized = count) items: [1]string, count: int }
+main :: proc() {
+    bad := Bad{count = 2};
+    fmt.println("built");
+}

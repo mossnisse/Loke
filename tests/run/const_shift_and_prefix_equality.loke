@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 // Constant folding agrees with run time: a shift past the width saturates, and
 // two values with an `@(initialized)` field compare only their live prefix.

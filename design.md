@@ -1624,7 +1624,7 @@ m: Maybe;              // accepted: the zero is `.none`
 
 Choice :: union { a: i32, b: bool }
 c: Choice;             // rejected: a file-scope variable is zero-initialized
-d: Choice = ---;       // accepted: storage, with no value in it yet
+d: Choice = ---;       // accepted with `core:unsafe`: storage, with no value in it yet
 
 setup :: proc() {
 	local: Choice;     // accepted: a lexical local starts dead instead
@@ -5140,11 +5140,13 @@ view := unsafe.cstring_view(raw);    // programmer promises the lifetime
 unsafe.free(block, allocator);       // programmer promises the allocation
 ```
 
-Three operations that give an unchecked address a usable shape are language syntax rather than members, and are valid only in a file that imports `core:unsafe`:
+Five unchecked operations are language syntax rather than members, and are valid only in a file that imports `core:unsafe`. Three give an unchecked address a usable shape, and two trust storage the compiler cannot see filled:
 
 - an explicit conversion to `^T` or `^mut T` from `rawptr`, from a C pointer, or from a pointer to a different pointee;
 - an explicit conversion to a C pointer from `rawptr` or from a C pointer to a different element;
-- indexing or slicing a C pointer.
+- indexing or slicing a C pointer;
+- leaving a variable uninitialised with [`x: T = ---`](#built-in-values);
+- declaring an [`@(initialized)`](#uninitialized-capacity) field, whose count generated copy and drop trust.
 
 Everything else stays ordinary code: a conversion to `rawptr`, or from `^T` to `[^]T`, only loses provenance, and weakening `^mut T` to `^T` is checked. Declaring a foreign procedure that takes or returns a C pointer needs no import either; using the pointer it returns does. A file in a `base:` package, which is the language's own runtime and cannot import `core:`, is exempt. Any other file is rejected at each such operation, with a diagnostic naming it.
 
@@ -5192,7 +5194,7 @@ Small_Array :: struct($T: type, $N: int) {
 
 The field then imposes no zero-value requirement on `T`, so the record has a zero value whatever the element is — an empty `Small_Array(T, N)` is as free of `T` as an empty `[dynamic]T`. The record's generated copy clones elements `0 ..< count` and leaves the capacity uncopied; its generated drop releases those same elements and nothing else. A copy that fails partway releases what it built, exactly as it does for any other part.
 
-The count's accuracy is the container author's promise. The compiler reads the named field to decide what to copy and what to release, and verifies only the shape: the attribute must name a sibling field of the record, and that field must be an `int`.
+The count's accuracy is the container author's promise, so the attribute is valid only in a file that imports [`core:unsafe`](#the-unsafe-package). The compiler reads the named field to decide what to copy and what to release, and verifies only the shape: the attribute must name a sibling field of the record, and that field must be an `int`. Generated copy, drop, equality, and formatting [panic](#panics-and-unwinding) on a count outside `0 ..= N` before reading an element. That check keeps a wrong count inside the array; it cannot show that the prefix it names holds values.
 
 Two `core:unsafe` operations move values across that boundary, because neither [`move`](#assignment-statements) nor [`exchange`](#exchange) can. `move` cannot name an element, and `exchange` installs a replacement the element type may not have.
 
@@ -5338,7 +5340,7 @@ nil   // unfixed nil value used for certain values
 
 `---` is declaration syntax with two roles: the [unspecified-contents marker](#zero-values) in `x: T = ---`, and the body marker for a [foreign procedure](#foreign-system). It is not an expression and cannot be assigned, passed, or used as `x := ---`.
 
-As an initializer, `---` is an **unsafe assertion**. The variable starts dead, but reads, borrows, and address-taking are accepted even though its contents are unspecified. Use it for storage another party will fill, such as a foreign out-parameter reached through `&mut x`.
+As an initializer, `---` is an **unsafe assertion**, valid only in a file that imports [`core:unsafe`](#the-unsafe-package). The variable starts dead, but reads, borrows, and address-taking are accepted even though its contents are unspecified. Use it for storage another party will fill, such as a foreign out-parameter reached through `&mut x`.
 
 `---` suppresses initialization checks, not lifecycle rules. The variable remains dead until a full assignment; `drop(x)` and `move(x)` are invalid before then.
 
@@ -6173,7 +6175,7 @@ Maybe :: union @(zero=none, failure=none) { none:, some: int }
 
 #### `@(initialized=<field>)`
 
-On a fixed array field of a struct, names a sibling `int` field that counts how many leading elements hold values; the rest is uninitialized capacity. See [Uninitialized capacity](#uninitialized-capacity).
+On a fixed array field of a struct, names a sibling `int` field that counts how many leading elements hold values; the rest is uninitialized capacity. Valid only in a file that imports `core:unsafe`. See [Uninitialized capacity](#uninitialized-capacity).
 
 #### `@(default_allocator=<string>)` and `@(default_logger=<string>)`
 

@@ -19,14 +19,23 @@ indexing a C pointer is unchecked
 L0706
 @31:7
 slicing a C pointer is unchecked
-L0381
+L0706
 @46:2
+leaving a variable uninitialised with `---` is unchecked
+L0706
+@47:2
+leaving a variable uninitialised with `---` is unchecked
+L0381
+@49:2
 `[dynamic]int` has a lifecycle, so it cannot be left uninitialised with `---`
 L0381
-@47:2
+@50:2
 `^int` is or contains a reference
 L0381
-@48:2
+@51:2
 `Handle` has a lifecycle
 declare it without an initializer, or give it `{}` or `nil`
 !%!(
+L0706
+@67:4
+trusting an `@(initialized)` count is unchecked

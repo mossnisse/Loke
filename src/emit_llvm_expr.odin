@@ -1695,6 +1695,8 @@ emit_prefix_equal :: proc(
 
 	count_left := widen_to_i64(e, raw_left, counter.type)
 	count_right := widen_to_i64(e, raw_right, counter.type)
+	emit_prefix_count_check(e, count_left, array)
+	emit_prefix_count_check(e, count_right, array)
 	shorter, total := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", shorter, count_left, count_right)
 	fmt.sbprintfln(

@@ -527,7 +527,6 @@ fewer exceptions, rather than shortening keywords.
 
 | Priority | Proposal | Main benefit | Scope |
 | --- | --- | --- | --- |
-| First | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
 | First | Flow-sensitive fault/result diagnostics | Catch definite failures and overwritten errors | Analysis |
 | Next | Explicit mutable slices and compatible reborrows | Capability no longer depends on expression context | Borrow rules and syntax |
@@ -536,6 +535,7 @@ fewer exceptions, rather than shortening keywords.
 | Next | Uniform arithmetic policies | Scalar and vector code preserve the same meaning | Numeric APIs and lowering |
 | Next | Compiler-selected ordinary union layout | Compact optionals and nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
+| Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
 | Later | Explicit-capture callables and conditional patterns | Shorter callbacks and fallible streaming loops | Small syntax additions |
 | Later | Checked thread transfer and scoped workers | Reduce races and permit borrowed parallel work | Thread APIs and capabilities |
 | Later | Focused syntax and construction cleanup | Remove duplicate forms and accidental zero fields | Grammar and initialization |
@@ -546,50 +546,27 @@ partitioning algorithm, and a parallel numeric kernel.
 
 ### Put unchecked obligations at their operation
 
-The current [unsafe boundary](design.md#the-unsafe-package) is mostly a file
-import. Once the file imports `core:unsafe`, unrelated unchecked pointer
-indexing and casts acquire permission too. Two particularly sharp obligations
-do not even need that import:
+The current [unsafe boundary](design.md#the-unsafe-package) is a file import.
+Once a file imports `core:unsafe`, every unchecked pointer conversion and
+C-pointer access in it is permitted, not only the one that needed it. Most
+unchecked operations are already named at their use (`unsafe.raw_data`,
+`unsafe.take`); the syntax forms are the exception. `x: T = ---` and
+`@(initialized)` storage now need the import too.
 
-```odin
-value: int = ---;       // reads are accepted without initialization
+**Proposal:** add a lexical `unsafe { ... }` boundary for unchecked pointer
+use and unchecked calls. An unsafe procedure declaration should mean that its
+caller owes a stated precondition; an ordinary wrapper can establish it
+internally. The spelling is proposed syntax, not syntax accepted today. It
+pays once a library exposes a procedure with a caller-owed precondition; none
+outside `core:unsafe` does yet, and the files that import `core:unsafe` are
+mostly OS wrappers that would wrap nearly every procedure.
 
-Bad :: struct {
-    @(initialized = count) items: [1]string,
-    count: int,
-}
-bad := Bad{count = 2};  // generated lifecycle trusts the count
-```
-
-Both forms compiled in focused probes. They were not executed. The
-[unspecified initializer](design.md#built-in-values) bypasses definite
-initialization; [uninitialized capacity](design.md#uninitialized-capacity)
-allows the programmer's count to govern generated copy and drop.
-
-**Proposal:** retain the package for low-level operations, but add a lexical
-`unsafe { ... }` boundary for unchecked pointer use and unchecked calls.
-An unsafe procedure declaration should mean that its caller owes a stated
-precondition; an ordinary wrapper can establish it internally. The spelling is
-proposed syntax, not syntax accepted today.
-
-Remove `---` as an ordinary initializer. Foreign out-parameters should use a
-small uninitialized-storage API that requires an explicit unsafe assertion
-before the value is read, while normal locals retain definite-assignment
-checking. Such an API need not replace the inline storage representation of
-`Small_Array`.
-
-Mark the declaration and manipulation of `@(initialized=...)` storage as
-unchecked, restrict access to its representation, reject provably invalid
-constant counts, and check `0 <= count <= capacity` before generated lifecycle
-traversals where the count is not statically established. A range check does
-not prove that the prefix was initialized; that remains the container author's
-explicit obligation. Keep that limitation clear.
-
-Raw pointer constness is another useful separation: a C pointer currently
-loses both provenance and read-only capability. Consider `[^]T` for read-only
-foreign access and `[^]mut T` for writing, with an unchecked cast required to
-strengthen capability. Foreign pointer use would still require lifetime and
-bounds obligations; constness alone does not establish either.
+Raw pointer constness is a separate idea: a C pointer currently loses both
+provenance and read-only capability. Consider `[^]T` for read-only foreign
+access and `[^]mut T` for writing, with an unchecked cast required to
+strengthen capability. It would change every foreign signature in `core`, and
+foreign pointer use would still require lifetime and bounds obligations;
+constness alone does not establish either.
 
 ### Non-null references and explicit allocation owners
 

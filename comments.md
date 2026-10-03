@@ -643,6 +643,18 @@ removed. `base:` packages are exempt: they are
 the runtime, reach the same operations through compiler-contributed names, and
 cannot import `core:`.
 
+Two unchecked declarations stayed ungated after that: `x: T = ---` on plain
+data, whose reads go unchecked, and `@(initialized = count)`, whose count
+generated copy and drop trust, so `Bad{count = 2}` over a one-element array
+dropped past its end. Both now need the import too. Removing `---` behind a
+new uninitialized-storage API was considered, but nothing in `base`, `core`, or
+`examples` used it, so gating kept its two uses (a foreign out-parameter, and a
+`static` of a type with no zero) for one rule. Nor did the gate cost the
+library anything: `core:container` and `core:thread` already imported
+`core:unsafe` for `unsafe.write` and `unsafe.take`, and `shared(T)` lives in
+`base`. Generated traversals also check `0 <= count <= N`, which turns a count
+past the capacity into a panic, though it cannot show the prefix holds values.
+
 ### Formatting and logging sinks are `dyn` views
 
 `fmt.Writer :: dyn mut fmt.Sink` and `log.Logger :: dyn mut log.Sink` are

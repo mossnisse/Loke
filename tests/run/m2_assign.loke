@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 // design.md "Assignment statements": every right side is evaluated, then every
 // destination, then the writes. A swap therefore needs no temporary.
@@ -50,7 +50,7 @@ main :: proc() {
 	n &~= 1;
 	fmt.println(n);
 
-	// `---` leaves storage uninitialised, then it is written.
+	// `---` leaves storage uninitialised, which is unchecked, then it is written.
 	u: int = ---;
 	u = 42;
 	fmt.println(u);
