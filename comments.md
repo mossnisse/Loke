@@ -622,6 +622,19 @@ low-level work, and the checked extraction that does exist — `view.(T)` on an
 
 ## Changed features
 
+### Reading a carrier under a read-only reborrow
+
+A read-only reborrow used to suspend its source for every use, so
+`slice.equal(xs, xs)` with `xs: []mut int` was rejected although both
+arguments only read, and so was `view: []int = xs; x := xs[1];`. The
+suspension exists so that no mutable alias writes behind the reborrow, and a
+read cannot, so only writes and mutable reborrows now conflict with a
+read-only one. A mutable reborrow still excludes reads, because the reader
+could observe a half-done update. The compiler accepts a read only where the
+provenance walk tags it as one, so a read it has not been taught to recognize
+stays rejected rather than letting a write through; known-gaps.md lists the
+reads still rejected.
+
 ### Each required result is asked about
 
 `@(require_results)` used to ask only whether a binding's name was ever read,

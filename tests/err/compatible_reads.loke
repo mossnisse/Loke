@@ -1,0 +1,32 @@
+package main;
+
+// design.md "Weakening and reborrows": a read-only reborrow of a mutable slice
+// allows reads of it, not a write through it or a mutable reborrow of it, and
+// a live mutable reborrow allows no use at all.
+
+bump :: proc(values: []mut int) { values[0] += 1; }
+
+write_while_viewed :: proc(xs: []mut int) -> int {
+	view: []int = xs;
+	xs[0] = 50;
+	return view[0];
+}
+mutable_argument_while_viewed :: proc(xs: []mut int) -> int {
+	view: []int = xs;
+	bump(xs);
+	return view[0];
+}
+mutable_copy_while_viewed :: proc(xs: []mut int) -> int {
+	view: []int = xs;
+	other: []mut int = xs;
+	other[0] = 1;
+	return view[0];
+}
+read_while_mutably_reborrowed :: proc(xs: []mut int) -> int {
+	other: []mut int = xs;
+	x := xs[0];
+	other[0] = 1;
+	return x;
+}
+
+main :: proc() {}

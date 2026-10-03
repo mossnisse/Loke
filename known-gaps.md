@@ -7,6 +7,34 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
+### Reads under a read-only reborrow are allowed only for slice locals
+
+[design.md "Weakening and reborrows"](design.md#weakening-and-reborrows) lets a
+carrier suspended by a read-only reborrow still be read. The compiler allows
+those reads only for a local `[]mut T` whose elements are plain data: passed to
+a `[]T` parameter, indexed, `len`, `cap`, `hash`, resliced read-only, traversed
+by value, or printed. Any other read is still `L0641`, among them a slice
+stored in a record field, a `^mut T`, and a slice whose elements are carriers.
+This program should be accepted:
+
+```odin
+package main;
+import "core:fmt";
+Holder :: struct { items: []mut int }
+main :: proc() {
+    storage := [2]int{1, 2};
+    held := Holder{storage[:]};
+    view: []int = held.items;
+    fmt.println(held.items[0]);   // L0641; it only reads
+    fmt.println(view[0]);
+}
+```
+
+Each accepted read is tagged where the provenance walk emits it
+(`reads_only` on the `Live` event), so an untagged read stays rejected rather
+than letting a write through. Covering the rest means tagging the read paths
+through fields, pointers, and loaded carriers.
+
 ### Temporary and unwinding drops are not write effects
 
 [design.md "Global write effects"](design.md#global-write-effects) counts a

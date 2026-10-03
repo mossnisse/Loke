@@ -86,6 +86,9 @@ Prov_Event :: struct {
 	revives:       bool,
 	// `Load`: also reads through what was read, at any depth.
 	deep:          bool,
+	// `Live`: the carrier is only read, so a live read-only reborrow of it does
+	// not conflict (design.md "Weakening and reborrows").
+	reads_only:    bool,
 }
 
 // A borrowed parameter arrives holding the caller's storage, which the entry
@@ -973,6 +976,31 @@ prov_capture_slots :: proc(graph: ^Flow_Graph, slots: []int, rewritten: []int, s
 	return out[:]
 }
 
+@(private)
+prov_carrier_is_read_only :: proc(graph: ^Flow_Graph, type: Type_Id) -> bool {
+	return type_is_carrier(graph.k.c, type) && !carrier_is_mutable(graph.k.c, type)
+}
+
+// A slice local whose elements are plain data, which reading cannot turn into
+// a way to write (design.md "Weakening and reborrows").
+@(private)
+prov_plain_slice_local :: proc(graph: ^Flow_Graph, e: Expr) -> (^Expr_Ident, bool) {
+	ident, is_ident := e.(^Expr_Ident)
+	// A conversion such as `[dynamic]T` to `[]T` borrows an owner instead.
+	if !is_ident || ident.view_from != INVALID_TYPE {
+		return nil, false
+	}
+	// An erased operand's own type is `any_view`.
+	type := ident.erased_from != INVALID_TYPE ? ident.erased_from : ident.type
+	if underlying_kind(graph.k.c, type) != .Slice {
+		return nil, false
+	}
+	if _, is_carrier := prov_slot_for_symbol(graph, ident.symbol); !is_carrier {
+		return nil, false
+	}
+	return ident, !type_carries_borrow(graph.k.c, underlying_info(graph.k.c, type).element).any
+}
+
 @(private = "file")
 prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
 	append(&graph.prov_slots, empty_prov_slot(INVALID_SYMBOL))
@@ -1266,8 +1294,14 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	span := expr_span(e)
 	// Also a use of what a carrier already refers to, so erasure cannot hide
-	// a stale view.
-	loans := walk_flow_expr_erased(graph, e)
+	// a stale view. A view of a slice local only reads it, so it holds a
+	// read-only reborrow, as a `[]T` parameter would.
+	loans: []int
+	if ident, plain := prov_plain_slice_local(graph, e); plain {
+		loans = prov_reborrow_traversal(graph, prov_read_ident(graph, ident, .Read, reads_only = true), span, false)
+	} else {
+		loans = walk_flow_expr_erased(graph, e)
+	}
 	if root, path, ok := prov_place_of(graph, e); ok {
 		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "view"))
 	}
@@ -2597,7 +2631,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []
 
 // An index that is not a constant or a plain read may call something that
 // writes the carrier being indexed.
-@(private = "file")
+@(private)
 prov_indices_may_write :: proc(indices: []Expr) -> bool {
 	for index in indices {
 		if !is_const_expr(index) && !is_effect_free_place(index) {
@@ -2784,13 +2818,13 @@ prov_range_step :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> Proj_Step {
 // ------------------------------------------------------- statement hooks --
 
 @(private)
-prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind) -> []int {
+prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind, reads_only := false) -> []int {
 	if root := prov_root_for_symbol(graph, v.symbol); root != NO_ROOT {
 		prov_access(graph, root, nil, kind, v.span)
 	}
 	if slot, is_carrier := prov_slot_for_symbol(graph, v.symbol); is_carrier {
 		sources := prov_one(graph, slot)
-		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = v.span})
+		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = v.span, reads_only = reads_only})
 		return sources
 	}
 	if content := prov_content_slots(graph, v.symbol); len(content) > 0 {
@@ -2878,7 +2912,12 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 			return carriers
 		}
 	}
-	source := walk_flow_expr(graph, v.operand)
+	source: []int
+	if ident, plain := prov_plain_slice_local(graph, v.operand); plain && !mutable {
+		source = prov_read_ident(graph, ident, .Read, reads_only = true) // a read-only view only reads
+	} else {
+		source = walk_flow_expr(graph, v.operand)
+	}
 	if v.lo != nil {
 		walk_flow_expr(graph, v.lo)
 	}
@@ -3788,8 +3827,14 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		} else if prov_argument_borrows_caller(graph, v, index, receiver, has_receiver) {
 			// design.md "Receiver forms": a read-only borrow of the caller's value,
 			// plus whatever borrows the receiver itself carries.
-			held := walk_flow_expr(graph, argument)
 			callee := symbol_of(c, v.resolution.chosen_overload)
+			if ident, plain := prov_plain_slice_local(graph, argument); plain && callee != nil &&
+			   (callee.synth == .Standard_Len || callee.synth == .Standard_Cap || callee.synth == .Standard_Hash) {
+				// Measuring or hashing only reads, and the plain result keeps nothing.
+				prov_read_ident(graph, ident, .Read, reads_only = true)
+				continue
+			}
+			held := walk_flow_expr(graph, argument)
 			if callee != nil && (callee.synth == .Adapter_Iter || callee.synth == .Iterator_Copy ||
 			   (callee.synth == .Adapter_View && type_of(c, callee.result).adapter_by_value) ||
 			   clone_copies_receiver(c, callee)) {
@@ -3815,6 +3860,10 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				held = prov_join(graph, held, loan)
 			}
 			actuals[index] = held
+		} else if ident, plain := prov_plain_slice_local(graph, argument); plain && !(index == 0 && has_receiver) &&
+		   prov_carrier_is_read_only(graph, prov_parameter_type(graph, v, index)) {
+			// Weakened to a read-only parameter, the carrier is only read.
+			actuals[index] = prov_read_ident(graph, ident, .Read, reads_only = true)
 		} else {
 			actuals[index] = walk_flow_expr(graph, argument)
 		}

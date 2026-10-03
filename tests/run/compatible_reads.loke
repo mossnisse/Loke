@@ -1,0 +1,27 @@
+package main;
+import "core:fmt";
+import "core:slice";
+
+// design.md "Weakening and reborrows": a live read-only reborrow of a mutable
+// slice still lets the slice be read -- passed where a `[]T` is wanted,
+// indexed, measured, resliced read-only, traversed by value, and printed. Only
+// a write or a mutable reborrow waits for the reborrow's last use.
+
+total :: proc(values: []int) -> int {
+	sum := 0;
+	foreach (value in values) { sum += value; }
+	return sum;
+}
+
+main :: proc() {
+	storage := [4]int{4, 3, 2, 1};
+	xs: []mut int = storage[:];
+	view: []int = xs;
+	tail := xs[1:];
+	walked := 0;
+	foreach (value in xs) { walked += value; }
+	fmt.println(slice.equal(xs, xs), total(xs), xs[0], xs.len(), tail, walked);
+	fmt.println(xs, view);
+	xs[0] = 9;  // the reborrows are no longer used
+	fmt.println(storage);
+}

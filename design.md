@@ -4863,7 +4863,7 @@ A mutable carrier implicitly weakens to the read-only carrier of the same shape.
 
 Where the weakening happens decides what it costs. A **fresh** borrow — `&mut x` written straight into a `^T`, or `xs[0:2]` into a `[]T` — is simply created read-only; the destination settles a capability the borrowing expression never committed to, and nothing is suspended.
 
-Weakening an **existing** mutable carrier is a read-only reborrow of it. While the reborrow is live, the carrier it was taken from is suspended and may not be used; after the reborrow's last use, the source is usable again. Without this a mutable alias could write behind the reborrow's back:
+Weakening an **existing** mutable carrier is a read-only reborrow of it. While the reborrow is live, the carrier it was taken from is suspended for writing: it may not be written through or reborrowed mutably, which includes copying it into another mutable carrier; after the reborrow's last use, the source is usable again. Without this a mutable alias could write behind the reborrow's back. Reading the suspended carrier is still allowed, because a read cannot write behind anything: passing it where a read-only carrier is wanted, reading an element, `len`, `cap`, `hash`, reslicing it read-only, traversing it by value, and printing it. So `slice.equal(xs, xs)` is accepted for `xs: []mut int`.
 
 ```odin
 source: []mut int = numbers[0:2];
@@ -4875,7 +4875,7 @@ fmt.println(reborrow[1]);    // ... because this keeps the reborrow live
 
 Moving the last use of `reborrow` above the write makes the same program legal. The diagnostic names both ends: where the reborrow was taken, and the later use that keeps it live.
 
-Any carrier derived from an existing mutable carrier is a reborrow of it, mutable or read-only: a copy, a reslice, `&mut xs[i]` or `&xs[i]`, a record field it is stored in, and a `foreach` over it. The carrier is suspended until the last use of the reborrow, and of anything reborrowed from that in turn, so two mutable views reached through one carrier are never usable at once:
+Any carrier derived from an existing mutable carrier is a reborrow of it, mutable or read-only: a copy, a reslice, `&mut xs[i]` or `&xs[i]`, a record field it is stored in, and a `foreach` over it. A mutable reborrow suspends the carrier for every use, reads included, until the last use of the reborrow and of anything reborrowed from that in turn, so two mutable views reached through one carrier are never usable at once:
 
 ```odin
 bump :: proc(xs: []mut int) {

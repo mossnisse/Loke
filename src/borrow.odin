@@ -2128,7 +2128,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		// A reborrow suspends its source until its own last use, and the last use
 		// of whatever was reborrowed from it in turn.
 		for source in event.sources {
-			if reborrow, derived, found := live_reborrow_of(state, source, live); found {
+			if reborrow, derived, found := live_reborrow_of(state, source, live, event.reads_only); found {
 				report_suspended_reborrow(state, event, reborrow, uses[derived])
 				state.diagnostic_precision |= state.precision[derived]
 				return
@@ -2260,12 +2260,14 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 // The first reborrow of `source` that a live slot still depends on, directly or
 // through reborrows of the reborrow, and that live slot.
 @(private = "file")
-live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool) -> (Prov_Reborrow, int, bool) {
+live_reborrow_of :: proc(state: ^Prov_State, source: int, live: []bool, reads_only: bool) -> (Prov_Reborrow, int, bool) {
 	graph := state.graph
 	visited := make(map[int]bool, 8, context.temp_allocator)
 	pending := make([dynamic]int, 0, 8, context.temp_allocator)
 	for reborrow in graph.reborrows {
-		if reborrow.source != source || reborrow.passes_on {
+		// Only a mutable reborrow excludes a read; what is derived from a
+		// read-only one is read-only too.
+		if reborrow.source != source || reborrow.passes_on || (reads_only && !reborrow.mutable) {
 			continue
 		}
 		clear(&pending)

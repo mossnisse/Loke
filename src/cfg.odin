@@ -1278,6 +1278,8 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	iterated: []int
 	if graph.mode == .Lifecycle {
 		append(&graph.held, ..walk_flow_reads(graph, iterable))
+	} else if ident, plain := prov_plain_slice_local(graph, iterable); plain && !place_loop {
+		iterated = prov_read_ident(graph, ident, .Read, reads_only = true) // traversed by value
 	} else {
 		iterated = walk_flow_expr(graph, iterable)
 	}
@@ -1673,6 +1675,16 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				prov_walk_subscripts(graph, v)
 				prov_access(graph, root, path, .Read, v.span)
 				return prov_read_content(graph, root, path, v.type, v.span)
+			}
+			// An element of plain data read out of a slice local only reads the
+			// carrier (design.md "Weakening and reborrows").
+			if ident, plain := prov_plain_slice_local(graph, v.operand); plain && len(v.bound) == 0 &&
+			   !prov_indices_may_write(v.indices) {
+				carriers := prov_read_ident(graph, ident, .Read, reads_only = true)
+				for index in v.indices {
+					walk_flow_expr(graph, index)
+				}
+				return prov_load_content(graph, carriers, nil, v.type, v.span)
 			}
 			if carriers, path, ok := prov_read_through_carrier(graph, v); ok {
 				return prov_load_content(graph, carriers, path, v.type, v.span)

@@ -250,6 +250,10 @@ checklist.
 
 ### Changed
 
+- A mutable slice may still be read while a read-only reborrow of it is live:
+  passed to a `[]T` parameter, indexed, measured, resliced read-only,
+  traversed by value, or printed. `slice.equal(xs, xs)` with `xs: []mut int`
+  no longer fails with `L0641`. Writes and mutable reborrows still conflict.
 - The copy-cost warning (`L0507`) reports a copy that may allocate — of a
   container, or of a record with a copy hook — whatever its size, as "this
   binding clones `first`, which may allocate". A copy last-use transfer makes

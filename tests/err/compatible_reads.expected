@@ -1,0 +1,12 @@
+L0641
+@11:2
+a read-only reborrow of it is still in use
+L0641
+@16:7
+a read-only reborrow of it is still in use
+L0641
+@21:21
+a read-only reborrow of it is still in use
+L0641
+@27:7
+a mutable reborrow of it is still in use

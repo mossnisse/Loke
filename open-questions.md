@@ -490,23 +490,6 @@ already is? The cost is parser lookahead and error recovery that has to tell a
 name from the keyword, and diagnostics that can no longer say "expected a name,
 found keyword" there.
 
-## Read-only reborrows of one carrier in one call
-
-[design.md "Weakening and reborrows"](design.md#weakening-and-reborrows)
-suspends a mutable carrier while a read-only reborrow of it is live, and a
-suspended carrier may not be used at all. A `[]mut T` passed where a `[]T` is
-wanted is such a reborrow for the duration of the call, so
-`slice.equal(s, s)` with `s: []mut int` is rejected (`L0641`) although both
-arguments only read: the second argument uses `s` while the first argument's
-reborrow is live. Binding a read-only view first, `view: []int = s;
-slice.equal(view, view)`, is accepted.
-
-Should a suspended carrier allow uses that are themselves read-only reborrows
-or plain reads, so only writes and mutable reborrows conflict? That matches
-the rule's purpose, that no mutable alias writes behind the reborrow, but it
-changes the rule for explicit bindings too: `view: []int = source; x :=
-source[1];` is rejected today.
-
 ## Language design review (2026-10-03)
 
 This is a set of proposals, not an amendment to the normative specification.
@@ -529,7 +512,7 @@ fewer exceptions, rather than shortening keywords.
 | --- | --- | --- | --- |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
 | Next | Flow-sensitive nil diagnostics | Catch definite nil uses | Analysis |
-| Next | Explicit mutable slices and compatible reborrows | Capability no longer depends on expression context | Borrow rules and syntax |
+| Next | Explicit mutable slices | Capability no longer depends on expression context | Syntax |
 | Next | Checked disjoint access | Express partitioning and parallel array algorithms | Library primitives and provenance |
 | Next | Fallible insertion of move-only values | Handle allocation failure while transferring resources | Container APIs |
 | Next | Uniform arithmetic policies | Scalar and vector code preserve the same meaning | Numeric APIs and lowering |
@@ -625,7 +608,7 @@ conversions through locals were considered and left out: they need constant
 propagation through locals, constant expressions are already diagnosed, and
 the rest already panics at run time.
 
-### Make mutable access explicit and permit compatible reads
+### Make mutable access explicit
 
 [Slices](design.md#slices) are read-only under `:=`, but an expected `[]mut T`
 can select mutable slicing. An adapter can also change the outcome:
@@ -644,14 +627,6 @@ one explicitly through one spelling, for example `a.mut_slice(lo, hi)`.
 The exact spelling is secondary; its meaning should survive adding a type
 annotation or an adapter. Use the same rule for built-in and library containers.
 An adapter preserves the capability it receives and never upgrades it.
-
-Separately, adopt the relaxation discussed under
-[Read-only reborrows](#read-only-reborrows-of-one-carrier-in-one-call): a live
-read-only reborrow forbids writes and mutable reborrows, not another compatible
-read. `slice.equal(xs, xs)` with `xs: []mut int` currently fails with `L0641`;
-binding one read-only view first succeeds. Allow the direct form. Keep the
-stronger exclusion while a mutable child borrow is live. These rules must also
-apply through stored carriers, not only to two arguments of one call.
 
 ### Provide checked disjoint access
 
