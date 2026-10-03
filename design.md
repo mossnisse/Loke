@@ -2630,6 +2630,8 @@ Every copyable type has these copy operations; user code customizes them only th
 | `try_clone` | `proc(self, allocator := mem.default_allocator()) -> Result(T, Allocator_Error)` | Returns `.err`; delegates to `hook(copy)` when present. |
 | `clone` | `proc(self, allocator := mem.default_allocator()) -> T` | Calls `try_clone` once and invokes the allocator's failure policy on failure. |
 
+A copy hook returns its source's logical value with independent ownership, as the type defines both; the copy need not share the source's addresses or bits. How many implicit copies run is unspecified: [last-use transfer](#last-use-transfer) skips a copy together with the source's later drop, so bookkeeping a copy hook does must be balanced by the drop hook, and a hook's other effects, such as tracing, may show which copies ran but are not events a program can rely on. A duplicate that must differ from its source, such as one with a fresh identity, is a named method on a `move_only` type. An explicit `clone` or `try_clone` always runs the hook.
+
 Default copying recursively calls `try_clone` for owning fields. A custom copy hook must use fallible operations on the supplied allocator. On failure, it returns `.err`, releases temporary resources, and exposes no partial result. It may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations.
 
 Allocator selection follows these rules:
@@ -2650,9 +2652,10 @@ An explicit call to `try_clone` returns the error and never invokes the policy.
 
 Each type may have one copy hook, one drop hook, and one coherent `==`/`hash` pair. Hook signatures and package ownership are checked at compile time.
 
-Allocator discipline, valid ownership, and equal values producing equal hashes are programmer obligations not checked by the compiler. Violations have the following consequences:
+Allocator discipline, valid ownership, value-preserving copies, and equal values producing equal hashes are programmer obligations not checked by the compiler. Violations have the following consequences:
 
 - A copy hook that panics follows ordinary [panic semantics](#panics-and-unwinding).
+- A copy hook that changes the value, or whose effects a program depends on, makes the program's results depend on which implicit copies last-use transfer skips. It does not by itself cause undefined behavior.
 - Invalid ownership, such as a clone sharing storage it does not own or a drop hook leaving a live alias, causes undefined behavior.
 - Breaking the hash laws voids the map's logical guarantees: lookups may miss, iteration may repeat or skip. It does not by itself authorize memory corruption, and an implementation must not treat it as license for unchecked access.
 
@@ -3149,7 +3152,7 @@ A variable holds a value, not a reference to one. Copying an owning value produc
 
 [Iteration](#borrowing-iteration) holds its root for the complete statement and borrows stored elements; [`copied()`](#iteration-adapters) is the written clone. `move(place)` can transfer the collection into that statement-owned root, but does not transfer its elements individually.
 
-Whether a place is copied or a temporary transferred changes what an expression costs, never what it computes, apart from the copy hooks a [last-use transfer](#last-use-transfer) does not run. Optional [copy-cost diagnostics](#copy-cost-diagnostics) can report costly copies.
+Whether a place is copied or a temporary transferred changes what an expression costs, never what it computes, provided the type's copy hook preserves its source's value as [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types) requires. Optional [copy-cost diagnostics](#copy-cost-diagnostics) can report costly copies.
 
 #### Last-use transfer
 
@@ -3169,7 +3172,7 @@ A read is anything that names the local: an expression, a borrow, a `move` or `d
 - the procedure stores a value that may carry a borrow, and whose expression reads the local, anywhere in its body: it binds it to a variable or place, as `view := list[:]` does, or passes it to a call that has an `inout` argument or receiver, as `views.append(list[:])` does. A view of the local may still be in use;
 - the destination is declared with `via`, whose allocator a clone uses and a move would not.
 
-The transfer is checked as a written move is. A borrow of the local that is still in use when it moves, such as one a callee stored through a pointer, is an error at the copy, and writing `.clone()` keeps it a copy. A transferred local runs no `hook(copy)`, and its value is dropped with the destination rather than at the end of the local's scope. Every other context that copies a place — an argument, an aggregate element, a container insertion, an `or_else` operand — clones.
+The transfer is checked as a written move is. A borrow of the local that is still in use when it moves, such as one a callee stored through a pointer, is an error at the copy, and writing `.clone()` keeps it a copy. A transferred local runs no `hook(copy)` and allocates nothing, so it cannot fail as the copy could have, and its value is dropped with the destination rather than at the end of the local's scope. Every other context that copies a place — an argument, an aggregate element, a container insertion, an `or_else` operand — clones.
 
 #### Values that outlive every scope
 

@@ -8,27 +8,27 @@ b 2
 read afterwards
   copy 4
 a 4
-b 104
-  drop 104
+b 4
+  drop 4
   drop 4
 read on one path
   copy 5
 a 5
-  drop 105
+  drop 5
   drop 5
 deferred read
   copy 6
-b 106
-  drop 106
+b 6
+  drop 6
 a 6
   drop 6
 loop over an outer local
   copy 7
-b 107
-  drop 107
+b 7
+  drop 7
   copy 7
-b 107
-  drop 107
+b 7
+  drop 7
   drop 7
 loop-local source
 b 8

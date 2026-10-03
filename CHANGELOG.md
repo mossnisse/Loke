@@ -229,6 +229,11 @@ checklist.
 
 ### Changed
 
+- A `hook(copy)` must return its source's value, and how many implicit copies
+  run is unspecified: last-use transfer skips a copy and the source's later
+  drop. A hook that changes the value or counts its calls gets results that
+  depend on that choice; make such a type `move_only` with a named method.
+  See design.md "Lifecycle hooks and resource types".
 - Debug builds preserve outputs ending in `.ll` or `.natvis`, including case
   variants. Deferred locals remain visible at every emitted exit, exported
   names stay literal, and `else if` conditions have their own source locations.

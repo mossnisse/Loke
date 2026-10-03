@@ -156,6 +156,17 @@ not transferred automatically, even if that borrow has ended. Arguments,
 aggregate elements, and insertions still follow their ordinary copy rules.
 This keeps transfer checking simple while preserving borrow safety.
 
+Last-use transfer is sound only because a copy hook must preserve its source's
+value (design.md "Lifecycle hooks and resource types"). Without that contract,
+a hook that traced or renumbered its copies let a debug print of the source,
+added after an assignment, change the assignment's result. The alternatives
+were worse: excluding types with custom copy hooks from transfer would make
+every `shared(T)` assignment pay an atomic increment and a later decrement,
+and no checker can prove a hook preserves a value, since the effect analysis
+deliberately does not see foreign I/O. C++ copy elision makes the same choice.
+A duplicate that must differ from its source belongs on a `move_only` type as
+a named method, where every call is written.
+
 The [assignment history](#assignment-history) records the rejected explicit-copy
 policy; [last-use transfer implementation](#last-use-transfer-implementation)
 explains the analysis order and generated moves.

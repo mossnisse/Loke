@@ -6,14 +6,16 @@ import "core:mem";
 // design.md "Last-use transfer": a binding or assignment that would clone a
 // local nothing reads again moves it instead. The hooks print, so the output
 // shows which copies ran and when each value is dropped: a moved value drops
-// with its destination, never twice.
+// with its destination, never twice. The copy hook preserves the value, as
+// design.md "Lifecycle hooks and resource types" requires, so only the trace
+// shows the difference.
 
 Tracked :: struct { id: int }
 
 impl Tracked {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
 		fmt.println("  copy", self.id);
-		return .ok(Tracked{self.id + 100});
+		return .ok(Tracked{self.id});
 	}
 	release :: hook(drop) proc(self: inout Tracked) { fmt.println("  drop", self.id); }
 }

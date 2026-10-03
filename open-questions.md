@@ -527,7 +527,6 @@ fewer exceptions, rather than shortening keywords.
 
 | Priority | Proposal | Main benefit | Scope |
 | --- | --- | --- | --- |
-| First | Define the contract for elidable copies | Copy hooks preserve logical values when last-use transfer skips them | Lifecycle rules |
 | First | Include implicit hooks in effects | Cleanup cannot silently invalidate a checked borrow | Analysis and specification |
 | First | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
@@ -546,64 +545,7 @@ The first group should precede a broad syntax rewrite. The next group should
 be tried on concrete programs: a parser, a resource container, a sorting or
 partitioning algorithm, and a parallel numeric kernel.
 
-### Stable ownership costs
-
-[Last-use transfer](design.md#last-use-transfer) changes a binding or assignment
-from a clone to a move when a later use disappears. This affects custom hooks,
-allocator selection, allocation failure, and cleanup timing, not merely the
-number of machine instructions.
-
-The existing [last-use test](tests/run/last_use_transfer.loke) deliberately has
-a copy hook that prints and adds 100 to a field. Running it confirms that a
-last-use binding preserves `1`, while copying a source used later changes `4`
-to `104`. Adding a debug print of the source can therefore change an earlier
-assignment's result. This is permitted by the current specification.
-
-That example identifies a problem with the contract for copy hooks; it does
-not establish that replacing a last-use copy with a move is itself undesirable.
-A value-preserving copy can be expensive, and transferring ownership is useful
-when the source will no longer be used. Requiring explicit clones for every
-owning assignment would remove that convenience without being necessary to
-address the example.
-
-**Proposal:** retain last-use transfer and define an explicit contract for
-elidable implicit copies:
-
-- A copy hook preserves the source's logical value and the type's documented
-  ownership semantics. This does not require identical backing addresses or
-  bit representations. Producing a new logical ID or transformed value belongs
-  in an explicitly named operation, not an implicit copy hook.
-- Program correctness must not depend on how many implicit copy hooks run.
-  Resource bookkeeping must remain balanced when a move skips both a copy and
-  the source's later drop. Diagnostic tracing can reveal the choice, but is
-  not a guaranteed application event.
-- State that an elided copy performs no allocation and therefore cannot fail
-  because of that allocation. Specify allocator selection and cleanup timing
-  under transfer; retain the existing exclusion for a `via` destination whose
-  requested allocator a move would bypass.
-- Explicit `clone` and `try_clone` remain requests for the copy operation and
-  its failure contract. Last-use transfer must not silently reinterpret them
-  as moves. Ordinary as-if optimization still applies when it preserves their
-  specified behavior.
-
-The explicit choices remain available where callers need them:
-
-```odin
-backup := data.clone();       // independent storage, may fail by policy
-queued := move(data);         // ownership transfer, data becomes dead
-```
-
-The compiler generally cannot prove that an arbitrary hook preserves a logical
-value. This is a type-author contract, like coherent equality and hashing,
-rather than a proposed static proof. Identity-sensitive duplication should use
-a move-only type with a named duplication method. The current trace test can
-still illustrate what today's implementation does, but its value-changing hook
-would not be an example of a valid copy under the proposed contract.
-
-Predictable meaning does not imply identical cost after every source edit:
-adding a later read can still make an allocation necessary. That is a separate
-performance concern, best addressed with explicit operations and diagnostics,
-not by forbidding last-use transfer altogether.
+### Copy-cost diagnostics by kind
 
 Copy-cost diagnostics should distinguish an allocation, recursive element
 cloning, reference-count retention, and inline byte copying. The current
