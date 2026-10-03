@@ -527,7 +527,6 @@ fewer exceptions, rather than shortening keywords.
 
 | Priority | Proposal | Main benefit | Scope |
 | --- | --- | --- | --- |
-| First | Include copy hooks in effects | A copy cannot silently invalidate a checked borrow | Analysis and specification |
 | First | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
 | First | Flow-sensitive fault/result diagnostics | Catch definite failures and overwritten errors | Analysis |
@@ -551,42 +550,6 @@ Copy-cost diagnostics should distinguish an allocation, recursive element
 cloning, reference-count retention, and inline byte copying. The current
 inline-size threshold cannot communicate the cost of cloning a small header
 that owns a million elements.
-
-### Count copy hooks as effects
-
-[Global write effects](design.md#global-write-effects) count drop hooks,
-conversion hooks, and `format` methods as calls, but not an implicit
-`hook(copy)`. This program is accepted, and the copy clears the storage `view`
-still reads:
-
-```odin
-package main;
-import "core:fmt";
-
-cache: [dynamic]int;
-Counted :: struct { n: int }
-impl Counted {
-    dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Counted, Allocator_Error) {
-        cache.clear(); cache.shrink();
-        return .ok(Counted{self.n});
-    }
-}
-main :: proc() {
-    cache = [dynamic]int{42};
-    view := cache[:];
-    a := Counted{1};
-    b := a;               // copied: `a` is read below
-    fmt.println(view[0], a.n, b.n);
-}
-```
-
-Implicit copies are decided by lowering, so the provenance walk has no point
-for each one; the [ownership table](design.md#value-semantics-and-the-ownership-rule)
-lists the contexts that would need one. A hook whose writes another copy would
-see is already suspect under the copy contract in [Lifecycle hooks and
-resource types](design.md#lifecycle-hooks-and-resource-types), so the
-alternative is to reject a `hook(copy)` whose write effect is not empty. That
-is simpler, but rules out a global instance count kept balanced with `drop`.
 
 ### Put unchecked obligations at their operation
 

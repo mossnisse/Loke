@@ -336,6 +336,30 @@ compute_global_writes :: proc(k: ^Checker) {
 	}
 	c.global_writes_ready = true
 	warn_thread_races(c)
+	reject_copy_hook_writes(c)
+}
+
+// design.md "Lifecycle hooks and resource types": how many copies run is
+// unspecified, so a copy hook writes no global. Reported once per declaration,
+// not per generic instance.
+@(private = "file")
+reject_copy_hook_writes :: proc(c: ^Compiler) {
+	reported := make(map[Span]bool, context.temp_allocator)
+	for body in c.checked_bodies {
+		sym := symbol_of(c, body.literal.symbol)
+		writes := c.global_writes[body.literal.symbol]
+		if sym == nil || sym.hook != .Copy || len(writes) == 0 || reported[sym.span] {
+			continue
+		}
+		reported[sym.span] = true
+		global := symbol_of(c, writes[0])
+		errorf(
+			c, sym.span, "L0711",
+			"`%s` is a copy hook and may not write `%s`: how many copies run is unspecified",
+			identifier_text(c, sym.name), identifier_text(c, global.name),
+		)
+		add_notef(c, global.span, "declared here; a count kept by copies can be a `sync.Atomic`, whose updates are not writes")
+	}
 }
 
 // The bodies one call may run.

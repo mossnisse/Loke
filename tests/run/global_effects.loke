@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:sync";
 
 // design.md "Global write effects": a call only conflicts with a borrow of a
 // global its callee may actually write.
@@ -35,6 +35,15 @@ Tally :: struct { n: int }
 impl Tally {
 	format :: proc(self: ^Tally, writer: fmt.Writer, options: fmt.Options) { other.append(1); }
 }
+// A copy hook may count through an atomic, whose updates are not writes.
+copies: sync.Atomic(int);
+Counted :: struct { n: int }
+impl Counted {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Counted, Allocator_Error) {
+		copies.add(1);
+		return .ok(Counted{self.n});
+	}
+}
 consume :: proc(guard: move Guard) -> Guard { return guard; }
 hooks :: proc() {
 	view: []int = cache;
@@ -45,6 +54,9 @@ hooks :: proc() {
 	}
 	fmt.print(Tally{1});
 	fmt.println(view.len());
+	counted := Counted{1};
+	again := counted.clone();
+	fmt.println(copies.load(), counted.n + again.n);
 }
 
 main :: proc() {

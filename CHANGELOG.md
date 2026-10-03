@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A `hook(copy)` that writes a file-scope, `static`, or `thread_local`
+  variable, directly or through a call, is `L0711`: how many copies run is
+  unspecified, and such a write could invalidate a live borrow unchecked.
+  Keep a count of copies in a `sync.Atomic`, or move the write into a named
+  method callers invoke.
 - A drop hook's or `format` method's writes to globals now count where the
   hook runs, as an explicit call's do: dropping a value whose `hook(drop)`
   writes a global, or printing a value whose `format` does, while a borrow of

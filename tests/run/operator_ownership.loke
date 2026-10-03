@@ -1,16 +1,18 @@
 package main; import "core:fmt";
+import "core:sync";
 
 // design.md's ownership matrix for `or_else` and `or_return`, one row at a
 // time. A place operand would copy the selected payload, which may allocate, so
 // it is written `place.clone()`: a temporary, which like `move(x)` hands its
 // value over. `or_else` never copies the error — it drops a temporary's.
 
-copies, drops: int;
+drops: int;
+copies: sync.Atomic(int);
 
 Owned :: struct { id: int }
 impl Owned {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
-		copies += 1;
+		copies.add(1);
 		return .ok(Owned{self.id});
 	}
 	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
@@ -29,8 +31,8 @@ impl Handle {
 Sealed :: union @(failure=gone) { open: Handle, gone: }
 opened :: proc(id: int) -> Sealed { return .open(Handle{id}); }
 
-reset :: proc() { copies, drops = 0, 0; }
-report :: proc(label: string_view) { fmt.println(label, copies, drops); }
+reset :: proc() { copies.store(0); drops = 0; }
+report :: proc(label: string_view) { fmt.println(label, copies.load(), drops); }
 
 // `or_return` over a clone of a place, so the source stays whole.
 place_or_return :: proc() -> Boxed {

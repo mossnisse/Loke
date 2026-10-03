@@ -1,4 +1,5 @@
 package main; import "core:fmt";
+import "core:sync";
 
 // design.md "Switch ownership": a switch over a place borrows it, and a switch
 // over a temporary consumes it — the active payload transferring into the
@@ -7,12 +8,13 @@ package main; import "core:fmt";
 // Every exit is walked here: falling out, `break`, `continue`, `return`, a
 // `move` out of the binding, a grouped case, a default case, and `_`.
 
-copies, drops: int;
+drops: int;
+copies: sync.Atomic(int);
 
 Owned :: struct { id: int }
 impl Owned {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
-		copies += 1;
+		copies.add(1);
 		return .ok(Owned{self.id});
 	}
 	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
@@ -29,8 +31,8 @@ Sealed :: union { open: Handle, shut: }
 held :: proc(id: int) -> Boxed { return .held(Owned{id}); }
 opened :: proc(id: int) -> Sealed { return .open(Handle{id}); }
 
-reset :: proc() { copies, drops = 0, 0; }
-report :: proc(label: string_view) { fmt.println(label, copies, drops); }
+reset :: proc() { copies.store(0); drops = 0; }
+report :: proc(label: string_view) { fmt.println(label, copies.load(), drops); }
 
 // A `return` out of a consuming case still drops the binding once.
 returns_from_a_case :: proc(id: int) -> int {

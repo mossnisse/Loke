@@ -1,15 +1,17 @@
 package main; import "core:fmt";
+import "core:sync";
 
 // design.md "Unions": a union owns exactly one payload, so every generated
 // operation reads the tag first and touches that variant alone. An inactive
 // payload is never loaded, compared, formatted, cloned, or dropped.
 
-copies, drops: int;
+drops: int;
+copies: sync.Atomic(int);
 
 Owned :: struct { id: int }
 impl Owned {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
-		copies += 1;
+		copies.add(1);
 		return .ok(Owned{self.id});
 	}
 	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
@@ -25,7 +27,7 @@ Pair :: union @(zero=left) { left: int, right: int }
 // A managed payload beside a managed one, so the tag decides which hook runs.
 Text :: union @(zero=none) { none:, one: string, two: string }
 
-reset :: proc() { copies, drops = 0, 0; }
+reset :: proc() { copies.store(0); drops = 0; }
 
 main :: proc() {
 	// --- the inactive payload is untouched --------------------------------
@@ -33,21 +35,21 @@ main :: proc() {
 	{
 		empty: Boxed = .empty;
 		copy := empty.clone();
-		fmt.println(empty == copy, copies, drops);
+		fmt.println(empty == copy, copies.load(), drops);
 		fmt.println(empty);
 	}
 	// Nothing was cloned and nothing was dropped: neither value held a payload.
-	fmt.println("empty", copies, drops);
+	fmt.println("empty", copies.load(), drops);
 
 	reset();
 	{
 		held: Boxed = .held(Owned{7});
 		copy := held.clone();
-		fmt.println(held == copy, copies, drops);
+		fmt.println(held == copy, copies.load(), drops);
 		fmt.println(held);
 	}
 	// Exactly one clone, and two values to destroy.
-	fmt.println("held", copies, drops);
+	fmt.println("held", copies.load(), drops);
 
 	// The zero of a union that designates one is that variant.
 	reset();
@@ -55,7 +57,7 @@ main :: proc() {
 		inert: Boxed = {};
 		fmt.println(inert);
 	}
-	fmt.println("zero", copies, drops);
+	fmt.println("zero", copies.load(), drops);
 
 	// --- variant identity -------------------------------------------------
 	// Same payload type, same payload value, different arms.
@@ -82,10 +84,10 @@ main :: proc() {
 		Holder :: struct { id: int, boxed: Boxed }
 		h := Holder{1, .held(Owned{5})};
 		g := h.clone();
-		fmt.println(g.boxed, copies);
+		fmt.println(g.boxed, copies.load());
 		row := [2]Boxed{.empty, .held(Owned{6})};
 		other := row.clone();
-		fmt.println(other[1], copies);
+		fmt.println(other[1], copies.load());
 	}
-	fmt.println("nested", copies, drops);
+	fmt.println("nested", copies.load(), drops);
 }

@@ -48,6 +48,13 @@ an erased value is chosen by its run-time type; tracking which types reach
 `any_view` would be more precise, but only a `format` that writes globals pays
 for the approximation.
 
+Copy hooks are the exception: one that writes a global is rejected instead of
+counted. Copies happen in more places than the borrow walk has points for —
+bindings, arguments, container insertion, generated clones of records holding
+the type — and under the copy contract their number is unspecified, so a
+global write there is either a count, which `Atomic(T)` keeps without a write
+and which copies on several threads need anyway, or a bug.
+
 ### Threads the language can start
 
 The memory model, `thread_local` teardown, `Once` poisoning, `shared(T)`, and

@@ -1,14 +1,16 @@
 package main; import "core:fmt";
+import "core:sync";
 
 // A slice literal owns a copy of a borrowed element, a value-returning
 // `operator([])` result is a temporary that is dropped once, and a fixed array
 // longer than a narrow index type's range still accepts every index in range.
 
-copies, drops: int;
+drops: int;
+copies: sync.Atomic(int);
 Value :: struct { id: int }
 impl Value {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
-		copies += 1;
+		copies.add(1);
 		return .ok(Value{self.id});
 	}
 	release :: hook(drop) proc(self: inout Value) { if (self.id != 0) { drops += 1; } }
@@ -23,17 +25,17 @@ main :: proc() {
 	{
 		v := Value{1};
 		s := []Value{v.clone()};
-		fmt.println(copies, drops, s.len());
+		fmt.println(copies.load(), drops, s.len());
 	}
-	fmt.println(copies, drops);
-	copies, drops = 0, 0;
+	fmt.println(copies.load(), drops);
+	copies.store(0); drops = 0;
 	{
 		b := Box{10};
 		fmt.println(b[1].id);
 		kept := b[2];
-		fmt.println(copies, drops, kept.id);
+		fmt.println(copies.load(), drops, kept.id);
 	}
-	fmt.println(copies, drops);
+	fmt.println(copies.load(), drops);
 
 	xs: [300]int = {};
 	xs[50] = 7;

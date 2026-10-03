@@ -1,0 +1,41 @@
+package main; import "core:fmt";
+
+// design.md "Lifecycle hooks and resource types": how many copies run is
+// unspecified, so a copy hook writes no global, directly or through a call.
+// A generic record's hook is reported once, not per instance.
+
+cache: [dynamic]int;
+seen: thread_local int;
+
+Direct :: struct { n: int }
+impl Direct {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Direct, Allocator_Error) {
+		cache.clear();
+		return .ok(Direct{self.n});
+	}
+}
+
+note :: proc() { seen += 1; }
+Through :: struct { n: int }
+impl Through {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Through, Allocator_Error) {
+		note();
+		return .ok(Through{self.n});
+	}
+}
+
+Box :: struct($T: type) { value: T }
+impl Box($T) {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Box(T), Allocator_Error) {
+		cache.append(0);
+		return .ok(Box(T){self.value});
+	}
+}
+
+main :: proc() {
+	a := Direct{1};
+	b := Through{2};
+	c := Box(int){3};
+	d := Box(bool){true};
+	fmt.println(a.clone().n, b.clone().n, c.clone().value, d.clone().value);
+}

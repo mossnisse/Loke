@@ -1,5 +1,6 @@
 package main;
 import "core:fmt";
+import "core:sync";
 import "core:container";
 import "base:interfaces";
 
@@ -18,11 +19,11 @@ sum :: proc(items: []Entry) -> int {
 	return total;
 }
 
-copies: int;
+copies: sync.Atomic(int);
 Tracked :: struct { id: int }
 impl Tracked {
 	copy_value :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
-		copies += 1;
+		copies.add(1);
 		return .ok(Tracked{self.id});
 	}
 	release :: hook(drop) proc(self: inout Tracked) { self.id = 0; }
@@ -61,8 +62,8 @@ main :: proc() {
 	for (pass := 0; pass < 2; pass += 1) {
 		foreach (item in tracked) { fmt.println("tracked", item.id); }
 	}
-	fmt.println("copies", copies);
-	assert(copies == 0);
+	fmt.println("copies", copies.load());
+	assert(copies.load() == 0);
 
 	values := [dynamic]int{1, 2, 3};
 	view: []int = values[:];

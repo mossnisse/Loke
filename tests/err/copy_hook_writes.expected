@@ -1,0 +1,9 @@
+L0711
+@12:2
+`dup` is a copy hook and may not write `cache`
+L0711
+@21:2
+`dup` is a copy hook and may not write `seen`
+L0711
+@29:2
+`dup` is a copy hook and may not write `cache`

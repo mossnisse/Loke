@@ -1,4 +1,5 @@
 package main; import "core:fmt";
+import "core:sync";
 
 Canvas :: struct { marks: int }
 
@@ -134,11 +135,12 @@ more :: proc() {
 	fmt.println(counter.value);
 }
 
-erased_copies, erased_drops: int;
+erased_drops: int;
+erased_copies: sync.Atomic(int);
 Owned :: struct { id: int }
 impl Owned {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
-		erased_copies += 1;
+		erased_copies.add(1);
 		return .ok(Owned{self.id + 100});
 	}
 	release :: hook(drop) proc(self: inout Owned) { if (self.id != 0) { erased_drops += 1; } }
@@ -150,7 +152,7 @@ owned_extraction :: proc() {
 		view: any_view = source;
 		{
 			switch (held in view.as(Owned)) {
-			case .some: assert(held.id == 101 && source.id == 1 && erased_copies == 1);
+			case .some: assert(held.id == 101 && source.id == 1 && erased_copies.load() == 1);
 			case .none: assert(false);
 			}
 		}
@@ -161,18 +163,18 @@ owned_extraction :: proc() {
 			case .none: assert(false);
 			}
 		}
-		assert(erased_copies == 2 && erased_drops == 2);
+		assert(erased_copies.load() == 2 && erased_drops == 2);
 		{
 			held := view.(Owned);
-			assert(held.id == 101 && erased_copies == 3);
+			assert(held.id == 101 && erased_copies.load() == 3);
 		}
 		assert(erased_drops == 3);
 		view.as(Owned);
-		assert(erased_copies == 4 && erased_drops == 4);
+		assert(erased_copies.load() == 4 && erased_drops == 4);
 		other: any_view = 42;
 		switch (_ in other.as(Owned)) {
 		case .some: assert(false);
-		case .none: assert(erased_copies == 4);
+		case .none: assert(erased_copies.load() == 4);
 		}
 	}
 	assert(erased_drops == 5);

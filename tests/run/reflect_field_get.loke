@@ -1,18 +1,19 @@
 package main; import "core:fmt";
+import "core:sync";
 
 // design.md "Compile-time reflection": `field.get(value)` names the field in
 // place, as `field.pointer(value)^` does. A binding copies it, and a read that
 // is only used drops nothing the record still owns.
 
 drops: static int = 0;
-copies: static int = 0;
+copies: sync.Atomic(int);
 
 Res :: struct { id: int }
 
 impl Res {
 	release :: hook(drop) proc(self: inout Res) { drops += 1; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
-		copies += 1;
+		copies.add(1);
 		return .ok(Res{self.id});
 	}
 }
@@ -40,7 +41,7 @@ main :: proc() {
 		} else {
 			fmt.println(field.get(&h).id);
 			{ kept := field.get(&h).clone(); }
-			fmt.println(copies, drops);
+			fmt.println(copies.load(), drops);
 		}
 	}
 	c := first(&h);
