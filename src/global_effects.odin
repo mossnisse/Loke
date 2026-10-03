@@ -183,15 +183,47 @@ warn_thread_races :: proc(c: ^Compiler) {
 	}
 }
 
+// Dropping a value runs its `hook(drop)`s, which write what a call of each
+// would.
+prov_drop_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span, dropped := "") {
+	for hook in type_drop_hooks(graph.k.c, type) {
+		prov_effect_call(graph, Effect_Call{callee = hook}, span, dropped)
+	}
+}
+
+// `clear` and a `resize` that may shrink drop the elements they discard; `pop` and
+// `remove` hand theirs back.
 @(private = "file")
-prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span) {
+ELEMENT_DROPPING_OPS :: bit_set[Container_Op]{.Clear, .Resize, .Map_Clear}
+
+prov_container_drop_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	if graph.mode == .Lifecycle || sym == nil || sym.synth != .Container_Op || len(v.bound) == 0 ||
+	   sym.container_op not_in ELEMENT_DROPPING_OPS {
+		return
+	}
+	prov_drop_effects(graph, expr_base(v.bound[0]).type, v.span)
+}
+
+// A local's scope exit drops it only where the lifecycle pass found it may
+// still be live there; a moved-out local runs no hook.
+prov_scope_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
+	if sym := symbol_of(graph.k.c, id); sym != nil && sym.drop_at_exit {
+		prov_drop_effects(graph, sym.type, span, identifier_text(graph.k.c, sym.name))
+	}
+}
+
+@(private = "file")
+prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dropped := "") {
 	c := graph.k.c
 	if !c.global_writes_ready {
 		append(&graph.effect_calls, target)
 		return
 	}
 	name := ""
-	if sym := symbol_of(c, target.callee); sym != nil {
+	if sym := symbol_of(c, target.callee); sym != nil && dropped != "" {
+		name = fmt.tprintf("modified by `%s` when `%s` is dropped", identifier_text(c, sym.name), dropped)
+	} else if sym != nil {
 		name = fmt.tprintf("modified by `%s`", identifier_text(c, sym.name))
 	} else {
 		name = "modified by a procedure this call may reach"
@@ -328,6 +360,16 @@ effect_targets :: proc(
 			}
 			if index, found := index_of[witness.slots[call.dyn_index].target]; found {
 				append(&out, index)
+			}
+		}
+		// design.md "String format printing": the witness erased printing
+		// recovers for each printed type is built after this pass, so the slot
+		// may reach any `format` method.
+		if view, found := c.runtime_types["Format_View"]; found && call.dyn_interface == underlying_info(c, view).dyn_interface {
+			for body, index in bodies {
+				if sym := symbol_of(c, body.symbol); sym != nil && sym.has_receiver && identifier_text(c, sym.name) == "format" {
+					append(&out, index)
+				}
 			}
 		}
 	case:

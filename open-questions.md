@@ -527,7 +527,7 @@ fewer exceptions, rather than shortening keywords.
 
 | Priority | Proposal | Main benefit | Scope |
 | --- | --- | --- | --- |
-| First | Include implicit hooks in effects | Cleanup cannot silently invalidate a checked borrow | Analysis and specification |
+| First | Include copy hooks in effects | A copy cannot silently invalidate a checked borrow | Analysis and specification |
 | First | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
 | First | Flow-sensitive fault/result diagnostics | Catch definite failures and overwritten errors | Analysis |
@@ -552,45 +552,41 @@ cloning, reference-count retention, and inline byte copying. The current
 inline-size threshold cannot communicate the cost of cloning a small header
 that owns a million elements.
 
-### Count implicit hooks as effects
+### Count copy hooks as effects
 
-[Global write effects](design.md#global-write-effects) exclude implicitly called
-copy/drop/conversion hooks and formatting methods. Consequently, the following
-program is accepted by the rebuilt compiler, despite the final access depending
-on storage invalidated by the inner scope's cleanup:
+[Global write effects](design.md#global-write-effects) count drop hooks,
+conversion hooks, and `format` methods as calls, but not an implicit
+`hook(copy)`. This program is accepted, and the copy clears the storage `view`
+still reads:
 
 ```odin
 package main;
 import "core:fmt";
 
 cache: [dynamic]int;
-Guard :: move_only struct { active: bool }
-impl Guard {
-    release :: hook(drop) proc(self: inout) {
-        if (self.active) { cache.clear(); cache.shrink(); }
+Counted :: struct { n: int }
+impl Counted {
+    dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Counted, Allocator_Error) {
+        cache.clear(); cache.shrink();
+        return .ok(Counted{self.n});
     }
 }
 main :: proc() {
     cache = [dynamic]int{42};
     view := cache[:];
-    { guard := Guard{true}; }
-    fmt.println(view[0]);
+    a := Counted{1};
+    b := a;               // copied: `a` is read below
+    fmt.println(view[0], a.n, b.n);
 }
 ```
 
-This probe was compiled to LLVM IR, not executed. It demonstrates a documented
-hole in the safety model, not a compiler divergence from the current spec.
-
-**Proposal:** include every implicit invocation in the same transitive effect
-analysis as an explicit call, including nested field cleanup and exceptional
-cleanup. Reject the conflicting cleanup while `view` remains live. Formatting
-must also count: printing a value can execute arbitrary user code.
-
-Where an effect genuinely cannot be established, require an explicit unchecked
-contract at that boundary or conservatively invalidate the relevant facts.
-Do not silently treat an unknown effect as no effect. Begin with statically
-known hooks; solving all foreign aliasing is a separate problem. This improves
-local guarantees without requiring a full Rust-style ownership system.
+Implicit copies are decided by lowering, so the provenance walk has no point
+for each one; the [ownership table](design.md#value-semantics-and-the-ownership-rule)
+lists the contexts that would need one. A hook whose writes another copy would
+see is already suspect under the copy contract in [Lifecycle hooks and
+resource types](design.md#lifecycle-hooks-and-resource-types), so the
+alternative is to reject a `hook(copy)` whose write effect is not empty. That
+is simpler, but rules out a global instance count kept balanced with `drop`.
 
 ### Put unchecked obligations at their operation
 

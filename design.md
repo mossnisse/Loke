@@ -5093,7 +5093,7 @@ make_holder :: proc() -> Holder {
 
 #### Global write effects
 
-A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through calls. Writes by foreign code or implicitly invoked hooks, and writes through pointers or views stored in globals, are excluded; see [What is not checked](#what-is-not-checked). A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:
+A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through calls. A hook the language calls counts as a call where it runs: a `hook(drop)` wherever a value is dropped — at a scope exit or a `move` parameter's return, by `drop`, by an assignment replacing a value, by a container operation discarding elements, at the end of a temporary's statement, or while a panic unwinds — a `hook(convert)` at its conversion, and the `format` methods printing reaches, which are all of them, since an erased value's type is known only at run time. Writes by foreign code or by copy hooks, and writes through pointers or views stored in globals, are excluded; see [What is not checked](#what-is-not-checked). A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:
 
 ```odin
 cache: [dynamic]int;
@@ -5122,7 +5122,7 @@ The analysis is local to one procedure body, together with the recorded summary 
 - concurrent access to the same storage, beyond the warning for a spawned entry's writes under [Global write effects](#global-write-effects). A data race is undefined behavior, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
 - which thread releases the last [`shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`'s `drop` and uses the control block's allocator;
 - everything [`unsafe.free`](#the-unsafe-package) releases.
-- a global written through a pointer or view to it that was itself stored in a global, or by foreign code, and one written by a hook the language calls implicitly (`drop`, `copy`, `convert`, or a `format` method run by `core:fmt`) while a borrow of it is live.
+- a global written through a pointer or view to it that was itself stored in a global, or by foreign code, and one written by a copy hook the language runs implicitly while a borrow of it is live.
 
 If a view has no locally provable lifetime, make an owned copy with `clone`, use `shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.
 

@@ -1206,6 +1206,11 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			if sym == nil {
 				continue
 			}
+			// A `move` parameter is dropped when the body returns; callers see
+			// that write through this body's effect.
+			if parameter.mode == .Move {
+				prov_scope_drop_effects(graph, id, sym.span)
+			}
 			// design.md "Allocator regions and region provenance": an owner moved in,
 			// a copy of one passed in, and what a carrier passed in views keep the
 			// argument's region, which the caller substitutes.
@@ -3169,6 +3174,10 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		}
 		if s.op == .Assign {
 			// The old value ends first; a provider moved in then joins the local.
+			// A destination already moved out holds nothing to drop.
+			if index >= len(s.destination_live) || s.destination_live[index] != .Dead {
+				prov_drop_effects(graph, target_type, expr_span(target))
+			}
 			if ident, is_ident := target.(^Expr_Ident); is_ident {
 				provider_assign_end(graph, ident)
 			} else {
@@ -3540,6 +3549,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		case .Drop:
 			if len(v.bound) == 1 {
 				provider_drop_end(graph, v)
+				prov_drop_effects(graph, expr_base(v.bound[0]).type, v.span)
 				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
 					prov_drop_use(graph, ident.symbol, v.span)
 					prov_clear_content(graph, ident.symbol, v.span)

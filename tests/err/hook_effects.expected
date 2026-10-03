@@ -1,0 +1,24 @@
+L0512
+@26:4
+`cache` cannot be modified by `release` when `guard` is dropped here
+L0512
+@32:2
+`cache` cannot be modified by `release` here
+L0512
+@38:2
+`cache` cannot be modified by `release` here
+L0512
+@45:2
+`cache` cannot be modified by `consume` here
+L0512
+@51:2
+`cache` cannot be modified by `guarded` here
+L0512
+@55:2
+`cache` cannot be modified by `release` when `guard` is dropped here
+L0512
+@62:2
+`cache` cannot be modified by `release` here
+L0512
+@67:2
+`cache` cannot be modified by `println` here

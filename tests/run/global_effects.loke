@@ -25,7 +25,31 @@ measure :: proc(shape: dyn Shape) -> int {
 	return view.len() + n;
 }
 
+// A drop hook and a `format` method count as the calls they are, so only the
+// globals they write conflict, and a moved-out local's scope exit runs no hook.
+Guard :: move_only struct { active: bool }
+impl Guard {
+	release :: hook(drop) proc(self: inout Guard) { if (self.active) { cache.clear(); } }
+}
+Tally :: struct { n: int }
+impl Tally {
+	format :: proc(self: ^Tally, writer: fmt.Writer, options: fmt.Options) { other.append(1); }
+}
+consume :: proc(guard: move Guard) -> Guard { return guard; }
+hooks :: proc() {
+	view: []int = cache;
+	guard := Guard{true};
+	{
+		inner := consume(move(guard));
+		guard = move(inner);
+	}
+	fmt.print(Tally{1});
+	fmt.println(view.len());
+}
+
 main :: proc() {
+	hooks();
+	fmt.println(cache.len());
 	fill();
 	fmt.println(reads(cache), writes_other(cache), countdown(3));
 	fmt.println(cache);

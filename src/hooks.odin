@@ -210,43 +210,51 @@ type_is_managed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // own or one of something it owns. Such a hook may read the value's borrows,
 // so the drop is a use of them; a container's intrinsic drop reads none.
 type_drop_runs_hook :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return len(type_drop_hooks(c, type)) > 0
+}
+
+// The hand-written `hook(drop)`s dropping a value of this type may run: its own
+// and those of everything it owns.
+type_drop_hooks :: proc(c: ^Compiler, type: Type_Id) -> []Symbol_Id {
+	hooks := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
 	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
-	return drop_runs_hook_walk(c, type, &visiting)
+	drop_hooks_walk(c, type, &visiting, &hooks)
+	return hooks[:]
 }
 
 @(private = "file")
-drop_runs_hook_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> bool {
+drop_hooks_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool, hooks: ^[dynamic]Symbol_Id) {
 	if !type_is_managed(c, type) {
-		return false
-	}
-	if lifecycle_of(c, type).custom_drop != INVALID_SYMBOL {
-		return true
+		return
 	}
 	under := type_underlying(c, type)
 	info := type_of(c, under)
 	if info == nil || visiting[under] {
-		return false
+		return
 	}
 	visiting[under] = true
+	if hook := lifecycle_of(c, type).custom_drop; hook != INVALID_SYMBOL {
+		append(hooks, hook)
+	}
 	#partial switch info.kind {
 	case .Array, .Dynamic_Array:
-		return drop_runs_hook_walk(c, info.element, visiting)
+		drop_hooks_walk(c, info.element, visiting, hooks)
 	case .Map:
-		return drop_runs_hook_walk(c, info.key, visiting) || drop_runs_hook_walk(c, info.element, visiting)
+		drop_hooks_walk(c, info.key, visiting, hooks)
+		drop_hooks_walk(c, info.element, visiting, hooks)
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && drop_runs_hook_walk(c, sym.type, visiting) {
-				return true
+			if sym := symbol_of(c, field); sym != nil {
+				drop_hooks_walk(c, sym.type, visiting, hooks)
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if variant != TYPE_VOID && drop_runs_hook_walk(c, variant, visiting) {
-				return true
+			if variant != TYPE_VOID {
+				drop_hooks_walk(c, variant, visiting, hooks)
 			}
 		}
 	}
-	return false
 }
 
 type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {

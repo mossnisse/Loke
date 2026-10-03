@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- A drop hook's or `format` method's writes to globals now count where the
+  hook runs, as an explicit call's do: dropping a value whose `hook(drop)`
+  writes a global, or printing a value whose `format` does, while a borrow of
+  that global is still in use is `L0512`. Such programs read freed storage.
+  End the borrow before the drop or print, or take an owned copy with
+  `clone`.
 - A procedure type keeps its variadic parameter last, as a declaration does:
   `proc(nums: ..int, tail: int)` is `L0574`. Move the variadic parameter to
   the end.

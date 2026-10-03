@@ -1,0 +1,71 @@
+package main; import "core:fmt";
+
+// design.md "Global write effects": a drop hook the program runs implicitly,
+// and a `format` method erased printing calls, write what an explicit call of
+// them would, so a borrow of that global live across them conflicts. A drop
+// runs at scope exit, by `drop`, when assignment replaces a value, at a `move`
+// parameter's return, and in `clear` or a shrinking `resize`.
+
+cache: [dynamic]int;
+
+Guard :: move_only struct { active: bool }
+impl Guard {
+	release :: hook(drop) proc(self: inout Guard) {
+		if (self.active) { cache.clear(); cache.shrink(); }
+	}
+}
+Holder :: move_only struct { guard: Guard }
+
+Noisy :: struct { n: int }
+impl Noisy {
+	format :: proc(self: ^Noisy, writer: fmt.Writer, options: fmt.Options) { cache.clear(); }
+}
+
+at_scope_exit :: proc() {
+	view := cache[:];
+	{ guard := Guard{true}; }
+	fmt.println(view[0]);
+}
+by_drop :: proc() {
+	guard := Guard{true};
+	view := cache[:];
+	drop(guard);
+	fmt.println(view[0]);
+}
+by_assignment :: proc() {
+	holder := Holder{Guard{true}};
+	view := cache[:];
+	holder.guard = Guard{false};
+	fmt.println(view[0]);
+}
+consume :: proc(guard: move Guard) {}
+in_a_move_parameter :: proc() {
+	guard := Guard{true};
+	view := cache[:];
+	consume(move(guard));
+	fmt.println(view[0]);
+}
+guarded :: proc() { guards := [dynamic]Guard{}; guards.append(Guard{true}); }
+in_an_element :: proc() {
+	view := cache[:];
+	guarded();
+	fmt.println(view[0]);
+}
+returned :: proc() -> []int {
+	guard := Guard{true};
+	return cache[:];
+}
+by_clear :: proc() {
+	guards := [dynamic]Guard{};
+	guards.append(Guard{true});
+	view := cache[:];
+	guards.clear();
+	fmt.println(view[0]);
+}
+by_formatting :: proc() {
+	view := cache[:];
+	fmt.println(Noisy{1});
+	fmt.println(view[0]);
+}
+
+main :: proc() {}

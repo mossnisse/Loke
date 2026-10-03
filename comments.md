@@ -39,6 +39,15 @@ Raw pointers, stored borrows, foreign calls, and cross-thread lifetimes remain
 explicit trust boundaries. This keeps low-level optimization and interop
 possible without making unsafe behavior the default.
 
+Hooks the language calls are counted in [global write
+effects](design.md#global-write-effects) rather than forbidden from writing
+globals: a guard whose drop restores or clears global state is a legitimate
+idiom, and counting rejects only the programs where that write would invalidate
+a live borrow. Printing reaches every `format` method because the witness for
+an erased value is chosen by its run-time type; tracking which types reach
+`any_view` would be more precise, but only a `format` that writes globals pays
+for the approximation.
+
 ### Threads the language can start
 
 The memory model, `thread_local` teardown, `Once` poisoning, `shared(T)`, and

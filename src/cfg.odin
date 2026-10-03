@@ -574,6 +574,7 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr) {
 			resize(&graph.owners_in_scope, owners)
 		case .Prov_Root:
 			provider_region_end(graph, graph.roots[int(action.root)].symbol, action.span, exit)
+			prov_scope_drop_effects(graph, graph.roots[int(action.root)].symbol, action.span)
 			prov_drop_use(graph, graph.roots[int(action.root)].symbol, action.span, at_scope_exit = true)
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
 		case .Local:
@@ -582,6 +583,7 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr) {
 			span := sym == nil ? no_span() : sym.span
 			provider_region_end(graph, id, span, exit)
 			if graph.mode != .Lifecycle {
+				prov_scope_drop_effects(graph, id, span)
 				prov_drop_use(graph, id, span, at_scope_exit = true)
 			}
 			emit(graph, Flow_Event {
@@ -1827,6 +1829,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	if graph.mode != .Lifecycle {
 		out := prov_call(graph, v)
 		provider_container_end(graph, v)
+		prov_container_drop_effects(graph, v)
 		return out
 	}
 	#partial switch builtin {
@@ -1877,6 +1880,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		}
 	}
 	provider_container_end(graph, v)
+	prov_container_drop_effects(graph, v)
 	note_reset_point(graph, v)
 	return nil
 }
