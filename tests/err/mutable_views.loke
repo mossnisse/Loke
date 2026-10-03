@@ -39,7 +39,7 @@ only_through_iter :: proc(cells: []mut int) {
 // A stored mutable adapter holds the exclusive loan its source took.
 loans :: proc() {
 	values := [dynamic]int{1, 2, 3};
-	view := values[:].indexed();
+	view := (&mut values[:]).indexed();
 	n := values.len();
 	foreach (&v, i in view) { v += n + i; }
 }
@@ -47,6 +47,6 @@ loans :: proc() {
 main :: proc() {
 	storage := [2]int{1, 2};
 	adapters_over_containers();
-	only_through_iter(storage[:]);
+	only_through_iter(&mut storage[:]);
 	loans();
 }

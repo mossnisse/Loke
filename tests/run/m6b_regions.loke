@@ -14,7 +14,7 @@ package main; import "core:fmt"; import "core:mem";
 // over a local fixed buffer puts a dynamic array's storage in this frame.
 in_frame :: proc() {
 	buffer: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(buffer[:]);
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	data: [dynamic]int via arena.allocator() = {};
 	data.append(1, 2, 3);
 	fmt.println(data.len());
@@ -150,7 +150,7 @@ nested :: proc() {
 	outer := mem.Arena.init();
 	room: [dynamic]u8 via outer.allocator() = {};
 	room.resize(2048);
-	inner := mem.Arena.from_buffer(room[:]);
+	inner := mem.Arena.from_buffer(&mut room[:]);
 	xs: [dynamic]int via inner.allocator() = {};
 	xs.append(1, 2, 3, 4);
 	fmt.println(xs.len());
@@ -212,7 +212,7 @@ wrapped_provider :: proc() {
 // initial block requested by a child.
 fallible_provider :: proc() {
 	buffer: [4096]u8 = {};
-	parent := mem.Arena.from_buffer(buffer[:]);
+	parent := mem.Arena.from_buffer(&mut buffer[:]);
 	switch (_ in mem.try_arena(parent.allocator())) {
 	case .ok: fmt.println(false);
 	case .err: fmt.println(true);
@@ -273,7 +273,7 @@ provider_ends :: proc() {
 // block, so it succeeds even when the region has no byte left to copy into.
 shrink_below_top :: proc() {
 	room: [1024]u8 = {};
-	arena := mem.Arena.from_buffer(room[:]);
+	arena := mem.Arena.from_buffer(&mut room[:]);
 	xs: [dynamic]u8 via arena.allocator() = {};
 	xs.append(1);
 	ys: [dynamic]u8 via arena.allocator() = {};
@@ -287,7 +287,7 @@ shrink_below_top :: proc() {
 buffer_after_arena :: proc() {
 	buffer: [256]u8 = {};
 	{
-		arena := mem.Arena.from_buffer(buffer[:]);
+		arena := mem.Arena.from_buffer(&mut buffer[:]);
 		xs: [dynamic]u8 via arena.allocator() = {};
 		xs.append(1);
 	}

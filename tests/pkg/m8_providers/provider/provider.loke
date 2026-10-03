@@ -42,7 +42,7 @@ allocator_factory :: proc() -> Allocator {
 	before := state.records;
 	log.warning("from the allocator factory");
 	state.logger_at_allocator = state.records != before;
-	region = mem.Arena.from_buffer(storage[:]);
+	region = mem.Arena.from_buffer(&mut storage[:]);
 	return region.allocator();
 }
 

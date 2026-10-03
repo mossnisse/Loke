@@ -139,6 +139,9 @@ Expr_Slice :: struct {
 	operand:    Expr,
 	lo:         Expr,
 	hi:         Expr,
+	// Written `&mut a[lo:hi]`: the one way to ask for a `[]mut T` (design.md
+	// "Slices"). The span starts at the `&`.
+	mutable:    bool,
 	// A user `operator([:])`: receiver, low, and high in parameter order.
 	bound:      []Expr,
 }

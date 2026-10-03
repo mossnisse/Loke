@@ -18,7 +18,7 @@ through_pointer :: proc() {
 }
 two_views :: proc() {
 	arr := [2]int{1, 2};
-	v: []mut int = arr[:];
+	v: []mut int = &mut arr[:];
 	both(v, v);
 }
 // Distinct carriers, and one used again after the call, are fine.
@@ -28,9 +28,9 @@ distinct_carriers :: proc() {
 	grow_and_read(inout p^, [1]int{3}[:]);
 	p^.append(2);
 	arr := [2]int{1, 2};
-	v: []mut int = arr[:];
+	v: []mut int = &mut arr[:];
 	arr2 := [2]int{3, 4};
-	w: []mut int = arr2[:];
+	w: []mut int = &mut arr2[:];
 	both(v, w);
 	both(v, w);
 	v[0] = 1;
@@ -57,7 +57,7 @@ read_then_lend :: proc() {
 overwrite :: proc(b: []int, a: []mut int) { a[0] = b[0] + 1; }
 view_then_lend :: proc() {
 	arr := [2]int{1, 2};
-	v: []mut int = arr[:];
+	v: []mut int = &mut arr[:];
 	overwrite(v, v);
 }
 

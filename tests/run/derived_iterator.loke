@@ -47,6 +47,6 @@ main :: proc() {
 	fmt.println(total(Countdown{4}));
 	fmt.println(total(Grouped{4}));
 	storage := [2]int{1, 2};
-	foreach (&c in Row{storage[:]}) { c += 5; }
+	foreach (&c in Row{&mut storage[:]}) { c += 5; }
 	fmt.println(storage);
 }

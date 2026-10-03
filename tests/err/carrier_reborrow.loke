@@ -8,9 +8,9 @@ import "core:fmt";
 
 siblings :: proc() {
 	values := [4]int{1, 2, 3, 4};
-	source: []mut int = values[:];
-	left: []mut int = source[0:3];
-	right: []mut int = source[1:4];
+	source: []mut int = &mut values[:];
+	left: []mut int = &mut source[0:3];
+	right: []mut int = &mut source[1:4];
 	left[1] = 10;
 	right[0] = 20;
 }
@@ -25,14 +25,14 @@ copied :: proc(xs: []mut int) {
 // Freeing what a view of the element still names was accepted before.
 element_pointer :: proc(xs: []mut [dynamic]int) {
 	x := &mut xs[0];
-	inner: []mut int = x^[:];
+	inner: []mut int = &mut x^[:];
 	xs[0] = {};
 	inner[0] = 99;
 }
 
 traversal :: proc(xs: []mut [dynamic]int) {
 	foreach (&x in xs) {
-		inner: []mut int = x[:];
+		inner: []mut int = &mut x[:];
 		xs[0] = {};
 		inner[0] = 99;
 		break;
@@ -59,9 +59,9 @@ sequential :: proc(xs: []mut int) {
 	copy[0] = 7;
 	xs[1] = 8;
 	foreach (&x in xs) { x += 1; }
-	rest: []mut int = xs[1:];
+	rest: []mut int = &mut xs[1:];
 	rest[0] = 3;
-	head: []mut int = rest[0:1];
+	head: []mut int = &mut rest[0:1];
 	head[0] = 4;
 	fmt.println(rest.len());
 }
@@ -72,10 +72,10 @@ main :: proc() {
 	owners := [dynamic][dynamic]int{};
 	owners.append([dynamic]int{1});
 	siblings();
-	copied(storage[:]);
-	element_pointer(owners[:]);
-	traversal(owners[:]);
-	read_during_traversal(storage[:]);
-	overwrite_intermediate(storage[:], other_storage[:]);
-	sequential(storage[:]);
+	copied(&mut storage[:]);
+	element_pointer(&mut owners[:]);
+	traversal(&mut owners[:]);
+	read_during_traversal(&mut storage[:]);
+	overwrite_intermediate(&mut storage[:], &mut other_storage[:]);
+	sequential(&mut storage[:]);
 }

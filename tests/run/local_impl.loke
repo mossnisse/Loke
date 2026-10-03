@@ -44,7 +44,7 @@ doubled :: proc(values: []int) -> int {
 
 main :: proc() {
 	values := [dynamic]int{5, 1, 4, 2};
-	sort_pending(values[:], 3);
+	sort_pending(&mut values[:], 3);
 	fmt.println(values[0], values[1], values[2], values[3]);
 	fmt.println(one(), two());
 	fmt.println(doubled(values[:]));

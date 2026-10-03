@@ -1380,19 +1380,6 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 	}
 }
 
-// design.md "Slices": a built-in slice bound by `:=` names no capability, so it
-// takes the read-only one, as `&x` does; `[]mut T` is asked for by a written
-// type. The loan follows the type, so the source stays readable meanwhile.
-@(private = "file")
-default_slice_capability :: proc(k: ^Checker, value: Expr, type: Type_Id) -> Type_Id {
-	slice, is_slice := value.(^Expr_Slice)
-	if !is_slice || slice.resolution.kind == .User_Operator || !slice_is_mutable(k.c, type) {
-		return type
-	}
-	slice.type = slice_of(k.c, type_of(k.c, type).element, mutable = false)
-	return slice.type
-}
-
 @(private = "file")
 parameter_is_poly :: proc(parameter: Parameter) -> bool {
 	for entry in parameter.names {
@@ -2291,7 +2278,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			// An untyped constant stays untyped (design.md "Unfixed constants").
 			final = type
 		} else {
-			final = default_slice_capability(k, value, default_type(k.c, type))
+			final = default_type(k.c, type)
 			if final == INVALID_TYPE {
 				errorf(k.c, expr_span(value), "L0310", "`nil` has no type to infer here")
 				continue
@@ -3201,7 +3188,7 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 	case .Through_Slice:
 		errorf(
 			k.c, base.span, "L0478",
-			"this is an element of a read-only `[]T` and cannot be %s; writing through a slice takes a `[]mut T`, which a `:=` binding writes out",
+			"this is an element of a read-only `[]T` and cannot be %s; writing through a slice takes a `[]mut T`, which `&mut a[lo:hi]` makes",
 			what,
 		)
 	case .Through_Pointer:

@@ -147,7 +147,7 @@ report_not_mutably_iterable :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type
 		)
 		add_notef(
 			k.c, expr_span(s.iterable),
-			"apply `%s()` to a mutable view instead, such as `values[:].%s()` for an array or `items.slice().%s()` for a `Small_Array`",
+			"apply `%s()` to a mutable view instead, such as `(&mut values[:]).%s()` for an array or `items.slice().%s()` for a `Small_Array`",
 			name, name, name,
 		)
 		return

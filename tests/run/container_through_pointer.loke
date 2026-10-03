@@ -14,7 +14,7 @@ main :: proc() {
     put(&mut m);
     xs: [dynamic]int = {1, 2};
     set(&mut xs);
-    s: []mut int = xs[:];
+    s: []mut int = &mut xs[:];
     poke(&s);
     fmt.println(get(&m), first(&xs), xs[1]);
 

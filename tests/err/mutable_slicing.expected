@@ -1,0 +1,28 @@
+L0310
+@21:7
+cannot pass `[]mut int` with `[]int`
+write `&mut a[lo:hi]` for a mutable slice
+L0392
+@22:2
+no overload of `sort` applies to these arguments
+L0310
+@23:20
+cannot initialise `[]mut int` with `[]int`
+L0373
+@24:19
+`[]int` cannot be converted to `Handle`
+L0478
+@26:11
+a read-only slice never becomes mutable
+L0478
+@28:10
+a string is immutable and cannot be sliced mutably
+L0419
+@31:7
+`Reads` has no `operator([:])` yielding a `[]mut T`
+L0419
+@32:7
+`Writes` has only a mutable `operator([:])`; slice it with `&mut`
+L0358
+@35:47
+a value parameter is immutable and cannot be sliced mutably

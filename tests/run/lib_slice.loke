@@ -116,7 +116,7 @@ main :: proc() {
 		junk.append(i % 7);
 		i = i + 1;
 	}
-	slice.sort_by(junk[:], Always_Before{});
+	slice.sort_by(&mut junk[:], Always_Before{});
 	total := 0;
 	i = 0;
 	for (i < junk.len()) {
@@ -170,7 +170,7 @@ main :: proc() {
 	// `reverse` loops on `low + 1 < high`, so the lengths it must not touch and
 	// the first one it must are all below five.
 	foreach (n in 0 ..< 4) {
-		short: []mut int = []mut int{1, 2, 3}[0:n];
+		short: []mut int = &mut []mut int{1, 2, 3}[0:n];
 		slice.reverse(short);
 		fmt.println(n, short);
 	}
@@ -206,7 +206,7 @@ main :: proc() {
 	// An owned copy outlives the view it came from, which is the whole point.
 	owned := slice.clone(s);
 	fmt.println(owned, owned.len(), owned.cap() >= owned.len());
-	slice.reverse(owned[:]);
+	slice.reverse(&mut owned[:]);
 	fmt.println(owned);
 
 	// The allocator is a parameter, not a fixed choice, and `try_clone` is the

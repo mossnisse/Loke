@@ -33,7 +33,7 @@ count_lines :: proc(path: string_view) -> Result(int, io.Error) {
 	lines := 0;
 	window: [4096]u8 = {};
 	for (;;) {
-		switch (file.read(window[:])) {
+		switch (file.read(&mut window[:])) {
 		case .ok(count):
 			foreach (index in 0 ..< count) {
 				if (window[index] == u8('\n')) { lines += 1; }

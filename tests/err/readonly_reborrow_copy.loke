@@ -4,7 +4,7 @@ import "core:fmt";
 // mutable source suspended.
 main :: proc() {
     xs := [4]int{1, 2, 3, 4};
-    source: []mut int = xs[:];
+    source: []mut int = &mut xs[:];
     view: []int = source;
     copy := view;
     source[0] = 9;

@@ -44,7 +44,7 @@ suspended :: proc(flag: bool) {
 	local := [3]int{1, 2, 3};
 	s: []mut int = nil;
 	d: []int = nil;
-	if (flag) { s = local[:]; d = s; } else { local = [3]int{4, 5, 6}; }
+	if (flag) { s = &mut local[:]; d = s; } else { local = [3]int{4, 5, 6}; }
 	s[0] = 9;
 	fmt.println(d[0]);
 }

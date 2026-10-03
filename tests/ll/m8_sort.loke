@@ -30,7 +30,7 @@ main :: proc() {
 
 	cards := [dynamic]Card{Card{2, 0}, Card{1, 1}};
 	cards.sort();
-	slice.sort_by(cards[:], By_Tag{true});
+	slice.sort_by(&mut cards[:], By_Tag{true});
 
 	fmt.println(numbers, view, cards.len());
 }

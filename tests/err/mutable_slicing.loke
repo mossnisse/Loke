@@ -1,0 +1,35 @@
+package main;
+import "core:slice";
+
+// design.md "Slices": `a[lo:hi]` is read-only and `&mut a[lo:hi]` is the one way
+// to ask for a `[]mut T`, whose operand must be writable. A read-only slice
+// where a mutable one is wanted says how to ask for it.
+
+fill :: proc(values: []mut int) { values[0] = 1; }
+Handle :: distinct []mut int;
+Reads :: struct { items: [2]int }
+impl Reads {
+	span :: operator([:]) proc(self: ^, low: int, high: int) -> []int { return self.items[low:high]; }
+}
+Writes :: struct { items: [2]int }
+impl Writes {
+	span :: operator([:]) proc(self: inout, low: int, high: int) -> []mut int { return &mut self.items[low:high]; }
+}
+
+main :: proc() {
+	numbers := [3]int{3, 1, 2};
+	fill(numbers[:]);
+	slice.sort(numbers[:]);
+	held: []mut int = numbers[0:2];
+	handle := Handle(numbers[:]);
+	view: []int = numbers[:];
+	again := &mut view[:];
+	text := "abc";
+	part := &mut text[0:1];
+	reads := Reads{};
+	writes := Writes{};
+	a := &mut reads[0:1];
+	b := writes[0:1];
+}
+
+parameter :: proc(values: [2]int) { c := &mut values[:]; }

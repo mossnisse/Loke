@@ -10,6 +10,16 @@ checklist.
 
 ### Breaking changes
 
+- A slice expression `a[lo:hi]` is always a read-only `[]T`. A mutable slice
+  is written `&mut a[lo:hi]`, as a mutable pointer is written `&mut x`; the
+  destination no longer chooses. Passing `buffer[:]` to a `[]mut T` parameter,
+  binding it to a `[]mut T`, or selecting a user `operator([:])` yielding
+  `[]mut T` now needs `&mut`, and the error says so: write
+  `reader.read(&mut chunk[:])`, `slice.sort(&mut names[:])`,
+  `mem.Arena.from_buffer(&mut buffer[:])`. A mutable adapter is
+  `(&mut values[:]).indexed()`; `values[:].indexed()` is now read-only. A
+  slice erased to `any_view` now holds `[]T`, so `view.([]mut T)` on it fails
+  unless it was sliced with `&mut`.
 - A required result that a call stores in a local and that no path reads
   before the local is next written or leaves scope is `L0698`, as a binding
   never read was. Before, one read of the name anywhere covered every result

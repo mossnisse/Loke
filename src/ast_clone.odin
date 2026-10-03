@@ -245,6 +245,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 
 	case ^Expr_Slice:
 		n := new_clone(c, Expr_Slice, &v.base)
+		n.mutable = v.mutable
 		n.operand = clone_expr(c, v.operand)
 		n.lo = clone_expr(c, v.lo)
 		n.hi = clone_expr(c, v.hi)

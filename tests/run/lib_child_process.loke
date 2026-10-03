@@ -105,7 +105,7 @@ parent :: proc(exe: string_view) {
 	{
 		piped := spawned(process.Command{program = exe, arguments = []string_view{"exit"}, stdin = .Pipe, stdout = .Pipe});
 		buffer: [4]u8 = {};
-		fmt.println(code(piped.stdin.read(buffer[:])), code(piped.stdout.write("x".bytes())), code(piped.stderr.read(buffer[:])));
+		fmt.println(code(piped.stdin.read(&mut buffer[:])), code(piped.stdout.write("x".bytes())), code(piped.stderr.read(&mut buffer[:])));
 		_ = piped.wait();
 	}
 

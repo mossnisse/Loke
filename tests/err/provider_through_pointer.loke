@@ -31,7 +31,7 @@ element_through_slice :: proc() {
 	all[0] = mem.Arena.init();
 	xs: [dynamic]int via all[0].allocator() = {};
 	xs.append(1);
-	view: []mut mem.Arena = all[:];
+	view: []mut mem.Arena = &mut all[:];
 	view[0] = mem.Arena.init();
 	fmt.println(xs.len());
 }

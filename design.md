@@ -745,8 +745,7 @@ A slice is a non-owning view of a sequence. Its length is a runtime value. `[]T`
 Slice mutability follows the capability, not the storage:
 
 - A mutable slice implicitly weakens to a read-only slice. A read-only slice never converts to a mutable slice, even when its original owner is mutable.
-- Slicing a mutable, addressable array or dynamic array produces `[]mut T`. Slicing an immutable parameter or an existing `[]T` produces `[]T`.
-- A slice bound by `:=`, which names no type, is `[]T` even over mutable storage, as `&x` is a `^T`, so the source stays readable while the slice lives. To write through a slice, ask for the capability by type: `v: []mut int = a[:]`, or pass `a[:]` to a `[]mut T` parameter.
+- `a[lo:hi]` is always a `[]T`, as `&x` is always a `^T`, whatever the storage and whatever the destination. `&mut a[lo:hi]` is the one way to ask for a `[]mut T`, as `&mut x` asks for a `^mut T`; the operand must be writable: a mutable array or dynamic array place, or an existing `[]mut T`. So a call that may change elements shows it, `fill(&mut buffer[:])`, and adding a type annotation or an adapter never changes what a slice expression means. A [C pointer](#c-pointers) is the exception: slicing one with both bounds gives a `[]mut T`.
 - Slicing a `string` or `string_view` produces a [`string_view`](#string-types-and-views) over those bytes, not a slice.
 
 A slice expression has a low bound and a high bound separated by a colon:
@@ -769,7 +768,7 @@ A slice does not own element storage. Its runtime value contains a pointer and a
 
 ```odin
 numbers := [dynamic]int{1, 2, 3};
-view: []int = numbers[:]; // mutable capability is weakened to read-only
+view: []int = numbers[:]; // a read-only slice
 numbers.append(4);   // ERROR: `numbers` may reallocate while `view` is live
 fmt.println(view[0]);
 ```
@@ -930,7 +929,7 @@ Backing storage need not be on the heap. An arena over a local buffer provides f
 
 ```odin
 buffer: [4096]u8 = {};
-arena := mem.Arena.from_buffer(buffer[:]);
+arena := mem.Arena.from_buffer(&mut buffer[:]);
 data: [dynamic]int via arena.allocator() = {};
 data.append(1, 2, 3); // backing storage is in buffer; no heap allocation
 ```
@@ -2299,11 +2298,11 @@ A compound assignment on such a type reads through `operator([])` and writes bac
 
 `operator([:])` defines slicing. It returns either an owning value or a borrow derived from the receiver, treated as a borrow under [Borrows and lifetimes](#borrows-and-lifetimes). A `[]mut T` result requires an `inout` receiver; a `self: ^` receiver returns only `[]T`.
 
-Position selects between the two as it does for `operator([])`: a `[]mut T` destination is a place position for slicing, so the overload yielding `[]mut T` is required there, as a built-in slice of a mutable place is `[]mut T`. Everywhere else the overload yielding `[]T` is preferred, so `x[a:b]` reads on any container that offers it:
+The written form selects between the two, as it does for built-in slicing: `&mut x[a:b]` requires the overload yielding `[]mut T`, and `x[a:b]` requires one yielding anything else. The destination selects nothing, and a form the type does not offer is an error rather than a fallback to the other:
 
 ```odin
-part: []mut int = small[0:2];   // the `inout` overload; `small` must be a mutable place
-read := small[0:2];             // the read-only overload
+part := &mut small[0:2];   // the `inout` overload; `small` must be a mutable place
+read := small[0:2];        // the read-only overload
 ```
 
 An omitted endpoint means what it does for built-in slicing: a missing low endpoint is `0` and a missing high one is `x.len()`, so `x[:]` and `x[1:]` reach the same `operator([:])` as `x[0:x.len()]`. The length is read from the operand a second time, so a missing high endpoint requires an operand whose evaluation runs nothing — a variable, a field path, or a dereference — and a type with a `len` method.
@@ -2381,7 +2380,7 @@ foreach (item in make_items()) { inspect(item); }       // temporary kept throug
 foreach (item in items.copied()) { take(move(item)); }  // one clone per element, asked for
 ```
 
-An adapter or container view — `indexed`, `reversed`, `copied`, `keys`, `values`, `entries` — is an ordinary value, and a header means the same by it as a local holding it: `&` asks that value, never the collection it was made from. `foreach (&v, i in values.indexed())` over a dynamic array is therefore rejected, because `values.indexed()` is a read-only view; `values[:].indexed()` numbers the mutable view. The **root**, the expression the adapters are applied to, is evaluated once, and a temporary root lives for the whole statement (see [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries)). A user-defined method with one of those names keeps lookup precedence and is an ordinary call.
+An adapter or container view — `indexed`, `reversed`, `copied`, `keys`, `values`, `entries` — is an ordinary value, and a header means the same by it as a local holding it: `&` asks that value, never the collection it was made from. `foreach (&v, i in values.indexed())` over a dynamic array is therefore rejected, because `values.indexed()` is a read-only view; `(&mut values[:]).indexed()` numbers the mutable view. The **root**, the expression the adapters are applied to, is evaluated once, and a temporary root lives for the whole statement (see [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries)). A user-defined method with one of those names keeps lookup precedence and is an ordinary call.
 
 #### Yield modes
 
@@ -2450,10 +2449,10 @@ Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps
 
 `indexed()` and `reversed()` return ordinary iterable values. They allocate and copy no elements, may be stored or passed while their source remains valid, and start a fresh traversal on each `iter()` call. User-defined members with those names take precedence. Static expansion uses the same adapters.
 
-A stored adapter keeps the capability of what it was made from. `v := items.indexed()` read-borrows `items` while `v` is live; `v := items[:].indexed()` holds the exclusive loan `items[:]` took, so it can be traversed by reference, stored, passed, and returned like the `[]mut T` it wraps:
+A stored adapter keeps the capability of what it was made from and never upgrades it. `v := items.indexed()` and `v := items[:].indexed()` read-borrow `items` while `v` is live; `v := (&mut items[:]).indexed()` holds the exclusive loan `&mut items[:]` took, so it can be traversed by reference, stored, passed, and returned like the `[]mut T` it wraps:
 
 ```odin
-view := values[:].indexed();
+view := (&mut values[:]).indexed();
 fmt.println(values.len());          // ERROR: `view` holds the exclusive loan of `values`
 foreach (&value, index in view) { value += index; }
 ```
@@ -4861,12 +4860,12 @@ A mutable borrow permits reads and writes through that borrow. While one is live
 
 A mutable carrier implicitly weakens to the read-only carrier of the same shape. The reverse never happens: a read-only carrier does not strengthen, whatever the storage behind it was declared as.
 
-Where the weakening happens decides what it costs. A **fresh** borrow — `&mut x` written straight into a `^T`, or `xs[0:2]` into a `[]T` — is simply created read-only; the destination settles a capability the borrowing expression never committed to, and nothing is suspended.
+Where the weakening happens decides what it costs. A **fresh** borrow — `&mut x` written straight into a `^T`, or `&mut xs[0:2]` into a `[]T` — is simply created read-only; the destination settles a capability the borrowing expression never committed to, and nothing is suspended.
 
 Weakening an **existing** mutable carrier is a read-only reborrow of it. While the reborrow is live, the carrier it was taken from is suspended for writing: it may not be written through or reborrowed mutably, which includes copying it into another mutable carrier; after the reborrow's last use, the source is usable again. Without this a mutable alias could write behind the reborrow's back. Reading the suspended carrier is still allowed, because a read cannot write behind anything: passing it where a read-only carrier is wanted, reading an element, `len`, `cap`, `hash`, reslicing it read-only, traversing it by value, and printing it. So `slice.equal(xs, xs)` is accepted for `xs: []mut int`.
 
 ```odin
-source: []mut int = numbers[0:2];
+source: []mut int = &mut numbers[0:2];
 reborrow: []int = source;    // a read-only reborrow of `source`
 fmt.println(reborrow[0]);
 source[0] = 50;              // ERROR: `source` is suspended here
@@ -4991,7 +4990,7 @@ The summary also tells a borrow *of* the storage a parameter reaches apart from 
 first :: proc(values: []string_view) -> string_view { return values[0]; }
 
 arr := [2]string_view{"b", "a"};
-xs: []mut string_view = arr[:];
+xs: []mut string_view = &mut arr[:];
 low := first(xs);  // borrows the literals, not `xs`
 xs[0] = "c";       // fine
 fmt.println(low);
@@ -5652,7 +5651,7 @@ Temporary storage uses an explicit `mem.Scratch` or `mem.Arena` owner. `free_all
 `Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows the supplied storage; provider-backed construction takes a parent allocator and defaults it to the program provider. Ordinary construction applies the parent's failure policy, while the `try_` procedures return a `Result` containing either the owner or an error, never a partial owner. A provider-backed child must be dropped before its parent region is reset or ended. The zero `Arena` or `Scratch`, which a `static` provider holds until it is assigned, owns an empty region: allocating a byte or more from it fails, and resetting or dropping it does nothing.
 
 ```odin
-fixed := mem.Arena.from_buffer(buffer[:]);
+fixed := mem.Arena.from_buffer(&mut buffer[:]);
 arena := mem.Arena.init(parent_allocator);
 scratch := mem.Scratch.init();
 outcome := mem.try_scratch(parent_allocator); // Result; handle before using the owner

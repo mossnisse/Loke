@@ -110,7 +110,7 @@ main :: proc() {
 	// `to_string` formats into storage from the allocator it is handed. The
 	// arena is sized for the scratch buffer and the string both.
 	room: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(room[:]);
+	arena := mem.Arena.from_buffer(&mut room[:]);
 	text := fmt.to_string(arena.allocator(), "id", 7);
 	fmt.println(text, text.len());
 

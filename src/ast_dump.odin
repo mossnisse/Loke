@@ -458,7 +458,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Expr_Slice:
-		fmt.sbprint(b, "(slice-of")
+		fmt.sbprint(b, node.mutable ? "(slice-of mut" : "(slice-of")
 		dump_child(b, node.operand, depth)
 		dump_child(b, node.lo, depth)
 		dump_child(b, node.hi, depth)

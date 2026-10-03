@@ -64,7 +64,7 @@ impl Keeper_Iterator {
 
 main :: proc() {
 	storage := [2]int{1, 2};
-	lender := Lender{storage[:]};
+	lender := Lender{&mut storage[:]};
 	foreach (value in lender) { _ = value; }
 	_ = lender;
 

@@ -93,16 +93,16 @@ impl Small_Array($T, $N) {
 		return self.items[low:high];
 	}
 
-	// The writable subrange, which a `[]mut T` destination selects
-	// (design.md "Indexing and slicing"): `part: []mut T = x[a:b]`.
+	// The writable subrange, which `&mut x[a:b]` selects (design.md "Indexing
+	// and slicing").
 	span_mut :: operator([:]) proc(self: inout, low: int, high: int) -> []mut T {
 		self.check_span(low, high);
-		return self.items[low:high];
+		return &mut self.items[low:high];
 	}
 
 	// The whole live prefix as one mutable view.
 	slice :: proc(self: inout) -> []mut T {
-		return self.items[0:self.count];
+		return &mut self.items[0:self.count];
 	}
 
 	// ----------------------------------------------------------- iteration --
@@ -295,7 +295,7 @@ impl Small_Array($T, $N) {
 	move_last_to :: proc(self: inout, index: int) {
 		at := self.count - 1;
 		for (at > index) {
-			self.items[:].swap(at, at - 1);
+			(&mut self.items[:]).swap(at, at - 1);
 			at -= 1;
 		}
 	}

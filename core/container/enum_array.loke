@@ -76,7 +76,7 @@ impl Enum_Array($E, $T) {
 	// caller's root.
 	iter :: proc(self: ^) -> Enum_Array_Iterator(E, T) { return {self.slots[:], 0}; }
 
-	iter_mut :: proc(self: inout) -> Enum_Array_Mut_Iterator(E, T) { return {self.slots[:], 0}; }
+	iter_mut :: proc(self: inout) -> Enum_Array_Mut_Iterator(E, T) { return {&mut self.slots[:], 0}; }
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, "{");

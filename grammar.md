@@ -583,6 +583,12 @@ Index_Or_Slice = Expression ("," Expression)* ","?     // index; comma form is u
                | Expression? ":" Expression?           // slice
 ```
 
+`&mut` applied to a postfix expression whose last suffix is a slice,
+`&mut a[lo:hi]`, is mutable slicing rather than the address of a slice: one
+expression whose value is a `[]mut T`. A suffix after the slice applies first,
+so a mutable slice's member is reached through parentheses,
+`(&mut a[:]).indexed()`. See design.md [Slices](design.md#slices).
+
 ## Primary expressions
 
 ```

@@ -63,7 +63,7 @@ mutable_slice_under_a_view :: proc() {
 	sa: container.Small_Array(int, 4) = {};
 	sa.append(1);
 	part := sa[0:1];
-	whole: []mut int = sa[0:1];
+	whole: []mut int = &mut sa[0:1];
 	whole[0] = 2;
 	fmt.println(part[0]);
 }

@@ -30,7 +30,7 @@ main :: proc() {
 	xs := [dynamic]Big{Big{2, {}}, Big{1, {}}, Big{3, {}}};
 	xs.sort();
 	fmt.println(xs[0].id, xs[1].id, xs[2].id);
-	slice.sort_by(xs[:], By_Id{true, {}});
+	slice.sort_by(&mut xs[:], By_Id{true, {}});
 	fmt.println(xs[0].id, xs[1].id, xs[2].id);
 
 	keyed: map[Key]int = {};

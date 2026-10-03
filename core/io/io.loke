@@ -169,7 +169,7 @@ CHUNK :: 4096;
 read_exact :: proc(reader: inout $R, destination: []mut u8) -> Result(Unit, Error) where Reader(R) {
 	filled := 0;
 	for (; filled < destination.len(); ) {
-		switch (outcome in reader.read(destination[filled:])) {
+		switch (outcome in reader.read(&mut destination[filled:])) {
 		case .ok:
 			if (outcome == 0) { return .err(make_error(.Unexpected_End, .Read)); }
 			filled += outcome;
@@ -219,7 +219,7 @@ read_to_end :: proc(
 	chunk: [CHUNK]u8 = {};
 	for (;;) {
 		count := 0;
-		switch (outcome in reader.read(chunk[:])) {
+		switch (outcome in reader.read(&mut chunk[:])) {
 		case .ok: count = outcome;
 		case .err:
 			if (is(outcome, .End_Of_Input)) { return .ok(move(collected)); }
@@ -248,7 +248,7 @@ copy :: proc(
 	destination: inout $W, source: inout $R, buffer: []mut u8 = nil,
 ) -> Result(u64, Error) where Writer(W), Reader(R) {
 	own: [CHUNK]u8 = {};
-	window := buffer if buffer.len() > 0 else own[:];
+	window := buffer if buffer.len() > 0 else &mut own[:];
 	moved: u64 = 0;
 	for (;;) {
 		count := 0;
@@ -282,7 +282,7 @@ read_line :: proc(
 	ended := false;
 	for (; !ended; ) {
 		count := 0;
-		switch (outcome in reader.read(one[:])) {
+		switch (outcome in reader.read(&mut one[:])) {
 		case .ok: count = outcome;
 		case .err:
 			if (!is(outcome, .End_Of_Input)) {

@@ -11,9 +11,9 @@ main :: proc() {
 	small.append(2);
 	small.append(3);
 
-	part: []mut int = small[0:2];
+	part: []mut int = &mut small[0:2];
 	part[1] = 20;
-	whole: []mut int = small[:];
+	whole: []mut int = &mut small[:];
 	whole[2] = 30;
 
 	read := small[1:3];

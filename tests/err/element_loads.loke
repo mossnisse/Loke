@@ -18,7 +18,7 @@ keep :: proc(dst: inout [dynamic][]u8, @(escape=stored) src: [][]u8) { dst.appen
 // Fine: neither result reborrows `xs`, so both may be live together.
 both :: proc() {
 	arr := [2]string_view{"b", "a"};
-	xs: []mut string_view = arr[:];
+	xs: []mut string_view = &mut arr[:];
 	fmt.println(slice.min(xs), slice.max(xs));
 	low := slice.min(xs);
 	xs[0] = "c";

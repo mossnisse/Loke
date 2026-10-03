@@ -16,7 +16,7 @@ Use the narrowest form that expresses what the procedure needs:
 | `value: ^T` | Read through a pointer, possibly returning a view into its storage | `view(&value)` |
 | `value: ^mut T` | Write through a pointer | `update(&mut value)` |
 | `values: []T` | Read a sequence without owning it | `sum(values)` |
-| `values: []mut T` | Change elements without resizing the owner | `adjust(values[:])` |
+| `values: []mut T` | Change elements without resizing the owner | `adjust(&mut values[:])` |
 | `value: move T` | Take ownership | `consume(move(value))` |
 
 `inout` exposes the variable directly. A pointer uses postfix `^` to access
@@ -55,7 +55,7 @@ main :: proc() {
 	fmt.println(word);
 
 	scores := [3]int{10, 30, 20};
-	best := largest(scores[:]);
+	best := largest(&mut scores[:]);
 	best^ += 5;
 	fmt.println(scores);
 }
@@ -91,8 +91,8 @@ increase :: proc(values: []mut int, amount: int) {
 
 main :: proc() {
 	values := [4]int{1, 2, 3, 4};
-	left: []mut int = values[0:2];
-	right: []mut int = values[2:4];
+	left: []mut int = &mut values[0:2];
+	right: []mut int = &mut values[2:4];
 	increase(left, 10);
 	increase(right, 20);
 	fmt.println(left, right);

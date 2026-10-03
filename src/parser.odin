@@ -1831,6 +1831,12 @@ parse_unary :: proc(p: ^Parser) -> Expr {
 		// Only address-of accepts `mut`.
 		mutable := t.kind == .Amp && allow(p, .Mut)
 		operand := parse_unary(p)
+		// `&mut a[lo:hi]` is mutable slicing, not the address of a slice.
+		if slice, is_slice := operand.(^Expr_Slice); is_slice && mutable && !slice.mutable {
+			slice.mutable = true
+			slice.span.lo = t.lo
+			return slice
+		}
 		e := new_expr(p, Expr_Unary, t.lo)
 		e.op = t.kind
 		e.op_span = span_of(p, t)

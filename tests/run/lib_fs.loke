@@ -205,7 +205,7 @@ main :: proc() {
 		fmt.println(0);
 	}
 	window: [3]u8 = {};
-	switch (count in handle.read(window[:])) {
+	switch (count in handle.read(&mut window[:])) {
 	case .ok:
 		fmt.println(true);
 		fmt.println(count);
@@ -218,7 +218,7 @@ main :: proc() {
 	// Close is idempotent, and the value is inert afterwards.
 	fmt.println(succeeded(handle.close()));
 	fmt.println(handle.is_open());
-	switch (_ in handle.read(window[:])) {
+	switch (_ in handle.read(&mut window[:])) {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(true);
 	}

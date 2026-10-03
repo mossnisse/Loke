@@ -37,7 +37,7 @@ main :: proc() {
     assert(integer(n if choose else 99) == 7);
     assert(small_integer(i32(n)) == 7);
     assert(box_number(Box{number = n + 1, text = "x"}) == 8);
-    assert(slice_length(numbers[:]) == 2);
+    assert(slice_length(&mut numbers[:]) == 2);
     assert(integer(next_int()) == 1);
     assert(calls == 1);
 

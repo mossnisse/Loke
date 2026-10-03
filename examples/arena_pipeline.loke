@@ -51,7 +51,7 @@ run_batches :: proc(samples: []Sample) {
 // analysis is what enforces it.
 in_frame :: proc() -> int {
 	buffer: [2048]u8 = {};
-	arena := mem.Arena.from_buffer(buffer[:]);
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
 
 	ids: [dynamic]int via arena.allocator() = {};
 	foreach (i in 0 ..< 16) { ids.append(i * i); }

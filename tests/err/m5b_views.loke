@@ -19,7 +19,7 @@ impl Table {
 	// design.md: "`[]mut T` requires an `inout` receiver and carries exclusive
 	// capability; an immutable receiver may produce only `[]T`."
 	span :: operator([:]) proc(self: Table, lo: int, hi: int) -> []mut int {
-		return self.rows[lo:hi];
+		return &mut self.rows[lo:hi];
 	}
 }
 
@@ -27,7 +27,7 @@ Ok_Table :: struct { rows: []mut int }
 
 impl Ok_Table {
 	span :: operator([:]) proc(self: inout Ok_Table, lo: int, hi: int) -> []mut int {
-		return self.rows[lo:hi];
+		return &mut self.rows[lo:hi];
 	}
 }
 
@@ -78,8 +78,8 @@ move_self_invalidates_a_borrow :: proc() {
 
 mutable_user_slice_needs_an_exclusive_receiver :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
-	bad := Table{numbers[0:4]};
-	part := bad[0:2];
+	bad := Table{&mut numbers[0:4]};
+	part := &mut bad[0:2];
 	fmt.println(part[0]);
 }
 
@@ -91,13 +91,13 @@ mutable_user_slice_needs_an_exclusive_receiver :: proc() {
 Owning_Table :: struct { rows: [4]int }
 impl Owning_Table {
 	span :: operator([:]) proc(self: inout Owning_Table, lo: int, hi: int) -> []mut int {
-		return self.rows[lo:hi];
+		return &mut self.rows[lo:hi];
 	}
 }
 
 user_slice_result_outlives_its_receiver :: proc() {
 	t := Owning_Table{[4]int{1, 2, 3, 4}};
-	part := t[0:2];
+	part := &mut t[0:2];
 	t = Owning_Table{[4]int{5, 6, 7, 8}};
 	fmt.println(part[0]);
 }

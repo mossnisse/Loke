@@ -269,16 +269,16 @@ set_promised_global :: proc(@(escape=static) values: []int) {
 Rows :: struct { rows: []mut int }
 impl Rows {
 	span :: operator([:]) proc(self: inout Rows, lo: int, hi: int) -> []mut int {
-		return self.rows[lo:hi];
+		return &mut self.rows[lo:hi];
 	}
 }
 
 reslice_a_stored_view :: proc() -> int {
 	numbers := [4]int{1, 2, 3, 4};
 	others := [4]int{5, 6, 7, 8};
-	table := Rows{numbers[0:4]};
-	part := table[0:2];
-	table = Rows{others[2:4]};
+	table := Rows{&mut numbers[0:4]};
+	part := &mut table[0:2];
+	table = Rows{&mut others[2:4]};
 	return part[0];
 }
 

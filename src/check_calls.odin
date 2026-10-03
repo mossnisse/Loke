@@ -958,6 +958,7 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, 
 	usable := hook_candidates(k, target, .Convert)
 	if len(usable) == 0 {
 		errorf(k.c, expr_span(v.args[0].value), "L0373", "`%s` cannot be converted to `%s`", type_name(k.c, attempted), type_name(k.c, target))
+		note_mutable_slicing(k, v.args[0].value, attempted, type_underlying(k.c, target))
 		if (target == TYPE_STRING || target == TYPE_STRING_VIEW) &&
 		   (slice_element(k.c, attempted) == TYPE_U8 || (target == TYPE_STRING && underlying_kind(k.c, attempted) == .CString_View)) {
 			add_notef(k.c, v.span, "use `%s.from_utf8(bytes)`, which returns `Option(%s)`", type_name(k.c, target), type_name(k.c, target))

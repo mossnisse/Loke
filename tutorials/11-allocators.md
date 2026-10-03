@@ -29,7 +29,7 @@ main :: proc() {
 	fmt.println(heap_values);
 
 	buffer: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(buffer[:]);
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	{
 		local_values := squares(5, arena.allocator());
 		fmt.println(local_values);
@@ -142,7 +142,7 @@ import "core:mem";
 
 main :: proc() {
 	buffer: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(buffer[:]);
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	values: [dynamic]u8 via arena.allocator() = {};
 	switch (_ in values.try_reserve(8192)) {
 	case .ok: fmt.println("reserved");

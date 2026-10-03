@@ -890,17 +890,26 @@ Everywhere else the mutable form is the marked one: `^mut`, `[]mut`,
 probe spelled `find_ref`. `find` now returns `Option(^V)` and `find_mut`
 `Option(^mut V)`. Every call in the tree was renamed to keep its meaning.
 
-### A `[]mut T` destination selects a mutable slicing overload
+### Mutable slicing is written `&mut a[lo:hi]`
 
-A slice of a mutable place is `[]mut T` when a `[]mut T` destination asks for
-one, but a user container could not do the same: `operator([:])` overloads
-were ranked by their arguments alone, so `Small_Array`'s one read-only
-overload made `sv: []mut int = s[0:2]` L0310 where the same line over a
-dynamic array compiled. A `[]mut T` destination now counts as a place
-position for slicing, as an `inout` argument does for indexing, and
-`Small_Array` has a `span_mut` overload for it. Its `slice()` stays: a method
-receiver is not a destination, so `small.slice().indexed()` still names the
-mutable view it iterates.
+A slice of a mutable place used to be `[]mut T` or `[]T` depending on where it
+went: a `:=` binding took `[]T`, a `[]mut T` parameter or annotation took
+`[]mut T`, and a user `operator([:])` was selected by its destination. That
+made `view := a[:].indexed()` a mutable view where `view := a[:]` was not,
+and it was the one place a destination selected an overload. Pointers never
+worked that way: `&x` is always `^T` and `&mut x` always `^mut T`. Slicing now
+matches them. `a[lo:hi]` is always read-only and `&mut a[lo:hi]` is mutable,
+for built-in and user slicing alike, so a call that may write elements says
+so, and an annotation or an adapter never changes a slice's capability.
+
+The spelling reuses `&mut`, which already means an exclusive mutable borrow,
+and a slice is a borrow. Rust writes the same `&mut a[lo..hi]`. A method
+spelling such as `a.mut_slice(lo, hi)` was the alternative, but passing a
+buffer to a reader is the most common use, and `read(&mut buffer[:])` is
+shorter than `read(buffer.mut_slice())`. The cost is parentheses around a
+mutable slice whose member is called, `(&mut a[:]).indexed()`, because a
+suffix binds tighter than `&mut`. Measured before the change, 146 places in
+the tree needed the spelling, about 20 of them outside tests.
 
 ### A string literal receiver is a static `string_view`
 

@@ -30,7 +30,7 @@ allocator_factory :: proc() -> Allocator {
 	// Nothing is published yet, so this is the runtime's own fallback — kept so
 	// the host can check that publication actually replaced it.
 	fallback = mem.default_allocator();
-	region = mem.Arena.from_buffer(storage[:]);
+	region = mem.Arena.from_buffer(&mut storage[:]);
 	return region.allocator();
 }
 

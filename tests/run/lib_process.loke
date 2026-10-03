@@ -28,7 +28,7 @@ main :: proc() {
 	fmt.println(succeeded(os.set_environment(name, value)));
 
 	room: [160]u8 = {};
-	arena := mem.Arena.from_buffer(room[:]);
+	arena := mem.Arena.from_buffer(&mut room[:]);
 	switch (outcome in os.get_environment(name, arena.allocator())) {
 	case .ok:
 		// A successful read still separates "set" from "not set".

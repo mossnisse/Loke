@@ -17,7 +17,7 @@ take_raw    :: proc(p: ^int)   { _ = p; }
 
 main :: proc() {
 	backing := [4]int{1, 2, 3, 4};
-	h := Handle(backing[:]);
+	h := Handle(&mut backing[:]);
 	take_other(h);
 	take_plain(h);
 

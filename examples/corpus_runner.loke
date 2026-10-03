@@ -142,7 +142,7 @@ sources :: proc(directory: string_view) -> Result([dynamic]string, io.Error) {
 				names.append(strings.copy(entry.name));
 			}
 		case .none:
-			slice.sort(names[:]);
+			slice.sort(&mut names[:]);
 			return .ok(move(names));
 		}
 	}

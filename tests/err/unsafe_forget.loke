@@ -35,7 +35,7 @@ main :: proc() {
 	local := 4;
 	unsafe.forget(&local);
 	numbers := [3]int{1, 2, 3};
-	view: []mut int = numbers[:];
+	view: []mut int = &mut numbers[:];
 	unsafe.forget(move(view));
 
 	// Static-duration storage is always live; `exchange` is what replaces it.

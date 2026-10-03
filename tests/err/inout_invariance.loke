@@ -26,7 +26,7 @@ main :: proc() {
 	replaces(inout pointer);
 	numbers: [dynamic]int = {};
 	narrow(inout numbers);
-	elements: []mut int = numbers[:];
+	elements: []mut int = &mut numbers[:];
 	generic(inout elements);
 	machine := Machine{};
 	machine.replace(inout pointer);

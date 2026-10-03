@@ -54,7 +54,7 @@ leaked_handle :: proc() -> Allocator {
 // outlive it either.
 leaked_fixed :: proc() -> mem.Arena {
 	buffer: [4096]u8 = {};
-	return mem.Arena.from_buffer(buffer[:]);
+	return mem.Arena.from_buffer(&mut buffer[:]);
 }
 
 // design.md: "release_scratch(arena.allocator()); // ERROR while `scratch` or

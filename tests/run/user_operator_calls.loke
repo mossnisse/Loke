@@ -29,7 +29,7 @@ main :: proc() {
 	sa[sa.len() - 1] = 5;
 	last := &mut sa[sa.len() - 1];
 	last^ += 1;
-	whole: []mut int = sa[:];
+	whole: []mut int = &mut sa[:];
 	whole[0] = 7;
 	part := sa[0:2];
 	fmt.println(part[0], part[1]);

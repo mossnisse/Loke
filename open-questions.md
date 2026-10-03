@@ -512,7 +512,6 @@ fewer exceptions, rather than shortening keywords.
 | --- | --- | --- | --- |
 | First | Non-null checked references | Remove ordinary nil dereferences and redundant optional states | Types and APIs |
 | Next | Flow-sensitive nil diagnostics | Catch definite nil uses | Analysis |
-| Next | Explicit mutable slices | Capability no longer depends on expression context | Syntax |
 | Next | Checked disjoint access | Express partitioning and parallel array algorithms | Library primitives and provenance |
 | Next | Fallible insertion of move-only values | Handle allocation failure while transferring resources | Container APIs |
 | Next | Uniform arithmetic policies | Scalar and vector code preserve the same meaning | Numeric APIs and lowering |
@@ -607,26 +606,6 @@ analysis. Proven zero divisors, invalid fixed bounds, and impossible checked
 conversions through locals were considered and left out: they need constant
 propagation through locals, constant expressions are already diagnosed, and
 the rest already panics at run time.
-
-### Make mutable access explicit
-
-[Slices](design.md#slices) are read-only under `:=`, but an expected `[]mut T`
-can select mutable slicing. An adapter can also change the outcome:
-
-```odin
-read := a[:];             // read-only
-view := a[:].indexed();   // can retain a mutable view
-```
-
-A probe confirmed that `read` is `[]int`, while `foreach (&value, index in
-view)` mutates `a`. Destination-selected user slicing is an exception to the
-otherwise valuable rule that destinations do not select overloads.
-
-**Proposal:** `a[lo:hi]` always produces a read-only view. Request a writable
-one explicitly through one spelling, for example `a.mut_slice(lo, hi)`.
-The exact spelling is secondary; its meaning should survive adding a type
-annotation or an adapter. Use the same rule for built-in and library containers.
-An adapter preserves the capability it receives and never upgrades it.
 
 ### Provide checked disjoint access
 

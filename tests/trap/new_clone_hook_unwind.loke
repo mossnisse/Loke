@@ -11,7 +11,7 @@ impl Payload {
 
 main :: proc() {
 	room: [320]u8 = {};
-	arena := mem.Arena.from_buffer(room[:]);
+	arena := mem.Arena.from_buffer(&mut room[:]);
 	defer {
 		probe := try_new(Payload, arena.allocator()) or_else nil;
 		fmt.println(probe != nil);

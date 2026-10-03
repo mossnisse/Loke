@@ -277,7 +277,7 @@ read_console_line :: proc(
 	units: [512]u16 = {};
 	for (;;) {
 		read: u32 = 0;
-		if (rt_read_console(handle, unsafe.raw_data(units[:]), u32(units.len()), &mut read, nil) == 0) {
+		if (rt_read_console(handle, unsafe.raw_data(&mut units[:]), u32(units.len()), &mut read, nil) == 0) {
 			return .err(from_last_error(.Read_Line));
 		}
 		if (read == 0) {

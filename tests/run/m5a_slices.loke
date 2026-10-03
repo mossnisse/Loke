@@ -66,7 +66,7 @@ main :: proc() {
 	fmt.println(chunk[0]);
 
 	// Slicing a mutable addressable array gives `[]mut T`, which weakens.
-	writable: []mut int = fib[0:3];
+	writable: []mut int = &mut fib[0:3];
 	writable[0] = 100;
 	fmt.println(writable[0]);
 	fmt.println(first(writable));
@@ -75,7 +75,7 @@ main :: proc() {
 	// again and sees the write.
 	fmt.println(fib[0]);
 
-	fill(fib[3:], 9);
+	fill(&mut fib[3:], 9);
 	fmt.println(fib[3] + fib[4] + fib[5]);
 
 	// Literals keep the capability they are written with.

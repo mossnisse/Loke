@@ -73,7 +73,7 @@ main :: proc() {
 	// A caller's allocator reaches the buffer, so exhausting it is reported as
 	// `Out_Of_Memory` rather than ending the process.
 	room: [160]u8 = {};
-	cramped := mem.Arena.from_buffer(room[:]);
+	cramped := mem.Arena.from_buffer(&mut room[:]);
 	long := "0123456789" + "0123456789" + "0123456789" + "0123456789" +
 		"0123456789" + "0123456789" + "0123456789" + "0123456789" +
 		"0123456789" + "0123456789" + "0123456789" + "0123456789";

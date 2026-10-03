@@ -19,7 +19,7 @@ Ok_Table :: struct { rows: []mut int }
 impl Ok_Table {
 	// An exclusive receiver may yield an exclusive slice.
 	span :: operator([:]) proc(self: inout Ok_Table, lo: int, hi: int) -> []mut int {
-		return self.rows[lo:hi];
+		return &mut self.rows[lo:hi];
 	}
 }
 
@@ -64,8 +64,8 @@ dyn_views :: proc() {
 
 user_slicing :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
-	t := Ok_Table{numbers[0:4]};
-	part := t[0:2];
+	t := Ok_Table{&mut numbers[0:4]};
+	part := &mut t[0:2];
 	part[0] = 9;
 	fmt.println(part[0] + part[1]);
 }

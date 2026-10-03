@@ -20,6 +20,6 @@ impl Cursor {
 
 main :: proc() {
 	storage := [1]int{1};
-	source := Source{storage[:]};
+	source := Source{&mut storage[:]};
 	foreach (&value in source.reversed()) { value += 1; }
 }

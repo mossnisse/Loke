@@ -6,7 +6,7 @@ package main; import "core:mem"; import "core:fmt";
 
 written_under_an_owner :: proc() {
 	buffer: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(buffer[:]);
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	xs: [dynamic]int via arena.allocator() = {};
 	xs.append(1, 2, 3);
 	buffer[0] = 0;
@@ -15,13 +15,13 @@ written_under_an_owner :: proc() {
 
 written_before_cleanup :: proc() {
 	buffer: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(buffer[:]);
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	buffer[0] = 0;
 }
 
 written_after_a_move :: proc() {
 	buffer: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(buffer[:]);
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	kept := move(arena);
 	xs: [dynamic]int via kept.allocator() = {};
 	xs.append(1);
@@ -33,7 +33,7 @@ Env :: struct { arena: mem.Arena }
 
 written_under_a_record :: proc() {
 	buffer: [4096]u8 = {};
-	env := Env{mem.Arena.from_buffer(buffer[:])};
+	env := Env{mem.Arena.from_buffer(&mut buffer[:])};
 	xs: [dynamic]int via env.arena.allocator() = {};
 	xs.append(1);
 	buffer[0] = 0;
@@ -43,7 +43,7 @@ written_under_a_record :: proc() {
 // Moving any carrier moves the borrow it holds.
 moved_slice :: proc() {
 	buffer: [16]u8 = {};
-	view: []mut u8 = buffer[:];
+	view: []mut u8 = &mut buffer[:];
 	kept := move(view);
 	buffer[0] = 1;
 	kept[1] = 2;

@@ -9,7 +9,7 @@ both :: proc(left: []int, right: []int) -> bool { return left[0] == right[0]; }
 
 main :: proc() {
 	storage := [1]int{1};
-	source: []mut int = storage[:];
+	source: []mut int = &mut storage[:];
 	observe(source, bump(source));
 	_ = both(source, source);
 	view: []int = source;

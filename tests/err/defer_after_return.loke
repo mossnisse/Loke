@@ -58,7 +58,7 @@ main :: proc() {
 	fmt.println(propagated(inout xs));
 	fmt.println(counted(inout xs), local());
 	a := [2]int{1, 2};
-	fmt.println(written(a[:]));
+	fmt.println(written(&mut a[:]));
 	arena := mem.Arena.init();
 	fmt.println(reset_later(arena.allocator()) == nil, arena_backed() == nil);
 }

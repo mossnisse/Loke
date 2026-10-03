@@ -16,8 +16,8 @@ kept :: proc(input: []int) -> []int {
 main :: proc() {
 	x := [2]int{1, 2};
 	y := [2]int{3, 4};
-	p: []mut int = x[:];
-	q: []mut int = y[:];
+	p: []mut int = &mut x[:];
+	q: []mut int = &mut y[:];
 	p, q = q, p;
 	p[0] = 9;
 	q[1] = 8;

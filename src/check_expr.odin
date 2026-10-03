@@ -217,9 +217,19 @@ materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: stri
 			type_name(k.c, final),
 		)
 		note_overload_selection(k, e, target)
+		note_mutable_slicing(k, e, final, target)
 		return false
 	}
 	return true
+}
+
+// design.md "Slices": a `[]mut T` is asked for where the slice is written.
+note_mutable_slicing :: proc(k: ^Checker, e: Expr, found, target: Type_Id) {
+	slice, is_slice := e.(^Expr_Slice)
+	if is_slice && !slice.mutable && slice_is_mutable(k.c, target) && !slice_is_mutable(k.c, found) &&
+	   type_kind(k.c, found) == .Slice {
+		add_notef(k.c, slice.span, "`a[lo:hi]` is read-only; write `&mut a[lo:hi]` for a mutable slice")
+	}
 }
 
 // ---------------------------------------------------------------- literals --
@@ -1329,13 +1339,31 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 	if check_builtin_slice(k, v, operand) {
 		return
 	}
-	slicers := select_slicers(k, operator_candidates_for_receiver(k, "[:]", operand), expected)
-	if len(slicers) == 0 {
+	all := operator_candidates_for_receiver(k, "[:]", operand)
+	if len(all) == 0 {
 		errorf(
 			k.c, v.span, "L0362",
 			"`%s` cannot be sliced; a user type needs an `operator([:])` overload",
 			type_name(k.c, operand),
 		)
+		v.type = INVALID_TYPE
+		return
+	}
+	slicers := select_slicers(k, all, v.mutable)
+	if len(slicers) == 0 {
+		if v.mutable {
+			errorf(
+				k.c, v.span, "L0419",
+				"`%s` has no `operator([:])` yielding a `[]mut T`, so it cannot be sliced mutably",
+				type_name(k.c, operand),
+			)
+		} else {
+			errorf(
+				k.c, v.span, "L0419",
+				"`%s` has only a mutable `operator([:])`; slice it with `&mut`, as in `&mut x[a:b]`",
+				type_name(k.c, operand),
+			)
+		}
 		v.type = INVALID_TYPE
 		return
 	}
@@ -1403,19 +1431,18 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 	}
 }
 
-// design.md "Indexing and slicing": the destination's capability filters the
-// candidates before ranking, so a `[]mut T` destination selects the overload
-// yielding `[]mut T`.
+// design.md "Indexing and slicing": `&mut x[a:b]` selects the overload yielding
+// `[]mut T`, and `x[a:b]` the one yielding anything else. The destination
+// selects nothing.
 @(private = "file")
-select_slicers :: proc(k: ^Checker, all: []Symbol_Id, expected: Type_Id) -> []Symbol_Id {
-	wants_mutable := slice_is_mutable(k.c, expected)
+select_slicers :: proc(k: ^Checker, all: []Symbol_Id, mutable: bool) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
 	for candidate in all {
-		if sym := symbol_of(k.c, candidate); sym != nil && slice_is_mutable(k.c, sym.result) == wants_mutable {
+		if sym := symbol_of(k.c, candidate); sym != nil && slice_is_mutable(k.c, sym.result) == mutable {
 			append(&out, candidate)
 		}
 	}
-	return len(out) == 0 ? all : out[:]
+	return out[:]
 }
 
 // A variable, a field path, or a dereference: evaluating one twice reads the same
@@ -1474,14 +1501,33 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 		v.type = INVALID_TYPE
 		return true
 	}
+	// design.md "Slices": `a[lo:hi]` is read-only; `&mut a[lo:hi]` asks for the
+	// mutable capability, which the operand must have.
 	#partial switch info.kind {
-	case .Array:
-		v.type = slice_of(k.c, info.element, !materialized && base.addressable && base.immutable == .None)
+	case .Array, .Dynamic_Array:
+		writable := info.kind == .Array ? !materialized && base.immutable == .None : base.assignable
+		if v.mutable && !writable {
+			report_not_assignable(k, base, "sliced mutably")
+			v.type = INVALID_TYPE
+			return true
+		}
+		v.type = slice_of(k.c, info.element, v.mutable)
 	case .Slice:
-		v.type = slice_of(k.c, info.element, info.mutable)
-	case .Dynamic_Array:
-		v.type = slice_of(k.c, info.element, base.assignable)
+		if v.mutable && !info.mutable {
+			errorf(
+				k.c, v.span, "L0478",
+				"`%s` is read-only, and a read-only slice never becomes mutable", type_name(k.c, operand),
+			)
+			v.type = INVALID_TYPE
+			return true
+		}
+		v.type = slice_of(k.c, info.element, v.mutable)
 	case .String, .String_View:
+		if v.mutable {
+			errorf(k.c, v.span, "L0478", "a string is immutable and cannot be sliced mutably")
+			v.type = INVALID_TYPE
+			return true
+		}
 		// The bounds are checked at run time against the length and the encoding.
 		v.type = TYPE_STRING_VIEW
 	case .C_Pointer:

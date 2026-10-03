@@ -598,7 +598,7 @@ resolve_overload :: proc(
 	}
 	if len(viable) == 0 {
 		if report {
-			report_no_match(k, span, description, all[:])
+			report_no_match(k, span, description, all[:], args, members)
 		}
 		return Candidate{}, false
 	}
@@ -645,7 +645,9 @@ overload_has_viable :: proc(
 // ---------------------------------------------------------------- diagnostics --
 
 @(private = "file")
-report_no_match :: proc(k: ^Checker, span: Span, description: string, all: []Candidate) {
+report_no_match :: proc(
+	k: ^Checker, span: Span, description: string, all: []Candidate, args: []Arg_Info, members: []Symbol_Id,
+) {
 	// A candidate whose declaration was rejected already explains the call.
 	for cand in all {
 		if cand.template != nil && cand.template.rejected {
@@ -670,6 +672,28 @@ report_no_match :: proc(k: ^Checker, span: Span, description: string, all: []Can
 			identifier_text(k.c, sym.name),
 			cand.reason == "" ? "it is not viable here" : cand.reason,
 		)
+	}
+	note_mutable_slice_arguments(k, args, members)
+}
+
+// design.md "Slices": a read-only `a[lo:hi]` passed where an overload wants a
+// `[]mut T` is the usual reason none applies, so say so when the mutable
+// slice would have selected one.
+@(private = "file")
+note_mutable_slice_arguments :: proc(k: ^Checker, args: []Arg_Info, members: []Symbol_Id) {
+	for arg, index in args {
+		sliced, is_slice := arg.expr.(^Expr_Slice)
+		if !is_slice || sliced.mutable || type_kind(k.c, arg.type) != .Slice || slice_is_mutable(k.c, arg.type) {
+			continue
+		}
+		strengthened := slice.clone(args, context.temp_allocator)
+		strengthened[index].type = slice_of(k.c, type_of(k.c, arg.type).element, mutable = true)
+		for member in members {
+			if build_candidate(k, member, strengthened).viable {
+				note_mutable_slicing(k, arg.expr, arg.type, strengthened[index].type)
+				break
+			}
+		}
 	}
 }
 

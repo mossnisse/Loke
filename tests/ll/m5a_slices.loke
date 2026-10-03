@@ -12,7 +12,7 @@ main :: proc() {
 	data := [4]int{1, 2, 3, 4};
 
 	// Two capabilities, one representation.
-	writable: []mut int = data[:];
+	writable: []mut int = &mut data[:];
 	readable: []int = writable;
 	fmt.println(readable.len());
 	fmt.println(writable[0]);
