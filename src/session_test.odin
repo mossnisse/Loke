@@ -30,7 +30,11 @@ write_session_source :: proc(t: ^testing.T, path, text: string) -> bool {
 @(private = "file")
 expect_session_diagnostics :: proc(t: ^testing.T, a, b: ^Compiler) {
 	testing.expect_value(t, a.error_count, b.error_count)
-	testing.expect_value(t, len(a.sources), len(b.sources))
+	if testing.expect_value(t, len(a.sources), len(b.sources)) {
+		for source, index in a.sources {
+			testing.expect_value(t, filepath.base(source.path), filepath.base(b.sources[index].path))
+		}
+	}
 	if !testing.expect_value(t, len(a.diagnostics), len(b.diagnostics)) { return }
 	for diagnostic, index in a.diagnostics {
 		other := b.diagnostics[index]
@@ -168,6 +172,10 @@ session_check_modes_preserve_entry_requirements :: proc(t: ^testing.T) {
 	testing.expect(t, read_error == nil && string(bytes) == ir, "artifact emission differs from in-memory emission")
 	delete(bytes)
 	testing.expect_value(t, emit_session(&s, Emission_Options{}), 2)
+	_, generated = emit_session_ir(&s)
+	testing.expect(t, generated && len(s.compiler.diagnostics) == 0, "a missing output path must not block emission")
+	unwritable := filepath.join({root, "missing", "library.obj"}, context.temp_allocator)
+	testing.expect_value(t, emit_session(&s, Emission_Options{output = unwritable}), 2)
 	testing.expect(t, s.compiler.error_count == 1 && s.compiler.diagnostics[0].code == "L0401")
 	testing.expect(t, check_session(&s, path), "a new check must clear emission failures")
 	_, generated = emit_session_ir(&s)
@@ -224,14 +232,15 @@ snapshot_test_position :: proc(t: ^testing.T, s: ^Compilation_Session, snapshot:
 }
 
 // The same source loader checks overlays and disk, and the same package loader
-// discovers both. Caller memory, alias spelling, and unsaved directories matter.
+// discovers both. Caller memory, alias spelling, unsaved directories, and file
+// order matter: an unsaved file sorts by name among listed ones.
 @(test)
 session_overlays_match_disk_compilation :: proc(t: ^testing.T) {
 	root := session_fixture(t, "overlays")
 	if root == "" { return }
 	defer os2.remove_all(root)
 	path := filepath.join({root, "main.loke"}, context.temp_allocator)
-	extra := filepath.join({root, "extra.loke"}, context.temp_allocator)
+	extra := filepath.join({root, "z_extra.loke"}, context.temp_allocator)
 	dependency := filepath.join({root, "lib", "values", "values.loke"}, context.temp_allocator)
 	disk := "package main; main :: proc() {}"
 	text := `package main; import "library:values"; main :: proc() { assert(values.identity(answer) == 42); }`
@@ -426,7 +435,8 @@ main :: proc() {
 	// Emission diagnostics after capture do not mutate a read-only snapshot.
 	diagnostics, diagnostics_ok := query_diagnostics(&s, snapshot)
 	testing.expect(t, diagnostics_ok && len(diagnostics) == 0)
-	testing.expect_value(t, emit_session(&s, Emission_Options{}), 2)
+	unwritable := filepath.join({root, "missing", "main.obj"}, context.temp_allocator)
+	testing.expect_value(t, emit_session(&s, Emission_Options{output = unwritable}), 2)
 	diagnostics, diagnostics_ok = query_diagnostics(&s, snapshot)
 	testing.expect(t, diagnostics_ok && len(diagnostics) == 0 && len(s.compiler.diagnostics) == 1)
 }

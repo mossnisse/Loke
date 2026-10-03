@@ -107,12 +107,13 @@ filesystem and toolchain policy remain in `src/emit_llvm_toolchain.odin`.
 | `init_session(&s, config)` | Initialize a zeroed session in place. Copy all configuration strings and arrays; the caller can release them immediately. Default to `DEFAULT_COMPILATION_CONFIG`, matching CLI defaults. Return false with diagnostics for invalid configuration; reject reinitializing a live session. |
 | `check_session(&s, input)` | Replace the previous compilation, reload source and project files (using source overlays), and run whole-program checking, entry/export validation, and semantic finalization. Return false for source/configuration errors, retaining diagnostics. The caller can release its input path on return. |
 | `check_session(&s, input, documentation = true)` | Preserve `-doc` behavior: check declarations and exports without requiring executable entry or finalizing emission dependencies. This result cannot be emitted. |
-| `emit_session_ir(&s)` | Return LLVM module text and a success flag from a successfully finalized check. Create no files and invoke no external tools. Repeated emission consumes the same checked state. |
-| `emit_session(&s, options)` | Write IR, an object, or an executable using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Require an explicit output path; take optimization and build mode from the checked configuration. Return the existing toolchain exit status. |
+| `emit_session_ir(&s)` | Return LLVM module text and a success flag from a successfully finalized check. Create no files and invoke no external tools. Repeated emission consumes the same checked state; each module stays allocated until the next check or destruction. |
+| `emit_session(&s, options)` | Write IR, an object, or an executable using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Return 2 without a diagnostic for an empty output path, so the check can still be emitted; take optimization and build mode from the checked configuration. Return the existing toolchain exit status. |
 | `destroy_session(&s)` | Release all compilation, configuration, scratch, overlay, and query storage. Safe on a zeroed session, after any failure, and repeatedly. |
 
 Do not copy a live session or its `Compiler`: their allocators contain pointers
-into those structs. Use one operation at a time on a session. Its allocator is
+into those structs. Use one operation at a time on a session, except for the
+concurrent queries in [Snapshots and queries](#snapshots-and-queries). Its allocator is
 captured at creation and must remain alive until destruction. Configuration is
 fixed until destruction; create a new session to change it.
 
@@ -170,7 +171,13 @@ Except for the owned reference array, returned strings and slices are borrowed,
 must not be modified or deleted, and expire on invalidation. Copy needed data
 before editing/checking. Keeping a token does not retain an older compilation;
 invalidation releases its query arena immediately and the next check releases
-the preceding compiler state. Use one operation at a time on a session.
+the preceding compiler state.
+
+Once `session_snapshot` has built a check's views, later `session_snapshot` and
+query calls only read the session, so several threads may run them at once.
+Allocating queries use the calling thread's `context`. That first
+`session_snapshot` call, overlay edits, checks, emission, and destruction need
+exclusive use of the session.
 
 On incomplete or erroneous programs, loaded sources and diagnostics remain
 available. Collected bindings, recorded definitions/references, and checked

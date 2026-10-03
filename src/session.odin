@@ -74,7 +74,7 @@ configure_session :: proc(s: ^Compilation_Session) -> bool {
 	c.debug_info, c.debug = config.debug_info, config.debug
 	c.log_level = config.log_level
 	configured := seed_defines(c, config.defines) && register_collections(c, config.collections)
-	c.source_overlays = s.overlays
+	c.source_overlays = &s.overlays
 	return configured
 }
 
@@ -116,6 +116,8 @@ check_session :: proc(s: ^Compilation_Session, input: string, documentation := f
 // In-memory emission creates no artifacts and performs no toolchain invocation.
 // It consumes only the finalized state; an unchecked/failed/documentation
 // session is rejected without entering the backend.
+// ponytail: every call adds a module to the emission arena until the next check;
+// resetting it per call would also free emission diagnostics living there.
 emit_session_ir :: proc(s: ^Compilation_Session) -> (string, bool) {
 	if !s.ready || s.compiler.error_count > 0 { return "", false }
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
@@ -123,14 +125,12 @@ emit_session_ir :: proc(s: ^Compilation_Session) -> (string, bool) {
 }
 
 // Artifact/toolchain policy is supplied separately from checking configuration.
+// A missing output path is the caller's mistake, rejected like an unchecked
+// session: no diagnostic, so it cannot block later emission of the same check.
 emit_session :: proc(s: ^Compilation_Session, opts: Emission_Options) -> int {
-	if !s.ready || s.compiler.error_count > 0 { return 2 }
+	if !s.ready || s.compiler.error_count > 0 || opts.output == "" { return 2 }
 	context.allocator = s.allocator
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
-	if opts.output == "" {
-		errorf(&s.compiler, no_span(), "L0401", "an output path is required")
-		return 2
-	}
 	return emit_package(&s.compiler, opts)
 }
 

@@ -3,6 +3,7 @@
 package lokec
 
 import "core:mem/virtual"
+import "core:slice"
 import "core:strings"
 import "core:sync"
 
@@ -65,6 +66,8 @@ invalidate_session_snapshot :: proc(s: ^Compilation_Session) {
 }
 
 // Capture views once, on demand, including after failed initialization/checking.
+// Later calls and every query only read, so several threads may share them;
+// keep it that way (compiler-architecture.md "Snapshots and queries").
 // Returned strings/slices are borrowed and must not be modified. They expire at
 // an overlay edit, the next check, or destruction. Capture diagnostics before
 // emission to obtain checking diagnostics; later emission cannot change them.
@@ -223,7 +226,8 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		id := Symbol_Id(index)
 		for source := symbol; source.instance_of != INVALID_SYMBOL; source = symbol_of(c, id) { id = source.instance_of }
 		source := symbol_of(c, id)
-		if written_query_binding(c, source) {
+		written := written_query_binding(c, source)
+		if written {
 			key := Binding_Key{source.span, source.kind, source.name}
 			if existing, found := bindings[key]; found { id = existing } else { bindings[key] = id }
 		}
@@ -233,10 +237,10 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 			Symbol_Handle{s.snapshot, Symbol_Id(index)}, identifier_text(c, symbol.name), symbol.kind,
 			Type_Handle{s.snapshot, type}, Query_Location{s.snapshot, symbol.span}, symbol.public, symbol.generic,
 		}
-		if id == Symbol_Id(index) && written_query_binding(c, source) {
+		if id == Symbol_Id(index) && written {
 			append(&q.documents[source.span.file], Symbol_Handle{s.snapshot, id})
 		}
-		if written_query_binding(c, source) {
+		if written {
 			append(&q.occurrences, Query_Occurrence{span = symbol.span, symbol = Symbol_Id(index), type = type})
 		} else { q.symbols[index].definition.span = no_span() }
 	}
@@ -250,7 +254,7 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 			element = Type_Handle{s.snapshot, info.element}, key = Type_Handle{s.snapshot, info.key}, result = Type_Handle{s.snapshot, info.result},
 			count = info.count, bits = info.bits, signed = info.signed, mutable = info.mutable, result_inout = info.result_inout,
 			fields = make([]Symbol_Handle, len(info.fields)), members = make([]Symbol_Handle, len(info.members)),
-			parameters = make([]Type_Handle, len(info.parameters)), param_modes = info.param_modes,
+			parameters = make([]Type_Handle, len(info.parameters)), param_modes = slice.clone(info.param_modes),
 		}
 		for field, slot in info.fields { type.fields[slot] = Symbol_Handle{s.snapshot, field} }
 		for member, slot in info.members { type.members[slot] = Symbol_Handle{s.snapshot, member} }

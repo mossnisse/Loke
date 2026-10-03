@@ -63,14 +63,11 @@ index_query_item :: proc(index: ^Query_Index, item: Item) {
 	index_query_attributes(index, base.attributes)
 	switch v in item {
 	case ^Decl, ^Item_Error, ^Item_Import, ^Item_Foreign_Import, ^Item_Delegate:
-	case ^Item_Foreign_Block, ^Item_Impl, ^Item_Block:
-		#partial switch node in item {
-		case ^Item_Foreign_Block: for member in node.members { index_query_item(index, member) }
-		case ^Item_Impl:
-			index_query_expr(index, node.type)
-			for member in node.members { index_query_item(index, member) }
-		case ^Item_Block: for member in node.items { index_query_item(index, member) }
-		}
+	case ^Item_Foreign_Block: for member in v.members { index_query_item(index, member) }
+	case ^Item_Impl:
+		index_query_expr(index, v.type)
+		for member in v.members { index_query_item(index, member) }
+	case ^Item_Block: for member in v.items { index_query_item(index, member) }
 	case ^Item_When:
 		index_query_expr(index, v.cond)
 		if v.resolved {
@@ -153,11 +150,8 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	case ^Expr_Call:
 		index_query_expr(index, v.callee)
 		for argument in v.args { index_query_expr(index, argument.value) }
-	case ^Expr_Postfix, ^Expr_Unary:
-		#partial switch node in expr {
-		case ^Expr_Postfix: index_query_expr(index, node.operand)
-		case ^Expr_Unary: index_query_expr(index, node.operand)
-		}
+	case ^Expr_Postfix: index_query_expr(index, v.operand)
+	case ^Expr_Unary: index_query_expr(index, v.operand)
 	case ^Expr_Binary:
 		index_query_expr(index, v.lhs)
 		index_query_expr(index, v.rhs)
@@ -189,14 +183,11 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		index_query_stmt(index, v.body)
 	case ^Expr_Proc_Group:
 	case ^Expr_Operator: index_query_expr(index, v.value)
-	case ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Distinct:
-		#partial switch node in expr {
-		case ^Type_Pointer: index_query_expr(index, node.elem)
-		case ^Type_C_Pointer: index_query_expr(index, node.elem)
-		case ^Type_Slice: index_query_expr(index, node.elem)
-		case ^Type_Dynamic_Array: index_query_expr(index, node.elem)
-		case ^Type_Distinct: index_query_expr(index, node.elem)
-		}
+	case ^Type_Pointer: index_query_expr(index, v.elem)
+	case ^Type_C_Pointer: index_query_expr(index, v.elem)
+	case ^Type_Slice: index_query_expr(index, v.elem)
+	case ^Type_Dynamic_Array: index_query_expr(index, v.elem)
+	case ^Type_Distinct: index_query_expr(index, v.elem)
 	case ^Type_Array:
 		index_query_expr(index, v.length)
 		index_query_expr(index, v.elem)

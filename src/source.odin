@@ -77,9 +77,9 @@ Diagnostic :: struct {
 // and packages use the compilation-lifetime semantic arena below.
 Compiler :: struct {
 	sources:     [dynamic]Source,
-	// Borrowed from the session. Loaded buffers are copied so an overlay edit
-	// cannot alter a compilation already being consumed.
-	source_overlays: map[string]Source_Overlay,
+	// The session's overlays; read through `compiler_overlays`. Loaded buffers
+	// are copied so an overlay edit cannot alter a compilation being consumed.
+	source_overlays: ^map[string]Source_Overlay,
 	diagnostics: [dynamic]Diagnostic,
 	error_count: int,
 	// What a body checked on demand for compile-time execution reported
@@ -335,8 +335,8 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 	init_semantic_stores(c)
 	data: []u8
 	read_ok: bool
-	if len(c.source_overlays) > 0 {
-		if overlay, found := c.source_overlays[dir_key(canonical_dir(path))]; found {
+	if overlays := compiler_overlays(c); len(overlays) > 0 {
+		if overlay, found := overlays[dir_key(canonical_dir(path))]; found {
 			data, read_ok = transmute([]u8)strings.clone(overlay.text), true
 		}
 	}

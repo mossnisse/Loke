@@ -21,7 +21,6 @@ set_session_overlay :: proc(s: ^Compilation_Session, path, text: string) -> bool
 		overlay.key = strings.clone(key)
 		s.overlays[overlay.key] = overlay
 	}
-	s.compiler.source_overlays = s.overlays
 	invalidate_session_snapshot(s)
 	return true
 }
@@ -37,11 +36,16 @@ remove_session_overlay :: proc(s: ^Compilation_Session, path: string) -> bool {
 		delete(previous.key)
 		delete(previous.path)
 		delete(previous.text)
-		s.compiler.source_overlays = s.overlays
 		invalidate_session_snapshot(s)
 		return true
 	}
 	return false
+}
+
+// Empty outside a session. A pointer, not a copy of the map, so an overlay edit
+// can never leave the compiler holding a stale map header.
+compiler_overlays :: proc(c: ^Compiler) -> map[string]Source_Overlay {
+	return c.source_overlays^ if c.source_overlays != nil else nil
 }
 
 // A new unsaved file can establish a package directory without creating it on
@@ -50,7 +54,7 @@ remove_session_overlay :: proc(s: ^Compilation_Session, path: string) -> bool {
 is_source_directory :: proc(c: ^Compiler, path: string) -> bool {
 	if is_directory(path) { return true }
 	key := strings.concatenate({strings.trim_right(dir_key(canonical_dir(path)), "/"), "/"}, context.temp_allocator)
-	for _, overlay in c.source_overlays {
+	for _, overlay in compiler_overlays(c) {
 		if strings.has_prefix(overlay.key, key) { return true }
 	}
 	return false

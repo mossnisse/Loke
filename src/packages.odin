@@ -187,28 +187,31 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 // Direct regular `.loke` files, sorted for deterministic package order.
 @(private = "file")
 package_sources :: proc(c: ^Compiler, dir: string) -> []string {
+	overlays := compiler_overlays(c)
 	entries, err := os2.read_all_directory_by_path(dir, context.temp_allocator)
-	if err != nil && len(c.source_overlays) == 0 {
+	if err != nil && len(overlays) == 0 {
 		return nil
 	}
 	paths := make([dynamic]string, 0, len(entries), c.semantic_allocator)
 	seen: map[string]bool
-	if len(c.source_overlays) > 0 { seen = make(map[string]bool, context.temp_allocator) }
+	if len(overlays) > 0 { seen = make(map[string]bool, context.temp_allocator) }
 	for entry in entries {
 		if entry.type == .Regular && strings.to_lower(filepath.ext(entry.name), context.temp_allocator) == ".loke" {
 			append(&paths, strings.clone(entry.fullpath, c.semantic_allocator))
-			if len(c.source_overlays) > 0 { seen[dir_key(canonical_dir(entry.fullpath))] = true }
+			if len(overlays) > 0 { seen[dir_key(canonical_dir(entry.fullpath))] = true }
 		}
 	}
-	if len(c.source_overlays) > 0 {
+	if len(overlays) > 0 {
 		key := dir_key(canonical_dir(dir))
-		for path, overlay in c.source_overlays {
+		for path, overlay in overlays {
 			if !seen[path] && dir_key(canonical_dir(filepath.dir(overlay.path, context.temp_allocator))) == key {
 				append(&paths, strings.clone(overlay.path, c.semantic_allocator))
 			}
 		}
 	}
-	slice.sort(paths[:])
+	// By name: listed paths end `\name` on Windows, unsaved ones `/name`, and
+	// the separator must not put unsaved files first.
+	slice.sort_by(paths[:], proc(a, b: string) -> bool { return filepath.base(a) < filepath.base(b) })
 	return paths[:]
 }
 
