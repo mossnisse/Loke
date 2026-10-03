@@ -1,0 +1,16 @@
+warning[L0507]: this return clones `list`, which may allocate
+@10:59
+warning[L0507]: this binding clones `first`, which may allocate
+@14:12
+warning[L0507]: this binding clones part of `bag`, which may allocate
+@21:11
+warning[L0507]: this binding clones `first`, which may allocate
+@25:12
+this runs on every iteration of the enclosing loop
+warning[L0507]: this variadic argument clones `first`, which may allocate
+@30:15
+L0310
+@37:17
+!allocating_copy_cost.loke:16:
+!allocating_copy_cost.loke:17:
+!allocating_copy_cost.loke:34:

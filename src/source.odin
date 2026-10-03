@@ -203,6 +203,9 @@ Compiler :: struct {
 	// duplicates at least this many inline bytes, or when its clone may allocate.
 	copy_cost_threshold: u64,
 	copy_cost_enabled:   bool,
+	// Allocating binding and assignment copies of the body being analysed,
+	// reported once last-use transfer has settled which stay copies.
+	held_copy_reports: [dynamic]Held_Copy_Report,
 	// design.md "Panic strategy": `-panic=unwind` registers one logical frame per
 	// procedure that can own a cleanup, so a panic replays every active Loke
 	// frame's live actions before terminating; `-panic=abort` registers none.

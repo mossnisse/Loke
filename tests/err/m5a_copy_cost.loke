@@ -9,8 +9,8 @@ package main; import "core:fmt";
 //
 // Compiled with `-copy-cost=1`, so every real copy site reports and the ones
 // that are not copy sites still stay quiet — `_ = place` writes to nothing and
-// is not one. A copy that may allocate is not a copy site but an error (L0504,
-// tests/err/implicit_allocating_copy), so each one here is written `clone` or
+// is not one. A copy that may allocate reports as a clone whatever its size
+// (tests/err/allocating_copy_cost), so each one here is written `clone` or
 // `move`, and what reports is inline bytes: nothing at the default threshold.
 //
 // design.md also asks that an ABI hidden-pointer transport not be mistaken for a

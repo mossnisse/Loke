@@ -268,8 +268,11 @@ line shows it, so Loke skips it where it can. When the variable you copy from
 is never read again, as `second` is not after `third := second;`, the assignment
 hands the container over instead of copying it.
 [design.md "Last-use transfer"](../design.md#last-use-transfer) has the exact
-rule. Large copies are also reported: the compiler warns when one copies 512
-bytes or more of a value itself (`-copy-cost=N` changes the limit).
+rule. A copy that remains is reported: compiling this program warns that the
+binding `second := first` clones `first`, which may allocate, and writing
+`first.clone()` instead says the copy is intended. The compiler also warns when
+a copy duplicates 512 bytes or more of a value itself (`-copy-cost=N` changes
+the limit, and `-copy-cost=off` turns both warnings off).
 
 When you want to be sure which of the two happens, say so:
 

@@ -99,7 +99,7 @@ Compile examples individually: `examples/` contains separate programs, not one m
 | `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
 | `-define:NAME=VALUE` | Supply a project-wide `build_config` value. Repeat for different names. |
 | `-collection name=path` | Map an import prefix to a directory. Repeat for different prefixes. |
-| `-copy-cost=N` | Warn about copies of at least `N` inline bytes. Default: `512`; use `-copy-cost=off` to disable. |
+| `-copy-cost=N` | Warn about copies that may allocate, and about copies of at least `N` inline bytes. Default: `512`; use `-copy-cost=off` to disable both. |
 | `-build-mode=exe\|obj` | Produce an executable (default) or one relocatable object. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |

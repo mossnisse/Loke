@@ -4298,6 +4298,8 @@ Machine-level argument passing does not grant extra ownership, mutation, or life
 
 Tools may warn about costly copies of aggregates and managed owners. These warnings are optional and may use a cost threshold. When enabled, the warning policy applies to all copy contexts under [the ownership rule](#value-semantics-and-the-ownership-rule): bindings, assignments, argument copies, returns, place operands and fallbacks of [`or_else` or `or_return`](#operator-ownership), [aggregate literal](#struct-literals) elements, [variant](#unions) payloads, [container insertion](#container-insertion), variadic pack elements, and explicit `clone` or [`copied()`](#iteration-adapters) calls.
 
+A warning names what a copy costs. A copy that may allocate — of a container, of a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or of anything holding one — reports as a clone whatever its inline size, since its inline bytes say nothing of what it duplicates. A copy that retains storage, of a [`string`](#string-type) or [`shared(T)`](#shared-ownership), is not costly. Any other copy is measured by the inline bytes it duplicates. A copy that [last-use transfer](#last-use-transfer) makes a move is not reported, and neither is a written `clone()`, which states the copy is intended.
+
 Converting an operand to a destination type is not itself a copy: `print(count)` erases an `int` into a borrowing `any_view`, duplicating nothing. Ordinary `value: T` parameters borrow managed owners for the call and are not copy sites either.
 
 #### Local copies of parameters

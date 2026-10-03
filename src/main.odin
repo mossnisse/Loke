@@ -48,8 +48,8 @@ options:
     -define:NAME=VALUE
                   set a project-wide build_config value: true, false, an integer,
                   or a string
-    -copy-cost=N  warn at a copy site duplicating N or more inline bytes
-                  (default 512; "off" disables it)
+    -copy-cost=N  warn at a copy that may allocate, and at one duplicating N
+                  or more inline bytes (default 512; "off" disables both)
     -runtime=<dir>
                   the seed runtime's C sources; defaults to the runtime
                   directory beside the compiler

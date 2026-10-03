@@ -164,7 +164,10 @@ Allocating copies are implicit so assignment works uniformly in generic code
 and adding an owning field does not break every caller that copies a record.
 The cost is a possible allocation. [Last-use transfer](design.md#last-use-transfer)
 avoids it for eligible bindings and assignments whose source is finished;
-the copy-cost diagnostic reports large inline copies.
+the copy-cost diagnostic reports each allocating copy that remains, and large
+inline copies. It is on by default: measured when it was added, it reported
+nothing in `examples/` or the standard library they use, so the noise that
+sank the explicit-copy policy does not return as warnings.
 
 Last-use transfer is conservative about borrows. A local ever stored into a
 borrow-carrying value, or passed as one to a call with an `inout` argument, is

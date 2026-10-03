@@ -544,13 +544,6 @@ The first group should precede a broad syntax rewrite. The next group should
 be tried on concrete programs: a parser, a resource container, a sorting or
 partitioning algorithm, and a parallel numeric kernel.
 
-### Copy-cost diagnostics by kind
-
-Copy-cost diagnostics should distinguish an allocation, recursive element
-cloning, reference-count retention, and inline byte copying. The current
-inline-size threshold cannot communicate the cost of cloning a small header
-that owns a million elements.
-
 ### Put unchecked obligations at their operation
 
 The current [unsafe boundary](design.md#the-unsafe-package) is mostly a file

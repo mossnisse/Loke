@@ -442,7 +442,7 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
 			continue
 		}
 		if value != nil && expression_is_borrowed_place(value) {
-			report_copy_cost(k, .Binding, expr_span(value), value, sym.type, in_loop)
+			report_copy_cost(k, .Binding, expr_span(value), value, sym.type, in_loop, Held_Copy_Report{decl = d, index = index})
 		}
 		if !classify_copy(k, value, sym.type, .Binding) {
 			continue
@@ -485,7 +485,7 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 			continue
 		}
 		if expression_is_borrowed_place(value) {
-			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, in_loop)
+			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, in_loop, Held_Copy_Report{assign = s, index = index})
 		}
 		if !classify_copy(k, value, base.type, .Assignment) {
 			continue
@@ -602,16 +602,42 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 	return "copy"
 }
 
-// Whether a copy of `type` is worth reporting: its inline size. What an
-// allocating copy duplicates besides is not known until it runs, and a copy at
-// a local's last use is a move instead (design.md "Last-use transfer").
-@(private = "file")
-copy_is_expensive :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return c.copy_cost_enabled && type_size(c, type) >= c.copy_cost_threshold
+// A binding or assignment copy whose report waits for last-use transfer: the
+// copy it names may yet become a move (design.md "Last-use transfer").
+Held_Copy_Report :: struct {
+	decl:    ^Decl,
+	assign:  ^Stmt_Assign,
+	index:   int,
+	site:    Copy_Site,
+	span:    Span,
+	source:  Expr,
+	in_loop: bool,
 }
 
-report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool) {
-	if !copy_is_expensive(k.c, type) {
+// A copy that may allocate is reported as one whatever its size, since its
+// inline bytes say nothing of what it duplicates; any other copy by the bytes
+// it duplicates. A `string` or `shared(T)` copy retains, and costs neither.
+report_copy_cost :: proc(
+	k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool,
+	held := Held_Copy_Report{},
+) {
+	if !k.c.copy_cost_enabled {
+		return
+	}
+	if clone_may_allocate(k.c, type) {
+		if held.decl == nil && held.assign == nil {
+			report_allocating_copy(k, site, span, source, in_loop)
+			return
+		}
+		if k.c.held_copy_reports == nil {
+			k.c.held_copy_reports = make([dynamic]Held_Copy_Report, 0, 4, k.c.semantic_allocator)
+		}
+		held := held
+		held.site, held.span, held.source, held.in_loop = site, span, source, in_loop
+		append(&k.c.held_copy_reports, held)
+		return
+	}
+	if type_size(k.c, type) < k.c.copy_cost_threshold {
 		return
 	}
 	name := ""
@@ -642,6 +668,47 @@ report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr,
 	add_notef(k.c, no_span(), "take a pointer or `shared(T)` if the two names should share one value")
 }
 
+@(private = "file")
+report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, in_loop: bool) {
+	name := ""
+	if root := symbol_of(k.c, place_root_symbol(source)); root != nil {
+		name = identifier_text(k.c, root.name)
+	}
+	if _, is_ident := source.(^Expr_Ident); is_ident && name != "" {
+		warnf(k.c, span, "L0507", "this %s clones `%s`, which may allocate", copy_site_text(site), name)
+		if in_loop {
+			add_notef(k.c, no_span(), "this runs on every iteration of the enclosing loop")
+		}
+		add_notef(k.c, no_span(), "write `%s.clone()` if the copy is intended", name)
+		return
+	}
+	if name == "" {
+		warnf(k.c, span, "L0507", "this %s clones a value that may allocate", copy_site_text(site))
+	} else {
+		warnf(k.c, span, "L0507", "this %s clones part of `%s`, which may allocate", copy_site_text(site), name)
+	}
+	if in_loop {
+		add_notef(k.c, no_span(), "this runs on every iteration of the enclosing loop")
+	}
+	add_notef(k.c, no_span(), "write `.clone()` on it if the copy is intended")
+}
+
+// The held reports whose copies last-use transfer left copies. A deferred
+// declaration is classified at each expansion, so one site may be held twice.
+@(private = "file")
+flush_held_copy_reports :: proc(k: ^Checker) {
+	reported := make(map[Span]bool, context.temp_allocator)
+	for held in k.c.held_copy_reports {
+		clones := held.decl != nil ? held.decl.value_clones : held.assign.rhs_clones
+		if held.index >= len(clones) || !clones[held.index] || reported[held.span] {
+			continue
+		}
+		reported[held.span] = true
+		report_allocating_copy(k, held.site, held.span, held.source, held.in_loop)
+	}
+	clear(&k.c.held_copy_reports)
+}
+
 // ------------------------------------------------------------- liveness --
 
 // Where a local sits at one program point. The join of two different states is
@@ -664,6 +731,7 @@ analyze_ownership :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	// reaches here, so one reserved arena reset per body is enough.
 	defer free_all(k.c.analysis_allocator)
 	graph := build_flow_graph(k, literal)
+	defer flush_held_copy_reports(k)
 	if graph == nil {
 		return
 	}

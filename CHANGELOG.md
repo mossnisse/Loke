@@ -240,6 +240,12 @@ checklist.
 
 ### Changed
 
+- The copy-cost warning (`L0507`) reports a copy that may allocate — of a
+  container, or of a record with a copy hook — whatever its size, as "this
+  binding clones `first`, which may allocate". A copy last-use transfer makes
+  a move, a written `.clone()`, and a `string` or `shared(T)` copy are not
+  reported. Write `.clone()` to mark an intended copy, or pass
+  `-copy-cost=off`.
 - A `hook(copy)` must return its source's value, and how many implicit copies
   run is unspecified: last-use transfer skips a copy and the source's later
   drop. A hook that changes the value or counts its calls gets results that

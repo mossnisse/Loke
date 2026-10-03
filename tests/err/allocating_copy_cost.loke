@@ -1,0 +1,38 @@
+package main; import "core:fmt";
+
+// design.md "Copy-cost diagnostics": at the default threshold, a copy that may
+// allocate reports as a clone whatever its inline size, in every copying
+// context. A copy last-use transfer makes a move is not one, a written
+// `clone()` is the intended copy, and a `string` copy retains its storage.
+
+Bag :: struct { items: [dynamic]int }
+
+keep :: proc(list: [dynamic]int) -> [dynamic]int { return list; }
+
+main :: proc() {
+	first := [dynamic]int{1, 2, 3};
+	second := first;                   // a clone: `first` is read below
+	fmt.println(first, second);
+	third := second;                   // a move: nothing reads `second` again
+	explicit := third.clone();         // written, so intended
+	fmt.println(third, explicit);
+
+	bag := Bag{[dynamic]int{4}};
+	items := bag.items;                // a clone of part of `bag`
+	fmt.println(bag, items);
+
+	for (i := 0; i < 2; i += 1) {
+		again := first;                // a clone on every iteration
+		fmt.println(again);
+	}
+
+	store: [dynamic][dynamic]int = {};
+	store.append(first);               // container insertion clones
+	fmt.println(store);
+
+	name := "text";
+	other := name;                     // a `string` retains: no report
+	fmt.println(name, other, keep(first));
+
+	missing: int = "not an int";
+}
