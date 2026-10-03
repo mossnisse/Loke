@@ -161,12 +161,14 @@ deliverable; incremental checking is a later milestone with its own evidence.
 
 Implementation order:
 
-1. **Reusable sessions.** Separate driver concerns from a compilation session
-   that owns sources, packages, semantic stores, and diagnostics. Initially run
-   the existing whole-program pipeline on every compilation. Define creation,
-   checking, emission, and destruction, and make `lokec` use that same path.
-   Compare diagnostics and emitted IR with the baseline and check repeated
-   session creation/destruction for leaks.
+1. **Reusable sessions — shipped.** `Compilation_Session` separates driver
+   concerns from owned configuration, sources, packages, semantic stores, and
+   diagnostics. `lokec` uses its creation, checking, emission, and destruction
+   path; every check reloads inputs and runs the existing whole-program pipeline.
+   Regression coverage compares reused and fresh sessions after source and
+   manifest edits, checks diagnostics and IR, and tracks repeated creation and
+   destruction for leaks. The API and lifetime contract are in
+   [Reusable batch sessions](compiler-architecture.md#reusable-batch-sessions).
 2. **Snapshots and queries.** Add in-memory overlays for unsaved sources and
    read-only queries for symbols, types, definitions, references, signatures,
    and diagnostics. Specify which queries work on an incomplete or erroneous

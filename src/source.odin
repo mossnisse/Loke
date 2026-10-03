@@ -100,7 +100,7 @@ Compiler :: struct {
 	package_by_dir: map[string]Package_Id,
 	root_dir:       string,
 	root_package:   Package_Id,
-	// Validated by the driver for executable builds; never resolved by emission.
+	// Validated by the session for executable builds; never resolved by emission.
 	entry_point:    Symbol_Id,
 	// Every parsed file, so one `destroy_compilation` frees the lot.
 	parsed_files:   [dynamic]^File,

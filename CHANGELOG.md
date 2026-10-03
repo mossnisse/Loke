@@ -324,6 +324,10 @@ checklist.
 
 ### Added
 
+- Reusable compiler sessions own build configuration and compilation state,
+  support repeated whole-program checks and in-memory LLVM emission, and back
+  the existing `lokec` command-line pipeline. See
+  [compiler-architecture.md "Reusable batch sessions"](compiler-architecture.md#reusable-batch-sessions).
 - `core:math` adds `wrap(T, value)`, a compiler-known conversion that keeps an
   integer's low bits, and `wrapping_add`, `wrapping_sub`, `wrapping_mul`,
   `checked_add`, `checked_sub`, and `checked_mul` for signed and unsigned

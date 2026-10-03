@@ -17,6 +17,13 @@ import "core:time"
 
 CLANG_MISSING :: "cannot run `%s`: install LLVM (`winget install LLVM.LLVM`) or set LOKE_CLANG"
 
+Emission_Options :: struct {
+	output:      string,
+	emit_ll:     bool,
+	keep_temps:  bool,
+	runtime_dir: string,
+}
+
 // `os2.process_exec`, but idle while the child runs. The core one polls its pipes
 // in a loop with no pause, so a waiting lokec held a whole core, and parallel
 // builds starved their own clang processes of CPU. The test harness keeps its
@@ -85,7 +92,7 @@ drain :: proc(pipe: ^os2.File, into: ^[dynamic]byte, done: ^bool) -> (got: bool,
 	return n > 0, err
 }
 
-emit_package :: proc(c: ^Compiler, opts: Options) -> int {
+emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	context.allocator = virtual.arena_allocator(&c.emission_arena)
 	module, generated := emit_llvm_module(c)
 	if !generated {
@@ -117,7 +124,7 @@ emit_package :: proc(c: ^Compiler, opts: Options) -> int {
 	}
 
 	if c.build_mode == .Obj {
-		return compile_object(c, ll_path, opts.output, opts)
+		return compile_object(c, ll_path, opts.output)
 	}
 	return link(c, ll_path, natvis_path, opts.output, opts)
 }
@@ -125,7 +132,7 @@ emit_package :: proc(c: ^Compiler, opts: Options) -> int {
 // design.md "Build modes": one relocatable object, with runtime and foreign
 // references left for the C host's final link. Assembly can't ride along.
 @(private = "file")
-compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string, opts: Options) -> int {
+compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string) -> int {
 	for imp in foreign_imports(c) {
 		if assembler := assembler_for(imp.path); assembler != "" {
 			errorf(
@@ -138,7 +145,7 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string, opts: Op
 	}
 
 	clang := find_clang()
-	command := []string{clang, "-c", ll_path, "-o", obj_path, opt_clang_flag(opts.opt_mode), "-Wno-override-module"}
+	command := []string{clang, "-c", ll_path, "-o", obj_path, opt_clang_flag(c.opt_mode), "-Wno-override-module"}
 	state, _, stderr, err := run_process(os2.Process_Desc{command = command}, context.allocator)
 	if err != nil {
 		errorf(c, no_span(), "L0402", CLANG_MISSING, clang)
@@ -179,7 +186,7 @@ Layout_Probe :: struct {
 
 // `-check-layout`: runs a module printing LLVM's size, alignment, and field
 // offsets for every type and compares them with the checker's layout.
-check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
+check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	context.allocator = virtual.arena_allocator(&c.emission_arena)
 	e := make_emitter(c)
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, c.target.triple)
@@ -328,16 +335,16 @@ replace_ext :: proc(path: string, ext: string) -> string {
 // ponytail: superseded sets are left behind (about 100 KB each); a sweep
 // would need to know no link still reads them.
 @(private = "file")
-prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opts: Options) -> []string {
-	if opts.runtime_dir != "" {
+prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opt_mode: Opt_Mode, custom_runtime: bool) -> []string {
+	if custom_runtime {
 		return nil
 	}
-	command := runtime_compile_command(runtime_dir, sources, opts)
+	command := runtime_compile_command(runtime_dir, sources, opt_mode)
 	manifest, identified := runtime_build_manifest(runtime_dir, command)
 	if !identified {
 		return nil
 	}
-	name := fmt.tprintf("%v-%16x", opts.opt_mode, hash.fnv64a(transmute([]byte)manifest))
+	name := fmt.tprintf("%v-%16x", opt_mode, hash.fnv64a(transmute([]byte)manifest))
 	dir := filepath.join({runtime_dir, "prebuilt", name})
 	objects := make([]string, len(sources))
 	for source, index in sources {
@@ -412,13 +419,13 @@ prebuilt_current :: proc(dir: string, objects: []string, manifest: string) -> bo
 // One clang process; `-c` with several inputs writes each object into the
 // working directory.
 @(private = "file")
-runtime_compile_command :: proc(runtime_dir: string, sources: []string, opts: Options) -> []string {
+runtime_compile_command :: proc(runtime_dir: string, sources: []string, opt_mode: Opt_Mode) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, find_clang(), "-c")
 	for source in sources {
 		append(&command, source)
 	}
-	append(&command, opt_clang_flag(opts.opt_mode))
+	append(&command, opt_clang_flag(opt_mode))
 	append_c_includes(&command, runtime_dir)
 	return command[:]
 }
@@ -437,7 +444,7 @@ compile_runtime_sources :: proc(command: []string, staging: string) -> bool {
 // (decisions A5, A7). Outside a developer prompt it cannot find the MSVC
 // toolset, so its headers and libraries are located here.
 @(private = "file")
-link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Options) -> int {
+link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emission_Options) -> int {
 	clang := find_clang()
 
 	runtime_dir := resolved_runtime_dir(opts)
@@ -469,7 +476,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Options
 
 	command := make([dynamic]string)
 	append(&command, clang, ll_path, "-o", exe_path)
-	append(&command, opt_clang_flag(opts.opt_mode))
+	append(&command, opt_clang_flag(c.opt_mode))
 	// The module carries its own debug information; `-g` has the linker write
 	// the PDB.
 	if c.debug_info {
@@ -479,7 +486,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Options
 		append(&command, fmt.aprintf("-Wl,/NATVIS:%s", natvis_path))
 	}
 	runtime_inputs := sources
-	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, opts); prebuilt != nil {
+	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, c.opt_mode, opts.runtime_dir != ""); prebuilt != nil {
 		runtime_inputs = prebuilt
 	}
 	for input in runtime_inputs {

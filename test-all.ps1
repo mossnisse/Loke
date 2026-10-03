@@ -41,14 +41,14 @@ try {
     }
 
     # Nor does the checker reach into the backend: a helper both sides need
-    # lives with its semantic owner. The driver, main.odin, runs the emitter.
+    # lives with its semantic owner. The driver and session API run the emitter.
     $emitter = Get-ChildItem src/emit_llvm*.odin | Where-Object { $_.Name -notlike '*_test.odin' }
     $emitterProcs = $emitter |
         Select-String -Pattern '^(\w+) :: (#force_inline )?proc' -CaseSensitive -Context 1, 0 |
         Where-Object { $_.Context.PreContext[0] -ne '@(private = "file")' } |
         ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique
     $frontEnd = Get-ChildItem src/*.odin | Where-Object {
-        $_.Name -notlike '*_test.odin' -and $_.Name -notlike 'emit_llvm*' -and $_.Name -ne 'main.odin'
+        $_.Name -notlike '*_test.odin' -and $_.Name -notlike 'emit_llvm*' -and $_.Name -notin @('main.odin', 'session.odin')
     }
     # A file-private procedure of the same name, such as the evaluator's
     # `bind_local`, is the front end's own.

@@ -1,4 +1,4 @@
-// Driver: CLI, pipeline, exit codes.
+// Driver: CLI, presentation, exit codes. Compilation lives in session.odin.
 //
 // Exit codes: 0 success, 1 a user error (diagnostics or a bad command line),
 // 2 an internal or toolchain failure.
@@ -97,8 +97,6 @@ Options :: struct {
 	log_level:  Log_Level,
 }
 
-DEFAULT_PANIC_UNWIND :: true
-
 // `-define:LOKE_TRACK_MEMORY=true` reports every allocation `run` did not free,
 // and every bad free, on stderr.
 LOKE_TRACK_MEMORY :: #config(LOKE_TRACK_MEMORY, false)
@@ -148,24 +146,22 @@ run :: proc() -> int {
 		return print_toolchain()
 	}
 
-	c: Compiler
-	defer destroy_compilation(&c)
-	c.copy_cost_threshold, c.copy_cost_enabled = opts.copy_cost, opts.copy_cost_enabled
-	c.panic_unwind = opts.panic_unwind
-	c.opt_mode, c.build_mode = opts.opt_mode, opts.build_mode
-	c.debug_info, c.debug = opts.debug_info, opts.debug
-	c.log_level = opts.log_level
-	if !seed_defines(&c, opts.defines[:]) {
-		report(&c)
-		return 1
-	}
-	if !register_collections(&c, opts.collections[:]) {
-		report(&c)
+	s: Compilation_Session
+	defer destroy_session(&s)
+	c := &s.compiler
+	if !init_session(&s, Compilation_Config{
+		defines = opts.defines[:], collections = opts.collections[:],
+		copy_cost = opts.copy_cost, copy_cost_enabled = opts.copy_cost_enabled,
+		panic_unwind = opts.panic_unwind, opt_mode = opts.opt_mode,
+		build_mode = opts.build_mode, debug_info = opts.debug_info,
+		debug = opts.debug, log_level = opts.log_level,
+	}) {
+		report(c)
 		return 1
 	}
 	if opts.fmt || opts.fmt_check {
-		status := format_files(&c, opts.input, opts.fmt_check)
-		report(&c)
+		status := format_files(c, opts.input, opts.fmt_check)
+		report(c)
 		return status
 	}
 	if opts.parse_only || opts.dump_ast || opts.dump_tokens {
@@ -174,21 +170,21 @@ run :: proc() -> int {
 			fmt.eprintfln("error: %s needs a file input", mode)
 			return 2
 		}
-		file, loaded := load_source(&c, opts.input)
+		file, loaded := load_source(c, opts.input)
 		if !loaded {
-			report(&c)
+			report(c)
 			return 1
 		}
-		tokens := lex(&c, file)
+		tokens := lex(c, file)
 		defer delete(tokens)
 		if opts.dump_tokens {
 			for token in tokens {
 				fmt.printfln("%d %d %v", token.lo, token.hi, token.kind)
 			}
-			report(&c)
+			report(c)
 			return c.error_count > 0 ? 1 : 0
 		}
-		ast := parse(&c, file, tokens)
+		ast := parse(c, file, tokens)
 		defer destroy_ast(&ast)
 		if opts.dump_ast {
 			dump := ast_dump(&ast)
@@ -196,57 +192,43 @@ run :: proc() -> int {
 			fmt.print(dump)
 		}
 		if c.error_count > 0 {
-			report(&c)
+			report(c)
 			return 1
 		}
 		return 0
 	}
 
-	if !register_project(&c, opts.input) {
-		report(&c)
-		return 1
-	}
-	package_id, compiled := compile_program(&c, opts.input)
-	if compiled {
-		// An object build accepts any root package: its foreign
-		// host owns process entry, so `main` is neither required nor emitted.
-		// Nor does documenting a library need one.
-		if opts.build_mode == .Exe && !opts.doc {
-			validate_executable(&c, package_id)
-		}
-		check_exports(&c)
-	}
-	if c.error_count > 0 {
-		report(&c)
+	if !check_session(&s, opts.input, opts.doc) {
+		report(c)
 		return 1
 	}
 	if opts.doc {
-		fmt.print(document_project(&c, package_id))
-		report(&c) // warnings
+		page := document_project(c, c.root_package)
+		defer delete(page)
+		fmt.print(page)
+		report(c) // warnings
 		return 0
 	}
 
-	finalize_semantics(&c)
-	if c.error_count > 0 {
-		report(&c)
-		return 1
+	emission := Emission_Options{
+		output = opts.output, emit_ll = opts.emit_ll,
+		keep_temps = opts.keep_temps, runtime_dir = opts.runtime_dir,
 	}
-
 	if opts.check_layout {
-		code := check_layout_agreement(&c, opts)
-		report(&c) // the disagreements themselves are diagnostics
+		code := check_layout_agreement(c, emission)
+		report(c) // the disagreements themselves are diagnostics
 		return code
 	}
 
-	code := emit_package(&c, opts)
-	report(&c) // warnings may have been produced with no error
+	code := emit_session(&s, emission)
+	report(c) // warnings may have been produced with no error
 	return code
 }
 
 @(private = "file")
 parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
-	opts.copy_cost, opts.copy_cost_enabled = 512, true
-	opts.panic_unwind = DEFAULT_PANIC_UNWIND
+	opts.copy_cost, opts.copy_cost_enabled = DEFAULT_COMPILATION_CONFIG.copy_cost, DEFAULT_COMPILATION_CONFIG.copy_cost_enabled
+	opts.panic_unwind = DEFAULT_COMPILATION_CONFIG.panic_unwind
 	for i := 0; i < len(args); i += 1 {
 		arg := args[i]
 		switch {
@@ -405,92 +387,4 @@ default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 		stem = strings.trim_suffix(input, filepath.ext(input))
 	}
 	return strings.concatenate({stem, mode == .Obj ? ".obj" : ".exe"}, context.temp_allocator)
-}
-
-@(private = "file")
-seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
-	init_semantic_stores(c)
-	c.defines = make(map[string]Const_Value, len(defines), c.semantic_allocator)
-	for entry in defines {
-		split := strings.index_byte(entry, '=')
-		if split <= 0 {
-			errorf(c, no_span(), "L0388", "`-define:%s` needs the form NAME=VALUE", entry)
-			continue
-		}
-		name := entry[:split]
-		text := entry[split + 1:]
-		if !is_config_name(name) {
-			errorf(c, no_span(), "L0388", "`%s` is not a valid configuration name", name)
-			continue
-		}
-		if _, duplicate := c.defines[name]; duplicate {
-			errorf(c, no_span(), "L0388", "`%s` is defined more than once", name)
-			continue
-		}
-		switch text {
-		case "true":
-			c.defines[name] = bool_const(true)
-		case "false":
-			c.defines[name] = bool_const(false)
-		case:
-			if value, ok := bi_parse_int_literal(c, text); ok {
-				c.defines[name] = integer_const(value)
-			} else {
-				c.defines[name] = Const_Value{kind = .String, text = text}
-			}
-		}
-	}
-	return c.error_count == 0
-}
-
-@(private = "file")
-is_config_name :: proc(name: string) -> bool {
-	for i in 0 ..< len(name) {
-		ch := name[i]
-		letter := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
-		if !letter && !(i > 0 && ch >= '0' && ch <= '9') {
-			return false
-		}
-	}
-	return len(name) > 0
-}
-
-// Explicit entries replace bundled `base:` and `core:` roots.
-@(private = "file")
-register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
-	init_semantic_stores(c)
-	for name in ([]string{"base", "core"}) {
-		if bundled := install_component(name); bundled != "" {
-			// Cloned like an explicit entry, so the whole map has one owner and
-			// the heap path `install_component` returns is not left behind.
-			c.collections[name] = strings.clone(bundled, c.semantic_allocator)
-			delete(bundled)
-		}
-	}
-
-	explicit := make(map[string]bool, len(entries), context.temp_allocator)
-	for entry in entries {
-		split := strings.index_byte(entry, '=')
-		if split <= 0 {
-			errorf(c, no_span(), "L0333", "`-collection %s` needs the form name=path", entry)
-			continue
-		}
-		name := entry[:split]
-		root := entry[split + 1:]
-		if strings.index_byte(name, ':') >= 0 {
-			errorf(c, no_span(), "L0333", "collection name `%s` cannot contain `:`", name)
-			continue
-		}
-		if root == "" {
-			errorf(c, no_span(), "L0333", "collection `%s` needs a path", name)
-			continue
-		}
-		if explicit[name] {
-			errorf(c, no_span(), "L0333", "collection `%s` is registered more than once", name)
-			continue
-		}
-		explicit[name] = true
-		c.collections[name] = strings.clone(root, c.semantic_allocator)
-	}
-	return c.error_count == 0
 }

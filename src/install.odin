@@ -39,7 +39,7 @@ runtime_sources :: proc(dir: string) -> []string {
 }
 
 // `-runtime=<dir>` replaces the bundled directory outright.
-resolved_runtime_dir :: proc(opts: Options) -> string {
+resolved_runtime_dir :: proc(opts: Emission_Options) -> string {
 	if opts.runtime_dir != "" {
 		return opts.runtime_dir
 	}

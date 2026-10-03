@@ -50,10 +50,12 @@ source lookup or repair incomplete semantic state.
 
 ## Driver and phase order
 
-`main` in `src/main.odin` calls the file-private `run`, which seeds immutable
-build configuration, collection roots, panic strategy, optimization mode, and
-build mode before source discovery begins. `register_project` in
-`src/project.odin` then adds the collections `loke.project` files require.
+`main` in `src/main.odin` calls the file-private `run`, which parses CLI options
+and creates a `Compilation_Session` through `init_session` in
+`src/session.odin`. The session seeds immutable build configuration, collection
+roots, panic strategy, optimization mode, and build mode before source discovery
+begins. `check_session` calls `register_project` in `src/project.odin` to add the
+collections `loke.project` files require, then runs the normal compilation path.
 
 The normal compilation path is:
 
@@ -75,14 +77,14 @@ The normal compilation path is:
    selected providers' factory signatures, once every package has been checked.
    Last, diagnostics held aside during checking rejoin the list.
    `finish_program_analysis` runs this step and records `program_analyzed`.
-5. The driver validates the executable entry point and exported names. Then
+5. The session validates the executable entry point and exported names. Then
    `finalize_semantics` freezes runtime `typeid` values, discovers the coherent
    `fmt.Formattable` witness for each printable concrete type, finalizes immutable
    lifecycle-operation records, and installs `any_view`'s fields, the one
    carrier whose fields cannot be made with its type. Each step is idempotent.
-6. `emit_package` calls `emit_llvm_module`, which first runs
-   `validate_emission_dependencies` to reject an incomplete checked state before
-   an emitter is allocated, then produces one textual LLVM module containing
+6. `emit_session` calls `emit_package`, which calls `emit_llvm_module`. The module
+   boundary first runs `validate_emission_dependencies` to reject an incomplete
+   checked state before an emitter is allocated, then produces one textual LLVM module containing
    every package in deterministic dependency order.
 7. `emit_package` writes the module and either stops at `.ll`, compiles a
    relocatable `.obj`, or links an executable with the C runtime and foreign
@@ -91,6 +93,43 @@ The normal compilation path is:
 `-parse-only`, `-dump-ast`, and `-dump-tokens` deliberately take a shorter path
 through source loading, lexing, and parsing for one file. `-check-layout` stops after the
 semantic closure passes and compares the compiler's layout facts with LLVM.
+
+## Reusable batch sessions
+
+`src/session.odin` is the reusable orchestration boundary in the existing Odin
+`lokec` package. A session owns one `Compiler`, a copied `Compilation_Config`,
+and configuration and scratch arenas. CLI presentation, option parsing, and
+exit handling remain in `src/main.odin`; filesystem and toolchain policy remain
+in `src/emit_llvm_toolchain.odin`.
+
+| Operation | Contract |
+| --- | --- |
+| `init_session(&s, config)` | Initialize a zeroed session in place. Copy all configuration strings and arrays; the caller can release them immediately. Default to `DEFAULT_COMPILATION_CONFIG`, matching CLI defaults. Return false with diagnostics for invalid configuration; reject reinitializing a live session. |
+| `check_session(&s, input)` | Replace the previous compilation, reload source and project files, and run whole-program checking, entry/export validation, and semantic finalization. Return false for source/configuration errors, retaining diagnostics. The caller can release its input path on return. |
+| `check_session(&s, input, documentation = true)` | Preserve `-doc` behavior: check declarations and exports without requiring executable entry or finalizing emission dependencies. This result cannot be emitted. |
+| `emit_session_ir(&s)` | Return LLVM module text and a success flag from a successfully finalized check. Create no files and invoke no external tools. Repeated emission consumes the same checked state. |
+| `emit_session(&s, options)` | Write IR, an object, or an executable using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Require an explicit output path; take optimization and build mode from the checked configuration. Return the existing toolchain exit status. |
+| `destroy_session(&s)` | Release all compilation, configuration, and scratch storage. Safe on a zeroed session, after any failure, and repeatedly. |
+
+Do not copy a live session or its `Compiler`: their allocators contain pointers
+into those structs. Use one operation at a time on a session. Its allocator is
+captured at creation and must remain alive until destruction. Configuration is
+fixed until destruction; create a new session to change it.
+
+The current compiler state is available through `s.compiler`. Sources, syntax,
+semantic IDs, diagnostics, and emitted strings are borrowed and remain valid
+until the next check or destruction, including when the next check fails.
+Copy data a caller needs longer. Each check destroys the previous compiler and
+scratch arena before loading the new program, so sources, manifest collections,
+generic instances, held diagnostics, and emission state cannot survive an edit.
+This is batch reuse; overlays, snapshot handles, queries, and incremental caches
+remain later milestones in [Compiler services](future-plans.md#compiler-services).
+
+`session_test.odin` compares reused sessions with fresh sessions after edits to
+generic procedures, dependency manifests, and invalid source. It also covers
+configuration/input ownership, repeated emission, documentation and object
+entry policy, recovery after an emission error, and repeated creation/destruction
+with memory tracking and virtual-arena release checks.
 
 ## Core representations and ownership
 
@@ -384,7 +423,7 @@ be file-private.
 
 | Files | Responsibility |
 | --- | --- |
-| `main.odin`, `build_config.odin`, `providers.odin` | CLI options, build constants, provider selection, top-level phase order, and exit codes. |
+| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI options and presentation, reusable batch sessions and phase order, build constants, provider selection, and exit codes. |
 | `stack.odin` | The 64 MB compiler stack reservation that bounds nesting (`MAX_NEST`) and compile-time recursion. |
 | `install.odin`, `packages.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, and `when` selection. |
 | `source.odin` | `Compiler`, source buffers, spans, and the diagnostics engine. Start here when locating global state; `destroy_compilation` is `semantic.odin`'s. |
@@ -460,7 +499,7 @@ instance's template and arguments, a compiler-made type's `backend_label`, a
 witness's interface and arguments), and the emitter spells and escapes them.
 No non-test backend file
 (`emit_llvm*.odin`, `emission_contract.odin`) names `Checker`, and no front-end
-file other than the driver, `main.odin`, calls a procedure an `emit_llvm*.odin`
+file other than `main.odin` and `session.odin` calls a procedure an `emit_llvm*.odin`
 file defines: a helper both sides need lives with its semantic owner.
 `test-all.ps1` enforces both.
 
@@ -549,6 +588,8 @@ Compiler unit tests live beside the implementation:
 - `carrier_test.odin` covers aggregate carrier shapes and provenance;
 - `syntax_corpus_test.odin` runs the valid syntax corpus, the AST goldens and the parser mutation fuzzer in process;
 - `emit_llvm_test.odin` checks emission contracts and structural backend rules.
+- `session_test.odin` checks batch-session reuse, diagnostics/IR equivalence,
+  entry policy, ownership, and destruction.
 
 The integration harness is `tests/corpus_test.odin`:
 
