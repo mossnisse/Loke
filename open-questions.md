@@ -24,8 +24,19 @@ Decided so far, and built as `loke.project` (readme.md "Projects"):
 - Dependencies are local directories. When versioned sources arrive (a git
   URL and tag, fetched into a cache outside the compiler front end), the
   version chosen is the highest minimum any manifest asks for, as Go's minimal
-  version selection does: deterministic without a solver, so a lock file only
-  has to record checksums.
+  version selection does: deterministic without a solver. Version selection
+  alone does not pin source content: the lock must record the selected source,
+  version, immutable commit ID, and content checksum for every dependency, as
+  planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
+
+## Roadmap review (2026-10-03)
+
+Both findings are accepted into the roadmap, with implementation and regression
+work still pending: [Packages and dependencies](future-plans.md#packages-and-dependencies)
+requires immutable revisions and a moved-tag regression;
+[Self-hosting](future-plans.md#self-hosting) requires a third bootstrap stage,
+stage-2/stage-3 artifact comparison, and repeated clean builds. These are planned
+acceptance criteria, not claims that either feature has shipped.
 
 ## package header files
 

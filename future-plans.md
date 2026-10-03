@@ -1,245 +1,354 @@
 # Future plans
 
-The v1 language design is complete, and the compiler implements it. Any
-divergence found later is recorded in [known-gaps.md](known-gaps.md) and fixed
-as v1 work, not treated as a future language extension.
+This is the implementation roadmap beyond the current v1 compiler. The
+language contract remains in [design.md](design.md) and [grammar.md](grammar.md).
+Existing divergences belong in [known-gaps.md](known-gaps.md) and are v1 fixes,
+including while the work below proceeds.
 
-Later work should extend the existing architecture without weakening
-diagnostics, semantic consistency, and reproducibility. Each
-initiative below should receive a detailed implementation plan when work begins.
-
-## Standard-library maturity
-
-Complete the library capabilities required by real applications and by a
-self-hosted compiler. Continue to add packages from concrete use cases rather
-than creating a broad utility namespace. The open inventory and its design
-constraints remain in [standard-library.md](standard-library.md).
-
-Main work:
-
-- settle width and precision in `fmt` together, once a program needs both
-  ([open-questions.md "Width and precision in `fmt`"](open-questions.md#width-and-precision-in-fmt));
-- provide the testing and binary/text facilities needed to express the compiler
-  and its test harness in Loke. `examples/corpus_runner.loke` checks the run,
-  trap, diagnostic, syntax-error, IR, and package corpora, which needed
-  `process.output` and `thread.processor_count`, and assembles the IR it checks
-  with the clang `lokec -print-toolchain` finds, as the Odin suite does;
-- validate that the shipped collections, paths, filesystem, formatting, and
-  allocation APIs scale to a compiler-sized program. `examples/lexer.loke` is
-  the compiler's lexer in Loke, checked against `lokec -dump-tokens`, and lexes
-  the repository's sources in under a second; the parser is the next slice;
-- prioritize `core:bytes`, time, random, buffered I/O, and higher-level encodings
-  only when a concrete program establishes their contracts;
-- add examples and allocator-failure, cleanup, Unicode, and platform-conformance
-  tests with every new public API.
-
-Done means ordinary command-line applications and the planned self-hosted
-compiler need no private substitute for a missing foundational library service.
-
-## Packages and dependencies
-
-Turn the current explicit `-collection name=path` mechanism into a reproducible
-project workflow without coupling source imports to one registry. Settle the
-package and import versioning questions tracked in [open-questions.md](open-questions.md)
-before freezing a manifest format.
-
-`loke.project` (readme.md "Projects") names each dependency's directory and
-registers it as a collection, following each dependency's own manifest, with
-`-collection` as the override. The decisions behind it are in
-[open-questions.md "Package and import versioning"](open-questions.md#package-and-import-versioning).
-
-Main work:
-
-- add versioned sources: a git URL and tag per dependency, fetched by a
-  separate `lokec` step into a cache, and chosen by minimal version selection;
-- add a lock format holding each fetched dependency's checksum, and specify
-  cache layout and offline builds;
-- decide how compiler, language, runtime, and standard-library versions declare
-  compatibility;
-- keep fetching and registry policy outside the compiler front end unless a
-  concrete semantic requirement proves otherwise.
-
-Done means two clean machines can resolve the same project to the same dependency
-graph and build it without hand-written collection flags.
-
-## Compiler services
-
-Make the compiler usable as a long-lived service, not only as one command-line
-run. Compilation is whole-program and single-process today
-([compiler-architecture.md](compiler-architecture.md) "Deliberate v1
-boundaries"); the language server, developer tools, and a self-hosted compiler
-all need the same checked program without re-running everything.
-
-Main work:
-
-- separate the command-line driver from a reusable compilation session that owns
-  source, package, and semantic state;
-- add in-memory source overlays for unsaved editor buffers;
-- cache per-package results and invalidate only the packages an edit affects;
-- expose read-only semantic queries for symbols, types, definitions, references,
-  signatures, and diagnostics, keyed by the existing semantic IDs;
-- keep command-line compilation behavior unchanged.
-
-Done means a long-lived process re-checks an edited package without rebuilding
-unrelated packages, and `lokec` built on the same session produces the same
-diagnostics and IR as before.
-
-## Language server
-
-Build an LSP server on the [compiler services](#compiler-services). It reuses the
-real lexer, parser, package loader, and checker, and must not grow a second,
-approximate Loke front end.
-
-Main work:
-
-- support diagnostics, hover, go-to-definition, completion, references, rename,
-  document symbols, and signature help;
-- keep partial and temporarily invalid programs responsive through the parser's
-  existing recovery nodes and accumulated diagnostics.
-
-Done means the server handles a multi-package workspace, updates after an edit
-without rebuilding unrelated packages, and agrees with `lokec` on diagnostics
-and name resolution.
-
-## Debugging and developer tools
-
-Only the editor integration below needs the
-[compiler services](#compiler-services); the rest can start at any time. Debug
-information is a separate backend consumer, and since the backend emits textual
-LLVM it can carry LLVM's debug metadata directly. It should drive any durable
-intermediate representation it actually needs.
-
-The lexer keeps every comment's span on its `Source`, in source order, for the
-formatter, the documentation generator, and hover to find by position.
-
-`-g` already emits each procedure, its locals and their types scoped to their
-blocks, and the line of each statement, loop header, closing `}`, and deferred
-statement, through specialization and static expansion, as CodeView in a PDB,
-at any `-opt` level, with natvis rules for a string's text, a map's entries, and
-the value an `any_view` or `dyn` points at; a panic in a `-g` executable prints
-its Loke frames; and `-debug` sets `LOKE_DEBUG` on its own
-([src/emit_llvm_debug.odin](src/emit_llvm_debug.odin),
-[runtime/trace.c](runtime/trace.c)). `lokec <package> -doc` prints a checked
-package's public API as Markdown, its package comments, each declaration and
-public struct field with the comments directly above it, and a page for each
-project package it imports ([src/doc.odin](src/doc.odin)), and `lokec -fmt` lays out source by the
-rules in [comments.md "Formatting"](comments.md#formatting).
-
-Main work:
-
-- align columns automatically in `-fmt`, once hand-kept alignment proves a
-  burden;
-- integrate formatting, documentation, and debugging metadata with editor tools
-  without teaching them a second language front end.
-
-Done means a developer can format a project, browse its public API, set a
-source-level breakpoint, inspect ordinary locals, and obtain a Loke-oriented
-stack trace from a debug build.
-
-## Ongoing quality engineering
-
-Treat correctness, diagnostic quality, and performance as continuing work rather
-than a milestone that ends after v1.
-
-Main work:
-
-- record every compiler/specification divergence in
-  [known-gaps.md](known-gaps.md) with its reproduction, fix those that can accept
-  an unsafe program first, and move each fixed reproduction into the regression
-  corpus;
-- expand syntax, semantic, IR, run, trap, package, object-host, and foreign-ABI
-  corpora whenever a bug or new feature exposes a missing boundary;
-- test malformed and adversarial source without crashes, hangs, or unbounded
-  diagnostic cascades;
-- measure with `perf.ps1` before and after changing compiler representations
-  for speed, and add a `bench/` program when a workload it matters for is
-  missing;
-- keep generated IR and binaries inspectable enough to explain material size or
-  performance regressions;
-- test runtime and compiler code with the strongest practical sanitizers and
-  platform diagnostics.
-
-Done is continuous: every release has conformance, robustness, and performance
-evidence comparable with the previous release.
-
-## More platforms
-
-Separate the currently Windows-specific target, ABI, runtime, standard-library,
-and toolchain decisions, then add Linux and macOS targets. Target support should
-be explicit rather than hidden behind host checks.
-
-Main work:
-
-- make target triples, scalar layout, calling conventions, object formats, and
-  linker arguments target records;
-- add an explicit target-selection interface and distinguish the build host from
-  the program target throughout the driver;
-- decide which target pairs support cross-compilation, how SDKs and sysroots are
-  selected, and how target-specific foreign libraries are resolved;
-- port runtime startup, arguments, panic/unwind, TLS teardown, atomics, and
-  platform services;
-- provide target-specific `core:os`, filesystem, terminal, and foreign bindings
-  behind the existing public contracts, and run the same library conformance
-  tests on every target;
-- add cross-platform toolchain discovery, diagnostics, and target-aware artifact
-  naming;
-- run the same semantic, layout, IR, run, trap, package, and C-interop corpora on
-  every supported target.
-
-Done means one source program has the same specified behavior on Windows,
-Linux, and macOS, with intentional ABI differences isolated behind target
-interfaces and continuously tested in CI.
-
-## Self-hosting
-
-Reimplement `lokec` in Loke only after the compiler services and standard
-library are sufficient for a compiler-sized program. The Odin compiler remains
-the trusted bootstrap until the replacement is reproducible.
-
-Main work:
-
-- provide the library support needed for source management, diagnostics,
-  collections, processes, paths, and binary/text output;
-- preserve the current phase contracts and reuse the architecture described in
-  [compiler-architecture.md](compiler-architecture.md);
-- bootstrap stage 1 with the Odin compiler, build stage 2 with stage 1, and
-  compare stage 1 and stage 2 behavior and artifacts;
-- run the complete compiler and integration suites against both implementations
-  during migration;
-- retire the Odin implementation only after reproducible bootstrap, diagnostic
-  compatibility, and release builds are proven.
-
-Done means a released Loke compiler can build an equivalent compiler from
-source, the second-stage build is reproducible, and no supported program depends
-on the bootstrap implementation used.
-
-## Open language questions
-
-[open-questions.md](open-questions.md) is the canonical backlog for possible language
-changes. Keep proposals there until a concrete use case and implementation plan
-make them roadmap candidates; do not silently turn an open question into a
-compiler task.
+Each phase states its starting point, implementation order, and completion
+checks. The order is a priority order, with prerequisites called out separately;
+it is not a promise that all work in one phase must stop before the next starts.
+Before implementing a milestone, settle its remaining contract questions and
+identify the regression cases that will demonstrate it. Update this document
+as milestones ship, and keep implementation details in
+[compiler-architecture.md](compiler-architecture.md).
 
 ## Suggested order
 
-1. Finish the smaller debug-information, documentation, and formatting items as
-   real programs ask for them.
-2. Define the reproducible package and dependency workflow, and finish the
-   standard-library services required by a compiler-sized program.
-3. Build the compiler services without changing command-line compilation
-   behavior.
-4. Build the language server on those compiler services, and connect the
-   formatter, documentation, and debugging metadata to editors through it.
-5. Isolate target interfaces and add Linux, then macOS, with an explicit native
-   and cross-compilation policy and one shared conformance corpus.
-6. Begin self-hosting after the compiler services, package workflow, release
-   process, and required libraries have stabilized.
+| Phase | Deliverable | Prerequisite |
+| --- | --- | --- |
+| 0 | [Correctness and performance baseline](#ongoing-quality-engineering), maintained throughout | Existing compiler and test suites |
+| 1 | [Library support demonstrated by a parser and test harness in Loke](#standard-library-maturity) | Current lexer and corpus-runner examples |
+| 2 | [Reproducible dependency resolution and locked builds](#packages-and-dependencies) | Existing local `loke.project` workflow |
+| 3 | [Reusable compiler sessions, then incremental checking](#compiler-services) | Current phase contracts and baseline comparisons |
+| 4 | [Language server](#language-server) and [editor integration](#debugging-and-developer-tools) | Phase 3 sessions, overlays, and semantic queries |
+| 5 | [Linux, then macOS support](#more-platforms) | Target interfaces isolated while preserving Windows behavior |
+| 6 | [Self-hosted compiler and reproducible bootstrap](#self-hosting) | Stable compiler contracts, required libraries, locked inputs, and release checks |
 
-Library and diagnostic gaps that real programs expose are filled as they
-appear, as the tutorials' were. Standard-library and debug-information work may
-overlap. The
-language server and platform ports may overlap once the compiler services
-exist. Quality
-engineering continues through every step. Self-hosting remains last because it
-multiplies the cost of any compiler, runtime, library, or package interface that
-is still moving.
+Start with the highest-risk known correctness gaps and the parser example.
+Dependency work can proceed alongside library work. The first language-server
+milestone can use whole-program checking while incremental checking is built.
+Platform work can overlap editor work; it does not depend on the LSP or its
+caches. Small formatter, documentation, and debugger improvements can ship
+whenever a concrete use requires them.
+
+The full compiler rewrite stays last to avoid maintaining two implementations
+while their shared contracts are changing. The lexer and parser examples are
+earlier library trials and can later become parts of that rewrite.
+
+## Ongoing quality engineering
+
+**Phase 0, then continuous.** Correctness, diagnostic quality, and performance
+remain release requirements throughout the roadmap.
+
+Implementation order:
+
+1. Triage [known-gaps.md](known-gaps.md), fixing acceptance of unsafe programs
+   before false rejections. Keep a minimal reproduction for each open gap and
+   move each fixed reproduction into the appropriate regression corpus.
+2. Preserve a baseline of diagnostics, emitted IR, and runtime output for any
+   compiler refactor. Follow
+   [Testing and verification](compiler-architecture.md#testing-and-verification):
+   use the affected suite or `test-all.ps1` while iterating and let CI run the
+   full gate. Run `-Full` locally when changing what only it covers or chasing
+   a CI failure.
+3. Measure with `perf.ps1` before and after representation or algorithm changes
+   intended to improve speed. Add a `bench/` workload when the relevant case is
+   missing; retain comparable measurements from the same machine.
+4. Extend the syntax, semantic, IR, run, trap, package, object-host, foreign-ABI,
+   example, and tutorial coverage as new boundaries appear. Malformed source
+   must not crash, hang, or cause unbounded diagnostic cascades. Use practical
+   runtime and compiler sanitizers and platform diagnostics as support permits.
+5. Apply the existing [release checklist](releasing.md#release-checklist),
+   including its requirement for no open specification divergences. Explain
+   material performance regressions before a release.
+
+**Completion check:** every shipped milestone has its regression evidence and
+updated documentation; every release has comparable conformance, robustness,
+and performance evidence. This phase does not end after v1.
+
+## Standard-library maturity
+
+**Phase 1.** Establish library contracts through real command-line programs and
+compiler workloads. The API inventory and test requirements remain in
+[standard-library.md](standard-library.md).
+
+Already available: [examples/lexer.loke](examples/lexer.loke) is checked against
+`lokec -dump-tokens`. [examples/corpus_runner.loke](examples/corpus_runner.loke)
+exercises run, trap, diagnostic, syntax-error, IR, and package corpora, using
+`process.output`, `thread.processor_count`, and the toolchain reported by
+`lokec -print-toolchain`.
+
+Implementation order:
+
+1. Build the parser as the next Loke example, reusing the lexer. Compare its
+   accepted syntax, AST structure, source spans, and recovery on malformed
+   input with the Odin parser and existing syntax corpus. Resolve library and
+   language gaps exposed by this program before growing another subsystem.
+2. Use that parser and the corpus runner to exercise source ownership,
+   collections, paths, filesystem access, diagnostics, formatting, and
+   allocation at repository scale. Record missing foundational operations
+   before adding APIs; keep the program that demonstrates each need.
+3. Add the testing and binary/text facilities those programs actually require.
+   Introduce `core:bytes`, time, random, buffered I/O, or higher-level encodings
+   only when a caller establishes their contracts. Settle
+   [width and precision in `fmt`](open-questions.md#width-and-precision-in-fmt)
+   together when a program needs both.
+4. For every public API, add an example and the applicable allocator-failure,
+   cleanup, Unicode, short-I/O, and platform-conformance cases from
+   [Test requirements](standard-library.md#test-requirements).
+
+**Completion check:** the lexer, parser, and test harness run on the shared
+library without private substitutes for foundational services. Further library
+needs are handled with the compiler phase that exposes them; this is not a
+requirement to finish every optional package before phase 2 or phase 3.
+
+## Packages and dependencies
+
+**Phase 2.** Extend the existing [Projects](readme.md#projects) workflow while
+keeping imports independent of a registry. Today `loke.project` registers local
+dependency directories as collections, follows their manifests, and permits
+explicit `-collection` overrides.
+
+Implementation order:
+
+1. Define dependency identity and version syntax before extending the manifest:
+   how a collection name identifies its source, which Git tags are versions,
+   how versions are ordered, and how incompatible major versions and conflicting
+   sources are diagnosed. Use the minimal-version-selection direction recorded
+   in [Package and import versioning](open-questions.md#package-and-import-versioning).
+   Retain local directories and explicit overrides. Record the required Loke
+   release without splitting the compiler, runtime, and library bundle that
+   [Version policy](releasing.md#version-policy) already defines.
+2. Implement resolution and fetching as an explicit tool step outside front-end
+   compilation. Resolve direct and transitive requirements to one graph, then
+   write a lock containing every selected dependency's collection name, source
+   URL, version, immutable Git commit ID, and content checksum. Define exactly
+   which files the checksum covers. A version tag is an input to resolution;
+   locked fetching uses the commit ID and verifies content.
+3. Define locked-build and update behavior separately. A locked build must use
+   the recorded graph and reject inconsistent manifests or missing lock entries.
+   Only an explicit resolve/update operation may select new revisions or rewrite
+   the lock. Define how local dependencies and overrides are represented: an
+   unrecorded local replacement must not silently claim to reproduce a locked
+   build, and reproducibility checks must cover any recorded local inputs.
+4. Specify cache keys, content verification, interrupted fetch cleanup, and
+   offline behavior. Compilation consumes already prepared dependencies and
+   performs no implicit network access. A preparation step may fetch missing
+   locked commits; an offline preparation uses only verified cached or vendored
+   content. Unavailable locked content is an error, never a reason to select a
+   different revision.
+5. Add fixtures for transitive version selection, source/name conflicts, local
+   overrides, incompatible compiler requirements, lock/manifest mismatches,
+   cache corruption, unavailable commits, and offline cache misses. Resolve a
+   project, move a dependency tag while retaining its original commit on the
+   remote, clear the local cache, and verify that locked fetching still builds
+   the original graph.
+
+**Completion check:** two clean machines given the same project, lock, available
+source revisions, and matched Loke release prepare the same dependency graph
+and build without collection flags. The prepared project builds offline, and
+neither a moved tag nor a normal build changes its locked inputs. This guarantees
+dependency reproducibility; binary reproducibility is checked separately during
+self-hosting.
+
+## Compiler services
+
+**Phase 3.** Expose the existing compiler to tools in small steps. Preserve the
+[checking and consumption boundary](compiler-architecture.md#pipeline-at-a-glance)
+and the current command-line behavior. A reusable batch session is the first
+deliverable; incremental checking is a later milestone with its own evidence.
+
+Implementation order:
+
+1. **Reusable sessions.** Separate driver concerns from a compilation session
+   that owns sources, packages, semantic stores, and diagnostics. Initially run
+   the existing whole-program pipeline on every compilation. Define creation,
+   checking, emission, and destruction, and make `lokec` use that same path.
+   Compare diagnostics and emitted IR with the baseline and check repeated
+   session creation/destruction for leaks.
+2. **Snapshots and queries.** Add in-memory overlays for unsaved sources and
+   read-only queries for symbols, types, definitions, references, signatures,
+   and diagnostics. Specify which queries work on an incomplete or erroneous
+   program. Existing semantic IDs are stable within a compilation; define their
+   snapshot lifetime and reject stale handles instead of assuming they survive
+   an edit. This milestone is enough to begin the language server.
+3. **Invalidation rules.** Identify inputs to cached results: source contents,
+   imports, manifests, collections, providers, build configuration, compiler
+   release, and target. Account for compile-time evaluation, generic instances,
+   inferred cross-procedure effects, and final semantic registries, following
+   [Driver and phase order](compiler-architecture.md#driver-and-phase-order).
+   Start with conservative invalidation and a whole-program fallback whenever
+   a narrower dependency cannot yet be established safely.
+4. **Incremental checking.** Cache and reclaim per-package state, invalidate
+   changed packages and affected dependents, and rerun required whole-program
+   analyses and finalization. Do not introduce separate object compilation as
+   part of this milestone. Track rechecked packages and memory use across edit
+   sequences so reuse and reclamation are both observable.
+5. **Equivalence and cost.** Compare each incremental result with a fresh batch
+   compilation after edits, including import additions/removals, conditional
+   imports, generic changes, provider/configuration changes, and fixes to invalid
+   source. Measure cold startup, warm edit latency, and memory on a representative
+   multi-package workspace before calling the cache an improvement.
+
+**Completion checks:** milestones 1 and 2 retain batch diagnostics and IR and
+support repeated tool queries. The incremental milestone gives the same results
+as fresh compilation, avoids rechecking unrelated packages for an ordinary local
+edit, and does not retain obsolete snapshots indefinitely. Document cases that
+still require whole-program invalidation.
+
+## Language server
+
+**Phase 4.** Build on [Compiler services](#compiler-services), using the real
+lexer, parser, package loader, and checker. Begin after sessions, overlays, and
+queries exist; incremental checking can arrive during this phase.
+
+Implementation order:
+
+1. Support workspace/project loading and document open, change, save, and close.
+   Publish diagnostics for the current document version, discard results for
+   superseded versions, and handle cancellation and shutdown. Start with batch
+   checking through the session API.
+2. Add hover, go-to-definition, and document symbols from checked semantic data.
+   Exercise unsaved buffers, multiple packages, syntax errors, missing imports,
+   and recovery after a broken edit. A missing semantic result must not crash
+   the server or be presented as a successful resolution.
+3. Add completion and signature help for incomplete programs, then references
+   and rename. Check that rename respects binding identity, scope, and name
+   collisions across packages rather than replacing matching text.
+4. Adopt the incremental session path and measure editor latency on the same
+   workspace used for compiler-service checks. Add protocol-level regressions
+   for rapid edits, cancellation, stale results, and workspace changes.
+5. Connect the formatter and generated documentation through the existing tools
+   as described in [Debugging and developer tools](#debugging-and-developer-tools).
+
+**Completion check:** the server handles a multi-package workspace and unsaved,
+temporarily invalid code; diagnostics and name resolution agree with a fresh
+`lokec` run on the same inputs. Ordinary edits reuse unaffected package state,
+and each advertised editing operation has a protocol regression test.
+
+## Debugging and developer tools
+
+**Alongside phases 1-5, with editor integration in phase 4.** The command-line
+foundation already exists: `-fmt` formats source, `-doc` emits public API and
+declaration comments, and Windows `-g` emits CodeView/PDB information for
+procedures, scoped locals, and statement locations. Debug executables include
+Loke panic frames; natvis covers strings, maps, `any_view`, and `dyn` values.
+See [Common options](readme.md#common-options) and
+[Formatting](comments.md#formatting).
+
+Implementation order:
+
+1. Keep the existing formatter, documentation, and debugger regression coverage
+   green through compiler-service changes. Use the lexer's retained comment
+   spans for documentation and hover.
+2. Add automatic column alignment when hand-maintained alignment becomes a
+   demonstrated burden, settling the remaining
+   [formatting questions](open-questions.md#formatting) with examples first.
+3. Expose formatting and documentation from the editor without creating another
+   front end. Preserve unsaved-buffer behavior and make formatting edits
+   repeatable: applying the formatter twice must leave the same text.
+4. Document and test an editor/debugger workflow for each supported target:
+   breakpoint, stepping, ordinary local inspection, and panic stack trace.
+   Windows coverage uses the existing PDB path; platform ports must choose and
+   verify their own debug formats and debugger integration. Introduce a durable
+   intermediate representation only if a concrete consumer requires it.
+
+**Completion check:** the supported editor workflow can format a document,
+browse its public API, set a source breakpoint, inspect ordinary locals, and
+show Loke frames. Optimized-build limitations are documented and covered by
+target-specific tests where practical.
+
+## More platforms
+
+**Phase 5.** Preserve Windows x64 behavior while isolating target decisions,
+then add Linux and macOS. Target support is explicit and distinct from the
+host running the compiler. This work can overlap phases 3 and 4.
+
+Implementation order:
+
+1. **Target boundary on Windows.** Centralize target triples, scalar layout,
+   calling conventions, object formats, debug formats, and linker arguments.
+   Add an explicit target-selection interface, keeping the current Windows x64
+   target as the compatibility baseline. Distinguish host paths/processes from
+   target ABI and runtime choices throughout the driver.
+2. **Supported configurations.** Name the initial Linux and macOS architectures
+   and supported host/target pairs. Decide toolchain discovery, SDK/sysroot
+   selection, foreign-library resolution, and artifact naming before promising
+   cross-compilation. Reject unsupported combinations explicitly.
+3. **Native Linux.** Port the compiler's host operations, runtime startup,
+   arguments, panic/unwind and stack traces, TLS teardown, atomics, and platform
+   services. Implement filesystem, terminal, process, and OS bindings behind
+   existing library contracts. Add Linux build, test, and release jobs.
+4. **Native macOS.** Reuse the target boundary and shared implementations, then
+   add the macOS ABI, toolchain, runtime, library, debugger, and CI coverage.
+   Keep platform differences in their implementations and documented contracts.
+5. **Declared cross-compilation pairs.** Validate each supported combination
+   using its documented SDK/sysroot and foreign libraries. Run produced programs
+   on the target; successful cross-linking alone is not conformance evidence.
+
+**Completion check for each target:** the shared semantic, layout, IR, run,
+trap, package, library, and C-interop suites pass in CI, with explicit expected
+ABI/platform differences instead of blanket skips. Debugging and installed
+release-bundle smoke tests pass on that target. Windows remains green throughout.
+Portable programs have the same specified behavior across supported targets.
+
+## Self-hosting
+
+**Phase 6.** Start the full rewrite when the required libraries, compiler phase
+and session contracts, dependency workflow, and release checks are stable.
+Incremental performance tuning and optional editor features need not be finished.
+Reuse the earlier lexer and parser trials. The Odin implementation remains the
+bootstrap and behavioral reference until the replacement passes the gates below.
+
+Implementation order:
+
+1. **Pin the inputs.** Record the Odin-based `lokec` used as stage 0, the Loke
+   compiler source revision, locked dependencies, matched runtime/library bundle,
+   LLVM/linker versions, target, and build flags. Define reproducible source paths
+   and handling of timestamps and debug metadata before comparing artifacts.
+2. **Migrate by phase.** Port source/package loading and parsing, then semantic
+   stores and checking, compile-time evaluation and specialization, ownership
+   and provenance analysis, LLVM emission, and the driver/toolchain integration.
+   Preserve [phase contracts](compiler-architecture.md#driver-and-phase-order).
+   Compare each available phase with the Odin implementation before porting the
+   next; keep library additions tied to the compiler code that requires them.
+3. **Behavioral parity.** Run the complete compiler and integration suites
+   against both implementations, including diagnostics, invalid input, tutorials,
+   object-host/foreign ABI, and optimization-sensitive cases. Port Odin-only
+   unit checks or provide equivalent checks for the Loke implementation. Resolve
+   unexplained acceptance, diagnostic, layout, and runtime differences before
+   treating bootstrap success as sufficient.
+4. **Three-stage bootstrap.** Compile the same Loke compiler sources with stage 0
+   to produce stage 1; use stage 1 to produce stage 2; use stage 2 to produce
+   stage 3. Stages 1 and 2 may differ because their producers are different
+   implementations. Compare stage 2 and stage 3 emitted IR and compiler binaries
+   using identical inputs and options. Run the conformance suites with the
+   resulting compilers as well.
+5. **Reproducibility gate.** Repeat the bootstrap from clean build directories
+   in CI on each supported native target. Require byte-identical stage-2/stage-3
+   comparison artifacts, including distributed debug artifacts when present.
+   Eliminate incidental path/time variation through build settings; any necessary
+   normalization must be narrowly documented and must not mask generated code or
+   data differences. Also compare repeated clean builds to catch nondeterminism
+   that one consecutive stage comparison could miss.
+6. **Release and retirement.** Build and install a candidate self-hosted release
+   bundle, use it to rebuild the compiler and compile external sample projects,
+   and apply the existing [release checklist](releasing.md#release-checklist).
+   Retire the Odin implementation only after behavioral parity, reproducible
+   bootstrap, and installed-release checks pass. Preserve a documented bootstrap
+   path and the exact inputs needed to rebuild it.
+
+**Completion check:** a released Loke compiler builds an equivalent compiler
+from source; stage 2 and stage 3 match under the reproducibility contract; both
+implementations pass the required compatibility suites during migration; and
+the installed release works without the Odin implementation present.
+
+## Open language questions
+
+[open-questions.md](open-questions.md) remains the canonical backlog for possible
+language changes. A roadmap workload may establish a need, but implementation
+starts only after the proposal's semantics and migration are decided. Keep the
+specification, grammar, implementation, tests, rationale, and release notes
+consistent when such a change is accepted. This roadmap does not silently
+promote every open question into a compiler task.
