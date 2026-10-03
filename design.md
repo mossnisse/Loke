@@ -3625,7 +3625,7 @@ The exception to these rules is when the dividend x is the most negative value f
 
 If the divisor is a constant, it must not be zero. If the divisor is zero at runtime, a runtime panic occurs.
 
-A shift count is read as an unsigned integer, so it is never negative, and has no upper limit. Shifts are arithmetic for a signed left operand and logical for an unsigned one, behaving as `n` repeated one-bit shifts. So `x<<1` equals `x*2`, and `x>>1` equals `x/2` truncated toward negative infinity.
+A shift count is read as an unsigned integer, so it is never negative, and has no upper limit. Shifts are arithmetic for a signed left operand and logical for an unsigned one, behaving as `n` repeated one-bit shifts. So `x<<1` equals `x*2` whenever that product fits, and `x>>1` equals `x/2` truncated toward negative infinity. A left shift of a signed value [never panics](#integer-overflow): bits shifted out are discarded, the sign bit included.
 
 A shift count that is equal to or greater than the width of the left operand has defined behavior. It is the limit of the repeated one-bit shift:
 

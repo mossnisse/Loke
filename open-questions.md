@@ -663,9 +663,9 @@ the generated code for a representative kernel before deciding, since SIMD code
 exists to be fast.
 
 Shifts and atomic `add`/`sub` stay modular and are not part of this question.
-A shift is a bit operation whose limit is defined for every count, and an
-atomic read-modify-write has already published its result before anything
-could panic.
+Shifts are decided ([Signed shifts stay bit operations](comments.md#signed-shifts-stay-bit-operations)),
+and an atomic read-modify-write has already published its result before
+anything could panic.
 
 ### Performance opportunities and actual semantic limits
 

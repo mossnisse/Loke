@@ -721,6 +721,10 @@ checklist.
 
 ### Documentation
 
+- [comments.md](comments.md#signed-shifts-stay-bit-operations) records why
+  signed `<<` stays modular rather than checked, and
+  [design.md](design.md#integer-operators) now says `x<<1` equals `x*2` only
+  when the product fits.
 - [open-questions.md](open-questions.md#language-design-review-2026-10-03)
   records a language-design review with prioritized proposals, compiler probes,
   and tradeoffs for ownership, safety, expressiveness, performance, and syntax.

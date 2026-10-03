@@ -807,6 +807,27 @@ and `wrapping_mul` keep the low bits; `checked_add`, `checked_sub`, and
 wants. They are ordinary library procedures over `math.wrap`, computing in
 `u128`. A saturating family was left out until a caller needs one.
 
+### Signed shifts stay bit operations
+
+When signed `+`, `-`, and `*` started panicking on overflow, and again when
+integer conversions started keeping the value, signed `<<` was weighed and left
+modular: the bits shifted out are discarded, the sign bit included, and no shift
+panics.
+
+A shift is written for its bits: building a mask, packing a field, reaching
+`MIN` as `i64(1) << 63`. Checking it would need a definition of overflow that
+code written that way breaks. If overflow means "a bit that differs from the
+result's sign was shifted out", then `i64(1) << 63` panics. If it means "the
+result is not `x * 2^n`", the shift is a multiplication with a different
+spelling. Rust reaches the same answer and checks only the count, and Loke
+defines every count already, as the limit of the repeated one-bit shift, so
+there is nothing left to check.
+
+The arithmetic meaning has its own spelling. `x * 2` panics where the product
+does not fit, and `math.checked_mul(x, 2)` asks whether it does, so code that
+means multiplication writes multiplication. The same reasoning keeps unsigned
+`<<` modular, as all unsigned arithmetic is.
+
 ### `in` is a comparison, not an additive operator
 
 Odin places `in` at the comparison precedence level and Loke had moved it to the
