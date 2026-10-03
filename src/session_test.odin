@@ -6,7 +6,7 @@ import "core:path/filepath"
 import "core:strings"
 import "core:testing"
 
-@(private = "file")
+@(private)
 session_test_config :: proc() -> Compilation_Config {
 	config := DEFAULT_COMPILATION_CONFIG
 	config.collections = make([]string, 2, context.temp_allocator)
@@ -15,14 +15,14 @@ session_test_config :: proc() -> Compilation_Config {
 	return config
 }
 
-@(private = "file")
+@(private)
 session_fixture :: proc(t: ^testing.T, name: string) -> string {
 	root := fmt.tprintf("tests/tmp/session-%d-%s", os2.get_pid(), name)
 	if !testing.expect(t, os2.make_directory_all(root) == nil) { return "" }
 	return root
 }
 
-@(private = "file")
+@(private)
 write_session_source :: proc(t: ^testing.T, path, text: string) -> bool {
 	return testing.expect(t, os2.write_entire_file(path, transmute([]u8)text) == nil)
 }
@@ -528,9 +528,9 @@ session_snapshot_errors_and_stale_handles :: proc(t: ^testing.T) {
 	testing.expect(t, ok && found && len(diagnostics) == 1 && diagnostics[0].code == "L0388")
 }
 
-@(private = "file")
+@(private)
 expect_session_matches_fresh :: proc(t: ^testing.T, s: ^Compilation_Session, input: string, config: Compilation_Config, expected: bool) -> Compilation_Snapshot {
-	checked := check_session(s, input)
+	checked := check_session_incremental(s, input)
 	if checked != expected { report(&s.compiler) }
 	testing.expect_value(t, checked, expected)
 	fresh: Compilation_Session
@@ -713,8 +713,8 @@ main :: proc() {
 				text, _ = strings.replace_all(template, "RESULT", result, context.temp_allocator)
 			}
 			if !write_session_source(t, path, text) { return }
-			testing.expect(t, invalidate_session(&s))
 			snapshot := expect_session_matches_fresh(t, &s, path, config, edit != 1)
+			if edit > 0 { testing.expect(t, len(session_check_stats(&s).reused_packages) > 0) }
 			if edit == 1 {
 				diagnostics, captured := query_diagnostics(&s, snapshot)
 				found_borrow_error := false
@@ -767,8 +767,8 @@ impl Value {
 		case 6: if !write_session_source(t, path, "package main; main :: proc() {}") { return }
 		case 7: if !write_session_source(t, path, text) { return }
 		}
-		testing.expect(t, invalidate_session(&s))
 		snapshot := expect_session_matches_fresh(t, &s, path, config, edit != 2 && edit != 4)
+		testing.expect_value(t, len(session_check_stats(&s).reused_packages), 0)
 		c := &s.compiler
 		testing.expect_value(t, c.providers[.Allocator].selected, edit != 6)
 		if edit != 2 && edit != 4 {

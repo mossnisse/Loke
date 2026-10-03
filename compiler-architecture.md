@@ -62,11 +62,14 @@ The normal compilation path is:
 1. `compile_program` in `src/packages.odin` initializes semantic stores, loads
    `base:runtime`, loads the root package, reads the provider selections from
    its package-clause attributes, and adds the selected provider packages.
-2. Package discovery runs to a fixed point. Each round rebuilds the selected
+2. For graphs with file-scope selection or providers, package discovery runs to
+   a fixed point. Each round rebuilds the selected
    `File.active_items`, discovers newly active imports, rejects import cycles,
    prepares package declarations, and evaluates file-scope `when` conditions.
    An unselected branch is parsed but has no semantic effect.
 3. Once the graph is stable, package bodies are checked in dependency order.
+   Static graphs discover all imports first, then prepare and check each package
+   before its dependents; incremental checkpoints sit before package preparation.
    Generic instances and pending generic `impl` bodies are checked as concrete
    uses commit them.
 4. Ownership analysis runs per concrete procedure while it is checked.
@@ -98,7 +101,8 @@ semantic closure passes and compares the compiler's layout facts with LLVM.
 
 `src/session.odin` is the reusable orchestration boundary in the existing Odin
 `lokec` package. A session owns one `Compiler`, a copied `Compilation_Config`,
-and configuration, scratch, and query arenas, plus copied source overlays. CLI
+and configuration, scratch, query, and statistics arenas, plus copied source
+overlays and optional package checkpoints. CLI
 presentation, option parsing, and exit handling remain in `src/main.odin`;
 filesystem and toolchain policy remain in `src/emit_llvm_toolchain.odin`.
 
@@ -107,6 +111,8 @@ filesystem and toolchain policy remain in `src/emit_llvm_toolchain.odin`.
 | `init_session(&s, config)` | Initialize a zeroed session in place. Copy all configuration strings and arrays; the caller can release them immediately. Default to `DEFAULT_COMPILATION_CONFIG`, matching CLI defaults. Return false with diagnostics for invalid configuration; reject reinitializing a live session. |
 | `check_session(&s, input)` | Replace the previous compilation, reload source and project files (using source overlays), and run whole-program checking, entry/export validation, and semantic finalization. Return false for source/configuration errors, retaining diagnostics. The caller can release its input path on return. |
 | `check_session(&s, input, documentation = true)` | Preserve `-doc` behavior: check declarations and exports without requiring executable entry or finalizing emission dependencies. This result cannot be emitted. |
+| `check_session_incremental(&s, input)` | Validate inputs and reuse a checked dependency prefix when the package graph is static and unchanged. Otherwise perform a full check. Preserve batch diagnostics, queries, and finalization; every call expires previous snapshots. See [Incremental checking](#incremental-checking). Documentation mode always performs a full check. |
+| `session_check_stats(&s)` | Return package IDs rechecked/reused by the last check, current semantic-arena bytes used, and retained checkpoint-image bytes. ID slices expire at the next check or destruction. |
 | `invalidate_session(&s)` | Invalidate the entire checked result after an external input change. Reject old snapshots/handles and emission, release query storage, and keep copied configuration and overlays. The next check reloads and rebuilds the whole program. Return false only for a zeroed/destroyed session; repeated invalidation is safe. Requires exclusive use. |
 | `emit_session_ir(&s)` | Return LLVM module text and a success flag from a successfully finalized check. Create no files and invoke no external tools. Repeated emission consumes the same checked state; each module stays allocated until the next check or destruction. |
 | `emit_session(&s, options)` | Write IR, an object, or an executable using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Return 2 without a diagnostic for an empty output path, so the check can still be emitted; take optimization and build mode from the checked configuration. Return the existing toolchain exit status. |
@@ -122,12 +128,12 @@ The current compiler state is available through `s.compiler`. Sources, syntax,
 semantic IDs, diagnostics, and emitted strings are borrowed and remain valid
 until explicit invalidation, an overlay edit, the next check, or destruction,
 including when the next check fails.
-Copy data a caller needs longer. Each check destroys the previous compiler and
+Copy data a caller needs longer. Each batch check destroys the previous compiler and
 scratch arena before loading the new program, so sources, manifest collections,
 generic instances, held diagnostics, and emission state cannot survive an edit.
-This remains batch reuse: every check rebuilds the whole program, following
-[Invalidation rules](#invalidation-rules). Incremental caches remain a later
-milestone in [Compiler services](future-plans.md#compiler-services).
+`check_session` remains the batch oracle; `check_session_incremental` can retain
+a dependency prefix under [Incremental checking](#incremental-checking).
+Switching to batch or documentation checking drops every checkpoint.
 
 `session_test.odin` compares reused sessions with fresh sessions after edits to
 generic procedures, dependency manifests, and invalid source. It also covers
@@ -201,11 +207,12 @@ repeated queries, and reclamation with memory tracking.
 
 ## Invalidation rules
 
-The unit of invalidation is the **whole compilation**. There is no safe
-per-package or per-procedure reuse yet. `invalidate_session(&s)` is the external
+The unit of public snapshot invalidation is the **whole compilation**.
+`invalidate_session(&s)` is the conservative external
 notification boundary for disk/project changes; overlay edits and new checks
 use that same boundary. It expires all snapshot IDs and query views, clears
-emission readiness, and releases the query arena. Configuration and overlays
+emission readiness, releases the query arena, and drops package checkpoints.
+Configuration and overlays
 remain owned by the session. The next `check_session` destroys the previous
 compiler and scratch storage, reloads the inputs, and runs the entire
 [Driver and phase order](#driver-and-phase-order), including whole-program
@@ -221,9 +228,9 @@ events take the same whole-program fallback. Do not filter notifications solely
 by `query_file`: a missing file, newly selected import, new package member, or
 new nearer manifest is not necessarily among the previously loaded sources.
 
-Inputs to any future cache must include the following facts. Every change
-currently requires whole-program invalidation; a narrower cache must establish
-and validate all its dependencies before overriding that fallback.
+Inputs to a cache must include the following facts. The opt-in incremental path
+validates its complete input set before reusing a dependency prefix; unclassified
+changes still require a full check.
 
 | Input | Facts that affect reuse | Existing reader/consumer |
 | --- | --- | --- |
@@ -285,6 +292,87 @@ retargeting, body-only CTFE/conditional imports, failed generic bounds and fixes
 global writes and result provenance, provider selection/signature failures and
 fixes, changed formatting/drop hooks, and removal of final registry demands.
 
+## Incremental checking
+
+`check_session_incremental` is an opt-in checking path. The CLI continues to use
+`check_session` and allocates no package cache. Both paths discover a static
+import graph before preparing/checking packages in dependency order; programs
+with file-scope `when` use the existing discovery/preparation fixed point.
+Every check still runs whole-program provenance/provider analysis, entry/export
+validation, and semantic finalization. LLVM remains whole-program emission.
+
+For a static graph without selected providers, the incremental path records a
+checkpoint immediately before preparing each package. A checkpoint saves the
+compiler's fields, a semantic-arena watermark, and the used bytes of its arena
+blocks. Incremental source buffers, line/comment tables, parser syntax, file
+objects, diagnostics, and semantic registries all use that arena, so the saved
+image includes mutations to earlier types, templates, scopes, and syntax as
+well as newly allocated state. Ordinary batch parsing retains per-file arenas.
+Allocator pointers continue to name the same live `Compiler`; internal field
+restoration preserves its live semantic arena and recreates disposable analysis
+and emission arenas. Checkpoints cannot be moved into another compiler/session.
+
+Before reuse, a temporary batch loader re-resolves the nearest/transitive
+manifests and collections, enumerates every loaded package directory, and reads
+the exact bytes of every loaded source through current overlays. It compares
+root identity, file/directory mode, working directory, manifest paths/contents,
+effective collections, package membership, and each changed file's package name
+and ordered import paths/aliases. Configuration, compiler, and target identity
+are fixed by the live session. No timestamp or hash substitutes for byte equality.
+
+The earliest changed package selects the checkpoint. Restoring it discards all
+later allocations and restores earlier mutable data exactly. The whole suffix
+is then checked again, including every affected dependent. Unrelated packages
+before the boundary retain their checked state; unrelated packages after it are
+conservatively rechecked. With no changed bytes, the final package is rechecked
+and whole-program analyses still run. This prefix strategy avoids incomplete
+dependency tracking for generic instances, CTFE, inferred effects, and final
+registries: their cross-package mutations are rolled back to the checking
+boundary rather than retained on signature equality.
+
+Every suffix source is compared with the currently read inputs after restoring,
+including files edited since an older checkpoint was captured. Changed files
+are reparsed at their original source indices, and their package's imports are
+rebound to refresh diagnostic spans. The restored boundary stays before those
+replacement allocations, so repeated edits cannot accumulate old syntax.
+Later checkpoints are discarded and rebuilt. Query storage and previous
+emission are reclaimed on every check, and a new snapshot ID is always issued.
+
+The following cases use a full check:
+
+- First incremental check; an explicit `invalidate_session`; switching input,
+  working directory, root mode, batch mode, or documentation mode.
+- File/package additions or removals; changed manifests or collection roots;
+  changed package clauses or import paths/aliases; changed package attributes.
+- Any program with file-scope `when` or selected providers, including conditional
+  import graphs and their compile-time body dependencies.
+- Source read/UTF-8/BOM/parse failures, or an unavailable package checkpoint.
+
+Semantic errors can retain an unaffected prefix and are retried after a fix.
+The full-check fallback rebuilds whatever eligible checkpoints its new inputs
+permit. Configuration changes require a new session as before.
+
+Checkpoint images have a 64 MiB payload limit per session. Older boundaries are
+evicted first; a boundary whose image alone exceeds the limit is not cached.
+Retained images never form a growing edit history. `session_check_stats` exposes
+rechecked/reused package IDs, semantic-arena used bytes (including incremental
+source/syntax), and checkpoint payload bytes. The latter excludes small image
+metadata, configuration, overlays, scratch, queries, emission, and OS reservation
+overhead; these are accounting counters, not a process working-set measurement.
+Recreating a session or destroying it releases every cache image and arena.
+
+`incremental_test.odin` checks dependency reuse, arbitrary-length edits,
+multi-package generic/CTFE changes, rejected instantiation fixes, stale snapshots,
+final-registry demand removal, bounded cache eviction, and constant memory across
+repeated overlay edits. The invalidation edit sequences
+also use the incremental API, comparing diagnostics, registry sizes, and exact
+IR with fresh batch checks. Discovery and selection changes verify the full
+fallback. Representative latency/working-set evaluation remains the separate
+[Equivalence and cost](future-plans.md#compiler-services) milestone; the bounded
+image strategy makes no blanket performance claim. Local before/after CLI runs
+with `perf.ps1` retain identical executable sizes and peak memory within about 1%;
+these batch measurements do not establish warm incremental latency.
+
 ## Core representations and ownership
 
 ### Source and syntax
@@ -295,7 +383,8 @@ the lexer records each comment's span on its `Source` instead, in source order,
 for the tools that need them. Every AST node has a span, including
 recovery nodes, so later phases never need to reconstruct source locations.
 
-Each parsed `File` owns a syntax arena. The parser keeps errors in the tree as
+Each batch-parsed `File` owns a syntax arena; incremental syntax shares the
+checkpointed semantic arena. The parser keeps errors in the tree as
 explicit error nodes and continues after synchronization points. Types and
 expressions share the `Expr` node domain because constructs such as generic
 applications and calls cannot always be classified from syntax alone.
@@ -372,10 +461,12 @@ walks the annotated AST directly.
 
 ### Allocation domains
 
-- Source buffers and diagnostics use ordinary process-owned storage. A
+- Batch source buffers and diagnostics use ordinary process-owned storage;
+  incremental inputs and diagnostics share the checkpointed semantic arena. A
   diagnostic's strings come from the allocator its list was first grown with,
   so one raised during emission is still freed correctly.
-- Each parsed file owns its AST arena.
+- Each batch-parsed file owns its AST arena; incremental source/syntax lives in
+  the checkpointed semantic arena.
 - Compilation-wide semantic stores use the semantic arena, and so does cloned
   syntax: generic instances and static `foreach` copies.
 - Ownership and provenance analysis use the analysis arena, reset after each
@@ -578,6 +669,7 @@ be file-private.
 | Files | Responsibility |
 | --- | --- |
 | `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI options and presentation, reusable batch sessions and phase order, build constants, provider selection, and exit codes. |
+| `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
 | `stack.odin` | The 64 MB compiler stack reservation that bounds nesting (`MAX_NEST`) and compile-time recursion. |
 | `install.odin`, `packages.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, and `when` selection. |
 | `source.odin` | `Compiler`, source buffers, spans, and the diagnostics engine. Start here when locating global state; `destroy_compilation` is `semantic.odin`'s. |
@@ -742,8 +834,9 @@ Compiler unit tests live beside the implementation:
 - `carrier_test.odin` covers aggregate carrier shapes and provenance;
 - `syntax_corpus_test.odin` runs the valid syntax corpus, the AST goldens and the parser mutation fuzzer in process;
 - `emit_llvm_test.odin` checks emission contracts and structural backend rules.
-- `session_test.odin` checks batch-session reuse, diagnostics/IR equivalence,
-  entry policy, ownership, and destruction.
+- `session_test.odin` and `incremental_test.odin` check batch/incremental reuse,
+  diagnostics/IR equivalence, invalidation, reclamation, entry policy, ownership,
+  and destruction.
 
 The integration harness is `tests/corpus_test.odin`:
 
@@ -858,8 +951,8 @@ ordering drift that successful execution may hide.
 - The backend is annotated AST to textual LLVM; a durable MIR and direct native
   debug backend should be introduced only with a real second consumer.
 - The compiler shells out to clang and NASM and links a versioned C runtime.
-- Compilation is whole-program and single-process; there is no incremental or
-  parallel package compilation.
+- Emission is whole-program and single-process. Optional session checking reuses
+  dependency prefixes; there is no separate object or parallel package compilation.
 - The compiler remains in Odin; v1 has no self-hosting path (future-plans.md
   sketches one).
 - Debug information covers procedures, statement lines, a loop header's, a

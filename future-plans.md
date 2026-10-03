@@ -187,13 +187,17 @@ Implementation order:
    configuration, compiler identity, and target inputs, plus the CTFE, generic,
    inferred-effect, and final-registry dependencies that signatures alone miss.
    Regression coverage compares edits, failures, and fixes with fresh batches.
-   Narrower reuse remains deferred until its complete dependencies can be
-   established safely.
-4. **Incremental checking.** Cache and reclaim per-package state, invalidate
-   changed packages and affected dependents, and rerun required whole-program
-   analyses and finalization. Do not introduce separate object compilation as
-   part of this milestone. Track rechecked packages and memory use across edit
-   sequences so reuse and reclamation are both observable.
+   These rules also govern the narrower reuse in the following milestone.
+4. **Incremental checking — shipped.** `check_session_incremental` restores
+   bounded package checkpoints for stable static import graphs, reuses the
+   dependency prefix before an edit, and rechecks the suffix containing the
+   changed packages and their dependents. Whole-program analyses and finalization
+   still run; emission remains whole-program. `session_check_stats` exposes reuse
+   and retained memory. Edit sequences compare fresh diagnostics/IR and verify
+   repeated overlays do not accumulate obsolete state. Discovery, conditional
+   selection, providers, and unknown changes retain the full-check fallback.
+   The scope and memory ceiling are in
+   [Incremental checking](compiler-architecture.md#incremental-checking).
 5. **Equivalence and cost.** Compare each incremental result with a fresh batch
    compilation after edits, including import additions/removals, conditional
    imports, generic changes, provider/configuration changes, and fixes to invalid

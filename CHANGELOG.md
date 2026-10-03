@@ -324,6 +324,11 @@ checklist.
 
 ### Added
 
+- `check_session_incremental` reuses checked dependency prefixes for stable
+  static import graphs and falls back to a full check for discovery, conditional
+  selection, or provider changes. `session_check_stats` reports rechecked/reused
+  packages and retained semantic/checkpoint bytes; repeated edits reclaim old
+  state. See [Incremental checking](compiler-architecture.md#incremental-checking).
 - `invalidate_session` lets compiler-service clients expire snapshots and
   emission readiness after external file or project changes. The next check
   rebuilds the whole program under documented conservative

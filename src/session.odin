@@ -37,6 +37,9 @@ Compilation_Session :: struct {
 	scratch_arena: virtual.Arena,
 	overlays: map[string]Source_Overlay,
 	query_arena: virtual.Arena,
+	package_cache: Package_Check_Cache,
+	check_stats: Compilation_Check_Stats,
+	stats_arena: virtual.Arena,
 	snapshot: Snapshot_Id,
 	queries: Snapshot_Queries,
 	queries_ready: bool,
@@ -71,6 +74,7 @@ init_session :: proc(s: ^Compilation_Session, config := DEFAULT_COMPILATION_CONF
 invalidate_session :: proc(s: ^Compilation_Session) -> bool {
 	if !s.initialized { return false }
 	invalidate_session_snapshot(s)
+	destroy_package_cache(&s.package_cache)
 	return true
 }
 
@@ -93,6 +97,18 @@ configure_session :: proc(s: ^Compilation_Session) -> bool {
 // pipeline. Even a failed check replaces the preceding compilation. Documentation
 // checks omit entry validation and finalization, as the CLI's -doc path does.
 check_session :: proc(s: ^Compilation_Session, input: string, documentation := false) -> bool {
+	return check_session_impl(s, input, documentation, false)
+}
+
+// Reuse a dependency prefix when source edits preserve the static package graph.
+// Unknown inputs and discovery changes fall back to the ordinary full pipeline
+// (compiler-architecture.md "Incremental checking").
+check_session_incremental :: proc(s: ^Compilation_Session, input: string, documentation := false) -> bool {
+	return check_session_impl(s, input, documentation, true)
+}
+
+@(private = "file")
+check_session_impl :: proc(s: ^Compilation_Session, input: string, documentation, incremental: bool) -> bool {
 	if !s.initialized || !s.configured { return false }
 	context.allocator = s.allocator
 	// Input may itself be borrowed from the preceding snapshot.
@@ -100,6 +116,12 @@ check_session :: proc(s: ^Compilation_Session, input: string, documentation := f
 	defer delete(input_copy)
 	invalidate_session_snapshot(s)
 	s.snapshot = next_snapshot_id()
+	virtual.arena_destroy(&s.stats_arena)
+	s.check_stats = {}
+	if incremental && !documentation && s.started && try_incremental_check(s, input_copy) {
+		return finish_session_check(s, s.compiler.root_package, s.compiler.error_count == 0, false)
+	}
+	destroy_package_cache(&s.package_cache)
 	if s.started {
 		destroy_compilation(&s.compiler)
 		virtual.arena_destroy(&s.scratch_arena)
@@ -108,10 +130,31 @@ check_session :: proc(s: ^Compilation_Session, input: string, documentation := f
 	s.started, s.ready = true, false
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
 	c := &s.compiler
+	if incremental && !documentation {
+		s.package_cache.allocator = s.allocator
+		c.package_cache = &s.package_cache
+		// Configuration was already allocated; subsequent owned inputs join it.
+		c.sources.allocator, c.parsed_files.allocator = c.semantic_allocator, c.semantic_allocator
+		c.diagnostics.allocator, c.held_diagnostics.allocator = c.semantic_allocator, c.semantic_allocator
+	}
 	// The caller may release its path as soon as this call returns.
 	path := strings.clone(input_copy, c.semantic_allocator)
 	if !register_project(c, path) { return false }
 	root, compiled := compile_program(c, path)
+	if c.package_cache != nil && len(s.package_cache.entries) > 0 {
+		remember_incremental_inputs(s, input_copy)
+	}
+	return finish_session_check(s, root, compiled, documentation)
+}
+
+@(private = "file")
+finish_session_check :: proc(s: ^Compilation_Session, root: Package_Id, compiled, documentation: bool) -> bool {
+	c := &s.compiler
+	if len(s.check_stats.rechecked_packages) == 0 {
+		allocator := virtual.arena_allocator(&s.stats_arena)
+		s.check_stats.rechecked_packages = make([]Package_Id, max(0, len(c.packages) - 1), allocator)
+		for index in 1 ..< len(c.packages) { s.check_stats.rechecked_packages[index - 1] = Package_Id(index) }
+	}
 	if compiled {
 		if c.build_mode == .Exe && !documentation { validate_executable(c, root) }
 		check_exports(c)
@@ -147,11 +190,13 @@ emit_session :: proc(s: ^Compilation_Session, opts: Emission_Options) -> int {
 
 // Safe after a failed initialization/check and on an already destroyed session.
 destroy_session :: proc(s: ^Compilation_Session) {
-	if s.initialized { context.allocator = s.allocator }
+	context.allocator = s.allocator if s.initialized else context.allocator
 	invalidate_session_snapshot(s)
+	destroy_package_cache(&s.package_cache)
 	destroy_compilation(&s.compiler)
 	virtual.arena_destroy(&s.scratch_arena)
 	virtual.arena_destroy(&s.configuration_arena)
+	virtual.arena_destroy(&s.stats_arena)
 	for _, overlay in s.overlays {
 		delete(overlay.key)
 		delete(overlay.path)

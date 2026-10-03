@@ -33,8 +33,8 @@ no_span :: proc() -> Span {
 Source :: struct {
 	path:        string,
 	text:        string,
-	// Non-empty only when `load_source` allocated the text; tests register string
-	// literals directly, and the destructor has to be correct for both.
+	// Non-empty only for process-allocated text. Incremental source text lives in
+	// the checkpointed arena; tests may register string literals directly.
 	owned_text:  []u8,
 	line_starts: []u32, // byte offset of the first character of each line
 	// Every comment, in source order, as the lexer last found them: a `//`
@@ -72,10 +72,12 @@ Diagnostic :: struct {
 // Compiler-wide state. Named `Compiler` rather than `Context` because `context`
 // is an Odin keyword.
 //
-// Source buffers and diagnostics use the process allocator. Parsed syntax is
-// owned separately by each File's arena; identifiers, types, symbols, scopes,
-// and packages use the compilation-lifetime semantic arena below.
+// Batch source buffers and diagnostics use the process allocator and each File
+// owns its syntax arena. Incremental inputs/syntax/diagnostics join identifiers,
+// types, symbols, scopes, and packages in the checkpointed semantic arena.
 Compiler :: struct {
+	// Opt-in session package checkpoints; nil for ordinary batch compilations.
+	package_cache: ^Package_Check_Cache,
 	sources:     [dynamic]Source,
 	// The session's overlays; read through `compiler_overlays`. Loaded buffers
 	// are copied so an overlay edit cannot alter a compilation being consumed.
@@ -354,6 +356,12 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 		return 0, false
 	}
 
+	if c.package_cache != nil {
+		// A checkpoint owns source bytes along with syntax and semantic state.
+		text = strings.clone(text, c.semantic_allocator)
+		delete(data)
+		data = nil
+	}
 	index = add_source(c, path, text, data)
 	if valid, bad_offset := valid_utf8(text); !valid {
 		errorf(
@@ -384,6 +392,7 @@ display_path :: proc(path: string) -> string {
 
 // Registers source text; `owned` is freed with the compilation.
 add_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> u32 {
+	context.allocator = c.semantic_allocator if c.package_cache != nil else context.allocator
 	starts := make([dynamic]u32)
 	append(&starts, 0)
 	for i := 0; i < len(text); i += 1 {
@@ -391,7 +400,7 @@ add_source :: proc(c: ^Compiler, path, text: string, owned: []u8 = nil) -> u32 {
 			append(&starts, u32(i + 1))
 		}
 	}
-	append(&c.sources, Source{path = path, text = text, owned_text = owned, line_starts = starts[:]})
+	append(&c.sources, Source{path = path, text = text, owned_text = owned, line_starts = starts[:], comments = make([dynamic]Span)})
 	return u32(len(c.sources) - 1)
 }
 

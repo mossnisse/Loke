@@ -3,6 +3,7 @@
 package lokec
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import os2 "core:os/os2"
 import "core:path/filepath"
@@ -25,6 +26,17 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 
 	k := Checker{c = c}
 	defer delete(k.nil_uses)
+	// With no file-scope selection, discovery needs no semantic preparation.
+	// Checking each dependency before preparing its dependents gives checkpoints
+	// a boundary with no references back into a later package.
+	for index in 1 ..< len(c.packages) { rebuild_active_items(c, &c.packages[index]) }
+	_ = discover_imports(c, &k)
+	if !check_import_cycles(c) { return root, false }
+	if static_package_graph(c) {
+		check_static_packages(&k, package_order(c), 0)
+		finish_program_analysis(&k)
+		return root, c.error_count == 0
+	}
 	for {
 		for index in 1 ..< len(c.packages) {
 			rebuild_active_items(c, &c.packages[index])
@@ -185,7 +197,7 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 }
 
 // Direct regular `.loke` files, sorted for deterministic package order.
-@(private = "file")
+@(private)
 package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 	overlays := compiler_overlays(c)
 	entries, err := os2.read_all_directory_by_path(dir, context.temp_allocator)
@@ -223,8 +235,10 @@ parse_file :: proc(c: ^Compiler, path: string) -> (^File, bool) {
 	}
 	tokens := lex(c, index)
 	defer delete(tokens)
-	file := new(File)
-	file^ = parse(c, index, tokens)
+	allocator := context.allocator
+	if c.package_cache != nil { allocator = c.semantic_allocator }
+	file := new(File, allocator)
+	file^ = parse(c, index, tokens, c.package_cache != nil ? c.semantic_allocator : mem.Allocator{})
 	append(&c.parsed_files, file)
 	return file, true
 }
@@ -232,7 +246,7 @@ parse_file :: proc(c: ^Compiler, path: string) -> (^File, bool) {
 // ---------------------------------------------------------------- discovery --
 
 // Binds active imports and reports whether the graph grew.
-@(private = "file")
+@(private)
 discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 	changed := false
 	// Loading may reallocate `c.packages`, so retain IDs rather than pointers.

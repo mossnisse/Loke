@@ -721,6 +721,12 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		panic("cannot reserve the compilation's semantic arena")
 	}
 	c.semantic_allocator = virtual.arena_allocator(&c.semantic_arena)
+	if c.package_cache != nil {
+		c.sources = make([dynamic]Source, c.semantic_allocator)
+		c.parsed_files = make([dynamic]^File, c.semantic_allocator)
+		c.diagnostics = make([dynamic]Diagnostic, c.semantic_allocator)
+		c.held_diagnostics = make([dynamic]Diagnostic, c.semantic_allocator)
+	}
 	if err := virtual.arena_init_growing(&c.analysis_arena); err != nil {
 		panic("cannot reserve the compilation's analysis arena")
 	}
@@ -1940,9 +1946,10 @@ add_package_file :: proc(c: ^Compiler, package_id: Package_Id, file: ^File) -> b
 }
 
 destroy_compilation :: proc(c: ^Compiler) {
-	// Production parsing gives the compilation ownership of both the file
-	// object and its syntax arena. Hand-built tests keep `parsed_files` empty and
-	// continue to own their stack-local ASTs themselves.
+	context.allocator = c.semantic_allocator if c.package_cache != nil else context.allocator
+	// Batch parsing owns file objects and their syntax arenas. Incremental file
+	// objects/syntax share semantic storage; destroy_ast is then a no-op.
+	// Hand-built tests continue to own their stack-local ASTs themselves.
 	for file in c.parsed_files {
 		if file != nil {
 			destroy_ast(file)
