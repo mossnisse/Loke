@@ -93,12 +93,39 @@ main :: proc() {
 			testing.expect_value(t, stats.cache_bytes, cached[variant])
 		}
 	}
+	// Invalidation expires views but keeps checkpoints: the next check revalidates.
 	testing.expect(t, invalidate_session(&s))
-	testing.expect_value(t, session_check_stats(&s).cache_bytes, u64(0))
+	testing.expect(t, session_check_stats(&s).cache_bytes > 0)
 	expect_session_matches_fresh(t, &s, path, config, true)
-	testing.expect_value(t, len(session_check_stats(&s).reused_packages), 0)
+	testing.expect(t, slice.contains(session_check_stats(&s).reused_packages, steady))
 	destroy_session(&s)
 	testing.expect(t, s.compiler.semantic_arena.curr_block == nil && s.package_cache.bytes == 0 && len(s.package_cache.entries) == 0)
+}
+
+// Checkpoints stop at a package with errors. An edit after it restarts from the
+// nearest earlier boundary, not from scratch.
+@(test)
+session_incremental_reuses_prefix_before_an_error :: proc(t: ^testing.T) {
+	root := session_fixture(t, "incremental-error-prefix")
+	if root == "" { return }
+	defer os2.remove_all(root)
+	if !testing.expect(t, os2.make_directory_all(filepath.join({root, "dep"}, context.temp_allocator)) == nil) { return }
+	path := filepath.join({root, "main.loke"}, context.temp_allocator)
+	main_text := `package main; import "dep"; main :: proc() { assert(dep.answer() == 1); }`
+	if !write_session_source(t, filepath.join({root, "dep", "dep.loke"}, context.temp_allocator), "package dep; @(public) answer :: proc() -> int { return missing; }") ||
+	   !write_session_source(t, path, main_text) { return }
+	config := session_test_config()
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, config)) { return }
+	expect_session_matches_fresh(t, &s, path, config, false)
+	edited, _ := strings.replace_all(main_text, "== 1", "== 2", context.temp_allocator)
+	if !write_session_source(t, path, edited) { return }
+	expect_session_matches_fresh(t, &s, path, config, false)
+	dep := s.compiler.package_by_dir[dir_key(canonical_dir(filepath.join({root, "dep"}, context.temp_allocator)))]
+	stats := session_check_stats(&s)
+	testing.expect(t, len(stats.reused_packages) > 0, "an edit after a failing dependency rechecked everything")
+	testing.expect(t, slice.contains(stats.rechecked_packages, dep) && slice.contains(stats.rechecked_packages, s.compiler.root_package))
 }
 
 @(test)

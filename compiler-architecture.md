@@ -113,7 +113,7 @@ filesystem and toolchain policy remain in `src/emit_llvm_toolchain.odin`.
 | `check_session(&s, input, documentation = true)` | Preserve `-doc` behavior: check declarations and exports without requiring executable entry or finalizing emission dependencies. This result cannot be emitted. |
 | `check_session_incremental(&s, input)` | Validate inputs and reuse a checked dependency prefix when the package graph is static and unchanged. Otherwise perform a full check. Preserve batch diagnostics, queries, and finalization; every call expires previous snapshots. See [Incremental checking](#incremental-checking). Documentation mode always performs a full check. |
 | `session_check_stats(&s)` | Return package IDs rechecked/reused by the last check, current semantic-arena bytes used, and retained checkpoint-image bytes. ID slices expire at the next check or destruction. |
-| `invalidate_session(&s)` | Invalidate the entire checked result after an external input change. Reject old snapshots/handles and emission, release query storage, and keep copied configuration and overlays. The next check reloads and rebuilds the whole program. Return false only for a zeroed/destroyed session; repeated invalidation is safe. Requires exclusive use. |
+| `invalidate_session(&s)` | Invalidate the entire checked result after an external input change. Reject old snapshots/handles and emission, release query storage, and keep copied configuration, overlays, and package checkpoints. `check_session` then rebuilds the whole program; `check_session_incremental` re-reads every input before reusing a checkpoint. Return false only for a zeroed/destroyed session; repeated invalidation is safe. Requires exclusive use. |
 | `emit_session_ir(&s)` | Return LLVM module text and a success flag from a successfully finalized check. Create no files and invoke no external tools. Repeated emission consumes the same checked state; each module stays allocated until the next check or destruction. |
 | `emit_session(&s, options)` | Write IR, an object, or an executable using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Return 2 without a diagnostic for an empty output path, so the check can still be emitted; take optimization and build mode from the checked configuration. Return the existing toolchain exit status. |
 | `destroy_session(&s)` | Release all compilation, configuration, scratch, overlay, and query storage. Safe on a zeroed session, after any failure, and repeatedly. |
@@ -211,9 +211,9 @@ The unit of public snapshot invalidation is the **whole compilation**.
 `invalidate_session(&s)` is the conservative external
 notification boundary for disk/project changes; overlay edits and new checks
 use that same boundary. It expires all snapshot IDs and query views, clears
-emission readiness, releases the query arena, and drops package checkpoints.
-Configuration and overlays
-remain owned by the session. The next `check_session` destroys the previous
+emission readiness, and releases the query arena. Configuration, overlays,
+and package checkpoints remain owned by the session; an incremental check
+validates every input before reusing a checkpoint. The next `check_session` destroys the previous
 compiler and scratch storage, reloads the inputs, and runs the entire
 [Driver and phase order](#driver-and-phase-order), including whole-program
 analysis and semantic finalization. A failed check replaces previous results
@@ -320,7 +320,8 @@ effective collections, package membership, and each changed file's package name
 and ordered import paths/aliases. Configuration, compiler, and target identity
 are fixed by the live session. No timestamp or hash substitutes for byte equality.
 
-The earliest changed package selects the checkpoint. Restoring it discards all
+The nearest checkpoint at or before the earliest changed package is restored;
+checkpoints stop at a package with errors, so an edit after it restarts there. Restoring it discards all
 later allocations and restores earlier mutable data exactly. The whole suffix
 is then checked again, including every affected dependent. Unrelated packages
 before the boundary retain their checked state; unrelated packages after it are
@@ -340,7 +341,7 @@ emission are reclaimed on every check, and a new snapshot ID is always issued.
 
 The following cases use a full check:
 
-- First incremental check; an explicit `invalidate_session`; switching input,
+- First incremental check; switching input,
   working directory, root mode, batch mode, or documentation mode.
 - File/package additions or removals; changed manifests or collection roots;
   changed package clauses or import paths/aliases; changed package attributes.

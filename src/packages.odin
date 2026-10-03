@@ -235,10 +235,11 @@ parse_file :: proc(c: ^Compiler, path: string) -> (^File, bool) {
 	}
 	tokens := lex(c, index)
 	defer delete(tokens)
-	allocator := context.allocator
-	if c.package_cache != nil { allocator = c.semantic_allocator }
-	file := new(File, allocator)
-	file^ = parse(c, index, tokens, c.package_cache != nil ? c.semantic_allocator : mem.Allocator{})
+	// Incremental syntax joins the checkpointed arena; batch files own theirs.
+	syntax: mem.Allocator
+	if c.package_cache != nil { syntax = c.semantic_allocator }
+	file := new(File, syntax if c.package_cache != nil else context.allocator)
+	file^ = parse(c, index, tokens, syntax)
 	append(&c.parsed_files, file)
 	return file, true
 }

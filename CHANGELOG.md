@@ -330,8 +330,9 @@ checklist.
   packages and retained semantic/checkpoint bytes; repeated edits reclaim old
   state. See [Incremental checking](compiler-architecture.md#incremental-checking).
 - `invalidate_session` lets compiler-service clients expire snapshots and
-  emission readiness after external file or project changes. The next check
-  rebuilds the whole program under documented conservative
+  emission readiness after external file or project changes. The next batch
+  check rebuilds the whole program; an incremental check revalidates every
+  input before reusing a checkpoint, under documented
   [invalidation rules](compiler-architecture.md#invalidation-rules).
 - Compiler sessions accept in-memory source overlays, including new unsaved
   packages, and expose read-only snapshot queries for symbols, types,

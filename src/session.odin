@@ -66,15 +66,15 @@ init_session :: proc(s: ^Compilation_Session, config := DEFAULT_COMPILATION_CONF
 	return s.configured
 }
 
-// External input changes invalidate the whole program. Keep copied configuration
-// and overlays; the next check discards all preceding compilation state and runs
-// the full pipeline (compiler-architecture.md "Invalidation rules"). Callers
-// notify disk/project changes; no watcher or path filter is implied. Requires
-// exclusive use, just like checking and overlay edits.
+// External input changes invalidate the whole checked result. Keep copied
+// configuration, overlays, and package checkpoints: an incremental check re-reads
+// every input before reusing one, and `check_session` still rebuilds everything
+// (compiler-architecture.md "Invalidation rules"). Callers notify disk/project
+// changes; no watcher or path filter is implied. Requires exclusive use, just
+// like checking and overlay edits.
 invalidate_session :: proc(s: ^Compilation_Session) -> bool {
 	if !s.initialized { return false }
 	invalidate_session_snapshot(s)
-	destroy_package_cache(&s.package_cache)
 	return true
 }
 

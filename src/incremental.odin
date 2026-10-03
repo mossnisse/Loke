@@ -93,8 +93,7 @@ cache_package_checkpoint :: proc(c: ^Compiler, index: int) {
 	// should not lose their checkpoint to rarely used dependency boundaries.
 	for cache.bytes + u64(c.semantic_arena.total_used) > MAX_PACKAGE_CACHE_BYTES {
 		discard_checkpoint(cache, &cache.entries[0])
-		for position in 1 ..< len(cache.entries) { cache.entries[position - 1] = cache.entries[position] }
-		resize(&cache.entries, len(cache.entries) - 1)
+		ordered_remove(&cache.entries, 0)
 	}
 	checkpoint := Package_Checkpoint{index = index, state = c^}
 	checkpoint.mark = virtual.arena_temp_begin(&c.semantic_arena)
@@ -230,9 +229,12 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string) -> bool {
 			first = min(first, position)
 		}
 	}
+	// The nearest boundary at or before the edit. Checkpoints stop at a package
+	// with errors, so an edit after it restarts there rather than from scratch.
 	checkpoint_index := -1
-	for entry, index in cache.entries { if entry.index == first { checkpoint_index = index; break } }
+	for entry, index in cache.entries { if entry.index <= first { checkpoint_index = index } }
 	if checkpoint_index < 0 { return false }
+	first = cache.entries[checkpoint_index].index
 
 	// Rewind exactly, including mutations to earlier types, generic templates,
 	// registries and syntax. Saved allocator pointers still target this Compiler;
