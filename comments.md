@@ -137,7 +137,8 @@ would have been the one owner that broke that rule.
 It is a compiler type rather than a library record over a `rawptr`, for three
 reasons. A record over a raw pointer has a zero value, the null one, which a box
 must not have. It carries no borrows, so a box of a view would drop what the
-view owes; `shared(T)` has exactly that hole today. And `b^`, the payload as a
+view owes; `shared(T)` had exactly that hole until the compiler supplied its
+payload's carrier shape. And `b^`, the payload as a
 place with the box's capability, is a projection the borrow checker has to
 see, as it sees a dynamic array's element. The cost is one more type kind
 handled where `[dynamic]T` is.
@@ -664,8 +665,10 @@ read cannot, so only writes and mutable reborrows now conflict with a
 read-only one. A mutable reborrow still excludes reads, because the reader
 could observe a half-done update. The compiler accepts a read only where the
 provenance walk tags it as one, so a read it has not been taught to recognize
-stays rejected rather than letting a write through; known-gaps.md lists the
-reads still rejected.
+stays rejected rather than letting a write through. A read through a field, a
+pointer, or an element qualifies when what it yields carries no mutable
+borrow, and an unnamed value read out of a mutable carrier takes the
+capability of the destination it is stored into, as a fresh borrow does.
 
 ### Each required result is asked about
 

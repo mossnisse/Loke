@@ -5851,7 +5851,7 @@ Threads and retained tasks receive only the arguments explicitly moved or copied
 
 `shared(T)` is a library type for shared ownership of one stable `T` payload. Its zero value is `nil`, and copies use thread-safe handle accounting.
 
-`shared(value)` clones a borrowed value into shared storage; a temporary, or `shared(move(value))`, moves in. `clone` and assignment create another handle, `move` transfers one, and the final `drop` destroys the payload exactly once. A handle is never consumed implicitly at its last use.
+`shared(value)` clones a borrowed value into shared storage; a temporary, or `shared(move(value))`, moves in. `clone` and assignment create another handle, `move` transfers one, and the final `drop` destroys the payload exactly once. A handle is never consumed implicitly at its last use. A handle, strong or weak, carries the borrows its payload holds, as a [box](#owned-values) does (see [Values that contain borrows](#values-that-contain-borrows)), so a `shared(View)` cannot outlive what its `View` borrows.
 
 Construction uses `mem.default_allocator()` unless an `allocator` argument selects another. Use `try_shared` to handle failure. The shared allocation retains its allocator, so a `shared(T)` declaration cannot use `via`.
 

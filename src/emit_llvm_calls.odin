@@ -986,6 +986,7 @@ emit_bound_call :: proc(
 	defer delete(argument_cleanups)
 	handoff_cleanups := make([dynamic]Deferred)
 	defer delete(handoff_cleanups)
+	result_borrows := callee_type.result != INVALID_TYPE && type_carries_borrow(e.c, callee_type.result).any
 	for step in 0 ..< len(bound) {
 		index := call_node != nil ? call_slot_at(call_node, step) : step
 		argument := bound[index]
@@ -1029,8 +1030,17 @@ emit_bound_call :: proc(
 			if entry.place != "" { append(&handoff_cleanups, entry) }
 		} else if mode == .Value && index < len(callee_type.parameters) && index != consumed &&
 		   !expression_is_borrowed_place(argument) {
-			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
-			if entry.place != "" { append(&argument_cleanups, entry) }
+			if result_borrows {
+				// The result may borrow the argument, as `arena.allocator()` borrows
+				// its provider, so the temporary lives through the complete
+				// expression (design.md "Temporaries and procedure boundaries").
+				held := alloca(e, llvm_type(e, callee_type.parameters[index]))
+				store(e, callee_type.parameters[index], operands[index], held)
+				register_temporary_place(e, callee_type.parameters[index], held)
+			} else {
+				entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
+				if entry.place != "" { append(&argument_cleanups, entry) }
+			}
 		}
 		// Method syntax supplies a move receiver's marker implicitly.
 		if index == 0 && symbol != nil && symbol.receiver == .Move {

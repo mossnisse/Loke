@@ -14,10 +14,11 @@
 // The compiler contributes the atomic intrinsics here for the same reason it
 // contributes `allocate_string` to both `core:strings` and `core:fmt`.
 //
-// Four things about these types are the *language's*, not the library's, and
+// Five things about these types are the *language's*, not the library's, and
 // the compiler owns them: the zero value is `nil` and compares to `nil`, `via`
 // on such a declaration is an error, `handle.get()` derives its root provenance
-// from the handle, and neither is ever silently moved at its last use.
+// from the handle, a handle carries the borrows its payload holds, and neither
+// is ever silently moved at its last use.
 //
 // The atomic count makes *handle accounting* race-free. It does not make the
 // payload safe to touch from two threads, and it does not make destruction safe

@@ -10,6 +10,25 @@ checklist.
 
 ### Breaking changes
 
+- An owner made from a temporary provider, as
+  `make([dynamic]int, 0, 1, mem.Arena.init().allocator())`, cannot outlive
+  the statement that made the provider (`L0537`); it used to be accepted and
+  then used through a freed control block. Keep the provider in a local.
+- A `defer free_all(allocator)` of the region backing the value being
+  returned is `L0537`: the caller holds the result before deferred
+  statements run. Reset the region elsewhere, or return a value from another
+  region.
+- `shared(T)` and `weak(T)` carry the borrows their payload holds, so
+  `return shared(View{local[:]});` is `L0526` and writing `local` while a
+  handle views it is `L0511`, as for the payload itself. Make the payload own
+  its data, or keep the handle within the borrow's lifetime.
+- A drop hook's writes to globals now also count where a temporary argument
+  is dropped, where an expression statement or `_ = value` discards a result,
+  and on a panic's unwind path (`L0512`), and a cleanup on that path that ends
+  a region an owner still uses is `L0537`. A `defer drop(arena)` registered
+  after an owner the arena backs is therefore rejected even when every normal
+  exit drops the owner first: a panic in between would unwind the arena
+  first. Register such a `defer` before the owners it outlives.
 - A pointer to a temporary that holds borrows, as `return &Holder{view};`,
   now borrows the temporary too, so returning or keeping it is `L0526`; it was
   accepted when the temporary held a borrow of caller storage, and the caller
@@ -281,6 +300,10 @@ checklist.
 
 ### Changed
 
+- A carrier suspended by a read-only reborrow may be read through a field, a
+  pointer, or an element, as a slice local could: `held.items[0]` and
+  `len_of(held.items)` with `view: []int = held.items` live, `p^` with
+  `q: ^int = p` live, and so on. Writes and mutable copies still conflict.
 - A mutable slice may still be read while a read-only reborrow of it is live:
   passed to a `[]T` parameter, indexed, measured, resliced read-only,
   traversed by value, or printed. `slice.equal(xs, xs)` with `xs: []mut int`
@@ -437,6 +460,10 @@ checklist.
 
 ### Fixed
 
+- A temporary argument whose borrow the result keeps, as the arena in
+  `make(..., mem.Arena.init().allocator())`, lives through its complete
+  expression; it was dropped right after the call, and the program used a
+  freed allocator.
 - A generic record's `hook(copy)` bound by a `where` clause that an instance
   fails crashed the backend with `L0405`; the instance is now move-only, as
   design.md "where clauses" specifies.

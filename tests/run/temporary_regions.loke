@@ -1,0 +1,29 @@
+// design.md "Temporaries and procedure boundaries": a temporary provider lives
+// through its statement, so what is made from it may be used there; and a
+// shared handle's payload keeps the borrows it was made with.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+View :: struct { items: []int }
+
+total :: proc(xs: [dynamic]int) -> int { return xs.len(); }
+first :: proc(h: shared(View)) -> int { return h.get().items[0]; }
+
+main :: proc() {
+	fmt.println(total(make([dynamic]int, 3, 4, mem.Arena.init().allocator())));
+	fmt.println(box(5, mem.Arena.init().allocator())^);
+
+	local := [3]int{1, 2, 3};
+	h := shared(View{local[:]});
+	view := View{local[1:]};
+	m := shared(move(view));
+	t := try_shared(View{local[2:]}) or_else panic("no memory");
+	w := h.downgrade();
+	switch (again in w.upgrade()) {
+	case .some: fmt.println(again.get().items[1]);
+	case .none: fmt.println("gone");
+	}
+	fmt.println(first(h), m.get().items[0], t.get().items[0], h.get().items[2]);
+}

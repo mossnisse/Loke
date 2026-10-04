@@ -4,6 +4,8 @@
 // each rather than two that print the same.
 package lokec
 
+import "core:slice"
+
 
 @(private = "file")
 Bootstrap_Kind :: enum {
@@ -27,7 +29,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	c.shared_symbol = bootstrap_symbol(k, pkg, "Shared", .Type)
 	c.weak_symbol = bootstrap_symbol(k, pkg, "Weak", .Type)
 	c.shared_construct_symbol = bootstrap_symbol(k, pkg, "shared_construct", .Proc_Group)
-	try_shared := bootstrap_symbol(k, pkg, "try_shared", .Proc_Group)
+	c.try_shared_symbol = bootstrap_symbol(k, pkg, "try_shared", .Proc_Group)
 	if sym := symbol_of(c, unit); sym != nil {
 		c.unit_type = sym.type
 	}
@@ -39,7 +41,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	// `shared_construct` at the call.
 	bind_universe_name(c, universe, "shared", c.shared_symbol)
 	bind_universe_name(c, universe, "weak", c.weak_symbol)
-	bind_universe_name(c, universe, "try_shared", try_shared)
+	bind_universe_name(c, universe, "try_shared", c.try_shared_symbol)
 
 	c.alloc_result_type = result_type(k, c.unit_type, TYPE_ALLOCATOR_ERROR)
 }
@@ -106,4 +108,34 @@ type_is_shared_handle :: proc(c: ^Compiler, id: Type_Id) -> bool {
 		return false
 	}
 	return info.instance_of == c.shared_symbol || info.instance_of == c.weak_symbol
+}
+
+// The payload type of a `shared(T)` or `weak(T)`, or INVALID_TYPE. The record
+// holds its block as a `rawptr`, so the compiler supplies what the handle
+// carries: its payload's borrows (design.md "Values that contain borrows").
+shared_payload_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
+	if !type_is_shared_handle(c, id) {
+		return INVALID_TYPE
+	}
+	info := type_of(c, type_underlying(c, id))
+	if len(info.instance_args) != 1 || !info.instance_args[0].is_type {
+		return INVALID_TYPE
+	}
+	return info.instance_args[0].type
+}
+
+// `shared(value)` or `try_shared(value)`: the payload it takes, and whether its
+// result is a `Result`. Nil for any other call.
+shared_constructor_payload :: proc(c: ^Compiler, v: ^Expr_Call) -> (payload: Expr, fallible: bool) {
+	chosen := symbol_of(c, v.resolution.chosen_overload)
+	if chosen == nil || len(v.bound) == 0 {
+		return nil, false
+	}
+	template := chosen.instance_of != INVALID_SYMBOL ? chosen.instance_of : v.resolution.chosen_overload
+	for group, index in ([2]Symbol_Id{c.shared_construct_symbol, c.try_shared_symbol}) {
+		if members := symbol_of(c, group); members != nil && slice.contains(members.members, template) {
+			return v.bound[0], index == 1
+		}
+	}
+	return nil, false
 }

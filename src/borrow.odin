@@ -460,6 +460,9 @@ carrier_reach_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]b
 	visiting[type] = true
 	defer delete_key(visiting, type)
 	out: Carrier_Reach
+	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
+		return carrier_reach_walk(c, payload, visiting)
+	}
 	#partial switch info.kind {
 	case .Struct:
 		for field in info.fields {
@@ -556,6 +559,11 @@ carrier_shape_walk :: proc(
 	}
 	info := underlying_info(c, type)
 	if info == nil {
+		return
+	}
+	// A shared handle's payload is reached as a box's is.
+	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
+		carrier_shape_walk(c, payload, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
 		return
 	}
 	#partial switch info.kind {
@@ -814,6 +822,10 @@ widen_summary_map_path :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) {
 	}
 	info := underlying_info(c, type)
 	if info == nil {
+		return
+	}
+	if payload := shared_payload_type(c, type); payload != INVALID_TYPE {
+		widen_summary_map_path(c, payload, path[1:])
 		return
 	}
 	#partial switch info.kind {
@@ -2163,6 +2175,17 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 		}
 		return
 	}
+	if event.ends_result {
+		errorf(
+			state.k.c,
+			event.span,
+			"L0537",
+			"%s would end the region backing the returned value, which the caller already holds when deferred statements run",
+			event.ends != "" ? event.ends : "this reset",
+		)
+		add_notef(state.k.c, event.owner_span, "the value is returned here")
+		return
+	}
 	if event.verb != "" {
 		errorf(
 			state.k.c,
@@ -2173,6 +2196,9 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 			event.verb,
 		)
 		add_notef(state.k.c, event.owner_span, "`%s` is declared here and is cleaned up after this point", event.verb)
+		if from, unwinding := event.unwind_from.?; unwinding {
+			add_notef(state.k.c, from, "a panic in this statement unwinds through the cleanup, before `%s` is dropped", event.verb)
+		}
 		return
 	}
 	it := live_loans(state, live)

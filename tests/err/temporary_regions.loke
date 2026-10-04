@@ -1,0 +1,43 @@
+package main; import "core:fmt"; import "core:mem";
+
+// design.md "Allocator regions and region provenance": a temporary provider
+// ends with its statement, and so does its region.
+temporary_arena :: proc() {
+	xs := make([dynamic]int, 0, 1, mem.Arena.init().allocator());
+	xs.append(1);
+	b := box(0, mem.Arena.init().allocator());
+	b^ = 1;
+}
+
+// design.md "Allocators": a result reaches the caller before the deferred
+// statements run.
+reset_later :: proc(@(allocator_reset) allocator: Allocator) -> [dynamic]int {
+	defer free_all(allocator);
+	return make([dynamic]int, 0, 1, allocator);
+}
+
+// design.md "Shared ownership": a handle carries what its payload borrows.
+View :: struct { items: []int }
+
+shared_handle :: proc() -> shared(View) {
+	local := [3]int{1, 2, 3};
+	return shared(View{local[:]});
+}
+
+weak_handle :: proc() -> weak(View) {
+	local := [3]int{1, 2, 3};
+	h := shared(View{local[:]});
+	return h.downgrade();
+}
+
+main :: proc() {
+	local := [3]int{1, 2, 3};
+	h := shared(View{local[:]});
+	local[0] = 9;
+	fmt.println(h.get().items[0]);
+	temporary_arena();
+	arena := mem.Arena.init();
+	_ = reset_later(arena.allocator());
+	_ = shared_handle();
+	_ = weak_handle();
+}

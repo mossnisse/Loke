@@ -1,0 +1,57 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// design.md "Global write effects": a drop hook writes what it would wherever
+// a value is dropped, a temporary's, a discarded result's, and a panic's
+// unwind among them.
+
+cache: [dynamic]int;
+
+Guard :: move_only struct { active: bool }
+
+impl Guard {
+	release :: hook(drop) proc(self: inout Guard) {
+		if (self.active) { cache.clear(); cache.shrink(); }
+	}
+}
+
+look :: proc(g: Guard) {}
+make_guard :: proc() -> Guard { return Guard{true}; }
+risky :: proc(fail: bool) { if (fail) { panic("failed"); } }
+
+temporary_argument :: proc() {
+	view := cache[:];
+	look(Guard{true});
+	fmt.println(view[0]);
+}
+
+discarded_result :: proc() {
+	view := cache[:];
+	make_guard();
+	fmt.println(view[0]);
+}
+
+discarded_pop :: proc() {
+	guards := [dynamic]Guard{};
+	guards.append(Guard{true});
+	view := cache[:];
+	_ = guards.pop();
+	fmt.println(view[0]);
+}
+
+// The guard is forgotten on the normal path, but a panic in `risky` unwinds
+// it before the deferred read.
+unwinding :: proc() {
+	view := cache[:];
+	defer fmt.println(view[0]);
+	g := Guard{true};
+	risky(true);
+	unsafe.forget(move(g));
+}
+
+main :: proc() {
+	cache = [dynamic]int{42};
+	temporary_argument();
+	discarded_result();
+	discarded_pop();
+	unwinding();
+}

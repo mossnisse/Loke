@@ -863,6 +863,15 @@ report_events :: proc(
 			record_reset_liveness(k, graph, event, state)
 			continue
 		}
+		if block.unwind {
+			#partial switch event.kind {
+			case .Init, .Assign:
+				state[event.slot] = .Live
+			case .Kill, .Cleanup:
+				state[event.slot] = .Dead
+			}
+			continue
+		}
 		local := &graph.tracked[event.slot]
 		#partial switch event.kind {
 		case .Init:

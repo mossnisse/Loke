@@ -347,10 +347,13 @@ lookup_regressions :: proc() {
 		}
 		assert(key in m);
 		assert(m[key].id == 1 && key_drops == 1);
+		// A switch subject's temporaries live until the switch ends, and the
+		// borrow `find_mut` returns needs its key that long.
 		switch (_ in m.find_mut({1})) {
-		case .some: assert(key_drops == 2);
+		case .some: assert(key_drops == 1);
 		case .none: assert(false);
 		}
+		assert(key_drops == 2);
 		assert(Tracked_Key{1} in m);
 		assert(m[Tracked_Key{1}].id == 1 && key_drops == 4);
 		{

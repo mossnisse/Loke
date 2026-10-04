@@ -7,6 +7,9 @@ L0512
 L0641
 @25:8
 `p` cannot be used here: a read-only reborrow of it is still in use
+L0537
+@32:8
+this reset would end the region backing the returned value, which the caller already holds when deferred statements run
 L0526
 @46:9
 this slice cannot be returned: `arr` ends when this procedure returns

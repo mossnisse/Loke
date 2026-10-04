@@ -81,6 +81,9 @@ Flow_Block :: struct {
 	entry_state: []Liveness,
 	exit_state:  []Liveness,
 	visited:     bool,
+	// On a panic's unwind path: the lifecycle pass records liveness there but
+	// reports nothing and counts no cleanup point.
+	unwind:      bool,
 
 	// Provenance modes, solved by `src/borrow.odin`. Reaching loans are packed
 	// one `ceil(2*loans/8)`-byte row per slot: which loans the slot may hold,
@@ -154,6 +157,10 @@ Flow_Graph :: struct {
 	// Walk state both modes keep.
 	// Temporaries ending with the current statement (design.md).
 	temp_roots:     [dynamic]Root_Id,
+	// Set while a panic's unwind path is walked, from the statement at
+	// `unwind_at`; its blocks are marked.
+	unwinding:      bool,
+	unwind_at:      Span,
 	// The `move`s and `exchange`s whose value becomes a new local or a result,
 	// which takes the provider's region with it rather than ending it.
 	aliased_moves:    map[rawptr]bool,
@@ -254,6 +261,12 @@ Prov_State :: struct {
 	// of providers moved in, which may sit at any position.
 	provider_paths: map[Symbol_Id][]Provider_Path,
 	provider_moved: map[Symbol_Id]u64,
+	// A temporary provider, as in `mem.Arena.init().allocator()`: the token of
+	// each handle taken of one, and the ones the current statement ends.
+	temp_provider_bits: map[^Expr_Call]u64,
+	// The value a `return` hands back while its deferred statements are walked.
+	returning: ^Prov_Returning,
+	temp_providers:     [dynamic]Temp_Provider,
 	// Locals a mutable loan was ever taken of: only these can be reached through
 	// a pointer or slice. Flow-insensitive, like the region facts.
 	lent_locals: map[Symbol_Id]bool,
@@ -351,6 +364,8 @@ build_flow_pass :: proc(
 		graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
 		graph.provider_paths = make(map[Symbol_Id][]Provider_Path, 4, allocator)
 		graph.provider_moved = make(map[Symbol_Id]u64, 4, allocator)
+		graph.temp_provider_bits = make(map[^Expr_Call]u64, 4, allocator)
+		graph.temp_providers = make([dynamic]Temp_Provider, allocator)
 		graph.lent_locals = make(map[Symbol_Id]bool, 4, allocator)
 	}
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
@@ -383,6 +398,7 @@ new_flow_block :: proc(graph: ^Flow_Graph) -> Block_Id {
 	block.preds = make([dynamic]Block_Id, graph.alloc)
 	block.succs = make([dynamic]Block_Id, graph.alloc)
 	block.prov = make([dynamic]Prov_Event, graph.alloc)
+	block.unwind = graph.unwinding
 	append(&graph.blocks, block)
 	return Block_Id(len(graph.blocks) - 1)
 }
@@ -553,14 +569,48 @@ leave_flow_scope :: proc(graph: ^Flow_Graph) {
 @(private = "file")
 walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
 	for stmt in stmts {
+		emit_unwind_branch(graph, stmt)
 		walk_flow_stmt(graph, stmt)
 	}
 }
 
-// Cleanup events for every registration above `down_to`, innermost first
-// (design.md). `exit` is the jump that runs them, nil at a scope's end.
+// design.md "Panics and unwinding": a panic in a statement runs the cleanups
+// registered so far, newest first, as an exit from the procedure does. Only a
+// registered `defer` can observe them afterwards, so the path is modeled where
+// one is in scope, from the statement's start, which no later state in it can
+// make less live.
 @(private = "file")
-emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr) {
+emit_unwind_branch :: proc(graph: ^Flow_Graph, stmt: Stmt) {
+	if graph.current == NO_BLOCK || graph.unwinding {
+		return
+	}
+	deferred := false
+	for action in graph.in_scope {
+		deferred ||= action.kind == .Defer
+	}
+	if !deferred {
+		return
+	}
+	// The block ends here, so the unwind sees the state before the statement.
+	from := graph.current
+	resume := new_flow_block(graph)
+	graph.unwinding = true
+	graph.unwind_at = stmt_span(stmt)
+	graph.current = new_flow_block(graph)
+	link(graph, from, graph.current)
+	link(graph, from, resume)
+	// Every statement variant is a pointer, stored first.
+	node := stmt
+	emit_cleanups(graph, 0, (^rawptr)(&node)^, unwinding = true)
+	graph.unwinding = false
+	graph.current = resume
+}
+
+// Cleanup events for every registration above `down_to`, innermost first
+// (design.md). `exit` is the jump that runs them, nil at a scope's end; an
+// `unwinding` exit drops each local only where the lifecycle pass found it live.
+@(private = "file")
+emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr, unwinding := false) {
 	for index := len(graph.in_scope) - 1; index >= down_to; index -= 1 {
 		action := graph.in_scope[index]
 		switch action.kind {
@@ -581,7 +631,11 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr) {
 			resize(&graph.owners_in_scope, owners)
 		case .Prov_Root:
 			provider_region_end(graph, graph.roots[int(action.root)].symbol, action.span, exit)
-			prov_scope_drop_effects(graph, graph.roots[int(action.root)].symbol, action.span)
+			if unwinding {
+				unwind_drop_effects(graph, graph.roots[int(action.root)].symbol, graph.unwind_at, exit)
+			} else {
+				prov_scope_drop_effects(graph, graph.roots[int(action.root)].symbol, action.span)
+			}
 			prov_drop_use(graph, graph.roots[int(action.root)].symbol, action.span, at_scope_exit = true)
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
 		case .Local:
@@ -589,8 +643,12 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr) {
 			sym := symbol_of(graph.k.c, id)
 			span := sym == nil ? no_span() : sym.span
 			provider_region_end(graph, id, span, exit)
-			if graph.mode != .Lifecycle {
+			if unwinding {
+				unwind_drop_effects(graph, id, graph.unwind_at, exit)
+			} else if graph.mode != .Lifecycle {
 				prov_scope_drop_effects(graph, id, span)
+			}
+			if graph.mode != .Lifecycle {
 				prov_drop_use(graph, id, span, at_scope_exit = true)
 			}
 			emit(graph, Flow_Event {
@@ -601,6 +659,28 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr) {
 			})
 		}
 	}
+}
+
+// An unwind drops a local only if it is still live where the panic happens,
+// which the lifecycle pass records one pass ahead of provenance. `span` is the
+// statement the panic would unwind from.
+@(private = "file")
+unwind_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, exit: rawptr) {
+	sym := symbol_of(graph.k.c, id)
+	if sym == nil || sym.kind != .Var || len(type_drop_hooks(graph.k.c, sym.type)) == 0 {
+		return
+	}
+	key := Reset_Key{graph.literal, exit, id, graph.expansion}
+	if graph.mode == .Lifecycle {
+		graph.k.c.cleanup_reset_dead[key] = {}
+		emit(graph, Flow_Event{kind = .Reset_Point, reset = key, span = span})
+		return
+	}
+	live, found := graph.k.c.cleanup_reset_dead[key]
+	if !found || !live.reached || slice.contains(live.dead, id) {
+		return
+	}
+	prov_drop_effects(graph, sym.type, span, identifier_text(graph.k.c, sym.name))
 }
 
 // A local holding a provider ends its region when it is cleaned up, dropped,
@@ -855,16 +935,30 @@ mark_aliased_moves :: proc(graph: ^Flow_Graph, e: Expr) {
 	}
 }
 
+// The temporaries a statement made end with it: providers first, so an owner
+// backed by one is reported, then the temporary roots.
+@(private = "file")
+end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int) {
+	if graph.prov != nil {
+		for index := len(graph.temp_providers) - 1; index >= providers; index -= 1 {
+			prov_temp_provider_end(graph, graph.temp_providers[index])
+		}
+		resize(&graph.temp_providers, providers)
+	}
+	for index := len(graph.temp_roots) - 1; index >= mark; index -= 1 {
+		prov_emit(graph, Prov_Event{kind = .Root_End, root = graph.temp_roots[index]})
+	}
+	resize(&graph.temp_roots, mark)
+}
+
 // Temporaries end with their statement, but a header's initial statement
 // `extend`s them to the whole enclosing statement (design.md).
 @(private = "file")
 walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	mark := len(graph.temp_roots)
+	providers := graph.prov == nil ? 0 : len(graph.temp_providers)
 	defer if !extend {
-		for index := len(graph.temp_roots) - 1; index >= mark; index -= 1 {
-			prov_emit(graph, Prov_Event{kind = .Root_End, root = graph.temp_roots[index]})
-		}
-		resize(&graph.temp_roots, mark)
+		end_statement_temporaries(graph, mark, providers)
 	}
 	switch s in stmt {
 	case ^Stmt_Error, ^Item_Impl:
@@ -875,6 +969,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	case ^Stmt_Expr:
 		for expr in s.exprs {
 			walk_flow_expr(graph, expr)
+			prov_discarded_drop_effects(graph, expr)
 		}
 
 	case ^Stmt_Assign:
@@ -901,6 +996,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 		}
 		if graph.mode != .Lifecycle {
 			held: []int
+			outer := graph.returning
 			if value := s.value; value != nil {
 				// design.md "`inout` results": `return inout place` hands back a
 				// borrow of the place, which must outlive the frame.
@@ -911,6 +1007,9 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 					sources = walk_flow_expr(graph, value.expr)
 				}
 				escaping := prov_escape_region(graph, value.expr)
+				if !value.is_inout {
+					graph.returning = new_clone(Prov_Returning{region = escaping, span = expr_span(value.expr)}, graph.alloc)
+				}
 				result_type := expr_base(value.expr).type
 				if sym := symbol_of(graph.k.c, graph.literal.symbol); sym != nil {
 					result_type = sym.result
@@ -929,6 +1028,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 				held = prov_hold_result(graph, prov_join(graph, sources, contents), result_type, expr_span(value.expr))
 			}
 			emit_cleanups(graph, 0, s)
+			graph.returning = outer
 			if len(held) > 0 {
 				prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = expr_span(s.value.expr)})
 			}
@@ -1160,6 +1260,13 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	}
 	if graph.mode != .Lifecycle {
 		prov_assign(graph, s, value_loans)
+		if !s.destructure.active {
+			for target, index in s.lhs {
+				if is_discard(target) && index < len(s.rhs) {
+					prov_discarded_drop_effects(graph, s.rhs[index])
+				}
+			}
+		}
 		return
 	}
 	classify_assignment_copies(graph.k, s, graph.loop_depth > 0)
@@ -1594,16 +1701,19 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				prov_access(graph, root, path, .Read, v.span)
 				return prov_read_content(graph, root, path, v.type, v.span)
 			}
-			if carriers, path, ok := prov_read_through_carrier(graph, v); ok {
-				return prov_load_content(graph, carriers, path, v.type, v.span)
+			only := prov_read_is_reads_only(graph.k.c, v.type)
+			if carriers, path, ok := prov_read_through_carrier(graph, v, only); ok {
+				return prov_load_content(graph, carriers, path, v.type, v.span, only)
 			}
 			loans := walk_flow_expr(graph, v.operand)
 			return prov_project_content(graph, loans, expr_base(v.operand).type, {proj_wild()}, v.type, v.span)
 		}
-		operand_loans := walk_flow_expr(graph, v.operand)
 		if prov && v.op == .Caret {
-			return prov_load_content(graph, operand_loans, nil, v.type, v.span)
+			only := prov_read_is_reads_only(graph.k.c, v.type)
+			carriers, _, _ := prov_read_through_carrier(graph, v, only)
+			return prov_load_content(graph, carriers, nil, v.type, v.span, only)
 		}
+		operand_loans := walk_flow_expr(graph, v.operand)
 		if v.op == .Or_Return {
 			// Either payload may be copied out of a place, so the report names
 			// the whole fallible union.
@@ -1670,8 +1780,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				// The read yields the field's content, with no lasting borrow.
 				return prov_read_content(graph, root, path, v.type, v.span)
 			}
-			if carriers, path, ok := prov_read_through_carrier(graph, v); ok {
-				return prov_load_content(graph, carriers, path, v.type, v.span)
+			only := prov_read_is_reads_only(graph.k.c, v.type)
+			if carriers, path, ok := prov_read_through_carrier(graph, v, only); ok {
+				return prov_load_content(graph, carriers, path, v.type, v.span, only)
 			}
 			loans := walk_flow_expr(graph, v.operand)
 			if v.resolution.kind == .Field && v.operand != nil {
@@ -1703,8 +1814,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				}
 				return prov_load_content(graph, carriers, nil, v.type, v.span)
 			}
-			if carriers, path, ok := prov_read_through_carrier(graph, v); ok {
-				return prov_load_content(graph, carriers, path, v.type, v.span)
+			only := prov_read_is_reads_only(graph.k.c, v.type)
+			if carriers, path, ok := prov_read_through_carrier(graph, v, only); ok {
+				return prov_load_content(graph, carriers, path, v.type, v.span, only)
 			}
 			loans := walk_flow_expr(graph, v.operand)
 			for index in v.indices {
@@ -2093,6 +2205,11 @@ settle_last_uses :: proc(graph: ^Flow_Graph) {
 reads_at_exit :: proc(graph: ^Flow_Graph, read_in: [][]bool, block: Block_Id, reads: []bool) {
 	slice.fill(reads, false)
 	for successor in graph.blocks[int(block)].succs {
+		// What an unwind's deferred statements read moves nothing and keeps no
+		// result from going unread: the lifecycle pass reports nothing there.
+		if graph.blocks[int(successor)].unwind && !graph.blocks[int(block)].unwind {
+			continue
+		}
 		for value, slot in read_in[int(successor)] {
 			reads[slot] ||= value
 		}

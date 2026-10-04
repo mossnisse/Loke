@@ -580,6 +580,14 @@ local starts dead and definite initialization is checked for all of them; only
 a managed one also carries a scope-exit cleanup obligation. Normal exits and
 panic unwind consume the same settled cleanup facts.
 
+Where a `defer` is registered, `cfg.odin` also branches from the start of each
+statement to a dead-end walk of the cleanups a panic there would run
+(`emit_unwind_branch`), so provenance sees a deferred statement run after the
+locals registered later have been dropped. Blocks on that path are marked
+`unwind`: the lifecycle pass records liveness there for provenance to look up,
+but reports nothing and counts no cleanup point, so the emitter's drop flags
+are those of the normal exits.
+
 `borrow.odin` runs two related dataflow analyses over provenance events:
 
 - root provenance follows which storage a slice, text view, `any_view`, `dyn`,

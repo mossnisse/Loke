@@ -1,0 +1,33 @@
+package main; import "core:fmt";
+
+// design.md "Weakening and reborrows": a read-only reborrow suspends its
+// source for writing, through a field and a pointer as for a slice local, and
+// a mutable reborrow suspends it for reading too.
+
+Holder :: struct { items: []mut int }
+Rows :: struct { rows: [][]mut int }
+
+sort_in_place :: proc(xs: []mut int) {}
+
+main :: proc() {
+	storage := [2]int{1, 2};
+	held := Holder{&mut storage[:]};
+	view: []int = held.items;
+	held.items[0] = 5;
+	copy := held.items;
+	sort_in_place(held.items);
+	fmt.println(view[0], copy[0]);
+
+	x := 5;
+	p := &mut x;
+	q: ^int = p;
+	p^ = 6;
+	fmt.println(q^);
+
+	row := [2]int{1, 2};
+	table := [1][]mut int{&mut row[:]};
+	r := Rows{&mut table[:]};
+	seen: [][]mut int = r.rows;
+	inner := r.rows[0];
+	fmt.println(seen[0][0], inner[0]);
+}

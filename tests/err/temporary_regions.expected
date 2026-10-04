@@ -1,0 +1,18 @@
+L0537
+@6:33
+this temporary allocator, which ends with its statement, would end the region backing `xs`
+L0537
+@8:14
+this temporary allocator, which ends with its statement, would end the region backing `b`
+L0537
+@15:8
+would end the region backing the returned value
+L0526
+@24:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@30:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0511
+@36:2
+this write of `local` is not compatible with the read-only slice of it that is still in use

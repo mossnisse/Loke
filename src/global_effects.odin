@@ -191,6 +191,17 @@ prov_drop_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span, dropped
 	}
 }
 
+// A value nothing binds, an expression statement's or `_ = value`'s, is
+// dropped where it is discarded.
+prov_discarded_drop_effects :: proc(graph: ^Flow_Graph, expr: Expr) {
+	if graph.mode == .Lifecycle || expr == nil || expression_is_borrowed_place(expr) {
+		return
+	}
+	if base := expr_base(expr); base != nil && base.type != INVALID_TYPE && base.type != TYPE_VOID {
+		prov_drop_effects(graph, base.type, expr_span(expr))
+	}
+}
+
 // `clear` and a `resize` that may shrink drop the elements they discard; `pop` and
 // `remove` hand theirs back.
 @(private = "file")

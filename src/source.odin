@@ -297,6 +297,7 @@ Compiler :: struct {
 	shared_symbol:            Symbol_Id,
 	weak_symbol:              Symbol_Id,
 	shared_construct_symbol:  Symbol_Id,
+	try_shared_symbol:        Symbol_Id,
 	default_allocator_arg:    Expr,
 	// The constant `0` a defaulted container `shrink` floor uses.
 	zero_int_arg:             Expr,

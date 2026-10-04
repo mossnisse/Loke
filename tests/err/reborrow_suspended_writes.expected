@@ -1,0 +1,15 @@
+L0641
+@16:2
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@17:10
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@18:16
+`held` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@24:2
+`p` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@32:14
+a mutable reborrow of it is still in use

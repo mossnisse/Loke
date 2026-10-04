@@ -1,0 +1,29 @@
+// design.md "Weakening and reborrows": a carrier suspended by a read-only
+// reborrow may still be read, through a field, a pointer, or an element that
+// is itself a carrier, as a slice local may.
+package main;
+
+import "core:fmt";
+
+Holder :: struct { items: []mut int }
+
+len_of :: proc(xs: []int) -> int { return xs.len(); }
+
+main :: proc() {
+	storage := [2]int{1, 2};
+	held := Holder{&mut storage[:]};
+	view: []int = held.items;
+	fmt.println(held.items[0], len_of(held.items));
+	fmt.println(view[0]);
+
+	x := 5;
+	p := &mut x;
+	q: ^int = p;
+	fmt.println(p^, q^);
+
+	inner := [2]int{3, 4};
+	outer := [1][]int{inner[:]};
+	lists := &mut outer[:];
+	seen: [][]int = lists;
+	fmt.println(lists[0][1], seen[0][0]);
+}

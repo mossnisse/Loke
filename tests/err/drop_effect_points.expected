@@ -1,0 +1,15 @@
+L0512
+@23:7
+`cache` cannot be modified by `release` here
+L0512
+@29:2
+`cache` cannot be modified by `release` here
+L0512
+@37:2
+`cache` cannot be modified by `release` here
+L0512
+@47:2
+when `g` is dropped here
+L0512
+@48:2
+when `g` is dropped here

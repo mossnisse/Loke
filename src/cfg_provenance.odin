@@ -74,6 +74,11 @@ Prov_Event :: struct {
 	// direct `free_all`, `Write` for handing an allocator onward.
 	reset_covered: bool,
 	provider_end: bool, // ends the control block as well as its allocations
+	// A reset in a `return`'s deferred statements that may end the region of
+	// the value already handed to the caller; `owner_span` is that value.
+	ends_result: bool,
+	// A reset on a panic's unwind path: the statement the panic unwinds from.
+	unwind_from: Maybe(Span),
 	owner_span:    Span,
 	// `Reset`: the written operation ending a provider, such as "dropping `a`".
 	ends:          string,
@@ -717,6 +722,7 @@ prov_project_content :: proc(
 	path: []Proj_Step,
 	result_type: Type_Id,
 	span: Span,
+	reads_only := false,
 ) -> []int {
 	if len(sources) == 0 {
 		return nil
@@ -726,19 +732,19 @@ prov_project_content :: proc(
 		full := prov_concat_path(graph, path, graph.prov_slots[slot].path)
 		graph.prov_slots[slot].precision |= path_precision(full)
 		selected := prov_select_content(graph, sources, source_type, full)
-		prov_emit(graph, Prov_Event{kind = .Live, sources = selected, span = span})
+		prov_emit(graph, Prov_Event{kind = .Live, sources = selected, span = span, reads_only = reads_only})
 		prov_define_one_content(graph, slot, selected, span)
 	}
 	return content
 }
 
 @(private)
-prov_read_content :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, type: Type_Id, span: Span) -> []int {
+prov_read_content :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, type: Type_Id, span: Span, reads_only := false) -> []int {
 	sym := symbol_of(graph.k.c, graph.roots[int(root)].symbol)
 	if sym == nil {
 		return nil
 	}
-	return prov_project_content(graph, prov_content_at(graph, root, path), sym.type, path, type, span)
+	return prov_project_content(graph, prov_content_at(graph, root, path), sym.type, path, type, span, reads_only)
 }
 
 // Without a field mapping, every result path gets every source.
@@ -748,7 +754,7 @@ prov_value_content :: proc(graph: ^Flow_Graph, sources: []int, type: Type_Id, sp
 }
 
 @(private)
-prov_load_content :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, type: Type_Id, span: Span) -> []int {
+prov_load_content :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, type: Type_Id, span: Span, reads_only := false) -> []int {
 	if len(carriers) == 0 {
 		return nil
 	}
@@ -757,15 +763,39 @@ prov_load_content :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step
 	for slot in content {
 		graph.prov_slots[slot].loaded = true
 		prov_emit(graph, Prov_Event {
-			kind = .Load,
-			slot = slot,
-			into = carriers,
-			path = prov_concat_path(graph, path, graph.prov_slots[slot].path),
-			span = span,
+			kind       = .Load,
+			slot       = slot,
+			into       = carriers,
+			path       = prov_concat_path(graph, path, graph.prov_slots[slot].path),
+			span       = span,
+			reads_only = reads_only,
 		})
 	}
-	prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = span})
+	prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = span, reads_only = reads_only})
 	return content
+}
+
+// design.md "Weakening and reborrows": a value read out through a carrier only
+// reads it when the value carries no mutable borrow, so a read-only reborrow
+// of the carrier does not suspend it.
+prov_read_is_reads_only :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return !type_carries_borrow(c, type).mutable
+}
+
+// The carriers `operand` holds, for a read through them.
+@(private = "file")
+prov_read_carrier :: proc(graph: ^Flow_Graph, operand: Expr, reads_only: bool) -> []int {
+	if reads_only {
+		if ident, is_ident := operand.(^Expr_Ident); is_ident {
+			return prov_read_ident(graph, ident, .Read, reads_only = true)
+		}
+		if root, path, ok := prov_place_of(graph, operand); ok {
+			prov_walk_subscripts(graph, operand)
+			prov_access(graph, root, path, .Read, expr_span(operand))
+			return prov_read_content(graph, root, path, expr_base(operand).type, expr_span(operand), reads_only = true)
+		}
+	}
+	return walk_flow_expr(graph, operand)
 }
 
 // Consuming a value: read what it held, then end the source's own storage. The
@@ -990,6 +1020,28 @@ prov_plain_slice_local :: proc(graph: ^Flow_Graph, e: Expr) -> (^Expr_Ident, boo
 	return ident, !type_carries_borrow(graph.k.c, underlying_info(graph.k.c, type).element).any
 }
 
+// A carrier place passed to a parameter that can write through nothing it
+// receives, as `held.items` passed to a `[]int`: the call only reads it.
+@(private = "file")
+prov_argument_only_read :: proc(graph: ^Flow_Graph, argument: Expr, parameter: Type_Id) -> bool {
+	c := graph.k.c
+	base := expr_base(argument)
+	// A conversion such as `[dynamic]T` to `[]T` borrows an owner instead.
+	if base == nil || base.view_from != INVALID_TYPE || type_carries_borrow(c, parameter).mutable {
+		return false
+	}
+	// An erased operand's own type is `any_view`.
+	type := base.erased_from != INVALID_TYPE ? base.erased_from : base.type
+	if !type_is_carrier(c, type) {
+		return false
+	}
+	if _, is_ident := argument.(^Expr_Ident); is_ident {
+		return true
+	}
+	_, _, place := prov_place_of(graph, argument)
+	return place
+}
+
 @(private = "file")
 prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
 	append(&graph.prov_slots, empty_prov_slot(INVALID_SYMBOL))
@@ -1028,6 +1080,16 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		reborrowed := prov_slot_is_reborrow(graph, slot)
 		if !mutable_source && !reborrowed {
 			continue
+		}
+		// An unnamed value read out of a mutable carrier, as `held.items`, has
+		// only this destination, so it takes the destination's capability as a
+		// fresh loan does.
+		if weakens && graph.prov_slots[slot].symbol == INVALID_SYMBOL {
+			for &earlier in graph.reborrows {
+				if earlier.derived == slot {
+					earlier.mutable = false
+				}
+			}
 		}
 		// A named read-only reborrow is not itself suspended by its copies.
 		passes_on := !mutable_source && graph.prov_slots[slot].symbol != INVALID_SYMBOL
@@ -1940,6 +2002,9 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (Region_Set, bo
 		return Region_Set{}, false
 	}
 	ident, is_ident := v.bound[0].(^Expr_Ident)
+	if !is_ident && prov_expr_is_temporary(v.bound[0]) {
+		return prov_temp_provider_region(graph, v), true
+	}
 	if !is_ident {
 		// A provider inside a local record or container: the token of its position.
 		if root, path, ok := prov_place_of(graph, v.bound[0]); ok {
@@ -1957,6 +2022,48 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (Region_Set, bo
 	set := prov_empty_region(graph)
 	set.unknown = true
 	return set, true
+}
+
+Temp_Provider :: struct {
+	bit:  u64,
+	span: Span,
+}
+
+Prov_Returning :: struct {
+	region: Region_Set,
+	span:   Span,
+}
+
+// design.md "Allocator regions and region provenance": a temporary provider is
+// a local region that ends with its statement, so its handle gets a token of
+// its own, ended there. Unknown once the tokens run out.
+@(private = "file")
+prov_temp_provider_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Region_Set {
+	set := prov_empty_region(graph)
+	bit, found := graph.temp_provider_bits[v]
+	if !found {
+		if len(graph.provider_symbols) >= 64 {
+			set.unknown = true
+			return set
+		}
+		bit = u64(1) << u64(len(graph.provider_symbols))
+		append(&graph.provider_symbols, INVALID_SYMBOL)
+		graph.temp_provider_bits[v] = bit
+		append(&graph.temp_providers, Temp_Provider{bit = bit, span = expr_span(v.bound[0])})
+	}
+	set.locals = bit
+	return set
+}
+
+// The end of a temporary provider's statement ends its region.
+@(private)
+prov_temp_provider_end :: proc(graph: ^Flow_Graph, provider: Temp_Provider) {
+	if graph.mode == .Lifecycle {
+		return
+	}
+	set := prov_empty_region(graph)
+	set.locals = provider.bit
+	prov_reset(graph, set, provider.span, true, nil, ends = "this temporary allocator, which ends with its statement,", provider_end = true)
 }
 
 // The region of a call result: a direct summary substituted by position, or for
@@ -2155,6 +2262,9 @@ prov_reset :: proc(
 		ends          = ends,
 		provider_end  = provider_end,
 	}
+	if graph.unwinding {
+		event.unwind_from = graph.unwind_at
+	}
 	// A live owner in an overlapping region blocks the reset, since its cleanup
 	// still runs. Liveness is lifecycle's answer, recorded one pass earlier; a
 	// dropped owner no longer blocks (design.md).
@@ -2193,6 +2303,12 @@ prov_reset :: proc(
 		event.verb = identifier_text(graph.k.c, owner.name)
 		event.owner_span = owner.span
 		break
+	}
+	// design.md "Allocators": a result reaches the caller before the deferred
+	// statements run, so it is live across a reset among them.
+	if event.verb == "" && !provider_end && graph.returning != nil && regions_may_overlap(graph.returning.region, set) {
+		event.ends_result = true
+		event.owner_span = graph.returning.span
 	}
 	prov_emit(graph, event)
 }
@@ -2583,19 +2699,19 @@ prov_index_path :: proc(graph: ^Flow_Graph, v: ^Expr_Index) -> []Proj_Step {
 // The carrier where a place leaves lexical storage and the projection below it,
 // so `p^.left` does not make `right` live.
 @(private)
-prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []Proj_Step, bool) {
+prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr, reads_only := false) -> ([]int, []Proj_Step, bool) {
 	#partial switch v in place {
 	case ^Expr_Postfix:
 		// A box's payload is part of the box, so `b^` is a carrier read only when
 		// the box itself is reached through one (design.md "Owned values").
 		if v.op == .Caret && type_is_box(graph.k.c, expr_base(v.operand).type) {
-			if carriers, path, ok := prov_read_through_carrier(graph, v.operand); ok {
+			if carriers, path, ok := prov_read_through_carrier(graph, v.operand, reads_only); ok {
 				return carriers, prov_extend(graph, path, proj_wild()), true
 			}
 			return nil, nil, false
 		}
 		if v.op == .Caret {
-			return walk_flow_expr(graph, v.operand), nil, true
+			return prov_read_carrier(graph, v.operand, reads_only), nil, true
 		}
 	case ^Expr_Call:
 		// `field.get(value)` is `field.pointer(value)^`.
@@ -2608,9 +2724,9 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []
 		}
 		step := prov_field_step(graph, v)
 		if type_is_pointer(graph.k.c, expr_base(v.operand).type) {
-			return walk_flow_expr(graph, v.operand), prov_extend(graph, nil, step), true
+			return prov_read_carrier(graph, v.operand, reads_only), prov_extend(graph, nil, step), true
 		}
-		if carriers, path, ok := prov_read_through_carrier(graph, v.operand); ok {
+		if carriers, path, ok := prov_read_through_carrier(graph, v.operand, reads_only); ok {
 			return carriers, prov_extend(graph, path, step), true
 		}
 	case ^Expr_Index:
@@ -2619,7 +2735,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []
 		}
 		kind := underlying_kind(graph.k.c, expr_base(v.operand).type)
 		if kind == .Slice || kind == .Pointer || kind == .C_Pointer {
-			carriers := walk_flow_expr(graph, v.operand)
+			carriers := prov_read_carrier(graph, v.operand, reads_only && !prov_indices_may_write(v.indices))
 			if prov_indices_may_write(v.indices) {
 				carriers = prov_capture(graph, carriers, v.span)
 			}
@@ -2628,7 +2744,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []
 			}
 			return carriers, nil, true
 		}
-		if carriers, path, ok := prov_read_through_carrier(graph, v.operand); ok {
+		if carriers, path, ok := prov_read_through_carrier(graph, v.operand, reads_only && !prov_indices_may_write(v.indices)); ok {
 			if prov_indices_may_write(v.indices) {
 				carriers = prov_capture(graph, carriers, v.span)
 			}
@@ -3549,6 +3665,24 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
 	}
+	// design.md "Shared ownership": the payload's borrows land below the
+	// handle's one step, as for a box; the library body hides them in a `rawptr`.
+	if payload, fallible := shared_constructor_payload(c, v); payload != nil {
+		loans := walk_flow_expr(graph, payload)
+		for argument in v.bound[1:] {
+			if argument != nil {
+				walk_flow_expr(graph, argument)
+			}
+		}
+		depth := fallible ? 2 : 1
+		content := prov_temp_content(graph, v.type)
+		for slot in content {
+			path := graph.prov_slots[slot].path
+			suffix := path[min(depth, len(path)):]
+			prov_define_one_content(graph, slot, prov_select_content(graph, loans, expr_base(payload).type, suffix), v.span)
+		}
+		return content
+	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
 		case .Fmt_Format_View:
@@ -3861,10 +3995,9 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				held = prov_join(graph, held, loan)
 			}
 			actuals[index] = held
-		} else if ident, plain := prov_plain_slice_local(graph, argument); plain && !(index == 0 && has_receiver) &&
-		   prov_carrier_is_read_only(graph, prov_parameter_type(graph, v, index)) {
+		} else if !(index == 0 && has_receiver) && prov_argument_only_read(graph, argument, prov_parameter_type(graph, v, index)) {
 			// Weakened to a read-only parameter, the carrier is only read.
-			actuals[index] = prov_read_ident(graph, ident, .Read, reads_only = true)
+			actuals[index] = prov_read_carrier(graph, argument, true)
 		} else {
 			actuals[index] = walk_flow_expr(graph, argument)
 		}
@@ -3886,10 +4019,34 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	prov_call_retention(graph, v, actuals)
 	prov_container_content(graph, v, container_op, actuals)
 	prov_call_effects(graph, v)
+	prov_argument_drop_effects(graph, v)
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
 	return prov_store_call_results(graph, v, actuals)
+}
+
+// design.md "Global write effects": a temporary lent to a value parameter is
+// dropped once the call is done with it, and its drop hooks write what they
+// would anywhere. A container operation may keep its element, so it is left
+// to the container's own effects.
+@(private = "file")
+prov_argument_drop_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	c := graph.k.c
+	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil && sym.synth == .Container_Op {
+		return
+	}
+	info := underlying_info(c, call_proc_type(c, v))
+	if info == nil {
+		return
+	}
+	for argument, index in v.bound {
+		if argument == nil || index >= len(info.param_modes) || info.param_modes[index] != .Value ||
+		   expression_is_borrowed_place(argument) {
+			continue
+		}
+		prov_drop_effects(graph, expr_base(argument).type, expr_span(argument))
+	}
 }
 
 // design.md "Weakening and reborrows": a mutable carrier lent to a call is

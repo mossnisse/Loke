@@ -1,8 +1,8 @@
 package main; import "core:mem"; import "core:fmt";
 
-// design.md "Allocators": a deferred reset runs at every exit, and each exit
-// is checked with the owners live there. Here every exit has `xs` cleaned up
-// or dropped first, so none of them is an error.
+// design.md "Allocators": a deferred reset runs at every exit, a panic's
+// unwind among them, and each exit is checked with the owners live there. Here
+// every exit has `xs` cleaned up or dropped first, so none of them is an error.
 
 several_exits :: proc(n: int) -> int {
 	arena := mem.Arena.init();
@@ -24,10 +24,12 @@ several_exits :: proc(n: int) -> int {
 	return xs.len() + 100;
 }
 
+// The deferred drop is registered before `xs`, so a panic in `append` unwinds
+// `xs` first, as every exit drops it first.
 dropped_before_one_exit :: proc(flag: bool) -> int {
 	arena := mem.Arena.init();
-	xs: [dynamic]int via arena.allocator() = {};
 	defer drop(arena);
+	xs: [dynamic]int via arena.allocator() = {};
 	xs.append(1);
 	if (flag) {
 		drop(xs);
