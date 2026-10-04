@@ -106,7 +106,8 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id, span: Span) {
 		size = u64(type_bits(c, type) + 7) / 8
 		alignment = min(size, u64(c.target.max_align))
 
-	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View:
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View, .Box:
+		// A box is the address of its allocation, which records the allocator.
 		size = u64(c.target.pointer_bits) / 8
 		alignment = size
 

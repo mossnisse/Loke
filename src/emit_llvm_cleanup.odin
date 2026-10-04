@@ -74,6 +74,9 @@ Cleanup_Scope :: struct {
 @(private)
 emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: string) -> string {
 	operations := emit_lifecycle(e, type)
+	if operations.boxed {
+		return emit_box_try_clone_into(e, type, out, src, allocator)
+	}
 	if operations.container {
 		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_clone" : "loke_rt_v1_dyn_clone"
 		status, ok := temp(e), temp(e)
@@ -795,14 +798,15 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator := "") -> string {
 	entry := emit_lifecycle(e, type)
 	provider := allocator
-	if provider == "" && (entry.container || entry.clone != INVALID_SYMBOL ||
+	if provider == "" && (entry.container || entry.boxed || entry.clone != INVALID_SYMBOL ||
 	   underlying_kind(e.c, type) == .Array) {
 		provider = emit_default_allocator(e)
 	}
-	if entry.container {
-		source := alloca(e, CONTAINER_TYPE)
-		destination := alloca(e, CONTAINER_TYPE)
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", CONTAINER_TYPE, value, source)
+	if entry.container || entry.boxed {
+		shape := llvm_type(e, type)
+		source := alloca(e, shape)
+		destination := alloca(e, shape)
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", shape, value, source)
 		ok := emit_try_clone_into(e, type, destination, source, provider)
 		fail_label, done_label := new_label(e, "cclone.fail"), new_label(e, "cclone.done")
 		branch_if(e, ok, done_label, fail_label)
@@ -811,7 +815,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		fmt.sbprintln(&e.b, "  unreachable")
 		e.terminated = true
 		place_label(e, done_label)
-		return load(e, CONTAINER_TYPE, destination)
+		return load(e, shape, destination)
 	}
 	// A string copy retains a shared handle; only `.copy()` allocates.
 	if entry.intrinsic {
@@ -942,9 +946,9 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 
-	// `string`, `[dynamic]T` and `map[K]V` carry a `try_clone` whose body is the
-	// same intrinsic copy the implicit paths use.
-	if operations.intrinsic {
+	// `string`, `[dynamic]T`, `map[K]V` and `box(T)` carry a `try_clone` whose
+	// body is the same intrinsic copy the implicit paths use.
+	if operations.intrinsic || operations.boxed {
 		self, built := alloca(e, value_type), alloca(e, value_type)
 		store(e, subject, subject_value, self)
 		store(e, subject, "zeroinitializer", built)
@@ -1124,6 +1128,9 @@ emit_drop_prefix_elements :: proc(e: ^Emitter, element: Type_Id, items, count: s
 @(private = "file")
 drop_may_panic :: proc(e: ^Emitter, type: Type_Id) -> bool {
 	operations := emit_lifecycle(e, type)
+	if operations.boxed {
+		return emit_lifecycle(e, box_element(e.c, type)).managed
+	}
 	if operations.container {
 		key_managed := type_is_map(e.c, type) && emit_lifecycle(e, container_key(e.c, type)).managed
 		return key_managed || emit_lifecycle(e, container_element(e.c, type)).managed
@@ -1327,10 +1334,11 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 @(private = "file")
 emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, string, string) {
 	operations := emit_lifecycle(e, part)
-	if operations.container {
-		destination := alloca(e, CONTAINER_TYPE)
+	if operations.container || operations.boxed {
+		shape := llvm_type(e, part)
+		destination := alloca(e, shape)
 		ok := emit_try_clone_into(e, part, destination, source, "%arg1")
-		cloned := load(e, CONTAINER_TYPE, destination)
+		cloned := load(e, shape, destination)
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, ok)
 		return cloned, failed, ""
@@ -1433,6 +1441,10 @@ emit_lifecycle :: proc(e: ^Emitter, type: Type_Id) -> Lifecycle_Operations {
 emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	operations := emit_lifecycle(e, type)
 	if !operations.managed {
+		return
+	}
+	if operations.boxed {
+		emit_box_drop(e, type, address)
 		return
 	}
 	// The container helper leaves the inert zero, and dropping zero is a no-op.

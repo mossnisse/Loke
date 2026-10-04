@@ -122,6 +122,30 @@ observable process cleanup therefore uses a lexical owner, `defer`, or
 local endpoint and is dropped on normal thread return, in reverse initialization order;
 aborting termination makes no such guarantee.
 
+### An owner for one value
+
+Odin's `new` hands back a `^T` that the caller must remember to `free`; the
+type of the result is the type of a borrow. [`box(T)`](design.md#owned-values)
+is the owning form: it is to `^T` what `[dynamic]T` is to `[]T`, so ownership,
+cleanup, region provenance, copying, and the implicit read-only loan follow
+rules the language already had for containers. That is also why a box is
+copyable when its payload is: the [ownership rule](design.md#value-semantics-and-the-ownership-rule)
+makes a copy of an owner an independent value, last-use transfer removes the
+common copy, and the copy-cost diagnostic reports the rest. A move-only box
+would have been the one owner that broke that rule.
+
+It is a compiler type rather than a library record over a `rawptr`, for three
+reasons. A record over a raw pointer has a zero value, the null one, which a box
+must not have. It carries no borrows, so a box of a view would drop what the
+view owes; `shared(T)` has exactly that hole today. And `b^`, the payload as a
+place with the box's capability, is a projection the borrow checker has to
+see, as it sees a dynamic array's element. The cost is one more type kind
+handled where `[dynamic]T` is.
+
+A box is one address and its allocation records the allocator, so a child
+link in a tree is one word, and a later `Option` of it can be one word too
+(open-questions.md "Non-null references and explicit allocation owners").
+
 ### Storage modifiers instead of storage attributes
 
 Odin spells static-duration locals `@(static)` and thread locals

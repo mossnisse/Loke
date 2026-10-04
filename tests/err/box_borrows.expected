@@ -1,0 +1,18 @@
+L0526
+@7:9
+this pointer cannot be returned: `b` ends when this procedure returns
+L0526
+@12:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0592
+@17:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns
+L0512
+@23:7
+`b` cannot be moved here: a read-only pointer of it is still in use
+L0512
+@28:2
+`d` cannot be assigned here: a read-only pointer of it is still in use
+L0537
+@33:2
+this reset would end the region backing `e`, which is still live here

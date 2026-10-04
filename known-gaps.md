@@ -66,3 +66,32 @@ main :: proc() {
 
 The provenance walk has no point where a temporary's drop happens; the emitter
 decides that. Unwinding cleanup is modeled only by the lifecycle pass.
+
+### A `shared(T)` payload's borrows are not tracked
+
+[design.md "Values that contain borrows"](design.md#values-that-contain-borrows)
+says putting a borrow inside a value does not discard what it owes. A
+`shared(T)` is a library record over a `rawptr` control block, so it carries
+no carrier path to its payload, and a payload that borrows a local outlives it.
+This program is accepted and reads a dead frame:
+
+```odin
+package main;
+import "core:fmt";
+View :: struct { items: []int }
+make_handle :: proc() -> shared(View) {
+    local := [3]int{1, 2, 3};
+    return shared(View{local[:]});  // should be L0526
+}
+main :: proc() {
+    h := make_handle();
+    fmt.println(h.get().items[0]);
+}
+```
+
+`box(T)` is a compiler type for this reason, and its payload is a wildcard
+carrier path as a dynamic array's element is. `shared(T)` needs the same:
+either the compiler gives `Shared(T)` and `Weak(T)` their payload's carrier
+shape, or they become compiler types when the decision under
+[Non-null references and explicit allocation owners](open-questions.md#non-null-references-and-explicit-allocation-owners)
+gives `shared(T)` the box's `^` and conversion.

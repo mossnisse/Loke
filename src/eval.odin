@@ -379,6 +379,12 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 		eval_fail(ev, ev.origin, "L0341", "a pointer cannot escape compile-time evaluation")
 		return Const_Value{}, false
 	}
+	// design.md "Compile-time procedure evaluation": a box owns an allocation the
+	// generated program would have to release.
+	if type_is_box(ev.k.c, v.type) {
+		eval_fail(ev, ev.origin, "L0594", "a `%s` cannot escape compile-time evaluation", type_name(ev.k.c, v.type))
+		return Const_Value{}, false
+	}
 	// design.md: a container's only constant is the empty one.
 	if type_is_container(ev.k.c, v.type) {
 		if len(v.elements) > 0 {
@@ -455,6 +461,10 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	// design.md: a container's zero value is empty.
 	if type_is_container(ev.k.c, type) {
 		return Eval_Value{kind = .Aggregate, type = type}, true
+	}
+	// A box has no zero; this is the inert value `drop` and `move` leave behind.
+	if type_is_box(ev.k.c, type) {
+		return Eval_Value{kind = .Invalid, type = type}, true
 	}
 	// design.md "Nil slices": a slice's zero value is nil.
 	if type_is_slice(ev.k.c, type) {
@@ -571,6 +581,13 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 		if v.op == .Or_Return {
 			return eval_or_return(ev, v)
 		}
+		if v.boxed {
+			boxed, ok := eval_expr(ev, v.operand)
+			if !ok || len(boxed.elements) != 1 {
+				return Eval_Value{}, false
+			}
+			return boxed.elements[0], true
+		}
 		pointer, ok := eval_expr(ev, v.operand)
 		if !ok {
 			return Eval_Value{}, false
@@ -623,8 +640,22 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 	case ^Expr_Slice:
 		return eval_slice(ev, v)
 
+	case ^Expr_Move:
+		// The value leaves its place, which is left inert as at run time.
+		place, ok := eval_place(ev, v.value)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		value := place^
+		if zeroed, made := zero_value(ev, place.type); made {
+			place^ = zeroed
+		} else {
+			place^ = Eval_Value{kind = .Invalid, type = value.type}
+		}
+		return value, true
+
 	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract,
-	     ^Expr_Move, ^Expr_Proc_Group, ^Expr_Operator,
+	     ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
@@ -1648,6 +1679,31 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 		return &base.elements[index], true
 
 	case ^Expr_Postfix:
+		// design.md "Owned values": the payload is the box's one element.
+		if v.boxed {
+			holder: ^Eval_Value
+			if expr_base(v.operand).addressable {
+				place, ok := eval_place(ev, v.operand)
+				if !ok {
+					return nil, false
+				}
+				holder = place
+			} else {
+				value, ok := eval_expr(ev, v.operand)
+				if !ok {
+					return nil, false
+				}
+				holder, ok = eval_slot(ev, value)
+				if !ok {
+					return nil, false
+				}
+			}
+			if len(holder.elements) != 1 {
+				eval_fail(ev, v.span, "L0341", "this box holds no value")
+				return nil, false
+			}
+			return &holder.elements[0], true
+		}
 		pointer, ok := eval_expr(ev, v.operand)
 		if !ok {
 			return nil, false
@@ -1937,6 +1993,10 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		}
 		value.type = operation.type
 		return eval_named_union(ev, v.type, "some", value)
+	case Call_Box_Unbox:
+		boxed, ok := eval_expr(ev, v.bound[0])
+		if !ok || len(boxed.elements) != 1 { return Eval_Value{}, false }
+		return boxed.elements[0], true
 	case Call_Union_As:
 		value, ok := eval_expr(ev, v.bound[0])
 		if !ok { return Eval_Value{}, false }
@@ -2347,6 +2407,31 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}
 		slot^ = zeroed
 		return void, true
+
+	case .Box_New, .Try_Box:
+		// design.md "Owned values": a box is one value held apart, so the
+		// evaluator keeps it as a one-element aggregate with value semantics.
+		payload, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		if expression_is_borrowed_place(v.bound[0]) {
+			payload, ok = copy_value(ev, payload)
+			if !ok {
+				return Eval_Value{}, false
+			}
+		}
+		elements, allocated := eval_elements(ev, 1)
+		if !allocated {
+			return Eval_Value{}, false
+		}
+		elements[0] = payload
+		checked := v.operation.(Call_Allocation)
+		boxed := Eval_Value{kind = .Aggregate, type = box_of(ev.k.c, checked.type), elements = elements}
+		if checked.fallible {
+			return eval_named_union(ev, v.type, "ok", boxed)
+		}
+		return boxed, true
 
 	case .Unsafe_Take:
 		place, ok := eval_place(ev, v.bound[0])

@@ -29,7 +29,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Expr_Index, "operand indices", "bound map_inserts"},
 		{Expr_Slice, "operand lo hi mutable", "bound"},
 		{Expr_Call, "callee args", "bound bound_order operation overload_members group is_variadic variadic_slot variadic_forwards variadic_elements variadic_spreads variadic_order"},
-		{Expr_Postfix, "op op_span operand", "borrows"},
+		{Expr_Postfix, "op op_span operand", "borrows boxed"},
 		{Expr_Unary, "op op_span mutable operand", ""},
 		{Expr_Binary, "op op_span lhs rhs", "negated"},
 		{Expr_Range, "op op_span lo hi", ""},

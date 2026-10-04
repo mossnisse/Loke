@@ -176,8 +176,8 @@ A field or enum member is reached through a selector rather than by name lookup,
 Every other predeclared name may be shadowed by a declaration like any other name. They are:
 
 - types: `bool`, `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `uint`, `u8`, `u16`, `u32`, `u64`, `u128`, `uintptr`, `byte`, `f16`, `f32`, `f64`, `rune`, `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `any_view`, `Allocator`, and `Allocator_Error`;
-- generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `shared`, and `weak`;
-- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `new`, `new_clone`, `make`, `free`, `free_all`, `drop`, `exchange`, and `try_shared`;
+- generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `box`, `shared`, and `weak`;
+- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `new`, `new_clone`, `make`, `free`, `free_all`, `drop`, `exchange`, `try_box`, and `try_shared`;
 - [build constants](#build-constants): `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`, `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_LOG_LEVEL`, `LOKE_VENDOR`, and `LOKE_VERSION`.
 
 `type` and `move` are keywords, not predeclared names.
@@ -326,7 +326,7 @@ Compile-time-only `type` and reflection descriptors have no zero value.
 
 ##### Types with no zero value
 
-A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
+A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A [`box(T)`](#owned-values) has none, since it always owns a payload. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
 
 Every operation that manufactures a zero is rejected for a no-zero type:
 
@@ -386,6 +386,7 @@ The following list defines the implicit conversions. There are no user-defined o
 - `string` -> `string_view`; a non-owning borrow subject to [Borrows and lifetimes](#borrows-and-lifetimes)
 - `[dynamic]T` -> `[]T`, a read-only view of the live elements under the same borrow rules; see [Dynamic arrays](#dynamic-arrays)
 - `[N]T` -> `[]T`, a read-only view of all `N` elements under the same borrow rules; see [Fixed arrays](#fixed-arrays)
+- `box(T)` -> `^T`, a read-only borrow of the payload under the same borrow rules; see [Owned values](#owned-values)
 - Unfixed strings -> `string`, `string_view`, or `cstring_view` when the destination supplies the required lifetime
 - A scalar of a vector's lane type -> that `Simd(T, N)`, the [splat](#construction-and-conversion) with every lane equal to it
 
@@ -622,6 +623,40 @@ The same rule carries through implicit pointer field selection, indexing, method
 A `^mut T` implicitly weakens to a `^T`. A `^T` never strengthens, even when the storage it names is a mutable local — see [Capabilities and the one rule](#capabilities-and-the-one-rule).
 
 Pointer arithmetic is not an operator. Address calculation goes through a [C pointer](#c-pointers), which indexes and slices without checks.
+
+### Owned values
+
+`box(T)` owns one value of type `T` in an allocation of its own. It is to `^T` what `[dynamic]T` is to `[]T`: an owner whose read-only borrow is a pointer. A box is one address, and its allocation records the allocator that made it, so dropping or copying a box needs nothing else.
+
+```odin
+Tree :: struct {
+	value:       int,
+	left, right: Option(box(Tree)),
+}
+
+leaf := box(Tree{value = 1});
+root := Tree{value = 2, left = .some(move(leaf))};
+```
+
+`box(value, allocator := mem.default_allocator())` allocates and takes `value` the way an initialization does: a place is cloned into the allocation, and a temporary or `move(x)` is handed over. It follows the allocator's [failure policy](#allocation-failure); `try_box` takes the same arguments and returns `Result(box(T), Allocator_Error)`. Written with a type, `box(T)` names the box type.
+
+`b^` is the payload. It is a place, writable exactly when `b` is, as an element of a dynamic array has its container's capability. Field selection, indexing, and method calls reach through a box as through a [pointer](#pointers), after the box's own members such as `clone`. A box converts implicitly to `^T`, a read-only borrow of its payload, and `&mut b^` is the mutable borrow. Either borrows `b`, so while one is live `b` cannot be moved, dropped, or assigned.
+
+```odin
+lookup :: proc(tree: ^Tree) -> int { return tree.value; }
+
+node := box(Tree{value = 3});
+node.value += 1;              // the payload, through `node`
+fmt.println(lookup(node));    // 4: the box lends a `^Tree`
+```
+
+A box has no zero value, because it always owns a payload; an absent one is `Option(box(T))`. Copying a box copies its payload into a new allocation from the destination's allocator, so `box(T)` is copyable exactly when `T` is, and [last-use transfer](#last-use-transfer) applies. Dropping a box drops its payload and releases the allocation. A box carries the borrows its payload carries, and takes [region provenance](#allocator-regions-and-region-provenance) from its allocator and from a payload handed to it: a box made from an arena cannot outlive the arena.
+
+`move(b).unbox()` consumes a box and returns its payload, releasing the allocation. It is how a move-only payload, or one without a zero value, leaves its box, since `move` cannot name `b^` and [`exchange`](#exchange) needs a replacement.
+
+Dropping, copying, and printing a box reach its payload, and through it any box the payload holds, so a long chain of boxes such as a linked list nests that deeply. A type that builds a long chain declares a drop hook that unlinks it iteratively, moving each node's successor out before the node is dropped.
+
+A box is neither comparable nor hashable, and it is not [foreign-ABI-safe](#foreign-abi-safe-types).
 
 ### C pointers
 
@@ -1865,7 +1900,7 @@ Type_Kind :: enum u8 {
 	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
 	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
 	Struct, Enum, Union, Proc, String, String_View, CString_View,
-	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
+	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
 }
 
 Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
@@ -3171,7 +3206,7 @@ Whether a place is copied or a temporary transferred changes what an expression 
 
 #### Last-use transfer
 
-**An eligible last-use copy of a local transfers ownership.** This applies when a binding or assignment would clone a whole local variable or `move` parameter whose copy may allocate — a `[dynamic]T` or `map[K]V`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — and no path reads the local again before reassignment or scope exit. Subject to the exclusions below, the value transfers as with `move(x)`, leaving the source dead.
+**An eligible last-use copy of a local transfers ownership.** This applies when a binding or assignment would clone a whole local variable or `move` parameter whose copy may allocate — a `[dynamic]T`, `map[K]V`, or `box(T)`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — and no path reads the local again before reassignment or scope exit. Subject to the exclusions below, the value transfers as with `move(x)`, leaving the source dead.
 
 ```odin
 first := [dynamic]int{1, 2, 3};
@@ -3467,7 +3502,7 @@ The equality operators `==` and `!=` apply to operands that are comparable. The 
 - Array values are comparable if values of the element type are comparable.
 - Structural comparison compares a struct field by field, an array element by element, and a union by its active payload. A part whose type declares its own `==` inherently, or whose underlying type does, is compared by that operator, and is comparable through it whatever its own fields are; any other part is compared structurally. An extension `==` is never used for a part, so a type has the same equality wherever it is nested. Comparing a value is an error where a part's inherent `==` is not visible.
 - typeid is comparable.
-- Slices, dynamic arrays, maps, and `dyn Interface` views are **not** comparable. A slice or `dyn Interface` may be tested only against `nil`; a dynamic array or map has no nil value (its zero is `{}`), so emptiness is `value.len() == 0`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
+- Slices, dynamic arrays, maps, boxes, and `dyn Interface` views are **not** comparable. A slice or `dyn Interface` may be tested only against `nil`; a dynamic array or map has no nil value (its zero is `{}`), so emptiness is `value.len() == 0`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
 
 ### Logical operators
 
@@ -4697,6 +4732,8 @@ impl Small_Array($T, $N) {
 }
 ```
 
+A `hook(copy)` excluded this way leaves that instance [move-only](#lifecycle-hooks-and-resource-types), not copied byte for byte: a record whose copy hook needs `is_copyable(T)` usually owns something only the hook knows how to duplicate, and a bitwise copy would leave its drop hook to release it twice.
+
 An excluded method also leaves any [procedure group](#explicit-procedure-overloading) that names it: the group keeps the members the instantiation has, and naming an excluded one is not a name error. This is how one group serves both kinds of element — `Small_Array(T, N)` groups a copying `append` with a consuming one, and a move-only `T` leaves the group with only the consuming member.
 
 A bound written on the record itself is not this case: it constrains which instances exist at all, and failing it is a hard error at the instantiation. An interface-local bound contributes to the interface's Boolean result; a use that requires the interface to hold reports it as the failed interface predicate. The exclusion applies only where there is still a type to have members.
@@ -4846,7 +4883,7 @@ The pointee's cleanup policy does not decide whether a pointer is a borrow: a `&
 
 Putting a borrow inside a value does not discard what the borrow owes. A struct, union, fixed array, or container whose fields reach a built-in carrier *carries* those borrows: `Holder :: struct { view: []int }` is checked wherever a bare `[]int` is, and `return Holder{local[:]}` is rejected for the same reason `return local[:]` is. An `Option` or a `Result` is a union like any other, so wrapping a borrow in one keeps it, and unwrapping it — a case binding, `or_else`, `or_return` — hands the same borrow on.
 
-A type's **carrier paths** are the projection paths from the value to each built-in borrow carrier inside it. Records contribute fields, unions alternatives, and fixed arrays elements. Dynamic arrays use a wildcard element; maps distinguish key and value paths and may distinguish a limited number of constant keys. Each path keeps its own capability, so a record containing both `[]int` and `[]mut int` does not have one aggregate capability. How precisely an implementation must track these paths is set in the appendix under [Minimum provenance precision](#minimum-provenance-precision).
+A type's **carrier paths** are the projection paths from the value to each built-in borrow carrier inside it. Records contribute fields, unions alternatives, and fixed arrays elements. Dynamic arrays and boxes use a wildcard element; maps distinguish key and value paths and may distinguish a limited number of constant keys. Each path keeps its own capability, so a record containing both `[]int` and `[]mut int` does not have one aggregate capability. How precisely an implementation must track these paths is set in the appendix under [Minimum provenance precision](#minimum-provenance-precision).
 
 A user record contains carriers but is not itself a new carrier. A record of `rawptr` or `[^]T` fields carries no checked provenance; a checked carrier rebuilt from untracked storage has unknown provenance.
 
@@ -5380,6 +5417,7 @@ The predeclared operations used by this document are:
 | `assert(condition, message := "", ..args)` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string, and `args` are `any_view`s printed after it |
 | `panic(message, ..args)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string, and `args` are `any_view`s printed after it. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
 | `new`, `new_clone`, `make`, `free`, `free_all`, `drop` | [Allocation and release](#allocators) |
+| `box(value, allocator)`, `try_box(value, allocator)` | An [owned value](#owned-values) in an allocation of its own |
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
 | `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |
 
@@ -5878,7 +5916,7 @@ A procedure using a foreign calling convention, a variable declared in a foreign
 
 On Windows x64, integers wider than 64 bits and zero-sized structs are not foreign-ABI-safe, including as enum backings or nested record fields. A pointer to such a type remains permitted.
 
-Managed containers, `string`, slices, dynamic arrays, maps, tagged unions, `any_view`, `dyn Interface`, [`Simd(T, N)`](#simd-vectors), and records with custom lifecycle hooks are not foreign-ABI-safe. Interface declarations and compile-time `type` values have no runtime ABI, and a [generic](#generics) procedure or type is likewise not ABI surface — only a concrete instantiation, wrapped in a procedure with a foreign calling convention, can cross the boundary. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
+Managed containers, `string`, slices, dynamic arrays, maps, boxes, tagged unions, `any_view`, `dyn Interface`, [`Simd(T, N)`](#simd-vectors), and records with custom lifecycle hooks are not foreign-ABI-safe. Interface declarations and compile-time `type` values have no runtime ABI, and a [generic](#generics) procedure or type is likewise not ABI surface — only a concrete instantiation, wrapped in a procedure with a foreign calling convention, can cross the boundary. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
 
 Pass a C union as `rawptr` and expose typed wrapper accessors. Passing one by value is target-specific and not portable Loke source.
 

@@ -1326,7 +1326,11 @@ prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	saved, saved_type := base.view_from, base.type
 	base.view_from, base.type = INVALID_TYPE, saved
 	defer base.view_from, base.type = saved, saved_type
-	noun := underlying_kind(graph.k.c, saved_type) == .Slice ? "slice" : "string view"
+	noun := "string view"
+	#partial switch underlying_kind(graph.k.c, saved_type) {
+	case .Slice:   noun = "slice"
+	case .Pointer: noun = "pointer"
+	}
 	span := expr_span(e)
 	if root, path, ok := prov_place_of(graph, e); ok {
 		loans := walk_flow_expr(graph, e)
@@ -1821,6 +1825,12 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		if v.op == .Or_Return {
 			return prov_region_of(graph, v.operand)
 		}
+		if v.op == .Caret && type_is_box(c, expr_base(v.operand).type) {
+			if root, path, ok := prov_place_of(graph, e); ok {
+				return prov_region_content_at(graph, root, path)
+			}
+			return prov_read_region(graph, e)
+		}
 		if v.op == .Caret {
 			return prov_viewed_region(graph, v.operand)
 		}
@@ -1983,12 +1993,30 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 		out.default = true
 		return out
 	}
+	// The payload `unbox` hands out is backed by what backed its box.
+	if _, unbox := v.operation.(Call_Box_Unbox); unbox {
+		return prov_region_of(graph, v.bound[0])
+	}
 	if _, extraction := v.operation.(Call_Extract); extraction && type_is_managed(c, result_type) {
 		out.default = true
 		return out
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
 		out.default = true
+		return out
+	}
+	// design.md "Owned values": a box is backed by the allocator that made it,
+	// the default when none is written, and by whatever a payload handed to it
+	// is backed by. A payload cloned from a place allocates from the box's.
+	if sym := symbol_of(c, v.resolution.symbol); sym != nil && (sym.builtin == .Box_New || sym.builtin == .Try_Box) {
+		if len(v.bound) > 1 && v.bound[1] != nil {
+			region_merge(&out, prov_region_of(graph, v.bound[1]))
+		} else {
+			out.default = true
+		}
+		if !expression_is_borrowed_place(v.bound[0]) {
+			region_merge(&out, prov_region_of(graph, v.bound[0]))
+		}
 		return out
 	}
 	// Also here, because a stored call result is consulted before `prov_region_of`.
@@ -2239,6 +2267,9 @@ prov_retain_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> []int {
 	c := graph.k.c
 	#partial switch v in place {
 	case ^Expr_Postfix:
+		if v.op == .Caret && type_is_box(c, expr_base(v.operand).type) {
+			return prov_retain_through_carrier(graph, v.operand)
+		}
 		if v.op == .Caret {
 			return prov_carrier_slots(graph, v.operand)
 		}
@@ -2582,6 +2613,14 @@ prov_index_path :: proc(graph: ^Flow_Graph, v: ^Expr_Index) -> []Proj_Step {
 prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []Proj_Step, bool) {
 	#partial switch v in place {
 	case ^Expr_Postfix:
+		// A box's payload is part of the box, so `b^` is a carrier read only when
+		// the box itself is reached through one (design.md "Owned values").
+		if v.op == .Caret && type_is_box(graph.k.c, expr_base(v.operand).type) {
+			if carriers, path, ok := prov_read_through_carrier(graph, v.operand); ok {
+				return carriers, prov_extend(graph, path, proj_wild()), true
+			}
+			return nil, nil, false
+		}
 		if v.op == .Caret {
 			return walk_flow_expr(graph, v.operand), nil, true
 		}
@@ -2665,6 +2704,18 @@ prov_place_of :: proc(graph: ^Flow_Graph, e: Expr) -> (Root_Id, []Proj_Step, boo
 		}
 		return root, prov_extend(graph, path, prov_field_step(graph, v)), true
 
+	case ^Expr_Postfix:
+		// design.md "Owned values": the payload lives in the box's allocation, so
+		// the box is the root, as a container is its element's.
+		if v.op != .Caret || !type_is_box(c, expr_base(v.operand).type) {
+			return NO_ROOT, nil, false
+		}
+		root, path, ok := prov_place_of(graph, v.operand)
+		if !ok {
+			return NO_ROOT, nil, false
+		}
+		return root, prov_extend(graph, path, proj_wild()), true
+
 	case ^Expr_Index:
 		if len(v.bound) > 0 || v.operand == nil {
 			return NO_ROOT, nil, false // user-defined addressing
@@ -2691,6 +2742,10 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := fa
 	#partial switch v in e {
 	case ^Expr_Selector:
 		prov_walk_subscripts(graph, v.operand, publish_map_keys)
+	case ^Expr_Postfix:
+		if v.boxed {
+			prov_walk_subscripts(graph, v.operand, publish_map_keys)
+		}
 	case ^Expr_Index:
 		prov_walk_subscripts(graph, v.operand, publish_map_keys)
 		key_sources: []int
@@ -2994,7 +3049,8 @@ prov_expr_is_temporary :: proc(e: Expr) -> bool {
 	case ^Expr_Binary:
 		return v.value_category != .Place // a user operator may return a place
 	case ^Expr_Postfix:
-		return v.op == .Or_Return
+		// A temporary box's payload ends with the box.
+		return v.op == .Or_Return || (v.boxed && prov_expr_is_temporary(v.operand))
 	case ^Expr_Selector:
 		// `pkg.name` is a whole global, not a field of its operand.
 		return v.resolution.kind != .Value && prov_expr_is_temporary(v.operand)

@@ -1,0 +1,17 @@
+5 6 11 5 6 8 16
+5
+60
+5 0
+copy 1
+2 101
+drop 3
+4
+unboxed 4
+try 7
+6 6 16
+5 2
+106 106
+7 .some(8)
+drop 4
+drop 101
+drop 2

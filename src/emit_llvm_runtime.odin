@@ -658,6 +658,10 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	case .Map:
 		emit_format_map(e, under, address)
 
+	case .Box:
+		// design.md "Owned values": a box is a value, so it prints its payload.
+		emit_format_call(e, info.element, emit_box_payload_address(e, under, load(e, "ptr", address)))
+
 	case .Struct:
 		emit_format_struct(e, type, under, address)
 
@@ -1095,6 +1099,7 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> Runtime_Type_Kind {
 	case .Dyn:             return .Dyn
 	case .Allocator:       return .Allocator
 	case .Allocator_Error: return .Allocator_Error
+	case .Box:             return .Box
 	}
 	return .Invalid
 }

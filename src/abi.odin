@@ -242,6 +242,9 @@ abi_walk :: proc(
 	case .Simd:
 		// design.md "SIMD vectors": vectors do not cross foreign boundaries.
 		return false, "a SIMD vector", ""
+	case .Box:
+		// An owner whose drop releases through a Loke allocator.
+		return false, "a `box`", ""
 	case .Enum:
 		if !info.enum_backing_explicit {
 			return false, "an enum without an explicit integer backing type", ""

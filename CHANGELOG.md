@@ -324,6 +324,15 @@ checklist.
 
 ### Added
 
+- `box(T)` owns one value in an allocation of its own, as `[dynamic]T` owns a
+  run of them (design.md "Owned values"). `box(value, allocator)` and
+  `try_box(...)` build one; `b^`, field selection, indexing, and methods reach
+  the payload with the box's capability; a box lends `^T` implicitly and
+  `&mut b^` explicitly; copying clones the payload; `move(b).unbox()` hands it
+  out. A box is one address, has no zero value, and makes recursive types such
+  as `Tree :: struct { left, right: Option(box(Tree)) }` ordinary owned values.
+  Reflection reports it as the new `runtime.Type_Kind.Box`.
+
 - `check_session_incremental` reuses checked dependency prefixes for stable
   static import graphs and falls back to a full check for discovery, conditional
   selection, or provider changes. `session_check_stats` reports rechecked/reused
@@ -413,6 +422,12 @@ checklist.
   `format` method that prints `(3, 4)`.
 
 ### Fixed
+
+- A generic record's `hook(copy)` bound by a `where` clause that an instance
+  fails crashed the backend with `L0405`; the instance is now move-only, as
+  design.md "where clauses" specifies.
+- `move(x)` evaluates at compile time instead of reporting that the expression
+  has no compile-time meaning.
 
 - `examples/lexer.loke` checks a source BOM before UTF-8 validation, matching
   `lokec`'s `L0002` diagnostic even when later bytes are invalid, and reports

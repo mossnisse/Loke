@@ -1,0 +1,17 @@
+package main; import "core:fmt";
+
+Ticket :: move_only struct { id: int }
+
+take :: proc(b: box(int)) { b^ = 3; }
+
+main :: proc() {
+	x: box(int, int);
+	y := box();
+	z: box(int) = {};
+	t := Ticket{1};
+	u := box(t);
+	v := box(5);
+	w := v.unbox();
+	q := move(v).unbox(1);
+	same := box(1) == box(1);
+}

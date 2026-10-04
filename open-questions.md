@@ -564,10 +564,12 @@ constness alone does not establish either.
 
 ### Non-null references and explicit allocation owners
 
-**Decided (2026-10-04), not yet built.** design.md and the compiler still have
-nullable references and checked `new`/`free`. Each stage at the end of this
-entry changes the specification, compiler, tests, tutorials, and changelog
-together, and the entry leaves this file when the last one lands.
+**Decided (2026-10-04), partly built.** `box(T)` has landed
+([design.md "Owned values"](design.md#owned-values)); design.md and the
+compiler still have nullable references and checked `new`/`free`. Each stage
+at the end of this entry changes the specification, compiler, tests,
+tutorials, and changelog together, and the entry leaves this file when the
+last one lands.
 
 [Pointers](design.md#pointers), procedure values, and `dyn` views have a nil
 state, so `Option(^T)` has three states where two are meant, every
@@ -739,9 +741,9 @@ Rejected:
 comments.md, the compiler, tests, tutorials, and CHANGELOG.md with an upgrade
 note:
 
-1. `box(T)` and `try_box`; raw allocation into `core:unsafe`; allocation-root
-   provenance removed. Migrates `core:thread`, `shared(T)`, tutorial 12, and
-   the 117 test files that call `new` or `free`.
+1. `box(T)` and `try_box` (landed); raw allocation into `core:unsafe`;
+   allocation-root provenance removed. Migrates `core:thread`, `shared(T)`,
+   tutorial 12, and the 117 test files that call `new` or `free`.
 2. `nil` narrowed to unchecked addresses: the zeros of item 2, `{}` as the
    empty slice, and a total `type_info_of`.
 3. Non-null references: no-zero typing, null-tested unchecked conversions, no

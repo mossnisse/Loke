@@ -1,0 +1,35 @@
+package main; import "core:fmt"; import "core:mem";
+
+View :: struct { items: []int }
+
+dangling :: proc() -> ^int {
+	b := box(1);
+	return &b^;
+}
+
+escaping_payload :: proc() -> box(View) {
+	local := [3]int{1, 2, 3};
+	return box(View{local[:]});
+}
+
+escaping_region :: proc() -> box(int) {
+	arena := mem.Arena.init();
+	return box(1, arena.allocator());
+}
+
+main :: proc() {
+	b := box(1);
+	r := &b^;
+	c := move(b);
+	fmt.println(r^, c^);
+
+	d := box(2);
+	s: ^int = d;
+	d = box(3);
+	fmt.println(s^);
+
+	arena := mem.Arena.init();
+	e := box(4, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(e^);
+}

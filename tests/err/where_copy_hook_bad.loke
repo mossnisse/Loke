@@ -1,0 +1,17 @@
+package main;
+
+Holder :: struct($T: type) { value: T }
+
+impl Holder($T) {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Holder(T), Allocator_Error) where is_copyable(T) {
+		return .ok(Holder(T){self.value});
+	}
+}
+
+Ticket :: move_only struct { id: int }
+
+main :: proc() {
+	held := Holder(Ticket){Ticket{1}};
+	twin := held;
+	_ = held;
+}

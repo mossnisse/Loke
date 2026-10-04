@@ -300,7 +300,7 @@ hook_argument :: proc(e: ^Emitter, hook: Symbol_Id, index: int, type: Type_Id, a
 
 // A memoised private function with one entry block, parked in `e.pending`.
 // Each body writes its own `ret`.
-@(private = "file")
+@(private)
 container_thunk :: proc(
 	e: ^Emitter,
 	name: string,

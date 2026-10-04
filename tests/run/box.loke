@@ -1,0 +1,101 @@
+// design.md "Owned values": construction, the payload place, the `^T` loan,
+// copies, drops, `unbox`, `try_box`, regions, and compile-time use.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+Noisy :: struct { id: int }
+
+impl Noisy {
+	bye :: hook(drop) proc(self: inout Noisy) { fmt.println("drop", self.id); }
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Noisy, Allocator_Error) {
+		fmt.println("copy", self.id);
+		return .ok(Noisy{self.id + 100});
+	}
+	bump :: proc(self: inout) { self.id += 1; }
+}
+
+Point :: struct { x, y: int }
+
+impl Point {
+	sum :: proc(self) -> int { return self.x + self.y; }
+}
+
+Tree :: struct {
+	value:       int,
+	left, right: Option(box(Tree)),
+}
+
+read :: proc(p: ^Point) -> int { return p.x; }
+first :: proc(p: ^$T) -> T { return p^; }
+element_size :: proc(b: box($T)) -> int { return size_of(T); }
+
+total :: proc(tree: ^Tree) -> int {
+	sum := tree.value;
+	switch (tree.left) { case .some(left): sum += total(left); case .none: }
+	switch (tree.right) { case .some(right): sum += total(right); case .none: }
+	return sum;
+}
+
+compile_time :: proc() -> int {
+	b := box(5);
+	b^ += 1;
+	c := b.clone();
+	c^ = 100;
+	return b^ + move(c).unbox();
+}
+
+COMPILED :: compile_time();
+
+main :: proc() {
+	// The payload is a place with the box's capability.
+	p := box(Point{1, 2});
+	p.x = 5;
+	p^.y = 6;
+	fmt.println(p.x, p.y, p.sum(), read(p), first(p).y, size_of(box(Point)), element_size(p));
+	r := &p^;
+	fmt.println(r.x);
+	w := &mut p^;
+	w.y = 60;
+	fmt.println(p.y);
+
+	// A copy is an independent value, cloned into a new allocation.
+	q := p.clone();
+	q.x = 0;
+	fmt.println(p.x, q.x);
+
+	// Copies run the payload's hook, drops release it once each.
+	a := box(Noisy{1});
+	b := a.clone();
+	a.bump();
+	fmt.println(a.id, b.id);
+	c := box(Noisy{3});
+	drop(c);
+	moved := box(Noisy{4});
+	last := moved;               // the last use moves rather than copies
+	fmt.println(last.id);
+
+	// `unbox` hands the payload out and frees the allocation.
+	n := move(last).unbox();
+	fmt.println("unboxed", n.id);
+
+	// `try_box` returns the failure instead of applying the policy.
+	switch (made in try_box(Point{7, 8})) {
+	case .ok:  fmt.println("try", made.x);
+	case .err: fmt.println("no memory");
+	}
+
+	// A recursive type owns its children.
+	tree := Tree{2, .some(box(Tree{value = 1})), .some(box(Tree{value = 3}))};
+	copy := tree.clone();
+	fmt.println(total(&tree), total(&copy), size_of(Option(box(Tree))));
+
+	// A box from an arena is backed by it.
+	arena := mem.Arena.init();
+	from_arena := p.clone(arena.allocator());
+	fmt.println(from_arena.x, box([3]int{1, 2, 3}, arena.allocator())[1]);
+
+	fmt.println(COMPILED, compile_time());
+	fmt.println(box(7), box(Option(box(int)).some(box(8))));
+}

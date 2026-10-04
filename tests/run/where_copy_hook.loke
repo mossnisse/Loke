@@ -1,0 +1,25 @@
+// design.md "where clauses": a `hook(copy)` its bound excludes leaves the
+// instance move-only rather than copied byte for byte.
+package main;
+
+import "core:fmt";
+
+Holder :: struct($T: type) { value: T }
+
+impl Holder($T) {
+	dup :: hook(copy) proc(self, allocator: Allocator) -> Result(Holder(T), Allocator_Error) where is_copyable(T) {
+		fmt.println("copied");
+		return .ok(Holder(T){self.value});
+	}
+}
+
+Ticket :: move_only struct { id: int }
+
+main :: proc() {
+	plain := Holder(int){1};
+	twin := plain.clone();
+	fmt.println(twin.value, is_copyable(Holder(int)), is_copyable(Holder(Ticket)));
+	held := Holder(Ticket){Ticket{2}};
+	moved := move(held);
+	fmt.println(moved.value.id);
+}

@@ -348,8 +348,8 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 			return "float"
 		}
 		return "double"
-	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View:
-		// An `Allocator` is a one-word handle on the provider record; a
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View, .Box:
+		// A `box` is the address of its allocation. An `Allocator` is a one-word handle on the provider record; a
 		// `cstring_view` is one zero-terminated address; a C pointer is one
 		// address with neither a length nor a capability.
 		return "ptr"

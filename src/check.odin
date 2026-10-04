@@ -1880,6 +1880,9 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if range_callee(k, value.callee) {
 			return resolve_range_application(k, value)
 		}
+		if box_callee(k, value.callee) {
+			return resolve_box_application(k, value)
+		}
 		// `Table(string, int)`: a generic application in type position.
 		template := generic_template_of_callee(k, value.callee, .Record)
 		if template == nil {

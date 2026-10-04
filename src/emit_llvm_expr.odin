@@ -692,6 +692,9 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 
 	case ^Expr_Postfix:
 		// `x or_return` is a value, materialised below like any other.
+		if v.boxed {
+			return emit_box_payload_address(e, expr_base(v.operand).type, emit_expr(e, v.operand))
+		}
 		if v.op == .Caret {
 			pointer := emit_expr(e, v.operand)
 			emit_nil_check(e, pointer)
@@ -1045,6 +1048,10 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		data := extract(e, STRING_TYPE, value, STRING_DATA)
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+	}
+	// A `box(T)` lent as the `^T` of its payload.
+	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, from) == .Box {
+		return emit_box_payload_address(e, from, load_place(e, from, emit_address_at(e, expr, from)))
 	}
 	// A `[N]T` read as a `[]T` of all its elements.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .Slice &&

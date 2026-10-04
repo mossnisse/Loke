@@ -1,0 +1,69 @@
+// design.md "Owned values": a singly linked list as a chain of boxes. Its drop
+// hook unlinks iteratively, so a long list does not nest one drop per node, and
+// `unbox` hands out a move-only payload.
+package main;
+
+import "core:fmt";
+
+Node :: struct($T: type) { value: T, next: Option(box(Node(T))) }
+List :: struct($T: type) { head: Option(box(Node(T))), count: int }
+Ticket :: move_only struct { id: int }
+
+impl List($T) {
+	push_front :: proc(self: inout, @(escape=stored) value: move T) {
+		rest := exchange(inout self.head, .none);
+		self.head = .some(box(Node(T){move(value), move(rest)}));
+		self.count += 1;
+	}
+
+	pop_front :: proc(self: inout) -> Option(T) {
+		switch (first in exchange(inout self.head, .none)) {
+		case .none: return .none;
+		case .some:
+			value, next := move(first).unbox();
+			self.head = move(next);
+			self.count -= 1;
+			return .some(move(value));
+		}
+	}
+
+	release :: hook(drop) proc(self: inout) {
+		rest := exchange(inout self.head, .none);
+		for (true) {
+			switch (node in move(rest)) {
+			case .none: break;
+			case .some: rest = exchange(inout node.next, .none);
+			}
+		}
+	}
+}
+
+sum :: proc(list: ^List(int)) -> int {
+	total := 0;
+	cursor := &list.head;
+	for (true) {
+		switch (cursor^) {
+		case .some(node): total += node.value; cursor = &node.next;
+		case .none: break;
+		}
+	}
+	return total;
+}
+
+main :: proc() {
+	numbers: List(int) = {};
+	for (i := 0; i < 200000; i += 1) {
+		value := i;
+		numbers.push_front(move(value));
+	}
+	fmt.println(numbers.count, sum(&numbers));
+	fmt.println(numbers.pop_front(), numbers.pop_front(), numbers.count);
+
+	tickets: List(Ticket) = {};
+	tickets.push_front(Ticket{1});
+	tickets.push_front(Ticket{2});
+	switch (ticket in tickets.pop_front()) {
+	case .some: fmt.println("ticket", ticket.id);
+	case .none:
+	}
+}

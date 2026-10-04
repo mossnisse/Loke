@@ -878,7 +878,19 @@ match_array_as_view :: proc(
 	k: ^Checker, pattern: Expr, actual: Type_Id, scope: ^Scope, out: ^[dynamic]Generic_Binding,
 ) -> bool {
 	info := underlying_info(k.c, actual)
-	if _, is_slice := pattern.(^Type_Slice); !is_slice || info == nil || (info.kind != .Dynamic_Array && info.kind != .Array) {
+	if info == nil {
+		return false
+	}
+	// A `box(T)` reaches a `^T` pattern the same way (design.md "Owned values").
+	if pointer, is_pointer := pattern.(^Type_Pointer); is_pointer && info.kind == .Box && !pointer.mutable {
+		before := len(out)
+		if match_type_pattern(k, pattern, pointer_to(k.c, info.element, false), scope, out) {
+			return true
+		}
+		resize(out, before)
+		return false
+	}
+	if _, is_slice := pattern.(^Type_Slice); !is_slice || (info.kind != .Dynamic_Array && info.kind != .Array) {
 		return false
 	}
 	before := len(out)
@@ -996,6 +1008,13 @@ match_type_pattern :: proc(
 		return match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Expr_Call:
+		// design.md "Owned values": `box($T)` matches a box and binds its element.
+		if box_callee(k, v.callee) {
+			if info.kind != .Box || len(v.args) != 1 {
+				return false
+			}
+			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
+		}
 		// design.md "SIMD vectors": `Simd($T, $N)` is written like a generic
 		// application but is a predeclared type constructor, so its parts come
 		// from the type itself rather than from a template's bound arguments.

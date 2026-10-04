@@ -75,7 +75,7 @@ check_expr :: proc(
 		check_unary(k, v, expected)
 
 	case ^Expr_Postfix:
-		check_postfix(k, v)
+		check_postfix(k, v, position)
 
 	case ^Expr_Binary:
 		check_binary(k, v, expected)
@@ -711,6 +711,21 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 		return
 	}
 
+	// design.md "Owned values": a box reaches its payload's fields and methods as
+	// a pointer does, after its own members such as `clone`. The hop is written
+	// into the typed AST as `b^`, which every later pass already understands.
+	if boxed := underlying_info(k.c, operand); boxed != nil && boxed.kind == .Box {
+		payload := underlying_info(k.c, boxed.element)
+		has_field := payload != nil && payload.kind == .Struct &&
+		             struct_field(k.c, type_underlying(k.c, boxed.element), intern_identifier(k.c, v.name.text)) != INVALID_SYMBOL
+		if !has_field && select_method(k, v, operand, callee) {
+			return
+		}
+		v.operand = implicit_box_deref(k, v.operand, boxed.element)
+		operand = boxed.element
+		operand_base = expr_base(v.operand)
+	}
+
 	// `p.field` through one pointer is the same selection as `p^.field`, and it
 	// inherits the pointer's capability the same way.
 	base_type := type_underlying(k.c, operand)
@@ -914,6 +929,29 @@ implicit_pointer_deref :: proc(
 	return n
 }
 
+// `b^` for a box `b`: the payload is part of the box's value, so it has the
+// box's own capability, as a dynamic array's element has its container's.
+box_deref_place :: proc(v: ^Expr_Base, payload: Type_Id, box: ^Expr_Base) {
+	v.type = payload
+	v.value_category = .Place
+	v.addressable = true
+	v.assignable = box.assignable
+	v.immutable = box.immutable
+}
+
+// The `b^` an implicit box dereference writes into the typed AST.
+implicit_box_deref :: proc(k: ^Checker, operand: Expr, payload: Type_Id) -> Expr {
+	base := expr_base(operand)
+	n := new(Expr_Postfix, k.c.semantic_allocator)
+	n.span = base.span
+	n.op = .Caret
+	n.op_span = base.span
+	n.operand = operand
+	n.boxed = true
+	box_deref_place(&n.base, payload, base)
+	return n
+}
+
 // `Type.member`: an associated constant, an associated type, or a procedure
 // reached through the type name.
 @(private = "file")
@@ -1047,6 +1085,12 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 	if operand == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
+	}
+
+	// design.md "Owned values": `b[i]` indexes the payload.
+	if boxed := underlying_info(k.c, operand); boxed != nil && boxed.kind == .Box {
+		v.operand = implicit_box_deref(k, v.operand, boxed.element)
+		operand = boxed.element
 	}
 
 	// Nominal: a `distinct` type inherits none of the underlying type's
@@ -1848,7 +1892,7 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bo
 }
 
 @(private = "file")
-check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
+check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix, position := Expr_Position.Value) {
 	v.value_category = .Value
 	if v.op == .Or_Return {
 		check_or_return(k, v)
@@ -1859,12 +1903,19 @@ check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		v.type = INVALID_TYPE
 		return
 	}
-	operand := check_single_expr(k, v.operand)
+	// A box's payload is part of the box's own place, so the box is reached in
+	// the same position (design.md "Owned values").
+	operand := check_single_expr(k, v.operand, position = position == .Place || position == .Insert ? .Place : .Value)
 	if operand == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
 	}
 	info := underlying_info(k.c, operand)
+	if info != nil && info.kind == .Box {
+		v.boxed = true
+		box_deref_place(&v.base, info.element, expr_base(v.operand))
+		return
+	}
 	if info == nil || info.kind != .Pointer {
 		errorf(k.c, v.op_span, "L0355", "`^` needs a pointer, found `%s`", type_name(k.c, operand))
 		v.type = INVALID_TYPE
@@ -3093,7 +3144,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// A `string` borrows as a `string_view` with no validation: it is already
 	// valid UTF-8.
 	if (underlying_kind(k.c, target) == .String_View && underlying_kind(k.c, base.type) == .String) ||
-	   array_views_as(k.c, base.type, target) {
+	   array_views_as(k.c, base.type, target) || box_views_as(k.c, base.type, target) {
 		// A named constant array is viewed in its read-only storage.
 		if base.is_const && underlying_kind(k.c, base.type) == .Array {
 			request_materialization(k, e)
@@ -3485,7 +3536,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	   underlying_kind(c, to) == .String_View {
 		return true
 	}
-	if array_views_as(c, from, to) {
+	if array_views_as(c, from, to) || box_views_as(c, from, to) {
 		return true
 	}
 	if type_is_untyped(c, from) {

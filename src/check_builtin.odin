@@ -33,6 +33,8 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_simd_builtin(k, v, ident, sym.builtin)
 	case .New, .New_Clone, .Try_New, .Try_New_Clone, .Free, .Unsafe_Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
+	case .Box_New, .Try_Box:
+		check_box_builtin(k, v, ident, sym.builtin, expected)
 	case .Drop:
 		check_drop_builtin(k, v)
 	case .Exchange:
@@ -151,7 +153,6 @@ reject_builtin_argument_shape :: proc(k: ^Checker, arg: Argument) {
 }
 
 // Whether every argument is a positional value, reporting the first that isn't.
-@(private = "file")
 builtin_arguments_ok :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 	for arg in v.args {
 		if arg.name.text != "" || arg.mode != .Value {
@@ -1265,7 +1266,7 @@ Runtime_Type_Kind :: enum {
 	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
 	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
 	Struct, Enum, Union, Proc, String, String_View, CString_View,
-	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
+	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
 }
 
 Runtime_Member_Kind :: enum { Field, Enum_Value, Union_Variant, Parameter, Result }

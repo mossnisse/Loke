@@ -53,6 +53,10 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 		}
 	case .Array:
 		return info.count == 0 || type_has_zero_walk(c, info.element, seen)
+	case .Box:
+		// design.md "Owned values": a box always owns a value, so there is no
+		// empty one to start from; `Option(box(T))` is the absent box.
+		return false
 	}
 	// Scalars, SIMD vectors, and container headers, whose capacity is raw storage.
 	return true

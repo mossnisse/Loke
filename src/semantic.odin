@@ -99,6 +99,9 @@ Type_Kind :: enum {
 	Allocator,
 	Allocator_Error,
 	Dynamic_Array,
+	// design.md "Owned values": `box(T)`, one address owning one `T` and the
+	// allocator that made it.
+	Box,
 	Array,
 	Map,
 	// design.md "SIMD vectors": `Simd(T, N)`, an element type and a count like
@@ -400,6 +403,10 @@ Builtin_Kind :: enum {
 	Try_New_Clone,
 	Free,
 	Free_All,
+	// design.md "Owned values": `box(value)`, which as `box(T)` also names the
+	// type, and `try_box(value)`.
+	Box_New,
+	Try_Box,
 	// design.md "Dynamic arrays" and "Maps": its first operand is a *type*, which
 	// no ordinary signature can spell.
 	Make,
@@ -1276,6 +1283,21 @@ c_pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	)
 }
 
+// `box(T)`: an owner of one allocated `T` (design.md "Owned values"). Its
+// identity is its element, as for `[dynamic]T`; the allocator is a run-time
+// property of the allocation, not of the type.
+box_of :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+	return intern_type(
+		c,
+		Type_Key{kind = .Box, element = element},
+		Type_Info{kind = .Box, element = element, bits = c.target.pointer_bits},
+	)
+}
+
+type_is_box :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	return underlying_kind(c, id) == .Box
+}
+
 array_of :: proc(c: ^Compiler, element: Type_Id, count: u64) -> Type_Id {
 	return intern_type(
 		c,
@@ -1624,7 +1646,7 @@ type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 	     .Untyped_String:
 		// No components, so nothing to be invalid below the type itself.
 		return false
-	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Array, .Simd, .Distinct:
+	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Simd, .Distinct:
 		return type_contains_invalid(c, info.element, seen)
 	case .Map:
 		return type_contains_invalid(c, info.key, seen) ||
@@ -1698,7 +1720,7 @@ type_is_supported_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> b
 		return type_is_supported_walk(c, info.element, seen)
 	case .Interface:
 		return false
-	case .Dynamic_Array:
+	case .Dynamic_Array, .Box:
 		return type_is_supported_walk(c, info.element, seen)
 	case .Map:
 		return type_is_supported_walk(c, info.key, seen) &&
@@ -1806,6 +1828,8 @@ type_name_alloc :: proc(c: ^Compiler, id: Type_Id, allocator: mem.Allocator) -> 
 		return fmt.aprintf("[]%s%s", info.mutable ? "mut " : "", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Dynamic_Array:
 		return fmt.aprintf("[dynamic]%s", type_name_alloc(c, info.element, allocator), allocator = allocator)
+	case .Box:
+		return fmt.aprintf("box(%s)", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Map:
 		return fmt.aprintf("map[%s]%s", type_name_alloc(c, info.key, allocator), type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Distinct:

@@ -1,0 +1,24 @@
+L0358
+@5:29
+a value parameter is immutable and cannot be an assignment destination
+L0713
+@8:5
+`box` as a type takes one element type, as in `box(Node)`
+L0714
+@9:7
+`box` takes a value and an optional allocator
+L0424
+@10:16
+`box(int)` has no zero value, so it cannot be produced by `{}`
+L0503
+@12:11
+`Ticket` is move-only, so this box cannot copy it; write `move(...)` to transfer ownership instead
+L0715
+@14:7
+`unbox` consumes its box; write `move(...).unbox()` to give the box up
+L0715
+@15:7
+`unbox` takes no arguments
+L0355
+@16:17
+`box(int)` is not comparable

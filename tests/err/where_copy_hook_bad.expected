@@ -1,0 +1,3 @@
+L0503
+@15:10
+`Holder(Ticket)` is move-only, so this binding cannot copy it; write `move(...)` to transfer ownership instead

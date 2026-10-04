@@ -97,6 +97,8 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"try_new_clone", .Try_New_Clone},
 		{"free", .Free},
 		{"free_all", .Free_All},
+		{"box", .Box_New},
+		{"try_box", .Try_Box},
 		{"make", .Make},
 		{"try_make", .Try_Make},
 		{"drop", .Drop},

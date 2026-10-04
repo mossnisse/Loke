@@ -1583,6 +1583,20 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		walk_flow_expr(graph, v.operand)
 
 	case ^Expr_Postfix:
+		// design.md "Owned values": reading `b^` reads the box, as reading `xs[i]`
+		// reads a dynamic array.
+		if prov && v.op == .Caret && type_is_box(graph.k.c, expr_base(v.operand).type) {
+			if root, path, ok := prov_place_of(graph, v); ok {
+				prov_walk_subscripts(graph, v)
+				prov_access(graph, root, path, .Read, v.span)
+				return prov_read_content(graph, root, path, v.type, v.span)
+			}
+			if carriers, path, ok := prov_read_through_carrier(graph, v); ok {
+				return prov_load_content(graph, carriers, path, v.type, v.span)
+			}
+			loans := walk_flow_expr(graph, v.operand)
+			return prov_project_content(graph, loans, expr_base(v.operand).type, {proj_wild()}, v.type, v.span)
+		}
 		operand_loans := walk_flow_expr(graph, v.operand)
 		if prov && v.op == .Caret {
 			return prov_load_content(graph, operand_loans, nil, v.type, v.span)
@@ -1838,6 +1852,13 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		return nil
 	case Call_Extract:
 		return walk_flow_expr(graph, operation.node)
+	case Call_Box_Unbox:
+		// The payload carries what the consumed box carried below its one step.
+		loans := walk_flow_expr(graph, v.bound[0])
+		if graph.mode == .Lifecycle {
+			return nil
+		}
+		return prov_project_content(graph, loans, expr_base(v.bound[0]).type, {proj_wild()}, v.type, v.span)
 	case Call_Union_As:
 		// Both unions keep their payloads below one wildcard.
 		loans := walk_flow_expr(graph, v.bound[0])

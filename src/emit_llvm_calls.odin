@@ -43,6 +43,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		return emit_option_value(e, as_type, present, value)
 	case Call_Union_As:
 		return emit_union_as(e, v, operation.index, as_type)
+	case Call_Box_Unbox:
+		return emit_box_unbox(e, v)
 	case Call_Extract:
 		return emit_any_view_extract(e, operation.node, operation.node.type)[0]
 	case Call_Dyn_Slot:
@@ -87,6 +89,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .New, .New_Clone, .Try_New, .Try_New_Clone:
 			kind, _ := allocation_builtin(symbol.builtin)
 			return emit_allocation_pair(e, v, kind, as_type)[0]
+		case .Box_New, .Try_Box:
+			return emit_box_new(e, v, as_type)
 		case .Make, .Try_Make:
 			return emit_make_container(e, v, as_type)[0]
 		case .Drop:
@@ -303,6 +307,11 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []stri
 		case Call_Allocation:
 			kind, _ := allocation_builtin(call_builtin_kind(e, v))
 			if kind == .Make { return emit_make_container(e, v, as_type) }
+			if kind == .Box_New || kind == .Try_Box {
+				single := make([]string, 1)
+				single[0] = emit_box_new(e, v, as_type)
+				return single
+			}
 			return emit_allocation_pair(e, v, kind, as_type)
 		case Call_Text:
 			return emit_text_operation(e, v, as_type)

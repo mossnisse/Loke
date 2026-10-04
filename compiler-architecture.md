@@ -690,6 +690,7 @@ be file-private.
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Closed enum validation, tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
+| `box.odin` | `box(T)`: the type constructor, `box`/`try_box` construction, `unbox`, the `^T` loan, and the allocation layout the emitter shares. A box dereference is written into the typed AST as a `b^` postfix marked `boxed`, a projection of the box's own place, so provenance treats it as it treats a dynamic array's element. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
 | `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Fallback `indexed`/`reversed`/`copied` adapters, peeled so `foreach` lowers directly; mutable lending over arrays, dynamic arrays, mutable slices, and maps, and the `iter_mut` protocol check; and the yield modes, derived from `next`, that decide whether a loop binding owns, borrows, or mutably borrows each part. |
 
@@ -731,6 +732,7 @@ be file-private.
 | `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, and typed-comparator sort adapters. |
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
+| `emit_llvm_box.odin` | Box construction, `unbox`, and the per-type drop and clone thunks, which let a type reach itself through a box without recursive emission. |
 | `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
 | `emit_llvm_debug.odin` | `-g`: procedure, statement, scope, and local markers, turned into `!dbg` attachments, `llvm.dbg.declare` calls, and debug metadata once the module is complete, and the natvis rules the linker puts in the PDB. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |

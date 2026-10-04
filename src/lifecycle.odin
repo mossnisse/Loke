@@ -579,6 +579,7 @@ Copy_Site :: enum {
 	Conversion,
 	Or_Else_Fallback,
 	Conditional,
+	Box,
 }
 
 @(private = "file")
@@ -598,6 +599,7 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 	case .Conversion:       return "conversion"
 	case .Or_Else_Fallback: return "`or_else` fallback"
 	case .Conditional:      return "conditional expression"
+	case .Box:              return "box"
 	}
 	return "copy"
 }

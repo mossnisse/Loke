@@ -209,6 +209,7 @@ Call_Operation :: union {
 	Call_Dyn_Conversion,
 	Call_Dyn_Slot,
 	Call_Allocation,
+	Call_Box_Unbox,
 }
 
 Call_Procedure :: struct {}
@@ -238,6 +239,8 @@ Call_Dyn_Slot :: struct { index: int }
 // The element of new/new_clone, or the container type of make.
 // `fallible`: a `try_` form, whose result is `Result(T, Allocator_Error)`.
 Call_Allocation :: struct { type: Type_Id, fallible: bool }
+// `move(b).unbox()`: the payload taken out of a box it consumes.
+Call_Box_Unbox :: struct {}
 
 // A call, a conversion, or a generic application; syntax cannot tell them apart.
 Expr_Call :: struct {
@@ -272,6 +275,9 @@ Expr_Postfix :: struct {
 	using base: Expr_Base,
 	// Over a place, the payloads are copied out and the source stays live.
 	borrows:    bool,
+	// `b^` of a box: a projection of the box's own place rather than a load
+	// through a carrier (design.md "Owned values").
+	boxed:      bool,
 	op:         Token_Kind,
 	op_span:    Span,
 	operand:    Expr,

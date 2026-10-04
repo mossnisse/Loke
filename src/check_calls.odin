@@ -80,7 +80,8 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 			return
 		}
 		// Compiler-defined operations on unions, text, and enums.
-		if check_any_view_as(k, v, sel) ||
+		if check_box_unbox(k, v, sel) ||
+		   check_any_view_as(k, v, sel) ||
 		   check_text_operation(k, v, sel) ||
 		   check_enum_values(k, v, sel) ||
 		   check_enum_from_int(k, v, sel) {
@@ -193,7 +194,6 @@ result_written_but_unresolved :: proc(sym: ^Symbol) -> bool {
 }
 
 // A call that denotes a type, such as `Simd(f32, 4)`.
-@(private = "file")
 set_type_call :: proc(v: ^Expr_Call, denoted: Type_Id) {
 	if denoted == INVALID_TYPE {
 		v.type = INVALID_TYPE
@@ -513,7 +513,6 @@ reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -
 }
 
 // Whether a one-argument application names a type; the probe is silent.
-@(private = "file")
 callee_argument_denotes_type :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
 		return false

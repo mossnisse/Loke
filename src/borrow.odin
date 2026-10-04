@@ -478,7 +478,7 @@ carrier_reach_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]b
 		for variant in info.variants {
 			carrier_reach_join(&out, carrier_reach_walk(c, variant, visiting))
 		}
-	case .Array, .Dynamic_Array:
+	case .Array, .Dynamic_Array, .Box:
 		carrier_reach_join(&out, carrier_reach_walk(c, info.element, visiting))
 	case .Map:
 		carrier_reach_join(&out, carrier_reach_walk(c, info.key, visiting))
@@ -590,7 +590,8 @@ carrier_shape_walk :: proc(
 		step := proj_wild()
 		if info.count > CARRIER_ARRAY_ELEMENTS { step.precision = {.Array_Elements} }
 		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out)
-	case .Dynamic_Array:
+	case .Dynamic_Array, .Box:
+		// A box's payload is reached by the same one wildcard step a place `b^` takes.
 		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
 	case .Map:
 		// No separate wildcard entry: an unknown key uses a wildcard step, which

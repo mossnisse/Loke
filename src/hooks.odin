@@ -16,8 +16,10 @@ Lifecycle :: struct {
 	// The contributed public copy entry points.
 	clone:            Symbol_Id,
 	try_clone:        Symbol_Id,
-	// `move_only`, a provider, or holding a move-only part: no copy exists.
+	// `move_only`, a provider, holding a move-only part, or an instance whose
+	// `hook(copy)` its `where` clause excluded: no copy exists.
 	clone_disabled:   bool,
+	copy_excluded:    bool,
 	// Has a hook, is move-only, or has a managed part.
 	managed:          bool,
 	// `string`, containers and providers: the runtime does the clone/drop, so
@@ -25,6 +27,10 @@ Lifecycle :: struct {
 	intrinsic:        bool,
 	container:        bool,
 	provider:         bool,
+	// design.md "Owned values": a `box(T)`. Its clone allocates and its drop
+	// releases, both through the allocator its allocation records; the emitter
+	// supplies both.
+	boxed:            bool,
 	state:            Size_State,
 }
 
@@ -59,7 +65,7 @@ finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	facts := lifecycle_of(c, under)^
 	operations := Lifecycle_Operations{facts = facts}
 	operations.state = .Checking
-	operations.clone_fallible = facts.custom_try_clone != INVALID_SYMBOL || facts.container
+	operations.clone_fallible = facts.custom_try_clone != INVALID_SYMBOL || facts.container || facts.boxed
 	c.lifecycle_operations[under] = operations
 	for part in lifecycle_parts(c, under) {
 		if !finalize_type_lifecycle(c, part) { return false }
@@ -119,10 +125,12 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 		collect_hooks(c, under, info, entry)
 		entry.container = info.kind == .Dynamic_Array || info.kind == .Map
 		entry.provider = info.provider
+		entry.boxed = info.kind == .Box
 		entry.intrinsic = info.kind == .String || entry.container || entry.provider
-		entry.clone_disabled = entry.provider || info.move_only || has_move_only_part(c, under, info)
+		entry.clone_disabled = entry.provider || info.move_only || entry.copy_excluded || has_move_only_part(c, under, info)
 		entry.managed =
 			entry.intrinsic ||
+			entry.boxed ||
 			entry.custom_drop != INVALID_SYMBOL ||
 			entry.custom_try_clone != INVALID_SYMBOL ||
 			entry.clone_disabled ||
@@ -140,7 +148,7 @@ lifecycle_fields_resolved :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Ty
 	if record_resolving(c, info) { return false }
 	visiting[under] = true
 	#partial switch info.kind {
-	case .Array, .Dynamic_Array:
+	case .Array, .Dynamic_Array, .Box:
 		return lifecycle_fields_resolved(c, info.element, visiting)
 	case .Map:
 		return lifecycle_fields_resolved(c, info.key, visiting) &&
@@ -171,7 +179,14 @@ collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lif
 		case .Drop:
 			entry.custom_drop = member
 		case .Copy:
-			entry.custom_try_clone = member
+			// design.md "Lifecycle hooks and resource types": an instance that fails
+			// the hook's bound has no copy, rather than a bitwise one its drop hook
+			// would release twice.
+			if sym.bound_excluded {
+				entry.copy_excluded = true
+			} else {
+				entry.custom_try_clone = member
+			}
 		case .Convert, .None:
 		}
 	}
@@ -237,7 +252,7 @@ drop_hooks_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool
 		append(hooks, hook)
 	}
 	#partial switch info.kind {
-	case .Array, .Dynamic_Array:
+	case .Array, .Dynamic_Array, .Box:
 		drop_hooks_walk(c, info.element, visiting, hooks)
 	case .Map:
 		drop_hooks_walk(c, info.key, visiting, hooks)
@@ -277,7 +292,7 @@ has_move_only_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> boo
 @(private = "file")
 has_move_only_part_walk :: proc(c: ^Compiler, info: ^Type_Info, visiting: ^map[Type_Id]bool) -> bool {
 	#partial switch info.kind {
-	case .Array, .Dynamic_Array:
+	case .Array, .Dynamic_Array, .Box:
 		return type_clone_disabled_walk(c, info.element, visiting)
 	case .Map:
 		return type_clone_disabled_walk(c, info.key, visiting) ||
@@ -406,7 +421,7 @@ contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requ
 		return
 	}
 	#partial switch info.kind {
-	case .Struct, .Array, .Union, .Dynamic_Array, .Map, .String:
+	case .Struct, .Array, .Union, .Dynamic_Array, .Box, .Map, .String:
 	case .Invalid, .Void, .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune,
 	     .Untyped_Nil, .Untyped_String, .Interface, .Type:
 		return
@@ -423,7 +438,7 @@ contribute_underlying_lifecycle_members :: proc(k: ^Checker, type: Type_Id, requ
 	info.contributed += {.Lifecycle}
 
 	#partial switch info.kind {
-	case .Dynamic_Array, .Map, .String:
+	case .Dynamic_Array, .Box, .Map, .String:
 		if !entry.clone_disabled && !created {
 			contribute_intrinsic_copy_members(k, type)
 		}
@@ -503,7 +518,7 @@ clone_may_allocate :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	entry := lifecycle_of(c, type)
-	if entry.custom_try_clone != INVALID_SYMBOL || entry.container {
+	if entry.custom_try_clone != INVALID_SYMBOL || entry.container || entry.boxed {
 		return true
 	}
 	for part in lifecycle_parts(c, type) {
@@ -521,7 +536,7 @@ type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	entry := lifecycle_of(c, type)
-	if entry.custom_try_clone != INVALID_SYMBOL || entry.container {
+	if entry.custom_try_clone != INVALID_SYMBOL || entry.container || entry.boxed {
 		return true
 	}
 	for part in lifecycle_parts(c, type) {
@@ -670,8 +685,10 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 	}
 	switch sym.hook {
 	case .Drop, .Copy:
-		// Includes a record made move-only by one of its fields.
-		if sym.hook == .Copy && type_clone_disabled(k.c, subject) {
+		// Includes a record made move-only by one of its fields. A hook its own
+		// bound excluded is what made the instance move-only, so it is not a
+		// second declaration of anything.
+		if sym.hook == .Copy && !sym.bound_excluded && type_clone_disabled(k.c, subject) {
 			errorf(k.c, sym.span, "L0488", "a `move_only` type cannot also declare `hook(copy)`")
 			return
 		}
