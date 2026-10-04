@@ -1,0 +1,46 @@
+// design.md "Owned values": a temporary box lends its payload and is dropped
+// at the end of its full expression; the same loan and allocator argument
+// evaluate at compile time; a provider moved into a box keeps its handle.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+Noisy :: struct { id: int }
+
+impl Noisy {
+	bye :: hook(drop) proc(self: inout Noisy) { fmt.println("drop", self.id); }
+}
+
+read :: proc(value: ^int) -> int { return value^; }
+read_noisy :: proc(value: ^Noisy) -> int { return value.id; }
+
+count_allocator :: proc(count: ^mut int) -> Allocator {
+	count^ += 1;
+	return nil;
+}
+
+compute :: proc() -> int {
+	count := 0;
+	held := box(40, count_allocator(&mut count));
+	return count + read(held) + read(box(1));
+}
+
+COMPUTED :: compute();
+
+main :: proc() {
+	fmt.println(read(box(42)));
+	fmt.println(read_noisy(box(Noisy{1})));
+	fmt.println(box(Noisy{2}).id);
+	fmt.println(box(Noisy{3})^.id, box([2]int{4, 5})[1]);
+	fmt.println("projected");
+
+	fmt.println(COMPUTED, compute());
+
+	arena := mem.Arena.init();
+	handle := arena.allocator();
+	owner := box(move(arena));
+	value := box(7, handle);
+	fmt.println(value^);
+	_ = owner;
+}

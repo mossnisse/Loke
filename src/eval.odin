@@ -517,6 +517,28 @@ current_frame :: proc(ev: ^Evaluator) -> ^Eval_Frame {
 }
 
 eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool) {
+	// design.md "Owned values": a box lent as the `^T` of its payload.
+	if base := expr_base(e); base != nil && base.view_from != INVALID_TYPE &&
+	   underlying_kind(ev.k.c, base.view_from) == .Box && underlying_kind(ev.k.c, base.type) == .Pointer {
+		holder: ^Eval_Value
+		if base.addressable {
+			holder = eval_place(ev, e) or_return
+		} else {
+			value := eval_value_unviewed(ev, e) or_return
+			holder = eval_slot(ev, value) or_return
+		}
+		if len(holder.elements) != 1 {
+			eval_fail(ev, expr_span(e), "L0341", "this box holds no value")
+			return Eval_Value{}, false
+		}
+		return Eval_Value{kind = .Nil, type = base.type, target = &holder.elements[0]}, true
+	}
+	return eval_value_unviewed(ev, e)
+}
+
+// `eval_expr` before an implicit loan recorded on the node itself.
+@(private = "file")
+eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool) {
 	defer { if !eval_memory_ok(ev) { success = false } }
 	if e == nil {
 		return Eval_Value{}, false
@@ -2418,6 +2440,13 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		if expression_is_borrowed_place(v.bound[0]) {
 			payload, ok = copy_value(ev, payload)
 			if !ok {
+				return Eval_Value{}, false
+			}
+		}
+		// The allocator argument runs for its effects; the evaluator's box holds
+		// no storage of its own to take from it.
+		if len(v.bound) > 1 && v.bound[1] != nil {
+			if _, evaluated := eval_expr(ev, v.bound[1]); !evaluated {
 				return Eval_Value{}, false
 			}
 		}

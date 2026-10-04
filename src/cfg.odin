@@ -833,7 +833,8 @@ provider_end_phrase :: proc(graph: ^Flow_Graph, verb, name: string) -> string {
 	return graph.mode == .Lifecycle ? "" : fmt.aprintf("%s `%s`", verb, name, allocator = graph.alloc)
 }
 
-// The moves an initializer or a result takes whole, through composite literals.
+// The moves an initializer or a result takes whole, through composite literals
+// and the payload of a box.
 @(private = "file")
 mark_aliased_moves :: proc(graph: ^Flow_Graph, e: Expr) {
 	#partial switch v in e {
@@ -842,6 +843,8 @@ mark_aliased_moves :: proc(graph: ^Flow_Graph, e: Expr) {
 	case ^Expr_Call:
 		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange {
 			graph.aliased_moves[v] = true
+		} else if payload := boxed_payload(graph.k.c, v); payload != nil {
+			mark_aliased_moves(graph, payload)
 		}
 	case ^Expr_Composite:
 		for element in v.elements {

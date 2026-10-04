@@ -152,6 +152,8 @@ box_drop_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 	)
 }
 
+// The payload is cloned before the allocation is made, as `box(place)` does,
+// so a copy hook that panics leaves no unpublished block behind.
 @(private = "file")
 box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 	return container_thunk(
@@ -159,7 +161,23 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 		"i32", "ptr %out, ptr %src, ptr %a",
 		proc(e: ^Emitter, box_type: Type_Id) {
 			payload := box_element(e.c, box_type)
-			source := load(e, "ptr", "%src")
+			origin := box_payload_at(e, payload, load(e, "ptr", "%src"))
+			managed := emit_lifecycle(e, payload).managed
+			value: string
+			staged := ""
+			if managed {
+				staged = alloca(e, llvm_type(e, payload))
+				ok := emit_try_clone_into(e, payload, staged, origin, "%a")
+				cloned_label, refused_label := new_label(e, "boxclone.cloned"), new_label(e, "boxclone.refused")
+				branch_if(e, ok, cloned_label, refused_label)
+				place_label(e, refused_label)
+				fmt.sbprintln(&e.b, "  ret i32 0")
+				place_label(e, cloned_label)
+				value = load_place(e, payload, staged)
+			} else {
+				// Plain data is its own clone.
+				value = load_place(e, payload, origin)
+			}
 			block := temp(e)
 			fmt.sbprintfln(
 				&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %%a, i64 %d, i64 %d)",
@@ -167,30 +185,16 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 			)
 			no_memory := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, block)
-			refused_label, copy_label := new_label(e, "boxclone.refused"), new_label(e, "boxclone.copy")
-			branch_if(e, no_memory, refused_label, copy_label)
-			place_label(e, refused_label)
-			fmt.sbprintln(&e.b, "  ret i32 0")
-			place_label(e, copy_label)
-			fmt.sbprintfln(&e.b, "  store ptr %%a, ptr %s", block)
-			destination, origin := box_payload_at(e, payload, block), box_payload_at(e, payload, source)
-			if !emit_lifecycle(e, payload).managed {
-				// Plain data is its own clone.
-				store(e, payload, load_place(e, payload, origin), destination)
-				fmt.sbprintfln(&e.b, "  store ptr %s, ptr %%out", block)
-				fmt.sbprintln(&e.b, "  ret i32 1")
-				return
-			}
-			ok := emit_try_clone_into(e, payload, destination, origin, "%a")
-			publish_label, undo_label := new_label(e, "boxclone.publish"), new_label(e, "boxclone.undo")
-			branch_if(e, ok, publish_label, undo_label)
+			undo_label, publish_label := new_label(e, "boxclone.undo"), new_label(e, "boxclone.publish")
+			branch_if(e, no_memory, undo_label, publish_label)
 			place_label(e, undo_label)
-			fmt.sbprintfln(
-				&e.b, "  call void @loke_rt_v1_free(ptr %%a, ptr %s, i64 %d, i64 %d)",
-				block, box_block_size(e.c, payload), box_block_align(e.c, payload),
-			)
+			if managed {
+				emit_drop_place(e, payload, staged)
+			}
 			fmt.sbprintln(&e.b, "  ret i32 0")
 			place_label(e, publish_label)
+			fmt.sbprintfln(&e.b, "  store ptr %%a, ptr %s", block)
+			store(e, payload, value, box_payload_at(e, payload, block))
 			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %%out", block)
 			fmt.sbprintln(&e.b, "  ret i32 1")
 		},

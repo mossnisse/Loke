@@ -51,6 +51,17 @@ box_argument_denotes_type :: proc(k: ^Checker, e: Expr) -> bool {
 	return resolve_type_syntax(k, e) != INVALID_TYPE
 }
 
+// The payload a successful `box(value)` holds, or nil for any other call. Not
+// `try_box`'s: a refused allocation drops the payload, so a moved provider
+// would end while the result survives.
+boxed_payload :: proc(c: ^Compiler, v: ^Expr_Call) -> Expr {
+	sym := symbol_of(c, v.resolution.symbol)
+	if sym == nil || sym.builtin != .Box_New || len(v.bound) == 0 {
+		return nil
+	}
+	return v.bound[0]
+}
+
 // `box(T)` in type position.
 resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if v.denoted_type != INVALID_TYPE {

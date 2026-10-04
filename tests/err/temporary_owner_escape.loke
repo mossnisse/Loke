@@ -1,0 +1,32 @@
+package main; import "core:fmt"; import "core:mem";
+
+// A pointer to a temporary borrows the temporary, even when the temporary
+// also holds borrows of caller storage.
+
+Holder :: struct { view: []int }
+Ptr :: ^int;
+
+wrap :: proc(view: []int) -> ^Holder {
+	return &Holder{view};
+}
+
+boxed_pointer :: proc(value: ^int) -> ^Ptr {
+	return &box(value)^;
+}
+
+// A provider moved into a box ends with the box. `try_box` drops its payload
+// when the allocation is refused, so the provider ends at the move.
+main :: proc() {
+	arena := mem.Arena.init();
+	handle := arena.allocator();
+	owner := box(move(arena));
+	drop(owner);
+	value := box(7, handle);
+
+	second := mem.Arena.init();
+	other := second.allocator();
+	refused := try_box(move(second));
+	kept := box(8, other);
+	fmt.println(value^, kept^);
+	_ = refused;
+}

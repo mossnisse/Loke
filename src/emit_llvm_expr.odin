@@ -693,7 +693,8 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	case ^Expr_Postfix:
 		// `x or_return` is a value, materialised below like any other.
 		if v.boxed {
-			return emit_box_payload_address(e, expr_base(v.operand).type, emit_expr(e, v.operand))
+			// A temporary box drops at the end of its full expression.
+			return emit_box_payload_address(e, expr_base(v.operand).type, emit_borrowed_operand(e, v.operand))
 		}
 		if v.op == .Caret {
 			pointer := emit_expr(e, v.operand)
@@ -1050,7 +1051,8 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 	}
 	// A `box(T)` lent as the `^T` of its payload.
-	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, from) == .Box {
+	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, from) == .Box &&
+	   underlying_kind(e.c, as_type) == .Pointer {
 		return emit_box_payload_address(e, from, load_place(e, from, emit_address_at(e, expr, from)))
 	}
 	// A `[N]T` read as a `[]T` of all its elements.

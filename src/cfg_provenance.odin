@@ -1621,7 +1621,7 @@ prov_provider_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 }
 
 // The provider tokens a value moved out of locals carries, through composite
-// literals and `exchange`, or 0.
+// literals, `exchange`, and `box`, or 0.
 @(private = "file")
 prov_moved_bits :: proc(graph: ^Flow_Graph, e: Expr) -> u64 {
 	source: Expr
@@ -1631,6 +1631,8 @@ prov_moved_bits :: proc(graph: ^Flow_Graph, e: Expr) -> u64 {
 	case ^Expr_Call:
 		if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.builtin == .Exchange && len(v.bound) == 2 {
 			source = v.bound[0]
+		} else if payload := boxed_payload(graph.k.c, v); payload != nil {
+			return prov_moved_bits(graph, payload)
 		}
 	case ^Expr_Composite:
 		bits: u64
@@ -2893,11 +2895,13 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 			return place
 		}
 		loans := walk_flow_expr(graph, operand)
-		if len(loans) > 0 || !prov_expr_is_temporary(operand) {
+		if !prov_expr_is_temporary(operand) {
 			return loans
 		}
-		// A borrow of a temporary cannot escape its expression (design.md).
-		return prov_borrow(graph, prov_temp_root(graph, expr_span(operand)), nil, mutable, span, what)
+		// A borrow of a temporary cannot escape its expression (design.md), even
+		// when the temporary also holds borrows, as `&box(view)^` does.
+		temporary := prov_borrow(graph, prov_temp_root(graph, expr_span(operand)), nil, mutable, span, what)
+		return prov_join(graph, loans, temporary)
 	}
 	prov_walk_subscripts(graph, operand)
 	access_block, access_index := prov_access(graph, root, path, mutable ? .Write : .Read, span)

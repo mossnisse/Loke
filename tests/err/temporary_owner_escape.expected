@@ -1,0 +1,12 @@
+L0526
+@10:9
+this pointer cannot be returned: the temporary it borrows ends when this procedure returns
+L0526
+@14:9
+this pointer cannot be returned: the temporary it borrows ends when this procedure returns
+L0537
+@23:2
+dropping `owner` would end an allocator control block whose handle is still in use
+L0537
+@28:21
+moving `second` would end an allocator control block whose handle is still in use

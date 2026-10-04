@@ -1,0 +1,27 @@
+package main; import "core:fmt"; import "core:mem";
+
+// Copying a box clones its payload before allocating, so a copy hook that
+// panics leaves the destination allocator nothing to release.
+
+Payload :: struct { bytes: [128]u8 }
+
+impl Payload {
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Payload, Allocator_Error) {
+		panic("copy failed");
+		return .ok(Payload{});
+	}
+}
+
+main :: proc() {
+	room: [320]u8 = {};
+	arena := mem.Arena.from_buffer(&mut room[:]);
+	defer {
+		// The arena has room for one box.
+		switch (_ in try_box(Payload{}, arena.allocator())) {
+		case .ok: fmt.println(true);
+		case .err: fmt.println(false);
+		}
+	}
+	source := box(Payload{});
+	copy := source.clone(arena.allocator());
+}

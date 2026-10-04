@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- A pointer to a temporary that holds borrows, as `return &Holder{view};`,
+  now borrows the temporary too, so returning or keeping it is `L0526`; it was
+  accepted when the temporary held a borrow of caller storage, and the caller
+  received a pointer into a dead frame. Store the value in caller-owned
+  storage, or return it by value.
 - `new`, `new_clone`, `try_new`, `try_new_clone`, and checked `free` are gone,
   and with them `L0514`. A value that needs an allocation of its own is a
   `box(T)`: write `p := box(value)` or `box(value, allocator)` for
