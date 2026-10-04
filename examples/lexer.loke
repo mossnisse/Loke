@@ -5,7 +5,7 @@ import "core:fs";
 import "core:io";
 import "core:os";
 import "core:path";
-import "core:strings";
+import "core:slice";
 
 // Loke's lexer, in Loke: grammar.md "Lexical structure" as src/lexer.odin
 // implements it, token for token. Given a file it prints each token as
@@ -40,7 +40,7 @@ Kind :: enum {
 Token :: struct { kind: Kind, lo: int, hi: int }
 
 // The compiler's diagnostic code; the wording stays the compiler's business.
-Diagnostic :: struct { code: string, at: int }
+Diagnostic :: struct { code: string_view, at: int }
 
 Totals :: struct { files: int, tokens: int, diagnostics: int }
 
@@ -104,23 +104,42 @@ walk :: proc(directory: string_view, totals: inout Totals) -> Result(Unit, io.Er
 // before lexing.
 lex_file :: proc(file: string_view, found: inout [dynamic]Diagnostic) -> Result([dynamic]Token, io.Error) {
 	bytes := fs.read_bytes(file) or_return;
+	// grammar.md "Source encoding": reject a BOM before validating UTF-8,
+	// as src/source.odin's load_source does even when later bytes are invalid.
+	if (matches(bytes[:], 0, "\uFEFF")) {
+		error(inout found, "L0002", 0);
+		return .ok({});
+	}
 	switch (text in string_view.from_utf8(bytes[:])) {
 	case .some: return .ok(lex(text, inout found));
 	case .none:
-		error(inout found, "L0003", 0);
+		error(inout found, "L0003", invalid_utf8_offset(bytes[:]));
 		return .ok({});
 	}
+}
+
+// The first invalid UTF-8 sequence, or the end of valid bytes. Only used after
+// whole-file validation fails; the built-in validator checks each sequence's
+// continuation bytes and scalar bounds.
+invalid_utf8_offset :: proc(src: []u8) -> int {
+	at := 0;
+	for (at < src.len()) {
+		ch := src[at];
+		if (ch < 0x80) { at += 1; continue; }
+		width := 2 if ch < 0xe0 else (3 if ch < 0xf0 else 4);
+		if (at + width > src.len()) { return at; }
+		switch (string_view.from_utf8(src[at:at + width])) {
+		case .some: at += width;
+		case .none: return at;
+		}
+	}
+	return at;
 }
 
 // The whole token stream, ending with `EOF`, as src/lexer.odin's `lex`.
 lex :: proc(text: string_view, found: inout [dynamic]Diagnostic) -> [dynamic]Token {
 	tokens: [dynamic]Token = {};
 	src := text.bytes();
-	// grammar.md: a source file is UTF-8 *without* a byte order mark.
-	if (strings.starts_with(text, "\uFEFF")) {
-		error(inout found, "L0002", 0);
-		return tokens;
-	}
 	at := 0;
 	for (;;) {
 		at = skip_trivia(src, at, inout found);
@@ -140,10 +159,7 @@ peek :: proc(src: []u8, at: int) -> u8 {
 matches :: proc(src: []u8, at: int, text: string_view) -> bool {
 	wanted := text.bytes();
 	if (at + wanted.len() > src.len()) { return false; }
-	foreach (b, i in wanted.indexed()) {
-		if (src[at + i] != b) { return false; }
-	}
-	return true;
+	return slice.equal(src[at:at + wanted.len()], wanted);
 }
 
 is_digit :: proc(ch: u8) -> bool { return ch >= '0' && ch <= '9'; }
@@ -180,8 +196,8 @@ digits_end :: proc(src: []u8, from: int) -> int {
 	return at;
 }
 
-error :: proc(found: inout [dynamic]Diagnostic, code: string_view, at: int) {
-	found.append(Diagnostic{strings.copy(code), at});
+error :: proc(found: inout [dynamic]Diagnostic, @(escape=stored) code: string_view, at: int) {
+	found.append(Diagnostic{code, at});
 }
 
 skip_trivia :: proc(src: []u8, from: int, found: inout [dynamic]Diagnostic) -> int {
@@ -227,7 +243,10 @@ block_comment :: proc(src: []u8, from: int, found: inout [dynamic]Diagnostic) ->
 next_token :: proc(src: []u8, lo: int, found: inout [dynamic]Diagnostic) -> Token {
 	if (lo >= src.len()) { return {.EOF, lo, lo}; }
 	ch := src[lo];
-	if (is_ident_start(ch)) { return {keyword(src, lo, ident_end(src, lo)), lo, ident_end(src, lo)}; }
+	if (is_ident_start(ch)) {
+		hi := ident_end(src, lo);
+		return {keyword(src, lo, hi), lo, hi};
+	}
 	if (is_digit(ch)) { return number(src, lo, inout found); }
 	if (ch == '"') { return string_literal(src, lo, inout found); }
 	if (ch == '`') { return raw_string_literal(src, lo, inout found); }

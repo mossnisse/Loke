@@ -414,6 +414,9 @@ checklist.
 
 ### Fixed
 
+- `examples/lexer.loke` checks a source BOM before UTF-8 validation, matching
+  `lokec`'s `L0002` diagnostic even when later bytes are invalid, and reports
+  `L0003` at the first invalid UTF-8 sequence instead of always at byte 0.
 - Comparing or `switch`ing on a record that contains itself by value reports
   `L0364` instead of crashing the compiler with a stack overflow.
 - Nested procedure-literal arguments, as `sink(proc() { sink(proc() { ... }); });`,

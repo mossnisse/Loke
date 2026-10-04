@@ -2343,6 +2343,31 @@ example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
 		append(&files, ..found)
 	}
 	append(&files, "tests/err/byte_order_mark.loke", "tests/err/invalid_utf8.loke")
+	// Encoding failures happen before lexing; assert their offsets as well as
+	// comparing codes, including a BOM whose remaining bytes are invalid.
+	encoding_cases := []struct { name, input, stderr: string }{
+		{"bom-invalid", "\xef\xbb\xbf\xff", "0 L0002\n"},
+		{"late-invalid", "package main;\n\xff", "14 L0003\n"},
+		{"unicode-prefix", "\xc3\xa9\xef\xbf\xbd\xf0\x9f\x98\x80\xff", "9 L0003\n"},
+		{"continuation", "a\x80", "1 L0003\n"},
+		{"overlong-two", "a\xc0\xaf", "1 L0003\n"},
+		{"overlong-three", "a\xe0\x80\xaf", "1 L0003\n"},
+		{"overlong-four", "a\xf0\x80\x80\xaf", "1 L0003\n"},
+		{"surrogate", "a\xed\xa0\x80", "1 L0003\n"},
+		{"out-of-range", "a\xf4\x90\x80\x80", "1 L0003\n"},
+		{"truncated-two", "a\xc2", "1 L0003\n"},
+		{"truncated-three", "a\xe2\x82", "1 L0003\n"},
+		{"truncated-four", "a\xf0\x9f\x98", "1 L0003\n"},
+		{"bad-continuation", "a\xc2b", "1 L0003\n"},
+	}
+	encoding_start := len(files)
+	for c in encoding_cases {
+		file := fmt.tprintf("%s/example-lexer-%s.loke", TMP, c.name)
+		if !testing.expectf(t, os.write_entire_file(file, transmute([]u8)c.input), "cannot write %s", file) {
+			return
+		}
+		append(&files, file)
+	}
 	jobs := make([]Exec, 2 * len(files) + 1, context.temp_allocator)
 	// Allocated: a `[]string{...}` literal is stack storage this loop reuses.
 	for file, i in files {
@@ -2365,6 +2390,13 @@ example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
 			t, diagnostic_codes(string(want.stderr)) == diagnostic_codes(string(got.stderr)),
 			"%s: lokec reports %s, the lexer %s",
 			file, diagnostic_codes(string(want.stderr)), diagnostic_codes(string(got.stderr)),
+		)
+	}
+	for c, i in encoding_cases {
+		got := jobs[2 * (encoding_start + i) + 1]
+		testing.expectf(
+			t, normalise(string(got.stderr)) == normalise(c.stderr),
+			"%s: expected %q, got %q", c.name, c.stderr, string(got.stderr),
 		)
 	}
 	library := jobs[len(jobs) - 1]
