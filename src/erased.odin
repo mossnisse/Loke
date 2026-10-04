@@ -56,7 +56,7 @@ type_contains_any_view :: proc(c: ^Compiler, id: Type_Id, seen: ^map[Type_Id]boo
 	#partial switch info.kind {
 	case .Any_View:
 		return true
-	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Array, .Distinct:
+	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Box, .Array, .Distinct:
 		return type_contains_any_view(c, info.element, seen)
 	case .Map:
 		return type_contains_any_view(c, info.key, seen) ||

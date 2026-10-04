@@ -8,7 +8,8 @@ import "core:sync";
 
 // Too large for any allocator to satisfy, which is how a fixture reaches the
 // failure path of an explicitly fallible operation.
-Huge :: struct { pad: [4611686018427387904]u8 }
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
 
 Plain :: struct {
 	x: int,
@@ -37,8 +38,7 @@ Failing :: struct { id: int }
 
 impl Failing {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Failing, Allocator_Error) {
-		p := try_new(Huge, allocator) or_return;
-		free(p, allocator);
+		_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
 		return .ok(Failing{self.id});
 	}
 }
@@ -127,18 +127,17 @@ main :: proc() {
 	case .err: fmt.println(-1);
 	}
 
-	// design.md: `new_clone` "creates a new allocation root containing a clone of
-	// the value", so it fills the allocation through the same hook.
-	switch (held in try_new_clone(Res{5})) {
-	case .ok:
-		fmt.println(held^.id);
-		free(held);
+	// design.md "Owned values": a box made from a place clones it, through the
+	// same hook.
+	five := Res{5};
+	switch (held in try_box(five)) {
+	case .ok:  fmt.println(held^.id);
 	case .err: fmt.println(0);
 	}
 
-	// And destroys the allocation it could not publish into: the two elements
-	// already cloned are dropped, then the block is released.
-	switch (_ in try_new_clone(ok)) {
+	// A clone that fails leaves no box: the two elements already cloned are
+	// dropped, and nothing is allocated.
+	switch (_ in try_box(ok)) {
 	case .ok: fmt.println(0);
 	case .err: fmt.println(-2);
 	}

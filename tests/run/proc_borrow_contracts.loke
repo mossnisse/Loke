@@ -61,7 +61,7 @@ constant_view :: proc() -> []int {
 	return f(CONSTANT);
 }
 
-allocate :: proc() -> ^mut int { return try_new(int) or_else nil; }
+allocate :: proc() -> box(int) { return box(0); }
 read_erased :: proc(value: any_view) -> int { return value.as(int) or_else 0; }
 view_length :: proc(value: string_view) -> int { return value.len(); }
 
@@ -91,7 +91,8 @@ main :: proc() {
 	assert(run(chosen, values[:])[0] == 1);
 	allocator := allocate;
 	pointer := allocator();
-	if (pointer != nil) { pointer^ = 12; assert(pointer^ == 12); free(pointer); }
+	pointer^ = 12;
+	assert(pointer^ == 12);
 	assert(read_erased(37) == 37);
 	text: string = "hello";
 	assert(view_length(text) == 5);

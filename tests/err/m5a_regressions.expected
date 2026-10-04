@@ -1,18 +1,15 @@
-L0514
-@17:2
-`free` releases an allocation from `new` or `new_clone`; this pointer may designate local
 L0498
-@22:7
+@14:7
 cannot be applied to `static` storage, which is always live
 L0497
-@24:7
+@16:7
 names a variable; move the owner out of the aggregate first
 L0500
-@29:20
+@21:20
 cannot be used here: it has already been moved, dropped, or released
 L0500
-@36:16
+@28:16
 cannot be dropped here: it is live on only some of the paths
 L0500
-@37:15
+@29:15
 cannot be used here: it is live on only some of the paths

@@ -107,28 +107,6 @@ borrow_outlives_its_root :: proc() {
 	fmt.println(view[0]);
 }
 
-// `free` needs the base pointer of a fresh allocation.
-free_of_a_lexical_root :: proc() {
-	value := 1;
-	pointer := &mut value;
-	free(pointer);
-}
-
-double_free :: proc() {
-	q := try_new(int) or_else panic("allocation failed");
-	free(q);
-	free(q);
-}
-
-// A `free` invalidates every locally tracked alias, so one that survives it is
-// the error rather than the read it would later perform.
-alias_survives_free :: proc() {
-	q := try_new(int) or_else panic("allocation failed");
-	alias := q;
-	free(q);
-	fmt.println(alias^);
-}
-
 // A body with no managed local at all still gets borrow diagnostics: M5a would
 // not have built a graph for this one.
 all_trivial_body :: proc() {
@@ -178,12 +156,4 @@ switch_header_borrow :: proc(n: int) {
 	p: ^int = nil;
 	switch (x := n; n) { case 0: p = &x; case: p = &x; }
 	fmt.println(p^);
-}
-
-// Released on the back edge and never replaced, so the next pass frees it again.
-double_free_in_a_loop :: proc() {
-	p := new(int);
-	for (i := 0; i < 3; i += 1) {
-		free(p);
-	}
 }

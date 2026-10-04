@@ -13,12 +13,14 @@ main :: proc() {
 	room: [320]u8 = {};
 	arena := mem.Arena.from_buffer(&mut room[:]);
 	defer {
-		probe := try_new(Payload, arena.allocator()) or_else nil;
-		fmt.println(probe != nil);
-		if (probe != nil) { free(probe, arena.allocator()); }
+		// The arena has room for one box: the panicking copy left none behind.
+		switch (_ in try_box(Payload{}, arena.allocator())) {
+		case .ok: fmt.println(true);
+		case .err: fmt.println(false);
+		}
 	}
 	value: Payload = {};
-	switch (_ in try_new_clone(value, arena.allocator())) {
+	switch (_ in try_box(value, arena.allocator())) {
 	case .ok:
 	case .err:
 	}

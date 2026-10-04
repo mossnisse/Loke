@@ -403,17 +403,6 @@ union_result_escape :: proc(values: []int) -> []int {
 	}
 }
 
-Result_Pointers :: struct { left: ^mut int, right: ^mut int }
-allocate_result_pair :: proc() -> Result_Pointers {
-	p := try_new(int) or_else panic("allocation failed");
-	return Result_Pointers{p, p};
-}
-result_fields_may_alias :: proc() -> int {
-	pair := allocate_result_pair();
-	free(pair.left);
-	return pair.right^;
-}
-
 // Entry numbering is local to a body, so map results have no precise key
 // correspondence to export. The caller deliberately encounters the keys in
 // the opposite order from the callee.
@@ -529,23 +518,12 @@ unknown_global_aggregate_read :: proc() {
 	unknown_global_view = unknown_global_holder.view;
 }
 
-// A fresh allocation is valid until release, not for the duration of whatever
-// longer-lived place receives one of its aliases. Retention itself therefore
-// needs proof independent of the allocation root.
-retained_allocation: ^mut int;
-retain_and_release_escape :: proc() {
-	p := try_new(int) or_else panic("allocation failed");
-	retained_allocation = p;
-	free(p);
-}
-
-// The same rule covers allocations tied to a locally owned allocator region:
-// the arena's cleanup ends the allocation even without an explicit `free`.
-region_retained_allocation: ^mut int;
+// An owner tied to a locally owned allocator region cannot be retained past
+// it: the arena's cleanup ends the box's storage.
+region_retained_box: Option(box(int));
 retain_local_region_escape :: proc() {
 	arena := mem.Arena.init();
-	p := try_new(int, arena.allocator()) or_else panic("allocation failed");
-	region_retained_allocation = p;
+	region_retained_box = .some(box(0, arena.allocator()));
 }
 
 retain_for_callback :: proc(destination: inout Holder, @(escape=stored) values: []int) {

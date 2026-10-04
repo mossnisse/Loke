@@ -107,7 +107,7 @@ provider_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]b
 				return true
 			}
 		}
-	case .Array, .Dynamic_Array, .Map:
+	case .Array, .Dynamic_Array, .Box, .Map:
 		return provider_reach_walk(c, info.element, visited) || provider_reach_walk(c, info.key, visited)
 	}
 	return false

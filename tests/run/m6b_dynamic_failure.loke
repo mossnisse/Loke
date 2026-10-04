@@ -11,7 +11,8 @@ package main; import "core:fmt";
 // A representable request no heap will satisfy is how a failing provider is
 // written; there is no failure-injection provider.
 
-Huge :: struct { pad: [4611686018427387904]u8 }
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
 
 // One element whose own `try_clone` fails, so the container's insertion has to
 // clean up the prefix it already built.
@@ -21,8 +22,7 @@ impl Res {
 	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
 		if (self.id == 3) {
-			p := try_new(Huge, allocator) or_return;
-			free(p, allocator);
+			_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
 		}
 		return .ok(Res{self.id});
 	}

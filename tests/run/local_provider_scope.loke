@@ -23,13 +23,12 @@ dropped_outer :: proc() {
 	}
 }
 
-// Last use can precede region end without an explicit free.
+// A box backed by the region ends before it does.
 last_use :: proc() -> int {
 	total := 0;
 	{
 		a := mem.Scratch.init();
-		p := try_new(int, a.allocator()) or_else nil;
-		if (p == nil) { return 0; }
+		p := box(0, a.allocator());
 		p^ = 9;
 		total = p^;
 	}

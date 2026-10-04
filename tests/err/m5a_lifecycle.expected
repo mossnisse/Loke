@@ -21,16 +21,16 @@ L0412
 `release` implements `hook(drop)` and is not directly accessible; use `drop(value)`
 L0698
 @47:2
-`bad` holds a `Result(^mut Move_Only, Allocator_Error)` that is never used
-L0491
-@47:23
-`Move_Only` is move-only, so it cannot be cloned into a new allocation
+`bad` holds a `Result(box(Move_Only), Allocator_Error)` that is never used: inspect it, or discard it with `_ = ...`
+L0503
+@47:17
+`Move_Only` is move-only, so this box cannot copy it; write `move(...)` to transfer ownership instead
 L0412
 @49:2
 `release` implements `hook(drop)` and is not directly accessible; use `drop(value)`
-L0490
+L0714
 @52:13
-`try_new` takes an operand and an optional allocator
+`try_box` takes a value and an optional allocator
 L0490
 @53:12
 `default_allocator` takes no arguments

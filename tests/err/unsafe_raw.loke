@@ -26,8 +26,9 @@ main :: proc() {
 	_ = unsafe.string_view(bytes, text);
 	_ = unsafe.string_view(bytes);
 
-	// The release is sized, so it names the pointee type. A `rawptr` is cast
-	// back on first, and a `^T` reads the allocation without getting to end it.
+	// The release is sized, so it names the pointee type: a `[^]T`, or a `^mut T`
+	// rebuilt from one. A `rawptr` is cast back first, and a `^T` reads the
+	// allocation without getting to end it.
 	held: rawptr = &mut values[0];
 	unsafe.free(held, mem.default_allocator());
 	reader: ^int = &values[0];

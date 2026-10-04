@@ -50,6 +50,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// package dependency that would exist only to spell a name.
 		contribute_builtin(c, pkg, "default_allocator", .Default_Allocator, public = false)
 		contribute_builtin(c, pkg, "unsafe_free", .Unsafe_Free, public = false)
+		contribute_builtin(c, pkg, "unsafe_try_new", .Unsafe_Try_New, public = false)
 		// The payload is capacity inside that block, so it arrives and leaves the way
 		// a container element does, without asking `T` for a zero.
 		contribute_builtin(c, pkg, "unsafe_write", .Unsafe_Write, public = false)
@@ -83,6 +84,8 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// and the only release a handle over a `rawptr` control block can perform:
 		contribute_builtin(c, pkg, "forget", .Unsafe_Forget)
 		contribute_builtin(c, pkg, "free", .Unsafe_Free)
+		contribute_builtin(c, pkg, "new", .Unsafe_New)
+		contribute_builtin(c, pkg, "try_new", .Unsafe_Try_New)
 		// Knowing whether raw capacity holds a value, so the container author says
 		// so (design.md "Uninitialized capacity"):
 		contribute_builtin(c, pkg, "take", .Unsafe_Take)

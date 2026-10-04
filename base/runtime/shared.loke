@@ -36,9 +36,9 @@ package runtime;
 // zero, and the block itself is released when `weak` does.
 //
 // The payload is capacity (design.md "Uninitialized capacity"), so the block
-// has a zero whatever `T` is and `new` can make one: `live` says whether it
-// holds a value, and the payload is written in and taken out without a zero `T`
-// ever standing in for it.
+// is allocated before it holds a value: `live` says whether it does, and the
+// payload is written in and taken out without a zero `T` ever standing in for
+// it.
 @(private)
 Shared_Block :: struct($T: type) {
 	strong:    int,
@@ -98,10 +98,8 @@ try_shared_from_clone :: proc(
 try_shared_from_move :: proc(
 	@(escape=stored) value: move $T, allocator: Allocator = default_allocator(),
 ) -> Result(Shared(T), Allocator_Error) {
-	block := try_new(Shared_Block(T), allocator) or_return;
-	block^.strong = 1;
-	block^.weak = 1;
-	block^.allocator = allocator;
+	raw := unsafe_try_new(Shared_Block(T){strong = 1, weak = 1, allocator = allocator}, allocator) or_return;
+	block := (^mut Shared_Block(T))(raw);
 	unsafe_write(block^.payload[0], move(value));
 	block^.live = 1;
 	return .ok(Shared(T){rawptr(block)});

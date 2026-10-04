@@ -3,7 +3,8 @@ package main; import "core:fmt";
 // Map insertion has two independent failure points: cloning the incoming value
 // and cloning a new key while the table grows. Neither may replace an existing
 // value or publish a rehash.
-Huge :: struct { pad: [4611686018427387904]u8 }
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
 
 Key :: struct { id: int }
 
@@ -11,8 +12,7 @@ impl Key {
 	release :: hook(drop) proc(self: inout Key) { self.id = 0; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Key, Allocator_Error) {
 		if (self.id == 99) {
-			p := try_new(Huge, allocator) or_return;
-			free(p, allocator);
+			_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
 		}
 		return .ok(Key{self.id});
 	}
@@ -26,8 +26,7 @@ impl Value {
 	release :: hook(drop) proc(self: inout Value) { self.id = 0; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
 		if (self.id == 99) {
-			p := try_new(Huge, allocator) or_return;
-			free(p, allocator);
+			_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
 		}
 		return .ok(Value{self.id});
 	}

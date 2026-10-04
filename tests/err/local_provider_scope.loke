@@ -11,14 +11,13 @@ outlive_local_arena :: proc() {
 	fmt.println(xs[0]);
 }
 
-pointer_outlives_local_arena :: proc() {
-	p: ^mut int = nil;
+box_outlives_local_arena :: proc() {
+	p: Option(box(int)) = .none;
 	{
 		a := mem.Arena.init();
-		p = try_new(int, a.allocator()) or_else nil;
+		p = .some(box(0, a.allocator()));
 	}
-	if (p == nil) { panic("no"); }
-	fmt.println(p^);
+	fmt.println(p);
 }
 
 // No subsequent read is needed: xs still has a cleanup obligation.
@@ -56,6 +55,6 @@ conditional_drop :: proc(remove: bool) {
 }
 
 main :: proc() {
-	outlive_local_arena(); pointer_outlives_local_arena();
+	outlive_local_arena(); box_outlives_local_arena();
 	scratch_break(); scratch_continue(); conditional_drop(false);
 }

@@ -5,14 +5,14 @@ package main; import "core:fmt";
 // unchanged." M5a's fixed fallback is a non-unwinding trap, taken before the
 // destination is touched (m5a-plan step 4).
 
-Huge :: struct { pad: [4611686018427387904]u8 }
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
 
 Failing :: struct { id: int }
 
 impl Failing {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Failing, Allocator_Error) {
-		p := try_new(Huge, allocator) or_return;
-		free(p, allocator);
+		_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
 		return .ok(Failing{self.id});
 	}
 

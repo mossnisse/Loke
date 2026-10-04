@@ -31,10 +31,6 @@ main :: proc() {
 	partial := Holder{1};
 	nested := Wrapped{};
 
-	// A fresh allocation is zeroed.
-	p := try_new(Choice);
-	q := try_new(Named);
-
 	// A written length fills that many slots; a constant `0` length fills none,
 	// which is how `make(T, 0, capacity)` reserves storage for one of these.
 	filled := try_make([dynamic]Choice, 4);
@@ -56,5 +52,5 @@ main :: proc() {
 	// manufactures a zero, so nothing here is rejected. `tests/run/
 	// no_zero_containers.loke` runs it.
 
-	fmt.println(blank, partial, nested, p, q, filled.len(), reserved.len(), ys.len(), global);
+	fmt.println(blank, partial, nested, filled.len(), reserved.len(), ys.len(), global);
 }

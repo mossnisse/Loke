@@ -92,29 +92,6 @@ move_an_owner :: proc(values: []int) -> Owner {
 	return move(owner);
 }
 
-// --- allocation bases -------------------------------------------------------
-
-// POSITIVE. The bare base reaches checked `free`.
-alloc_bare :: proc() {
-	pointer := try_new(int) or_else nil;
-	if (pointer == nil) { return; }
-	pointer^ = 1;
-	free(pointer);
-}
-
-// POSITIVE since step 5, and a measured false rejection before it: the same
-// allocation base put in a record field reaches checked `free` too. An alias or
-// an interior pointer still does not.
-Handle :: struct { target: ^mut int }
-
-alloc_wrapped :: proc() {
-	pointer := try_new(int) or_else nil;
-	if (pointer == nil) { return; }
-	pointer^ = 1;
-	handle := Handle{pointer};
-	free(handle.target);
-}
-
 // POSITIVE. Two elements of a small fixed array are two places, so returning the
 // one that borrows the caller's argument does not name the local the other holds.
 elements_are_independent :: proc(values: []int) -> []int {
@@ -323,8 +300,6 @@ main :: proc() {
 	fmt.println(write_beside_a_borrowed_element());
 	fmt.println(overwrite_one_element(numbers[:]).len());
 
-	alloc_bare();
-	alloc_wrapped();
 
 	holder: Holder = {};
 	retain_into_inout(inout holder, others[:]);

@@ -86,10 +86,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return "0"
 		case .Default_Allocator:
 			return emit_default_allocator(e)
-		case .New, .New_Clone, .Try_New, .Try_New_Clone:
-			kind, _ := allocation_builtin(symbol.builtin)
-			return emit_allocation_pair(e, v, kind, as_type)[0]
-		case .Box_New, .Try_Box:
+		case .Box_New, .Try_Box, .Unsafe_New, .Unsafe_Try_New:
 			return emit_box_new(e, v, as_type)
 		case .Make, .Try_Make:
 			return emit_make_container(e, v, as_type)[0]
@@ -137,7 +134,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return emit_atomic_builtin(e, v, symbol.builtin, as_type)
 		case .Simd_Cast, .Simd_Select, .Simd_Reduce:
 			return emit_simd_builtin(e, v, symbol.builtin, as_type)
-		case .Free, .Unsafe_Free:
+		case .Unsafe_Free:
 			emit_free(e, v)
 			return "0"
 		case .Free_All:
@@ -307,12 +304,9 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []stri
 		case Call_Allocation:
 			kind, _ := allocation_builtin(call_builtin_kind(e, v))
 			if kind == .Make { return emit_make_container(e, v, as_type) }
-			if kind == .Box_New || kind == .Try_Box {
-				single := make([]string, 1)
-				single[0] = emit_box_new(e, v, as_type)
-				return single
-			}
-			return emit_allocation_pair(e, v, kind, as_type)
+			single := make([]string, 1)
+			single[0] = emit_box_new(e, v, as_type)
+			return single
 		case Call_Text:
 			return emit_text_operation(e, v, as_type)
 		case Call_Text_Conversion:
@@ -368,126 +362,6 @@ emit_alloc_outcome :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, failed,
 	e.terminated = true
 	place_label(e, ok)
 	return value
-}
-
-// `new` and `new_clone`, in either spelling.
-@(private = "file")
-emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> []string {
-	checked := v.operation.(Call_Allocation)
-	if kind == .New_Clone && emit_lifecycle(e, checked.type).clone_fallible {
-		return emit_new_clone_hook(e, v, as_type)
-	}
-	value := ""
-	if kind == .New_Clone {
-		// The clone only borrows its source; an owned temporary one is dropped at
-		// the end of its full expression (design.md "Temporaries and procedure
-		// boundaries").
-		value = emit_borrowed_operand(e, v.bound[0])
-	}
-	allocator := emit_allocator_operand(e, v, kind == .New ? 0 : 1)
-	size, align := type_size(e.c, checked.type), type_align(e.c, checked.type)
-	pointer := temp(e)
-	if kind == .New {
-		fmt.sbprintfln(
-			&e.b, "  %s = call ptr @loke_rt_v1_alloc_zeroed(ptr %s, i64 %d, i64 %d)",
-			pointer, allocator, size, align,
-		)
-	} else {
-		fmt.sbprintfln(
-			&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
-			pointer, allocator, size, align,
-		)
-	}
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, pointer)
-
-	if kind == .New_Clone {
-		store_label, done_label := new_label(e, "newclone.store"), new_label(e, "newclone.done")
-		fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", failed, done_label, store_label)
-		place_label(e, store_label)
-		if emit_lifecycle(e, checked.type).managed {
-			value = emit_clone_value(e, checked.type, value, allocator)
-		}
-		store(e, checked.type, value, pointer)
-		branch(e, done_label)
-		place_label(e, done_label)
-		e.terminated = false
-	}
-
-	out := make([]string, 1)
-	out[0] = emit_alloc_outcome(e, v, as_type, failed, pointer, allocator)
-	return out
-}
-
-// The fallible-clone half of `new_clone`.
-@(private = "file")
-emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
-	checked := v.operation.(Call_Allocation)
-	value := emit_borrowed_operand(e, v.bound[0])
-	allocator := emit_allocator_operand(e, v, 1)
-	size, align := type_size(e.c, checked.type), type_align(e.c, checked.type)
-
-	pointer_slot := alloca(e, "ptr")
-	error_slot := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", pointer_slot)
-	fmt.sbprintfln(&e.b, "  store i64 1, ptr %s", error_slot)
-
-	hook := emit_lifecycle(e, checked.type).try_clone
-	if hook == INVALID_SYMBOL {
-		backend_fail(e, "a fallible `new_clone` has no `try_clone` member")
-		failed := make([]string, 1)
-		failed[0] = "zeroinitializer"
-		return failed
-	}
-	clone_result := symbol_of(e.c, hook).result
-	receiver_type, receiver := call_receiver_operand(e, hook, checked.type, value)
-	returned := emit_call_result(
-		e, clone_result, symbol_name(e, hook), fmt.aprintf("%s %s, ptr %s", receiver_type, receiver, allocator),
-	)
-	clone_slot := emit_union_spill(e, clone_result, returned)
-	failed := emit_union_failed(e, clone_result, returned)
-	cloned := emit_union_payload(e, clone_result, checked.type, clone_slot)
-	refused_label := new_label(e, "newclone.refused")
-	allocate_label, done_label := new_label(e, "newclone.allocate"), new_label(e, "newclone.done")
-	branch_if(e, failed, refused_label, allocate_label)
-
-	// The clone's error becomes a status again, so its size goes back to the note.
-	place_label(e, refused_label)
-	emit_restore_refusal(e, allocator, emit_union_payload(e, clone_result, TYPE_ALLOCATOR_ERROR, clone_slot))
-	branch(e, done_label)
-
-	place_label(e, allocate_label)
-	guard := hold_temporary_value(e, checked.type, cloned)
-	pointer := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
-		pointer, allocator, size, align,
-	)
-	no_memory := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, pointer)
-	release_label, publish_label := new_label(e, "newclone.release"), new_label(e, "newclone.publish")
-	branch_if(e, no_memory, release_label, publish_label)
-
-	place_label(e, release_label)
-	drop_temporary_value(e, guard)
-	branch(e, done_label)
-
-	place_label(e, publish_label)
-	store(e, checked.type, cloned, pointer)
-	finish_temporary_drop(e, guard)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", pointer, pointer_slot)
-	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", error_slot)
-	branch(e, done_label)
-
-	place_label(e, done_label)
-	e.terminated = false
-	published, code, broke := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", published, pointer_slot)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", code, error_slot)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", broke, code)
-	out := make([]string, 1)
-	out[0] = emit_alloc_outcome(e, v, as_type, broke, published, allocator)
-	return out
 }
 
 // `make(T, counts..., allocator)` receives checker-bound operands in order.
@@ -554,14 +428,14 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	return out
 }
 
-// Releases a checked allocation root with its original layout.
+// `unsafe.free`: releases an allocation sized by the pointer's element type.
 @(private = "file")
 emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	pointer := emit_expr(e, v.bound[0])
 	allocator := emit_allocator_operand(e, v, 1)
 	info := underlying_info(e.c, expr_base(v.bound[0]).type)
-	if info == nil || info.kind != .Pointer {
-		backend_fail(e, "`free` did not receive an allocation pointer")
+	if info == nil || (info.kind != .Pointer && info.kind != .C_Pointer) {
+		backend_fail(e, "`unsafe.free` did not receive an allocation pointer")
 		return
 	}
 	fmt.sbprintfln(

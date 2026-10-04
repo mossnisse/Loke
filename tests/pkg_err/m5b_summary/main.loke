@@ -34,11 +34,11 @@ resets_across_a_package :: proc(allocator: Allocator) {
 	views.release(allocator);
 }
 
-// The promise written, the call is accepted; the allocation has no surviving
-// carrier, so the reset releases it.
+// The promise written, the call is accepted; the box is gone before the reset
+// releases its region.
 marked_across_a_package :: proc(@(allocator_reset) allocator: Allocator) {
-	switch (pointer in try_new(int, allocator)) {
-	case .ok:  pointer^ = 1;
+	switch (made in try_box(0, allocator)) {
+	case .ok:  made^ = 1;
 	case .err: return;
 	}
 	views.release(allocator);

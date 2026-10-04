@@ -1,0 +1,13 @@
+declare ptr @loke_rt_v1_selected_allocator()
+declare ptr @loke_rt_v1_alloc(ptr, i64, i64)
+declare void @loke_rt_v1_free(ptr, ptr, i64, i64)
+call ptr @loke_rt_v1_alloc(ptr %t*, i64 16, i64 8)
+box.release.
+box.publish.
+@loke.i.Res.try_clone(ptr %t*, ptr %t*)
+box.refused.
+box.cloned.
+define private void @loke.boxdrop.*(ptr %p)
+call void @loke_rt_v1_free(ptr %t*, ptr %t*, i64 16, i64 8)
+call ptr @loke_rt_v1_alloc(ptr %t*, i64 8, i64 8)
+call void @loke_rt_v1_free(ptr %t*, ptr %t*, i64 8, i64 8)

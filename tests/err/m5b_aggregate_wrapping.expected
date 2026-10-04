@@ -1,9 +1,9 @@
 L0526
 @21:9
 this slice cannot be returned: `local` ends when this procedure returns
-L0526
+L0310
 @27:9
-this slice cannot be returned: `local` ends when this procedure returns
+cannot return `Choice` with `Holder`
 L0511
 @36:2
 this write of `numbers` is not compatible with the read-only slice of it that is still in use
@@ -60,7 +60,7 @@ L0526
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @206:9
-this slice cannot be returned: `local` ends when this procedure returns
+this slice may depend on `local`, which ends when this procedure returns
 L0526
 @219:9
 this slice cannot be returned: `local` ends when this procedure returns
@@ -130,51 +130,45 @@ this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @401:23
 this slice cannot be returned: `local` ends when this procedure returns
-L0512
-@413:2
-this allocation cannot be released here: a pointer of it is still in use
 L0526
-@431:9
+@420:9
+this slice may depend on `local`, which ends when this procedure returns
+L0526
+@434:9
+this slice may depend on `local`, which ends when this procedure returns
+L0526
+@448:9
+this slice may depend on `local`, which ends when this procedure returns
+L0526
+@458:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@445:9
-this slice cannot be returned: `local` ends when this procedure returns
-L0526
-@459:9
-this slice cannot be returned: `local` ends when this procedure returns
-L0526
-@469:9
-this slice cannot be returned: `local` ends when this procedure returns
-L0526
-@476:9
+@465:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0647
-@482:2
+@471:2
 this slice borrows `local`, which does not outlive `retained_holders`: process-lifetime storage
 L0647
-@486:2
+@475:2
 this slice borrows `local`, which does not outlive `destination`: storage the caller owns
 L0647
-@491:2
+@480:2
 this slice borrows `local`, which does not outlive `destination`: storage the caller owns
 L0646
-@497:2
+@486:2
 this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
 L0526
-@506:9
+@495:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@513:9
+@502:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0647
-@521:2
+@510:2
 this slice borrows `aggregate_tls_numbers`, which does not outlive `aggregate_global_view`: process-lifetime storage
+L0536
+@526:2
+this value is backed by an allocator region created in this procedure, so it cannot be stored in `region_retained_box` (file-scope storage), which outlives that region
 L0647
-@538:2
-this pointer borrows this allocation, which does not outlive `retained_allocation`: process-lifetime storage
-L0647
-@548:2
-this pointer borrows this allocation, which does not outlive `region_retained_allocation`: process-lifetime storage
-L0647
-@559:2
+@537:2
 this slice borrows `local`, which does not outlive `distinct_global_holder`: process-lifetime storage

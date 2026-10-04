@@ -31,33 +31,15 @@ L0512
 L0513
 @107:14
 this slice is used after `local`, the local it borrows, has ended
-L0514
-@114:2
-`free` releases an allocation from `new` or `new_clone`; this pointer may designate local
 L0512
-@119:2
-this allocation cannot be released here: a pointer of it is still in use
-L0514
-@120:2
-this allocation has already been released
-L0512
-@128:2
-this allocation cannot be released here: a pointer of it is still in use
-L0641
-@128:7
-`q` cannot be used here: a mutable reborrow of it is still in use
-L0512
-@137:2
+@115:2
 `value` cannot be assigned here: a read-only pointer of it is still in use
 L0513
-@168:14
+@146:14
 this pointer is used after `x`, the local it borrows, has ended
 L0513
-@174:14
+@152:14
 this pointer is used after `x`, the local it borrows, has ended
 L0513
-@180:14
+@158:14
 this pointer is used after `x`, the local it borrows, has ended
-L0514
-@187:3
-this allocation has already been released

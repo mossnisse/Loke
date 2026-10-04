@@ -10,6 +10,15 @@ checklist.
 
 ### Breaking changes
 
+- `new`, `new_clone`, `try_new`, `try_new_clone`, and checked `free` are gone,
+  and with them `L0514`. A value that needs an allocation of its own is a
+  `box(T)`: write `p := box(value)` or `box(value, allocator)` for
+  `p := new_clone(value)` and drop the `free`, which the box does at scope
+  exit; `try_box` replaces the `try_` forms; a box passes where a `^T` is
+  wanted, and `&mut p^` is its `^mut T`. Raw storage that nothing owns is
+  `unsafe.new(value, allocator)` or `unsafe.try_new`, which return a `[^]T`,
+  released with `unsafe.free`, which now takes that `[^]T` or a `^mut T` and
+  reports anything else as `L0493` (design.md "The `unsafe` package").
 - An integer conversion `T(v)` keeps the value or panics: a narrowing that
   would lose bits, or a negative value converted to an unsigned type, used to
   keep the low bits silently. A constant that does not fit is `L0712`, typed or

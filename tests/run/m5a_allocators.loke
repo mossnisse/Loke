@@ -2,7 +2,7 @@ package main; import "core:mem"; import "core:fmt";
 
 // design.md "Allocators" and "Allocation failure" (m5a-plan step 3): the
 // explicitly fallible primitives always return their error and never invoke a
-// failure policy, and `free` returns no status.
+// failure policy.
 
 Handle :: move_only struct {
 	id:    int,
@@ -48,11 +48,9 @@ impl Counter {
 // `Result(T, Allocator_Error)`, so it propagates with `or_return` rather than
 // an explicit test.
 direct :: proc() -> Result(int, Allocator_Error) {
-	p := try_new(int) or_return;
+	p := try_box(0) or_return;
 	p^ = 11;
-	n := p^;
-	free(p);
-	return .ok(n);
+	return .ok(p^);
 }
 
 // The same propagation into a user's own two-variant failure union, which
@@ -60,43 +58,38 @@ direct :: proc() -> Result(int, Allocator_Error) {
 Boxed :: union @(failure=broke) { held: int, broke: Allocator_Error }
 
 wrapped :: proc() -> Boxed {
-	p := try_new(int) or_return;
+	p := try_box(0) or_return;
 	p^ = 12;
-	n := p^;
-	free(p);
-	return .held(n);
+	return .held(p^);
 }
 
 main :: proc() {
-	// `new` zero-initialises and reports failure explicitly.
-	p := try_new(int) or_else nil;
-	if (p == nil) {
+	// `try_box` reports failure explicitly.
+	switch (p in try_box(0)) {
+	case .ok:
+		fmt.println(p^);
+		p^ = 42;
+		fmt.println(p^);
+	case .err:
 		fmt.println(-1);
 		return;
 	}
-	fmt.println(p^);
-	p^ = 42;
-	fmt.println(p^);
-	free(p);
 
-	// `new_clone` copies its operand into the fresh allocation.
-	q := try_new_clone(7) or_else nil;
-	if (q != nil) {
-		fmt.println(q^);
-		free(q);
+	// It takes its value as an initialization does, before its allocator.
+	switch (q in try_box(7)) {
+	case .ok:  fmt.println(q^);
+	case .err:
 	}
-	ordered := try_new_clone(ordered_value(), ordered_allocator()) or_else nil;
-	if (ordered != nil) {
-		fmt.println(order);
-		free(ordered);
+	switch (_ in try_box(ordered_value(), ordered_allocator())) {
+	case .ok:  fmt.println(order);
+	case .err:
 	}
 
-	// An explicit allocator argument selects the same default provider in M5a.
+	// An explicit allocator argument selects the same default provider.
 	a := mem.default_allocator();
-	r := try_new(Counter, a) or_else nil;
-	if (r != nil) {
-		fmt.println(r^.count);
-		free(r);
+	switch (r in try_box(Counter{}, a)) {
+	case .ok:  fmt.println(r^.count);
+	case .err:
 	}
 
 	// The public `try_clone` wrapper returns the copy hook's error.
@@ -121,10 +114,6 @@ main :: proc() {
 	fmt.println(1);
 
 	// `or_else` takes the same result and supplies a value instead of it.
-	s := try_new(int) or_else nil;
-	if (s != nil) {
-		s^ = 13;
-		fmt.println(s^);
-		free(s);
-	}
+	s := try_box(13) or_else box(-1);
+	fmt.println(s^);
 }

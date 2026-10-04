@@ -6,13 +6,20 @@ package lokec
 
 import "core:fmt"
 
-// `box(value[, allocator])` and `try_box(...)`. The payload is held as a
-// temporary until the allocation publishes it, so a failure or a panic on the
+// `box(value[, allocator])` and `try_box(...)`, and the headerless allocation
+// `unsafe.new` and `unsafe.try_new` hand out as a `[^]T`. The payload is held as
+// a temporary until the allocation publishes it, so a failure or a panic on the
 // way drops it exactly once.
 @(private)
 emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	checked := v.operation.(Call_Allocation)
 	payload := checked.type
+	base, _ := allocation_builtin(call_builtin_kind(e, v))
+	header := base == .Box_New
+	size, align := box_block_size(e.c, payload), box_block_align(e.c, payload)
+	if !header {
+		size, align = type_size(e.c, payload), type_align(e.c, payload)
+	}
 	operations := emit_lifecycle(e, payload)
 	value := emit_expr(e, v.bound[0])
 	copies := operations.managed && expression_is_borrowed_place(v.bound[0])
@@ -44,10 +51,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	}
 
 	block := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
-		block, allocator, box_block_size(e.c, payload), box_block_align(e.c, payload),
-	)
+	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)", block, allocator, size, align)
 	no_memory := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, block)
 	release_label, publish_label := new_label(e, "box.release"), new_label(e, "box.publish")
@@ -58,8 +62,12 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	branch(e, done_label)
 
 	place_label(e, publish_label)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, block)
-	store(e, payload, value, box_payload_at(e, payload, block))
+	if header {
+		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, block)
+		store(e, payload, value, box_payload_at(e, payload, block))
+	} else {
+		store(e, payload, value, block)
+	}
 	finish_temporary_drop(e, guard)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", block, block_slot)
 	branch(e, done_label)

@@ -84,7 +84,7 @@ impl Thread {
 // What a new thread starts from: the entry and its argument, on the heap until
 // the thread takes them. `run` leads so the non-generic `thread_main` can find
 // the instantiation that knows `T`. The argument is capacity (design.md
-// "Uninitialized capacity"), so `new` needs no zero `T`.
+// "Uninitialized capacity"), so the block is allocated before it holds one.
 @(private)
 Start :: struct($T: type) {
 	run:   proc(block: rawptr),
@@ -122,9 +122,7 @@ thread_main :: proc "stdcall" (raw: rawptr) -> u32 {
 // end under it. Running out of memory or threads panics.
 @(private)
 spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) -> Thread {
-	block := new(Start(T));
-	block^.run = Start(T).begin;
-	block^.entry = entry;
+	block := (^mut Start(T))(unsafe.new(Start(T){run = Start(T).begin, entry = entry}));
 	unsafe.write(block^.arg[0], move(arg));
 	block^.live = 1;
 	handle := rt_create_thread(nil, 0, thread_main, rawptr(block), 0, nil);

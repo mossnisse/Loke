@@ -397,11 +397,6 @@ Builtin_Kind :: enum {
 	// the allocator's failure policy and the `try_` forms return the error;
 	// `allocation_builtin` pairs them. `free_all` lowers to the provider's reset
 	// entry once provenance proves no dependant survives it.
-	New,
-	New_Clone,
-	Try_New,
-	Try_New_Clone,
-	Free,
 	Free_All,
 	// design.md "Owned values": `box(value)`, which as `box(T)` also names the
 	// type, and `try_box(value)`.
@@ -437,6 +432,10 @@ Builtin_Kind :: enum {
 	// Releases an allocation whose root the compiler cannot see — one reached
 	// through a `rawptr` field, a parameter, or foreign code.
 	Unsafe_Free,
+	// design.md "The `unsafe` package": `unsafe.new(value[, allocator])`, an
+	// allocation the caller releases with `unsafe.free`, and its `try_` form.
+	Unsafe_New,
+	Unsafe_Try_New,
 	// design.md "`unsafe.transmute`": its first argument is a *type*, and
 	// reinterpretation is not a universally valid conversion.
 	Unsafe_Transmute,

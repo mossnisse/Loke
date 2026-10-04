@@ -7,33 +7,24 @@ this read of `values` is not compatible with the mutable slice of it that is sti
 L0511
 @33:38
 this write of `values` is not compatible with the read-only slice of it that is still in use
-L0514
-@44:2
-this pointer may designate local
 L0511
-@56:2
+@45:2
 this write of `values` is not compatible with the read-only slice of it that is still in use
 L0537
-@74:2
+@63:2
 this reset would end the region backing `held`, which is still live here
 L0538
-@85:2
+@74:2
 this call may reset a pre-existing or unknown allocator region, so the reset cannot be hidden in this procedure
 L0537
-@102:2
+@91:2
 this reset would end the region backing `result`, which is still live here
 L0537
-@116:2
-this reset would end the region backing `held`, which is still live here
-L0514
-@126:2
-this pointer may designate thread-duration storage
-L0514
-@132:2
-this pointer may designate static-duration storage
-L0537
-@141:2
+@105:2
 this reset would end the region backing `held`, which is still live here
 L0537
-@151:2
+@115:2
+this reset would end the region backing `held`, which is still live here
+L0537
+@125:2
 this reset would end the region backing `held`, which is still live here

@@ -79,7 +79,7 @@ are **reserved**: no name a lookup can reach may be one of them. A field or enum
 member is reached by a selector rather than by lookup, so those names stay free.
 
 Every built-in procedure is an ordinary predeclared identifier that a
-declaration may shadow, including `drop`, `new`, `make`, `size_of`, `type_of`,
+declaration may shadow, including `drop`, `box`, `make`, `size_of`, `type_of`,
 and the compile-time `static_assert`, `build_config`, `source_location`, and
 `caller_location`. There is no `#name` lexical form. Element counts are
 receiver members, `x.len()` and `x.cap()`, not built-in procedures.

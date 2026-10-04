@@ -227,7 +227,6 @@ Prov_State :: struct {
 	call_results:   map[^Expr_Call]Prov_Call_Result,
 	// The call each user operator stands for, keyed by its node.
 	operator_calls: map[rawptr]^Expr_Call,
-	allocation_region_sources: [dynamic]Prov_Allocation_Region_Source,
 	// Summary mode: the direct callees whose result summaries this body reads.
 	summary_callees: [dynamic]Symbol_Id,
 	// Calls through a procedure type with no result contract, for notes.
@@ -337,7 +336,6 @@ build_flow_pass :: proc(
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 		graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
 		graph.operator_calls = make(map[rawptr]^Expr_Call, 4, allocator)
-		graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
 		graph.summary_callees = make([dynamic]Symbol_Id, allocator)
 		graph.plain_calls = make([dynamic]^Expr_Call, allocator)
 		graph.effect_writes = make([dynamic]Symbol_Id, allocator)
@@ -373,7 +371,6 @@ build_flow_pass :: proc(
 	leave_flow_scope(graph)
 
 	if mode != .Lifecycle {
-		prov_finalize_allocation_regions(graph)
 		return graph
 	}
 	return len(graph.tracked) == 0 ? nil : graph
@@ -703,6 +700,9 @@ place_is_direct :: proc(c: ^Compiler, place: Expr) -> bool {
 		return true
 	case ^Expr_Selector:
 		return v.operand != nil && !type_is_pointer(c, expr_base(v.operand).type) && place_is_direct(c, v.operand)
+	case ^Expr_Postfix:
+		// A box's payload is part of the box (design.md "Owned values").
+		return v.boxed && place_is_direct(c, v.operand)
 	case ^Expr_Index:
 		#partial switch underlying_kind(c, expr_base(v.operand).type) {
 		case .Array, .Dynamic_Array, .Map:
@@ -1913,12 +1913,6 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		if len(v.bound) == 1 {
 			provider_drop_end(graph, v)
 			walk_flow_operand(graph, v.bound[0], .Kill, v.span, "dropped")
-		}
-		return nil
-	case .Free:
-		// Only a use: provenance reports a double release in the allocation's terms.
-		if len(v.bound) == 1 {
-			walk_flow_operand(graph, v.bound[0], .Use, v.span, "released")
 		}
 		return nil
 	}

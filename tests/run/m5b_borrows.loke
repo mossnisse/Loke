@@ -101,33 +101,6 @@ invalidation_after_last_use :: proc() {
 	fmt.println(p.a);
 }
 
-// design.md: `free` "ends the allocation root designated by a checked base
-// pointer". M5b propagates that identity through pointer copies.
-free_through_a_copy :: proc() {
-	q := try_new(int) or_else nil;
-	if (q == nil) { panic("allocation failed"); }
-	q^ = 41;
-	alias := q;
-	alias^ += 1;
-	fmt.println(alias^);
-	free(alias);
-}
-
-// A release is tracked per pointer: at the loop head `p` may still hold the
-// first allocation, and that allocation is released on the back edge, but no
-// path does both.
-free_and_reallocate_in_a_loop :: proc() {
-	p := new(int);
-	for (i := 0; i < 3; i += 1) {
-		p^ += i;
-		free(p);
-		p = new(int);
-		p^ = 10 * i;
-	}
-	fmt.println(p^);
-	free(p);
-}
-
 // A parameter is a borrow of the caller's storage, and reading it here conflicts
 // with nothing the callee can see.
 borrowed_parameter :: proc(values: []int, target: ^mut int) -> int {
@@ -145,8 +118,6 @@ main :: proc() {
 	last_use_across_branches(false);
 	overwrite_ends_one_value();
 	invalidation_after_last_use();
-	free_through_a_copy();
-	free_and_reallocate_in_a_loop();
 
 	xs := [3]int{5, 6, 7};
 	out := 0;

@@ -15,7 +15,7 @@ L8 :: struct { inner: L7 }
 main :: proc() {
 	owner := L8{L7{L6{L5{L4{L3{L2{L1{L0{mem.Arena.init()}}}}}}}}};
 	allocator := owner.inner.inner.inner.inner.inner.inner.inner.inner.inner.allocator();
-	p := new(int, allocator);
+	p := box(0, allocator);
 	drop(owner);
 	p^ = 42;
 }

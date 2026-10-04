@@ -1,0 +1,36 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// Allocation lowering over the seed runtime's allocator ABI (m6a-plan step 1).
+// Every allocation names the provider record, the exact size, and the exact
+// alignment. A box's allocation is the allocator then the payload, so an `int`
+// box asks for 16 bytes; its drop runs through one thunk per box type, which
+// returns the same size and alignment to the provider. A payload cloned from a
+// place goes through its own clone hook, and an allocation it cannot publish
+// into is released. `unsafe.new` asks for the payload alone.
+
+Res :: struct { id: int }
+
+impl Res {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		return .ok(Res{self.id});
+	}
+
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
+}
+
+main :: proc() {
+	switch (p in try_box(1)) {
+	case .ok:  p^ = 2;
+	case .err:
+	}
+
+	source := Res{2};
+	switch (r in try_box(source)) {
+	case .ok:  fmt.println(r.id);
+	case .err:
+	}
+
+	raw := unsafe.new(7);
+	unsafe.free(raw);
+	fmt.println(0);
+}

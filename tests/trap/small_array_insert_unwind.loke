@@ -3,13 +3,13 @@ package main;
 import "core:container";
 import "core:fmt";
 
-Huge :: struct { pad: [4611686018427387904]u8 }
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
 Tracked :: struct { id: int }
 impl Tracked {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
 		if (self.id == 9) {
-			p := try_new(Huge, allocator) or_return;
-			free(p, allocator);
+			_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
 		}
 		return .ok(Tracked{self.id});
 	}

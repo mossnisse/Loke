@@ -9,19 +9,19 @@ L0538
 this call may reset `allocator`, so `allocator` must be marked `@(allocator_reset)`
 L0537
 @46:2
-this reset ends every allocation in the region, but a pointer of one of them is still in use
+this reset would end the region backing `pointer`, which is still live here
 L0537
 @54:2
 this reset would end the region backing `held`, which is still live here
 L0537
 @63:2
-this reset ends every allocation in the region, but a pointer of one of them is still in use
+this reset would end the region backing `pointer`, which is still live here
 L0537
 @74:2
-this reset ends every allocation in the region, but a pointer of one of them is still in use
+this reset would end the region backing `pointer`, which is still live here
 L0537
 @87:3
-this reset ends every allocation in the region, but a pointer of one of them is still in use
+this reset would end the region backing `pointer`, which is still live here
 L0592
 @96:9
 this result is backed by `arena`, an allocator region that ends when this procedure returns

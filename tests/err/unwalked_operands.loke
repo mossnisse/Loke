@@ -19,10 +19,9 @@ map_literal_key :: proc() {
     xs.append(1);
 }
 
-free_operand :: proc() {
+box_operand :: proc() {
     xs: [dynamic]int = {};
-    q := try_new(int) or_else nil;
-    free(q if count(move(xs)) == 0 else q);
+    b := box(1 if count(move(xs)) == 0 else 2);
     xs.append(1);
 }
 

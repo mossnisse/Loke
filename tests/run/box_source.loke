@@ -1,0 +1,28 @@
+// design.md "Owned values": `box` takes its value the way an initialization
+// does. A temporary moves in, so it is neither copied nor dropped where it was
+// made; a place is cloned, so the source stays with its scope.
+package main;
+import "core:fmt";
+Res :: struct { id: int }
+impl Res {
+    copy_res :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+        return .ok(Res{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Res) { fmt.println("drop", self.id); }
+}
+Text :: struct { name: string }
+build :: proc(id: int) -> Res { return Res{id}; }
+main :: proc() {
+    p := box(build(1));
+    fmt.println(p.id);
+    switch (q in try_box(build(3))) {
+    case .ok:  fmt.println(q.id);
+    case .err:
+    }
+    local := Res{2};
+    r := box(local);
+    fmt.println(r.id);
+    t := box(Text{"a" + "b"});
+    fmt.println(t.name);
+    fmt.println("done");
+}

@@ -95,3 +95,54 @@ either the compiler gives `Shared(T)` and `Weak(T)` their payload's carrier
 shape, or they become compiler types when the decision under
 [Non-null references and explicit allocation owners](open-questions.md#non-null-references-and-explicit-allocation-owners)
 gives `shared(T)` the box's `^` and conversion.
+
+### An owner made from a temporary arena outlives it
+
+[design.md "Allocator regions and region provenance"](design.md#allocator-regions-and-region-provenance)
+says an owner backed by a local region cannot outlive the region. A named
+arena's drop ends its region and is checked (`L0537`), but a temporary arena
+ends with its statement and nothing marks that end, so a container or a box
+built from one is accepted and then used, and released, through a freed
+control block:
+
+```odin
+package main;
+import "core:mem";
+main :: proc() {
+    xs := make([dynamic]int, 0, 1, mem.Arena.init().allocator());
+    xs.append(1);                             // should be rejected
+    b := box(0, mem.Arena.init().allocator());
+    b^ = 1;                                   // should be rejected
+}
+```
+
+`new` used to catch its own case, because its allocation root depended on the
+allocator handle's loan; the containers never did. The fix is to end a
+temporary provider's region where the temporary ends, as `provider_region_end`
+does for a named one.
+
+### A deferred reset can end the region backing a returned owner
+
+[design.md "Allocators"](design.md#allocators) rejects a reset while an owner
+backed by the region is live, and a result is transferred to the caller before
+the procedure's deferred statements run, so the caller's owner is live across
+the reset. A `defer free_all` of a received region is accepted anyway when the
+result is an owner, and the caller receives one whose storage is gone:
+
+```odin
+package main;
+import "core:mem";
+reset_later :: proc(@(allocator_reset) allocator: Allocator) -> [dynamic]int {
+    defer free_all(allocator);      // should be L0537
+    return make([dynamic]int, 0, 1, allocator);
+}
+main :: proc() {
+    arena := mem.Arena.init();
+    xs := reset_later(arena.allocator());
+    xs.append(1);
+}
+```
+
+`new` was rejected in this position, because its result was a checked pointer
+into an allocation root the reset ended; the same function returning a
+`box(int)` is accepted like the container.

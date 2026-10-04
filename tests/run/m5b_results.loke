@@ -33,11 +33,8 @@ constant_view :: proc() -> []int {
 // design.md: "A checked pointer to an allocation root created by `new` or
 // `new_clone` may be returned because the allocation is not callee-local
 // storage."
-allocate :: proc(value: int) -> ^mut int {
-	pointer := try_new(int) or_else nil;
-	if (pointer == nil) { panic("allocation failed"); }
-	pointer^ = value;
-	return pointer;
+allocate :: proc(value: int) -> box(int) {
+	return box(value);
 }
 
 // design.md: "An `inout` parameter aliases the caller's root, so a borrow
@@ -76,7 +73,6 @@ main :: proc() {
 	// caller may release it.
 	pointer := allocate(7);
 	fmt.println(pointer^);
-	free(pointer);
 
 	target := 0;
 	written := inout_borrow(inout target);

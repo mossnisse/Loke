@@ -8,14 +8,15 @@ package main; import "core:mem"; import "core:fmt";
 //     policy the same value on both sides of a call;
 //   - every allocation and release names that handle, the exact size, and the
 //     exact alignment, so an over-aligned type reaches the provider with its
-//     own alignment rather than the heap's default.
+//     own alignment rather than the heap's default. A box of `Wide` asks for
+//     its 16-aligned payload after the allocator: 48 bytes, aligned to 16.
 
 Wide :: struct { a: i128, b: int }
 
 // The handle arrives as one `ptr` parameter and is forwarded unchanged.
 in_region :: proc(allocator: Allocator) -> Result(Unit, Allocator_Error) {
-	p := try_new(Wide, allocator) or_return;
-	free(p, allocator);
+	made := try_box(Wide{}, allocator) or_return;
+	made.b = 1;
 	return .ok(Unit{});
 }
 

@@ -6,7 +6,8 @@ package main; import "core:fmt";
 // without asking for memory has no size to report: the report names only the
 // allocator.
 
-Huge :: struct { pad: [4611686018427387904]u8 }
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
 
 Refusing :: struct { id: int }
 
@@ -18,7 +19,7 @@ impl Refusing {
 }
 
 main :: proc() {
-	switch (failure in try_new(Huge)) {
+	switch (failure in try_make([dynamic]Huge, 0, 1)) {
 	case .ok: fmt.println("allocated");
 	case .err: fmt.println("handled", failure);
 	}

@@ -236,7 +236,7 @@ Call_Simd_Reduce :: struct { fold: Simd_Fold }
 // A nil witness represents conversion of a nil pointer to a nil dyn view.
 Call_Dyn_Conversion :: struct { witness: ^Witness }
 Call_Dyn_Slot :: struct { index: int }
-// The element of new/new_clone, or the container type of make.
+// The payload of `box` or `unsafe.new`, or the container type of `make`.
 // `fallible`: a `try_` form, whose result is `Result(T, Allocator_Error)`.
 Call_Allocation :: struct { type: Type_Id, fallible: bool }
 // `move(b).unbox()`: the payload taken out of a box it consumes.

@@ -40,6 +40,17 @@ box_callee :: proc(k: ^Checker, callee: Expr) -> bool {
 	return sym != nil && sym.kind == .Builtin && sym.builtin == .Box_New
 }
 
+// Whether `box(x)` names a type: `x` is one. A nested `box(...)` answers for
+// its own argument rather than being resolved as a type, which would report
+// `box(value)` as an unknown type.
+box_argument_denotes_type :: proc(k: ^Checker, e: Expr) -> bool {
+	if call, is_call := e.(^Expr_Call); is_call && box_callee(k, call.callee) {
+		return len(call.args) == 1 && call.args[0].name.text == "" && call.args[0].mode == .Value &&
+		       box_argument_denotes_type(k, call.args[0].value)
+	}
+	return resolve_type_syntax(k, e) != INVALID_TYPE
+}
+
 // `box(T)` in type position.
 resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if v.denoted_type != INVALID_TYPE {
@@ -67,10 +78,15 @@ resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 // `box(value[, allocator])` and `try_box(value[, allocator])`. The value is
 // taken the way an initialization takes it: a place is cloned, a temporary or
 // `move(x)` is handed over.
+//
+// `unsafe.new` and `unsafe.try_new` take their value the same way and answer
+// the unchecked `[^]T` of an allocation with no header, which the caller
+// releases with `unsafe.free` (design.md "The `unsafe` package").
 check_box_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind, expected: Type_Id) {
 	v.value_category = .Value
 	v.type = INVALID_TYPE
-	if kind == .Box_New && callee_argument_denotes_type(k, v) {
+	if kind == .Box_New && len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value &&
+	   box_argument_denotes_type(k, v.args[0].value) {
 		set_type_call(v, resolve_box_application(k, v))
 		return
 	}
@@ -102,7 +118,9 @@ check_box_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		return
 	}
 	classify_copy(k, argument, payload, .Box)
-	classify_copy_cost(k, argument, payload, .Box)
+	if !type_clone_disabled(k.c, payload) {
+		classify_copy_cost(k, argument, payload, .Box)
+	}
 
 	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
 	bound[0] = argument
@@ -121,11 +139,16 @@ check_box_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		bound[1] = v.args[1].value
 	}
 	v.bound = bound
-	fallible := kind == .Try_Box
+	base, fallible := allocation_builtin(kind)
 	v.operation = Call_Allocation{type = payload, fallible = fallible}
-	boxed := box_of(k.c, payload)
-	contribute_lifecycle_members(k, boxed)
-	v.type = fallible ? result_type(k, boxed, TYPE_ALLOCATOR_ERROR) : boxed
+	made := c_pointer_to(k.c, payload)
+	if base == .Box_New {
+		made = box_of(k.c, payload)
+		contribute_lifecycle_members(k, made)
+	} else {
+		contribute_lifecycle_members(k, payload)
+	}
+	v.type = fallible ? result_type(k, made, TYPE_ALLOCATOR_ERROR) : made
 }
 
 

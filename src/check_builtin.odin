@@ -31,9 +31,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_make_builtin(k, v, sym.builtin == .Try_Make)
 	case .Simd_Cast, .Simd_Select, .Simd_Reduce:
 		check_simd_builtin(k, v, ident, sym.builtin)
-	case .New, .New_Clone, .Try_New, .Try_New_Clone, .Free, .Unsafe_Free, .Free_All:
+	case .Unsafe_Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
-	case .Box_New, .Try_Box:
+	case .Box_New, .Try_Box, .Unsafe_New, .Unsafe_Try_New:
 		check_box_builtin(k, v, ident, sym.builtin, expected)
 	case .Drop:
 		check_drop_builtin(k, v)
@@ -447,12 +447,12 @@ operand_type :: proc(k: ^Checker, e: Expr, builtin: string, accepts_value: bool)
 	return materialize(k, e, typed) ? typed : INVALID_TYPE
 }
 
-// design.md "Allocators": `new(T[, allocator])` and `new_clone(value[, allocator])`
-// return their `Allocator_Error`; `free(pointer[, allocator])` and
-// `free_all(allocator)` return nothing. An omitted allocator is the default.
+// design.md "Allocators": `free_all(allocator)`, and design.md "The `unsafe`
+// package": `unsafe.free(pointer[, allocator])`. Neither returns anything, and
+// an omitted allocator is the default.
 @(private = "file")
 check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, written: Builtin_Kind) {
-	kind, fallible := allocation_builtin(written)
+	kind := written
 	arity_high := kind == .Free_All ? 1 : 2
 	if len(v.args) < 1 || len(v.args) > arity_high {
 		errorf(
@@ -473,58 +473,10 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 
 	bound := make([dynamic]Expr, 0, 2, k.c.semantic_allocator)
 	#partial switch kind {
-	case .New:
-		element := operand_type(k, v.args[0].value, ident.name, false)
-		if element == INVALID_TYPE || !gate_type(k, element, expr_span(v.args[0].value)) {
-			v.type = INVALID_TYPE
-			return
-		}
-		if type_is_compile_time_only(k.c, element) {
-			errorf(k.c, expr_span(v.args[0].value), "L0490", "`new` needs a runtime type, found `%s`", type_name(k.c, element))
-			v.type = INVALID_TYPE
-			return
-		}
-		if !require_type_has_zero(k, element, v.span, "`new`, which zeroes the allocation") {
-			v.type = INVALID_TYPE
-			return
-		}
-		v.operation = Call_Allocation{type = element, fallible = fallible}
-		set_allocation_results(k, v, pointer_to(k.c, element, true), fallible)
-
-	case .New_Clone:
-		value := check_single_expr(k, v.args[0].value)
-		if value == INVALID_TYPE || !gate_type(k, value, expr_span(v.args[0].value)) {
-			v.type = INVALID_TYPE
-			return
-		}
-		// An untyped constant is allocated at its default type.
-		if type_is_untyped(k.c, value) {
-			value = default_type(k.c, value)
-			if value == INVALID_TYPE || !materialize(k, v.args[0].value, value) {
-				v.type = INVALID_TYPE
-				return
-			}
-		}
-		append(&bound, v.args[0].value)
-		v.operation = Call_Allocation{type = value, fallible = fallible}
-		contribute_lifecycle_members(k, value)
-		// The result shape is settled first, so a destructuring still knows its
-		// arity and the move-only failure is reported once.
-		set_allocation_results(k, v, pointer_to(k.c, value, true), fallible)
-		if type_clone_disabled(k.c, value) {
-			errorf(
-				k.c,
-				expr_span(v.args[0].value),
-				"L0491",
-				"`%s` is move-only, so it cannot be cloned into a new allocation",
-				type_name(k.c, value),
-			)
-		}
-
-	case .Free, .Unsafe_Free:
+	case .Unsafe_Free:
 		pointer := check_single_expr(k, v.args[0].value)
-		if pointer == INVALID_TYPE ||
-		   !check_free_operand(k, v.args[0].value, pointer, kind == .Unsafe_Free ? "unsafe.free" : "free") {
+		// `unsafe.free` is spelled through its package, whose import is the gate.
+		if pointer == INVALID_TYPE || !check_free_operand(k, v.args[0].value, pointer) {
 			v.type = INVALID_TYPE
 			return
 		}
@@ -1002,44 +954,35 @@ is_constant_zero :: proc(e: Expr) -> bool {
 	return base != nil && base.is_const && base.const_value.kind == .Integer && bi_is_zero(base.const_value.integer)
 }
 
-@(private = "file")
-set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id, fallible: bool) {
-	v.type = fallible ? result_type(k, pointer, TYPE_ALLOCATOR_ERROR) : pointer
-	v.value_category = .Value
-}
-
 // design.md "Allocation failure": `try_new`, `try_new_clone`, and `try_make`
 // are `new`, `new_clone`, and `make` returning the error instead of following
 // the allocator's policy.
 allocation_builtin :: proc(kind: Builtin_Kind) -> (base: Builtin_Kind, fallible: bool) {
 	#partial switch kind {
-	case .Try_New:
-		return .New, true
-	case .Try_New_Clone:
-		return .New_Clone, true
+	case .Try_Box:
+		return .Box_New, true
+	case .Unsafe_Try_New:
+		return .Unsafe_New, true
 	case .Try_Make:
 		return .Make, true
 	}
 	return kind, false
 }
 
-// `free` needs a `^mut T`; whether it is really an allocation base, and not yet
-// released, is root provenance (`src/borrow.odin`). `unsafe.free` shares the
-// shape under its own name.
+// `unsafe.free` releases the allocation a typed address names: a `[^]T` from
+// `unsafe.new`, or a `^mut T` the caller rebuilt. The element type is what the
+// allocator is told the size of.
 @(private = "file")
-check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id, form: string) -> bool {
-	if underlying_kind(k.c, pointer) != .Pointer {
-		errorf(k.c, expr_span(e), "L0493", "`%s` takes an allocation pointer, found `%s`", form, type_name(k.c, pointer))
-		return false
+check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id) -> bool {
+	info := underlying_info(k.c, pointer)
+	if info != nil && (info.kind == .C_Pointer || (info.kind == .Pointer && info.mutable)) {
+		return true
 	}
-	if !pointer_is_mutable(k.c, pointer) {
-		errorf(
-			k.c, expr_span(e), "L0639",
-			"`%s` needs a mutable allocation pointer, found `%s`", form, type_name(k.c, pointer),
-		)
-		return false
-	}
-	return true
+	errorf(
+		k.c, expr_span(e), "L0493",
+		"`unsafe.free` takes the `[^]T` or `^mut T` of an allocation, found `%s`", type_name(k.c, pointer),
+	)
+	return false
 }
 
 // An `assert`/`panic`/`static_assert` message is a compile-time string. The

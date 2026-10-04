@@ -6,33 +6,48 @@ This page uses a file to make those transitions visible.
 
 ## A pointer is not automatically an owner
 
-`&value` borrows existing storage. `new(T)` allocates storage that must be
-released explicitly or placed under an owning wrapper:
+`&value` borrows existing storage. A value that needs an allocation of its own
+is owned by a `box`, which releases it when the box goes out of scope:
 
 ```odin file=explicit_allocation.loke
 package main;
 
 import "core:fmt";
 
+Node :: struct {
+	value: int,
+	next:  Option(box(Node)),
+}
+
 main :: proc() {
-	cell := new(int);
-	defer free(cell);
-	cell^ = 42;
+	cell := box(42);
+	cell^ += 1;
 	fmt.println(cell^);
+
+	tail := box(Node{value = 2});
+	head := Node{value = 1, next = .some(move(tail))};
+	switch (next in head.next) {
+	case .some: fmt.println(head.value, next.value);
+	case .none: fmt.println(head.value);
+	}
 }
 ```
 
 ```text output=explicit_allocation
-42
+43
+1 2
 ```
 
-`new(int)` starts with the zero value and returns a `^mut int`. The `defer`
-releases that allocation at scope exit. Passing an allocator to `new` requires
-using the same allocator for `free`. Pointers made with `&` or `&mut` cannot be
-freed: they borrow storage owned elsewhere.
+`box(42)` allocates an `int` and returns a `box(int)`; `cell^` is the value
+inside. A box is the only owner of its allocation, so a `Node` can hold the
+next node directly, and dropping `head` drops the whole chain. A box lends its
+value as a `^T`, so a procedure taking a pointer accepts one. Pointers made
+with `&` or `&mut` never own anything: they borrow storage owned elsewhere.
 
 Ordinary containers already supply ownership and cleanup, so use them when
-they fit. A raw allocation is useful when an API specifically requires it.
+they fit. `core:unsafe` has `unsafe.new` and `unsafe.free` for raw storage
+that nothing owns, which only foreign interfaces and allocator-level code
+need.
 
 ## Make a resource move-only
 

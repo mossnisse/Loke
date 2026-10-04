@@ -59,7 +59,7 @@ The pair costs a type author nothing. Both names are generated from the single `
 
 And the policy-following half is load-bearing rather than convenient. Copy assignment of a copyable type is *defined* as `try_clone` plus the [allocation failure policy](design.md#allocation-failure), and [`Cloneable`](design.md#standard-interface-catalogue) names the fallible slot, so both halves already have language-level jobs. Deleting `clone` would not remove the policy call, only move it to every call site that copies. A container `try_op` carries no equivalent obligation, which is what leaves the container pair the live half of the question.
 
-The allocation built-ins are a third instance, and they keep the pair: `new`/`try_new`, `new_clone`/`try_new_clone`, and `make`/`try_make` (see [The allocation built-ins follow the `try_` convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
+The allocation built-ins are a third instance, and they keep the pair: `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The allocation built-ins follow the `try_` convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
 
 ## `()` as a type category
 
@@ -564,9 +564,11 @@ constness alone does not establish either.
 
 ### Non-null references and explicit allocation owners
 
-**Decided (2026-10-04), partly built.** `box(T)` has landed
-([design.md "Owned values"](design.md#owned-values)); design.md and the
-compiler still have nullable references and checked `new`/`free`. Each stage
+**Decided (2026-10-04), partly built.** Stage 1 has landed: `box(T)`
+([design.md "Owned values"](design.md#owned-values)) replaced checked
+`new`/`free`, and raw allocation moved into
+[`core:unsafe`](design.md#the-unsafe-package). design.md and the compiler
+still have nullable references. Each stage
 at the end of this entry changes the specification, compiler, tests,
 tutorials, and changelog together, and the entry leaves this file when the
 last one lands.
@@ -575,11 +577,11 @@ last one lands.
 state, so `Option(^T)` has three states where two are meant, every
 dereference and indirect call compiles to a null test and a panic branch, and
 [Nil states](design.md#nil-states) can only diagnose a local given nothing but
-`nil`. `new(T)` returns the borrow type `^mut T` while handing over release by
-convention, and the borrow model carries an allocation-root category and a
-same-region rule for checked `free` that no program in `examples/` uses; the
-library's two calls, in `core:thread` and `shared(T)`, already release through
-`unsafe.free`.
+`nil`. `new(T)` returned the borrow type `^mut T` while handing over release
+by convention, and the borrow model carried an allocation-root category and a
+same-region rule for checked `free` that no program in `examples/` used; the
+library's two calls, in `core:thread` and `shared(T)`, already released
+through `unsafe.free`.
 
 **The principle: every zero value is a usable value.** A type has a zero only
 when the all-zero value supports every operation the type has, as `0`, `""`,
@@ -741,9 +743,9 @@ Rejected:
 comments.md, the compiler, tests, tutorials, and CHANGELOG.md with an upgrade
 note:
 
-1. `box(T)` and `try_box` (landed); raw allocation into `core:unsafe`;
-   allocation-root provenance removed. Migrates `core:thread`, `shared(T)`,
-   tutorial 12, and the 117 test files that call `new` or `free`.
+1. (Landed.) `box(T)` and `try_box`; raw allocation into `core:unsafe`;
+   allocation-root provenance removed. Migrated `core:thread`, `shared(T)`,
+   tutorial 12, and the test files that called `new` or `free`.
 2. `nil` narrowed to unchecked addresses: the zeros of item 2, `{}` as the
    empty slice, and a total `type_info_of`.
 3. Non-null references: no-zero typing, null-tested unchecked conversions, no

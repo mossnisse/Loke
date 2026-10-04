@@ -17,23 +17,17 @@ L0424
 @32:12
 `Holder` has no zero value, so it cannot be produced by the omitted field `held`
 L0424
-@35:7
-`Choice` has no zero value, so it cannot be produced by `new`, which zeroes the allocation
-L0424
-@36:7
-`Named` has no zero value, so it cannot be produced by `new`, which zeroes the allocation
-L0424
-@40:38
+@36:38
 `Choice` has no zero value, so it cannot be produced by a `make` length
 L0424
-@46:2
+@42:2
 `Choice` has no zero value, so it cannot be produced by growing a container
 L0424
-@47:2
+@43:2
 `Choice` has no zero value, so it cannot be produced by growing a container
 L0424
-@48:10
+@44:10
 `Choice` has no zero value, so it cannot be produced by growing a container
 L0363
-@59:58
+@55:52
 `Result([dynamic]Choice, Allocator_Error)` has no field or member `len`

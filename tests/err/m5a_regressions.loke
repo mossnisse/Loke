@@ -9,14 +9,6 @@ impl Res {
 
 Box :: struct { item: Res }
 
-stale_allocation_root :: proc() {
-	p := try_new(int) or_else nil;
-	free(p);
-	x := 42;
-	p = &mut x;
-	free(p);
-}
-
 invalid_receivers :: proc() {
 	static_value: static = Res{1};
 	move(static_value).consume();

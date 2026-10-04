@@ -5,8 +5,6 @@ package main; import "core:fmt";
 Record :: struct { bytes: [900000]u8, tag: int }
 
 main :: proc() {
-	r := new(Record);
-	r^ = Record{tag = 4};
+	r := box(Record{tag = 4});
 	fmt.println(r.tag, r.bytes[0], r.bytes[899999]);
-	free(r);
 }

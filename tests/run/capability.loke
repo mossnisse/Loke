@@ -68,12 +68,11 @@ main :: proc() {
 	fmt.println(1 if whole == again else 0);
 	fmt.println(1 if &FIRST == &SECOND else 0);
 
-	// `new` hands back `^mut T`; `free` needs that capability.
-	allocated := try_new(int) or_else nil;
-	if (allocated == nil) { panic("allocation failed"); }
-	allocated^ = 99;
+	// A box lends `^mut T` to `&mut b^` and `^T` to anything that reads.
+	allocated := box(0);
+	writer := &mut allocated^;
+	writer^ = 99;
 	fmt.println(allocated^);
-	free(allocated);
 
 	// Both capabilities are one machine address, and both compare with nil.
 	empty: ^int = nil;

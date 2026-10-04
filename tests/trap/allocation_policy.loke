@@ -1,20 +1,20 @@
 package main; import "core:fmt";
 
-// design.md "Allocation failure": `try_new` and `try_make` hand the error back;
-// `new` and `make` follow the allocator's failure policy, which panics.
+// design.md "Allocation failure": `try_make` hands the error back; `make`
+// follows the allocator's failure policy, which panics.
 
-Huge :: struct { pad: [4611686018427387904]u8 }
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
 
 main :: proc() {
-	switch (_ in try_new(Huge)) {
+	switch (_ in try_make([dynamic]Huge, 0, 1)) {
 	case .ok: fmt.println("allocated");
-	case .err: fmt.println("try_new failed");
+	case .err: fmt.println("try_make failed");
 	}
 	switch (_ in try_make([dynamic]Huge, 0, 2)) {
 	case .ok: fmt.println("made");
-	case .err: fmt.println("try_make failed");
+	case .err: fmt.println("try_make of two failed");
 	}
-	p := new(Huge);
-	fmt.println("not reached");
-	free(p);
+	p := make([dynamic]Huge, 0, 1);
+	fmt.println("not reached", p.len());
 }

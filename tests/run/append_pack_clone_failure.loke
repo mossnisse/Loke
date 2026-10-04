@@ -8,7 +8,8 @@ import "core:fmt";
 // already made are destroyed, nothing is published, and the caller drops the
 // temporary it built. Every value is still dropped exactly once.
 
-Huge :: struct { pad: [4611686018427387904]u8 }
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
 
 drops: static int = 0;
 
@@ -18,8 +19,7 @@ impl Res {
 	release :: hook(drop) proc(self: inout Res) { if (self.id != 0) { drops += 1; } }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
 		if (self.id == 3) {
-			p := try_new(Huge, allocator) or_return;
-			free(p, allocator);
+			_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
 		}
 		return .ok(Res{self.id});
 	}

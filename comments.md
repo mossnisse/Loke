@@ -146,6 +146,14 @@ A box is one address and its allocation records the allocator, so a child
 link in a tree is one word, and a later `Option` of it can be one word too
 (open-questions.md "Non-null references and explicit allocation owners").
 
+Checked `new`, `new_clone`, and `free` went when `box` arrived. They were a
+second way to own one value whose type still said nothing about who releases
+it, and the borrow checker kept an allocation-root category and a same-region
+rule for `free` that no program in `examples/` used. What is left for raw
+storage, `unsafe.new` and `unsafe.free`, answers a `[^]T` and checks nothing,
+which is what the library's two callers, `shared(T)` and `core:thread`, were
+already doing through `unsafe.free`.
+
 ### Storage modifiers instead of storage attributes
 
 Odin spells static-duration locals `@(static)` and thread locals
@@ -481,8 +489,8 @@ still an ordinary call and still evaluates `x`; the unevaluated operand is
 
 ### `mem.` spellings of the allocation built-ins
 
-`design.md` once promised that `new`, `new_clone`, `make`, `free`, `free_all`,
-and `drop` were also available in package `mem`. No compiler ever contributed
+`design.md` once promised that the allocation built-ins, `make`, `free_all`,
+and `drop` among them, were also available in package `mem`. No compiler ever contributed
 them, and a second name for each built-in would buy nothing: each allocating
 built-in has a `try_` form returning `Result(T, Allocator_Error)`, so there is
 no stricter error handling left for a `mem.` spelling to add. The universe name
@@ -907,10 +915,9 @@ that `try_` marks the form returning the failure its plain form would panic
 on. Callers wanted both: of the twelve calls in `core` and `base`, seven
 returned or reported the error and five turned it into a panic through a
 one-line helper, and design.md's `make` examples used `or_else {}`, which
-turns an allocation failure into an empty container. `new`, `new_clone`, and
-`make` now follow the allocator's failure policy, and `try_new`,
-`try_new_clone`, and `try_make` return the `Result`. About a hundred calls in
-`tests/` changed spelling.
+turns an allocation failure into an empty container. `make` now follows the
+allocator's failure policy and `try_make` returns the `Result`, as `box` and
+`try_box` later did. About a hundred calls in `tests/` changed spelling.
 
 ### `main` may return an `i32` status
 
@@ -1084,7 +1091,7 @@ a parameter mode and has to be reserved regardless.
 It is not predeclared either. Reinterpreting bits is not a safe, universally
 valid conversion: nothing about the source value says the destination
 representation is one its type ever admits. That is the same loss `raw_data` and
-`free` make visible, so it is spelled at the same boundary and an import says
+`unsafe.free` make visible, so it is spelled at the same boundary and an import says
 the program does it.
 
 ### Parenthesized control-flow headers

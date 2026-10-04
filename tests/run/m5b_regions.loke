@@ -25,15 +25,14 @@ release_twice :: proc(@(allocator_reset) allocator: Allocator) {
 	release(allocator);
 }
 
-// design.md: the proof is "that no dependant survives the reset, not that every
-// allocation was already freed", so an unfreed allocation whose last carrier use
-// is behind us is simply released by the reset.
+// design.md: the proof is "that no dependant survives the reset", so a box
+// from the region that has already ended does not block it.
 reset_after_last_use :: proc(@(allocator_reset) allocator: Allocator) -> int {
-	pointer := try_new(int, allocator) or_else nil;
-	if (pointer == nil) { return 0; }
-	pointer^ = 7;
-	total := pointer^;
-	// No alias survives, so the reset is accepted even though nothing was freed.
+	total := 0;
+	{
+		held := box(7, allocator);
+		total = held^;
+	}
 	free_all(allocator);
 	return total;
 }
@@ -45,40 +44,29 @@ reset_after_last_use :: proc(@(allocator_reset) allocator: Allocator) -> int {
 allocations_of_another_region :: proc() -> int {
 	a := mem.Arena.init();
 	b := mem.Arena.init();
-	mine := try_new(int, b.allocator()) or_else nil;
-	heap := try_new(int) or_else nil;
-	if (mine == nil || heap == nil) { return 0; }
-	mine^ = 10;
-	heap^ = 20;
+	mine := box(10, b.allocator());
+	heap := box(20);
 	free_all(a.allocator());
-	total := mine^ + heap^;
-	free(heap);
-	return total;
+	return mine^ + heap^;
 }
 
-allocate_in :: proc(allocator: Allocator) -> ^mut int {
-	return try_new(int, allocator) or_else nil;
+allocate_in :: proc(value: int, allocator: Allocator) -> box(int) {
+	return box(value, allocator);
 }
 
-allocate_in_default :: proc() -> ^mut int {
-	return try_new(int) or_else nil;
+allocate_in_default :: proc(value: int) -> box(int) {
+	return box(value);
 }
 
-// Fresh allocation roots carry their regions through a direct result summary,
-// so an unrelated local reset remains valid after either helper call.
+// Boxes carry their regions through a direct result summary, so an unrelated
+// local reset remains valid after either helper call.
 returned_allocations_of_another_region :: proc() -> int {
 	a := mem.Arena.init();
 	b := mem.Arena.init();
-	mine := allocate_in(b.allocator());
-	heap := allocate_in_default();
-	if (mine == nil || heap == nil) { return 0; }
-	mine^ = 30;
-	heap^ = 40;
+	mine := allocate_in(30, b.allocator());
+	heap := allocate_in_default(40);
 	free_all(a.allocator());
-	total := mine^ + heap^;
-	free(mine, b.allocator());
-	free(heap);
-	return total;
+	return mine^ + heap^;
 }
 
 // An owner whose scope has ended no longer blocks a reset.

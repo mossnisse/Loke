@@ -2,74 +2,68 @@ package main;
 import "core:fmt";
 import "core:mem";
 
+// design.md "Owned values": a box carries its payload's borrows and is backed
+// by its allocator's region, through helpers, nesting, and deep providers.
 forward :: proc(allocator: Allocator) -> Allocator { return allocator; }
-clone_parameter :: proc(value: ^int) -> ^mut ^int { return new_clone(value); }
-clone_slice :: proc(values: []int) -> ^mut []int { return new_clone(values); }
+box_parameter :: proc(value: ^int) -> box(^int) { return box(value); }
+box_slice :: proc(values: []int) -> box([]int) { return box(values); }
 View :: struct { values: []int }
-clone_view :: proc(values: []int) -> ^mut View { return new_clone(View{values}); }
-clone_nested :: proc(value: ^int) -> ^mut ^mut ^int {
-	return new_clone(new_clone(value));
+box_view :: proc(values: []int) -> box(View) { return box(View{values}); }
+box_nested :: proc(value: ^int) -> box(box(^int)) {
+	return box(box(value));
 }
 Pair :: struct { left: ^int, right: ^int }
-clone_pair :: proc(value: Pair) -> ^mut Pair { return new_clone(value); }
+box_pair :: proc(value: Pair) -> box(Pair) { return box(value); }
 
 handles :: proc() {
 	owner := mem.Arena.init();
 	handle := forward(owner.allocator());
 	moved := move(owner);
 	free_all(handle);
-	p := new_clone(42, handle);
-	fmt.println(p^);
-	free(p, handle);
+	{
+		p := box(42, handle);
+		fmt.println(p^);
+	}
 	free_all(handle);
-	p = new(int, handle);
-	p^ = 7;
-	fmt.println(p^);
-	free(p, handle);
+	{
+		p := box(0, handle);
+		p^ = 7;
+		fmt.println(p^);
+	}
 	drop(moved);
 }
 
 clones :: proc() {
 	value := 42;
-	p := new_clone(&value);
+	p := box(&value);
 	fmt.println(p^^);
-	free(p);
-	p = clone_parameter(&value);
+	p = box_parameter(&value);
 	fmt.println(p^^);
-	free(p);
 	values := [2]int{3, 7};
 	view: []int = values[:];
-	s := clone_slice(view);
+	s := box_slice(view);
 	fmt.println(s^[1]);
-	free(s);
-	r := clone_view(view);
+	r := box_view(view);
 	fmt.println(r.values[0]);
-	free(r);
-	fallible := try_new_clone(&value) or_else nil;
+	fallible := try_box(&value) or_else box(&value);
 	fmt.println(fallible^^);
-	free(fallible);
-	inner := new_clone(&value);
-	outer := new_clone(inner);
+	inner := box(&value);
+	outer := box(move(inner));
 	fmt.println(outer^^^);
-	free(outer);
-	free(inner);
-	outer = clone_nested(&value);
+	outer = box_nested(&value);
 	fmt.println(outer^^^);
-	inner = outer^;
-	free(outer);
-	free(inner);
 }
 
 separate_fields :: proc() {
 	value := 7;
-	p: ^mut Pair = nil;
+	right: Option(box(^int)) = .none;
 	{
 		short := 3;
-		p = clone_pair(Pair{&short, &value});
+		p := box_pair(Pair{&short, &value});
 		fmt.println(p.left^);
+		right = .some(box(p.right));
 	}
-	fmt.println(p.right^);
-	free(p);
+	switch (right) { case .some(kept): fmt.println(kept^^); case .none: }
 }
 
 L0 :: struct { inner: mem.Arena }
@@ -85,9 +79,10 @@ L8 :: struct { inner: L7 }
 deep :: proc() {
 	owner := L8{L7{L6{L5{L4{L3{L2{L1{L0{mem.Arena.init()}}}}}}}}};
 	handle := owner.inner.inner.inner.inner.inner.inner.inner.inner.inner.allocator();
-	p := new_clone(11, handle);
-	fmt.println(p^);
-	free(p, handle);
+	{
+		p := box(11, handle);
+		fmt.println(p^);
+	}
 	drop(owner);
 }
 
@@ -96,9 +91,10 @@ Node :: struct { children: [dynamic]Node, arena: mem.Arena }
 recursive :: proc() {
 	node := Node{{}, mem.Arena.init()};
 	handle := node.arena.allocator();
-	p := new_clone(9, handle);
-	fmt.println(p^);
-	free(p, handle);
+	{
+		p := box(9, handle);
+		fmt.println(p^);
+	}
 	drop(node);
 }
 

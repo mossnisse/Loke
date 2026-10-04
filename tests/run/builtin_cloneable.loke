@@ -50,10 +50,9 @@ main :: proc() {
 	fmt.println(original.copy());
 	{
 		source := original.copy();
-		switch (root in try_new_clone(source)) {
+		switch (root in try_box(source)) {
 		case .ok:
-			taken := unsafe.take(root^);
-			free(root);
+			taken := move(root).unbox();
 			drop(source);
 			fmt.println(taken);
 		case .err: assert(false);

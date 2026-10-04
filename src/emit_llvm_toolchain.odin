@@ -311,7 +311,7 @@ layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct,
 	     .Distinct, .Union, .Slice, .Allocator, .Allocator_Error,
-	     .Dynamic_Array, .Map:
+	     .Dynamic_Array, .Box, .Map:
 		return true
 	}
 	return false

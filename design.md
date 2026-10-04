@@ -177,7 +177,7 @@ Every other predeclared name may be shadowed by a declaration like any other nam
 
 - types: `bool`, `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `uint`, `u8`, `u16`, `u32`, `u64`, `u128`, `uintptr`, `byte`, `f16`, `f32`, `f64`, `rune`, `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `any_view`, `Allocator`, and `Allocator_Error`;
 - generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `box`, `shared`, and `weak`;
-- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `new`, `new_clone`, `make`, `free`, `free_all`, `drop`, `exchange`, `try_box`, and `try_shared`;
+- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `make`, `free_all`, `drop`, `exchange`, `try_box`, and `try_shared`;
 - [build constants](#build-constants): `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`, `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_LOG_LEVEL`, `LOKE_VENDOR`, and `LOKE_VERSION`.
 
 `type` and `move` are keywords, not predeclared names.
@@ -332,7 +332,6 @@ Every operation that manufactures a zero is rejected for a no-zero type:
 
 - a static-duration declaration with no initializer, which is zero-initialized before the program runs. A lexical local of a no-zero type needs no initializer, because it starts dead and manufactures nothing; `x: T = ---;` asks for the storage alone and is accepted at either duration
 - a field an aggregate literal omits
-- `new(T)`, which hands back zeroed storage
 - a `make` **length**, which fills that many slots; a capacity, a map reservation, and a length written as the constant `0` are raw storage and fill nothing, so `make(T, 0, capacity)` reserves storage for a no-zero element
 - growing a container with `resize`
 
@@ -3282,10 +3281,9 @@ The following rules also apply to `static` and `thread_local`:
 Ownership and allocation lifetime are distinct:
 
 - an **automatic owner** is a lexical value cleaned up at scope exit;
-- an **allocation root** is `new`/`new_clone` storage, released by `free` or by resetting its allocator region, never by scope exit;
 - a **forgotten owner** is a value whose cleanup was explicitly suppressed.
 
-Managed locals may own allocator-supplied backing storage. Use `new`, a `[dynamic]T`, or an arena for bulk storage rather than a very large fixed array local.
+Managed locals may own allocator-supplied backing storage. Use a [`box(T)`](#owned-values), a `[dynamic]T`, or an arena for bulk storage rather than a very large fixed array local.
 
 `drop(value)` cleans up a definitely live lexical owning variable, writes the inert zero representation, and marks it **dead**. It is forbidden on static-duration storage and its subplaces. Scope exit drops every live managed lexical owner unless consumed by [`unsafe.forget`](#unsafeforget).
 
@@ -4583,11 +4581,11 @@ array := make_f32_array(3, 2);
 Types can also be explicitly passed through a `$` parameter of compile-time-only type `type`:
 
 ```odin
-my_new :: proc($T: type) -> ^mut T {
-	return new(T);
+byte_count :: proc($T: type, count: int) -> int {
+	return size_of(T) * count;
 }
 
-ptr := my_new(int);
+bytes := byte_count(int, 4);
 ```
 
 #### Generic data types
@@ -4814,7 +4812,7 @@ Loke checks the lifetime of locally visible borrows. The model is based on **sto
 
 ### Storage roots and borrow carriers
 
-Every ordinary variable and value temporary owns its inline storage. It is a storage root for borrows of that storage. A root may additionally own a backing allocation or another resource, as a dynamic array or `File` does, but that is a separate lifecycle property. An allocator-created allocation is also a storage root even though it is reached through a pointer.
+Every ordinary variable and value temporary owns its inline storage. It is a storage root for borrows of that storage. A root may additionally own a backing allocation or another resource, as a dynamic array or `File` does, but that is a separate lifecycle property. A [box](#owned-values)'s payload belongs to the box's root even though it lives in an allocation of its own, so borrowing `b^` borrows `b`.
 
 Cleanup policy does not change which value is the root. A borrow of an automatic owner and a borrow of one that will be forgotten are checked borrows in exactly the same way — and forgetting an owner invalidates its borrows just as dropping it would.
 
@@ -4834,14 +4832,13 @@ Copying a borrow carrier copies the view and its root provenance, never the poin
 - slicing creates a checked `[]T` or `[]mut T` borrow of the sliced root;
 - conversion to a built-in view and compiler-known iteration preserve the source root;
 - a borrow returned from a Loke procedure derives root provenance from its borrowed arguments as described below;
-- `new` and `new_clone` create a new allocation root and return a checked `^mut T` pointer to its first value, which is the capability `free` requires.
 
 #### How root and region provenance compose
 
 Loke performs two distinct lifetime analyses over related values:
 
 - **Root provenance** belongs to a non-owning pointer, slice, or other borrow carrier. It identifies the storage root whose continued existence and access rules make that borrow valid.
-- **Region provenance** belongs to an owning value or allocation root whose backing storage came from an allocator region. It identifies the region that must remain valid while that owner or allocation is live. See [Allocators](#allocators).
+- **Region provenance** belongs to an owning value whose backing storage came from an allocator region. It identifies the region that must remain valid while that owner or allocation is live. See [Allocators](#allocators).
 
 These are not two names for the same property: root provenance answers "which storage does this view borrow?" and region provenance answers "which allocator region keeps this owned storage valid?" They compose transitively — if owner `value` is backed by region `R` and `view` borrows `value`, then `view` depends directly on `value` and indirectly on `R`:
 
@@ -4875,7 +4872,7 @@ bad_owner :: proc() -> [dynamic]u8 {
 }
 ```
 
-The pointee's cleanup policy does not decide whether a pointer is a borrow: a `&` pointer is a borrow whatever becomes of its root, and a `new` pointer designates a separate allocation root without owning it or acquiring automatic cleanup. `free` ends the allocation root and invalidates every checked pointer derived from it. To make an allocation a move-only, auto-cleaned value, wrap the pointer and allocator in a resource type with a `drop` hook.
+The pointee's cleanup policy does not decide whether a pointer is a borrow: a `&` pointer is a borrow whatever becomes of its root. A checked pointer never owns what it points at: storage that outlives its scope is owned by a [`box(T)`](#owned-values), a container, or a resource type with a `drop` hook, and a pointer into it is a borrow of that owner.
 
 `rawptr` and `[^]T` carry no checked provenance. A `^T` received from foreign code, reconstructed by unsafe code, or loaded from storage whose provenance the compiler does not track is also an unchecked address despite having the same machine type as a checked `^T`. Dereferencing an unchecked address is the programmer's responsibility.
 
@@ -5029,13 +5026,13 @@ An `inout` parameter, a `^T` parameter, and a [`self: ^` receiver](#receiver-for
 
 Where a procedure has several borrowed arguments, the result contract below records which of them a returned borrow derives from; a procedure value retains this precision when its type carries that contract.
 
-A checked pointer to an allocation root created by `new` or `new_clone` may be returned because the allocation is not callee-local storage. The pointer's root provenance and the allocation root's region provenance follow the result. This transfers release responsibility by API convention, not by making `^T` an owning type; the compiler does not require every manually allocated root to be freed.
+A procedure hands an allocation it made to its caller as an owner, such as a [`box(T)`](#owned-values), whose region provenance follows the result. A checked pointer is a borrow, so it cannot carry an allocation out of the procedure that made it.
 
 #### Procedure result contracts
 
 Each named Loke procedure and generic instantiation has a result-provenance contract with two independent components when applicable:
 
-- root provenance: borrowed parameters, static storage, `thread_local` storage, a fresh allocation root, or unknown root provenance;
+- root provenance: borrowed parameters, static storage, `thread_local` storage, or unknown root provenance;
 - region provenance: allocator parameters, the region dependency of a moved or shared owner, a non-resettable static region, or unknown region provenance.
 
 Where a parameter reaches a borrow through its own [carrier paths](#values-that-contain-borrows), the summary records which of those paths the result may name, so a helper returning one field of a record argument substitutes that field's root rather than everything the argument holds.
@@ -5079,9 +5076,9 @@ A plain written `proc(...) -> T` signature has no inferred result contract. Conv
 A conditional between distinct inferred callback types with the same plain signature carries both contracts: a call through it may return whatever either declaration may. The joined contract is its own type, printed with both names (`[result contract: a | b]`); it does not depend on branch order, and a procedure assigned to it later must fit the join like any other contract-bearing destination. If either branch has a plain type, the conditional has the plain type. An expected callback type still constrains both branches instead.
 
 
-At a call through a plain procedure type, a returned pointer, slice, view, or [`inout` result](#inout-results) conservatively derives from every borrowed argument the type does not exclude with `@(escape=none)`, and from whatever those arguments' storage holds (unknown root provenance if there is none). An owning result retains the region provenance of every moved owner and allocator argument (unknown if none), and so does every argument the call may write. Fresh-allocation root provenance is erased in this case, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through an erased callback uses a move-only resource wrapper. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
+At a call through a plain procedure type, a returned pointer, slice, view, or [`inout` result](#inout-results) conservatively derives from every borrowed argument the type does not exclude with `@(escape=none)`, and from whatever those arguments' storage holds (unknown root provenance if there is none). An owning result retains the region provenance of every moved owner and allocator argument (unknown if none), and so does every argument the call may write. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
 
-Allocator-wide invalidation is the one effect propagated through arbitrary ordinary procedure wrappers. A parameter marked [`@(allocator_reset)`](#allocator_reset) states that a successful call may end every allocation root in that allocator region. At the call, the compiler rejects the reset while a value or checked borrow from the region is live.
+Allocator-wide invalidation is the one effect propagated through arbitrary ordinary procedure wrappers. A parameter marked [`@(allocator_reset)`](#allocator_reset) states that a successful call may end every allocation in that allocator region. At the call, the compiler rejects the reset while a value or checked borrow from the region is live.
 
 #### Escape levels
 
@@ -5213,7 +5210,9 @@ escape :: proc() -> ^mut int {
 }
 ```
 
-`unsafe.free(pointer)` and `unsafe.free(pointer, allocator)` release an allocation whose root the compiler cannot follow — one reached through a `rawptr`, a parameter, or foreign code. They release exactly what checked `free` releases and check nothing: the caller promises that the pointer is an allocation base from that allocator, that nothing still refers to it, and that it is released once. A handle over an opaque control block, `shared(T)` among them, has no other way to release it.
+`unsafe.new(value, allocator := mem.default_allocator())` allocates storage for one `T`, takes `value` into it as [`box`](#owned-values) does, and returns its address as a `[^]T`. Nothing owns that allocation: the value is never dropped and the storage is never released unless the program does it, and the address carries no provenance. `unsafe.try_new` takes the same arguments and returns `Result([^]T, Allocator_Error)`. A handle over an opaque control block, `shared(T)` among them, allocates it this way.
+
+`unsafe.free(pointer)` and `unsafe.free(pointer, allocator)` release the allocation a `[^]T` or `^mut T` names, sized by its element type. They do not drop the value, and they check nothing: the caller promises that the pointer is the base of an allocation of that type from that allocator, that nothing still refers to it, and that it is released once.
 
 #### `unsafe.transmute`
 
@@ -5416,7 +5415,7 @@ The predeclared operations used by this document are:
 | `fields_of(T)`, `enum_values_of(T)` | Typed [compile-time reflection](#compile-time-reflection) descriptor arrays |
 | `assert(condition, message := "", ..args)` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string, and `args` are `any_view`s printed after it |
 | `panic(message, ..args)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string, and `args` are `any_view`s printed after it. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
-| `new`, `new_clone`, `make`, `free`, `free_all`, `drop` | [Allocation and release](#allocators) |
+| `make`, `free_all`, `drop` | [Allocation and release](#allocators) |
 | `box(value, allocator)`, `try_box(value, allocator)` | An [owned value](#owned-values) in an allocation of its own |
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
 | `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |
@@ -5699,9 +5698,9 @@ Dynamic arrays, maps, runtime strings, and other managed containers remember the
 
 The allocator affects where backing storage comes from, but does not change value semantics or whether cleanup is automatic. Cleanup is suppressed per value with [`unsafe.forget`](#unsafeforget), never by a declaration modifier.
 
-Omitting the allocator argument selects the default provider: `new(int)` is `new(int, mem.default_allocator())`. The default expression is evaluated only when the caller omits the argument. A nil `Allocator` also selects the default provider, wherever it is passed.
+Omitting the allocator argument selects the default provider: `box(1)` is `box(1, mem.default_allocator())`. The default expression is evaluated only when the caller omits the argument. A nil `Allocator` also selects the default provider, wherever it is passed.
 
-A request for zero bytes, such as `new` of an empty struct, never reaches the allocator. It succeeds from every allocator, the empty region below included, and answers a non-null address at the requested alignment that nothing may dereference. Two such results may compare equal, and releasing one does nothing.
+A request for zero bytes, such as `unsafe.new` of an empty struct, never reaches the allocator. It succeeds from every allocator, the empty region below included, and answers a non-null address at the requested alignment that nothing may dereference. Two such results may compare equal, and releasing one does nothing.
 
 Temporary storage uses an explicit `mem.Scratch` or `mem.Arena` owner. `free_all`, and any call with the same reset effect, is rejected while a live owner or borrow still refers to that allocator's storage.
 
@@ -5714,7 +5713,7 @@ scratch := mem.Scratch.init();
 outcome := mem.try_scratch(parent_allocator); // Result; handle before using the owner
 ```
 
-For this rule, an owner is live when it may be used later or still requires cleanup on an outgoing path. An explicitly dropped or forgotten owner is dead and no longer blocks reset; moving an owner transfers the dependency to its destination. An unfreed allocation root whose checked carriers have no later use does not by itself block reset, because the reset is the operation that releases it. A carrier or owner that would survive and be used or cleaned up after the reset does block it.
+For this rule, an owner is live when it may be used later or still requires cleanup on an outgoing path. An explicitly dropped or forgotten owner is dead and no longer blocks reset; moving an owner transfers the dependency to its destination. A carrier or owner that would survive and be used or cleaned up after the reset does block it.
 
 #### Allocator regions and region provenance
 
@@ -5748,30 +5747,7 @@ view := scratch[:];
 release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
 ```
 
-The following low-level procedures are built in. Normal managed strings, arrays, and maps do not need them. Each follows the allocator's [failure policy](#allocation-failure); its `try_` form, `try_new`, `try_new_clone`, or `try_make`, takes the same arguments and returns `Result(T, Allocator_Error)` instead.
-
-- `new(T, allocator := mem.default_allocator()) -> ^mut T` creates a zero-initialized allocation, so `T` must have a [zero value](#zero-values). The result is an allocation root with pointer and allocator-region provenance. Release it with `free`, reset its region, or move responsibility into a resource wrapper.
-
-```odin
-ptr := new(int);
-ptr^ = 123;
-x: int = ptr^;
-free(ptr);
-
-switch (maybe in try_new(int)) {
-case .ok: free(maybe);
-case .err: fmt.println("no memory for an int");
-}
-```
-
-- `new_clone(value, allocator := mem.default_allocator()) -> ^mut T` creates an allocation containing a clone. It has the same provenance and release rules as `new`. Borrows in the clone keep their source lifetimes; allocating the clone does not extend them.
-
-```odin
-x: int = 123;
-ptr := new_clone(x);
-assert(ptr^ == 123);
-free(ptr);
-```
+The following low-level procedures are built in. Normal managed strings, arrays, and maps do not need them. `make` follows the allocator's [failure policy](#allocation-failure); `try_make` takes the same arguments and returns `Result(T, Allocator_Error)` instead. A single value gets an allocation of its own from [`box`](#owned-values).
 
 - `make(Container, ..., allocator := mem.default_allocator()) -> Container` constructs a dynamic array or map with selected backing storage. A length creates zero values and therefore requires one; capacity or map reservation does not. The result is an ordinary owning value.
 
@@ -5781,18 +5757,6 @@ with_length := make([dynamic]int, 32);
 with_length_and_capacity := make([dynamic]int, 16, 64);
 made_map := make(map[string]int);
 made_map_with_reservation := make(map[string]int, 64);
-```
-
-- `free(pointer, allocator := mem.default_allocator())` consumes a checked `^mut T` base pointer from `new` or `new_clone` and invalidates its pointers and views. Pointers created with `&` or `&mut`, and weakened `^T` pointers, cannot be freed. The allocator must be the one that created the allocation, and the compiler checks it through region provenance: both must name the same single region — the default provider, one `Allocator` parameter, or one local provider — so `free(p)` of an arena allocation, or of one made through an allocator the compiler cannot follow, is a compile-time error. [`unsafe.free`](#the-unsafe-package) handles unchecked or foreign allocations.
-
-```odin
-ptr := new(int);
-free(ptr);
-
-arena := mem.Arena.init();
-cell := new(int, arena.allocator());
-free(cell);                    // ERROR: `cell` came from the arena, not the default provider
-free(cell, arena.allocator()); // OK
 ```
 
 - `free_all(@(allocator_reset) allocator: Allocator)` frees every allocation in the allocator's region. No tracked dependent may survive the reset, and the annotation carries this invalidation through wrappers and indirect calls. An allocator that does not support region reset aborts the process without unwinding, but checked code cannot reach that abort: only [local regions](#allocators), which always reset, can be named by a reset.
@@ -5832,7 +5796,7 @@ backup := source.try_clone() or_return;
 numbers.try_append(value) or_return;
 ```
 
-The `try_` forms of allocating operations, `try_new`, `try_new_clone`, and `try_make` among them, return `Result(T, Allocator_Error)` and do not invoke the allocator policy. An `Allocator_Error` holds the size of the request that was refused, or all bits set when the failure requested nothing, and a nil one is no failure. Handing the error on, as `or_return` does, keeps the size for the report of a policy that is reached later. `free` and `drop` return no status. Passing `unsafe.free` the wrong allocation or allocator is a programmer error; checked `free` rejects both.
+The `try_` forms of allocating operations, `try_box`, `try_make`, and `unsafe.try_new` among them, return `Result(T, Allocator_Error)` and do not invoke the allocator policy. An `Allocator_Error` holds the size of the request that was refused, or all bits set when the failure requested nothing, and a nil one is no failure. Handing the error on, as `or_return` does, keeps the size for the report of a policy that is reached later. `drop` and `unsafe.free` return no status. Passing `unsafe.free` the wrong allocation or allocator is a programmer error.
 
 ## Concurrency and the memory model
 
@@ -6376,7 +6340,6 @@ Terms this specification gives a precise meaning, with the section that defines 
 
 | Term | Meaning |
 | --- | --- |
-| **allocation root** | Storage created by `new` or `new_clone`. It is released by `free` or by resetting its allocator region, never by scope exit. See [Owners and `drop`](#owners-and-drop). |
 | **bare bound** | A `where` bound that is a plain interface application — not negated and not one side of `||`. Besides filtering, it lets the body call the interface's slots. See [where clauses](#where-clauses). |
 | **borrow carrier** | A value that refers to another root without owning it: `^T`, `[]T`, a view, a `dyn` value, a parameter access path. See [Storage roots and borrow carriers](#storage-roots-and-borrow-carriers). |
 | **capability** | Whether a borrow is read-only or mutable. It is part of the carrier's type, spelled `mut`: `[]mut T`, `^mut T`, `dyn mut I`. See [Capabilities and the one rule](#capabilities-and-the-one-rule). |
