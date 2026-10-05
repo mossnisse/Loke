@@ -1,51 +1,69 @@
 L0310
-@13:13
+@17:13
 `nil` is not a value of `[]int`
 L0310
-@14:19
+@18:19
 `nil` is not a value of `string_view`
 L0310
-@15:15
+@19:15
 `nil` is not a value of `typeid`
 L0310
-@16:17
+@20:17
 `nil` is not a value of `Allocator`
 L0310
-@17:23
+@21:23
 `nil` is not a value of `Allocator_Error`
 L0310
-@18:17
+@22:17
 `nil` is not a value of `Weak(int)`
 L0310
-@20:11
+@24:11
 `nil` is not a value of `[]int`
 L0310
-@21:12
+@25:12
 `nil` is not a value of `typeid`
 L0310
-@23:12
+@27:12
 `nil` is not a value of `^int`
 L0310
-@24:16
+@28:16
 `nil` is not a value of `^mut int`
 L0310
-@25:16
+@29:16
 `nil` is not a value of `proc(int) -> int`
 L0310
-@26:17
+@30:17
 `nil` is not a value of `dyn Shape`
 L0310
-@27:20
+@31:20
 `nil` is not a value of `cstring_view`
 L0310
-@28:19
+@32:19
 `nil` is not a value of `Shared(int)`
 L0424
-@29:18
+@33:18
 `any_view` has no zero value, so it cannot be produced by `{}`
 L0424
-@30:22
+@34:22
 `Shared(int)` has no zero value, so it cannot be produced by `{}`
 L0424
-@31:15
+@35:15
 `^Node` has no zero value, so it cannot be produced by the omitted field `next`
+L0373
+@44:14
+`untyped nil` cannot be converted to `[]int`
+L0373
+@45:14
+`untyped nil` cannot be converted to `[]int`
+L0373
+@46:16
+`untyped nil` cannot be converted to `Allocator`
+L0392
+@47:6
+no overload of `Taker` applies to these arguments
+L0443
+@48:26
+`nil` is not representable by the interface parameter's type `Allocator`
+L0432
+@49:13
+`nil` is not representable by the generic parameter's type `Allocator_Error`

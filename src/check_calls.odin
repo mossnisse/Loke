@@ -911,6 +911,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	if base.is_const {
 		fits: bool
 		converted, fits = convert_const(k.c, base.const_value, target, true)
+		fits &&= nil_converts(k.c, source, target)
 		if !fits && report_constant_out_of_range(k.c, v.span, base.const_value, target) {
 			v.type = INVALID_TYPE
 			return true

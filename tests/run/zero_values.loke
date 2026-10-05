@@ -10,6 +10,14 @@ import "core:fmt";
 // a slice literal's hidden array (design.md "Empty slices").
 none :: proc() -> []int { return {}; }
 
+// A typed zero constant converts like any other value of its type (design.md
+// "Distinct types"), and binds a generic value parameter.
+Ints :: distinct []int;
+EMPTY: Ints : {};
+is_default :: proc($a: Allocator) -> bool { return a == Allocator{}; }
+Tagged :: struct($e: Allocator_Error) { field: int }
+Gate :: interface($T: type, $a: Allocator) {}
+
 total :: proc(xs: []int = {}) -> int {
 	n := 0;
 	foreach (x in xs) { n += x; }
@@ -34,6 +42,13 @@ main :: proc() {
 	xs.append(4);
 	e: Allocator_Error = {};
 	fmt.println(xs, a == Allocator{}, e == Allocator_Error{});
+
+	// Typed zero constants, converted and bound.
+	static_assert(Gate(int, Allocator{}));
+	converted := ([]int)(EMPTY);
+	e2 := Allocator_Error(Allocator_Error{});
+	tagged := Tagged(Allocator_Error{}){5};
+	fmt.println(converted.len(), Allocator(Allocator{}) == Allocator{}, e2 == Allocator_Error{}, is_default(Allocator{}), tagged.field);
 
 	// An empty weak handle upgrades to nothing.
 	w: weak(int) = {};

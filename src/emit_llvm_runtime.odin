@@ -946,27 +946,17 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 	return "0"
 }
 
-// Dispatches an erased value through the table, printing `<nil>` for no entry.
+// Dispatches an erased value through the table. Every type an `any_view` can
+// erase has an entry (design.md "any_view type").
 @(private = "file")
 emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) {
 	safe, _ := typeid_index(e, id, FMT_ENTRY_COUNT)
 	thunk := load(e, "ptr", gep_at(e, "ptr", FMT_ENTRIES, safe))
-	missing := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, thunk)
-	none, call, done := new_label(e, "fmt.none"), new_label(e, "fmt.call"), new_label(e, "fmt.done")
-	branch_if(e, missing, none, call)
-	place_label(e, none)
-	nil_text := text_literal_global(e, "<nil>")
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 5)", writer, nil_text)
-	branch(e, done)
-	place_label(e, call)
 	if _, uses_interface := e.c.runtime_types["Format_View"]; uses_interface {
 		emit_format_witness_call(e, thunk, data, writer, options)
 	} else {
 		fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)", thunk, data, writer, options)
 	}
-	branch(e, done)
-	place_label(e, done)
 }
 
 // The same slot ABI ordinary dyn calls use, with the C runtime's spilled

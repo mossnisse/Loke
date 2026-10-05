@@ -8,6 +8,10 @@ package main;
 Shape :: interface($Self: type) { slot area: proc(self) -> int; }
 Callback :: proc(x: int) -> int;
 Node :: struct { value: int, next: ^Node }
+Taker :: proc($a: Allocator) -> int { return 0; }
+Gate :: interface($T: type, $a: Allocator) {}
+Holder :: struct($e: Allocator_Error) { field: int }
+NIL :: nil;
 
 main :: proc() {
 	s: []int = nil;
@@ -35,4 +39,12 @@ main :: proc() {
 	bytes: [^]u8 = nil;
 	absent: Option(^int) = .none;
 	_ = r; _ = bytes; _ = absent;
+
+	// A typed zero shares the written `nil`'s constant, but not its leniency.
+	_ = ([]int)(nil);
+	_ = ([]int)(NIL);
+	_ = Allocator(nil);
+	_ = Taker(nil);
+	static_assert(Gate(int, nil));
+	_ = Holder(nil){3};
 }

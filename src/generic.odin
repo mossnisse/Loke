@@ -1898,7 +1898,7 @@ convert_generic_value :: proc(k: ^Checker, value: Const_Value, value_type, wante
 		return {}, "an enum generic argument must be a variant of the parameter's enum type"
 	}
 	converted, fits := convert_const(k.c, value, wanted, false)
-	if !fits {
+	if !fits || !nil_converts(k.c, value_type, wanted) {
 		return {}, fmt.aprintf(
 			"`%s` is not representable by the generic parameter's type `%s`",
 			generic_value_text(k.c, value), type_name(k.c, wanted), allocator = k.c.semantic_allocator,

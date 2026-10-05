@@ -297,6 +297,7 @@ interface_arguments_for :: proc(
 				if symbol := symbol_of(k.c, lookup_symbol(k.scope, name)); symbol != nil && symbol.kind == .Const {
 					converted, fits := convert_const(k.c, symbol.const_value, wanted, false)
 					fits &&= !type_is_enum(k.c, wanted) || assignable(k.c, symbol.type, wanted)
+					fits &&= nil_converts(k.c, symbol.type, wanted)
 					if !fits {
 						if report {
 							report_unrepresentable_argument(k, arg.span, code, symbol.const_value, wanted)
@@ -331,6 +332,7 @@ interface_arguments_for :: proc(
 				}
 				converted, fits := convert_const(k.c, folded, wanted, false)
 				fits &&= !type_is_enum(k.c, wanted) || assignable(k.c, expr_base(arg.value).type, wanted)
+				fits &&= nil_converts(k.c, expr_base(arg.value).type, wanted)
 				if !fits {
 					if report {
 						report_unrepresentable_argument(k, arg.span, code, folded, wanted)

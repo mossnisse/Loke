@@ -510,7 +510,7 @@ fmt.println(Card{7, .Hearts}); // 7 of Hearts
 
 Each concrete type has one printed form throughout the program. Declaring more than one eligible inherent `format` method for a type is an error; the compiler provides a default `format` method for other printable runtime types, including scalars and aggregates. These methods satisfy `fmt.Formattable(T)` and support ordinary `dyn fmt.Formattable` views. A generated struct formatter prints only public fields. An extension in another package may declare and call its own `format` method, but `print` does not use it.
 
-The print procedures accept mixed `..any_view` arguments. For each erased argument, they recover the concrete type's `Formattable` witness and call its `format` slot with the borrowed value, writer, and options. The same method is selected by an explicit `(dyn fmt.Formattable)(&value)` conversion. A nil `any_view` prints `<nil>`.
+The print procedures accept mixed `..any_view` arguments. For each erased argument, they recover the concrete type's `Formattable` witness and call its `format` slot with the borrowed value, writer, and options. The same method is selected by an explicit `(dyn fmt.Formattable)(&value)` conversion.
 
 For ordinary member lookup, a visible local extension named `format` takes precedence over the generated default. Interface slot selection remains independent of the caller's extensions. An inherent `format` must match the slot, including the writer and options parameter modes; a generic method does not supply this concrete slot.
 
@@ -4439,7 +4439,7 @@ Divergence belongs to the declaration, not to the procedure type: `proc() -> !` 
 A call can name its arguments. Named arguments show the parameter for each value and do not depend on parameter order:
 
 ```odin
-create_window :: proc(title: string, x, y: int, width, height: int, monitor: ^Monitor) -> Result(^mut Window, Window_Error) {...};
+create_window :: proc(title: string, x, y: int, width, height: int, monitor: Option(^Monitor)) -> Result(^mut Window, Window_Error) {...};
 
 window := create_window(title="Hellope Title", monitor=.none, width=854, height=480, x=0, y=0) or_return;
 ```

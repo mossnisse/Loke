@@ -3210,7 +3210,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		return base.type == target
 	}
 	converted, fits := convert_const(k.c, base.const_value, target, false)
-	if !fits {
+	if !fits || !nil_converts(k.c, base.type, target) {
 		report_unrepresentable(k, base, target)
 		return false
 	}
@@ -3330,11 +3330,10 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			return value, true
 		}
 	}
+	// A typed zero such as an empty slice shares `.Nil` with the written `nil`;
+	// the sites converting an untyped constant refuse `nil` for other types.
 	if value.kind == .Nil {
-		if !type_accepts_nil(c, target) {
-			return value, false
-		}
-		return nil_const(), true
+		return value, type_accepts_nil(c, target) || zero_is_nil(c, target)
 	}
 	#partial switch info.kind {
 	case .Untyped_String, .CString_View:
@@ -3483,6 +3482,20 @@ type_accepts_nil :: proc(c: ^Compiler, to: Type_Id) -> bool {
 		return true
 	}
 	return false
+}
+
+// Does a constant of `from` that is `.Nil` stay a value of `to`? The written
+// `nil` converts only to an unchecked address; a typed zero keeps its type's.
+nil_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	return from != TYPE_UNTYPED_NIL || type_accepts_nil(c, to)
+}
+
+// Is `.Nil` the zero value of `type`? A reference's zero_const is `.Nil` too,
+// but a reference has no zero.
+@(private = "file")
+zero_is_nil :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	zero, ok := zero_const(c, type, false)
+	return ok && zero.kind == .Nil && type_has_zero(c, type)
 }
 
 // Is a value of `from` acceptable where `to` is wanted, with no written
