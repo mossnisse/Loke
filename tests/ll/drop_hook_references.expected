@@ -1,0 +1,4 @@
+@loke.p.Guard.release(ptr nonnull %arg0)
+= call i64 %t*(i64 %t
+not icmp eq ptr
+not icmp ne ptr

@@ -856,7 +856,7 @@ The integration harness is `tests/corpus_test.odin`:
 | `tests/trap/` | Compile, require a failing process result, and match the panic report with `.expected-err`. |
 | `tests/err/` | Match diagnostic count, codes, message fragments, and optional `@line:column` spans. Warnings the case's own sources raise are counted too, written as `warning[L0507]: ...`. |
 | `tests/syntax_err/` | Parser recovery: diagnostics, and the file's trailing sentinel survives. (`tests/syntax/` is run in process by `syntax_corpus_test.odin`.) |
-| `tests/ll/` | Require stable shapes in emitted LLVM IR, and require LLVM to accept the module. |
+| `tests/ll/` | Require stable shapes in emitted LLVM IR, forbid shapes listed after `not `, and require LLVM to accept the module. |
 | `tests/layout/` | Compare compiler and LLVM layout. |
 | `tests/pkg/`, `tests/pkg_err/` | Multi-package success and import/package diagnostics. |
 | `tests/obj/`, `tests/os/` | C-host object linking, and real process arguments and environment values. |

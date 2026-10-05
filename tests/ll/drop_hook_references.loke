@@ -1,0 +1,25 @@
+// design.md "Types with no zero value": a reference field is never null, so a
+// drop hook dereferences one and calls through a procedure field without a
+// null test, and its `self` is `nonnull`.
+package main;
+
+Guard :: move_only struct {
+	target: ^mut int,
+	count:  ^int,
+	step:   proc(n: int) -> int,
+}
+
+impl Guard {
+	release :: hook(drop) proc(self: inout) {
+		self.target^ += self.step(self.count^);
+	}
+}
+
+double :: proc(n: int) -> int { return n * 2; }
+
+main :: proc() {
+	x := 1;
+	n := 2;
+	{ _g := Guard{&mut x, &n, double}; }
+	assert(x == 5);
+}

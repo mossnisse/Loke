@@ -5,7 +5,8 @@
 //                                  sibling .expected-err compares stderr too
 //   tests/ll/*.loke  + .expected   compile with -emit-ll, assert the generated
 //                                  IR still contains each listed shape; a `*`
-//                                  matches any run inside one IR line
+//                                  matches any run inside one IR line, and a
+//                                  shape after `not ` must appear nowhere
 //   tests/err/*.loke + .expected   compile, assert exact diagnostic count plus
 //                                  code/message substrings and @line:column spans;
 //                                  a `!`-prefixed line must *not* appear, and a
@@ -828,6 +829,11 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 		for raw_line in strings.split_lines(normalise(string(expected))) {
 			line := strings.trim_space(raw_line)
 			if line == "" {
+				continue
+			}
+			if strings.has_prefix(line, "not ") {
+				absent := line[len("not "):]
+				testing.expectf(t, !ir_contains(string(ir), absent), "%s: IR contains %q", path, absent)
 				continue
 			}
 			testing.expectf(t, ir_contains(string(ir), line), "%s: IR does not contain %q", path, line)
