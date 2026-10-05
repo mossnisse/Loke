@@ -36,3 +36,14 @@ calls_it :: proc() {
 	_ = returns_missing();
 	returns_missing();
 }
+
+// A qualifier that is not an imported package, here the built-in `box`, names no
+// type. A value from that signature leaves `box` unchecked without a second
+// report, and the borrow checker, which still walks this error-free body, does
+// not read the call `box` left unbound.
+takes_builtin :: proc(a: box.Allocator) -> Allocator { return a; }
+
+boxes_through_it :: proc(a: Allocator) {
+	b := takes_builtin(a);
+	_ = box(0, b);
+}

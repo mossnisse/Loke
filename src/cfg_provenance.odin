@@ -3713,7 +3713,11 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		case .Box_New, .Try_Box:
 			// design.md "Owned values": the payload's borrows land below the box's
 			// one step, path by path, so a box keeps its fields apart as a record
-			// does. The allocator is only read.
+			// does. The allocator is only read. A call that failed to check bound
+			// nothing.
+			if len(v.bound) == 0 {
+				return nil
+			}
 			loans := walk_flow_expr(graph, v.bound[0])
 			if len(v.bound) > 1 {
 				walk_flow_expr(graph, v.bound[1])

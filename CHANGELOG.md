@@ -507,6 +507,10 @@ checklist.
 
 ### Fixed
 
+- A type written `x.Name` where `x` is not an imported package, such as
+  `box.Allocator`, is `L0306` naming the qualifier; it was `L0350`, the
+  compiler-defect diagnostic. A `box(value, allocator)` whose allocator came
+  out of such a signature no longer crashes the compiler.
 - A by-value `foreach` over an array or dynamic array of mutable carriers,
   such as `[2]fmt.Writer` or `[dynamic]^mut int`, no longer rejects using the
   element with `L0641` naming an empty source. The element is the stored

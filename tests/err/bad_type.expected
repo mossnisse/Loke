@@ -37,6 +37,9 @@ unknown type `no_such_type`
 L0306
 @31:30
 unknown type `no_such_type`
+L0306
+@44:26
+unknown type `box.Allocator`: `box` is not an imported package
 
 !L0309
 !L0326

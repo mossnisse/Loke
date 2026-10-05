@@ -2044,6 +2044,16 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 			return
 		}
 	}
+	// `x.Name` where `x` is not an imported package; a package reports its own.
+	if selector, is_selector := syntax.(^Expr_Selector); is_selector {
+		if operand, operand_is_ident := selector.operand.(^Expr_Ident); operand_is_ident {
+			errorf(
+				k.c, selector.span, "L0306", "unknown type `%s.%s`: `%s` is not an imported package",
+				operand.name, selector.name.text, operand.name,
+			)
+			return
+		}
+	}
 	unsupported_construct(k, expr_span(syntax))
 }
 
