@@ -153,7 +153,7 @@ The proposal must specify allocator identity, alignment, fallible construction,
 move, clone, drop, thread-affine destruction, and whether inline small-object
 storage changes representation. Borrowed `dyn` intentionally settles none of
 those questions and never allocates. The decided
-[`box(T)`](#non-null-references-and-explicit-allocation-owners) settles them
+[`box(T)`](design.md#owned-values) settles them
 for a payload whose type is known; `box(dyn I)` would still need erased clone
 and drop, and the payload's size and alignment from the witness.
 
@@ -524,7 +524,6 @@ fewer exceptions, rather than shortening keywords.
 
 | Priority | Proposal | Main benefit | Scope |
 | --- | --- | --- | --- |
-| Decided | [Non-null references and `box(T)`](#non-null-references-and-explicit-allocation-owners) | No nil dereferences, one-word optional references, owners visible in types | Types, representation, and APIs |
 | Next | Checked signed SIMD lanes | Scalar and vector code preserve the same meaning | SIMD lowering |
 | Next | Compiler-selected ordinary union layout | Compact nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
@@ -561,211 +560,6 @@ access and `[^]mut T` for writing, with an unchecked cast required to
 strengthen capability. It would change every foreign signature in `core`, and
 foreign pointer use would still require lifetime and bounds obligations;
 constness alone does not establish either.
-
-### Non-null references and explicit allocation owners
-
-**Decided (2026-10-04), partly built.** Stage 1 has landed: `box(T)`
-([design.md "Owned values"](design.md#owned-values)) replaced checked
-`new`/`free`, and raw allocation moved into
-[`core:unsafe`](design.md#the-unsafe-package). Stage 2 has landed too:
-`nil` is no longer a slice's, `string_view`'s, `typeid`'s, `Allocator`'s, or
-`weak(T)`'s zero ([Zero values](design.md#zero-values)). Stage 3 has landed:
-references are never null and have no zero value
-([Types with no zero value](design.md#types-with-no-zero-value)). Stage 4 has
-landed: an `Option` of a reference is the reference alone
-([Representation](design.md#representation)). Each stage
-at the end of this entry changes the specification, compiler, tests,
-tutorials, and changelog together, and the entry leaves this file when the
-last one lands.
-
-[Pointers](design.md#pointers), procedure values, and `dyn` views had a nil
-state, so `Option(^T)` had three states where two are meant, every
-dereference and indirect call compiled to a null test and a panic branch, and
-design.md's former "Nil states" rule could only diagnose a local given nothing
-but `nil`. `new(T)` returned the borrow type `^mut T` while handing over release
-by convention, and the borrow model carried an allocation-root category and a
-same-region rule for checked `free` that no program in `examples/` used; the
-library's two calls, in `core:thread` and `shared(T)`, already released
-through `unsafe.free`.
-
-**The principle: every zero value is a usable value.** A type has a zero only
-when the all-zero value supports every operation the type has, as `0`, `""`,
-and an empty `[dynamic]T` already do. No type has a state that fails when used,
-and `nil` names one thing, the null unchecked address. The rest follows:
-
-1. **Single-target references are never null.** `^T`, `^mut T`, procedure
-   values, `dyn I`, `dyn mut I`, `any_view`, `cstring_view`, `shared(T)`, and
-   `box(T)` below have no null state and no zero value. They join
-   [Types with no zero value](design.md#types-with-no-zero-value) and its
-   propagation: a struct with a reference field has no `{}`, and an omitted
-   reference field is an error at the literal rather than a nil found at run
-   time. Absence is `Option(...)`. Dereference, indirect call, and slot
-   dispatch lose their null tests, a `^T` parameter can be emitted `nonnull
-   dereferenceable`, and the nil-state diagnostic (`src/nil_uses.odin`) is
-   deleted. Non-nullness proves neither lifetime nor exclusivity; the borrow
-   checks stay as they are.
-2. **Other zeros are values, written `{}`.** A slice's or `string_view`'s zero
-   is the empty view, and `{}` at a slice type writes it instead of being
-   `L0479`. Slices stop comparing with `nil`; emptiness is `len() == 0`. Today
-   `a[0:0] == nil` is false while a zero slice's is true, a distinction nothing
-   needs. `Allocator`'s zero is the default provider, which a nil allocator
-   already means. `weak(T)`'s zero is an empty handle whose `upgrade` answers
-   `.none`. `typeid`'s zero is the invalid id, and `type_info_of` becomes
-   total, answering the `.Invalid` entry as `base:runtime` already does for a
-   forged id.
-3. **`nil` is the null `rawptr` or `[^]T`.** C pointers stay nullable for
-   interop and address arithmetic. Converting one to a checked pointer or to a
-   `cstring_view`, already an [unchecked operation](design.md#the-unsafe-package),
-   panics on null, so a reference is non-null from the moment checked code
-   holds it. A foreign binding that types a parameter or result `^T` promises
-   it is not null, as one that uses an enum promises membership; where the C
-   side may pass NULL, the binding writes `Option(^T)`.
-4. **`Option` of a reference is one reference wide.** A union of exactly two
-   variants, one without a payload and one whose payload is a non-null
-   reference, stores the payload alone, and the payloadless variant is the
-   null address: an exception to [Representation](design.md#representation).
-   `size_of(Option(^int))` falls from 16 to 8 on x64, and `Option` of a
-   procedure value, `cstring_view`, `box`, or `shared` is one word too; `dyn`
-   and `any_view` stay two. With a `^T`, `^mut T`, foreign procedure pointer,
-   or `cstring_view` payload, the union is
-   [foreign-ABI-safe](design.md#foreign-abi-safe-types) and lowers to the
-   nullable C pointer: `Option(cstring_view)` is C's optional `char const *`,
-   and a C struct whose pointer field may be NULL keeps a zero value. `Atomic`
-   accepts such a union, which is how an atomic pointer starts empty. Compact
-   layout for other unions, such as `Result(Option(T), E)`, stays the separate
-   question under
-   [Performance opportunities](#performance-opportunities-and-actual-semantic-limits).
-5. **`box(T)` owns one value.** It is declared beside `shared(T)` in
-   `base:runtime`, and it is to `^T` what `[dynamic]T` is to `[]T`.
-   `box(value, allocator := mem.default_allocator())` clones a place and takes
-   a temporary or `move(x)`, as `shared(value)` does; `try_box` returns the
-   allocation failure instead. A box is one address, with its allocator
-   recorded in the allocation.
-   - `b^` is the payload, a place writable when `b` is. Field selection,
-     indexing, and receivers reach through a box as through a pointer.
-   - A box converts implicitly to `^T`, as `string` does to `string_view`, and
-     `&mut b^` lends a `^mut T`. Both borrows have `b` as their root, so
-     moving, dropping, or assigning `b` ends them.
-   - It is copyable exactly when `T` is. A copy allocates from the
-     destination's allocator, `via` included, and
-     [last-use transfer](design.md#last-use-transfer) applies. Dropping a box
-     drops the payload and releases the allocation.
-   - It takes [region provenance](design.md#allocator-regions-and-region-provenance)
-     from its allocator: a box from an arena cannot outlive the arena, and
-     resetting the arena is rejected while the box is live.
-   - It carries the borrows its payload carries. It is not comparable, and it
-     prints its payload.
-   - `move(b).unbox()` consumes the box and returns its payload, releasing the
-     allocation. `move` cannot name a field and `exchange` needs a replacement
-     the payload type may not have, so without it a list's `pop` would have to
-     clone, and could not pop a move-only element at all.
-
-   A recursive type becomes an ordinary owned value with a zero, a clone, and
-   automatic cleanup: `Tree :: struct { value: int, left, right: Option(box(Tree)) }`,
-   each child one word. `shared(T)` gets the same `^` and the same conversion,
-   replacing `get()`, so the owners line up with their borrows:
-
-   | | Owner | Read-only borrow | Mutable borrow |
-   | --- | --- | --- | --- |
-   | One value | `box(T)`, `shared(T)` | `^T` | `^mut T`, from a box only |
-   | A sequence | `[dynamic]T` | `[]T` | `[]mut T` |
-   | Text | `string` | `string_view` | none |
-
-6. **Raw allocation moves to `core:unsafe`.** `new`, `new_clone`, their `try_`
-   forms, and checked `free` stop being built-ins. `unsafe.new(value,
-   allocator)` and `unsafe.try_new` return a `[^]T`, needing no zero because
-   they take a value, and `unsafe.free` releases. The borrow model loses the
-   allocation-root storage root, the fresh-allocation case of
-   [result contracts](design.md#procedure-result-contracts), and checked
-   `free`'s base-pointer and same-region rules. `make`, `free_all`, and `drop`
-   stay. A single value in an arena is `box(value, arena.allocator())`; nodes
-   shared within a graph use handles or indices, as
-   [checked disjoint access](#provide-checked-disjoint-access) recommends, or
-   `shared` and `weak`.
-7. **Drop hooks stop guarding against null.** A type with no zero reaches its
-   [drop hook](design.md#lifecycle-hooks-and-resource-types) only as a completed
-   initialization, so a resource holding a reference needs no inert check:
-   `thread.Guard`'s `mutex == nil` test and `shared`'s `block == nil` branches
-   go. Handle-based resources such as `fs.File` keep their sentinel; a way for
-   such a record to refuse a zero is item 6 of
-   [Focused syntax and construction cleanup](#focused-syntax-and-construction-cleanup).
-8. **A switch can bind a payload mutably.** With absence in `Option`, updating
-   a payload in place becomes common, as in inserting into an
-   `Option(box(Tree))`. On a writable place subject, `case .some(&node):` binds
-   the payload as a writable place, as `foreach (&value in items)` binds an
-   element, and the subject is exclusively borrowed for that case. Without it
-   the update is `exchange(inout tree, .none)`, a consuming switch, and a
-   reassignment. `Branch_Pattern` gains an optional `&`; if `foreach` moves to
-   `&mut`, this moves with it. Storing a reborrow taken through such a binding
-   back into the subject's own carrier, as `cursor = &mut node.next` does for
-   `switch (cursor^) { case .some(&node): ... }`, is the self-store of
-   [Weakening and reborrows](design.md#weakening-and-reborrows) and suspends
-   nothing, as `xs = &mut xs[1:]` already does.
-
-**Linked lists** work as owned chains: `List :: struct($T: type) { head:
-Option(box(Node(T))) }` over `Node :: struct($T: type) { value: T, next:
-Option(box(Node(T))) }`. `push_front` and `pop_front` are an `exchange` of
-`head` plus `unbox`; reading walks a `^` cursor through borrowed bindings,
-which compiles today with `Option(^Node)` links. Appending at the tail and
-removing in place walk a `^mut Option(box(Node(T)))` cursor by the self-store
-above; the nearest program today, a `^mut` cursor over borrowed `^mut` links,
-is `L0641`, so stage 5 adds both as acceptance tests rather than assuming
-them. Two limits stay:
-
-- Generated drop, clone, and formatting recurse once per box, so a long chain
-  can exhaust the stack. A list type declares iterative hooks instead: its drop
-  hook takes `head`, then loops, moving each node's `next` out before the node
-  drops. Trees, whose depth is logarithmic, can keep the generated ones.
-- A tail pointer or a `prev` link is a second, mutable path into storage the
-  chain owns, which no checked reference may be. An O(1) queue or a doubly
-  linked list uses handles, `prev` and `next` as `Option(int)` into a
-  `[dynamic]` slot array, or a `core:container` list that uses `unsafe.new`
-  inside and exposes a checked cursor.
-
-This also closes the former question *Definite faults need dataflow*. Its
-example, a local given `nil` and then dereferenced, no longer type-checks, and
-the other faults it considered (proven zero divisors, invalid fixed bounds,
-impossible conversions through locals) had already been left out. Because more
-code now inspects an `Option`, the conditional pattern proposed under
-[Callbacks and fallible loops](#callbacks-and-fallible-loops-deserve-small-conveniences)
-gains weight; it is not part of this decision.
-
-Rejected:
-
-- **Nullable `^T` with a flow-sensitive nil analysis.** `Option(^T)` keeps
-  three states, every dereference keeps its test, and nothing is promised
-  across a field, parameter, or container.
-- **A second, non-null pointer type beside `^T`.** Every API would choose
-  between two pointer types to say what `Option` already says.
-- **Checked `new` and `free` beside `box`.** Two ways to own one value, and the
-  pointer type still would not say who releases it.
-- **A move-only box.** The
-  [ownership rule](design.md#value-semantics-and-the-ownership-rule) makes a
-  copy of an owner an independent value, as for `[dynamic]T`; last-use
-  transfer removes the common copy, and copy-cost diagnostics report the rest.
-
-**Order of work.** Each stage is one commit that updates design.md, grammar.md,
-comments.md, the compiler, tests, tutorials, and CHANGELOG.md with an upgrade
-note:
-
-1. (Landed.) `box(T)` and `try_box`; raw allocation into `core:unsafe`;
-   allocation-root provenance removed. Migrated `core:thread`, `shared(T)`,
-   tutorial 12, and the test files that called `new` or `free`.
-2. (Landed.) `nil` narrowed to references and unchecked addresses: the zeros
-   of item 2, `Allocator_Error`'s among them, `{}` as the empty slice, and a
-   total `type_info_of`.
-3. (Landed.) Non-null references: no-zero typing, null-tested unchecked
-   conversions, no null tests in emitted code, and design.md "Nil states" and
-   `src/nil_uses.odin` deleted. Migrated `core:log` (`selected:
-   Option(Logger)`), `core:fmt`'s `format_any`, `thread.Guard`, `shared(T)`,
-   and the tests that wrote `nil` for a reference.
-4. (Landed.) The one-word `Option` representation, its foreign-ABI
-   acceptance, `Atomic` over it, and `nonnull` on reference, pointer-mode, and
-   large parameters, measured with `perf.ps1`. `dereferenceable` was left out:
-   LLVM reads it as holding for the whole call, and a callee can still release
-   the last owner of a `^T`'s target through a global it writes.
-5. Mutable switch payload bindings, with a list's tail append and in-place
-   removal as acceptance tests.
 
 ### Provide checked disjoint access
 
@@ -837,7 +631,7 @@ this review establishes that the current compiler achieves C-like performance.
 
 | Area | Current consequence | Recommendation |
 | --- | --- | --- |
-| Bounds/overflow checks | Observable failure constrains motion and speculation | Keep checks; eliminate those proved redundant and expose explicit arithmetic policies. Nil checks go with [non-null references](#non-null-references-and-explicit-allocation-owners) |
+| Bounds/overflow checks | Observable failure constrains motion and speculation | Keep checks; eliminate those proved redundant and expose explicit arithmetic policies. References are [never null](design.md#types-with-no-zero-value), so they carry no nil checks |
 | Aliasing | Local exclusivity can help; unknown provenance and hidden effects limit what may be assumed | Repair effect holes first, then emit alias/memory attributes only where their precise obligations hold |
 | Floating-point expressions | Unwritten FMA contraction and reassociation are forbidden | Add explicit `math.fma` and separately named reassociating reductions; keep default arithmetic strict |
 | Ordered reductions | A floating SIMD sum is defined left to right | Retain the ordered form and offer an explicit unordered/tree reduction with documented numerical differences |
@@ -848,8 +642,8 @@ this review establishes that the current compiler achieves C-like performance.
 
 An unused representation, or niche, is a bit pattern no valid payload uses.
 For references the niche is decided: null encodes `.none` in an `Option`-shaped
-union over a non-null reference, under
-[Non-null references and explicit allocation owners](#non-null-references-and-explicit-allocation-owners).
+union over a non-null reference
+([Representation](design.md#representation)).
 What remains here is every other union.
 
 Make the layout of ordinary unions an implementation choice, while retaining
@@ -951,7 +745,9 @@ continue_after_stream();
 The expression is evaluated once per step; a matching payload lives for the
 body, a nonmatching variant ends the loop, and `or_return` handles errors in
 the ordinary way. Borrowed entries must expire before the next call. An `if`
-form can share the same rule. Do not add nested patterns, implicit error
+form can share the same rule. Absence is now always an `Option`, so more code
+inspects one than when references could be null, which gives this form more
+weight. Do not add nested patterns, implicit error
 conversion, and general comprehensions as prerequisites.
 
 ### Thread transfer needs a visible contract
@@ -1004,7 +800,7 @@ Prefer changes that remove an ambiguity or semantic exception:
    to supply every field unless a field declares a default. An opt-in
    constructor-only/no-default-initialization record is a smaller alternative.
    Zero being representable does not mean it satisfies a resource or domain
-   invariant. [Non-null references](#non-null-references-and-explicit-allocation-owners)
+   invariant. [Non-null references](design.md#types-with-no-zero-value)
    already reject an omitted reference field; what this item still covers is
    scalar and handle fields, such as `fs.File`'s.
 

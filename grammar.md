@@ -529,7 +529,8 @@ Value_Switch = Attributes? "switch" "(" Init_Statement? Expression ")"
 Value_Case   = "case" (Branch_Pattern | Expression_List)? ":" Statement*
 // A branch pattern is recognized only when the switch subject is a union. It
 // is deliberately shallow: one variant, one identifier binding, no nesting.
-Branch_Pattern = "." Identifier "(" Identifier ")"
+// `&` binds the payload as a writable place (design.md "Switch ownership").
+Branch_Pattern = "." Identifier "(" "&"? Identifier ")"
 
 Type_Switch  = Attributes? "switch" "(" Init_Statement? Identifier "in" Expression ")"
                "{" Type_Case* "}"

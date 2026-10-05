@@ -3166,7 +3166,7 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 	case .Payload_Binding:
 		errorf(
 			k.c, base.span, "L0358",
-			"a `switch` binding names storage the subject still owns and cannot be %s",
+			"a `switch` binding names storage the subject still owns and cannot be %s; bind it with `&` for a mutable payload",
 			what,
 		)
 	case .Read_Only_Name:

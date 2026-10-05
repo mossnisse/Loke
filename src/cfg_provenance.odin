@@ -176,10 +176,15 @@ prov_root_view :: proc(graph: ^Flow_Graph, root: Root_Id) -> []int {
 	return graph.view_loans[symbol]
 }
 
+// A `.name(&binding)` case borrows the subject exclusively for the case, as
+// `&mut subject` would (design.md "Switch ownership").
 @(private)
-prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr) -> []int {
+prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool) -> []int {
 	if subject == nil {
 		return nil
+	}
+	if mutable {
+		return prov_borrow_place(graph, subject, true, expr_span(subject), "payload")
 	}
 	root, path, ok := prov_place_of(graph, subject)
 	if !ok {
@@ -3021,6 +3026,13 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 	}
 	prov_walk_subscripts(graph, operand)
 	access_block, access_index := prov_access(graph, root, path, mutable ? .Write : .Read, span)
+	// Part of a viewing binding is part of its source, so `&mut node.next` in
+	// `switch (cursor^) { case .some(&node): }` reborrows `cursor`.
+	if symbol := graph.roots[int(root)].symbol; symbol != INVALID_SYMBOL && !graph.step_views[symbol] {
+		if loans, viewed := graph.view_loans[symbol]; viewed {
+			return loans
+		}
+	}
 	return prov_borrow(graph, root, path, mutable, span, what, access_block, access_index)
 }
 

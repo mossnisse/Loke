@@ -1571,7 +1571,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 			// a consumed one is the binding's own, which ends with its case
 			// (design.md "Switch ownership").
 			if !consumes {
-				prov_bind_view(graph, c.binding_symbol, prov_subject_view(graph, s.subject))
+				prov_bind_view(graph, c.binding_symbol, prov_subject_view(graph, s.subject, c.binding_ref))
 			} else if c.binding_symbol != INVALID_SYMBOL {
 				root := prov_root_for_symbol(graph, c.binding_symbol)
 				append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = c.span})

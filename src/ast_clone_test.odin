@@ -93,7 +93,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Generic_Param, "span names type", "symbols"},
 		{Binding_Group, "span names is_inout type", "symbols"},
 		{Requirement, "span kind bindings expr result_inout result name slot_type", ""},
-		{Switch_Case, "span values stmts binding", "binding_symbol binding_type variant_indices"},
+		{Switch_Case, "span values stmts binding binding_ref", "binding_symbol binding_type variant_indices"},
 		{Return_Value, "span is_inout expr", "clone_on_return"},
 		{Foreach_Binding, "name is_static is_ref group", "symbol"},
 	}

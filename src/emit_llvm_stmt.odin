@@ -628,7 +628,9 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	erased := union_type == TYPE_ANY_VIEW
 	consumes := false
 	tag_llvm := "i64"
-	value := emit_expr(e, s.subject)
+	// A `.name(&binding)` case binds the payload in the subject's own storage.
+	place := switch_binds_place(s) ? emit_address(e, s.subject) : ""
+	value := place != "" ? load_place(e, union_type, place) : emit_expr(e, s.subject)
 	slot, tag: string
 	if erased {
 		storage := llvm_type(e, TYPE_ANY_VIEW)
@@ -668,7 +670,11 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	for entry, index in s.cases {
 		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
-		emit_type_case_binding(e, entry, union_type, value, slot, erased)
+		if entry.binding_ref && entry.binding_symbol != INVALID_SYMBOL {
+			bind_local(e, entry.binding_symbol, gep_field(e, llvm_type(e, union_type), place, 0))
+		} else {
+			emit_type_case_binding(e, entry, union_type, value, slot, erased)
+		}
 		// A consumed payload drops with the binding, or with the case if unbound.
 		if consumes {
 			if entry.binding_symbol != INVALID_SYMBOL {

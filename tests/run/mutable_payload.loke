@@ -1,0 +1,122 @@
+// design.md "Switch ownership": `case .name(&binding):` binds the payload in the
+// subject's own storage, through a local, a field, a `^mut`, and a box.
+package main;
+
+import "core:fmt";
+
+Shape :: union { circle: f64, rect: Rect, empty: }
+Rect :: struct { w, h: int }
+
+Noisy :: struct { id: int }
+
+impl Noisy {
+	bye :: hook(drop) proc(self: inout Noisy) { fmt.println("drop", self.id); }
+}
+
+Tree :: struct {
+	value:       int,
+	left, right: Option(box(Tree)),
+}
+
+Holder :: struct { shape: Shape }
+
+insert :: proc(tree: ^mut Option(box(Tree)), value: int) {
+	switch (tree^) {
+	case .some(&node):
+		if (value < node.value) { insert(&mut node.left, value); } else { insert(&mut node.right, value); }
+	case .none:
+		tree^ = .some(box(Tree{value, .none, .none}));
+	}
+}
+
+in_order :: proc(tree: ^Option(box(Tree))) {
+	switch (tree^) {
+	case .some(node): in_order(&node.left); fmt.print(node.value, ""); in_order(&node.right);
+	case .none:
+	}
+}
+
+grow :: proc(shape: ^mut Shape) {
+	switch (shape^) {
+	case .circle(&radius): radius *= 2;
+	case .rect(&r):        r.w += 1; r.h += 1;
+	case .empty:
+	}
+}
+
+counted :: proc() -> int {
+	value: Option(int) = .some(4);
+	for (i := 0; i < 3; i += 1) {
+		switch (value) {
+		case .some(&n): n += i;
+		case .none:
+		}
+	}
+	return value or_else 0;
+}
+
+COUNTED :: counted();
+
+// A `^mut` cursor stores each reborrow back into itself, at compile time too.
+push_back :: proc(head: ^mut Option(box(Tree)), value: int) {
+	cursor := head;
+	for (;;) {
+		switch (cursor^) {
+		case .some(&node): cursor = &mut node.right;
+		case .none:        cursor^ = .some(box(Tree{value, .none, .none})); return;
+		}
+	}
+}
+
+chained :: proc() -> int {
+	chain: Option(box(Tree)) = .none;
+	push_back(&mut chain, 1);
+	push_back(&mut chain, 2);
+	push_back(&mut chain, 3);
+	digits := 0;
+	cursor := &chain;
+	for (;;) {
+		switch (cursor^) {
+		case .some(node): digits = digits * 10 + node.value; cursor = &node.right;
+		case .none:       return digits;
+		}
+	}
+}
+
+CHAINED :: chained();
+
+main :: proc() {
+	value: Option(int) = .some(4);
+	switch (value) {
+	case .some(&n): n *= 10;
+	case .none:
+	}
+	fmt.println(value, COUNTED, counted(), CHAINED, chained());
+
+	holder := Holder{.rect(Rect{2, 3})};
+	grow(&mut holder.shape);
+	circle: Shape = .circle(1.5);
+	grow(&mut circle);
+	rect := holder.shape.as(.rect) or_else Rect{};
+	fmt.println(rect.w, rect.h, circle);
+
+	// Assigning the binding replaces the payload, dropping the old one.
+	noisy: Option(box(Noisy)) = .some(box(Noisy{1}));
+	switch (noisy) {
+	case .some(&b): b = box(Noisy{2});
+	case .none:
+	}
+	switch (noisy) {
+	case .some(&b): b.id += 10;
+	case .none:
+	}
+	switch (noisy) {
+	case .some(b): fmt.println("now", b.id);
+	case .none:
+	}
+
+	tree: Option(box(Tree)) = .none;
+	foreach (v in []int{5, 3, 8, 1, 4, 9}) { insert(&mut tree, v); }
+	in_order(&tree);
+	fmt.println();
+}

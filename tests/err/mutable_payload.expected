@@ -1,0 +1,30 @@
+L0512
+@14:18
+`x` cannot be assigned here: a mutable payload of it is still in use
+L0511
+@22:30
+this read of `x` is not compatible with the mutable payload of it that is still in use
+L0359
+@28:10
+this expression cannot be switched with a mutable payload binding
+L0640
+@35:10
+this place is reached through a read-only `^T` and cannot be switched with a mutable payload binding; borrow it with `&mut` for a `^mut T`
+L0358
+@42:10
+a value parameter is immutable and cannot be switched with a mutable payload binding
+L0512
+@56:2
+`x` cannot be assigned here: a mutable payload of it is still in use
+L0690
+@63:28
+`move` views the payload of a switch over a place, which still owns it; `switch (b in move(...))` hands it over first
+L0358
+@71:17
+a `switch` binding names storage the subject still owns and cannot be an assignment destination; bind it with `&` for a mutable payload
+L0641
+@83:3
+`cursor` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@94:3
+`head` cannot be used here: a mutable reborrow of it is still in use

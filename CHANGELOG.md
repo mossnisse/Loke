@@ -397,6 +397,12 @@ checklist.
 
 ### Added
 
+- `case .name(&binding):` binds a union payload as a writable place when the
+  switch subject is a writable place, which the case borrows exclusively
+  (design.md "Switch ownership"). An `Option(box(T))` field is updated in
+  place, and a `^mut` cursor walks a chain by storing `&mut node.next` back
+  into itself, so a linked list's tail append and in-place removal need no
+  `exchange` or unchecked code.
 - `Option` of `^T`, `^mut T`, a foreign procedure pointer, or `cstring_view`
   is foreign-ABI-safe, lowered to the nullable C pointer: a binding whose C
   side may pass or return NULL now writes `Option(^T)` rather than `[^]T` or

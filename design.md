@@ -1619,7 +1619,7 @@ v = number(7);
 
 #### Inspecting a union
 
-A union is inspected with a `switch`, whose cases are variant names. A case may bind that variant's payload locally with `.name(binding)`. This is a deliberately small pattern: the binding is one identifier (or `_`), and patterns do not nest. Payloadless variants are written as bare `.name`.
+A union is inspected with a `switch`, whose cases are variant names. A case may bind that variant's payload locally with `.name(binding)`, or as a writable place with `.name(&binding)` (see [Switch ownership](#switch-ownership)). This is a deliberately small pattern: the binding is one identifier (or `_`), and patterns do not nest. Payloadless variants are written as bare `.name`.
 
 ```odin
 switch (v) {
@@ -1665,6 +1665,22 @@ n := shape.as(.count) or_return;    // in a procedure returning an Option
 A switch over a **place** borrows it: a payload binding is immutable and non-owning, and the place keeps its value.
 
 A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
+
+A case written `.name(&binding)` binds the payload as a writable place instead, as `foreach (&value in items)` binds an element. The subject must be a writable place, and the case borrows it exclusively: the subject cannot be read or written while the binding, or anything borrowed through it, is still used. Assigning the binding replaces the payload in place, and like any binding over a place it cannot be moved or dropped. A borrow taken through the binding is part of the subject's borrow, so storing one back into the carrier the subject was reached through, as `cursor = &mut node.next` does below, is the self-store of [Weakening and reborrows](#weakening-and-reborrows) and suspends nothing:
+
+```odin
+Node :: struct { value: int, next: Option(box(Node)) }
+
+push_back :: proc(head: ^mut Option(box(Node)), value: int) {
+	cursor := head;
+	for (;;) {
+		switch (cursor^) {
+		case .some(&node): cursor = &mut node.next;
+		case .none:        cursor^ = .some(box(Node{value, .none})); return;
+		}
+	}
+}
+```
 
 #### Zero values and `@(zero=)`
 
@@ -3180,7 +3196,7 @@ A variable holds a value, not a reference to one. Copying an owning value produc
 | `inout T` parameter | exclusive mutable borrow | not accepted: `inout` names a caller's variable |
 | `move T` parameter | transferred, and written `move(x)` at the call | transferred, with no marker |
 | [result](#parameter-semantics-and-abi-lowering) | a borrowed parameter or place is cloned | a managed local, temporary, or `move` parameter is transferred |
-| [`switch` subject](#switch-ownership) | payload borrowed, and the binding is immutable | payload consumed |
+| [`switch` subject](#switch-ownership) | payload borrowed; the binding is immutable, or the writable payload itself when written `&` | payload consumed |
 | [`or_else`](#or_else-expression) | success payload copied out, failure left alone | payload transferred, and a managed failure dropped before the fallback |
 | [`or_return`](#or_return-operator) | the selected payload copied out, source stays live | transferred |
 | [conditional operand](#conditional-expression) | copied into the result | transferred |

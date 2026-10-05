@@ -1,0 +1,100 @@
+// design.md "Switch ownership": a `.name(&binding)` case needs a writable place,
+// and borrows it exclusively until the binding and what is taken from it are
+// last used. A reborrow stored back into the cursor is a self-store.
+package main;
+
+import "core:fmt";
+
+make_opt :: proc() -> Option(int) { return .some(1); }
+take :: proc(value: move box(int)) { }
+
+writes_subject :: proc() {
+	x: Option(int) = .some(1);
+	switch (x) {
+	case .some(&n): x = .none; n += 1;
+	case .none:
+	}
+}
+
+reads_subject :: proc() {
+	x: Option(int) = .some(1);
+	switch (x) {
+	case .some(&n): fmt.println(x); n += 1;
+	case .none:
+	}
+}
+
+temporary :: proc() {
+	switch (make_opt()) {
+	case .some(&n): n += 1;
+	case .none:
+	}
+}
+
+read_only :: proc(p: ^Option(int)) {
+	switch (p^) {
+	case .some(&n): n += 1;
+	case .none:
+	}
+}
+
+value_param :: proc(x: Option(int)) {
+	switch (x) {
+	case .some(&n): n += 1;
+	case .none:
+	}
+}
+
+escapes :: proc() {
+	x: Option(int) = .some(1);
+	y := 0;
+	q := &mut y;
+	switch (x) {
+	case .some(&n): q = &mut n;
+	case .none:
+	}
+	x = .none;
+	q^ = 2;
+}
+
+moves_out :: proc() {
+	x: Option(box(int)) = .some(box(1));
+	switch (x) {
+	case .some(&b): take(move(b));
+	case .none:
+	}
+}
+
+read_only_payload :: proc() {
+	x: Option(int) = .some(1);
+	switch (x) {
+	case .some(n): n += 1;
+	case .none:
+	}
+}
+
+Node :: struct { value: int, next: Option(box(Node)) }
+
+invalidates :: proc(head: ^mut Option(box(Node))) {
+	cursor := head;
+	switch (cursor^) {
+	case .some(&node):
+		other := &mut node.next;
+		cursor^ = .none;
+		other^ = .none;
+	case .none:
+	}
+}
+
+source_after :: proc(head: ^mut Option(box(Node))) {
+	cursor := &mut head^;
+	switch (cursor^) {
+	case .some(&node):
+		cursor = &mut node.next;
+		head^ = .none;
+		cursor^ = .none;
+	case .none:
+	}
+}
+
+main :: proc() {}

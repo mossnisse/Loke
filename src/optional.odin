@@ -236,35 +236,53 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 
 // ---------------------------------------------------------- type switch --
 
-// A union subject turns `.name(binding)` calls into branch patterns.
+// A union subject turns `.name(binding)` and `.name(&binding)` calls into
+// branch patterns.
 adopt_branch_patterns :: proc(s: ^Stmt_Switch) {
 	s.kind = .Pattern
 	for &entry in s.cases {
 		if len(entry.values) != 1 {
 			continue
 		}
-		if selector, binding, ok := branch_variant_pattern(entry.values[0]); ok {
+		if selector, binding, ref, ok := branch_variant_pattern(entry.values[0]); ok {
 			entry.values[0] = selector
 			entry.binding = binding
+			entry.binding_ref = ref
 		}
 	}
 }
 
 @(private = "file")
-branch_variant_pattern :: proc(value: Expr) -> (Expr, Name, bool) {
+branch_variant_pattern :: proc(value: Expr) -> (Expr, Name, bool, bool) {
 	call, is_call := value.(^Expr_Call)
 	if !is_call || len(call.args) != 1 {
-		return nil, Name{}, false
+		return nil, Name{}, false, false
 	}
 	selector, is_selector := call.callee.(^Expr_Selector)
 	arg := call.args[0]
-	ident, is_ident := arg.value.(^Expr_Ident)
+	written := arg.value
+	ref := false
+	if unary, is_unary := written.(^Expr_Unary); is_unary && unary.op == .Amp && !unary.mutable {
+		written, ref = unary.operand, true
+	}
+	ident, is_ident := written.(^Expr_Ident)
 	if !is_selector || selector.operand != nil || !is_ident ||
 	   arg.name.text != "" || arg.mode != .Value {
-		return nil, Name{}, false
+		return nil, Name{}, false, false
 	}
 	binding := Name{text = ident.name, span = ident.span, id = ident.name_id}
-	return selector, binding, true
+	return selector, binding, ref, true
+}
+
+// design.md "Switch ownership": a `.name(&binding)` case makes the switch work
+// on its subject's storage rather than on a copy.
+switch_binds_place :: proc(s: ^Stmt_Switch) -> bool {
+	for entry in s.cases {
+		if entry.binding_ref {
+			return true
+		}
+	}
+	return false
 }
 
 check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
@@ -300,6 +318,12 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	}
 	erased := subject == TYPE_ANY_VIEW
 	borrows := erased || expression_is_borrowed_place(s.subject)
+	// design.md "Switch ownership": a mutable payload binding writes the
+	// subject's own storage.
+	if switch_binds_place(s) && !erased && !expr_base(s.subject).assignable {
+		report_not_assignable(k, expr_base(s.subject), "switched with a mutable payload binding")
+		return Flow_Info{}
+	}
 	if !erased && !type_is_union(k.c, subject) {
 		errorf(
 			k.c,
@@ -424,7 +448,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 				type       = binding_type,
 				pkg        = k.pkg,
 				owner_proc = k.proc_literal,
-				immutable  = borrows,
+				immutable  = borrows && !entry.binding_ref,
 				borrowed_binding = borrows ? .Switch_Payload : .None,
 			})
 			k.scope.names[name] = entry.binding_symbol

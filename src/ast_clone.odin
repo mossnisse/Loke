@@ -513,6 +513,7 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 				values  = clone_exprs(c, entry.values),
 				stmts   = clone_stmts(c, entry.stmts),
 				binding = entry.binding,
+				binding_ref = entry.binding_ref,
 			}
 		}
 		return n

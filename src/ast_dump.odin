@@ -337,7 +337,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 				dump_child(b, value, depth + 1)
 			}
 			if entry.binding.text != "" {
-				fmt.sbprintf(b, " (bind %q)", entry.binding.text)
+				fmt.sbprintf(b, " (bind %s%q)", entry.binding_ref ? "&" : "", entry.binding.text)
 			}
 			fmt.sbprintln(b)
 			for inner in entry.stmts {

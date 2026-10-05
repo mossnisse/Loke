@@ -3296,6 +3296,14 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 			return flow
 		}
 	}
+	// A `.name(&binding)` case binds the payload in the subject's own storage.
+	if switch_binds_place(s) {
+		place, ok := eval_place(ev, s.subject)
+		if !ok {
+			return .Fail
+		}
+		return eval_variant_switch(ev, s, place^, place)
+	}
 	subject, ok := eval_expr(ev, s.subject)
 	if !ok {
 		return .Fail
@@ -3327,7 +3335,7 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 
 // Dispatches on the variant index, as the emitter compares the tag.
 @(private = "file")
-eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value) -> Eval_Flow {
+eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value, place: ^Eval_Value = nil) -> Eval_Flow {
 	chosen := -1
 	fallback := -1
 	for entry, index in s.cases {
@@ -3357,6 +3365,10 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 		if frame == nil {
 			eval_fail(ev, s.span, "L0341", "a case binding needs a compile-time frame")
 			return .Fail
+		}
+		if entry.binding_ref {
+			frame.locals[entry.binding_symbol] = &place.elements[0]
+			return eval_stmts(ev, entry.stmts, true)
 		}
 		bound, copied := copy_value(ev, eval_union_payload(subject, entry.binding_type))
 		if !copied || !bind_local(ev, frame, entry.binding_symbol, bound) {

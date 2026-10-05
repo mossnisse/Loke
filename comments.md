@@ -144,8 +144,8 @@ see, as it sees a dynamic array's element. The cost is one more type kind
 handled where `[dynamic]T` is.
 
 A box is one address and its allocation records the allocator, so a child
-link in a tree is one word, and a later `Option` of it can be one word too
-(open-questions.md "Non-null references and explicit allocation owners").
+link in a tree is one word, and an `Option` of it is one word too
+([Zeros that are values](#zeros-that-are-values)).
 
 Checked `new`, `new_clone`, and `free` went when `box` arrived. They were a
 second way to own one value whose type still said nothing about who releases
@@ -163,8 +163,7 @@ subslice that behaves identically. Loke gives each such type a zero that
 supports every operation the type has, written `{}` like any other zero: the
 empty view, the invalid id with its `Invalid` reflection entry, the default
 provider, an empty `weak` handle. `nil` is then only ever an address that is
-not there, which is what lets references stop having one at all
-(open-questions.md "Non-null references and explicit allocation owners").
+not there, which is what lets references stop having one at all.
 Slices stop comparing with `nil` because the only question that comparison
 could answer, besides emptiness, was which of two empty views had been sliced
 from memory.
@@ -188,6 +187,38 @@ that address alone, as Rust's `Option<&T>` is, so a chain of
 means by a nullable pointer, both across the foreign boundary and inside an
 `Atomic`. design.md "Representation" states the rule by shape rather than by
 naming `Option`, so a hand-written two-variant union gets the same layout.
+
+Two other designs were rejected. A nullable `^T` with a flow-sensitive nil
+analysis keeps three states inside an `Option` and a test on every
+dereference, and promises nothing across a field, a parameter, or a container.
+A second, non-null pointer type beside `^T` would make every API choose
+between two pointer types to say what `Option` already says.
+
+### Updating a payload in place
+
+Once absence is an `Option`, updating a payload in place is common, as in
+inserting into an `Option(box(Tree))`. Without a mutable binding that update is
+an `exchange` of the field for `.none`, a consuming switch, and an assignment
+back. `case .some(&node):` binds the payload as a writable place instead,
+spelled as `foreach (&value in items)` binds an element, and it would move to
+`&mut` with `foreach` if that ever changes
+([Switch ownership](design.md#switch-ownership)).
+
+The binding views the subject's storage, so a borrow taken through it is part
+of the subject's borrow rather than a borrow of the binding. That is what makes
+a cursor walk work: in `switch (cursor^) { case .some(&node): cursor = &mut
+node.next; }`, the new pointer reborrows `cursor` and is stored back into it,
+the self-store that `xs = &mut xs[1:]` already was. A list's `push_back` and an
+in-place `remove` are written that way, with no unchecked code.
+
+Two limits stay. Generated drop, clone, and formatting recurse once per box, so
+a long chain can exhaust the stack; a list type declares an iterative drop hook
+that moves each node's `next` out before the node drops, while a tree, whose
+depth is logarithmic, can keep the generated hooks. And a tail pointer or a
+`prev` link is a second mutable path into storage the chain owns, which no
+checked reference may be: an O(1) queue or a doubly linked list uses handles,
+`prev` and `next` as `Option(int)` into a `[dynamic]` slot array, or a
+container that uses `unsafe.new` inside and exposes a checked cursor.
 
 ### Storage modifiers instead of storage attributes
 

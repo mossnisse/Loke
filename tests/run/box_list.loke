@@ -1,6 +1,8 @@
 // design.md "Owned values": a singly linked list as a chain of boxes. Its drop
 // hook unlinks iteratively, so a long list does not nest one drop per node, and
-// `unbox` hands out a move-only payload.
+// `unbox` hands out a move-only payload. Appending at the tail and removing in
+// place walk a `^mut` cursor through mutable payload bindings, storing each
+// reborrow back into the cursor (design.md "Switch ownership").
 package main;
 
 import "core:fmt";
@@ -24,6 +26,36 @@ impl List($T) {
 			self.head = move(next);
 			self.count -= 1;
 			return .some(move(value));
+		}
+	}
+
+	push_back :: proc(self: inout, @(escape=stored) value: move T) {
+		cursor := &mut self.head;
+		for (;;) {
+			switch (cursor^) {
+			case .some(&node): cursor = &mut node.next;
+			case .none:
+				cursor^ = .some(box(Node(T){move(value), .none}));
+				self.count += 1;
+				return;
+			}
+		}
+	}
+
+	remove :: proc(self: inout, value: T) -> bool {
+		cursor := &mut self.head;
+		for (;;) {
+			switch (cursor^) {
+			case .none: return false;
+			case .some(&node):
+				if (node.value == value) {
+					rest := exchange(inout node.next, .none);
+					cursor^ = move(rest);
+					self.count -= 1;
+					return true;
+				}
+				cursor = &mut node.next;
+			}
 		}
 	}
 
@@ -58,6 +90,16 @@ main :: proc() {
 	}
 	fmt.println(numbers.count, sum(&numbers));
 	fmt.println(numbers.pop_front(), numbers.pop_front(), numbers.count);
+
+	short: List(int) = {};
+	for (i := 1; i <= 5; i += 1) {
+		value := i;
+		short.push_back(move(value));
+	}
+	fmt.println(short.remove(3), short.remove(1), short.remove(5), short.remove(9), short.count);
+	six := 6;
+	short.push_back(move(six));
+	fmt.println(short.pop_front(), short.pop_front(), short.pop_front(), short.pop_front());
 
 	tickets: List(Ticket) = {};
 	tickets.push_front(Ticket{1});
