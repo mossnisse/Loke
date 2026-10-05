@@ -204,11 +204,17 @@ spelled as `foreach (&value in items)` binds an element, and it would move to
 `&mut` with `foreach` if that ever changes
 ([Switch ownership](design.md#switch-ownership)).
 
-The binding views the subject's storage, so a borrow taken through it is part
-of the subject's borrow rather than a borrow of the binding. That is what makes
-a cursor walk work: in `switch (cursor^) { case .some(&node): cursor = &mut
+A borrow taken through the binding is a borrow of that field of the binding,
+tracked as precisely as one of a local, and it also carries the subject's
+borrow. When the case runs again the binding names different storage, so the
+checker stops counting the earlier pass's borrows against it; the subject's
+borrow they carry still guards what they point into. That is what makes a
+cursor walk work: in `switch (cursor^) { case .some(&node): cursor = &mut
 node.next; }`, the new pointer reborrows `cursor` and is stored back into it,
-the self-store that `xs = &mut xs[1:]` already was. A list's `push_back` and an
+the self-store that `xs = &mut xs[1:]` already was, and the next pass's `node`
+is free to borrow again. Treating every borrow through the binding as the
+subject's whole borrow would also work for the cursor, but it lost field
+tracking: growing a buffer under a pointer into it went unreported. A list's `push_back` and an
 in-place `remove` are written that way, with no unchecked code.
 
 Two limits stay. Generated drop, clone, and formatting recurse once per box, so

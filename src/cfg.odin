@@ -1571,6 +1571,11 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 			// a consumed one is the binding's own, which ends with its case
 			// (design.md "Switch ownership").
 			if !consumes {
+				// design.md "Switch ownership": `cursor = &mut node.next` keeps a
+				// loan of this case's `node`, which the next pass binds afresh.
+				if c.binding_ref && c.binding_symbol != INVALID_SYMBOL {
+					prov_emit(graph, Prov_Event{kind = .Rebind, root = prov_root_for_symbol(graph, c.binding_symbol), span = c.span})
+				}
 				prov_bind_view(graph, c.binding_symbol, prov_subject_view(graph, s.subject, c.binding_ref))
 			} else if c.binding_symbol != INVALID_SYMBOL {
 				root := prov_root_for_symbol(graph, c.binding_symbol)

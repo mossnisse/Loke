@@ -491,9 +491,11 @@ LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_options_v1) == 16, options_size);
 LOKE_RT_STATIC_ASSERT(offsetof(loke_rt_options_v1, uppercase) == 8, options_uppercase_offset);
 
 /* The two process sinks. `state` carries the stream selector, so one `write`
- * implementation serves both and `core:fmt` needs no foreign declarations. */
+ * implementation serves both and `core:fmt` needs no foreign declarations.
+ * Neither selector is 0: `state` is a `dyn` view's data word, which is never
+ * null, and a null one would read as `.none` inside an `Option`. */
 void loke_rt_v1_write_std(void *state, const uint8_t *bytes, int64_t count);
-enum { LOKE_RT_STDOUT = 0, LOKE_RT_STDERR = 1 };
+enum { LOKE_RT_STDOUT = 1, LOKE_RT_STDERR = 2 };
 /* Called by `core:term` before it writes a standard handle directly. */
 void loke_rt_v1_flush_stdout(void);
 

@@ -1581,6 +1581,16 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, ended
 		state.precision[event.slot] = loss
 	case .Load:
 		load_pointee_content(state, event, reach)
+	case .Rebind:
+		for slot in 0 ..< state.slots {
+			row := reach_row(state, reach, slot)
+			for loan, index in graph.loans {
+				if loan.root == event.root {
+					bit_clear(row, index)
+					bit_clear(row, state.loans + index)
+				}
+			}
+		}
 	case .Publish:
 		// Joins into every root the carrier may name.
 		mem.zero_slice(state.merged)

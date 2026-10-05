@@ -421,7 +421,7 @@ emit_formatted_panic :: proc(e: ^Emitter, v: ^Expr_Call, message_index: int, fal
 	writer := alloca(e, "{ ptr, ptr }")
 	// `{` is a format directive to core:fmt, so these are concatenated.
 	strings.write_string(&e.b, strings.concatenate({
-		"  store { ptr, ptr } { ptr inttoptr (i64 1 to ptr), ptr ", SINK_STD_WITNESS, " }, ptr ", writer, "\n",
+		"  store { ptr, ptr } { ptr inttoptr (i64 ", fmt.tprint(SINK_STDERR), " to ptr), ptr ", SINK_STD_WITNESS, " }, ptr ", writer, "\n",
 	}))
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_panic_begin(ptr %s)", message_global(e, message))
 	space := text_literal_global(e, " ")
@@ -884,6 +884,11 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 // stream selector `loke_rt_v1_write_std` expects. Every module defines both:
 // the runtime's `fmt_bytes` calls the first whether or not `core:fmt` is used.
 SINK_STD_WITNESS :: "@loke.fmt.std_sink"
+// runtime/loke_rt.h `LOKE_RT_STDOUT` and `LOKE_RT_STDERR`: a process sink's
+// data word selects its stream, and a `dyn` view's data word is never null
+// (design.md "Representation").
+SINK_STDOUT :: 1
+SINK_STDERR :: 2
 
 @(private)
 emit_sink_bridge :: proc(e: ^Emitter) {
@@ -918,7 +923,7 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 	writer_type := llvm_type(e, e.c.runtime_types["Writer"])
 	#partial switch kind {
 	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer:
-		stream := kind == .Fmt_Stdout_Writer ? 0 : 1
+		stream := kind == .Fmt_Stdout_Writer ? SINK_STDOUT : SINK_STDERR
 		first, out := temp(e), temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = insertvalue %s undef, ptr inttoptr (i64 %d to ptr), %d",

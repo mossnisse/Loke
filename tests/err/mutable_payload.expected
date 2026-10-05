@@ -28,3 +28,9 @@ L0641
 L0641
 @94:3
 `head` cannot be used here: a mutable reborrow of it is still in use
+L0512
+@109:3
+`payload` cannot be modified here: a read-only pointer of it is still in use
+L0511
+@120:8
+this write of `payload` is not compatible with the mutable pointer of it that is still in use

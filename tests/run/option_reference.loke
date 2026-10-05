@@ -73,4 +73,10 @@ main :: proc() {
 	old := a.exchange(Option(^int).none);
 	fmt.println(old == Option(^int).some(&x), a.load() == .none);
 	fmt.println(q, g == .none);
+
+	// Both process writers have a non-null data word, so each stays `.some`.
+	out: Option(fmt.Writer) = .some(fmt.stdout());
+	err: Option(fmt.Writer) = .some(fmt.stderr());
+	switch (out) { case .some(writer): fmt.format_to(writer, "present"); case .none: fmt.print("absent"); }
+	switch (err) { case .some: fmt.println(" present"); case .none: fmt.println(" absent"); }
 }

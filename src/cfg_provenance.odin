@@ -21,6 +21,10 @@ Prov_Kind :: enum u8 {
 	Access,
 	// A root's storage ends, so every loan of it does too.
 	Root_End,
+	// A binding that views another place is bound again, so it names new
+	// storage: loans taken through its earlier instance stop naming its root.
+	// They still carry the loans of what that instance viewed.
+	Rebind,
 	// A value leaves the body through `return`.
 	Escape,
 	// A borrow stored somewhere that outlives the statement: process/thread
@@ -3026,13 +3030,6 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 	}
 	prov_walk_subscripts(graph, operand)
 	access_block, access_index := prov_access(graph, root, path, mutable ? .Write : .Read, span)
-	// Part of a viewing binding is part of its source, so `&mut node.next` in
-	// `switch (cursor^) { case .some(&node): }` reborrows `cursor`.
-	if symbol := graph.roots[int(root)].symbol; symbol != INVALID_SYMBOL && !graph.step_views[symbol] {
-		if loans, viewed := graph.view_loans[symbol]; viewed {
-			return loans
-		}
-	}
 	return prov_borrow(graph, root, path, mutable, span, what, access_block, access_index)
 }
 

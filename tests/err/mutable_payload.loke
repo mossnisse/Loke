@@ -97,4 +97,31 @@ source_after :: proc(head: ^mut Option(box(Node))) {
 	}
 }
 
+// A borrow of a field through the binding is tracked as a field: growing the
+// buffer under `first` and two mutable borrows of `n` are each rejected.
+Payload :: struct { values: [dynamic]int, n: int }
+
+field_reallocated :: proc() {
+	value: Option(Payload) = .some(Payload{[dynamic]int{1, 2}, 0});
+	switch (value) {
+	case .some(&payload):
+		first := &payload.values[0];
+		payload.values.reserve(10000);
+		fmt.println(first^);
+	case .none:
+	}
+}
+
+field_borrowed_twice :: proc() {
+	value: Option(Payload) = .some(Payload{[dynamic]int{1, 2}, 0});
+	switch (value) {
+	case .some(&payload):
+		a := &mut payload.n;
+		b := &mut payload.n;
+		a^ = 1;
+		b^ = 2;
+	case .none:
+	}
+}
+
 main :: proc() {}
