@@ -482,11 +482,17 @@ debug_union :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 	}
 	payload := debug_node(d, "distinct !DICompositeType(tag: DW_TAG_union_type, size: %d, elements: !{{%s})",
 		shape.payload_size * 8, strings.to_string(variants))
+	payload_member := debug_node(d, `!DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !%d, size: %d, offset: 0)`,
+		payload, shape.payload_size * 8)
+	// A niche union's null payload is its other variant; it has no tag member.
+	if shape.niche {
+		debug_composite(d, id, "DW_TAG_structure_type", name, shape.size * 8, fmt.aprintf("!%d", payload_member))
+		return
+	}
 	tag := debug_node(d, `!DIBasicType(name: "tag", size: %d, encoding: DW_ATE_unsigned)`, shape.tag_bytes * 8)
 	members := fmt.aprintf(
 		"!%d, !%d",
-		debug_node(d, `!DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !%d, size: %d, offset: 0)`,
-			payload, shape.payload_size * 8),
+		payload_member,
 		debug_node(d, `!DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !%d, size: %d, offset: %d)`,
 			tag, shape.tag_bytes * 8, shape.tag_offset * 8),
 	)

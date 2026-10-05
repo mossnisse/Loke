@@ -44,6 +44,10 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Ty
 			strings.write_string(&b, ", ")
 			write_byte_array_constant(&b, payload_bytes[int(shape.align):int(shape.payload_size)])
 		}
+		if shape.niche {
+			strings.write_string(&b, " }")
+			return strings.to_string(b)
+		}
 		if gap := shape.tag_offset - shape.payload_size; gap > 0 {
 			fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", gap)
 		}
@@ -325,6 +329,9 @@ write_const_bytes :: proc(
 		payload_size := int(type_size(e.c, payload_type))
 		if payload_size > 0 && !write_const_bytes(e, out[:payload_size], payload, payload_type, relocations, at) {
 			return false
+		}
+		if shape.niche {
+			return true
 		}
 		for byte_index in 0 ..< int(shape.tag_bytes) {
 			out[int(shape.tag_offset) + byte_index] = u8(u64(index) >> u64(byte_index * 8))

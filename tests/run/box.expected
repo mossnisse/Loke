@@ -8,7 +8,7 @@ drop 3
 4
 unboxed 4
 try 7
-6 6 16
+6 6 8
 5 2
 106 106
 7 .some(8)

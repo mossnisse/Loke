@@ -182,6 +182,13 @@ type promises the rest. The cost is that a record holding a reference has no
 and that a global reference is an `Option`, since no address is a compile-time
 constant.
 
+Absence costs nothing in return. With the null address free, `Option(^T)` is
+that address alone, as Rust's `Option<&T>` is, so a chain of
+`Option(box(Node))` links is one word per link and `Option(^T)` is what C
+means by a nullable pointer, both across the foreign boundary and inside an
+`Atomic`. design.md "Representation" states the rule by shape rather than by
+naming `Option`, so a hand-written two-variant union gets the same layout.
+
 ### Storage modifiers instead of storage attributes
 
 Odin spells static-duration locals `@(static)` and thread locals

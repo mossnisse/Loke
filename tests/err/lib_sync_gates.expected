@@ -17,6 +17,10 @@ L0662
 `Point` is not an atomic type
 L0662
 `f64` is not an atomic type
+L0662
+`Option(int)` is not an atomic type
+L0662
+`Option(cstring_view)` is not an atomic type
 L0664
 this operation does not permit the ordering `Release`
 L0664

@@ -1,0 +1,12 @@
+L0619
+@9:14
+a foreign parameter is not ABI-safe: `Option(int)` is a tagged union
+L0619
+@10:18
+a foreign parameter is not ABI-safe: `Option(proc())` is a `loke`-convention procedure pointer
+L0619
+@11:13
+a foreign parameter is not ABI-safe: `Option(dyn Shape)` is a tagged union
+L0619
+@12:12
+a foreign parameter is not ABI-safe: `Option(box(int))` is a tagged union

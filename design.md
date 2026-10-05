@@ -1696,6 +1696,8 @@ See [Types with no zero value](#types-with-no-zero-value) for how the property p
 
 A union's storage is its payload region, then the tag, then whatever padding the alignment asks for. The tag is the narrowest unsigned integer that indexes `0 ..< variant_count`: 256 variants still fit in one byte and 257 need two. The first declared variant has tag 0, and there is no nil tag. A union with no variants keeps one byte. A tag wider than every payload raises the union's alignment, as any other member would.
 
+One exception stores no tag. A union of exactly two variants, one without a payload and the other with a [reference](#types-with-no-zero-value) payload, is the payload alone: a reference is never null, so the null first word is the payloadless variant. `Option(^T)` is one address, as is `Option` of a procedure value, `cstring_view`, `box(T)`, or `shared(T)`; `Option(dyn I)` and `Option(any_view)` are their two words. Nothing else changes: the variants keep their declaration order, and the all-zero value is still the payloadless one.
+
 ### Enumerations
 
 An enumeration is a closed sum type whose variants carry no payload. `enum` offers compact syntax and control over its integer representation. Every value names exactly one declared variant. Variants have declaration order:
@@ -5791,7 +5793,7 @@ Within one thread, evaluations are ordered by the rules under [Evaluation order]
 
 Two accesses conflict when they touch overlapping bytes and at least one is a write. If conflicting non-atomic accesses from different threads are not ordered by happens-before, the program has a data race and its behavior is undefined. Ordinary variables, pointers, container headers, reference counts, and struct fields are not implicitly atomic. This rule permits conventional optimizing compilers while making synchronization requirements explicit.
 
-The `core:sync` package provides `Atomic(T)` for booleans, integers, enums with a supported integer backing type, and pointers.
+The `core:sync` package provides `Atomic(T)` for booleans, integers, enums with a supported integer backing type, pointers, and an `Option(^T)`, which is one address (see [Representation](#representation)) and starts as `.none`.
 
 - Operations accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or `.Sequentially_Consistent` where meaningful. `core:sync.fence(order)` accepts every ordering except `.Relaxed`. Invalid type, operation, or ordering combinations are compile-time errors.
 - Every operation, writes included, takes a read-only `self: ^` receiver, because no atomic access conflicts with another. So an `Atomic(T)` reached through a `^T`, such as a `shared(T)` payload, can still be updated. Its plain `value` field keeps the ordinary rules.
@@ -5830,7 +5832,7 @@ Threads and retained tasks receive only the arguments explicitly moved or copied
 | `once.do(action: proc())` | runs `action` exactly once across every thread that reaches `once`. A call that finds the action running waits for it, so a return means the action has completed and its writes are visible. An action that reaches its own `Once` never returns. If `action` panics, the `Once` is poisoned: every later call, and every call waiting on it, panics |
 | `once.is_done()` | whether the action has completed; `false` may be stale when it is read |
 
-`Atomic(T)` and `Once` have usable zero values, so either may live in `static` storage with no initializer.
+`Once`, and `Atomic(T)` for a `T` with a zero value, have usable zero values, so either may live in `static` storage with no initializer. An atomic pointer that starts empty is an `Atomic(Option(^T))`.
 
 ### Shared ownership
 
@@ -5855,17 +5857,18 @@ The foreign system lets Loke code call foreign code, such as a C library. A fore
 A procedure using a foreign calling convention, a variable declared in a foreign block, or an exported foreign symbol must have a representation the target ABI can describe. The following types are foreign-ABI-safe:
 
 - fixed-width integers, `int`, `uint`, `uintptr`, `bool`, `rune`, `f32`, and `f64`; their size and alignment follow their Loke definitions and their argument classification follows the target C ABI for a scalar of that representation. `bool` uses C `_Bool`, and `int` and `uint` use the ABI class matching their target-selected width. `f16`, 128-bit integers, and other target extensions are safe only when that target ABI defines their C-compatible classification;
-- `rawptr`, `^T`, and `[^]T`, lowered as C pointers; the pointed-to type need not be foreign-ABI-safe because the foreign function receives only an address. A binding that types a parameter or result `^T` promises it is never NULL, as one that uses an enum promises membership; where the C side may pass or return NULL, the binding uses `[^]T` or `rawptr`;
+- `rawptr`, `^T`, and `[^]T`, lowered as C pointers; the pointed-to type need not be foreign-ABI-safe because the foreign function receives only an address. A binding that types a parameter or result `^T` promises it is never NULL, as one that uses an enum promises membership; where the C side may pass or return NULL, the binding uses `Option(^T)`;
 - procedure pointers whose declared calling convention and complete signature match the foreign declaration;
 - enums with an explicit foreign-ABI-safe integer backing type, provided the binding guarantees that incoming values name declared variants. Use the backing integer and `Enum.from_int` when unknown values are possible;
 - plain structs with a trivial lifecycle whose fields are recursively foreign-ABI-safe. Their field order, padding, alignment, and by-value argument classification follow the target C ABI for the equivalent C record. A fixed array is permitted as a record field and has the equivalent C array layout;
-- `cstring_view`, lowered to `char const *`. It may be used as a parameter or result and never claims ownership. It promises a non-NULL string, as `^T` promises a non-NULL pointer.
+- `cstring_view`, lowered to `char const *`. It may be used as a parameter or result and never claims ownership. It promises a non-NULL string, as `^T` promises a non-NULL pointer;
+- `Option` of `^T`, `^mut T`, a foreign procedure pointer, or `cstring_view`, lowered to the same C pointer, with `.none` as NULL (see [Representation](#representation)). `Option(cstring_view)` is C's optional `char const *`, and a record whose pointer field may be NULL holds an `Option` and so keeps a zero value.
 
 **`int` is not C `int`.** Loke's `int` and `uint` use the natural register width, so they are 64-bit on a 64-bit target while C `int` remains 32-bit there. Bindings must use the type the C declaration resolves to: typically `i32` for C `int`, `i64` for C `long long`, and Loke `int` for types such as `ptrdiff_t`.
 
 On Windows x64, integers wider than 64 bits and zero-sized structs are not foreign-ABI-safe, including as enum backings or nested record fields. A pointer to such a type remains permitted.
 
-Managed containers, `string`, slices, dynamic arrays, maps, boxes, tagged unions, `any_view`, `dyn Interface`, [`Simd(T, N)`](#simd-vectors), and records with custom lifecycle hooks are not foreign-ABI-safe. Interface declarations and compile-time `type` values have no runtime ABI, and a [generic](#generics) procedure or type is likewise not ABI surface — only a concrete instantiation, wrapped in a procedure with a foreign calling convention, can cross the boundary. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
+Managed containers, `string`, slices, dynamic arrays, maps, boxes, other tagged unions, `any_view`, `dyn Interface`, [`Simd(T, N)`](#simd-vectors), and records with custom lifecycle hooks are not foreign-ABI-safe. Interface declarations and compile-time `type` values have no runtime ABI, and a [generic](#generics) procedure or type is likewise not ABI surface — only a concrete instantiation, wrapped in a procedure with a foreign calling convention, can cross the boundary. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
 
 Pass a C union as `rawptr` and expose typed wrapper accessors. Passing one by value is target-specific and not portable Loke source.
 

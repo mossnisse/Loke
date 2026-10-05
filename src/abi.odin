@@ -314,6 +314,14 @@ abi_walk :: proc(
 	case .Map:
 		return false, "a managed map", ""
 	case .Union:
+		// design.md "Foreign-ABI-safe types": a nullable C pointer.
+		if some := union_niche_variant(c, under); some >= 0 {
+			payload := info.variants[some]
+			#partial switch underlying_kind(c, payload) {
+			case .Pointer, .CString_View, .Proc:
+				return abi_walk(c, payload, false, walk)
+			}
+		}
 		return false, "a tagged union", ""
 	case .Any_View:
 		return false, "an `any_view`", ""

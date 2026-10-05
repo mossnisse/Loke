@@ -1,0 +1,76 @@
+package main;
+import "core:fmt";
+import "core:sync";
+
+// design.md "Representation": a two-variant union whose other variant has no
+// payload stores a reference payload alone, its null address being that
+// variant. Every union operation reads the computed tag, so behaviour is as for
+// any union; only the size changes. `Flip` declares its payload first.
+
+Shape :: interface($Self: type) { slot area: proc(self) -> int; }
+Square :: struct { side: int }
+impl Square { area :: proc(self) -> int { return self.side * self.side; } }
+Callback :: proc(x: int) -> int;
+double :: proc(x: int) -> int { return x * 2; }
+Flip :: union { some: ^int, none: }
+Node :: struct { value: int, next: Option(box(Node)) }
+
+first :: proc(xs: []int) -> Option(^int) {
+	if (xs.len() == 0) { return .none; }
+	return .some(&xs[0]);
+}
+
+anchor: int = 11;
+held: static Option(^int) = .none;
+
+main :: proc() {
+	x := 5;
+	p: Option(^int) = .some(&x);
+	q: Option(^int) = .none;
+	fmt.println(size_of(Option(^int)), size_of(Option(Callback)), size_of(Option(cstring_view)), size_of(Option(dyn Shape)), size_of(Option(box(int))), size_of(Option(shared(int))), size_of(Flip), size_of(Option(Option(^int))));
+	fmt.println(p == q, p == Option(^int).some(&x), q == .none, (p or_else &x)^);
+	switch (p) {
+	case .some(v): fmt.println("some", v^);
+	case .none: fmt.println("none");
+	}
+	switch (q) {
+	case .some(v): fmt.println("some", v^);
+	case .none: fmt.println("none");
+	}
+	f: Option(Callback) = .some(double);
+	g: Option(Callback) = .none;
+	fmt.println((f or_else double)(4), g == .none);
+	s := Square{3};
+	d: Option(dyn Shape) = .some((dyn Shape)(&s));
+	switch (d) { case .some(view): fmt.println(view.area()); case .none: }
+	fl: Flip = .some(&x);
+	fl2: Flip = .none;
+	switch (fl) { case .some(v): fmt.println("flip", v^); case .none: fmt.println("flip none"); }
+	switch (fl2) { case .some(v): fmt.println("flip", v^); case .none: fmt.println("flip none"); }
+	xs := [3]int{7, 8, 9};
+	fmt.println((first(xs[:]) or_else &x)^, first(xs[:0]) == .none);
+	list: Node = {1, .some(box(Node{2, .some(box(Node{3, .none}))}))};
+	total := 0;
+	cursor: Option(^Node) = .some(&list);
+	for (cursor != .none) {
+		switch (cursor) {
+		case .some(n):
+			total += n.value;
+			switch (n.next) { case .some(b): cursor = .some(&b^); case .none: cursor = .none; }
+		case .none:
+		}
+	}
+	fmt.println(total);
+	sh: Option(shared(int)) = .some(shared(42));
+	copy := sh;
+	switch (copy) { case .some(h): fmt.println(h.strong_count()); case .none: }
+	held = .some(&anchor);
+	fmt.println((held or_else &x)^);
+	a: sync.Atomic(Option(^int)) = {};
+	fmt.println(a.load() == .none);
+	a.store(Option(^int).some(&x));
+	fmt.println((a.load() or_else &x)^);
+	old := a.exchange(Option(^int).none);
+	fmt.println(old == Option(^int).some(&x), a.load() == .none);
+	fmt.println(q, g == .none);
+}

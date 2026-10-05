@@ -1,0 +1,24 @@
+package main;
+import "core:fmt";
+
+// design.md "Foreign-ABI-safe types": an `Option` of a pointer or a
+// `cstring_view` is C's nullable pointer, in both directions. `strchr` answers
+// NULL when the character is absent.
+foreign import libc "system:legacy_stdio_definitions.lib";
+foreign libc {
+	strchr :: proc "c" (s: cstring_view, ch: i32) -> Option(cstring_view) ---;
+}
+Pair :: struct { a: Option(^int), b: int }
+pass :: proc "c" (p: Option(^int), pair: Pair) -> Option(^int) {
+	if (pair.a == .none) { return .none; }
+	return p;
+}
+main :: proc() {
+	x := 3;
+	switch (strchr("hello", 108)) {
+	case .some(rest): fmt.println(rest);
+	case .none: fmt.println("absent");
+	}
+	switch (strchr("hello", 122)) { case .some: fmt.println("found"); case .none: fmt.println("absent"); }
+	fmt.println((pass(.some(&x), {.some(&x), 1}) or_else &x)^, pass(.some(&x), {.none, 1}) == .none);
+}

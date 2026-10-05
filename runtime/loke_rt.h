@@ -467,7 +467,7 @@ uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed);
  *
  * `Writer` is `dyn mut fmt.Sink` (design.md "Borrowed dynamic interface
  * values"): the sink's address and its witness table, whose one slot is
- * `write(self: inout Self, bytes: []u8)`. A nil view has a null witness. */
+ * `write(self: inout Self, bytes: []u8)`. */
 typedef struct loke_rt_writer_v1 {
 	void *data;
 	void *const *witness;

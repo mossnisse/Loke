@@ -138,12 +138,17 @@ attribute_variant_name :: proc(k: ^Checker, attribute: Attribute, what: string) 
 
 // design.md "Unions": the payload region, then the tag, then padding. The
 // emitter builds storage matching these facts rather than asking LLVM.
+//
+// A `niche` union stores no tag (design.md "Representation"): its payload's
+// first word is a non-null reference, so the null word is the payloadless
+// variant. `tag_bytes` is then the width of the tag the emitter computes.
 Union_Layout :: struct {
 	payload_size:  u64,
 	align:         u64,
 	tag_offset:    u64,
 	tag_bytes:     u64,
 	size:          u64,
+	niche:         bool,
 }
 
 union_layout :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) -> Union_Layout {
@@ -162,7 +167,42 @@ union_layout :: proc(c: ^Compiler, type: Type_Id, span := Span{file = NO_FILE}) 
 	out.payload_size = align_to(out.payload_size, out.align)
 	out.tag_offset = out.payload_size
 	out.size = align_to(out.tag_offset + out.tag_bytes, out.align)
+	if union_niche_variant(c, type) >= 0 {
+		out.niche = true
+		out.size = out.payload_size
+	}
 	return out
+}
+
+// design.md "Representation": the variant of a two-variant union whose payload
+// is a non-null reference, when the other has no payload; -1 otherwise.
+union_niche_variant :: proc(c: ^Compiler, type: Type_Id) -> int {
+	info := underlying_info(c, type)
+	if info == nil || info.kind != .Union || len(info.variants) != 2 {
+		return -1
+	}
+	for payload, index in info.variants {
+		if info.variants[1 - index] == TYPE_VOID && type_is_reference(c, payload) {
+			return index
+		}
+	}
+	return -1
+}
+
+// design.md "Types with no zero value": a reference, whose first word is a
+// non-null address.
+type_is_reference :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	info := underlying_info(c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Pointer, .Proc, .Dyn, .Any_View, .CString_View, .Box:
+		return true
+	case .Struct:
+		return info.instance_of != INVALID_SYMBOL && info.instance_of == c.shared_symbol
+	}
+	return false
 }
 
 // The narrowest tag representing `0 ..< variant_count`, at least one byte.

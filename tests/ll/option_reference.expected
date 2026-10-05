@@ -1,0 +1,5 @@
+%union.Option.$5eint.* = type { i64 }
+@loke.p.read(ptr nonnull %arg0, ptr %arg1)
+@loke.p.pick(%union.Option.$5eint.* %arg0)
+icmp ne i64 %t*, 0
+select i1 %t*, i8 1, i8 0

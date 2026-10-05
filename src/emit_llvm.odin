@@ -536,7 +536,8 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 			if index > 0 {
 				fmt.sbprint(&e.b, ", ")
 			}
-			fmt.sbprintf(&e.b, "%s %%arg%d", param_llvm(e, parameter, symbol_param_mode(e.c, symbol, index)), index)
+			mode := symbol_param_mode(e.c, symbol, index)
+			fmt.sbprintf(&e.b, "%s%s %%arg%d", param_llvm(e, parameter, mode), param_nonnull(e, parameter, mode), index)
 		}
 		fmt.sbprintln(&e.b, ") {")
 	}

@@ -99,3 +99,11 @@ copy_once :: proc(source: inout sync.Once) {
 }
 
 nothing :: proc() {}
+
+// Only an `Option` of a pointer is one address word with a null `.none`.
+unsupported_option :: proc() {
+	place: sync.Atomic(Option(int)) = {};
+	place.load();
+	view: sync.Atomic(Option(cstring_view)) = {};
+	view.load();
+}

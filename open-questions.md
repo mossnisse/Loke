@@ -571,7 +571,9 @@ constness alone does not establish either.
 `nil` is no longer a slice's, `string_view`'s, `typeid`'s, `Allocator`'s, or
 `weak(T)`'s zero ([Zero values](design.md#zero-values)). Stage 3 has landed:
 references are never null and have no zero value
-([Types with no zero value](design.md#types-with-no-zero-value)). Each stage
+([Types with no zero value](design.md#types-with-no-zero-value)). Stage 4 has
+landed: an `Option` of a reference is the reference alone
+([Representation](design.md#representation)). Each stage
 at the end of this entry changes the specification, compiler, tests,
 tutorials, and changelog together, and the entry leaves this file when the
 last one lands.
@@ -756,13 +758,12 @@ note:
    conversions, no null tests in emitted code, and design.md "Nil states" and
    `src/nil_uses.odin` deleted. Migrated `core:log` (`selected:
    Option(Logger)`), `core:fmt`'s `format_any`, `thread.Guard`, `shared(T)`,
-   and the tests that wrote `nil` for a reference. Until stage 4, a foreign
-   binding whose C side may pass NULL uses `[^]T` or `rawptr`, and an atomic
-   pointer starts from a real address.
-4. The one-word `Option` representation, its foreign-ABI acceptance, `Atomic`
-   over it, and `nonnull` parameter attributes, measured with `perf.ps1`. It
-   cannot come before stage 3: the encoding is sound only once nothing can
-   hold `.some(nil)`.
+   and the tests that wrote `nil` for a reference.
+4. (Landed.) The one-word `Option` representation, its foreign-ABI
+   acceptance, `Atomic` over it, and `nonnull` on reference, pointer-mode, and
+   large parameters, measured with `perf.ps1`. `dereferenceable` was left out:
+   LLVM reads it as holding for the whole call, and a callee can still release
+   the last owner of a `^T`'s target through a global it writes.
 5. Mutable switch payload bindings, with a list's tail append and in-place
    removal as acceptance tests.
 

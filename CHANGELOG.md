@@ -23,8 +23,8 @@ checklist.
   Instead, converting a null `rawptr` or `[^]T` to `^T` or `^mut T`, and a
   null `[^]u8` through `unsafe.cstring_view`, panics at the conversion. A
   foreign binding that types a parameter or result `^T` or `cstring_view`
-  promises it is never NULL; one whose C side may pass NULL now uses `[^]T`
-  or `rawptr`.
+  promises it is never NULL; one whose C side may pass NULL now uses
+  `Option(^T)`.
 - `core:log`'s published logger is `selected: Option(Logger)`; a logging
   provider is still a factory returning `Logger`.
 
@@ -328,6 +328,14 @@ checklist.
 
 ### Changed
 
+- A two-variant union whose other variant has no payload stores a reference
+  payload alone, its null address being the payloadless variant (design.md
+  "Representation"): `Option(^T)`, and `Option` of a procedure value,
+  `cstring_view`, `box(T)`, or `shared(T)`, is one word instead of two, and
+  `Option(dyn I)` two instead of three. Code that hard-coded the old
+  `size_of` sees the new one.
+- Procedure definitions mark reference, pointer-mode, and large-value
+  parameters `nonnull` for LLVM.
 - A carrier suspended by a read-only reborrow may be read through a field, a
   pointer, or an element, as a slice local could: `held.items[0]` and
   `len_of(held.items)` with `view: []int = held.items` live, `p^` with
@@ -389,6 +397,11 @@ checklist.
 
 ### Added
 
+- `Option` of `^T`, `^mut T`, a foreign procedure pointer, or `cstring_view`
+  is foreign-ABI-safe, lowered to the nullable C pointer: a binding whose C
+  side may pass or return NULL now writes `Option(^T)` rather than `[^]T` or
+  `rawptr`. `sync.Atomic(Option(^T))` is an atomic pointer that starts as
+  `.none`.
 - `box(T)` owns one value in an allocation of its own, as `[dynamic]T` owns a
   run of them (design.md "Owned values"). `box(value, allocator)` and
   `try_box(...)` build one; `b^`, field selection, indexing, and methods reach

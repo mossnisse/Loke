@@ -61,8 +61,9 @@ runtime_enum_matches :: proc(c: ^Compiler, type: Type_Id, $E: typeid) -> bool {
 	return true
 }
 
-// `bool`, the integer and rune types, an enum over a supported integer, and every
-// pointer. No floats: an atomic float would promise arithmetic it lacks.
+// `bool`, the integer and rune types, an enum over a supported integer, every
+// pointer, and an `Option` of one. No floats: an atomic float would promise
+// arithmetic it lacks.
 atomic_type_supported :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	info := underlying_info(c, type)
 	if info == nil {
@@ -71,6 +72,8 @@ atomic_type_supported :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch info.kind {
 	case .Bool, .Rune, .Pointer, .C_Pointer, .Raw_Pointer:
 		return true
+	case .Union:
+		return atomic_option_of_pointer(c, type)
 	case .Int, .Enum:
 		return atomic_width_bits(c, type) != 0
 	}
@@ -91,6 +94,8 @@ atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
 		return 32
 	case .Pointer, .C_Pointer, .Raw_Pointer:
 		return int(c.target.pointer_bits)
+	case .Union:
+		return atomic_option_of_pointer(c, type) ? int(c.target.pointer_bits) : 0
 	case .Int, .Enum:
 		bits := type_bits(c, type_underlying(c, type))
 		switch bits {
@@ -99,6 +104,13 @@ atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
 		}
 	}
 	return 0
+}
+
+// design.md "Concurrency and the memory model": a one-word `Option` of a
+// pointer, whose `.none` is the null address.
+atomic_option_of_pointer :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	some := union_niche_variant(c, type)
+	return some >= 0 && underlying_kind(c, union_variant_payload(c, type, some)) == .Pointer
 }
 
 // Read-modify-write arithmetic is integers only; an enum has no arithmetic.
@@ -233,7 +245,7 @@ check_atomic_place :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind:
 	if !atomic_type_supported(k.c, info.element) {
 		errorf(
 			k.c, expr_span(argument), "L0662",
-			"`%s` is not an atomic type: the set is `bool`, the integer and rune types, an enum over one, and any pointer",
+			"`%s` is not an atomic type: the set is `bool`, the integer and rune types, an enum over one, any pointer, and an `Option` of a `^T`",
 			type_name(k.c, info.element),
 		)
 		return INVALID_TYPE

@@ -1,0 +1,14 @@
+package main;
+
+// design.md "Foreign-ABI-safe types": an `Option` of a pointer, a foreign
+// procedure pointer, or a `cstring_view` is the nullable C pointer. No other
+// union crosses, even one that is one word wide.
+Shape :: interface($Self: type) { slot area: proc(self) -> int; }
+
+accepted :: proc "c" (a: Option(^int), b: Option(cstring_view), c: Option(proc "c" ())) -> Option(^mut int) { return .none; }
+bad_value :: proc "c" (value: Option(int)) {}
+bad_procedure :: proc "c" (value: Option(proc())) {}
+bad_view :: proc "c" (value: Option(dyn Shape)) {}
+bad_box :: proc "c" (value: Option(box(int))) {}
+
+main :: proc() {}

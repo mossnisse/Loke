@@ -89,8 +89,8 @@ atomic_storage_type :: proc(e: ^Emitter, type: Type_Id, bits: int) -> string {
 	if underlying_kind(e.c, type) == .Bool {
 		return "i8"
 	}
-	if underlying_kind(e.c, type) == .Pointer || underlying_kind(e.c, type) == .C_Pointer ||
-	   underlying_kind(e.c, type) == .Raw_Pointer {
+	#partial switch underlying_kind(e.c, type) {
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Union:
 		return fmt.aprintf("i%d", bits)
 	}
 	return llvm_type(e, type)
@@ -109,6 +109,10 @@ atomic_to_storage :: proc(e: ^Emitter, type: Type_Id, storage: string, value: st
 		fmt.sbprintfln(&e.b, "  %s = ptrtoint ptr %s to %s", out, value, storage)
 		return out
 	}
+	// A one-word `Option` is its address word.
+	if kind == .Union {
+		return extract(e, llvm_type(e, type), value, 0)
+	}
 	return value
 }
 
@@ -124,6 +128,9 @@ atomic_from_storage :: proc(e: ^Emitter, type: Type_Id, storage: string, value: 
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = inttoptr %s %s to ptr", out, storage, value)
 		return out
+	}
+	if kind == .Union {
+		return insert(e, llvm_type(e, type), "undef", storage, value, 0)
 	}
 	return value
 }

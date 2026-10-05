@@ -397,6 +397,10 @@ union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 		if pad := shape.payload_size - shape.align; pad > 0 {
 			fmt.sbprintf(&b, ", [%d x i8]", pad)
 		}
+		if shape.niche {
+			strings.write_string(&b, " }")
+			return strings.to_string(b)
+		}
 		if gap := shape.tag_offset - shape.payload_size; gap > 0 {
 			fmt.sbprintf(&b, ", [%d x i8]", gap)
 		}
@@ -482,10 +486,15 @@ emit_union_choice :: proc(
 	return emit_union_either(e, union_type, present, present_index, payload, absent_index, "")
 }
 
+// A niche union's tag is its payload: the zeroed slot is already the
+// payloadless variant, and a written reference is never null.
 @(private = "file")
 emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag: int) {
 	llvm := llvm_type(e, union_type)
 	shape := union_layout(e.c, union_type)
+	if shape.niche {
+		return
+	}
 	address := gep_field(e, llvm, slot, union_tag_member(e, union_type))
 	fmt.sbprintfln(&e.b, "  store i%d %d, ptr %s", shape.tag_bytes * 8, tag, address)
 }
@@ -494,6 +503,20 @@ emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag
 // tests.
 @(private)
 emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
+	if shape := union_layout(e.c, union_type); shape.niche {
+		head := fmt.aprintf("i%d", shape.align * 8)
+		word: string
+		if is_large_value(e, union_type) {
+			word = load(e, head, gep_field(e, llvm_type(e, union_type), value, 0))
+		} else {
+			word = extract(e, llvm_type(e, union_type), value, 0)
+		}
+		present, out := temp(e), temp(e)
+		some := union_niche_variant(e.c, union_type)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne %s %s, 0", present, head, word)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i8 %d, i8 %d", out, present, some, 1 - some)
+		return out
+	}
 	if is_large_value(e, union_type) {
 		shape := union_layout(e.c, union_type)
 		tag := gep_field(e, llvm_type(e, union_type), value, union_tag_member(e, union_type))
@@ -591,6 +614,20 @@ emit_call_result :: proc(e: ^Emitter, result: Type_Id, callee, arguments: string
 @(private)
 param_llvm :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
 	return param_mode_is_pointer(mode) || is_large_value(e, type) ? "ptr" : llvm_type(e, type)
+}
+
+// design.md "Types with no zero value": a reference, and the address a pointer-
+// mode or large parameter arrives at, is never null.
+@(private)
+param_nonnull :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
+	if param_mode_is_pointer(mode) || is_large_value(e, type) {
+		return " nonnull"
+	}
+	#partial switch underlying_kind(e.c, type) {
+	case .Pointer, .Box, .Proc, .CString_View:
+		return " nonnull"
+	}
+	return ""
 }
 
 @(private)

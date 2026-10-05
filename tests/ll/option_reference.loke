@@ -1,0 +1,19 @@
+package main;
+import "core:fmt";
+
+// design.md "Representation": `Option(^int)` is the address alone, tested for
+// null where its tag is read. design.md "Types with no zero value": a `^T`
+// parameter is emitted `nonnull`, and a `rawptr` one is not.
+read :: proc(p: ^int, raw: rawptr) -> int { return p^; }
+
+pick :: proc(o: Option(^int)) -> int {
+	switch (o) {
+	case .some(p): return p^;
+	case .none: return 0;
+	}
+}
+
+main :: proc() {
+	x := 4;
+	fmt.println(read(&x, nil), pick(.some(&x)), pick(.none));
+}

@@ -86,7 +86,7 @@ main :: proc() {
 	case .err: fmt.println("no memory");
 	}
 
-	// A recursive type owns its children.
+	// A recursive type owns its children, each one word (design.md "Representation").
 	tree := Tree{2, .some(box(Tree{value = 1})), .some(box(Tree{value = 3}))};
 	copy := tree.clone();
 	fmt.println(total(&tree), total(&copy), size_of(Option(box(Tree))));
