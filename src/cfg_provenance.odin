@@ -872,20 +872,22 @@ prov_clear_content :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 // Binds loans to a name no declaration defines: a `foreach` element or a case
 // binding.
 @(private)
-prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span: Span) {
+prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span: Span, copies := true) {
 	if id == INVALID_SYMBOL {
 		return
 	}
 	if slot, is_carrier := prov_slot_for_symbol(graph, id); is_carrier {
 		sym := symbol_of(graph.k.c, id)
-		if sym != nil {
+		if sym != nil && copies {
 			prov_reborrow(graph, sources, sym.type, slot, span)
+		} else if !copies {
+			graph.lent_aliases[slot] = sources
 		}
 		prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
 		return
 	}
 	if content := prov_content_slots(graph, id); len(content) > 0 {
-		prov_define_content(graph, content, sources, span)
+		prov_define_content(graph, content, sources, span, copies = copies)
 	}
 }
 
@@ -899,6 +901,7 @@ prov_define_content :: proc(
 	written: []Proj_Step = nil,
 	value_type: Type_Id = INVALID_TYPE,
 	preserve_previous := false,
+	copies := true,
 ) {
 	indistinct := path_is_indistinct(written)
 	for slot in into {
@@ -917,7 +920,7 @@ prov_define_content :: proc(
 		   (indistinct || path_is_indistinct(entry.path) || partial_truncated_write)) {
 			sources = prov_join(graph, prov_one(graph, slot), sources)
 		}
-		prov_define_one_content(graph, slot, sources, span, path_precision(written))
+		prov_define_one_content(graph, slot, sources, span, path_precision(written), copies)
 	}
 }
 
@@ -947,8 +950,14 @@ path_has_exact_prefix :: proc(path, prefix: []Proj_Step) -> bool {
 
 // A mutable borrow published into a read-only field weakens as at a local.
 @(private = "file")
-prov_define_one_content :: proc(graph: ^Flow_Graph, slot: int, sources: []int, span: Span, precision: Precision_Loss = {}) {
-	prov_reborrow(graph, sources, graph.prov_slots[slot].content_type, slot, span)
+prov_define_one_content :: proc(
+	graph: ^Flow_Graph, slot: int, sources: []int, span: Span, precision: Precision_Loss = {}, copies := true,
+) {
+	if copies {
+		prov_reborrow(graph, sources, graph.prov_slots[slot].content_type, slot, span)
+	} else {
+		graph.lent_aliases[slot] = sources
+	}
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, precision = precision})
 }
 
@@ -1084,6 +1093,10 @@ prov_reborrow :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, in
 		// reborrow passes on to its copies and to what is taken from its elements.
 		if into < 0 || into == slot {
 			continue
+		}
+		// A copy of a lent element reborrows the stored carrier it names.
+		if aliased, lent := graph.lent_aliases[slot]; lent {
+			prov_reborrow(graph, aliased, destination, into, span)
 		}
 		mutable_source := prov_slot_is_mutable_carrier(graph, slot) || prov_slot_is_loaded_mutable(graph, slot)
 		reborrowed := prov_slot_is_reborrow(graph, slot)
@@ -4523,8 +4536,7 @@ prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 
 // design.md "Temporaries and procedure boundaries": a direct call substitutes
 // argument roots into the callee's result summary. An indirect call has none,
-// so its result derives from every escaping argument and loses fresh-allocation
-// provenance, which keeps it away from checked `free`.
+// so its result derives from every escaping argument.
 @(private = "file")
 prov_call_result :: proc(
 	graph: ^Flow_Graph,

@@ -1,0 +1,52 @@
+// design.md "Borrowing iteration": a by-value `foreach` over a container of
+// mutable carriers lends each stored carrier. Using the element is using that
+// carrier, and a copy of the last element may outlive the loop.
+package main;
+
+import "core:fmt";
+
+through_array :: proc() {
+	x, y := 1, 2;
+	ptrs := [2]^mut int{&mut x, &mut y};
+	foreach (p in ptrs) { p^ += 10; }
+	fmt.println(x, y);
+}
+
+through_dynamic :: proc() {
+	x, y := 1, 2;
+	ptrs := [dynamic]^mut int{&mut x, &mut y};
+	foreach (p in ptrs) { fmt.print(p^, ""); }
+	fmt.println();
+}
+
+through_options :: proc() {
+	x := 3;
+	options := [2]Option(^mut int){.some(&mut x), .none};
+	foreach (o in options) {
+		switch (o) { case .some(p): fmt.print("some", p^, ""); case .none: fmt.print("none"); }
+	}
+	fmt.println();
+}
+
+through_writers :: proc() {
+	writers := [2]fmt.Writer{fmt.stdout(), fmt.stdout()};
+	foreach (w in writers) { fmt.format_to(w, "w"); }
+	fmt.println();
+}
+
+keeps_last :: proc() {
+	x, y, w := 1, 2, 0;
+	ptrs := [2]^mut int{&mut x, &mut y};
+	saved := &mut w;
+	foreach (p in ptrs) { saved = p; }
+	saved^ = 7;
+	fmt.println(x, y, w);
+}
+
+main :: proc() {
+	through_array();
+	through_dynamic();
+	through_options();
+	through_writers();
+	keeps_last();
+}

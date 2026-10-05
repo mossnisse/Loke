@@ -30,9 +30,8 @@ constant_view :: proc() -> []int {
 	return TABLE[:];
 }
 
-// design.md: "A checked pointer to an allocation root created by `new` or
-// `new_clone` may be returned because the allocation is not callee-local
-// storage."
+// design.md "Owned values": a box owns its allocation, not callee-local
+// storage, so it may be returned.
 allocate :: proc(value: int) -> box(int) {
 	return box(value);
 }
@@ -69,8 +68,7 @@ main :: proc() {
 	// A static root escapes its callee legally.
 	fmt.println(sum(constant_view()));
 
-	// A fresh allocation returned by a direct call keeps its identity, so the
-	// caller may release it.
+	// The returned box is the caller's, released when `pointer` drops.
 	pointer := allocate(7);
 	fmt.println(pointer^);
 

@@ -1,0 +1,41 @@
+// design.md "Borrowing iteration": a lent element of a container of mutable
+// carriers is the stored carrier. The container stays borrowed for the loop,
+// the carriers' targets stay borrowed while an element is used, and a copy of
+// an element reborrows the container's carrier.
+package main;
+
+writes_container :: proc() {
+	x, y, z := 1, 2, 3;
+	ptrs := [2]^mut int{&mut x, &mut y};
+	foreach (p in ptrs) { ptrs[0] = &mut z; p^ = 1; }
+}
+
+writes_target :: proc() {
+	x, y := 1, 2;
+	ptrs := [2]^mut int{&mut x, &mut y};
+	foreach (p in ptrs) { x = 5; p^ = 6; }
+}
+
+keeps_copy :: proc() {
+	x, y, w := 1, 2, 0;
+	ptrs := [2]^mut int{&mut x, &mut y};
+	saved := &mut w;
+	foreach (p in ptrs) { saved = p; }
+	ptrs[0]^ = 1;
+	saved^ = 2;
+}
+
+copy_inside :: proc() {
+	x, y := 1, 2;
+	ptrs := [2]^mut int{&mut x, &mut y};
+	foreach (p in ptrs) { q := p; p^ = 1; q^ = 2; }
+}
+
+// A switch payload over a place is the stored payload too.
+payload_copy_inside :: proc() {
+	x := 1;
+	o: Option(^mut int) = .some(&mut x);
+	switch (o) { case .some(p): q := p; p^ = 1; q^ = 2; case .none: }
+}
+
+main :: proc() {}

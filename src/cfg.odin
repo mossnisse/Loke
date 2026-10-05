@@ -227,6 +227,9 @@ Prov_State :: struct {
 	// The view bindings whose own loans end with their step (design.md
 	// "By-reference iteration"), so `&binding` borrows the binding too.
 	step_views:     map[Symbol_Id]bool,
+	// The carrier slots of a lent loop element, which is the stored carrier
+	// rather than a copy: a copy taken from one reborrows these instead.
+	lent_aliases:   map[int][]int,
 	// One slot per `carrier_shape` path of a local that holds carriers.
 	content_by_symbol: map[Symbol_Id][]int,
 	// The keyed map-shape entry each constant key uses, first written first.
@@ -346,6 +349,7 @@ build_flow_pass :: proc(
 		graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
 		graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
 		graph.step_views = make(map[Symbol_Id]bool, 8, allocator)
+		graph.lent_aliases = make(map[int][]int, 8, allocator)
 		graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 		graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
 		graph.operator_calls = make(map[rawptr]^Expr_Call, 4, allocator)
@@ -1406,17 +1410,34 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	done := new_flow_block(graph)
 	link(graph, head, done)
 	// The iteration reads its source every step, so the loan stays live through
-	// the body (design.md).
+	// the body (design.md). A by-value step reads its element only when it runs,
+	// so the element's own borrows are read on entering the body, not on the way
+	// out: a copy of the last element may outlive the loop.
+	head_reads, step_reads: []int = iterated, nil
+	if !place_loop && len(elements) > 0 {
+		outer := make([dynamic]int, 0, len(iterated), graph.alloc)
+		for slot in iterated {
+			if !slice.contains(elements, slot) {
+				append(&outer, slot)
+			}
+		}
+		head_reads, step_reads = outer[:], elements
+	}
 	graph.current = head
-	if len(iterated) > 0 {
+	if len(head_reads) > 0 {
 		prov_emit(graph, Prov_Event{
-			kind = .Live, sources = iterated, span = expr_span(s.iterable), revives = true,
+			kind = .Live, sources = head_reads, span = expr_span(s.iterable), revives = true,
 		})
 	}
 
 	body := new_flow_block(graph)
 	link(graph, head, body)
 	graph.current = body
+	if len(step_reads) > 0 {
+		prov_emit(graph, Prov_Event{
+			kind = .Live, sources = step_reads, span = expr_span(s.iterable), revives = true,
+		})
+	}
 	if graph.mode != .Lifecycle {
 		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements)
 	}
@@ -1440,10 +1461,15 @@ walk_foreach_binding_provenance :: proc(
 		if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 {
 			loans = elements
 		}
-		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
+		// A lent element is the stored carrier, not a copy of it, so it does not
+		// reborrow what the container holds (design.md "Borrowing iteration"):
+		// reading it reads that carrier, which the iterator loan already guards.
+		sym := symbol_of(graph.k.c, binding.symbol)
+		lent := sym != nil && sym.borrowed_binding != .None && !binding.is_ref
+		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable), copies = !lent)
 		prov_bind_element_region(graph, binding.symbol, s.iterable)
 		// A lent or mutable element is the source's storage, not a copy.
-		if sym := symbol_of(graph.k.c, binding.symbol); sym != nil && sym.borrowed_binding != .None {
+		if sym != nil && sym.borrowed_binding != .None {
 			prov_bind_view(graph, binding.symbol, iterated, lends = !foreach_is_place_loop(s))
 		}
 	}
@@ -1565,7 +1591,8 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		graph.current = bodies[index]
 		enter_flow_scope(graph)
 		if graph.mode != .Lifecycle {
-			prov_bind_value(graph, c.binding_symbol, prov_case_payload(graph, s, c, subject), c.span)
+			// Over a place, the binding is the stored payload, not a copy of it.
+			prov_bind_value(graph, c.binding_symbol, prov_case_payload(graph, s, c, subject), c.span, copies = consumes)
 			prov_bind_case_region(graph, c.binding_symbol, s.subject)
 			// A place subject keeps its payload, so the binding views its storage;
 			// a consumed one is the binding's own, which ends with its case

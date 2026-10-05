@@ -1,0 +1,15 @@
+L0511
+@10:24
+this write of `ptrs` is not compatible with the read-only iterator of it that is still in use
+L0512
+@16:24
+`x` cannot be assigned here: a mutable pointer of it is still in use
+L0641
+@24:2
+`ptrs` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@31:32
+`p` cannot be used here: a mutable reborrow of it is still in use
+L0641
+@38:38
+`p` cannot be used here: a mutable reborrow of it is still in use

@@ -63,28 +63,3 @@ main :: proc() {
 
 `core:fmt`'s `format_any` keeps the recovered view in a local for this reason,
 so printing still counts a `format` method's writes.
-
-### A by-value `foreach` over mutable carriers rejects using the element
-
-[design.md "Weakening and reborrows"](design.md#weakening-and-reborrows) makes
-an element copied out of a container of mutable carriers a reborrow of it,
-which suspends the container, not the copy. The checker instead reports a use
-of the copy as a use of the suspended source, and names that source as an
-empty string. This program is valid but is `L0641` twice, both times as
-"`` cannot be used here: a mutable reborrow of it is still in use":
-
-```odin
-package main;
-import "core:fmt";
-main :: proc() {
-    x, y := 1, 2;
-    ptrs := [2]Option(^mut int){.some(&mut x), .some(&mut y)};
-    foreach (p in ptrs) {
-        switch (p) { case .some: fmt.print("present "); case .none: }
-    }
-    writers := [2]fmt.Writer{fmt.stdout(), fmt.stderr()};
-    foreach (w in writers) { fmt.format_to(w, "w"); }
-}
-```
-
-Indexing the array in a counted loop avoids it; iterating with `&` does not.

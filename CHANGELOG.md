@@ -507,6 +507,11 @@ checklist.
 
 ### Fixed
 
+- A by-value `foreach` over an array or dynamic array of mutable carriers,
+  such as `[2]fmt.Writer` or `[dynamic]^mut int`, no longer rejects using the
+  element with `L0641` naming an empty source. The element is the stored
+  carrier, and a copy of it, kept even past the loop, reborrows the container's
+  carrier as a copy of `ptrs[i]` does.
 - A temporary argument whose borrow the result keeps, as the arena in
   `make(..., mem.Arena.init().allocator())`, lives through its complete
   expression; it was dropped right after the call, and the program used a
