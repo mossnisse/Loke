@@ -66,11 +66,7 @@ main :: proc() {
 	from_move := shared(move(moved_in));
 	fmt.println(from_move.get()^.value, from_move.get()^.tag);
 
-	// "Its zero value is `nil`", and two handles over one block compare equal.
-	empty: shared(Node) = {};
-	fmt.println(empty == nil, empty.strong_count(), handle == nil);
-	also_empty: shared(Node) = nil;
-	fmt.println(also_empty == empty);
+	// Two handles over one block compare equal.
 	fourth := handle;
 	fmt.println(fourth == handle, fourth == from_move);
 	drop(fourth);

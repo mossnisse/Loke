@@ -19,13 +19,13 @@ consumed_case_binding :: proc() {
 }
 
 copied_loop_element :: proc() {
-	q: ^int = nil;
+	unset := 0; q: ^int = &unset;
 	foreach (i in 0 ..< 3) { q = &i; }
 	fmt.println(q^);
 }
 
 lent_from_a_temporary :: proc() {
-	p: ^int = nil;
+	unset := 0; p: ^int = &unset;
 	foreach (x in [dynamic]int{1, 2, 3}) { p = &x; }
 	fmt.println(p^);
 }

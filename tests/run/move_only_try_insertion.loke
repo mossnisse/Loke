@@ -49,7 +49,7 @@ main :: proc() {
 
 	table: map[string]Token = {};
 	fmt.println(table.try_insert("a", make_token(4)) == .ok);
-	slot := table.try_find_or_insert("a", make_token(5)) or_else nil;
+	slot := table.try_find_or_insert("a", make_token(5)) or_else panic("no slot");
 	fmt.println(slot^.id);
 
 	// Fixed capacity fails the same way.

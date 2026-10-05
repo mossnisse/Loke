@@ -74,12 +74,8 @@ map_value_read :: proc(table: map[string]Holder) -> []int {
 
 // POSITIVE. An entry pointer is a borrow of the container's storage, which the
 // `inout` receiver makes the caller's.
-map_entry_pointer :: proc(table: inout map[string]Holder) -> ^mut Holder {
-	switch (slot in table.find_mut("a")) {
-	case .some: return slot;
-	case .none: return nil;
-	}
-	return nil;
+map_entry_pointer :: proc(table: inout map[string]Holder) -> Option(^mut Holder) {
+	return table.find_mut("a");
 }
 
 // --- moving an owner that carries a borrow ----------------------------------
@@ -287,7 +283,7 @@ main :: proc() {
 	table: map[string]Holder = {};
 	table["a"] = Holder{numbers[:]};
 	fmt.println(map_value_read(table)[3]);
-	fmt.println(map_entry_pointer(inout table).view.len());
+	fmt.println((map_entry_pointer(inout table) or_else panic("no entry")).view.len());
 
 	fmt.println(move_an_owner(numbers[:]).view.len());
 

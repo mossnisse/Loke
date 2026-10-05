@@ -25,7 +25,6 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	load_provider_packages(c)
 
 	k := Checker{c = c}
-	defer delete(k.nil_uses)
 	// With no file-scope selection, discovery needs no semantic preparation.
 	// Checking each dependency before preparing its dependents gives checkpoints
 	// a boundary with no references back into a later package.

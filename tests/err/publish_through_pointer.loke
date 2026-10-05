@@ -7,7 +7,7 @@ Holder :: struct { view: ^mut [dynamic]int }
 main :: proc() {
     xs := [dynamic]int{1};
     source := &mut xs;
-    holder: Holder = {};
+    spare := [dynamic]int{}; holder: Holder = {&mut spare};
     target := &mut holder;
     target.view = source;
     element := &holder.view^[0];

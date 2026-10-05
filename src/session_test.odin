@@ -740,7 +740,7 @@ session_provider_and_registry_changes_match_fresh_checks :: proc(t: ^testing.T) 
 	data := filepath.join({root, "data", "data.loke"}, context.temp_allocator)
 	text := `@(default_allocator = "./provider:factory") package main;
 import "core:fmt"; import "data";
-main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(data.Value)); assert(type_info_of(typeid_of(data.Value)) != nil); }`
+main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(data.Value)); assert(type_info_of(typeid_of(data.Value)).id == typeid_of(data.Value)); }`
 	selected_missing, _ := strings.replace_all(text, "provider:factory", "provider:other", context.temp_allocator)
 	provider_text := "package provider; @(public) factory :: proc() -> Allocator { return {}; }"
 	if !write_session_source(t, path, text) || !write_session_source(t, provider, provider_text) ||

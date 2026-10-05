@@ -72,7 +72,6 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		// A `dyn` slot call dispatches through the witness.
 		if operand := dyn_operand_type(k, sel.operand); operand != INVALID_TYPE {
 			if check_dyn_slot_call(k, v, sel, operand) {
-				note_nil_use(k, sel.operand, "dispatch")
 				return
 			}
 			errorf(k.c, v.span, "L0467", "`%s` has no slot `%s`", type_name(k.c, operand), sel.name.text)
@@ -148,9 +147,6 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// Only a procedure value can be nil.
-	note_nil_use(k, v.callee, "call")
-
 	// Only a directly named procedure (`f` or `pkg.f`) has defaults and named
 	// parameters.
 	declaration := INVALID_SYMBOL
@@ -598,7 +594,6 @@ check_bound_argument_mode :: proc(k: ^Checker, value: Expr, target: Type_Id, mod
 	if mode != .Inout {
 		return true
 	}
-	note_unknown_nil_write(k, value)
 	// design.md "@(packed)": `inout` passes the address, which may be misaligned.
 	if field, packed := packed_field_reached(k, value); packed {
 		errorf(

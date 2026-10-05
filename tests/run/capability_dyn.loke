@@ -78,9 +78,4 @@ main :: proc() {
 	described := (dyn Described)(&c);
 	fmt.println(described.size() + described.label());
 
-	// The zero value of both capabilities is nil.
-	absent: dyn Mixed = nil;
-	missing: dyn mut Mixed = nil;
-	fmt.println(1 if absent == nil else 0);
-	fmt.println(1 if missing == nil else 0);
 }

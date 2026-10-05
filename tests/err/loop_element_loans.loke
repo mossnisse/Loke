@@ -64,7 +64,7 @@ changed_after_last_use :: proc() -> int {
 			break;
 		}
 	}
-	saved: ^int = nil;
+	unset := 0; saved: ^int = &unset;
 	foreach (item in values) { saved = &item; }
 	total += saved^;
 	values.clear();

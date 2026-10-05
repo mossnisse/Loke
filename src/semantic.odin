@@ -284,14 +284,6 @@ WINDOWS_X64 :: Target_Info {
 	max_align    = 16,
 }
 
-// Sticky: `Unknown` is never left, because the pass asks about the whole body
-// rather than one path through it (`nil_uses.odin`).
-Nil_Writes :: enum u8 {
-	None,
-	Nil_Only,
-	Unknown,
-}
-
 Resolution_Kind :: enum {
 	Unresolved,
 	Error,
@@ -499,9 +491,6 @@ Symbol :: struct {
 	// a declaration may not take one of those names. Every other predeclared name
 	// stays shadowable.
 	reserved:    bool,
-	// Whether every value this local has been given is `nil`, which is what lets
-	// a use of it be reported rather than trapped (`nil_uses.odin`).
-	nil_writes:  Nil_Writes,
 	type:        Type_Id,
 	const_value: Const_Value,
 	params:      []Type_Id,
@@ -1518,9 +1507,9 @@ type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> 
 	// carries no length, so comparing two of them would compare addresses.
 	case .String, .String_View:
 		return true
-	// design.md "Allocation failure": recovery is written `if (err != nil)`, so
-	// the error code is nil-comparable. An `Allocator` handle is comparable for
-	// the same reason a pointer is.
+	// design.md "Allocation failure": an error code compares with its zero, no
+	// failure. An `Allocator` handle is comparable for the same reason a pointer
+	// is.
 	case .Allocator, .Allocator_Error:
 		return true
 	// design.md: two `type` values support `==` and `!=` during compilation, and
@@ -1545,18 +1534,6 @@ type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> 
 				return false
 			}
 		}
-		return true
-	}
-	return false
-}
-
-// design.md: a dynamic interface value compares against `nil` and nothing
-// else, so it is not a comparable leaf either. Kept apart from
-// `type_is_comparable` because an aggregate reads that one to decide whether it
-// may be compared field-wise, which these two may not.
-type_compares_to_nil_only :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch underlying_kind(c, id) {
-	case .Dyn:
 		return true
 	}
 	return false

@@ -21,9 +21,6 @@ cannot initialise `^mut int` with `^int`
 L0373
 @60:23
 `^int` cannot be converted to `^mut int`
-L0373
-@67:23
-`^int` cannot be converted to `^mut int`
 L0641
-@78:2
+@71:2
 `source` cannot be used here: a read-only reborrow of it is still in use

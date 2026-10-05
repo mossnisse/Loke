@@ -10,6 +10,24 @@ checklist.
 
 ### Breaking changes
 
+- References are never null and have no zero value: `^T`, `^mut T`,
+  procedure values, `dyn I`, `any_view`, `cstring_view`, and `shared(T)`.
+  `nil` is now only the null `rawptr` or `[^]T` (`L0310`), a reference is not
+  comparable with `nil`, `dyn` views are not comparable at all, and a record
+  with a reference field has no `{}` (`L0424`). Write `Option(^T)` with
+  `.none` where a reference may be absent, construct records with every
+  reference field, and give a global reference the type `Option(^T)`, since
+  no address is a compile-time constant. `L0476` and the whole-body nil-use
+  diagnostic `L0701` are gone with the null state they reported.
+- Dereferences, indirect calls, and `dyn` slot calls no longer test for null.
+  Instead, converting a null `rawptr` or `[^]T` to `^T` or `^mut T`, and a
+  null `[^]u8` through `unsafe.cstring_view`, panics at the conversion. A
+  foreign binding that types a parameter or result `^T` or `cstring_view`
+  promises it is never NULL; one whose C side may pass NULL now uses `[^]T`
+  or `rawptr`.
+- `core:log`'s published logger is `selected: Option(Logger)`; a logging
+  provider is still a factory returning `Logger`.
+
 - `nil` is no longer a value of a slice, `string_view`, `typeid`,
   `Allocator`, `Allocator_Error`, or `weak(T)` (`L0310`), and slices no
   longer compare with `nil`. Each of these types' zero is written `{}`, as for

@@ -290,7 +290,6 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string) -> bool {
 		}
 	}
 	k := Checker{c = c}
-	defer delete(k.nil_uses)
 	_ = discover_imports(c, &k)
 	// Retain the pre-edit boundary. Reload the complete suffix from the probe on
 	// each rewind, including edits made since an earlier boundary was captured.

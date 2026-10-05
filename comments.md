@@ -169,6 +169,19 @@ Slices stop comparing with `nil` because the only question that comparison
 could answer, besides emptiness, was which of two empty views had been sliced
 from memory.
 
+A reference has no such zero, so it has none at all: `^T`, a procedure value,
+`dyn I`, `any_view`, `cstring_view`, and `shared(T)` are never null, and absence
+is `Option(^T)`, as it already was for every other type. Odin's `^T` has three
+states inside an `Option` where two are meant, and every dereference and
+indirect call pays a null test. Loke used to keep those tests and add a
+whole-body diagnostic for a local given only `nil`; it caught the certain cases
+and nothing that arrived through a field, a parameter, or a container. Now the
+null test happens once, where an unchecked address becomes a reference, and the
+type promises the rest. The cost is that a record holding a reference has no
+`{}`, which the language already handled for unions and enums without a zero,
+and that a global reference is an `Option`, since no address is a compile-time
+constant.
+
 ### Storage modifiers instead of storage attributes
 
 Odin spells static-duration locals `@(static)` and thread locals
@@ -741,7 +754,7 @@ needs `core:unsafe`.
 
 A formatter uses its sink only during the call. A logger factory must return
 process-lifetime storage, so it can lend a `static` sink. Neither use needs an
-owning closure. Calling a nil view panics, and views compare only with `nil`.
+owning closure. A view always names a sink, and views are not comparable.
 The [sink implementation notes](#formatting-and-logging-sink-implementation)
 record the migration from raw state pointers and the runtime adapter.
 
@@ -1277,14 +1290,15 @@ not bypass that check. See [design.md "Last-use transfer"](design.md#last-use-tr
 The former `state + proc` sink cast a `rawptr` back to a typed pointer in
 `core:fmt`'s collector and `core:io`'s latch adapter. Borrowed `dyn mut` views
 removed those casts without requiring retained closures. A nil `Writer`, which
-used to discard output, now panics like every other nil view's slot call.
+used to discard output, first panicked like every other nil view's slot call,
+and then stopped existing when references lost their null state.
 
 The generated module supplies `loke_rt_v1_sink_write` for the runtime's scalar
 formatters. It calls the witness slot with a slice built in LLVM, avoiding a C
 prototype for LLVM's two-word aggregate convention. Process streams use a
 compiler-emitted witness whose data pointer identifies the stream.
 
-Because views compare only with `nil`, the logger-provider test checks sink
+Because views are not comparable, the logger-provider test checks sink
 output instead of comparing `current().write` with `standard_logger().write`.
 
 ### Extended UNC volume boundaries

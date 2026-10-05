@@ -13,7 +13,7 @@ Holder :: struct { view: []int }
 Handle :: struct { target: ^int }
 
 global_view: []int;
-global_pointer: ^int;
+global_pointer: Option(^int) = .none;
 global_holder: Holder;
 
 // 1. Storing a pointer, slice, iterator, or other view in a record field is
@@ -22,7 +22,7 @@ global_holder: Holder;
 //    to it. The unconstrained forms moved to tests/err/m5b_retention.loke.
 store_in_a_global :: proc(@(escape=static) values: []int, @(escape=static) target: ^int) {
 	global_view = values;
-	global_pointer = target;
+	global_pointer = .some(target);
 }
 
 store_in_a_record_field :: proc(values: []int) -> Holder {
@@ -78,7 +78,7 @@ main :: proc() {
 	numbers := KEPT;
 	target := 0;
 	store_in_a_global(KEPT[:], &mut kept_target);
-	fmt.println(global_view[0] + global_pointer^);
+	fmt.println(global_view[0] + (global_pointer or_else panic("unset"))^);
 
 	holder := store_in_a_record_field(numbers[:]);
 	fmt.println(holder.view[1]);

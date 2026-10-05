@@ -678,7 +678,7 @@ emit_program_init :: proc(e: ^Emitter) {
 	if allocator := e.c.providers[.Allocator].factory; allocator != INVALID_SYMBOL {
 		handle := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call ptr %s()", handle, symbol_name(e, allocator))
-		// The runtime rejects a nil or foreign handle.
+		// The runtime rejects a zero or foreign handle.
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_publish_allocator(ptr %s)", handle)
 	}
 	if logger := e.c.providers[.Logger].factory; logger != INVALID_SYMBOL {
@@ -692,7 +692,8 @@ emit_program_init :: proc(e: ^Emitter) {
 				&e.b, "  %s = call %s %s()",
 				handle, llvm_type(e, factory.result), symbol_name(e, logger),
 			)
-			store(e, factory.result, handle, global)
+			destination := symbol_of(e.c, e.c.providers[.Logger].destination).type
+			store(e, destination, emit_option_some(e, destination, handle), global)
 		}
 	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_provider_init_end()")

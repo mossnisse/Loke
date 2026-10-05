@@ -14,7 +14,7 @@ main :: proc() {
 	it := xs.iter();
 	// Mutating the cursor repeatedly is legal while it borrows the source, and
 	// what it lends names the element in place.
-	first := it.next() or_else nil;
+	first := it.next() or_else panic("empty");
 	fmt.println(first^);
 	advance(inout it);
 	fmt.println(it.next() == .none);
@@ -29,7 +29,7 @@ main :: proc() {
 	Dynamic :: [dynamic]int;
 	holder: (it: Dynamic.Iterator) = {it = y.iter()};
 	// A dynamic array lends, so what comes back names the element in place.
-	held := holder.it.next() or_else nil;
+	held := holder.it.next() or_else panic("empty");
 	fmt.println(held^);
 	advance(inout holder.it);
 	y.append(3);

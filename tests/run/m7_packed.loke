@@ -72,5 +72,5 @@ main :: proc() {
 
 	// Runtime type info reports the packed size.
 	info := type_info_of(typeid_of(Packed));
-	if (info != nil) { fmt.println(info.size, info.align); }
+	fmt.println(info.size, info.align);
 }

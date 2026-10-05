@@ -44,7 +44,8 @@ stored_sum :: proc() -> int {
 STORED_SUM :: stored_sum();
 
 main :: proc() {
-	first, second: ^int = nil, nil;
+	unset := 0;
+	first, second: ^int = &unset, &unset;
 	foreach (item in DIRECT) { first = &item; break; }
 	foreach (item in DIRECT) { second = &item; break; }
 	fmt.println("constant", first == second, first^);

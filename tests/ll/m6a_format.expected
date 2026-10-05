@@ -1,6 +1,6 @@
 @.loke.formatters = private unnamed_addr constant [4 x ptr] [ ptr null, ptr @loke.w.Formattable.Money, ptr @loke.w.Formattable.Point, ptr @loke.w.Formattable.int ]
 @.loke.formatters.count = private unnamed_addr constant i64 3
-@.loke.type_names = private unnamed_addr constant [4 x %loke.string_view] [ %loke.string_view zeroinitializer, %loke.string_view { ptr @.str.10, i64 5 }, %loke.string_view { ptr @.str.3, i64 5 }, %loke.string_view { ptr @.str.11, i64 3 } ]
+@.loke.type_names = private unnamed_addr constant [4 x %loke.string_view] [ %loke.string_view zeroinitializer, %loke.string_view { ptr @.str.*, i64 5 }, %loke.string_view { ptr @.str.*, i64 5 }, %loke.string_view { ptr @.str.*, i64 3 } ]
 define private void @loke.f.1(ptr %data, ptr %w, ptr %o) {
 define private void @loke.f.2(ptr %data, ptr %w, ptr %o) {
 define private void @loke.f.3(ptr %data, ptr %w, ptr %o) {

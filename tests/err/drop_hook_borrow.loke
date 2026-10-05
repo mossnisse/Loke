@@ -11,7 +11,7 @@ Guard :: move_only struct { p: ^[dynamic]int }
 
 impl Guard {
 	done :: hook(drop) proc(self: inout) {
-		if (self.p != nil) { fmt.println(self.p^.len()); }
+		fmt.println(self.p^.len());
 	}
 }
 
@@ -41,7 +41,7 @@ nested :: proc() {
 }
 
 declared_later :: proc() {
-	g: Guard = {};
+	g: Guard;
 	ys := [dynamic]int{2};
 	g = Guard{&ys};
 }

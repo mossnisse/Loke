@@ -50,7 +50,6 @@ BOOTSTRAP_INSTANCES :: 1
 // The single-package half of `compile_program`, without `when` discovery.
 check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	k := Checker{c = c}
-	defer delete(k.nil_uses)
 	ensure_runtime_bootstrap(&k)
 	rebuild_active_items(c, package_of(c, pkg_id))
 	prepare_package(&k, pkg_id)

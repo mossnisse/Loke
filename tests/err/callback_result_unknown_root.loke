@@ -5,13 +5,12 @@ package main;
 // root. An argument borrowed only for the call establishes nothing, so the
 // thread-local result cannot be kept in process-lifetime storage.
 source: thread_local int = 1;
-kept: static ^int = nil;
+kept: static Option(^int) = .none;
 
 get :: proc(@(escape=none) scratch: ^int) -> ^int { return &source; }
 
 main :: proc() {
 	action: proc(@(escape=none) scratch: ^int) -> ^int = get;
 	value := 2;
-	kept = action(&value);
-	kept = action(nil);
+	kept = .some(action(&value));
 }

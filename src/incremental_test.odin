@@ -202,7 +202,7 @@ session_incremental_rebuilds_final_registry_demands :: proc(t: ^testing.T) {
 	path := filepath.join({root, "main.loke"}, context.temp_allocator)
 	if !write_session_source(t, filepath.join({data_dir, "data.loke"}, context.temp_allocator), "@(public) package data; Value :: struct { item: int }") { return }
 	rich := `package main; import "core:fmt"; import "data";
-main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(data.Value)); assert(type_info_of(typeid_of(data.Value)) != nil); }`
+main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(data.Value)); assert(type_info_of(typeid_of(data.Value)).id == typeid_of(data.Value)); }`
 	simple := `package main; import "core:fmt"; import "data"; main :: proc() {}`
 	config := session_test_config()
 	s: Compilation_Session

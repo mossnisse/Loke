@@ -138,14 +138,16 @@ main :: proc() {
 
 	// Pointers, both spellings.
 	target := 42;
-	pointer: sync.Atomic(^int) = {};
-	fmt.println(pointer.load() == nil);
+	start := 0;
+	pointer: sync.Atomic(^int) = {value = &start};
+	fmt.println(pointer.load() == &start);
 	pointer.store(&target);
 	fmt.println(pointer.load()^);
 	// A `^mut T` is a distinct atomic type from a `^T`, and the one a published
 	// pointer is usually read back as.
 	writable_target := 1;
-	writable: sync.Atomic(^mut int) = {};
+	writable_start := 0;
+	writable: sync.Atomic(^mut int) = {value = &mut writable_start};
 	writable.store(&mut writable_target);
 	writable.load()^ = 43;
 	fmt.println(writable_target);

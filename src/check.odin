@@ -8,9 +8,6 @@ import "core:strings"
 
 Checker :: struct {
 	c:     ^Compiler,
-	// Uses that trap on `nil`, pending the rest of the body that decides whether
-	// the local can be anything else (`nil_uses.odin`).
-	nil_uses: [dynamic]Nil_Use,
 	// Foreign signatures that named a record still resolving its fields
 	// (`check_deferred_foreign_signatures`).
 	deferred_foreign_signatures: [dynamic]Foreign_Signature,
@@ -2211,7 +2208,6 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 					if symbol := symbol_of(k.c, symbol_id); symbol != nil && field != nil {
 						symbol.type = field.type
 					}
-					note_nil_write_to(k, symbol_id, d.values[0])
 				}
 			}
 			return
@@ -2319,7 +2315,6 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 				}
 			}
 		}
-		note_nil_write_to(k, symbol_id, value)
 	}
 }
 
@@ -2409,9 +2404,6 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	}
 	outer_scope, outer_body := k.scope, k.body
 	defer k.scope, k.body = outer_scope, outer_body
-	// Only this body's uses, not an enclosing one's (`nil_uses.odin`).
-	nil_mark := len(k.nil_uses)
-	defer report_nil_uses(k, nil_mark)
 
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
 	k.scope.owner_proc = literal
@@ -2738,7 +2730,6 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 						return
 					}
 					check_assign_target(k, target, field.type)
-					note_unknown_nil_write(k, target)
 				}
 			}
 			return
@@ -2785,7 +2776,6 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			continue
 		}
 		check_value_expr(k, s.rhs[index], type, "assign")
-		note_nil_write(k, target, s.rhs[index])
 	}
 }
 
@@ -2995,7 +2985,6 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	}
 	// design.md "Maps": `m[key] += 1` reads and writes one element, so the entry
 	// must already be there; only `m[key] = elem` creates one.
-	note_unknown_nil_write(k, s.lhs[0])
 	type := check_assign_target(k, s.lhs[0], INVALID_TYPE, inserts = false)
 	if type == INVALID_TYPE {
 		check_expr(k, s.rhs[0])

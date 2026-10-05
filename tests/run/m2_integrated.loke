@@ -4,7 +4,7 @@ Colour :: enum { Red, Green = 5, Blue }
 
 Point :: struct { x: int, y: int }
 
-Node :: struct { value: int, next: ^Node }
+Node :: struct { value: int, next: Option(^Node) }
 
 Alias :: u32;
 
@@ -78,7 +78,7 @@ main :: proc() {
 	r.x = 99;
 	fmt.println(p.x);
 
-	n := Node{value = 5, next = nil};
+	n := Node{value = 5, next = .none};
 	fmt.println(n.value);
 
 	// enums

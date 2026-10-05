@@ -696,10 +696,10 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			// A temporary box drops at the end of its full expression.
 			return emit_box_payload_address(e, expr_base(v.operand).type, emit_borrowed_operand(e, v.operand))
 		}
+		// design.md "Pointers": a checked pointer is never null, so there is
+		// nothing to test.
 		if v.op == .Caret {
-			pointer := emit_expr(e, v.operand)
-			emit_nil_check(e, pointer)
-			return pointer
+			return emit_expr(e, v.operand)
 		}
 
 	case ^Expr_Selector:
@@ -849,18 +849,9 @@ emit_base_address :: proc(e: ^Emitter, operand: Expr) -> (Type_Id, string) {
 	type := expr_base(operand).type
 	info := underlying_info(e.c, type)
 	if info != nil && info.kind == .Pointer {
-		pointer := emit_expr(e, operand)
-		emit_nil_check(e, pointer)
-		return info.element, pointer
+		return info.element, emit_expr(e, operand)
 	}
 	return type, emit_address(e, operand)
-}
-
-@(private = "file")
-emit_nil_check :: proc(e: ^Emitter, pointer: string) {
-	is_nil := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, pointer)
-	panic_if(e, is_nil, "nil.deref", "nil pointer dereference")
 }
 
 // `lo` and `hi`, each evaluated once in order, checked as
@@ -2313,6 +2304,7 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 
 	case .Unsafe_C_String_View:
 		out[0] = emit_expr(e, v.bound[0])
+		guard_null_reference(e, out[0], expr_base(v.bound[0]).type, TYPE_CSTRING_VIEW)
 
 	case .Unsafe_String_View:
 		// design.md "string type conversions": a negative length is a bounds

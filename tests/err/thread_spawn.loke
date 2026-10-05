@@ -43,7 +43,7 @@ main :: proc() {
 }
 
 escapes :: proc() {
-	p: ^mut int = nil;
+	p: ^mut int;
 	{
 		guard := total.lock();
 		p = &mut guard.get();

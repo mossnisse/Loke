@@ -233,7 +233,7 @@ Call_Text_Conversion :: struct { op: Text_Conversion }
 Call_Atomic :: struct { type: Type_Id, order: int, failure_order: int }
 Call_Sort_By :: struct { comparator: Symbol_Id }
 Call_Simd_Reduce :: struct { fold: Simd_Fold }
-// A nil witness represents conversion of a nil pointer to a nil dyn view.
+// The witness the pointed-to type satisfies the interface with.
 Call_Dyn_Conversion :: struct { witness: ^Witness }
 Call_Dyn_Slot :: struct { index: int }
 // The payload of `box` or `unsafe.new`, or the container type of `make`.

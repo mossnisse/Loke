@@ -1,0 +1,11 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// design.md "The `unsafe` package": `unsafe.cstring_view` makes a reference,
+// so a null address panics there rather than in the foreign code that reads it.
+
+no_bytes :: proc() -> [^]u8 { return nil; }
+
+main :: proc() {
+	view := unsafe.cstring_view(no_bytes());
+	fmt.println(view);
+}

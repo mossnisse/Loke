@@ -1,10 +1,10 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 // design.md "Panics and unwinding" enumerates the runtime faults that are
 // panics. Each takes the program strategy, so each of them unwinds the frame
 // that raised it: none of them is still an undifferentiated trap.
 //
-// One program covers only one fault, so this one takes the nil dereference and
+// One program covers only one fault, so this one takes the null conversion and
 // leaves the arithmetic, bounds, and assertion families to their `guards` and
 // `assert` siblings — what is asserted here is that a *classified* panic still
 // runs the frame's cleanup.
@@ -15,14 +15,13 @@ impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }
 }
 
-// design.md "Nil states": a *provably* nil local is a compile error (L0701), so
-// the nil arrives from a call. The trap covers every nil the compiler cannot
-// see coming, which is what this program is about.
-no_pointer :: proc() -> ^int { return nil; }
+// A checked pointer is never null, so the null arrives as an unchecked address
+// and faults where it is converted (design.md "The `unsafe` package").
+no_pointer :: proc() -> rawptr { return nil; }
 
 main :: proc() {
 	live := Res{7};
 	defer fmt.println(70);
-	p := no_pointer();
+	p := (^int)(no_pointer());
 	fmt.println(p^);
 }

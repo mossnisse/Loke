@@ -3,11 +3,12 @@ import "core:fmt";
 import "core:mem";
 
 // design.md "Default values": `name := default` takes the default's type, which
-// may read the parameters to its left, and a `^T` parameter may have a default.
+// may read the parameters to its left, and an `Option(^T)` parameter may have a
+// default.
 Monitor :: struct { id: int }
 
-window :: proc(title: string, x := 0, width := x + 854, scale := 1.5, monitor: ^Monitor = nil) {
-	fmt.println(title, x, width, scale, monitor == nil);
+window :: proc(title: string, x := 0, width := x + 854, scale := 1.5, monitor: Option(^Monitor) = .none) {
+	fmt.println(title, x, width, scale, monitor == .none);
 }
 
 sized :: proc(n: int, allocator := mem.default_allocator()) -> int { return n; }
@@ -32,7 +33,7 @@ impl Counter {
 main :: proc() {
 	screen := Monitor{1};
 	window("a");
-	window("b", 10, monitor = &screen);
+	window("b", 10, monitor = .some(&screen));
 	fmt.println(sized(3));
 	c := Counter.make();
 	fmt.println(c.v, c.add(), c.add(by = 5));

@@ -9,7 +9,7 @@ Color :: enum { Red, Green }
 
 Point :: struct {
 	x: int,
-	next: ^Point,
+	next: ^int,
 }
 
 Shape :: union {
@@ -23,7 +23,7 @@ add :: proc(a: int, b: int) -> int {
 
 main :: proc() {
 	total := add(40, 2);
-	point := Point{x = total, next = nil};
+	point := Point{x = total, next = &total};
 	color := Color.Green;
 	shape: Shape = .circle(1.5);
 	name := "loke";

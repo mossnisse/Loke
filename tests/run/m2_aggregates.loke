@@ -7,7 +7,7 @@ Point :: struct { x: int, y: int }
 Line :: struct { a: Point, b: Point, colour: Colour }
 
 // A pointer edge breaks the containment cycle, so this has a finite size.
-Node :: struct { value: int, next: ^Node }
+Node :: struct { value: int, next: Option(^Node) }
 
 Meters :: distinct int;
 
@@ -85,10 +85,13 @@ main :: proc() {
 	fmt.println(addressed(21));
 
 	// Pointer-recursive data.
-	tail := Node{value = 2, next = nil};
-	head := Node{value = 1, next = &tail};
-	fmt.println(head.next.value);
-	fmt.println(1 if tail.next == nil else 0);
+	tail := Node{value = 2, next = .none};
+	head := Node{value = 1, next = .some(&tail)};
+	switch (next in head.next) {
+	case .some: fmt.println(next.value);
+	case .none: fmt.println(0);
+	}
+	fmt.println(1 if tail.next == .none else 0);
 
 	// A distinct type has a fresh identity and converts explicitly.
 	m: Meters = Meters(100);

@@ -49,13 +49,13 @@ uninitialised :: proc() {
 	d: [dynamic]int = ---;
 	p: ^int = ---;
 	h: Handle = ---;
-	fmt.println(d.len(), p == nil, h.id);
+	fmt.println(d.len(), h.id);
 }
 
 main :: proc() {
 	value := 1;
 	fmt.println(escape()^);
-	conversions(nil, nil, nil);
+	real := 1.0; conversions(nil, &real, nil);
 	accesses(nil);
 	allowed(&mut value);
 	uninitialised();

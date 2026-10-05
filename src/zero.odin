@@ -40,6 +40,11 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 		// A generic instance can bind a zero variant's payload to a type with no zero.
 		return info.zero_designated && len(info.variants) > 0 && type_has_zero_walk(c, info.variants[0], seen)
 	case .Struct:
+		// A `shared(T)` always shares a payload; its record holds the block as a
+		// `rawptr` only so that it carries no borrow.
+		if info.instance_of != INVALID_SYMBOL && info.instance_of == c.shared_symbol {
+			return false
+		}
 		for field in info.fields {
 			symbol := symbol_of(c, field)
 			// design.md "Uninitialized capacity": storage past the live prefix holds
@@ -56,6 +61,10 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 	case .Box:
 		// design.md "Owned values": a box always owns a value, so there is no
 		// empty one to start from; `Option(box(T))` is the absent box.
+		return false
+	// design.md "Types with no zero value": a reference always refers to
+	// something, so there is no null one; `Option(^T)` is the absent one.
+	case .Pointer, .Proc, .Dyn, .Any_View, .CString_View:
 		return false
 	}
 	// Scalars, SIMD vectors, and container headers, whose capacity is raw storage.

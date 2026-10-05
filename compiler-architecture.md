@@ -260,7 +260,7 @@ The dependency closure extends beyond exported signatures:
   whose parameter/result types did not change.
 - **Inferred effects and provenance.** Recompute global/indirect write sets,
   result summaries and their dependency solver, written allocator regions,
-  callback contract checks/joins, nil-use facts, liveness, ownership, and borrow
+  callback contract checks/joins, liveness, ownership, and borrow
   analysis. A callee body or a newly reachable indirect/dynamic target can change
   a caller's legality. The existing result-summary solver edges schedule that
   analysis within one compilation; they do not establish complete incremental
@@ -723,7 +723,6 @@ be file-private.
 | `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
 | `global_effects.odin` | Whole-program global write effects: which globals each body, and each call through it, may write; the L0707 warning for a `thread.spawn` entry that writes a shared global; and the L0711 error for a copy hook that writes any global. |
-| `nil_uses.odin` | Locals a body only ever writes `nil` to, reported at the use rather than left to the trap. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 
 ### LLVM and toolchain

@@ -1,0 +1,38 @@
+package main;
+
+// design.md "Zero values": `nil` is the null unchecked address and nothing
+// else. A reference has no null state, so it has no zero value either, and its
+// absence is an `Option`; every other type's zero is `{}`, and a slice compares
+// with nothing (design.md "Empty slices").
+
+Shape :: interface($Self: type) { slot area: proc(self) -> int; }
+Callback :: proc(x: int) -> int;
+Node :: struct { value: int, next: ^Node }
+
+main :: proc() {
+	s: []int = nil;
+	v: string_view = nil;
+	id: typeid = nil;
+	a: Allocator = nil;
+	e: Allocator_Error = nil;
+	w: weak(int) = nil;
+	t: []int = {};
+	if (t == nil) { }
+	if (id == nil) { }
+
+	p: ^int = nil;
+	m: ^mut int = nil;
+	f: Callback = nil;
+	d: dyn Shape = nil;
+	c: cstring_view = nil;
+	h: shared(int) = nil;
+	any: any_view = {};
+	held: shared(int) = {};
+	node: Node = {};
+
+	// Still accepted: an unchecked address, and the absent reference.
+	r: rawptr = nil;
+	bytes: [^]u8 = nil;
+	absent: Option(^int) = .none;
+	_ = r; _ = bytes; _ = absent;
+}

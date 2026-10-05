@@ -181,7 +181,6 @@ impl Guard($T) {
 
 	@(private)
 	unlock :: hook(drop) proc(self: inout) {
-		if (self.mutex == nil) { return; }
 		rt_unlock(rawptr(&self.mutex.word.value));
 	}
 }

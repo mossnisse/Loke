@@ -569,17 +569,18 @@ constness alone does not establish either.
 `new`/`free`, and raw allocation moved into
 [`core:unsafe`](design.md#the-unsafe-package). Stage 2 has landed too:
 `nil` is no longer a slice's, `string_view`'s, `typeid`'s, `Allocator`'s, or
-`weak(T)`'s zero ([Zero values](design.md#zero-values)). design.md and the
-compiler still have nullable references. Each stage
+`weak(T)`'s zero ([Zero values](design.md#zero-values)). Stage 3 has landed:
+references are never null and have no zero value
+([Types with no zero value](design.md#types-with-no-zero-value)). Each stage
 at the end of this entry changes the specification, compiler, tests,
 tutorials, and changelog together, and the entry leaves this file when the
 last one lands.
 
-[Pointers](design.md#pointers), procedure values, and `dyn` views have a nil
-state, so `Option(^T)` has three states where two are meant, every
-dereference and indirect call compiles to a null test and a panic branch, and
-[Nil states](design.md#nil-states) can only diagnose a local given nothing but
-`nil`. `new(T)` returned the borrow type `^mut T` while handing over release
+[Pointers](design.md#pointers), procedure values, and `dyn` views had a nil
+state, so `Option(^T)` had three states where two are meant, every
+dereference and indirect call compiled to a null test and a panic branch, and
+design.md's former "Nil states" rule could only diagnose a local given nothing
+but `nil`. `new(T)` returned the borrow type `^mut T` while handing over release
 by convention, and the borrow model carried an allocation-root category and a
 same-region rule for checked `free` that no program in `examples/` used; the
 library's two calls, in `core:thread` and `shared(T)`, already released
@@ -751,11 +752,13 @@ note:
 2. (Landed.) `nil` narrowed to references and unchecked addresses: the zeros
    of item 2, `Allocator_Error`'s among them, `{}` as the empty slice, and a
    total `type_info_of`.
-3. Non-null references: no-zero typing, null-tested unchecked conversions, no
-   null tests in emitted code, and design.md "Nil states" and
-   `src/nil_uses.odin` deleted. Migrates `core:log` (`selected:
-   Option(Logger)`), `core:fmt`'s `format_view`, `thread.Guard`, and the rest
-   of the 176 test files that write `nil`.
+3. (Landed.) Non-null references: no-zero typing, null-tested unchecked
+   conversions, no null tests in emitted code, and design.md "Nil states" and
+   `src/nil_uses.odin` deleted. Migrated `core:log` (`selected:
+   Option(Logger)`), `core:fmt`'s `format_any`, `thread.Guard`, `shared(T)`,
+   and the tests that wrote `nil` for a reference. Until stage 4, a foreign
+   binding whose C side may pass NULL uses `[^]T` or `rawptr`, and an atomic
+   pointer starts from a real address.
 4. The one-word `Option` representation, its foreign-ABI acceptance, `Atomic`
    over it, and `nonnull` parameter attributes, measured with `perf.ps1`. It
    cannot come before stage 3: the encoding is sound only once nothing can

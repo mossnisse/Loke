@@ -643,11 +643,6 @@ emit_direct_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		callee = symbol_name(e, v.resolution.symbol)
 	} else {
 		callee = emit_expr(e, v.callee)
-		// A procedure value may be nil; the call takes the same trap seam every
-		// other defined runtime failure does.
-		is_nil := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, callee)
-		panic_if(e, is_nil, "nil.call", "call through a nil procedure value")
 	}
 
 	return emit_bound_call(e, v.resolution.symbol, callee, callee_type, v.bound, v)
@@ -1151,6 +1146,7 @@ emit_value_conversion :: proc(e: ^Emitter, value: string, source, target: Type_I
 	to := type_underlying(e.c, target)
 	if checked {
 		guard_integer_conversion(e, value, from, to)
+		guard_null_reference(e, value, from, to)
 	}
 	if llvm_type(e, from) == llvm_type(e, to) {
 		return value
@@ -1247,6 +1243,26 @@ guard_integer_conversion :: proc(e: ^Emitter, value: string, from, to: Type_Id) 
 		bad = simd_any_lane(e, info, bad)
 	}
 	panic_if(e, bad, "cast.int", "an integer outside the destination type's range; `math.wrap` keeps the low bits")
+}
+
+// design.md "The `unsafe` package": an unchecked address becomes a reference
+// only if it is not null, so no reference is ever null once checked code holds
+// it and nothing that uses one tests it again.
+@(private)
+guard_null_reference :: proc(e: ^Emitter, value: string, from, to: Type_Id) {
+	#partial switch underlying_kind(e.c, from) {
+	case .Raw_Pointer, .C_Pointer:
+	case:
+		return
+	}
+	#partial switch underlying_kind(e.c, to) {
+	case .Pointer, .CString_View:
+	case:
+		return
+	}
+	is_null := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_null, value)
+	panic_if(e, is_null, "cast.null", "a null address converted to a reference")
 }
 
 // Guard LLVM float-to-integer casts from poison on invalid inputs.

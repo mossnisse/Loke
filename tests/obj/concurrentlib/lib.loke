@@ -65,8 +65,10 @@ impl Payload {
 	}
 }
 
+// A handle has no zero value, so the global holds an `Option` of one until
+// `initialize` publishes it.
 @(private)
-holder: static shared(Payload) = {};
+holder: static Option(shared(Payload)) = .none;
 
 @(private)
 watcher: static weak(Payload) = {};
@@ -83,8 +85,9 @@ initialize :: proc() {
 	// Published by `once`: every thread that leaves `do` sees this handle, and
 	// nothing writes it again, so the traffic below is clones and drops only.
 	seed := Payload{1};
-	holder = shared(move(seed));
-	watcher = holder.downgrade();
+	handle := shared(move(seed));
+	watcher = handle.downgrade();
+	holder = .some(move(handle));
 }
 
 @(export)
@@ -110,7 +113,7 @@ conc_worker :: proc "c" (index: i32, iterations: i32) {
 		// A clone and a drop of the same handle, from every thread at once. The
 		// payload must still be there — a lost increment or an early release
 		// would show up here or in the counts `conc_check` asserts.
-		held := holder;
+		held := holder or_else panic("`initialize` published no handle");
 		if (held.get()^.id != 1) { shared_failures.add(1); }
 		switch (revived in watcher.upgrade()) {
 		case .some: if (revived.get()^.id != 1) { shared_failures.add(1); }
@@ -144,13 +147,17 @@ conc_check :: proc "c" (threads: i32, iterations: i32) -> i32 {
 	// Every clone was matched by a drop, so the one handle `initialize` made is
 	// all that is left, and nothing released the payload early.
 	if (shared_failures.load() != 0) { return 8; }
-	if (holder.strong_count() != 1) { return 9; }
-	if (holder.weak_count() != 1) { return 10; }
+	switch (published_handle in holder) {
+	case .some:
+		if (published_handle.strong_count() != 1) { return 9; }
+		if (published_handle.weak_count() != 1) { return 10; }
+	case .none: return 9;
+	}
 	if (payload_drops.load() != 0) { return 11; }
 
 	// The last strong handle drops the payload exactly once. The weak handle
 	// keeps the control block, so `upgrade` can still answer — and answers no.
-	retired := exchange(inout holder, {});
+	retired := exchange(inout holder, .none);
 	drop(retired);
 	if (payload_drops.load() != 1) { return 12; }
 	if (watcher.strong_count() != 0) { return 13; }

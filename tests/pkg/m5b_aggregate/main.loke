@@ -13,8 +13,11 @@ import "./wrapping";
 // POSITIVE. Every root in this chain is the caller's, and the caller keeps the
 // table alive for the whole of it.
 integrated :: proc(table: inout map[string][dynamic]int) -> int {
-	slot := table.find_mut("a") or_else nil;
-	if (slot == nil) { return -1; }
+	slot: ^mut [dynamic]int;
+	switch (found in table.find_mut("a")) {
+	case .some: slot = found;
+	case .none: return -1;
+	}
 	holder := wrapping.wrap(slot^[:]);
 	held: wrapping.Holder = {};
 	wrapping.retain(inout held, wrapping.unwrap(holder));

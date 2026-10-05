@@ -1,0 +1,51 @@
+L0310
+@13:13
+`nil` is not a value of `[]int`
+L0310
+@14:19
+`nil` is not a value of `string_view`
+L0310
+@15:15
+`nil` is not a value of `typeid`
+L0310
+@16:17
+`nil` is not a value of `Allocator`
+L0310
+@17:23
+`nil` is not a value of `Allocator_Error`
+L0310
+@18:17
+`nil` is not a value of `Weak(int)`
+L0310
+@20:11
+`nil` is not a value of `[]int`
+L0310
+@21:12
+`nil` is not a value of `typeid`
+L0310
+@23:12
+`nil` is not a value of `^int`
+L0310
+@24:16
+`nil` is not a value of `^mut int`
+L0310
+@25:16
+`nil` is not a value of `proc(int) -> int`
+L0310
+@26:17
+`nil` is not a value of `dyn Shape`
+L0310
+@27:20
+`nil` is not a value of `cstring_view`
+L0310
+@28:19
+`nil` is not a value of `Shared(int)`
+L0424
+@29:18
+`any_view` has no zero value, so it cannot be produced by `{}`
+L0424
+@30:22
+`Shared(int)` has no zero value, so it cannot be produced by `{}`
+L0424
+@31:15
+`^Node` has no zero value, so it cannot be produced by the omitted field `next`

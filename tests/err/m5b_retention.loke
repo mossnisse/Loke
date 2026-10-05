@@ -11,7 +11,7 @@ package main; import "core:fmt";
 Holder :: struct { view: []int }
 
 global_view: []int;
-global_pointer: ^int;
+global_pointer: Option(^int) = .none;
 global_holder: Holder;
 tls_view: thread_local []int;
 
@@ -32,7 +32,7 @@ local_to_global_field :: proc() {
 // An unconstrained parameter proves nothing about its caller's storage.
 store_in_a_global :: proc(values: []int, target: ^int) {
 	global_view = values;
-	global_pointer = target;
+	global_pointer = .some(target);
 }
 
 retain_an_argument :: proc(values: []int) {

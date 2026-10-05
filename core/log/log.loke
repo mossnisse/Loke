@@ -38,17 +38,16 @@ Sink :: interface($Self: type) {
 Logger :: dyn mut Sink;
 
 // Where a selected logging provider is published. Generated startup writes the
-// factory's result here, once, before `main`; until then it is the nil view
-// and every call goes to the standard sink below. That is also what makes an
+// factory's result here, once, before `main`; until then it is `.none` and
+// every call goes to the standard sink below. That is also what makes an
 // unselected build need no initialization at all.
 @(private)
-selected: Logger = nil;
+selected: Option(Logger) = .none;
 
 // The handle the program is logging through, for code that wants to pass it on
 // rather than call the package procedures.
 current :: proc() -> Logger {
-	if (selected == nil) { return standard_logger(); }
-	return selected;
+	return selected or_else standard_logger();
 }
 
 // The standard logger: one line per record on the process error stream, with

@@ -29,10 +29,10 @@ reassigned :: proc() -> int {
 // design.md "Borrowing iteration": the pointer outlives the loop, not the source.
 kept_element :: proc() -> int {
 	values := [dynamic]int{1, 2, 3};
-	first: ^int = nil;
-	foreach (item in values) { if (first == nil) { first = &item; } }
+	first: Option(^int) = .none;
+	foreach (item in values) { if (first == .none) { first = .some(&item); } }
 	foreach (i in 0..<1000) { values.append(i); }
-	return first^;
+	return (first or_else panic("empty"))^;
 }
 
 main :: proc() {

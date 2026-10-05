@@ -429,7 +429,7 @@ to_string(allocator: Allocator, args: ..any_view) -> string
 
 A `Writer` borrows its sink: any record with a `write(self: inout, bytes:
 []u8)` becomes one with `(fmt.Writer)(&mut sink)`, and the process streams are
-`stdout()` and `stderr()`. Formatting through a nil `Writer` panics.
+`stdout()` and `stderr()`. A `Writer` always names a sink.
 
 `Formattable` describes a value's printed representation. Declare an inherent
 `format(self, writer: fmt.Writer, options: fmt.Options)` method, or use
@@ -441,7 +441,7 @@ consume the receiver, including a move-only value.
 
 The variadic procedures retain `..any_view` so callers can mix types and forward
 arguments. Internally each erased value becomes a `dyn Formattable` view and
-is formatted through its slot. A nil `any_view` prints `<nil>`. Extensions in
+is formatted through its slot. Extensions in
 other packages do not change a type's printed representation.
 
 Arguments are separated by one space, except by `concat_to`, which writes them

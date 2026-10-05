@@ -321,7 +321,7 @@ The zero value is:
 - the invalid id for `typeid`, whose [`type_info_of`](#type-and-typeid) entry has kind `Invalid`
 - the default provider for `Allocator`, and no failure for `Allocator_Error`
 - an empty handle for `weak(T)`, whose `upgrade` answers `.none`
-- `nil` for pointer, C pointer, `rawptr`, procedure, `cstring_view`, `any_view`, every `dyn Interface`, and `shared(T)` type. These are the only types `nil` converts to
+- `nil`, the null address, for a C pointer and `rawptr`. These are the only types `nil` converts to
 - the variant `@(zero=name)` designates, for a [union](#unions) that designates one
 
 Aggregate zero values are built recursively from their fields. A type with `hook(drop)` must have an inert zero value on which dropping does nothing; a resource that uses zero for a live handle must instead carry a separate validity field or forbid a zero owning value.
@@ -330,7 +330,7 @@ Compile-time-only `type` and reflection descriptors have no zero value.
 
 ##### Types with no zero value
 
-A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A [`box(T)`](#owned-values) has none, since it always owns a payload. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
+A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A [`box(T)`](#owned-values) has none, since it always owns a payload. A **reference** always refers to something, so it has no null state and no zero value: `^T`, `^mut T`, a procedure value, `dyn I` and `dyn mut I`, `any_view`, `cstring_view`, and `shared(T)`. An absent reference is an `Option` of it, such as `Option(^T)`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
 
 Every operation that manufactures a zero is rejected for a no-zero type:
 
@@ -341,7 +341,9 @@ Every operation that manufactures a zero is rejected for a no-zero type:
 
 A map of a no-zero element is indexed like any other, because no map operation manufactures a zero: [`m[key]`](#maps) reads an entry that must already exist, `m[key] = elem` stores the value it is given, and `find_or_insert` takes the element to insert as an argument. A dynamic array of one is unrestricted apart from a written length and `resize`.
 
-The diagnostic names the operation and suggests the two ways out: give the union a zero with `@(zero=first_variant)`, or construct the value explicitly.
+The diagnostic names the operation and suggests the two ways out: give the union a zero with `@(zero=first_variant)`, or construct the value explicitly. A record that may lack a reference holds an `Option` of it instead, which has the zero `.none`.
+
+Not being null proves neither lifetime nor exclusivity: a reference is still a borrow, checked as one. A reference stays non-null because nothing produces a null one: `nil` is not a value of a reference type, and the [unchecked conversions](#the-unsafe-package) from an address panic on a null one. So no dereference, indirect call, or slot dispatch tests for null.
 
 #### Type conversion
 
@@ -508,7 +510,7 @@ fmt.println(Card{7, .Hearts}); // 7 of Hearts
 
 Each concrete type has one printed form throughout the program. Declaring more than one eligible inherent `format` method for a type is an error; the compiler provides a default `format` method for other printable runtime types, including scalars and aggregates. These methods satisfy `fmt.Formattable(T)` and support ordinary `dyn fmt.Formattable` views. A generated struct formatter prints only public fields. An extension in another package may declare and call its own `format` method, but `print` does not use it.
 
-The print procedures accept mixed `..any_view` arguments. For each non-nil erased argument, they recover the concrete type's `Formattable` witness and call its `format` slot with the borrowed value, writer, and options. The same method is selected by an explicit `(dyn fmt.Formattable)(&value)` conversion. A nil `any_view` prints `<nil>`.
+The print procedures accept mixed `..any_view` arguments. For each erased argument, they recover the concrete type's `Formattable` witness and call its `format` slot with the borrowed value, writer, and options. The same method is selected by an explicit `(dyn fmt.Formattable)(&value)` conversion. A nil `any_view` prints `<nil>`.
 
 For ordinary member lookup, a visible local extension named `format` takes precedence over the generated default. Interface slot selection remains independent of the caller's extensions. An inherent `format` must match the slot, including the writer and options parameter modes; a generic method does not supply this concrete slot.
 
@@ -596,11 +598,10 @@ In the table below `src` is the source value, and the action is one of: **copy**
 
 ### Pointers
 
-A pointer contains the memory address of a value. `^T` is a read-only pointer to `T` and `^mut T` a mutable one. The zero value of both is `nil`, and both are one machine address: the capability is static and changes no layout, no ABI, and no calling convention.
+A pointer contains the memory address of a value. `^T` is a read-only pointer to `T` and `^mut T` a mutable one. Neither is ever null, so neither has a zero value (see [Types with no zero value](#types-with-no-zero-value)), and both are one machine address: the capability is static and changes no layout, no ABI, and no calling convention. A pointer that may be absent is an `Option(^T)`:
 
 ```odin
-p: ^int = nil;
-q: ^mut int = nil;
+p: Option(^int) = .none;
 ```
 
 `&` returns a read-only borrow of a readable addressable operand, and `&mut` an exclusive mutable borrow of one this body may write:
@@ -1796,7 +1797,7 @@ foreach (direction, index in Direction.values().indexed()) {
 
 ### Procedure type
 
-A procedure type is a code pointer. Its zero value is `nil`.
+A procedure type is a code pointer. It always names a procedure, so it has no zero value; a procedure value that may be absent is an `Option` of it.
 
 Examples:
 
@@ -1809,9 +1810,7 @@ A variable can have a procedure type:
 
 ```odin
 Callback :: proc() -> int;
-a: Callback = nil;
-assert(a == nil);
-a = proc() -> int { return 0; };
+a: Callback = proc() -> int { return 0; };
 fmt.println(a()); // 0
 a = proc() -> int { return 100; };
 fmt.println(a()); // 100
@@ -1958,7 +1957,7 @@ Reflection values may be inspected, compared for identity, passed to `$` paramet
 
 ### any_view type
 
-`any_view` is a non-owning, type-erased view used for formatting, logging, and runtime reflection. Creating one borrows its source. Its zero value is nil.
+`any_view` is a non-owning, type-erased view used for formatting, logging, and runtime reflection. Creating one borrows its source. It always views a value, so it has no zero value.
 
 It may be a local variable or parameter, but it cannot be a result type, global, struct or union field, container element, or captured/stored value. The ordinary local borrow checker ensures a local `any_view` does not outlive or overlap an invalidating operation on its source. A temporary converted for a call remains valid through that complete call expression. A temporary converted into a local `any_view` keeps its storage for the rest of the scope when its type has a trivial lifecycle; a managed temporary is dropped when its statement ends, like any other, so the view cannot be used after that statement:
 
@@ -2567,9 +2566,9 @@ Fixed arrays, slices, dynamic arrays, and the standard `Small_Array(T, N)` yield
 Because the binding names the source's own storage, a borrowed yield **carries the source's provenance**. It, and any `&item` taken from it, stays valid after the iterator advances and after the iterator is dropped, for as long as the source itself is valid:
 
 ```odin
-first: ^Entry = nil;
+first: Option(^Entry) = .none;
 foreach (item in items) {
-	if (first == nil) { first = &item; }   // outlives the loop; `items` must too
+	if (first == .none) { first = .some(&item); }   // outlives the loop; `items` must too
 }
 ```
 
@@ -3082,7 +3081,7 @@ viewer.bump();                 // ERROR: `bump` mutates its subject, so it needs
 
 The conversion allocates nothing and copies no value. The `dyn` view borrows the pointed-to source and follows the same lifetime rules as a slice. A view of a temporary is valid only for that complete expression.
 
-Converting a nil concrete pointer yields the nil dynamic view and retains no witness. The zero value of every `dyn Interface` is nil; copying one copies only the view when the borrow rules permit the alias, and calling a slot on nil panics. Dynamic interface values are comparable only with `nil`.
+A `dyn Interface` always views a value, so it has no zero value, and a slot call needs no test. Copying one copies only the view when the borrow rules permit the alias. Dynamic interface values are not comparable.
 
 Use `any_view`, not `dyn`, when checked runtime type inspection is required.
 
@@ -3147,23 +3146,6 @@ x = 20;  // OK: assignment to the existing `x`
 y, z := 20, 30;
 test, z := 20, 30; // ERROR: `z` is already declared in this scope
 ```
-
-### Nil states
-
-`^T`, a procedure value, and `dyn I` each have a nil state that fails on use. A local given nothing but `nil` is rejected where it is dereferenced, called, or dispatched through, rather than reaching that failure at run time:
-
-```odin
-p: ^int = nil;
-fmt.println(p^);   // ERROR: `p` is nil everywhere it is given a value
-
-q: ^int = nil;
-if (ready) { q = &count; }
-fmt.println(q^);   // accepted; panics at run time if `ready` was false
-```
-
-The question is asked over the whole body rather than along its paths. One write of anything else, anywhere in the body, settles it — as does one exposure to a write the compiler cannot read, such as `&mut local` or an `inout` argument. A pointer left nil on only *one* path is therefore not reported: that is a possibility rather than a certainty, and rejecting it would reject a program whose author knows the path is unreachable.
-
-This is a diagnostic, not a guarantee. Nothing about `^T` promises non-nil, and a nil that arrives from a parameter, a field, a container, or foreign code is still a run-time failure.
 
 ### Managed values and storage
 
@@ -3504,7 +3486,7 @@ The equality operators `==` and `!=` apply to operands that are comparable. The 
 - Array values are comparable if values of the element type are comparable.
 - Structural comparison compares a struct field by field, an array element by element, and a union by its active payload. A part whose type declares its own `==` inherently, or whose underlying type does, is compared by that operator, and is comparable through it whatever its own fields are; any other part is compared structurally. An extension `==` is never used for a part, so a type has the same equality wherever it is nested. Comparing a value is an error where a part's inherent `==` is not visible.
 - typeid is comparable.
-- Slices, dynamic arrays, maps, boxes, and `dyn Interface` views are **not** comparable. A `dyn Interface` may be tested only against `nil`; a slice, dynamic array, or map has no nil value (its zero is `{}`), so emptiness is `value.len() == 0`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
+- Slices, dynamic arrays, maps, boxes, and `dyn Interface` views are **not** comparable. None has a nil value: a `dyn Interface` always views a value, and a slice's, dynamic array's, or map's zero is `{}`, so emptiness is `value.len() == 0`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
 
 ### Logical operators
 
@@ -3552,7 +3534,7 @@ An `any_view` is not addressable, and a checked extraction `x.(T)` or `x.as(T)` 
 
 Both forms are always single-valued: every addressable operand yields exactly one pointer.
 
-For an operand `x` of pointer type `^T`, `x^` denotes the `T` pointed to. Explicit `x^` and implicit dereferences such as `x.field` test for nil and raise a runtime panic before accessing memory; an implementation may use a hardware fault only if it preserves the same observable behavior. Dereferencing a non-nil address that is dangling, misaligned, or otherwise invalid is undefined behavior, and can arise only through an unchecked lifetime hole, raw-pointer manipulation, or foreign code.
+For an operand `x` of pointer type `^T`, `x^` denotes the `T` pointed to. Explicit `x^` and implicit dereferences such as `x.field` need no test, because a `^T` is never null. Dereferencing an address that is dangling, misaligned, or otherwise invalid is undefined behavior, and can arise only through an unchecked lifetime hole, raw-pointer manipulation, or foreign code.
 
 ```odin
 &count;                  // a variable
@@ -3561,10 +3543,8 @@ For an operand `x` of pointer type `^T`, `x^` denotes the `T` pointed to. Explic
 p^;                      // the value `p` points to
 
 deref :: proc(p: ^int) -> int { return p^; }
-deref(nil); // causes a runtime panic
+deref(nil); // ERROR: `nil` is not a value of `^int`
 ```
-
-A local that is only ever given `nil` is rejected where it is dereferenced instead; see [Nil states](#nil-states).
 
 ### Conditional expression
 
@@ -4461,7 +4441,7 @@ A call can name its arguments. Named arguments show the parameter for each value
 ```odin
 create_window :: proc(title: string, x, y: int, width, height: int, monitor: ^Monitor) -> Result(^mut Window, Window_Error) {...};
 
-window := create_window(title="Hellope Title", monitor=nil, width=854, height=480, x=0, y=0) or_return;
+window := create_window(title="Hellope Title", monitor=.none, width=854, height=480, x=0, y=0) or_return;
 ```
 
 One call can contain positional and named arguments. Positional arguments must occur before named arguments.
@@ -4478,7 +4458,7 @@ draw_label("Hellope", 10, y=20, bold=true);   // `size` takes its default
 A parameter can have a default value. The call uses the default when it omits that argument:
 
 ```odin
-create_window :: proc(title: string, x := 0, y := 0, width := 854, height := 480, monitor: ^Monitor = nil) -> Result(^mut Window, Window_Error) {...};
+create_window :: proc(title: string, x := 0, y := 0, width := 854, height := 480, monitor: Option(^Monitor) = .none) -> Result(^mut Window, Window_Error) {...};
 
 window1 := create_window("Title1") or_return;
 window2 := create_window(title="Title1", width=640, height=360) or_return;
@@ -5204,6 +5184,8 @@ Five unchecked operations are language syntax rather than members, and are valid
 - leaving a variable uninitialised with [`x: T = ---`](#built-in-values);
 - declaring an [`@(initialized)`](#uninitialized-capacity) field, whose count generated copy and drop trust.
 
+A conversion to `^T` or `^mut T` from `rawptr` or a C pointer, and `unsafe.cstring_view`, panic when the address is null, so checked code never holds a null reference.
+
 Everything else stays ordinary code: a conversion to `rawptr`, or from `^T` to `[^]T`, only loses provenance, and weakening `^mut T` to `^T` is checked. Declaring a foreign procedure that takes or returns a C pointer needs no import either; using the pointer it returns does. A file in a `base:` package, which is the language's own runtime and cannot import `core:`, is exempt. Any other file is rejected at each such operation, with a diagnostic naming it.
 
 ```odin
@@ -5604,8 +5586,7 @@ A **panic** is an unrecoverable runtime fault. In required compile-time procedur
 
 - `panic(message, ..args)`
 - a failed `assert`
-- dereference of a nil pointer
-- a call through a nil procedure value or a nil `dyn` view
+- an unchecked conversion of a null address to a reference
 - integer division or remainder by zero
 - an out-of-range built-in index or slice bound, and a read of an absent map key
 - a string slice bound that falls inside a UTF-8 sequence
@@ -5853,7 +5834,7 @@ Threads and retained tasks receive only the arguments explicitly moved or copied
 
 ### Shared ownership
 
-`shared(T)` is a library type for shared ownership of one stable `T` payload. Its zero value is `nil`, and copies use thread-safe handle accounting.
+`shared(T)` is a library type for shared ownership of one stable `T` payload. A handle always shares a payload, so it has no zero value, and copies use thread-safe handle accounting.
 
 `shared(value)` clones a borrowed value into shared storage; a temporary, or `shared(move(value))`, moves in. `clone` and assignment create another handle, `move` transfers one, and the final `drop` destroys the payload exactly once. A handle is never consumed implicitly at its last use. A handle, strong or weak, carries the borrows its payload holds, as a [box](#owned-values) does (see [Values that contain borrows](#values-that-contain-borrows)), so a `shared(View)` cannot outlive what its `View` borrows.
 
@@ -5874,11 +5855,11 @@ The foreign system lets Loke code call foreign code, such as a C library. A fore
 A procedure using a foreign calling convention, a variable declared in a foreign block, or an exported foreign symbol must have a representation the target ABI can describe. The following types are foreign-ABI-safe:
 
 - fixed-width integers, `int`, `uint`, `uintptr`, `bool`, `rune`, `f32`, and `f64`; their size and alignment follow their Loke definitions and their argument classification follows the target C ABI for a scalar of that representation. `bool` uses C `_Bool`, and `int` and `uint` use the ABI class matching their target-selected width. `f16`, 128-bit integers, and other target extensions are safe only when that target ABI defines their C-compatible classification;
-- `rawptr`, `^T`, and `[^]T`, lowered as C pointers; the pointed-to type need not be foreign-ABI-safe because the foreign function receives only an address;
+- `rawptr`, `^T`, and `[^]T`, lowered as C pointers; the pointed-to type need not be foreign-ABI-safe because the foreign function receives only an address. A binding that types a parameter or result `^T` promises it is never NULL, as one that uses an enum promises membership; where the C side may pass or return NULL, the binding uses `[^]T` or `rawptr`;
 - procedure pointers whose declared calling convention and complete signature match the foreign declaration;
 - enums with an explicit foreign-ABI-safe integer backing type, provided the binding guarantees that incoming values name declared variants. Use the backing integer and `Enum.from_int` when unknown values are possible;
 - plain structs with a trivial lifecycle whose fields are recursively foreign-ABI-safe. Their field order, padding, alignment, and by-value argument classification follow the target C ABI for the equivalent C record. A fixed array is permitted as a record field and has the equivalent C array layout;
-- `cstring_view`, lowered to `char const *`. It may be used as a parameter or result and never claims ownership.
+- `cstring_view`, lowered to `char const *`. It may be used as a parameter or result and never claims ownership. It promises a non-NULL string, as `^T` promises a non-NULL pointer.
 
 **`int` is not C `int`.** Loke's `int` and `uint` use the natural register width, so they are 64-bit on a 64-bit target while C `int` remains 32-bit there. Bindings must use the type the C declaration resolves to: typically `i32` for C `int`, `i64` for C `long long`, and Loke `int` for types such as `ptrdiff_t`.
 

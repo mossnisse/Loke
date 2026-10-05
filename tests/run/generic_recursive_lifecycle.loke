@@ -20,18 +20,18 @@ impl Copyable {
 }
 
 Probe :: struct($T: type) where interfaces.Cloneable(T) || true { n: int }
-Direct :: struct($T: type) { probe: ^Probe(Direct(T)), value: T }
-Nested :: struct($T: type) { probe: ^Probe([dynamic][1]Nested(T)), value: T }
+Direct :: struct($T: type) { probe: Option(^Probe(Direct(T))), value: T }
+Nested :: struct($T: type) { probe: Option(^Probe([dynamic][1]Nested(T))), value: T }
 
 main :: proc() {
-	a := Direct(Noisy){nil, Noisy{1}};
-	b := Nested(Noisy){nil, Noisy{2}};
+	a := Direct(Noisy){.none, Noisy{1}};
+	b := Nested(Noisy){.none, Noisy{2}};
 	fmt.println(interfaces.Cloneable(Direct(Noisy)), interfaces.Cloneable([dynamic][1]Nested(Noisy)));
 	// A completed copyable instance must still acquire its generated methods.
-	c := Direct(int){nil, 3};
+	c := Direct(int){.none, 3};
 	d := c.clone();
 	fmt.println(interfaces.Cloneable(Direct(int)), d.value);
-	e := Direct(Copyable){nil, Copyable{4}};
+	e := Direct(Copyable){.none, Copyable{4}};
 	f := e.clone();
 	fmt.println(f.value.n);
 }

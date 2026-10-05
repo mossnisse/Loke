@@ -426,7 +426,7 @@ borrowed_keys :: proc() {
 	case .none: assert(false);
 	}
 	m[view] += 4;
-	assert(&m[view] != nil && m[view] == 15);
+	assert(m[view] == 15);
 	// A view into a longer buffer: the key ends where the view does.
 	text: string = "hellopeXX";
 	assert(text[0:7] in m && m[text[0:7]] == 15);

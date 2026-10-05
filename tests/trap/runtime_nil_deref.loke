@@ -1,8 +1,0 @@
-package main; import "core:fmt";
-
-Point :: struct { x: int, y: int }
-
-main :: proc() {
-	p: ^Point = nil;
-	fmt.println(p.x);
-}

@@ -52,6 +52,4 @@ main :: proc() {
 	fmt.println([?]Label{{1}, {2}});
 	result: Result = .value(Label{8});
 	fmt.println(result);
-	empty: any_view = {};
-	fmt.println(empty);
 }

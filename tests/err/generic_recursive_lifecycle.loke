@@ -8,10 +8,10 @@ A :: struct($T: type) { b: ^B(A(T)), n: Noisy }
 B :: struct($T: type) where interfaces.Cloneable(T) { n: int }
 
 Probe :: struct($T: type) where interfaces.Cloneable(T) || true { n: int }
-C :: struct($T: type) { probe: ^Probe(C(T)), n: Noisy }
+C :: struct($T: type) { probe: Option(^Probe(C(T))), n: Noisy }
 
 main :: proc() {
-	a: A(int) = {};
-	c := C(int){nil, Noisy{7}};
+	a: A(int);
+	c := C(int){.none, Noisy{7}};
 	copy := c;
 }

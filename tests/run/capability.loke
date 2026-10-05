@@ -74,9 +74,7 @@ main :: proc() {
 	writer^ = 99;
 	fmt.println(allocated^);
 
-	// Both capabilities are one machine address, and both compare with nil.
-	empty: ^int = nil;
-	fmt.println(1 if empty == nil else 0);
+	// Both capabilities are one machine address.
 	fmt.println(size_of(^int) == size_of(^mut int));
 
 	// A `^$T` pattern accepts either capability (the slice rule, for pointers).

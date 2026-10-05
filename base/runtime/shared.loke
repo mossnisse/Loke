@@ -15,10 +15,9 @@
 // contributes `allocate_string` to both `core:strings` and `core:fmt`.
 //
 // Five things about these types are the *language's*, not the library's, and
-// the compiler owns them: a `shared(T)`'s zero value is `nil` and compares to
-// `nil` while a `weak(T)`'s is `{}`, `via`
-// on such a declaration is an error, `handle.get()` derives its root provenance
-// from the handle, a handle carries the borrows its payload holds, and neither
+// the compiler owns them: a `shared(T)` has no zero value while a `weak(T)`'s
+// is `{}`, `via` on such a declaration is an error, `handle.get()` derives its
+// root provenance from the handle, a handle carries the borrows its payload holds, and neither
 // is ever silently moved at its last use.
 //
 // The atomic count makes *handle accounting* race-free. It does not make the
@@ -51,7 +50,8 @@ Shared_Block :: struct($T: type) {
 }
 
 // design.md: "It owns one stable, heap-allocated `T` payload and an atomic
-// strong-reference count. Its zero value is `nil`."
+// strong-reference count." It has no zero value: a handle always shares a
+// payload, and `Option(shared(T))` is the absent one.
 //
 // The block travels as a `rawptr` rather than a typed pointer so the handle
 // carries no borrow: a `shared(T)` is an owner, and nothing about it should
@@ -130,7 +130,6 @@ impl Shared($T) {
 	// a handle lives in `core:sync`'s `Atomic` or `Once` fields, whose operations
 	// work through a `^T`, or behind another protocol of the caller's own.
 	get :: proc(self: ^) -> ^T {
-		if (self.block == nil) { panic("this shared handle is nil"); }
 		block := (^mut Shared_Block(T))(self.block);
 		return &block^.payload[0];
 	}
@@ -138,7 +137,6 @@ impl Shared($T) {
 	// The number of strong handles, for tests and diagnostics. It may be stale
 	// the moment it is read whenever another thread holds a handle.
 	strong_count :: proc(self) -> int {
-		if (self.block == nil) { return 0; }
 		block := (^mut Shared_Block(T))(self.block);
 		return atomic_load(&block^.strong, Memory_Order.Acquire);
 	}
@@ -146,14 +144,12 @@ impl Shared($T) {
 	// The number of weak handles. The group of strong handles counts as one
 	// more, which is what keeps the block alive while any of them exist.
 	weak_count :: proc(self) -> int {
-		if (self.block == nil) { return 0; }
 		block := (^mut Shared_Block(T))(self.block);
 		return atomic_load(&block^.weak, Memory_Order.Acquire) - 1;
 	}
 
 	// A non-owning companion to this handle.
 	downgrade :: proc(self) -> Weak(T) {
-		if (self.block == nil) { return Weak(T){nil}; }
 		block := (^mut Shared_Block(T))(self.block);
 		atomic_add(&mut block^.weak, 1, Memory_Order.Relaxed);
 		return Weak(T){self.block};
@@ -164,7 +160,6 @@ impl Shared($T) {
 	// instead of cloning `T`." The allocator is therefore unused: this hook
 	// allocates nothing, and the payload keeps the allocator it was made with.
 	share :: hook(copy) proc(self, allocator: Allocator) -> Result(Shared(T), Allocator_Error) {
-		if (self.block == nil) { return .ok(Shared(T){nil}); }
 		block := (^mut Shared_Block(T))(self.block);
 		// Relaxed is enough to *add* a reference: the new handle is a copy of one
 		// the caller already holds, so nothing new becomes reachable here.
@@ -172,10 +167,8 @@ impl Shared($T) {
 		return .ok(Shared(T){self.block});
 	}
 
-	// design.md: the zero value is `nil`, so `handle == nil` has to be sayable.
-	// The compiler converts `nil` to this type's zero; comparing the blocks is
-	// what makes that answer right, and it also answers the other useful
-	// question — whether two handles name the same value.
+	// Whether two handles name the same value. A handle always names one, so
+	// comparing the blocks is the whole answer.
 	same :: operator(==) proc(left, right: Shared(T)) -> bool {
 		return left.block == right.block;
 	}
@@ -187,9 +180,7 @@ impl Shared($T) {
 	// whichever thread runs the final drop; the acquire fence there is what makes
 	// those writes visible to *it* before the payload is destroyed.
 	release :: hook(drop) proc(self: inout) {
-		if (self.block == nil) { return; }
 		block := (^mut Shared_Block(T))(self.block);
-		self.block = nil;
 		if (atomic_sub(&mut block^.strong, 1, Memory_Order.Release) != 1) { return; }
 		fence(Memory_Order.Acquire);
 		// Taking the payload out and dropping it is what drops it exactly once:

@@ -58,8 +58,6 @@ dyn_views :: proc() {
 	square.side = 4;
 	fmt.println(square.side);
 
-	absent: dyn Shape = nil;
-	fmt.println(1 if absent == nil else 0);
 }
 
 user_slicing :: proc() {

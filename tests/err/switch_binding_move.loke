@@ -43,7 +43,7 @@ taken_from_moved_place :: proc(source: []int) -> int {
 // Replacing the subject is what ends it.
 pointer_outlives_payload :: proc() -> int {
 	outcome: Result([dynamic]int, int) = .ok([dynamic]int{1, 2});
-	held: ^[dynamic]int = nil;
+	held: ^[dynamic]int;
 	switch (owned in outcome) {
 	case .ok:  held = &owned;
 	case .err: return -1;

@@ -22,7 +22,8 @@ main :: proc() {
 	q := false;
 	fmt.println(1 if p && q else 0);
 
-	// Bounds check, then a nil check through a pointer.
+	// Bounds check, then a field read through a pointer, which is never null
+	// and so is not tested.
 	xs := [4]int{1, 2, 3, 4};
 	i := 2;
 	fmt.println(xs[i]);

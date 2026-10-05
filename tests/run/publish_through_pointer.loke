@@ -9,7 +9,8 @@ main :: proc() {
     ys := [dynamic]int{5};
     source := &mut xs;
     other := &mut ys;
-    holder, spare: Holder = {}, {};
+    first_unused, second_unused := [dynamic]int{}, [dynamic]int{};
+    holder, spare: Holder = {&mut first_unused}, {&mut second_unused};
     target := &mut holder;
     target.view = source;
     spare.view = other;

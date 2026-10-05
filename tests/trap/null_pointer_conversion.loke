@@ -1,0 +1,14 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// design.md "The `unsafe` package": a checked pointer is never null, so the
+// unchecked conversion that makes one from an address tests it there, once,
+// and nothing that later reads through the pointer tests it again.
+
+Point :: struct { x: int, y: int }
+
+no_address :: proc() -> rawptr { return nil; }
+
+main :: proc() {
+	p := (^Point)(no_address());
+	fmt.println(p.x);
+}

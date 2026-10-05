@@ -1452,28 +1452,17 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 	return single
 }
 
-// `(dyn I)(&value)`: the data pointer plus the witness; nil gives the nil view.
+// `(dyn I)(&value)`: the data pointer plus the witness.
 @(private)
 emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	storage := llvm_type(e, as_type)
-	if v.operation.(Call_Dyn_Conversion).witness == nil {
-		return "zeroinitializer"
-	}
 	data := emit_expr(e, v.bound[0])
-	// design.md "Borrowed dynamic interface values": a pointer that is nil at
-	// run time gives the nil view, which retains no witness.
-	is_nil, witness := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, data)
-	fmt.sbprintfln(
-		&e.b, "  %s = select i1 %s, ptr null, ptr %s",
-		witness, is_nil, e.witness_names[v.operation.(Call_Dyn_Conversion).witness],
-	)
 	first := insert(e, storage, "undef", "ptr", data, DYN_DATA)
-	return insert(e, storage, first, "ptr", witness, DYN_WITNESS)
+	return insert(e, storage, first, "ptr", e.witness_names[v.operation.(Call_Dyn_Conversion).witness], DYN_WITNESS)
 }
 
-// A slot call: load the thunk from the witness table, trapping first if the
-// view is nil, and call it with the view's data pointer as the receiver.
+// A slot call: load the thunk from the witness table and call it with the
+// view's data pointer as the receiver.
 @(private)
 emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	view := emit_expr(e, v.bound[0])
@@ -1486,9 +1475,6 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 
 @(private = "file")
 emit_witness_slot :: proc(e: ^Emitter, witness: string, index: int) -> string {
-	is_nil := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, witness)
-	panic_if(e, is_nil, "dyn.nil", "call through a nil dyn view")
 	return load(e, "ptr", gep_at(e, "ptr", witness, fmt.aprintf("%d", index)))
 }
 

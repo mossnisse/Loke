@@ -109,9 +109,6 @@ more :: proc() {
 	fmt.println(paint_static(view, inout canvas));
 	fmt.println(canvas.marks);
 
-	// The zero value of every `dyn` type is nil, and it compares with nil.
-	empty: dyn Drawable = nil;
-	if (empty == nil) { fmt.println(1); } else { fmt.println(0); }
 	copied := view;
 	fmt.println(copied.size());
 

@@ -819,11 +819,6 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	v.operation = Call_Dyn_Conversion{}
 	v.resolution = {}
 
-	// `nil` gives the nil view, with no witness.
-	if source == TYPE_UNTYPED_NIL {
-		materialize(k, v.args[0].value, TYPE_RAWPTR)
-		return
-	}
 	pointer := underlying_info(k.c, source)
 	if pointer == nil || pointer.kind != .Pointer {
 		errorf(

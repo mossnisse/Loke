@@ -16,7 +16,6 @@ check_for_emission :: proc(p: ^Checked, source: string, key := "", mode := Build
 	p.c.root_package = p.pkg
 	add_package_file(&p.c, p.pkg, &p.f)
 	k := Checker{c = &p.c}
-	defer delete(k.nil_uses)
 	ensure_runtime_bootstrap(&k)
 	rebuild_active_items(&p.c, package_of(&p.c, p.pkg))
 	prepare_package(&k, p.pkg)
@@ -415,7 +414,7 @@ impl Key {
     hash :: proc(self, seed: uint) -> uint { return seed; }
     equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
 }
-Grid :: struct { entries: map[string]f32, nested: [1]map[Key]int, next: ^Grid }
+Grid :: struct { entries: map[string]f32, nested: [1]map[Key]int, next: Option(^Grid) }
 main :: proc() {
     g: Grid = {};
     p := g.entries.find("a");

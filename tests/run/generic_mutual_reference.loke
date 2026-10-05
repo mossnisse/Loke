@@ -24,15 +24,15 @@ impl Holder($T) {
 	take :: proc(self: ^, p: move Pair(T)) {}
 }
 
-List :: struct($T: type) { next: ^List(T), value: T }
+List :: struct($T: type) { next: Option(^List(T)), value: T }
 
 main :: proc() {
-	first: Pair(int) = {nil, Noisy{1}};
 	h := Holder(int){3};
+	first: Pair(int) = {&h, Noisy{1}};
 	p := h.pair(2);
 	fmt.println(p.holder^.x, p.n.n);
 	h.take(move(p));
-	tail := List(int){nil, 5};
-	head := List(int){&tail, 4};
-	fmt.println(head.value, head.next^.value);
+	tail := List(int){.none, 5};
+	head := List(int){.some(&tail), 4};
+	fmt.println(head.value, (head.next or_else panic("no next"))^.value);
 }

@@ -1,0 +1,15 @@
+L0355
+@31:8
+`[]mut int` is not comparable
+L0355
+@32:8
+`dyn Sized` is not comparable
+L0310
+@33:11
+`nil` is not a value of `dyn Sized`
+L0355
+@36:23
+`Boxed` is not comparable
+L0355
+@37:23
+`Erased` is not comparable

@@ -54,7 +54,7 @@ main :: proc() {
 	fmt.println(s, v);
 
 	// Pointers and identities.
-	p: ^int = {};
+	p: rawptr = nil;
 	fmt.println(p);
 	fmt.println(typeid_of(int));
 

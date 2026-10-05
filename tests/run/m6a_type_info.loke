@@ -38,43 +38,31 @@ forge :: proc(raw: i64) -> typeid {
 
 main :: proc() {
 	info := type_info_of(typeid_of(Point));
-	if (info != nil) {
-		fmt.println(info.size);
-		fmt.println(info.members.len());
-		fmt.println(int(info.kind));
-		fmt.println(info.name.len());
-	}
+	fmt.println(info.size);
+	fmt.println(info.members.len());
+	fmt.println(int(info.kind));
+	fmt.println(info.name.len());
 	u := type_info_of(typeid_of(u8));
-	if (u != nil) {
-		fmt.println(u.bits);
-		fmt.println(1 if u.signed else 0);
-	}
+	fmt.println(u.bits);
+	fmt.println(1 if u.signed else 0);
 	empty: typeid = {};
 	fmt.println(int(type_info_of(empty).kind), type_info_of(empty).size);
 	forged := forge(999999);
 	fmt.println(int(type_info_of(forged).kind), type_info_of(forged).name.len());
 	c := type_info_of(typeid_of(Colour));
-	if (c != nil) { fmt.println(c.members.len()); }
+	fmt.println(c.members.len());
 	wide := type_info_of(typeid_of(Huge));
-	if (wide != nil) {
-		fmt.println(wide.members[0].value_low, wide.members[0].value_high);
-	}
+	fmt.println(wide.members[0].value_low, wide.members[0].value_high);
 	pair := type_info_of(typeid_of(Pair));
-	if (pair != nil) {
-		fmt.println(int(pair.kind), pair.members.len());
-		foreach (member in pair.members) {
-			fmt.println(member.name, int(member.kind), member.offset,
-				1 if member.type == typeid_of(i32) else 0);
-		}
+	fmt.println(int(pair.kind), pair.members.len());
+	foreach (member in pair.members) {
+		fmt.println(member.name, int(member.kind), member.offset,
+			1 if member.type == typeid_of(i32) else 0);
 	}
 	depth := type_info_of(typeid_of(Depth));
-	if (depth != nil) {
-		fmt.println(int(depth.kind), depth.size, depth.bits, 1 if depth.element == typeid_of(Meters) else 0);
-		meters := type_info_of(depth.element);
-		if (meters != nil) {
-			fmt.println(int(meters.kind), 1 if meters.element == typeid_of(f64) else 0);
-			float := type_info_of(meters.element);
-			if (float != nil) { fmt.println(int(float.kind), float.bits); }
-		}
-	}
+	fmt.println(int(depth.kind), depth.size, depth.bits, 1 if depth.element == typeid_of(Meters) else 0);
+	meters := type_info_of(depth.element);
+	fmt.println(int(meters.kind), 1 if meters.element == typeid_of(f64) else 0);
+	float := type_info_of(meters.element);
+	fmt.println(int(float.kind), float.bits);
 }

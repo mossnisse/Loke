@@ -43,7 +43,7 @@ make_values :: proc() -> [dynamic]int { return [dynamic]int{4, 5}; }
 CONSTANT :: [2]int{21, 22};
 constant_first :: proc() -> ^int {
 	walker := CONSTANT.iter();
-	return walker.next() or_else nil;
+	return walker.next() or_else panic("empty");
 }
 
 main :: proc() {
@@ -74,21 +74,22 @@ main :: proc() {
 	from_slice := view_of(values[:]);
 	fmt.println("returned", sum_ints(from_slice));
 	walker := view.iter();
-	one := walker.next() or_else nil;
-	two := walker.next() or_else nil;
+	one := walker.next() or_else panic("empty");
+	two := walker.next() or_else panic("empty");
 	drop(walker);
 	fmt.println("retained", one^, two^);
 	values.append(4); // all source borrows have ended
 	fmt.println("resumed", values.len());
 	// An element pointer taken inside the loop outlives the loop itself.
-	saved: ^int = nil;
+	unset := 0;
+	saved: ^int = &unset;
 	foreach (item in values) { saved = &item; break; }
 	fmt.println("past loop", saved^);
 	// `indexed()` lends what its source lends, so the pairs a stored adapter hands
 	// back hold element pointers that outlive the walk.
 	indexed_walker := values.indexed().iter();
-	indexed_one := indexed_walker.next() or_else {};
-	indexed_two := indexed_walker.next() or_else {};
+	indexed_one := indexed_walker.next() or_else panic("empty");
+	indexed_two := indexed_walker.next() or_else panic("empty");
 	drop(indexed_walker);
 	fmt.println("indexed retained", indexed_one.value^, indexed_two.value^);
 	fmt.println("constant", constant_first()^, constant_first() == &CONSTANT[0]);

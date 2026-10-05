@@ -48,18 +48,17 @@ Format_View :: dyn Formattable;
 //   stdout_writer()      the process output sink
 //   stderr_writer()      the process error sink
 //   write_bytes(w, view) one string view, straight through the sink
-//   format_view(v)       borrow the value as `dyn Formattable`, or nil for nil
+//   format_view(v)       borrow the value as `dyn Formattable`
 //
 // `any_view` keeps mixed variadic arguments and forwarding convenient. Only
 // recovering its concrete witness needs an intrinsic; formatting is a slot call.
 
 @(private)
 format_any :: proc(value: any_view, writer: Writer, options: Options) {
+	// A local, not a temporary receiver, so the slot call counts the `format`
+	// methods' global writes (known-gaps.md "A slot call on a temporary `dyn`
+	// view has no global effects").
 	view := format_view(value);
-	if (view == nil) {
-		write_bytes(writer, "<nil>");
-		return;
-	}
 	view.format(writer, options);
 }
 

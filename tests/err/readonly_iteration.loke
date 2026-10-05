@@ -18,7 +18,7 @@ strengthen :: proc(values: []int) {
 retained_after_drop :: proc() {
 	values := [dynamic]int{1, 2};
 	walker := values.iter();
-	item := walker.next() or_else nil;
+	item := walker.next() or_else panic("empty");
 	drop(walker);
 	drop(values);
 	fmt.println(item^);
@@ -27,7 +27,7 @@ retained_after_drop :: proc() {
 escape_local :: proc() -> ^int {
 	values := [2]int{1, 2};
 	walker := values.iter();
-	return walker.next() or_else nil;
+	return walker.next() or_else panic("empty");
 }
 
 make_values :: proc() -> [dynamic]int { return [dynamic]int{1, 2}; }
@@ -50,7 +50,7 @@ conditional_temporary :: proc(flag: bool) -> ^int {
 	left := [2]int{1, 2};
 	right := [2]int{3, 4};
 	walker := (left if flag else right).iter();
-	return walker.next() or_else nil;
+	return walker.next() or_else panic("empty");
 }
 
 Packed :: struct @(packed) { tag: u8, items: [2]int }
@@ -71,7 +71,7 @@ lend_during_mutation :: proc() {
 // it outlives the step and ends when that source is invalidated.
 escaped_element :: proc() {
 	values := [dynamic]int{1, 2};
-	kept: ^int = nil;
+	unset := 0; kept: ^int = &unset;
 	foreach (item in values) { kept = &item; }
 	values.append(3);
 	fmt.println(kept^);

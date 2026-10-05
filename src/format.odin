@@ -98,7 +98,6 @@ discover_formatters :: proc(c: ^Compiler) {
 		_ = formatter_of(c, type, writer, options, &reported)
 	}
 	k := Checker{c = c}
-	defer delete(k.nil_uses)
 	for pkg in c.packages {
 		if pkg.key != STD_FMT { continue }
 		k.pkg, k.lookup_pkg, k.scope = pkg.id, pkg.id, pkg.scope

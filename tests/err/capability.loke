@@ -61,13 +61,6 @@ casts_away_read_only :: proc() {
 	fmt.println(writer^);
 }
 
-// A typed constant keeps its type's capability, even when it is nil.
-EMPTY :: (^int)(nil);
-casts_a_read_only_constant :: proc() {
-	writer := (^mut int)(EMPTY);
-	fmt.println(writer == nil);
-}
-
 // A read-only reborrow suspends the carrier it was taken from until its own
 // last use.
 uses_a_suspended_carrier :: proc() {
@@ -90,6 +83,5 @@ main :: proc() {
 	fmt.println(borrows_a_constant());
 	strengthens();
 	casts_away_read_only();
-	casts_a_read_only_constant();
 	uses_a_suspended_carrier();
 }

@@ -1722,10 +1722,6 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			return
 		}
 		operand_base := expr_base(v.operand)
-		// `&mut local` hands out a write this pass cannot read.
-		if v.mutable {
-			note_unknown_nil_write(k, v.operand)
-		}
 		// A named constant gets read-only storage (design.md "Materialization"),
 		// so `&mut` is then rejected as a constant.
 		if !operand_base.addressable && request_materialization(k, v.operand) {
@@ -1921,7 +1917,6 @@ check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix, position := Expr_Position.V
 		v.type = INVALID_TYPE
 		return
 	}
-	note_nil_use(k, v.operand, "dereference")
 	v.type = info.element
 	v.value_category = .Place
 	v.addressable = true
@@ -1996,11 +1991,6 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	// Asked before unification materialises a written `nil`.
-	nil_only := is_comparison &&
-	            (type_compares_to_nil_only(k.c, lhs) || type_compares_to_nil_only(k.c, rhs))
-	against_nil := lhs == TYPE_UNTYPED_NIL || rhs == TYPE_UNTYPED_NIL
-
 	operand_type, unified := unify_operands(k, v.lhs, v.rhs, v.op_span)
 	if !unified {
 		v.type = INVALID_TYPE
@@ -2008,19 +1998,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	if is_comparison {
-		// A slice or dyn value compares against nil only (design.md "Comparison operators").
-		if nil_only && !against_nil {
-			errorf(
-				k.c,
-				v.op_span,
-				"L0476",
-				"`%s` compares against `nil` and nothing else",
-				type_name(k.c, type_compares_to_nil_only(k.c, lhs) ? lhs : rhs),
-			)
-			v.type = INVALID_TYPE
-			return
-		}
-		check_comparison(k, v, operand_type, nil_only)
+		check_comparison(k, v, operand_type)
 		return
 	}
 
@@ -2189,9 +2167,7 @@ validate_shift_count :: proc(k: ^Checker, e: Expr, type: Type_Id) -> bool {
 }
 
 @(private = "file")
-// `nil_only` says the operand type compares against `nil` and nothing else,
-// which `check_binary` has already confirmed is what this comparison does.
-check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id, nil_only := false) {
+check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 	ordered := v.op != .Eq_Eq && v.op != .Not_Eq
 	both := []Type_Id{operand_type, operand_type}
 	if ordered && !type_is_ordered(k.c, operand_type) {
@@ -2209,7 +2185,7 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id, ni
 		v.type = INVALID_TYPE
 		return
 	}
-	if !ordered && !nil_only && !type_is_comparable(k.c, operand_type) {
+	if !ordered && !type_is_comparable(k.c, operand_type) {
 		errorf(k.c, v.op_span, "L0355", "`%s` is not comparable", type_name(k.c, operand_type))
 		v.type = INVALID_TYPE
 		return
@@ -2620,6 +2596,13 @@ check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 
 @(private = "file")
 check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
+	// A `shared(T)`'s one field has a zero, but the handle has none (design.md
+	// "Types with no zero value").
+	if len(v.elements) == 0 && info.instance_of != INVALID_SYMBOL && info.instance_of == k.c.shared_symbol {
+		require_type_has_zero(k, target, v.span, "`{}`")
+		v.type = INVALID_TYPE
+		return
+	}
 	count := len(info.fields)
 	// Positional elements fill the named fields; padding stays zero.
 	positional := named_fields(k.c, info)
@@ -3265,6 +3248,9 @@ report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 			add_notef(k.c, base.span, "the empty `%s` is written %s, and emptiness is `.len() == 0`", type_name(k.c, target), "`{}`")
 		} else if type_has_zero(k.c, target) {
 			add_notef(k.c, base.span, "the zero value of `%s` is written %s", type_name(k.c, target), "`{}`")
+		} else {
+			name := type_name(k.c, target)
+			add_notef(k.c, base.span, "a `%s` always has a value; one that may be absent is an `Option(%s)`", name, name)
 		}
 	case .String:
 		if !utf8.valid_string(base.const_value.text) {
@@ -3347,10 +3333,6 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 	if value.kind == .Nil {
 		if !type_accepts_nil(c, target) {
 			return value, false
-		}
-		// design.md "Shared ownership": a handle's zero value is `nil`.
-		if info.kind == .Struct {
-			return zero_const(c, target)
 		}
 		return nil_const(), true
 	}
@@ -3493,15 +3475,14 @@ retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, expl
 	return Const_Value{kind = .Aggregate, aggregate = retyped}, true
 }
 
-// design.md "Zero values": the types whose zero is `nil`. Every other zero,
-// a slice's and an `Allocator`'s among them, is written `{}`. A union has no
-// nil state, even with a designated zero variant.
+// design.md "Zero values": `nil` is the null unchecked address and nothing
+// else. A reference has no null state, and every other zero is written `{}`.
 type_accepts_nil :: proc(c: ^Compiler, to: Type_Id) -> bool {
 	#partial switch underlying_kind(c, to) {
-	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Dyn, .Any_View, .CString_View:
+	case .C_Pointer, .Raw_Pointer:
 		return true
 	}
-	return type_is_shared_handle(c, to) && type_of(c, type_underlying(c, to)).instance_of == c.shared_symbol
+	return false
 }
 
 // Is a value of `from` acceptable where `to` is wanted, with no written

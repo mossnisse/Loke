@@ -30,7 +30,7 @@ retained :: proc(flag: bool) {
 // borrow of `local` after its scope ends.
 published :: proc(flag: bool) {
 	h: Holder = {};
-	p: ^mut Holder = nil;
+	spare: Holder = {}; p: ^mut Holder = &mut spare;
 	if (flag) { p = &mut h; } else { h = Holder{}; }
 	{
 		local := [3]int{1, 2, 3};

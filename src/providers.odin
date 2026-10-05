@@ -249,14 +249,15 @@ provider_logger_destination :: proc(k: ^Checker, wanted: Type_Id, span: Span) ->
 		symbol_id := pkg.scope.names[intern_identifier(k.c, "selected")] or_else INVALID_SYMBOL
 		resolve_symbol_signature_in_place(k, symbol_id)
 		sym := symbol_of(k.c, symbol_id)
-		if sym != nil && sym.kind == .Var && !sym.immutable && sym.type == wanted {
+		// An `Option(Logger)`: a logger has no null state to mean "unselected".
+		if sym != nil && sym.kind == .Var && !sym.immutable && option_payload(k.c, sym.type) == wanted {
 			return symbol_id
 		}
 		break
 	}
 	errorf(
 		k.c, span, "L0660",
-		"selecting a logging provider needs `%s.selected` to be a writable global of type `%s`",
+		"selecting a logging provider needs `%s.selected` to be a writable global of type `Option(%s)`",
 		STD_LOG, type_name(k.c, wanted),
 	)
 	return INVALID_SYMBOL
