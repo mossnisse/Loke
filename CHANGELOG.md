@@ -855,6 +855,10 @@ checklist.
 
 ### Documentation
 
+- The [tutorials](tutorials/README.md) explain non-null references and omitted
+  fields that have no zero value, document nullable C pointers and their
+  `Option` ABI, and repair the initialization cross-reference. Checked examples
+  cover required reference fields, optional fields, and nullable C results.
 - [comments.md](comments.md#signed-shifts-stay-bit-operations) records why
   signed `<<` stays modular rather than checked, and
   [design.md](design.md#integer-operators) now says `x<<1` equals `x*2` only

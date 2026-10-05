@@ -381,6 +381,10 @@ cannot be reassigned, but the value it points to can change. `^T` is a read-only
 pointer, and `^mut T` permits writing. `&value` and `&mut value` borrow a value
 with those capabilities; postfix `^` dereferences the pointer.
 
+Both pointer types are non-null and have no zero value: neither accepts `nil`
+or `{}`. Represent an absent pointer with `Option(^T)` and `.none` instead;
+[Errors](05-errors.md#option-a-value-that-may-be-absent) explains `Option`.
+
 ```odin file=pointers.loke
 package main;
 

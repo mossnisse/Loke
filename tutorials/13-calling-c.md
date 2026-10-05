@@ -77,10 +77,13 @@ read the headers to check. The usual pairs are:
 | `unsigned int` | `u32` |
 | `size_t` | `uint` |
 | `double`, `float` | `f64`, `f32` |
-| `const char *` | `cstring_view` |
+| `const char *` (non-NULL, zero-terminated) | `cstring_view` |
+| `const char *` (may be NULL, otherwise zero-terminated) | `Option(cstring_view)` |
 | `void *` | `rawptr` |
-| `T *` | `^T`, or `^mut T` when C writes through it |
-| a function pointer | `proc "c" (...) -> ...` |
+| `T *` (non-NULL) | `^T`, or `^mut T` when C writes through it |
+| `T *` (may be NULL) | `Option(^T)`, or `Option(^mut T)` when C writes through it |
+| a non-NULL function pointer | `proc "c" (...) -> ...` |
+| a nullable function pointer | `Option(proc "c" (...) -> ...)` |
 
 **Loke's `int` is not C's `int`.** Loke's `int` is 64 bits on 64-bit Windows,
 while C's `int` is 32. Use `i32` for C's `int`.
@@ -89,9 +92,51 @@ A `cstring_view` points at text ending in a zero byte, which is what C expects.
 A string literal converts to one directly. A `string` made while the program
 runs converts with `.to_c_view()`.
 
-`string`, slices, dynamic arrays, maps, and unions have no C equivalent, so they
-cannot appear in a foreign signature. Pass C what it understands: a pointer and
-a length, a `cstring_view`, or a plain record of C-compatible fields.
+Using `^T`, `^mut T`, `cstring_view`, or a procedure value in a binding promises
+that C never passes or returns NULL there. The compiler cannot verify that
+promise against C's implementation. Use the corresponding `Option` when the
+C API permits NULL: `.none` is NULL, and `.some(value)` is the non-null address.
+
+`string`, slices, dynamic arrays, maps, and ordinary tagged unions cannot appear
+in a foreign signature. The pointer `Option` forms in the table are an
+exception: they have the same representation as a C pointer. Pass C a pointer
+and a length, a `cstring_view`, or a plain record of C-compatible fields; see
+[design.md "Foreign-ABI-safe types"](../design.md#foreign-abi-safe-types).
+
+## Nullable C results
+
+`strchr` returns a pointer into its input when it finds a character, or NULL
+when the character is absent. Bind its result as `Option(cstring_view)`:
+
+```odin file=nullable_c.loke
+package main;
+
+import "core:fmt";
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	strchr :: proc(text: cstring_view, character: i32) -> Option(cstring_view) ---;
+}
+
+main :: proc() {
+	foreach (letter in []rune{'l', 'z'}) {
+		switch (rest in strchr("hello", i32(letter))) {
+		case .some: fmt.println(rest);
+		case .none: fmt.println("not found");
+		}
+	}
+}
+```
+
+```text output=nullable_c
+llo
+not found
+```
+
+The binding turns the returned pointer into `.some` or `.none`, so the switch
+handles absence before using the view. The result owns no memory: the input
+must stay alive while it is used. Here the literal has static storage.
 
 ## Callbacks and unchecked code
 

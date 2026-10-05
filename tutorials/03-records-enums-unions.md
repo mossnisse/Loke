@@ -6,7 +6,8 @@ fixed set of choices, and unions that hold one of several kinds of value.
 ## Records
 
 A `struct` is a record with named fields. A literal lists the fields in order,
-or names them; a field left out takes its zero value.
+or names them; a field left out takes its zero value if its type has one.
+Otherwise the literal must supply that field explicitly.
 
 ```odin file=records.loke
 package main;
@@ -54,6 +55,58 @@ private to the package that declares it unless it is marked `@(public)`, and
 choose how a type prints is a `format` method, covered later in
 [Reflection and formatting](15-reflection-and-formatting.md#give-a-type-a-printed-representation).
 [Packages](06-packages.md) explains what else `@(public)` controls.
+
+Some fields cannot be left out. A pointer such as `^int` has no zero value,
+because it is never null. This program is rejected:
+
+```odin file=required_field.loke
+package main;
+
+Reading :: struct { value: ^int }
+
+main :: proc() {
+	reading := Reading{};  // error: `value` has no zero value
+	_ = reading;
+}
+```
+
+```text error=required_field
+error[L0424]: `^int` has no zero value, so it cannot be produced by the omitted field `value`
+ --> required_field.loke:6:13
+   |
+6 | 	reading := Reading{};  // error: `value` has no zero value
+   | 	           ^^^^^^^^^
+  = note: required_field.loke:6:13: construct the value explicitly, or provide a zero variant (an enum member represented by 0, or a union's `@(zero=first_variant)`)
+```
+
+Supply the pointer explicitly. If absence is part of the type's meaning, use
+an `Option` field, whose zero value is `.none`:
+
+```odin file=reference_fields.loke
+package main;
+
+import "core:fmt";
+
+Reading :: struct { value: ^int }
+Maybe_Reading :: struct { value: Option(^int) }
+
+main :: proc() {
+	count := 7;
+	reading := Reading{value = &count};
+	optional: Maybe_Reading = {};
+	fmt.println(reading.value^, optional.value == .none);
+}
+```
+
+```text output=reference_fields
+7 true
+```
+
+[Errors](05-errors.md#option-a-value-that-may-be-absent) explains how to inspect
+an `Option`. Boxes, enums without a value represented by `0`, and unions
+without a designated zero variant also have no zero value. A record or
+non-empty fixed array containing any such type has none either; see
+[design.md "Types with no zero value"](../design.md#types-with-no-zero-value).
 
 ## Methods
 

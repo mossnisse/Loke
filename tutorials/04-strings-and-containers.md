@@ -333,7 +333,7 @@ Ada
 - `move(original)` hands the container over without copying it. `original` has
   no value afterwards, and the compiler rejects any later read of it, the same
   way it rejected the unassigned variable on the
-  [previous page](02-values-and-control-flow.md#every-variable-has-a-value-before-it-is-read).
+  [previous page](02-values-and-control-flow.md#every-variable-must-have-a-value-before-it-is-read).
 - Passing a container to a procedure copies nothing: the procedure borrows it
   for the call. Returning a container made inside the procedure hands it to the
   caller, also without a copy.
