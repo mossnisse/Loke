@@ -138,7 +138,7 @@ moved :: proc() {
 	xs.append(8);
 	fmt.println(xs.len());
 	fmt.println(xs[1]);
-	fmt.println(holder.arena.allocator() != nil);
+	fmt.println(holder.arena.allocator() != Allocator{});
 	// `holder` is declared after `xs`, so its cleanup would end the region
 	// first and leave `xs` releasing into a freed control block.
 	drop(xs);
@@ -296,7 +296,7 @@ buffer_after_arena :: proc() {
 }
 
 // The zero provider owns an empty region: allocating a byte fails, a reset and
-// a drop do nothing, and its handle is not nil, which would mean the default
+// a drop do nothing, and its handle is not the zero `Allocator`, which would mean the default
 // provider.
 zero_provider :: proc() {
 	arena: mem.Arena = {};
@@ -317,14 +317,14 @@ zero_provider :: proc() {
 		}
 	}
 	free_all(arena.allocator());
-	fmt.println(arena.allocator() != nil);
+	fmt.println(arena.allocator() != Allocator{});
 	scratch: mem.Scratch = {};
 	free_all(scratch.allocator());
 }
 
-// A nil allocator is the default provider, for an allocation as for a container.
-nil_allocator :: proc() {
-	allocator: Allocator = nil;
+// The zero allocator is the default provider, for an allocation as for a container.
+zero_allocator :: proc() {
+	allocator: Allocator = {};
 	switch (p in try_box(0, allocator)) {
 	case .ok: p^ = 6; fmt.println(p^);
 	case .err: fmt.println(false);
@@ -380,7 +380,7 @@ main :: proc() {
 	zero_size();
 	replaced_through_pointer();
 	moved_into_storage();
-	nil_allocator();
+	zero_allocator();
 	zero_provider();
 	buffer_after_arena();
 	shrink_below_top();

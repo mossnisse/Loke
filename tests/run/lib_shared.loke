@@ -129,7 +129,7 @@ main :: proc() {
 
 	// A `weak` that never had a payload upgrades to nothing.
 	orphan: weak(Node) = {};
-	fmt.println(orphan == nil, orphan.strong_count());
+	fmt.println(orphan == weak(Node){}, orphan.strong_count());
 	switch (never in orphan.upgrade()) {
 	case .some: fmt.println("upgraded");
 	case .none: fmt.println("gone");

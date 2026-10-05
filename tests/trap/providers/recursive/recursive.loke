@@ -13,5 +13,5 @@ foreign rt {
 
 factory :: proc() -> Allocator {
 	loke_rt_v1_program_init();
-	return nil;
+	return {};
 }

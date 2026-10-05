@@ -567,8 +567,10 @@ constness alone does not establish either.
 **Decided (2026-10-04), partly built.** Stage 1 has landed: `box(T)`
 ([design.md "Owned values"](design.md#owned-values)) replaced checked
 `new`/`free`, and raw allocation moved into
-[`core:unsafe`](design.md#the-unsafe-package). design.md and the compiler
-still have nullable references. Each stage
+[`core:unsafe`](design.md#the-unsafe-package). Stage 2 has landed too:
+`nil` is no longer a slice's, `string_view`'s, `typeid`'s, `Allocator`'s, or
+`weak(T)`'s zero ([Zero values](design.md#zero-values)). design.md and the
+compiler still have nullable references. Each stage
 at the end of this entry changes the specification, compiler, tests,
 tutorials, and changelog together, and the entry leaves this file when the
 last one lands.
@@ -746,8 +748,9 @@ note:
 1. (Landed.) `box(T)` and `try_box`; raw allocation into `core:unsafe`;
    allocation-root provenance removed. Migrated `core:thread`, `shared(T)`,
    tutorial 12, and the test files that called `new` or `free`.
-2. `nil` narrowed to unchecked addresses: the zeros of item 2, `{}` as the
-   empty slice, and a total `type_info_of`.
+2. (Landed.) `nil` narrowed to references and unchecked addresses: the zeros
+   of item 2, `Allocator_Error`'s among them, `{}` as the empty slice, and a
+   total `type_info_of`.
 3. Non-null references: no-zero typing, null-tested unchecked conversions, no
    null tests in emitted code, and design.md "Nil states" and
    `src/nil_uses.odin` deleted. Migrates `core:log` (`selected:

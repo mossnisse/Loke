@@ -95,7 +95,7 @@ main :: proc() {
 
 	// Foreach keeps the temporary owner alive for the complete loop.
 	foreach (item in make_values()) { fmt.println("temporary", item); }
-	empty: []Entry = nil;
+	empty: []Entry = {};
 	foreach (item in empty) { panic("empty slice yielded"); }
 	zero: [0]Entry = {};
 	foreach (item in zero.reversed()) { panic("empty array yielded"); }

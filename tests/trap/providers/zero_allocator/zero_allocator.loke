@@ -1,0 +1,9 @@
+@(public)
+package zero_allocator;
+
+// design.md "Provider initialization": a zero allocator handle terminates the
+// program before application code runs.
+
+factory :: proc() -> Allocator {
+	return {};
+}

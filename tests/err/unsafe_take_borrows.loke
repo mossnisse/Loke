@@ -11,18 +11,18 @@ import "core:unsafe";
 
 popped :: proc() {
 	sa: container.Small_Array([]int, 4) = {};
-	v: []int = nil;
+	v: []int = {};
 	{
 		arr := [3]int{1, 2, 3};
 		sa.append(arr[:]);
-		v = sa.pop() or_else nil;
+		v = sa.pop() or_else {};
 	}
 	fmt.println(v[0]);
 }
 
 removed :: proc() {
 	sa: container.Small_Array([]int, 4) = {};
-	v: []int = nil;
+	v: []int = {};
 	{
 		arr := [3]int{1, 2, 3};
 		sa.append(arr[:]);
@@ -33,7 +33,7 @@ removed :: proc() {
 
 removed_unordered :: proc() {
 	sa: container.Small_Array([]int, 4) = {};
-	v: []int = nil;
+	v: []int = {};
 	{
 		arr := [3]int{1, 2, 3};
 		sa.append(arr[:]);
@@ -59,7 +59,7 @@ used_in_scope :: proc() {
 	sa: container.Small_Array([]int, 4) = {};
 	arr := [3]int{1, 2, 3};
 	sa.append(arr[:]);
-	v := sa.pop() or_else nil;
+	v := sa.pop() or_else {};
 	fmt.println(v[0]);
 }
 

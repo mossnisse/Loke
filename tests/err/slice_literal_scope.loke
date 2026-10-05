@@ -5,7 +5,7 @@ package main; import "core:fmt";
 // slice of either carries its elements' borrows too. Slicing a temporary owner
 // ends with its statement; reslicing a carrier keeps only that carrier's loans.
 
-static_slice :: proc() -> []int { return nil; }
+static_slice :: proc() -> []int { return {}; }
 views :: proc(s: string_view) -> [dynamic]string_view { return [dynamic]string_view{s}; }
 
 table := []int{7, 8}; // file scope: static lifetime
@@ -23,7 +23,7 @@ local :: proc() -> int {
 }
 
 main :: proc() {
-	v: []int = nil;
+	v: []int = {};
 	{ v = []int{5, 6}; }
 	a := "abc".copy();
 	y := views(a[:])[:];

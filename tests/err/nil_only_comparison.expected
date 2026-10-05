@@ -1,12 +1,18 @@
-L0476
-@35:8
-`[]mut int` compares against `nil` and nothing else
-L0476
+L0310
+@28:11
+`nil` is not a value of `[]mut int`
+L0310
+@29:6
+`nil` is not a value of `[]mut int`
+L0355
 @37:8
+`[]mut int` is not comparable
+L0476
+@39:8
 `dyn Sized` compares against `nil` and nothing else
 L0355
-@40:23
+@42:23
 `Boxed` is not comparable
 L0355
-@41:23
+@43:23
 `Erased` is not comparable

@@ -15,7 +15,8 @@
 // contributes `allocate_string` to both `core:strings` and `core:fmt`.
 //
 // Five things about these types are the *language's*, not the library's, and
-// the compiler owns them: the zero value is `nil` and compares to `nil`, `via`
+// the compiler owns them: a `shared(T)`'s zero value is `nil` and compares to
+// `nil` while a `weak(T)`'s is `{}`, `via`
 // on such a declaration is an error, `handle.get()` derives its root provenance
 // from the handle, a handle carries the borrows its payload holds, and neither
 // is ever silently moved at its last use.

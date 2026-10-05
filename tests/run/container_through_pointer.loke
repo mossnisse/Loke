@@ -7,7 +7,7 @@ get :: proc(p: ^map[int]int) -> int { return p[1]; }
 set :: proc(p: ^mut [dynamic]int) { p[0] = 7; }
 first :: proc(p: ^[dynamic]int) -> int { return p[0]; }
 poke :: proc(p: ^[]mut int) { p[1] = 9; }
-is_nil :: proc(s: string_view) -> bool { return s == nil; }
+is_empty :: proc(s: string_view) -> bool { return s.len() == 0; }
 
 main :: proc() {
     m: map[int]int = {};
@@ -18,9 +18,9 @@ main :: proc() {
     poke(&s);
     fmt.println(get(&m), first(&xs), xs[1]);
 
-    v: string_view = nil;
+    v: string_view = {};
     c: cstring_view = nil;
-    fmt.println(is_nil(v), is_nil("a"), v.len());
+    fmt.println(is_empty(v), is_empty("a"), v.len());
     f: f32 = 3.4e38;
     fmt.println(f > 0);
 }

@@ -7,9 +7,9 @@ cannot initialise `[]mut int` with `[]int`
 L0373
 @17:27
 `[]int` cannot be converted to `[]mut int`
-L0476
+L0355
 @21:15
-compares against `nil` and nothing else
+`[]int` is not comparable
 L0480
 @26:12
 yields read-only elements, so it cannot be iterated by reference

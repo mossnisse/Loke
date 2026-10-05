@@ -1550,13 +1550,13 @@ type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> 
 	return false
 }
 
-// design.md: a slice or a dynamic interface value compares against `nil` and
-// nothing else, so it is not a comparable leaf either. Kept apart from
+// design.md: a dynamic interface value compares against `nil` and nothing
+// else, so it is not a comparable leaf either. Kept apart from
 // `type_is_comparable` because an aggregate reads that one to decide whether it
 // may be compared field-wise, which these two may not.
 type_compares_to_nil_only :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch underlying_kind(c, id) {
-	case .Slice, .Dyn:
+	case .Dyn:
 		return true
 	}
 	return false

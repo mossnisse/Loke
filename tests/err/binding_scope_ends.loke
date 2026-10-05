@@ -10,7 +10,7 @@ U :: union { a: [dynamic]int, b: f64 }
 make_u :: proc() -> U { return U.a([dynamic]int{1}); }
 
 consumed_case_binding :: proc() {
-	outer: []int = nil;
+	outer: []int = {};
 	switch (make_u()) {
 	case .a(v): outer = v[:];
 	case .b(f):

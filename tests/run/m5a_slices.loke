@@ -34,10 +34,11 @@ fill :: proc(values: []mut int, with: int) {
 }
 
 main :: proc() {
-	// Nil is the zero slice, and compares against nil.
-	empty: []int = nil;
+	// `{}` is the empty slice; a slice compares with nothing, so emptiness is
+	// its length (design.md "Empty slices").
+	empty: []int = {};
 	fmt.println(empty.len());
-	if (empty == nil) {
+	if (empty.len() == 0) {
 		fmt.println(1);
 	}
 

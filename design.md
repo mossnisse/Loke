@@ -317,7 +317,11 @@ The zero value is:
 - the declared variant represented by `0`, for an enum that has one
 - `""` for `string`
 - an empty, immediately usable value for `[dynamic]T` and `map[K]V`: `len` and `cap` are 0, and appending or inserting needs no prior construction. Without a `via` declaration it is allocator-unbound until its first allocating operation
-- `nil` for pointer, C pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, `any_view`, every `dyn Interface`, `shared(T)`, and `weak(T)` type. A nil slice or view has length 0
+- the empty view, of length 0, for a slice and for `string_view`
+- the invalid id for `typeid`, whose [`type_info_of`](#type-and-typeid) entry has kind `Invalid`
+- the default provider for `Allocator`, and no failure for `Allocator_Error`
+- an empty handle for `weak(T)`, whose `upgrade` answers `.none`
+- `nil` for pointer, C pointer, `rawptr`, procedure, `cstring_view`, `any_view`, every `dyn Interface`, and `shared(T)` type. These are the only types `nil` converts to
 - the variant `@(zero=name)` designates, for a [union](#unions) that designates one
 
 Aggregate zero values are built recursively from their fields. A type with `hook(drop)` must have an inert zero value on which dropping does nothing; a resource that uses zero for a live handle must instead carry a separate validity field or forbid a zero owning value.
@@ -846,7 +850,7 @@ This slice literal creates the same hidden array and returns a read-only slice o
 []int{1, 6, 3}
 ```
 
-**A slice literal has the type it is written with.** `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability is never inferred. A `[]mut T` literal may still be weakened by an explicit `[]T` destination, like any other mutable slice.
+**A slice literal has the type it is written with.** `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability is never inferred. A `[]mut T` literal may still be weakened by an explicit `[]T` destination, like any other mutable slice. A bare `{}` at a slice type is not a slice literal but the [empty view](#empty-slices), a constant with no backing array, so it may be returned.
 
 ```odin
 readable := []int{1, 6, 3};        // []int
@@ -857,14 +861,14 @@ readable[0] = 99;                  // ERROR: elements of `[]int` are read-only
 
 The backing array of a slice literal is a hidden fixed-array owner in the surrounding lexical scope, so the slice remains valid until that scope exits. At file scope it has static lifetime. Returning a slice literal from a procedure is rejected because its hidden owner is local, just as returning a slice of a named local array is rejected.
 
-#### Nil slices
+#### Empty slices
 
-The zero value of a slice is nil. A nil slice has a length of 0 and does not point to any underlying memory. Slices can be compared against nil and nothing else.
+The zero value of a slice is the empty view, written `{}`. It has a length of 0 and points at no memory. Slices are not comparable, so emptiness is tested with `len`, which answers the same for the zero value and for an empty subslice such as `a[0:0]`:
 
 ```odin
-s: []int = nil;
-if (s == nil) {
-	fmt.println("s is nil!");
+s: []int = {};
+if (s.len() == 0) {
+	fmt.println("s is empty!");
 }
 ```
 
@@ -1888,7 +1892,7 @@ main :: proc() {
 }
 ```
 
-`typeid_of(T)` maps a compile-time `type` to a runtime `typeid` constant. `type_info_of(id)` returns runtime metadata; it cannot recover a compile-time `type`. Invalid or unknown identifiers produce `nil`.
+`typeid_of(T)` maps a compile-time `type` to a runtime `typeid` constant. `type_info_of(id)` returns runtime metadata; it cannot recover a compile-time `type`. It is total: the zero `typeid`, written `{}`, and an id no type has both answer the entry whose kind is `Invalid` and whose other fields are zero.
 
 For a union value, `type_of(value)` is the union's static type. Its active variant is a tag, not a separate runtime type; inspect it with a [`switch`](#inspecting-a-union).
 
@@ -3500,7 +3504,7 @@ The equality operators `==` and `!=` apply to operands that are comparable. The 
 - Array values are comparable if values of the element type are comparable.
 - Structural comparison compares a struct field by field, an array element by element, and a union by its active payload. A part whose type declares its own `==` inherently, or whose underlying type does, is compared by that operator, and is comparable through it whatever its own fields are; any other part is compared structurally. An extension `==` is never used for a part, so a type has the same equality wherever it is nested. Comparing a value is an error where a part's inherent `==` is not visible.
 - typeid is comparable.
-- Slices, dynamic arrays, maps, boxes, and `dyn Interface` views are **not** comparable. A slice or `dyn Interface` may be tested only against `nil`; a dynamic array or map has no nil value (its zero is `{}`), so emptiness is `value.len() == 0`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
+- Slices, dynamic arrays, maps, boxes, and `dyn Interface` views are **not** comparable. A `dyn Interface` may be tested only against `nil`; a slice, dynamic array, or map has no nil value (its zero is `{}`), so emptiness is `value.len() == 0`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
 
 ### Logical operators
 
@@ -5666,7 +5670,7 @@ These attributes are rejected on an imported package, so no library can change a
 
 Initialization runs once before `main` and before worker threads, in this order:
 
-1. Call and publish the allocator factory's non-nil handle.
+1. Call and publish the allocator factory's handle, which must not be the zero `Allocator`.
 2. Call and retain the logger factory's handle.
 
 The allocator factory runs before any allocator has been published, so its own default allocations use the system heap; the logger factory runs after, so its default allocations use the published allocator. Logging before the logger is published goes to the standard fallback.
@@ -5698,7 +5702,7 @@ Dynamic arrays, maps, runtime strings, and other managed containers remember the
 
 The allocator affects where backing storage comes from, but does not change value semantics or whether cleanup is automatic. Cleanup is suppressed per value with [`unsafe.forget`](#unsafeforget), never by a declaration modifier.
 
-Omitting the allocator argument selects the default provider: `box(1)` is `box(1, mem.default_allocator())`. The default expression is evaluated only when the caller omits the argument. A nil `Allocator` also selects the default provider, wherever it is passed.
+Omitting the allocator argument selects the default provider: `box(1)` is `box(1, mem.default_allocator())`. The default expression is evaluated only when the caller omits the argument. The zero `Allocator`, written `{}`, also selects the default provider, wherever it is passed.
 
 A request for zero bytes, such as `unsafe.new` of an empty struct, never reaches the allocator. It succeeds from every allocator, the empty region below included, and answers a non-null address at the requested alignment that nothing may dereference. Two such results may compare equal, and releasing one does nothing.
 
@@ -5796,7 +5800,7 @@ backup := source.try_clone() or_return;
 numbers.try_append(value) or_return;
 ```
 
-The `try_` forms of allocating operations, `try_box`, `try_make`, and `unsafe.try_new` among them, return `Result(T, Allocator_Error)` and do not invoke the allocator policy. An `Allocator_Error` holds the size of the request that was refused, or all bits set when the failure requested nothing, and a nil one is no failure. Handing the error on, as `or_return` does, keeps the size for the report of a policy that is reached later. `drop` and `unsafe.free` return no status. Passing `unsafe.free` the wrong allocation or allocator is a programmer error.
+The `try_` forms of allocating operations, `try_box`, `try_make`, and `unsafe.try_new` among them, return `Result(T, Allocator_Error)` and do not invoke the allocator policy. An `Allocator_Error` holds the size of the request that was refused, or all bits set when the failure requested nothing, and its zero is no failure. Handing the error on, as `or_return` does, keeps the size for the report of a policy that is reached later. `drop` and `unsafe.free` return no status. Passing `unsafe.free` the wrong allocation or allocator is a programmer error.
 
 ## Concurrency and the memory model
 
@@ -5859,7 +5863,7 @@ Handle accounting is safe across threads, but destruction may be thread-affine. 
 
 Shared ownership does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` that cannot outlive the handle. Conflicting access, including through different handles, still requires synchronization. State that changes behind a handle is held in `Atomic(T)` or `Once` fields, whose operations work through that `^T`.
 
-Strong-reference cycles are permitted and leak until explicitly broken. `weak(T)` is the non-owning companion: its zero value is also `nil`, it cannot use `via` either, and it keeps the control block but not the payload alive, and `upgrade` returns `Option(shared(T))`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
+Strong-reference cycles are permitted and leak until explicitly broken. `weak(T)` is the non-owning companion: its zero value, written `{}`, is an empty handle whose `upgrade` answers `.none`, it cannot use `via` either, and it keeps the control block but not the payload alive, and `upgrade` returns `Option(shared(T))`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
 
 ## Foreign system
 

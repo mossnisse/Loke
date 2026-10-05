@@ -13,7 +13,7 @@ held: []int;
 // be returned.
 escaped :: proc(flag: bool) -> []int {
 	local := [3]int{1, 2, 3};
-	v: []int = nil;
+	v: []int = {};
 	if (flag) { v = local[:]; } else { local = [3]int{4, 5, 6}; }
 	return v;
 }
@@ -21,7 +21,7 @@ escaped :: proc(flag: bool) -> []int {
 // design.md "Retaining a borrow": nor stored in process-lifetime storage.
 retained :: proc(flag: bool) {
 	local := [3]int{1, 2, 3};
-	v: []int = nil;
+	v: []int = {};
 	if (flag) { v = local[:]; } else { local = [3]int{4, 5, 6}; }
 	held = v;
 }
@@ -42,8 +42,8 @@ published :: proc(flag: bool) {
 // design.md "Weakening and reborrows": `s` is suspended while `d` is live.
 suspended :: proc(flag: bool) {
 	local := [3]int{1, 2, 3};
-	s: []mut int = nil;
-	d: []int = nil;
+	s: []mut int = {};
+	d: []int = {};
 	if (flag) { s = &mut local[:]; d = s; } else { local = [3]int{4, 5, 6}; }
 	s[0] = 9;
 	fmt.println(d[0]);

@@ -27,7 +27,7 @@ through_a_switch :: proc() -> []int {
 	boxed: Boxed = .held(Holder{local[:]});
 	switch (held in boxed) {
 	case .held:  return held.view;
-	case .empty: return nil;
+	case .empty: return {};
 	}
 }
 
@@ -35,7 +35,7 @@ through_a_switch :: proc() -> []int {
 through_or_else :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	boxed: Boxed = .held(Holder{local[:]});
-	return (boxed or_else Holder{nil}).view;
+	return (boxed or_else Holder{{}}).view;
 }
 
 // Unwrapped by `or_return`.

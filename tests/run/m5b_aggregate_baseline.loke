@@ -55,9 +55,9 @@ inject :: proc(values: []int) -> Choice {
 extract :: proc(choice: Choice) -> []int {
 	switch (value in choice) {
 	case .held:  return value.view;
-	case .plain: return nil;
+	case .plain: return {};
 	}
-	return nil;
+	return {};
 }
 
 // --- containers -------------------------------------------------------------
@@ -67,9 +67,9 @@ extract :: proc(choice: Choice) -> []int {
 map_value_read :: proc(table: map[string]Holder) -> []int {
 	switch (held in table.lookup_value("a")) {
 	case .some: return held.view;
-	case .none: return nil;
+	case .none: return {};
 	}
-	return nil;
+	return {};
 }
 
 // POSITIVE. An entry pointer is a borrow of the container's storage, which the
@@ -126,9 +126,9 @@ pop_an_element :: proc(values: []int) -> []int {
 	holders.append(Holder{values});
 	switch (held in holders.pop()) {
 	case .some: return held.view;
-	case .none: return nil;
+	case .none: return {};
 	}
-	return nil;
+	return {};
 }
 
 // POSITIVE. The same for a map, where the value's content is what travels and a
@@ -138,9 +138,9 @@ remove_a_value :: proc(values: []int) -> []int {
 	table["a"] = Holder{values};
 	switch (held in table.remove("a")) {
 	case .some: return held.view;
-	case .none: return nil;
+	case .none: return {};
 	}
-	return nil;
+	return {};
 }
 
 // POSITIVE. Two constant keys are two entries, so reading one back does not
@@ -163,9 +163,9 @@ constant_key_lookup :: proc(values: []int) -> []int {
 	table["b"] = Holder{local[:]};
 	switch (held in table.lookup_value("a")) {
 	case .some: return held.view;
-	case .none: return nil;
+	case .none: return {};
 	}
-	return nil;
+	return {};
 }
 
 // POSITIVE. A known key replaces what it held, so the local is gone from it.
@@ -401,18 +401,18 @@ optional_extraction_read :: proc(values: []int) -> []int {
 	choice: Choice = .held(Holder{values});
 	switch (held in choice) {
 	case .held:  return held.view;
-	case .plain: return nil;
+	case .plain: return {};
 	}
-	return nil;
+	return {};
 }
 
 grouped_extraction_read :: proc(values: []int) -> []int {
 	choice: Choice = .held(Holder{values});
 	switch (held in choice) {
 	case .held: return held.view;
-	case:       return nil;
+	case:       return {};
 	}
-	return nil;
+	return {};
 }
 
 temporary_fields_are_independent :: proc(values: []int) -> []int {
@@ -459,9 +459,9 @@ erased_extraction_read :: proc(values: []int) -> []int {
 	erased: any_view = held;
 	switch (value in erased.as(Holder)) {
 	case .some: return value.view;
-	case .none: return nil;
+	case .none: return {};
 	}
-	return nil;
+	return {};
 }
 
 Outer :: struct { pair: Pair }
@@ -522,7 +522,7 @@ assigned_result_field :: proc(values: []int) -> []int {
 
 conditional_result_field :: proc(values: []int, choose_first: bool) -> []int {
 	local := [3]int{7, 8, 9};
-	pair := result_reverse(local[:], values) if choose_first else Pair{values, nil};
+	pair := result_reverse(local[:], values) if choose_first else Pair{values, {}};
 	return pair.left;
 }
 
@@ -579,9 +579,9 @@ union_result_field :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
 	switch (held in result_union(local[:], values)) {
 	case .outer: return held.pair.right;
-	case .plain: return nil;
+	case .plain: return {};
 	}
-	return nil;
+	return {};
 }
 
 Result_With_Map :: struct { entries: map[string]Holder, view: []int }
@@ -722,9 +722,9 @@ bare_map_lookup :: proc(values: []int) -> []int {
 	table["a"] = values;
 	switch (result in table.lookup_value("a")) {
 	case .some: return result;
-	case .none: return nil;
+	case .none: return {};
 	}
-	return nil;
+	return {};
 }
 
 bare_map_index :: proc(values: []int) -> []int {

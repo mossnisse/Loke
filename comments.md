@@ -155,6 +155,20 @@ storage, `unsafe.new` and `unsafe.free`, answers a `[^]T` and checks nothing,
 which is what the library's two callers, `shared(T)` and `core:thread`, were
 already doing through `unsafe.free`.
 
+### Zeros that are values
+
+In Odin, `nil` is the zero of a slice, a `typeid`, an allocator, and a string
+view as well as of a pointer, and a nil slice compares unequal to an empty
+subslice that behaves identically. Loke gives each such type a zero that
+supports every operation the type has, written `{}` like any other zero: the
+empty view, the invalid id with its `Invalid` reflection entry, the default
+provider, an empty `weak` handle. `nil` is then only ever an address that is
+not there, which is what lets references stop having one at all
+(open-questions.md "Non-null references and explicit allocation owners").
+Slices stop comparing with `nil` because the only question that comparison
+could answer, besides emptiness, was which of two empty views had been sliced
+from memory.
+
 ### Storage modifiers instead of storage attributes
 
 Odin spells static-duration locals `@(static)` and thread locals

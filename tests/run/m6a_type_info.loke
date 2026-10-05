@@ -3,8 +3,8 @@ package main; import "core:fmt"; import "core:unsafe";
 // design.md "`type` and `typeid`": `type_info_of(id)` "accepts a runtime
 // `typeid` and returns runtime metadata". The table is dense and keyed by the
 // frozen id, so a lookup is a checked index rather than a runtime call — and a
-// `typeid` is an ordinary scalar, so the check is what makes a forged one
-// answer nil instead of reading past the table.
+// `typeid` is an ordinary scalar, so the check is what makes the zero id and a
+// forged one answer the `Invalid` entry instead of reading past the table.
 
 import "base:runtime";
 
@@ -50,9 +50,9 @@ main :: proc() {
 		fmt.println(1 if u.signed else 0);
 	}
 	empty: typeid = {};
-	fmt.println(0 if type_info_of(empty) == nil else 1);
+	fmt.println(int(type_info_of(empty).kind), type_info_of(empty).size);
 	forged := forge(999999);
-	fmt.println(0 if type_info_of(forged) == nil else 1);
+	fmt.println(int(type_info_of(forged).kind), type_info_of(forged).name.len());
 	c := type_info_of(typeid_of(Colour));
 	if (c != nil) { fmt.println(c.members.len()); }
 	wide := type_info_of(typeid_of(Huge));

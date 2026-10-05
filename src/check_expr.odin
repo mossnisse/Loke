@@ -2008,7 +2008,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	if is_comparison {
-		// A slice or dyn value compares against nil only (design.md "Nil slices").
+		// A slice or dyn value compares against nil only (design.md "Comparison operators").
 		if nil_only && !against_nil {
 			errorf(
 				k.c,
@@ -2582,6 +2582,12 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 // "Slice literals"). It views a hidden fixed array in the enclosing scope.
 @(private = "file")
 check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
+	// `{}` is the empty view, as for any other zero (design.md "Zero values").
+	if v.type_expr == nil && len(v.elements) == 0 {
+		v.is_const = true
+		v.const_value, _ = zero_const(k.c, target)
+		return
+	}
 	if v.type_expr == nil {
 		// The braces are not in the format string, where `{` is a directive.
 		errorf(k.c, v.span, "L0479", "a slice literal must be written with its type, as in `%s`", concat(k.c, type_name(k.c, target), "{ ... }"))
@@ -3060,8 +3066,10 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 	case .Typeid:
 		// design.md "`type` and `typeid`": `Invalid`, numerically 0.
 		return type_const(INVALID_TYPE), true
+	// A slice constant's elements are the viewed ones, so the empty view is the
+	// all-zero `.Nil` rather than an aggregate of its two fields.
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error,
-	     .CString_View:
+	     .CString_View, .Slice:
 		return nil_const(), true
 	case .String, .String_View:
 		return Const_Value{kind = .String}, true
@@ -3085,7 +3093,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id, build := true) -> (Const_Value, 
 		aggregate.type = type
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
-	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
+	case .Struct, .Any_View, .Dyn, .Dynamic_Array, .Map:
 		// A record containing itself by value was already reported and has no
 		// zero value to build.
 		if info.size_state == .Cyclic {
@@ -3251,6 +3259,13 @@ report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 		errorf(k.c, base.span, "L0353", "%v is not representable by `%s`", base.const_value.float, type_name(k.c, target))
 	case .Nil:
 		errorf(k.c, base.span, "L0310", "`nil` is not a value of `%s`", type_name(k.c, target))
+		// design.md "Zero values": `nil` names only a null address.
+		// The braces are not in the format string, where `{` is a directive.
+		if type_is_slice(k.c, target) || underlying_kind(k.c, target) == .String_View {
+			add_notef(k.c, base.span, "the empty `%s` is written %s, and emptiness is `.len() == 0`", type_name(k.c, target), "`{}`")
+		} else if type_has_zero(k.c, target) {
+			add_notef(k.c, base.span, "the zero value of `%s` is written %s", type_name(k.c, target), "`{}`")
+		}
 	case .String:
 		if !utf8.valid_string(base.const_value.text) {
 			report_invalid_utf8(k, base.span, target)
@@ -3328,22 +3343,27 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return value, true
 		}
+	}
+	if value.kind == .Nil {
+		if !type_accepts_nil(c, target) {
+			return value, false
+		}
+		// design.md "Shared ownership": a handle's zero value is `nil`.
+		if info.kind == .Struct {
+			return zero_const(c, target)
+		}
+		return nil_const(), true
+	}
+	#partial switch info.kind {
 	case .Untyped_String, .CString_View:
 		if value.kind == .String {
 			return value, true
-		}
-		// A view's zero value is `nil` (design.md "Zero values"); a `string`'s is `""`.
-		if value.kind == .Nil && info.kind == .CString_View {
-			return nil_const(), true
 		}
 	// A `string` always holds valid UTF-8 (design.md "string type"). It is checked
 	// after folding, so `"\xc3" + "\xa9"` is the `é` it spells.
 	case .String, .String_View:
 		if value.kind == .String {
 			return value, utf8.valid_string(value.text)
-		}
-		if value.kind == .Nil && info.kind == .String_View {
-			return Const_Value{kind = .String}, true
 		}
 	case .Bool:
 		if value.kind == .Boolean {
@@ -3409,22 +3429,10 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			return fits ? float_const(converted, info.bits) : value, fits
 		}
 	case .Typeid:
-		if value.kind == .Nil {
-			return type_const(INVALID_TYPE), true
-		}
 		// A folded `typeid_of(T)` keeps the type it identifies; the value's own
 		// type, checked before this, is what separates it from a type.
 		if value.kind == .Type {
 			return value, true
-		}
-	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
-		if value.kind == .Nil {
-			return nil_const(), true
-		}
-	case .Dyn, .Any_View, .Slice:
-		// Every other value of these is built at run time.
-		if value.kind == .Nil {
-			return nil_const(), true
 		}
 	case .Union:
 		return retype_aggregate(c, value, target, explicit, storage)
@@ -3456,10 +3464,6 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
 	case .Struct, .Array:
-		// design.md "Shared ownership": a handle's zero value is `nil`.
-		if value.kind == .Nil && type_is_shared_handle(c, target) {
-			return zero_const(c, target)
-		}
 		return retype_aggregate(c, value, target, explicit, storage)
 	case .Type:
 		if value.kind == .Type {
@@ -3489,6 +3493,17 @@ retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, expl
 	return Const_Value{kind = .Aggregate, aggregate = retyped}, true
 }
 
+// design.md "Zero values": the types whose zero is `nil`. Every other zero,
+// a slice's and an `Allocator`'s among them, is written `{}`. A union has no
+// nil state, even with a designated zero variant.
+type_accepts_nil :: proc(c: ^Compiler, to: Type_Id) -> bool {
+	#partial switch underlying_kind(c, to) {
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Dyn, .Any_View, .CString_View:
+		return true
+	}
+	return type_is_shared_handle(c, to) && type_of(c, type_underlying(c, to)).instance_of == c.shared_symbol
+}
+
 // Is a value of `from` acceptable where `to` is wanted, with no written
 // conversion? Representability of an untyped constant is settled by
 // `materialize` before this is asked.
@@ -3500,14 +3515,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	if from == TYPE_UNTYPED_NIL {
-		#partial switch underlying_kind(c, to) {
-		// design.md "Zero values"; a nil `Allocator_Error` is success.
-		// A union has no nil state, even with a designated zero variant.
-		case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Dyn, .Any_View, .Slice, .Typeid,
-		     .String_View, .CString_View, .Allocator, .Allocator_Error:
-			return true
-		}
-		return type_is_shared_handle(c, to)
+		return type_accepts_nil(c, to)
 	}
 	// design.md "SIMD vectors": a scalar splats; nothing else converts.
 	if type_is_simd(c, to) && !type_is_simd(c, from) {

@@ -42,8 +42,8 @@ deep_views :: proc() {
 }
 
 element :: proc() {
-	r: []u8 = nil;
-	arr := [1][]u8{nil};
+	r: []u8 = {};
+	arr := [1][]u8{{}};
 	{
 		s := [3]u8{1, 2, 3};
 		arr[0] = s[:];
@@ -54,8 +54,8 @@ element :: proc() {
 
 // Two loads deep: the pointer reaches `v`, and `v` holds `s`.
 through_pointer :: proc() {
-	r: []u8 = nil;
-	v: []u8 = nil;
+	r: []u8 = {};
+	v: []u8 = {};
 	{
 		s := [3]u8{1, 2, 3};
 		v = s[:];
@@ -66,8 +66,8 @@ through_pointer :: proc() {
 }
 
 field :: proc() {
-	r: []u8 = nil;
-	arr := [1][]u8{nil};
+	r: []u8 = {};
+	arr := [1][]u8{{}};
 	{
 		s := [3]u8{1, 2, 3};
 		arr[0] = s[:];
@@ -78,8 +78,8 @@ field :: proc() {
 
 plain :: proc() {
 	f: proc(values: [][]u8) -> []u8 = first;
-	r: []u8 = nil;
-	arr := [1][]u8{nil};
+	r: []u8 = {};
+	arr := [1][]u8{{}};
 	{
 		s := [3]u8{1, 2, 3};
 		arr[0] = s[:];
@@ -90,7 +90,7 @@ plain :: proc() {
 
 kept :: proc() {
 	out: [dynamic][]u8 = {};
-	arr := [1][]u8{nil};
+	arr := [1][]u8{{}};
 	{
 		s := [3]u8{1, 2, 3};
 		arr[0] = s[:];

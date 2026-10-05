@@ -284,7 +284,7 @@ bounded :: proc(value: $T) -> int where known(T) { return 1; }
 main :: proc() {
     static_assert(Probe(i8));
     static_assert(Probe(int));
-    assert(identity(1) != nil);
+    assert(identity(1) != typeid{});
     assert(bounded(true) == 1);
 }`
 	p: Checked

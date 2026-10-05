@@ -1829,7 +1829,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 	if base := expr_base(e); base != nil && base.type != INVALID_TYPE && !prov_type_has_region(c, base.type) {
 		return Region_Set{}
 	}
-	// design.md "Allocators": a nil `Allocator` is the default provider.
+	// design.md "Allocators": the zero `Allocator` is the default provider.
 	if base := expr_base(e); base != nil && base.is_const && base.const_value.kind == .Nil &&
 	   type_underlying(c, base.type) == TYPE_ALLOCATOR {
 		set := prov_empty_region(graph)

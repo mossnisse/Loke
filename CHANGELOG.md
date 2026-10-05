@@ -10,6 +10,16 @@ checklist.
 
 ### Breaking changes
 
+- `nil` is no longer a value of a slice, `string_view`, `typeid`,
+  `Allocator`, `Allocator_Error`, or `weak(T)` (`L0310`), and slices no
+  longer compare with `nil`. Each of these types' zero is written `{}`, as for
+  every other type, so write `xs: []int = {}` and `buffer: []mut u8 = {}`,
+  and test emptiness with `xs.len() == 0`. `{}` at a slice type, formerly
+  `L0479`, is the empty view.
+- `type_info_of` is total: the zero `typeid` and an unknown id answer the
+  entry whose kind is `Invalid` instead of `nil`. Test `info.kind ==
+  .Invalid` where code tested `info == nil`.
+
 - An owner made from a temporary provider, as
   `make([dynamic]int, 0, 1, mem.Arena.init().allocator())`, cannot outlive
   the statement that made the provider (`L0537`); it used to be accepted and

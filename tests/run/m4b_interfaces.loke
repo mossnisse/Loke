@@ -44,7 +44,7 @@ main :: proc() {
 	// A hypothetical call must not commit an instance with its typeid request
 	// suppressed. No other expression requests this record's runtime identity.
 	static_assert(Has_Identity(Identity_Record));
-	assert(identity(Identity_Record{1}) != nil);
+	assert(identity(Identity_Record{1}) != typeid{});
 	static_assert(Additive(int));
 	static_assert(Additive(f64));
 	static_assert(!Additive(bool));

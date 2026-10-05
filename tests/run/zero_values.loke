@@ -1,0 +1,44 @@
+package main;
+import "core:fmt";
+
+// design.md "Zero values": every type but a reference's is zero as `{}`, and
+// that zero supports every operation the type has. `nil` is no longer one of
+// these values (open-questions.md "Non-null references and explicit allocation
+// owners", stage 2).
+
+// The empty view is a constant, so returning it borrows nothing local, unlike
+// a slice literal's hidden array (design.md "Empty slices").
+none :: proc() -> []int { return {}; }
+
+total :: proc(xs: []int = {}) -> int {
+	n := 0;
+	foreach (x in xs) { n += x; }
+	return n;
+}
+
+main :: proc() {
+	s: []int = {};
+	m: []mut int = {};
+	v: string_view = {};
+	fmt.println(s.len(), m.len(), v.len(), none().len(), total(), total([]int{1, 2}));
+	fmt.println(s, v.len() == 0);
+
+	// The zero `typeid` has the `Invalid` entry rather than none.
+	id: typeid = {};
+	info := type_info_of(id);
+	fmt.println(int(info.kind), info.size, info.name.len(), id == typeid{});
+
+	// The zero allocator is the default provider; the zero error is no failure.
+	a: Allocator = {};
+	xs: [dynamic]int via a = {};
+	xs.append(4);
+	e: Allocator_Error = {};
+	fmt.println(xs, a == Allocator{}, e == Allocator_Error{});
+
+	// An empty weak handle upgrades to nothing.
+	w: weak(int) = {};
+	switch (w.upgrade()) {
+	case .some: fmt.println("upgraded");
+	case .none: fmt.println("none");
+	}
+}

@@ -99,7 +99,7 @@ exchange_under_a_borrow :: proc() {
 
 // A borrow may not be used after the root it names has ended.
 borrow_outlives_its_root :: proc() {
-	view: []int = nil;
+	view: []int = {};
 	{
 		local := [3]int{1, 2, 3};
 		view = local[:];

@@ -1,9 +1,11 @@
 package main;
 
-// design.md "Nil slices": a slice and a dynamic interface value compare against
-// `nil` and nothing else. The rule is about the type, not about the position it
-// is written in, so burying one in a struct field must not make the whole
-// record comparable — a field-wise comparison there would compare addresses.
+// design.md "Comparison operators": a dynamic interface value compares against
+// `nil` and nothing else, and a slice compares with nothing, not even `nil`
+// (design.md "Empty slices"). The rule is about the type, not about the
+// position it is written in, so burying one in a struct field must not make the
+// whole record comparable — a field-wise comparison there would compare
+// addresses.
 
 Sized :: interface($Self: type) {
 	slot size: proc(self) -> int;
@@ -21,7 +23,7 @@ main :: proc() {
 	a := [2]int{1, 2};
 	b := [2]int{1, 2};
 
-	// Against `nil` both ways: accepted.
+	// Against `nil`: accepted for a dyn, rejected for a slice.
 	p: []mut int = &mut a[:];
 	if (p == nil) { }
 	if (nil != p) { }

@@ -69,7 +69,7 @@ extract_a_local :: proc() -> []int {
 	choice: Choice = .held(Holder{local[:]});
 	switch (value in choice) {
 	case .held:   return value.view;
-	case .number: return nil;
+	case .number: return {};
 	}
 }
 
@@ -80,7 +80,7 @@ iterate_a_local :: proc() -> []int {
 	foreach (h in holders) {
 		return h.view;
 	}
-	return nil;
+	return {};
 }
 
 // A helper returning one field substitutes that field's root at the caller, so
@@ -108,7 +108,7 @@ map_from_a_local :: proc() -> []int {
 	table["a"] = Holder{numbers[:]};
 	switch (held in table.lookup_value("a")) {
 	case .some: return held.view;
-	case .none: return nil;
+	case .none: return {};
 	}
 }
 
@@ -163,7 +163,7 @@ pop_a_local :: proc() -> []int {
 	holders.append(Holder{local[:]});
 	switch (held in holders.pop()) {
 	case .some: return held.view;
-	case .none: return nil;
+	case .none: return {};
 	}
 }
 
@@ -252,7 +252,7 @@ variant_switch_read :: proc() -> []int {
 	choice: Choice = .held(Holder{local[:]});
 	switch (held in choice) {
 	case .held:   return held.view;
-	case .number: return nil;
+	case .number: return {};
 	}
 }
 
@@ -260,7 +260,7 @@ consumed_variant_switch_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	switch (held in Choice.held(Holder{local[:]})) {
 	case .held:   return held.view;
-	case .number: return nil;
+	case .number: return {};
 	}
 }
 
@@ -310,7 +310,7 @@ erased_extraction_read :: proc() -> []int {
 	erased: any_view = held;
 	switch (value in erased.as(Holder)) {
 	case .some: return value.view;
-	case .none: return nil;
+	case .none: return {};
 	}
 }
 
@@ -399,7 +399,7 @@ union_result_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
 	switch (outer in union_result(values, local[:])) {
 	case .outer:  return outer.pair.right;
-	case .number: return nil;
+	case .number: return {};
 	}
 }
 

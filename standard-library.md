@@ -289,7 +289,7 @@ Core helpers:
 ```odin
 Line_Options :: struct { keep_ending: bool }
 
-copy(destination, source, buffer: []mut u8 = nil) -> Result(u64, Error)
+copy(destination, source, buffer: []mut u8 = {}) -> Result(u64, Error)
 read_exact(reader, destination) -> Result(Unit, Error)
 read_to_end(reader, allocator: Allocator = mem.default_allocator(),
 	limit: int = 0) -> Result([dynamic]u8, Error)
@@ -301,9 +301,8 @@ read_line(reader, allocator: Allocator = mem.default_allocator(),
 
 Every default argument names a type. `{}` takes its type from context and `:=`
 infers from the expression, so `options := {}` has no type at all; a parameter
-default for a zero value must be written `name: T = {}`. A *slice* default is
-`= nil` rather than `= {}`, because `{}` at a slice type is a slice literal and
-must be written with its type.
+default for a zero value must be written `name: T = {}`, a slice's empty
+view included.
 
 A `limit` of zero or less means no library-imposed limit. A positive limit
 prevents an untrusted stream from causing unbounded allocation. An input that

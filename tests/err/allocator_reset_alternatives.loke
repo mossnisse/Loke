@@ -12,7 +12,7 @@ extracted :: proc(@(allocator_reset) allowed: Allocator, erased: any_view) {
 }
 
 defaulted :: proc(@(allocator_reset) allowed: Allocator, flag: bool) {
-	selected := allowed if flag else nil;
+	selected := allowed if flag else Allocator{};
 	free_all(selected);
 }
 

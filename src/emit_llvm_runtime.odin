@@ -1234,14 +1234,12 @@ named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]st
 	return strings.to_string(b)
 }
 
-// design.md: a nil, out-of-range, or forged id gives nil.
+// design.md "`type` and `typeid`": the zero, an out-of-range, or a forged id
+// gives the `Invalid` entry, which is entry 0.
 @(private)
 emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
-	safe, bad := typeid_index(e, emit_expr(e, v.bound[0]), TYPE_INFO_COUNT)
-	address := gep_at(e, struct_name(e, e.c.runtime_types["Type_Info"]), TYPE_INFO_TABLE, safe)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr null, ptr %s", out, bad, address)
-	return out
+	safe, _ := typeid_index(e, emit_expr(e, v.bound[0]), TYPE_INFO_COUNT)
+	return gep_at(e, struct_name(e, e.c.runtime_types["Type_Info"]), TYPE_INFO_TABLE, safe)
 }
 
 // `id` clamped into a table of `count` entries: a nil or out-of-range id maps to

@@ -17,7 +17,7 @@ read_noisy :: proc(value: ^Noisy) -> int { return value.id; }
 
 count_allocator :: proc(count: ^mut int) -> Allocator {
 	count^ += 1;
-	return nil;
+	return {};
 }
 
 compute :: proc() -> int {

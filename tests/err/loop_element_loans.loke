@@ -36,7 +36,7 @@ lent_view :: proc() -> int {
 escaping_view :: proc() -> int {
 	boxes := [dynamic]Box{};
 	boxes.append(Box{[dynamic]int{1, 2}});
-	saved: []int = nil;
+	saved: []int = {};
 	foreach (b in boxes) { saved = b.view(); }
 	boxes.clear();
 	return saved[0];

@@ -16,7 +16,7 @@ main :: proc() {
 	back: []mut int = readable;
 	converted := ([]mut int)(readable);
 
-	// Slices compare against nil and nothing else.
+	// Slices are not comparable (design.md "Empty slices").
 	other: []int = data[:];
 	if (readable == other) {
 		fmt.println(1);
@@ -40,7 +40,7 @@ main :: proc() {
 	view[0] = 4;
 
 	// A slice literal is written with its type, never inferred from the
-	// destination.
+	// destination; only `{}`, the empty view, needs none.
 	inferred: []int = {1, 2};
 
 	fmt.println(mutable.len());

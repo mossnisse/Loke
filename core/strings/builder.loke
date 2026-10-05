@@ -16,8 +16,8 @@ import "core:mem";
 // bytes that are not text wants a `[dynamic]u8`, not this.
 String_Builder :: struct {
 	@(private) data: [dynamic]u8,
-	// nil until `init` selects one, which is what keeps the zero value a
-	// constant. `finish` resolves it the same way the container does.
+	// The zero `Allocator`, the default provider, until `init` selects one,
+	// which is what keeps the zero value a constant.
 	@(private) allocator: Allocator,
 }
 
@@ -125,8 +125,7 @@ impl String_Builder {
 		// Unreachable through the public surface, which never admits a partial
 		// rune. The diverging fallback is a guard, not a policy.
 		view := string_view.from_utf8(self.data[:]) or_else panic("String_Builder holds invalid UTF-8");
-		selected := mem.default_allocator() if allocator == nil else allocator;
-		return allocate_string(view, selected);
+		return allocate_string(view, allocator);
 	}
 }
 

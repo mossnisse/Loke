@@ -245,7 +245,7 @@ read_to_end :: proc(
 // one -- a caller who needs that owns the loop and calls `read` and `write_all`
 // itself.
 copy :: proc(
-	destination: inout $W, source: inout $R, buffer: []mut u8 = nil,
+	destination: inout $W, source: inout $R, buffer: []mut u8 = {},
 ) -> Result(u64, Error) where Writer(W), Reader(R) {
 	own: [CHUNK]u8 = {};
 	window := buffer if buffer.len() > 0 else &mut own[:];

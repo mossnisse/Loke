@@ -23,7 +23,7 @@ loggers: static int = 0;
 written: static int = 0;
 
 @(private)
-fallback: static Allocator = nil;
+fallback: static Allocator = {};
 
 allocator_factory :: proc() -> Allocator {
 	allocators += 1;
