@@ -724,6 +724,38 @@ header from unrelated bits and later pass an invalid pointer to `drop`.
 low-level work, and the checked extraction that does exist — `view.(T)` on an
 `any_view`, where the set of types is open — traps rather than guessing.
 
+### Nominal conformance declarations
+
+An `implements Drawable(Circle);` declaration was proposed and rejected. With no
+semantic force it is only a second spelling of `static_assert(Drawable(Circle));`
+while suggesting a nominal relationship the language does not create. The
+structural interface model is complete without it, and a file-scope assertion
+stays a check rather than a registry.
+
+Reconsider it only as a proposal in which it *has* force. That proposal must
+define ownership and orphan rules, coherence, generic and conditional
+conformances, conformances for built-in types, compatibility with existing
+structural code, and whether a claim gates static satisfaction or only `dyn`
+witness construction.
+
+### A `()` unit type
+
+`()` is not a type. The library's `Unit :: struct {}` already covers
+`Result(Unit, E)`, and the product, call-matching, and one-result work all
+shipped without a second spelling for one zero-sized type. Reopen it if a second
+zero-sized use appears that `Unit` serves badly.
+
+### Reviving a variable without a write
+
+`core:unsafe` has no operation that makes a dead variable live without writing
+a value into it. A full assignment already revives one (see
+[Assignment statements](design.md#assignment-statements)), and
+[`unsafe.forget`](design.md#unsafeforget) covers the opposite direction. Liveness
+is a compile-time property, so a definitely-live or definitely-dead variable
+costs nothing at runtime. Only a conditionally live one keeps a hidden drop
+flag, and the operation would only let a programmer delete that flag and its
+branch. No program has shown the flag mattering; reopen this when one does.
+
 ## Changed features
 
 ### Reading a carrier under a read-only reborrow

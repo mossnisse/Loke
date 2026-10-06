@@ -29,15 +29,6 @@ Decided so far, and built as `loke.project` (readme.md "Projects"):
   version, immutable commit ID, and content checksum for every dependency, as
   planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
 
-## Roadmap review (2026-10-03)
-
-Both findings are accepted into the roadmap, with implementation and regression
-work still pending: [Packages and dependencies](future-plans.md#packages-and-dependencies)
-requires immutable revisions and a moved-tag regression;
-[Self-hosting](future-plans.md#self-hosting) requires a third bootstrap stage,
-stage-2/stage-3 artifact comparison, and repeated clean builds. These are planned
-acceptance criteria, not claims that either feature has shipped.
-
 ## package header files
 
 I am not happy with the package level encapsulation, one idea is
@@ -60,10 +51,6 @@ The pair costs a type author nothing. Both names are generated from the single `
 And the policy-following half is load-bearing rather than convenient. Copy assignment of a copyable type is *defined* as `try_clone` plus the [allocation failure policy](design.md#allocation-failure), and [`Cloneable`](design.md#standard-interface-catalogue) names the fallible slot, so both halves already have language-level jobs. Deleting `clone` would not remove the policy call, only move it to every call site that copies. A container `try_op` carries no equivalent obligation, which is what leaves the container pair the live half of the question.
 
 The allocation built-ins are a third instance, and they keep the pair: `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The allocation built-ins follow the `try_` convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
-
-## `()` as a type category
-
-Is `()` a new zero-sized type category, or the anonymous spelling of an already-legal empty struct? The shipped `Unit :: struct {}` already covers `Result(Unit, E)`, so a second spelling for one type buys nothing yet, and the product, call-matching, and one-result work all shipped without it. The question only becomes live if a second zero-sized use appears.
 
 ## Unnamed record fields, and records versus structs
 
@@ -166,47 +153,6 @@ rule, and a normative slot-flattening order for a consumer that did not exist.
 Whichever way the question above is answered, the primitive comes back with the
 owner that needs it.
 
-## Marking a dead variable live
-
-Should `core:unsafe` gain an operation that tells the checker a dead variable is
-live again, without writing a value into it?
-
-Two thirds of the original question have since been answered. Reviving a dead
-variable is already possible and already cheap: a full assignment completes an
-initialization and makes the variable live, so `a = [dynamic]int{7, 8}` after a
-`move(a)` is the supported spelling (see
-[Assignment statements](design.md#assignment-statements) and
-[Managed values and storage](design.md#managed-values-and-storage)). The
-opposite direction shipped too — [`unsafe.forget`](design.md#unsafeforget) makes
-a live owner dead without running its cleanup. What is missing is only the
-combination of the two: becoming live again *without* the write.
-
-The optimization motivation is narrower than it looks. Liveness is a
-compile-time property and "does not add storage to ordinary variables", so a
-definitely-live or definitely-dead variable costs nothing at runtime and has
-nothing to remove. Only the *conditionally* live case can cost anything: the
-specification permits the compiler to preserve that state however it likes, and
-today it emits a hidden `i1` drop flag, set when a variable is conditionally
-assigned or dead on one exit path. So the entire surface of this question is
-letting a programmer assert that such a variable is definitely one state or the
-other, and thereby delete one flag and the branch that reads it. No corpus
-program has yet shown that flag mattering.
-
-The package charter is no longer an objection. `core:unsafe` was scoped to
-operations that "discard or manufacture provenance"; `unsafe.take` and
-`unsafe.write` are liveness operations and live there, so the charter now reads
-"provenance, or a liveness the compiler cannot see" — which is what `forget`
-always was. What is left is only whether the flag this would remove is worth a
-member, and no corpus program has yet shown one mattering.
-
-The `unsafe.Maybe_Uninit(T)` half of that precedent is settled. The
-implementation need appeared — `Small_Array(T, N)` could not hold an element
-with no zero value, while `[dynamic]T` could — and it was answered by
-[`@(initialized = count)`](design.md#uninitialized-capacity) plus that pair of
-operations, rather than by a wrapper type. A container's storage stays `[N]T`,
-so it still yields a contiguous `[]T`, and the count it already keeps is what
-bounds the generated copy and drop.
-
 ## Concurrency refinements
 
 The current [memory model](design.md#concurrency-and-the-memory-model) defines data races, atomics, transfer between threads, and `shared(T)`. Experience with a real concurrent runtime should determine whether later versions need compiler-checked `Send` or `Sync` interfaces, additional atomic orderings, or a thread-affine owning type for code that wants non-atomic reference counts.
@@ -289,20 +235,6 @@ Encapsulation and abstractions must still be important so they can work on an pa
 ## garbage collection
 
 add an garbage collected allocator as an alternative?
-
-## Nominal conformance
-
-An `implements Drawable(Circle);` declaration was proposed and rejected. With no
-semantic force it is only a second spelling of `static_assert(Drawable(Circle));`
-while suggesting a nominal relationship the language does not create. The
-structural interface model is complete without it.
-
-It should be reconsidered only as a proposal in which it *has* force. That
-proposal must define ownership and orphan rules, coherence, generic and
-conditional conformances, conformances for built-in types, compatibility with
-existing structural code, and whether a claim gates static satisfaction or only
-`dyn` witness construction. Until then satisfaction stays structural, and a
-file-scope assertion stays a check rather than a registry.
 
 ## Printed form of built-in types
 
@@ -841,26 +773,3 @@ main :: proc() { _ = first(0..<2); }
 Resolve the document conflict deliberately, preferably in favor of ordinary
 chained associated types, and add a grammar regression with that decision.
 Do not advertise this as a missing compiler feature: the probe already works.
-
-Validation performed for this review:
-
-- Rebuilt `lokec.exe` from the workspace with Odin's unused/shadowing vet flags.
-- Compiled the nil, uninitialized-read, implicit-hook, invalid initialized-count,
-  overwritten-result, and chained-associated-type probes to LLVM IR. The
-  potentially invalid memory programs were not executed.
-- Confirmed rejection of repeated read reborrows, simultaneous mutable split
-  slices, and fallible insertion of a move-only temporary.
-- Built and ran the slice-capability and pointer-layout/conversion probes.
-  Observed 8/16-byte pointer/optional sizes and wrapping runtime conversions.
-  Confirmed that the corresponding out-of-range unfixed literal conversions
-  are rejected.
-- Built and ran the existing last-use-transfer example and observed its
-  copy-hook and cleanup trace.
-- Ran the specification citation checker, checked local file links in the
-  edited documents, and ran `git diff --check`; all passed.
-
-These are focused design checks, not the complete integration suite, and no
-optimization-speed or allocation-count measurements were taken. Apart from
-the grammar/document conflict above, the highlighted accepted/rejected cases
-follow the current specification. They are proposed changes to its promises,
-not claimed fixes to undocumented compiler behavior.
