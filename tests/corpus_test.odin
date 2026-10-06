@@ -65,6 +65,8 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 
+import "../src/subprocess"
+
 LOKEC_DEFAULT :: "lokec.exe"
 TMP :: "tests/tmp"
 
@@ -83,73 +85,9 @@ launch_path :: proc(path: string) -> string {
 	return filepath.join({cwd, path}, context.temp_allocator)
 }
 
-// `os2.process_exec`, but idle while the child runs. The core one polls its pipes
-// in a loop with no pause, so every process the harness waits on held a whole
-// core, and the parallel corpora starved the very compiles they were waiting for.
-// Every launch in the harness goes through here.
-@(private)
-exec :: proc(
-	desc: os2.Process_Desc,
-	allocator: runtime.Allocator,
-) -> (
-	state: os2.Process_State,
-	stdout, stderr: []byte,
-	err: os2.Error,
-) {
-	stdout_r, stdout_w := os2.pipe() or_return
-	defer os2.close(stdout_r)
-	stderr_r, stderr_w := os2.pipe() or_return
-	defer os2.close(stderr_r)
-	process: os2.Process
-	{
-		// Our copies of the write ends must close, or the reads never see EOF.
-		defer os2.close(stdout_w)
-		defer os2.close(stderr_w)
-		desc := desc
-		desc.stdout, desc.stderr = stdout_w, stderr_w
-		process = os2.process_start(desc) or_return
-	}
-
-	out := make([dynamic]byte, allocator)
-	errs := make([dynamic]byte, allocator)
-	out_done, errs_done: bool
-	for err == nil && !(out_done && errs_done) {
-		got_out, got_errs: bool
-		got_out, err = drain(stdout_r, &out, &out_done)
-		if err == nil {
-			got_errs, err = drain(stderr_r, &errs, &errs_done)
-		}
-		if !got_out && !got_errs {
-			time.sleep(time.Millisecond)
-		}
-	}
-	stdout, stderr = out[:], errs[:]
-	if err != nil {
-		_ = os2.process_kill(process)
-	}
-	state, _ = os2.process_wait(process)
-	return
-}
-
-// One read from `pipe` if it holds anything; `done` once the writer is gone.
-@(private = "file")
-drain :: proc(pipe: ^os2.File, into: ^[dynamic]byte, done: ^bool) -> (got: bool, err: os2.Error) {
-	if done^ {
-		return false, nil
-	}
-	buf: [4096]byte
-	n := 0
-	has_data: bool
-	has_data, err = os2.pipe_has_data(pipe)
-	if has_data {
-		n, err = os2.read(pipe, buf[:])
-	}
-	if err == .EOF || err == .Broken_Pipe {
-		done^, err = true, nil
-	}
-	append(into, ..buf[:n])
-	return n > 0, err
-}
+// Every launch in the harness goes through here, so none of them holds a core
+// while it waits.
+exec :: subprocess.run
 
 @(private)
 compiler_path :: proc() -> string {

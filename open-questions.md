@@ -344,14 +344,6 @@ rather than a wrong answer; the wrong answers it found are in
   `rhs_clones`) and reports copy costs, so the disposable view writes
   annotations the backend reads. Should topology construction be separated from
   the per-mode consumers?
-- **Keep one copy of process waiting when that code next changes.**
-  `run_process`/`drain` in
-  [src/emit_llvm_toolchain.odin](src/emit_llvm_toolchain.odin) and `exec`/`drain`
-  in [tests/corpus_test.odin](tests/corpus_test.odin) duplicate roughly 65 lines
-  of pipe draining and process waiting. A shared internal helper can remove
-  one copy, less package/import overhead, without adding a dependency. The
-  documented busy-loop behavior is a reason to retain the current waiting
-  semantics, not to substitute `os2.process_exec` blindly.
 
 The completed audit and its decisions are recorded in
 [comments.md "Compiler architecture audit (2026-09-28)"](comments.md#compiler-architecture-audit-2026-09-28).

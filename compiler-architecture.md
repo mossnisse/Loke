@@ -743,6 +743,7 @@ be file-private.
 | `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
 | `emit_llvm_debug.odin` | `-g`: procedure, statement, scope, and local markers, turned into `!dbg` attachments, `llvm.dbg.declare` calls, and debug metadata once the module is complete, and the natvis rules the linker puts in the PDB. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |
+| `subprocess/subprocess.odin` | `subprocess.run`, which waits on a child without polling its pipes in a busy loop; the test harness imports it too. |
 
 `emit_llvm_module` is an artifact boundary: it consumes a checked compilation
 and returns module text in memory. It creates no types or symbols; the only
