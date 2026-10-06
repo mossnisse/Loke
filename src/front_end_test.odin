@@ -300,34 +300,18 @@ main :: proc() {
 }
 
 // Only committed emission state: type interning, signature instances, and other
-// semantic caches may grow while answering a hypothetical requirement.
+// semantic caches may grow while answering a hypothetical requirement. Every
+// `end_probe` checks the shared registries; this fixture also holds its probes'
+// synthesized members to it.
 @(private = "file")
 Probe_Emission_State :: struct {
-	typeids, typeid_order:                   int,
-	witnesses, witness_order:                int,
-	materialized, materialized_order:        int,
-	instances, checked_bodies, static_locals: int,
-	synth_procs:                             int,
-	format_requested, type_info_requested:   bool,
+	using registries: Emission_Registries,
+	synth_procs:      int,
 }
 
 @(private = "file")
 probe_emission_state :: proc(c: ^Compiler) -> Probe_Emission_State {
-	state := Probe_Emission_State {
-		typeids             = len(c.typeid_requested),
-		typeid_order        = len(c.typeid_order),
-		witnesses           = len(c.witnesses),
-		witness_order       = len(c.witness_order),
-		materialized        = len(c.materialized),
-		materialized_order  = len(c.materialized_order),
-		checked_bodies      = len(c.checked_bodies),
-		static_locals       = len(c.static_locals),
-		synth_procs         = len(c.synth_procs),
-		format_requested    = c.format_requested,
-		type_info_requested = c.type_info_requested,
-	}
-	for pkg in c.packages { state.instances += len(pkg.instances) }
-	return state
+	return {registries = emission_registries(c), synth_procs = len(c.synth_procs)}
 }
 
 @(test)

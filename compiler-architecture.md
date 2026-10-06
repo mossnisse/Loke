@@ -528,7 +528,12 @@ locals, materialized globals, type IDs, the format and type-info requests),
 report-once caches (map-key and sort-order policies, validated attributes,
 runtime types), and the last-use annotations the backend reads. A rollback
 outside speculation would let a cache record a report that no longer exists.
-`test-all.ps1` rejects a read of `speculation_depth` outside `source.odin`. The
+`end_probe` asserts that the registries emission reads are no larger than when
+the probe began, unless a sanctioned commit (below) ran inside it, so a write
+that skips the gate fails in whichever corpus program reaches it. Synthesized
+members are outside that check: one a type creates is enrolled at once, even
+in a probe, and only `format` waits for a commit (open-questions.md "Open
+questions in the compiler's structure"). `test-all.ps1` rejects a read of `speculation_depth` outside `source.odin`. The
 one sanctioned commit from inside speculation is `ensure_proc_typed_for_eval`,
 which checks a body for compile-time execution between `begin_commit` and
 `end_commit`, at depth zero, and holds that body's diagnostics aside

@@ -674,6 +674,10 @@ unwind_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, exit:
 	if sym == nil || sym.kind != .Var || len(type_drop_hooks(graph.k.c, sym.type)) == 0 {
 		return
 	}
+	// A view such as a `&` loop element owns nothing, so an unwind drops nothing.
+	if sym.borrowed_binding != .None {
+		return
+	}
 	key := Reset_Key{graph.literal, exit, id, graph.expansion}
 	if graph.mode == .Lifecycle {
 		graph.k.c.cleanup_reset_dead[key] = {}
@@ -681,7 +685,8 @@ unwind_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, exit:
 		return
 	}
 	live, found := graph.k.c.cleanup_reset_dead[key]
-	if !found || !live.reached || slice.contains(live.dead, id) {
+	assert(found, "the provenance walk reached an unwind drop the lifecycle walk did not")
+	if !live.reached || slice.contains(live.dead, id) {
 		return
 	}
 	prov_drop_effects(graph, sym.type, span, identifier_text(graph.k.c, sym.name))

@@ -95,6 +95,9 @@ Compiler :: struct {
 	// the ordinary checker, but must not enroll backend artifacts in the final
 	// module. Nested checks share this counter so every registry has one gate.
 	speculation_depth: int,
+	// How many `begin_commit`s have run, so a probe can tell its own enrollment
+	// from a sanctioned commit inside it.
+	commits:           int,
 
 	// The widths `int`, `uint`, `uintptr` and every pointer take. Checker and
 	// emitter read this one record so they cannot disagree.
@@ -542,18 +545,55 @@ truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 // A hypothetical check (compiler-architecture.md "Checking and overload
 // resolution"): `begin_probe` raises `speculation_depth` and marks the
 // diagnostics, and `end_probe` rolls them back, unless `keep`, before lowering
-// the depth again, so a rollback never happens outside speculation.
+// the depth again, so a rollback never happens outside speculation. A probe
+// that grew the emission registries without a `begin_commit` skipped the
+// `committing(c)` gate somewhere, and fails here.
 Probe :: struct {
-	diagnostics, depth: int,
+	diagnostics, depth, commits: int,
+	registries:                  Emission_Registries,
+}
+
+// The sizes of the registries emission reads. `synth_procs` is left out: a
+// member a type synthesizes is enrolled when it is created, even inside a probe
+// (open-questions.md "Open questions in the compiler's structure").
+Emission_Registries :: struct {
+	typeids, typeid_order, witnesses, witness_order: int,
+	materialized, materialized_order:                int,
+	instances, checked_bodies, static_locals:        int,
+	format_requested, type_info_requested:           bool,
+}
+
+emission_registries :: proc(c: ^Compiler) -> Emission_Registries {
+	r := Emission_Registries {
+		typeids             = len(c.typeid_requested),
+		typeid_order        = len(c.typeid_order),
+		witnesses           = len(c.witnesses),
+		witness_order       = len(c.witness_order),
+		materialized        = len(c.materialized),
+		materialized_order  = len(c.materialized_order),
+		checked_bodies      = len(c.checked_bodies),
+		static_locals       = len(c.static_locals),
+		format_requested    = c.format_requested,
+		type_info_requested = c.type_info_requested,
+	}
+	for pkg in c.packages { r.instances += len(pkg.instances) }
+	return r
 }
 
 begin_probe :: proc(c: ^Compiler) -> Probe {
 	c.speculation_depth += 1
-	return Probe{diagnostics = len(c.diagnostics), depth = c.speculation_depth}
+	return Probe {
+		diagnostics = len(c.diagnostics),
+		depth       = c.speculation_depth,
+		commits     = c.commits,
+		registries  = emission_registries(c),
+	}
 }
 
 end_probe :: proc(c: ^Compiler, probe: Probe, keep := false) {
 	assert(c.speculation_depth == probe.depth, "a probe ended out of order")
+	assert(c.commits != probe.commits || emission_registries(c) == probe.registries,
+	       "a probe enrolled emission state without asking committing(c)")
 	if !keep {
 		truncate_diagnostics(c, probe.diagnostics)
 	}
@@ -574,6 +614,7 @@ committing :: proc(c: ^Compiler) -> bool {
 begin_commit :: proc(c: ^Compiler) -> (saved: int) {
 	saved = c.speculation_depth
 	c.speculation_depth = 0
+	c.commits += 1
 	return
 }
 

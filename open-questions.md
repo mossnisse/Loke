@@ -304,6 +304,30 @@ rather than a wrong answer; the wrong answers it found are in
   The remaining structural question is whether registry writes should be
   journaled for rollback, or probes should stop before body-level work, rather
   than requiring each write to use the gate.
+
+  *Assessment (2026-10-06): neither.* A journal needs each registry write to
+  record its undo, which is the same per-write discipline as the gate, and it
+  would also have to tell enrollment from caches that must outlive a probe
+  (interned types, signature instances, synthesized members). Stopping before
+  body-level work changes what a requirement means: an interface requirement
+  may hold a procedure literal whose body decides it, and a `where` bound runs
+  bodies at compile time, which `begin_commit` already allows. What was
+  missing was detection, which `end_probe` now provides: it compares the
+  emission registries with their sizes when the probe began, so every probe in
+  every corpus checks the gate. That check found the next item, and leaves
+  `synth_procs` out until it is settled.
+- **Synthesized members enroll during probes.** `synth_proc` appends to
+  `synth_procs` when it creates a member, and so does the `dyn` forwarder
+  construction in `erased.odin`; neither asks `committing(c)`. Only `format`
+  waits for a commit (`Format_Enrolled`). Before `end_probe` left them out,
+  `examples/greeting.loke` enrolled a `dyn` forwarder and
+  `examples/shapes.loke` a standard `hash` inside a probe. The emission
+  contract accepts them, and they are emitted even when nothing that commits
+  uses them. Either record that a member attached to a type enrolls when it is
+  created, as interning the type does, and drop the gate from the list of
+  "Checking and overload resolution"; or give each such member `format`'s
+  enroll-on-commit flag and add `synth_procs` to the `end_probe` check. The
+  first is smaller; the second matches what that section promises.
 - **Lifecycle and provenance meet through shared keys.** The dead owners at
   each reset point reach the provenance walk through `reset_dead` and
   `cleanup_reset_dead`, keyed by a `Reset_Key` both walks build alike: the
@@ -312,6 +336,15 @@ rather than a wrong answer; the wrong answers it found are in
   does not find is an assertion failure rather than "nothing to check". The
   coupling remains: should liveness at reset points be solved on the provenance
   graph, which already has the topology?
+
+  *Assessment (2026-10-06): keep the keys.* The provenance walk reads liveness
+  while it builds (whether an unwind drops a local, which owners block a
+  reset), so solving it on the provenance graph would need lifecycle's events
+  in every mode and a second phase that resolves reset events after the solve.
+  Lifecycle would still run first, because `settle_last_uses` rewrites the
+  syntax the provenance walk reads, so liveness would be solved twice per body
+  and again per summary round and region pass. The keys agree because one walk
+  builds both graphs (next item).
 - **One graph builder serves three modes.** The provenance modes' state is a
   `Prov_State` that a lifecycle graph does not have, but one walk in `cfg.odin`
   still builds every mode's topology and events, branching on the mode, because
@@ -320,6 +353,26 @@ rather than a wrong answer; the wrong answers it found are in
   `rhs_clones`) and reports copy costs, so the disposable view writes
   annotations the backend reads. Should topology construction be separated from
   the per-mode consumers?
+
+  *Assessment (2026-10-06): keep one walk; move the copy decisions instead.*
+  Blocks begin inside expressions (`&&`, `or_else`, the unwind branch before
+  each statement, each `defer` expansion), and the provenance walk returns
+  loans from every expression, so separate topology would be a recorded list
+  of event sites per block: the IR the audit declined. The mode branches sit
+  at the same syntax position in both modes, which is why the graphs agree and
+  the reset keys line up; two walkers would make that agreement a convention.
+  The narrower problem is real, though. `classify_declaration_copies`,
+  `classify_assignment_copies`, and the walk's `report_copy_cost` calls read
+  only checker annotations and whether the statement is in a loop, which the
+  checker tracks as `loop_depth`; the checker already reports other copy
+  costs. Called from the checker, they would run once per declaration rather
+  than once per `defer` expansion, and the lifecycle walk would write only its
+  own results: last-use moves, liveness, and cleanup slots. One catch: an
+  allocating copy's report is held until the body's last-use transfer, and a
+  nested procedure literal is analysed, flushing `held_copy_reports`, while
+  its enclosing body is still being checked. Classified by the checker, the
+  enclosing body's reports would need to be held per body, for example in
+  `Body_Context`.
 
 The completed audit and its decisions are recorded in
 [comments.md "Compiler architecture audit (2026-09-28)"](comments.md#compiler-architecture-audit-2026-09-28).
