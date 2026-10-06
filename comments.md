@@ -1530,8 +1530,7 @@ generics, ownership, emission, runtime interface, and test harnesses. Its
 corrective findings A1–A10 have since been addressed. Their original priority
 order is no longer a work list; the current contracts are in
 [compiler-architecture.md](compiler-architecture.md), and the remaining
-structural questions are in
-[open-questions.md](open-questions.md#open-questions-in-the-compilers-structure).
+structural questions were settled in a follow-up review, below.
 
 The review favored enforcing the existing phase boundaries over adding an IR
 or splitting the compiler into packages. Stable IDs, arena ownership, one
@@ -1583,3 +1582,30 @@ names, every name, or pattern layers. A shared enumeration would have made
 them all descend everywhere. Making `first_unresolved_name` exhaustive found
 that it skipped anonymous-record field types and `move`
 ([tests/run/when_anonymous_record_condition.loke](tests/run/when_anonymous_record_condition.loke)).
+
+A follow-up review (2026-10-06) settled the three structural questions the
+audit left open:
+
+- **Probes keep the `committing(c)` gate.** Journaling registry writes for
+  rollback needs the same discipline at every write, and would have to tell
+  enrollment from caches that must outlive a probe. Stopping probes before
+  body-level work would change what a requirement means: an interface
+  requirement may hold a procedure literal whose body decides it, and a
+  `where` bound runs bodies at compile time. What was missing was detection,
+  so `end_probe` now asserts that the registries emission reads did not grow.
+  Its first run found synthesized members enrolled during probes; they now
+  enroll from the use that commits them (`enroll_synth`).
+- **Lifecycle and provenance keep their shared `Reset_Key`s.** The provenance
+  walk reads liveness while it builds, and lifecycle must still run first
+  because last-use transfer rewrites the syntax provenance walks, so solving
+  liveness on the provenance graph would solve it twice per body and again per
+  summary round and region pass. The keys agree because one walk builds both
+  graphs; a missing one is an assertion failure at every lookup.
+- **One walk keeps building every mode's graph.** Blocks begin inside
+  expressions, and the provenance walk returns loans from each one, so
+  separate topology would be a recorded list of event sites per block: the IR
+  this audit declined. The mode branches at one syntax position are what keep
+  the graphs, and so the reset keys, in agreement. The copy decisions the
+  lifecycle walk used to make moved to the checker instead, which already
+  made the others; a declaration in a `defer` is now classified once, not once
+  per expansion.

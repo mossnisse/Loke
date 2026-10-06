@@ -530,6 +530,10 @@ checklist.
 
 ### Fixed
 
+- A declaration that copies a place into a `via` destination, such as
+  `copy: [dynamic]int via arena.allocator() = list`, reports a use of an
+  allocator already moved or dropped (`L0500`). It compiled, and the program
+  failed at run time allocating from the dead allocator.
 - A chained associated type such as `S.Iterator.Item` is accepted in every
   type position, as design.md "Iteration protocol" uses it; it parsed only
   inside generic arguments. A chain that names no associated type is `L0306`.

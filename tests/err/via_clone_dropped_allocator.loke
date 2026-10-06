@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Variable declarations": a copy into a `via` destination allocates
+// through that allocator, so reading one already dropped is a use of it.
+
+main :: proc() {
+	arena := mem.Arena.init(mem.default_allocator());
+	list := [dynamic]int{1};
+	drop(arena);
+	copy: [dynamic]int via arena.allocator() = list;
+	fmt.println(list, copy);
+}

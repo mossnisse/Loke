@@ -348,6 +348,7 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 	}
 	value.clone_on_return = true
 	contribute_lifecycle_members(k, result)
+	report_copy_cost(k, .Return, expr_span(value.expr), value.expr, expr_base(value.expr).type)
 }
 
 // The variable a place expression is rooted in, or INVALID_SYMBOL for a
@@ -411,7 +412,7 @@ classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_S
 	if base == nil || base.type != type || base.erased_from != INVALID_TYPE {
 		return
 	}
-	report_copy_cost(k, site, expr_span(value), value, type, k.loop_depth > 0)
+	report_copy_cost(k, site, expr_span(value), value, type)
 }
 
 // Aggregate elements follow ordinary copy/transfer rules.
@@ -426,9 +427,9 @@ classify_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, 
 	v.element_clones[index] = true
 }
 
-classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
+classify_declaration_copies :: proc(k: ^Checker, d: ^Decl) {
 	if d.destructure.active {
-		classify_destructure(k, &d.destructure, d.values[0], in_loop)
+		classify_destructure(k, &d.destructure, d.values[0])
 		return
 	}
 	if d.kind == .Const || d.top_level || len(d.values) != len(d.symbols) {
@@ -441,7 +442,7 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
 			continue
 		}
 		if value != nil && expression_is_borrowed_place(value) {
-			report_copy_cost(k, .Binding, expr_span(value), value, sym.type, in_loop, Held_Copy_Report{decl = d, index = index})
+			report_copy_cost(k, .Binding, expr_span(value), value, sym.type, Held_Copy_Report{decl = d, index = index})
 		}
 		if !classify_copy(k, value, sym.type, .Binding) {
 			continue
@@ -454,7 +455,7 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
 	d.value_clones = clones
 }
 
-classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := false) {
+classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	if s.op != .Assign {
 		return // a compound assignment reads and writes one place, and copies nothing
 	}
@@ -465,7 +466,7 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 		}
 	}
 	if s.destructure.active {
-		classify_destructure(k, &s.destructure, s.rhs[0], in_loop)
+		classify_destructure(k, &s.destructure, s.rhs[0])
 		return
 	}
 	if len(s.rhs) != len(s.lhs) {
@@ -484,7 +485,7 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 			continue
 		}
 		if expression_is_borrowed_place(value) {
-			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, in_loop, Held_Copy_Report{assign = s, index = index})
+			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, Held_Copy_Report{assign = s, index = index})
 		}
 		if !classify_copy(k, value, base.type, .Assignment) {
 			continue
@@ -499,7 +500,7 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 
 // A place destructure clones each retained managed field.
 @(private = "file")
-classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr, in_loop: bool) {
+classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr) {
 	if !plan.from_place {
 		return // a temporary or a `move` transfers its fields; nothing is cloned
 	}
@@ -512,7 +513,7 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr, in_
 		if field == nil || !type_is_managed(k.c, field.type) {
 			continue
 		}
-		report_copy_cost(k, .Binding, expr_span(operand), operand, field.type, in_loop)
+		report_copy_cost(k, .Binding, expr_span(operand), operand, field.type)
 		if type_clone_disabled(k.c, field.type) {
 			errorf(
 				k.c, expr_span(operand), "L0503",
@@ -619,12 +620,13 @@ Held_Copy_Report :: struct {
 // inline bytes say nothing of what it duplicates; any other copy by the bytes
 // it duplicates. A `string` or `shared(T)` copy retains, and costs neither.
 report_copy_cost :: proc(
-	k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool,
+	k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id,
 	held := Held_Copy_Report{},
 ) {
 	if !k.c.copy_cost_enabled {
 		return
 	}
+	in_loop := k.loop_depth > 0
 	if clone_may_allocate(k.c, type) {
 		if held.decl == nil && held.assign == nil {
 			report_allocating_copy(k, site, span, source, in_loop)
@@ -694,12 +696,14 @@ report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source:
 	add_notef(k.c, no_span(), "write `.clone()` on it if the copy is intended")
 }
 
-// The held reports whose copies last-use transfer left copies. A deferred
-// declaration is classified at each expansion, so one site may be held twice.
+// The held reports, from `mark` on, whose copies last-use transfer left copies.
+// A nested procedure literal is analysed while its enclosing body is still being
+// checked, so each body flushes only what it held. A static `foreach` checks a
+// copy of its body per expansion, so one site may be held more than once.
 @(private = "file")
-flush_held_copy_reports :: proc(k: ^Checker) {
+flush_held_copy_reports :: proc(k: ^Checker, mark: int) {
 	reported := make(map[Span]bool, context.temp_allocator)
-	for held in k.c.held_copy_reports {
+	for held in k.c.held_copy_reports[mark:] {
 		clones := held.decl != nil ? held.decl.value_clones : held.assign.rhs_clones
 		if held.index >= len(clones) || !clones[held.index] || reported[held.span] {
 			continue
@@ -707,7 +711,7 @@ flush_held_copy_reports :: proc(k: ^Checker) {
 		reported[held.span] = true
 		report_allocating_copy(k, held.site, held.span, held.source, held.in_loop)
 	}
-	clear(&k.c.held_copy_reports)
+	resize(&k.c.held_copy_reports, mark)
 }
 
 // ------------------------------------------------------------- liveness --
@@ -726,13 +730,14 @@ join :: proc(a, b: Liveness) -> Liveness {
 }
 
 // One concrete body's answer, run after checking so every node carries its type
-// and every `defer` already has its slot.
-analyze_ownership :: proc(k: ^Checker, literal: ^Expr_Proc) {
+// and every `defer` already has its slot. `held` is how many copy reports were
+// held before this body.
+analyze_ownership :: proc(k: ^Checker, literal: ^Expr_Proc, held: int) {
 	// A nested literal is checked, and analysed, before the body containing it
 	// reaches here, so one reserved arena reset per body is enough.
 	defer free_all(k.c.analysis_allocator)
 	graph := build_flow_graph(k, literal)
-	defer flush_held_copy_reports(k)
+	defer flush_held_copy_reports(k, held)
 	if graph == nil {
 		return
 	}

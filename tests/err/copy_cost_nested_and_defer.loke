@@ -1,0 +1,29 @@
+package main; import "core:fmt";
+
+// design.md "Copy-cost diagnostics": copies are classified where they are
+// checked. A nested procedure literal is analysed while its enclosing body is
+// still being checked, and must not report the enclosing body's held copies
+// before last-use transfer settles them. A deferred copy is reported once, where
+// it is written, and not as a loop's even when a `return` in a loop runs it.
+
+nested :: proc() {
+	first := [dynamic]int{1};
+	second := first;                   // a move: nothing reads `first` again
+	helper := proc() { fmt.println("nested"); };
+	helper();
+	fmt.println(second);
+}
+
+deferred :: proc(flag: bool) {
+	first := [dynamic]int{1};
+	defer { copy := first; fmt.println(copy, first); }
+	for (i := 0; i < 2; i += 1) {
+		if (flag) { return; }
+	}
+}
+
+main :: proc() {
+	nested();
+	deferred(true);
+	missing: int = "not an int";
+}

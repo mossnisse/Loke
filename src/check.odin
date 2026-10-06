@@ -2428,6 +2428,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	k.body = {proc_literal = literal, result_type = symbol.result, result_inout = symbol.result_inout}
 
 	errors_before := k.c.error_count
+	held := len(k.c.held_copy_reports)
 	// Defaults were checked with the signature; the body only needs the names.
 	for parameter in literal.signature.params {
 		install_symbols(k.scope, k.c, parameter.symbols)
@@ -2435,7 +2436,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 
 	flow := check_block(k, literal.body)
 	// design.md "Managed values and storage": dataflow over the finished body.
-	analyze_ownership(k, literal)
+	analyze_ownership(k, literal, held)
 	// Provenance runs later, once every body's summary is settled. A probe's body
 	// is not part of the program, as its literal is not hoisted.
 	if committing(k.c) {
@@ -2585,6 +2586,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		// Local symbols do not exist during the package-wide attribute pass.
 		validate_decl_attributes(k, s, .Local)
 		check_decl(k, s)
+		classify_declaration_copies(k, s)
 		return FLOWS
 
 	case ^Stmt_Expr:
@@ -2605,6 +2607,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 
 	case ^Stmt_Assign:
 		check_assign(k, s)
+		classify_assignment_copies(k, s)
 		return FLOWS
 
 	case ^Stmt_If:

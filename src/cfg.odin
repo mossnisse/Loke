@@ -175,7 +175,6 @@ Flow_Graph :: struct {
 	scopes:         [dynamic]Flow_Scope,
 	// The `defer` body being walked, if any.
 	expansion:      Defer_Expansion,
-	loop_depth:     int,
 	// Where an abrupt exit lands, and how far down `in_scope` it unwinds.
 	break_block:    Block_Id,
 	continue_block: Block_Id,
@@ -1046,12 +1045,6 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 		}
 		if value := s.value; value != nil {
 			// Returning an owned local moves it into the result (design.md).
-			if value.clone_on_return {
-				report_copy_cost(
-					graph.k, .Return, expr_span(value.expr), value.expr,
-					expr_base(value.expr).type, graph.loop_depth > 0,
-				)
-			}
 			// Only a managed local transfers; a scalar is copied, so a deferred read
 			// still sees it (design.md "defer statement").
 			killed := false
@@ -1123,7 +1116,6 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		prov_declare(graph, d, value_loans)
 		return
 	}
-	classify_declaration_copies(graph.k, d, graph.loop_depth > 0)
 	for id, symbol_index in d.symbols {
 		sym := symbol_of(graph.k.c, id)
 		// Static storage is never dropped automatically (design.md).
@@ -1278,7 +1270,6 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		}
 		return
 	}
-	classify_assignment_copies(graph.k, s, graph.loop_depth > 0)
 	// design.md "Evaluation order": every destination is prepared before any
 	// write. A write through a field or element is a use of its root.
 	revived := make([]bool, len(s.lhs), graph.alloc)
@@ -1489,7 +1480,6 @@ walk_flow_loop_body :: proc(
 	outer_break_depth, outer_continue_depth := graph.break_depth, graph.continue_depth
 	graph.break_block, graph.continue_block = done, next
 	graph.break_depth, graph.continue_depth = len(graph.in_scope), len(graph.in_scope)
-	graph.loop_depth += 1
 	enter_flow_scope(graph)
 	if graph.mode != .Lifecycle {
 		add_foreach_ref_cleanups(graph, bindings, all_step_locals)
@@ -1498,7 +1488,6 @@ walk_flow_loop_body :: proc(
 	}
 	walk_flow_block(graph, body)
 	leave_flow_scope(graph)
-	graph.loop_depth -= 1
 	graph.break_block, graph.continue_block = outer_break, outer_continue
 	graph.break_depth, graph.continue_depth = outer_break_depth, outer_continue_depth
 }
@@ -1752,14 +1741,6 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		}
 		operand_loans := walk_flow_expr(graph, v.operand)
 		if v.op == .Or_Return {
-			// Either payload may be copied out of a place, so the report names
-			// the whole fallible union.
-			if !prov && v.borrows {
-				report_copy_cost(
-					graph.k, .Or_Return, expr_span(v.operand), v.operand,
-					expr_base(v.operand).type, graph.loop_depth > 0,
-				)
-			}
 			entry := graph.current
 			resume := new_flow_block(graph)
 			link(graph, entry, resume)
@@ -1915,11 +1896,6 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Or_Else:
 		value_loans := walk_flow_expr(graph, v.value)
-		// design.md "Operator ownership": a place operand's success payload is
-		// copied out, and only that copy is reported.
-		if !prov && v.borrows {
-			report_copy_cost(graph.k, .Or_Else, expr_span(v.value), v.value, v.type, graph.loop_depth > 0)
-		}
 		entry := graph.current
 		merge := new_flow_block(graph)
 		link(graph, entry, merge)
@@ -1955,33 +1931,6 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 	}
 	return nil
-}
-
-// A place copied into a trivial aggregate `value: T` parameter is a copy site; a
-// managed one is borrowed for the call (design.md).
-@(private = "file")
-report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
-	info := underlying_info(graph.k.c, call_proc_type(graph.k.c, v))
-	if info == nil {
-		return
-	}
-	// A container insertion reports its element as the insertion it is.
-	if callee := symbol_of(graph.k.c, v.resolution.symbol); callee != nil && callee.container_op != .None {
-		return
-	}
-	for argument, index in v.bound {
-		if argument == nil || index >= len(info.parameters) {
-			continue
-		}
-		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
-		type := info.parameters[index]
-		if mode != .Value || type_is_managed(graph.k.c, type) || !type_is_aggregate(graph.k.c, type) {
-			continue
-		}
-		if expression_is_borrowed_place(argument) {
-			report_copy_cost(graph.k, .Argument, expr_span(argument), argument, type, graph.loop_depth > 0)
-		}
-	}
 }
 
 // A lifecycle event on a tracked variable operand, or else an ordinary walk of it.
@@ -2073,7 +2022,6 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym == nil || !sym.has_receiver {
 		walk_flow_expr(graph, v.callee)
 	}
-	report_argument_copies(graph, v)
 	stores := call_may_store(graph.k.c, v)
 	for step in 0 ..< len(v.bound) {
 		index := call_slot_at(v, step)

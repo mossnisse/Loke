@@ -1,0 +1,5 @@
+warning[L0507]: this binding clones `first`, which may allocate
+@19:18
+L0310
+@28:17
+!copy_cost_nested_and_defer.loke:11:

@@ -13,6 +13,7 @@ call_slot_at :: proc(v: ^Expr_Call, step: int) -> int {
 @(private)
 check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	defer materialize_call_receiver(k, v)
+	defer report_argument_copies(k, v)
 	v.value_category = .Value
 
 	// A built-in, spelled plainly or as `pkg.builtin`, is not a value.
@@ -590,6 +591,46 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	enroll_synth(k.c, chosen)
 }
 
+// A place copied into a trivial aggregate `value: T` parameter is a copy site; a
+// managed one is borrowed for the call (design.md). Operations that read no
+// arguments, or report their own copies, are skipped.
+@(private = "file")
+report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
+	#partial switch operation in v.operation {
+	case Call_Enum_From_Int, Call_Extract, Call_Box_Unbox, Call_Union_As, Call_Union_Construct:
+		return
+	case Call_Reflect:
+		if operation.op == .Field_Get { return }
+	}
+	if sym := symbol_of(k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
+		#partial switch sym.builtin {
+		case .Size_Of, .Align_Of, .Offset_Of, .Type_Of, .Source_Location, .Exchange, .Unsafe_Take, .Unsafe_Write, .Drop:
+			return
+		}
+	}
+	info := underlying_info(k.c, call_proc_type(k.c, v))
+	if info == nil {
+		return
+	}
+	// A container insertion reports its element as the insertion it is.
+	if callee := symbol_of(k.c, v.resolution.symbol); callee != nil && callee.container_op != .None {
+		return
+	}
+	for argument, index in v.bound {
+		if argument == nil || index >= len(info.parameters) {
+			continue
+		}
+		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+		type := info.parameters[index]
+		if mode != .Value || type_is_managed(k.c, type) || !type_is_aggregate(k.c, type) {
+			continue
+		}
+		if expression_is_borrowed_place(argument) {
+			report_copy_cost(k, .Argument, expr_span(argument), argument, type)
+		}
+	}
+}
+
 check_bound_argument_mode :: proc(k: ^Checker, value: Expr, target: Type_Id, mode: Param_Mode, subject: string) -> bool {
 	if mode == .Borrow {
 		return check_borrow_argument(k, value)
@@ -928,7 +969,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	// both it and the result would own one allocation.
 	clones := classify_copy(k, v.args[0].value, source, .Conversion)
 	if clones {
-		report_copy_cost(k, .Conversion, expr_span(v.args[0].value), v.args[0].value, source, k.loop_depth > 0)
+		report_copy_cost(k, .Conversion, expr_span(v.args[0].value), v.args[0].value, source)
 	}
 	v.operation = Call_Conversion{clones = clones}
 	v.resolution = {}

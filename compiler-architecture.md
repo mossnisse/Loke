@@ -576,7 +576,12 @@ and error accounting.
 Managed values have language-defined clone, move, and drop behavior.
 `hooks.odin` classifies types and records canonical lifecycle operations;
 `lifecycle.odin` assigns copy obligations, tracks liveness, diagnoses invalid
-uses, and determines cleanup slots. Before liveness is solved, a backward
+uses, and determines cleanup slots. The checker decides clone or move at each
+copy site as it checks it, and reports copy costs there; a report of an
+allocating binding or assignment is held until the body's last-use transfer
+has settled, and each body flushes only the reports it held. The lifecycle
+walk writes only its own results: last-use moves, liveness, and cleanup slots.
+Before liveness is solved, a backward
 pass over the same graph (`settle_last_uses` in `cfg.odin`) replaces a clone
 at a local's last use with a `move` in the syntax tree (design.md "Last-use
 transfer"), so every later phase sees an ordinary written move and checks it as
