@@ -276,7 +276,7 @@ Type = "^" "mut"? Type                                   // pointer
 Record_Type    = "(" Record_Field ("," Record_Field)* ","? ")"
 Record_Field   = Identifier_List ":" Type
 
-Type_Name      = Identifier ("." Identifier)?            // optionally package-qualified
+Type_Name      = Identifier ("." Identifier)*            // qualified or associated
 Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ","? ")"
 Generic_Argument = Type | Expression                     // type or compile-time value
 
@@ -298,10 +298,11 @@ around the binding, as in `[]$Element`, and Boolean constraints use a
 `Where_Clause`. An explicit generic parameter's `$Name: Type` is declared by
 the parameter-list production; see [Generics](design.md#generics).
 
-The single selector in `Type_Name` is classified during name resolution. It is
-either a package-qualified type such as `interfaces.Sequence` or an associated
-type such as `S.Element` made available by an active interface constraint.
-Associated-type selectors do not chain in version 1.
+The selectors in `Type_Name` are classified during name resolution. The first
+is either a package-qualified type such as `interfaces.Sequence` or an
+associated type such as `S.Element` made available by an active interface
+constraint. Each later selector names an associated type of the type before it,
+as in `S.Iterator.Item`.
 
 In `dyn Interface(arguments...)`, the interface's first parameter is the erased
 subject and is omitted from `arguments`. The conversion is written with a
@@ -606,7 +607,7 @@ Primary_Expression =
      | "(" Type ")"                                    // parenthesised type, as in (^u32)(&f)
 
 Composite_Literal = Composite_Type? "{" Element_List? "}"
-Composite_Type    = Type_Name Type_Arguments?
+Composite_Type    = Identifier ("." Identifier)? Type_Arguments?   // at most one selector
                   | "[" "]" "mut"? Type
                   | "[" "?" "]" Type
                   | "[" "dynamic" "]" Type
@@ -625,6 +626,9 @@ Argument      = Identifier "=" Named_Argument_Value    // named argument
 Named_Argument_Value = "inout" Expression | Argument_Value
 Argument_Value= Expression | Type                       // runtime value or compile-time type
 ```
+
+A composite literal's type name takes at most one selector, so `a.b.c{}` is
+never a literal.
 
 A `Type` that begins with a token no other expression begins with — `^`, `[`,
 `map`, `distinct`, `dyn`, `type`, `$`, `proc`, `struct`, `enum`, `union`,

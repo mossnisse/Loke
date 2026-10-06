@@ -1,0 +1,21 @@
+package main;
+// grammar.md "Types": `S.Iterator.Item` chains associated-type selectors in
+// every type position, not only inside generic arguments.
+import "core:fmt";
+import "base:interfaces";
+first :: proc(values: $S) -> S.Iterator.Item
+	where interfaces.Iterable(S) {
+	iterator := values.iter();
+	item: S.Iterator.Item = iterator.next() or_else -1;
+	return item;
+}
+rest :: proc(values: $S) -> Option(S.Iterator.Item)
+	where interfaces.Iterable(S) {
+	iterator := values.iter();
+	_ = iterator.next();
+	return iterator.next();
+}
+main :: proc() {
+	fmt.println(first(3..<5));
+	fmt.println(rest(3..<5) or_else -1);
+}

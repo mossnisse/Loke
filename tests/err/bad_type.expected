@@ -40,6 +40,12 @@ unknown type `no_such_type`
 L0306
 @44:26
 unknown type `box.Allocator`: `box` is not an imported package
+L0306
+@54:16
+unknown type `fmt.Options.base`: `fmt.Options` has no associated type `base`
+L0306
+@56:8
+unknown type `S.Iterator.Bogus`: `S.Iterator` has no associated type `Bogus`
 
 !L0309
 !L0326

@@ -2019,7 +2019,7 @@ is_composite_type :: proc(e: Expr) -> bool {
 	return is_type_name(e)
 }
 
-// grammar.md `Type_Name`: a name with at most one selector, so `a.b.c{}` is
+// grammar.md `Composite_Type`: a name with at most one selector, so `a.b.c{}` is
 // never a literal.
 @(private = "file")
 is_type_name :: proc(e: Expr) -> bool {
@@ -2602,7 +2602,7 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 	return n
 }
 
-// A type name may have one selector and generic arguments.
+// A type name may have selectors and generic arguments.
 @(private = "file")
 parse_type_name :: proc(p: ^Parser) -> Expr {
 	start := current(p)
@@ -2617,7 +2617,7 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 	id.name_id = intern_identifier(p.c, id.name)
 	e = id
 
-	if at(p, .Period) && peek_token(p, 1).kind == .Ident {
+	for at(p, .Period) && peek_token(p, 1).kind == .Ident {
 		advance(p)
 		field := advance(p)
 		s := new_expr(p, Expr_Selector, start.lo)

@@ -750,26 +750,3 @@ compile-time file I/O out; an explicit build input mechanism would be easier to
 make reproducible than ambient filesystem access. Package headers should be
 generated documentation or checked API manifests, not a second manually
 maintained declaration source by default.
-
-### Specification consistency and validation
-
-One normative inconsistency was found: [grammar Types](grammar.md#types) limits
-`Type_Name` to one selector and says associated selectors do not chain, while
-[Iteration protocol](design.md#iteration-protocol) explicitly uses
-`S.Iterator.Item`. The rebuilt compiler accepts the chained type in this
-complete probe:
-
-```odin
-package main;
-import "base:interfaces";
-first :: proc(values: $S) -> Option(S.Iterator.Item)
-    where interfaces.Iterable(S) {
-    iterator := values.iter();
-    return iterator.next();
-}
-main :: proc() { _ = first(0..<2); }
-```
-
-Resolve the document conflict deliberately, preferably in favor of ordinary
-chained associated types, and add a grammar regression with that decision.
-Do not advertise this as a missing compiler feature: the probe already works.

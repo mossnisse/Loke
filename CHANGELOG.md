@@ -507,6 +507,9 @@ checklist.
 
 ### Fixed
 
+- A chained associated type such as `S.Iterator.Item` is accepted in every
+  type position, as design.md "Iteration protocol" uses it; it parsed only
+  inside generic arguments. A chain that names no associated type is `L0306`.
 - A type written `x.Name` where `x` is not an imported package, such as
   `box.Allocator`, is `L0306` naming the qualifier; it was `L0350`, the
   compiler-defect diagnostic. A `box(value, allocator)` whose allocator came

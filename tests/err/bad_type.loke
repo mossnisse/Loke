@@ -47,3 +47,12 @@ boxes_through_it :: proc(a: Allocator) {
 	b := takes_builtin(a);
 	_ = box(0, b);
 }
+
+// grammar.md "Types": a later selector names an associated type of the type
+// before it, so a chain that reaches no associated type says which link failed.
+import "base:interfaces";
+chained_field: fmt.Options.base;
+chained_missing :: proc(values: $S) where interfaces.Iterable(S) {
+	item: S.Iterator.Bogus;
+}
+calls_chained :: proc() { chained_missing(0..<1); }

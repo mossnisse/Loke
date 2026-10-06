@@ -24,6 +24,7 @@ mutable_borrowed: dyn mut Sequence;
 borrowed_generic: dyn Sequence(int);
 mutable_borrowed_generic: dyn mut Sequence(int);
 qualified: geometry.Point;
+associated: S.Iterator.Item;
 applied: Table(string, int);
 applied_value: Matrix(f32, 4);
 applied_pattern: ^Table($Key, $Value);

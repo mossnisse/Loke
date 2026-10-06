@@ -2053,6 +2053,14 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 			)
 			return
 		}
+		// A chained selector, `S.Iterator.Item`, names an associated type.
+		span := expr_span(selector.operand)
+		head := k.c.sources[span.file].text[span.lo:span.hi]
+		errorf(
+			k.c, selector.span, "L0306", "unknown type `%s.%s`: `%s` has no associated type `%s`",
+			head, selector.name.text, head, selector.name.text,
+		)
+		return
 	}
 	unsupported_construct(k, expr_span(syntax))
 }
