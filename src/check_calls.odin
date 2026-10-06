@@ -162,7 +162,6 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	}
 	v.resolution = Resolution{kind = .Call, symbol = declaration, chosen_overload = declaration}
 	v.operation = Call_Procedure{}
-	enroll_synth(k.c, declaration)
 
 	if !bind_arguments(k, v, info, declaration) {
 		v.type = INVALID_TYPE

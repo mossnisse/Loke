@@ -532,8 +532,8 @@ outside speculation would let a cache record a report that no longer exists.
 the probe began, unless a sanctioned commit (below) ran inside it, so a write
 that skips the gate fails in whichever corpus program reaches it. A
 synthesized member stays on its type once a probe creates it, so the use that
-commits it enrolls it (`enroll_synth`): a call, a `foreach`, a witness slot, or
-a variant constructor, with an adapter's target. `test-all.ps1` rejects a read of `speculation_depth` outside `source.odin`. The
+commits it enrolls it (`enroll_synth`): a call, a procedure value, a
+`foreach`, or a witness slot, with an adapter's target. `test-all.ps1` rejects a read of `speculation_depth` outside `source.odin`. The
 one sanctioned commit from inside speculation is `ensure_proc_typed_for_eval`,
 which checks a body for compile-time execution between `begin_commit` and
 `end_commit`, at depth zero, and holds that body's diagnostics aside

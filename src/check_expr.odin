@@ -543,6 +543,8 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Value
 		v.type = sym.proc_type
+		// A member a probe synthesized is emitted once a value use commits it.
+		enroll_synth(k.c, symbol_id)
 		// design.md "`@(deprecated=<string>)`": a warning at each use.
 		if sym.deprecated {
 			if sym.deprecated_message != "" {

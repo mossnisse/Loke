@@ -1,0 +1,15 @@
+package main; import "core:fmt";
+
+// design.md "Receiver forms": an unbound method is a procedure value. A probe
+// may create a type's standard member before any committed use, and taking it
+// as a value is the use that emits it.
+Hashable :: interface($T: type) {
+	(value: T, seed: uint) value.hash(seed) -> uint;
+}
+
+main :: proc() {
+	static_assert(Hashable(int));
+	hash := int.hash;
+	value, same := 7, 7;
+	fmt.println(hash(&value, uint(0)) == hash(&same, uint(0)));
+}
