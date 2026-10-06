@@ -626,7 +626,7 @@ report_copy_cost :: proc(
 	if !k.c.copy_cost_enabled {
 		return
 	}
-	in_loop := k.loop_depth > 0
+	in_loop := k.loop_depth + k.expanded_in_loops > 0
 	if clone_may_allocate(k.c, type) {
 		if held.decl == nil && held.assign == nil {
 			report_allocating_copy(k, site, span, source, in_loop)

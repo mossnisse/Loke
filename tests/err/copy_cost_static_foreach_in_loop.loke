@@ -1,0 +1,22 @@
+package main;
+
+// design.md "Copy-cost diagnostics": a copy in a static `foreach` expansion
+// inside a runtime loop runs on every iteration of that loop, so its report
+// says so. The expansion is still no loop for `break` and `continue`, even
+// inside a runtime one.
+
+take :: proc(value: [600]u8) {}
+
+main :: proc() {
+	value: [600]u8 = {};
+	for (i := 0; i < 2; i += 1) {
+		foreach ($n in [1]int{1}) {
+			take(value);
+		}
+	}
+	for (i := 0; i < 2; i += 1) {
+		foreach ($n in [1]int{1}) {
+			break;
+		}
+	}
+}

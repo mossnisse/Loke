@@ -40,17 +40,20 @@ Checker :: struct {
 // is left behind: `outer := k.body; defer k.body = outer`.
 Body_Context :: struct {
 	// The procedure being checked, and so the frame a name may come from.
-	proc_literal: ^Expr_Proc,
+	proc_literal:      ^Expr_Proc,
 	// design.md "One result": at most one result. INVALID_TYPE means the
 	// procedure has none.
-	result_type:  Type_Id,
+	result_type:       Type_Id,
 	// Whether the result was declared `inout`, so `return` must hand out a place.
-	result_inout: bool,
+	result_inout:      bool,
 	// Lexical loop targets for `break` and `continue`, and defer restrictions.
-	loop_depth:   int,
-	in_defer:     bool,
+	loop_depth:        int,
+	// Runtime loops around a static expansion, which resets `loop_depth`; its
+	// body still runs on each of their iterations.
+	expanded_in_loops: int,
+	in_defer:          bool,
 	// One flag slot per syntactic `defer` in the procedure being checked.
-	defer_slots:  int,
+	defer_slots:       int,
 }
 
 // What a statement can do to control flow.

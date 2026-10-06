@@ -1,0 +1,6 @@
+warning[L0507]: this argument copies 600 bytes from `value`
+@14:9
+this runs on every iteration of the enclosing loop
+L0455
+`break` cannot target a static expansion
+@19:4

@@ -58,10 +58,10 @@ expand_one_element :: proc(
 	}
 
 	before := len(k.c.diagnostics)
-	outer_loop := k.loop_depth
-	k.loop_depth = 0
+	outer_loop, outer_expanded := k.loop_depth, k.expanded_in_loops
+	k.loop_depth, k.expanded_in_loops = 0, outer_expanded + outer_loop
 	flow := check_block(k, copy_block)
-	k.loop_depth = outer_loop
+	k.loop_depth, k.expanded_in_loops = outer_loop, outer_expanded
 	if len(k.c.diagnostics) > before {
 		add_notef(
 			k.c,
