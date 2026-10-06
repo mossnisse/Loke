@@ -1,0 +1,38 @@
+package main;
+// design.md "String format printing": the generated printed forms.
+import "core:fmt";
+
+Point :: struct { @(public) x: f64, @(public) label: string }
+Pair :: (key: string, value: int);
+Tag :: distinct (n: int);
+Name :: distinct string;
+Shout :: struct { @(public) text: string }
+Shape :: union { none:, label: string, mark: rune }
+
+impl Shout {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.concat_to(writer, self.text, "!");
+	}
+}
+
+main :: proc() {
+	// A float never reads as an integer.
+	fmt.println(1.0, -0.0, 0.5, 1e21, 2.5e-5, 1e16, 1e17, f32(3.0));
+	// On its own a string or rune is its text.
+	fmt.println("a b", 'c');
+	// Nested, it is quoted and escaped as a literal would spell it.
+	fmt.println([]string{"a b", "c"}, []rune{'x', '\'', '\\'});
+	fmt.println([]string{"q\"", "back\\slash", "line\nbreak", "tab\t", "\x01", "é"});
+	fmt.println(Point{1.0, "p q"}, Shape.label("s"), Shape.mark('m'), Shape.none);
+	fmt.println(map[string]int{"k" = 1});
+	o: Option(string_view) = .some("view");
+	fmt.println(o);
+	// A distinct string is still a string; a type with its own `format` is not.
+	fmt.println([]Name{Name("n")}, []Shout{{"hey"}});
+	// A box prints its payload, quoted where the payload would be.
+	b := box("boxed");
+	fmt.println(b, [1]box(string){box("in")});
+	// An anonymous record is its field list; a distinct one keeps its name.
+	pair: Pair = {"one", 1};
+	fmt.println(pair, Tag{3});
+}

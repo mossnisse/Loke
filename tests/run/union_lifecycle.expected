@@ -9,7 +9,7 @@ zero 0 0
 true false
 .left(3) .right(3)
 right 9
-.one(first) .two(second) .one(first) .two(second)
+.one("first") .two("second") .one("first") .two("second")
 true true false
 .held(Owned{}) 1
 .held(Owned{}) 2

@@ -75,6 +75,8 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_f32(ptr, float)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bool(ptr, i32)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_rune(ptr, i32)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_quoted(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_quoted_rune(ptr, i32)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_ptr(ptr, ptr)")
 	emit_carrier_types(e)
 	emit_text_declarations(e)
@@ -531,8 +533,8 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	append(&e.globals, strings.to_string(b))
 }
 
-// Aggregates print as `[elements]`, `Name{field = value}`, and enum members
-// by name.
+// Aggregates print as `[elements]`, `Name{field = value}`, `(field = value)`,
+// and enum members by name.
 @(private = "file")
 emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	frame := begin_function_emission(e)
@@ -562,6 +564,36 @@ emit_format_call :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		return
 	}
 	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %%w, ptr %%o)", fmt_thunk_name(e, type), address)
+}
+
+// An element, field, key, or payload. A string or rune here prints quoted, so
+// `["a b", "c"]` cannot be read as three elements; a type with its own `format`
+// prints as that method says.
+@(private = "file")
+emit_format_nested :: proc(e: ^Emitter, type: Type_Id, address: string) {
+	under := type_underlying(e.c, type)
+	info := type_of(e.c, under)
+	if info == nil || type_has_written_format(e.c, type) {
+		emit_format_call(e, type, address)
+		return
+	}
+	#partial switch info.kind {
+	case .String, .String_View:
+		data, length := load_pair(e, llvm_type(e, under), address, STRING_DATA, STRING_LEN)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_quoted(ptr %%w, ptr %s, i64 %s)", data, length)
+	case .CString_View:
+		value := load(e, "ptr", address)
+		length := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, value)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_quoted(ptr %%w, ptr %s, i64 %s)", value, length)
+	case .Rune:
+		value := load(e, "i32", address)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_quoted_rune(ptr %%w, i32 %s)", value)
+	case .Box:
+		emit_format_nested(e, info.element, emit_box_payload_address(e, under, load(e, "ptr", address)))
+	case:
+		emit_format_call(e, type, address)
+	}
 }
 
 @(private = "file")
@@ -698,7 +730,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 		if variant != TYPE_VOID {
 			emit_format_literal(e, "(")
 			payload := gep_field(e, llvm_type(e, under), slot, 0)
-			emit_format_call(e, variant, payload)
+			emit_format_nested(e, variant, payload)
 			emit_format_literal(e, ")")
 		}
 		branch(e, done)
@@ -783,7 +815,7 @@ emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string)
 	branch(e, formatted)
 	place_label(e, formatted)
 	slot := gep_at(e, llvm_type(e, element), base, index)
-	emit_format_call(e, element, slot)
+	emit_format_nested(e, element, slot)
 	advanced := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", advanced, index)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, cursor)
@@ -827,9 +859,9 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	branch(e, entry)
 	place_label(e, entry)
 	key_slot := load(e, "ptr", key_out)
-	emit_format_call(e, info.key, key_slot)
+	emit_format_nested(e, info.key, key_slot)
 	emit_format_literal(e, " = ")
-	emit_format_call(e, info.element, load(e, "ptr", value_out))
+	emit_format_nested(e, info.element, load(e, "ptr", value_out))
 	branch(e, head)
 
 	place_label(e, done)
@@ -839,8 +871,15 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 @(private = "file")
 emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
-	emit_format_literal(e, type_name(e.c, type))
-	emit_format_literal(e, "{")
+	// An anonymous record's type is its field list, so it prints as `(x = 1)`
+	// rather than spelling that list out again as a name.
+	anonymous := type_of(e.c, type).anonymous_record
+	if anonymous {
+		emit_format_literal(e, "(")
+	} else {
+		emit_format_literal(e, type_name(e.c, type))
+		emit_format_literal(e, "{")
+	}
 	written := 0
 	for field, index in info.fields {
 		sym := symbol_of(e.c, field)
@@ -872,9 +911,9 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 			emit_format_sequence(e, element, slot, count)
 			continue
 		}
-		emit_format_call(e, sym.type, slot)
+		emit_format_nested(e, sym.type, slot)
 	}
-	emit_format_literal(e, "}")
+	emit_format_literal(e, anonymous ? ")" : "}")
 }
 
 // `fmt.Writer` is `dyn mut fmt.Sink`, whose one slot takes `[]u8`. The runtime's

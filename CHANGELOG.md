@@ -37,6 +37,15 @@ checklist.
 - `type_info_of` is total: the zero `typeid` and an unknown id answer the
   entry whose kind is `Invalid` instead of `nil`. Test `info.kind ==
   .Invalid` where code tested `info == nil`.
+- Generated printed forms changed, and design.md "String format printing"
+  now specifies them. A float always shows a fraction or an exponent:
+  `fmt.println(1.0)` prints `1.0`, not `1`, and exponents are bare, `1e21`
+  and `1e-7` rather than `1e+21` and `1e-07`. A string or rune inside an
+  aggregate prints quoted and escaped, `["a b", "c"]` rather than `[a b, c]`,
+  and an anonymous record prints `(x = 1, y = "s")` rather than
+  `(x: int, y: string){x = 1, y = s}`. A string printed on its own is
+  unchanged. Update output a program or test compares against; a type that
+  needs the old spelling declares its own `format`.
 
 - An owner made from a temporary provider, as
   `make([dynamic]int, 0, 1, mem.Arena.init().allocator())`, cannot outlive

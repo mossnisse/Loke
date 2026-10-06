@@ -48,7 +48,7 @@ main :: proc() {
 9
 2.5
 plum
-[hi, hi, hi] [7.5, 7.5]
+["hi", "hi", "hi"] [7.5, 7.5]
 ```
 
 - `where interfaces.Ordered(T)` says `T` must have `<`. The body compares
@@ -168,7 +168,7 @@ main :: proc() {
 
 ```text output=interfaces
 a circle of area 3.14159
-a square of area 4
+a square of area 4.0
 7.14159
 ```
 

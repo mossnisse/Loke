@@ -164,10 +164,10 @@ main :: proc() {
 ```
 
 ```text output=methods
-Vector{x = 3, y = 4} 25
-Vector{x = 6, y = 8}
-Vector{x = 7, y = 9}
-130
+Vector{x = 3.0, y = 4.0} 25.0
+Vector{x = 6.0, y = 8.0}
+Vector{x = 7.0, y = 9.0}
+130.0
 ```
 
 - `self` on its own receives the value and cannot change it. `self: inout`
@@ -297,8 +297,8 @@ main :: proc() {
 
 ```text output=unions
 3.14159
-6
-0
+6.0
+0.0
 ```
 
 - `.circle(1)` builds a `Shape` holding the variant `circle` with the payload

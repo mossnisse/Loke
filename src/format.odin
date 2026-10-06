@@ -47,6 +47,21 @@ type_is_printable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return type != INVALID_TYPE && type_is_supported(c, type) && !type_is_compile_time_only(c, type)
 }
 
+// Whether a type declares its own `format`, as `formatter_of` would find it.
+type_has_written_format :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	info := type_of(c, type)
+	if info == nil {
+		return false
+	}
+	for member in info.members {
+		sym := symbol_of(c, member)
+		if sym != nil && sym.synth == .None && !sym.bound_excluded && identifier_text(c, sym.name) == "format" {
+			return true
+		}
+	}
+	return false
+}
+
 // A type's inherent `format`, or INVALID_SYMBOL when the compiler generates one.
 @(private = "file")
 formatter_of :: proc(c: ^Compiler, type, writer, options: Type_Id, reported: ^map[Span]bool) -> Symbol_Id {

@@ -1,4 +1,4 @@
-.ok(hé)
+.ok("hé")
 .err(Read_Line failed: End_Of_Input)
 false
 Character 65 true false false

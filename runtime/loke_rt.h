@@ -514,6 +514,8 @@ void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value);
 void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value);
 void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value);
+void loke_rt_v1_fmt_quoted(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count);
+void loke_rt_v1_fmt_quoted_rune(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_ptr(const loke_rt_writer_v1 *w, const void *value);
 
 /* ------------------------------------------------------ panic and threads -- */

@@ -508,7 +508,31 @@ impl Card {
 fmt.println(Card{7, .Hearts}); // 7 of Hearts
 ```
 
-Each concrete type has one printed form throughout the program. Declaring more than one eligible inherent `format` method for a type is an error; the compiler provides a default `format` method for other printable runtime types, including scalars and aggregates. These methods satisfy `fmt.Formattable(T)` and support ordinary `dyn fmt.Formattable` views. A generated struct formatter prints only public fields. An extension in another package may declare and call its own `format` method, but `print` does not use it.
+Each concrete type has one printed form throughout the program. Declaring more than one eligible inherent `format` method for a type is an error; the compiler provides a default `format` method for other printable runtime types, including scalars and aggregates. These methods satisfy `fmt.Formattable(T)` and support ordinary `dyn fmt.Formattable` views. An extension in another package may declare and call its own `format` method, but `print` does not use it.
+
+A generated method prints:
+
+| Type | Printed form |
+| --- | --- |
+| `bool` | `true` or `false` |
+| integer | its digits in `Options.base`, decimal by default |
+| float | the shortest decimal that reads back as the same value, never spelled as an integer: fixed notation with at least one fractional digit from `1e-4` to below `1e17`, as `1.0`, `0.1`, and `-0.0`, and a bare exponent outside it, as `1e21` and `2.5e-5`; `nan`, `inf`, or `-inf` |
+| `string`, `string_view`, `cstring_view`, `rune` | its text |
+| pointer, `rawptr`, `[^]T`, procedure | `0x` and the address in hexadecimal, or `<nil>` |
+| `typeid` | the type's name |
+| enum | the member's name, or the number of a value no member names |
+| array, slice, dynamic array, `Simd` | `[1, 2, 3]` |
+| map | `[key = value, ...]` in [iteration order](#maps) |
+| struct | `Name{x = 1, y = 2}`, with the public fields in declaration order |
+| anonymous record | `(x = 1, y = 2)` |
+| union, including `Option` | `.none` or `.some(3)`: the variant, and its payload in parentheses |
+| `box(T)` | its payload |
+| `any_view` | the value it views |
+| `dyn` view | its type's name |
+
+A struct prints its public fields only, as reflection from another package sees it, because one printed form serves every package: in a `package main` whose fields are private by default, `Point{1, 2}` prints `Point{}`. A `distinct` type prints as the type it wraps, under its own name where that form has one.
+
+A field, element, map key, or union payload whose type is a string type, `rune`, or a `box` of one prints quoted, escaping the backslash, the quote, `\n`, `\r`, `\t`, and other control characters as a literal would: `["a b", "c"]` and `.some('x')`. Printed on its own, as `fmt.println("a b")`, it is its text. A type with its own `format` prints by it in both places.
 
 The print procedures accept mixed `..any_view` arguments. For each erased argument, they recover the concrete type's `Formattable` witness and call its `format` slot with the borrowed value, writer, and options. The same method is selected by an explicit `(dyn fmt.Formattable)(&value)` conversion.
 

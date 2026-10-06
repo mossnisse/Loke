@@ -449,10 +449,9 @@ back to back for a `format` method or a line whose punctuation is its own.
 `Options.base` is 2 to 36 and any other
 value reads as 10; it and `uppercase` reach integers and whatever a type's
 `format` passes them to. A float prints the shortest spelling that reads back
-as the same value at its own width, in fixed notation from 1e-4 to below 1e17
-and with an exponent outside that; NaN prints as `nan` and the infinities as
-`inf` and `-inf`. A struct without its own `format` prints its public fields
-only.
+as the same value at its own width. design.md "String format printing" gives
+every generated form, including floats and the quoting of strings inside
+aggregates.
 
 ## `core:strings`
 

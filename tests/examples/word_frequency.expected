@@ -13,7 +13,7 @@ sleeps 1
 and 1
 runs 1
 on 1
-repeated: [the, fox, dog]
+repeated: ["the", "fox", "dog"]
 fox: 102
 cat: 0
 cat present: false

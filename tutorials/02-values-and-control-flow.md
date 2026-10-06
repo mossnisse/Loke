@@ -31,7 +31,7 @@ main :: proc() {
 ```
 
 ```text output=variables
-Ada buys 12 apples for 30
+Ada buys 12 apples for 30.0
 hungry: true
 3 1 3.5
 -3 -1

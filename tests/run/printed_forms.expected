@@ -1,0 +1,10 @@
+1.0 -0.0 0.5 1e21 2.5e-5 10000000000000000.0 1e17 3.0
+a b c
+["a b", "c"] ['x', '\'', '\\']
+["q\"", "back\\slash", "line\nbreak", "tab\t", "\x01", "é"]
+Point{x = 1.0, label = "p q"} .label("s") .mark('m') .none
+["k" = 1]
+.some("view")
+["n"] [hey!]
+boxed ["in"]
+(key = "one", value = 1) Tag{n = 3}

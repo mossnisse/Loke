@@ -112,8 +112,8 @@ main :: proc() {
 ```
 
 ```text output=custom_format
-position: (3, 4)
-through the interface: (3, 4)
+position: (3.0, 4.0)
+through the interface: (3.0, 4.0)
 ```
 
 `self: ^` borrows the vector without copying it. Plain `self` also satisfies
@@ -133,7 +133,8 @@ library's `*_with` procedures.
 
 The compiler supplies default `format` methods for other printable types,
 so `fmt.Formattable(int)` is true too. A default struct formatter prints only
-public fields. Custom formatting belongs in the type's own package so that
+public fields, a float always shows a fraction or an exponent (`3.0`, `1e21`),
+and a string inside an array or a record prints quoted (`["a b", "c"]`). Custom formatting belongs in the type's own package so that
 every caller sees the same representation.
 
 You can also constrain a generic procedure with `where fmt.Formattable(T)`

@@ -142,7 +142,9 @@ static void spell_up(char *sci) {
 }
 
 /* `%g`'s layout for a `%.*e` spelling, with the trailing zeros dropped: fixed
- * notation from 1e-4 to below 1e17, and an exponent outside that. */
+ * notation from 1e-4 to below 1e17, and an exponent outside that. A float never
+ * reads as an integer (design.md "String format printing"): fixed notation keeps
+ * one fractional digit, `1.0`, and an exponent is written bare, `1e21`, `1e-7`. */
 static int spell_general(char *out, const char *sci) {
 	char digits[24];
 	int count = 0;
@@ -167,7 +169,7 @@ static int spell_general(char *out, const char *sci) {
 			memcpy(out + used, digits + 1, (size_t)(count - 1));
 			used += count - 1;
 		}
-		return used + snprintf(out + used, 8, "e%+03d", exponent);
+		return used + snprintf(out + used, 8, "e%d", exponent);
 	}
 	if (exponent < 0) {
 		out[used++] = '0';
@@ -183,6 +185,10 @@ static int spell_general(char *out, const char *sci) {
 			out[used++] = '.';
 		}
 		out[used++] = i < count ? digits[i] : '0';
+	}
+	if (count <= exponent + 1) {
+		out[used++] = '.';
+		out[used++] = '0';
 	}
 	return used;
 }
@@ -269,6 +275,56 @@ void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value) {
 		return;
 	}
 	loke_rt_v1_fmt_bytes(w, buffer, used);
+}
+
+/* `bytes` as a literal would spell them, between `quote`s: a string or rune
+ * nested in an aggregate (design.md "String format printing"). Only the
+ * backslash, the quote, and control bytes are escaped; any other byte, including
+ * the rest of UTF-8, is written as it is. */
+static void fmt_quoted(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count, uint8_t quote) {
+	static const char hex[] = "0123456789ABCDEF";
+	loke_rt_v1_fmt_bytes(w, &quote, 1);
+	int64_t start = 0;
+	for (int64_t i = 0; i < count; i++) {
+		uint8_t b = bytes[i];
+		uint8_t escape[4] = {'\\', 0, 0, 0};
+		int64_t length = 2;
+		if (b == '\\' || b == quote) {
+			escape[1] = b;
+		} else if (b == '\n') {
+			escape[1] = 'n';
+		} else if (b == '\r') {
+			escape[1] = 'r';
+		} else if (b == '\t') {
+			escape[1] = 't';
+		} else if (b < 0x20 || b == 0x7F) {
+			escape[1] = 'x';
+			escape[2] = (uint8_t)hex[b >> 4];
+			escape[3] = (uint8_t)hex[b & 15];
+			length = 4;
+		} else {
+			continue;
+		}
+		loke_rt_v1_fmt_bytes(w, bytes + start, i - start);
+		loke_rt_v1_fmt_bytes(w, escape, length);
+		start = i + 1;
+	}
+	loke_rt_v1_fmt_bytes(w, bytes + start, count - start);
+	loke_rt_v1_fmt_bytes(w, &quote, 1);
+}
+
+void loke_rt_v1_fmt_quoted(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count) {
+	fmt_quoted(w, bytes, count, '"');
+}
+
+void loke_rt_v1_fmt_quoted_rune(const loke_rt_writer_v1 *w, int32_t value) {
+	uint8_t buffer[4];
+	int64_t used = loke_rt_encode_rune(buffer, value);
+	if (used == 0) {
+		fmt_quoted(w, (const uint8_t *)"\xEF\xBF\xBD", 3, '\''); /* U+FFFD */
+		return;
+	}
+	fmt_quoted(w, buffer, used, '\'');
 }
 
 void loke_rt_v1_fmt_ptr(const loke_rt_writer_v1 *w, const void *value) {

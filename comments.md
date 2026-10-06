@@ -834,6 +834,29 @@ owning closure. A view always names a sink, and views are not comparable.
 The [sink implementation notes](#formatting-and-logging-sink-implementation)
 record the migration from raw state pointers and the runtime adapter.
 
+### Generated printed forms say what they print
+
+Go's `Println` prints `1.0` as `1` and a nested string bare, and Loke's
+generated formats did too. They ([String format printing](design.md#string-format-printing))
+now differ in three places, each so the output cannot be read as something
+else:
+
+- A float always has a fraction or an exponent. `1` printed for `1.0` is the
+  integer's form, so a reader of `[1, 2]` could not tell `[]f64` from `[]int`;
+  `1.0` and `1e21` are also float literals that read back as the same value.
+  The exponent is bare, `1e-7` rather than C's `1e-07`.
+- A string or rune nested in an aggregate is quoted and escaped. Bare,
+  `["a b", "c"]` and `["a", "b c"]` both printed `[a b c]`, and a field
+  holding `", y = 2"` could forge another field. Printed on its own a string
+  is still its text, since that is what `println("hello")` is for.
+- An anonymous record prints `(x = 1, y = 2)`. It had printed its type as
+  a struct prints its name, `(x: int, y: string){x = 1, y = s}`, repeating
+  every field name for no information.
+
+A struct still prints only its public fields. One printed form serves every
+package, so it can show only what every package may see; a type that wants its
+private fields printed declares `format`.
+
 ### Explicit overload groups
 
 Overloads are assembled in named procedure groups. Each implementation keeps an

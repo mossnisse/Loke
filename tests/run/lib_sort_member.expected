@@ -10,12 +10,12 @@
 50 true true
 [one, two, three]
 [three, two, one]
-[apple, date, fig, pear]
--1 0.25 3.5
+["apple", "date", "fig", "pear"]
+-1.0 0.25 3.5
 [1, 2, 3]
 [one, two, three] true
 [three, two, one] true
-(index: int, found: bool){index = 1, found = true}
+(index = 1, found = true)
 .some(one) .some(three)
 true .some(1)
--1 true true
+-1.0 true true
