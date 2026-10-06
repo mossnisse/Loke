@@ -516,8 +516,23 @@ synth_proc :: proc(
 		proc_type     = intern_proc_type(c, param_copy, modes, result, false, ""),
 		synth         = kind,
 	})
-	if enroll { append(&c.synth_procs, id) }
+	if enroll { enroll_synth(c, id) }
 	return id
+}
+
+// A synthesized member stays on its type once created, but only a use that
+// commits it is emitted (compiler-architecture.md "Checking and overload
+// resolution"), so a use that finds one a probe created enrolls it here, along
+// with what its emitted body calls.
+enroll_synth :: proc(c: ^Compiler, id: Symbol_Id) {
+	sym := symbol_of(c, id)
+	if !committing(c) || sym == nil || sym.synth == .None || sym.synth_enrolled {
+		return
+	}
+	sym.synth_enrolled = true
+	append(&c.synth_procs, id)
+	// An adapter's body calls the member it adapts.
+	enroll_synth(c, sym.iteration_target)
 }
 
 iteration_proc_matches :: proc(
@@ -916,6 +931,8 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	s.iterator_type = iterator
 	s.iter_symbol = iter
 	s.next_symbol = next
+	enroll_synth(k.c, iter)
+	enroll_synth(k.c, next)
 	return check_foreach_body(k, s, effective_yield)
 }
 

@@ -284,6 +284,8 @@ adapter_proc :: proc(k: ^Checker, name: string, kind: Synth_Kind, owner: Type_Id
 	id := synth_proc(k.c, name, kind, owner, []Type_Id{owner}, []Param_Mode{mode}, result)
 	sym := symbol_of(k.c, id)
 	sym.has_receiver, sym.receiver, sym.iteration_target = true, mode, target
+	// `synth_proc` enrolled the adapter before it had a target.
+	if sym.synth_enrolled { enroll_synth(k.c, target) }
 	set_synth_result_summary(k.c, id, 0)
 	return id
 }

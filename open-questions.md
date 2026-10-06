@@ -314,20 +314,7 @@ rather than a wrong answer; the wrong answers it found are in
   bodies at compile time, which `begin_commit` already allows. What was
   missing was detection, which `end_probe` now provides: it compares the
   emission registries with their sizes when the probe began, so every probe in
-  every corpus checks the gate. That check found the next item, and leaves
-  `synth_procs` out until it is settled.
-- **Synthesized members enroll during probes.** `synth_proc` appends to
-  `synth_procs` when it creates a member, and so does the `dyn` forwarder
-  construction in `erased.odin`; neither asks `committing(c)`. Only `format`
-  waits for a commit (`Format_Enrolled`). Before `end_probe` left them out,
-  `examples/greeting.loke` enrolled a `dyn` forwarder and
-  `examples/shapes.loke` a standard `hash` inside a probe. The emission
-  contract accepts them, and they are emitted even when nothing that commits
-  uses them. Either record that a member attached to a type enrolls when it is
-  created, as interning the type does, and drop the gate from the list of
-  "Checking and overload resolution"; or give each such member `format`'s
-  enroll-on-commit flag and add `synth_procs` to the `end_probe` check. The
-  first is smaller; the second matches what that section promises.
+  every corpus checks the gate.
 - **Lifecycle and provenance meet through shared keys.** The dead owners at
   each reset point reach the provenance walk through `reset_dead` and
   `cleanup_reset_dead`, keyed by a `Reset_Key` both walks build alike: the

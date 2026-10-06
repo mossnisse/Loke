@@ -402,6 +402,7 @@ Variant_Key :: struct { union_type: Type_Id, index: int }
 variant_constructor :: proc(c: ^Compiler, union_type: Type_Id, index: int) -> Symbol_Id {
 	key := Variant_Key{union_type, index}
 	if existing, found := c.variant_constructors[key]; found {
+		enroll_synth(c, existing)
 		return existing
 	}
 	id := synth_proc(

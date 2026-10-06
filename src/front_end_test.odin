@@ -299,21 +299,6 @@ main :: proc() {
 	testing.expect(t, typeid_value(&p.c, TYPE_BOOL) != 0, "an executed generic bound lost its dependencies")
 }
 
-// Only committed emission state: type interning, signature instances, and other
-// semantic caches may grow while answering a hypothetical requirement. Every
-// `end_probe` checks the shared registries; this fixture also holds its probes'
-// synthesized members to it.
-@(private = "file")
-Probe_Emission_State :: struct {
-	using registries: Emission_Registries,
-	synth_procs:      int,
-}
-
-@(private = "file")
-probe_emission_state :: proc(c: ^Compiler) -> Probe_Emission_State {
-	return {registries = emission_registries(c), synth_procs = len(c.synth_procs)}
-}
-
 @(test)
 interface_probes_do_not_register_emission_dependencies :: proc(t: ^testing.T) {
 	// A small core:fmt package reaches its private dispatch intrinsic without
@@ -365,7 +350,7 @@ Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 	record := symbol_of(&p.c, scope.names[intern_identifier(&p.c, "Record")]).type
 	table := scope.names[intern_identifier(&p.c, "TABLE")]
 	args := []Generic_Arg{{is_type = true, type = record}}
-	before := probe_emission_state(&p.c)
+	before := emission_registries(&p.c)
 	cached_before := len(p.c.procedure_instances)
 	testing.expect(t, !before.format_requested && !before.type_info_requested,
 	               "the fixture already requested the runtime tables")
@@ -377,7 +362,7 @@ Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 		if !testing.expectf(t, info != nil, "missing interface %s", name) { return }
 		held := interface_satisfied(&k, info, args, no_span(), report = false)
 		testing.expectf(t, held == (name != "Rejected"), "%s returned the wrong probe result", name)
-		after := probe_emission_state(&p.c)
+		after := emission_registries(&p.c)
 		testing.expectf(t, after == before, "%s changed emission state: before %v, after %v", name, before, after)
 		testing.expectf(t, p.c.speculation_depth == 0, "%s did not restore speculation depth", name)
 		testing.expectf(t, p.c.error_count == 0, "%s leaked a diagnostic", name)
@@ -404,7 +389,7 @@ use_dependencies :: proc(value: ^Record, erased: any_view, writer: Writer, optio
 	add_package_file(&p.c, p.pkg, &f)
 	check_one_package(&p.c, p.pkg)
 	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
-	after := probe_emission_state(&p.c)
+	after := emission_registries(&p.c)
 	testing.expect(t, after.typeids == before.typeids + 1 && after.typeid_order == before.typeid_order + 1 &&
 	               p.c.typeid_requested[record], "a real use lost the probed typeid")
 	testing.expect(t, after.witnesses == before.witnesses + 1 && after.witness_order == before.witness_order + 1 &&

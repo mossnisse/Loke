@@ -553,13 +553,12 @@ Probe :: struct {
 	registries:                  Emission_Registries,
 }
 
-// The sizes of the registries emission reads. `synth_procs` is left out: a
-// member a type synthesizes is enrolled when it is created, even inside a probe
-// (open-questions.md "Open questions in the compiler's structure").
+// The sizes of the registries emission reads.
 Emission_Registries :: struct {
 	typeids, typeid_order, witnesses, witness_order: int,
 	materialized, materialized_order:                int,
 	instances, checked_bodies, static_locals:        int,
+	synth_procs:                                     int,
 	format_requested, type_info_requested:           bool,
 }
 
@@ -573,6 +572,7 @@ emission_registries :: proc(c: ^Compiler) -> Emission_Registries {
 		materialized_order  = len(c.materialized_order),
 		checked_bodies      = len(c.checked_bodies),
 		static_locals       = len(c.static_locals),
+		synth_procs         = len(c.synth_procs),
 		format_requested    = c.format_requested,
 		type_info_requested = c.type_info_requested,
 	}

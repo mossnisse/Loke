@@ -560,6 +560,8 @@ Symbol :: struct {
 	// A procedure the compiler contributes: it has a real symbol and signature,
 	// and the backend writes its body (`src/iterate.odin`).
 	synth:       Synth_Kind,
+	// In `synth_procs`, so emitted: a use that commits it enrolled it.
+	synth_enrolled: bool,
 	// Field or enum-member position in its owning type; parameter position in
 	// its signature.
 	index:       u32,

@@ -405,7 +405,7 @@ enroll_lifecycle_members :: proc(c: ^Compiler, type: Type_Id) {
 	for id in info.members {
 		sym := symbol_of(c, id)
 		if sym == nil || (sym.synth != .Clone && sym.synth != .Try_Clone) { continue }
-		append(&c.synth_procs, id)
+		enroll_synth(c, id)
 		// A `distinct` name's pair is its own; the entry records the underlying's.
 		if type_underlying(c, type) == type {
 			entry := lifecycle_of(c, type)

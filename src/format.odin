@@ -38,7 +38,7 @@ ensure_format_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 		info := type_of(k.c, type)
 		if .Format_Enrolled not_in info.contributed {
 			info.contributed += {.Format_Enrolled}
-			append(&k.c.synth_procs, id)
+			enroll_synth(k.c, id)
 		}
 	}
 }

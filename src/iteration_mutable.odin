@@ -109,6 +109,8 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 	}
 	s.kind, s.element_type, s.iterator_type = .Protocol, logical, iterator
 	s.iter_symbol, s.next_symbol = iter, next
+	enroll_synth(k.c, iter)
+	enroll_synth(k.c, next)
 	if !check_foreach_pattern(k, s, s.bindings, s.element_type, s.item_type, handed) { return FLOWS }
 	return check_foreach_block(k, s)
 }

@@ -219,7 +219,7 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 			index          = u32(index),
 		})
 		members[index] = id
-		append(&k.c.synth_procs, id)
+		enroll_synth(k.c, id)
 	}
 	if stored := type_of(k.c, dyn); stored != nil {
 		stored.members = members
@@ -689,6 +689,7 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	if committing(k.c) {
 		k.c.witnesses[key] = witness
 		append(&k.c.witness_order, witness)
+		for slot in slots { enroll_synth(k.c, slot.target) }
 	}
 	return witness
 }

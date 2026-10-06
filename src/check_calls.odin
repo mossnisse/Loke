@@ -161,6 +161,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	}
 	v.resolution = Resolution{kind = .Call, symbol = declaration, chosen_overload = declaration}
 	v.operation = Call_Procedure{}
+	enroll_synth(k.c, declaration)
 
 	if !bind_arguments(k, v, info, declaration) {
 		v.type = INVALID_TYPE
@@ -404,6 +405,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	sel.type = chosen.proc_type
 	v.resolution = Resolution{kind = .Call, symbol = cand.symbol, chosen_overload = cand.symbol}
 	v.operation = Call_Procedure{}
+	enroll_synth(k.c, cand.symbol)
 	if !bind_chosen_call(k, v, cand) {
 		v.type = INVALID_TYPE
 		return
@@ -585,6 +587,7 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	}
 	v.resolution = Resolution{kind = .Call, symbol = chosen, chosen_overload = chosen}
 	v.operation = Call_Procedure{}
+	enroll_synth(k.c, chosen)
 }
 
 check_bound_argument_mode :: proc(k: ^Checker, value: Expr, target: Type_Id, mode: Param_Mode, subject: string) -> bool {
