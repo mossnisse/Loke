@@ -3300,8 +3300,9 @@ report_constant_out_of_range :: proc(c: ^Compiler, span: Span, value: Const_Valu
 	return true
 }
 
-// Converts a constant to a target type. An `explicit` `T(v)` truncates a float
-// to an integer; an implicit conversion needs it exact.
+// Converts a constant to a target type. Only an `explicit` `T(v)` turns a float
+// into an integer, truncating it; an implicit conversion refuses even an
+// integral float.
 convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool, allocator: mem.Allocator = {}) -> (Const_Value, bool) {
 	storage := value_allocator(c, allocator)
 	info := underlying_info(c, target)

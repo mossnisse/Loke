@@ -359,17 +359,6 @@ between ordinary and destructured initialization. Small shared checks address
 the divergent paths; another checker abstraction or a file split by size is
 unnecessary.
 
-## Review cleanup in `check_expr.odin`
-
-Recommendations for [src/check_expr.odin](src/check_expr.odin) that remain:
-
-- Reuse `materialize_value_expr` for SIMD lane validation and
-  `index_arguments`' candidate context for slicing. Share the packed-storage
-  check with slicing and its existing borrow callers; no general conversion
-  abstraction is needed.
-- Correct the `convert_const` comment when repairing float-to-integer
-  conversion; an exact implicit conversion is still forbidden.
-
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md "Formatting"](comments.md#formatting).
