@@ -1,0 +1,33 @@
+package main;
+// standard-library.md "`core:fmt`": `fixed`, `pad_left`, and `pad_right`.
+import "core:fmt";
+
+Shout :: struct { @(public) text: string }
+
+impl Shout {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.concat_to(writer, self.text, "!");
+	}
+}
+
+main :: proc() {
+	// A fixed number of fractional digits, rounded to nearest.
+	fmt.println(fmt.fixed(3.14159, 2), fmt.fixed(2.5, 0), fmt.fixed(-0.004, 2), fmt.fixed(1.0, 3));
+	fmt.println(fmt.fixed(1e20, 1), fmt.fixed(0.1, 20));
+	// Out-of-range digits read as the nearer end; NaN and infinity print as floats.
+	nan := 0.0 / 0.0;
+	inf := 1.0 / 0.0;
+	fmt.println(fmt.fixed(7.25, -3), fmt.fixed(nan, 2), fmt.fixed(-inf, 2));
+
+	// Columns: padding counts runes, and a longer value prints whole.
+	fmt.println("|", fmt.pad_left(42, 6), "|", fmt.pad_right("ab", 4), "|");
+	fmt.println("|", fmt.pad_left("världen", 9), "|", fmt.pad_right("toolong", 3), "|");
+	fmt.println("|", fmt.pad_left(fmt.fixed(9.876, 1), 7), "|", fmt.pad_right(Shout{"hey"}, 6), "|");
+	name := "alice";
+	fmt.println(fmt.pad_right(name, 8), fmt.pad_left(7, 3));
+	// A padded value inside an aggregate keeps its own form.
+	fmt.println([]fmt.Padded(int){fmt.pad_left(1, 3), fmt.pad_left(22, 3)});
+	// The options reach the padded value.
+	fmt.format_to_with(fmt.stdout(), fmt.Options{base = 16, uppercase = true}, fmt.pad_left(255, 4));
+	fmt.println();
+}

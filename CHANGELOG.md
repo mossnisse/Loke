@@ -406,6 +406,10 @@ checklist.
 
 ### Added
 
+- `fmt.fixed(value, digits)` prints a float with a fixed number of fractional
+  digits, and `fmt.pad_left`/`fmt.pad_right(value, width)` pad any printable
+  value to a width in runes, so `fmt.println(fmt.pad_left(fmt.fixed(x, 2), 8))`
+  prints an aligned column (standard-library.md "`core:fmt`").
 - `io.from_native_code(native_code, operation)` turns a platform error number
   into an `io.Error` (standard-library.md "Shared I/O contract"). `core:fs`,
   `core:os`, `core:process`, and `core:term` now share its one table, so a

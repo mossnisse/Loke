@@ -91,9 +91,7 @@ Implementation order:
    before adding APIs; keep the program that demonstrates each need.
 3. Add the testing and binary/text facilities those programs actually require.
    Introduce `core:bytes`, time, random, buffered I/O, or higher-level encodings
-   only when a caller establishes their contracts. Settle
-   [width and precision in `fmt`](open-questions.md#width-and-precision-in-fmt)
-   together when a program needs both.
+   only when a caller establishes their contracts.
 4. For every public API, add an example and the applicable allocator-failure,
    cleanup, Unicode, short-I/O, and platform-conformance cases from
    [Test requirements](standard-library.md#test-requirements).

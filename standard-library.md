@@ -431,6 +431,12 @@ format_to(w: Writer, args: ..any_view)
 concat_to(w: Writer, args: ..any_view)
 format_to_with(w: Writer, options: Options, args: ..any_view)
 to_string(allocator: Allocator, args: ..any_view) -> string
+
+Fixed :: struct { /* private */ }
+Padded :: struct($T: type) { /* private */ }
+fixed(value: f64, digits: int) -> Fixed
+pad_left(value: $T, width: int) -> Padded(T)
+pad_right(value: $T, width: int) -> Padded(T)
 ```
 
 A `Writer` borrows its sink: any record with a `write(self: inout, bytes:
@@ -458,6 +464,21 @@ value reads as 10; it and `uppercase` reach integers and whatever a type's
 as the same value at its own width. design.md "String format printing" gives
 every generated form, including floats and the quoting of strings inside
 aggregates.
+
+Width and precision belong to one value, not to a call, so they are spelled
+by wrapping it: nothing nested and no type's own `format` has to interpret
+them. `fixed(value, digits)` prints a float with exactly `digits` fractional
+digits, 0 to 40 with anything outside reading as the nearer end, rounded to
+nearest with ties to even: `fixed(3.14159, 2)` is `3.14` and `fixed(2.5, 0)`
+is `2`. NaN and the infinities print as a plain float does.
+`pad_left(value, width)` prints the value after enough spaces to fill `width`
+runes, so a column lines up on the right, and `pad_right` puts the spaces
+after it; a longer value prints whole. Width counts runes, not display
+columns. Padding formats the value twice, once to measure it. Either wrapper
+holds its value as a returned `value` parameter does (design.md "Parameter
+semantics and ABI lowering"), so pad a view of a container rather than the
+container. They nest, as in `pad_left(fixed(x, 1), 8)`, and the call's
+`Options` reach the wrapped value.
 
 ## `core:strings`
 

@@ -176,3 +176,78 @@ emit :: proc(w: Writer, options: Options, args: ..any_view) {
 		format_any(a, w, options);
 	}
 }
+
+// ------------------------------------------------------ width and precision --
+
+// `value` with exactly `digits` digits after the point, rounded to nearest with
+// ties to even: `fixed(3.14159, 2)` prints `3.14`. `digits` is 0 to 40; a value
+// outside reads as the nearer end. NaN and the infinities print as any float.
+@(public)
+fixed :: proc(value: f64, digits: int) -> Fixed {
+	return Fixed{value, digits};
+}
+
+@(public)
+Fixed :: struct { value: f64, digits: int }
+
+impl Fixed {
+	format :: proc(self, writer: Writer, options: Options) {
+		rt_fmt_fixed(&writer, self.value, self.digits);
+	}
+}
+
+// `value` printed in at least `width` runes, padded with spaces on the left so
+// that a column of them lines up on the right: `pad_left(42, 5)` prints `   42`.
+// A longer value prints whole. `width` counts runes, not display columns.
+@(public)
+pad_left :: proc(value: $T, width: int) -> Padded(T) {
+	return Padded(T){value, width, true};
+}
+
+// The same, padded on the right, for a column that lines up on the left.
+@(public)
+pad_right :: proc(value: $T, width: int) -> Padded(T) {
+	return Padded(T){value, width, false};
+}
+
+@(public)
+Padded :: struct($T: type) { value: T, width: int, left: bool }
+
+impl Padded($T) {
+	format :: proc(self, writer: Writer, options: Options) {
+		// ponytail: the value is formatted twice, once to count it, rather than
+		// buffered; a `format` with side effects runs them twice.
+		counter := Rune_Counter{};
+		format_any(self.value, (Writer)(&mut counter), options);
+		if (!self.left) {
+			format_any(self.value, writer, options);
+		}
+		for (i := counter.runes; i < self.width; i += 1) {
+			write_bytes(writer, " ");
+		}
+		if (self.left) {
+			format_any(self.value, writer, options);
+		}
+	}
+}
+
+@(private)
+Rune_Counter :: struct { runes: int }
+
+impl Rune_Counter {
+	// Every byte but a UTF-8 continuation byte starts a rune.
+	write :: proc(self: inout, bytes: []u8) {
+		foreach (b in bytes) {
+			if ((b & 0xC0) != 0x80) { self.runes += 1; }
+		}
+	}
+}
+
+// The seed runtime is part of every link, and a `Writer` has its writer record's
+// layout. Private, or the file-wide `@(public)` would export it as
+// `fmt.rt_fmt_fixed`.
+@(private)
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_fmt_fixed")
+	rt_fmt_fixed :: proc "c" (writer: ^Writer, value: f64, digits: int) ---;
+}

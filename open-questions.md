@@ -298,12 +298,6 @@ text than was asked for.
   factory, on `Arena`/`Scratch` construction, or as a build-wide default for
   freestanding targets?
 
-## Width and precision in `fmt`
-
-`fmt.Options` holds only `base` and `uppercase`, so a width, a precision, or
-padding has no spelling: `3.14159` cannot be printed as `3.14`, nor a column
-aligned.
-
 ## Open questions in the compiler's structure
 
 An architecture review of `src/` left these open. Each is a structural risk

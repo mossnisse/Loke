@@ -254,6 +254,23 @@ void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value) {
 	fmt_float(w, value, 1);
 }
 
+/* `fmt.fixed`: `value` with exactly `digits` fractional digits, rounded as the
+ * C library rounds, to nearest with ties to even. `digits` is clamped to 0 to
+ * 40, so the longest spelling is a sign, the 309 integer digits of the largest
+ * double, the point, and 40 digits. NaN and the infinities print as any float. */
+void loke_rt_v1_fmt_fixed(const loke_rt_writer_v1 *w, double value, int64_t digits) {
+	if (isnan(value) || isinf(value)) {
+		fmt_float(w, value, 0);
+		return;
+	}
+	digits = digits < 0 ? 0 : digits > 40 ? 40 : digits;
+	char out[352];
+	int used = snprintf(out, sizeof(out), "%.*f", (int)digits, value);
+	if (used > 0) {
+		loke_rt_v1_fmt_bytes(w, (const uint8_t *)out, used);
+	}
+}
+
 void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value) {
 	if (value != 0) {
 		loke_rt_v1_fmt_bytes(w, (const uint8_t *)"true", 4);
