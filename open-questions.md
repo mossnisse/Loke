@@ -288,16 +288,6 @@ text than was asked for.
   console while `tests/run/lib_term_console` runs is read along with the
   records it wrote.
 
-## Open questions in the allocation runtime
-
-- design.md "Allocation failure" gives every allocator one of two policies, but
-  no source spelling selects `.Trap`: `core:mem` names no policy, and `Arena`
-  and `Scratch` always answer `.Panic`. Only a record a foreign provider builds
-  can carry it, so the non-unwinding abort that `runtime/fail.c` implements
-  for it has no corpus test. Where does a program choose `.Trap`: on the
-  factory, on `Arena`/`Scratch` construction, or as a build-wide default for
-  freestanding targets?
-
 ## Open questions in the compiler's structure
 
 An architecture review of `src/` left these open. Each is a structural risk

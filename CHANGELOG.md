@@ -406,6 +406,11 @@ checklist.
 
 ### Added
 
+- `mem.Failure_Policy` and a `policy` argument on `mem.Arena.init`,
+  `Arena.from_buffer`, `Scratch.init`, `try_arena`, and `try_scratch` select
+  `.Trap` for a region: its allocation failures then abort without unwinding
+  (design.md "Allocation failure"). `.Panic` remains the default, and a
+  trapping default allocator is a factory returning such a region.
 - `fmt.fixed(value, digits)` prints a float with a fixed number of fractional
   digits, and `fmt.pad_left`/`fmt.pad_right(value, width)` pad any printable
   value to a width in runes, so `fmt.println(fmt.pad_left(fmt.fixed(x, 2), 8))`

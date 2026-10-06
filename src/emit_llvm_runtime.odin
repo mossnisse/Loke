@@ -207,6 +207,7 @@ emit_text_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_to_runes(ptr, ptr, ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_open(ptr)")
 	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_open_fixed(ptr, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_arena_set_failure(ptr, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_arena_drop(ptr)")
 	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_allocator(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_retain(i64)")

@@ -147,6 +147,9 @@ Compiler :: struct {
 	// The two local region providers (`src/region.odin`), created on first use.
 	arena_type:           Type_Id,
 	scratch_type:         Type_Id,
+	// `mem.Failure_Policy`, and the `.Panic` its constructors default to.
+	failure_policy_type:  Type_Id,
+	panic_policy_arg:     Expr,
 	// design.md "Typed fallibility": the three `base:runtime` declarations the
 	// compiler bootstraps and binds into the universe. `Unit` is a type; the
 	// other two are generic templates instantiated through `src/bootstrap.odin`.

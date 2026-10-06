@@ -628,6 +628,7 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		opened, out := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
 		emit_provider_open_check(e, opened, "%arg0")
+		emit_provider_policy(e, opened)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", out, provider, opened, PROVIDER_CONTROL)
 		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
 
@@ -640,12 +641,14 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", opened, data, length,
 		)
+		emit_provider_policy(e, opened)
 		out := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
 		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
 
 	case .Try_Open:
 		opened := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
+		emit_provider_policy(e, opened)
 		value := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, opened)
@@ -661,6 +664,13 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	}
 	fmt.sbprintln(&e.b, "}")
 	e.terminated = true
+}
+
+// The constructor's `policy`, its second parameter. A failed `try_` open has no
+// control block, which the runtime ignores.
+@(private = "file")
+emit_provider_policy :: proc(e: ^Emitter, control: string) {
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_arena_set_failure(ptr %s, i64 %%arg1)", control)
 }
 
 @(private = "file")

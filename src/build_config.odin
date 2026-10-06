@@ -36,7 +36,6 @@ Build_Config :: struct {
 	types: [Build_Config_Enum]Type_Id,
 }
 
-@(private = "file")
 synth_enum :: proc(c: ^Compiler, name: string, members: []string) -> Type_Id {
 	type := new_type(c, Type_Info {
 		kind    = .Enum,

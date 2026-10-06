@@ -5731,13 +5731,14 @@ A request for zero bytes, such as `unsafe.new` of an empty struct, never reaches
 
 Temporary storage uses an explicit `mem.Scratch` or `mem.Arena` owner. `free_all`, and any call with the same reset effect, is rejected while a live owner or borrow still refers to that allocator's storage.
 
-`Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows the supplied storage; provider-backed construction takes a parent allocator and defaults it to the program provider. Ordinary construction applies the parent's failure policy, while the `try_` procedures return a `Result` containing either the owner or an error, never a partial owner. A provider-backed child must be dropped before its parent region is reset or ended. The zero `Arena` or `Scratch`, which a `static` provider holds until it is assigned, owns an empty region: allocating a byte or more from it fails, and resetting or dropping it does nothing.
+`Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows the supplied storage; provider-backed construction takes a parent allocator and defaults it to the program provider. Ordinary construction applies the parent's failure policy if the owner cannot be created, while the `try_` procedures return a `Result` containing either the owner or an error, never a partial owner. Every constructor takes a final `policy: mem.Failure_Policy`, `.Panic` unless written, which the new region's own allocation failures follow; see [Allocation failure](#allocation-failure). A provider-backed child must be dropped before its parent region is reset or ended. The zero `Arena` or `Scratch`, which a `static` provider holds until it is assigned, owns an empty region: allocating a byte or more from it fails, and resetting or dropping it does nothing.
 
 ```odin
 fixed := mem.Arena.from_buffer(&mut buffer[:]);
 arena := mem.Arena.init(parent_allocator);
 scratch := mem.Scratch.init();
 outcome := mem.try_scratch(parent_allocator); // Result; handle before using the owner
+embedded := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
 ```
 
 For this rule, an owner is live when it may be used later or still requires cleanup on an outgoing path. An explicitly dropped or forgotten owner is dead and no longer blocks reset; moving an owner transfers the dependency to its destination. A carrier or owner that would survive and be used or cleaned up after the reset does block it.
@@ -5814,7 +5815,7 @@ Each allocator carries one of two **failure policies**:
 
 The report names the allocator by kind, such as the system heap or an arena, and says when the build selected it as the default. A failure that requested nothing, such as a `try_clone` that answers `.err` without allocating, reports only the allocator.
 
-The policy is part of the allocator value and follows an explicitly supplied allocator into a subsystem. `.Panic` raises an ordinary [panic](#panics-and-unwinding) and therefore follows the program's panic strategy, unwinding or not accordingly; `.Trap` aborts immediately without unwinding whatever that strategy is. In either case a partially constructed temporary is cleaned up when unwinding permits it, and an existing assignment destination is not modified before all required allocation and cloning succeeds.
+The policy is part of the allocator value and follows an explicitly supplied allocator into a subsystem. The system heap is `.Panic`. A `mem.Arena` or `mem.Scratch` takes its policy at construction, as the `policy` argument of `init`, `from_buffer`, `try_arena`, or `try_scratch`, whose type is `mem.Failure_Policy :: enum { Panic, Trap }`. A program whose default allocator should trap selects a factory returning such a region's allocator ([Build-selected providers](#build-selected-providers)). `.Panic` raises an ordinary [panic](#panics-and-unwinding) and therefore follows the program's panic strategy, unwinding or not accordingly; `.Trap` aborts immediately without unwinding whatever that strategy is. In either case a partially constructed temporary is cleaned up when unwinding permits it, and an existing assignment destination is not modified before all required allocation and cloning succeeds.
 
 An explicitly fallible form returns the failure to the caller. A procedure returning a compatible `Result` may propagate it with `or_return`:
 

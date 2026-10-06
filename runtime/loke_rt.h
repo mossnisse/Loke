@@ -137,6 +137,10 @@ uint64_t loke_rt_v1_arena_min_buffer(void);
  * allocates; the buffer must outlive the arena, which the compiler checks. */
 loke_rt_arena_v1 *loke_rt_v1_arena_open(const loke_rt_allocator_v1 *parent);
 loke_rt_arena_v1 *loke_rt_v1_arena_open_fixed(void *buffer, int64_t size);
+/* design.md "Allocation failure": a `LOKE_RT_ON_FAILURE_*` policy for the
+ * region's own failures, set right after it opens. NULL, a failed open, is
+ * ignored. */
+void loke_rt_v1_arena_set_failure(loke_rt_arena_v1 *arena, int64_t policy);
 /* Releases every block and, for a provider-backed arena, the control block
  * itself. A NULL arena is the moved-from/zero value and drops to nothing. */
 void loke_rt_v1_arena_drop(loke_rt_arena_v1 *arena);

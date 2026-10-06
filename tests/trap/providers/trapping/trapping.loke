@@ -1,0 +1,19 @@
+@(public)
+package trapping;
+
+import "core:mem";
+
+// A selected allocator that traps: a small fixed arena constructed with
+// `.Trap`, so the program's default allocations abort rather than panic once
+// it is full.
+
+@(private)
+storage: static [256]u8 = {};
+
+@(private)
+region: static mem.Arena = {};
+
+factory :: proc() -> Allocator {
+	region = mem.Arena.from_buffer(&mut storage[:], policy = .Trap);
+	return region.allocator();
+}

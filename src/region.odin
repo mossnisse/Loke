@@ -25,11 +25,12 @@ PROVIDER_CONTROL :: 0
 
 Provider_Op :: enum {
 	None,
-	// `mem.Arena.init(parent)` and `mem.Scratch.init(parent)`.
+	// `mem.Arena.init(parent, policy)` and `mem.Scratch.init(parent, policy)`.
 	Open,
-	// `mem.Arena.from_buffer(buffer)`: storage and control block in the buffer.
+	// `mem.Arena.from_buffer(buffer, policy)`: storage and control block in the
+	// buffer.
 	Open_Fixed,
-	// `mem.try_arena(parent)` and `mem.try_scratch(parent)`.
+	// `mem.try_arena(parent, policy)` and `mem.try_scratch(parent, policy)`.
 	Try_Open,
 	// `arena.allocator()`: the handle. Its region is this provider's.
 	Handle,
@@ -47,6 +48,31 @@ scratch_type :: proc(c: ^Compiler) -> Type_Id {
 		c.scratch_type = new_provider_type(c, "mem.Scratch")
 	}
 	return c.scratch_type
+}
+
+// design.md "Allocation failure": the policy a region's own failures follow. The
+// members' values are the runtime's `LOKE_RT_ON_FAILURE_*`.
+failure_policy_type :: proc(c: ^Compiler) -> Type_Id {
+	if c.failure_policy_type == INVALID_TYPE {
+		c.failure_policy_type = synth_enum(c, "mem.Failure_Policy", {"Panic", "Trap"})
+	}
+	return c.failure_policy_type
+}
+
+// The `.Panic` an omitted `policy` argument means.
+@(private = "file")
+panic_policy_arg :: proc(c: ^Compiler) -> Expr {
+	if c.panic_policy_arg == nil {
+		literal := new(Expr_Literal, c.semantic_allocator)
+		literal.span = no_span()
+		literal.kind = .Int
+		literal.type = failure_policy_type(c)
+		literal.value_category = .Value
+		literal.is_const = true
+		literal.const_value = int_const(c, 0)
+		c.panic_policy_arg = literal
+	}
+	return c.panic_policy_arg
 }
 
 @(private = "file")
@@ -132,15 +158,11 @@ ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
 	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
 	if type == k.c.arena_type {
 		buffer := slice_of(k.c, TYPE_U8, mutable = true)
-		append(&members, provider_member(
-			k.c, type, "from_buffer", .Open_Fixed,
-			[]Type_Id{buffer}, []Param_Mode{.Value}, type, has_receiver = false,
+		append(&members, provider_constructor(
+			k.c, type, "from_buffer", .Open_Fixed, buffer, "buffer", type,
 		))
 	}
-	open := provider_member(
-		k.c, type, "init", .Open,
-		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value}, type, has_receiver = false,
-	)
+	open := provider_constructor(k.c, type, "init", .Open, TYPE_ALLOCATOR, "parent", type)
 	if sym := symbol_of(k.c, open); sym != nil {
 		sym.param_defaults[0] = default_allocator_arg(k.c)
 	}
@@ -176,16 +198,41 @@ provider_member :: proc(
 	return id
 }
 
+// A constructor taking its storage source, then a `policy` that defaults to
+// `.Panic`. Both are named, so `policy = .Trap` may be written alone.
+@(private = "file")
+provider_constructor :: proc(
+	c: ^Compiler,
+	owner: Type_Id,
+	name: string,
+	op: Provider_Op,
+	source: Type_Id,
+	source_name: string,
+	result: Type_Id,
+) -> Symbol_Id {
+	policy := failure_policy_type(c)
+	id := provider_member(
+		c, owner, name, op, []Type_Id{source, policy}, []Param_Mode{.Value, .Value}, result, has_receiver = false,
+	)
+	if sym := symbol_of(c, id); sym != nil {
+		sym.param_defaults[1] = panic_policy_arg(c)
+		for parameter, index in ([]string{source_name, "policy"}) {
+			sym.param_symbols[index] = new_symbol(c, Symbol {
+				name = intern_identifier(c, parameter), kind = .Parameter,
+				type = sym.params[index], mode = .Value,
+			})
+		}
+	}
+	return id
+}
+
 // A package-level fallible constructor, synthesized eagerly when `core:mem` is
 // loaded: unlike an associated member, package lookup has no type from which to
 // trigger lazy contribution.
 provider_try_proc :: proc(k: ^Checker, owner: Type_Id, name: string) -> Symbol_Id {
 	c := k.c
-	id := provider_member(
-		c, owner, name, .Try_Open,
-		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value},
-		result_type(k, owner, TYPE_ALLOCATOR_ERROR),
-		has_receiver = false,
+	id := provider_constructor(
+		c, owner, name, .Try_Open, TYPE_ALLOCATOR, "parent", result_type(k, owner, TYPE_ALLOCATOR_ERROR),
 	)
 	if sym := symbol_of(c, id); sym != nil {
 		sym.param_defaults[0] = default_allocator_arg(c)

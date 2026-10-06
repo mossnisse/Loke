@@ -21,6 +21,8 @@ package mem;
 // argument names, so an omitted allocator and a written
 // `mem.default_allocator()` select one provider through one call.
 //
+//   Failure_Policy     `.Panic` or `.Trap`, the last argument of every
+//                      constructor below, `.Panic` unless written
 //   Arena              a local bump region, optionally over a caller's buffer
 //   Scratch            the same, always provider-backed
 //   try_arena          the two constructors again, reporting an allocation
@@ -31,7 +33,8 @@ package mem;
 // body may reset without a promise, and one no owner may outlive.
 //
 //   arena := mem.Arena.init();                 // blocks from the default provider
-//   arena := mem.Arena.from_buffer(buffer[:]); // caller storage, no allocation
+//   arena := mem.Arena.from_buffer(&mut buffer[:]); // caller storage, no allocation
+//   arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap); // aborts on failure
 //   scratch := mem.Scratch.init();
 //   outcome := mem.try_arena();                // Result(Arena, Allocator_Error)
 //

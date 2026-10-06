@@ -285,6 +285,12 @@ loke_rt_arena_v1 *loke_rt_v1_arena_open_fixed(void *buffer, int64_t size) {
 	return arena;
 }
 
+void loke_rt_v1_arena_set_failure(loke_rt_arena_v1 *arena, int64_t policy) {
+	if (arena != 0) {
+		arena->record.on_failure = (uint32_t)policy;
+	}
+}
+
 void loke_rt_v1_arena_drop(loke_rt_arena_v1 *arena) {
 	const loke_rt_allocator_v1 *parent;
 	if (arena == 0) {

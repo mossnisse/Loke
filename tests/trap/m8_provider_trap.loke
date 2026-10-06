@@ -1,0 +1,12 @@
+@(default_allocator = "./providers/trapping:factory")
+package main; import "core:fmt";
+
+// design.md "Allocation failure": a default allocator whose region was built
+// with `.Trap` aborts without unwinding, so the `defer` never runs.
+
+main :: proc() {
+	defer fmt.println("unwound");
+	xs: [dynamic]int = {};
+	xs.reserve(1000);
+	fmt.println("not reached", xs.len());
+}

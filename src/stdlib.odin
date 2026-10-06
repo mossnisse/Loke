@@ -71,6 +71,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// merely call them.
 		contribute_type(c, pkg, "Arena", arena_type(c))
 		contribute_type(c, pkg, "Scratch", scratch_type(c))
+		contribute_type(c, pkg, "Failure_Policy", failure_policy_type(c))
 		contribute_symbol(c, pkg, "try_arena", provider_try_proc(k, arena_type(c), "try_arena"))
 		contribute_symbol(c, pkg, "try_scratch", provider_try_proc(k, scratch_type(c), "try_scratch"))
 	case STD_UNSAFE:
