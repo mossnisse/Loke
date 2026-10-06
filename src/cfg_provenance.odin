@@ -3687,125 +3687,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	case Call_Text, Call_Text_Conversion:
 		return prov_text_call(graph, v)
 	}
-	// design.md "Shared ownership": the payload's borrows land below the
-	// handle's one step, as for a box; the library body hides them in a `rawptr`.
-	if payload, fallible := shared_constructor_payload(c, v); payload != nil {
-		loans := walk_flow_expr(graph, payload)
-		for argument in v.bound[1:] {
-			if argument != nil {
-				walk_flow_expr(graph, argument)
-			}
-		}
-		depth := fallible ? 2 : 1
-		content := prov_temp_content(graph, v.type)
-		for slot in content {
-			path := graph.prov_slots[slot].path
-			suffix := path[min(depth, len(path)):]
-			prov_define_one_content(graph, slot, prov_select_content(graph, loans, expr_base(payload).type, suffix), v.span)
-		}
-		return content
-	}
-	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
-		#partial switch sym.builtin {
-		case .Fmt_Format_View:
-			// The interface view borrows exactly what the erased input borrows.
-			return walk_flow_expr(graph, v.bound[0])
-		case .Box_New, .Try_Box:
-			// design.md "Owned values": the payload's borrows land below the box's
-			// one step, path by path, so a box keeps its fields apart as a record
-			// does. The allocator is only read. A call that failed to check bound
-			// nothing.
-			if len(v.bound) == 0 {
-				return nil
-			}
-			loans := walk_flow_expr(graph, v.bound[0])
-			if len(v.bound) > 1 {
-				walk_flow_expr(graph, v.bound[1])
-			}
-			allocation := v.operation.(Call_Allocation)
-			depth := allocation.fallible ? 2 : 1
-			content := prov_temp_content(graph, v.type)
-			for slot in content {
-				path := graph.prov_slots[slot].path
-				suffix := path[min(depth, len(path)):]
-				prov_define_one_content(graph, slot, prov_select_content(graph, loans, allocation.type, suffix), v.span)
-			}
-			return content
-		case .Default_Allocator:
-			return prov_synthetic_borrow(graph, v, .Static, TYPE_ALLOCATOR)
-		case .Unsafe_Free:
-			// design.md "What is not checked": the operands are only read.
-			for bound in v.bound {
-				walk_flow_expr(graph, bound)
-			}
-			return nil
-		case .Free_All:
-			if len(v.bound) >= 1 {
-				region := prov_region_of(graph, v.bound[0])
-				walk_flow_expr(graph, v.bound[0])
-				prov_reset(graph, region, v.span, true, v)
-			}
-			return nil
-		case .Drop:
-			if len(v.bound) == 1 {
-				provider_drop_end(graph, v)
-				prov_drop_effects(graph, expr_base(v.bound[0]).type, v.span)
-				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
-					prov_drop_use(graph, ident.symbol, v.span)
-					prov_clear_content(graph, ident.symbol, v.span)
-				}
-				prov_invalidate(graph, v.bound[0], v.span, "dropped")
-			}
-			return nil
-		case .Exchange:
-			if len(v.bound) == 2 {
-				provider_exchange_end(graph, v)
-				// `old := x; x = value; return old`, for loans as for regions.
-				type := expr_base(v.bound[0]).type
-				old := prov_project_content(graph, walk_flow_expr(graph, v.bound[0]), type, nil, type, v.span)
-				prov_invalidate(graph, v.bound[0], v.span, "exchanged")
-				sources := walk_flow_expr(graph, v.bound[1])
-				prov_store_region(graph, v.bound[0], v.bound[1])
-				prov_store_loans(graph, v.bound[0], sources, v.span)
-				return old
-			}
-			return nil
-		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
-		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
-			// An atomic returns the stored value, not a borrow of its address, or an
-			// `Atomic(^T)` could never load.
-			for argument in v.bound {
-				if argument != nil {
-					walk_flow_expr(graph, argument)
-				}
-			}
-			return nil
-		case .Unsafe_Take:
-			// design.md "The `unsafe` package": the value is read out, and keeps
-			// what it borrows.
-			if len(v.bound) == 1 {
-				type := expr_base(v.bound[0]).type
-				taken := prov_project_content(graph, walk_flow_expr(graph, v.bound[0]), type, nil, type, v.span)
-				prov_invalidate(graph, v.bound[0], v.span, "taken")
-				return taken
-			}
-			return nil
-		case .Unsafe_Write:
-			// Stored the way an initialization takes it, loans and region alike.
-			if len(v.bound) == 2 {
-				prov_invalidate(graph, v.bound[0], v.span, "overwritten")
-				sources := walk_flow_expr(graph, v.bound[1])
-				prov_store_region(graph, v.bound[0], v.bound[1])
-				prov_store_loans(graph, v.bound[0], sources, v.span)
-			}
-			return nil
-		case .Unsafe_Forget:
-			if len(v.bound) == 1 {
-				// A borrow of the forgotten value dies here, as at a `drop`.
-				prov_consume(graph, v.bound[0], v.span, "forgotten")
-			}
-			return nil
-		}
+	if result, handled := prov_builtin_call(graph, v); handled {
+		return result
 	}
 	if call_provider_op(c, v) == .Handle && len(v.bound) > 0 {
 		// design.md "Allocators": the control block follows the region's
@@ -3872,174 +3755,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	// borrows before a later one invalidates.
 	for step in 0 ..< len(v.bound) {
 		index := call_slot_at(v, step)
-		argument := v.bound[index]
-		// design.md "Variadic parameters": the pack slot holds no written
-		// expression unless a sole spread is forwarded.
-		if v.is_variadic && index == v.variadic_slot && !v.variadic_forwards {
-			actuals[index] = walk_variadic_pack(graph, v)
-			borrowed = prov_join(graph, borrowed, actuals[index])
-			continue
-		}
-		if argument == nil {
-			continue
-		}
-		if index == 0 && receiver == .Move {
-			actuals[index] = prov_consume(graph, argument, expr_span(argument), "moved")
-			borrowed = prov_join(graph, borrowed, actuals[index])
-			continue
-		}
-		// design.md "`inout` results": an `inout` call result passed on `inout`
-		// is the place its own `inout` arguments borrow.
-		if prov_argument_is_inout(graph, v, index) {
-			if place, is_inout := prov_inout_result_place(graph, argument); is_inout {
-				actuals[index] = place
-				borrowed = prov_join(graph, borrowed, place)
-				continue
-			}
-		}
-		if index == 0 && receiver == .Inout {
-			// An `inout` receiver invalidates borrows of it (design.md), and its held
-			// borrows stay live through the call, as `iterator.next()` reads its slice.
-			borrowed = prov_join(graph, borrowed, prov_carrier_slots(graph, argument))
-			prov_invalidate(graph, argument, v.span, "modified")
-			// design.md "Borrowing iteration": a result derived from a view the
-			// receiver holds names that view's source, not the receiver, so
-			// advancing the receiver cannot invalidate an element already handed
-			// back. The summary tells the two apart. The two lending synths have no
-			// body to summarize, so they are named here; `indexed()` lends only
-			// while it wraps a lending source.
-			lends := prov_result_reads_through_receiver(c, v, index)
-			if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil {
-				lends ||= callee.synth == .Slice_Ref_Next || indexed_next_lends(c, callee)
-			}
-			if lends {
-				actuals[index] = prov_carrier_slots(graph, argument)
-				continue
-			}
-			if root, path, ok := prov_place_of(graph, argument); ok {
-				if prov_op_removes_element(container_op) {
-					// A removal returns what the element held, not a container borrow.
-					actuals[index] = prov_content_at(
-						graph, root, prov_element_path(graph, v, path, container_op),
-					)
-				} else {
-					actuals[index] = prov_join(graph, prov_carrier_slots(graph, argument),
-						prov_borrow(graph, root, path, true, expr_span(argument), "borrow"))
-				}
-				borrowed = prov_join(graph, borrowed, actuals[index])
-			}
-			continue
-		}
-		if index == 0 && prov_op_returns_view(container_op) {
-			// design.md "Iteration adapters": a map view read-borrows the map, and
-			// also carries what the stored elements borrow.
-			held := walk_flow_expr(graph, argument)
-			if root, path, ok := prov_place_of(graph, argument); ok {
-				prov_access(graph, root, path, .Read, expr_span(argument))
-				held = prov_join(
-					graph, held, prov_borrow(graph, root, path, false, expr_span(argument), "view"),
-				)
-			} else if prov_expr_is_temporary(argument) {
-				held = prov_join(
-					graph, held,
-					prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "view"),
-				)
-			}
-			actuals[index] = held
-			borrowed = prov_join(graph, borrowed, held)
-			continue
-		}
-		if prov_argument_is_inout(graph, v, index) {
-			if root, path, ok := prov_place_of(graph, argument); ok {
-				borrowed = prov_join(graph, borrowed, prov_carrier_slots(graph, argument))
-				prov_walk_subscripts(graph, argument)
-				prov_access(graph, root, path, .Write, expr_span(argument))
-				actuals[index] = prov_join(graph, prov_carrier_slots(graph, argument),
-					prov_borrow(graph, root, path, true, expr_span(argument), "borrow"))
-				borrowed = prov_join(graph, borrowed, actuals[index])
-				continue
-			}
-			// design.md "Weakening and reborrows": `inout p^` lends what `p` names,
-			// as `&mut p^` would, so `p` is suspended for the call.
-			if carriers, _, through := prov_read_through_carrier(graph, argument); through {
-				actuals[index] = prov_lend_carrier(graph, carriers, borrowed, expr_span(argument))
-				borrowed = prov_join(graph, borrowed, actuals[index])
-				continue
-			}
-		}
-		if index == 0 && container_op == .Map_Lookup_Value {
-			// `lookup_value` copies the payload, carrying its stored dependencies.
-			result_type := v.type
-			entry_step := prov_map_call_step(graph, v)
-			if root, path, ok := prov_place_of(graph, argument); ok {
-				prov_walk_subscripts(graph, argument)
-				prov_access(graph, root, path, .Read, expr_span(argument))
-				entry := prov_extend(graph, path, entry_step)
-				value := prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE))
-				actuals[index] = prov_read_content(graph, root, value, result_type, v.span)
-			} else {
-				receiver := walk_flow_expr(graph, argument)
-				entry := prov_extend(graph, nil, entry_step)
-				value := prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE))
-				actuals[index] = prov_project_content(
-					graph, receiver, expr_base(argument).type, value, result_type, v.span,
-				)
-			}
-		} else if prov_argument_borrows_caller(graph, v, index, receiver, has_receiver) {
-			// design.md "Receiver forms": a read-only borrow of the caller's value,
-			// plus whatever borrows the receiver itself carries.
-			callee := symbol_of(c, v.resolution.chosen_overload)
-			if ident, plain := prov_plain_slice_local(graph, argument); plain && callee != nil &&
-			   (callee.synth == .Standard_Len || callee.synth == .Standard_Cap || callee.synth == .Standard_Hash) {
-				// Measuring or hashing only reads, and the plain result keeps nothing.
-				prov_read_ident(graph, ident, .Read, reads_only = true)
-				continue
-			}
-			held := walk_flow_expr(graph, argument)
-			if callee != nil && (callee.synth == .Adapter_Iter || callee.synth == .Iterator_Copy ||
-			   (callee.synth == .Adapter_View && type_of(c, callee.result).adapter_by_value) ||
-			   clone_copies_receiver(c, callee)) {
-				actuals[index] = held
-				borrowed = prov_join(graph, borrowed, held)
-				continue
-			}
-			loan: []int
-			// Walking the argument above already read the place.
-			if root, path, ok := prov_place_of(graph, argument); ok && !expression_converts_storage(argument) {
-				loan = prov_borrow(graph, root, path, false, expr_span(argument), "borrow")
-			} else if carriers, _, through := prov_read_through_carrier(graph, argument); through {
-				loan = carriers // `Type.method(&value)`, or a place behind a pointer
-			} else {
-				loan = prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "borrow")
-			}
-			// A `value: T` callee shares the owner's allocations only for the call
-			// (design.md "Parameter semantics and ABI lowering"): the argument stays
-			// borrowed until it returns, but the result cannot derive from it.
-			if !(index == 0 && has_receiver) && proc_parameter_mode(c, call_proc_type(c, v), index) == .Value {
-				borrowed = prov_join(graph, borrowed, loan)
-			} else {
-				held = prov_join(graph, held, loan)
-			}
-			actuals[index] = held
-		} else if !(index == 0 && has_receiver) && prov_argument_only_read(graph, argument, prov_parameter_type(graph, v, index)) {
-			// Weakened to a read-only parameter, the carrier is only read.
-			actuals[index] = prov_read_carrier(graph, argument, true)
-		} else {
-			actuals[index] = walk_flow_expr(graph, argument)
-		}
-		param_type := prov_parameter_type(graph, v, index)
-		prov_reborrow(graph, actuals[index], param_type)
-		// A mutable carrier passed on as one is reborrowed until the call and what
-		// it returns are done with it, so no other argument may use it meanwhile.
-		if carrier_is_mutable(c, param_type) && !(index == 0 && has_receiver) {
-			actuals[index] = prov_lend_carrier(graph, actuals[index], borrowed, expr_span(argument))
-		} else if type_is_carrier(c, param_type) && !(index == 0 && has_receiver) {
-			// design.md "Weakening and reborrows": an existing mutable carrier
-			// weakened to a read-only parameter is reborrowed for the call, which
-			// suspends it while later arguments are evaluated.
-			actuals[index] = prov_reborrow_traversal(graph, actuals[index], expr_span(argument), false)
-		}
-		borrowed = prov_join(graph, borrowed, actuals[index])
+		actuals[index] = prov_call_argument(graph, v, index, receiver, has_receiver, container_op, &borrowed)
 	}
 	prov_call_resets(graph, v)
 	prov_call_retention(graph, v, actuals)
@@ -4050,6 +3766,318 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
 	return prov_store_call_results(graph, v, actuals)
+}
+
+// The calls with provenance rules of their own: a shared constructor and the
+// builtins. `handled` is false for every other call.
+@(private = "file")
+prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, handled: bool) {
+	c := graph.k.c
+	// design.md "Shared ownership": the payload's borrows land below the
+	// handle's one step, as for a box; the library body hides them in a `rawptr`.
+	if payload, fallible := shared_constructor_payload(c, v); payload != nil {
+		loans := walk_flow_expr(graph, payload)
+		for argument in v.bound[1:] {
+			if argument != nil {
+				walk_flow_expr(graph, argument)
+			}
+		}
+		depth := fallible ? 2 : 1
+		content := prov_temp_content(graph, v.type)
+		for slot in content {
+			path := graph.prov_slots[slot].path
+			suffix := path[min(depth, len(path)):]
+			prov_define_one_content(graph, slot, prov_select_content(graph, loans, expr_base(payload).type, suffix), v.span)
+		}
+		return content, true
+	}
+	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
+		#partial switch sym.builtin {
+		case .Fmt_Format_View:
+			// The interface view borrows exactly what the erased input borrows.
+			return walk_flow_expr(graph, v.bound[0]), true
+		case .Box_New, .Try_Box:
+			// design.md "Owned values": the payload's borrows land below the box's
+			// one step, path by path, so a box keeps its fields apart as a record
+			// does. The allocator is only read. A call that failed to check bound
+			// nothing.
+			if len(v.bound) == 0 {
+				return nil, true
+			}
+			loans := walk_flow_expr(graph, v.bound[0])
+			if len(v.bound) > 1 {
+				walk_flow_expr(graph, v.bound[1])
+			}
+			allocation := v.operation.(Call_Allocation)
+			depth := allocation.fallible ? 2 : 1
+			content := prov_temp_content(graph, v.type)
+			for slot in content {
+				path := graph.prov_slots[slot].path
+				suffix := path[min(depth, len(path)):]
+				prov_define_one_content(graph, slot, prov_select_content(graph, loans, allocation.type, suffix), v.span)
+			}
+			return content, true
+		case .Default_Allocator:
+			return prov_synthetic_borrow(graph, v, .Static, TYPE_ALLOCATOR), true
+		case .Unsafe_Free:
+			// design.md "What is not checked": the operands are only read.
+			for bound in v.bound {
+				walk_flow_expr(graph, bound)
+			}
+			return nil, true
+		case .Free_All:
+			if len(v.bound) >= 1 {
+				region := prov_region_of(graph, v.bound[0])
+				walk_flow_expr(graph, v.bound[0])
+				prov_reset(graph, region, v.span, true, v)
+			}
+			return nil, true
+		case .Drop:
+			if len(v.bound) == 1 {
+				provider_drop_end(graph, v)
+				prov_drop_effects(graph, expr_base(v.bound[0]).type, v.span)
+				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
+					prov_drop_use(graph, ident.symbol, v.span)
+					prov_clear_content(graph, ident.symbol, v.span)
+				}
+				prov_invalidate(graph, v.bound[0], v.span, "dropped")
+			}
+			return nil, true
+		case .Exchange:
+			if len(v.bound) == 2 {
+				provider_exchange_end(graph, v)
+				// `old := x; x = value; return old`, for loans as for regions.
+				type := expr_base(v.bound[0]).type
+				old := prov_project_content(graph, walk_flow_expr(graph, v.bound[0]), type, nil, type, v.span)
+				prov_invalidate(graph, v.bound[0], v.span, "exchanged")
+				sources := walk_flow_expr(graph, v.bound[1])
+				prov_store_region(graph, v.bound[0], v.bound[1])
+				prov_store_loans(graph, v.bound[0], sources, v.span)
+				return old, true
+			}
+			return nil, true
+		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
+		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
+			// An atomic returns the stored value, not a borrow of its address, or an
+			// `Atomic(^T)` could never load.
+			for argument in v.bound {
+				if argument != nil {
+					walk_flow_expr(graph, argument)
+				}
+			}
+			return nil, true
+		case .Unsafe_Take:
+			// design.md "The `unsafe` package": the value is read out, and keeps
+			// what it borrows.
+			if len(v.bound) == 1 {
+				type := expr_base(v.bound[0]).type
+				taken := prov_project_content(graph, walk_flow_expr(graph, v.bound[0]), type, nil, type, v.span)
+				prov_invalidate(graph, v.bound[0], v.span, "taken")
+				return taken, true
+			}
+			return nil, true
+		case .Unsafe_Write:
+			// Stored the way an initialization takes it, loans and region alike.
+			if len(v.bound) == 2 {
+				prov_invalidate(graph, v.bound[0], v.span, "overwritten")
+				sources := walk_flow_expr(graph, v.bound[1])
+				prov_store_region(graph, v.bound[0], v.bound[1])
+				prov_store_loans(graph, v.bound[0], sources, v.span)
+			}
+			return nil, true
+		case .Unsafe_Forget:
+			if len(v.bound) == 1 {
+				// A borrow of the forgotten value dies here, as at a `drop`.
+				prov_consume(graph, v.bound[0], v.span, "forgotten")
+			}
+			return nil, true
+		}
+	}
+	return nil, false
+}
+
+// One argument of `v`, in slot `index`: what it lends to the call. Loans that
+// must stay live through the call are added to `borrowed`.
+@(private = "file")
+prov_call_argument :: proc(
+	graph: ^Flow_Graph,
+	v: ^Expr_Call,
+	index: int,
+	receiver: Param_Mode,
+	has_receiver: bool,
+	container_op: Container_Op,
+	borrowed: ^[]int,
+) -> (actual: []int) {
+	c := graph.k.c
+	argument := v.bound[index]
+	// design.md "Variadic parameters": the pack slot holds no written
+	// expression unless a sole spread is forwarded.
+	if v.is_variadic && index == v.variadic_slot && !v.variadic_forwards {
+		actual = walk_variadic_pack(graph, v)
+		borrowed^ = prov_join(graph, borrowed^, actual)
+		return actual
+	}
+	if argument == nil {
+		return actual
+	}
+	if index == 0 && receiver == .Move {
+		actual = prov_consume(graph, argument, expr_span(argument), "moved")
+		borrowed^ = prov_join(graph, borrowed^, actual)
+		return actual
+	}
+	// design.md "`inout` results": an `inout` call result passed on `inout`
+	// is the place its own `inout` arguments borrow.
+	if prov_argument_is_inout(graph, v, index) {
+		if place, is_inout := prov_inout_result_place(graph, argument); is_inout {
+			actual = place
+			borrowed^ = prov_join(graph, borrowed^, place)
+			return actual
+		}
+	}
+	if index == 0 && receiver == .Inout {
+		// An `inout` receiver invalidates borrows of it (design.md), and its held
+		// borrows stay live through the call, as `iterator.next()` reads its slice.
+		borrowed^ = prov_join(graph, borrowed^, prov_carrier_slots(graph, argument))
+		prov_invalidate(graph, argument, v.span, "modified")
+		// design.md "Borrowing iteration": a result derived from a view the
+		// receiver holds names that view's source, not the receiver, so
+		// advancing the receiver cannot invalidate an element already handed
+		// back. The summary tells the two apart. The two lending synths have no
+		// body to summarize, so they are named here; `indexed()` lends only
+		// while it wraps a lending source.
+		lends := prov_result_reads_through_receiver(c, v, index)
+		if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil {
+			lends ||= callee.synth == .Slice_Ref_Next || indexed_next_lends(c, callee)
+		}
+		if lends {
+			actual = prov_carrier_slots(graph, argument)
+			return actual
+		}
+		if root, path, ok := prov_place_of(graph, argument); ok {
+			if prov_op_removes_element(container_op) {
+				// A removal returns what the element held, not a container borrow.
+				actual = prov_content_at(
+					graph, root, prov_element_path(graph, v, path, container_op),
+				)
+			} else {
+				actual = prov_join(graph, prov_carrier_slots(graph, argument),
+					prov_borrow(graph, root, path, true, expr_span(argument), "borrow"))
+			}
+			borrowed^ = prov_join(graph, borrowed^, actual)
+		}
+		return actual
+	}
+	if index == 0 && prov_op_returns_view(container_op) {
+		// design.md "Iteration adapters": a map view read-borrows the map, and
+		// also carries what the stored elements borrow.
+		held := walk_flow_expr(graph, argument)
+		if root, path, ok := prov_place_of(graph, argument); ok {
+			prov_access(graph, root, path, .Read, expr_span(argument))
+			held = prov_join(
+				graph, held, prov_borrow(graph, root, path, false, expr_span(argument), "view"),
+			)
+		} else if prov_expr_is_temporary(argument) {
+			held = prov_join(
+				graph, held,
+				prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "view"),
+			)
+		}
+		actual = held
+		borrowed^ = prov_join(graph, borrowed^, held)
+		return actual
+	}
+	if prov_argument_is_inout(graph, v, index) {
+		if root, path, ok := prov_place_of(graph, argument); ok {
+			borrowed^ = prov_join(graph, borrowed^, prov_carrier_slots(graph, argument))
+			prov_walk_subscripts(graph, argument)
+			prov_access(graph, root, path, .Write, expr_span(argument))
+			actual = prov_join(graph, prov_carrier_slots(graph, argument),
+				prov_borrow(graph, root, path, true, expr_span(argument), "borrow"))
+			borrowed^ = prov_join(graph, borrowed^, actual)
+			return actual
+		}
+		// design.md "Weakening and reborrows": `inout p^` lends what `p` names,
+		// as `&mut p^` would, so `p` is suspended for the call.
+		if carriers, _, through := prov_read_through_carrier(graph, argument); through {
+			actual = prov_lend_carrier(graph, carriers, borrowed^, expr_span(argument))
+			borrowed^ = prov_join(graph, borrowed^, actual)
+			return actual
+		}
+	}
+	if index == 0 && container_op == .Map_Lookup_Value {
+		// `lookup_value` copies the payload, carrying its stored dependencies.
+		result_type := v.type
+		entry_step := prov_map_call_step(graph, v)
+		if root, path, ok := prov_place_of(graph, argument); ok {
+			prov_walk_subscripts(graph, argument)
+			prov_access(graph, root, path, .Read, expr_span(argument))
+			entry := prov_extend(graph, path, entry_step)
+			value := prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE))
+			actual = prov_read_content(graph, root, value, result_type, v.span)
+		} else {
+			receiver := walk_flow_expr(graph, argument)
+			entry := prov_extend(graph, nil, entry_step)
+			value := prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE))
+			actual = prov_project_content(
+				graph, receiver, expr_base(argument).type, value, result_type, v.span,
+			)
+		}
+	} else if prov_argument_borrows_caller(graph, v, index, receiver, has_receiver) {
+		// design.md "Receiver forms": a read-only borrow of the caller's value,
+		// plus whatever borrows the receiver itself carries.
+		callee := symbol_of(c, v.resolution.chosen_overload)
+		if ident, plain := prov_plain_slice_local(graph, argument); plain && callee != nil &&
+		   (callee.synth == .Standard_Len || callee.synth == .Standard_Cap || callee.synth == .Standard_Hash) {
+			// Measuring or hashing only reads, and the plain result keeps nothing.
+			prov_read_ident(graph, ident, .Read, reads_only = true)
+			return actual
+		}
+		held := walk_flow_expr(graph, argument)
+		if callee != nil && (callee.synth == .Adapter_Iter || callee.synth == .Iterator_Copy ||
+		   (callee.synth == .Adapter_View && type_of(c, callee.result).adapter_by_value) ||
+		   clone_copies_receiver(c, callee)) {
+			actual = held
+			borrowed^ = prov_join(graph, borrowed^, held)
+			return actual
+		}
+		loan: []int
+		// Walking the argument above already read the place.
+		if root, path, ok := prov_place_of(graph, argument); ok && !expression_converts_storage(argument) {
+			loan = prov_borrow(graph, root, path, false, expr_span(argument), "borrow")
+		} else if carriers, _, through := prov_read_through_carrier(graph, argument); through {
+			loan = carriers // `Type.method(&value)`, or a place behind a pointer
+		} else {
+			loan = prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "borrow")
+		}
+		// A `value: T` callee shares the owner's allocations only for the call
+		// (design.md "Parameter semantics and ABI lowering"): the argument stays
+		// borrowed until it returns, but the result cannot derive from it.
+		if !(index == 0 && has_receiver) && proc_parameter_mode(c, call_proc_type(c, v), index) == .Value {
+			borrowed^ = prov_join(graph, borrowed^, loan)
+		} else {
+			held = prov_join(graph, held, loan)
+		}
+		actual = held
+	} else if !(index == 0 && has_receiver) && prov_argument_only_read(graph, argument, prov_parameter_type(graph, v, index)) {
+		// Weakened to a read-only parameter, the carrier is only read.
+		actual = prov_read_carrier(graph, argument, true)
+	} else {
+		actual = walk_flow_expr(graph, argument)
+	}
+	param_type := prov_parameter_type(graph, v, index)
+	prov_reborrow(graph, actual, param_type)
+	// A mutable carrier passed on as one is reborrowed until the call and what
+	// it returns are done with it, so no other argument may use it meanwhile.
+	if carrier_is_mutable(c, param_type) && !(index == 0 && has_receiver) {
+		actual = prov_lend_carrier(graph, actual, borrowed^, expr_span(argument))
+	} else if type_is_carrier(c, param_type) && !(index == 0 && has_receiver) {
+		// design.md "Weakening and reborrows": an existing mutable carrier
+		// weakened to a read-only parameter is reborrowed for the call, which
+		// suspends it while later arguments are evaluated.
+		actual = prov_reborrow_traversal(graph, actual, expr_span(argument), false)
+	}
+	borrowed^ = prov_join(graph, borrowed^, actual)
+	return actual
 }
 
 // design.md "Global write effects": a temporary lent to a value parameter is

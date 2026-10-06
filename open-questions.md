@@ -348,16 +348,6 @@ rather than a wrong answer; the wrong answers it found are in
 The completed audit and its decisions are recorded in
 [comments.md "Compiler architecture audit (2026-09-28)"](comments.md#compiler-architecture-audit-2026-09-28).
 
-## Review cleanup in `cfg_provenance.odin`
-
-The correctness findings and reproductions are in
-[known-gaps.md](known-gaps.md). One recommendation for
-[src/cfg_provenance.odin](src/cfg_provenance.odin) remains: give `prov_call`
-visible phase boundaries using small helpers for builtin calls and argument
-preparation, following its existing `prov_text_call` pattern. Its current
-dispatch, evaluation, borrow creation, and effect application occupy one
-procedure of roughly 360 lines.
-
 ## Review cleanup in `check.odin`
 
 The confirmed specification divergences and reproductions are in
