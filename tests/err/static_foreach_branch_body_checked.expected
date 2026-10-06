@@ -1,0 +1,7 @@
+warning[L0507]: this argument copies 600 bytes from `once`
+@12:8
+L0310
+@13:16
+L0455
+`continue` cannot target a static expansion
+@14:17

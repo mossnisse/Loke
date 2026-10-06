@@ -12,10 +12,11 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	}
 	if !check_static_pattern_markers(k, s.bindings) { return FLOWS }
 
-	// Checked once on the written body, not per copy.
-	if block_has_branch(k, s.body) {
-		return FLOWS
-	}
+	// Reported once on the written body, not per copy. The copies are still
+	// checked, so nothing else in the body goes unreported.
+	outer_reported := k.branches_reported
+	k.branches_reported = block_has_branch(k, s.body)
+	defer k.branches_reported = outer_reported
 
 	elements, element_type, folded := fold_static_iterable(k, s.iterable)
 	if !folded {

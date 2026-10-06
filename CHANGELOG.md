@@ -530,6 +530,9 @@ checklist.
 
 ### Fixed
 
+- A static `foreach` body with a `break` or `continue` that targets the
+  expansion (`L0455`) is still checked, so its other errors and copy-cost
+  warnings are reported; only the `L0455` was.
 - A declaration that copies a place into a `via` destination, such as
   `copy: [dynamic]int via arena.allocator() = list`, reports a use of an
   allocator already moved or dropped (`L0500`). It compiled, and the program

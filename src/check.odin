@@ -51,6 +51,9 @@ Body_Context :: struct {
 	// Runtime loops around a static expansion, which resets `loop_depth`; its
 	// body still runs on each of their iterations.
 	expanded_in_loops: int,
+	// The static expansion being checked has a `break` or `continue` of its
+	// own, already reported once on its written body (L0455).
+	branches_reported: bool,
 	in_defer:          bool,
 	// One flag slot per syntactic `defer` in the procedure being checked.
 	defer_slots:       int,
@@ -3610,13 +3613,17 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 check_branch :: proc(k: ^Checker, s: ^Stmt_Branch) -> Flow_Info {
 	if s.kind == .Break {
 		if k.loop_depth == 0 {
-			errorf(k.c, s.span, "L0368", "`break` is only valid inside a loop")
+			if !k.branches_reported {
+				errorf(k.c, s.span, "L0368", "`break` is only valid inside a loop")
+			}
 			return FLOWS
 		}
 		return Flow_Info{breaks = true}
 	}
 	if k.loop_depth == 0 {
-		errorf(k.c, s.span, "L0368", "`continue` is only valid inside a loop")
+		if !k.branches_reported {
+			errorf(k.c, s.span, "L0368", "`continue` is only valid inside a loop")
+		}
 		return FLOWS
 	}
 	return Flow_Info{continues = true}

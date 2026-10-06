@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Static `foreach` expansion": a `break` or `continue` targeting the
+// expansion is reported once, on the written body, and the rest of the body is
+// still checked: its errors and copy-cost warnings are reported too.
+
+take :: proc(value: [600]u8) {}
+
+main :: proc() {
+	once: [600]u8 = {};
+	foreach ($n in [1]int{1}) {
+		take(once);
+		wrong: int = "not an int";
+		if (n == 1) { continue; }
+	}
+}
