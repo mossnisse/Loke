@@ -221,13 +221,10 @@ is_console :: proc(handle: int) -> bool {
 @(private)
 from_last_error :: proc(operation: io.Operation) -> io.Error {
 	native := rt_last_error();
-	code := io.Code.Other;
-	if (native == 109 || native == 232) { code = .Broken_Pipe; }
-	else if (native == 38) { code = .End_Of_Input; }
-	else if (native == 5) { code = .Permission_Denied; }
-	else if (native == 6) { code = .Not_A_Terminal; }
-	else if (native == 995) { code = .Interrupted; }
-	return io.make_error(code, operation, native);
+	// A handle that is not a console is the one code only a terminal reads
+	// differently; `ERROR_INVALID_HANDLE` elsewhere stays `Other`.
+	if (native == 6) { return io.make_error(.Not_A_Terminal, operation, native); }
+	return io.from_native_code(native, operation);
 }
 
 @(private)

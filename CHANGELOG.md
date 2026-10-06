@@ -406,6 +406,11 @@ checklist.
 
 ### Added
 
+- `io.from_native_code(native_code, operation)` turns a platform error number
+  into an `io.Error` (standard-library.md "Shared I/O contract"). `core:fs`,
+  `core:os`, `core:process`, and `core:term` now share its one table, so a
+  Windows error that one of them reported as `Other` now gets the code the
+  others give it; `core:term` alone still reads error 6 as `Not_A_Terminal`.
 - `case .name(&binding):` binds a union payload as a writable place when the
   switch subject is a writable place, which the case borrows exclusively
   (design.md "Switch ownership"). An `Option(box(T))` field is updated in

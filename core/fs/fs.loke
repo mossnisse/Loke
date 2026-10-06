@@ -451,24 +451,11 @@ wide_path :: proc(path: string_view, operation: io.Operation) -> Result([dynamic
 	}
 }
 
-// One place turns a Windows error number into a portable code, so no public
-// signature has to mention either.
+// The calling thread's last platform error, as a portable code, so no public
+// signature has to mention a Windows error number.
 @(private)
 from_last_error :: proc(operation: io.Operation) -> io.Error {
-	native := rt_last_error();
-	code := io.Code.Other;
-	if (native == 2 || native == 3) { code = .Not_Found; }
-	else if (native == 5 || native == 19 || native == 32) { code = .Permission_Denied; }
-	else if (native == 80 || native == 183) { code = .Already_Exists; }
-	else if (native == 8 || native == 14) { code = .Out_Of_Memory; }
-	else if (native == 38) { code = .End_Of_Input; }
-	else if (native == 109 || native == 232) { code = .Broken_Pipe; }
-	else if (native == 112) { code = .Out_Of_Space; }
-	else if (native == 145) { code = .Directory_Not_Empty; }
-	else if (native == 123 || native == 161 || native == 206 || native == 267) { code = .Invalid_Path; }
-	else if (native == 995) { code = .Interrupted; }
-	else if (native == 50 || native == 1) { code = .Unsupported; }
-	return io.make_error(code, operation, native);
+	return io.from_native_code(rt_last_error(), operation);
 }
 
 @(private)

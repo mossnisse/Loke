@@ -29,4 +29,6 @@ true
 109
 Write failed: Broken_Pipe (native 109)
 Open failed: Not_Found
+Environment failed: Not_Found (native 203)
+Invalid_Data Other
 true

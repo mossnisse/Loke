@@ -213,6 +213,9 @@ main :: proc() {
 	// An error formats through its own package's `format`.
 	fmt.println(failure);
 	fmt.println(io.make_error(.Not_Found, .Open));
+	// One table turns a platform error number into a code, keeping the number.
+	fmt.println(io.from_native_code(203, .Environment));
+	fmt.println(io.code_of(io.from_native_code(193, .Spawn)), io.code_of(io.from_native_code(6, .Read)));
 
 	// And propagates with `or_return`.
 	fmt.println(!succeeded(propagate()));

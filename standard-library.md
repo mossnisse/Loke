@@ -219,6 +219,7 @@ Error :: struct {
 
 make_error(code: Code, operation: Operation,
 	native_code: u32 = 0) -> Error
+from_native_code(native_code: u32, operation: Operation) -> Error
 from_allocator_error(operation: Operation) -> Error
 is(error: Error, code: Code) -> bool
 code_of(error: Error) -> Code
@@ -233,6 +234,11 @@ do not put paths or other caller data in the error merely for context.
 
 The error does not borrow the caller's path and does not allocate merely to
 report a failure. `native_code` is zero when there is no platform code.
+`from_native_code` is the one table from a platform error number to a `Code`,
+shared by `core:fs`, `core:os`, `core:process`, and `core:term`; it keeps the
+number as the native code, and a number it does not know is `Other`. The
+numbers are Windows system error codes. `core:term` alone reads
+`ERROR_INVALID_HANDLE` (6) as `Not_A_Terminal`.
 `Closed` means the stream was closed before the call; `Unsupported` means a
 live stream was asked for a direction it does not have.
 The query procedures are `is`, `code_of`, `operation_of`, and `native_code_of`;

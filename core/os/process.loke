@@ -88,17 +88,9 @@ foreign kernel32 {
 	rt_last_error :: proc "stdcall" () -> u32 ---;
 }
 
-@(private) ERROR_ENVVAR_NOT_FOUND :: 203;
-
 @(private)
 from_last_error :: proc(operation: io.Operation) -> io.Error {
-	native := rt_last_error();
-	code := io.Code.Other;
-	if (native == 2 || native == 3 || native == u32(ERROR_ENVVAR_NOT_FOUND)) { code = .Not_Found; }
-	else if (native == 5) { code = .Permission_Denied; }
-	else if (native == 8 || native == 14) { code = .Out_Of_Memory; }
-	else if (native == 123 || native == 161 || native == 206 || native == 267) { code = .Invalid_Path; }
-	return io.make_error(code, operation, native);
+	return io.from_native_code(rt_last_error(), operation);
 }
 
 @(private)

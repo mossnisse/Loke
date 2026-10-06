@@ -93,6 +93,27 @@ make_error :: proc(code: Code, operation: Operation, native_code: u32 = 0) -> Er
 	return Error{code, native_code, operation};
 }
 
+// The one table from a platform error number to a portable code, shared by every
+// package that calls the platform. The numbers are Windows system error codes,
+// the only backend so far; a number the table does not know is `Other`.
+from_native_code :: proc(native_code: u32, operation: Operation) -> Error {
+	n := native_code;
+	code := Code.Other;
+	if (n == 2 || n == 3 || n == 203) { code = .Not_Found; }
+	else if (n == 5 || n == 19 || n == 32) { code = .Permission_Denied; }
+	else if (n == 80 || n == 183) { code = .Already_Exists; }
+	else if (n == 8 || n == 14) { code = .Out_Of_Memory; }
+	else if (n == 38) { code = .End_Of_Input; }
+	else if (n == 109 || n == 232) { code = .Broken_Pipe; }
+	else if (n == 112) { code = .Out_Of_Space; }
+	else if (n == 145) { code = .Directory_Not_Empty; }
+	else if (n == 123 || n == 161 || n == 206 || n == 267) { code = .Invalid_Path; }
+	else if (n == 193 || n == 216) { code = .Invalid_Data; }
+	else if (n == 995) { code = .Interrupted; }
+	else if (n == 1 || n == 50) { code = .Unsupported; }
+	return Error{code, native_code, operation};
+}
+
 // The one conversion point between the two vocabularies. A procedure here that
 // allocates takes an allocator, uses the `try_` form internally, destroys any
 // partial result, and converts the failure exactly once — so no procedure ever

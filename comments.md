@@ -1426,8 +1426,10 @@ directory preserves that identity and the native code instead of reporting
 `Other`. The contracts are in [standard-library.md "`core:os` additions"](standard-library.md#coreos-additions)
 and ["`core:fs`"](standard-library.md#corefs); regressions live in
 [tests/run/lib_process.loke](tests/run/lib_process.loke) and
-[tests/run/lib_fs.loke](tests/run/lib_fs.loke). The separate native translation
-tables remain an [open question](open-questions.md#open-questions-in-coreos).
+[tests/run/lib_fs.loke](tests/run/lib_fs.loke). Every package now translates
+through the one table in `io.from_native_code`, so a code means the same thing
+whichever package reports it; only `core:term` reads `ERROR_INVALID_HANDLE` as
+`Not_A_Terminal`, because there it means the handle is not a console.
 
 ### Malformed console input
 

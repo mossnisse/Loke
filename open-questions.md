@@ -249,14 +249,6 @@ Should a reparse point read as `Other` now? That would be explicit. It would
 also make `create_directories` fail through a junction, which ordinary Windows
 profiles contain.
 
-## Open questions in `core:os`
-
-- `from_last_error` is written three times, in `core:os`, `core:fs`, and
-  `core:term`, with different tables. Process and filesystem path errors now
-  agree, but should shared mappings be checked together or factored into one
-  helper? The input and path-error decisions are recorded in
-  [comments.md "Portable process input and path errors"](comments.md#portable-process-input-and-path-errors).
-
 ## Open questions in `core:strconv`
 
 - `parse_f64` rounds through the C library's `strtod`, as `fmt` already does to
