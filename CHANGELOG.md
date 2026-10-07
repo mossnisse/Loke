@@ -414,6 +414,10 @@ checklist.
 
 ### Added
 
+- A payloadless union variant may be written as a bare name:
+  `union { none, some: T }` (design.md "Unions"). `name:` still works. A bare
+  name that is a type in scope, as in Odin's `union { int, string }`, is
+  rejected (`L0422`) rather than read as a payloadless variant.
 - `strings.try_slice`, `floor_boundary`, `ceil_boundary`, and `prefix_runes`
   cut text at an offset from outside the program without risking the panic a
   slice through a code point raises.

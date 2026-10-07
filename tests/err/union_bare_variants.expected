@@ -1,0 +1,8 @@
+L0422
+@4:23
+`int` is a type, so it cannot name a payloadless variant
+L0422
+@4:28
+L0422
+@7:18
+a variant carrying it is written `name: Shape`

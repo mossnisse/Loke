@@ -106,7 +106,7 @@ Source_Code_Location :: struct {
 Unit :: struct {}
 
 @(public)
-Option :: union($T: type) @(zero=none, failure=none) { none:, some: T }
+Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
 
 @(public)
 @(require_results)

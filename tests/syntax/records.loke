@@ -41,6 +41,7 @@ Typed_Enum :: enum u8 { Red = 1, Green, Blue = 4, }
 Empty_Union :: union { }
 Value_Union :: union { count: int, label: string, node: ^Point }
 Payloadless_Union :: union { absent:, present: int }
+Bare_Union :: union { absent, present: int, gone }
 Generic_Union :: union($T: type) @(zero=empty) where Sized(T) { empty:, held: T, failed: Error, }
 
 Sequence :: interface($Self: type) {

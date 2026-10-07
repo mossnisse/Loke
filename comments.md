@@ -920,6 +920,13 @@ enum's layout to its member list.
 An enum without a variant represented by zero has no zero value, and that
 restriction propagates through aggregates just as it does for unions.
 
+A payloadless union variant is a bare name, `union { none, some: T }`. It was
+once `none:`, a colon kept so that Odin's `union { int, string }` could not
+quietly become two payloadless variants. The guard is now narrower and louder:
+a payloadless variant may not be named by a type in scope, so that Odin spelling
+is an error that says how to name a payload. `name:` stays accepted so existing
+code keeps compiling.
+
 ### Signed overflow panics
 
 Signed `+`, `-`, `*`, and `<<` used to wrap two's-complement, defended against

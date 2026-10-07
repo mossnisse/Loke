@@ -23,7 +23,19 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 		// `void` reaches `variants` only here, so it is the test for "payloadless"
 		// everywhere downstream.
 		payload := TYPE_VOID
-		if variant.type != nil {
+		if variant.type == nil {
+			// design.md "Unions": Odin's `union { int, string }` lists payload
+			// types, which here would quietly be payloadless variants.
+			symbol := symbol_of(k.c, lookup_symbol(k.scope, name))
+			if symbol != nil && symbol.kind == .Type {
+				errorf(
+					k.c, variant.span, "L0422",
+					"`%s` is a type, so it cannot name a payloadless variant; a variant carrying it is written `name: %s`",
+					variant.name.text, variant.name.text,
+				)
+				continue
+			}
+		} else {
 			payload = resolve_type_syntax(k, variant.type)
 			if payload == INVALID_TYPE {
 				errorf(k.c, expr_span(variant.type), "L0422", "this union variant payload is not a type")

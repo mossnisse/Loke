@@ -537,17 +537,14 @@ Prefer changes that remove an ambiguity or semantic exception:
 2. **Use `mut` for mutable loop bindings.** A proposed `foreach (&mut value in
    items)` agrees with `&mut value` elsewhere. Today `&value` means a writable
    iteration binding but a read-only pointer in an expression.
-3. **Payloadless variants need no dangling colon.** `union { none, some: T }`
-   is an unambiguous proposed spelling. Keep enums for explicit numeric
-   representations; eliminating enums would not eliminate that requirement.
-4. **Use one pattern grammar where destructuring is supported.** Ordinary
+3. **Use one pattern grammar where destructuring is supported.** Ordinary
    destructuring is flat but `foreach` nesting is recursive. Either support
    the same small nested pattern in bindings or explicitly keep this limited;
    do not grow several subtly different pattern languages.
-5. **Consider a `default:` switch arm.** It names the intent more clearly than
+4. **Consider a `default:` switch arm.** It names the intent more clearly than
    bare `case:`. This is a readability preference with lower value than the
    capability and matching changes.
-6. **Protect important fields from silent zero fill.** Keep explicit `T{}`
+5. **Protect important fields from silent zero fill.** Keep explicit `T{}`
    zero construction for zeroable types, but consider requiring named literals
    to supply every field unless a field declares a default. An opt-in
    constructor-only/no-default-initialization record is a smaller alternative.

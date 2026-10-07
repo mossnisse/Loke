@@ -1607,13 +1607,13 @@ Value :: union {
 	number: i32,
 	real:   f32,
 	text:   string,
-	absent:            // payloadless: the colon is written, the type is not
+	absent,            // payloadless: a bare name
 }
 
 v: Value = .text("Hello");
 ```
 
-The colon is mandatory. Writing a bare type is not a union variant: the name is the variant's identity, so two variants may carry the same payload type and remain distinct.
+A variant with a payload is written `name: Type`; one without is the bare name, and `name:` with nothing after the colon means the same. A bare type is not a variant: the name is the variant's identity, so two variants may carry the same payload type and remain distinct. A payloadless variant may therefore not be named by a type in scope, so Odin's `union { int, string }` is rejected rather than read as two payloadless variants.
 
 ```odin
 Temperature :: union { celsius: f64, fahrenheit: f64 }   // two variants, one payload type
@@ -1713,7 +1713,7 @@ A union has **no zero value** unless it designates one, because there is no vari
 `@(zero=name)` designates one. It is valid only for the *first* declared variant, and that variant's payload must itself be all-zero, so the union's zero stays the all-zero representation every other zero is.
 
 ```odin
-Maybe :: union @(zero=none) { none:, some: int }
+Maybe :: union @(zero=none) { none, some: int }
 m: Maybe;              // accepted: the zero is `.none`
 
 Choice :: union { a: i32, b: bool }
@@ -5472,7 +5472,7 @@ Absence and failure are **types**, not a trailing result. A procedure that may h
 ```odin
 Unit :: struct {}
 
-Option :: union($T: type) @(zero=none, failure=none) { none:, some: T }
+Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
 
 @(require_results)
 Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
@@ -6225,7 +6225,7 @@ main :: proc() {
 Written after `union`, before its body. `@(zero=name)` gives the union a zero value, and must name its first variant, whose payload is all-zero; see [Zero values and `@(zero=)`](#zero-values-and-zero). `@(failure=name)` marks one variant of a two-variant union as its failure, which is what [`or_else`](#or_else-expression) and [`or_return`](#or_return-operator) recognize; see [The failure protocol](#the-failure-protocol-and-failure).
 
 ```odin
-Maybe :: union @(zero=none, failure=none) { none:, some: int }
+Maybe :: union @(zero=none, failure=none) { none, some: int }
 ```
 
 #### `@(initialized=<field>)`

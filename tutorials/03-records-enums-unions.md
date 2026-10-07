@@ -277,7 +277,7 @@ import "core:fmt";
 Shape :: union {
 	circle: f64,                            // the radius
 	rectangle: (width: f64, height: f64),
-	empty:,                                 // no payload at all
+	empty,                                  // no payload at all
 }
 
 area :: proc(shape: Shape) -> f64 {

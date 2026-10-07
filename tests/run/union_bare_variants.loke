@@ -1,0 +1,18 @@
+package main; import "core:fmt";
+
+// design.md "Unions": a payloadless variant is a bare name; `name:` means the same.
+Token :: union { end, number: int, older:, }
+
+describe :: proc(token: Token) -> string {
+	switch (token) {
+	case .end:       return "end";
+	case .number(n): fmt.println(n); return "number";
+	case .older:     return "older";
+	}
+}
+
+main :: proc() {
+	fmt.println(describe(.end), describe(.number(3)), describe(Token.older));
+	maybe: Option(int) = .none;
+	fmt.println(maybe);
+}

@@ -3009,15 +3009,14 @@ parse_record :: proc(p: ^Parser) -> Expr {
 				continue
 			}
 			entry.name = name_of(p, name)
-			_, typed := expect(p, .Colon, "L0239", "`:` after the variant name")
-			// `name:` is a payloadless variant.
-			if !at(p, .Comma) && !at(p, .Rbrace) && !at(p, .EOF) {
+			// grammar.md "Records": `name` and `name:` are payloadless variants.
+			if allow(p, .Colon) && !at(p, .Comma) && !at(p, .Rbrace) && !at(p, .EOF) {
 				entry.type = parse_type(p)
 			}
 			entry.span = span_to_here(p, start)
 			append(&list, entry)
 
-			malformed := !typed || expr_has_error(entry.type)
+			malformed := expr_has_error(entry.type)
 			members_ok = members_ok && !malformed
 			more, separated := next_element(p, .Rbrace, malformed, "`,` or `}` after the variant")
 			members_ok = members_ok && separated

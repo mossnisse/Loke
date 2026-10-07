@@ -327,7 +327,8 @@ Member_Name = Identifier | "type"
 
 Union_Type  = "union" Generic_Parameters? Attributes? Where_Clause? "{" Union_Variants? "}"
 Union_Variants = Union_Variant ("," Union_Variant)* ","?
-Union_Variant  = Identifier ":" Type?
+// A variant with no payload is a bare name; `name:` still means the same.
+Union_Variant  = Identifier (":" Type?)?
 
 Generic_Parameters = "(" Generic_Parameter ("," Generic_Parameter)* ","? ")"
 Generic_Parameter  = Generic_Name ("," Generic_Name)* ":" Type

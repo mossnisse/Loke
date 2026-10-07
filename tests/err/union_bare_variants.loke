@@ -1,0 +1,9 @@
+package main;
+
+// design.md "Unions": Odin's `union { int, string }` names no payloads here.
+Odin_Style :: union { int, string }
+
+Shape :: struct { sides: int }
+Named :: union { Shape, ok, other: }
+
+main :: proc() {}
