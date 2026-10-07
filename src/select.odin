@@ -417,8 +417,14 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 		if missing := first_unresolved_name(k, v.callee); missing != "" {
 			return missing
 		}
-		// `build_config(NAME, default)` names a configuration key, not a binding.
-		skip := callee_is_builtin(k, v.callee, .Build_Config) ? 0 : -1
+		// `build_config(NAME, default)` names a configuration key and
+		// `offset_of(T, field)` a field of `T`, neither of them a binding.
+		skip := -1
+		if callee_is_builtin(k, v.callee, .Build_Config) {
+			skip = 0
+		} else if callee_is_builtin(k, v.callee, .Offset_Of) {
+			skip = 1
+		}
 		for argument, index in v.args {
 			if index == skip {
 				continue

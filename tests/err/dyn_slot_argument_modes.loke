@@ -1,0 +1,31 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Parameters": a call through a `dyn` slot spells each argument's
+// mode as any other call does, so a missing `inout` cannot pass the caller's
+// variable to be written, nor a stray one a value, and nothing spreads into a
+// slot without a variadic parameter.
+Update :: interface($Self: type) {
+	slot update: proc(self: ^Self, target: inout int);
+	slot read: proc(self: ^Self, x: int) -> int;
+}
+
+Thing :: struct { base: int }
+impl Thing {
+	update :: proc(self: ^Thing, target: inout int) { target = 4; }
+	read :: proc(self: ^Thing, x: int) -> int { return self.base + x; }
+}
+
+main :: proc() {
+	thing: Thing = {10};
+	view: dyn Update = (dyn Update)(&thing);
+	value := 1;
+	view.update(value);
+	view.update(target = value);
+	_ = view.read(inout value);
+	xs := []int{1};
+	_ = view.read(..xs);
+	view.update(inout value);
+	fmt.println(value, view.read(x = 3));
+}

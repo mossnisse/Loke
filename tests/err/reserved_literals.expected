@@ -11,5 +11,8 @@ L0700
 @20:11
 `nil` spells a literal, so it cannot be declared
 L0700
-@24:10
+@23:12
+`true` spells a literal, so it cannot be declared
+L0700
+@25:10
 `true` spells a literal, so it cannot be declared

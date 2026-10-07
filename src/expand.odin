@@ -120,6 +120,10 @@ check_static_pattern_markers :: proc(k: ^Checker, bindings: []Foreach_Binding) -
 			errorf(k.c, binding.name.span, "L0454", "a static binding is immutable and cannot use `&`")
 			return false
 		}
+		// Checked once here, not per expanded element where `bind_static` runs.
+		if binding.name.text != "_" && reject_reserved_name(k, name_identifier(k.c, binding.name), binding.name.span) {
+			return false
+		}
 	}
 	return true
 }

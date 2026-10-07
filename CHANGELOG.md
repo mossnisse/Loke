@@ -579,6 +579,15 @@ checklist.
 
 ### Fixed
 
+- A call through a `dyn` slot checks each argument's written mode:
+  `view.update(value)` for an `inout` parameter is now `L0370`, as in any
+  other call, instead of writing the caller's variable; a stray `inout` or
+  `..` is rejected too (design.md "Parameters").
+- A file-scope `when` condition using `offset_of(T, field)` no longer reports
+  the field name as an undeclared dependency (`L0389`) (design.md
+  "Conditional compilation").
+- A static `foreach` binding may no longer be `$true`, `$false`, or `$nil`
+  (`L0700`), as no other declaration may (design.md "Predeclared names").
 - Compile-time evaluation no longer skips a record's `hook(drop)` or
   `hook(copy)`: a value whose drop or copy would run one is now an error
   (`L0341`) where evaluation makes it, until the evaluator runs hooks

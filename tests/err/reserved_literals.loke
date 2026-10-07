@@ -20,6 +20,7 @@ binds_a_literal_name :: proc(values: []int, c: Choice) -> int {
 	foreach (nil in values) {
 		fmt.println(1);
 	}
+	foreach ($true in [1]int{2}) { fmt.println(true); }
 	switch (c) {
 	case .a(true): return 1;
 	case .b(x):    return x;

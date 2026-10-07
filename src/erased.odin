@@ -1043,17 +1043,19 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 		}
 		filled[slot] = true
 		append(&order, slot)
-		want := params[slot]
-		checked := check_single_expr(k, arg.value, want, modes[slot] == .Inout ? .Place : .Value)
-		if checked == INVALID_TYPE || !materialize_argument(k, arg.value, want) {
+		if arg.mode == .Spread {
+			errorf(k.c, arg.span, "L0371", "`..` needs a variadic parameter to spread into")
 			v.type = INVALID_TYPE
 			return true
 		}
-		if modes[slot] == .Inout && !check_bound_argument_mode(k, arg.value, want, .Inout, "an `inout` argument") {
+		// design.md "Parameters": the written mode must match the slot's, as in
+		// any other call.
+		value, passed := bind_written_argument(k, arg, params[slot], modes[slot])
+		if !passed {
 			v.type = INVALID_TYPE
 			return true
 		}
-		bound[slot] = arg.value
+		bound[slot] = value
 	}
 	v.bound = bound
 	if named {

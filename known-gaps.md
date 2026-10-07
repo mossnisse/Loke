@@ -96,51 +96,6 @@ This is rejected with `L0341` ("`T` has a `hook(drop)`, which compile-time evalu
 package main; T :: struct { n: int } impl T { release :: hook(drop) proc(self: inout T) { panic("drop ran"); } } compute :: proc() -> int { value := T{1}; drop(value); return 1; } VALUE :: compute(); main :: proc() { _ = VALUE; }
 ```
 
-### Dyn slot calls omit required argument mode validation
-
-[design.md "Parameters"](design.md#parameters).
-
-This compiles and prints 4, although `view.update(value)` must spell `view.update(inout value)`. `src/erased.odin` checks assignability but never validates the written argument mode. Reuse the ordinary call mode compatibility check before binding slot arguments.
-
-```odin
-package main;
-import "core:fmt";
-Update :: interface($Self: type) { slot update: proc(self: ^Self, target: inout int); }
-Thing :: struct {}
-impl Thing { update :: proc(self: ^Thing, target: inout int) { target = 4; } }
-main :: proc() {
-    thing: Thing = {};
-    view: dyn Update = (dyn Update)(&thing);
-    value := 1;
-    view.update(value);
-    fmt.println(value);
-}
-```
-
-### File-scope when treats an offset_of field token as a lexical dependency
-
-[design.md "Conditional compilation"](design.md#conditional-compilation).
-
-This rejects `x` with `L0389` and consequently loses `VALUE`. `src/select.odin` treats the second `offset_of` argument as an expression needing lexical resolution, although it names a field token of `S`. Skip token arguments in this prepass as it already does for `build_config`, leaving the layout checker responsible for validating the field.
-
-```odin
-package main;
-S :: struct { x: int }
-when (offset_of(S, x) == 0) { VALUE :: 1; }
-main :: proc() { _ = VALUE; }
-```
-
-### Static foreach accepts a reserved literal as its binding
-
-[design.md "Predeclared names"](design.md#predeclared-names).
-
-This compiles and prints 2 by shadowing the reserved literal `true`. `src/expand.odin` inserts static bindings directly into the scope without ordinary reserved-name validation. Validate written bindings before installing them. The spec permits these spellings as field/enum member names accessed by selector; that exception does not apply to a loop binding. Generic-name validation is a related unexecuted candidate.
-
-```odin
-package main; import "core:fmt";
-main :: proc() { foreach ($true in [1]int{2}) { fmt.println(true); } }
-```
-
 ### Reflection builtins accept invalid argument names and modes
 
 [design.md "Parameters"](design.md#parameters) and ["Compile-time built-ins"](design.md#compile-time-built-ins).

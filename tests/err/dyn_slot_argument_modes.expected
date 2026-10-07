@@ -1,0 +1,12 @@
+L0370
+@24:14
+this parameter is `inout`; write `inout` at the call site
+L0370
+@25:14
+write `inout` at the call site
+L0370
+@26:16
+this parameter is not `inout`
+L0371
+@28:16
+`..` needs a variadic parameter to spread into
