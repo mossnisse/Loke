@@ -1,0 +1,4 @@
+drop key true
+drop key false
+drop value 7
+outer cleanup

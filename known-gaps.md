@@ -64,28 +64,6 @@ main :: proc() {
 `core:fmt`'s `format_any` keeps the recovered view in a local for this reason,
 so printing still counts a `format` method's writes.
 
-### A container's whole drop leaks the elements after a panicking hook
-
-[design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not).
-
-This prints `drop 1`, `drop 2`, then `outer cleanup`, and never `drop 3`. The array's cleanup is unregistered before `loke_rt_v1_dyn_drop` runs, as every cleanup is, so when element 2's hook panics nothing owes element 3 its drop. `clear` and a shrinking `resize` already shorten before each drop (`dyn_truncate` in `runtime/container.c`); a whole drop could do the same and stay registered until it finishes, and `loke_rt_v1_map_drop` likewise. `loke_rt_v1_map_remove` drops the key after copying the value out, so a panicking key hook leaves the copied value unowned.
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: struct { id: int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) {
-        fmt.println("drop", self.id);
-        if (self.id == 2) { panic("drop failed"); }
-    }
-}
-main :: proc() {
-    defer fmt.println("outer cleanup");
-    values := [dynamic]Tracked{Tracked{1}, Tracked{2}, Tracked{3}};
-}
-```
-
 ### Compile-time evaluation rejects records with lifecycle hooks
 
 [design.md "Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation).

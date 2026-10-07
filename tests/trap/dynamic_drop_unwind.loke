@@ -1,0 +1,20 @@
+package main;
+
+import "core:fmt";
+
+// design.md "What the unwind runs, and what it does not": a dynamic array's
+// whole drop shortens before each element's drop, last element first, and
+// stays registered until it finishes, so when one hook panics the unwind
+// still drops every element after it and then runs the outer cleanup.
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) {
+		fmt.println("drop", self.id);
+		if (self.id == 2) { panic("drop failed"); }
+	}
+}
+
+main :: proc() {
+	defer fmt.println("outer cleanup");
+	values := [dynamic]Tracked{Tracked{1}, Tracked{2}, Tracked{3}};
+}

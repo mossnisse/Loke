@@ -1,0 +1,35 @@
+package main;
+
+import "core:fmt";
+
+// design.md "What the unwind runs, and what it does not": `remove` drops the
+// stored key before handing its value back. When that hook panics, the key is
+// not dropped again and the map still owns the value, so the unwind drops it.
+phase := 0;
+
+Key :: struct { id: int, stored: bool }
+impl Key {
+	hash :: proc(self, seed: uint) -> uint { return self.id.hash(seed); }
+	equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+	release :: hook(drop) proc(self: inout Key) {
+		if (phase == 0) { return; }
+		fmt.println("drop key", self.stored);
+		if (phase == 1 && self.stored) {
+			phase = 2;
+			panic("key drop failed");
+		}
+	}
+}
+Value :: struct { id: int }
+impl Value {
+	release :: hook(drop) proc(self: inout Value) { fmt.println("drop value", self.id); }
+}
+
+main :: proc() {
+	defer fmt.println("outer cleanup");
+	m: map[Key]Value = {};
+	m[Key{1, true}] = Value{7};
+	probe := Key{1, false};
+	phase = 1;
+	_ = m.remove(probe);
+}

@@ -119,14 +119,19 @@ int32_t loke_rt_v1_dyn_reserve(
 	return 1;
 }
 
+/* design.md "What the unwind runs, and what it does not": the caller keeps the
+ * array registered while this runs, and it shortens before each drop, last
+ * element first, as `dyn_truncate` does. A panicking hook therefore leaves the
+ * length counting exactly the elements still owed a drop, and the unwind's
+ * second call drops each of them once and frees the storage. */
 void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops) {
 	uint64_t bytes;
 	/* Not guarded by `data`: zero-sized elements are live without any storage,
 	 * and each still owes its drop hook. */
 	if (ops->elem_drop != 0) {
-		int64_t i;
-		for (i = 0; i < self->len; i += 1) {
-			ops->elem_drop(dyn_at(self, ops, i));
+		while (self->len > 0) {
+			self->len -= 1;
+			ops->elem_drop(dyn_at(self, ops, self->len));
 		}
 	}
 	if (self->data != 0 && loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes) && bytes != 0) {
@@ -674,22 +679,41 @@ int32_t loke_rt_v1_map_reserve(
 	return 1;
 }
 
+/* Takes one entry out of the table before its hooks run, as `dyn_truncate`
+ * shortens first: the slot is a tombstone that owns its value until the key's
+ * hook returns, and a plain one once the value's hook starts. Whichever hook
+ * panics, the slot then says exactly what is still owed, and a later drop of
+ * the map finishes the entry without dropping either part twice. */
+static void map_drop_entry(
+	loke_rt_map_v1 *self, loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, int64_t slot) {
+	uint8_t *controls = map_controls(t);
+	if (controls[slot] == LOKE_RT_MAP_OCCUPIED) {
+		controls[slot] = LOKE_RT_MAP_VALUE_OWED;
+		t->occupied -= 1;
+		t->tombstones += 1;
+		self->len -= 1;
+		if (ops->key_drop != 0) {
+			ops->key_drop(map_key_at(t, ops, slot));
+		}
+	}
+	if (controls[slot] == LOKE_RT_MAP_VALUE_OWED) {
+		controls[slot] = LOKE_RT_MAP_TOMBSTONE;
+		if (ops->elem_drop != 0) {
+			ops->elem_drop(map_value_at(t, ops, slot));
+		}
+	}
+}
+
+/* design.md "What the unwind runs, and what it does not": the caller keeps the
+ * map registered while this runs, so a panicking hook leaves the entries not
+ * yet taken out to the unwind's second call. */
 void loke_rt_v1_map_drop(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops) {
 	loke_rt_map_table_v1 *t = (loke_rt_map_table_v1 *)self->table;
 	if (t != 0) {
 		if (ops->key_drop != 0 || ops->elem_drop != 0) {
-			uint8_t *controls = map_controls(t);
 			int64_t slot;
 			for (slot = 0; slot < t->slot_count; slot += 1) {
-				if (controls[slot] != LOKE_RT_MAP_OCCUPIED) {
-					continue;
-				}
-				if (ops->key_drop != 0) {
-					ops->key_drop(map_key_at(t, ops, slot));
-				}
-				if (ops->elem_drop != 0) {
-					ops->elem_drop(map_value_at(t, ops, slot));
-				}
+				map_drop_entry(self, t, ops, slot);
 			}
 		}
 		map_free_block(self->allocator, t);
@@ -721,6 +745,10 @@ int32_t loke_rt_v1_map_clone(
 	controls = map_controls(fresh);
 	for (slot = 0; slot < fresh->slot_count; slot += 1) {
 		if (controls[slot] != LOKE_RT_MAP_OCCUPIED) {
+			/* An owed value stays the source's; the clone has only its bits. */
+			if (controls[slot] == LOKE_RT_MAP_VALUE_OWED) {
+				controls[slot] = LOKE_RT_MAP_TOMBSTONE;
+			}
 			continue;
 		}
 		if (ops->key_clone != 0 &&
@@ -925,9 +953,11 @@ void *loke_rt_v1_map_entry(
 	return map_value_at(t, ops, (int64_t)index);
 }
 
-/* Moves the stored value to `out`, drops the key, and answers 0 when the key was
- * absent. The slot becomes a tombstone, because an entry inserted after it may
- * lie beyond it in a probe run. */
+/* Drops the stored key, moves the stored value to `out`, and answers 0 when the
+ * key was absent. The slot becomes a tombstone, because an entry inserted after
+ * it may lie beyond it in a probe run. The value moves only once the key's hook
+ * has returned: until then the map owns it, so a panicking key hook leaves it
+ * to the map's drop rather than to an `out` nothing has registered. */
 int32_t loke_rt_v1_map_remove(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, void *out) {
 	loke_rt_map_table_v1 *t = (loke_rt_map_table_v1 *)self->table;
@@ -941,14 +971,15 @@ int32_t loke_rt_v1_map_remove(
 	if (slot < 0) {
 		return 0;
 	}
-	memcpy(out, map_value_at(t, ops, slot), (size_t)ops->elem_size);
-	if (ops->key_drop != 0) {
-		ops->key_drop(map_key_at(t, ops, slot));
-	}
-	map_controls(t)[slot] = LOKE_RT_MAP_TOMBSTONE;
+	map_controls(t)[slot] = LOKE_RT_MAP_VALUE_OWED;
 	t->occupied -= 1;
 	t->tombstones += 1;
 	self->len -= 1;
+	if (ops->key_drop != 0) {
+		ops->key_drop(map_key_at(t, ops, slot));
+	}
+	memcpy(out, map_value_at(t, ops, slot), (size_t)ops->elem_size);
+	map_controls(t)[slot] = LOKE_RT_MAP_TOMBSTONE;
 	return 1;
 }
 
@@ -961,21 +992,9 @@ void loke_rt_v1_map_clear(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *
 	}
 	controls = map_controls(t);
 	for (slot = 0; slot < t->slot_count; slot += 1) {
-		if (controls[slot] != LOKE_RT_MAP_OCCUPIED) {
-			continue;
-		}
-		/* Removed before its hooks run, as `dyn_truncate` does, so a panicking
-		 * hook leaves only the entries still owed a drop for the unwind. */
-		controls[slot] = LOKE_RT_MAP_TOMBSTONE;
-		t->occupied -= 1;
-		t->tombstones += 1;
-		self->len -= 1;
-		if (ops->key_drop != 0) {
-			ops->key_drop(map_key_at(t, ops, slot));
-		}
-		if (ops->elem_drop != 0) {
-			ops->elem_drop(map_value_at(t, ops, slot));
-		}
+		/* Removed before its hooks run, so a panicking hook leaves only the
+		 * entries still owed a drop for the unwind. */
+		map_drop_entry(self, t, ops, slot);
 	}
 	memset(controls, LOKE_RT_MAP_EMPTY, (size_t)t->slot_count);
 	t->occupied = 0;

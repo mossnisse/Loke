@@ -1,0 +1,21 @@
+package main;
+
+import "core:fmt";
+
+// design.md "What the unwind runs, and what it does not": an inner array is
+// dropped by the outer one's element hook, which keeps it registered too, so a
+// panic deep inside leaves no element behind.
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) {
+		fmt.println("drop", self.id);
+		if (self.id == 2) { panic("drop failed"); }
+	}
+}
+
+main :: proc() {
+	defer fmt.println("outer cleanup");
+	lists := [dynamic][dynamic]Tracked{};
+	lists.append([dynamic]Tracked{Tracked{1}, Tracked{2}, Tracked{3}});
+	lists.append([dynamic]Tracked{Tracked{4}});
+}

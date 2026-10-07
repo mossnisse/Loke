@@ -307,6 +307,7 @@ container_thunk :: proc(
 	part: Type_Id,
 	result, params: string,
 	body: proc(e: ^Emitter, part: Type_Id),
+	framed := false,
 ) -> string {
 	if e.container_thunks[name] {
 		return name
@@ -318,8 +319,15 @@ container_thunk :: proc(
 	defer e.synth_bodies = saved
 	frame := begin_function_emission(e)
 	open_function(e, "define private %s %s(%s)", result, name, params)
+	header: strings.Builder
+	if framed {
+		header = begin_generated_frame(e, name)
+	}
 	body(e, part)
 	fmt.sbprintln(&e.b, "}")
+	if framed {
+		end_generated_frame(e, header)
+	}
 	fmt.sbprintln(&e.b, "")
 	finish_pending_thunk(e, frame)
 	return name
@@ -331,13 +339,17 @@ container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	if part == INVALID_TYPE || !emit_lifecycle(e, part).managed {
 		return "null"
 	}
+	// design.md "What the unwind runs, and what it does not": the element's own
+	// drop registers what it has not dropped yet, as a procedure's would.
 	return container_thunk(
 		e, fmt.aprintf("@loke.cdrop.%d", int(type_underlying(e.c, part))), part,
 		"void", "ptr %p",
 		proc(e: ^Emitter, part: Type_Id) {
 			emit_drop_place(e, part, "%p")
+			emit_unwind_pop(e)
 			fmt.sbprintln(&e.b, "  ret void")
 		},
+		framed = true,
 	)
 }
 

@@ -579,6 +579,14 @@ checklist.
 
 ### Fixed
 
+- A panicking element drop hook no longer leaks the rest of a container.
+  Dropping a whole dynamic array or map now keeps it registered for the unwind
+  and takes each element out before its hook runs, as `clear` already did, so
+  the unwind drops every element still owed exactly once. This also covers an
+  element's own parts and a container nested in another. A map entry whose key
+  hook panics keeps its value for the unwind; before, the unwind dropped that
+  key a second time. A dynamic array now drops its elements last first, as
+  `clear`, fixed arrays, and `Small_Array` already did.
 - `process.run` and `Child.wait` on Windows return a child's exit code
   reinterpreted as `i32`, as documented, instead of panicking when its top bit
   is set: an exit code of `0xffffffff` is `.ok(-1)`.

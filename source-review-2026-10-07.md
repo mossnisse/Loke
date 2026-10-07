@@ -46,7 +46,7 @@ tests; a fixed row no longer links to Known gaps. The cleanup findings G03–G05
 shared an ownership obligation: completed resources need exactly one live
 cleanup registration, retired before entering a user drop hook. They are
 fixed; checking their sibling paths found that a container's whole drop
-leaks the elements after a panicking hook, now in [Known gaps](known-gaps.md#a-containers-whole-drop-leaks-the-elements-after-a-panicking-hook).
+leaked the elements after a panicking hook, also fixed now.
 
 ## Tooling and harnesses
 

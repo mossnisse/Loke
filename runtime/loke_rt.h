@@ -297,7 +297,14 @@ typedef struct loke_rt_container_ops_v1 {
  * One block holds the header, then `slot_count` control bytes, then the key
  * array, then the value array. Offsets are stored rather than recomputed so the
  * reader and the allocator agree byte for byte. */
-enum { LOKE_RT_MAP_EMPTY = 0, LOKE_RT_MAP_TOMBSTONE = 1, LOKE_RT_MAP_OCCUPIED = 2 };
+enum {
+	LOKE_RT_MAP_EMPTY = 0,
+	LOKE_RT_MAP_TOMBSTONE = 1,
+	LOKE_RT_MAP_OCCUPIED = 2,
+	/* A tombstone whose value is still owned: its entry left the table and its
+	 * key's drop hook is running, or panicked. Only a drop reads the value. */
+	LOKE_RT_MAP_VALUE_OWED = 3
+};
 
 typedef struct loke_rt_map_table_v1 {
 	int64_t slot_count; /* a power of two */

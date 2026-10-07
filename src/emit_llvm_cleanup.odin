@@ -1430,9 +1430,17 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		return
 	}
 	// The container helper leaves the inert zero, and dropping zero is a no-op.
+	// design.md "What the unwind runs, and what it does not": the container
+	// stays registered while the helper runs, which takes each element out
+	// before its hook, so a panicking hook leaves the rest to the unwind.
 	if operations.container {
 		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_drop" : "loke_rt_v1_dyn_drop"
+		guard := Deferred{slot = -1}
+		if unwind_enabled(e) && drop_may_panic(e, type) {
+			guard = begin_temporary_drop(e, type, address)
+		}
 		fmt.sbprintfln(&e.b, "  call void @%s(ptr %s, ptr %s)", helper, address, container_ops_global(e, type))
+		finish_temporary_drop(e, guard)
 		return
 	}
 	// Ending a local region releases every block it handed out.
