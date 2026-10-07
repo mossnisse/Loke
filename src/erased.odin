@@ -110,7 +110,10 @@ any_view_accepts :: proc(c: ^Compiler, from: Type_Id) -> bool {
 	if type_is_untyped(c, from) && from != TYPE_UNTYPED_NIL {
 		return true // through its default type
 	}
-	return type_is_supported(c, from) && !type_mentions_any_view(c, from)
+	// design.md "Zero values": a `type` or descriptor exists only while
+	// compiling, so there is nothing at run time for a view to point at.
+	return type_is_supported(c, from) && !type_mentions_any_view(c, from) &&
+	       compile_time_only_component(c, from) == INVALID_TYPE
 }
 
 // The concrete type an `any_view` is being made from, once untyped constants

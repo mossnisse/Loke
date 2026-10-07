@@ -2037,7 +2037,7 @@ The slice and its elements borrow the caller's temporary arguments and live only
 
 `[]any_view` exists only for this variadic call. [`@(c_vararg)`](#c_vararg) is separate signature notation and uses the C default argument promotions.
 
-Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. It supports runtime checked extractions and a switch over its type.
+Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. `any_view(value)` writes the same conversion out, for a subject or an argument with no `any_view` destination. A `type` or reflection descriptor exists only while compiling, so it cannot be erased. It supports runtime checked extractions and a switch over its type.
 
 ```odin
 print_value :: proc(value: any_view) { ... }

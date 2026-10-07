@@ -1,0 +1,9 @@
+package main; import "core:fmt";
+
+// design.md "any_view type": a `type` exists only while compiling, so neither
+// spelling of the conversion can erase one.
+main :: proc() {
+	explicit := any_view(int);
+	implicit: any_view = bool;
+	fmt.println(explicit, implicit);
+}

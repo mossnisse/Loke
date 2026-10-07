@@ -579,6 +579,10 @@ checklist.
 
 ### Fixed
 
+- `any_view(x)` was accepted and then emitted as a scalar cast that clang
+  rejected; it is now the implicit conversion written out (design.md
+  "any_view type"). Erasing a `type` value into an `any_view`, by either
+  spelling, compiled and crashed at run time; it is now `L0378`.
 - A procedure literal with a `where` clause was reported as a compiler defect
   (`L0350`); it is now `L0433`, since a literal is never generic (design.md
   "where clauses"). A literal with a `$` parameter reported "unknown type"

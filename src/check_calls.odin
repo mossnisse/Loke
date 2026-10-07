@@ -922,6 +922,21 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// design.md "any_view type": the explicit spelling is the implicit
+	// conversion, so the operand is erased exactly as at an `any_view`
+	// destination and the conversion itself changes nothing.
+	if target == TYPE_ANY_VIEW && source != TYPE_ANY_VIEW {
+		if !materialize_value_expr(k, v.args[0].value, TYPE_ANY_VIEW, "convert") {
+			v.type = INVALID_TYPE
+			return
+		}
+		v.operation = Call_Conversion{}
+		v.resolution = {}
+		v.bound = make([]Expr, 1, k.c.semantic_allocator)
+		v.bound[0] = v.args[0].value
+		v.type = TYPE_ANY_VIEW
+		return
+	}
 	if builtin_conversion(k, v, target, source) {
 		return
 	}

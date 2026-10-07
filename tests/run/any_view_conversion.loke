@@ -1,0 +1,23 @@
+package main; import "core:fmt";
+
+// design.md "any_view type": `any_view(x)` is the implicit conversion written
+// out, so it erases `x` exactly as an `any_view` destination does.
+kind :: proc(value: any_view) -> string {
+	switch (value) {
+	case int:    return "int";
+	case string: return "string";
+	default:     return "other";
+	}
+}
+
+main :: proc() {
+	n := 3;
+	switch (any_view(n)) {
+	case int(m): fmt.println("int", m);
+	default:     fmt.println("other");
+	}
+	item: Option(int) = .some(42);
+	view := any_view(item);
+	fmt.println(kind(view), kind(any_view(5)), kind(any_view("x")), view);
+	if (case Option(int)(o) = any_view(item)) { fmt.println("option", o); }
+}
