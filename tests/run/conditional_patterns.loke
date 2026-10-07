@@ -1,0 +1,71 @@
+package main; import "core:fmt";
+
+// design.md "Conditional patterns": `case Pattern = subject` in an `if` or
+// `for` header is one switch case, evaluated once per step.
+Read_Error :: enum { Broken }
+
+Reader :: struct { next_value: int, fail_at: int }
+
+impl Reader {
+	next :: proc(self: inout Reader) -> Result(Option(int), Read_Error) {
+		self.next_value += 1;
+		if (self.next_value == self.fail_at) { return .err(.Broken); }
+		if (self.next_value > 5) { return .ok(.none); }
+		return .ok(.some(self.next_value));
+	}
+}
+
+sum :: proc(reader: inout Reader) -> Result(int, Read_Error) {
+	total := 0;
+	for (case .some(entry) = reader.next() or_return) {
+		if (entry == 2) { continue; }
+		total += entry;
+	}
+	return .ok(total);
+}
+
+Ticket :: move_only struct { id: int }
+
+impl Ticket {
+	release :: hook(drop) proc(self: inout Ticket) { fmt.println("drop", self.id); }
+}
+
+take :: proc(id: int) -> Option(Ticket) {
+	if (id > 0) { return .some(Ticket{id}); }
+	return .none;
+}
+
+kind :: proc(value: any_view) -> string {
+	if (case int(n) = value) {
+		return "small" if n < 10 else "large";
+	} else if (case string = value) {
+		return "text";
+	} else {
+		return "other";
+	}
+}
+
+main :: proc() {
+	good := Reader{fail_at = 99};
+	fmt.println(sum(inout good));
+	bad := Reader{fail_at = 3};
+	fmt.println(sum(inout bad));
+
+	if (case .some(ticket) = take(7)) {
+		fmt.println("got", ticket.id);
+	}
+	if (case .some(ticket) = take(0)) {
+		fmt.println("unexpected", ticket.id);
+	} else {
+		fmt.println("none");
+	}
+
+	fmt.println(kind(3), kind(30), kind("x"), kind(1.5));
+
+	count := 0;
+	for (case .some(ticket) = take(3 - count)) {
+		count += 1;
+		if (ticket.id == 2) { break; }
+	}
+	fmt.println("count", count);
+}

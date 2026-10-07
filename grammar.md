@@ -480,12 +480,17 @@ Every control-flow header is parenthesised and every body is braced. There is no
 single-statement body form.
 
 ```
-If_Statement   = Attributes? "if" "(" Init_Statement? Expression ")" Block
+If_Statement   = Attributes? "if" "(" (Init_Statement? Expression | Case_Header) ")" Block
                  ("else" (If_Statement | Block))?
 
 For_Statement  = Attributes? "for" "(" For_Header ")" Block
 For_Header     = (Init_Statement | ";") Expression? ";" Simple_Statement?
                | Expression
+               | Case_Header
+
+// One switch case: `Branch_Pattern` or `Case_Value` as in a `Switch_Case`
+// (design.md "Conditional patterns").
+Case_Header    = "case" (Branch_Pattern | Case_Value) "=" Expression
 
 Foreach_Statement = Attributes? "foreach" "(" Binding ("," Binding)* "in" Expression ")" Block
 Binding         = "$"? ("&" "mut")? Identifier

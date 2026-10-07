@@ -97,6 +97,10 @@ main :: proc() {
 	case 1:
 	}
 
+	// One switch case as an `if` or `for` header.
+	if (case .some(x) = maybe) { } else if (case int(n) = view) { } else { }
+	for (case .some(entry) = reader.next() or_return) { }
+
 	// A switch over an `any_view` names types, and may bind one: `case T(name):`.
 	switch (figure) {
 	case Circle:

@@ -212,6 +212,18 @@ fill for every field that has a valid zero.
 `fs.File` does not use it: its zero is its closed state, which `drop` treats as
 inert, so a zero `File` is a valid value and containers of files keep working.
 
+### Conditional patterns
+
+Reading a `Result(Option(T), E)` stream to its end took a loop, an `or_return`,
+and a switch whose other case broke out. `for (case .some(entry) = next()
+or_return)` says that in one header, and `if (case ...)` is its one-shot form.
+Both are defined as the switch they abbreviate, and the parser builds exactly
+that switch, so they add no rule of their own for ownership, binding scope,
+lifetime, or control flow; whatever a switch case can write, the header can.
+Rust's `while let` and Swift's `if case` are the same idea. Nested patterns,
+several cases, and an initialization statement in the header were left out:
+each would be a rule a switch does not already have.
+
 ### Updating a payload in place
 
 Once absence is an `Option`, updating a payload in place is common, as in

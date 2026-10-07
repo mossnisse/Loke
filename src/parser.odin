@@ -1312,7 +1312,11 @@ parse_if :: proc(p: ^Parser) -> Stmt {
 	// A simple statement is the initializer only when `;` follows it.
 	init: Stmt
 	cond: Expr
-	if starts_declaration(p) {
+	pattern: Expr
+	header_ok := true
+	if at(p, .Case) {
+		pattern, cond, header_ok = parse_case_header(p)
+	} else if starts_declaration(p) {
 		init = parse_init_declaration(p)
 	} else {
 		first := parse_simple_statement(p)
@@ -1339,12 +1343,55 @@ parse_if :: proc(p: ^Parser) -> Stmt {
 		}
 	}
 
+	if pattern != nil {
+		else_stmts: []Stmt
+		if otherwise != nil {
+			else_stmts = make([]Stmt, 1, p.allocator)
+			else_stmts[0] = otherwise
+		}
+		s := case_switch(p, start, pattern, cond, then, else_stmts)
+		s.has_error = !opened || !closed || !body_ok || !header_ok
+		return s
+	}
+
 	s := new_stmt(p, Stmt_If, start)
 	s.init = init
 	s.cond = cond
 	s.then = then
 	s.otherwise = otherwise
 	s.has_error = !opened || !closed || !body_ok || expr_has_error(cond)
+	return s
+}
+
+// grammar.md "Statements": `case Pattern = subject` in an `if` or `for`
+// header is one switch case.
+@(private = "file")
+parse_case_header :: proc(p: ^Parser) -> (pattern: Expr, subject: Expr, ok: bool) {
+	advance(p) // `case`
+	p.type_value = true
+	pattern = parse_expr(p)
+	p.type_value = false
+	_, assigned := expect(p, .Assign, "L0245", "`=` and the value the pattern matches")
+	subject = parse_expr(p)
+	ok = assigned && !expr_has_error(pattern) && !expr_has_error(subject)
+	return
+}
+
+// design.md "Conditional patterns": the header is parsed as the switch it
+// means, `switch (subject) { case pattern: matched  default: otherwise }`, so
+// binding, ownership, and `break`/`continue` are the switch's own.
+@(private = "file")
+case_switch :: proc(p: ^Parser, start: Token, pattern, subject: Expr, matched: ^Block, otherwise: []Stmt) -> ^Stmt_Switch {
+	s := new_stmt(p, Stmt_Switch, start)
+	s.subject = subject
+	values := make([]Expr, 1, p.allocator)
+	values[0] = pattern
+	body := make([]Stmt, 1, p.allocator)
+	body[0] = matched
+	cases := make([]Switch_Case, 2, p.allocator)
+	cases[0] = Switch_Case{span = expr_span(pattern), values = values, stmts = body}
+	cases[1] = Switch_Case{span = s.span, stmts = otherwise}
+	s.cases = cases
 	return s
 }
 
@@ -1394,6 +1441,27 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 	post: Stmt
 	condition_only := false
 	bare_in := false
+
+	if at(p, .Case) {
+		// `for (case P = e) body` loops `switch (e) { case P: body  default: break; }`.
+		pattern, subject, header_ok := parse_case_header(p)
+		closed := close_header(p, opened, "`)` to close the `for` header")
+		body, body_ok := parse_block(p)
+		stop := new_stmt(p, Stmt_Branch, start)
+		stop.kind = .Break
+		stop.span = expr_span(pattern)
+		otherwise := make([]Stmt, 1, p.allocator)
+		otherwise[0] = stop
+		step := case_switch(p, start, pattern, subject, body, otherwise)
+		step.has_error = !opened || !closed || !body_ok || !header_ok
+		stmts := make([]Stmt, 1, p.allocator)
+		stmts[0] = step
+		loop_body := new_stmt(p, Block, start)
+		loop_body.stmts = stmts
+		s := new_stmt(p, Stmt_For, start)
+		s.body = loop_body
+		return s
+	}
 
 	switch {
 	case allow(p, .Semicolon):

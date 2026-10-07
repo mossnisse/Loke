@@ -303,7 +303,7 @@ fewer exceptions, rather than shortening keywords.
 | Next | Compiler-selected ordinary union layout | Compact nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
 | Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
-| Later | Explicit-capture callables and conditional patterns | Shorter callbacks and fallible streaming loops | Small syntax additions |
+| Later | Explicit-capture callables | Shorter callbacks | Small syntax additions |
 | Later | Checked disjoint access | Hand mutable halves to parallel workers | One compiler-known slice operation |
 | Later | Checked thread transfer and scoped workers | Reduce races and permit borrowed parallel work | Thread APIs and capabilities |
 
@@ -452,19 +452,14 @@ the limit, add acceptance tests just beyond each boundary, and make written
 contracts/disjoint primitives reduce dependence on inferred shape. Raising
 numeric limits alone does not solve this architectural issue.
 
-### Callbacks and fallible loops deserve small conveniences
+### Callbacks deserve a small convenience
 
-Two practical workflows are unnecessarily verbose:
+A stateful comparator or error mapper requires a nominal record plus an
+`impl call`, while ordinary procedures and callable records are not accepted
+uniformly by every callback API. (The fallible-stream loop this item also
+covered is now [Conditional patterns](design.md#conditional-patterns).)
 
-- A stateful comparator or error mapper requires a nominal record plus an
-  `impl call`, while ordinary procedures and callable records are not accepted
-  uniformly by every callback API.
-- A `Result(Option(T), E)` stream requires a loop, error propagation, and a
-  switch even for the simple operation "read until the end". This is verbosity,
-  not missing expressive power: `break` already exits the nearest loop through
-  an enclosing switch, so code can continue afterwards without a helper.
-
-For callbacks, first unify the existing callable-record convention in library
+First unify the existing callable-record convention in library
 APIs. Then consider an explicit-capture procedure literal that lowers to that
 same record and method. Captures should say whether they copy, borrow, or move;
 escaping a borrowed capture must be checked, and creating a generic stack
@@ -481,25 +476,6 @@ Specify mutable/consuming captures and callable result inference before making
 this syntax normative. Owning runtime type erasure is a separate question;
 most sorting and mapping callbacks do not need it. This refines
 [Callable records, procedures, and closures](#callable-records-procedures-and-closures).
-
-For streaming, reuse the existing shallow variant pattern in a conditional
-header instead of adding a second fallibility protocol. Example *proposed
-syntax*:
-
-```odin
-for (case .some(entry) = reader.next() or_return) {
-    use(entry);
-}
-continue_after_stream();
-```
-
-The expression is evaluated once per step; a matching payload lives for the
-body, a nonmatching variant ends the loop, and `or_return` handles errors in
-the ordinary way. Borrowed entries must expire before the next call. An `if`
-form can share the same rule. Absence is now always an `Option`, so more code
-inspects one than when references could be null, which gives this form more
-weight. Do not add nested patterns, implicit error
-conversion, and general comprehensions as prerequisites.
 
 ### Thread transfer needs a visible contract
 

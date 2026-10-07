@@ -436,6 +436,12 @@ checklist.
 
 ### Added
 
+- `if` and `for` take one switch case as their header (design.md
+  "Conditional patterns"): `if (case .some(entry) = table.find(key)) { ... }
+  else { ... }`, and `for (case .some(entry) = reader.next() or_return)`,
+  which reads a stream until the first value that does not match. Each means
+  the switch it abbreviates, so ownership and `break`/`continue` are the
+  switch's.
 - `@(required)` on a struct field makes every literal supply it (design.md
   "Required fields"). The struct then has no zero value, so `T{}`, an
   uninitialized global, a `make` length, and `resize` reject it too.

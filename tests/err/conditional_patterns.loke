@@ -1,0 +1,15 @@
+package main; import "core:fmt";
+
+// design.md "Conditional patterns": the binding exists only in the matched
+// body, and a header names one case.
+main :: proc() {
+	value: Option(int) = .some(1);
+	if (case .some(n) = value) {
+		fmt.println(n);
+	} else {
+		fmt.println(n);
+	}
+	for (case .some(m) = value) { break; }
+	fmt.println(m);
+	if (case .some(k) = value) { k = 2; }
+}

@@ -4136,6 +4136,29 @@ degrees :: proc(d: Direction) -> int {
 
 Unknown external integers are handled by [`Enum.from_int`](#integer-conversion) before switching over the validated enum. They are not extra enum variants requiring a default arm.
 
+### Conditional patterns
+
+`if` and `for` take one switch case as their header, `case Pattern = subject`. The pattern is anything a [switch](#switch-statement) case may write, usually a variant with its binding. The `if` form runs its block when the subject matches, with the binding in scope there and nowhere else, and its `else` otherwise:
+
+```odin
+if (case .some(entry) = table.find(key)) {
+	use(entry);
+} else {
+	report_missing(key);
+}
+```
+
+The `for` form evaluates the subject once per step and runs its block while the subject matches; the first value that does not match ends the loop. That is a stream read to its end, with `or_return` handling a failure in the ordinary way:
+
+```odin
+for (case .some(entry) = reader.next() or_return) {
+	use(entry);
+}
+continue_after_stream();
+```
+
+Each form means exactly the switch it abbreviates: `if (case P = e) A else B` is `switch (e) { case P: A  default: B }`, and `for (case P = e) A` is `for (;;) { switch (e) { case P: A  default: break; } }`. Ownership, binding, and lifetime are therefore the switch's: over a temporary the payload is the step's own and drops when the step ends, and over a place it is borrowed, so a borrowed entry expires before the next evaluation. `break` and `continue` in the block act on the loop. The header has no initialization statement and names one case, patterns do not nest, and a failure is not converted.
+
 ### defer statement
 
 A defer statement defers the execution of a statement until the end of the scope it is in. It is registered when execution reaches the `defer` statement and participates in the unified LIFO scope-exit ordering described under [Managed values and storage](#managed-values-and-storage).

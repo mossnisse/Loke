@@ -21,7 +21,7 @@ L0690
 `move` views the payload of a switch over a place, which still owns it; `switch (b in move(...))` hands it over first
 L0358
 @71:17
-a `switch` binding names storage the subject still owns and cannot be an assignment destination; bind it with `&mut` for a mutable payload
+a case binding names storage the subject still owns and cannot be an assignment destination; bind it with `&mut` for a mutable payload
 L0641
 @83:3
 `cursor` cannot be used here: a mutable reborrow of it is still in use

@@ -19,4 +19,4 @@ a `foreach` binding names the element read-only and cannot be an assignment dest
 bind it with `&mut` for mutable traversal
 L0358
 @22:22
-a `switch` binding names storage the subject still owns and cannot be an assignment destination
+a case binding names storage the subject still owns and cannot be an assignment destination
