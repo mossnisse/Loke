@@ -489,3 +489,87 @@ it. Process termination may end the guarantee because no parent continues.
 Do not add futures, async syntax, or reactive variables merely to solve this
 borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements).
 
+
+## Source review follow-up (2026-10-07)
+
+The [complete per-file review](source-review-2026-10-07.md) covers 168 implementation,
+library, example, benchmark, script, CI, and test-harness files. Small corpus
+fixtures were outside the agreed scope. The four earlier items fixed in
+`1a8aa53` remain closed. Confirmed language/API divergences are registered in
+[Known gaps](known-gaps.md#gaps); the following tooling and structural work
+remains open.
+
+### Compiler and harness resource handling
+
+- **Process handles (T01, reproduced):** `src/subprocess/subprocess.odin` never
+  calls `os2.process_close` after a successful start. A controlled 32-call run
+  increased native handle count from 136 to 200. At least 32 are the process
+  handles owned by this wrapper; the pinned Odin Windows implementation also
+  leaks a separate thread handle upstream. Register process close immediately
+  after successful start. The manual child in
+  `tests/corpus_test.odin`'s `output_returns_a_failed_collection` needs the
+  same treatment.
+- **Pipe failure (T02, source-confirmed):** the first pipe's write end is not
+  registered for cleanup until the second pipe succeeds. A second-pipe error
+  returns early and leaks that first writer. Register both ends immediately
+  after acquiring them, retaining the existing early writer-close scope.
+  No native failure was injected.
+- **Formatter paths (T03, reproduced):** an unformatted file under a directory
+  named `fmt[one]` is reported clean by `lokec -fmt-check <directory>` and
+  unchanged by `lokec -fmt <directory>`, while checking that same file directly
+  fails. `src/formatter.odin` uses the supplied directory as part of a glob.
+  Enumerate the directory and filter its `.loke` files, following existing
+  package-source enumeration.
+- **Compiler freshness (T04, source-confirmed):**
+  `tests/corpus_test.odin`'s `compiler_binary_is_current` scans only
+  `src/*.odin`. It misses the compiled-in `src/subprocess/*.odin` dependency,
+  so editing that helper can leave integration tests exercising stale code.
+  Include this known subpackage in the existing scan.
+
+### Performance script validation and cleanup
+
+`perf.ps1` accepts `-Repeat 0` and negative counts (T05). PowerShell's inclusive
+ranges make `1..0` two runs and `1..-2` four. Add a positive `ValidateRange`
+to the parameter. This is confirmed by the range expression, without running
+the benchmark suite.
+
+The measurement loop throws on build, execution, or expected-output failures,
+bypassing the final temporary-directory removal (T06). Wrap that work in
+`try/finally`, removing only its verified `loke-perf-$PID` directory. This is a
+source-confirmed cleanup gap; no failing full benchmark run was performed.
+
+### Small simplifications using existing code
+
+| ID | Location | Concrete change |
+| --- | --- | --- |
+| S01 | `core/container/small_array.loke`, `append_moved` | Delegate to `insert_moved(self.count, move(value))`, as copied append already delegates to copied insertion. Preserve required public diagnostics. |
+| S02 | `src/operators.odin`, `install_delegated_operator` | Replace the manual member-slice allocation and copy with existing `add_members`. |
+| S03 | `src/const_ops.odin`, `power_of_two` | Use `math.ldexp(1, exponent)`, already used by `bigint.odin`; callers supply nonnegative integer bit widths. |
+| S04 | `src/iterate.odin`, `Synth_Kind` and general symbol helpers | Move `add_members`, `new_associated_type`, `synth_proc`, `enroll_synth`, and their general enum to `semantic.odin`. Their container, hook, union, format, and region callers belong to general semantic construction. Update the architecture responsibility table with the move. |
+| S05 | `tests/corpus_test.odin`, three C-host link tests | Append common runtime C sources, include paths, runtime-library choice, and toolchain flags through one helper. Keep each test's host and output setup local. |
+| S06 | `examples/corpus_runner.loke`, `Job.cases` and worker startup | Move the immutable case list into one `shared([dynamic]string)` and clone handles for workers. This removes one complete array clone and string-retain traversal per worker while preserving cross-thread ownership. |
+
+These proposals require no new dependency or general framework. They were
+reviewed against their callers; no refactor was applied.
+
+### Candidates still needing evidence
+
+These are investigation notes, not additional confirmed spec gaps.
+
+| ID | Location | Remaining question and smallest next check |
+| --- | --- | --- |
+| C01 | `base/runtime/shared.loke`, final `Shared.release` | A panicking payload drop bypasses the final strong-group weak-reference release. Check observable cleanup, then defer `release_block` before dropping the payload. |
+| C02 | `core/thread/thread.loke`, `spawn_with` | Native thread creation failure follows transfer into raw `Start(T)` without freeing it or dropping its argument. Inject a native creation failure before choosing the cleanup change. |
+| C03 | `core/fs/fs.loke` and `core/process/process.loke` | Result-returning paths use infallible string builders, joins, copies, and other scratch allocation. Check a bounded selected default allocator to establish which APIs panic instead of returning `Out_Of_Memory`. |
+| C04 | `core/os/process.loke`, environment lookup | A variable removed between the one-unit size probe and second read can be mistaken for a present empty value. Inject the native results and last-error states. |
+| C05 | `src/emit_llvm_box.odin`, boxed drop thunk | A payload panic may skip remaining field cleanup and block release. Check observable field cleanup under unwind; process-memory retention alone is insufficient evidence of material harm. |
+| C06 | `src/parser.odin`, `parse_type_name` | Selector chains bypass the parser's nesting guard. A 5,000-selector source produced ordinary `L0306`; a 50,000-selector source exceeded a bounded 1,500 ms run. No stack overflow or crash was established. |
+| C07 | `src/generic.odin` and template declaration checking | Generic name installation appears to bypass reserved-name checks. Reproduce an instantiated written parameter named `true`; field and enum selector names with this spelling are expressly legal. |
+| C08 | `src/select.odin`, composite-expression dependency traversal | Composite keys are not visited by the pending-name prepass. Find a valid file-scope `when` whose key depends on another selected declaration. |
+| C09 | `src/reflect.odin`, nominal type sort keys | Local types with the same spelling in different procedures share the textual sort key. This may undermine internal ordering goals, but the spec promises unique type IDs, not unchanged numeric IDs across changed builds. Do not report it as a confirmed spec divergence. |
+| C10 | `src/subprocess/subprocess.odin`, `process_wait` | The wait error is discarded. Establish failure behavior and propagate it only when there is no earlier drain error to preserve. |
+
+Sibling literal/container cleanup paths and large packed equality projections
+are identified beside their confirmed reproductions in
+[Known gaps](known-gaps.md#gaps). They still need separate checks when those
+families are fixed.
