@@ -139,16 +139,30 @@ box_drop_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 			place_label(e, release_label)
 			// Inert first: a payload drop hook that panics leaves nothing to drop twice.
 			fmt.sbprintfln(&e.b, "  store ptr null, ptr %%p")
+			// design.md "What the unwind runs, and what it does not": the payload's
+			// drop registers its parts not yet dropped, and the allocation stays
+			// registered until the payload is gone.
+			release := begin_box_release(e, payload, block)
 			emit_drop_place(e, payload, box_payload_at(e, payload, block))
-			allocator := load(e, "ptr", block)
-			fmt.sbprintfln(
-				&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
-				allocator, block, box_block_size(e.c, payload), box_block_align(e.c, payload),
-			)
+			finish_temporary_drop(e, release)
+			emit_box_release(e, payload, block)
 			branch(e, done_label)
 			place_label(e, done_label)
+			emit_unwind_pop(e)
 			fmt.sbprintln(&e.b, "  ret void")
 		},
+		framed = true,
+	)
+}
+
+// Returns a box's allocation, whose payload is already dropped or moved out, to
+// the allocator stored at its start.
+@(private)
+emit_box_release :: proc(e: ^Emitter, payload: Type_Id, block: string) {
+	allocator := load(e, "ptr", block)
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
+		allocator, block, box_block_size(e.c, payload), box_block_align(e.c, payload),
 	)
 }
 
@@ -208,10 +222,6 @@ emit_box_unbox :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	payload := box_element(e.c, box_type)
 	block := emit_expr(e, v.bound[0])
 	value := load_place(e, payload, box_payload_at(e, payload, block))
-	allocator := load(e, "ptr", block)
-	fmt.sbprintfln(
-		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
-		allocator, block, box_block_size(e.c, payload), box_block_align(e.c, payload),
-	)
+	emit_box_release(e, payload, block)
 	return value
 }

@@ -32,6 +32,9 @@ Deferred :: struct {
 	array_buffer_env: int,
 	array_flags_env:  int,
 	array_count_env:  int,
+	// A box's allocation, published at `place_env`, whose payload `type` is
+	// being dropped: replay releases the allocation and nothing else.
+	box_release: bool,
 	// Index in the procedure's registration state, or -1 under `-panic=abort`.
 	slot: int,
 }
@@ -383,6 +386,8 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 			push_temporaries(e)
 			emit_stmt(e, entry.stmt)
 			pop_temporaries(e)
+		} else if entry.box_release {
+			emit_box_release(e, entry.type, unwind_env_load(e, env, entry.place_env))
 		} else if entry.temporary_place {
 			emit_drop_place(e, entry.type, unwind_env_load(e, env, entry.place_env))
 		} else if place, bound := e.names[entry.place_symbol]; bound {
@@ -416,6 +421,21 @@ begin_temporary_drop :: proc(e: ^Emitter, type: Type_Id, place: string) -> Defer
 	}
 	unwind_reserve(e, &entry)
 	unwind_publish_env(e, entry.place_env, place)
+	unwind_register(e, entry)
+	return entry
+}
+
+// Registers a box's allocation for panic replay while its payload is dropped,
+// so a payload drop that panics still releases it.
+@(private)
+begin_box_release :: proc(e: ^Emitter, payload: Type_Id, block: string) -> Deferred {
+	entry := Deferred{type = payload, box_release = true, slot = -1, place_env = -1}
+	if !unwind_enabled(e) || !drop_may_panic(e, payload) {
+		return entry
+	}
+	entry.place_env = unwind_reserve_env(e)
+	unwind_reserve(e, &entry)
+	unwind_publish_env(e, entry.place_env, block)
 	unwind_register(e, entry)
 	return entry
 }
@@ -1135,7 +1155,7 @@ emit_drop_prefix_elements :: proc(e: ^Emitter, element: Type_Id, items, count: s
 
 // Whether dropping a `type` can run a user hook, and so panic. A container's
 // element hooks run inside the runtime, so one with managed parts counts.
-@(private = "file")
+@(private)
 drop_may_panic :: proc(e: ^Emitter, type: Type_Id) -> bool {
 	operations := emit_lifecycle(e, type)
 	if operations.boxed {

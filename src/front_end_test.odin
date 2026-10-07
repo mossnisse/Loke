@@ -1145,7 +1145,8 @@ main :: proc() {
 	testing.expect(t, sentinel_survived, "the statement after the bad range did not survive recovery")
 }
 
-// Deep parentheses, operator chains, and prefix runs each give one L0222.
+// Deep parentheses, operator chains, prefix runs, and a type name's selector
+// chain each give one L0222.
 @(test)
 parser_depth_is_bounded :: proc(t: ^testing.T) {
 	sources := []string {
@@ -1169,6 +1170,10 @@ parser_depth_is_bounded :: proc(t: ^testing.T) {
 				strings.repeat(")", 10_000, context.temp_allocator),
 				" in values) { }\n}\n",
 			},
+			context.temp_allocator,
+		),
+		strings.concatenate(
+			{"package main;\n\nmain :: proc() {\n\tx: T", strings.repeat(".a", 10_000, context.temp_allocator), " = {};\n}\n"},
 			context.temp_allocator,
 		),
 	}

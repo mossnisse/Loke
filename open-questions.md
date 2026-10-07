@@ -504,9 +504,6 @@ These are investigation notes, not additional confirmed spec gaps.
 
 | ID | Location | Remaining question and smallest next check |
 | --- | --- | --- |
-| C04 | `core/os/process.loke`, environment lookup | A variable removed between the one-unit size probe and second read can be mistaken for a present empty value. Inject the native results and last-error states. |
-| C05 | `src/emit_llvm_box.odin`, boxed drop thunk | A payload panic may skip remaining field cleanup and block release. Check observable field cleanup under unwind; process-memory retention alone is insufficient evidence of material harm. |
-| C06 | `src/parser.odin`, `parse_type_name` | Selector chains bypass the parser's nesting guard. A 5,000-selector source produced ordinary `L0306`; a 50,000-selector source exceeded a bounded 1,500 ms run. No stack overflow or crash was established. |
 | C07 | `src/generic.odin` and template declaration checking | Generic name installation appears to bypass reserved-name checks. Reproduce an instantiated written parameter named `true`; field and enum selector names with this spelling are expressly legal. |
 | C08 | `src/select.odin`, composite-expression dependency traversal | Composite keys are not visited by the pending-name prepass. Find a valid file-scope `when` whose key depends on another selected declaration. |
 | C09 | `src/reflect.odin`, nominal type sort keys | Local types with the same spelling in different procedures share the textual sort key. This may undermine internal ordering goals, but the spec promises unique type IDs, not unchanged numeric IDs across changed builds. Do not report it as a confirmed spec divergence. |

@@ -1,0 +1,45 @@
+// standard-library "`core:os` additions": `get_environment` tells a missing
+// variable from a present empty one. A value that shrinks to empty between the
+// size probe and the read is still present, whatever this thread's last native
+// error was before the call.
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:sync";
+import "core:thread";
+
+NAME :: "LOKE_ENVIRONMENT_SHRINK_9B41";
+
+stop: sync.Atomic(int);
+
+toggle :: proc() {
+	for (; stop.load() == 0;) {
+		_ = os.set_environment(NAME, "a value long enough to need a second read");
+		_ = os.set_environment(NAME, "");
+	}
+}
+
+main :: proc() {
+	_ = os.set_environment(NAME, "");
+	fmt.println(os.get_environment(NAME));
+
+	flipper := thread.spawn(toggle);
+	wrong := 0;
+	foreach (_ in 0..<40000) {
+		// Leaves "not found" as this thread's last error.
+		_ = os.get_environment("LOKE_ENVIRONMENT_NEVER_SET_9B41");
+		switch (os.get_environment(NAME)) {
+		case .ok(found):
+			switch (found) {
+			case .some:
+			case .none: wrong += 1;
+			}
+		case .err: wrong += 1;
+		}
+	}
+	stop.store(1);
+	flipper.join();
+	fmt.println("misread", wrong);
+	_ = os.unset_environment(NAME);
+}

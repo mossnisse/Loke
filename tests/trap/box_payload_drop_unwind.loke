@@ -1,0 +1,20 @@
+package main;
+
+import "core:fmt";
+
+// design.md "What the unwind runs, and what it does not": a boxed record is
+// dropped part by part, last field first, and a panic in one field's hook
+// still leaves the fields before it, and the box's allocation, to the unwind.
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) {
+		fmt.println("drop", self.id);
+		if (self.id == 2) { panic("drop failed"); }
+	}
+}
+Pair :: struct { first: Tracked, second: Tracked }
+
+main :: proc() {
+	defer fmt.println("outer cleanup");
+	held := box(box(Pair{Tracked{1}, Tracked{2}}));
+}

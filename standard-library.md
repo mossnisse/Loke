@@ -1160,9 +1160,9 @@ executable_path(allocator := mem.default_allocator())
 ```
 
 The `Option` from `get_environment` distinguishes a missing variable from a
-present empty value, except that on Windows setting a variable to the empty
-string removes it; that is the platform's behavior, documented at the call. Its
-owning result uses the supplied allocator. Environment
+present empty value: a variable set to the empty string is present, and a value
+another thread changes or removes during the call reads as one of the states
+it passed through. Its owning result uses the supplied allocator. Environment
 names and values must become valid UTF-8 or the operation returns invalid data.
 A name must be non-empty and contain neither `=` nor U+0000. All three
 environment operations reject such names as `Invalid_Data`, with operation

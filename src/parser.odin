@@ -2743,7 +2743,16 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 	id.name_id = intern_identifier(p.c, id.name)
 	e = id
 
+	// Count the selector spine against the recursion budget, as `parse_postfix`
+	// does: later phases walk it recursively however it was parsed.
+	spine := 0
+	defer p.depth -= spine
 	for at(p, .Period) && peek_token(p, 1).kind == .Ident {
+		if p.depth > MAX_NEST {
+			return depth_exceeded(p)
+		}
+		spine += 1
+		p.depth += 1
 		advance(p)
 		field := advance(p)
 		s := new_expr(p, Expr_Selector, start.lo)

@@ -584,6 +584,14 @@ checklist.
 
 ### Fixed
 
+- `os.get_environment` no longer misreads a value that another thread empties
+  during the call as missing or as a stale error. standard-library.md no longer
+  claims that Windows removes a variable set to the empty string: it stays
+  present and empty, as the library already reported.
+- When a boxed value's drop panics part way, the unwind still drops its
+  remaining fields and returns the box's allocation.
+- A type name written with thousands of selectors (`T.a.a.a...`) is reported
+  as nesting too deeply (`L0222`) instead of overflowing the compiler's stack.
 - `fs.read_directory`, and spawning a child through `process.spawn`, `run`,
   or `output`, report a failed scratch allocation as `Out_Of_Memory` instead of
   panicking, as standard-library.md's shared I/O contract promises.

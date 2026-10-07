@@ -27,10 +27,8 @@ get_environment :: proc(
 	return get_environment_native(name, allocator);
 }
 
-// Note for the first target: Windows treats setting a variable to the empty
-// string as removing it, so a later `get_environment` answers "not set" rather
-// than "set to nothing". That is the platform's behavior, not this library's
-// choice.
+// A variable set to the empty string is present and empty: a later
+// `get_environment` answers `.some("")`, not `.none`.
 set_environment :: proc(name: string_view, value: string_view) -> Result(Unit, io.Error) {
 	validate_environment_name(name) or_return;
 	return set_environment_native(name, value);
@@ -86,6 +84,8 @@ foreign kernel32 {
 	rt_module_file_name :: proc "stdcall" (module: int, buffer: [^]u16, size: u32) -> u32 ---;
 	@(link_name="GetLastError")
 	rt_last_error :: proc "stdcall" () -> u32 ---;
+	@(link_name="SetLastError")
+	rt_set_last_error :: proc "stdcall" (code: u32) ---;
 }
 
 @(private)
@@ -128,10 +128,20 @@ get_environment_native :: proc(
 	// terminator; one that fits answers the length without it. Another thread can
 	// resize or remove the variable between calls, so size, fill, and retry until
 	// the value fits.
+	//
+	// An empty value that fits answers zero, as a failure does, and a successful
+	// call leaves the thread's last error as it was. So the last error is cleared
+	// before each call, and a zero with it still clear is the empty value -- the
+	// case `Option` exists to tell from `.none`.
+	rt_set_last_error(0);
 	needed := rt_get_environment(unsafe.raw_data(encoded), nil, 0);
 	for (;;) {
 		if (needed == 0) {
-			error := from_last_error(.Environment);
+			code := rt_last_error();
+			if (code == 0) {
+				return .ok(.some(from_wide([]u16{}, 0, allocator, .Environment) or_return));
+			}
+			error := io.from_native_code(code, .Environment);
 			if (io.is(error, .Not_Found)) { return .ok(.none); }
 			return .err(error);
 		}
@@ -140,11 +150,9 @@ get_environment_native :: proc(
 		case .ok(made):  buffer = move(made);
 		case .err: return .err(io.make_error(.Out_Of_Memory, .Environment));
 		}
+		rt_set_last_error(0);
 		written := rt_get_environment(unsafe.raw_data(encoded), unsafe.raw_data(buffer), needed);
-		// A variable set to the empty string writes zero units into a buffer of 1.
-		// That is a value, not a failure -- the case `Option` exists to tell from
-		// `.none`. Any other zero is a failure, handled at the top.
-		if (written < needed && (written != 0 || needed == 1)) {
+		if (written != 0 && written < needed) {
 			return .ok(.some(from_wide(buffer[:], int(written), allocator, .Environment) or_return));
 		}
 		needed = written;

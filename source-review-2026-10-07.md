@@ -140,7 +140,7 @@ table in Open questions.
 | `core/math/math.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/mem/mem.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/os/os.loke` | backend-library | No independent actionable finding after full reading. |
-| `core/os/process.loke` | backend-library | C04: empty-variable removal race. |
+| `core/os/process.loke` | backend-library | C04 (fixed): empty-variable removal race. |
 | `core/path/path.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/process/process.loke` | backend-library | G19: high-bit exit conversion; C03 (fixed): infallible scratch allocation. |
 | `core/simd/simd.loke` | backend-library | No independent actionable finding after full reading. |
@@ -208,7 +208,7 @@ table in Open questions.
 | `src/emit_llvm_abi.odin` | backend-library | No independent actionable finding after full reading. |
 | `src/emit_llvm_adapters.odin` | backend-library | No independent actionable finding after full reading. |
 | `src/emit_llvm_atomics.odin` | backend-library | No independent actionable finding after full reading. |
-| `src/emit_llvm_box.odin` | backend-library | C05: remaining fields/block after payload panic. |
+| `src/emit_llvm_box.odin` | backend-library | C05 (fixed): remaining fields/block after payload panic. |
 | `src/emit_llvm_calls.odin` | backend-library | G06, G11: descriptor alignment and variadic carrier forwarding. |
 | `src/emit_llvm_cleanup.odin` | backend-library | G04 family: native callback/remaining-element cleanup paths traced. |
 | `src/emit_llvm_containers.odin` | backend-library | G04 family: native callback progress and map-replacement pattern traced. |
@@ -252,7 +252,7 @@ table in Open questions.
 | `src/overlays.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/overload.odin` | frontend | No independent actionable finding after full reading. |
 | `src/packages.odin` | frontend | No independent actionable finding after full reading. |
-| `src/parser.odin` | frontend | C06: unbounded type selector spine; no reproduced crash. |
+| `src/parser.odin` | frontend | C06 (fixed): unbounded type selector spine; a 50,000-selector type name overflowed the stack. |
 | `src/precision.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/proc_contracts.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/project.odin` | frontend | No independent actionable finding after full reading. |
