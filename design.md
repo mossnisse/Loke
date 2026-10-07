@@ -1497,7 +1497,7 @@ low, high = minmax(a, b);
 foreach (key, value in table) { ... }
 ```
 
-The record must have exactly as many **directly declared** fields as there are bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is. Only a `foreach` header [nests](#element-bindings).
+The record must have exactly as many **directly declared** fields as there are bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is. Only a `foreach` header [nests](#element-bindings), because an adapter such as `indexed()` wraps an element that is itself a record; a declaration destructures a nested field in a second step, `entry, index := pair; key, value := entry;`. Every binding form takes a subset of one pattern grammar; see [grammar.md](grammar.md#statements).
 
 A nominal record — a struct, or a `distinct` type over one — destructures only in the package that declares its fields, since that package may reorder them. Elsewhere the value is bound whole and its fields selected by name. An [anonymous record](#anonymous-records) destructures anywhere: its field order is its type identity.
 

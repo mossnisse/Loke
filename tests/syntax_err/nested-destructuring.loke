@@ -1,0 +1,12 @@
+// grammar.md "Statements": `:=` and `=` destructure one flat list. A nested
+// group is one diagnostic, and parsing resumes at the next statement.
+package main;
+
+main :: proc() {
+	(x, y), b := pair;
+	a, (c, d) = pair;
+	(e) = 1;
+	f, g := pair;
+}
+
+sentinel :: proc() { }

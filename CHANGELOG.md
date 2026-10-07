@@ -354,6 +354,10 @@ checklist.
 
 ### Changed
 
+- `:=` and `=` destructuring stays flat by design; only a `foreach` header
+  nests (design.md "Destructuring"). A nested group such as `(x, y), b := p`
+  is now one diagnostic (`L0207`) saying to destructure in a second step,
+  instead of a cascade of expression errors.
 - A two-variant union whose other variant has no payload stores a reference
   payload alone, its null address being the payloadless variant (design.md
   "Representation"): `Option(^T)`, and `Option` of a procedure value,

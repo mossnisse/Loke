@@ -513,6 +513,19 @@ a static expansion; both forms share one production so that a mixed header
 parses and can be diagnosed (see
 [design.md](design.md#static-foreach-expansion)).
 
+`Binding` is the one binding pattern; each form that binds names takes a
+subset of it:
+
+| Form | Leaf markers | Groups |
+| --- | --- | --- |
+| `foreach` header | `$`, `&mut` | nested to any depth |
+| `Branch_Pattern` | `&mut` | none: one leaf |
+| `:=` and `=` destructuring | none | none: one flat list |
+
+A leaf is always an `Identifier`, `_` included. Declarations and assignments
+stay flat by design (see [design.md](design.md#destructuring)), so a `(` at the
+start of a statement never begins a pattern.
+
 `return inout expr` is legal only where the procedure's result is declared
 `inout`.
 

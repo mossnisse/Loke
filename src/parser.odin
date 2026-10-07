@@ -783,6 +783,55 @@ scans_name_list_colon :: proc(p: ^Parser, offset: int) -> bool {
 	}
 }
 
+// grammar.md "Statements": `:=` and `=` destructure one flat list, so names and
+// comma-holding groups followed by `:` or `=` are a nested pattern written where
+// none is allowed. `(x) = 1` holds no comma and stays an assignment.
+@(private = "file")
+scans_nested_pattern :: proc(p: ^Parser) -> (group: Token, found: bool) {
+	offset := 0
+	for {
+		#partial switch peek_token(p, offset).kind {
+		case .Ident:
+			offset += 1
+		case .Lparen:
+			if !found {
+				group, found = peek_token(p, offset), true
+			}
+			depth, comma := 0, false
+			for {
+				#partial switch peek_token(p, offset).kind {
+				case .Lparen:
+					depth += 1
+				case .Rparen:
+					depth -= 1
+				case .Comma:
+					comma = true
+				case .Ident:
+				case:
+					return {}, false
+				}
+				offset += 1
+				if depth == 0 {
+					break
+				}
+			}
+			if !comma {
+				return {}, false
+			}
+		case:
+			return {}, false
+		}
+		#partial switch peek_token(p, offset).kind {
+		case .Comma:
+			offset += 1
+		case .Colon, .Assign:
+			return group, found
+		case:
+			return {}, false
+		}
+	}
+}
+
 // A labelled first group distinguishes a record type from `(expression)`.
 @(private = "file")
 starts_anon_record_type :: proc(p: ^Parser) -> bool {
@@ -1088,6 +1137,15 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 		return with_attributes(parse_branch(p), attributes), true
 	case .Error:
 		advance(p)
+		sync_to_statement(p)
+		return error_stmt(p, span_of(p, t)), true
+	}
+
+	if group, nested := scans_nested_pattern(p); nested {
+		errorf(
+			p.c, span_of(p, group), "L0207",
+			"a declaration or assignment destructures one flat list; bind the inner record, then destructure it in a second step",
+		)
 		sync_to_statement(p)
 		return error_stmt(p, span_of(p, t)), true
 	}

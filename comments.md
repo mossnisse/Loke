@@ -480,6 +480,24 @@ unrelated types named `Token` do not become interchangeable.
 The [one-result migration](#one-result-migration) records the compatibility
 break and compiler defects found while migrating named fields.
 
+### One pattern grammar, flat declarations
+
+Every form that binds names takes a subset of one pattern: a leaf is a name or
+`_`, `&mut` marks a leaf that names a place, `$` a leaf a static expansion
+fixes, and a parenthesized group descends into a record field. A `foreach`
+header uses all of it, a switch case one leaf, and `:=` and `=` one flat list.
+That is one language with stated subsets, not several that differ in the
+details.
+
+Declarations stay flat because nothing asks for more. Nesting in a header
+exists because adapters wrap elements the program did not shape, as
+`table.indexed()` yields `(entry, index)` around a map entry. A declaration
+destructures a value the program built, and a nested field takes a second
+line. Nesting there would also need a recursive form of the consume, hook, and
+drop-order rules, and a statement-start scan past `(` to tell a pattern from a
+parenthesized expression. If a real program wants it, the grammar already has
+the production to extend.
+
 ## Removed or narrowed features
 
 ### Generics are not ABI surface

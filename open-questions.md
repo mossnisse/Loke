@@ -534,10 +534,6 @@ Prefer changes that remove an ambiguity or semantic exception:
    Grouped arms can inspect the original subject. This removes the grammar's
    special interpretation of a membership expression and its extra-parenthesis
    workaround.
-2. **Use one pattern grammar where destructuring is supported.** Ordinary
-   destructuring is flat but `foreach` nesting is recursive. Either support
-   the same small nested pattern in bindings or explicitly keep this limited;
-   do not grow several subtly different pattern languages.
 
 Keep the distinction between nominal structs and structural records: privacy,
 hook ownership, and cross-package positional construction have real semantics.
