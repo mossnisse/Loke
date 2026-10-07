@@ -1,0 +1,26 @@
+package main;
+
+import "core:fmt";
+
+// design.md "`inout` results": a returned place is checked as a place, so
+// `m[key]` names the existing entry (never inserting) and a user
+// `operator([])` resolves to its `inout` overload.
+entry :: proc(m: inout map[int]int, key: int) -> inout int { return inout m[key]; }
+
+Grid :: struct { cells: [4]int }
+impl Grid {
+	read :: operator([]) proc(self: Grid, i: int) -> int { return self.cells[i] + 1000; }
+	write :: operator([]) proc(self: inout Grid, i: int) -> inout int { return inout self.cells[i]; }
+}
+
+cell :: proc(g: inout Grid, i: int) -> inout int { return inout g[i]; }
+
+main :: proc() {
+	m := map[int]int{0 = 1, 5 = 2};
+	entry(inout m, 0) = 4;
+	entry(inout m, 5) += 10;
+	fmt.println(m[0], m[5], m.len());
+	g := Grid{};
+	cell(inout g, 2) = 7;
+	fmt.println(g.cells[2], g[2]);
+}

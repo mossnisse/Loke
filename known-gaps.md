@@ -86,36 +86,14 @@ main :: proc() {
 }
 ```
 
-### Compile-time drop silently skips user hooks
+### Compile-time evaluation rejects records with lifecycle hooks
 
 [design.md "Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation).
 
-This compiles and evaluates `VALUE` to 1 instead of diagnosing the reached panic in the drop hook. Explicit `drop` in `src/eval.odin` only writes zero storage; scope exit also processes written defers without executing custom managed drops. Execute the checked lifecycle operations on explicit drop and normal scope exit. Only explicit drop is directly reproduced here.
+This is rejected with `L0341` ("`T` has a `hook(drop)`, which compile-time evaluation does not run yet"), although a record with a lifecycle hook is an ordinary value the evaluated path may use. `src/eval.odin` runs no lifecycle hook: not at an explicit `drop`, scope exit, a replacing assignment, a discarded temporary, or a container removal, and not for an implicit copy's `hook(copy)`. Until it runs them, `eval_hooks_supported` refuses any record value whose drop or copy would run a hook, wherever evaluation makes one, rather than evaluating it with the hook skipped. Running them needs per-slot liveness, as the emitter's drop flags give the runtime.
 
 ```odin
 package main; T :: struct { n: int } impl T { release :: hook(drop) proc(self: inout T) { panic("drop ran"); } } compute :: proc() -> int { value := T{1}; drop(value); return 1; } VALUE :: compute(); main :: proc() { _ = VALUE; }
-```
-
-### A single dynamic-array spread reaches LLVM with the wrong carrier
-
-[design.md "Variadic parameters"](design.md#variadic-parameters).
-
-The checker accepts this, then linking fails with `L0403`: a `%loke.container` four-field dynamic-array header is passed where the variadic procedure expects a two-field slice. `src/check_calls.odin` accepts compatible spread carriers while the single-spread fast path in `src/emit_llvm_calls.odin` forwards the original value. Materialize the compatible carrier as the variadic pack before forwarding; the multiple-spread path already extracts data and length.
-
-```odin
-package main; sum :: proc(xs: ..int) -> int { result := 0; foreach (x in xs) { result += x; } return result; } main :: proc() { xs := [dynamic]int{1, 2}; _ = sum(..xs); }
-```
-
-### An inout result cannot return an existing map entry
-
-[design.md "`inout` results"](design.md#inout-results).
-
-This is rejected with `L0418: an inout result must return a place`. `src/check.odin` checks the return operand in value position, so map indexing never receives its place annotation. Check an `inout` return operand in `.Place` position, selecting an existing entry rather than insertion.
-
-```odin
-package main; import "core:fmt";
-get :: proc(m: inout map[int]int) -> inout int { return inout m[0]; }
-main :: proc() { m := map[int]int{0 = 1}; get(inout m) = 4; fmt.println(m[0]); }
 ```
 
 ### Dyn slot calls omit required argument mode validation

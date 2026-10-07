@@ -1,0 +1,30 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Variadic parameters": a `..` spread of a `[dynamic]T` or `[N]T`
+// passes the `[]T` it views, whether it is the only argument (forwarded as
+// is) or one of several (copied into the pack).
+sum :: proc(xs: ..int) -> int {
+	result := 0;
+	foreach (x in xs) { result += x; }
+	return result;
+}
+
+lengths :: proc(xs: ..string) -> int {
+	total := 0;
+	foreach (x in xs) { total += x.len(); }
+	return total;
+}
+
+make_values :: proc() -> [dynamic]int { return [dynamic]int{4, 5}; }
+
+main :: proc() {
+	xs := [dynamic]int{1, 2};
+	fixed := [3]int{10, 20, 30};
+	fmt.println(sum(..xs), sum(..xs, ..xs), sum(..fixed), sum(..fixed, ..xs), sum(5, ..fixed));
+	fmt.println(sum(..make_values()), sum(..[dynamic]int{7}));
+	words := [dynamic]string{"ab", "cde"};
+	fmt.println(lengths(..words), lengths(..words, ..words), lengths("x", ..words));
+	fmt.println(words[0], words[1]);
+}

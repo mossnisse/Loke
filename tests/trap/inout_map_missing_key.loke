@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// design.md "`inout` results": a returned `m[key]` names an existing entry; it
+// is not the inserting form, so a missing key panics as any read does.
+entry :: proc(m: inout map[int]int, key: int) -> inout int { return inout m[key]; }
+
+main :: proc() {
+	m := map[int]int{0 = 1};
+	entry(inout m, 0) = 2;
+	fmt.println(m[0]);
+	entry(inout m, 9) = 3;
+	fmt.println("unreachable");
+}

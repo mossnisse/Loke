@@ -513,6 +513,37 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	return value_from_const(ev, zero, type)
 }
 
+// design.md "Compile-time procedure evaluation": the evaluator runs no
+// lifecycle hook yet, so a record whose drop or copy would run one is rejected
+// where it is made, rather than evaluated with its hooks skipped. Only a record
+// declares a hook, and only a record or a fixed array holds one by value in a
+// zero; a container, union, or box starts out holding none.
+@(private = "file")
+eval_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool {
+	info := underlying_info(ev.k.c, type)
+	if info == nil {
+		return true
+	}
+	#partial switch info.kind {
+	case .Array:
+		return eval_hooks_supported(ev, info.element, site)
+	case .Struct:
+		lifecycle := lifecycle_of(ev.k.c, type)
+		if lifecycle.custom_drop != INVALID_SYMBOL || lifecycle.custom_try_clone != INVALID_SYMBOL {
+			return eval_fail(
+				ev, site, "L0341", "`%s` has a `hook(%s)`, which compile-time evaluation does not run yet",
+				type_name(ev.k.c, type), lifecycle.custom_drop != INVALID_SYMBOL ? "drop" : "copy",
+			)
+		}
+		for field in info.fields {
+			if symbol := symbol_of(ev.k.c, field); symbol != nil && !eval_hooks_supported(ev, symbol.type, site) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 @(private = "file")
 current_frame :: proc(ev: ^Evaluator) -> ^Eval_Frame {
 	if len(ev.frames) == 0 {
@@ -556,6 +587,10 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return Eval_Value{}, false
 	}
 	if base.is_const && base.const_value.kind != .Invalid {
+		// A folded record literal is made here as well.
+		if base.const_value.kind == .Aggregate && !eval_hooks_supported(ev, base.type, expr_span(e)) {
+			return Eval_Value{}, false
+		}
 		return value_from_const(ev, base.const_value, base.type)
 	}
 
@@ -1065,6 +1100,9 @@ eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool)
 	if type_is_container(ev.k.c, v.type) || type_is_slice(ev.k.c, v.type) {
 		return eval_container_literal(ev, v)
 	}
+	if !eval_hooks_supported(ev, v.type, v.span) {
+		return Eval_Value{}, false
+	}
 	value, zeroed := zero_value(ev, v.type)
 	if !zeroed {
 		return Eval_Value{}, false
@@ -1486,6 +1524,9 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			if index < len(self.elements) {
 				append(&next, self.elements[index])
 				continue
+			}
+			if !eval_hooks_supported(ev, element, v.span) {
+				return nil, false
 			}
 			zero, zeroed := zero_value(ev, element)
 			if !zeroed {
@@ -2312,6 +2353,10 @@ eval_invoke :: proc(
 
 	// Zeroed, so `or_return` can publish into it.
 	if symbol.result != INVALID_TYPE {
+		if !eval_hooks_supported(ev, symbol.result, site) {
+			pop(&ev.frames)
+			return Eval_Value{}, false
+		}
 		value, zeroed := zero_value(ev, symbol.result)
 		if !zeroed {
 			pop(&ev.frames)
@@ -2887,7 +2932,11 @@ eval_local_decl :: proc(ev: ^Evaluator, d: ^Decl) -> Eval_Flow {
 			}
 		} else {
 			symbol := symbol_of(ev.k.c, symbol_id)
-			value, ok = zero_value(ev, symbol == nil ? INVALID_TYPE : symbol.type)
+			type := symbol == nil ? INVALID_TYPE : symbol.type
+			ok = eval_hooks_supported(ev, type, d.span)
+			if ok {
+				value, ok = zero_value(ev, type)
+			}
 		}
 		if !ok {
 			return .Fail

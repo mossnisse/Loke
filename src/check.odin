@@ -3785,8 +3785,9 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		return terminated
 	}
 	// An assignable place of exactly the result type, checked as written: no
-	// conversion may turn it into a temporary.
-	if check_single_expr(k, value.expr, k.result_type) == INVALID_TYPE {
+	// conversion may turn it into a temporary. In place position, `m[key]`
+	// names an existing entry and a user `operator([])` is its `inout` overload.
+	if check_single_expr(k, value.expr, k.result_type, .Place) == INVALID_TYPE {
 		return terminated
 	}
 	base := expr_base(value.expr)

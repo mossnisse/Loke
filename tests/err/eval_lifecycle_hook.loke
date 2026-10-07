@@ -1,0 +1,33 @@
+package main;
+
+// design.md "Compile-time procedure evaluation": the evaluator runs no
+// lifecycle hook yet, so a record whose drop or copy would run one is refused
+// where evaluation makes it, folded or built, alone or held in another record,
+// instead of being evaluated with its hook skipped.
+Tracked :: struct { n: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) { panic("drop ran"); }
+}
+
+Holder :: struct { inner: Tracked, count: int }
+
+Copied :: struct { n: int }
+impl Copied {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Copied, Allocator_Error) {
+		return .ok(Copied{self.n + 1});
+	}
+}
+
+explicit :: proc() -> int { value := Tracked{1}; drop(value); return 1; }
+held :: proc() -> int { holder := Holder{count = 2}; return holder.count; }
+declared :: proc() -> int { pair: [2]Tracked; return 1; }
+copied :: proc() -> int { a: Copied = {}; b := a; return b.n; }
+plain :: proc() -> int { return 7; }
+
+EXPLICIT :: explicit();
+HELD :: held();
+DECLARED :: declared();
+COPIED :: copied();
+PLAIN :: plain();
+
+main :: proc() { _ = EXPLICIT + HELD + DECLARED + COPIED + PLAIN; }

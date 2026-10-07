@@ -1266,6 +1266,8 @@ check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechec
 		)
 		return arg.value, false
 	}
-	return arg.value, true
+	// A `[dynamic]T` or `[N]T` is spread as the `[]T` it views, so a lone
+	// spread forwards a slice and several spreads read a slice's data and length.
+	return arg.value, materialize(k, arg.value, pack)
 }
 

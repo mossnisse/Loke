@@ -579,6 +579,17 @@ checklist.
 
 ### Fixed
 
+- Compile-time evaluation no longer skips a record's `hook(drop)` or
+  `hook(copy)`: a value whose drop or copy would run one is now an error
+  (`L0341`) where evaluation makes it, until the evaluator runs hooks
+  (design.md "Compile-time procedure evaluation"). Previously a reached
+  `drop` of such a value evaluated as if it had no hook.
+- A lone `..` spread of a `[dynamic]T` or `[N]T`, as in `sum(..xs)`, passes
+  the `[]T` it views instead of failing in LLVM (`L0403`) (design.md
+  "Variadic parameters").
+- `return inout m[key]` returns the existing map entry, and `return inout
+  g[i]` uses a user `operator([])`'s `inout` overload; both were rejected with
+  `L0418` (design.md "`inout` results").
 - A decimal literal negated twice, `-(-1.000000059604644775390625000001)`,
   narrows to `f32` or `f16` with the same single rounding as the literal
   itself, and an exponent far outside the range, such as

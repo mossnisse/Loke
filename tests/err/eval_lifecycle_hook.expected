@@ -1,0 +1,12 @@
+L0341
+@27:13
+`Tracked` has a `hook(drop)`, which compile-time evaluation does not run yet
+L0341
+@28:9
+`Tracked` has a `hook(drop)`
+L0341
+@29:13
+`Tracked` has a `hook(drop)`
+L0341
+@30:11
+`Copied` has a `hook(copy)`
