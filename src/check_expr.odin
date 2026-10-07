@@ -2444,16 +2444,7 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 @(private = "file")
 check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	v.value_category = .Value
-	if v.bodiless {
-		errorf(
-			k.c, v.span, "L0630",
-			"only a foreign declaration ends with `---`; a procedure value needs a body",
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	if len(v.where_clauses) > 0 || v.signature == nil {
-		unsupported_construct(k, v.span)
+	if !proc_shape_ok(k, v, is_value = true) {
 		v.type = INVALID_TYPE
 		return
 	}

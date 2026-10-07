@@ -1,0 +1,11 @@
+package main;
+
+// A procedure literal gets the same shape checks as a declaration, worded for a
+// value: it is never generic and has no `where` clause (design.md "where
+// clauses", "Generics").
+main :: proc() {
+	bounded := proc(x: int) -> int where true { return x; };
+	generic := proc($T: type, x: T) -> T { return x; };
+	missing := proc() ---;
+	_, _, _ = bounded, generic, missing;
+}

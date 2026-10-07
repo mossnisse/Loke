@@ -245,17 +245,6 @@ profiles contain.
   console while `tests/run/lib_term_console` runs is read along with the
   records it wrote.
 
-## Review cleanup in `check.odin`
-
-The confirmed specification divergences and reproductions are in
-[known-gaps.md](known-gaps.md). One recommendation for
-[src/check.odin](src/check.odin) remains: keep the existing sections,
-`Checker_Location`, and `Body_Context` save/restore units, but share signature
-guards between named and anonymous procedures, and declaration validation
-between ordinary and destructured initialization. Small shared checks address
-the divergent paths; another checker abstraction or a file split by size is
-unnecessary.
-
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md "Formatting"](comments.md#formatting).

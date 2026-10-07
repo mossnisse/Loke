@@ -2225,13 +2225,8 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 				)
 				return
 			}
-			// design.md "Storage modifiers": static storage starts with a constant,
-			// as a single binding's would.
-			if (d.top_level || d.duration != .None) && !errors_since(k.c, value_mark) {
-				what := d.top_level ? "a file-scope initializer" : "a static-duration initializer"
-				if _, evaluated := require_const(k, d.values[0], what, d.top_level ? "L0325" : "L0506"); !evaluated {
-					return
-				}
+			if !errors_since(k.c, value_mark) && !require_static_initializer(k, d, d.values[0]) {
+				return
 			}
 			if fields, ok := destructure_fields(
 				k, base.type, len(d.names), expr_span(d.values[0]), "L0308", "bound by a destructuring declaration",
@@ -2330,13 +2325,8 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			}
 		}
 
-		// The codes here are `require_const`'s fallback, unpinned by design.
-		// design.md "Storage modifiers": a local `static` or `thread_local` is
-		// initialised before code runs, as a file-scope variable is.
-		if d.top_level && d.kind == .Var && evaluable {
-			require_const(k, value, "a file-scope initializer", "L0325")
-		} else if d.duration != .None && d.kind == .Var && evaluable {
-			require_const(k, value, d.duration == .Static ? "a `static` initializer" : "a `thread_local` initializer", "L0506")
+		if d.kind == .Var && evaluable {
+			require_static_initializer(k, d, value)
 		}
 
 		bind_literal_allocator(k.c, value, symbol_id)
@@ -2356,6 +2346,23 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
+// design.md "Storage modifiers": a file-scope variable, and a local `static` or
+// `thread_local`, is initialised before code runs, so its initializer is a
+// constant. Shared by a single binding and a destructuring declaration. The
+// codes are `require_const`'s fallback, unpinned by design.
+@(private = "file")
+require_static_initializer :: proc(k: ^Checker, d: ^Decl, value: Expr) -> bool {
+	what: string
+	switch {
+	case d.top_level:              what = "a file-scope initializer"
+	case d.duration == .Static:    what = "a `static` initializer"
+	case d.duration == .Thread_Local: what = "a `thread_local` initializer"
+	case:                          return true
+	}
+	_, evaluated := require_const(k, value, what, d.top_level ? "L0325" : "L0506")
+	return evaluated
+}
+
 @(private = "file")
 assign_symbol_types :: proc(c: ^Compiler, d: ^Decl, type: Type_Id) {
 	for symbol_id in d.symbols {
@@ -2372,32 +2379,13 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 	if len(d.names) != 1 {
 		errorf(k.c, d.span, "L0312", "a procedure declaration binds exactly one name")
 	}
-	signature := literal.signature
 	// Checked by `check_foreign_block`.
 	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL {
 		if sym := symbol_of(k.c, d.symbols[0]); sym != nil && sym.is_foreign {
 			return
 		}
 	}
-	if literal.bodiless {
-		errorf(
-			k.c, literal.span, "L0630",
-			"only a foreign declaration ends with `---`; a procedure declared here needs a body",
-		)
-		return
-	}
-	if signature == nil {
-		unsupported_construct(k, literal.span)
-		return
-	}
-	// design.md "where clauses": only with generic parameters in scope.
-	if len(literal.where_clauses) > 0 && !literal.generic_instance && k.generic_depth == 0 {
-		errorf(
-			k.c,
-			expr_span(literal.where_clauses[0]),
-			"L0433",
-			"a `where` clause needs a generic parameter in scope; use `if` or `assert` for a runtime precondition",
-		)
+	if !proc_shape_ok(k, literal, is_value = false) {
 		return
 	}
 	symbol := symbol_of(k.c, literal.symbol)
@@ -2423,6 +2411,43 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 		return
 	}
 	check_proc_body(k, literal)
+}
+
+// The checks a procedure needs before its signature is resolved, shared by a
+// declaration and a procedure literal so the two cannot drift. A literal is a
+// value, so it is never generic and has no `where` clause.
+proc_shape_ok :: proc(k: ^Checker, literal: ^Expr_Proc, is_value: bool) -> bool {
+	if literal.bodiless {
+		errorf(
+			k.c, literal.span, "L0630",
+			"only a foreign declaration ends with `---`; %s needs a body",
+			is_value ? "a procedure value" : "a procedure declared here",
+		)
+		return false
+	}
+	if literal.signature == nil {
+		unsupported_construct(k, literal.span)
+		return false
+	}
+	// design.md "Generics": a generic procedure has no runtime value.
+	if is_value && proc_signature_is_generic(literal) {
+		errorf(
+			k.c, literal.span, "L0431",
+			"a procedure literal is a value, and a generic procedure is not one; declare it with `::` and call it",
+		)
+		return false
+	}
+	// design.md "where clauses": only with generic parameters in scope, which a
+	// literal never has of its own.
+	if len(literal.where_clauses) > 0 && (is_value || (!literal.generic_instance && k.generic_depth == 0)) {
+		message := "a `where` clause needs a generic parameter in scope; use `if` or `assert` for a runtime precondition"
+		if is_value {
+			message = "a procedure literal has no generic parameters, so it cannot have a `where` clause; bound the enclosing declaration"
+		}
+		errorf(k.c, expr_span(literal.where_clauses[0]), "L0433", "%s", message)
+		return false
+	}
+	return true
 }
 
 // design.md "`type` and `typeid`": a procedure that computes a `type` or a

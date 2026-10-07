@@ -578,6 +578,11 @@ checklist.
 
 ### Fixed
 
+- A procedure literal with a `where` clause was reported as a compiler defect
+  (`L0350`); it is now `L0433`, since a literal is never generic (design.md
+  "where clauses"). A literal with a `$` parameter reported "unknown type"
+  for each use; it is now one `L0431` saying a generic procedure is not a
+  value. Named procedures and literals share these checks.
 - A procedure can compute a type, as design.md "`type` and `typeid`"
   describes: `Index_Type :: proc($Count: uint) -> type` is accepted, every
   call is evaluated by the compiler, and the result names a type in a
