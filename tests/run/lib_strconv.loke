@@ -55,6 +55,9 @@ main :: proc() {
 	show_i64("zz", 36);
 	show_i64("9223372036854775807");
 	show_i64("-9223372036854775808");
+	// Negative zero has no magnitude to borrow one from.
+	show_i64("-0");
+	show_i64("-0x0");
 
 	// And every documented failure.
 	show_i64("");

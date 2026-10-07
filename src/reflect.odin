@@ -541,6 +541,11 @@ typeid_value :: proc(c: ^Compiler, type: Type_Id) -> u64 {
 
 check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
+	// Positional value arguments only (design.md "Parameters").
+	if !builtin_arguments_ok(k, v) {
+		v.type = INVALID_TYPE
+		return
+	}
 	if len(v.args) != 1 {
 		errorf(k.c, v.span, "L0322", "`%s` takes 1 argument, found %d", ident.name, len(v.args))
 		v.type = INVALID_TYPE

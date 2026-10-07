@@ -96,55 +96,6 @@ This is rejected with `L0341` ("`T` has a `hook(drop)`, which compile-time evalu
 package main; T :: struct { n: int } impl T { release :: hook(drop) proc(self: inout T) { panic("drop ran"); } } compute :: proc() -> int { value := T{1}; drop(value); return 1; } VALUE :: compute(); main :: proc() { _ = VALUE; }
 ```
 
-### Reflection builtins accept invalid argument names and modes
-
-[design.md "Parameters"](design.md#parameters) and ["Compile-time built-ins"](design.md#compile-time-built-ins).
-
-Both calls below are accepted, although neither builtin has a parameter called `bogus` or an `inout` operand. `src/check_builtin.odin` omits its existing `builtin_arguments_ok` validation in the location and type-info handlers. Apply that shared argument-shape gate consistently.
-
-```odin
-package main; main :: proc() { x := 1; _ = source_location(bogus = inout x); id := typeid_of(int); _ = type_info_of(bogus = inout id); }
-```
-
-### Shared allocation failure ignores the allocator Trap policy
-
-[design.md "Allocation failure"](design.md#allocation-failure).
-
-With `-panic=unwind`, this prints `unwound` before a shared-allocation panic. The supplied `.Trap` allocator must terminate immediately without running that defer. `base/runtime/shared.loke` unconditionally calls `panic`; `core/slice/slice.loke`, `core/strings/strings.loke`, `core/strings/builder.loke` and `core/fmt/fmt.loke` contain the same wrapper pattern. Route ordinary failures through a shared policy operation carrying the original `Allocator_Error`, preserving the request size. Only shared construction was directly faulted.
-
-```odin
-package main;
-import "core:fmt";
-import "core:mem";
-Payload :: struct { data: [2048]u8 }
-main :: proc() {
-    defer fmt.println("unwound");
-    buffer: [256]u8 = {};
-    arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
-    payload: Payload = {};
-    handle := shared(move(payload), arena.allocator());
-    fmt.println(handle.strong_count());
-}
-```
-
-### Parsing negative zero as an integer panics
-
-[standard-library.md "`core:strconv`"](standard-library.md#corestrconv).
-
-This panics on a checked integer conversion instead of returning `.ok(0)`. `core/strconv/strconv.loke` computes unsigned `magnitude - 1` before converting the negative magnitude, so zero wraps to the largest `u64`. Guard zero before this conversion; `parse_int` inherits the same path.
-
-```odin
-package main;
-import "core:fmt";
-import "core:strconv";
-main :: proc() {
-    switch (strconv.parse_i64("-0")) {
-    case .ok(v): fmt.println(v);
-    case .err(e): fmt.println(e);
-    }
-}
-```
-
 ### Windows process wait panics on high-bit exit statuses
 
 [standard-library.md "`core:process`"](standard-library.md#coreprocess).

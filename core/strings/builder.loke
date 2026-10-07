@@ -116,7 +116,11 @@ impl String_Builder {
 
 	// A copy of what is written so far. The builder is not disturbed either way.
 	copy_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
-		return self.try_copy_string(allocator) or_else panic("String_Builder allocation failed");
+		// Failure follows the allocator's policy.
+		switch (self.try_copy_string(allocator)) {
+		case .ok(copied): return copied;
+		case .err(error): allocation_failed(error, allocator);
+		}
 	}
 
 	try_copy_string :: proc(

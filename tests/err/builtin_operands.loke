@@ -1,5 +1,7 @@
 package main;
 
+import "core:unsafe";
+
 // An untyped constant is measured at its default type.
 static_assert(size_of(1) == size_of(int));
 static_assert(align_of(1.0) == align_of(f64));
@@ -8,5 +10,13 @@ untyped_nil :: proc() { n := size_of(nil); }
 make_value :: proc() { xs: [dynamic]int = {}; ys := try_make(xs) or_else {}; }
 free_all_unknown :: proc() { free_all(nope); }
 named_argument :: proc() { static_assert(condition = true); }
+
+// design.md "Parameters": no built-in has a parameter to name or an `inout`
+// operand, the location and reflection ones included.
+named_location :: proc() { x := 1; _ = source_location(bogus = inout x); }
+named_type_info :: proc() { id := typeid_of(int); _ = type_info_of(bogus = inout id); }
+inout_reflection :: proc() { x := 1; _ = typeid_of(inout x); }
+named_fields :: proc() { _ = fields_of(bogus = int); }
+named_unsafe :: proc() { xs := []int{1}; _ = unsafe.raw_data(bogus = xs); }
 
 main :: proc() {}

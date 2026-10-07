@@ -455,6 +455,12 @@ Builtin_Kind :: enum {
 	// `copy`/`try_copy`) and to `core:fmt`, which can't import `core:strings`
 	// for `to_string` without pulling in the whole package.
 	Strings_Allocate,
+	// design.md "Allocation failure": `allocation_failed(error, allocator)`, the
+	// allocator's failure policy for an `Allocator_Error` a library wrapper got
+	// from a `try_` form, with the size it carries. It diverges as `panic` does,
+	// but `.Trap` aborts without unwinding. Contributed package-privately to the
+	// standard packages whose implicitly allocating wrappers need it.
+	Allocation_Failed,
 	// design.md "Concurrency and the memory model": the atomic intrinsics
 	// `Atomic(T)` wraps, contributed package-privately to `core:sync`. Each
 	// requires a constant ordering, which no ordinary signature can ask for.

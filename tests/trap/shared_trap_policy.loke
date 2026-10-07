@@ -1,0 +1,19 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Allocation failure": `shared(value)` applies its allocator's
+// failure policy, as every implicitly allocating operation does. `.Trap`
+// aborts at once, so the `defer` never runs, and the report keeps the size of
+// the refused control block.
+Payload :: struct { data: [2048]u8 }
+
+main :: proc() {
+	defer fmt.println("unwound");
+	buffer: [256]u8 = {};
+	arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
+	payload: Payload = {};
+	handle := shared(move(payload), arena.allocator());
+	fmt.println(handle.strong_count());
+}

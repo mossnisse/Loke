@@ -1,2 +1,2 @@
-loke: panic: formatting allocation failed
+loke: panic: allocation failed: 145 bytes requested from a fixed-buffer arena
 loke: panicked

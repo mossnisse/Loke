@@ -192,8 +192,11 @@ max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 // design.md "Slices": the way to keep data after its owner expires.
 clone :: proc(values: []$T, allocator: Allocator = mem.default_allocator()) -> [dynamic]T {
 	// `slice.try_clone` below, not a receiver member: a slice is a borrow and
-	// owns nothing to clone.
-	return try_clone(values, allocator) or_else panic("slice clone allocation failed");
+	// owns nothing to clone. Failure follows the allocator's policy.
+	switch (try_clone(values, allocator)) {
+	case .ok(copied): return copied;
+	case .err(error): allocation_failed(error, allocator);
+	}
 }
 
 try_clone :: proc(

@@ -59,7 +59,8 @@ parse_i64 :: proc(text: string_view, base: int = 0) -> Result(i64, Parse_Error) 
 	// whole reason the sign is handled here rather than after the conversion.
 	limit: u64 = 0x8000000000000000 if split.negative else 0x7FFFFFFFFFFFFFFF;
 	magnitude := accumulate(split.digits, split.radix, limit) or_return;
-	if (split.negative) {
+	// `magnitude - 1` keeps the minimum's magnitude in range; `-0` has none.
+	if (split.negative && magnitude != 0) {
 		return .ok(-i64(magnitude - 1) - 1);
 	}
 	return .ok(i64(magnitude));

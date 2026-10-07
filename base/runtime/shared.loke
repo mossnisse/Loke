@@ -72,16 +72,24 @@ Weak :: struct($T: type) {
 
 // `shared(value)` and `shared(move(value))`. The compiler routes the call form
 // of the type name here; the group is what makes the two spellings one name.
+// A failed construction answers by the allocator's policy (design.md
+// "Allocation failure"), as every implicitly allocating operation does.
 @(private)
 shared_from_clone :: proc(
 	value: $T, allocator: Allocator = default_allocator(),
 ) -> Shared(T) where is_copyable(T) {
-	return try_shared_from_clone(value, allocator) or_else shared_no_block(T, allocator);
+	switch (try_shared_from_clone(value, allocator)) {
+	case .ok(handle): return handle;
+	case .err(error): allocation_failed(error, allocator);
+	}
 }
 
 @(private)
 shared_from_move :: proc(value: move $T, allocator: Allocator = default_allocator()) -> Shared(T) {
-	return try_shared_from_move(move(value), allocator) or_else shared_no_block(T, allocator);
+	switch (try_shared_from_move(move(value), allocator)) {
+	case .ok(handle): return handle;
+	case .err(error): allocation_failed(error, allocator);
+	}
 }
 
 @(public)
@@ -109,14 +117,6 @@ try_shared_from_move :: proc(
 
 @(public)
 try_shared :: proc{try_shared_from_clone, try_shared_from_move};
-
-// design.md "Typed fallibility": `or_else` needs a value on its right, and a
-// construction that could not allocate has none — the program stops instead,
-// which is the same answer every other allocating library constructor gives.
-@(private)
-shared_no_block :: proc($T: type, allocator: Allocator) -> Shared(T) {
-	panic("shared allocation failed");
-}
 
 // ----------------------------------------------------------------- handles --
 

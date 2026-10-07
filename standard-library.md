@@ -665,9 +665,14 @@ result (as `path.join` does before `path.clean`) need not copy it.
 The compiler contributes one package-private `core:strings` primitive that
 copies a known-valid `string_view` into string storage with a supplied allocator
 and answers `Result(string, Allocator_Error)`. This is the minimal unexpressible
-bridge to the built-in string allocation ABI; UTF-8 algorithms and allocation
-policy remain ordinary Loke. It is `allocate_string`, contributed to `core:fmt`
-as well. Arbitrary byte append is deliberately absent because it
+bridge to the built-in string allocation ABI; UTF-8 algorithms remain ordinary
+Loke. It is `allocate_string`, contributed to `core:fmt` as well. A wrapper
+that applies the policy instead of returning the error hands that error to
+`allocation_failed(error, allocator)`, a second package-private primitive,
+contributed to `base:runtime`, `core:slice`, `core:strings`, and `core:fmt`. It
+applies the allocator's failure policy (design.md "Allocation failure") with the
+size the error carries: no Loke procedure can abort without unwinding under
+`.Trap`. Arbitrary byte append is deliberately absent because it
 could break the UTF-8 invariant; callers validate bytes first or use a byte
 buffer.
 

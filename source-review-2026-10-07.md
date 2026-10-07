@@ -36,9 +36,9 @@ P2 denotes another material correctness defect.
 | G13: Dyn slot calls omit required argument mode validation (fixed) | P2 | `src/erased.odin · check_dyn_slot_call` | Runtime reproduction. Missing inout marker accepted and mutates the argument. |
 | G14: File-scope when treats an offset_of field token as a lexical dependency (fixed) | P2 | `src/select.odin · first_unresolved_name` | Compile/IR reproduction. Field token x incorrectly produces L0389. |
 | G15: Static foreach accepts a reserved literal as its binding (fixed) | P2 | `src/expand.odin · bind_static` | Runtime reproduction. Reserved true loop binding accepted and prints 2. |
-| [G16: Reflection builtins accept invalid argument names and modes](known-gaps.md#reflection-builtins-accept-invalid-argument-names-and-modes) | P2 | `src/check_builtin.odin · location/type-info handlers` | Compile/IR reproduction. Bogus named inout operands accepted. |
-| [G17: Shared allocation failure ignores the allocator Trap policy](known-gaps.md#shared-allocation-failure-ignores-the-allocator-trap-policy) | P2 | `base/runtime/shared.loke; allocation wrappers` | Runtime reproduction. Trap allocator unwinds and prints unwound. |
-| [G18: Parsing negative zero as an integer panics](known-gaps.md#parsing-negative-zero-as-an-integer-panics) | P2 | `core/strconv/strconv.loke · parse_i64` | Runtime reproduction. parse_i64("-0") panics instead of returning zero. |
+| G16: Reflection builtins accept invalid argument names and modes (fixed) | P2 | `src/check_builtin.odin · location/type-info handlers` | Compile/IR reproduction. Bogus named inout operands accepted. |
+| G17: Shared allocation failure ignores the allocator Trap policy (fixed) | P2 | `base/runtime/shared.loke; allocation wrappers` | Runtime reproduction. Trap allocator unwinds and prints unwound. |
+| G18: Parsing negative zero as an integer panics (fixed) | P2 | `core/strconv/strconv.loke · parse_i64` | Runtime reproduction. parse_i64("-0") panics instead of returning zero. |
 | [G19: Windows process wait panics on high-bit exit statuses](known-gaps.md#windows-process-wait-panics-on-high-bit-exit-statuses) | P2 | `core/process/process.loke · wait_native` | Runtime reproduction. Child status 0xffffffff panics instead of returning -1. |
 
 The most urgent fixes were G01, G02, and G06, now fixed with regression
@@ -74,9 +74,10 @@ Six specific proposals, all since applied without a behavior change:
 - S05: three C-host tests share their repeated runtime-link inputs.
 - S06: corpus workers share one immutable case owner instead of cloning its array.
 
-G06 and G17 also point to shared responsibilities: use the existing projection
+G06 and G17 also pointed to shared responsibilities: use the existing projection
 alignment helper consistently, and route ordinary allocation failures through
-one allocator-policy operation carrying the original error.
+one allocator-policy operation carrying the original error. Both are fixed that
+way; G17's operation is the package-private `allocation_failed` built-in.
 
 ## Candidates and limits
 

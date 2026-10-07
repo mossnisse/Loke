@@ -58,6 +58,9 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// The control block is atomic, and `core:sync` is a package every program
 		// would then have to load — `shared` and `weak` are universe names.
 		contribute_atomic_intrinsics(c, pkg)
+		// design.md "Allocation failure": `shared(value)` applies the allocator's
+		// policy to the error its `try_` form reports, as each wrapper below does.
+		contribute_builtin(c, pkg, "allocation_failed", .Allocation_Failed, public = false)
 	case STD_MEM:
 		contribute_allocator_surface(c, pkg)
 		// An `Allocator` comes from the ordinary runtime default expression
@@ -110,12 +113,14 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// in almost every program: importing `core:strings` for one call measured
 		// 397 to 4923 lines of IR for hello-world, since the whole package emits.
 		contribute_builtin(c, pkg, "allocate_string", .Strings_Allocate, public = false)
+		contribute_builtin(c, pkg, "allocation_failed", .Allocation_Failed, public = false)
 	case STD_SLICE:
 		// `slice.sort_by` owns the typed public surface; this is the package-private
 		// bridge giving the shared runtime introsort a call-scoped comparator
 		// address and a generated typed thunk. Ordinary Loke cannot express raw
 		// relocation of an element without invoking its copy/drop operations.
 		contribute_builtin(c, pkg, "sort_by_intrinsic", .Slice_Sort_By, public = false)
+		contribute_builtin(c, pkg, "allocation_failed", .Allocation_Failed, public = false)
 	case STD_STRINGS:
 		// The one bridge the standard-library plan can't express in Loke itself:
 		// copying known-valid UTF-8 into string storage from a *supplied* allocator,
@@ -123,6 +128,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// operation allocates from the default provider. Package-private, because
 		// `core:strings` wraps it in `copy`/`try_copy`.
 		contribute_builtin(c, pkg, "allocate_string", .Strings_Allocate, public = false)
+		contribute_builtin(c, pkg, "allocation_failed", .Allocation_Failed, public = false)
 	case STD_SYNC:
 		// design.md "Concurrency and the memory model": the ordering enum is
 		// ordinary `base:runtime` source, and this *binds* that identity rather than

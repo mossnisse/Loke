@@ -1,12 +1,27 @@
 L0386
-@7:38
+@9:38
 `size_of` needs a typed value, found `untyped nil`
 L0386
-@8:62
+@10:62
 `make` needs a type, found a value of type `[dynamic]int`
 L0315
-@9:39
+@11:39
 unknown name `nope`
 L0371
-@10:42
+@12:42
+a built-in takes positional arguments only
+L0371
+@16:56
+a built-in takes positional arguments only
+L0371
+@17:68
+a built-in takes positional arguments only
+L0370
+@18:52
+a built-in takes value arguments only
+L0371
+@19:40
+a built-in takes positional arguments only
+L0371
+@20:62
 a built-in takes positional arguments only

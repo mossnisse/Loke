@@ -53,6 +53,8 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_type_info_of(k, v)
 	case .Strings_Allocate:
 		check_strings_allocate(k, v, ident)
+	case .Allocation_Failed:
+		check_allocation_failed(k, v, ident)
 	case .Slice_Sort_By:
 		check_slice_sort_by(k, v, ident)
 	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
@@ -139,6 +141,34 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.bound[0] = v.args[0].value
 	v.bound[1] = v.args[1].value
 	v.operation = Call_Sort_By{comparator = match}
+	v.type = TYPE_VOID
+}
+
+// `allocation_failed(error, allocator)`: an `Allocator_Error` and the allocator
+// whose policy answers it. Like `panic`, its call is `void` and diverges.
+@(private = "file")
+check_allocation_failed :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.value_category = .Value
+	v.type = INVALID_TYPE
+	if len(v.args) != 2 {
+		errorf(
+			k.c, v.span, "L0322", "`%s` takes an `Allocator_Error` and an `Allocator`, found %d argument%s",
+			ident.name, len(v.args), len(v.args) == 1 ? "" : "s",
+		)
+		return
+	}
+	if !builtin_arguments_ok(k, v) {
+		return
+	}
+	bound := make([]Expr, 2, k.c.semantic_allocator)
+	for target, index in ([]Type_Id{TYPE_ALLOCATOR_ERROR, TYPE_ALLOCATOR}) {
+		value, passed := check_argument_value(k, v.args[index].value, target)
+		bound[index] = value
+		if !passed {
+			return
+		}
+	}
+	v.bound = bound
 	v.type = TYPE_VOID
 }
 
@@ -1009,6 +1039,11 @@ check_message_arg :: proc(k: ^Checker, e: Expr, formatted: bool) {
 // again at every call that omits it, by `substitute_caller_location`.
 check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
+	// Positional value arguments only (design.md "Parameters").
+	if !builtin_arguments_ok(k, v) {
+		v.type = INVALID_TYPE
+		return
+	}
 	type, resolved := runtime_type_named(k, "Source_Code_Location")
 	if !resolved {
 		errorf(
@@ -1117,6 +1152,11 @@ substitute_caller_location :: proc(k: ^Checker, default: Expr, at: Span) -> Expr
 // without an entry, since a `typeid` can be forged.
 check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.value_category = .Value
+	// Positional value arguments only (design.md "Parameters").
+	if !builtin_arguments_ok(k, v) {
+		v.type = INVALID_TYPE
+		return
+	}
 	if len(v.args) != 1 {
 		errorf(k.c, v.span, "L0322", "`type_info_of` takes 1 argument, found %d", len(v.args))
 		v.type = INVALID_TYPE

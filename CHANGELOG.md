@@ -579,6 +579,18 @@ checklist.
 
 ### Fixed
 
+- `source_location`, `caller_location`, `type_info_of`, `type_of`,
+  `typeid_of`, `fields_of`, `enum_values_of`, `unsafe.raw_data`,
+  `unsafe.string_view`, and `unsafe.cstring_view` reject a named or `inout`
+  argument (`L0371`, `L0370`), as every other built-in does (design.md
+  "Parameters").
+- `shared(value)`, `slice.clone`, `strings.copy`,
+  `String_Builder.copy_string`, `finish`, and `fmt.to_string` apply the
+  allocator's failure policy when allocation fails: a `.Trap` allocator now
+  aborts without unwinding, and the report names the refused size, as for
+  every built-in allocation (design.md "Allocation failure").
+- `strconv.parse_i64("-0")` and `parse_int("-0")` return `.ok(0)` instead of
+  panicking.
 - A call through a `dyn` slot checks each argument's written mode:
   `view.update(value)` for an `inout` parameter is now `L0370`, as in any
   other call, instead of writing the caller's variable; a stray `inout` or

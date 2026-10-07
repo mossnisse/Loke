@@ -2774,7 +2774,7 @@ call_diverges :: proc(c: ^Compiler, e: Expr) -> bool {
 		return false
 	}
 	if symbol.kind == .Builtin {
-		return symbol.builtin == .Panic
+		return symbol.builtin == .Panic || symbol.builtin == .Allocation_Failed
 	}
 	return symbol.kind == .Proc && symbol.diverges
 }

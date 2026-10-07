@@ -81,8 +81,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			emit_formatted_panic(e, v, 1, "assertion failed")
 			place_label(e, ok)
 			return "0"
-		case .Panic:
-			backend_fail(e, "`panic` bypassed emit_diverging_call")
+		case .Panic, .Allocation_Failed:
+			backend_fail(e, "a diverging built-in bypassed emit_diverging_call")
 			return "0"
 		case .Default_Allocator:
 			return emit_default_allocator(e)
@@ -619,6 +619,15 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 emit_diverging_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if is_builtin_call(e.c, v, .Panic) {
 		emit_formatted_panic(e, v, 0, "explicit panic")
+	} else if is_builtin_call(e.c, v, .Allocation_Failed) {
+		// The error's size goes back into the runtime's note, so the report names
+		// the refused request, and the allocator's policy decides.
+		error := emit_expr(e, v.bound[0])
+		allocator := emit_expr(e, v.bound[1])
+		emit_restore_refusal(e, allocator, error)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
+		fmt.sbprintln(&e.b, "  unreachable")
+		e.terminated = true
 	} else {
 		emit_direct_call(e, v)
 		fmt.sbprintln(&e.b, "  unreachable")

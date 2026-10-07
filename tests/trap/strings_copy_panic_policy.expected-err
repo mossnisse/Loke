@@ -1,0 +1,2 @@
+loke: panic: allocation failed: 305 bytes requested from a fixed-buffer arena
+loke: panicked

@@ -222,6 +222,11 @@ check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 // from the caller's allocator.
 check_strings_allocate :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
+	// Positional value arguments only (design.md "Parameters").
+	if !builtin_arguments_ok(k, v) {
+		v.type = INVALID_TYPE
+		return
+	}
 	if len(v.args) != 2 {
 		errorf(
 			k.c, v.span, "L0637",
@@ -256,6 +261,11 @@ check_strings_allocate :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 // owner.
 check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
+	// Positional value arguments only (design.md "Parameters").
+	if !builtin_arguments_ok(k, v) {
+		v.type = INVALID_TYPE
+		return
+	}
 	arity := kind == .Unsafe_String_View ? 2 : 1
 	if len(v.args) != arity {
 		errorf(

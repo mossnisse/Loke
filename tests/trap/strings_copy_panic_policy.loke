@@ -1,0 +1,16 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:strings";
+
+// design.md "Allocation failure": a library wrapper over a `try_` form answers
+// by the allocator's policy, with the size the error carries. `.Panic` follows
+// the program's strategy, so the `defer` runs.
+main :: proc() {
+	defer fmt.println("unwound");
+	buffer: [256]u8 = {};
+	arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Panic);
+	text := strings.copy("0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789", arena.allocator());
+	fmt.println(text);
+}
