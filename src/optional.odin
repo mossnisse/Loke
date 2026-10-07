@@ -244,15 +244,15 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 
 // ---------------------------------------------------------- type switch --
 
-// A union subject turns `.name(binding)` and `.name(&binding)` calls into
+// A union subject turns `.name(binding)` and `.name(&mut binding)` calls into
 // branch patterns.
-adopt_branch_patterns :: proc(s: ^Stmt_Switch) {
+adopt_branch_patterns :: proc(k: ^Checker, s: ^Stmt_Switch) {
 	s.kind = .Pattern
 	for &entry in s.cases {
 		if len(entry.values) != 1 {
 			continue
 		}
-		if selector, binding, ref, ok := branch_variant_pattern(entry.values[0]); ok {
+		if selector, binding, ref, ok := branch_variant_pattern(k, entry.values[0]); ok {
 			entry.values[0] = selector
 			entry.binding = binding
 			entry.binding_ref = ref
@@ -261,7 +261,7 @@ adopt_branch_patterns :: proc(s: ^Stmt_Switch) {
 }
 
 @(private = "file")
-branch_variant_pattern :: proc(value: Expr) -> (Expr, Name, bool, bool) {
+branch_variant_pattern :: proc(k: ^Checker, value: Expr) -> (Expr, Name, bool, bool) {
 	call, is_call := value.(^Expr_Call)
 	if !is_call || len(call.args) != 1 {
 		return nil, Name{}, false, false
@@ -270,19 +270,29 @@ branch_variant_pattern :: proc(value: Expr) -> (Expr, Name, bool, bool) {
 	arg := call.args[0]
 	written := arg.value
 	ref := false
-	if unary, is_unary := written.(^Expr_Unary); is_unary && unary.op == .Amp && !unary.mutable {
+	plain: ^Expr_Unary
+	if unary, is_unary := written.(^Expr_Unary); is_unary && unary.op == .Amp {
 		written, ref = unary.operand, true
+		if !unary.mutable {
+			plain = unary
+		}
 	}
 	ident, is_ident := written.(^Expr_Ident)
 	if !is_selector || selector.operand != nil || !is_ident ||
 	   arg.name.text != "" || arg.mode != .Value {
 		return nil, Name{}, false, false
 	}
+	// design.md "Inspecting a union": `&` alone would read as a read-only
+	// pointer, but the binding is a writable place. Bound anyway, so the case
+	// reports only its spelling.
+	if plain != nil {
+		errorf(k.c, plain.op_span, "L0367", "a writable payload binding is written `&mut name`")
+	}
 	binding := Name{text = ident.name, span = ident.span, id = ident.name_id}
 	return selector, binding, ref, true
 }
 
-// design.md "Switch ownership": a `.name(&binding)` case makes the switch work
+// design.md "Switch ownership": a `.name(&mut binding)` case makes the switch work
 // on its subject's storage rather than on a copy.
 switch_binds_place :: proc(s: ^Stmt_Switch) -> bool {
 	for entry in s.cases {

@@ -36,7 +36,7 @@
           (block
           )
         )
-        (foreach ["&value","i"]
+        (foreach ["&mut value","i"]
           (in (ident "items"))
           (block
           )

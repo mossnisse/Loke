@@ -884,7 +884,7 @@ Switch_Case :: struct {
 	stmts:  []Stmt,
 	// The binding in `.variant(name)`, or empty.
 	binding: Name,
-	// `.variant(&name)`: the binding is the subject's payload place.
+	// `.variant(&mut name)`: the binding is the subject's payload place.
 	binding_ref: bool,
 	// A type switch's per-case binding: the payload type for one variant, the
 	// union type for a grouped or default case.

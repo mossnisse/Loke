@@ -24,16 +24,16 @@ impl Lender_Cursor {
 
 adapters_over_containers :: proc() {
 	values := [dynamic]int{1, 2, 3};
-	foreach (&v, i in values.indexed()) { v += i; }
+	foreach (&mut v, i in values.indexed()) { v += i; }
 	view := values.indexed();
-	foreach (&v, i in view) { v += i; }
+	foreach (&mut v, i in view) { v += i; }
 	table: map[int]int = {};
-	foreach (&v in table.values()) { v += 1; }
-	foreach (&key, value in table) { _ = value; }
+	foreach (&mut v in table.values()) { v += 1; }
+	foreach (&mut key, value in table) { _ = value; }
 }
 
 only_through_iter :: proc(cells: []mut int) {
-	foreach (&c in Lender{cells}) { c += 1; }
+	foreach (&mut c in Lender{cells}) { c += 1; }
 }
 
 // A stored mutable adapter holds the exclusive loan its source took.
@@ -41,7 +41,7 @@ loans :: proc() {
 	values := [dynamic]int{1, 2, 3};
 	view := (&mut values[:]).indexed();
 	n := values.len();
-	foreach (&v, i in view) { v += n + i; }
+	foreach (&mut v, i in view) { v += n + i; }
 }
 
 main :: proc() {

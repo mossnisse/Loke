@@ -1437,7 +1437,7 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	if graph.mode != .Lifecycle {
 		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements)
 	}
-	// design.md "By-reference iteration": a `&` binding's loan ends with its
+	// design.md "By-reference iteration": a `&mut` binding's loan ends with its
 	// step, and a copied element is a local of its step.
 	walk_flow_loop_body(graph, s.body, head, done, s.bindings, place_loop || !s.borrows)
 	link(graph, graph.current, head)

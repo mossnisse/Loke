@@ -44,7 +44,7 @@ main :: proc() {
 			}
 		}
 		fmt.println("failed", failed, small.len() > 0);
-		foreach (&token in small) { token.id = 0; }
+		foreach (&mut token in small) { token.id = 0; }
 	}
 
 	table: map[string]Token = {};

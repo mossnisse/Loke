@@ -3224,7 +3224,7 @@ eval_foreach_step :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value
 	return flow == .Continue ? .Normal : flow
 }
 
-// design.md "Element bindings": a value binding copies; a `&` binding is the
+// design.md "Element bindings": a value binding copies; a `&mut` binding is the
 // container's storage.
 @(private = "file")
 bind_foreach_element :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value, index: int) -> bool {
@@ -3318,7 +3318,7 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 			return flow
 		}
 	}
-	// A `.name(&binding)` case binds the payload in the subject's own storage.
+	// A `.name(&mut binding)` case binds the payload in the subject's own storage.
 	if switch_binds_place(s) {
 		place, ok := eval_place(ev, s.subject)
 		if !ok {

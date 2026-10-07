@@ -855,7 +855,7 @@ To keep the data after the owner expires, make an owned copy. `slice.clone(view)
 ```odin
 x: []mut int = ...;
 x[0] = 10;
-foreach (&value in x) {
+foreach (&mut value in x) {
 	value += 1;
 }
 length_of_x := x.len();
@@ -1659,7 +1659,7 @@ v = number(7);
 
 #### Inspecting a union
 
-A union is inspected with a `switch`, whose cases are variant names. A case may bind that variant's payload locally with `.name(binding)`, or as a writable place with `.name(&binding)` (see [Switch ownership](#switch-ownership)). This is a deliberately small pattern: the binding is one identifier (or `_`), and patterns do not nest. Payloadless variants are written as bare `.name`.
+A union is inspected with a `switch`, whose cases are variant names. A case may bind that variant's payload locally with `.name(binding)`, or as a writable place with `.name(&mut binding)` (see [Switch ownership](#switch-ownership)). This is a deliberately small pattern: the binding is one identifier (or `_`), and patterns do not nest. Payloadless variants are written as bare `.name`.
 
 ```odin
 switch (v) {
@@ -1706,7 +1706,7 @@ A switch over a **place** borrows it: a payload binding is immutable and non-own
 
 A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
 
-A case written `.name(&binding)` binds the payload as a writable place instead, as `foreach (&value in items)` binds an element. The subject must be a writable place, and the case borrows it exclusively: the subject cannot be read or written while the binding, or anything borrowed through it, is still used. Assigning the binding replaces the payload in place, and like any binding over a place it cannot be moved or dropped. A borrow taken through the binding borrows that part of the payload, with field precision as for a local, and also carries the subject's borrow. Each time the case runs, the binding names the payload the subject holds then, so a borrow kept from an earlier pass does not conflict with the new binding; the subject's borrow it carries still does. Storing one back into the carrier the subject was reached through, as `cursor = &mut node.next` does below, is therefore the self-store of [Weakening and reborrows](#weakening-and-reborrows) and suspends nothing:
+A case written `.name(&mut binding)` binds the payload as a writable place instead, as `foreach (&mut value in items)` binds an element. The subject must be a writable place, and the case borrows it exclusively: the subject cannot be read or written while the binding, or anything borrowed through it, is still used. Assigning the binding replaces the payload in place, and like any binding over a place it cannot be moved or dropped. A borrow taken through the binding borrows that part of the payload, with field precision as for a local, and also carries the subject's borrow. Each time the case runs, the binding names the payload the subject holds then, so a borrow kept from an earlier pass does not conflict with the new binding; the subject's borrow it carries still does. Storing one back into the carrier the subject was reached through, as `cursor = &mut node.next` does below, is therefore the self-store of [Weakening and reborrows](#weakening-and-reborrows) and suspends nothing:
 
 ```odin
 Node :: struct { value: int, next: Option(box(Node)) }
@@ -1715,7 +1715,7 @@ push_back :: proc(head: ^mut Option(box(Node)), value: int) {
 	cursor := head;
 	for (;;) {
 		switch (cursor^) {
-		case .some(&node): cursor = &mut node.next;
+		case .some(&mut node): cursor = &mut node.next;
 		case .none:        cursor^ = .some(box(Node{value, .none})); return;
 		}
 	}
@@ -2479,19 +2479,19 @@ A manual `next()` call returns `Item`, pointers and all. Code that must be gener
 
 `foreach` traverses in one of two **modes**, and the binding pattern decides which:
 
-1. Any `&` leaf in the [binding pattern](#element-bindings) asks the iterable for **mutable** traversal. A mutable place gives its container's own; any other value gives one only if its type is a [mutable view](#by-reference-iteration) — a `[]mut T`, an adapter over one, or a type whose `iter_mut` takes no `inout` receiver. Writing `&` together with `move(...)` or [`copied()`](#iteration-adapters) is an error.
+1. Any `&mut` leaf in the [binding pattern](#element-bindings) asks the iterable for **mutable** traversal. A mutable place gives its container's own; any other value gives one only if its type is a [mutable view](#by-reference-iteration) — a `[]mut T`, an adapter over one, or a type whose `iter_mut` takes no `inout` receiver. Writing `&mut` together with `move(...)` or [`copied()`](#iteration-adapters) is an error.
 2. Otherwise traversal **borrows**. A temporary root is owned by the loop for the complete statement and lends its elements until the loop ends; `move(place)` transfers the collection into that temporary but does not make its individual elements movable bindings.
 
 Ordinary traversal copies nothing, whatever the element type, and a [move-only](#lifecycle-hooks-and-resource-types) element is read like any other. To own a copy of each borrowed element, write [`copied()`](#iteration-adapters); removing or otherwise transferring elements is a container operation rather than a traversal mode.
 
 ```odin
 foreach (item in items) { inspect(item); }              // borrowed: no clone, move-only included
-foreach (&item in items) { item.count += 1; }           // mutable: an exclusive loan per step
+foreach (&mut item in items) { item.count += 1; }           // mutable: an exclusive loan per step
 foreach (item in make_items()) { inspect(item); }       // temporary kept through the statement
 foreach (item in items.copied()) { take(move(item)); }  // one clone per element, asked for
 ```
 
-An adapter or container view — `indexed`, `reversed`, `copied`, `keys`, `values`, `entries` — is an ordinary value, and a header means the same by it as a local holding it: `&` asks that value, never the collection it was made from. `foreach (&v, i in values.indexed())` over a dynamic array is therefore rejected, because `values.indexed()` is a read-only view; `(&mut values[:]).indexed()` numbers the mutable view. The **root**, the expression the adapters are applied to, is evaluated once, and a temporary root lives for the whole statement (see [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries)). A user-defined method with one of those names keeps lookup precedence and is an ordinary call.
+An adapter or container view — `indexed`, `reversed`, `copied`, `keys`, `values`, `entries` — is an ordinary value, and a header means the same by it as a local holding it: `&mut` asks that value, never the collection it was made from. `foreach (&mut v, i in values.indexed())` over a dynamic array is therefore rejected, because `values.indexed()` is a read-only view; `(&mut values[:]).indexed()` numbers the mutable view. The **root**, the expression the adapters are applied to, is evaluated once, and a temporary root lives for the whole statement (see [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries)). A user-defined method with one of those names keeps lookup precedence and is an ordinary call.
 
 #### Yield modes
 
@@ -2523,7 +2523,7 @@ foreach (key, value in table) {          // the entry's two fields
 	fmt.println(key, value);
 }
 
-foreach (key, &value in table) { value += 1; }   // the key stays read-only
+foreach (key, &mut value in table) { value += 1; }   // the key stays read-only
 ```
 
 This is the general [destructuring](#destructuring) rule applied to the element, so a destructured element must be a record with exactly the same number of directly declared, visible fields. A header extends it with nesting, which `:=` and `=` do not have: a group descends into a field that is itself a record, to any depth; promoted fields are not flattened. Any binding may be `_`.
@@ -2532,13 +2532,13 @@ A leaf is a **binding**, and what it receives is decided by the traversal's [yie
 
 - an **owned** leaf binds the value, which the iteration owns until the end of that step and then disposes of exactly once, including on early exit or panic;
 - a **borrowed** leaf binds the element itself, immutably — no copy is made, and a [move-only](#lifecycle-hooks-and-resource-types) element is read like any other;
-- a **mutable** leaf is written `&name` and binds a place, which may be written through.
+- a **mutable** leaf is written `&mut name` and binds a place, which may be written through. It is spelled as the mutable address `&mut place` is, because it acts as one; a bare `&name` leaf is an error.
 
-An `&` leaf must land on a mutably lent part, so a map's key, an `indexed()` counter, or a part a record `Item` lends read-only cannot be taken by reference; an unmarked leaf is immutable. A borrowed or mutable binding names storage the source still owns, so it cannot be moved or dropped — `move(item)` and `drop(item)` on one are the error [a switch over a place](#switch-ownership) already gives. `saved := item` still clones, and so still rejects a move-only element. `&item` on a borrowed binding yields a `^T` carrying the element's own provenance, which is how a pointer to an element is taken.
+An `&mut` leaf must land on a mutably lent part, so a map's key, an `indexed()` counter, or a part a record `Item` lends read-only cannot be taken by reference; an unmarked leaf is immutable. A borrowed or mutable binding names storage the source still owns, so it cannot be moved or dropped — `move(item)` and `drop(item)` on one are the error [a switch over a place](#switch-ownership) already gives. `saved := item` still clones, and so still rejects a move-only element. `&item` on a borrowed binding yields a `^T` carrying the element's own provenance, which is how a pointer to an element is taken.
 
 A single binding over a record yield receives that record with its pointer fields, read through `entry.value^`; destructuring binds the pointees directly. No transparent borrowed-record type is introduced.
 
-A loop never invents an index, key, or byte offset. To receive one, use an adapter or view whose element carries it: `sequence.indexed()` for an index, and `map.keys()`, `map.values()`, or plain destructuring of a map entry for a key or value. `foreach (&value, index in sequence)` and `foreach (&value in map)` are not valid headers; each is a diagnostic naming the adapter or destructuring that supplies what it asks for.
+A loop never invents an index, key, or byte offset. To receive one, use an adapter or view whose element carries it: `sequence.indexed()` for an index, and `map.keys()`, `map.values()`, or plain destructuring of a map entry for a key or value. `foreach (&mut value, index in sequence)` and `foreach (&mut value in map)` are not valid headers; each is a diagnostic naming the adapter or destructuring that supplies what it asks for.
 
 #### Iteration adapters
 
@@ -2550,11 +2550,11 @@ Every iterable has one default `Element` and `Iterator`. An adapter selects a di
 | `source.reversed()` | the source `Element`, in reverse order |
 | `source.copied()` | the source `Element`, cloned once per step |
 
-`indexed()` and `reversed()` work in both [modes](#traversal-modes) and nest where the underlying traversal supplies the required direction. Over a mutable view each is a mutable view, holding its source by value; over a container each is a read-only view. `copied()` turns a borrowed leaf into an owned one, cloning it with the element's own copy hook, allocator selection, and failure behavior — a loop never copies an element on its own. An already-owned leaf passes through uncloned. It rejects a non-copyable borrowed leaf and an `&` leaf.
+`indexed()` and `reversed()` work in both [modes](#traversal-modes) and nest where the underlying traversal supplies the required direction. Over a mutable view each is a mutable view, holding its source by value; over a container each is a read-only view. `copied()` turns a borrowed leaf into an owned one, cloning it with the element's own copy hook, allocator selection, and failure behavior — a loop never copies an element on its own. An already-owned leaf passes through uncloned. It rejects a non-copyable borrowed leaf and an `&mut` leaf.
 
 `indexed()`'s own `Item` is `(value: <the source's Item>, index: int)`: it lends whatever its source lends and owns only the counter it supplies, so numbering a borrowed traversal stays borrowed and a move-only element can be numbered. `indexed()` starts at zero and advances only after `next` succeeds. `source.reversed().indexed()` numbers the reversed traversal from zero. Repeated indexing wraps the previous element in another `{value, index}` record. An indexed view is forward-only: reversing it would require knowing the end index. A reversed view supports reversal again, restoring the original traversal.
 
-`reversed()` requires [`Reverse_Iterable`](#standard-interface-catalogue) and a receiver method named `iter_reverse`; under an `&` leaf it requires `iter_mut_reverse` instead. A forward-only iterable is rejected; reversal never buffers or allocates. `iter_reverse` returns the type's declared `Iterator`, and `iter_mut_reverse` its `Mut_Iterator`. A reverse traversal that needs another iterator representation must instead be a separate adapter with its own `Element` and `Iterator`.
+`reversed()` requires [`Reverse_Iterable`](#standard-interface-catalogue) and a receiver method named `iter_reverse`; under an `&mut` leaf it requires `iter_mut_reverse` instead. A forward-only iterable is rejected; reversal never buffers or allocates. `iter_reverse` returns the type's declared `Iterator`, and `iter_mut_reverse` its `Mut_Iterator`. A reverse traversal that needs another iterator representation must instead be a separate adapter with its own `Element` and `Iterator`.
 
 Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps the same collection borrowed for the whole loop.
 
@@ -2565,7 +2565,7 @@ A stored adapter keeps the capability of what it was made from and never upgrade
 ```odin
 view := (&mut values[:]).indexed();
 fmt.println(values.len());          // ERROR: `view` holds the exclusive loan of `values`
-foreach (&value, index in view) { value += index; }
+foreach (&mut value, index in view) { value += index; }
 ```
 
 Built-in containers also provide these views:
@@ -2636,12 +2636,12 @@ For a user-defined iterator whose `next` returns `^Element`, the pointer it retu
 
 #### By-reference iteration
 
-An `&` leaf anywhere in the pattern makes the traversal mutable:
+An `&mut` leaf anywhere in the pattern makes the traversal mutable:
 
 ```odin
-foreach (&value in collection) { ... }
-foreach (key, &value in table) { ... }
-foreach (&value, index in slice.indexed()) { ... }
+foreach (&mut value in collection) { ... }
+foreach (key, &mut value in table) { ... }
+foreach (&mut value, index in slice.indexed()) { ... }
 ```
 
 Mutable fixed arrays, dynamic arrays, `Small_Array`, maps, and user-defined containers implementing `Mutable_Iterable` support it as mutable places. A map lends its key read-only and its value mutably, so an entry is never yielded as a mutable whole. **Mutable views** support it as any value: a `[]mut T`, an `indexed()` or `reversed()` over one, and a user type whose `iter_mut` takes `self` or `self: ^`, since what it lends is in what it views rather than in the variable.
@@ -3942,11 +3942,11 @@ foreach (value in some_map.values()) {   // values alone, no entry record
 }
 ```
 
-What a binding receives — a borrow, a mutable place written `&value`, or an owned element — is decided by the header alone, under the [traversal modes](#traversal-modes):
+What a binding receives — a borrow, a mutable place written `&mut value`, or an owned element — is decided by the header alone, under the [traversal modes](#traversal-modes):
 
 ```odin
-foreach (&value in some_dynamic_array) { value += 1; }   // mutable: the root must be writable
-foreach (key, &value in some_map) { value += 1; }        // map keys stay immutable
+foreach (&mut value in some_dynamic_array) { value += 1; }   // mutable: the root must be writable
+foreach (key, &mut value in some_map) { value += 1; }        // map keys stay immutable
 ```
 
 Evaluating a place or borrow carrier establishes an iterator loan, immutable for a borrowing traversal and exclusive for a mutable one. It lasts while the traversal, an element binding, or anything taken from one is still used, so competing access to or invalidation of the iterable from inside the loop is checked by the ordinary one rule, `break` included. Value-only iteration such as an integer range needs no loan.
@@ -4978,7 +4978,7 @@ bump :: proc(xs: []mut int) {
 	xs[1] = 8;         // ERROR: `xs` is suspended here
 	view[2] = 9;       // ... because this keeps the reborrow live
 
-	foreach (&x in xs) {
+	foreach (&mut x in xs) {
 		x += xs.len();  // ERROR: the traversal reborrows `xs`
 	}
 }

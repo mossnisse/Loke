@@ -16,7 +16,7 @@ L0357
 L0358
 @19:32
 a `foreach` binding names the element read-only and cannot be an assignment destination
-bind it with `&` for mutable traversal
+bind it with `&mut` for mutable traversal
 L0358
 @22:22
 a `switch` binding names storage the subject still owns and cannot be an assignment destination

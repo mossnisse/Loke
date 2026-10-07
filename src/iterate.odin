@@ -682,13 +682,13 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	return check_foreach_body(k, s)
 }
 
-// design.md "By-reference iteration": a `&` anywhere in the header makes this
+// design.md "By-reference iteration": a `&mut` anywhere in the header makes this
 // a place loop over the container's own storage.
 foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
 	return first_ref_binding(s.bindings) != nil
 }
 
-// The first `&` leaf in a pattern, or nil.
+// The first `&mut` leaf in a pattern, or nil.
 @(private = "file")
 first_ref_binding :: proc(bindings: []Foreach_Binding) -> ^Foreach_Binding {
 	for &binding in bindings {
@@ -800,7 +800,7 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 				k.c,
 				ref_span(s),
 				"L0480",
-				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s` for mutation, or drop the `&` to read them",
+				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s` for mutation, or drop the `&mut` to read them",
 				type_name(k.c, subject),
 				type_name(k.c, info.element),
 			)
@@ -967,7 +967,7 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, yield := Yield_Desc{ki
 	if !s.borrows && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
-	// A value loop has no `&` leaf to check.
+	// A value loop has no `&mut` leaf to check.
 	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type, yield) { return FLOWS }
 	return check_foreach_block(k, s)
 }
@@ -975,7 +975,7 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, yield := Yield_Desc{ki
 // Binds one recursive pattern, for value and place loops alike (only a place
 // loop has `&` leaves). `item` is the projected form, where a record of lent
 // pointers binds whole; a direct place loop passes INVALID_TYPE. `desc` says
-// how each part is handed over, and an `&` leaf must land on a mutable one
+// how each part is handed over, and an `&mut` leaf must land on a mutable one
 // (design.md "Element bindings").
 check_foreach_pattern :: proc(
 	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical, item: Type_Id, desc: Yield_Desc,
@@ -1035,7 +1035,7 @@ check_foreach_pattern :: proc(
 	return true
 }
 
-// An `&` leaf over a part the traversal does not lend mutably.
+// An `&mut` leaf over a part the traversal does not lend mutably.
 @(private = "file")
 report_immutable_ref_leaf :: proc(k: ^Checker, s: ^Stmt_Foreach, binding: Foreach_Binding, desc: Yield_Desc) {
 	#partial switch desc.kind {

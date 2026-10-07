@@ -15,7 +15,7 @@ impl Box {
 
 mutable_element :: proc() {
 	values := [dynamic]int{1, 2, 3};
-	foreach (&x in values) {
+	foreach (&mut x in values) {
 		values.append(4, 5, 6);
 		x = 99;
 		break;
@@ -45,7 +45,7 @@ escaping_view :: proc() -> int {
 protocol_element :: proc() {
 	xs: container.Small_Array(int, 4) = {};
 	xs.append(1, 2, 3);
-	foreach (&x in xs) {
+	foreach (&mut x in xs) {
 		xs.clear();
 		x = 99;
 		break;
@@ -56,7 +56,7 @@ protocol_element :: proc() {
 changed_after_last_use :: proc() -> int {
 	values := [dynamic]int{1, 2, 3};
 	total := 0;
-	foreach (&x in values) {
+	foreach (&mut x in values) {
 		x += 1;
 		total += x;
 		if (total > 2) {

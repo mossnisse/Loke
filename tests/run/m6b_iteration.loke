@@ -20,13 +20,13 @@ main :: proc() {
 	fmt.println(weighted);
 
 	// `&value` names the element in place.
-	foreach (&v in xs) { v = v * 10; }
+	foreach (&mut v in xs) { v = v * 10; }
 	fmt.println(xs[0]);
 	fmt.println(xs[2]);
 
 	// The value view selects mutable traversal through its `&` binding.
 	some_map := map[string]int{"A" = 1, "C" = 9, "B" = 4};
-	foreach (_, &value in some_map) { value += 1; }
+	foreach (_, &mut value in some_map) { value += 1; }
 	fmt.println(some_map["A"]);
 	fmt.println(some_map["C"]);
 	fmt.println(some_map["B"]);

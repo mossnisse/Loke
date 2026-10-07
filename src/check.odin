@@ -3221,13 +3221,13 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 	case .Loop_Binding:
 		errorf(
 			k.c, base.span, "L0358",
-			"a `foreach` binding names the element read-only and cannot be %s; bind it with `&` for mutable traversal",
+			"a `foreach` binding names the element read-only and cannot be %s; bind it with `&mut` for mutable traversal",
 			what,
 		)
 	case .Payload_Binding:
 		errorf(
 			k.c, base.span, "L0358",
-			"a `switch` binding names storage the subject still owns and cannot be %s; bind it with `&` for a mutable payload",
+			"a `switch` binding names storage the subject still owns and cannot be %s; bind it with `&mut` for a mutable payload",
 			what,
 		)
 	case .Read_Only_Name:
@@ -3375,7 +3375,7 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 	// design.md "Inspecting a union": the subject's type decides.
 	if type_is_union(k.c, subject) {
-		adopt_branch_patterns(s)
+		adopt_branch_patterns(k, s)
 		return check_variant_cases(k, s, subject)
 	}
 	if type_is_untyped(k.c, subject) {

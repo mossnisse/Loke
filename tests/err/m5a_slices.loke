@@ -23,7 +23,7 @@ main :: proc() {
 	}
 
 	// By-reference iteration needs `[]mut T`.
-	foreach (&value in readable) {
+	foreach (&mut value in readable) {
 		value += 1;
 	}
 

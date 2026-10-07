@@ -24,6 +24,6 @@ main :: proc() {
 	fmt.println(p.first, p.last, named.last, first, last, t.a, t.b, CONSTANT.last);
 	fmt.println(p == Padded{1, 2});
 	items := [2]Padded{{1, 2}, {3, 4}};
-	foreach (&low, &high in items) { high += low; }
+	foreach (&mut low, &mut high in items) { high += low; }
 	foreach (low, high in items) { fmt.println(low, high); }
 }

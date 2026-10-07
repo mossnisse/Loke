@@ -217,17 +217,18 @@ inert, so a zero `File` is a valid value and containers of files keep working.
 Once absence is an `Option`, updating a payload in place is common, as in
 inserting into an `Option(box(Tree))`. Without a mutable binding that update is
 an `exchange` of the field for `.none`, a consuming switch, and an assignment
-back. `case .some(&node):` binds the payload as a writable place instead,
-spelled as `foreach (&value in items)` binds an element, and it would move to
-`&mut` with `foreach` if that ever changes
-([Switch ownership](design.md#switch-ownership)).
+back. `case .some(&mut node):` binds the payload as a writable place instead,
+spelled as `foreach (&mut value in items)` binds an element
+([Switch ownership](design.md#switch-ownership)). Both were once a bare `&`,
+which in an expression takes a read-only address; a writable binding now reads
+as the `&mut place` it acts like.
 
 A borrow taken through the binding is a borrow of that field of the binding,
 tracked as precisely as one of a local, and it also carries the subject's
 borrow. When the case runs again the binding names different storage, so the
 checker stops counting the earlier pass's borrows against it; the subject's
 borrow they carry still guards what they point into. That is what makes a
-cursor walk work: in `switch (cursor^) { case .some(&node): cursor = &mut
+cursor walk work: in `switch (cursor^) { case .some(&mut node): cursor = &mut
 node.next; }`, the new pointer reborrows `cursor` and is stored back into it,
 the self-store that `xs = &mut xs[1:]` already was, and the next pass's `node`
 is free to borrow again. Treating every borrow through the binding as the

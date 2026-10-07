@@ -16,7 +16,7 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 		if !ok { break }
 		sym := symbol_of(k.c, call.resolution.chosen_overload)
 		if sym == nil || sym.synth != .Adapter_View || len(call.bound) != 1 { break }
-		// design.md "Iteration protocol": `&` asks the adapter's value, never its
+		// design.md "Iteration protocol": `&mut` asks the adapter's value, never its
 		// root, so only a mutable view is peeled for a by-reference loop. Text and
 		// ranges still peel, to be refused for producing values.
 		if foreach_is_place_loop(s) && iteration_member(k, call.type, "iter_mut") == INVALID_SYMBOL &&

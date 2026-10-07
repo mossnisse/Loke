@@ -9,10 +9,10 @@ Point :: struct { x: int, y: int }
 
 main :: proc() {
 	text: string = "text";
-	foreach (&ch in text) { }
+	foreach (&mut ch in text) { }
 
 	m := map[int]int{};
-	foreach (&key, value in m) { }
+	foreach (&mut key, value in m) { }
 
 	values := []int{1, 2};
 	if (1 in values) { }

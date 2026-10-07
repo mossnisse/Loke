@@ -1,0 +1,11 @@
+package main; import "core:fmt";
+
+// design.md "Inspecting a union": a writable payload binding is `&mut name`.
+main :: proc() {
+	value: Option(int) = .some(1);
+	switch (value) {
+	case .some(&n): n += 1;
+	case .none:
+	}
+	fmt.println(value);
+}

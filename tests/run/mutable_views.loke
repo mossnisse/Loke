@@ -49,32 +49,32 @@ impl Row_Cursor {
 	}
 }
 
-bump_row :: proc(row: Row) { foreach (&c in row) { c += 1; } }
+bump_row :: proc(row: Row) { foreach (&mut c in row) { c += 1; } }
 
 // Generic over mutable traversal, taking the view by value.
 number :: proc(xs: $S) where interfaces.Mutable_Iterable(S) {
-	foreach (&v, i in xs) { v += i * 100; }
+	foreach (&mut v, i in xs) { v += i * 100; }
 }
 
 main :: proc() {
 	keys := [2]int{1, 2};
 	weights := [2]int{10, 20};
 	table := Table{keys[:], &mut weights[:]};
-	foreach (key, &value in table) { value += key; }
+	foreach (key, &mut value in table) { value += key; }
 	fmt.println(weights);
 
 	storage := [3]int{1, 2, 3};
 	bump_row(Row{&mut storage[:]});
-	foreach (&c in Row{&mut storage[:]}) { c += 10; }
+	foreach (&mut c in Row{&mut storage[:]}) { c += 10; }
 	fmt.println(storage);
 
 	// A stored adapter over a mutable view keeps its capability.
 	values := [dynamic]int{1, 2, 3};
 	view := (&mut values[:]).indexed();
-	foreach (&value, index in view) { value += index; }
+	foreach (&mut value, index in view) { value += index; }
 	back := (&mut values[:]).reversed();
-	foreach (&value in back) { value *= 2; }
-	foreach (&value, index in (&mut values[:]).reversed().indexed()) { value += index * 1000; }
+	foreach (&mut value in back) { value *= 2; }
+	foreach (&mut value, index in (&mut values[:]).reversed().indexed()) { value += index * 1000; }
 	fmt.println(values);
 	number((&mut values[:]).indexed());
 	walker := (&mut values[:]).indexed().iter_mut();
@@ -83,18 +83,18 @@ main :: proc() {
 
 	small: container.Small_Array(int, 4) = {};
 	small.append(1, 2);
-	foreach (&v, i in small.slice().indexed()) { v += i; }
+	foreach (&mut v, i in small.slice().indexed()) { v += i; }
 	fmt.println(small);
 
 	row := Row{&mut storage[:]};
 	numbered := row.indexed();
-	foreach (&c, i in numbered) { c += i * 1000; }
+	foreach (&mut c, i in numbered) { c += i * 1000; }
 	fmt.println(storage);
 
 	// A map lends its key read-only and its value mutably.
 	counts: map[string]int = {};
 	counts["abc"] = 1;
-	foreach (key, &value in counts) { value += key.len(); }
-	foreach (_, &value in counts) { value *= 10; }
+	foreach (key, &mut value in counts) { value += key.len(); }
+	foreach (_, &mut value in counts) { value *= 10; }
 	fmt.println(counts["abc"]);
 }

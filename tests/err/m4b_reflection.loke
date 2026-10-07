@@ -16,7 +16,7 @@ main :: proc() {
 	// Mixing a runtime and a compile-time binding.
 	foreach ($field, index in fields_of(Point)) { }
 	// A static binding is immutable and cannot use `&`.
-	foreach ($&field in fields_of(Point)) { }
+	foreach ($&mut field in fields_of(Point)) { }
 	// The iterable must be compile-time known.
 	n := 3;
 	foreach ($x in n) { }

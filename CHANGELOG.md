@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- A writable binding is spelled `&mut name`, as a mutable address is:
+  `foreach (&mut value in items)` and `case .some(&mut node):` (design.md
+  "Element bindings", "Switch ownership"). A bare `&name` binding, which read
+  as a read-only pointer, is now an error (`L0247` in a `foreach` header,
+  `L0367` in a case) naming the new spelling. Upgrade by inserting `mut ` after
+  each such `&`; an `&name` in an expression is unchanged.
 - A switch's default arm may be written `default:` (design.md "switch
   statement"); `case:` still means the same. `default` is now a reserved
   word: rename a variable, parameter, field, or procedure spelled `default`.
@@ -443,7 +449,7 @@ checklist.
   `core:os`, `core:process`, and `core:term` now share its one table, so a
   Windows error that one of them reported as `Other` now gets the code the
   others give it; `core:term` alone still reads error 6 as `Not_A_Terminal`.
-- `case .name(&binding):` binds a union payload as a writable place when the
+- `case .name(&mut binding):` binds a union payload as a writable place when the
   switch subject is a writable place, which the case borrows exclusively
   (design.md "Switch ownership"). An `Option(box(T))` field is updated in
   place, and a `^mut` cursor walks a chain by storing `&mut node.next` back

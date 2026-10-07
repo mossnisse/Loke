@@ -33,7 +33,7 @@ main :: proc() {
 	foreach (x, y, z in points) { fmt.println(x); }
 
 	// A mutable pattern may select individual record fields.
-	foreach (x, &y in points) { fmt.println(x); }
+	foreach (x, &mut y in points) { fmt.println(x); }
 
 	// Indexed views are forward-only: reversing them needs an end index.
 	foreach (v in xs.indexed().reversed()) { fmt.println(v); }
@@ -50,8 +50,8 @@ main :: proc() {
 
 	// `reversed()` carries mutable traversal too, but a `foreach` still never
 	// supplies an index itself.
-	foreach (&v in (&mut xs[:]).reversed()) { fmt.println(v); }
-	foreach (&v, i in xs) { fmt.println(v); }
+	foreach (&mut v in (&mut xs[:]).reversed()) { fmt.println(v); }
+	foreach (&mut v, i in xs) { fmt.println(v); }
 
 	// A type is not an iterable; an enumeration's members are a value.
 	foreach (colour in Colour) { fmt.println(colour); }

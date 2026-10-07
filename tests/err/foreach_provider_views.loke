@@ -5,7 +5,7 @@ package main; import "core:mem";
 main :: proc() {
     arenas: [2]mem.Arena = { mem.Arena.init(), mem.Arena.init() };
     b := mem.Arena.init();
-    foreach (&a in arenas) { }
+    foreach (&mut a in arenas) { }
     xs: [dynamic]int = {};
     {
         c := mem.Arena.init();

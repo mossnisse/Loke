@@ -534,10 +534,7 @@ Prefer changes that remove an ambiguity or semantic exception:
    Grouped arms can inspect the original subject. This removes the grammar's
    special interpretation of a membership expression and its extra-parenthesis
    workaround.
-2. **Use `mut` for mutable loop bindings.** A proposed `foreach (&mut value in
-   items)` agrees with `&mut value` elsewhere. Today `&value` means a writable
-   iteration binding but a read-only pointer in an expression.
-3. **Use one pattern grammar where destructuring is supported.** Ordinary
+2. **Use one pattern grammar where destructuring is supported.** Ordinary
    destructuring is flat but `foreach` nesting is recursive. Either support
    the same small nested pattern in bindings or explicitly keep this limited;
    do not grow several subtly different pattern languages.

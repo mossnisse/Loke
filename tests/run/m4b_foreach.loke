@@ -40,7 +40,7 @@ main :: proc() {
 	foreach (v, i in xs.indexed()) { fmt.println(i); fmt.println(v); }
 
 	// By reference over a mutable array.
-	foreach (&v in xs) { v = v + 1; }
+	foreach (&mut v in xs) { v = v + 1; }
 	foreach (v in xs) { fmt.println(v); }
 
 	// The discard binding.

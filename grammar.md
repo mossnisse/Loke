@@ -488,7 +488,7 @@ For_Header     = (Init_Statement | ";") Expression? ";" Simple_Statement?
                | Expression
 
 Foreach_Statement = Attributes? "foreach" "(" Binding ("," Binding)* "in" Expression ")" Block
-Binding         = "$"? "&"? Identifier
+Binding         = "$"? ("&" "mut")? Identifier
                 | "(" Binding ("," Binding)* ")"
 
 When_Statement = Attributes? "when" "(" Expression ")" Block
@@ -508,7 +508,7 @@ condition-only form.
 A binding list has any length: it names the fields of the element the iterable
 yields, so its arity is a semantic property of that element's type. A
 parenthesised group is a nested pattern over a field that is itself a record;
-`$` and `&` mark a leaf, never a group. A `foreach` whose bindings carry `$` is
+`$` and `&mut` mark a leaf, never a group. A `foreach` whose bindings carry `$` is
 a static expansion; both forms share one production so that a mixed header
 parses and can be diagnosed (see
 [design.md](design.md#static-foreach-expansion)).
@@ -531,8 +531,8 @@ Value_Switch = Attributes? "switch" "(" Init_Statement? Expression ")"
 Value_Case   = ("case" (Branch_Pattern | Expression_List)? | "default") ":" Statement*
 // A branch pattern is recognized only when the switch subject is a union. It
 // is deliberately shallow: one variant, one identifier binding, no nesting.
-// `&` binds the payload as a writable place (design.md "Switch ownership").
-Branch_Pattern = "." Identifier "(" "&"? Identifier ")"
+// `&mut` binds the payload as a writable place (design.md "Switch ownership").
+Branch_Pattern = "." Identifier "(" ("&" "mut")? Identifier ")"
 
 Type_Switch  = Attributes? "switch" "(" Init_Statement? Identifier "in" Expression ")"
                "{" Type_Case* "}"

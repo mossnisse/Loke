@@ -1432,7 +1432,15 @@ parse_foreach_binding :: proc(p: ^Parser) -> (Foreach_Binding, bool) {
 		return binding, ok
 	}
 	binding.is_static = allow(p, .Dollar)
-	binding.is_ref = allow(p, .Amp)
+	// grammar.md "Statements": a writable binding is `&mut name`, as a mutable
+	// address is `&mut place`; a bare `&` would read as a read-only pointer.
+	if at(p, .Amp) {
+		amp := advance(p)
+		binding.is_ref = true
+		if !allow(p, .Mut) {
+			errorf(p.c, span_of(p, amp), "L0247", "a writable binding is written `&mut name`")
+		}
+	}
 	name, ok := expect(p, .Ident, "L0247", "a binding name")
 	if ok {
 		binding.name = name_of(p, name)

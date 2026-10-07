@@ -15,7 +15,7 @@ main :: proc() {
 	foreach (t, i in xs.indexed()) { total += t.id * i; }
 	fmt.println(total);
 	ea: container.Enum_Array(Color, int) = {};
-	foreach (key, &value in ea) { value += int(key) + 1; }
+	foreach (key, &mut value in ea) { value += int(key) + 1; }
 	foreach (key, value in ea) { fmt.println(key, value); }
 	fmt.println(ea);
 }

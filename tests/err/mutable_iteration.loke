@@ -5,7 +5,7 @@ Small :: container.Small_Array(int, 4);
 main :: proc() {
 	xs: Small = {};
 	xs.append(1, 2);
-	foreach (&value in xs) {
+	foreach (&mut value in xs) {
 		xs.append(3);
 		value += 1;
 	}
@@ -14,7 +14,7 @@ main :: proc() {
 	second := iterator.next();
 	fmt.println(first, second);
 	unset := 0; saved: ^mut int = &mut unset;
-	foreach (&value in xs) {
+	foreach (&mut value in xs) {
 		saved = &mut value;
 		break;
 	}
@@ -24,7 +24,7 @@ main :: proc() {
 	owners := [dynamic][dynamic]int{};
 	owners.append([dynamic]int{1});
 	unset_owner := [dynamic]int{}; direct: ^mut [dynamic]int = &mut unset_owner;
-	foreach (&owner in owners) {
+	foreach (&mut owner in owners) {
 		direct = &mut owner;
 		break;
 	}
@@ -43,7 +43,7 @@ main :: proc() {
 element_ownership :: proc() {
 	owners := [dynamic][dynamic]int{};
 	owners.append([dynamic]int{1});
-	foreach (&owner in owners) {
+	foreach (&mut owner in owners) {
 		drop(owner);
 	}
 	_ = owners;
@@ -52,7 +52,7 @@ element_ownership :: proc() {
 element_transfer :: proc() {
 	owners := [dynamic][dynamic]int{};
 	owners.append([dynamic]int{1});
-	foreach (&owner in owners) {
+	foreach (&mut owner in owners) {
 		taken := move(owner);
 		_ = taken;
 	}

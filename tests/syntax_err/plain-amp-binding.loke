@@ -1,0 +1,12 @@
+// grammar.md "Statements": a writable `foreach` binding is `&mut name`; a bare
+// `&` is reported once, and the loop still parses.
+package main;
+
+bump :: proc(items: [dynamic]int) {
+	foreach (&item in items) {
+		item += 1;
+	}
+	foreach (key, &value in table) { }
+}
+
+sentinel :: proc() { }

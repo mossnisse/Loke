@@ -13,7 +13,7 @@ L0454
 @17:19
 every binding carries `$`
 L0454
-@19:13
+@19:17
 a static binding is immutable and cannot use `&`
 L0341
 @22:17

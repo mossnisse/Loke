@@ -112,7 +112,7 @@ total :: proc(values: []int) -> int {
 }
 
 add_bonus :: proc(values: []mut int) {
-	foreach (&value in values) {
+	foreach (&mut value in values) {
 		value += 5;
 	}
 }
@@ -160,7 +160,7 @@ main :: proc() {
 - `total` takes a `[]int`, so it accepts a slice, and also a fixed or dynamic
   array, which converts to a slice of all its elements.
 - A `foreach` over a container gives each element without copying it. Write
-  `&value` to change the elements, and `.indexed()` to number them.
+  `&mut value` to change the elements, and `.indexed()` to number them.
 
 `[]int` has read-only elements; `[]mut int` permits changing them. `add_bonus`
 borrows a mutable slice of `scores` and changes its elements without `inout`:

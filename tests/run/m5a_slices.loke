@@ -28,7 +28,7 @@ first :: proc(values: []int) -> int {
 }
 
 fill :: proc(values: []mut int, with: int) {
-	foreach (&value in values) {
+	foreach (&mut value in values) {
 		value = with;
 	}
 }

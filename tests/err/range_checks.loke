@@ -8,7 +8,7 @@ too_wide :: proc() {
 
 // A `&` anywhere in a range loop's header is the range error, reported at the `&`.
 nested_ref :: proc() {
-	foreach (v, &i in (0 ..< 3).indexed()) { _ = v; }
+	foreach (v, &mut i in (0 ..< 3).indexed()) { _ = v; }
 }
 
 main :: proc() {}

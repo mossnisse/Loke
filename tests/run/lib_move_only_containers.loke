@@ -47,7 +47,7 @@ main :: proc() {
 
 	// Read-only and mutable traversal, neither of which copies an element.
 	foreach (token in a.view()) { fmt.println(token.id); }
-	foreach (&token in a) { token.id += 100; }
+	foreach (&mut token in a) { token.id += 100; }
 	foreach (token in a.view()) { fmt.println(token.id); }
 
 	// A field read through the array is a place, not a copy.

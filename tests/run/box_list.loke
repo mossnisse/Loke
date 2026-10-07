@@ -33,7 +33,7 @@ impl List($T) {
 		cursor := &mut self.head;
 		for (;;) {
 			switch (cursor^) {
-			case .some(&node): cursor = &mut node.next;
+			case .some(&mut node): cursor = &mut node.next;
 			case .none:
 				cursor^ = .some(box(Node(T){move(value), .none}));
 				self.count += 1;
@@ -47,7 +47,7 @@ impl List($T) {
 		for (;;) {
 			switch (cursor^) {
 			case .none: return false;
-			case .some(&node):
+			case .some(&mut node):
 				if (node.value == value) {
 					rest := exchange(inout node.next, .none);
 					cursor^ = move(rest);

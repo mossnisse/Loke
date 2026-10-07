@@ -31,7 +31,7 @@ element_pointer :: proc(xs: []mut [dynamic]int) {
 }
 
 traversal :: proc(xs: []mut [dynamic]int) {
-	foreach (&x in xs) {
+	foreach (&mut x in xs) {
 		inner: []mut int = &mut x[:];
 		xs[0] = {};
 		inner[0] = 99;
@@ -40,7 +40,7 @@ traversal :: proc(xs: []mut [dynamic]int) {
 }
 
 read_during_traversal :: proc(xs: []mut int) {
-	foreach (&x in xs) { x += xs.len(); }
+	foreach (&mut x in xs) { x += xs.len(); }
 }
 
 // Replacing an intermediate cannot sever a reborrow that is still live through
@@ -58,7 +58,7 @@ sequential :: proc(xs: []mut int) {
 	copy := xs;
 	copy[0] = 7;
 	xs[1] = 8;
-	foreach (&x in xs) { x += 1; }
+	foreach (&mut x in xs) { x += 1; }
 	rest: []mut int = &mut xs[1:];
 	rest[0] = 3;
 	head: []mut int = &mut rest[0:1];

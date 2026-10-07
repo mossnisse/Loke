@@ -116,7 +116,7 @@ impl Enum_Array_Iterator($E, $T) {
 	}
 }
 
-// `foreach (key, &value in array)`: the key is still made per step, and the
+// `foreach (key, &mut value in array)`: the key is still made per step, and the
 // value is lent mutably until the next step.
 Enum_Array_Mut_Iterator :: struct($E: type, $T: type) {
 	@(private) slots: []mut T,

@@ -1,17 +1,17 @@
 L0457
-@27:12
+@27:16
 `indexed()` over `[dynamic]int` is a read-only view, so it cannot be iterated by reference
 L0457
-@29:12
+@29:16
 `indexed()` over `[dynamic]int` is a read-only view, so it cannot be iterated by reference
 L0457
-@31:12
+@31:16
 a map view is read-only, so it cannot be iterated by reference
 L0457
-@32:12
+@32:16
 `key` is lent read-only, so it cannot be taken by reference
 L0457
-@36:12
+@36:16
 `Lender` cannot be iterated by reference
 L0511
 @43:7

@@ -20,16 +20,16 @@ impl Mutable_Cursor {
 	}
 }
 increment :: proc(xs: inout $S) where interfaces.Mutable_Iterable(S) {
-	foreach (&value in xs) { value += 1; }
+	foreach (&mut value in xs) { value += 1; }
 }
 main :: proc() {
 	xs: Small = {};
 	xs.append(10, 20, 30);
-	foreach (&value, index in xs.slice().indexed()) { value += index; }
+	foreach (&mut value, index in xs.slice().indexed()) { value += index; }
 	fmt.println(xs);
 	increment(inout xs);
 	fmt.println(xs);
-	foreach (&value in xs) {
+	foreach (&mut value in xs) {
 		value += 10;
 		if (value == 21) { continue; }
 		break;
@@ -45,14 +45,14 @@ main :: proc() {
 	grown := [dynamic]int{3, 4};
 	increment(inout grown);
 	fmt.println(grown);
-	foreach (&value in (&mut grown[:]).reversed()) { value += 10; }
+	foreach (&mut value in (&mut grown[:]).reversed()) { value += 10; }
 	fmt.println(grown);
 	table: map[int]int = {};
 	table[1] = 6;
-	foreach (_, &value in table) { value += 1; }
+	foreach (_, &mut value in table) { value += 1; }
 	fmt.println(table[1]);
 	pairs := [1]Pair{{2, 3}};
-	foreach ((&left, right) in pairs) { left += right; }
+	foreach ((&mut left, right) in pairs) { left += right; }
 	fmt.println(pairs[0].left);
 	mutable_storage := [2]int{8, 9};
 	total := 0;

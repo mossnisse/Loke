@@ -180,7 +180,7 @@ prov_root_view :: proc(graph: ^Flow_Graph, root: Root_Id) -> []int {
 	return graph.view_loans[symbol]
 }
 
-// A `.name(&binding)` case borrows the subject exclusively for the case, as
+// A `.name(&mut binding)` case borrows the subject exclusively for the case, as
 // `&mut subject` would (design.md "Switch ownership").
 @(private)
 prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool) -> []int {

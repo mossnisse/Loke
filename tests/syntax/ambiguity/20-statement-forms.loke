@@ -11,7 +11,7 @@ main :: proc() {
 	for (i := 0; i < 10; i += 1) { }
 	for (;;) { }
 	for (running) { }
-	foreach (&value, i in items) { }
+	foreach (&mut value, i in items) { }
 	foreach ($member in fields_of(T)) { }
 	when (WINDOWS) { } else { }
 	defer close(handle);

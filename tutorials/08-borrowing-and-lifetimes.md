@@ -86,7 +86,7 @@ package main;
 import "core:fmt";
 
 increase :: proc(values: []mut int, amount: int) {
-	foreach (&value in values) { value += amount; }
+	foreach (&mut value in values) { value += amount; }
 }
 
 main :: proc() {

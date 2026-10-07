@@ -53,7 +53,7 @@ early :: proc() -> int {
 // storage, so the write lands there and the second pass sees it.
 doubled :: proc() -> int {
 	cells := [4]int{1, 2, 3, 4};
-	foreach (&cell in cells) { cell = cell * 2; }
+	foreach (&mut cell in cells) { cell = cell * 2; }
 	packed := 0;
 	foreach (cell in cells.reversed()) { packed = packed * 10 + cell; }
 	return packed;
@@ -64,7 +64,7 @@ doubled :: proc() -> int {
 squares :: proc() -> int {
 	cells := [4]int{0, 0, 0, 0};
 	index := 0;
-	foreach (&cell in cells) { cell = index * index; index += 1; }
+	foreach (&mut cell in cells) { cell = index * index; index += 1; }
 	return cells[0] + cells[1] + cells[2] + cells[3];
 }
 

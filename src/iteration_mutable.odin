@@ -156,7 +156,7 @@ report_not_mutably_iterable :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type
 	}
 	if info != nil && info.view_kind != .None && info.view_kind != .Rune_Offsets {
 		errorf(k.c, ref_span(s), "L0457", "a map view is read-only, so it cannot be iterated by reference")
-		add_notef(k.c, expr_span(s.iterable), "mutate a map's values with `foreach (key, &value in table)`")
+		add_notef(k.c, expr_span(s.iterable), "mutate a map's values with `foreach (key, &mut value in table)`")
 		return
 	}
 	errorf(

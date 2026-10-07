@@ -1,8 +1,8 @@
 L0564
-@12:12
+@12:16
 a string yields decoded code points, so it cannot be iterated by reference
 L0457
-@15:12
+@15:16
 `key` is lent read-only, so it cannot be taken by reference
 L0587
 @18:8

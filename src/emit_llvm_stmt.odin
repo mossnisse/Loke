@@ -628,7 +628,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	erased := union_type == TYPE_ANY_VIEW
 	consumes := false
 	tag_llvm := "i64"
-	// A `.name(&binding)` case binds the payload in the subject's own storage.
+	// A `.name(&mut binding)` case binds the payload in the subject's own storage.
 	place := switch_binds_place(s) ? emit_address(e, s.subject) : ""
 	value := place != "" ? load_place(e, union_type, place) : emit_expr(e, s.subject)
 	slot, tag: string

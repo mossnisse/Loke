@@ -71,7 +71,7 @@ main :: proc() {
 	fmt.println(size_of(it) < size_of(xs));
 	// Keep it live until here, then end the immutable traversal before mutation.
 	drop(it);
-	foreach (&value in xs) { value.id += 1; }
+	foreach (&mut value in xs) { value.id += 1; }
 	fmt.println(copies.load());
 	// Capacity never appears in either iterator type.
 	fmt.println(size_of(container.Small_Array(int, 4).Iterator) == size_of(container.Small_Array(int, 128).Iterator));

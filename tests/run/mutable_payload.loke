@@ -1,4 +1,4 @@
-// design.md "Switch ownership": `case .name(&binding):` binds the payload in the
+// design.md "Switch ownership": `case .name(&mut binding):` binds the payload in the
 // subject's own storage, through a local, a field, a `^mut`, and a box.
 package main;
 
@@ -22,7 +22,7 @@ Holder :: struct { shape: Shape }
 
 insert :: proc(tree: ^mut Option(box(Tree)), value: int) {
 	switch (tree^) {
-	case .some(&node):
+	case .some(&mut node):
 		if (value < node.value) { insert(&mut node.left, value); } else { insert(&mut node.right, value); }
 	case .none:
 		tree^ = .some(box(Tree{value, .none, .none}));
@@ -38,8 +38,8 @@ in_order :: proc(tree: ^Option(box(Tree))) {
 
 grow :: proc(shape: ^mut Shape) {
 	switch (shape^) {
-	case .circle(&radius): radius *= 2;
-	case .rect(&r):        r.w += 1; r.h += 1;
+	case .circle(&mut radius): radius *= 2;
+	case .rect(&mut r):        r.w += 1; r.h += 1;
 	case .empty:
 	}
 }
@@ -48,7 +48,7 @@ counted :: proc() -> int {
 	value: Option(int) = .some(4);
 	for (i := 0; i < 3; i += 1) {
 		switch (value) {
-		case .some(&n): n += i;
+		case .some(&mut n): n += i;
 		case .none:
 		}
 	}
@@ -62,7 +62,7 @@ push_back :: proc(head: ^mut Option(box(Tree)), value: int) {
 	cursor := head;
 	for (;;) {
 		switch (cursor^) {
-		case .some(&node): cursor = &mut node.right;
+		case .some(&mut node): cursor = &mut node.right;
 		case .none:        cursor^ = .some(box(Tree{value, .none, .none})); return;
 		}
 	}
@@ -88,7 +88,7 @@ CHAINED :: chained();
 main :: proc() {
 	value: Option(int) = .some(4);
 	switch (value) {
-	case .some(&n): n *= 10;
+	case .some(&mut n): n *= 10;
 	case .none:
 	}
 	fmt.println(value, COUNTED, counted(), CHAINED, chained());
@@ -103,11 +103,11 @@ main :: proc() {
 	// Assigning the binding replaces the payload, dropping the old one.
 	noisy: Option(box(Noisy)) = .some(box(Noisy{1}));
 	switch (noisy) {
-	case .some(&b): b = box(Noisy{2});
+	case .some(&mut b): b = box(Noisy{2});
 	case .none:
 	}
 	switch (noisy) {
-	case .some(&b): b.id += 10;
+	case .some(&mut b): b.id += 10;
 	case .none:
 	}
 	switch (noisy) {

@@ -337,7 +337,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 				dump_child(b, value, depth + 1)
 			}
 			if entry.binding.text != "" {
-				fmt.sbprintf(b, " (bind %s%q)", entry.binding_ref ? "&" : "", entry.binding.text)
+				fmt.sbprintf(b, " (bind %s%q)", entry.binding_ref ? "&mut " : "", entry.binding.text)
 			}
 			fmt.sbprintln(b)
 			for inner in entry.stmts {
@@ -818,7 +818,7 @@ dump_foreach_bindings :: proc(b: ^strings.Builder, bindings: []Foreach_Binding) 
 			b,
 			"\"%s%s%s\"",
 			binding.is_static ? "$" : "",
-			binding.is_ref ? "&" : "",
+			binding.is_ref ? "&mut " : "",
 			binding.name.text,
 		)
 	}

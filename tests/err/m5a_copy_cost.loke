@@ -99,7 +99,7 @@ main :: proc() {
 	// Copying an element is written `item.clone()`.
 	items := [dynamic]Res{};
 	foreach (item in items) { fmt.println(item.id); }
-	foreach (&item in items) { fmt.println(item.id); }
+	foreach (&mut item in items) { fmt.println(item.id); }
 	foreach (item in items) { saved := item.clone(); fmt.println(saved.id); }
 	_ = items;
 }

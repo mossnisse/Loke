@@ -11,7 +11,7 @@ take :: proc(value: move box(int)) { }
 writes_subject :: proc() {
 	x: Option(int) = .some(1);
 	switch (x) {
-	case .some(&n): x = .none; n += 1;
+	case .some(&mut n): x = .none; n += 1;
 	case .none:
 	}
 }
@@ -19,28 +19,28 @@ writes_subject :: proc() {
 reads_subject :: proc() {
 	x: Option(int) = .some(1);
 	switch (x) {
-	case .some(&n): fmt.println(x); n += 1;
+	case .some(&mut n): fmt.println(x); n += 1;
 	case .none:
 	}
 }
 
 temporary :: proc() {
 	switch (make_opt()) {
-	case .some(&n): n += 1;
+	case .some(&mut n): n += 1;
 	case .none:
 	}
 }
 
 read_only :: proc(p: ^Option(int)) {
 	switch (p^) {
-	case .some(&n): n += 1;
+	case .some(&mut n): n += 1;
 	case .none:
 	}
 }
 
 value_param :: proc(x: Option(int)) {
 	switch (x) {
-	case .some(&n): n += 1;
+	case .some(&mut n): n += 1;
 	case .none:
 	}
 }
@@ -50,7 +50,7 @@ escapes :: proc() {
 	y := 0;
 	q := &mut y;
 	switch (x) {
-	case .some(&n): q = &mut n;
+	case .some(&mut n): q = &mut n;
 	case .none:
 	}
 	x = .none;
@@ -60,7 +60,7 @@ escapes :: proc() {
 moves_out :: proc() {
 	x: Option(box(int)) = .some(box(1));
 	switch (x) {
-	case .some(&b): take(move(b));
+	case .some(&mut b): take(move(b));
 	case .none:
 	}
 }
@@ -78,7 +78,7 @@ Node :: struct { value: int, next: Option(box(Node)) }
 invalidates :: proc(head: ^mut Option(box(Node))) {
 	cursor := head;
 	switch (cursor^) {
-	case .some(&node):
+	case .some(&mut node):
 		other := &mut node.next;
 		cursor^ = .none;
 		other^ = .none;
@@ -89,7 +89,7 @@ invalidates :: proc(head: ^mut Option(box(Node))) {
 source_after :: proc(head: ^mut Option(box(Node))) {
 	cursor := &mut head^;
 	switch (cursor^) {
-	case .some(&node):
+	case .some(&mut node):
 		cursor = &mut node.next;
 		head^ = .none;
 		cursor^ = .none;
@@ -104,7 +104,7 @@ Payload :: struct { values: [dynamic]int, n: int }
 field_reallocated :: proc() {
 	value: Option(Payload) = .some(Payload{[dynamic]int{1, 2}, 0});
 	switch (value) {
-	case .some(&payload):
+	case .some(&mut payload):
 		first := &payload.values[0];
 		payload.values.reserve(10000);
 		fmt.println(first^);
@@ -115,7 +115,7 @@ field_reallocated :: proc() {
 field_borrowed_twice :: proc() {
 	value: Option(Payload) = .some(Payload{[dynamic]int{1, 2}, 0});
 	switch (value) {
-	case .some(&payload):
+	case .some(&mut payload):
 		a := &mut payload.n;
 		b := &mut payload.n;
 		a^ = 1;
