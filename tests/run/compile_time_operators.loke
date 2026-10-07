@@ -1,0 +1,58 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Compile-time procedure evaluation": a required evaluation runs
+// user operators as the ordinary procedures they are (design.md "Operator
+// declarations"), and a local constant needs no zero before its initializer.
+Vec :: struct { x, y: int }
+impl Vec {
+	add :: operator(+) proc(a, b: Vec) -> Vec { return {a.x + b.x, a.y + b.y}; }
+	negate :: operator(-) proc(v: Vec) -> Vec { return {-v.x, -v.y}; }
+	equal :: operator(==) proc(a, b: Vec) -> bool { return a.x == b.x && a.y == b.y; }
+}
+
+// A direct `+=` writes through its destination.
+Counter :: struct { count: int }
+impl Counter {
+	bump :: operator(+=) proc(self: inout Counter, by: int) { self.count += by * 10; }
+}
+
+Grid :: struct { cells: [4]int }
+impl Grid {
+	get :: operator([]) proc(self: Grid, x, y: int) -> int { return self.cells[y*2 + x]; }
+	set :: operator([]=) proc(self: inout Grid, x, y: int, value: int) { self.cells[y*2 + x] = value + 100; }
+	span :: operator([:]) proc(self: Grid, lo, hi: int) -> int { return self.cells[lo] + self.cells[hi]; }
+}
+
+Meters :: distinct f64;
+impl Meters {
+	delegate(+, <);
+}
+
+compute :: proc() -> int {
+	N :: 3;
+	SCALE: int : 2;
+	a := Vec{1, 2};
+	b := a + -Vec{N, 0};      // {-2, 2}
+	b += a;                   // the `+` fallback: {-1, 4}
+	same := b == Vec{-1, 4};
+	different := b != a;      // `!=` through the user `==`
+	c := Counter{1};
+	c += SCALE;               // 21
+	g := Grid{};
+	g[1, 0] = 5;              // 105
+	g[0, 1] = 7;              // 107
+	total := g[1, 0] + g[0:2]; // 105 + (0 + 107)
+	d := Meters(1.5) + Meters(2.0);
+	if (!same || !different || !(Meters(1.0) < d)) {
+		return -1;
+	}
+	return b.x*1000 + b.y*100 + c.count + total;
+}
+
+VALUE :: compute();
+
+main :: proc() {
+	fmt.println(VALUE, compute());
+}

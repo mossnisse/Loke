@@ -1,0 +1,24 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Unfixed constants": a decimal literal narrows to `f32` with one
+// rounding of its exact value, however many times it is negated first, and an
+// exponent far past the range under- or overflows without building its power.
+main :: proc() {
+	direct: f32 = 1.000000059604644775390625000001;
+	negated: f32 = -(-1.000000059604644775390625000001);
+	once: f32 = -1.000000059604644775390625000001;
+	fmt.println(direct == negated, direct, negated, once);
+
+	tiny: f32 = 1e-9223372036854775808;
+	fraction: f32 = 1.5e-9223372036854775808;
+	far: f32 = 1e-1000000;
+	half: f16 = -1e-99999999999999999999999;
+	fmt.println(tiny, fraction, far, half);
+
+	edge: f32 = 1.4e-45;
+	below: f32 = 0.7e-45;
+	largest: f32 = 340282346638528859811704183484516925440.0;
+	fmt.println(edge, below, largest);
+}

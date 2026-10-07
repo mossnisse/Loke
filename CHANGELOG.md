@@ -579,6 +579,15 @@ checklist.
 
 ### Fixed
 
+- A decimal literal negated twice, `-(-1.000000059604644775390625000001)`,
+  narrows to `f32` or `f16` with the same single rounding as the literal
+  itself, and an exponent far outside the range, such as
+  `1e-9223372036854775808`, rounds to zero (or overflows) instead of giving
+  `1.0` or taking minutes to compile (design.md "Unfixed constants").
+- Compile-time evaluation runs user operators, delegated ones included, and
+  accepts a local constant such as `N :: 3` in the evaluated procedure; both
+  were rejected (`L0341`, `L0311`) (design.md "Compile-time procedure
+  evaluation").
 - Under `-panic=unwind`, a panicking drop hook no longer runs a cleanup
   twice or skips one (design.md "What the unwind runs, and what it does
   not"):

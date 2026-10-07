@@ -583,7 +583,7 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		// design.md "Indexing and slicing": a user `operator([])` is called with
 		// the arguments the checker bound, receiver first.
 		if v.resolution.kind == .User_Operator {
-			return eval_invoke(ev, v.resolution.symbol, v.bound, v.span)
+			return eval_operator_call(ev, v.resolution.symbol, v.bound, v.span)
 		}
 		operand, ok := eval_aggregate_value(ev, v.operand)
 		if !ok {
@@ -721,9 +721,10 @@ eval_ident :: proc(ev: ^Evaluator, v: ^Expr_Ident) -> (Eval_Value, bool) {
 
 @(private = "file")
 eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
+	// design.md "Operator declarations": a user operator is an ordinary call.
 	if v.resolution.kind == .User_Operator {
-		eval_fail(ev, v.op_span, "L0341", "a user operator has no compile-time meaning yet")
-		return Eval_Value{}, false
+		operands := [1]Expr{v.operand}
+		return eval_operator_call(ev, v.resolution.symbol, operands[:], v.op_span)
 	}
 	if v.op == .Amp {
 		slot, ok := eval_place(ev, v.operand)
@@ -772,9 +773,15 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
 
 @(private = "file")
 eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
+	// design.md "Operator declarations": a user operator is an ordinary call,
+	// and `!=` without its own overload negates the user `==`.
 	if v.resolution.kind == .User_Operator {
-		eval_fail(ev, v.op_span, "L0341", "a user operator has no compile-time meaning yet")
-		return Eval_Value{}, false
+		operands := [2]Expr{v.lhs, v.rhs}
+		result, ok := eval_operator_call(ev, v.resolution.symbol, operands[:], v.op_span)
+		if !ok || !v.negated {
+			return result, ok
+		}
+		return scalar(bool_const(!const_of(result).boolean), v.type), true
 	}
 	// design.md "Maps": `key in m`.
 	if v.op == .In {
@@ -1756,9 +1763,9 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 // through a `[]mut T` reaches the original, and text slices by byte offsets.
 @(private = "file")
 eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (Eval_Value, bool) {
+	// A user `operator([:])` is called with the arguments the checker bound.
 	if v.resolution.kind == .User_Operator {
-		eval_fail(ev, v.span, "L0341", "a user operator has no compile-time meaning yet")
-		return Eval_Value{}, false
+		return eval_operator_call(ev, v.resolution.symbol, v.bound, v.span)
 	}
 	operand: Eval_Value
 	base := expr_base(v.operand)
@@ -2330,6 +2337,58 @@ eval_invoke :: proc(
 	return frame.result, true
 }
 
+// design.md "Delegating operators": a forwarding overload calls what it
+// forwards to, and one with no overload behind it applies the underlying type's
+// built-in operation, as `emit_delegated` does. `values`, when given, are the
+// operands already evaluated.
+@(private = "file")
+eval_operator_call :: proc(
+	ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil,
+) -> (Eval_Value, bool) {
+	symbol := symbol_of(ev.k.c, symbol_id)
+	if symbol == nil || !symbol.delegated {
+		return eval_invoke(ev, symbol_id, args, site, values)
+	}
+	if symbol.delegate_target != INVALID_SYMBOL {
+		return eval_operator_call(ev, symbol.delegate_target, args, site, values)
+	}
+	operands: [2]Eval_Value
+	count := min(max(len(args), len(values)), len(operands))
+	for index in 0 ..< count {
+		if index < len(values) {
+			operands[index] = values[index]
+			continue
+		}
+		operand, ok := eval_expr(ev, args[index])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		operands[index] = operand
+	}
+	// The one unary built-in delegation is `!`.
+	if count == 1 {
+		return scalar(bool_const(!operands[0].boolean), symbol.result), true
+	}
+	op := operator_token(symbol.operator)
+	#partial switch op {
+	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
+		result, ok := eval_compare(ev, op, operands[0], operands[1])
+		if !ok {
+			eval_fail(ev, site, "L0341", "this comparison has no compile-time meaning")
+			return Eval_Value{}, false
+		}
+		return scalar(bool_const(result), symbol.result), true
+	}
+	folded, ok := fold_arithmetic(
+		ev.k.c, op, site, const_of(operands[0]), const_of(operands[1]), symbol.delegate_underlying, ev.alloc,
+	)
+	if !ok {
+		eval_fold_failed(ev)
+		return Eval_Value{}, false
+	}
+	return scalar(folded, symbol.result), true
+}
+
 // design.md "`inout` results": a call returning `inout T` is a place, the
 // storage its `return inout` named.
 @(private = "file")
@@ -2816,21 +2875,22 @@ eval_local_decl :: proc(ev: ^Evaluator, d: ^Decl) -> Eval_Flow {
 		return .Normal
 	}
 	for symbol_id, index in d.symbols {
-		symbol := symbol_of(ev.k.c, symbol_id)
-		type := symbol == nil ? INVALID_TYPE : symbol.type
-		value, zeroed := zero_value(ev, type)
-		if !zeroed {
-			return .Fail
-		}
+		// Only a declaration without an initializer needs its type's zero; an
+		// unfixed constant such as `N :: 3` has none.
+		value: Eval_Value
+		ok: bool
 		if index < len(d.values) && d.values[index] != nil {
-			computed, ok := eval_expr(ev, d.values[index])
-			if !ok {
-				return .Fail
+			computed: Eval_Value
+			computed, ok = eval_expr(ev, d.values[index])
+			if ok {
+				value, ok = copy_value(ev, computed)
 			}
-			value, ok = copy_value(ev, computed)
-			if !ok {
-				return .Fail
-			}
+		} else {
+			symbol := symbol_of(ev.k.c, symbol_id)
+			value, ok = zero_value(ev, symbol == nil ? INVALID_TYPE : symbol.type)
+		}
+		if !ok {
+			return .Fail
 		}
 		if !bind_local(ev, frame, symbol_id, value) {
 			return .Fail
@@ -2892,9 +2952,11 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	if s.lowered != nil {
 		return eval_block(ev, s.lowered)
 	}
-	if s.operator != INVALID_SYMBOL || s.place_setter != INVALID_SYMBOL {
-		eval_fail(ev, s.op_span, "L0341", "a user operator has no compile-time meaning yet")
-		return .Fail
+	// design.md "Indexing and slicing": `grid[x, y] = v` calls `operator([]=)`
+	// with the arguments the checker bound.
+	if s.place_setter != INVALID_SYMBOL {
+		_, ok := eval_operator_call(ev, s.place_setter, s.setter_bound, s.op_span)
+		return ok ? .Normal : .Fail
 	}
 	if s.op != .Assign {
 		return eval_compound_assign(ev, s)
@@ -3006,6 +3068,12 @@ destination_slot :: proc(ev: ^Evaluator, destination: Eval_Destination) -> (^Eva
 
 @(private = "file")
 eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
+	// A direct user `+=` writes through its `inout` destination.
+	if s.operator != INVALID_SYMBOL && s.operator_direct {
+		operands := [2]Expr{s.lhs[0], s.rhs[0]}
+		_, ok := eval_operator_call(ev, s.operator, operands[:], s.op_span)
+		return ok ? .Normal : .Fail
+	}
 	slot, ok := eval_place(ev, s.lhs[0])
 	if !ok {
 		return .Fail
@@ -3013,6 +3081,16 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	operand, operand_ok := eval_expr(ev, s.rhs[0])
 	if !operand_ok {
 		return .Fail
+	}
+	// The user `+` it falls back to, its destination evaluated once, then a
+	// replacing write.
+	if s.operator != INVALID_SYMBOL {
+		result, called := eval_operator_call(ev, s.operator, nil, s.op_span, []Eval_Value{slot^, operand})
+		if !called {
+			return .Fail
+		}
+		slot^ = result
+		return .Normal
 	}
 	op := compound_operator(s.op)
 	type := slot.type

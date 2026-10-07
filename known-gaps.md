@@ -86,48 +86,6 @@ main :: proc() {
 }
 ```
 
-### Exact decimal narrowing loses the exponent or a second negation
-
-[design.md "Unfixed constants"](design.md#unfixed-constants).
-
-This prints `false 1.0000001 1.0`, although negating a literal twice must preserve its exact value before conversion to `f32`. `src/check_expr.odin` discards the retained decimal spelling on the second minus, causing intermediate `f64` rounding. Toggle the spelling's sign instead.
-
-Separately, `x: f32 = 1e-9223372036854775808` prints `1.0` instead of underflowing to zero: `abs(min(int))` remains negative and `src/bigint.odin` skips its exponent loop. Large finite exponents also cause unnecessary arena-backed bigint work (`1e-1000000` exceeded a bounded 750 ms compile). Bound provable overflow/underflow before constructing powers and handle the signed minimum without `abs`.
-
-```odin
-package main; import "core:fmt";
-main :: proc() {
-    direct: f32 = 1.000000059604644775390625000001;
-    negated: f32 = -(-1.000000059604644775390625000001);
-    fmt.println(direct == negated, direct, negated);
-}
-```
-
-### Compile-time local constants require a zero before their initializer
-
-[design.md "Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation).
-
-The valid `N :: 3` local constant makes this required evaluation fail with `L0311`. `src/eval.odin` calls `zero_value` before evaluating the written initializer, and an unfixed constant has no such zero. Evaluate the initializer first; require a default zero only when no initializer was written.
-
-```odin
-package main; compute :: proc() -> int { N :: 3; return N; } VALUE :: compute(); main :: proc() { _ = VALUE; }
-```
-
-### Compile-time evaluation rejects ordinary user operators
-
-[design.md "Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation).
-
-This is rejected with `L0341: a user operator has no compile-time meaning yet`, although the executed operator is an ordinary hermetic procedure. `src/eval.odin` explicitly rejects user unary, binary, slicing and assignment operators. Use the existing bound-call evaluator already used for user index operators, preserving overload fallback behavior.
-
-```odin
-package main; import "core:fmt";
-Vec :: struct { x: int }
-impl Vec { add :: operator(+) proc(a, b: Vec) -> Vec { return {a.x + b.x}; } }
-compute :: proc() -> int { a := Vec{1}; b := Vec{2}; return (a + b).x; }
-VALUE :: compute();
-main :: proc() { fmt.println(VALUE, compute()); }
-```
-
 ### Compile-time drop silently skips user hooks
 
 [design.md "Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation).

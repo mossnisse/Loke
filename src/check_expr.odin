@@ -1835,8 +1835,11 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		folded = value
 	case .Minus:
 		if value.kind == .Float {
+			// The decimal spelling follows the sign, so `-(-x)` still rounds once.
 			folded = float_const(-value.float, value.float_bits)
-			if value.text != "" && value.text[0] != '-' {
+			if value.text != "" && value.text[0] == '-' {
+				folded.text = value.text[1:]
+			} else if value.text != "" {
 				folded.text = strings.concatenate({"-", value.text}, k.c.semantic_allocator)
 			}
 		} else {

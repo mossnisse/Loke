@@ -6,7 +6,6 @@ package lokec
 import "core:math"
 import big "core:math/big"
 import "core:mem"
-import "core:strconv"
 import "core:strings"
 
 Big_Int :: big.Int
@@ -317,6 +316,9 @@ bi_to_float :: proc(c: Value_Storage, v: Big_Int, bits: u16) -> (result: f64, ok
 // a 16- or 32-bit float. `ok` is false for any other width or spelling, where
 // the caller's binary64 value already is the single rounding.
 decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: f64, ok: bool) {
+	// Far past both bounds below, and small enough that adding the fraction's
+	// digit count cannot overflow.
+	DECIMAL_EXPONENT_LIMIT :: 1 << 40
 	if (bits != 16 && bits != 32) || text == "" {
 		return 0, false
 	}
@@ -336,11 +338,24 @@ decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: 
 		case ch == '.':
 			point = true
 		case ch == 'e' || ch == 'E':
-			written, parsed := strconv.parse_int(text[index + 1:], 10)
-			if !parsed {
+			// Saturated: any exponent this large already decides the result below.
+			written := 0
+			sign := 1
+			rest := text[index + 1:]
+			if rest != "" && (rest[0] == '+' || rest[0] == '-') {
+				sign = rest[0] == '-' ? -1 : 1
+				rest = rest[1:]
+			}
+			if rest == "" {
 				return 0, false
 			}
-			exponent += written
+			for digit in transmute([]u8)rest {
+				if digit < '0' || digit > '9' {
+					return 0, false
+				}
+				written = min(written * 10 + int(digit - '0'), DECIMAL_EXPONENT_LIMIT)
+			}
+			exponent += sign * written
 			index = len(text)
 		case:
 			return 0, false
@@ -351,6 +366,20 @@ decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: 
 		return 0, false
 	}
 	if bi_is_zero(significand) {
+		return negative ? math.copy_sign(f64(0), -1) : 0, true
+	}
+	// The value lies in [10^(top - 1), 10^top). Past 10^40 every 16- and 32-bit
+	// float overflows, and below 10^-50 every one rounds to zero, so no power
+	// of ten is built for an exponent outside that range.
+	first := 0
+	for digits[first] == '0' {
+		first += 1
+	}
+	top := len(digits) - first + exponent
+	if top > 40 {
+		return 0, false
+	}
+	if top < -50 {
 		return negative ? math.copy_sign(f64(0), -1) : 0, true
 	}
 	ten := bi_from_i64(c, 10)
