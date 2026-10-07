@@ -52,7 +52,8 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 			if symbol == nil || symbol.initialized_by != INVALID_SYMBOL {
 				continue
 			}
-			if !type_has_zero_walk(c, symbol.type, seen) {
+			// design.md "Required fields": zero is not a value this field may hold.
+			if symbol.required || !type_has_zero_walk(c, symbol.type, seen) {
 				return false
 			}
 		}

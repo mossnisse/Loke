@@ -541,14 +541,6 @@ Prefer changes that remove an ambiguity or semantic exception:
    destructuring is flat but `foreach` nesting is recursive. Either support
    the same small nested pattern in bindings or explicitly keep this limited;
    do not grow several subtly different pattern languages.
-4. **Protect important fields from silent zero fill.** Keep explicit `T{}`
-   zero construction for zeroable types, but consider requiring named literals
-   to supply every field unless a field declares a default. An opt-in
-   constructor-only/no-default-initialization record is a smaller alternative.
-   Zero being representable does not mean it satisfies a resource or domain
-   invariant. [Non-null references](design.md#types-with-no-zero-value)
-   already reject an omitted reference field; what this item still covers is
-   scalar and handle fields, such as `fs.File`'s.
 
 Keep the distinction between nominal structs and structural records: privacy,
 hook ownership, and cross-package positional construction have real semantics.

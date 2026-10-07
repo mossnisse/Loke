@@ -569,6 +569,9 @@ Symbol :: struct {
 	// sibling field holding how many leading elements are live. The generated
 	// copy and drop visit that prefix only.
 	initialized_by: Symbol_Id,
+	// design.md "Required fields": every literal supplies this field, so its
+	// record has no zero value.
+	required:    bool,
 	mode:        Param_Mode,
 	// The declaring procedure literal, for the capture check in step 6.
 	owner_proc:  rawptr,

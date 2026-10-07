@@ -1,0 +1,15 @@
+L0424
+@12:1
+a declaration with static duration
+L0424
+@15:7
+the field `id` is `@(required)`, so this literal must supply it
+L0424
+@16:7
+L0424
+@17:7
+the omitted field `owner`
+L0424
+@18:30
+L0607
+@22:23

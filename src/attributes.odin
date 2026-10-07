@@ -77,6 +77,8 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "initialized":
 		// A sibling field name, checked by `resolve_uninitialized_fields`.
 		return {{.Struct_Field}, .Deferred, false}, true
+	case "required":
+		return {{.Struct_Field}, .None, false}, true
 	case "zero", "failure":
 		// A variant name, checked in `src/union.odin`.
 		return {{.Union_Literal}, .Deferred, false}, true

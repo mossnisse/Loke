@@ -1,0 +1,22 @@
+package main; import "core:fmt";
+
+// design.md "Required fields": a literal supplies every `@(required)` field;
+// the others still zero-fill.
+Account :: struct {
+	@(required) id: u64,
+	name:    string,
+	balance: int,
+}
+
+Ledger :: struct { owner: Account, entries: int }
+
+main :: proc() {
+	a := Account{id = 7};
+	b := Account{8, "positional"};
+	ledger := Ledger{owner = {id = 9, name = "nested"}};
+	fmt.println(a.id, a.name == "", a.balance, b.id, b.name, ledger.owner.id, ledger.entries);
+	pending: Option(Account) = .none;
+	accounts: [dynamic]Account = {};
+	accounts.append(a);
+	fmt.println(pending, accounts.len());
+}

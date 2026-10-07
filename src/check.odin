@@ -784,6 +784,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 				bound.index = u32(len(members))
 				bound.public = public && !padding
 				bound.is_using = field.is_using
+				bound.required = has_attribute(field.attributes, "required")
 			}
 			append(&bindings, binding)
 			if binding != INVALID_SYMBOL {

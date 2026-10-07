@@ -194,6 +194,24 @@ dereference, and promises nothing across a field, a parameter, or a container.
 A second, non-null pointer type beside `^T` would make every API choose
 between two pointer types to say what `Option` already says.
 
+### Required fields
+
+A zero being representable does not make it a valid value: an account id of 0,
+a handle whose 0 is a live resource. `@(required)` marks such a field, and the
+struct then joins the types with no zero value, so every operation that would
+manufacture one is already rejected by the rules references introduced.
+
+Two broader designs were weighed. Requiring every literal to name every field
+unless the field declares a default would need field defaults, which records do
+not have, and would turn every literal that relies on zero fill today into an
+error. A record-wide "no zero value" mark would reject `T{}` but still accept a
+literal that omits the very field whose zero is invalid, since it does not say
+which field that is. The per-field mark is opt-in, closes both, and keeps zero
+fill for every field that has a valid zero.
+
+`fs.File` does not use it: its zero is its closed state, which `drop` treats as
+inert, so a zero `File` is a valid value and containers of files keep working.
+
 ### Updating a payload in place
 
 Once absence is an `Option`, updating a payload in place is common, as in

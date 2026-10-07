@@ -1,0 +1,22 @@
+package main;
+
+// design.md "Required fields": a record with a `@(required)` field has no zero
+// value, and the containers holding it inherit that.
+Account :: struct {
+	@(required) id: u64,
+	name: string,
+}
+
+Ledger :: struct { owner: Account }
+
+global: Account;
+
+main :: proc() {
+	a := Account{name = "missing"};
+	b := Account{};
+	c := Ledger{};
+	d := make([dynamic]Account, 2);
+	_, _, _, _ = a, b, c, d;
+}
+
+Misplaced :: struct @(required) { id: u64 }

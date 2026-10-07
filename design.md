@@ -330,7 +330,7 @@ Compile-time-only `type` and reflection descriptors have no zero value.
 
 ##### Types with no zero value
 
-A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A [`box(T)`](#owned-values) has none, since it always owns a payload. A **reference** always refers to something, so it has no null state and no zero value: `^T`, `^mut T`, a procedure value, `dyn I` and `dyn mut I`, `any_view`, `cstring_view`, and `shared(T)`. An absent reference is an `Option` of it, such as `Option(^T)`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
+A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A struct with a [`@(required)`](#required-fields) field has none. A [`box(T)`](#owned-values) has none, since it always owns a payload. A **reference** always refers to something, so it has no null state and no zero value: `^T`, `^mut T`, a procedure value, `dyn I` and `dyn mut I`, `any_view`, `cstring_view`, and `shared(T)`. An absent reference is an `Option` of it, such as `Option(^T)`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
 
 Every operation that manufactures a zero is rejected for a no-zero type:
 
@@ -1552,6 +1552,22 @@ assert(v.z == 1);
 ```
 
 Elements evaluate **in source order**, whatever field each one names, and are then placed into field-order storage.
+
+#### Required fields
+
+A field marked `@(required)` must be supplied by every literal of its struct, positionally or by name. Its other fields still zero-fill:
+
+```odin
+Account :: struct {
+	@(required) id: u64,
+	name: string,
+}
+
+a := Account{id = 7};        // `name` is ""
+b := Account{name = "x"};    // error: the literal must supply `id`
+```
+
+A struct with a required field has [no zero value](#types-with-no-zero-value), so `Account{}`, a static-duration `Account` without an initializer, a `make` length, and `resize` are rejected too, and so is anything that contains an `Account` and would manufacture one. Use it where zero is representable but not a valid value of the field: an identifier, a handle whose zero is a live resource, a count that must be positive.
 
 Structs can be nested by defining a field as a struct.
 
@@ -6227,6 +6243,10 @@ Written after `union`, before its body. `@(zero=name)` gives the union a zero va
 ```odin
 Maybe :: union @(zero=none, failure=none) { none, some: int }
 ```
+
+#### `@(required)`
+
+On a struct field, requires every literal of the struct to supply it, and so leaves the struct without a zero value. See [Required fields](#required-fields).
 
 #### `@(initialized=<field>)`
 

@@ -417,6 +417,9 @@ checklist.
 
 ### Added
 
+- `@(required)` on a struct field makes every literal supply it (design.md
+  "Required fields"). The struct then has no zero value, so `T{}`, an
+  uninitialized global, a `make` length, and `resize` reject it too.
 - A payloadless union variant may be written as a bare name:
   `union { none, some: T }` (design.md "Unions"). `name:` still works. A bare
   name that is a type in scope, as in Odin's `union { int, string }`, is

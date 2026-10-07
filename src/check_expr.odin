@@ -2732,6 +2732,16 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 		if symbol == nil || symbol.initialized_by != INVALID_SYMBOL {
 			continue
 		}
+		// design.md "Required fields".
+		if symbol.required {
+			errorf(
+				k.c, v.span, "L0424",
+				"the field `%s` is `@(required)`, so this literal must supply it",
+				identifier_text(k.c, symbol.name),
+			)
+			ok = false
+			continue
+		}
 		if !require_type_has_zero(k, symbol.type, v.span, strings.concatenate({"the omitted field `", identifier_text(k.c, symbol.name), "`"}, context.temp_allocator)) {
 			ok = false
 		}
