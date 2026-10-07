@@ -1,0 +1,17 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": a map literal's key is evaluated before its
+// value, so the entry keeps the borrow the key held then. The value moves `key`
+// on to `right`, but the table still borrows `left`, which cannot be dropped
+// while the table is in use.
+main :: proc() {
+	left := [dynamic]u8{97};
+	right := [dynamic]u8{98};
+	key := string_view.from_utf8(left[:]) or_else "";
+	next := string_view.from_utf8(right[:]) or_else "";
+	table := map[string_view]int{key = exchange(inout key, next).len()};
+	drop(left);
+	fmt.println(table);
+}

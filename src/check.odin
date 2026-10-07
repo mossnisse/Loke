@@ -2837,6 +2837,9 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		}
 		return
 	}
+	if len(s.lhs) > 1 && lower_parallel_setter_assign(k, s) {
+		return
+	}
 	for target, index in s.lhs {
 		// A discard destination constrains nothing; its value is still evaluated
 		// for whatever it does on the way.
@@ -2918,48 +2921,21 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 	}
 	span := s.span
 	stmts := make([dynamic]Stmt, 0, len(target.indices) + 3, k.c.semantic_allocator)
-	shared := !is_effect_free_place(target.operand)
-	if shared {
-		address := new(Expr_Unary, k.c.semantic_allocator)
-		address.span = span
-		address.op = .Amp
-		address.op_span = span
-		address.mutable = true
-		address.operand = clone_expr(k.c, target.operand)
-		append(&stmts, lowered_temporary(k, "compound$receiver", address, span))
-	}
-	index_names := make([]string, len(target.indices), k.c.semantic_allocator)
-	for index, position in target.indices {
-		if !lowered_pure(index) {
-			digits: [20]u8
-			index_names[position] = strings.concatenate(
-				{"compound$index", strconv.itoa(digits[:], position)}, k.c.semantic_allocator,
-			)
-			append(&stmts, lowered_temporary(k, index_names[position], clone_expr(k.c, index), span))
-		}
-	}
+	receiver, index_names := bind_index_place(k, &stmts, target, "compound$", span)
 	value := clone_expr(k.c, s.rhs[0])
 	if !is_const_expr(probe) && !lowered_pure(s.rhs[0]) {
 		append(&stmts, lowered_temporary(k, "compound$value", value, span))
 		value = lowered_name(k, "compound$value", span)
 	}
 
-	read := lowered_index(k, target, index_names, shared, span)
+	read := lowered_index(k, target, index_names, receiver, span)
 	combined := new(Expr_Binary, k.c.semantic_allocator)
 	combined.span = span
 	combined.op = op
 	combined.op_span = s.op_span
 	combined.lhs = read
 	combined.rhs = value
-	assign := new(Stmt_Assign, k.c.semantic_allocator)
-	assign.span = span
-	assign.op = .Assign
-	assign.op_span = s.op_span
-	assign.lhs = make([]Expr, 1, k.c.semantic_allocator)
-	assign.lhs[0] = lowered_index(k, target, index_names, shared, span)
-	assign.rhs = make([]Expr, 1, k.c.semantic_allocator)
-	assign.rhs[0] = combined
-	append(&stmts, assign)
+	append(&stmts, lowered_assign(k, lowered_index(k, target, index_names, receiver, span), combined, s.op_span, span))
 
 	block := new(Block, k.c.semantic_allocator)
 	block.span = span
@@ -2967,6 +2943,136 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 	s.lowered = block
 	check_scoped_block(k, block)
 	return true
+}
+
+// Binds an indexed destination's receiver, by address, and its indices to
+// temporaries named from `prefix`, so later statements reuse them rather than
+// evaluate them again. What reads the same each time stays as written, its
+// name "".
+@(private = "file")
+bind_index_place :: proc(
+	k: ^Checker, stmts: ^[dynamic]Stmt, target: ^Expr_Index, prefix: string, span: Span,
+) -> (receiver: string, index_names: []string) {
+	if !is_effect_free_place(target.operand) {
+		receiver = strings.concatenate({prefix, "receiver"}, k.c.semantic_allocator)
+		append(stmts, lowered_temporary(k, receiver, lowered_address(k, target.operand, span), span))
+	}
+	index_names = make([]string, len(target.indices), k.c.semantic_allocator)
+	for index, position in target.indices {
+		if !lowered_pure(index) {
+			digits: [20]u8
+			index_names[position] = strings.concatenate(
+				{prefix, "index", strconv.itoa(digits[:], position)}, k.c.semantic_allocator,
+			)
+			append(stmts, lowered_temporary(k, index_names[position], clone_expr(k.c, index), span))
+		}
+	}
+	return
+}
+
+// design.md "Evaluation order": a multiple assignment with an `operator([]=)`
+// destination is checked as the block
+//
+//     { v0 := a; v1 := b; r0 := &mut grid; i0 := i; r0^[i0] = v0; x = v1; }
+//
+// so every value is evaluated, then every destination's receiver and indices,
+// then each write, the setter call among them, from left to right. A
+// destination that is neither indexed nor an effect-free place is bound by
+// address.
+@(private = "file")
+lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
+	any_setter := false
+	for target in s.lhs {
+		if indexed, is_index := target.(^Expr_Index); is_index {
+			operand := check_single_expr(k, indexed.operand)
+			any_setter ||= operand != INVALID_TYPE && uses_place_setter(k, operand)
+		}
+	}
+	if !any_setter {
+		return false
+	}
+	span := s.span
+	stmts := make([dynamic]Stmt, 0, 3 * len(s.lhs), k.c.semantic_allocator)
+	values := make([]Expr, len(s.rhs), k.c.semantic_allocator)
+	for value, position in s.rhs {
+		if is_discard(s.lhs[position]) {
+			append(&stmts, lowered_assign(k, clone_expr(k.c, s.lhs[position]), clone_expr(k.c, value), s.op_span, span))
+			continue
+		}
+		name := lowered_position_name(k, "assign$value", position, "")
+		append(&stmts, lowered_temporary(k, name, clone_expr(k.c, value), span))
+		values[position] = lowered_name(k, name, span)
+	}
+	destinations := make([]Expr, len(s.lhs), k.c.semantic_allocator)
+	for target, position in s.lhs {
+		if is_discard(target) {
+			continue
+		}
+		prefix := lowered_position_name(k, "assign$", position, "$")
+		if indexed, is_index := target.(^Expr_Index); is_index {
+			receiver, index_names := bind_index_place(k, &stmts, indexed, prefix, span)
+			destinations[position] = lowered_index(k, indexed, index_names, receiver, span)
+		} else if is_effect_free_place(target) {
+			destinations[position] = clone_expr(k.c, target)
+		} else {
+			name := strings.concatenate({prefix, "place"}, k.c.semantic_allocator)
+			append(&stmts, lowered_temporary(k, name, lowered_address(k, target, span), span))
+			destinations[position] = lowered_deref(k, name, span)
+		}
+	}
+	for destination, position in destinations {
+		if destination != nil {
+			append(&stmts, lowered_assign(k, destination, values[position], s.op_span, span))
+		}
+	}
+	block := new(Block, k.c.semantic_allocator)
+	block.span = span
+	block.stmts = stmts[:]
+	s.lowered = block
+	check_scoped_block(k, block)
+	return true
+}
+
+@(private = "file")
+lowered_position_name :: proc(k: ^Checker, prefix: string, position: int, suffix: string) -> string {
+	digits: [20]u8
+	return strings.concatenate({prefix, strconv.itoa(digits[:], position), suffix}, k.c.semantic_allocator)
+}
+
+// `&mut place`.
+@(private = "file")
+lowered_address :: proc(k: ^Checker, place: Expr, span: Span) -> Expr {
+	address := new(Expr_Unary, k.c.semantic_allocator)
+	address.span = span
+	address.op = .Amp
+	address.op_span = span
+	address.mutable = true
+	address.operand = clone_expr(k.c, place)
+	return address
+}
+
+// `name^`.
+@(private = "file")
+lowered_deref :: proc(k: ^Checker, name: string, span: Span) -> Expr {
+	deref := new(Expr_Postfix, k.c.semantic_allocator)
+	deref.span = span
+	deref.op = .Caret
+	deref.op_span = span
+	deref.operand = lowered_name(k, name, span)
+	return deref
+}
+
+@(private = "file")
+lowered_assign :: proc(k: ^Checker, target, value: Expr, op_span, span: Span) -> Stmt {
+	assign := new(Stmt_Assign, k.c.semantic_allocator)
+	assign.span = span
+	assign.op = .Assign
+	assign.op_span = op_span
+	assign.lhs = make([]Expr, 1, k.c.semantic_allocator)
+	assign.lhs[0] = target
+	assign.rhs = make([]Expr, 1, k.c.semantic_allocator)
+	assign.rhs[0] = value
+	return assign
 }
 
 @(private = "file")
@@ -2999,18 +3105,14 @@ lowered_temporary :: proc(k: ^Checker, name: string, value: Expr, span: Span) ->
 	return d
 }
 
-// `r^[i0]`, or the written receiver and indices where they were not bound.
+// `r^[i0]`, or the written receiver and indices where they were not bound; a
+// receiver bound to an address is named by `receiver`.
 @(private = "file")
-lowered_index :: proc(k: ^Checker, target: ^Expr_Index, index_names: []string, shared: bool, span: Span) -> Expr {
+lowered_index :: proc(k: ^Checker, target: ^Expr_Index, index_names: []string, receiver: string, span: Span) -> Expr {
 	out := new(Expr_Index, k.c.semantic_allocator)
 	out.span = target.span
-	if shared {
-		deref := new(Expr_Postfix, k.c.semantic_allocator)
-		deref.span = span
-		deref.op = .Caret
-		deref.op_span = span
-		deref.operand = lowered_name(k, "compound$receiver", span)
-		out.operand = deref
+	if receiver != "" {
+		out.operand = lowered_deref(k, receiver, span)
 	} else {
 		out.operand = clone_expr(k.c, target.operand)
 	}

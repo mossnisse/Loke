@@ -1,0 +1,28 @@
+package main;
+
+import "core:fmt";
+
+// design.md "@(packed)": every projection of a packed field is as unaligned as
+// the field — a `foreach` binding of each field (the `u32`), a field
+// descriptor's `get` (the `u16`), and the field-by-field comparison of a
+// record large enough to be compared in place (the `u64` elements).
+Packed :: struct @(packed) { tag: u8, count: u32, small: u16 }
+
+Big :: struct @(packed) { tag: u8, cells: [520]u64 }
+
+main :: proc() {
+	values := [2]Packed{Packed{1, 2, 3}, Packed{4, 5, 6}};
+	total: u32 = 0;
+	foreach (_, count, _ in values) { total += count; }
+	fmt.println(total);
+
+	item := Packed{7, 8, 9};
+	foreach ($field in fields_of(Packed)) {
+		when (type_of(field.get(&item)) == u16) { fmt.println(field.get(&item)); }
+	}
+
+	x := Big{};
+	y := Big{};
+	y.cells[3] = 9;
+	fmt.println(x == y);
+}

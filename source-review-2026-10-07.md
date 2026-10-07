@@ -21,12 +21,12 @@ P2 denotes another material correctness defect.
 
 | ID | Priority | Source | Evidence and result |
 | --- | --- | --- | --- |
-| [G01: Map literal keys lose their borrow when the value changes the key variable](known-gaps.md#map-literal-keys-lose-their-borrow-when-the-value-changes-the-key-variable) | P1 | `src/cfg_provenance.odin · prov_composite_content` | Compile/IR reproduction. Accepted despite a map key still borrowing dropped storage; control rejected L0512. |
-| [G02: Parallel assignments through setters write only the final destination](known-gaps.md#parallel-assignments-through-setters-write-only-the-final-destination) | P1 | `src/check.odin; src/emit_llvm_stmt.odin · assignment setter plan` | Runtime reproduction. Prints 0 22 instead of 11 22. |
+| G01: Map literal keys lose their borrow when the value changes the key variable (fixed) | P1 | `src/cfg_provenance.odin · prov_composite_content` | Compile/IR reproduction. Accepted despite a map key still borrowing dropped storage; control rejected L0512. |
+| G02: Parallel assignments through setters write only the final destination (fixed) | P1 | `src/check.odin; src/emit_llvm_stmt.odin · assignment setter plan` | Runtime reproduction. Prints 0 22 instead of 11 22. |
 | [G03: Assignment repeats a panicking drop hook](known-gaps.md#assignment-repeats-a-panicking-drop-hook) | P2 | `src/emit_llvm_stmt.odin · emit_replace_place` | Runtime reproduction. Runs drop 2 twice and aborts on double panic. |
 | [G04: Dynamic array clear repeats completed drops during unwinding](known-gaps.md#dynamic-array-clear-repeats-completed-drops-during-unwinding) | P2 | `runtime/container.c · dyn_clear` | Runtime reproduction. Runs drops 1, 2, 1, 2 and skips remaining cleanup. |
 | [G05: Partially constructed record literals omit completed field cleanup](known-gaps.md#partially-constructed-record-literals-omit-completed-field-cleanup) | P2 | `src/emit_llvm_expr.odin · emit_composite_into` | Runtime reproduction. Omits the completed field's drop before unwinding older locals. |
-| [G06: Packed field projections emit loads with excessive alignment](known-gaps.md#packed-field-projections-emit-loads-with-excessive-alignment) | P1 | `src/emit_llvm_iteration.odin; src/emit_llvm_calls.odin · packed projections` | IR reproduction. Packed offset-1 u64 reads omit align 1 in foreach and field.get. |
+| G06: Packed field projections emit loads with excessive alignment (fixed) | P1 | `src/emit_llvm_iteration.odin; src/emit_llvm_calls.odin · packed projections` | IR reproduction. Packed offset-1 u64 reads omit align 1 in foreach and field.get. |
 | [G07: Exact decimal narrowing loses the exponent or a second negation](known-gaps.md#exact-decimal-narrowing-loses-the-exponent-or-a-second-negation) | P2 | `src/bigint.odin; src/check_expr.odin · exact decimal conversion` | Runtime reproduction. Minimum exponent becomes 1.0; double negation changes f32 rounding. |
 | [G08: Compile-time local constants require a zero before their initializer](known-gaps.md#compile-time-local-constants-require-a-zero-before-their-initializer) | P2 | `src/eval.odin · eval_local_decl` | Compile/IR reproduction. Valid initialized local constant fails L0311. |
 | [G09: Compile-time evaluation rejects ordinary user operators](known-gaps.md#compile-time-evaluation-rejects-ordinary-user-operators) | P2 | `src/eval.odin · operator evaluation` | Compile/IR reproduction. Ordinary user operator fails L0341 during required CTFE. |
@@ -41,7 +41,8 @@ P2 denotes another material correctness defect.
 | [G18: Parsing negative zero as an integer panics](known-gaps.md#parsing-negative-zero-as-an-integer-panics) | P2 | `core/strconv/strconv.loke · parse_i64` | Runtime reproduction. parse_i64("-0") panics instead of returning zero. |
 | [G19: Windows process wait panics on high-bit exit statuses](known-gaps.md#windows-process-wait-panics-on-high-bit-exit-statuses) | P2 | `core/process/process.loke · wait_native` | Runtime reproduction. Child status 0xffffffff panics instead of returning -1. |
 
-The most urgent fixes are G01, G02, and G06. The cleanup findings G03–G05
+The most urgent fixes were G01, G02, and G06, now fixed with regression
+tests; a fixed row no longer links to Known gaps. The cleanup findings G03–G05
 share an ownership obligation: completed resources need exactly one live
 cleanup registration, retired before entering a user drop hook. Address the
 shared ownership transition and verify the sibling paths named in Known gaps.

@@ -1,0 +1,51 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": a multiple assignment evaluates every value,
+// then every destination, then writes from left to right. An `operator([]=)`
+// destination is one of those writes, not the whole statement.
+Grid :: struct { cells: [3]int }
+
+impl Grid {
+	get :: operator([]) proc(self: Grid, key: int) -> int { return self.cells[key]; }
+	set :: operator([]=) proc(self: inout Grid, key: int, value: int) {
+		fmt.println("set", key, value);
+		self.cells[key] = value;
+	}
+}
+
+Names :: struct { items: [2]string }
+
+impl Names {
+	get :: operator([]) proc(self: Names, key: int) -> string { return self.items[key]; }
+	set :: operator([]=) proc(self: inout Names, key: int, value: string) { self.items[key] = value; }
+}
+
+trace :: proc(label: string, value: int) -> int {
+	fmt.println("eval", label);
+	return value;
+}
+
+main :: proc() {
+	grid := Grid{};
+	grid[0], grid[1] = 11, 22;
+	fmt.println(grid.cells[0], grid.cells[1]);
+	// Both reads happen before either write.
+	grid[0], grid[1] = grid[1], grid[0];
+	fmt.println(grid.cells[0], grid.cells[1]);
+
+	// Every value, then every index, then the writes; the discard's value is
+	// still evaluated in its turn.
+	x := 0;
+	plain := [3]int{};
+	grid[trace("i0", 2)], x, _, plain[trace("i1", 1)] = trace("v0", 5), trace("v1", 6), trace("v2", 7), trace("v3", 8);
+	fmt.println(grid.cells[2], x, plain[1]);
+
+	// Managed values swap without disturbing their source.
+	names := Names{};
+	first := "alpha";
+	names[0], names[1] = first, "beta";
+	names[0], names[1] = names[1], names[0];
+	fmt.println(names.items[0], names.items[1], first);
+}

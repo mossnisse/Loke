@@ -490,6 +490,11 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 	for element, index in v.elements {
 		if is_map {
 			loans := walk_flow_expr(graph, element.key)
+			// The key is evaluated before its own value, which may write what it
+			// read, as may a later element.
+			if len(loans) > 0 && (prov_expr_may_write(element.value) || prov_elements_may_write(v.elements[index + 1:])) {
+				loans = prov_capture(graph, loans, expr_span(element.key))
+			}
 			entry := prov_extend(graph, nil, prov_map_entry_step(graph, v.type, element.key))
 			key_type := expr_base(element.key).type
 			append(&parts, Part{loans, prov_extend(graph, entry, proj_field(PROJ_MAP_KEY)), key_type, true})
@@ -500,7 +505,7 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 		loans := walk_flow_expr(graph, element.value)
 		// A later element may write what this one read (design.md "Evaluation
 		// order").
-		if index + 1 < len(v.elements) && len(loans) > 0 && prov_elements_may_write(v.elements[index + 1:]) {
+		if len(loans) > 0 && prov_elements_may_write(v.elements[index + 1:]) {
 			loans = prov_capture(graph, loans, expr_span(element.value))
 		}
 		prefix, known := prov_element_prefix(graph, v, index)
@@ -530,14 +535,16 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 @(private = "file")
 prov_elements_may_write :: proc(elements: []Element) -> bool {
 	for element in elements {
-		if element.key != nil && !is_const_expr(element.key) && !is_effect_free_place(element.key) {
-			return true
-		}
-		if element.value != nil && !is_const_expr(element.value) && !is_effect_free_place(element.value) {
+		if prov_expr_may_write(element.key) || prov_expr_may_write(element.value) {
 			return true
 		}
 	}
 	return false
+}
+
+@(private = "file")
+prov_expr_may_write :: proc(e: Expr) -> bool {
+	return e != nil && !is_const_expr(e) && !is_effect_free_place(e)
 }
 
 // The path one literal element's value fills: a field, an index range, or a

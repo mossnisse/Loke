@@ -579,6 +579,19 @@ checklist.
 
 ### Fixed
 
+- A multiple assignment with an `operator([]=)` destination,
+  `grid[0], grid[1] = 11, 22`, called only the last setter and dropped the
+  other writes. Each destination is now written, after every value and then
+  every destination's receiver and indices are evaluated (design.md
+  "Evaluation order").
+- A map literal whose value changed the variable its key read, as in
+  `{key = exchange(inout key, next).len()}`, lost the key's borrow, so
+  dropping what the key viewed was accepted while the map was still in use.
+  It is now `L0512`.
+- A packed field read through a `foreach` binding, a field descriptor's
+  `get`, or the in-place comparison of a large packed record was loaded as if
+  naturally aligned; it is now loaded unaligned, as every other packed field
+  access is (design.md "@(packed)").
 - An edit to a `runtime/` C source that kept its size and modification time
   linked the stale cached runtime objects; the cache now names each source by
   a hash of its contents. When a link cannot use the cache, the reason is in

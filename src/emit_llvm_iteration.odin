@@ -201,7 +201,7 @@ foreach_field_children :: proc(e: ^Emitter, logical: Type_Id, source: Foreach_Fi
 		field := symbol_of(e.c, field_id)
 		fields[index] = Foreach_Field{
 			type = field.type,
-			address = gep_field(e, llvm_type(e, logical), address, index),
+			address = element_address(e, logical, address, index),
 			place = source.place,
 			stored = source.stored,
 		}
@@ -221,7 +221,7 @@ materialize_foreach_record :: proc(
 	for item_field_id, index in item_info.fields {
 		want := symbol_of(e.c, item_field_id).type
 		have := symbol_of(e.c, logical_info.fields[index]).type
-		at := gep_field(e, llvm, slot, index)
+		at := element_address(e, item, slot, index)
 		if want == have {
 			store(e, want, owned_field_value(e, parts[index]), at)
 		} else if type_is_pointer(e.c, want) {

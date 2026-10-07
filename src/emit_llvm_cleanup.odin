@@ -1300,34 +1300,6 @@ emit_clone_prefix :: proc(
 	return guard
 }
 
-// The address of part `index`: a struct field or an array element.
-@(private = "file")
-element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -> string {
-	info := underlying_info(e.c, owner)
-	out := temp(e)
-	if info != nil && info.kind == .Array {
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %d",
-			out, llvm_type(e, owner), base, index,
-		)
-		if align, known := e.place_align[base]; known {
-			e.place_align[out] = align
-		}
-		return out
-	}
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		out, llvm_type(e, owner), base, index,
-	)
-	// design.md "@(packed)": a packed field is loaded and stored unaligned.
-	if info != nil && info.kind == .Struct && index < len(info.fields) {
-		if field := symbol_of(e.c, info.fields[index]); field != nil {
-			record_field_align(e, owner, base, out, field.type)
-		}
-	}
-	return out
-}
-
 // Clones one part through its own `try_clone`. Returns the value, the error
 // flag, and the `Allocator_Error`, empty when the failure is still a status in
 // the runtime's note; the caller publishes the value only on success.

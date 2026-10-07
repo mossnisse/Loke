@@ -64,43 +64,6 @@ main :: proc() {
 `core:fmt`'s `format_any` keeps the recovered view in a local for this reason,
 so printing still counts a `format` method's writes.
 
-### Map literal keys lose their borrow when the value changes the key variable
-
-[design.md "Values that contain borrows"](design.md#values-that-contain-borrows) and ["Evaluation order"](design.md#evaluation-order).
-
-The key is evaluated before its value. `src/cfg_provenance.odin` keeps the key's live provenance slot instead of capturing the evaluated key before the value writes it. The following program is accepted, although the map still borrows `left` when `drop(left)` runs. Replacing the value expression with `1` correctly produces `L0512`. Capture the key's provenance before an effectful value or later entry can overwrite it, using the existing `prov_capture` mechanism.
-
-```odin
-package main;
-import "core:fmt";
-
-main :: proc() {
-    left := [dynamic]u8{97};
-    right := [dynamic]u8{98};
-    key := string_view.from_utf8(left[:]) or_else "";
-    next := string_view.from_utf8(right[:]) or_else "";
-    table := map[string_view]int{key = exchange(inout key, next).len()};
-    drop(left);
-    fmt.println(table);
-}
-```
-
-### Parallel assignments through setters write only the final destination
-
-[design.md "Assignment statements"](design.md#assignment-statements).
-
-This program prints `0 22` instead of `11 22`. `src/check.odin` retains one setter annotation for the whole statement; `src/emit_llvm_stmt.odin` emits that call and returns. Keep a setter plan for each destination and apply the same evaluation order to ordinary destinations and setter calls.
-
-```odin
-package main; import "core:fmt";
-Grid :: struct { cells: [2]int }
-impl Grid {
-    get :: operator([]) proc(self: Grid, key: int) -> int { return self.cells[key]; }
-    set :: operator([]=) proc(self: inout Grid, key: int, value: int) { self.cells[key] = value; }
-}
-main :: proc() { grid := Grid{}; grid[0], grid[1] = 11, 22; fmt.println(grid.cells[0], grid.cells[1]); }
-```
-
 ### Assignment repeats a panicking drop hook
 
 [design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not).
@@ -166,24 +129,6 @@ main :: proc() {
     defer fmt.println("outer cleanup");
     older := Tracked{9};
     incomplete := Pair{Tracked{1}, fail()};
-}
-```
-
-### Packed field projections emit loads with excessive alignment
-
-[design.md "@(packed)"](design.md#packed).
-
-`src/emit_llvm_iteration.odin` emits a field-1 GEP into the packed `<{ i8, i64 }>` record followed by `load i64` without `align 1`. The omitted alignment promises natural alignment although this field may be at offset 1. A `fields_of(Packed)` descriptor's `field.get(&value)` reproduces the same IR defect in `src/emit_llvm_calls.odin`. Reuse `element_address`, which already records packed field alignment. Large record equality projections also bypass this helper and need checking. These are IR confirmations; no optimized runtime failure is claimed.
-
-```odin
-package main;
-import "core:fmt";
-Packed :: struct @(packed) { tag: u8, value: u64 }
-main :: proc() {
-    values := [2]Packed{Packed{1, 2}, Packed{3, 4}};
-    total: u64 = 0;
-    foreach (tag, value in values) { total += value + u64(tag); }
-    fmt.println(total);
 }
 ```
 

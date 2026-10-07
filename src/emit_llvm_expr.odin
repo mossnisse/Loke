@@ -1644,17 +1644,16 @@ emit_large_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs:
 	part_value :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
 		return is_large_value(e, type) ? address : load_place(e, type, address)
 	}
-	llvm := llvm_type(e, type)
 	if info.kind == .Struct {
 		result := "true"
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
-			left := part_value(e, symbol.type, gep_field(e, llvm, lhs, index))
-			right := part_value(e, symbol.type, gep_field(e, llvm, rhs, index))
+			left := part_value(e, symbol.type, element_address(e, type, lhs, index))
+			right := part_value(e, symbol.type, element_address(e, type, rhs, index))
 			leaf := ""
 			if counter := symbol_of(e.c, symbol.initialized_by); counter != nil {
-				count_left := load_place(e, counter.type, gep_field(e, llvm, lhs, int(counter.index)))
-				count_right := load_place(e, counter.type, gep_field(e, llvm, rhs, int(counter.index)))
+				count_left := load_place(e, counter.type, element_address(e, type, lhs, int(counter.index)))
+				count_right := load_place(e, counter.type, element_address(e, type, rhs, int(counter.index)))
 				leaf = emit_prefix_equal(e, counter, symbol.type, count_left, count_right, left, right)
 			} else {
 				leaf = emit_equal(e, symbol.type, left, right)

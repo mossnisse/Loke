@@ -159,7 +159,7 @@ emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	base := emit_expr(e, v.bound[0])
 	owner := underlying_info(e.c, expr_base(v.bound[0]).type)
 	field := symbol_of(e.c, checked.field)
-	return gep_field(e, llvm_type(e, owner.element), base, int(field.index))
+	return element_address(e, owner.element, base, int(field.index))
 }
 
 emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {
