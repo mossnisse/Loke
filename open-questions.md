@@ -29,13 +29,6 @@ Decided so far, and built as `loke.project` (readme.md "Projects"):
   version, immutable commit ID, and content checksum for every dependency, as
   planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
 
-## package header files
-
-I am not happy with the package level encapsulation, one idea is
-An files containing all public signature and what is reachable from the outside.
-Should be optional but if it exists it should be checked by the compiler that it's correct.
-A way to improve encapsulation and make it easier to see what an package can do both for humans and LLM's.
-
 ## package declaration
 
 is the package declaration needed or is it unessesary sermony?
@@ -86,14 +79,6 @@ are the differences above: privacy, the field-order rule, which package owns
 a record's hooks, and whether naming a record type always makes it nominal or
 only when it is declared `struct`. Nothing is wrong today; the question is
 whether two kinds are worth their extra rules.
-
-## Retaining defer
-
-Does scope-based `defer` provide enough clarity and utility to remain in the final language? Its current semantics are fully defined, including its ordering with automatic cleanup. The remaining question is whether explicit resource types and managed cleanup make most uses unnecessary.
-
-The standard library has since stopped using it. Stages 0-3 carried thirty-five explicit `drop(x)` and `defer drop(x)` statements that the compiler already emitted at scope exit; deleting them left `defer` with no user anywhere in `core/` or `base/`. What remains in the tree is the feature exercising itself under `tests/`, plus one line of `examples/config_parser.loke` that defers a `println` precisely to show its ordering against an automatic drop — a trace, not a release.
-
-That narrows the question rather than answering it. Every deferred *release* the library needed turned out to be one a managed local already performed, which is the case against keeping the statement. But nothing here tests a deferred *side effect* — logging, a counter, restoring a plain variable — and a resource type does not cover those, because there is no resource. Whether that residue justifies a statement form of its own is what is left to decide.
 
 ## Pure procedures
 
@@ -192,12 +177,6 @@ whether typed reflection and expansion are sufficient. If declaration
 generation is eventually required, it should preserve lexical name resolution,
 hygiene, incremental compilation, and readable diagnostics rather than exposing
 an untyped token macro system by default.
-
-## Compile time
-
-Make more stuff work at compile time
-file handling?
-fail load, can the programmer easily see what is going to run at compile time
 
 ## Recoverable panics
 
@@ -585,9 +564,7 @@ record results rather than adding unnamed tuples without a demonstrated need.
 
 There is no compelling reason here to remove `defer`, semicolons, parenthesized
 control-flow headers, explicit overload groups, or hermetic compile-time
-evaluation. `defer` still expresses rollback/restoration and other scoped side
-effects. Requiring a custom resource type for each is more ceremony. Keep
-compile-time file I/O out; an explicit build input mechanism would be easier to
-make reproducible than ambient filesystem access. Package headers should be
-generated documentation or checked API manifests, not a second manually
-maintained declaration source by default.
+evaluation. The decisions this review informed are in comments.md:
+[`defer`](comments.md#defer),
+[One language at compile time](comments.md#one-language-at-compile-time), and
+[Hand-written package header files](comments.md#hand-written-package-header-files).

@@ -358,7 +358,12 @@ result. Their values retain ordinary Loke types; only `type` and the opaque
 reflection descriptors are compile-time-only. This gives libraries loops,
 local mutation, type computation, and reflection without a parallel untyped
 macro language. File and environment access remain in an explicit build program
-rather than becoming ambient compiler effects.
+rather than becoming ambient compiler effects: an explicit build input can be
+made reproducible, and ambient file-system access cannot. What runs at compile
+time is visible in the source, because evaluation happens only where a context
+requires a constant, and
+[Compile-time phases](design.md#compile-time-phases) lists those contexts; a
+runtime call with constant arguments stays a runtime call.
 
 Built-in operations on built-in types cannot be shadowed. Domain-specific
 behavior over a primitive representation uses a `distinct` type, keeping the
@@ -755,6 +760,16 @@ is a compile-time property, so a definitely-live or definitely-dead variable
 costs nothing at runtime. Only a conditionally live one keeps a hidden drop
 flag, and the operation would only let a programmer delete that flag and its
 branch. No program has shown the flag mattering; reopen this when one does.
+
+### Hand-written package header files
+
+A separate file declaring a package's public signatures, checked against the
+package, was proposed to make a package's surface easy to read for people and
+tools. As a hand-written source it would be a second declaration of everything
+public, maintained alongside the first. `lokec -doc` already prints the public
+API from the package itself. Reopen it as a manifest the compiler generates and
+checks, for instance so that a release can show an unintended API change; not
+as a file someone writes.
 
 ## Changed features
 
@@ -1306,6 +1321,17 @@ print a bare `\n`. Text mode for both would instead make a program's bytes
 depend on the platform, which Linux support would then have to undo. The
 runtime sets both streams to binary at startup; an object build leaves them to
 its host.
+
+### `defer`
+
+`defer` stays. The standard library no longer uses it: every deferred release it
+carried was one the compiler already performed at scope exit, and deleting them
+left `defer` with no user in `core/` or `base/`. That argues against `defer` for
+releasing resources, which managed locals and resource types do. It does not
+cover a scoped side effect with no resource behind it — rolling back a partial
+update, restoring a plain variable, logging or counting on every exit — and a
+custom resource type for each of those would be more ceremony than the
+statement it replaces.
 
 ### Foreign declarations
 
