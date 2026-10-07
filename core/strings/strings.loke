@@ -221,6 +221,58 @@ cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
 	return .none;
 }
 
+// ------------------------------------------------------------ boundaries --
+
+// A slice bound must fall where a code point begins or at the end (design.md
+// "String views"); `text[low:high]` panics otherwise, as an out-of-range index
+// does. An offset from `index`, `cut`, or `rune_offsets()` always qualifies.
+// These are for one that may not: read from input, or computed by arithmetic.
+
+// `text[low:high]`, or `.none` where that slice would panic: a bound out of
+// range, `low` after `high`, or a bound inside a code point.
+try_slice :: proc(text: string_view, low, high: int) -> Option(string_view) {
+	if (low < 0 || low > high || high > text.len()) { return .none; }
+	if (!is_boundary(text, low) || !is_boundary(text, high)) { return .none; }
+	return .some(text[low:high]);
+}
+
+// The nearest boundary at or before `offset`, so `text[:floor_boundary(text, n)]`
+// is the longest prefix of at most `n` bytes. Past the end, the end; a negative
+// offset panics, as an index does.
+floor_boundary :: proc(text: string_view, offset: int) -> int {
+	if (offset >= text.len()) { return text.len(); }
+	at := offset;
+	for (!is_boundary(text, at)) { at -= 1; }
+	return at;
+}
+
+// The nearest boundary at or after `offset`. Past the end, the end; a negative
+// offset panics, as an index does.
+ceil_boundary :: proc(text: string_view, offset: int) -> int {
+	if (offset >= text.len()) { return text.len(); }
+	at := offset;
+	for (!is_boundary(text, at)) { at += 1; }
+	return at;
+}
+
+// The first `limit` scalar values, or all of `text` when it has fewer.
+prefix_runes :: proc(text: string_view, limit: int) -> string_view {
+	assert(limit >= 0, "strings.prefix_runes needs a non-negative limit");
+	seen := 0;
+	foreach (_, offset in text.rune_offsets()) {
+		if (seen == limit) { return text[0:offset]; }
+		seen += 1;
+	}
+	return text;
+}
+
+// Valid UTF-8 continues a code point only with a `10xxxxxx` byte, so every
+// other byte begins one.
+@(private)
+is_boundary :: proc(text: string_view, offset: int) -> bool {
+	return offset == text.len() || (text.bytes()[offset] & 0xC0) != 0x80;
+}
+
 // ------------------------------------------------- allocating transforms --
 
 // Every one of these builds its result in a `String_Builder` and finishes it

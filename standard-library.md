@@ -533,6 +533,27 @@ final empty part; an empty separator yields the whole text once.
 normalization, locale rules, grapheme segmentation, and case folding belong in
 a later `core:unicode` package.
 
+### Boundaries
+
+A slice through a code point panics, so an offset that did not come from a
+search or `rune_offsets()` (one read from input, or "the first 10 bytes") goes
+through one of these first:
+
+```odin
+try_slice(text: string_view, low, high: int) -> Option(string_view)
+floor_boundary(text: string_view, offset: int) -> int
+ceil_boundary(text: string_view, offset: int) -> int
+prefix_runes(text: string_view, limit: int) -> string_view
+```
+
+`try_slice` is `text[low:high]`, or `.none` wherever that slice would panic: a
+bound out of range, `low` after `high`, or a bound inside a code point.
+`floor_boundary` and `ceil_boundary` answer the nearest boundary at or before,
+and at or after, `offset`; past the end they answer `text.len()`, and a
+negative offset panics. `text[:floor_boundary(text, n)]` is the longest prefix
+of at most `n` bytes. `prefix_runes` is the first `limit` scalar values, or the
+whole text when it has fewer.
+
 ### Allocating transformations
 
 ```odin

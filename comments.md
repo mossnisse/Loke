@@ -1193,6 +1193,22 @@ caller holding a `string` write a conversion. The conversion is a borrow, costs
 nothing, and needs no validation, so the division is simply that `string_view`
 reads and `string` owns. It is one-way; going back allocates, via `.copy()`.
 
+### Slicing text keeps its panic
+
+`text[a:b]` panics when a bound falls inside a code point, as an out-of-range
+index does. An offset from a search or `rune_offsets()` is always a boundary,
+so the risk is only an offset from outside the program or from arithmetic, and
+`core:strings` names what such code wants instead: `try_slice`, which answers
+`.none`, and `floor_boundary`/`ceil_boundary`, which move the offset. "At most
+`n` bytes" is `text[:floor_boundary(text, n)]`, so it got no name of its own;
+"the first `n` runes" did, as `prefix_runes`, because it counts in another
+unit.
+
+Two other designs were weighed and rejected. An opaque index type, as in Swift,
+makes a bad cut a compile error, but then `text[0:3]` stops compiling and every
+offset needs a conversion. Rounding inside `[a:b]` never crashes, but quietly
+returns other text than was asked for.
+
 ### String ownership and concurrency
 
 `string` is an immutable owning value. Implementations may share backing storage,

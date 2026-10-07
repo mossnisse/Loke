@@ -414,6 +414,9 @@ checklist.
 
 ### Added
 
+- `strings.try_slice`, `floor_boundary`, `ceil_boundary`, and `prefix_runes`
+  cut text at an offset from outside the program without risking the panic a
+  slice through a code point raises.
 - `math.wrapping_add`, `wrapping_sub`, and `wrapping_mul` take two vectors of
   one `Simd` type with integer lanes, and wrap each lane.
 - `mem.Failure_Policy` and a `policy` argument on `mem.Arena.init`,

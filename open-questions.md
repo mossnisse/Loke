@@ -259,28 +259,6 @@ profiles contain.
   in Loke (Eisel-Lemire with a big-decimal fallback) would fix both. Is either
   worth that much code?
 
-## Slicing text at a byte offset
-
-`text[a:b]` panics when an offset falls inside a code point, so an offset read
-from input or computed by arithmetic ("the first 10 bytes") can crash a program
-on text its author never tried. An offset from `find`, `split`, or
-`rune_offsets()` is always on a boundary, so the risk is only in the second
-kind. Keeping the panic matches an out-of-range array index; the question is
-what to offer so that a program rarely needs to risk it:
-
-- `try_slice(a, b) -> Option(string_view)`, answering `none` for a cut through
-  a code point, for offsets that come from outside the program.
-- Operations naming the usual reasons to cut, which cannot fail:
-  `truncate_bytes(n)` (at most `n` bytes, rounded down to a boundary),
-  `prefix_runes(n)`, and `floor_boundary(i)` / `ceil_boundary(i)`.
-- `bytes()[a:b]` already slices anywhere, for data that is bytes rather than
-  text.
-
-Two alternatives seem worse. An opaque index type, as in Swift, makes a bad cut
-a compile error, but `text[0:3]` stops compiling and every offset needs a
-conversion. Rounding inside `[a:b]` never crashes, but quietly returns other
-text than was asked for.
-
 ## Open questions in `core:term`
 
 - Every console test writes records into the console the test run is using,

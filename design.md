@@ -553,7 +553,7 @@ m := byte_count(owned[5:]);   // a subrange view
 k := byte_count(owned[7:]);   // panics: offset 7 splits the two bytes of `ä`
 ```
 
-Each slice bound is a byte offset and must fall at the start of a UTF-8 sequence or at the end of the text, so the view is valid UTF-8 too. A bound inside a sequence panics, as `owned[7:]` does above.
+Each slice bound is a byte offset and must fall at the start of a UTF-8 sequence or at the end of the text, so the view is valid UTF-8 too. A bound inside a sequence panics, as `owned[7:]` does above. An offset from a search or from `rune_offsets()` is always a boundary; for one read from input or computed by arithmetic, `core:strings` has `try_slice`, which answers `.none` instead of panicking, and `floor_boundary` and `ceil_boundary`, which move an offset to the nearest boundary.
 
 Use `string_view` to read text and `string` to store it. The conversion runs one way only: a `string_view` becomes a `string` with `.copy()`, which allocates because the result must own its bytes.
 

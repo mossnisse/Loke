@@ -1,0 +1,30 @@
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+// standard-library.md "`core:strings`": an offset from outside the program
+// cannot crash a slice. "värld" is v(0) ä(1-2) r(3) l(4) d(5), six bytes.
+main :: proc() {
+	text := "värld";
+
+	// `try_slice` answers `.none` wherever `text[low:high]` would panic.
+	fmt.println(strings.try_slice(text, 0, 3), strings.try_slice(text, 3, 6));
+	fmt.println(strings.try_slice(text, 0, 2), strings.try_slice(text, 2, 6));
+	fmt.println(strings.try_slice(text, -1, 3), strings.try_slice(text, 4, 3), strings.try_slice(text, 0, 7));
+	fmt.println(strings.try_slice(text, 6, 6), strings.try_slice("", 0, 0));
+
+	// The nearest boundary either way; past the end is the end.
+	fmt.println(strings.floor_boundary(text, 2), strings.ceil_boundary(text, 2));
+	fmt.println(strings.floor_boundary(text, 3), strings.ceil_boundary(text, 3));
+	fmt.println(strings.floor_boundary(text, 0), strings.ceil_boundary(text, 0));
+	fmt.println(strings.floor_boundary(text, 99), strings.ceil_boundary(text, 99));
+
+	// "The first 2 bytes", which a plain `text[:2]` would panic on.
+	checks := "✓✓";
+	fmt.println(text[:strings.floor_boundary(text, 2)], checks[:strings.floor_boundary(checks, 5)]);
+
+	// Counting scalar values rather than bytes.
+	fmt.println(strings.prefix_runes(text, 2), strings.prefix_runes(text, 0).len());
+	fmt.println(strings.prefix_runes(text, 5), strings.prefix_runes(text, 9));
+}
