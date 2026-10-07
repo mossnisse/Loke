@@ -860,6 +860,8 @@ Compiler unit tests live beside the implementation:
 - `session_test.odin` and `incremental_test.odin` check batch/incremental reuse,
   diagnostics/IR equivalence, invalidation, reclamation, entry policy, ownership,
   and destruction.
+- `subprocess_test.odin` checks that `subprocess.run` releases the handles of
+  the children it waits on.
 
 The integration harness is `tests/corpus_test.odin`:
 

@@ -985,6 +985,27 @@ formatting_settles_and_keeps_tokens :: proc(t: ^testing.T) {
 	}
 }
 
+// `-fmt` and `-fmt-check` list a directory's files rather than matching a
+// pattern built from its name, so brackets in the name are only characters.
+@(test)
+formatting_a_directory_reads_its_name_literally :: proc(t: ^testing.T) {
+	dir := fmt.tprintf("%s/fmt-literal/fmt[one]", TMP)
+	os2.remove_all(fmt.tprintf("%s/fmt-literal", TMP))
+	os2.make_directory_all(dir)
+	path := fmt.tprintf("%s/messy.loke", dir)
+	os.write_entire_file(path, transmute([]u8)string("package main;\nmain :: proc() {\nx := 1;\n_ = x;\n}\n"))
+
+	checked, stdout, _, err := exec(os2.Process_Desc{command = []string{compiler_path(), dir, "-fmt-check"}}, context.allocator)
+	testing.expectf(
+		t, err == nil && checked.exit_code == 1 && strings.contains(string(stdout), "messy.loke"),
+		"-fmt-check passed a directory holding an unformatted file:\n%s", string(stdout),
+	)
+	formatted, _, stderr, format_err := exec(os2.Process_Desc{command = []string{compiler_path(), dir, "-fmt"}}, context.allocator)
+	testing.expectf(t, format_err == nil && formatted.exit_code == 0, "-fmt failed:\n%s", string(stderr))
+	text, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expectf(t, strings.contains(string(text), "\tx := 1;"), "-fmt left the file unformatted:\n%s", string(text))
+}
+
 // A `[]string{...}` literal lives on the stack, and these outlive the caller.
 @(private)
 format_check :: proc(dir: string) -> Exec {
@@ -1410,6 +1431,7 @@ output_returns_a_failed_collection :: proc(t: ^testing.T) {
 	if !testing.expectf(t, start_err == nil, "cannot run %s", exe) {
 		return
 	}
+	defer _ = os2.process_close(process)
 	run_state, wait_err := os2.process_wait(process, 60 * time.Second)
 	if wait_err != nil {
 		_ = os2.process_kill(process)

@@ -501,25 +501,6 @@ remains open.
 
 ### Compiler and harness resource handling
 
-- **Process handles (T01, reproduced):** `src/subprocess/subprocess.odin` never
-  calls `os2.process_close` after a successful start. A controlled 32-call run
-  increased native handle count from 136 to 200. At least 32 are the process
-  handles owned by this wrapper; the pinned Odin Windows implementation also
-  leaks a separate thread handle upstream. Register process close immediately
-  after successful start. The manual child in
-  `tests/corpus_test.odin`'s `output_returns_a_failed_collection` needs the
-  same treatment.
-- **Pipe failure (T02, source-confirmed):** the first pipe's write end is not
-  registered for cleanup until the second pipe succeeds. A second-pipe error
-  returns early and leaks that first writer. Register both ends immediately
-  after acquiring them, retaining the existing early writer-close scope.
-  No native failure was injected.
-- **Formatter paths (T03, reproduced):** an unformatted file under a directory
-  named `fmt[one]` is reported clean by `lokec -fmt-check <directory>` and
-  unchanged by `lokec -fmt <directory>`, while checking that same file directly
-  fails. `src/formatter.odin` uses the supplied directory as part of a glob.
-  Enumerate the directory and filter its `.loke` files, following existing
-  package-source enumeration.
 - **Compiler freshness (T04, source-confirmed):**
   `tests/corpus_test.odin`'s `compiler_binary_is_current` scans only
   `src/*.odin`. It misses the compiled-in `src/subprocess/*.odin` dependency,

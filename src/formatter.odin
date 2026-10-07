@@ -11,19 +11,19 @@ package lokec
 
 import "core:fmt"
 import "core:os"
-import "core:path/filepath"
 import "core:strings"
 
 // Formats every `.loke` file of `input`, a file or a directory's direct
 // files, in place; with `check`, only lists the ones that would change. The
 // exit status is 1 when a file does not parse or, with `check`, would change.
 format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
-	paths := make([dynamic]string)
+	// Listed as a package's sources are, never as a pattern, so a directory
+	// name holding `[` or `*` is only a name.
+	paths: []string
 	if is_directory(input) {
-		matches, _ := filepath.glob(filepath.join({input, "*.loke"}))
-		append(&paths, ..matches)
+		paths = package_sources(c, input)
 	} else {
-		append(&paths, input)
+		paths = []string{input}
 	}
 	status := 0
 	for path in paths {

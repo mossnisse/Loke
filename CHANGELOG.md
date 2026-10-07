@@ -584,6 +584,12 @@ checklist.
 
 ### Fixed
 
+- `lokec -fmt` and `-fmt-check` on a directory list its files instead of
+  matching a pattern built from its name, so a directory named like `fmt[one]`
+  is no longer reported clean while holding unformatted files.
+- `lokec` closes each child process it waits on (clang, NASM), and closes the
+  first pipe's write end when making the second fails, so neither leaks a
+  handle.
 - A panicking element drop hook no longer leaks the rest of a container.
   Dropping a whole dynamic array or map now keeps it registered for the unwind
   and takes each element out before its hook runs, as `clear` already did, so

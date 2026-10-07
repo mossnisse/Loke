@@ -52,9 +52,9 @@ leaked the elements after a panicking hook, also fixed now.
 
 | ID | Priority | Location | Finding and evidence |
 | --- | --- | --- | --- |
-| T01 | P2 | `src/subprocess/subprocess.odin`; manual corpus child | Process handles are never closed after start/wait. A 32-call reproduction retained 64 handles: at least 32 owned process handles, plus a separate upstream Odin thread-handle leak. |
-| T02 | P3 | `src/subprocess/subprocess.odin` | Second-pipe failure bypasses cleanup of the first writer. Confirmed by acquisition/return tracing; no injected native failure. |
-| T03 | P2 | `src/formatter.odin` | Directory glob treats brackets as syntax. Reproduced: directory fmt-check succeeds and fmt leaves bytes unchanged while direct-file fmt-check fails. |
+| T01 (fixed) | P2 | `src/subprocess/subprocess.odin`; manual corpus child | Process handles are never closed after start/wait. A 32-call reproduction retained 64 handles: at least 32 owned process handles, plus a separate upstream Odin thread-handle leak. |
+| T02 (fixed) | P3 | `src/subprocess/subprocess.odin` | Second-pipe failure bypasses cleanup of the first writer. Confirmed by acquisition/return tracing; no injected native failure. |
+| T03 (fixed) | P2 | `src/formatter.odin` | Directory glob treats brackets as syntax. Reproduced: directory fmt-check succeeds and fmt leaves bytes unchanged while direct-file fmt-check fails. |
 | T04 | P3 | `tests/corpus_test.odin` | Compiler freshness check omits the compiled-in subprocess package. Confirmed from the scan and import paths. |
 | T05 | P3 | `perf.ps1` | Repeat zero/negative values create extra runs through inclusive range semantics. Confirmed by evaluating the range expressions. |
 | T06 | P3 | `perf.ps1` | Build/run/output failure skips temporary-directory removal. Confirmed by the throw and cleanup paths. |

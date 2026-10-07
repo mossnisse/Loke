@@ -17,19 +17,29 @@ run :: proc(
 	stdout, stderr: []byte,
 	err: os2.Error,
 ) {
+	// Each end is owned from the moment it exists, so a failure making the
+	// second pipe still closes the first.
 	stdout_r, stdout_w := os2.pipe() or_return
 	defer os2.close(stdout_r)
+	defer if stdout_w != nil { os2.close(stdout_w) }
 	stderr_r, stderr_w := os2.pipe() or_return
 	defer os2.close(stderr_r)
+	defer if stderr_w != nil { os2.close(stderr_w) }
 	process: os2.Process
 	{
-		// Our copies of the write ends must close, or the reads never see EOF.
-		defer os2.close(stdout_w)
-		defer os2.close(stderr_w)
+		// Our copies of the write ends must close before reading, or the reads
+		// never see EOF.
+		defer {
+			os2.close(stdout_w)
+			os2.close(stderr_w)
+			stdout_w, stderr_w = nil, nil
+		}
 		desc := desc
 		desc.stdout, desc.stderr = stdout_w, stderr_w
 		process = os2.process_start(desc) or_return
 	}
+	// Waiting does not release the process handle.
+	defer _ = os2.process_close(process)
 
 	out := make([dynamic]byte, allocator)
 	errs := make([dynamic]byte, allocator)
