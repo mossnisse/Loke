@@ -1886,6 +1886,15 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if box_callee(k, value.callee) {
 			return resolve_box_application(k, value)
 		}
+		// `Index_Type(1000)`: a call to a procedure that computes a type
+		// (design.md "`type` and `typeid`"), folded where it is checked.
+		callee := symbol_of(k.c, named_callee_symbol(k, value.callee))
+		if (callee != nil && callee.kind == .Proc) || generic_template_of_callee(k, value.callee, .Procedure) != nil {
+			if value.denoted_type == INVALID_TYPE {
+				check_expr(k, value)
+			}
+			return value.denoted_type
+		}
 		// `Table(string, int)`: a generic application in type position.
 		template := generic_template_of_callee(k, value.callee, .Record)
 		if template == nil {
@@ -2043,6 +2052,10 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 		// A generic rejected at its declaration was reported there, and an
 		// application of a known one reported its own arguments.
 		if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
+			return
+		}
+		if callee := symbol_of(k.c, named_callee_symbol(k, call.callee)); callee != nil && callee.kind == .Proc && call.type != INVALID_TYPE {
+			errorf(k.c, call.span, "L0306", "this call does not compute a type: it returns `%s`", type_name(k.c, call.type))
 			return
 		}
 		if head, head_is_ident := call.callee.(^Expr_Ident); head_is_ident {
@@ -2401,10 +2414,30 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 			return
 		}
 	}
+	if !symbol.signature_error && compile_time_only_procedure(k.c, symbol) {
+		check_proc_body(k, literal)
+		return
+	}
 	if !runtime_signature_ok(k, symbol, literal.span) {
 		return
 	}
 	check_proc_body(k, literal)
+}
+
+// design.md "`type` and `typeid`": a procedure that computes a `type` or a
+// reflection descriptor is compile-time-only. Every call is evaluated by the
+// compiler, so it is never emitted and cannot be a procedure value; its
+// parameters still bind runtime values, so none of them may be compile-time-only.
+compile_time_only_procedure :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
+	if symbol.result == INVALID_TYPE || compile_time_only_component(c, symbol.result) == INVALID_TYPE {
+		return false
+	}
+	for parameter in symbol.params {
+		if compile_time_only_component(c, parameter) != INVALID_TYPE {
+			return false
+		}
+	}
+	return true
 }
 
 // Shared by named procedures and procedure literals: whether the signature can

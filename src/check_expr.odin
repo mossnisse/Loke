@@ -116,6 +116,21 @@ check_expr :: proc(
 			base.type = INVALID_TYPE
 		}
 	}
+	// design.md "`type` and `typeid`": a call to a compile-time-only procedure
+	// runs in the compiler where it is checked, so its result is a constant.
+	if call, is_call := e.(^Expr_Call); is_call && base.type != INVALID_TYPE && !base.is_const {
+		callee := symbol_of(k.c, call.resolution.symbol)
+		if callee != nil && callee.kind == .Proc && compile_time_only_procedure(k.c, callee) {
+			folded, ok := require_const(k, e, "a call to a compile-time-only procedure", "L0453")
+			if !ok {
+				base.type = INVALID_TYPE
+			} else if folded.kind == .Type {
+				// It names a type, as `Simd(f32, 4)` does.
+				base.value_category = .Type
+				base.denoted_type = folded.type_value
+			}
+		}
+	}
 	// design.md "Compile-time reflection": a descriptor or `type` value is only
 	// ever folded, so one computed at run time, such as `fields_of(T)[i]` with a
 	// runtime `i`, has no representation.
@@ -539,6 +554,16 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		if sym.proc_type == INVALID_TYPE && sym.decl != nil {
 			resolve_symbol_signature_in_place(k, symbol_id)
 			sym = symbol_of(k.c, symbol_id)
+		}
+		// design.md "`type` and `typeid`": only the compiler runs it, so it has
+		// no address to hold.
+		if !callee && sym.proc_type != INVALID_TYPE && compile_time_only_procedure(k.c, sym) {
+			errorf(
+				k.c, v.span, "L0378",
+				"`%s` is compile-time only: it can be called, but not held as a procedure value", name,
+			)
+			v.type = INVALID_TYPE
+			return
 		}
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Value

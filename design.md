@@ -1906,7 +1906,7 @@ Index_Type :: proc($Count: uint) -> type {
 Index :: Index_Type(1000);
 ```
 
-A `type` value exists only during compilation and has no zero value. It may be a constant, `$` parameter, or the result of a compile-time-only procedure. It cannot be stored in a runtime variable, record, container, foreign declaration, or procedure value. A procedure whose signature contains `type` or a compile-time reflection descriptor is compile-time-only and cannot be exported.
+A `type` value exists only during compilation and has no zero value. It may be a constant, `$` parameter, or the result of a compile-time-only procedure. It cannot be stored in a runtime variable, record, container, foreign declaration, or procedure value. A procedure whose signature contains `type` or a compile-time reflection descriptor is compile-time-only and cannot be exported. Every call to one is evaluated where it is written, so its arguments must be compile-time known, and it can be called but not held as a procedure value. A call that computes a type names that type wherever a type may be written: `small: Index_Type(10)` is a `u8`.
 
 Two `type` values support `==` and `!=` during compilation; equality means the same Loke type identity after aliases are resolved. They have no ordering and cannot be elements or keys of runtime or materialized containers.
 

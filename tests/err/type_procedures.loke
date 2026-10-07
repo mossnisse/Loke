@@ -1,0 +1,20 @@
+package main;
+
+// design.md "`type` and `typeid`": a procedure that computes a type is
+// compile-time-only. It can be called, with arguments known at compile time,
+// but it is never a procedure value and its result never a runtime value.
+
+Plain :: proc() -> type { return i16; }
+By_Bytes :: proc(bytes: int) -> type {
+	if (bytes > 4) { return i64; }
+	return i32;
+}
+Not_A_Type :: proc() -> int { return 4; }
+
+main :: proc() {
+	held := Plain;
+	stored := Plain();
+	count := 3;
+	Runtime :: By_Bytes(count);
+	x: Not_A_Type();
+}

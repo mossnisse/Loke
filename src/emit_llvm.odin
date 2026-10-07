@@ -508,7 +508,7 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 @(private = "file")
 emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	symbol := symbol_of(e.c, symbol_id)
-	if symbol == nil || literal == nil || literal.body == nil {
+	if symbol == nil || literal == nil || literal.body == nil || compile_time_only_procedure(e.c, symbol) {
 		return
 	}
 	llvm_name, named := e.names[symbol_id]

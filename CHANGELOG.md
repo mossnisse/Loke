@@ -543,6 +543,12 @@ checklist.
 
 ### Fixed
 
+- A procedure can compute a type, as design.md "`type` and `typeid`"
+  describes: `Index_Type :: proc($Count: uint) -> type` is accepted, every
+  call is evaluated by the compiler, and the result names a type in a
+  constant (`Index :: Index_Type(1000);`) or directly where a type is written
+  (`small: Index_Type(10)`). Such a procedure is never emitted; using it as a
+  procedure value is `L0378`. It used to be rejected at its signature.
 - `math.wrap` of a vector folds at compile time, lane by lane, as design.md
   "Type conversion" says; a compile-time path that reached one used to stop
   with `L0341`.

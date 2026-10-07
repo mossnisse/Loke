@@ -215,47 +215,31 @@ wrapping_mul_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
 }
 
 wrapping_add_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	return wrapping_lanes(a, b, Lane_Operation.Add);
+	U :: Unsigned_Lane(T);
+	return wrap(Simd(T, N), wrap(Simd(U, N), a) + wrap(Simd(U, N), b));
 }
 
 wrapping_sub_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	return wrapping_lanes(a, b, Lane_Operation.Sub);
+	U :: Unsigned_Lane(T);
+	return wrap(Simd(T, N), wrap(Simd(U, N), a) - wrap(Simd(U, N), b));
 }
 
 wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	return wrapping_lanes(a, b, Lane_Operation.Mul);
+	U :: Unsigned_Lane(T);
+	return wrap(Simd(T, N), wrap(Simd(U, N), a) * wrap(Simd(U, N), b));
 }
 
+// The unsigned integer type of `T`'s width.
 @(private)
-Lane_Operation :: enum u8 {
-	Add,
-	Sub,
-	Mul,
-}
-
-@(private)
-wrapping_lanes :: proc(a: Simd($T, $N), b: Simd(T, N), $operation: Lane_Operation) -> Simd(T, N) {
+Unsigned_Lane :: proc($T: type) -> type {
 	when (size_of(T) == 1) {
-		return wrapping_lanes_as(u8, a, b, operation);
+		return u8;
 	} else when (size_of(T) == 2) {
-		return wrapping_lanes_as(u16, a, b, operation);
+		return u16;
 	} else when (size_of(T) == 4) {
-		return wrapping_lanes_as(u32, a, b, operation);
+		return u32;
 	} else {
-		return wrapping_lanes_as(u64, a, b, operation);
-	}
-}
-
-@(private)
-wrapping_lanes_as :: proc($U: type, a: Simd($T, $N), b: Simd(T, N), $operation: Lane_Operation) -> Simd(T, N) {
-	x := wrap(Simd(U, N), a);
-	y := wrap(Simd(U, N), b);
-	when (operation == .Add) {
-		return wrap(Simd(T, N), x + y);
-	} else when (operation == .Sub) {
-		return wrap(Simd(T, N), x - y);
-	} else {
-		return wrap(Simd(T, N), x * y);
+		return u64;
 	}
 }
 

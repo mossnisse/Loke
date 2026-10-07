@@ -466,6 +466,11 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	if type_is_box(ev.k.c, type) {
 		return Eval_Value{kind = .Invalid, type = type}, true
 	}
+	// Nor has a `type` or a descriptor; this is what a compile-time-only
+	// procedure's result holds until its `return`.
+	if type_is_compile_time_only(ev.k.c, type) {
+		return Eval_Value{kind = .Invalid, type = type}, true
+	}
 	// design.md "Empty slices": a slice's zero value is the empty view.
 	if type_is_slice(ev.k.c, type) {
 		return Eval_Value{kind = .Nil, type = type}, true

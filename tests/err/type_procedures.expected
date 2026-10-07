@@ -1,0 +1,12 @@
+L0378
+@15:10
+can be called, but not held as a procedure value
+L0378
+@16:2
+`type` is compile-time only and cannot be stored in a variable
+L0341
+@18:13
+`count` is a mutable variable and cannot be read at compile time
+L0306
+@19:5
+this call does not compute a type: it returns `int`

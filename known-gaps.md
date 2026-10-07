@@ -38,25 +38,6 @@ Registering the `defer` before `xs` is accepted and is the safer order anyway.
 Narrowing the unwind points to the operations that can panic (calls, checked
 indexing and arithmetic, conversions) would accept the program as written.
 
-### A procedure cannot compute a type
-
-[design.md "`type` and `typeid`"](design.md#type-and-typeid) lets a
-compile-time-only procedure return `type`, and gives `Index_Type` as its
-example. The checker rejects the procedure's signature as runtime storage
-(`L0378`) and its call as a non-constant `type` (`L0453`):
-
-```odin
-package main;
-Index_Type :: proc($Count: uint) -> type {
-    when (Count <= 256) { return u8; } else { return u32; }
-}
-Index :: Index_Type(1000);  // L0378 at the signature, L0453 here
-main :: proc() { x: Index = 3; _ = x; }
-```
-
-`core:math`'s vector `wrapping_*` forms choose an unsigned lane type with a
-`when` on `size_of(T)` and pass it as a `$U: type` argument instead.
-
 ### A slot call on a temporary `dyn` view has no global effects
 
 [design.md "Global write effects"](design.md#global-write-effects) makes a call

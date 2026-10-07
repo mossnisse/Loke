@@ -1,0 +1,46 @@
+package main;
+
+import "core:fmt";
+
+// design.md "`type` and `typeid`": a procedure may compute a type. It is
+// compile-time-only, so every call runs in the compiler and names a type.
+
+Index_Type :: proc($Count: uint) -> type {
+	when (Count <= 256) {
+		return u8;
+	} else when (Count <= 65536) {
+		return u16;
+	} else {
+		return u32;
+	}
+}
+
+Index :: Index_Type(1000);
+
+// An ordinary parameter takes a constant argument, and the body may branch at
+// run time of the evaluator.
+By_Bytes :: proc(bytes: int) -> type {
+	if (bytes > 4) { return i64; }
+	return i32;
+}
+
+// One computing procedure may call another.
+Wider :: proc($T: type) -> type { return By_Bytes(size_of(T) * 2); }
+
+Slot :: struct { index: Index, wide: Wider(i32) }
+
+// Inside a generic body a computed type is a local constant, evaluated for each
+// specialization.
+widened :: proc(value: $T) -> int {
+	W :: Wider(T);
+	return size_of(W);
+}
+
+main :: proc() {
+	small: Index_Type(10) = 255;
+	fmt.println(size_of(Index), size_of(Index_Type(100000)), small);
+	Local :: By_Bytes(8);
+	value: Local = 9000000000;
+	fmt.println(value, size_of(By_Bytes(2)), size_of(Slot));
+	fmt.println(widened(i8(1)), widened(i32(1)));
+}
