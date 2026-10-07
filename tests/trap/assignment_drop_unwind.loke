@@ -1,0 +1,22 @@
+package main;
+
+import "core:fmt";
+
+// design.md "What the unwind runs, and what it does not": an assignment's old
+// value is dropped after its replacement is stored, so a drop hook that panics
+// unwinds through the replacement once and never replays the old value. With
+// several destinations, a value still waiting for its write is dropped too.
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) {
+		fmt.println("drop", self.id);
+		if (self.id == 2) { panic("replaced drop failed"); }
+	}
+}
+
+main :: proc() {
+	older := Tracked{1};
+	x := Tracked{2};
+	y := Tracked{3};
+	x, y = Tracked{4}, Tracked{5};
+}

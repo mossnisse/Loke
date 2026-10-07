@@ -427,6 +427,16 @@ finish_temporary_drop :: proc(e: ^Emitter, entry: Deferred) {
 
 // A completed owned value borrowed by an operation. Register it before
 // evaluating later arguments.
+// One completed element of an array still being built, registered for the
+// unwind until the whole array owns it.
+@(private)
+guard_built_element :: proc(e: ^Emitter, element: Type_Id, place: string) -> Deferred {
+	if !unwind_enabled(e) || !emit_lifecycle(e, element).managed {
+		return Deferred{slot = -1}
+	}
+	return begin_temporary_drop(e, element, place)
+}
+
 @(private)
 hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> Deferred {
 	if !emit_lifecycle(e, type).managed { return Deferred{slot = -1} }
@@ -1166,7 +1176,7 @@ drop_may_panic :: proc(e: ^Emitter, type: Type_Id) -> bool {
 
 // Registers one completed part of a record for the unwind, apart from the
 // record, whose own hook must not run for it.
-@(private = "file")
+@(private)
 guard_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) -> Deferred {
 	if !unwind_enabled(e) || !emit_lifecycle(e, clone_part(e.c, record, index)).managed {
 		return Deferred{slot = -1}

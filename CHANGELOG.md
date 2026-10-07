@@ -579,6 +579,18 @@ checklist.
 
 ### Fixed
 
+- Under `-panic=unwind`, a panicking drop hook no longer runs a cleanup
+  twice or skips one (design.md "What the unwind runs, and what it does
+  not"):
+  - an assignment whose old value's drop hook panicked dropped that value again
+    and aborted; the old value is now dropped after the replacement is
+    stored, and with several destinations a value still waiting for its write
+    is dropped too;
+  - `clear()` on a dynamic array or map, and a shrinking `resize`, dropped the
+    finished elements again and aborted; each element now leaves the container
+    before its hook runs, the last first;
+  - a record, fixed-array, or slice literal whose later element panicked never
+    dropped the parts already built; each built part is now dropped.
 - A multiple assignment with an `operator([]=)` destination,
   `grid[0], grid[1] = 11, 22`, called only the last setter and dropped the
   other writes. Each destination is now written, after every value and then

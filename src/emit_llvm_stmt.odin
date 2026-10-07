@@ -281,10 +281,11 @@ emit_destructure_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		if field == nil {
 			continue
 		}
-		emit_replace_place(e, s, index, addresses[index])
+		displaced := displace_place(e, s, index, addresses[index])
 		store(e, field.type, values[index], addresses[index])
 		revive_place(e, s.lhs[index])
 		finish_temporary_drop(e, guards[index])
+		drop_displaced(e, displaced)
 	}
 	emit_destructure_discards(e, plan, guards)
 }
@@ -322,9 +323,12 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		return
 	}
 	values := make([]string, len(s.rhs))
-	map_guards := make([]Deferred, len(s.rhs))
+	// A value waiting for its write is held for the unwind: a map insertion's
+	// while later keys are evaluated, and with several destinations each one's
+	// while an earlier write drops what it replaced.
+	guards := make([]Deferred, len(s.rhs))
 	for value, index in s.rhs {
-		map_guards[index] = Deferred{slot = -1}
+		guards[index] = Deferred{slot = -1}
 		values[index] = emit_expr(e, value)
 		if index < len(s.rhs_clones) && s.rhs_clones[index] {
 			values[index] = emit_clone_value(
@@ -332,8 +336,8 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 				emit_destination_allocator(e, place_root_symbol(s.lhs[index])),
 			)
 		}
-		if index < len(s.lhs) && inserting_map_index(s.lhs[index]) != nil {
-			map_guards[index] = hold_temporary_value(e, expr_base(s.lhs[index]).type, values[index])
+		if index < len(s.lhs) && (inserting_map_index(s.lhs[index]) != nil || (len(s.lhs) > 1 && !is_discard(s.lhs[index]))) {
+			guards[index] = hold_temporary_value(e, expr_base(s.lhs[index]).type, values[index])
 		}
 	}
 
@@ -352,7 +356,7 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	for target, index in s.lhs {
 		// `m[key] = elem` inserts rather than storing through an address.
 		if entry := inserting_map_index(target); entry != nil && index < len(values) {
-			emit_map_insert_store(e, map_destinations[index], values[index], map_guards[index])
+			emit_map_insert_store(e, map_destinations[index], values[index], guards[index])
 			continue
 		}
 		if addresses[index] == "" || index >= len(values) {
@@ -361,40 +365,69 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 			}
 			continue
 		}
-		emit_replace_place(e, s, index, addresses[index])
+		displaced := displace_place(e, s, index, addresses[index])
 		store(e, expr_base(target).type, values[index], addresses[index])
 		revive_place(e, target)
+		finish_temporary_drop(e, guards[index])
+		drop_displaced(e, displaced)
 	}
 }
 
-// Drops the destination's old value before a write, as its state requires,
-// and marks a flagged local live again.
+// A destination's old value, moved aside by a write; `live` is the `i1` saying
+// whether there was one, or "" when the checker knows there was.
 @(private = "file")
-emit_replace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: string) {
+Displaced :: struct {
+	type:  Type_Id,
+	aside: string,
+	live:  string,
+}
+
+// design.md "What the unwind runs, and what it does not": the old value is
+// moved aside, the replacement stored, and only then the old value dropped.
+// The destination's cleanup owns the replacement before the drop hook runs, so
+// a panicking hook unwinds through the replacement once and never replays the
+// old value. Marks a flagged local live again.
+@(private = "file")
+displace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: string) -> Displaced {
 	target := s.lhs[index]
 	type := expr_base(target).type
 	if !emit_lifecycle(e, type).managed {
-		return
+		return {}
 	}
 	flag := ""
 	if ident, is_ident := target.(^Expr_Ident); is_ident {
 		flag = drop_flag_of(e, ident.symbol)
 	}
+	out := Displaced{type = type}
 	state := index < len(s.destination_live) ? s.destination_live[index] : Liveness.Live
-	if state == .Live || (state != .Dead && flag == "") {
-		emit_drop_place(e, type, address)
-	} else if state != .Dead {
-		live := load(e, "i1", flag)
-		run, skip := new_label(e, "replace.drop"), new_label(e, "replace.done")
-		branch_if(e, live, run, skip)
-		place_label(e, run)
-		emit_drop_place(e, type, address)
-		branch(e, skip)
-		place_label(e, skip)
+	if state != .Dead {
+		if state != .Live && flag != "" {
+			out.live = load(e, "i1", flag)
+		}
+		out.aside = alloca(e, llvm_type(e, type))
+		copy_bytes(e, out.aside, address, type_size(e.c, type))
 	}
 	if flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
 	}
+	return out
+}
+
+@(private = "file")
+drop_displaced :: proc(e: ^Emitter, displaced: Displaced) {
+	if displaced.aside == "" {
+		return
+	}
+	if displaced.live == "" {
+		emit_drop_place(e, displaced.type, displaced.aside)
+		return
+	}
+	run, skip := new_label(e, "replace.drop"), new_label(e, "replace.done")
+	branch_if(e, displaced.live, run, skip)
+	place_label(e, run)
+	emit_drop_place(e, displaced.type, displaced.aside)
+	branch(e, skip)
+	place_label(e, skip)
 }
 
 // The destination is evaluated once, before the right operand.
@@ -412,10 +445,12 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		// The binary operator, then a replacing write.
 		address := emit_address(e, target)
 		value := emit_operator_call(e, s.operator, operands[:], left_place = address)
+		displaced: Displaced
 		if !operator_consumes_left(e, s.operator) {
-			emit_replace_place(e, s, 0, address)
+			displaced = displace_place(e, s, 0, address)
 		}
 		store(e, type, value, address)
+		drop_displaced(e, displaced)
 		return
 	}
 	// design.md: the destination is read after the right operand.

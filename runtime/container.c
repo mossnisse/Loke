@@ -421,31 +421,34 @@ void loke_rt_v1_dyn_remove(
 	}
 }
 
-void loke_rt_v1_dyn_clear(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops) {
-	int64_t i;
-	if (ops->elem_drop != 0) {
-		for (i = 0; i < self->len; i += 1) {
-			ops->elem_drop(dyn_at(self, ops, i));
-		}
+/* design.md "Uninitialized capacity": a container shortens before it drops what
+ * it took, last element first, so a drop hook that panics leaves the length
+ * counting exactly the elements still owed a drop, and the unwind drops each
+ * of them once. */
+static void dyn_truncate(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len) {
+	if (ops->elem_drop == 0) {
+		self->len = new_len;
+		return;
 	}
-	self->len = 0;
+	while (self->len > new_len) {
+		self->len -= 1;
+		ops->elem_drop(dyn_at(self, ops, self->len));
+	}
+}
+
+void loke_rt_v1_dyn_clear(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops) {
+	dyn_truncate(self, ops, 0);
 }
 
 int32_t loke_rt_v1_dyn_resize(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len) {
 	uint64_t bytes;
-	int64_t i;
 
 	if (new_len < 0) {
 		loke_rt_v1_container_fault("a container length cannot be negative");
 	}
 	if (new_len < self->len) {
-		if (ops->elem_drop != 0) {
-			for (i = new_len; i < self->len; i += 1) {
-				ops->elem_drop(dyn_at(self, ops, i));
-			}
-		}
-		self->len = new_len;
+		dyn_truncate(self, ops, new_len);
 		return 1;
 	}
 	if (new_len == self->len) {
@@ -961,6 +964,12 @@ void loke_rt_v1_map_clear(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *
 		if (controls[slot] != LOKE_RT_MAP_OCCUPIED) {
 			continue;
 		}
+		/* Removed before its hooks run, as `dyn_truncate` does, so a panicking
+		 * hook leaves only the entries still owed a drop for the unwind. */
+		controls[slot] = LOKE_RT_MAP_TOMBSTONE;
+		t->occupied -= 1;
+		t->tombstones += 1;
+		self->len -= 1;
 		if (ops->key_drop != 0) {
 			ops->key_drop(map_key_at(t, ops, slot));
 		}

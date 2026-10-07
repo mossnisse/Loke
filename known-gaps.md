@@ -64,11 +64,11 @@ main :: proc() {
 `core:fmt`'s `format_any` keeps the recovered view in a local for this reason,
 so printing still counts a `format` method's writes.
 
-### Assignment repeats a panicking drop hook
+### A container's whole drop leaks the elements after a panicking hook
 
 [design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not).
 
-With `-panic=unwind`, this prints `drop 2` twice and aborts with `panic while unwinding a panic`, skipping the older owner and replacement. The first panic happens during ordinary assignment; the second is caused by replaying its destination's still-registered cleanup. `src/emit_llvm_stmt.odin` must retire the old cleanup before calling the old drop and guard the already constructed replacement. The existing map replacement and explicit-drop paths provide ownership-transfer patterns.
+This prints `drop 1`, `drop 2`, then `outer cleanup`, and never `drop 3`. The array's cleanup is unregistered before `loke_rt_v1_dyn_drop` runs, as every cleanup is, so when element 2's hook panics nothing owes element 3 its drop. `clear` and a shrinking `resize` already shorten before each drop (`dyn_truncate` in `runtime/container.c`); a whole drop could do the same and stay registered until it finishes, and `loke_rt_v1_map_drop` likewise. `loke_rt_v1_map_remove` drops the key after copying the value out, so a panicking key hook leaves the copied value unowned.
 
 ```odin
 package main;
@@ -77,58 +77,12 @@ Tracked :: struct { id: int }
 impl Tracked {
     release :: hook(drop) proc(self: inout Tracked) {
         fmt.println("drop", self.id);
-        if (self.id == 2) { panic("replacement drop failed"); }
-    }
-}
-main :: proc() {
-    first := Tracked{1};
-    second := Tracked{2};
-    second = Tracked{3};
-}
-```
-
-### Dynamic array clear repeats completed drops during unwinding
-
-[design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not).
-
-With `-panic=unwind`, this prints `drop 1`, `drop 2`, `drop 1`, `drop 2`, then aborts with a double panic. Element 3 and the outer defer are skipped. `runtime/container.c` calls each hook while the array still reports the original live length. Retire each element before its hook runs and preserve cleanup of the remaining initialized elements. Similar map clear/remove and native drop callbacks need the same progress review; only dynamic clear is reproduced here.
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: struct { id: int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) {
-        fmt.println("drop", self.id);
-        if (self.id == 2) { panic("clear drop failed"); }
+        if (self.id == 2) { panic("drop failed"); }
     }
 }
 main :: proc() {
     defer fmt.println("outer cleanup");
     values := [dynamic]Tracked{Tracked{1}, Tracked{2}, Tracked{3}};
-    values.clear();
-}
-```
-
-### Partially constructed record literals omit completed field cleanup
-
-[design.md "What the unwind runs, and what it does not"](design.md#what-the-unwind-runs-and-what-it-does-not).
-
-With `-panic=unwind`, this prints `drop 9` and `outer cleanup` but never `drop 1`. `src/emit_llvm_expr.odin` stores the first owning field without a cleanup guard before evaluating the next field. Register completed literal parts until ownership transfers to the finished value, as the dynamic/map literal paths already do. Fixed-array and slice literal paths have the same missing-guard pattern but were not separately executed.
-
-```odin
-package main;
-import "core:fmt";
-Tracked :: struct { id: int }
-impl Tracked {
-    release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
-}
-Pair :: struct { resource: Tracked, number: int }
-fail :: proc() -> int { panic("later field failed"); return 0; }
-main :: proc() {
-    defer fmt.println("outer cleanup");
-    older := Tracked{9};
-    incomplete := Pair{Tracked{1}, fail()};
 }
 ```
 

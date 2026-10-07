@@ -1185,6 +1185,8 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 	info := type_of(e.c, backing)
 	root := alloca(e, llvm_type(e, backing))
 
+	// Each element is the unwind's to drop until the scope owns the array.
+	guards := make([]Deferred, len(v.elements))
 	for element, index in v.elements {
 		slot := temp(e)
 		fmt.sbprintfln(
@@ -1197,6 +1199,10 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 			value = emit_clone_value(e, info.element, value)
 		}
 		store(e, info.element, value, slot)
+		guards[index] = guard_built_element(e, info.element, slot)
+	}
+	for guard in guards {
+		finish_temporary_drop(e, guard)
 	}
 	register_scope_place(e, backing, root)
 	return emit_slice_value(e, as_type, root, fmt.aprintf("%d", len(v.elements)))
@@ -1221,6 +1227,11 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 		emit_map_literal_into(e, v, address, info.key, info.element, as_type)
 		return
 	}
+	// design.md "What the unwind runs, and what it does not": a part is the
+	// unwind's to drop from when it is stored until the literal is complete, so
+	// a later element that panics releases exactly the parts already built.
+	guards := make([dynamic]Deferred)
+	defer delete(guards)
 	for element, index in v.elements {
 		slot := index
 		element_type := info.element
@@ -1251,7 +1262,15 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 			field_address := gep_field(e, llvm_type(e, as_type), address, target)
 			record_field_align(e, as_type, address, field_address, element_type)
 			store(e, element_type, stored, field_address)
+			if info.kind == .Struct {
+				append(&guards, guard_record_part(e, as_type, address, target))
+			} else {
+				append(&guards, guard_built_element(e, element_type, field_address))
+			}
 		}
+	}
+	for guard in guards {
+		finish_temporary_drop(e, guard)
 	}
 }
 

@@ -1,0 +1,24 @@
+package main;
+
+import "core:fmt";
+
+// design.md "What the unwind runs, and what it does not": a partially built
+// literal releases the parts whose construction completed, here the record's
+// first field, before the older local.
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+
+Pair :: struct { resource: Tracked, number: int }
+
+fail :: proc() -> int {
+	panic("later field failed");
+	return 0;
+}
+
+main :: proc() {
+	defer fmt.println("outer cleanup");
+	older := Tracked{9};
+	incomplete := Pair{Tracked{1}, fail()};
+}
