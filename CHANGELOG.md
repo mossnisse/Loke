@@ -584,6 +584,11 @@ checklist.
 
 ### Fixed
 
+- `perf.ps1` refuses a `-Repeat` below 1, which PowerShell's inclusive
+  ranges turned into extra runs, and removes its temporary directory when a
+  build, run, or output check fails.
+- The test harness counts `lokec.exe` stale after an edit to `src/subprocess`
+  too, not only to `src/*.odin`.
 - `lokec -fmt` and `-fmt-check` on a directory list its files instead of
   matching a pattern built from its name, so a directory named like `fmt[one]`
   is no longer reported clean while holding unformatted files.

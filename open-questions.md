@@ -495,29 +495,8 @@ borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements)
 The [complete per-file review](source-review-2026-10-07.md) covers 168 implementation,
 library, example, benchmark, script, CI, and test-harness files. Small corpus
 fixtures were outside the agreed scope. The four earlier items fixed in
-`1a8aa53` remain closed. Confirmed language/API divergences are registered in
-[Known gaps](known-gaps.md#gaps); the following tooling and structural work
-remains open.
-
-### Compiler and harness resource handling
-
-- **Compiler freshness (T04, source-confirmed):**
-  `tests/corpus_test.odin`'s `compiler_binary_is_current` scans only
-  `src/*.odin`. It misses the compiled-in `src/subprocess/*.odin` dependency,
-  so editing that helper can leave integration tests exercising stale code.
-  Include this known subpackage in the existing scan.
-
-### Performance script validation and cleanup
-
-`perf.ps1` accepts `-Repeat 0` and negative counts (T05). PowerShell's inclusive
-ranges make `1..0` two runs and `1..-2` four. Add a positive `ValidateRange`
-to the parameter. This is confirmed by the range expression, without running
-the benchmark suite.
-
-The measurement loop throws on build, execution, or expected-output failures,
-bypassing the final temporary-directory removal (T06). Wrap that work in
-`try/finally`, removing only its verified `loke-perf-$PID` directory. This is a
-source-confirmed cleanup gap; no failing full benchmark run was performed.
+`1a8aa53` remain closed. The confirmed language, library, and tooling findings
+are fixed or settled by the spec; the candidates below remain open.
 
 ### Candidates still needing evidence
 

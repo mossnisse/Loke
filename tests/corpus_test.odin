@@ -141,15 +141,83 @@ compiler_binary_is_current :: proc(t: ^testing.T) {
 	if !testing.expectf(t, compiler_err == nil, "cannot stat %s; build it or set LOKEC=<path>", compiler) {
 		return
 	}
-	sources, _ := filepath.glob("src/*.odin", context.temp_allocator)
 	compiler_time := time.time_to_unix_nano(compiler_info.modification_time)
-	for source in sources {
+	for source in compiler_sources() {
 		info, err := os.stat(source, context.temp_allocator)
 		if err == nil && time.time_to_unix_nano(info.modification_time) > compiler_time {
 			testing.expectf(t, false, "%s is older than %s; rebuild it or set LOKEC=<path>", compiler, source)
 			return
 		}
 	}
+}
+
+// Every Odin file under `src`, its subpackages included: `lokec` compiles in
+// `src/subprocess`, so an edit there makes the binary stale too.
+@(private)
+compiler_sources :: proc() -> []string {
+	sources := make([dynamic]string, context.temp_allocator)
+	collect_odin_files("src", &sources)
+	return sources[:]
+}
+
+@(private)
+collect_odin_files :: proc(dir: string, into: ^[dynamic]string) {
+	entries, _ := os2.read_all_directory_by_path(dir, context.temp_allocator)
+	for entry in entries {
+		path := fmt.tprintf("%s/%s", dir, entry.name)
+		if entry.type == .Directory {
+			collect_odin_files(path, into)
+		} else if filepath.ext(entry.name) == ".odin" {
+			append(into, path)
+		}
+	}
+}
+
+@(test)
+compiler_sources_include_subpackages :: proc(t: ^testing.T) {
+	testing.expect(
+		t, slice.contains(compiler_sources(), "src/subprocess/subprocess.odin"),
+		"the freshness check does not see src/subprocess",
+	)
+}
+
+// `perf.ps1` refuses a repeat count below one, which PowerShell's inclusive
+// `1..$Repeat` would turn into extra runs, and a failed measurement still
+// removes its `loke-perf-<pid>` work directory.
+@(test)
+perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
+	refused, _, refused_stderr, refused_err := exec(
+		os2.Process_Desc{command = []string{"powershell", "-NoProfile", "-File", "perf.ps1", "-Repeat", "0"}},
+		context.allocator,
+	)
+	if !testing.expectf(t, refused_err == nil, "cannot run powershell: %v", refused_err) {
+		return
+	}
+	testing.expectf(
+		t, refused.exit_code != 0 && strings.contains(string(refused_stderr), "Repeat"),
+		"perf.ps1 accepted -Repeat 0:\n%s", string(refused_stderr),
+	)
+
+	// A compiler that always fails stops the first measurement.
+	os.make_directory(TMP)
+	source := fmt.tprintf("%s/perf-failing-compiler.loke", TMP)
+	os.write_entire_file(source, transmute([]u8)string("package main;\nimport \"core:os\";\nmain :: proc() { os.exit(1); }\n"))
+	failing := fmt.tprintf("%s/perf-failing-compiler.exe", TMP)
+	built, _, build_stderr, build_err := exec(
+		os2.Process_Desc{command = []string{compiler_path(), source, "-o", failing}}, context.allocator,
+	)
+	if !testing.expectf(t, build_err == nil && built.exit_code == 0, "cannot build the failing compiler:\n%s", string(build_stderr)) {
+		return
+	}
+	failed, _, _, failed_err := exec(
+		os2.Process_Desc{command = []string{"powershell", "-NoProfile", "-File", "perf.ps1", "-Lokec", failing}},
+		context.allocator,
+	)
+	testing.expectf(t, failed_err == nil && failed.exit_code != 0, "perf.ps1 succeeded with a failing compiler")
+	temp, _ := os2.temp_directory(context.temp_allocator)
+	work := filepath.join({temp, fmt.tprintf("loke-perf-%d", failed.pid)}, context.temp_allocator)
+	testing.expectf(t, !os.exists(work), "the failed run left %s behind", work)
+	os2.remove_all(work)
 }
 
 @(test)

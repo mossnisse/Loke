@@ -6,7 +6,9 @@ param(
     [string]$Out,
     # An earlier record: each figure is shown with its change from it.
     [string]$Baseline,
-    # Timings are the fastest of this many runs.
+    # Timings are the fastest of this many runs. `1..0` would be two runs, so
+    # fewer than one is refused.
+    [ValidateRange(1, 2147483647)]
     [int]$Repeat = 3
 )
 
@@ -25,7 +27,6 @@ $ErrorActionPreference = 'Stop'
 if (-not $Lokec) { $Lokec = "$PSScriptRoot/lokec.exe" }
 $Lokec = (Resolve-Path $Lokec).Path
 $work = Join-Path ([IO.Path]::GetTempPath()) "loke-perf-$PID"
-New-Item -ItemType Directory $work -Force | Out-Null
 
 # A process's peak working set is readable after it exits, through the handle
 # .NET keeps open, but Process.PeakWorkingSet64 is not.
@@ -85,31 +86,38 @@ function Get-Fastest([string]$exe, [string[]]$arguments, [string]$what) {
     $runs | Sort-Object Ms | Select-Object -First 1
 }
 
-$programs = @(Get-ChildItem "$PSScriptRoot/examples/*.loke") + @(Get-ChildItem "$PSScriptRoot/bench/*.loke")
-$records = foreach ($source in $programs) {
-    $name = "$($source.Directory.Name)/$($source.Name)"
-    Write-Host "Measuring $name"
-    $check = Get-Fastest $Lokec @('-emit-ll', $source.FullName, '-o', "$work/out.ll") "lokec -emit-ll $name"
-    $exe = "$work/$($source.BaseName).exe"
-    $build = Get-Fastest $Lokec @('-opt=speed', $source.FullName, '-o', $exe) "lokec -opt=speed $name"
-    $record = [ordered]@{
-        program  = $name
-        check_ms = [math]::Round($check.Ms)
-        build_ms = [math]::Round($build.Ms)
-        peak_mb  = [math]::Round(($check.Peak, $build.Peak | Measure-Object -Maximum).Maximum / 1MB, 1)
-        exe_kb   = [math]::Round((Get-Item $exe).Length / 1KB)
-        run_ms   = $null
+New-Item -ItemType Directory $work -Force | Out-Null
+# A failed build, run, or output still removes the work directory, and only it.
+try {
+    $programs = @(Get-ChildItem "$PSScriptRoot/examples/*.loke") + @(Get-ChildItem "$PSScriptRoot/bench/*.loke")
+    $records = foreach ($source in $programs) {
+        $name = "$($source.Directory.Name)/$($source.Name)"
+        Write-Host "Measuring $name"
+        $check = Get-Fastest $Lokec @('-emit-ll', $source.FullName, '-o', "$work/out.ll") "lokec -emit-ll $name"
+        $exe = "$work/$($source.BaseName).exe"
+        $build = Get-Fastest $Lokec @('-opt=speed', $source.FullName, '-o', $exe) "lokec -opt=speed $name"
+        $record = [ordered]@{
+            program  = $name
+            check_ms = [math]::Round($check.Ms)
+            build_ms = [math]::Round($build.Ms)
+            peak_mb  = [math]::Round(($check.Peak, $build.Peak | Measure-Object -Maximum).Maximum / 1MB, 1)
+            exe_kb   = [math]::Round((Get-Item $exe).Length / 1KB)
+            run_ms   = $null
+        }
+        if ($source.Directory.Name -eq 'bench') {
+            $run = Get-Fastest $exe @() $name
+            $expected = (Get-Content -Raw ($source.FullName -replace '\.loke$', '.expected')) -replace "`r`n", "`n"
+            $actual = $run.Stdout -replace "`r`n", "`n"
+            if ($actual -ne $expected) { throw "$name printed`n$actual`nbut bench expects`n$expected" }
+            $record.run_ms = [math]::Round($run.Ms)
+        }
+        [pscustomobject]$record
     }
-    if ($source.Directory.Name -eq 'bench') {
-        $run = Get-Fastest $exe @() $name
-        $expected = (Get-Content -Raw ($source.FullName -replace '\.loke$', '.expected')) -replace "`r`n", "`n"
-        $actual = $run.Stdout -replace "`r`n", "`n"
-        if ($actual -ne $expected) { throw "$name printed`n$actual`nbut bench expects`n$expected" }
-        $record.run_ms = [math]::Round($run.Ms)
+} finally {
+    if ((Split-Path -Leaf $work) -eq "loke-perf-$PID" -and (Test-Path -LiteralPath $work)) {
+        Remove-Item -LiteralPath $work -Recurse -Force
     }
-    [pscustomobject]$record
 }
-Remove-Item $work -Recurse -Force
 
 if ($Out) { ConvertTo-Json @($records) | Set-Content -Encoding utf8 $Out }
 
