@@ -44,53 +44,6 @@ View_Key :: struct {
 	kind:   View_Kind,
 }
 
-// A procedure the compiler contributes: a real symbol whose body the backend
-// writes by shape.
-Synth_Kind :: enum {
-	None,
-	Adapter_View,
-	Adapter_Iter,
-	Indexed_Next,
-	Copied_Next,
-	Iterator_Copy,
-	// Receiver forms of the built-in `len`, `cap` and `hash`.
-	Standard_Len,
-	Standard_Cap,
-	Standard_Hash,
-	Standard_Format,
-	Range_Iter,
-	Range_Iter_Reverse,
-	Range_Next,
-	Array_Iter,
-	Array_Iter_Reverse,
-	Array_Next,
-	Slice_Next,
-	Slice_Mut_Next,
-	Slice_Ref_Next,
-	// Builds a slice's `{ data, index }`, so `next` is the slice one.
-	Dynamic_Iter,
-	Dynamic_Iter_Reverse,
-	Map_Iter,
-	Map_Next,
-	Map_Keys_Next,
-	Map_Values_Next,
-	Map_View_Iter,
-	// Serves `string`, `string_view` and the rune-offset view alike.
-	Text_Iter,
-	Text_Next,
-	Rune_Offsets_Next,
-	Try_Clone,
-	Clone,
-	Dyn_Forward,
-	// Which operation is `Symbol.container_op`.
-	Container_Op,
-	// Which operation is `Symbol.provider_op`.
-	Provider_Op,
-	// `U.name` of a payload variant used as a value: the owner type is the
-	// union and the symbol's name the variant.
-	Variant_Construct,
-}
-
 // ---------------------------------------------------------- range values --
 
 range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
@@ -465,74 +418,6 @@ iter_member :: proc(c: ^Compiler, name: string, kind: Synth_Kind, owner, iterato
 	}
 	set_synth_result_summary(c, id, 0)
 	return id
-}
-
-// Appends to a type's members.
-add_members :: proc(c: ^Compiler, type: Type_Id, added: []Symbol_Id) {
-	info := type_of(c, type)
-	if info == nil || len(added) == 0 {
-		return
-	}
-	merged := make([]Symbol_Id, len(info.members) + len(added), c.semantic_allocator)
-	copy(merged, info.members)
-	copy(merged[len(info.members):], added)
-	info.members = merged
-}
-
-new_associated_type :: proc(c: ^Compiler, name: string, value, owner: Type_Id) -> Symbol_Id {
-	return new_symbol(c, Symbol {
-		name        = intern_identifier(c, name),
-		span        = no_span(),
-		kind        = .Const,
-		type        = TYPE_TYPE,
-		const_value = type_const(value),
-		owner_type  = owner,
-		public      = true,
-	})
-}
-
-synth_proc :: proc(
-	c: ^Compiler,
-	name: string,
-	kind: Synth_Kind,
-	owner: Type_Id,
-	params: []Type_Id,
-	modes: []Param_Mode,
-	result: Type_Id,
-	enroll := true,
-) -> Symbol_Id {
-	param_copy := make([]Type_Id, len(params), c.semantic_allocator)
-	copy(param_copy, params)
-	id := new_symbol(c, Symbol {
-		name          = intern_identifier(c, name),
-		span          = no_span(),
-		kind          = .Proc,
-		public        = true,
-		owner_type    = owner,
-		params        = param_copy,
-		result        = result,
-		param_symbols = make([]Symbol_Id, len(params), c.semantic_allocator),
-		param_defaults = make([]Expr, len(params), c.semantic_allocator),
-		proc_type     = intern_proc_type(c, param_copy, modes, result, false, ""),
-		synth         = kind,
-	})
-	if enroll { enroll_synth(c, id) }
-	return id
-}
-
-// A synthesized member stays on its type once created, but only a use that
-// commits it is emitted (compiler-architecture.md "Checking and overload
-// resolution"), so a use that finds one a probe created enrolls it here, along
-// with what its emitted body calls.
-enroll_synth :: proc(c: ^Compiler, id: Symbol_Id) {
-	sym := symbol_of(c, id)
-	if !committing(c) || sym == nil || sym.synth == .None || sym.synth_enrolled {
-		return
-	}
-	sym.synth_enrolled = true
-	append(&c.synth_procs, id)
-	// An adapter's body calls the member it adapts.
-	enroll_synth(c, sym.iteration_target)
 }
 
 iteration_proc_matches :: proc(

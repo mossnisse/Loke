@@ -63,8 +63,7 @@ and [Performance script validation and cleanup](open-questions.md#performance-sc
 
 ## Simplification and structure
 
-Six specific proposals are registered in
-[Small simplifications using existing code](open-questions.md#small-simplifications-using-existing-code):
+Six specific proposals, all since applied without a behavior change:
 
 - S01: moved append delegates to the existing moved insertion.
 - S02: delegated operators reuse the existing member append helper.

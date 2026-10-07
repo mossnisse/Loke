@@ -3,6 +3,7 @@
 // arbitrary-precision integer half.
 package lokec
 
+import "core:math"
 import "core:mem"
 import "core:strings"
 
@@ -87,11 +88,7 @@ float_bits_const :: proc(raw: u64, bits: u16) -> Const_Value {
 // powers of two, so one interval serves every float width — the value is exact
 // in any format that can hold it and an infinity in one that cannot.
 power_of_two :: proc(exponent: int) -> f64 {
-	out := f64(1)
-	for _ in 0 ..< exponent {
-		out *= 2
-	}
-	return out
+	return math.ldexp(f64(1), exponent)
 }
 
 // A typed float operation rounds to its own width after every step: folding an

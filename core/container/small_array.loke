@@ -219,9 +219,8 @@ impl Small_Array($T, $N) {
 	}
 
 	append_moved :: proc(self: inout, @(escape=stored) value: move T) {
-		if (self.count == N) { panic("Small_Array is full"); }
-		unsafe.write(self.items[self.count], move(value));
-		self.count += 1;
+		index := self.count;
+		self.insert_moved(index, move(value));
 	}
 
 	insert_moved :: proc(

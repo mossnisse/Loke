@@ -590,12 +590,7 @@ install_delegated_operator :: proc(
 		delegate_underlying = underlying,
 		delegate_target = target,
 	})
-	if info := type_of(k.c, subject); info != nil {
-		merged := make([]Symbol_Id, len(info.members) + 1, k.c.semantic_allocator)
-		copy(merged, info.members)
-		merged[len(info.members)] = id
-		info.members = merged
-	}
+	add_members(k.c, subject, {id})
 }
 
 // The binary operator a compound assignment applies, or `.EOF` when the kind

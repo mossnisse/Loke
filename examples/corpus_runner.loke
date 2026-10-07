@@ -41,30 +41,32 @@ main :: proc() {
 		usage();
 	}
 	compiler, corpus, scratch := os.args[1], os.args[2], os.args[3];
-	cases: [dynamic]string = {};
+	listed: [dynamic]string = {};
 	switch (sources(corpus)) {
-	case .ok(listed):  cases = move(listed);
-	case .err(listed):
-		fmt.eprintln("cannot read", corpus, "-", listed);
+	case .ok(found):  listed = move(found);
+	case .err(reason):
+		fmt.eprintln("cannot read", corpus, "-", reason);
 		os.exit(2);
 	}
+	// Every worker reads the same list, so each holds a handle, not a copy.
+	cases := shared(move(listed));
 	clang: Option(string) = .none;
 	if (mode == .Ir) {
 		clang = assembler(compiler);
 		if (clang == .none) { fmt.eprintln("no usable clang, so the IR is not assembled"); }
 	}
 	reasons: [dynamic]Option(string) = {};
-	reasons.resize(cases.len());
+	reasons.resize(cases.get().len());
 	board := shared(thread.Mutex(Board){value = {reasons = move(reasons)}});
 	{
 		workers: [dynamic]thread.Thread = {};
-		for (i := 0; i < thread.processor_count() && i < cases.len(); i += 1) {
+		for (i := 0; i < thread.processor_count() && i < cases.get().len(); i += 1) {
 			workers.append(thread.spawn(work, Job{compiler, corpus, scratch, cases.clone(), mode, clang, board.clone()}));
 		}
 	} // dropping a worker joins it
 	passed, failed := 0, 0;
 	guard := board.get().lock();
-	foreach (name, index in cases.indexed()) {
+	foreach (name, index in cases.get().indexed()) {
 		switch (guard.get().reasons[index]) {
 		case .none:
 			fmt.println("ok  ", name);
@@ -101,7 +103,7 @@ Board :: struct {
 // One worker's copy of the run, which a thread must own.
 Job :: struct {
 	compiler, corpus, scratch: string,
-	cases: [dynamic]string,
+	cases: shared([dynamic]string),
 	mode:  Mode,
 	// What assembles an IR case's module, when there is one.
 	clang: Option(string),
@@ -118,8 +120,8 @@ work :: proc(job: move Job) {
 			index = guard.get().next;
 			guard.get().next += 1;
 		}
-		if (index >= job.cases.len()) { return; }
-		switch (check(job.compiler, job.corpus, job.scratch, job.cases[index], job.mode, job.clang)) {
+		if (index >= job.cases.get().len()) { return; }
+		switch (check(job.compiler, job.corpus, job.scratch, job.cases.get()[index], job.mode, job.clang)) {
 		case .ok:
 		case .err(reason):
 			guard := job.board.get().lock();

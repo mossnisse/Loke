@@ -698,7 +698,7 @@ be file-private.
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
 | `formatter.odin` | `-fmt` and `-fmt-check`: whitespace-only layout over the lexer's tokens and comments, refused for a file that does not parse and checked to keep every token. |
 | `doc.odin` | `-doc`: the public API of the checked root package and each project package it imports, as Markdown, with the comments above each package clause, declaration, and struct field. |
-| `semantic.odin`, `universe.odin` | Stable IDs, symbols, types, scopes, packages, type interning, and predeclared names. |
+| `semantic.odin`, `universe.odin` | Stable IDs, symbols, types, scopes, packages, type interning, and predeclared names; compiler-contributed members (`synth_proc`, `enroll_synth`, `add_members`, associated types) for every feature that synthesizes them. |
 
 ### Checking and language features
 

@@ -1298,20 +1298,8 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 
 	// The host link: the object, the C entry, and the seed runtime sources.
 	exe := fmt.tprintf("%s/widget-host.exe", TMP)
-	command := make([dynamic]string, context.temp_allocator)
-	// `-rtlib=compiler-rt` is the same choice the compiler's own link makes: the
-	// runtime's 128-bit division helpers are not in the MSVC CRT.
-	append(&command, clang, "tests/obj/host.c", obj, "-o", exe, "-Wno-override-module", "-rtlib=compiler-rt")
-	runtime_sources, _ := filepath.glob("runtime/*.c")
-	for source in runtime_sources {
-		append(&command, source)
-	}
-	append(&command, "-I", "runtime")
-	for flag in include_flags {
-		append(&command, flag)
-	}
 	link_state, _, link_stderr, link_err := exec(
-		os2.Process_Desc{command = command[:]},
+		os2.Process_Desc{command = c_host_link_command(clang, "tests/obj/host.c", obj, exe, include_flags)},
 		context.allocator,
 	)
 	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {
@@ -1327,6 +1315,20 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 
 	selected_object_build_links_into_a_c_host(t, clang, include_flags)
 	atomics_hold_under_contention(t, clang, include_flags)
+}
+
+// A C host linked with an object build: the host's entry, the object, and the
+// seed runtime sources. `-rtlib=compiler-rt` is the same choice the compiler's
+// own link makes: the runtime's 128-bit division helpers are not in the MSVC
+// CRT.
+c_host_link_command :: proc(clang, host, obj, exe: string, include_flags: []string) -> []string {
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, clang, host, obj, "-o", exe, "-Wno-override-module", "-rtlib=compiler-rt")
+	runtime_sources, _ := filepath.glob("runtime/*.c", context.temp_allocator)
+	append(&command, ..runtime_sources)
+	append(&command, "-I", "runtime")
+	append(&command, ..include_flags)
+	return command[:]
 }
 
 // design.md "Concurrency and the memory model": the atomic
@@ -1356,18 +1358,8 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 	}
 
 	exe := fmt.tprintf("%s/conc-host.exe", TMP)
-	command := make([dynamic]string, context.temp_allocator)
-	append(&command, clang, "tests/obj/concurrent_host.c", obj, "-o", exe, "-Wno-override-module", "-rtlib=compiler-rt")
-	runtime_sources, _ := filepath.glob("runtime/*.c")
-	for source in runtime_sources {
-		append(&command, source)
-	}
-	append(&command, "-I", "runtime")
-	for flag in include_flags {
-		append(&command, flag)
-	}
 	link_state, _, link_stderr, link_err := exec(
-		os2.Process_Desc{command = command[:]},
+		os2.Process_Desc{command = c_host_link_command(clang, "tests/obj/concurrent_host.c", obj, exe, include_flags)},
 		context.allocator,
 	)
 	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {
@@ -1470,18 +1462,8 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 	}
 
 	exe := fmt.tprintf("%s/provider-host.exe", TMP)
-	command := make([dynamic]string, context.temp_allocator)
-	append(&command, clang, "tests/obj/provider_host.c", obj, "-o", exe, "-Wno-override-module", "-rtlib=compiler-rt")
-	runtime_sources, _ := filepath.glob("runtime/*.c")
-	for source in runtime_sources {
-		append(&command, source)
-	}
-	append(&command, "-I", "runtime")
-	for flag in include_flags {
-		append(&command, flag)
-	}
 	link_state, _, link_stderr, link_err := exec(
-		os2.Process_Desc{command = command[:]},
+		os2.Process_Desc{command = c_host_link_command(clang, "tests/obj/provider_host.c", obj, exe, include_flags)},
 		context.allocator,
 	)
 	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {

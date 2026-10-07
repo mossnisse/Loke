@@ -538,20 +538,6 @@ bypassing the final temporary-directory removal (T06). Wrap that work in
 `try/finally`, removing only its verified `loke-perf-$PID` directory. This is a
 source-confirmed cleanup gap; no failing full benchmark run was performed.
 
-### Small simplifications using existing code
-
-| ID | Location | Concrete change |
-| --- | --- | --- |
-| S01 | `core/container/small_array.loke`, `append_moved` | Delegate to `insert_moved(self.count, move(value))`, as copied append already delegates to copied insertion. Preserve required public diagnostics. |
-| S02 | `src/operators.odin`, `install_delegated_operator` | Replace the manual member-slice allocation and copy with existing `add_members`. |
-| S03 | `src/const_ops.odin`, `power_of_two` | Use `math.ldexp(1, exponent)`, already used by `bigint.odin`; callers supply nonnegative integer bit widths. |
-| S04 | `src/iterate.odin`, `Synth_Kind` and general symbol helpers | Move `add_members`, `new_associated_type`, `synth_proc`, `enroll_synth`, and their general enum to `semantic.odin`. Their container, hook, union, format, and region callers belong to general semantic construction. Update the architecture responsibility table with the move. |
-| S05 | `tests/corpus_test.odin`, three C-host link tests | Append common runtime C sources, include paths, runtime-library choice, and toolchain flags through one helper. Keep each test's host and output setup local. |
-| S06 | `examples/corpus_runner.loke`, `Job.cases` and worker startup | Move the immutable case list into one `shared([dynamic]string)` and clone handles for workers. This removes one complete array clone and string-retain traversal per worker while preserving cross-thread ownership. |
-
-These proposals require no new dependency or general framework. They were
-reviewed against their callers; no refactor was applied.
-
 ### Candidates still needing evidence
 
 These are investigation notes, not additional confirmed spec gaps.
