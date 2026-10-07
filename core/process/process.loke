@@ -124,8 +124,8 @@ spawn :: proc(command: Command) -> Result(Child, io.Error) {
 	if (strings.contains(command.program, "\"") || strings.contains(command.program, "\x00")) {
 		return .err(io.make_error(.Invalid_Data, .Spawn));
 	}
-	switch (variables in command.environment) {
-	case .some:
+	switch (command.environment) {
+	case .some(variables):
 		validate_environment(variables) or_return;
 	case .none:
 	}
@@ -168,9 +168,9 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 	collected := shared(thread.Mutex(Collected){value = .ok({})});
 	result: Output = {};
 	reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), collected.clone()});
-	switch (bytes in io.read_to_end(inout child.stdout)) {
-	case .ok:  result.stdout = move(bytes);
-	case .err:
+	switch (io.read_to_end(inout child.stdout)) {
+	case .ok(bytes):  result.stdout = move(bytes);
+	case .err(bytes):
 		// The child may be blocked writing stdout, and then never closes
 		// stderr, so it is ended before the stderr reader is joined.
 		_ = child.kill();
@@ -180,9 +180,9 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 	reader.join();
 	{
 		guard := collected.get().lock();
-		switch (bytes in exchange(inout guard.get(), .ok({}))) {
-		case .ok:  result.stderr = move(bytes);
-		case .err:
+		switch (exchange(inout guard.get(), .ok({}))) {
+		case .ok(bytes):  result.stderr = move(bytes);
+		case .err(bytes):
 			_ = child.kill();
 			return .err(bytes);
 		}
@@ -251,8 +251,8 @@ find_program :: proc(program: string_view) -> Result(string, io.Error) {
 		return .ok(strings.copy(program));
 	}
 	directories := "";
-	switch (found in os.get_environment("PATH")) {
-	case .ok:
+	switch (os.get_environment("PATH")) {
+	case .ok(found):
 		directories = found or_else "";
 	case .err:
 	}
@@ -457,8 +457,8 @@ spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io
 	}
 	environment: [dynamic]u16 = {};
 	flags := u32(EXTENDED_STARTUPINFO_PRESENT);
-	switch (variables in command.environment) {
-	case .some:
+	switch (command.environment) {
+	case .some(variables):
 		environment = environment_block(variables) or_return;
 		flags |= u32(CREATE_UNICODE_ENVIRONMENT);
 	case .none:
@@ -470,11 +470,11 @@ spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io
 	defer close_all(handles);
 	modes := [3]Stdio{command.stdin, command.stdout, command.stderr};
 	foreach (mode, index in modes[:].indexed()) {
-		switch (opened in standard_handle(mode, index)) {
-		case .ok:
+		switch (standard_handle(mode, index)) {
+		case .ok(opened):
 			handles.child[index] = opened[0];
 			handles.parent[index] = opened[1];
-		case .err: return .err(opened);
+		case .err(opened): return .err(opened);
 		}
 	}
 
@@ -630,8 +630,8 @@ kill_native :: proc(handle: Handle) -> Result(Unit, io.Error) {
 
 @(private)
 is_file :: proc(path: string_view) -> bool {
-	switch (units in utf16.encode(path, mem.default_allocator())) {
-	case .ok:
+	switch (utf16.encode(path, mem.default_allocator())) {
+	case .ok(units):
 		attributes := rt_file_attributes(unsafe.raw_data(units));
 		return attributes != INVALID_FILE_ATTRIBUTES && (attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) == 0;
 	case .err:
@@ -681,10 +681,10 @@ write_native :: proc(handle: Handle, source: []u8) -> Result(int, io.Error) {
 // `Invalid_Data`.
 @(private)
 wide :: proc(text: string_view) -> Result([dynamic]u16, io.Error) {
-	switch (units in utf16.encode(text, mem.default_allocator())) {
-	case .ok:
+	switch (utf16.encode(text, mem.default_allocator())) {
+	case .ok(units):
 		return .ok(move(units));
-	case .err:
+	case .err(units):
 		code := io.Code.Invalid_Data if units == .Contains_Zero else io.Code.Out_Of_Memory;
 		return .err(io.make_error(code, .Spawn));
 	}

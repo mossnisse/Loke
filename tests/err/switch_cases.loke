@@ -27,10 +27,21 @@ open :: proc(n: int) {
 	}
 }
 
-membership :: proc(counts: map[string]int, key: string) {
-	switch (key in counts) {
-	case true:
-	case:
+// The removed header binding `switch (name in subject)` is reported once.
+Shape :: union { circle: f64, empty }
+
+header_binding :: proc(shape: Shape) {
+	switch (radius in shape) {
+	case .circle: fmt.println(radius);
+	case .empty:
+	}
+}
+
+// An `any_view` lends read-only, so its case binding cannot be `&mut`.
+erased_mut :: proc(value: any_view) {
+	switch (value) {
+	case int(&mut n): fmt.println(n);
+	default:
 	}
 }
 
@@ -38,5 +49,6 @@ main :: proc() {
 	partial(Colour.Red);
 	duplicated(1);
 	open(1);
-	membership(map[string]int{}, "a");
+	header_binding(.empty);
+	erased_mut(1);
 }

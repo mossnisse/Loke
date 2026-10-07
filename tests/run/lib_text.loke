@@ -16,8 +16,8 @@ foreign libc {
 
 main :: proc() {
 	// An owned zero-terminated buffer, handed to a C routine that measures it.
-	switch (owned in cstrings.from_string("hej, värld")) {
-	case .ok:
+	switch (cstrings.from_string("hej, värld")) {
+	case .ok(owned):
 		fmt.println(true);
 		fmt.println(owned.len());
 		fmt.println(strlen(owned.view()));
@@ -32,8 +32,8 @@ main :: proc() {
 	}
 
 	// The empty case still produces a usable, terminated view.
-	switch (empty in cstrings.from_string("")) {
-	case .ok:
+	switch (cstrings.from_string("")) {
+	case .ok(empty):
 		fmt.println(true);
 		fmt.println(empty.len());
 		fmt.println(strlen(empty.view()));
@@ -48,21 +48,21 @@ main :: proc() {
 	text := string.from_utf8(with_zero[:]) or_else panic("the test produced invalid UTF-8");
 	fmt.println(true);
 	fmt.println(text.len());
-	switch (rejected in cstrings.from_string(text)) {
+	switch (cstrings.from_string(text)) {
 	case .ok:
 		fmt.println(false);
 		fmt.println(false);
 		fmt.println(-1);
-	case .err:
+	case .err(rejected):
 		fmt.println(true);
 		// The error is the enum itself now, not an erased value to extract.
 		fmt.println(true);
 		fmt.println(int(rejected));
 	}
 	// Nor may zero-terminated UTF-16.
-	switch (rejected in utf16.encode(text)) {
+	switch (utf16.encode(text)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(rejected == .Contains_Zero);
+	case .err(rejected): fmt.println(rejected == .Contains_Zero);
 	}
 
 	// The zero value of `C_String` is an empty, terminated buffer too.
@@ -77,13 +77,13 @@ main :: proc() {
 	long := "0123456789" + "0123456789" + "0123456789" + "0123456789" +
 		"0123456789" + "0123456789" + "0123456789" + "0123456789" +
 		"0123456789" + "0123456789" + "0123456789" + "0123456789";
-	switch (starved in cstrings.from_string(long, cramped.allocator())) {
-	case .ok:  fmt.println(false); fmt.println(starved.len());
-	case .err: fmt.println(true); fmt.println(int(starved));
+	switch (cstrings.from_string(long, cramped.allocator())) {
+	case .ok(starved):  fmt.println(false); fmt.println(starved.len());
+	case .err(starved): fmt.println(true); fmt.println(int(starved));
 	}
-	switch (starved in utf16.encode(long, cramped.allocator())) {
-	case .ok:  fmt.println(false); fmt.println(starved.len());
-	case .err: fmt.println(true); fmt.println(int(starved));
+	switch (utf16.encode(long, cramped.allocator())) {
+	case .ok(starved):  fmt.println(false); fmt.println(starved.len());
+	case .err(starved): fmt.println(true); fmt.println(int(starved));
 	}
 
 	// UTF-16, both directions, including a surrogate pair.
@@ -91,8 +91,8 @@ main :: proc() {
 	fmt.println(true);
 	fmt.println(units.len());
 	fmt.println(utf16.length_of(units[:]));
-	switch (back in utf16.decode(units[0:utf16.length_of(units[:])])) {
-	case .ok:
+	switch (utf16.decode(units[0:utf16.length_of(units[:])])) {
+	case .ok(back):
 		fmt.println(true);
 		fmt.println(back);
 		fmt.println(back.len());
@@ -104,20 +104,20 @@ main :: proc() {
 
 	// An unpaired surrogate is invalid data, not a replacement character.
 	lone := [?]u16{0xD800, 65};
-	switch (_ in utf16.decode(lone[:])) {
+	switch (utf16.decode(lone[:])) {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(true);
 	}
 	trailing := [?]u16{0xDC00};
-	switch (_ in utf16.decode(trailing[:])) {
+	switch (utf16.decode(trailing[:])) {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(true);
 	}
 
 	// An explicit allocator reaches the decoded string.
 	arena := mem.Arena.init();
-	switch (scoped in utf16.decode(units[0:3], arena.allocator())) {
-	case .ok:
+	switch (utf16.decode(units[0:3], arena.allocator())) {
+	case .ok(scoped):
 		fmt.println(true);
 		fmt.println(scoped);
 	case .err:

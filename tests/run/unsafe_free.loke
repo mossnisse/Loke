@@ -20,8 +20,8 @@ Handle :: struct {
 main :: proc() {
 	allocator := mem.default_allocator();
 	held := Handle{nil};
-	switch (p in unsafe.try_new(41, allocator)) {
-	case .ok:
+	switch (unsafe.try_new(41, allocator)) {
+	case .ok(p):
 		held.block = p;
 	case .err:
 		fmt.println("allocation failed");
@@ -37,8 +37,8 @@ main :: proc() {
 
 	// The default allocator is the same provider whether written or omitted, so
 	// the one-argument form releases what the two-argument form would.
-	switch (q in unsafe.try_new(0, allocator)) {
-	case .ok:
+	switch (unsafe.try_new(0, allocator)) {
+	case .ok(q):
 		q[0] = 7;
 		fmt.println(q[0]);
 		unsafe.free(q);

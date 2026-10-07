@@ -53,13 +53,13 @@ impl Counter {
 }
 
 describe :: proc(value: any_view) -> int {
-	switch (v in value) {
-	case int:
+	switch (value) {
+	case int(v):
 		return v;
-	case bool:
+	case bool(v):
 		if (v) { return 1; }
 		return 0;
-	case Circle:
+	case Circle(v):
 		return v.radius;
 	case:
 		return -1;
@@ -148,14 +148,14 @@ owned_extraction :: proc() {
 		source := Owned{1};
 		view: any_view = source;
 		{
-			switch (held in view.as(Owned)) {
-			case .some: assert(held.id == 101 && source.id == 1 && erased_copies.load() == 1);
+			switch (view.as(Owned)) {
+			case .some(held): assert(held.id == 101 && source.id == 1 && erased_copies.load() == 1);
 			case .none: assert(false);
 			}
 		}
 		assert(erased_drops == 1);
 		{
-			switch (_ in view.as(Owned)) {
+			switch (view.as(Owned)) {
 			case .some:
 			case .none: assert(false);
 			}
@@ -169,7 +169,7 @@ owned_extraction :: proc() {
 		view.as(Owned);
 		assert(erased_copies.load() == 4 && erased_drops == 4);
 		other: any_view = 42;
-		switch (_ in other.as(Owned)) {
+		switch (other.as(Owned)) {
 		case .some: assert(false);
 		case .none: assert(erased_copies.load() == 4);
 		}

@@ -28,8 +28,8 @@ first_negative :: proc(values: []int) -> Option(int) {
 main :: proc() {
 	readings := []int{4, 7, -2, 9, -5};
 
-	switch (index in first_negative(readings)) {
-	case .some: fmt.println("first negative at", index);
+	switch (first_negative(readings)) {
+	case .some(index): fmt.println("first negative at", index);
 	case .none: fmt.println("all readings are positive");
 	}
 
@@ -45,8 +45,8 @@ first negative at 2
 
 There are two ways to get the value out:
 
-- `switch (index in ...)` names the payload `index`, and a case for each variant
-  says what to do. In the `.some` case, `index` is the `int`.
+- `switch` has a case for each variant, and says what to do in each.
+  `case .some(index):` names the payload, so in that case `index` is the `int`.
 - `x or_else fallback` gives the payload when there is one, and `fallback` when
   there is not.
 
@@ -82,18 +82,18 @@ parse_time :: proc(text: string_view) -> Result(Time, Time_Error) {
 }
 
 parse_number :: proc(text: string_view) -> Result(int, Time_Error) {
-	switch (value in strconv.parse_int(text)) {
-	case .ok:  return .ok(value);
+	switch (strconv.parse_int(text)) {
+	case .ok(value):  return .ok(value);
 	case .err: return .err(.Not_A_Number);
 	}
 }
 
 main :: proc() {
 	foreach (text in []string_view{"09:30", "00:00", "23:59", "9.30", "25:00", "12:xx", "-1:30", "12:-1"}) {
-		switch (outcome in parse_time(text)) {
-		case .ok:
+		switch (parse_time(text)) {
+		case .ok(outcome):
 			fmt.println(text, "is", outcome.hours * 60 + outcome.minutes, "minutes after midnight");
-		case .err:
+		case .err(outcome):
 			fmt.println(text, "is not a time:", outcome);
 		}
 	}

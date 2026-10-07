@@ -68,8 +68,8 @@ empty_array_copies :: proc() {
 	// element has a custom (potentially failing) copy. Keep the other fields.
 	value: Empty_Arrays = {};
 	value.marker = 7;
-	switch (fallible in value.try_clone()) {
-	case .ok: assert(fallible.marker == 7);
+	switch (value.try_clone()) {
+	case .ok(fallible): assert(fallible.marker == 7);
 	case .err: assert(false);
 	}
 	explicit := value.clone();
@@ -122,7 +122,7 @@ main :: proc() {
 	// `tail` fails, so the two elements already cloned into the temporary are
 	// dropped in reverse part order — 122 then 111 — and the `Result` carries the
 	// error alone. There is no half-built value to inspect.
-	switch (_ in ok.try_clone()) {
+	switch (ok.try_clone()) {
 	case .ok: fmt.println(0);
 	case .err: fmt.println(-1);
 	}
@@ -130,14 +130,14 @@ main :: proc() {
 	// design.md "Owned values": a box made from a place clones it, through the
 	// same hook.
 	five := Res{5};
-	switch (held in try_box(five)) {
-	case .ok:  fmt.println(held^.id);
+	switch (try_box(five)) {
+	case .ok(held):  fmt.println(held^.id);
 	case .err: fmt.println(0);
 	}
 
 	// A clone that fails leaves no box: the two elements already cloned are
 	// dropped, and nothing is allocated.
-	switch (_ in try_box(ok)) {
+	switch (try_box(ok)) {
 	case .ok: fmt.println(0);
 	case .err: fmt.println(-2);
 	}

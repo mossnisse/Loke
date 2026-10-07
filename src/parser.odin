@@ -1404,8 +1404,8 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 		parse_error(p, span_of(p, t), "L0245", fmt_found(p, t), "a `for` header cannot be empty; `for (;;)` loops forever")
 	case:
 		// `for (name in xs)` is Odin's iteration header; membership needs
-		// `for ((name in xs))`, as a switch header does (design.md "for statement").
-		name_in := at_type_switch_binding(p)
+		// `for ((name in xs))` (design.md "for statement").
+		name_in := at(p, .Ident) && peek_token(p, 1).kind == .In
 		first := parse_simple_statement(p)
 		if allow(p, .Semicolon) {
 			init = first
@@ -1603,7 +1603,6 @@ parse_branch :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
-// `switch (name in expr)` is a type switch; `switch ((x in y))` tests membership.
 @(private = "file")
 parse_switch :: proc(p: ^Parser) -> Stmt {
 	start := advance(p) // `switch`
@@ -1611,12 +1610,10 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 
 	init: Stmt
 	subject: Expr
-	kind := Switch_Kind.Value
-	binding: Name
 
 	if starts_declaration(p) {
 		init = parse_init_declaration(p)
-	} else if !at_type_switch_binding(p) {
+	} else {
 		first := parse_simple_statement(p)
 		if allow(p, .Semicolon) {
 			init = first
@@ -1626,11 +1623,6 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 	}
 
 	if subject == nil {
-		if at_type_switch_binding(p) {
-			kind = .Type
-			binding = name_of(p, advance(p))
-			advance(p) // `in`
-		}
 		subject = parse_expr(p)
 	}
 	closed := close_header(p, opened, "`)` to close the `switch` header")
@@ -1638,14 +1630,12 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 	_, body_opened := expect(p, .Lbrace, "L0248", "`{` to open the switch body")
 	cases := make([dynamic]Switch_Case, 0, 0, p.allocator)
 	for at(p, .Case) || at(p, .Default) {
-		append(&cases, parse_switch_case(p, kind))
+		append(&cases, parse_switch_case(p))
 	}
 	body_closed := close_body(p, body_opened, "L0248", "`}` to close the switch body")
 
 	s := new_stmt(p, Stmt_Switch, start)
-	s.kind = kind
 	s.init = init
-	s.binding = binding
 	s.subject = subject
 	s.cases = cases[:]
 	s.has_error =
@@ -1653,15 +1643,10 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
-@(private = "file")
-at_type_switch_binding :: proc(p: ^Parser) -> bool {
-	return at(p, .Ident) && peek_token(p, 1).kind == .In
-}
-
 // A case runs until the next `case`, `default`, or the switch body's `}`.
 // `default:` is the same arm as `case:` (grammar.md "Switch").
 @(private = "file")
-parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
+parse_switch_case :: proc(p: ^Parser) -> Switch_Case {
 	start := advance(p) // `case` or `default`
 
 	entry: Switch_Case
@@ -1672,8 +1657,11 @@ parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
 		bad_label = true
 	} else if start.kind == .Case && !at(p, .Colon) {
 		for {
-			// The checker distinguishes a type from an implicit union selector.
-			append(&values, kind == .Type && !at(p, .Period) ? parse_type(p) : parse_expr(p))
+			// A case may name a type, for an `any_view` subject; the subject's
+			// type decides what a case names (design.md "switch statement").
+			p.type_value = true
+			append(&values, parse_expr(p))
+			p.type_value = false
 			bad_label ||= expr_has_error(values[len(values) - 1])
 			if !allow(p, .Comma) {
 				break

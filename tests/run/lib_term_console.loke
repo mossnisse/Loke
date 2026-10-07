@@ -56,16 +56,16 @@ open_input :: proc() -> int {
 }
 
 show :: proc(event: Result(term.Key_Event, io.Error)) {
-	switch (key in event) {
-	case .ok: fmt.println(key.key, int(key.value), key.shift, key.control, key.alt);
-	case .err: fmt.println(key);
+	switch (event) {
+	case .ok(key): fmt.println(key.key, int(key.value), key.shift, key.control, key.alt);
+	case .err(key): fmt.println(key);
 	}
 }
 
 invalid :: proc(event: Result(term.Key_Event, io.Error)) {
-	switch (error in event) {
+	switch (event) {
 	case .ok: panic("expected Invalid_Data for malformed UTF-16");
-	case .err:
+	case .err(error):
 		if (!io.is(error, .Invalid_Data) || io.operation_of(error) != .Read_Key ||
 			io.native_code_of(error) != 0) {
 				panic("wrong malformed key error");

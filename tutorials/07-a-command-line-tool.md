@@ -80,14 +80,14 @@ parse :: proc(text: string_view) -> Result(Totals, Problem) {
 		}
 		number := index + 1;
 		parts: strings.Cut;
-		switch (found in strings.cut(entry, ",")) {
-		case .some: parts = found;
+		switch (strings.cut(entry, ",")) {
+		case .some(found): parts = found;
 		case .none: return .err({number, "expected `category,amount`"});
 		}
 		category := strings.trim_space(parts.before);
 		amount: int;
-		switch (parsed in strconv.parse_int(strings.trim_space(parts.after))) {
-		case .ok:  amount = parsed;
+		switch (strconv.parse_int(strings.trim_space(parts.after))) {
+		case .ok(parsed):  amount = parsed;
 		case .err: return .err({number, "the amount is not a whole number"});
 		}
 		previous := totals.by_category.lookup_value(category) or_else 0;
@@ -134,19 +134,19 @@ main :: proc() -> i32 {
 	}
 
 	text: string;
-	switch (contents in fs.read_text(path)) {
-	case .ok:
+	switch (fs.read_text(path)) {
+	case .ok(contents):
 		text = contents;
-	case .err:
+	case .err(contents):
 		fmt.eprintln("tally: cannot read", path, "-", contents);
 		return 1;
 	}
 
 	totals: ledger.Totals;
-	switch (parsed in ledger.parse(text)) {
-	case .ok:
+	switch (ledger.parse(text)) {
+	case .ok(parsed):
 		totals = move(parsed);
-	case .err:
+	case .err(parsed):
 		fmt.eprintln("tally:", path, "line", parsed.line, "-", parsed.reason);
 		return 1;
 	}

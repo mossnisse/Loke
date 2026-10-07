@@ -14,13 +14,13 @@ main :: proc() {
 	arena := mem.Arena.from_buffer(&mut room[:]);
 	defer {
 		// The arena has room for one box: the panicking copy left none behind.
-		switch (_ in try_box(Payload{}, arena.allocator())) {
+		switch (try_box(Payload{}, arena.allocator())) {
 		case .ok: fmt.println(true);
 		case .err: fmt.println(false);
 		}
 	}
 	value: Payload = {};
-	switch (_ in try_box(value, arena.allocator())) {
+	switch (try_box(value, arena.allocator())) {
 	case .ok:
 	case .err:
 	}

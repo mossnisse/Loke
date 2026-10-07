@@ -261,11 +261,11 @@ release_block :: proc(block: ^mut Shared_Block($T)) {
 compare_exchange_strong :: proc(
 	place: ^mut int, expected: int, desired: int,
 ) -> (observed: int, swapped: bool) {
-	switch (found in atomic_compare_exchange(
+	switch (atomic_compare_exchange(
 		place, expected, desired,
 		Memory_Order.Sequentially_Consistent, Memory_Order.Acquire,
 	)) {
-	case .some: return {observed = found, swapped = false};
+	case .some(found): return {observed = found, swapped = false};
 	case .none: return {observed = expected, swapped = true};
 	}
 	return {observed = expected, swapped = false};

@@ -18,8 +18,8 @@ main :: proc() {
 		child(os.args[1]);
 		return;
 	}
-	switch (exe in os.executable_path()) {
-	case .ok:  parent(exe);
+	switch (os.executable_path()) {
+	case .ok(exe):  parent(exe);
 	case .err: fmt.println("no executable path");
 	}
 }
@@ -34,8 +34,8 @@ child :: proc(mode: string_view) {
 	} else if (mode == "echo") {
 		// Upper-cases its input until the parent closes it.
 		input_stream := term.stdin();
-		switch (input in io.read_to_end(inout input_stream)) {
-		case .ok:
+		switch (io.read_to_end(inout input_stream)) {
+		case .ok(input):
 			foreach (byte in input) {
 				fmt.concat_to(fmt.stdout(), rune(byte - 32) if byte >= u8('a') && byte <= u8('z') else rune(byte));
 			}
@@ -45,8 +45,8 @@ child :: proc(mode: string_view) {
 	} else if (mode == "env") {
 		fmt.println(show(os.get_environment("LOKE_CHILD")), show(os.get_environment("PATH")) != "unset");
 	} else if (mode == "cwd") {
-		switch (directory in os.working_directory()) {
-		case .ok:  fmt.println(directory == os.args[2]);
+		switch (os.working_directory()) {
+		case .ok(directory):  fmt.println(directory == os.args[2]);
 		case .err: fmt.println("cwd failed");
 		}
 	} else if (mode == "stderr") {
@@ -65,8 +65,8 @@ child :: proc(mode: string_view) {
 }
 
 show :: proc(value: Result(Option(string), io.Error)) -> string {
-	switch (found in value) {
-	case .ok:  return found or_else "unset";
+	switch (value) {
+	case .ok(found):  return found or_else "unset";
 	case .err: return "error";
 	}
 }
@@ -116,15 +116,15 @@ parent :: proc(exe: string_view) {
 	}
 
 	// `output` reads both pipes at once, so a child flooding stderr finishes.
-	switch (out in process.output(process.Command{program = exe, arguments = []string_view{"flood"}})) {
-	case .ok:  fmt.println(out.status, out.stdout.len(), out.stderr.len());
-	case .err: fmt.println("output failed", out);
+	switch (process.output(process.Command{program = exe, arguments = []string_view{"flood"}})) {
+	case .ok(out):  fmt.println(out.status, out.stdout.len(), out.stderr.len());
+	case .err(out): fmt.println("output failed", out);
 	}
 	// `output` writes nothing to a piped stdin, so it closes it at once and a
 	// child reading to its end finishes.
-	switch (out in process.output(process.Command{program = exe, arguments = []string_view{"echo"}, stdin = .Pipe})) {
-	case .ok:  fmt.println(out.status, out.stdout.len(), out.stderr.len());
-	case .err: fmt.println("output failed", out);
+	switch (process.output(process.Command{program = exe, arguments = []string_view{"echo"}, stdin = .Pipe})) {
+	case .ok(out):  fmt.println(out.status, out.stdout.len(), out.stderr.len());
+	case .err(out): fmt.println("output failed", out);
 	}
 
 	// A leading dot names a hidden file, not an extension, so `.exe` is tried.
@@ -147,8 +147,8 @@ parent :: proc(exe: string_view) {
 }
 
 spawned :: proc(command: process.Command) -> process.Child {
-	switch (child in process.spawn(command)) {
-	case .ok:  return move(child);
+	switch (process.spawn(command)) {
+	case .ok(child):  return move(child);
 	case .err: panic("spawn failed");
 	}
 }
@@ -161,22 +161,22 @@ captured :: proc(command: process.Command, stderr: bool = false) -> string {
 }
 
 text :: proc(pipe: inout process.Pipe) -> string {
-	switch (bytes in io.read_to_end(inout pipe)) {
-	case .ok:  return string.from_utf8(bytes[:]) or_else "not UTF-8";
+	switch (io.read_to_end(inout pipe)) {
+	case .ok(bytes):  return string.from_utf8(bytes[:]) or_else "not UTF-8";
 	case .err: return "";
 	}
 }
 
 code :: proc(outcome: Result(int, io.Error)) -> io.Code {
-	switch (error in outcome) {
+	switch (outcome) {
 	case .ok:  return .Other;
-	case .err: return io.code_of(error);
+	case .err(error): return io.code_of(error);
 	}
 }
 
 failure :: proc(command: process.Command) -> io.Code {
-	switch (error in process.spawn(command)) {
+	switch (process.spawn(command)) {
 	case .ok:  return .Other;
-	case .err: return io.code_of(error);
+	case .err(error): return io.code_of(error);
 	}
 }

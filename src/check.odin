@@ -3351,6 +3351,27 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 	}
 }
 
+// The header binding `switch (name in subject)` is gone: a case binds what it
+// matches (design.md "Inspecting a union"). Spelled with a name that resolves
+// nowhere, it reaches here as a membership test and is reported once.
+@(private = "file")
+report_header_binding :: proc(k: ^Checker, s: ^Stmt_Switch) -> bool {
+	test, is_binary := s.subject.(^Expr_Binary)
+	if !is_binary || test.op != .In {
+		return false
+	}
+	name, is_ident := test.lhs.(^Expr_Ident)
+	if !is_ident || lookup_symbol(k.scope, identifier_of(k.c, name)) != INVALID_SYMBOL {
+		return false
+	}
+	errorf(
+		k.c, expr_span(s.subject), "L0426",
+		"a switch binds in its cases: write `switch (subject)` with `case .variant(%s):`, or `case T(%s):` over an `any_view`",
+		name.name, name.name,
+	)
+	return true
+}
+
 @(private = "file")
 check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	if s.kind != .Value {
@@ -3368,14 +3389,18 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	if s.init != nil {
 		check_stmt(k, s.init)
 	}
+	if report_header_binding(k, s) {
+		return Flow_Info{}
+	}
 	subject := check_single_expr(k, s.subject)
 	if subject == INVALID_TYPE {
 		// Not falling through, so no missing return is blamed on it.
 		return Flow_Info{}
 	}
 	// design.md "Inspecting a union": the subject's type decides.
-	if type_is_union(k.c, subject) {
-		adopt_branch_patterns(k, s)
+	// A `dyn` subject arrives too, so it is told why it has no such switch.
+	if type_is_union(k.c, subject) || subject == TYPE_ANY_VIEW || type_is_dyn(k.c, subject) {
+		adopt_branch_patterns(k, s, subject == TYPE_ANY_VIEW)
 		return check_variant_cases(k, s, subject)
 	}
 	if type_is_untyped(k.c, subject) {
@@ -3447,6 +3472,18 @@ check_case_value :: proc(
 			errorf(k.c, range.op_span, "L0355", "`%s` is not ordered, so a range case is not meaningful", type_name(k.c, subject))
 		}
 		return
+	}
+	// design.md "switch statement": only an `any_view` subject has types to
+	// match, and that switch never reaches here.
+	if _, is_call := value.(^Expr_Call); !is_call {
+		if named := resolve_type_syntax(k, value); named != INVALID_TYPE {
+			errorf(
+				k.c, expr_span(value), "L0426",
+				"`%s` is a type, and only a switch over an `any_view` matches types; this one is over `%s`",
+				type_name(k.c, named), type_name(k.c, subject),
+			)
+			return
+		}
 	}
 	if !check_value_expr(k, value, subject, "compare") {
 		return

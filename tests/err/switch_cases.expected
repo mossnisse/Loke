@@ -8,6 +8,8 @@ L0366
 @24:2
 a switch over `int` needs a default case
 L0426
-@31:17
-a type switch needs a union or an `any_view`
-binds a payload; the membership test is
+@34:10
+a switch binds in its cases: write `switch (subject)` with `case .variant(radius):`
+L0426
+@43:16
+an `any_view` lends its value read-only

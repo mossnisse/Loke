@@ -60,8 +60,8 @@ dynamic_index_overlaps :: proc(i: int) {
 union_variant_overlaps :: proc() {
 	c: Choice = .number(1);
 	pointer := &mut c;
-	switch (n in c) {
-	case .number: fmt.println(n);
+	switch (c) {
+	case .number(n): fmt.println(n);
 	case .flag:
 	}
 	fmt.println(pointer^);

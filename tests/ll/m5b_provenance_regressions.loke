@@ -7,8 +7,8 @@ release :: proc(@(allocator_reset) allocator: Allocator) {
 // A reset before a later allocation must not poison that future loan.
 allocate_after_reset :: proc(@(allocator_reset) allocator: Allocator) {
 	release(allocator);
-	switch (made in try_box(0, allocator)) {
-	case .ok:  made^ = 1;
+	switch (try_box(0, allocator)) {
+	case .ok(made):  made^ = 1;
 	case .err:
 	}
 }

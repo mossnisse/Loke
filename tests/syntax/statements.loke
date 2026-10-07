@@ -97,14 +97,14 @@ main :: proc() {
 	case 1:
 	}
 
-	// A type switch: the `name in expr` header, decided after the init statement.
-	switch (shape in figure) {
+	// A switch over an `any_view` names types, and may bind one: `case T(name):`.
+	switch (figure) {
 	case Circle:
 	case ^Square, []Triangle:
 		f();
 	case:
 	}
-	switch (f := lookup(); _ in f) {
+	switch (f := lookup(); f) {
 	case int:
 	}
 

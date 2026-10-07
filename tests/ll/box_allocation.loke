@@ -19,14 +19,14 @@ impl Res {
 }
 
 main :: proc() {
-	switch (p in try_box(1)) {
-	case .ok:  p^ = 2;
+	switch (try_box(1)) {
+	case .ok(p):  p^ = 2;
 	case .err:
 	}
 
 	source := Res{2};
-	switch (r in try_box(source)) {
-	case .ok:  fmt.println(r.id);
+	switch (try_box(source)) {
+	case .ok(r):  fmt.println(r.id);
 	case .err:
 	}
 

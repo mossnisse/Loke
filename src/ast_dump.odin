@@ -320,10 +320,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 
 	case ^Stmt_Switch:
 		dump_indent(b, depth)
-		fmt.sbprint(b, node.kind == .Value ? "(switch value" : "(switch type")
-		if node.kind == .Type {
-			fmt.sbprintf(b, " %q", node.binding.text)
-		}
+		fmt.sbprint(b, node.kind == .Value ? "(switch value" : "(switch pattern")
 		dump_attributes(b, node.attributes)
 		fmt.sbprintln(b)
 		if node.init != nil {

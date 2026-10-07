@@ -15,8 +15,8 @@ build :: proc(id: int) -> Res { return Res{id}; }
 main :: proc() {
     p := box(build(1));
     fmt.println(p.id);
-    switch (q in try_box(build(3))) {
-    case .ok:  fmt.println(q.id);
+    switch (try_box(build(3))) {
+    case .ok(q):  fmt.println(q.id);
     case .err:
     }
     local := Res{2};

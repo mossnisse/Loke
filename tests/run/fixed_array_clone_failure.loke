@@ -32,8 +32,8 @@ main :: proc() {
 		rejected = attempt;
 		copies.store(0);
 		order = 0;
-		switch (cloned in source.try_clone()) {
-		case .ok:
+		switch (source.try_clone()) {
+		case .ok(cloned):
 			assert(attempt == 0);
 			for (i := 0; i < 4; i += 1) { assert(cloned[i].id == i + 101); }
 		case .err:

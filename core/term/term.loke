@@ -284,7 +284,7 @@ read_console_line :: proc(
 			break;
 		}
 		count := int(read);
-		switch (added in line.try_append(..units[0:count])) {
+		switch (line.try_append(..units[0:count])) {
 		case .ok:
 		case .err:
 			return .err(io.make_error(.Out_Of_Memory, .Read_Line));
@@ -302,10 +302,10 @@ read_console_line :: proc(
 		// The `\r` of a `\r\n` ending goes with it.
 		if (kept > 0 && line[kept - 1] == u16('\r')) { kept -= 1; }
 	}
-	switch (text in utf16.decode(line[0:kept], allocator)) {
-	case .ok:
+	switch (utf16.decode(line[0:kept], allocator)) {
+	case .ok(text):
 		return .ok(text);
-	case .err:
+	case .err(text):
 		code := io.Code.Out_Of_Memory if text == .Out_Of_Memory else io.Code.Invalid_Data;
 		return .err(io.make_error(code, .Read_Line));
 	}
@@ -468,8 +468,8 @@ impl Raw_Mode {
 			}
 			unmatched := self.pending != 0 && !low;
 			if (unmatched) { self.pending = 0; }
-			switch (event in decode_record(inout self, record)) {
-			case .some:
+			switch (decode_record(inout self, record)) {
+			case .some(event):
 				if (record.repeat_count > 1 || unmatched) {
 					self.repeats = record.repeat_count;
 					if (self.repeats == 0) { self.repeats = 1; }

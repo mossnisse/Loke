@@ -107,8 +107,8 @@ main :: proc() {
 	walker := owned.iter();
 	stepping := true;
 	for (stepping) {
-		switch (one in walker.next()) {
-		case .some: fmt.println(one^.id);
+		switch (walker.next()) {
+		case .some(one): fmt.println(one^.id);
 		case .none: stepping = false;
 		}
 	}

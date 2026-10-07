@@ -26,13 +26,13 @@ main :: proc() {
 	f := v.length;
 	// A variant that is not in the union.
 	u: Value = .number(1);
-	switch (t in u) {
+	switch (u) {
 	case .missing:
 	case .number:
 	case .flag:
 	}
 	// A type switch with no default that misses a variant.
-	switch (t in u) {
+	switch (u) {
 	case .number:
 		fmt.println(0);
 	}

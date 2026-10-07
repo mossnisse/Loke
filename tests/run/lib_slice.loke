@@ -48,9 +48,9 @@ impl Always_Before {
 
 // A `Sealed` payload, read without copying it out of the union.
 id_of :: proc(value: Sealed) -> int {
-	switch (token in value) {
-	case .held:  return token.id;
-	case .spare: return token.id;
+	switch (value) {
+	case .held(token):  return token.id;
+	case .spare(token): return token.id;
 	}
 	return 0;
 }
@@ -214,8 +214,8 @@ main :: proc() {
 	arena := mem.Arena.init();
 	scoped := slice.clone(s, arena.allocator());
 	fmt.println(scoped);
-	switch (result in slice.try_clone(s, arena.allocator())) {
-	case .ok: fmt.println("ok", result.len());
-	case .err: fmt.println("err", result);
+	switch (slice.try_clone(s, arena.allocator())) {
+	case .ok(result): fmt.println("ok", result.len());
+	case .err(result): fmt.println("err", result);
 	}
 }

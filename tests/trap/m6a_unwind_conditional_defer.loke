@@ -14,8 +14,8 @@ impl Res {
 
 fails :: proc(source: []Res) {
 	kept: [dynamic]Res = {};
-	switch (cloned in slice.try_clone(source)) {
-	case .ok:  kept = move(cloned);
+	switch (slice.try_clone(source)) {
+	case .ok(cloned):  kept = move(cloned);
 	case .err: return;
 	}
 	defer drop(kept);

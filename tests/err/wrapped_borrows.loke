@@ -25,8 +25,8 @@ wrapped :: proc() -> Boxed {
 through_a_switch :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	boxed: Boxed = .held(Holder{local[:]});
-	switch (held in boxed) {
-	case .held:  return held.view;
+	switch (boxed) {
+	case .held(held):  return held.view;
 	case .empty: return {};
 	}
 }
@@ -55,8 +55,8 @@ converted :: proc() -> string_view {
 
 converted_through_a_switch :: proc() -> string_view {
 	local := [3]u8{107, 101, 121};
-	switch (view in string_view.from_utf8(local[:])) {
-	case .some: return view;
+	switch (string_view.from_utf8(local[:])) {
+	case .some(view): return view;
 	case .none: return "";
 	}
 }
@@ -67,8 +67,8 @@ erased_allocator :: proc() {
 	arena := mem.Arena.init();
 	allocator := arena.allocator();
 	view: any_view = allocator;
-	switch (restored in view.as(Allocator)) {
-	case .some:
+	switch (view.as(Allocator)) {
+	case .some(restored):
 		xs: [dynamic]int via restored = {};
 		xs.append(1);
 		free_all(allocator);

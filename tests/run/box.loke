@@ -81,8 +81,8 @@ main :: proc() {
 	fmt.println("unboxed", n.id);
 
 	// `try_box` returns the failure instead of applying the policy.
-	switch (made in try_box(Point{7, 8})) {
-	case .ok:  fmt.println("try", made.x);
+	switch (try_box(Point{7, 8})) {
+	case .ok(made):  fmt.println("try", made.x);
 	case .err: fmt.println("no memory");
 	}
 

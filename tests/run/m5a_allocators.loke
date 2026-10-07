@@ -65,8 +65,8 @@ wrapped :: proc() -> Boxed {
 
 main :: proc() {
 	// `try_box` reports failure explicitly.
-	switch (p in try_box(0)) {
-	case .ok:
+	switch (try_box(0)) {
+	case .ok(p):
 		fmt.println(p^);
 		p^ = 42;
 		fmt.println(p^);
@@ -76,26 +76,26 @@ main :: proc() {
 	}
 
 	// It takes its value as an initialization does, before its allocator.
-	switch (q in try_box(7)) {
-	case .ok:  fmt.println(q^);
+	switch (try_box(7)) {
+	case .ok(q):  fmt.println(q^);
 	case .err:
 	}
-	switch (_ in try_box(ordered_value(), ordered_allocator())) {
+	switch (try_box(ordered_value(), ordered_allocator())) {
 	case .ok:  fmt.println(order);
 	case .err:
 	}
 
 	// An explicit allocator argument selects the same default provider.
 	a := mem.default_allocator();
-	switch (r in try_box(Counter{}, a)) {
-	case .ok:  fmt.println(r^.count);
+	switch (try_box(Counter{}, a)) {
+	case .ok(r):  fmt.println(r^.count);
 	case .err:
 	}
 
 	// The public `try_clone` wrapper returns the copy hook's error.
 	one := Counter{5};
-	switch (two in one.try_clone(a)) {
-	case .ok:  fmt.println(two.count);
+	switch (one.try_clone(a)) {
+	case .ok(two):  fmt.println(two.count);
 	case .err:
 	}
 

@@ -10,13 +10,13 @@ main :: proc() {
     payload := Big{};
     payload.values[0] = 4;
     value := construct(move(payload));
-    switch (inner in value) {
-    case .big: fmt.println(inner.values[0]);
+    switch (value) {
+    case .big(inner): fmt.println(inner.values[0]);
     case .absent: fmt.println(-1);
     }
     direct := Value.big(Big{});
-    switch (inner in direct) {
-    case .big: fmt.println(inner.values[0]);
+    switch (direct) {
+    case .big(inner): fmt.println(inner.values[0]);
     case .absent: fmt.println(-1);
     }
 }

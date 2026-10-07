@@ -121,8 +121,8 @@ foreign libc {
 
 main :: proc() {
 	foreach (letter in []rune{'l', 'z'}) {
-		switch (rest in strchr("hello", i32(letter))) {
-		case .some: fmt.println(rest);
+		switch (strchr("hello", i32(letter))) {
+		case .some(rest): fmt.println(rest);
 		case .none: fmt.println("not found");
 		}
 	}

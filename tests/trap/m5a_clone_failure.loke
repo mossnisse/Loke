@@ -22,7 +22,7 @@ Wrapper :: struct { inner: Failing }
 main :: proc() {
 	// The explicit entry point returns the error rather than applying a policy.
 	w := Wrapper{Failing{1}};
-	switch (_ in w.try_clone()) {
+	switch (w.try_clone()) {
 	case .ok:
 		fmt.println(0);
 		return;

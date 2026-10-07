@@ -123,9 +123,9 @@ Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 // result, inferred from the argument (design.md "Specialization").
 impl Result($T, $E) {
 	map_error :: proc(self: move, f: proc(error: move E) -> $F) -> Result(T, F) {
-		switch (payload in move(self)) {
-		case .ok:  return .ok(move(payload));
-		case .err: return .err(f(move(payload)));
+		switch (move(self)) {
+		case .ok(payload):  return .ok(move(payload));
+		case .err(payload): return .err(f(move(payload)));
 		}
 	}
 }
@@ -135,8 +135,8 @@ impl Result($T, $E) {
 // call whether or not it is used.
 impl Option($T) {
 	ok_or :: proc(self: move, error: move $E) -> Result(T, E) {
-		switch (payload in move(self)) {
-		case .some: return .ok(move(payload));
+		switch (move(self)) {
+		case .some(payload): return .ok(move(payload));
 		case .none: return .err(move(error));
 		}
 	}

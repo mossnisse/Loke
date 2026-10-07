@@ -36,8 +36,8 @@ main :: proc() {
 	}
 	fmt.println(xs);
 	iterator := xs.iter_mut();
-	switch (p in iterator.next()) { case .some: p^ += 100; case .none: }
-	switch (p in iterator.next()) { case .some: p^ += 200; case .none: }
+	switch (iterator.next()) { case .some(p): p^ += 100; case .none: }
+	switch (iterator.next()) { case .some(p): p^ += 200; case .none: }
 	fmt.println(xs);
 	array := [2]int{1, 2};
 	increment(inout array);

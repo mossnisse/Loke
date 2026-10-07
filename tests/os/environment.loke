@@ -13,13 +13,13 @@ import "core:os";
 // hands over, which is why this is a one-off rather than a `tests/run` case.
 
 report :: proc(name: string_view) {
-	switch (value in os.get_environment(name)) {
-	case .ok:
-		switch (text in value) {
-		case .some: fmt.println("some", text.len());
+	switch (os.get_environment(name)) {
+	case .ok(value):
+		switch (value) {
+		case .some(text): fmt.println("some", text.len());
 		case .none: fmt.println("none");
 		}
-	case .err:
+	case .err(value):
 		fmt.println("err", value);
 	}
 }

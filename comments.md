@@ -1430,6 +1430,28 @@ Possible refinements are recorded in [open-questions.md "Formatting"](open-quest
 
 ## Design history
 
+### Syntax and construction cleanup
+
+A review asked which forms to remove because they duplicated another or carried
+a special case. It led to: payloadless union variants without a dangling colon,
+a `default:` switch arm, `@(required)` struct fields, `&mut` writable bindings,
+one stated pattern grammar with flat declarations, and one union matching form.
+The last removed the header binding `switch (name in subject)`. A switch now
+binds only in its cases, `.variant(name)` over a union and `T(name)` over an
+`any_view`, so `name in subject` in a header is the ordinary membership test and
+needs no second pair of parentheses. What the header binding uniquely gave, a
+grouped case naming a temporary union whole, is a local before the switch.
+
+It kept the distinction between nominal structs and structural records: privacy,
+hook ownership, and cross-package positional construction have real semantics,
+so the two share rules and implementation where they can rather than merge into
+one form, and named record results stay rather than unnamed tuples without a
+demonstrated need. It found no reason to remove `defer`, semicolons,
+parenthesized control-flow headers, explicit overload groups, or hermetic
+compile-time evaluation; see [`defer`](#defer),
+[One language at compile time](#one-language-at-compile-time), and
+[Hand-written package header files](#hand-written-package-header-files).
+
 ### Assignment history
 
 Allocating copies were initially implicit. Version 0.7.1 rejected them with

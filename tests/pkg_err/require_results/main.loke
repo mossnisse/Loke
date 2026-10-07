@@ -70,8 +70,8 @@ main :: proc() {
 	_ = wrap(1);
 	_ = producers.open();
 	fmt.println(step() or_else 0, forward() or_else 0);
-	switch (n in recurse(2)) {
-	case .ok:  fmt.println(n);
+	switch (recurse(2)) {
+	case .ok(n):  fmt.println(n);
 	case .err: fmt.println(-1);
 	}
 }

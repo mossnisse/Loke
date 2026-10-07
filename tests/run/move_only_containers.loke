@@ -24,13 +24,13 @@ main :: proc() {
 		m["a"] = Res{ id = 2 };
 		m["b"] = Res{ id = 3 };
 		fmt.println("overwrite", drops);
-		switch (p in m.find_mut("b")) {
-		case .some: p^.id += 10;
+		switch (m.find_mut("b")) {
+		case .some(p): p^.id += 10;
 		case .none:
 		}
 		fmt.println("b", m["b"].id);
-		switch (r in m.remove("a")) {
-		case .some: fmt.println("removed", r.id);
+		switch (m.remove("a")) {
+		case .some(r): fmt.println("removed", r.id);
 		case .none: fmt.println("a missing");
 		}
 		fmt.println("len", m.len(), "drops", drops);
@@ -78,8 +78,8 @@ main :: proc() {
 }
 
 read_id :: proc(m: ^map[string]Res, key: string) -> int {
-	switch (found in m.find(key)) {
-	case .some: return found.id;
+	switch (m.find(key)) {
+	case .some(found): return found.id;
 	case .none:
 	}
 	return 0;

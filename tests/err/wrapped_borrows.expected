@@ -5,7 +5,7 @@ L0526
 @21:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@29:22
+@29:28
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @38:9
@@ -17,7 +17,7 @@ L0526
 @53:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@59:21
+@59:27
 this slice cannot be returned: `local` ends when this procedure returns
 L0537
 @74:3

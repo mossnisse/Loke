@@ -65,7 +65,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Stmt_For, "init cond post body condition_only", ""},
 		{Stmt_Foreach, "bindings iterable body", "kind adapter indexed element_type item_type borrows count iterator_type iter_symbol next_symbol expansion"},
 		{Stmt_When, "cond then otherwise", "resolved selected"},
-		{Stmt_Switch, "kind init binding subject cases", "exhaustive"},
+		{Stmt_Switch, "kind init subject cases", "exhaustive"},
 		{Stmt_Defer, "stmt", "slot"},
 		{Stmt_Return, "value", ""},
 		{Stmt_Branch, "kind", ""},

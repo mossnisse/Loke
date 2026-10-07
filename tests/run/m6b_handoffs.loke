@@ -30,8 +30,8 @@ main :: proc() {
 	fmt.println(empty.cap());
 
 	// Round trip.
-	switch (back in string.from_runes(rs[:])) {
-	case .some:
+	switch (string.from_runes(rs[:])) {
+	case .some(back):
 		fmt.println(back);
 		fmt.println(true);
 	case .none: fmt.println(false);

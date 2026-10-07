@@ -5,7 +5,7 @@ package main; import "core:fmt"; import "core:strings"; import "core:mem";
 // The builder's fallible half answers with `Result(Unit, Allocator_Error)`;
 // these checks only care which variant came back.
 succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
-	switch (_ in outcome) {
+	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;
 	}
@@ -20,16 +20,16 @@ main :: proc() {
 	fmt.println(strings.contains(text, "world"));
 	fmt.println(strings.starts_with(text, "Hej"));
 	fmt.println(strings.ends_with(text, "en"));
-	switch (at in strings.index(text, "v")) {
-	case .some:
+	switch (strings.index(text, "v")) {
+	case .some(at):
 		fmt.println(at);
 		fmt.println(true);
 	case .none:
 		fmt.println(-1);
 		fmt.println(false);
 	}
-	switch (missing in strings.index(text, "zz")) {
-	case .some:
+	switch (strings.index(text, "zz")) {
+	case .some(missing):
 		fmt.println(missing);
 		fmt.println(true);
 	case .none:
@@ -43,8 +43,8 @@ main :: proc() {
 	fmt.println(strings.count("aaaa", "aa"));
 
 	// The documented empty-needle behaviour.
-	switch (empty_at in strings.index("abc", "")) {
-	case .some:
+	switch (strings.index("abc", "")) {
+	case .some(empty_at):
 		fmt.println(empty_at);
 		fmt.println(true);
 	case .none:
@@ -62,15 +62,15 @@ main :: proc() {
 	fmt.println(strings.trim("xxhixx", "x"));
 	fmt.println(strings.trim_space("   ").len());
 
-	switch (halves in strings.cut("key=value", "=")) {
-	case .some:
+	switch (strings.cut("key=value", "=")) {
+	case .some(halves):
 		fmt.println(halves.before);
 		fmt.println(halves.after);
 		fmt.println(true);
 	case .none: fmt.println(false);
 	}
-	switch (halves in strings.cut("key", "=")) {
-	case .some:
+	switch (strings.cut("key", "=")) {
+	case .some(halves):
 		fmt.println(halves.before);
 		fmt.println(halves.after.len());
 		fmt.println(true);
@@ -136,8 +136,8 @@ main :: proc() {
 	if (!succeeded(fallible.try_append("ok"))) { fmt.println("append failed"); }
 	if (!succeeded(fallible.try_append('!'))) { fmt.println("append failed"); }
 	if (!succeeded(fallible.try_append_byte_ascii(u8('?')))) { fmt.println("append failed"); }
-	switch (done in fallible.try_finish()) {
-	case .ok:
+	switch (fallible.try_finish()) {
+	case .ok(done):
 		fmt.println(done);
 		fmt.println(true);
 	case .err:

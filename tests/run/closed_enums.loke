@@ -82,8 +82,8 @@ main :: proc() {
 	assert((Sparse.from_int(next()) or_else Sparse.Zero) == .High);
 	assert(count == 1);
 	foreach (n in [4]u8{0, 1, 254, 255}) {
-		switch (value in forward(No_Zero, n)) {
-		case .some: fmt.println(u8(value));
+		switch (forward(No_Zero, n)) {
+		case .some(value): fmt.println(u8(value));
 		case .none: fmt.println("unknown");
 		}
 	}

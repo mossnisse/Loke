@@ -40,8 +40,8 @@ erased_copies :: proc() {
 	alias := view;
 	fmt.println(view.(int));
 	fmt.println(alias.(int));
-	switch (v in alias) {
-	case int:  fmt.println(v);
+	switch (alias) {
+	case int(v):  fmt.println(v);
 	case:      fmt.println(0);
 	}
 	// Every view is finished, so the subject is writable again.

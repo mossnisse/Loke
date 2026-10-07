@@ -31,8 +31,8 @@ main :: proc() {
 	fmt.println(ys[0]);
 
 	// The fallible half reports success through its `Result`.
-	switch (zs in xs.try_clone()) {
-	case .ok:
+	switch (xs.try_clone()) {
+	case .ok(zs):
 		fmt.println(zs.len());
 		fmt.println(1);
 	case .err: fmt.println(0);
@@ -50,8 +50,8 @@ main :: proc() {
 	fmt.println(original.copy());
 	{
 		source := original.copy();
-		switch (root in try_box(source)) {
-		case .ok:
+		switch (try_box(source)) {
+		case .ok(root):
 			taken := move(root).unbox();
 			drop(source);
 			fmt.println(taken);
@@ -91,8 +91,8 @@ main :: proc() {
 	// receiver members on a built-in and a record alike, and take the same
 	// optional allocator.
 	fmt.println(xs.clone().len());
-	switch (freed in xs.try_clone()) {
-	case .ok:
+	switch (xs.try_clone()) {
+	case .ok(freed):
 		fmt.println(freed.len());
 		fmt.println(1);
 	case .err: fmt.println(0);

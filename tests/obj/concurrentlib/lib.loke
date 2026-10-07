@@ -115,8 +115,8 @@ conc_worker :: proc "c" (index: i32, iterations: i32) {
 		// would show up here or in the counts `conc_check` asserts.
 		held := holder or_else panic("`initialize` published no handle");
 		if (held.get()^.id != 1) { shared_failures.add(1); }
-		switch (revived in watcher.upgrade()) {
-		case .some: if (revived.get()^.id != 1) { shared_failures.add(1); }
+		switch (watcher.upgrade()) {
+		case .some(revived): if (revived.get()^.id != 1) { shared_failures.add(1); }
 		case .none: shared_failures.add(1);
 		}
 		drop(held);
@@ -147,8 +147,8 @@ conc_check :: proc "c" (threads: i32, iterations: i32) -> i32 {
 	// Every clone was matched by a drop, so the one handle `initialize` made is
 	// all that is left, and nothing released the payload early.
 	if (shared_failures.load() != 0) { return 8; }
-	switch (published_handle in holder) {
-	case .some:
+	switch (holder) {
+	case .some(published_handle):
 		if (published_handle.strong_count() != 1) { return 9; }
 		if (published_handle.weak_count() != 1) { return 10; }
 	case .none: return 9;
@@ -161,7 +161,7 @@ conc_check :: proc "c" (threads: i32, iterations: i32) -> i32 {
 	drop(retired);
 	if (payload_drops.load() != 1) { return 12; }
 	if (watcher.strong_count() != 0) { return 13; }
-	switch (revived in watcher.upgrade()) {
+	switch (watcher.upgrade()) {
 	case .some: return 14;
 	case .none:
 	}

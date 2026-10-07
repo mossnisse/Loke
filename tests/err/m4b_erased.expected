@@ -37,5 +37,5 @@ L0466
 @66:7
 has no checked extraction
 L0466
-@67:15
-has no type switch
+@67:10
+cannot be matched by type

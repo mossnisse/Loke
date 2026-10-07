@@ -68,8 +68,8 @@ main :: proc() {
 	walker := view.iter();
 	walking := true;
 	for (walking) {
-		switch (step in walker.next()) {
-		case .some: fmt.println(500 + step.id);
+		switch (walker.next()) {
+		case .some(step): fmt.println(500 + step.id);
 		case .none: walking = false;
 		}
 	}
@@ -132,8 +132,8 @@ main :: proc() {
 	steps := singles.iter();
 	stepping := true;
 	for (stepping) {
-		switch (one in steps.next()) {
-		case .some: fmt.println(1500 + one.id);
+		switch (steps.next()) {
+		case .some(one): fmt.println(1500 + one.id);
 		case .none: stepping = false;
 		}
 	}

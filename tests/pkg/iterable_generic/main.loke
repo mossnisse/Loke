@@ -71,20 +71,20 @@ main :: proc() {
 	static_assert(interfaces.Reverse_Iterable([dynamic]int));
 
 	xs := [3]int{1, 2, 3};
-	switch (a in first(xs)) {
-	case .some: fmt.println(a);
+	switch (first(xs)) {
+	case .some(a): fmt.println(a);
 	case .none: fmt.println(-1);
 	}
 
 	half := 1 ..< 4;
 	closed := 1 ..= 4;
-	switch (b in first(half)) {
-	case .some: fmt.println(b);
+	switch (first(half)) {
+	case .some(b): fmt.println(b);
 	case .none: fmt.println(-1);
 	}
 
-	switch (c in first(Countdown{5})) {
-	case .some: fmt.println(c);
+	switch (first(Countdown{5})) {
+	case .some(c): fmt.println(c);
 	case .none: fmt.println(-1);
 	}
 
@@ -100,8 +100,8 @@ main :: proc() {
 	static_assert(interfaces.Iterable(map[int]int));
 	ys: [dynamic]int = {4, 5, 6};
 	fmt.println(sum_all(ys));
-	switch (d in first(ys)) {
-	case .some: fmt.println(d);
+	switch (first(ys)) {
+	case .some(d): fmt.println(d);
 	case .none: fmt.println(-1);
 	}
 	m: map[int]int = {};

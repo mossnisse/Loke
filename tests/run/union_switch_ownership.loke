@@ -36,8 +36,8 @@ report :: proc(label: string_view) { fmt.println(label, copies.load(), drops); }
 
 // A `return` out of a consuming case still drops the binding once.
 returns_from_a_case :: proc(id: int) -> int {
-	switch (value in held(id)) {
-	case .held:  return value.id;
+	switch (held(id)) {
+	case .held(value):  return value.id;
 	case .spare: return -1;
 	case .empty: return 0;
 	}
@@ -46,8 +46,8 @@ returns_from_a_case :: proc(id: int) -> int {
 // So does a `return` that hands the payload on: the binding is a place, so the
 // value that leaves is a copy of it.
 copies_out_of_a_case :: proc(id: int) -> Owned {
-	switch (value in held(id)) {
-	case .held:  return value.clone();
+	switch (held(id)) {
+	case .held(value):  return value.clone();
 	case .spare: return Owned{0};
 	case .empty: return Owned{0};
 	}
@@ -57,9 +57,9 @@ main :: proc() {
 	// --- falling out of a case -------------------------------------------
 	reset();
 	{
-		switch (value in held(1)) {
-		case .held:  fmt.println("held", value.id);
-		case .spare: fmt.println("spare", value.id);
+		switch (held(1)) {
+		case .held(value):  fmt.println("held", value.id);
+		case .spare(value): fmt.println("spare", value.id);
 		case .empty:
 		}
 	}
@@ -69,8 +69,8 @@ main :: proc() {
 	reset();
 	{
 		for (;;) {
-			switch (value in held(2)) {
-			case .held:
+			switch (held(2)) {
+			case .held(value):
 				fmt.println("before break", value.id);
 				break;
 			case .spare, .empty:
@@ -84,8 +84,8 @@ main :: proc() {
 	reset();
 	{
 		for (i := 0; i < 2; i += 1) {
-			switch (value in held(3)) {
-			case .held:
+			switch (held(3)) {
+			case .held(value):
 				fmt.println("iteration", i, value.id);
 				continue;
 			case .spare, .empty:
@@ -108,14 +108,14 @@ main :: proc() {
 	// One clone leaving the case, and two values ending.
 	report("return a copy");
 
-	// --- a grouped case binds the union, a default case binds it too ------
+	// --- a grouped or default case names the union through a local ---------
+	// A case binds only a variant's payload, so a case that needs the whole
+	// value switches over a place holding it, and borrows it there.
 	reset();
 	{
-		switch (value in held(6)) {
+		value := held(6);
+		switch (value) {
 		case .held, .spare:
-			// The active variant is not known, so the binding keeps the union
-			// type and owns the whole of it.
-			static_assert(type_of(value) == Boxed);
 			fmt.println("grouped", value);
 		case .empty:
 		}
@@ -124,10 +124,10 @@ main :: proc() {
 
 	reset();
 	{
-		switch (value in held(7)) {
+		value := held(7);
+		switch (value) {
 		case .empty:
-		case:
-			static_assert(type_of(value) == Boxed);
+		default:
 			fmt.println("default", value);
 		}
 	}
@@ -136,7 +136,7 @@ main :: proc() {
 	// --- `_` acquires no binding, so the case owns the union --------------
 	reset();
 	{
-		switch (_ in held(8)) {
+		switch (held(8)) {
 		case .held:  fmt.println("discarded");
 		case .spare, .empty:
 		}
@@ -147,8 +147,8 @@ main :: proc() {
 	reset();
 	{
 		kept := held(9);
-		switch (value in kept) {
-		case .held:  fmt.println("borrowed", value.id);
+		switch (kept) {
+		case .held(value):  fmt.println("borrowed", value.id);
 		case .spare, .empty:
 		}
 		// `kept` still holds its payload here, and drops it at the end of the
@@ -164,8 +164,8 @@ main :: proc() {
 	reset();
 	{
 		taken: Handle = {};
-		switch (value in opened(10)) {
-		case .open: taken = move(value);
+		switch (opened(10)) {
+		case .open(value): taken = move(value);
 		case .shut:
 		}
 		fmt.println("moved out", taken.id);
@@ -175,8 +175,8 @@ main :: proc() {
 	// And a move-only payload a case simply drops.
 	reset();
 	{
-		switch (value in opened(11)) {
-		case .open: fmt.println("dropped in place", value.id);
+		switch (opened(11)) {
+		case .open(value): fmt.println("dropped in place", value.id);
 		case .shut:
 		}
 	}

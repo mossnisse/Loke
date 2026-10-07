@@ -1,0 +1,35 @@
+package main; import "core:fmt";
+
+// design.md "switch statement": one matching form. A case binds what it
+// matches, `.variant(name)` over a union and `T(name)` over an `any_view`, and
+// `name in subject` in a header is an ordinary membership test.
+Shape :: union { circle: f64, square: f64, empty }
+
+describe :: proc(value: any_view) -> string {
+	switch (value) {
+	case int(n):         return "big int" if n > 9 else "int";
+	case ([]u8)(bytes):  fmt.println(bytes.len()); return "bytes";
+	case f32, f64:       return "float";
+	default:             return "other";
+	}
+}
+
+main :: proc() {
+	fmt.println(describe(3), describe([]u8{1, 2}), describe(1.5), describe("x"));
+
+	shapes := [3]Shape{.circle(1), .square(2), .empty};
+	foreach (&mut shape in shapes) {
+		switch (shape) {
+		case .circle(&mut r): r *= 10;
+		case .square, .empty: fmt.println("as is", shape);
+		}
+	}
+	fmt.println(shapes[0]);
+
+	counts := map[string]int{"a" = 1};
+	key := "a";
+	switch (key in counts) {
+	case true:  fmt.println("present");
+	default:    fmt.println("absent");
+	}
+}

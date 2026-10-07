@@ -144,7 +144,7 @@ main :: proc() {
 	buffer: [4096]u8 = {};
 	arena := mem.Arena.from_buffer(&mut buffer[:]);
 	values: [dynamic]u8 via arena.allocator() = {};
-	switch (_ in values.try_reserve(8192)) {
+	switch (values.try_reserve(8192)) {
 	case .ok: fmt.println("reserved");
 	case .err: fmt.println("buffer is too small");
 	}

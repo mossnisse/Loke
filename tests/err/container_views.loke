@@ -38,8 +38,8 @@ main :: proc() {
 	entries := table.entries();
 	walker := entries.iter();
 	table.reserve(16);
-	switch (step in walker.next()) {
-	case .some: fmt.println(step.key);
+	switch (walker.next()) {
+	case .some(step): fmt.println(step.key);
 	case .none:
 	}
 	foreach (_, v in entries) { fmt.println(v); }

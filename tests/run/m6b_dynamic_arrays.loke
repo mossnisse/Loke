@@ -50,8 +50,8 @@ main :: proc() {
 
 	// An empty container has nothing to pop.
 	empty: [dynamic]int = {};
-	switch (nothing in empty.pop()) {
-	case .some:
+	switch (empty.pop()) {
+	case .some(nothing):
 		fmt.println(nothing);
 		fmt.println(true);
 	case .none:

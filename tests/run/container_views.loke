@@ -109,8 +109,8 @@ main :: proc() {
 	by_hand := 0;
 	walking := true;
 	for (walking) {
-		switch (step in walker.next()) {
-		case .some: by_hand += step^;
+		switch (walker.next()) {
+		case .some(step): by_hand += step^;
 		case .none: walking = false;
 		}
 	}

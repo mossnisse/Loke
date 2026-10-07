@@ -48,7 +48,7 @@ main :: proc() {
 	values: [dynamic]u8 = {};
 	values.append(1, 2, 3);
 	fmt.println(values);
-	switch (_ in values.try_reserve(131072)) {
+	switch (values.try_reserve(131072)) {
 	case .ok: fmt.println("reserved");
 	case .err: fmt.println("default region is too small");
 	}

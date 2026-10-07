@@ -20,11 +20,11 @@ main :: proc() {
 		f();
 	case:
 	}
-	switch (tag := kind(); shape in tag) {
+	switch (tag := kind(); tag) {
 	case Circle, ^Square:
 		break;
 	}
-	switch ((x in set)) {
+	switch (x in set) {
 	case true:
 	}
 	return;

@@ -107,8 +107,8 @@ impl Lines_Iterator {
 	next :: proc(self: inout Lines_Iterator) -> Option(string_view) {
 		if (self.done) { return .none; }
 		at := 0;
-		switch (found in index_byte(self.rest, u8('\n'))) {
-		case .some: at = found;
+		switch (index_byte(self.rest, u8('\n'))) {
+		case .some(found): at = found;
 		case .none:
 			self.done = true;
 			if (self.rest.len() == 0) { return .none; }

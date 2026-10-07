@@ -30,8 +30,8 @@ impl Id {
 // design.md "Maps": `lookup_value` copies rather than borrows, so its receiver
 // is immutable and an ordinary `value:` parameter can be read through it.
 borrowed_len :: proc(m: map[string][dynamic]int) -> int {
-	switch (held in m.lookup_value("a")) {
-	case .some: return held.len();
+	switch (m.lookup_value("a")) {
+	case .some(held): return held.len();
 	case .none: return -1;
 	}
 	return -1;
@@ -85,13 +85,13 @@ main :: proc() {
 	// The three membership forms. `lookup_value` is the `Option` read: it never
 	// inserts, and its payload is an independently owned value rather than a
 	// pointer into the table.
-	switch (entry in m.lookup_value("Bob")) {
-	case .some:
+	switch (m.lookup_value("Bob")) {
+	case .some(entry):
 		fmt.println(entry.x);
 		fmt.println(true);
 	case .none: fmt.println(false);
 	}
-	switch (_ in m.lookup_value("nobody")) {
+	switch (m.lookup_value("nobody")) {
 	case .some: fmt.println(true);
 	case .none: fmt.println(false);
 	}
@@ -103,27 +103,27 @@ main :: proc() {
 	fmt.println((m.lookup_value("nobody") or_else Test{5, 5}).x);
 
 	// `find` never inserts and hands back a pointer to the stored value.
-	switch (slot in m.find_mut("Chloe")) {
-	case .some:
+	switch (m.find_mut("Chloe")) {
+	case .some(slot):
 		fmt.println(true);
 		slot^ = Test{9, 9};
 	case .none: fmt.println(false);
 	}
 	fmt.println(m["Chloe"].y);
-	switch (_ in m.find_mut("nobody")) {
+	switch (m.find_mut("nobody")) {
 	case .some: fmt.println(true);
 	case .none: fmt.println(false);
 	}
 	fmt.println(m.len());
 
 	// Removal moves the stored value out and drops the key.
-	switch (taken in m.remove("Bob")) {
-	case .some:
+	switch (m.remove("Bob")) {
+	case .some(taken):
 		fmt.println(taken.x);
 		fmt.println(true);
 	case .none: fmt.println(false);
 	}
-	switch (_ in m.remove("Bob")) {
+	switch (m.remove("Bob")) {
 	case .some: fmt.println(true);
 	case .none: fmt.println(false);
 	}
@@ -136,7 +136,7 @@ main :: proc() {
 	counts["a"] = 1;
 	counts["a"] += 5;
 	fmt.println(counts["a"]);
-	switch (_ in counts.try_insert("b", 2)) {
+	switch (counts.try_insert("b", 2)) {
 	case .ok:  fmt.println(true);
 	case .err: fmt.println(false);
 	}
@@ -146,8 +146,8 @@ main :: proc() {
 	counts.find_or_insert("c", 0)^ += 1;
 	counts.find_or_insert("c", 0)^ += 1;
 	fmt.println(counts["c"]);
-	switch (slot in counts.try_find_or_insert("c", 99)) {
-	case .ok:  fmt.println(slot^);
+	switch (counts.try_find_or_insert("c", 99)) {
+	case .ok(slot):  fmt.println(slot^);
 	case .err: fmt.println(-1);
 	}
 	counts.remove("c");
@@ -207,8 +207,8 @@ main :: proc() {
 	fmt.println(built().lookup_value("k") or_else -1);
 	fmt.println(built().lookup_value("gone") or_else -1);
 	// Receiver, then key, each once.
-	switch (loud in noisy_map().lookup_value(noisy_key())) {
-	case .some:
+	switch (noisy_map().lookup_value(noisy_key())) {
+	case .some(loud):
 		fmt.println(loud);
 		fmt.println(true);
 	case .none: fmt.println(false);
@@ -219,8 +219,8 @@ main :: proc() {
 	views: map[int]string_view = {};
 	views[1] = "borrowed";
 	fmt.println(views[1]);
-	switch (seen in views.lookup_value(1)) {
-	case .some:
+	switch (views.lookup_value(1)) {
+	case .some(seen):
 		fmt.println(seen);
 		fmt.println(true);
 	case .none: fmt.println(false);
@@ -239,7 +239,7 @@ main :: proc() {
 	fmt.println(wide[199]);
 	total := 0;
 	for (i := 0; i < 200; i += 2) {
-		switch (_ in wide.remove(i)) {
+		switch (wide.remove(i)) {
 		case .some: total += 1;
 		case .none:
 		}
@@ -312,8 +312,8 @@ lookup_regressions :: proc() {
 		assert(key_copies.load() == 1 && key_drops == 0);
 		assert(value_copies.load() == 0 && value_drops == 0);
 		{
-			switch (held in m.lookup_value(key = key)) {
-			case .some:
+			switch (m.lookup_value(key = key)) {
+			case .some(held):
 				assert(held.id == 1 && key.id == 1);
 				assert(value_copies.load() == 1 && value_drops == 0 && key_drops == 0);
 			case .none: assert(false);
@@ -321,14 +321,14 @@ lookup_regressions :: proc() {
 		}
 		assert(value_drops == 1);
 		{
-			switch (_ in m.lookup_value(key)) {
+			switch (m.lookup_value(key)) {
 			case .some:
 			case .none: assert(false);
 			}
 		}
 		assert(value_copies.load() == 2 && value_drops == 2);
 		{
-			switch (_ in m.lookup_value(key)) {
+			switch (m.lookup_value(key)) {
 			case .some:
 			case .none: assert(false);
 			}
@@ -337,11 +337,11 @@ lookup_regressions :: proc() {
 		m.lookup_value(key);
 		m.lookup_value(key);
 		assert(value_copies.load() == 5 && value_drops == 5);
-		switch (_ in m.lookup_value({9})) {
+		switch (m.lookup_value({9})) {
 		case .some: assert(false);
 		case .none: assert(value_copies.load() == 5 && value_drops == 5 && key_drops == 1);
 		}
-		switch (_ in m.find_mut(key = key)) {
+		switch (m.find_mut(key = key)) {
 		case .some: assert(key_drops == 1);
 		case .none: assert(false);
 		}
@@ -349,7 +349,7 @@ lookup_regressions :: proc() {
 		assert(m[key].id == 1 && key_drops == 1);
 		// A switch subject's temporaries live until the switch ends, and the
 		// borrow `find_mut` returns needs its key that long.
-		switch (_ in m.find_mut({1})) {
+		switch (m.find_mut({1})) {
 		case .some: assert(key_drops == 1);
 		case .none: assert(false);
 		}
@@ -357,8 +357,8 @@ lookup_regressions :: proc() {
 		assert(Tracked_Key{1} in m);
 		assert(m[Tracked_Key{1}].id == 1 && key_drops == 4);
 		{
-			switch (taken in m.remove(key)) {
-			case .some: assert(taken.id == 1 && key_drops == 5);
+			switch (m.remove(key)) {
+			case .some(taken): assert(taken.id == 1 && key_drops == 5);
 			case .none: assert(false);
 			}
 		}
@@ -372,13 +372,13 @@ lookup_regressions :: proc() {
 	// counts read one lower inside a case than after it — the totals either
 	// side of the statement are unchanged.
 	{
-		switch (held in tracked_map().lookup_value(1)) {
-		case .some: assert(held.id == 2 && value_copies.load() == 6 && value_drops == 6);
+		switch (tracked_map().lookup_value(1)) {
+		case .some(held): assert(held.id == 2 && value_copies.load() == 6 && value_drops == 6);
 		case .none: assert(false);
 		}
 	}
 	assert(value_drops == 8);
-	switch (_ in tracked_map().lookup_value(9)) {
+	switch (tracked_map().lookup_value(9)) {
 	case .some: assert(false);
 	case .none: assert(value_copies.load() == 6 && value_drops == 8);
 	}
@@ -388,8 +388,8 @@ lookup_regressions :: proc() {
 	grid: map[[2]int]int = {};
 	grid[{1, 2}] = 17;
 	assert((grid.lookup_value(key = {1, 2}) or_else -1) == 17);
-	switch (ptr in grid.find_mut({1, 2})) {
-	case .some: assert(ptr^ == 17);
+	switch (grid.find_mut({1, 2})) {
+	case .some(ptr): assert(ptr^ == 17);
 	case .none: assert(false);
 	}
 
@@ -398,8 +398,8 @@ lookup_regressions :: proc() {
 	borrowed_keys();
 	assert(read_grid(&grid, {1, 2}) == 17);
 	assert(read_grid(&grid, {3, 4}) == -1);
-	switch (ptr in grid.find({1, 2})) {
-	case .some: assert(ptr^ == 17);
+	switch (grid.find({1, 2})) {
+	case .some(ptr): assert(ptr^ == 17);
 	case .none: assert(false);
 	}
 }
@@ -417,12 +417,12 @@ borrowed_keys :: proc() {
 	assert(m[view] == 1);
 	assert((m.lookup_value(view) or_else -1) == 1);
 	assert((m.lookup_value("missing") or_else -1) == -1);
-	switch (slot in m.find_mut(view)) {
-	case .some: slot^ = 11;
+	switch (m.find_mut(view)) {
+	case .some(slot): slot^ = 11;
 	case .none: assert(false);
 	}
-	switch (slot in m.find(view)) {
-	case .some: assert(slot^ == 11);
+	switch (m.find(view)) {
+	case .some(slot): assert(slot^ == 11);
 	case .none: assert(false);
 	}
 	m[view] += 4;
@@ -438,8 +438,8 @@ borrowed_keys :: proc() {
 }
 
 read_grid :: proc(m: ^map[[2]int]int, key: [2]int) -> int {
-	switch (ptr in m.find(key)) {
-	case .some: return ptr^;
+	switch (m.find(key)) {
+	case .some(ptr): return ptr^;
 	case .none:
 	}
 	return -1;

@@ -77,14 +77,14 @@ reader_over :: proc(text: string_view, most: int) -> Short_Reader {
 // Every stream below is built from valid UTF-8 and every helper below is
 // expected to reach its end, so a failure at either is a bug in the test.
 text_of :: proc(bytes: []u8) -> string {
-	switch (text in string.from_utf8(bytes)) {
-	case .some: return text;
+	switch (string.from_utf8(bytes)) {
+	case .some(text): return text;
 	case .none: panic("the test produced invalid UTF-8");
 	}
 }
 
 succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
-	switch (_ in outcome) {
+	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;
 	}
@@ -93,9 +93,9 @@ succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
 
 // The failure a `Result(Unit, Error)` carries. Every use below expects one.
 failed :: proc(outcome: Result(Unit, io.Error)) -> io.Error {
-	switch (error in outcome) {
+	switch (outcome) {
 	case .ok:  panic("this operation was supposed to fail");
-	case .err: return error;
+	case .err(error): return error;
 	}
 }
 
@@ -123,8 +123,8 @@ main :: proc() {
 
 	// read_to_end, with and without a limit.
 	whole := reader_over("one two three", 4);
-	switch (bytes in io.read_to_end(inout whole)) {
-	case .ok:
+	switch (io.read_to_end(inout whole)) {
+	case .ok(bytes):
 		fmt.println(true);
 		fmt.println(bytes.len());
 	case .err:
@@ -133,15 +133,15 @@ main :: proc() {
 	}
 
 	bounded := reader_over("0123456789", 3);
-	switch (limited in io.read_to_end(inout bounded, limit = 5)) {
+	switch (io.read_to_end(inout bounded, limit = 5)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(limited, .Limit_Exceeded));
+	case .err(limited): fmt.println(io.is(limited, .Limit_Exceeded));
 	}
 
 	// Exactly at the limit is not over it.
 	edge := reader_over("01234", 3);
-	switch (edge_bytes in io.read_to_end(inout edge, limit = 5)) {
-	case .ok:
+	switch (io.read_to_end(inout edge, limit = 5)) {
+	case .ok(edge_bytes):
 		fmt.println(true);
 		fmt.println(edge_bytes.len());
 	case .err:
@@ -158,8 +158,8 @@ main :: proc() {
 	into: Short_Writer = {};
 	into.most = 4;
 	window: [3]u8 = {};
-	switch (moved in io.copy(inout into, inout from, &mut window[:])) {
-	case .ok:
+	switch (io.copy(inout into, inout from, &mut window[:])) {
+	case .ok(moved):
 		fmt.println(moved);
 		fmt.println(true);
 	case .err:
@@ -173,9 +173,9 @@ main :: proc() {
 	fmt.println(io.read_line(inout lines) or_else panic("the reader ended early"));
 	fmt.println(io.read_line(inout lines) or_else panic("the reader ended early"));
 	fmt.println(io.read_line(inout lines) or_else panic("the reader ended early"));
-	switch (done in io.read_line(inout lines)) {
+	switch (io.read_line(inout lines)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(done, .End_Of_Input));
+	case .err(done): fmt.println(io.is(done, .End_Of_Input));
 	}
 
 	kept := reader_over("keep\n", 5);
@@ -186,16 +186,16 @@ main :: proc() {
 	odd_bytes := [?]u8{u8('\n'), 0xFF, u8('\n'), u8('z'), u8('\r')};
 	odd := Short_Reader{odd_bytes[:], 0, 2};
 	fmt.println((io.read_line(inout odd) or_else panic("the reader ended early")).len());
-	switch (refused in io.read_line(inout odd)) {
+	switch (io.read_line(inout odd)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(refused, .Invalid_Data));
+	case .err(refused): fmt.println(io.is(refused, .Invalid_Data));
 	}
 	fmt.println((io.read_line(inout odd) or_else panic("the reader ended early")).len());
 
 	combined: Error_After_Byte = {};
-	switch (combined_error in io.read_line(inout combined)) {
+	switch (io.read_line(inout combined)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(combined_error, .Other));
+	case .err(combined_error): fmt.println(io.is(combined_error, .Other));
 	}
 
 	// The formatting bridge latches the first failure.

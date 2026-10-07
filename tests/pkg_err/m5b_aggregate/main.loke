@@ -38,8 +38,8 @@ escaping_retention :: proc(destination: inout wrapping.Holder) {
 // it while the wrapped view is still in use.
 invalidated_root :: proc(table: inout map[string][dynamic]int) -> int {
 	slot: ^mut [dynamic]int;
-	switch (found in table.find_mut("a")) {
-	case .some: slot = found;
+	switch (table.find_mut("a")) {
+	case .some(found): slot = found;
 	case .none: return -1;
 	}
 	holder := wrapping.wrap(slot^[:]);

@@ -19,9 +19,9 @@ impl Refusing {
 }
 
 main :: proc() {
-	switch (failure in try_make([dynamic]Huge, 0, 1)) {
+	switch (try_make([dynamic]Huge, 0, 1)) {
 	case .ok: fmt.println("allocated");
-	case .err: fmt.println("handled", failure);
+	case .err(failure): fmt.println("handled", failure);
 	}
 	r := Refusing{1};
 	other := r.clone();

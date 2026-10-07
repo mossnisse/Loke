@@ -53,9 +53,9 @@ opened :: proc() -> Result(int, App_Error) {
 
 report :: proc(label: int, outcome: Result(int, App_Error)) {
 	fmt.println(label);
-	switch (r in outcome) {
-	case .ok:  fmt.println(r);
-	case .err: fmt.println(r);
+	switch (outcome) {
+	case .ok(r):  fmt.println(r);
+	case .err(r): fmt.println(r);
 	}
 }
 
@@ -110,22 +110,22 @@ main :: proc() {
 	report(4000, opened());
 
 	fmt.println(5000);
-	switch (outcome in detailed()) {
-	case .ok: fmt.println(outcome);
-	case .err:
-		switch (error in outcome) {
-		case .detail: fmt.println(error.id);
-		case .io:     fmt.println(error);
+	switch (detailed()) {
+	case .ok(outcome): fmt.println(outcome);
+	case .err(outcome):
+		switch (outcome) {
+		case .detail(error): fmt.println(error.id);
+		case .io(error):     fmt.println(error);
 		}
 	}
 
 	fmt.println(6000);
-	switch (outcome in stored()) {
+	switch (stored()) {
 	case .ok: fmt.println("stored");
-	case .err:
-		switch (error in outcome) {
-		case .full: fmt.println(error.rejected.id);
-		case .io:   fmt.println(error);
+	case .err(outcome):
+		switch (outcome) {
+		case .full(error): fmt.println(error.rejected.id);
+		case .io(error):   fmt.println(error);
 		}
 	}
 }

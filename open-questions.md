@@ -306,7 +306,6 @@ fewer exceptions, rather than shortening keywords.
 | Later | Explicit-capture callables and conditional patterns | Shorter callbacks and fallible streaming loops | Small syntax additions |
 | Later | Checked disjoint access | Hand mutable halves to parallel workers | One compiler-known slice operation |
 | Later | Checked thread transfer and scoped workers | Reduce races and permit borrowed parallel work | Thread APIs and capabilities |
-| Later | Focused syntax and construction cleanup | Remove duplicate forms and accidental zero fields | Grammar and initialization |
 
 The decided change should precede a broad syntax rewrite. The next group should
 be tried on concrete programs: a parser, a resource container, a sorting or
@@ -525,25 +524,3 @@ it. Process termination may end the guarantee because no parent continues.
 Do not add futures, async syntax, or reactive variables merely to solve this
 borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements).
 
-### Focused syntax and construction cleanup
-
-Prefer changes that remove an ambiguity or semantic exception:
-
-1. **One union matching form.** Keep `switch (value)` with branch-local
-   `.some(payload)` patterns; consider removing `switch (payload in value)`.
-   Grouped arms can inspect the original subject. This removes the grammar's
-   special interpretation of a membership expression and its extra-parenthesis
-   workaround.
-
-Keep the distinction between nominal structs and structural records: privacy,
-hook ownership, and cross-package positional construction have real semantics.
-Share their rules and implementation where possible instead of erasing the
-distinction just to reduce the count of type forms. Likewise, retain named
-record results rather than adding unnamed tuples without a demonstrated need.
-
-There is no compelling reason here to remove `defer`, semicolons, parenthesized
-control-flow headers, explicit overload groups, or hermetic compile-time
-evaluation. The decisions this review informed are in comments.md:
-[`defer`](comments.md#defer),
-[One language at compile time](comments.md#one-language-at-compile-time), and
-[Hand-written package header files](comments.md#hand-written-package-header-files).

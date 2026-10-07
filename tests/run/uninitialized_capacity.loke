@@ -57,9 +57,9 @@ impl Buffer($T, $N) {
 }
 
 id_of :: proc(value: Sealed) -> int {
-	switch (held in value) {
-	case .first:  return held.id;
-	case .second: return held.id;
+	switch (value) {
+	case .first(held):  return held.id;
+	case .second(held): return held.id;
 	}
 	return 0;
 }
@@ -143,7 +143,7 @@ main :: proc() {
 		failing := Fallible{1};
 		unsafe.write(source.items[0], move(failing));
 		source.count = 1;
-		switch (_ in source.try_clone()) {
+		switch (source.try_clone()) {
 		case .ok: fmt.println("unexpected clone");
 		case .err: fmt.println("clone failed");
 		}

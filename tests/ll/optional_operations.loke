@@ -13,8 +13,8 @@ Value :: union { flag: bool, number: i32 }
 
 main :: proc() {
 	v: Value = .number(4);
-	switch (n in v) {
-	case .number: fmt.println(int(n) + 1);
+	switch (v) {
+	case .number(n): fmt.println(int(n) + 1);
 	case .flag:   fmt.println(0);
 	}
 
@@ -28,8 +28,8 @@ main :: proc() {
 	xs: [dynamic]int = {};
 	xs.append(1);
 	m["a"] = move(xs);
-	switch (held in m.lookup_value("a")) {
-	case .some: fmt.println(held.len() + 1);
+	switch (m.lookup_value("a")) {
+	case .some(held): fmt.println(held.len() + 1);
 	case .none: fmt.println(0);
 	}
 }

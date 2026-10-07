@@ -1,0 +1,14 @@
+// Rule 6: a switch header is an optional init statement and a subject, so
+// `x in set` there is a membership test. A case value may be a type, and a
+// singleton call case is a pattern only once the subject's type is known.
+package main;
+
+main :: proc() {
+	switch (x) { case 1: }
+	switch (x in set) { case true: }
+	switch (init(); figure) { case int: }
+	switch (init(); x) { case 1: }
+	switch (figure) { case int(n), []u8, ^Square: }
+	switch (figure) { case ([]int)(xs): }
+	switch (shape) { case .circle(r), .square(&mut s): }
+}

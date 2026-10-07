@@ -8,7 +8,7 @@ main :: proc() {
 	defer fmt.println("unwound");
 	// A `try_` form still hands the error back whatever the policy.
 	scratch := mem.Scratch.init(policy = .Trap);
-	switch (_ in mem.try_arena(policy = .Panic)) {
+	switch (mem.try_arena(policy = .Panic)) {
 	case .ok: fmt.println("try_arena opened");
 	case .err: fmt.println("try_arena failed");
 	}

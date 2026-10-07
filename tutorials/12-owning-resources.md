@@ -26,8 +26,8 @@ main :: proc() {
 
 	tail := box(Node{value = 2});
 	head := Node{value = 1, next = .some(move(tail))};
-	switch (next in head.next) {
-	case .some: fmt.println(head.value, next.value);
+	switch (head.next) {
+	case .some(next): fmt.println(head.value, next.value);
 	case .none: fmt.println(head.value);
 	}
 }
@@ -102,7 +102,7 @@ process :: proc(input: move Tracked_File, cancel: bool) -> Result(Unit, Problem)
 
 main :: proc() {
 	file := Tracked_File.open("tracked_input.txt") or_else panic("cannot open input");
-	switch (_ in process(move(file), true)) {
+	switch (process(move(file), true)) {
 	case .ok: fmt.println("done");
 	case .err: fmt.println("cancelled");
 	}

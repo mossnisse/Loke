@@ -7,12 +7,12 @@
           (case (int "1")
           )
         )
-        (switch type "v"
-          (subject (ident "figure"))
-          (case (ident "int")
+        (switch value
+          (subject (binary In (ident "x") (ident "set")))
+          (case (ident "true")
           )
         )
-        (switch type "v"
+        (switch value
           (call (ident "init"))
           (subject (ident "figure"))
           (case (ident "int")
@@ -25,13 +25,18 @@
           )
         )
         (switch value
-          (subject (binary In (ident "x") (ident "set")))
-          (case (ident "true")
+          (subject (ident "figure"))
+          (case (call (ident "int") (ident "n")) (slice (ident "u8")) (ptr (ident "Square"))
           )
         )
-        (switch type "_"
+        (switch value
           (subject (ident "figure"))
-          (case (ident "int")
+          (case (call (slice (ident "int")) (ident "xs"))
+          )
+        )
+        (switch value
+          (subject (ident "shape"))
+          (case (call (selector _ "circle") (ident "r")) (call (selector _ "square") (unary Amp mut (ident "s")))
           )
         )
       )

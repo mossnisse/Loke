@@ -21,7 +21,7 @@ main :: proc() {
 	xs.append(1, 2, 3);
 	fmt.println(xs.len(), xs);
 
-	switch (_ in xs.try_reserve(200_000)) {
+	switch (xs.try_reserve(200_000)) {
 	case .ok:  fmt.println("reserve ok");
 	case .err: fmt.println("reserve failed");
 	}

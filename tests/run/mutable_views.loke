@@ -78,7 +78,7 @@ main :: proc() {
 	fmt.println(values);
 	number((&mut values[:]).indexed());
 	walker := (&mut values[:]).indexed().iter_mut();
-	switch (pair in walker.next()) { case .some: pair.value^ = 7; case .none: }
+	switch (walker.next()) { case .some(pair): pair.value^ = 7; case .none: }
 	fmt.println(values);
 
 	small: container.Small_Array(int, 4) = {};

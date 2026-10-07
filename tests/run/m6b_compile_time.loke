@@ -31,12 +31,12 @@ POPPED :: popped();
 popped :: proc() -> int {
 	xs: [dynamic]int = {4, 5, 6};
 	value := 0;
-	switch (popped in xs.pop()) {
-	case .some: value = popped;
+	switch (xs.pop()) {
+	case .some(popped): value = popped;
 	case .none: return -1;
 	}
 	empty: [dynamic]int = {};
-	switch (_ in empty.pop()) {
+	switch (empty.pop()) {
 	case .some: return -2;
 	case .none:
 	}
@@ -78,7 +78,7 @@ looked_up :: proc() -> int {
 	held := m.lookup_value("a") or_else {};
 	if (held.len() != 1) { return -1; }
 	held.append(5);
-	switch (_ in m.lookup_value("zz")) {
+	switch (m.lookup_value("zz")) {
 	case .some: return -2;
 	case .none:
 	}
@@ -96,8 +96,8 @@ queried :: proc() -> int {
 	total := 0;
 	if (view in m) { total += m[view]; }
 	total += m.lookup_value(view) or_else 0;
-	switch (slot in m.find("a")) {
-	case .some: total += slot^;
+	switch (m.find("a")) {
+	case .some(slot): total += slot^;
 	case .none: return -1;
 	}
 	total += m.remove(view) or_else 0;
@@ -107,17 +107,17 @@ queried :: proc() -> int {
 FOUND :: found();
 found :: proc() -> int {
 	m := map[int]int{1 = 10, 2 = 20, 1 = 30};
-	switch (slot in m.find_mut(2)) {
-	case .some: slot^ = 99;
+	switch (m.find_mut(2)) {
+	case .some(slot): slot^ = 99;
 	case .none: return -1;
 	}
-	switch (_ in m.find_mut(7)) {
+	switch (m.find_mut(7)) {
 	case .some: return -2;
 	case .none:
 	}
 	taken := 0;
-	switch (removed in m.remove(1)) {
-	case .some: taken = removed;
+	switch (m.remove(1)) {
+	case .some(removed): taken = removed;
 	case .none: return -3;
 	}
 	return taken * 1000 + m[2] * 10 + m.len();
@@ -204,18 +204,18 @@ custom_keys :: proc() -> int {
 	if (!(Annotated_Key{1, 40} in m)) { return -2; }
 	m[Annotated_Key{1, 50}] = 8;
 	{
-		switch (p in m.find_mut(Annotated_Key{1, 60})) {
-		case .some: if (p^ != 8) { return -3; }
+		switch (m.find_mut(Annotated_Key{1, 60})) {
+		case .some(p): if (p^ != 8) { return -3; }
 		case .none: return -3;
 		}
 	}
-	switch (_ in m.try_insert(Annotated_Key{1, 70}, 7)) {
+	switch (m.try_insert(Annotated_Key{1, 70}, 7)) {
 	case .ok:  if (m.len() != 1) { return -4; }
 	case .err: return -4;
 	}
 	value := 0;
-	switch (removed in m.remove(Annotated_Key{1, 80})) {
-	case .some: value = removed;
+	switch (m.remove(Annotated_Key{1, 80})) {
+	case .some(removed): value = removed;
 	case .none: return -5;
 	}
 	if (m.len() != 0) { return -5; }

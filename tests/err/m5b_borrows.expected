@@ -14,7 +14,7 @@ L0511
 @55:2
 this write of `xs` is not compatible with the mutable slice of it that is still in use
 L0511
-@63:15
+@63:10
 this read of `c` is not compatible with the mutable pointer of it that is still in use
 L0512
 @75:2

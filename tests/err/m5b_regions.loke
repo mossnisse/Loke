@@ -129,8 +129,8 @@ erased_allocator_region :: proc() {
 	arena := mem.Arena.init();
 	allocator := arena.allocator();
 	view: any_view = allocator;
-	switch (restored in view.as(Allocator)) {
-	case .some:
+	switch (view.as(Allocator)) {
+	case .some(restored):
 		xs: [dynamic]int via restored = {};
 		xs.append(1);
 		free_all(allocator);

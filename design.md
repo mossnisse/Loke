@@ -101,10 +101,10 @@ main :: proc() {
 	target := Point{0, 0}.shifted(3, 4) + Point{1, 1};
 	fmt.println("target", target.x, target.y);
 
-	switch (outcome in corners(8, 8)) {
-	case .ok:
+	switch (corners(8, 8)) {
+	case .ok(outcome):
 		foreach (p, i in outcome.indexed()) { fmt.println(i, p.x, p.y); }
-	case .err:
+	case .err(outcome):
 		fmt.eprintln("error:", outcome);
 	}
 }
@@ -580,8 +580,8 @@ Safe conversions return managed values or explicit borrows; they never hide a mu
 A validating constructor returns an [`Option`](#typed-fallibility): the payload on valid input, `.none` on invalid. Handle it with a `switch` or with `or_else`:
 
 ```odin
-switch (text in string.from_utf8(bytes)) {
-case .some: fmt.println(text);
+switch (string.from_utf8(bytes)) {
+case .some(text): fmt.println(text);
 case .none:
 	// `bytes` was not valid UTF-8.
 }
@@ -1341,8 +1341,8 @@ A lookup that tolerates a missing key is a method; each is listed under [Map con
 ```odin
 present := "Bob" in m;                         // presence only
 bob := m.lookup_value("Bob") or_else Score{};  // an owned copy, or a fallback
-switch (slot in m.find_mut("Bob")) {           // a pointer to the stored element
-case .some: slot^ = { 2, 2 };
+switch (m.find_mut("Bob")) {           // a pointer to the stored element
+case .some(slot): slot^ = { 2, 2 };
 case .none:
 }
 
@@ -1677,16 +1677,17 @@ case .absent:
 
 The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while each branch-local name has the payload type of the variant that introduced it.
 
-The header-binding form suits grouped cases. One variant narrows the binding to its payload; several variants, or a default case, keep it at the union type. A payloadless variant binds `Unit`:
+A case that lists several variants, and a default case, bind nothing: their variants carry different payloads. Such a case reads the subject itself, which keeps the union type. A temporary subject has no name to read, so a switch that needs the whole value there switches over a local holding it:
 
 ```odin
-switch (p in v) {
-case .text:                 static_assert(type_of(p) == string);
-case .number, .real:        static_assert(type_of(p) == Value);
-case .flag:                 static_assert(type_of(p) == bool);
-case .absent:               static_assert(type_of(p) == Unit);
+switch (v) {
+case .text(text):    static_assert(type_of(text) == string);
+case .number, .real: static_assert(type_of(v) == Value);
+case .flag, .absent:
 }
 ```
+
+The case is the only place a switch binds. `switch (x in set)` is an ordinary switch on the boolean membership test, and a header `switch (name in subject)` whose `name` is declared nowhere is reported as a binding written in the header, naming the case form.
 
 A switch with a case for every variant is **exhaustive**: some case always runs, so no path skips every case. That is what lets an exhaustive switch whose every case returns be the last statement of a value-returning procedure; see [Exhaustive switch](#exhaustive-switch). A switch that omits a variant and has no default case is rejected, and names the variants it did not cover. There is no nil case, because a union has no nil state.
 
@@ -2036,7 +2037,7 @@ The slice and its elements borrow the caller's temporary arguments and live only
 
 `[]any_view` exists only for this variadic call. [`@(c_vararg)`](#c_vararg) is separate signature notation and uses the C default argument promotions.
 
-Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. It supports runtime checked extractions and type switches.
+Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. It supports runtime checked extractions and a switch over its type.
 
 ```odin
 print_value :: proc(value: any_view) { ... }
@@ -2047,9 +2048,22 @@ print_value(42); // the temporary lives through the call
 
 ```odin
 print_text :: proc(value: any_view) {
-	switch (text in value.as(string)) {
-	case .some: fmt.println(text);
+	switch (value.as(string)) {
+	case .some(text): fmt.println(text);
 	case .none: fmt.println("not a string");
+	}
+}
+```
+
+A switch over an `any_view` matches the type it holds. A case names one or more concrete types, and a case naming one type may bind the value as that type with `T(name)`, the spelling of a conversion; a composite or pointer type is parenthesised there as in a conversion. The binding is read-only, since an `any_view` lends what it views. A case naming several types, and the default case, read the subject, which stays an `any_view`. No list of cases covers every type, so such a switch needs a default case:
+
+```odin
+describe :: proc(value: any_view) {
+	switch (value) {
+	case int(n):        fmt.println("int", n);
+	case ([]u8)(bytes): fmt.println(bytes.len(), "bytes");
+	case f32, f64:      fmt.println("float", value);
+	default:            fmt.println("something else");
 	}
 }
 ```
@@ -2219,8 +2233,8 @@ impl Table($Key, $Value) {
 
 table: Table(string, int) = {};
 table.insert("a", 1);
-switch (value in table.find("a")) {
-case .some: assert(value == 1);
+switch (table.find("a")) {
+case .some(value): assert(value == 1);
 case .none:
 }
 ```
@@ -4039,16 +4053,7 @@ case limit():
 
 `limit()` is not called if `i == 0`.
 
-A switch header of the form `switch (name in expression)` is always a [variant switch](#inspecting-a-union), never a value switch whose subject is the boolean `name in expression`. The membership meaning needs a second pair of parentheses:
-
-```odin
-switch (x in set) { }     // variant switch: `x` binds the payload of `set`
-switch ((x in set)) { }   // value switch on the boolean `x in set`
-```
-
-Rejecting such a header because its subject is not a union must say that the header bound a payload and give the second pair of parentheses, since the program the programmer wrote contains no payload.
-
-A union may instead put the payload binding in its individual case. This keeps unrelated payload names and types out of the other branches:
+The header is an initialization statement and a subject, and binds nothing: `switch (x in set)` switches on the boolean membership test. A switch over a [union](#inspecting-a-union) or an [`any_view`](#any_view-type) matches variants or types instead of comparing values, and each case binds what it matches. This keeps unrelated payload names and types out of the other branches:
 
 ```odin
 switch (token) {
@@ -4181,9 +4186,9 @@ A deferred operation that returns a `Result` must handle that result within the 
 read_file :: proc() -> Result(Unit, io.Error) {
 	file := fs.open_read("my_file.txt") or_return;
 	defer {
-		switch (error in file.close()) {
+		switch (file.close()) {
 		case .ok:
-		case .err: fmt.eprintln("close failed:", error);
+		case .err(error): fmt.eprintln("close failed:", error);
 		}
 	}
 	// Use `file` here.
@@ -5337,8 +5342,8 @@ A status returned from `main` takes effect after those scope-exit actions, so cl
 ```odin
 main :: proc() -> i32 {
 	// `initialize` returns Result(State, Error); `run` returns an i32 status.
-	switch (state in application.initialize()) {
-	case .ok:
+	switch (application.initialize()) {
+	case .ok(state):
 		defer application.shutdown(inout state);
 		return application.run(inout state);
 	case .err:
@@ -5563,9 +5568,9 @@ value :: proc() -> Result(int, Error_Code)  { return .ok(123); }
 work :: proc() -> Result(int, Error_Code) {
 	// The common idiom, written out.
 	first: int;
-	switch (n in value()) {
-	case .ok:  first = n;
-	case .err: return .err(n);
+	switch (value()) {
+	case .ok(n):  first = n;
+	case .err(n): return .err(n);
 	}
 
 	// The same thing, as one operator.
@@ -6362,8 +6367,8 @@ Where this specification rejects a program, it often also says what the message 
 | A variant or enum switch is not exhaustive | the variants it did not cover ([§](#inspecting-a-union)) |
 | An overloaded call stays ambiguous | every maximal candidate with its signature, and why selection failed, in the programmer's terms rather than as a rank vector or a tie-breaker number ([§](#operator-lookup-and-overload-resolution)) |
 | An overloaded call's result does not fit its destination | the member the arguments selected ([§](#operator-lookup-and-overload-resolution)) |
-| A `switch (name in expression)` subject is not a union | that the header bound a payload, and the second pair of parentheses that makes it a value switch ([§](#switch-statement)) |
-| A `foreach` header is written `(&value, index in sequence)` or `(&value in map)` | the adapter or destructuring that supplies the index or key ([§](#element-bindings)) |
+| A switch header is written `switch (name in subject)` with an undeclared `name` | that a switch binds in its cases, and the `.variant(name)` or `T(name)` case that does ([§](#inspecting-a-union)) |
+| A `foreach` header is written `(&mut value, index in sequence)` or `(&mut value in map)` | the adapter or destructuring that supplies the index or key ([§](#element-bindings)) |
 | A required interface application does not hold | the concrete application and the interface-body line that failed — “constraint not satisfied” alone is a defect ([§](#interface-bodies)) |
 | A mutating slot is called through a `dyn I` | `dyn mut I`, as a capability error rather than a missing member ([§](#borrowed-dynamic-interface-values)) |
 | Constant declarations form a cycle | the cycle as a path of constant declarations ([§](#constant-declarations)) |

@@ -84,10 +84,10 @@ load :: proc(
 }
 
 describe :: proc(outcome: Result(Unit, Error)) -> string_view {
-	switch (e in outcome) {
+	switch (outcome) {
 	case .ok:
 		return "none";
-	case .err:
+	case .err(e):
 		switch (e) {
 		case .Empty_Line:        return "empty line";
 		case .Missing_Separator: return "missing `=`";

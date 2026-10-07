@@ -24,15 +24,15 @@ main :: proc() {
 	e: Outcome = .value(4);
 	fmt.println(int(e or_else 0) + 1);
 
-	switch (t in e) {
-	case .value:
+	switch (e) {
+	case .value(t):
 		fmt.println(int(t));
 	case:
 		fmt.println(0);
 	}
 
-	switch (n in propagate()) {
-	case .value:  fmt.println(int(n) + 1);
+	switch (propagate()) {
+	case .value(n):  fmt.println(int(n) + 1);
 	case .failed: fmt.println(0);
 	}
 }

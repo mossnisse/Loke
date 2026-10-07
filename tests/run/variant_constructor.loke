@@ -51,18 +51,18 @@ filled :: proc() -> Result(Unit, App_Error) {
 }
 
 show :: proc(error: App_Error) {
-	switch (e in error) {
-	case .parse:  fmt.println("parse", e);
-	case .detail: fmt.println("detail", e.id);
-	case .full:   fmt.println("full", e.rejected.id);
+	switch (error) {
+	case .parse(e):  fmt.println("parse", e);
+	case .detail(e): fmt.println("detail", e.id);
+	case .full(e):   fmt.println("full", e.rejected.id);
 	}
 }
 
 // Compile-time evaluation calls a constructor like any procedure value.
 unwrapped :: proc() -> int {
 	some := Option(int).some;
-	switch (value in some(3)) {
-	case .some: return value;
+	switch (some(3)) {
+	case .some(value): return value;
 	case .none: return 0;
 	}
 }
@@ -70,9 +70,9 @@ unwrapped :: proc() -> int {
 UNWRAPPED :: unwrapped();
 
 main :: proc() {
-	switch (r in parsed())   { case .ok: fmt.println(r);    case .err: show(r); }
-	switch (r in detailed()) { case .ok: fmt.println(r);    case .err: show(r); }
-	switch (r in filled())   { case .ok: fmt.println("ok"); case .err: show(r); }
+	switch (parsed())   { case .ok(r): fmt.println(r);    case .err(r): show(r); }
+	switch (detailed()) { case .ok(r): fmt.println(r);    case .err(r): show(r); }
+	switch (filled())   { case .ok: fmt.println("ok"); case .err(r): show(r); }
 
 	// A stored constructor takes a place as `move(x)`, and a temporary as it is.
 	make := App_Error.parse;

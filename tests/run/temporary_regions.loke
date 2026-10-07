@@ -21,8 +21,8 @@ main :: proc() {
 	m := shared(move(view));
 	t := try_shared(View{local[2:]}) or_else panic("no memory");
 	w := h.downgrade();
-	switch (again in w.upgrade()) {
-	case .some: fmt.println(again.get().items[1]);
+	switch (w.upgrade()) {
+	case .some(again): fmt.println(again.get().items[1]);
 	case .none: fmt.println("gone");
 	}
 	fmt.println(first(h), m.get().items[0], t.get().items[0], h.get().items[2]);

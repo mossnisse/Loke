@@ -57,14 +57,14 @@ main :: proc() {
 	// types only.
 	view.paint(inout canvas);
 	erased: any_view = 1;
-	switch (t in erased) {
+	switch (erased) {
 	case Drawable:
 		fmt.println(1);
 	case:
 		fmt.println(0);
 	}
 	x := view.(Circle);
-	switch (t in view) {
+	switch (view) {
 	case Circle:
 		fmt.println(1);
 	}

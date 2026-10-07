@@ -21,7 +21,7 @@ Slot :: enum{First, Second, Third};
 Nothing :: enum{};
 
 succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
-	switch (_ in outcome) {
+	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;
 	}
@@ -35,17 +35,17 @@ main :: proc() {
 	m: map[int]Choice = {};
 	fmt.println(succeeded(m.try_insert(1, .a(3))));
 	fmt.println(m.len(), 1 in m);
-	switch (v in m.lookup_value(1)) {
-	case .some: fmt.println(v);
+	switch (m.lookup_value(1)) {
+	case .some(v): fmt.println(v);
 	case .none: fmt.println("missing");
 	}
-	switch (p in m.find_mut(1)) {
-	case .some: p^ = .b(true);
+	switch (m.find_mut(1)) {
+	case .some(p): p^ = .b(true);
 	case .none:
 	}
 	fmt.println(m.lookup_value(1) or_else .b(false));
-	switch (taken in m.remove(1)) {
-	case .some: fmt.println("removed", taken);
+	switch (m.remove(1)) {
+	case .some(taken): fmt.println("removed", taken);
 	case .none: fmt.println("absent");
 	}
 	fmt.println(m.len());

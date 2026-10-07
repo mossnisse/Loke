@@ -38,8 +38,8 @@ main :: proc() {
 	fmt.println(move(absent).ok_or("absent".copy()));
 
 	token: Option(Token) = .some(Token{7});
-	switch (found in move(token).ok_or(0)) {
-	case .ok:  fmt.println("token", found.id);
+	switch (move(token).ok_or(0)) {
+	case .ok(found):  fmt.println("token", found.id);
 	case .err: fmt.println("no token");
 	}
 }

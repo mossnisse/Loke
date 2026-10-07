@@ -871,9 +871,9 @@ Stmt_When :: struct {
 
 Switch_Kind :: enum {
 	Value,
-	Type,
-	// A union switch with per-case `.variant(binding)`; the checker turns a
-	// `Value` switch over a union into this.
+	// A union or `any_view` switch, whose cases name variants or types and may
+	// bind with `.variant(binding)` or `T(binding)`; the checker turns a
+	// `Value` switch over either into this.
 	Pattern,
 }
 
@@ -898,7 +898,6 @@ Stmt_Switch :: struct {
 	using base: Node_Base,
 	kind:       Switch_Kind,
 	init:       Stmt,
-	binding:    Name, // the type switch's header binding, `name in`
 	subject:    Expr,
 	cases:      []Switch_Case,
 	// Every path enters a case: all variants covered, or a default.

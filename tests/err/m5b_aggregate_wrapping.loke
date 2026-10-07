@@ -67,8 +67,8 @@ consume_a_local :: proc() -> []int {
 extract_a_local :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	choice: Choice = .held(Holder{local[:]});
-	switch (value in choice) {
-	case .held:   return value.view;
+	switch (choice) {
+	case .held(value):   return value.view;
 	case .number: return {};
 	}
 }
@@ -106,8 +106,8 @@ map_from_a_local :: proc() -> []int {
 	table: map[string]Holder = {};
 	numbers := [3]int{1, 2, 3};
 	table["a"] = Holder{numbers[:]};
-	switch (held in table.lookup_value("a")) {
-	case .some: return held.view;
+	switch (table.lookup_value("a")) {
+	case .some(held): return held.view;
 	case .none: return {};
 	}
 }
@@ -161,8 +161,8 @@ pop_a_local :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	holders: [dynamic]Holder = {};
 	holders.append(Holder{local[:]});
-	switch (held in holders.pop()) {
-	case .some: return held.view;
+	switch (holders.pop()) {
+	case .some(held): return held.view;
 	case .none: return {};
 	}
 }
@@ -250,16 +250,16 @@ dereferenced_value_read :: proc() -> Holder {
 variant_switch_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	choice: Choice = .held(Holder{local[:]});
-	switch (held in choice) {
-	case .held:   return held.view;
+	switch (choice) {
+	case .held(held):   return held.view;
 	case .number: return {};
 	}
 }
 
 consumed_variant_switch_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
-	switch (held in Choice.held(Holder{local[:]})) {
-	case .held:   return held.view;
+	switch (Choice.held(Holder{local[:]})) {
+	case .held(held):   return held.view;
 	case .number: return {};
 	}
 }
@@ -308,8 +308,8 @@ erased_extraction_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	held := Holder{local[:]};
 	erased: any_view = held;
-	switch (value in erased.as(Holder)) {
-	case .some: return value.view;
+	switch (erased.as(Holder)) {
+	case .some(value): return value.view;
 	case .none: return {};
 	}
 }
@@ -397,8 +397,8 @@ union_result :: proc(a: []int, b: []int) -> Result_Choice {
 }
 union_result_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	switch (outer in union_result(values, local[:])) {
-	case .outer:  return outer.pair.right;
+	switch (union_result(values, local[:])) {
+	case .outer(outer):  return outer.pair.right;
 	case .number: return {};
 	}
 }

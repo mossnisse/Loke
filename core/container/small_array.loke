@@ -134,7 +134,7 @@ impl Small_Array($T, $N) {
 	append_copied :: proc(
 		self: inout, @(escape=stored) values: ..T,
 	) where is_copyable(T) {
-		switch (_ in self.try_append(..values)) {
+		switch (self.try_append(..values)) {
 		case .ok:
 		case .err: panic("Small_Array is full");
 		}
@@ -169,7 +169,7 @@ impl Small_Array($T, $N) {
 	insert_copied :: proc(
 		self: inout, index: int, @(escape=stored) value: T,
 	) where is_copyable(T) {
-		switch (_ in self.try_insert(index, value)) {
+		switch (self.try_insert(index, value)) {
 		case .ok:
 		case .err: panic("Small_Array is full");
 		}

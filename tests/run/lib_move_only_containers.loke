@@ -58,8 +58,8 @@ main :: proc() {
 	fmt.println(taken.id, a.len());
 	moved_out := a.remove_unordered(0);
 	fmt.println(moved_out.id, a.len());
-	switch (last in a.pop()) {
-	case .some: fmt.println(last.id);
+	switch (a.pop()) {
+	case .some(last): fmt.println(last.id);
 	case .none: fmt.println("empty");
 	}
 	fmt.println(a.len());

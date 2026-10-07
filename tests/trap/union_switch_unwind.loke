@@ -15,8 +15,8 @@ held :: proc(id: int) -> Boxed { return .held(Owned{id}); }
 
 main :: proc() {
 	outer := Owned{1};
-	switch (value in held(2)) {
-	case .held:
+	switch (held(2)) {
+	case .held(value):
 		inner := Owned{3};
 		fmt.println("in the case", value.id, inner.id);
 		panic("out of the case");

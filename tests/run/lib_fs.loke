@@ -16,7 +16,7 @@ import "core:strings";
 
 // Every `Result(Unit, io.Error)` below is only ever asked which variant it is.
 succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
-	switch (_ in outcome) {
+	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;
 	}
@@ -25,17 +25,17 @@ succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
 
 // And these want the failure itself.
 failure_of :: proc(outcome: Result(Unit, io.Error)) -> io.Error {
-	switch (error in outcome) {
+	switch (outcome) {
 	case .ok:  return io.make_error(.Other, .Other);
-	case .err: return error;
+	case .err(error): return error;
 	}
 }
 
 root :: proc() -> string {
-	switch (outcome in os.get_environment("TEMP")) {
-	case .ok:
-		switch (base in outcome) {
-		case .some: return path.join([]string_view{base, "loke_fs_case"});
+	switch (os.get_environment("TEMP")) {
+	case .ok(outcome):
+		switch (outcome) {
+		case .some(base): return path.join([]string_view{base, "loke_fs_case"});
 		case .none:
 		}
 	case .err:
@@ -58,12 +58,12 @@ main :: proc() {
 	// An existing file is not an already-satisfied directory creation.
 	fmt.println(io.is(failure_of(fs.create_directories(file)), .Already_Exists));
 	// A file is not a removable directory: keep ERROR_DIRECTORY's path identity.
-	switch (error in fs.remove_directory(file)) {
+	switch (fs.remove_directory(file)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(error, .Invalid_Path), io.operation_of(error) == .Remove_Directory, io.native_code_of(error) == 267);
+	case .err(error): fmt.println(io.is(error, .Invalid_Path), io.operation_of(error) == .Remove_Directory, io.native_code_of(error) == 267);
 	}
-	switch (text in fs.read_text(file)) {
-	case .ok:
+	switch (fs.read_text(file)) {
+	case .ok(text):
 		fmt.println(true);
 		fmt.println(text);
 		fmt.println(text.len());
@@ -87,8 +87,8 @@ main :: proc() {
 	binary := in_root(directory, "binary.bin");
 	data := [?]u8{0, 1, 2, 0xFF, 0};
 	fmt.println(succeeded(fs.write_bytes(binary, data[:])));
-	switch (bytes in fs.read_bytes(binary)) {
-	case .ok:
+	switch (fs.read_bytes(binary)) {
+	case .ok(bytes):
 		fmt.println(true);
 		fmt.println(bytes.len());
 		fmt.println(int(bytes[3]));
@@ -99,41 +99,41 @@ main :: proc() {
 	}
 
 	// Those bytes are not UTF-8, and `read_text` says so rather than repairing.
-	switch (invalid in fs.read_text(binary)) {
+	switch (fs.read_text(binary)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(invalid, .Invalid_Data));
+	case .err(invalid): fmt.println(io.is(invalid, .Invalid_Data));
 	}
 
 	// The bounded read: one below, exactly at, and one above the limit.
-	switch (under in fs.read_bytes(binary, limit = 6)) {
-	case .ok:
+	switch (fs.read_bytes(binary, limit = 6)) {
+	case .ok(under):
 		fmt.println(true);
 		fmt.println(under.len());
 	case .err:
 		fmt.println(false);
 		fmt.println(0);
 	}
-	switch (exact in fs.read_bytes(binary, limit = 5)) {
-	case .ok:
+	switch (fs.read_bytes(binary, limit = 5)) {
+	case .ok(exact):
 		fmt.println(true);
 		fmt.println(exact.len());
 	case .err:
 		fmt.println(false);
 		fmt.println(0);
 	}
-	switch (over in fs.read_bytes(binary, limit = 4)) {
-	case .ok:
+	switch (fs.read_bytes(binary, limit = 4)) {
+	case .ok(over):
 		fmt.println(false);
 		fmt.println(over.len());
-	case .err:
+	case .err(over):
 		// Nothing partial comes back with the failure.
 		fmt.println(io.is(over, .Limit_Exceeded));
 		fmt.println(0);
 	}
 
 	// Metadata and existence.
-	switch (info in fs.metadata(file)) {
-	case .ok:
+	switch (fs.metadata(file)) {
+	case .ok(info):
 		fmt.println(true);
 		fmt.println(int(info.kind));
 		fmt.println(info.size);
@@ -146,21 +146,21 @@ main :: proc() {
 		fmt.println(0);
 		fmt.println(false);
 	}
-	switch (directory_info in fs.metadata(directory)) {
-	case .ok:  fmt.println(int(directory_info.kind));
+	switch (fs.metadata(directory)) {
+	case .ok(directory_info):  fmt.println(int(directory_info.kind));
 	case .err: fmt.println(-1);
 	}
 
-	switch (present in fs.exists(file)) {
-	case .ok:
+	switch (fs.exists(file)) {
+	case .ok(present):
 		fmt.println(present);
 		fmt.println(true);
 	case .err:
 		fmt.println(false);
 		fmt.println(false);
 	}
-	switch (absent in fs.exists(in_root(directory, "nothing.txt"))) {
-	case .ok:
+	switch (fs.exists(in_root(directory, "nothing.txt"))) {
+	case .ok(absent):
 		fmt.println(absent);
 		fmt.println(true);
 	case .err:
@@ -169,11 +169,11 @@ main :: proc() {
 	}
 
 	// A missing file is `Not_Found`, on every entry point.
-	switch (missing in fs.open_read(in_root(directory, "nothing.txt"))) {
+	switch (fs.open_read(in_root(directory, "nothing.txt"))) {
 	case .ok:
 		fmt.println(false);
 		fmt.println(-1);
-	case .err:
+	case .err(missing):
 		fmt.println(io.is(missing, .Not_Found));
 		fmt.println(int(io.operation_of(missing)));
 	}
@@ -196,8 +196,8 @@ main :: proc() {
 	fmt.println(true);
 	fmt.println(succeeded(io.write_string(inout handle, "0123456789")));
 	fmt.println(succeeded(handle.flush()));
-	switch (position in handle.seek(4, fs.Seek_Origin.Start)) {
-	case .ok:
+	switch (handle.seek(4, fs.Seek_Origin.Start)) {
+	case .ok(position):
 		fmt.println(true);
 		fmt.println(position);
 	case .err:
@@ -205,8 +205,8 @@ main :: proc() {
 		fmt.println(0);
 	}
 	window: [3]u8 = {};
-	switch (count in handle.read(&mut window[:])) {
-	case .ok:
+	switch (handle.read(&mut window[:])) {
+	case .ok(count):
 		fmt.println(true);
 		fmt.println(count);
 	case .err:
@@ -218,7 +218,7 @@ main :: proc() {
 	// Close is idempotent, and the value is inert afterwards.
 	fmt.println(succeeded(handle.close()));
 	fmt.println(handle.is_open());
-	switch (_ in handle.read(&mut window[:])) {
+	switch (handle.read(&mut window[:])) {
 	case .ok:  fmt.println(false);
 	case .err: fmt.println(true);
 	}
@@ -226,23 +226,23 @@ main :: proc() {
 	// A file opened for reading refuses to write, whatever the static type says.
 	reader := fs.open_read(file) or_else panic("a file the test just created could not be opened");
 	one: string_view = "x";
-	switch (wrong_direction in reader.write(one.bytes())) {
+	switch (reader.write(one.bytes())) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(wrong_direction, .Unsupported));
+	case .err(wrong_direction): fmt.println(io.is(wrong_direction, .Unsupported));
 	}
 	fmt.println(succeeded(reader.close()));
 
 	// Truncating is writing, so a read-only open refuses it and leaves the file
 	// whole; so does truncating an existing file for append.
 	truncating := fs.open(file, fs.Open_Options{access = .Read, disposition = .Create_Or_Truncate, append = false});
-	switch (refused in move(truncating)) {
+	switch (move(truncating)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(refused, .Unsupported));
+	case .err(refused): fmt.println(io.is(refused, .Unsupported));
 	}
 	appending := fs.open(file, fs.Open_Options{access = .Write, disposition = .Truncate_Existing, append = true});
-	switch (refused in move(appending)) {
+	switch (move(appending)) {
 	case .ok:  fmt.println(false);
-	case .err: fmt.println(io.is(refused, .Unsupported));
+	case .err(refused): fmt.println(io.is(refused, .Unsupported));
 	}
 	fmt.println(fs.read_text(file) or_else panic("a file the test just wrote could not be read"));
 
@@ -294,17 +294,17 @@ count_entries :: proc(directory: string_view) -> Result(int, io.Error) {
 // checked here: this runs before the first case as well.
 clean_up :: proc(directory: string_view) {
 	reader: fs.Directory_Reader;
-	switch (opened in fs.read_directory(directory)) {
-	case .ok:  reader = move(opened);
+	switch (fs.read_directory(directory)) {
+	case .ok(opened):  reader = move(opened);
 	case .err: return;
 	}
 	names := make([dynamic]string, 0, 8);
 	reading := true;
 	for (; reading; ) {
-		switch (outcome in reader.next()) {
-		case .ok:
-			switch (entry in outcome) {
-			case .some: names.append(strings.copy(entry.name));
+		switch (reader.next()) {
+		case .ok(outcome):
+			switch (outcome) {
+			case .some(entry): names.append(strings.copy(entry.name));
 			case .none: reading = false;
 			}
 		case .err: reading = false;

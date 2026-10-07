@@ -10,6 +10,15 @@ checklist.
 
 ### Breaking changes
 
+- One matching form: the header binding `switch (name in subject)` is
+  removed (design.md "Inspecting a union", "any_view type"). A case binds what
+  it matches, `case .variant(name):` over a union and `case T(name):` over an
+  `any_view` (`case ([]u8)(bytes):` for a composite type). A grouped or
+  default case reads the subject itself; over a temporary, bind it to a local
+  first. `switch (x in set)` is now the membership test, without the second
+  pair of parentheses, and the old spelling with an undeclared name is one
+  diagnostic (`L0426`) naming the case form. Upgrade by moving the name into
+  each single-variant case that uses it.
 - A writable binding is spelled `&mut name`, as a mutable address is:
   `foreach (&mut value in items)` and `case .some(&mut node):` (design.md
   "Element bindings", "Switch ownership"). A bare `&name` binding, which read

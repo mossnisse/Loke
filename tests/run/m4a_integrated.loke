@@ -51,9 +51,9 @@ transfer :: proc(from: inout Account, to: inout Account, amount: Money) -> Resul
 
 // One variant switch describes both halves of the outcome.
 describe :: proc(outcome: Result(Money, Error)) -> int {
-	switch (e in outcome) {
+	switch (outcome) {
 	case .ok:  return 0;
-	case .err: return 1 if e == .Overdrawn else 2;
+	case .err(e): return 1 if e == .Overdrawn else 2;
 	}
 	return -1;
 }

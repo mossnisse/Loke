@@ -22,7 +22,7 @@ impl Failing {
 main :: proc() {
 	source := Failing{1};
 	// The explicit entry point hands the error back, so this much runs.
-	switch (_ in source.try_clone()) {
+	switch (source.try_clone()) {
 	case .ok:
 		fmt.println(0);
 		return;

@@ -49,27 +49,27 @@ main :: proc() {
 	// A payload type does not name a variant: two variants may share one.
 	a := v.(i32);
 
-	// A type switch needs a union or an `any_view`.
+	// Only a switch over an `any_view` matches types.
 	plain := 1;
-	switch (t in plain) {
+	switch (plain) {
 	case int:
 		fmt.println(0);
 	}
 
 	// A union case names a variant, not a type.
-	switch (t in v) {
+	switch (v) {
 	case i32:
 		fmt.println(1);
 	}
 
 	// With no default, every variant must be covered.
-	switch (t in v) {
+	switch (v) {
 	case .number:
 		fmt.println(1);
 	}
 
 	// A variant that is not there at all.
-	switch (t in v) {
+	switch (v) {
 	case .flag:
 	case .missing:
 	}

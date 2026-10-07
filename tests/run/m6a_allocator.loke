@@ -8,8 +8,8 @@ package main; import "core:mem"; import "core:fmt";
 Wide :: struct { a: i128, b: int }
 
 round_trip :: proc(allocator: Allocator) -> int {
-	switch (p in try_box(Wide{}, allocator)) {
-	case .ok:
+	switch (try_box(Wide{}, allocator)) {
+	case .ok(p):
 		p.b = 7;
 		return p.b;
 	case .err:
@@ -21,8 +21,8 @@ main :: proc() {
 	fmt.println(round_trip(mem.default_allocator()));
 
 	// `try_box` through the same provider.
-	switch (q in try_box(41)) {
-	case .ok:
+	switch (try_box(41)) {
+	case .ok(q):
 		fmt.println(q^ + 1);
 	case .err: fmt.println("allocation failed");
 	}

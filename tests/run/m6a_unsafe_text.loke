@@ -31,20 +31,20 @@ main :: proc() {
 	// Text through the unsafe boundary and back.
 	text: string = "hej";
 	bytes := unsafe.raw_data(text);
-	switch (view in unsafe.string_view(bytes, 3)) {
-	case .some: fmt.println(view.len());
+	switch (unsafe.string_view(bytes, 3)) {
+	case .some(view): fmt.println(view.len());
 	case .none: fmt.println(-1);
 	}
 
 	terminated := unsafe.cstring_view(bytes);
-	switch (owned in string.from_utf8(terminated)) {
-	case .some: fmt.println(owned.len());
+	switch (string.from_utf8(terminated)) {
+	case .some(owned): fmt.println(owned.len());
 	case .none: fmt.println(-1);
 	}
 
 	// The validation is real: these bytes are not UTF-8.
 	raw := [?]u8{0xFF, 0xFE};
-	switch (_ in unsafe.string_view(unsafe.raw_data(raw[:]), 2)) {
+	switch (unsafe.string_view(unsafe.raw_data(raw[:]), 2)) {
 	case .some: fmt.println(-1);
 	case .none: fmt.println(0);
 	}

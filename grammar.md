@@ -537,27 +537,23 @@ no-op. It is narrowed further semantically: no `return`, `or_return`, or nested
 ## Switch
 
 ```
-Switch_Statement = Value_Switch | Type_Switch
-
-Value_Switch = Attributes? "switch" "(" Init_Statement? Expression ")"
-               "{" Value_Case* "}"
-Value_Case   = ("case" (Branch_Pattern | Expression_List)? | "default") ":" Statement*
-// A branch pattern is recognized only when the switch subject is a union. It
-// is deliberately shallow: one variant, one identifier binding, no nesting.
-// `&mut` binds the payload as a writable place (design.md "Switch ownership").
-Branch_Pattern = "." Identifier "(" ("&" "mut")? Identifier ")"
-
-Type_Switch  = Attributes? "switch" "(" Init_Statement? Identifier "in" Expression ")"
-               "{" Type_Case* "}"
-Type_Case    = ("case" (Case_Selector ("," Case_Selector)*)? | "default") ":" Statement*
-// A union case names variants; an `any_view` case names types. Which one a
-// case list is read as follows from the subject's type, and a `.` at case
-// position can never begin a type expression.
-Case_Selector = ("." Identifier) | Type
+Switch_Statement = Attributes? "switch" "(" Init_Statement? Expression ")"
+                   "{" Switch_Case* "}"
+Switch_Case  = ("case" (Branch_Pattern | Case_Value_List)? | "default") ":" Statement*
+Case_Value_List = Case_Value ("," Case_Value)*
+Case_Value   = Expression | Type
+// A branch pattern is recognized only when the switch subject is a union, as
+// `.variant(name)`, or an `any_view`, as `Type(name)`. It is deliberately
+// shallow: one variant or type, one identifier binding, no nesting. `&mut`
+// binds a union payload as a writable place (design.md "Switch ownership").
+Branch_Pattern = ("." Identifier | Type) "(" ("&" "mut")? Identifier ")"
 ```
 
-`default` is the default case; `case` with no values means the same. Case values may be ranges, since
-`..=` and `..<` are ordinary binary operators in the expression grammar.
+`default` is the default case; `case` with no values means the same. Case values
+may be ranges, since `..=` and `..<` are ordinary binary operators in the
+expression grammar. A case value may be a type, which only a switch over an
+`any_view` matches. A composite or pointer type in a `Branch_Pattern` is
+parenthesised, `([]u8)(bytes)`, as in a conversion.
 
 # Expressions
 
@@ -692,16 +688,15 @@ which it must be anyway as a [parameter mode](#procedures).
 
 The productions above use the following deterministic parsing rules:
 
-- `switch (name in expression)` is a type switch, over a union's variants or an
-  `any_view`'s types. A value switch over membership uses
-  `switch ((name in expression))`.
 - A condition-only `For_Header` whose whole `Expression` is
   `name in expression` is rejected. A loop over membership uses
   `for ((name in expression))`; iteration is `foreach`.
-- A `Value_Switch` parses its cases as expressions. When the subject's type is a
-  union, the checker reads a singleton case of the exact shape `.name(binding)`
-  as a branch-local pattern; calls of any other shape, and every case of a
-  switch over a non-union, remain expressions.
+- A switch parses its cases as expressions, a type among them. When the
+  subject's type is a union, the checker reads a singleton case of the exact
+  shape `.name(binding)` as a branch-local pattern, and when it is an
+  `any_view`, one of the shape `Type(binding)`; calls of any other shape, and
+  every case of any other switch, remain expressions. A switch header binds
+  nothing, so `switch (x in set)` switches on the membership test.
 - An `Init_Statement` is a `Variable_Decl` when the comma-separated list of names
   that opens it is followed by `:`, and a `Simple_Statement` otherwise. This is
   the same bounded scan `Declaration` performs at statement position.

@@ -160,11 +160,11 @@ read_bytes :: proc(
 	file := open_read(path) or_return;
 	outcome := io.read_to_end(inout file, allocator, limit);
 	closed := file.close();
-	switch (bytes in move(outcome)) {
-	case .ok:
+	switch (move(outcome)) {
+	case .ok(bytes):
 		closed or_return;
 		return .ok(move(bytes));
-	case .err:
+	case .err(bytes):
 		return .err(bytes);
 	}
 }
@@ -182,10 +182,10 @@ read_text :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result(string, io.Error) {
 	bytes := read_bytes(path, allocator, limit) or_return;
-	switch (view in string_view.from_utf8(bytes[:])) {
-	case .some:
-		switch (text in strings.try_copy(view, allocator)) {
-		case .ok:
+	switch (string_view.from_utf8(bytes[:])) {
+	case .some(view):
+		switch (strings.try_copy(view, allocator)) {
+		case .ok(text):
 			return .ok(text);
 		case .err:
 			return .err(io.from_allocator_error(.Read));
@@ -232,9 +232,9 @@ metadata :: proc(path: string_view) -> Result(Metadata, io.Error) {
 // failure is still an error, because "I could not tell" is not "it is not
 // there".
 exists :: proc(path: string_view) -> Result(bool, io.Error) {
-	switch (outcome in metadata(path)) {
+	switch (metadata(path)) {
 	case .ok: return .ok(true);
-	case .err:
+	case .err(outcome):
 		if (io.is(outcome, .Not_Found)) { return .ok(false); }
 		return .err(outcome);
 	}
@@ -275,11 +275,11 @@ create_directories :: proc(path: string_view) -> Result(Unit, io.Error) {
 // volume root, which always exists; only a directory satisfies the operation.
 @(private)
 ensure_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
-	switch (outcome in create_directory(path)) {
+	switch (create_directory(path)) {
 	case .ok: return .ok;
-	case .err:
-		switch (info in metadata(path)) {
-		case .ok:
+	case .err(outcome):
+		switch (metadata(path)) {
+		case .ok(info):
 			if (info.kind == .Directory) { return .ok; }
 		case .err:
 		}
@@ -442,10 +442,10 @@ wide_path :: proc(path: string_view, operation: io.Operation) -> Result([dynamic
 	if (path.len() == 0) {
 		return .err(io.make_error(.Invalid_Path, operation));
 	}
-	switch (units in utf16.encode(path, mem.default_allocator())) {
-	case .ok:
+	switch (utf16.encode(path, mem.default_allocator())) {
+	case .ok(units):
 		return .ok(move(units));
-	case .err:
+	case .err(units):
 		code := io.Code.Invalid_Path if units == .Contains_Zero else io.Code.Out_Of_Memory;
 		return .err(io.make_error(code, operation));
 	}
@@ -686,9 +686,9 @@ impl Directory_Reader {
 			// A slice, not a copy: the record is 592 bytes and the name alone is 520.
 			units := self.data.name[:];
 			count := utf16.length_of(units);
-			switch (decoded in utf16.decode(units[0:count], self.allocator)) {
-			case .ok:  self.current = decoded;
-			case .err: return .err(from_utf16_error(decoded, .Read_Directory));
+			switch (utf16.decode(units[0:count], self.allocator)) {
+			case .ok(decoded):  self.current = decoded;
+			case .err(decoded): return .err(from_utf16_error(decoded, .Read_Directory));
 			}
 			if (self.current == "." || self.current == "..") { continue; }
 			return .ok(.some(Directory_Entry{self.current, kind_of(self.data.attributes)}));

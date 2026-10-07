@@ -29,9 +29,9 @@ middle :: proc(values: Small) -> int {
 // The `try_` half answers `Result(Unit, Capacity_Error)`; these checks want the
 // variant and, when it failed, the numbers the error carries.
 report :: proc(outcome: Result(Unit, container.Capacity_Error)) {
-	switch (failure in outcome) {
+	switch (outcome) {
 	case .ok:  fmt.println("ok");
-	case .err: fmt.println(failure.requested_of(), failure.capacity_of(), failure);
+	case .err(failure): fmt.println(failure.requested_of(), failure.capacity_of(), failure);
 	}
 }
 

@@ -39,8 +39,8 @@ run :: proc() -> Result(Unit, io.Error) {
 }
 
 main :: proc() {
-	switch (outcome in run()) {
+	switch (run()) {
 	case .ok:
-	case .err: fmt.eprintln("error:", outcome);
+	case .err(outcome): fmt.eprintln("error:", outcome);
 	}
 }

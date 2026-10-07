@@ -33,8 +33,8 @@ Mode :: enum { Run, Trap, Diagnostics, Syntax, Ir }
 main :: proc() {
 	mode := Mode.Run;
 	if (os.args.len() == 5) {
-		switch (named in mode_named(os.args[4])) {
-		case .some: mode = named;
+		switch (mode_named(os.args[4])) {
+		case .some(named): mode = named;
 		case .none: usage();
 		}
 	} else if (os.args.len() != 4) {
@@ -42,9 +42,9 @@ main :: proc() {
 	}
 	compiler, corpus, scratch := os.args[1], os.args[2], os.args[3];
 	cases: [dynamic]string = {};
-	switch (listed in sources(corpus)) {
-	case .ok:  cases = move(listed);
-	case .err:
+	switch (sources(corpus)) {
+	case .ok(listed):  cases = move(listed);
+	case .err(listed):
 		fmt.eprintln("cannot read", corpus, "-", listed);
 		os.exit(2);
 	}
@@ -65,11 +65,11 @@ main :: proc() {
 	passed, failed := 0, 0;
 	guard := board.get().lock();
 	foreach (name, index in cases.indexed()) {
-		switch (reason in guard.get().reasons[index]) {
+		switch (guard.get().reasons[index]) {
 		case .none:
 			fmt.println("ok  ", name);
 			passed += 1;
-		case .some:
+		case .some(reason):
 			fmt.println("FAIL", name, "-", reason);
 			failed += 1;
 		}
@@ -170,8 +170,8 @@ check :: proc(
 	built := run(process.Command{program = compiler, arguments = arguments[:]}) or_return;
 	expected := read(sibling(corpus, name, ".expected"));
 	if (mode == .Diagnostics || mode == .Syntax || mode == .Ir) {
-		switch (wanted in expected) {
-		case .some:
+		switch (expected) {
+		case .some(wanted):
 			if (mode == .Ir) { return shaped(sibling(scratch, name, ".ll"), built, wanted, clang); }
 			// The AST is printed before the diagnostics, so the sentinel's node in
 			// it shows the parser recovered past every error to the end.
@@ -193,13 +193,13 @@ check :: proc(
 	if (trap && expected_err == .none) { return .err("has no .expected-err naming the failure"); }
 	if (!trap && ran.status != 0) { return .err(fmt.to_string(mem.default_allocator(), "exited with", ran.status)); }
 	if (!trap && expected == .none) { return .err("has no .expected"); }
-	switch (wanted in expected) {
-	case .some:
+	switch (expected) {
+	case .some(wanted):
 		if (normalise(text(ran.stdout[:])) != normalise(wanted)) { return .err("stdout differs"); }
 	case .none:
 	}
-	switch (wanted in expected_err) {
-	case .some:
+	switch (expected_err) {
+	case .some(wanted):
 		if (normalise(text(ran.stderr[:])) != normalise(wanted)) { return .err("stderr differs"); }
 	case .none:
 	}
@@ -264,8 +264,8 @@ shaped :: proc(
 			return .err(fmt.to_string(mem.default_allocator(), "IR does not contain", line));
 		}
 	}
-	switch (program in clang) {
-	case .some:
+	switch (clang) {
+	case .some(program):
 		object := strings.join([]string_view{ll, ".o"}, "");
 		assembled := run(process.Command{program = program, arguments = []string_view{"-x", "ir", "-c", ll, "-o", object}}) or_return;
 		if (assembled.status != 0) {
@@ -279,8 +279,8 @@ shaped :: proc(
 // The clang the compiler would link with, as the Odin suite finds it: from
 // `-print-toolchain`, and only when that says a link can run here.
 assembler :: proc(compiler: string_view) -> Option(string) {
-	switch (printed in process.output(process.Command{program = compiler, arguments = []string_view{"-print-toolchain"}})) {
-	case .ok:
+	switch (process.output(process.Command{program = compiler, arguments = []string_view{"-print-toolchain"}})) {
+	case .ok(printed):
 		found: Option(string) = .none;
 		ready := false;
 		foreach (line in strings.lines(text(printed.stdout[:]))) {
@@ -334,9 +334,9 @@ own_warnings :: proc(output: string_view, source: string_view) -> int {
 }
 
 run :: proc(command: process.Command) -> Result(process.Output, string) {
-	switch (outcome in process.output(command)) {
-	case .ok:  return .ok(move(outcome));
-	case .err: return .err(fmt.to_string(mem.default_allocator(), "cannot run", command.program, "-", outcome));
+	switch (process.output(command)) {
+	case .ok(outcome):  return .ok(move(outcome));
+	case .err(outcome): return .err(fmt.to_string(mem.default_allocator(), "cannot run", command.program, "-", outcome));
 	}
 }
 
@@ -347,8 +347,8 @@ sibling :: proc(directory: string_view, name: string_view, extension: string_vie
 
 // A file's text, or `.none` when it cannot be read.
 read :: proc(file: string_view) -> Option(string) {
-	switch (outcome in fs.read_text(file)) {
-	case .ok:  return .some(outcome);
+	switch (fs.read_text(file)) {
+	case .ok(outcome):  return .some(outcome);
 	case .err: return .none;
 	}
 }

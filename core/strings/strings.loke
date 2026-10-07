@@ -48,7 +48,7 @@ try_copy :: proc(
 // after the last.
 
 contains :: proc(text: string_view, needle: string_view) -> bool {
-	switch (found in index(text, needle)) {
+	switch (index(text, needle)) {
 	case .some: return true;
 	case .none: return false;
 	}
@@ -190,7 +190,7 @@ trim :: proc(text: string_view, cutset: string_view) -> string_view {
 
 @(private)
 contains_rune :: proc(set: string_view, value: rune) -> bool {
-	switch (found in index_rune(set, value)) {
+	switch (index_rune(set, value)) {
 	case .some: return true;
 	case .none: return false;
 	}
@@ -214,8 +214,8 @@ rune_size :: proc(value: rune) -> int {
 Cut :: struct { before: string_view, after: string_view }
 
 cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
-	switch (at in index(text, separator)) {
-	case .some: return .some(Cut{text[0:at], text[at + separator.len():]});
+	switch (index(text, separator)) {
+	case .some(at): return .some(Cut{text[0:at], text[at + separator.len():]});
 	case .none: return .none;
 	}
 	return .none;

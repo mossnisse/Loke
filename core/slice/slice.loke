@@ -150,7 +150,7 @@ last_index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.E
 }
 
 contains :: proc(values: []$T, wanted: T) -> bool where interfaces.Equatable(T) {
-	switch (_ in index_of(values, wanted)) {
+	switch (index_of(values, wanted)) {
 	case .some: return true;
 	case .none: return false;
 	}

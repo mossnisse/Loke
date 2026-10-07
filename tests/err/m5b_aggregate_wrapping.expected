@@ -17,7 +17,7 @@ L0526
 @63:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@71:23
+@71:30
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @81:10
@@ -29,7 +29,7 @@ L0526
 @100:9
 this slice cannot be returned: `others` ends when this procedure returns
 L0526
-@110:21
+@110:27
 this slice cannot be returned: `numbers` ends when this procedure returns
 L0526
 @119:9
@@ -47,7 +47,7 @@ L0526
 @155:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@165:21
+@165:27
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @179:9
@@ -77,10 +77,10 @@ L0526
 @247:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@254:23
+@254:29
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@262:23
+@262:29
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @269:9
@@ -98,7 +98,7 @@ L0526
 @304:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@312:21
+@312:28
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @323:9
@@ -128,7 +128,7 @@ L0526
 @382:9
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
-@401:23
+@401:30
 this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @420:9

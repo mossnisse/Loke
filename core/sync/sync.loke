@@ -79,8 +79,8 @@ impl Atomic($T) {
 		$success: Memory_Order = Memory_Order.Sequentially_Consistent,
 		$failure: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> (observed: T, swapped: bool) {
-		switch (found in atomic_compare_exchange(&self.value, expected, desired, success, failure)) {
-		case .some: return {observed = found, swapped = false};
+		switch (atomic_compare_exchange(&self.value, expected, desired, success, failure)) {
+		case .some(found): return {observed = found, swapped = false};
 		case .none: return {observed = expected, swapped = true};
 		}
 		return {observed = expected, swapped = false};

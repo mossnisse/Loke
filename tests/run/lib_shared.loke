@@ -35,8 +35,8 @@ Shape :: union { circle: int, square: f64 }
 // `get` borrows the handle read-only, so a by-value parameter, a `foreach`
 // binding, and a `^` all reach the payload.
 radius :: proc(held: shared(Shape)) -> int {
-	switch (r in held.get()^) {
-	case .circle: return r;
+	switch (held.get()^) {
+	case .circle(r): return r;
 	case .square: return 0;
 	}
 }
@@ -75,8 +75,8 @@ main :: proc() {
 	// the payload alive, and `upgrade` returns `Option(shared(T))`."
 	watcher := handle.downgrade();
 	fmt.println(handle.weak_count(), watcher.strong_count());
-	switch (revived in watcher.upgrade()) {
-	case .some: fmt.println("upgraded", revived.get()^.value, revived.strong_count());
+	switch (watcher.upgrade()) {
+	case .some(revived): fmt.println("upgraded", revived.get()^.value, revived.strong_count());
 	case .none: fmt.println("gone");
 	}
 	fmt.println(handle.strong_count());
@@ -89,8 +89,8 @@ main :: proc() {
 	fmt.println(drops, watching.strong_count());
 	drop(tracked);
 	fmt.println(drops, watching.strong_count());
-	switch (revived in watching.upgrade()) {
-	case .some: fmt.println("upgraded", revived.get()^.id);
+	switch (watching.upgrade()) {
+	case .some(revived): fmt.println("upgraded", revived.get()^.id);
 	case .none: fmt.println("gone");
 	}
 	drop(watching);
@@ -103,8 +103,8 @@ main :: proc() {
 	fmt.println(selected.get()^.value, selected.strong_count());
 	drop(selected);
 
-	switch (attempt in try_shared(Node{11, "eleven"})) {
-	case .ok:  fmt.println("built", attempt.get()^.value);
+	switch (try_shared(Node{11, "eleven"})) {
+	case .ok(attempt):  fmt.println("built", attempt.get()^.value);
 	case .err: fmt.println("no memory");
 	}
 
@@ -126,7 +126,7 @@ main :: proc() {
 	// A `weak` that never had a payload upgrades to nothing.
 	orphan: weak(Node) = {};
 	fmt.println(orphan == weak(Node){}, orphan.strong_count());
-	switch (never in orphan.upgrade()) {
+	switch (orphan.upgrade()) {
 	case .some: fmt.println("upgraded");
 	case .none: fmt.println("gone");
 	}
@@ -139,8 +139,8 @@ main :: proc() {
 	shapes.append(circle);
 	foreach (each in shapes) { fmt.println(each.strong_count(), radius(each)); }
 	outcome := shared(Result(int, Allocator_Error).ok(12));
-	switch (n in outcome.get()^) {
-	case .ok:  fmt.println("ok", n);
+	switch (outcome.get()^) {
+	case .ok(n):  fmt.println("ok", n);
 	case .err: fmt.println("err");
 	}
 }

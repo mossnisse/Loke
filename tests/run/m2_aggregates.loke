@@ -87,8 +87,8 @@ main :: proc() {
 	// Pointer-recursive data.
 	tail := Node{value = 2, next = .none};
 	head := Node{value = 1, next = .some(&tail)};
-	switch (next in head.next) {
-	case .some: fmt.println(next.value);
+	switch (head.next) {
+	case .some(next): fmt.println(next.value);
 	case .none: fmt.println(0);
 	}
 	fmt.println(1 if tail.next == .none else 0);

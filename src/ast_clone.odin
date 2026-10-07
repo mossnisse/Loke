@@ -504,7 +504,6 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		clone_node_base(c, &n.base, &v.base)
 		n.kind = v.kind
 		n.init = clone_stmt(c, v.init)
-		n.binding = v.binding
 		n.subject = clone_expr(c, v.subject)
 		n.cases = clone_slice(c, v.cases)
 		for entry, index in v.cases {

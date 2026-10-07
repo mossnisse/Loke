@@ -14,8 +14,8 @@ import "core:mem";
 main :: proc() {
 	assert(mem.marker() == 1);
 	a := mem.default_allocator();
-	switch (made in try_box(0, a)) {
-	case .ok:  assert(made^ == 0);
+	switch (try_box(0, a)) {
+	case .ok(made):  assert(made^ == 0);
 	case .err: assert(false);
 	}
 }

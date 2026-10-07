@@ -17,9 +17,9 @@ Held :: move_only struct { id: int }
 Sealed :: union { held: Held, spare: Held }
 
 id_of :: proc(value: Sealed) -> int {
-	switch (token in value) {
-	case .held:  return token.id;
-	case .spare: return token.id;
+	switch (value) {
+	case .held(token):  return token.id;
+	case .spare(token): return token.id;
 	}
 	return 0;
 }

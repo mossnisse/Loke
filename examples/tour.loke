@@ -33,10 +33,10 @@ main :: proc() {
 	target := Point{0, 0}.shifted(3, 4) + Point{1, 1};
 	fmt.println("target", target.x, target.y);
 
-	switch (outcome in corners(8, 8)) {
-	case .ok:
+	switch (corners(8, 8)) {
+	case .ok(outcome):
 		foreach (p, i in outcome.indexed()) { fmt.println(i, p.x, p.y); }
-	case .err:
+	case .err(outcome):
 		fmt.eprintln("error:", outcome);
 	}
 }

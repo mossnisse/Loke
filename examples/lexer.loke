@@ -51,17 +51,17 @@ main :: proc() {
 	}
 	target := os.args[1];
 	is_directory := false;
-	switch (metadata in fs.metadata(target)) {
-	case .ok:  is_directory = metadata.kind == .Directory;
-	case .err:
+	switch (fs.metadata(target)) {
+	case .ok(metadata):  is_directory = metadata.kind == .Directory;
+	case .err(metadata):
 		fmt.eprintln("cannot read", target, "-", metadata);
 		os.exit(1);
 	}
 	if (is_directory) {
 		totals := Totals{};
-		switch (walked in walk(target, inout totals)) {
+		switch (walk(target, inout totals)) {
 		case .ok:
-		case .err:
+		case .err(walked):
 			fmt.eprintln("cannot read", target, "-", walked);
 			os.exit(1);
 		}
@@ -69,10 +69,10 @@ main :: proc() {
 		return;
 	}
 	found: [dynamic]Diagnostic = {};
-	switch (tokens in lex_file(target, inout found)) {
-	case .ok:
+	switch (lex_file(target, inout found)) {
+	case .ok(tokens):
 		foreach (token in tokens) { fmt.println(token.lo, token.hi, token.kind); }
-	case .err:
+	case .err(tokens):
 		fmt.eprintln("cannot read", target, "-", tokens);
 		os.exit(1);
 	}
@@ -110,8 +110,8 @@ lex_file :: proc(file: string_view, found: inout [dynamic]Diagnostic) -> Result(
 		error(inout found, "L0002", 0);
 		return .ok({});
 	}
-	switch (text in string_view.from_utf8(bytes[:])) {
-	case .some: return .ok(lex(text, inout found));
+	switch (string_view.from_utf8(bytes[:])) {
+	case .some(text): return .ok(lex(text, inout found));
 	case .none:
 		error(inout found, "L0003", invalid_utf8_offset(bytes[:]));
 		return .ok({});

@@ -25,8 +25,8 @@ run :: proc() -> Result(Unit, io.Error) {
 main :: proc() {
 	// design.md "Typed fallibility": one variant switch is the whole of error
 	// handling at the top of a program.
-	switch (outcome in run()) {
+	switch (run()) {
 	case .ok:
-	case .err: fmt.eprintln("error:", outcome);
+	case .err(outcome): fmt.eprintln("error:", outcome);
 	}
 }

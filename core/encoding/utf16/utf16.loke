@@ -38,8 +38,8 @@ Error :: enum {
 encode :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]u16, Error) {
-	switch (units in try_make([dynamic]u16, 0, text.len() + 1, allocator)) {
-	case .ok:
+	switch (try_make([dynamic]u16, 0, text.len() + 1, allocator)) {
+	case .ok(units):
 		// No scalar value takes fewer UTF-8 bytes than UTF-16 units, so the
 		// capacity covers every append below and none can fail.
 		foreach (codepoint in text) {
@@ -76,7 +76,7 @@ decode :: proc(
 			low := int(units[at + 1]);
 			if (low < 0xDC00 || low > 0xDFFF) { return .err(.Invalid_Data); }
 			combined := 0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00);
-			switch (added in builder.try_append(rune(combined))) {
+			switch (builder.try_append(rune(combined))) {
 			case .ok:
 			case .err: return .err(.Out_Of_Memory);
 			}
@@ -86,13 +86,13 @@ decode :: proc(
 		if (value >= 0xDC00 && value <= 0xDFFF) {
 			return .err(.Invalid_Data);
 		}
-		switch (added in builder.try_append(rune(value))) {
+		switch (builder.try_append(rune(value))) {
 		case .ok:
 		case .err: return .err(.Out_Of_Memory);
 		}
 	}
-	switch (finished in builder.try_finish()) {
-	case .ok:  return .ok(finished);
+	switch (builder.try_finish()) {
+	case .ok(finished):  return .ok(finished);
 	case .err: return .err(.Out_Of_Memory);
 	}
 }

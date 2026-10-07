@@ -35,7 +35,7 @@ impl Value {
 // `try_insert` answers with `Result(Unit, Allocator_Error)`; these tests only
 // care which variant came back.
 succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
-	switch (_ in outcome) {
+	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;
 	}

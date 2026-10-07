@@ -63,9 +63,9 @@ main :: proc() {
 	// Same payload type, same payload value, different arms.
 	fmt.println(Pair.left(3) == Pair.left(3), Pair.left(3) == Pair.right(3));
 	fmt.println(Pair.left(3), Pair.right(3));
-	switch (n in Pair.right(9)) {
-	case .left:  fmt.println("left", n);
-	case .right: fmt.println("right", n);
+	switch (Pair.right(9)) {
+	case .left(n):  fmt.println("left", n);
+	case .right(n): fmt.println("right", n);
 	}
 
 	// --- which hook runs follows the tag ----------------------------------

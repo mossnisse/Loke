@@ -38,7 +38,7 @@ main :: proc() {
 		small := make([dynamic]Token, 0, 0, arena.allocator());
 		failed := false;
 		for (round := 0; round < 100 && !failed; round += 1) {
-			switch (_ in small.try_append(make_token(9))) {
+			switch (small.try_append(make_token(9))) {
 			case .ok:
 			case .err: failed = true;
 			}

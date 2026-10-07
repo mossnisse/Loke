@@ -85,8 +85,8 @@ main :: proc() {
 	fmt.println(returns_len());
 
 	// A failing `or_return` leaves through the same boundary a return does.
-	switch (v in or_returns()) {
-	case .ok:  fmt.println("ok", v);
+	switch (or_returns()) {
+	case .ok(v):  fmt.println("ok", v);
 	case .err: fmt.println("err");
 	}
 

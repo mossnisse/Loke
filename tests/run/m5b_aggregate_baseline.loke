@@ -53,8 +53,8 @@ inject :: proc(values: []int) -> Choice {
 }
 
 extract :: proc(choice: Choice) -> []int {
-	switch (value in choice) {
-	case .held:  return value.view;
+	switch (choice) {
+	case .held(value):  return value.view;
 	case .plain: return {};
 	}
 	return {};
@@ -65,8 +65,8 @@ extract :: proc(choice: Choice) -> []int {
 // POSITIVE. A value read copies the stored value, so it depends on what that
 // value borrows and not on the map root.
 map_value_read :: proc(table: map[string]Holder) -> []int {
-	switch (held in table.lookup_value("a")) {
-	case .some: return held.view;
+	switch (table.lookup_value("a")) {
+	case .some(held): return held.view;
 	case .none: return {};
 	}
 	return {};
@@ -120,8 +120,8 @@ overwrite_one_element :: proc(values: []int) -> []int {
 pop_an_element :: proc(values: []int) -> []int {
 	holders: [dynamic]Holder = {};
 	holders.append(Holder{values});
-	switch (held in holders.pop()) {
-	case .some: return held.view;
+	switch (holders.pop()) {
+	case .some(held): return held.view;
 	case .none: return {};
 	}
 	return {};
@@ -132,8 +132,8 @@ pop_an_element :: proc(values: []int) -> []int {
 remove_a_value :: proc(values: []int) -> []int {
 	table: map[string]Holder = {};
 	table["a"] = Holder{values};
-	switch (held in table.remove("a")) {
-	case .some: return held.view;
+	switch (table.remove("a")) {
+	case .some(held): return held.view;
 	case .none: return {};
 	}
 	return {};
@@ -157,8 +157,8 @@ constant_key_lookup :: proc(values: []int) -> []int {
 	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	table["b"] = Holder{local[:]};
-	switch (held in table.lookup_value("a")) {
-	case .some: return held.view;
+	switch (table.lookup_value("a")) {
+	case .some(held): return held.view;
 	case .none: return {};
 	}
 	return {};
@@ -395,8 +395,8 @@ slice_element_read :: proc(values: []int) -> []int {
 
 optional_extraction_read :: proc(values: []int) -> []int {
 	choice: Choice = .held(Holder{values});
-	switch (held in choice) {
-	case .held:  return held.view;
+	switch (choice) {
+	case .held(held):  return held.view;
 	case .plain: return {};
 	}
 	return {};
@@ -404,8 +404,8 @@ optional_extraction_read :: proc(values: []int) -> []int {
 
 grouped_extraction_read :: proc(values: []int) -> []int {
 	choice: Choice = .held(Holder{values});
-	switch (held in choice) {
-	case .held: return held.view;
+	switch (choice) {
+	case .held(held): return held.view;
 	case:       return {};
 	}
 	return {};
@@ -453,8 +453,8 @@ read_scalar_from_pointer :: proc() -> int {
 erased_extraction_read :: proc(values: []int) -> []int {
 	held := Holder{values};
 	erased: any_view = held;
-	switch (value in erased.as(Holder)) {
-	case .some: return value.view;
+	switch (erased.as(Holder)) {
+	case .some(value): return value.view;
 	case .none: return {};
 	}
 	return {};
@@ -573,8 +573,8 @@ Result_Choice :: union { outer: Outer, plain: int }
 result_union :: proc(a: []int, b: []int) -> Result_Choice { return .outer(Outer{Pair{a, b}}); }
 union_result_field :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
-	switch (held in result_union(local[:], values)) {
-	case .outer: return held.pair.right;
+	switch (result_union(local[:], values)) {
+	case .outer(held): return held.pair.right;
 	case .plain: return {};
 	}
 	return {};
@@ -716,8 +716,8 @@ copy_survives_clear :: proc(values: []int) -> []int {
 bare_map_lookup :: proc(values: []int) -> []int {
 	table: map[string][]int = {};
 	table["a"] = values;
-	switch (result in table.lookup_value("a")) {
-	case .some: return result;
+	switch (table.lookup_value("a")) {
+	case .some(result): return result;
 	case .none: return {};
 	}
 	return {};

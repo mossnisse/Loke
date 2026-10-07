@@ -19,9 +19,9 @@ impl List($T) {
 	}
 
 	pop_front :: proc(self: inout) -> Option(T) {
-		switch (first in exchange(inout self.head, .none)) {
+		switch (exchange(inout self.head, .none)) {
 		case .none: return .none;
-		case .some:
+		case .some(first):
 			value, next := move(first).unbox();
 			self.head = move(next);
 			self.count -= 1;
@@ -62,9 +62,9 @@ impl List($T) {
 	release :: hook(drop) proc(self: inout) {
 		rest := exchange(inout self.head, .none);
 		for (true) {
-			switch (node in move(rest)) {
+			switch (move(rest)) {
 			case .none: break;
-			case .some: rest = exchange(inout node.next, .none);
+			case .some(node): rest = exchange(inout node.next, .none);
 			}
 		}
 	}
@@ -104,8 +104,8 @@ main :: proc() {
 	tickets: List(Ticket) = {};
 	tickets.push_front(Ticket{1});
 	tickets.push_front(Ticket{2});
-	switch (ticket in tickets.pop_front()) {
-	case .some: fmt.println("ticket", ticket.id);
+	switch (tickets.pop_front()) {
+	case .some(ticket): fmt.println("ticket", ticket.id);
 	case .none:
 	}
 }

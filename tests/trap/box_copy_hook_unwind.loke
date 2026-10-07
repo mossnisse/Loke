@@ -17,7 +17,7 @@ main :: proc() {
 	arena := mem.Arena.from_buffer(&mut room[:]);
 	defer {
 		// The arena has room for one box.
-		switch (_ in try_box(Payload{}, arena.allocator())) {
+		switch (try_box(Payload{}, arena.allocator())) {
 		case .ok: fmt.println(true);
 		case .err: fmt.println(false);
 		}

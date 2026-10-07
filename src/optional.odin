@@ -245,15 +245,15 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 // ---------------------------------------------------------- type switch --
 
 // A union subject turns `.name(binding)` and `.name(&mut binding)` calls into
-// branch patterns.
-adopt_branch_patterns :: proc(k: ^Checker, s: ^Stmt_Switch) {
+// branch patterns, and an `any_view` subject turns `T(binding)` into one.
+adopt_branch_patterns :: proc(k: ^Checker, s: ^Stmt_Switch, erased: bool) {
 	s.kind = .Pattern
 	for &entry in s.cases {
 		if len(entry.values) != 1 {
 			continue
 		}
-		if selector, binding, ref, ok := branch_variant_pattern(k, entry.values[0]); ok {
-			entry.values[0] = selector
+		if pattern, binding, ref, ok := branch_variant_pattern(k, entry.values[0], erased); ok {
+			entry.values[0] = pattern
 			entry.binding = binding
 			entry.binding_ref = ref
 		}
@@ -261,12 +261,18 @@ adopt_branch_patterns :: proc(k: ^Checker, s: ^Stmt_Switch) {
 }
 
 @(private = "file")
-branch_variant_pattern :: proc(k: ^Checker, value: Expr) -> (Expr, Name, bool, bool) {
+branch_variant_pattern :: proc(k: ^Checker, value: Expr, erased: bool) -> (Expr, Name, bool, bool) {
 	call, is_call := value.(^Expr_Call)
 	if !is_call || len(call.args) != 1 {
 		return nil, Name{}, false, false
 	}
+	// A union case names `.variant`; an `any_view` case names a type, which is
+	// checked as one later.
 	selector, is_selector := call.callee.(^Expr_Selector)
+	implicit := is_selector && selector.operand == nil
+	if implicit == erased {
+		return nil, Name{}, false, false
+	}
 	arg := call.args[0]
 	written := arg.value
 	ref := false
@@ -278,8 +284,7 @@ branch_variant_pattern :: proc(k: ^Checker, value: Expr) -> (Expr, Name, bool, b
 		}
 	}
 	ident, is_ident := written.(^Expr_Ident)
-	if !is_selector || selector.operand != nil || !is_ident ||
-	   arg.name.text != "" || arg.mode != .Value {
+	if !is_ident || arg.name.text != "" || arg.mode != .Value {
 		return nil, Name{}, false, false
 	}
 	// design.md "Inspecting a union": `&` alone would read as a read-only
@@ -289,7 +294,7 @@ branch_variant_pattern :: proc(k: ^Checker, value: Expr) -> (Expr, Name, bool, b
 		errorf(k.c, plain.op_span, "L0367", "a writable payload binding is written `&mut name`")
 	}
 	binding := Name{text = ident.name, span = ident.span, id = ident.name_id}
-	return selector, binding, ref, true
+	return call.callee, binding, ref, true
 }
 
 // design.md "Switch ownership": a `.name(&mut binding)` case makes the switch work
@@ -329,7 +334,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 			k.c,
 			expr_span(s.subject),
 			"L0466",
-			"`%s` is a borrowed view and has no type switch; add a slot for the behavior, or switch on an `any_view`",
+			"`%s` is a borrowed view and cannot be matched by type; add a slot for the behavior, or switch on an `any_view`",
 			type_name(k.c, subject),
 		)
 		return Flow_Info{}
@@ -340,26 +345,6 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	// subject's own storage.
 	if switch_binds_place(s) && !erased && !expr_base(s.subject).assignable {
 		report_not_assignable(k, expr_base(s.subject), "switched with a mutable payload binding")
-		return Flow_Info{}
-	}
-	if !erased && !type_is_union(k.c, subject) {
-		errorf(
-			k.c,
-			expr_span(s.subject),
-			"L0426",
-			"a type switch needs a union or an `any_view`, found `%s`",
-			type_name(k.c, subject),
-		)
-		// A header binding is only ever written `name in expression`, which is
-		// always a payload binding (design.md "switch statement"). A membership
-		// test written there arrives here instead, and nothing above says why.
-		if s.binding.text != "" {
-			add_notef(
-				k.c, s.binding.span,
-				"`%s in ...` in a switch header binds a payload; the membership test is `switch ((%s in ...))`",
-				s.binding.text, s.binding.text,
-			)
-		}
 		return Flow_Info{}
 	}
 
@@ -436,7 +421,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		} else if len(entry.variant_indices) == 1 {
 			payload := union_variant_payload(k.c, subject, entry.variant_indices[0])
 			binding_type = payload == TYPE_VOID ? k.c.unit_type : payload
-			if s.kind == .Pattern && entry.binding.text != "" && payload == TYPE_VOID {
+			if entry.binding.text != "" && payload == TYPE_VOID {
 				errorf(
 					k.c, entry.binding.span, "L0426",
 					"the payloadless variant `.%s` has nothing to bind",
@@ -446,12 +431,13 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		}
 		entry.binding_type = binding_type
 
+		// design.md "any_view type": an `any_view` lends its value read-only.
+		if erased && entry.binding_ref {
+			errorf(k.c, entry.binding.span, "L0426", "an `any_view` lends its value read-only, so `%s` cannot be bound `&mut`", entry.binding.text)
+		}
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
-		binding := s.binding
-		if s.kind == .Pattern {
-			binding = entry.binding
-		}
+		binding := entry.binding
 		if binding.text != "" && binding.text != "_" {
 			name := intern_identifier(k.c, binding.text)
 			outer, owner := lookup_symbol_with_scope(case_scope, name)
@@ -484,7 +470,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	if !has_default {
 		if erased {
 			// An `any_view` erases an open set, so no case list can be exhaustive.
-			errorf(k.c, s.span, "L0465", "a type switch over `any_view` needs a default case")
+			errorf(k.c, s.span, "L0465", "a switch over an `any_view` needs a default case")
 		} else if variant_count(k.c, subject) == len(seen_variants) {
 			exhaustive = true
 		} else {
@@ -552,7 +538,7 @@ report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id
 		k.c,
 		s.span,
 		"L0427",
-		"this type switch over `%s` does not cover %s",
+		"this switch over `%s` does not cover %s",
 		type_name(k.c, subject),
 		missing,
 	)

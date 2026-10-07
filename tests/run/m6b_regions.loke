@@ -213,11 +213,11 @@ wrapped_provider :: proc() {
 fallible_provider :: proc() {
 	buffer: [4096]u8 = {};
 	parent := mem.Arena.from_buffer(&mut buffer[:]);
-	switch (_ in mem.try_arena(parent.allocator())) {
+	switch (mem.try_arena(parent.allocator())) {
 	case .ok: fmt.println(false);
 	case .err: fmt.println(true);
 	}
-	switch (_ in mem.try_scratch(parent.allocator())) {
+	switch (mem.try_scratch(parent.allocator())) {
 	case .ok: fmt.println(false);
 	case .err: fmt.println(true);
 	}
@@ -228,12 +228,12 @@ Empty :: struct {}
 
 zero_size :: proc() {
 	arena := mem.Arena.init();
-	switch (p in unsafe.try_new(Empty{})) {
-	case .ok: unsafe.free(p); fmt.println(true);
+	switch (unsafe.try_new(Empty{})) {
+	case .ok(p): unsafe.free(p); fmt.println(true);
 	case .err: fmt.println(false);
 	}
-	switch (p in unsafe.try_new(Empty{}, arena.allocator())) {
-	case .ok: unsafe.free(p, arena.allocator()); fmt.println(true);
+	switch (unsafe.try_new(Empty{}, arena.allocator())) {
+	case .ok(p): unsafe.free(p, arena.allocator()); fmt.println(true);
 	case .err: fmt.println(false);
 	}
 }
@@ -302,17 +302,17 @@ zero_provider :: proc() {
 	arena: mem.Arena = {};
 	{
 		xs: [dynamic]int via arena.allocator() = {};
-		switch (_ in xs.try_append(1)) {
+		switch (xs.try_append(1)) {
 		case .ok: fmt.println(false);
 		case .err: fmt.println(true);
 		}
-		switch (_ in try_box(0, arena.allocator())) {
+		switch (try_box(0, arena.allocator())) {
 		case .ok: fmt.println(false);
 		case .err: fmt.println(true);
 		}
 		// Zero bytes never reach the region, so even the empty one answers.
-		switch (p in unsafe.try_new(Unit{}, arena.allocator())) {
-		case .ok: unsafe.free(p, arena.allocator()); fmt.println(true);
+		switch (unsafe.try_new(Unit{}, arena.allocator())) {
+		case .ok(p): unsafe.free(p, arena.allocator()); fmt.println(true);
 		case .err: fmt.println(false);
 		}
 	}
@@ -325,8 +325,8 @@ zero_provider :: proc() {
 // The zero allocator is the default provider, for an allocation as for a container.
 zero_allocator :: proc() {
 	allocator: Allocator = {};
-	switch (p in try_box(0, allocator)) {
-	case .ok: p^ = 6; fmt.println(p^);
+	switch (try_box(0, allocator)) {
+	case .ok(p): p^ = 6; fmt.println(p^);
 	case .err: fmt.println(false);
 	}
 	xs: [dynamic]int via allocator = {};

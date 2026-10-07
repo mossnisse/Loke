@@ -25,14 +25,14 @@ main :: proc() {
 	case .number(n): fmt.println(n);
 	default:         fmt.println("not a number");
 	}
-	switch (payload in s) {
+	switch (s) {
 	case .off: fmt.println("off");
-	default:   fmt.println("on", payload);
+	default:   fmt.println("on", s);
 	}
 
 	value: any_view = 2.5;
-	switch (v in value) {
-	case int: fmt.println("int", v);
+	switch (value) {
+	case int(v): fmt.println("int", v);
 	default:  fmt.println("something else");
 	}
 }
