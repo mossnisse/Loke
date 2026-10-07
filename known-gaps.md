@@ -63,3 +63,24 @@ main :: proc() {
 
 `core:fmt`'s `format_any` keeps the recovered view in a local for this reason,
 so printing still counts a `format` method's writes.
+
+### An explicit `any_view(x)` conversion emits an invalid cast
+
+[design.md "any_view type"](design.md#any_view-type) defines the conversion
+to `any_view` as implicit, where an `any_view` destination is expected. The
+checker also accepts the explicit spelling, and the emitter then treats it as a
+scalar cast, which LLVM rejects (`L0403`):
+
+```odin
+package main; import "core:fmt";
+main :: proc() {
+    n := 3;
+    switch (any_view(n)) {
+    case int: fmt.println("int");
+    default:  fmt.println("other");
+    }
+}
+```
+
+`v := any_view(n);` fails the same way; `v: any_view = n;` works. Either reject
+the explicit form in the checker or lower it as the implicit conversion is.

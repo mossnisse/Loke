@@ -13,7 +13,8 @@ checklist.
 - One matching form: the header binding `switch (name in subject)` is
   removed (design.md "Inspecting a union", "any_view type"). A case binds what
   it matches, `case .variant(name):` over a union and `case T(name):` over an
-  `any_view` (`case ([]u8)(bytes):` for a composite type). A grouped or
+  `any_view` (`case ([]u8)(bytes):` for a composite type; a case that is
+  already a type, such as `Option(int)`, names it). A grouped or
   default case reads the subject itself; over a temporary, bind it to a local
   first. `switch (x in set)` is now the membership test, without the second
   pair of parentheses, and the old spelling with an undeclared name is one

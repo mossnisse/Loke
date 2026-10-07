@@ -273,6 +273,11 @@ branch_variant_pattern :: proc(k: ^Checker, value: Expr, erased: bool) -> (Expr,
 	if implicit == erased {
 		return nil, Name{}, false, false
 	}
+	// design.md "any_view type": a call that already names a type, such as
+	// `Option(int)`, is a type case; only `T(name)` around a complete `T` binds.
+	if erased && names_type_silently(k, value) {
+		return nil, Name{}, false, false
+	}
 	arg := call.args[0]
 	written := arg.value
 	ref := false
@@ -295,6 +300,13 @@ branch_variant_pattern :: proc(k: ^Checker, value: Expr, erased: bool) -> (Expr,
 	}
 	binding := Name{text = ident.name, span = ident.span, id = ident.name_id}
 	return call.callee, binding, ref, true
+}
+
+@(private = "file")
+names_type_silently :: proc(k: ^Checker, value: Expr) -> bool {
+	probe := begin_probe(k.c)
+	defer end_probe(k.c, probe)
+	return resolve_type_syntax(k, value) != INVALID_TYPE
 }
 
 // design.md "Switch ownership": a `.name(&mut binding)` case makes the switch work

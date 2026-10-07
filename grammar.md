@@ -699,7 +699,8 @@ The productions above use the following deterministic parsing rules:
 - A switch parses its cases as expressions, a type among them. When the
   subject's type is a union, the checker reads a singleton case of the exact
   shape `.name(binding)` as a branch-local pattern, and when it is an
-  `any_view`, one of the shape `Type(binding)`; calls of any other shape, and
+  `any_view`, one of the shape `Type(binding)` whose whole is not itself a
+  type, so `Option(int)` stays a type case; calls of any other shape, and
   every case of any other switch, remain expressions. A switch header binds
   nothing, so `switch (x in set)` switches on the membership test.
 - An `Init_Statement` is a `Variable_Decl` when the comma-separated list of names

@@ -1,0 +1,19 @@
+package main; import "core:fmt";
+
+// design.md "any_view type": a case that is itself a type, such as
+// `Option(int)`, names it; `T(name)` binds only around a complete type.
+
+describe :: proc(view: any_view) -> string {
+	switch (view) {
+	case Option(int):           return "option";
+	case Option(bool)(flag):    fmt.println(flag); return "bound option";
+	case int(n):                fmt.println(n); return "int";
+	default:                    return "other";
+	}
+}
+
+main :: proc() {
+	item: Option(int) = .some(42);
+	flag: Option(bool) = .some(true);
+	fmt.println(describe(item), describe(flag), describe(7), describe("x"));
+}

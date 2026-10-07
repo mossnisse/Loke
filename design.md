@@ -2055,7 +2055,7 @@ print_text :: proc(value: any_view) {
 }
 ```
 
-A switch over an `any_view` matches the type it holds. A case names one or more concrete types, and a case naming one type may bind the value as that type with `T(name)`, the spelling of a conversion; a composite or pointer type is parenthesised there as in a conversion. The binding is read-only, since an `any_view` lends what it views. A case naming several types, and the default case, read the subject, which stays an `any_view`. No list of cases covers every type, so such a switch needs a default case:
+A switch over an `any_view` matches the type it holds. A case names one or more concrete types, and a case naming one type may bind the value as that type with `T(name)`, the spelling of a conversion. A case that is already a complete type, such as `Option(int)`, names that type rather than binding: `Option(int)(item)` binds; a composite or pointer type is parenthesised there as in a conversion. The binding is read-only, since an `any_view` lends what it views. A case naming several types, and the default case, read the subject, which stays an `any_view`. No list of cases covers every type, so such a switch needs a default case:
 
 ```odin
 describe :: proc(value: any_view) {
