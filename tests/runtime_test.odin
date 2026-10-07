@@ -188,8 +188,9 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 // same C build. Naming the same clang by another spelling in `LOKE_CLANG` is a
 // different build and gets a set of its own, which parallel links install
 // without taking objects from one another; naming it as before reuses the
-// first set. A private copy of the compiler and runtime keeps these builds away
-// from the objects the corpus links against.
+// first set. An edit to a runtime source that keeps its size and modification
+// time is a different build too. A private copy of the compiler and runtime
+// keeps these builds away from the objects the corpus links against.
 @(test)
 runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	clang, _, found := host_toolchain()
@@ -270,8 +271,23 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 		stamp, _ := os2.modification_time_by_path(fmt.tprintf("%s/alloc.o", set.fullpath))
 		return stamp
 	}
+	// The installed sets' names, and why the latest link could not use one, to
+	// tell a host that refused a file from a cache that chose wrongly.
+	cache_state :: proc(root: string) -> string {
+		names := make([dynamic]string, context.temp_allocator)
+		for set in sets(root) {
+			append(&names, set.name)
+		}
+		reason, recorded := os.read_entire_file(fmt.tprintf("%s/runtime/prebuilt/last-failure.txt", root), context.temp_allocator)
+		return fmt.tprintf(
+			"installed sets: [%s]; last failure: %s",
+			strings.join(names[:], ", ", context.temp_allocator),
+			recorded ? strings.trim_space(string(reason)) : "none recorded",
+		)
+	}
 
-	if !link_all(t, compiler, root, with_clang(inherited, clang), 1) || !testing.expect(t, len(sets(root)) == 1, "the first link installed no set") {
+	if !link_all(t, compiler, root, with_clang(inherited, clang), 1) ||
+	   !testing.expectf(t, len(sets(root)) == 1, "the first link did not install exactly one set; %s", cache_state(root)) {
 		return
 	}
 	first := sets(root)[0]
@@ -281,9 +297,35 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	// Every link needs the new set at once, as a parallel corpus does after an
 	// input changes; none may lose the objects it links against.
 	link_all(t, compiler, root, with_clang(inherited, respelled), 8)
-	testing.expectf(t, len(sets(root)) == 2, "a `LOKE_CLANG` of `%s` did not get a set of its own", respelled)
+	testing.expectf(t, len(sets(root)) == 2, "a `LOKE_CLANG` of `%s` did not get a set of its own; %s", respelled, cache_state(root))
 	link_all(t, compiler, root, with_clang(inherited, clang), 1)
 	testing.expect(t, len(sets(root)) == 2 && built_at(first) == first_built, "returning to the first clang did not reuse its set")
+
+	// The same bytes count and timestamp, different contents: the edited
+	// formatter must be the one linked.
+	format_c := fmt.tprintf("%s/runtime/format.c", root)
+	format_info, stat_err := os2.stat(format_c, context.temp_allocator)
+	original, read := os.read_entire_file(format_c, context.temp_allocator)
+	edited, replaced := strings.replace(string(original), `"true", 4`, `"nope", 4`, 1, context.temp_allocator)
+	if !testing.expect(t, stat_err == nil && read && replaced, "cannot find the formatter's `true` in the runtime copy") {
+		return
+	}
+	testing.expect(t, os.write_entire_file(format_c, transmute([]byte)edited), "cannot edit the runtime copy")
+	testing.expect(t, os2.change_times(format_c, format_info.access_time, format_info.modification_time) == nil, "cannot restore the edited source's time")
+	program := fmt.tprintf("%s/prints_true.loke", root)
+	_ = os.write_entire_file(program, transmute([]byte)string("package main; import \"core:fmt\"; main :: proc() { fmt.println(true); }\n"))
+	exe := fmt.tprintf("%s/prints_true.exe", root)
+	built, _, stderr, build_err := exec(
+		os2.Process_Desc{command = []string{compiler, program, "-o", exe, "-collection", "base=base", "-collection", "core=core"}, env = with_clang(inherited, clang)},
+		context.temp_allocator,
+	)
+	if !testing.expectf(t, build_err == nil && built.exit_code == 0, "the program did not compile against the edited runtime:\n%s", string(stderr)) {
+		return
+	}
+	_, stdout, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.temp_allocator)
+	printed := strings.trim_space(string(stdout))
+	testing.expectf(t, run_err == nil && printed == "nope", "an edit that kept the size and time linked the old runtime: printed `%s`; %s", printed, cache_state(root))
+	testing.expectf(t, len(sets(root)) == 3, "the edited runtime did not get a set of its own; %s", cache_state(root))
 }
 
 // A `declare`/`define` of a runtime function that starts a string literal or

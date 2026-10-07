@@ -399,24 +399,11 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 			if index < 0 {
 				continue
 			}
-			if slice.contains(indices[:], index) {
+			if slice.contains(seen_variants[:], index) {
 				errorf(
 					k.c, expr_span(value), "L0367",
 					"`.%s` is already covered by an earlier case", union_variant_name(k.c, subject, index),
 				)
-				continue
-			}
-			for existing in seen_variants {
-				if existing == index {
-					errorf(
-						k.c, expr_span(value), "L0367",
-						"`.%s` is already covered by an earlier case", union_variant_name(k.c, subject, index),
-					)
-					index = -1
-					break
-				}
-			}
-			if index < 0 {
 				continue
 			}
 			append(&indices, index)

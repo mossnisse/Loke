@@ -25,8 +25,10 @@ jobs:
       # section, which becomes the release notes.
       - name: Release gate
         run: |
-          $gaps = [regex]::Match((Get-Content -Raw known-gaps.md), '(?s)## Gaps\s*(.*?)\s*## Not gaps').Groups[1].Value
-          if ($gaps -ne 'None.') { throw "known-gaps.md lists open gaps; a release needs none" }
+          # The section runs to the next level-two heading or the end of the file.
+          $gaps = [regex]::Match((Get-Content -Raw known-gaps.md), '(?ms)^## Gaps[ \t]*\r?$(.*?)(?=^## |\z)')
+          if (-not $gaps.Success) { throw "known-gaps.md has no ## Gaps section" }
+          if ($gaps.Groups[1].Value.Trim() -ne 'None.') { throw "known-gaps.md lists open gaps; a release needs none" }
           $version = [regex]::Match((Get-Content -Raw src/build_config.odin), 'LOKE_VERSION_STRING :: "([^"]+)"').Groups[1].Value
           if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "tag $env:GITHUB_REF_NAME does not match LOKE_VERSION_STRING $version" }
           if ((Get-Content -Raw CHANGELOG.md) -notmatch "(?m)^## \[$([regex]::Escape($version))\]") { throw "CHANGELOG.md has no [$version] section" }

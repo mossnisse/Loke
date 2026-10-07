@@ -13,3 +13,9 @@ a switch binds in its cases: write `switch (subject)` with `case .variant(radius
 L0426
 @43:16
 an `any_view` lends its value read-only
+L0367
+@53:15
+`.level` is already covered by an earlier case
+L0367
+@59:7
+`.level` is already covered by an earlier case

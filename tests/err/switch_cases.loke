@@ -45,10 +45,26 @@ erased_mut :: proc(value: any_view) {
 	}
 }
 
+// A union variant repeated in one case, and one repeated across cases.
+Signal :: union { level: int, idle }
+
+repeated_variant :: proc(signal: Signal) {
+	switch (signal) {
+	case .level, .level: fmt.println(1);
+	case .idle:
+	}
+	switch (signal) {
+	case .level(n): fmt.println(n);
+	case .idle:
+	case .level:
+	}
+}
+
 main :: proc() {
 	partial(Colour.Red);
 	duplicated(1);
 	open(1);
 	header_binding(.empty);
 	erased_mut(1);
+	repeated_variant(.idle);
 }

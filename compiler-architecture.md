@@ -668,9 +668,11 @@ An executable build links the generated module with the compiled C runtime.
 `runtime/prebuilt/<mode>-<hash>/`, one set per C build. The hash is of the
 set's `build-inputs.txt`: the clang command (the clang path, the flags, and the
 MSVC and SDK include roots), the clang binary's modification time, and each
-`runtime/*.c` and `*.h` file's name, size, and modification time. A changed
+`runtime/*.c` and `*.h` file's name and a hash of its contents. A changed
 input names a new set rather than replacing one a parallel link may be reading;
-an installed set is never modified, and superseded sets are left in place. The
+an installed set is never modified, and superseded sets are left in place. A
+link that cannot build or install a set compiles the sources itself and writes
+the reason to `runtime/prebuilt/last-failure.txt`. The
 first build after editing `runtime/` or changing `LOKE_CLANG` is slow by
 design, and the rest are not. An object build emits one
 relocatable compiler module and leaves its runtime and foreign references for

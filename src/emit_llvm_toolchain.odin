@@ -265,6 +265,8 @@ replace_ext :: proc(path: string, ext: string) -> string {
 // decides it, so a changed input makes a new set instead of replacing one a
 // concurrent link may be reading. A set is compiled in a private staging
 // directory and renamed into place, and an installed set is never modified.
+// A set that cannot be built or installed leaves the link to compile the
+// sources itself, and the reason in `RUNTIME_CACHE_FAILURE`.
 // ponytail: superseded sets are left behind (about 100 KB each); a sweep
 // would need to know no link still reads them.
 @(private = "file")
@@ -275,7 +277,7 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opt_mod
 	command := runtime_compile_command(runtime_dir, sources, opt_mode)
 	manifest, identified := runtime_build_manifest(runtime_dir, command)
 	if !identified {
-		return nil
+		return runtime_cache_failed(runtime_dir, "cannot read the runtime sources in `%s`", runtime_dir)
 	}
 	name := fmt.tprintf("%v-%16x", opt_mode, hash.fnv64a(transmute([]byte)manifest))
 	dir := filepath.join({runtime_dir, "prebuilt", name})
@@ -288,19 +290,19 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opt_mod
 	}
 	staging := filepath.join({runtime_dir, "prebuilt", fmt.tprintf(".staging-%d", os2.get_pid())})
 	defer os2.remove_all(staging)
-	if os2.make_directory_all(staging) != nil {
-		return nil
+	if err := os2.make_directory_all(staging); err != nil {
+		return runtime_cache_failed(runtime_dir, "cannot create `%s`: %v", staging, err)
 	}
-	if !compile_runtime_sources(command, staging) {
-		return nil
+	if reason := compile_runtime_sources(command, staging); reason != "" {
+		return runtime_cache_failed(runtime_dir, "%s", reason)
 	}
 	if !os.write_entire_file(filepath.join({staging, RUNTIME_MANIFEST}), transmute([]byte)manifest) {
-		return nil
+		return runtime_cache_failed(runtime_dir, "cannot write `%s` in `%s`", RUNTIME_MANIFEST, staging)
 	}
 	// A concurrent link that installed the same set first wins; either copy
-	// serves. Anything else leaves the link to compile the sources itself.
-	if os2.rename(staging, dir) != nil && !prebuilt_current(dir, objects, manifest) {
-		return nil
+	// serves.
+	if err := os2.rename(staging, dir); err != nil && !prebuilt_current(dir, objects, manifest) {
+		return runtime_cache_failed(runtime_dir, "cannot rename `%s` to `%s`: %v", staging, dir, err)
 	}
 	return objects
 }
@@ -308,10 +310,25 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opt_mod
 // Beside a prebuilt set: what it was built from.
 RUNTIME_MANIFEST :: "build-inputs.txt"
 
+// In `runtime/prebuilt/`: why the latest link could not use a set. Never read
+// by the compiler; it explains a slow link, and a test failure.
+RUNTIME_CACHE_FAILURE :: "last-failure.txt"
+
+@(private = "file")
+runtime_cache_failed :: proc(runtime_dir: string, format: string, args: ..any) -> []string {
+	reason := fmt.tprintfln(format, ..args)
+	prebuilt := filepath.join({runtime_dir, "prebuilt"}, context.temp_allocator)
+	if os2.make_directory_all(prebuilt) == nil {
+		os.write_entire_file(filepath.join({prebuilt, RUNTIME_CACHE_FAILURE}, context.temp_allocator), transmute([]byte)reason)
+	}
+	return nil
+}
+
 // Everything that decides the objects: the clang command, which names the
 // compiler, the flags, and the MSVC and SDK include roots; the clang binary's
 // modification time, which a reinstall changes; and each runtime source and
-// header's name, size, and modification time.
+// header's name and a hash of its contents, since an edit can keep both the
+// size and the modification time.
 @(private = "file")
 runtime_build_manifest :: proc(runtime_dir: string, command: []string) -> (manifest: string, ok: bool) {
 	b := strings.builder_make()
@@ -328,7 +345,11 @@ runtime_build_manifest :: proc(runtime_dir: string, command: []string) -> (manif
 	slice.sort_by(entries, proc(a, b: os2.File_Info) -> bool { return a.name < b.name })
 	for entry in entries {
 		if strings.has_suffix(entry.name, ".c") || strings.has_suffix(entry.name, ".h") {
-			fmt.sbprintfln(&b, "%s %d %d", entry.name, entry.size, time.to_unix_nanoseconds(entry.modification_time))
+			contents, read := os.read_entire_file(entry.fullpath, context.temp_allocator)
+			if !read {
+				return "", false
+			}
+			fmt.sbprintfln(&b, "%s %16x", entry.name, hash.fnv64a(contents))
 		}
 	}
 	return strings.to_string(b), true
@@ -363,14 +384,21 @@ runtime_compile_command :: proc(runtime_dir: string, sources: []string, opt_mode
 	return command[:]
 }
 
+// Why the sources did not compile, or "" when they did. Not reported: the link
+// then compiles the sources and clang explains.
 @(private = "file")
-compile_runtime_sources :: proc(command: []string, staging: string) -> bool {
-	state, _, _, err := subprocess.run(
+compile_runtime_sources :: proc(command: []string, staging: string) -> (reason: string) {
+	state, _, stderr, err := subprocess.run(
 		os2.Process_Desc{command = command, working_dir = staging},
-		context.allocator,
+		context.temp_allocator,
 	)
-	// Not reported: the link then compiles the sources and clang explains.
-	return err == nil && state.exit_code == 0
+	if err != nil {
+		return fmt.tprintf("cannot run `%s`: %v", command[0], err)
+	}
+	if state.exit_code != 0 {
+		return fmt.tprintf("`%s` exited with %d:\n%s", command[0], state.exit_code, string(stderr))
+	}
+	return ""
 }
 
 // clang does llc, the runtime's C sources, and the link in one process

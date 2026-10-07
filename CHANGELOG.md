@@ -579,6 +579,12 @@ checklist.
 
 ### Fixed
 
+- An edit to a `runtime/` C source that kept its size and modification time
+  linked the stale cached runtime objects; the cache now names each source by
+  a hash of its contents. When a link cannot use the cache, the reason is in
+  `runtime/prebuilt/last-failure.txt`.
+- The release gate rejected a `known-gaps.md` whose `## Gaps` section was
+  `None.`, since it looked for a `## Not gaps` heading that no longer exists.
 - `any_view(x)` was accepted and then emitted as a scalar cast that clang
   rejected; it is now the implicit conversion written out (design.md
   "any_view type"). Erasing a `type` value into an `any_view`, by either
