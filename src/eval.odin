@@ -513,11 +513,12 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	return value_from_const(ev, zero, type)
 }
 
-// design.md "Compile-time procedure evaluation": the evaluator runs no
-// lifecycle hook yet, so a record whose drop or copy would run one is rejected
-// where it is made, rather than evaluated with its hooks skipped. Only a record
-// declares a hook, and only a record or a fixed array holds one by value in a
-// zero; a container, union, or box starts out holding none.
+// design.md "Compile-time procedure evaluation": an evaluated path makes no
+// value whose drop or copy runs a hand-written hook, so such a record is
+// rejected where it is made. Only a record declares a hook, and only a record
+// or a fixed array holds one by value in a zero; a container, union, or box
+// starts out holding none, and gets one only from a value made, and checked,
+// on its own.
 @(private = "file")
 eval_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool {
 	info := underlying_info(ev.k.c, type)
@@ -528,12 +529,8 @@ eval_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool 
 	case .Array:
 		return eval_hooks_supported(ev, info.element, site)
 	case .Struct:
-		lifecycle := lifecycle_of(ev.k.c, type)
-		if lifecycle.custom_drop != INVALID_SYMBOL || lifecycle.custom_try_clone != INVALID_SYMBOL {
-			return eval_fail(
-				ev, site, "L0341", "`%s` has a `hook(%s)`, which compile-time evaluation does not run yet",
-				type_name(ev.k.c, type), lifecycle.custom_drop != INVALID_SYMBOL ? "drop" : "copy",
-			)
+		if !eval_record_hooks_supported(ev, type, site) {
+			return false
 		}
 		for field in info.fields {
 			if symbol := symbol_of(ev.k.c, field); symbol != nil && !eval_hooks_supported(ev, symbol.type, site) {
@@ -542,6 +539,39 @@ eval_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool 
 		}
 	}
 	return true
+}
+
+// A folded constant arrives whole, so it is checked by what it holds: a union
+// by the payload of its variant, which its type alone does not say.
+@(private = "file")
+eval_constant_hooks_supported :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id, site: Span) -> bool {
+	c := ev.k.c
+	if underlying_kind(c, type) == .Struct && !eval_record_hooks_supported(ev, type, site) {
+		return false
+	}
+	if cv.kind != .Aggregate || cv.aggregate == nil || type_is_container(c, type) {
+		return true
+	}
+	is_union := type_is_union(c, type_underlying(c, type))
+	for element, index in cv.aggregate.elements {
+		member := is_union ? union_variant_payload(c, type, cv.aggregate.variant) : element_type_at(c, type, index)
+		if !eval_constant_hooks_supported(ev, element, member, site) {
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+eval_record_hooks_supported :: proc(ev: ^Evaluator, type: Type_Id, site: Span) -> bool {
+	lifecycle := lifecycle_of(ev.k.c, type)
+	if lifecycle.custom_drop == INVALID_SYMBOL && lifecycle.custom_try_clone == INVALID_SYMBOL {
+		return true
+	}
+	return eval_fail(
+		ev, site, "L0341", "`%s` has a `hook(%s)`, and compile-time evaluation runs no lifecycle hook",
+		type_name(ev.k.c, type), lifecycle.custom_drop != INVALID_SYMBOL ? "drop" : "copy",
+	)
 }
 
 @(private = "file")
@@ -588,7 +618,7 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 	}
 	if base.is_const && base.const_value.kind != .Invalid {
 		// A folded record literal is made here as well.
-		if base.const_value.kind == .Aggregate && !eval_hooks_supported(ev, base.type, expr_span(e)) {
+		if base.const_value.kind == .Aggregate && !eval_constant_hooks_supported(ev, base.const_value, base.type, expr_span(e)) {
 			return Eval_Value{}, false
 		}
 		return value_from_const(ev, base.const_value, base.type)

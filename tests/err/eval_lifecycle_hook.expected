@@ -1,12 +1,15 @@
 L0341
-@27:13
-`Tracked` has a `hook(drop)`, which compile-time evaluation does not run yet
+@32:13
+`Tracked` has a `hook(drop)`, and compile-time evaluation runs no lifecycle hook
 L0341
-@28:9
+@33:9
 `Tracked` has a `hook(drop)`
 L0341
-@29:13
+@34:13
 `Tracked` has a `hook(drop)`
 L0341
-@30:11
+@35:11
 `Copied` has a `hook(copy)`
+L0341
+@38:19
+`Tracked` has a `hook(drop)`

@@ -3465,7 +3465,8 @@ A compile-time call requires every value it reads from outside its own locals to
 - read or modify runtime or mutable file-scope state;
 - call foreign code or use volatile, atomic, thread, clock, random, environment, file-system, network, or process operations;
 - observe a runtime address, convert a pointer to an integer, or retain a pointer to evaluator-owned storage;
-- use a runtime allocator or transfer an evaluator-owned managed value into the generated program.
+- use a runtime allocator or transfer an evaluator-owned managed value into the generated program;
+- make a value whose drop or copy would run a hand-written `hook(drop)` or `hook(copy)`: a record that declares one, or a record, fixed array, or union holding such a record. A container or `Option` that holds no such value, such as an empty `[dynamic]T` or `.none`, may still be used.
 
 Temporary managed values may be used while evaluation runs, but the final result must satisfy the [materialization](#materialization) rules. In particular, a runtime-owning dynamic array or map must first be converted to a fixed array, immutable string, or ordinary record.
 

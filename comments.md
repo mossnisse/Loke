@@ -396,6 +396,15 @@ requires a constant, and
 [Compile-time phases](design.md#compile-time-phases) lists those contexts; a
 runtime call with constant arguments stays a runtime call.
 
+An evaluated path cannot make a value whose drop or copy runs a hand-written
+lifecycle hook. Running hooks at compile time would need the evaluator to
+reproduce every runtime ownership decision exactly: liveness, last-use
+transfer, temporaries, container and union drops, and their order, since a
+hook can observe all of them. Getting any of it wrong would make a constant
+differ from the same call at run time, silently. In practice the cost is small:
+the hooks in the standard library guard files, processes, threads, terminals,
+and shared allocations, which compile-time evaluation cannot use anyway.
+
 Built-in operations on built-in types cannot be shadowed. Domain-specific
 behavior over a primitive representation uses a `distinct` type, keeping the
 changed meaning visible at its declaration.

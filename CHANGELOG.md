@@ -364,6 +364,11 @@ checklist.
 
 ### Changed
 
+- Compile-time evaluation rejecting a value whose drop or copy runs a
+  hand-written `hook(drop)` or `hook(copy)` is now a language rule (design.md
+  "Compile-time procedure evaluation") rather than a known gap, and `L0341`
+  says so. A folded union constant holding such a record is now rejected too;
+  before, evaluating it skipped the hook.
 - `:=` and `=` destructuring stays flat by design; only a `foreach` header
   nests (design.md "Destructuring"). A nested group such as `(x, y), b := p`
   is now one diagnostic (`L0207`) saying to destructure in a second step,

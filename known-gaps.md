@@ -63,13 +63,3 @@ main :: proc() {
 
 `core:fmt`'s `format_any` keeps the recovered view in a local for this reason,
 so printing still counts a `format` method's writes.
-
-### Compile-time evaluation rejects records with lifecycle hooks
-
-[design.md "Compile-time procedure evaluation"](design.md#compile-time-procedure-evaluation).
-
-This is rejected with `L0341` ("`T` has a `hook(drop)`, which compile-time evaluation does not run yet"), although a record with a lifecycle hook is an ordinary value the evaluated path may use. `src/eval.odin` runs no lifecycle hook: not at an explicit `drop`, scope exit, a replacing assignment, a discarded temporary, or a container removal, and not for an implicit copy's `hook(copy)`. Until it runs them, `eval_hooks_supported` refuses any record value whose drop or copy would run a hook, wherever evaluation makes one, rather than evaluating it with the hook skipped. Running them needs per-slot liveness, as the emitter's drop flags give the runtime.
-
-```odin
-package main; T :: struct { n: int } impl T { release :: hook(drop) proc(self: inout T) { panic("drop ran"); } } compute :: proc() -> int { value := T{1}; drop(value); return 1; } VALUE :: compute(); main :: proc() { _ = VALUE; }
-```
