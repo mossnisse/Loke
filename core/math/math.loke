@@ -191,17 +191,72 @@ to :: proc($To: type, value: $From) -> Option(To)
 // The low bits of a sum, difference, or product depend only on the low bits of
 // its operands, so the wrapping forms compute in `u128`, which holds every
 // integer's bits, and wrap back. The optimizer narrows the arithmetic again.
+//
+// Signed SIMD lanes panic on overflow too (design.md "Lane-wise operators"), so
+// the wrapping forms also take two vectors of integer lanes. A lane computes in
+// the unsigned type of its own width: `u128` is not a lane type, and a wider
+// one could exceed a vector's 64 bytes. The conversions change no bits, so the
+// operation is the plain vector instruction.
 
-wrapping_add :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+wrapping_add :: proc{wrapping_add_integer, wrapping_add_lanes};
+wrapping_sub :: proc{wrapping_sub_integer, wrapping_sub_lanes};
+wrapping_mul :: proc{wrapping_mul_integer, wrapping_mul_lanes};
+
+wrapping_add_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
 	return wrap(T, wrap(u128, a) + wrap(u128, b));
 }
 
-wrapping_sub :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+wrapping_sub_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
 	return wrap(T, wrap(u128, a) - wrap(u128, b));
 }
 
-wrapping_mul :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+wrapping_mul_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
 	return wrap(T, wrap(u128, a) * wrap(u128, b));
+}
+
+wrapping_add_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
+	return wrapping_lanes(a, b, Lane_Operation.Add);
+}
+
+wrapping_sub_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
+	return wrapping_lanes(a, b, Lane_Operation.Sub);
+}
+
+wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
+	return wrapping_lanes(a, b, Lane_Operation.Mul);
+}
+
+@(private)
+Lane_Operation :: enum u8 {
+	Add,
+	Sub,
+	Mul,
+}
+
+@(private)
+wrapping_lanes :: proc(a: Simd($T, $N), b: Simd(T, N), $operation: Lane_Operation) -> Simd(T, N) {
+	when (size_of(T) == 1) {
+		return wrapping_lanes_as(u8, a, b, operation);
+	} else when (size_of(T) == 2) {
+		return wrapping_lanes_as(u16, a, b, operation);
+	} else when (size_of(T) == 4) {
+		return wrapping_lanes_as(u32, a, b, operation);
+	} else {
+		return wrapping_lanes_as(u64, a, b, operation);
+	}
+}
+
+@(private)
+wrapping_lanes_as :: proc($U: type, a: Simd($T, $N), b: Simd(T, N), $operation: Lane_Operation) -> Simd(T, N) {
+	x := wrap(Simd(U, N), a);
+	y := wrap(Simd(U, N), b);
+	when (operation == .Add) {
+		return wrap(Simd(T, N), x + y);
+	} else when (operation == .Sub) {
+		return wrap(Simd(T, N), x - y);
+	} else {
+		return wrap(Simd(T, N), x * y);
+	}
 }
 
 // An overflowing sum wraps past the end that `b`'s sign points to, so it lands

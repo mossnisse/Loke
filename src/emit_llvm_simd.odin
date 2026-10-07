@@ -60,6 +60,13 @@ emit_simd_binary_values :: proc(
 	right := simd_operand(e, right_value, right_type, vector)
 	float := type_is_float(e.c, info.element)
 
+	if !float && integer_traps_overflow(e.c, info.element) {
+		#partial switch op {
+		case .Plus:  return emit_simd_checked(e, "sadd", info, llvm, left, right)
+		case .Minus: return emit_simd_checked(e, "ssub", info, llvm, left, right)
+		case .Star:  return emit_simd_checked(e, "smul", info, llvm, left, right)
+		}
+	}
 	mnemonic := ""
 	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
@@ -92,6 +99,24 @@ emit_simd_binary_values :: proc(
 	return out
 }
 
+// design.md "Lane-wise operators": a signed lane that overflows panics the whole
+// operation, as the scalar operator would. The vector `*.with.overflow`
+// intrinsics answer the wrapped lanes and which of them wrapped.
+@(private = "file")
+emit_simd_checked :: proc(e: ^Emitter, intrinsic: string, info: ^Type_Info, llvm, left, right: string) -> string {
+	key := fmt.aprintf("llvm.%s.with.overflow.v%d%s", intrinsic, info.count, simd_lane_llvm_type(e, info))
+	pair_type := fmt.aprintf("{{ %s, <%d x i1> }}", llvm, info.count)
+	if key not_in e.simd_intrinsics {
+		e.simd_intrinsics[key] = true
+		append(&e.globals, fmt.aprintf("declare %s @%s(%s, %s)\n", pair_type, key, llvm, llvm))
+	}
+	pair := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s)", pair, pair_type, key, llvm, left, llvm, right)
+	overflowed := extract(e, pair_type, pair, 1)
+	panic_if(e, simd_any_lane(e, info, overflowed), "int.overflow", "signed integer overflow")
+	return extract(e, pair_type, pair, 0)
+}
+
 // A comparison yields a mask: one byte per lane, widened from `icmp`'s `i1`.
 @(private = "file")
 emit_simd_compare :: proc(
@@ -111,8 +136,8 @@ emit_simd_compare :: proc(
 	return out
 }
 
-// Any zero divisor lane faults the whole operation; signed `MIN / -1` and
-// `MIN % -1` wrap as scalars do, via a safe divisor and a select.
+// Any zero divisor lane faults the whole operation. A signed `MIN / -1` lane
+// panics as the scalar does, and `MIN % -1` is 0 through a safe divisor of 1.
 @(private = "file")
 emit_simd_divrem :: proc(
 	e: ^Emitter, op: Token_Kind, vector: Type_Id, info: ^Type_Info, left, right: string,
@@ -134,10 +159,16 @@ emit_simd_divrem :: proc(
 	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_min, llvm, left, minimum)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_neg_one, llvm, right, simd_all_ones(e, info))
 	fmt.sbprintfln(&e.b, "  %s = and <%d x i1> %s, %s", overflow, info.count, is_min, is_neg_one)
+	if op == .Slash {
+		panic_if(e, simd_any_lane(e, info, overflow), "int.overflow", "signed integer overflow")
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = sdiv %s %s, %s", out, llvm, left, right)
+		return out
+	}
 	safe := simd_select(e, info, llvm, overflow, simd_repeated(e, info, "1"), right)
-	raw := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", raw, op == .Slash ? "sdiv" : "srem", llvm, left, safe)
-	return simd_select(e, info, llvm, overflow, op == .Slash ? minimum : "zeroinitializer", raw)
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = srem %s %s, %s", out, llvm, left, safe)
+	return out
 }
 
 // A count at or beyond the width gives the scalar result: zero, or the sign
@@ -186,7 +217,7 @@ emit_simd_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string
 	} else if type_is_float(e.c, info.element) {
 		fmt.sbprintfln(&e.b, "  %s = fneg %s %s", out, llvm, operand)
 	} else {
-		fmt.sbprintfln(&e.b, "  %s = sub %s zeroinitializer, %s", out, llvm, operand)
+		return emit_simd_checked(e, "ssub", info, llvm, "zeroinitializer", operand)
 	}
 	return out
 }
@@ -299,6 +330,9 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	case .Any: name = "or"
 	case .All: name = "and"
 	}
+	if !float && (fold == .Add || fold == .Mul) && integer_traps_overflow(e.c, info.element) {
+		return emit_simd_checked_fold(e, fold == .Add ? "sadd" : "smul", lane, count, value)
+	}
 	if fold == .Any || fold == .All {
 		folded := simd_call_reduce(e, name, lane, count, value, "")
 		out := temp(e)
@@ -311,4 +345,18 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		start = fmt.aprintf("%s %s, ", lane, llvm_float(float_pattern(fold == .Add ? -0.0 : 1.0, bits), bits))
 	}
 	return simd_call_reduce(e, name, lane, count, value, start)
+}
+
+// A signed sum or product folds from lane 0, left to right, through the scalar
+// checked operator, so a partial result that does not fit panics as the same
+// loop over the lanes would.
+@(private = "file")
+emit_simd_checked_fold :: proc(e: ^Emitter, intrinsic, lane: string, count: int, vector: string) -> string {
+	result := ""
+	for index in 0 ..< count {
+		element := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractelement <%d x %s> %s, i32 %d", element, count, lane, vector, index)
+		result = index == 0 ? element : emit_checked_signed(e, intrinsic, lane, result, element)
+	}
+	return result
 }

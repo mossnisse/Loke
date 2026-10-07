@@ -17,7 +17,7 @@
 [false, true, true, true] [true, true, true, true] [false, false, false, false]
 [-4, -1, 0, 4] [-1, -1, 0, 0] [true, true, false, false]
 [4294967295, 0, 1, 2] [0, 1, 1, 2] [false, false, true, true]
-[-2147483648, 3, -2147483648, 3] [0, 1, 0, 0]
+[0, 1, 0, 0]
 [0, 0, 0, 0] [0, 0, 0, 0]
 [2.0, -2.0] [2.25, 6.25] [0.75, -1.25] [-1.5, 2.5]
 [false, true] [true, true]

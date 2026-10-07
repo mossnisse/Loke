@@ -1400,7 +1400,6 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 
 // design.md "Integer overflow": a signed result that does not fit panics. The
 // `*.with.overflow` intrinsics answer the wrapped value and whether it wrapped.
-@(private = "file")
 emit_checked_signed :: proc(e: ^Emitter, intrinsic, llvm, lhs, rhs: string) -> string {
 	pair_type := strings.concatenate({"{ ", llvm, ", i1 }"})
 	pair := temp(e)

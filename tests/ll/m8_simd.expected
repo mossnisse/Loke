@@ -1,5 +1,11 @@
+%t* = call { <4 x i32>, <4 x i1> } @llvm.sadd.with.overflow.v4i32(<4 x i32> %t*, <4 x i32> %t*)
+%t* = call i1 @llvm.vector.reduce.or.v4i1(<4 x i1> %t*)
+br i1 %t*, label %int.overflow.*, label %ok.*
+%t* = call { <4 x i32>, <4 x i1> } @llvm.smul.with.overflow.v4i32(<4 x i32> %t*, <4 x i32> %t*)
+declare { <4 x i32>, <4 x i1> } @llvm.sadd.with.overflow.v4i32(<4 x i32>, <4 x i32>)
+%t* = extractelement <4 x i32> %t*, i32 3
+%t* = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t*, i32 %t*)
 %t* = add <4 x i32> %t*, %t*
-%t* = mul <4 x i32> %t*, %t*
 %t* = insertelement <4 x i64> poison, i64 %t*, i32 0
 %t* = shufflevector <4 x i64> %t*, <4 x i64> poison, <4 x i32> zeroinitializer
 %t* = icmp slt <4 x i32> %t*, %t*

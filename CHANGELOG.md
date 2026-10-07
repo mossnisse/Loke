@@ -334,6 +334,14 @@ checklist.
   compiler used to fold it one element at a time, taking seconds or running out
   of memory. Leave a zero-initialized global without an initializer
   (`buffer: [2000000]u8;`), or fill a large table at run time.
+- Signed SIMD lanes follow the scalar overflow rule (design.md "Lane-wise
+  operators"): `+`, `-`, `*`, `/`, and unary `-` panic when any lane
+  overflows, and are `L0397` at compile time, where they used to wrap; a
+  `MIN / -1` lane panics instead of answering `MIN`. Signed `simd.reduce_add`
+  and `simd.reduce_mul` fold left to right through the checked operator and
+  panic on an overflowing partial result. Write `math.wrapping_add(a, b)`,
+  `wrapping_sub`, or `wrapping_mul` where a kernel means to wrap; they take
+  vectors and compile to the plain instruction.
 
 ### Changed
 
@@ -406,6 +414,8 @@ checklist.
 
 ### Added
 
+- `math.wrapping_add`, `wrapping_sub`, and `wrapping_mul` take two vectors of
+  one `Simd` type with integer lanes, and wrap each lane.
 - `mem.Failure_Policy` and a `policy` argument on `mem.Arena.init`,
   `Arena.from_buffer`, `Scratch.init`, `try_arena`, and `try_scratch` select
   `.Trap` for a region: its allocation failures then abort without unwinding
@@ -530,6 +540,9 @@ checklist.
 
 ### Fixed
 
+- `math.wrap` of a vector folds at compile time, lane by lane, as design.md
+  "Type conversion" says; a compile-time path that reached one used to stop
+  with `L0341`.
 - A static `foreach` body with a `break` or `continue` that targets the
   expansion (`L0455`) is still checked, so its other errors and copy-cost
   warnings are reported; only the `L0455` was.

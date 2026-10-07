@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Lane-wise operators": a signed lane that overflows panics the whole
+// operation, as the scalar operator would; the other lanes do not let it pass.
+// `-`, `*`, `/`, unary `-`, and signed reductions share the check
+// (tests/ll/m8_simd pins its shape).
+main :: proc() {
+	lanes: Simd(i32, 4) = {1, 2147483646, -5, 0};
+	lanes += 1;
+	fmt.println(lanes);
+	lanes += 1;
+	fmt.println(lanes);
+}

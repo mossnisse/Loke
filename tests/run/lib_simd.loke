@@ -63,11 +63,11 @@ main :: proc() {
 	unsigned: Simd(u32, 4) = {1, 2, 3, 4};
 	fmt.println(unsigned - 2, unsigned >> 1, unsigned > 2);
 
-	// "Signed `MIN / -1` and `MIN % -1` have the same wrapping results scalars
-	// give", lane by lane beside ordinary ones.
+	// "`MIN % -1` is 0", lane by lane beside ordinary ones; `MIN / -1` panics
+	// (tests/trap/simd_signed_overflow).
 	extreme: Simd(i32, 4) = {-2147483648, 7, -2147483648, -9};
 	divisor: Simd(i32, 4) = {-1, 2, 1, -3};
-	fmt.println(extreme / divisor, extreme % divisor);
+	fmt.println(extreme % divisor);
 
 	// A shift count at or beyond the width is the limit of the repeated
 	// one-bit shift, exactly as for a scalar.

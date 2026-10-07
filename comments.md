@@ -933,9 +933,9 @@ they are evaluated at compile time. Unsigned arithmetic stays modular, since
 hashing and bit manipulation are written in it, and signed wrap is asked for
 by name, with `math.wrapping_add` and its siblings.
 The exceptions each keep an existing definition: `<<` is a bit operation whose
-limit is already defined for every count; `%` cannot overflow; a SIMD lane has
-no per-lane overflow flag to test; an atomic `add` is a hardware
-read-modify-write whose other readers have already seen the result.
+limit is already defined for every count; `%` cannot overflow; an atomic `add`
+is a hardware read-modify-write whose other readers have already seen the
+result.
 
 The cost is a checked operation, `llvm.sadd.with.overflow` and its siblings, per
 signed arithmetic step, much of it removed where loop bounds already prove the
@@ -967,6 +967,24 @@ and `wrapping_mul` keep the low bits; `checked_add`, `checked_sub`, and
 `checked_mul` answer `Option(T)`, which is what a parser accumulating digits
 wants. They are ordinary library procedures over `math.wrap`, computing in
 `u128`. A saturating family was left out until a caller needs one.
+
+### Signed SIMD lanes follow the scalar rule
+
+Signed SIMD lanes first stayed modular, on the grounds that a vector instruction
+has no per-lane overflow flag. That made replacing a scalar kernel with a vector
+one change its results at the boundary values. LLVM's `*.with.overflow`
+intrinsics take vectors, so a lane is now checked as a scalar is: the overflow
+lanes are ORed together and the operation branches once.
+
+Looking at `a * x + y` over `Simd(i32, 8)` at `-O2` with AVX2: the checked `+`
+is `vpaddd` plus two compares, an xor, a movemask, and one branch; the checked
+`*` adds about nine instructions, because x86 has no vector high-half multiply
+for 32-bit lanes and the high halves come from two `vpmuldq`. A kernel that
+means to wrap says so with `math.wrapping_add` and its siblings, which take
+vectors and compile to the bare `vpaddd` and `vpmulld`. Signed `reduce_add` and
+`reduce_mul` fold through the scalar checked operator, lane by lane, so they
+agree with the loop they replace; a reduction usually runs once per kernel,
+outside its loop.
 
 ### Signed shifts stay bit operations
 

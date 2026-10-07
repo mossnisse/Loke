@@ -343,7 +343,6 @@ fewer exceptions, rather than shortening keywords.
 
 | Priority | Proposal | Main benefit | Scope |
 | --- | --- | --- | --- |
-| Next | Checked signed SIMD lanes | Scalar and vector code preserve the same meaning | SIMD lowering |
 | Next | Compiler-selected ordinary union layout | Compact nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
 | Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
@@ -417,29 +416,6 @@ arena can use stable integer/generational handles without pervasive pointers.
 A record owning a buffer and views into itself needs address stability and an
 internal-borrow contract; non-null pointers do not solve it. Prefer offsets
 and handles before introducing general pinning or self-referential types.
-
-### Signed SIMD lanes should follow the scalar rule
-
-[Integer overflow](design.md#integer-overflow) panics for signed scalar `+`,
-`-`, `*`, `/`, and unary `-`, but signed [SIMD lanes](design.md#lane-wise-operators)
-wrap. Replacing a scalar kernel with SIMD can therefore change its results at
-the boundary values. Integer conversions, scalar and vector, are already
-checked, with `math.wrap` for the low bits, and the named `math.wrapping_*` and
-`math.checked_*` operations exist for scalars.
-
-**Proposal:** check signed lanes as scalars are checked: a lane that overflows
-panics the whole operation, as a zero divisor lane already does. LLVM's
-`*.with.overflow` intrinsics take vectors, so the check is one OR across the
-lanes and a branch per operation. Extend `math.wrapping_add`, `wrapping_sub`,
-and `wrapping_mul` to vectors, lowered to the plain instruction, so a kernel
-that wants wrapping says so in one call. Unsigned lanes are unaffected. Look at
-the generated code for a representative kernel before deciding, since SIMD code
-exists to be fast.
-
-Shifts and atomic `add`/`sub` stay modular and are not part of this question.
-Shifts are decided ([Signed shifts stay bit operations](comments.md#signed-shifts-stay-bit-operations)),
-and an atomic read-modify-write has already published its result before
-anything could panic.
 
 ### Performance opportunities and actual semantic limits
 

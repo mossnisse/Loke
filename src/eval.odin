@@ -861,6 +861,11 @@ eval_simd_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary, operand: Eval_Value) -> 
 			return Eval_Value{}, false
 		}
 		if folded.kind == .Integer || folded.kind == .Rune {
+			if v.op == .Minus && !signed_fits(ev.k.c, folded.integer, info.element, ev.alloc) {
+				report_signed_overflow(ev.k.c, v.op_span, folded.integer, info.element, ev.alloc)
+				eval_fold_failed(ev)
+				return Eval_Value{}, false
+			}
 			folded.integer = wrap_to_type(ev.k.c, folded.integer, info.element, ev.alloc)
 		}
 		elements[index] = scalar(folded, info.element)
@@ -900,7 +905,7 @@ eval_simd_binary_values :: proc(
 			continue
 		}
 		folded, ok := fold_arithmetic(
-			ev.k.c, op, op_span, const_of(a), const_of(b), source.element, ev.alloc, wrapping = true,
+			ev.k.c, op, op_span, const_of(a), const_of(b), source.element, ev.alloc,
 		)
 		if !ok {
 			eval_fold_failed(ev)
@@ -942,7 +947,6 @@ eval_simd_reduce :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		case .Add, .Mul:
 			folded, folded_ok := fold_arithmetic(
 				ev.k.c, fold == .Add ? .Plus : .Star, v.span, const_of(result), const_of(lane), info.element, ev.alloc,
-				wrapping = true,
 			)
 			if !folded_ok {
 				eval_fold_failed(ev)
@@ -2522,6 +2526,19 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		operand, ok := eval_expr(ev, v.bound[0])
 		if !ok {
 			return Eval_Value{}, false
+		}
+		// design.md "Type conversion": a vector wraps lane by lane.
+		if info := underlying_info(ev.k.c, v.type); info != nil && info.kind == .Simd {
+			elements, allocated := eval_elements(ev, int(info.count))
+			if !allocated {
+				return Eval_Value{}, false
+			}
+			for index in 0 ..< int(info.count) {
+				lane := const_of(eval_simd_lane(operand, index))
+				lane.integer = wrap_to_type(ev.k.c, lane.integer, info.element, ev.alloc)
+				elements[index] = scalar(lane, info.element)
+			}
+			return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
 		}
 		if operand.kind != .Integer && operand.kind != .Rune {
 			eval_fail(ev, v.span, "L0341", "this conversion has no compile-time value")

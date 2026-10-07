@@ -222,8 +222,6 @@ fold_arithmetic :: proc(
 	a, b: Const_Value,
 	type: Type_Id,
 	allocator: mem.Allocator = {},
-	// SIMD lanes keep the modular arithmetic their instructions have.
-	wrapping := false,
 ) -> (Const_Value, bool) {
 	storage := value_allocator(c, allocator)
 	// design.md "SIMD vectors": operators apply lane-wise.
@@ -333,7 +331,7 @@ fold_arithmetic :: proc(
 	}
 	#partial switch op {
 	case .Plus, .Minus, .Star, .Slash:
-		if !wrapping && !signed_fits(c, result, type, storage) {
+		if !signed_fits(c, result, type, storage) {
 			report_signed_overflow(c, op_span, result, type, storage)
 			return Const_Value{}, false
 		}
@@ -514,7 +512,7 @@ fold_simd_lanes :: proc(
 	elements := make([]Const_Value, info.count, value_allocator(c, allocator))
 	for index in 0 ..< int(info.count) {
 		folded, ok := fold_arithmetic(
-			c, op, op_span, lane(a, index), lane(b, index), info.element, allocator, wrapping = true,
+			c, op, op_span, lane(a, index), lane(b, index), info.element, allocator,
 		)
 		if !ok {
 			return Const_Value{}, false

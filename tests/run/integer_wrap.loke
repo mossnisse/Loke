@@ -17,6 +17,15 @@ static_assert(math.wrap(i8, WIDE) == -56);
 folded :: proc() -> u8 { return math.wrap(u8, BASE) + math.wrap(u8, rune(LETTER)); }
 FOLDED :: folded();
 
+// design.md "Lane-wise operators": signed lanes panic where scalars do, so a
+// kernel that means to wrap names it; the wrapping forms take vectors, folded
+// at compile time as at run time.
+wrapped_lanes :: proc() -> Simd(i8, 4) {
+	lanes: Simd(i8, 4) = {127, -128, 5, -3};
+	return math.wrapping_add(lanes, 1);
+}
+WRAPPED_LANES :: wrapped_lanes();
+
 main :: proc() {
 	base := BASE;
 	value := math.wrap(u8, base);
@@ -30,4 +39,9 @@ main :: proc() {
 	fmt.println(math.checked_mul(i8(-1), -128), math.checked_mul(i8(-128), -1), math.checked_mul(i8(-16), 8));
 	fmt.println(math.wrapping_mul(i64(9223372036854775807), 2), math.checked_mul(u64(4294967296), 4294967296));
 	fmt.println(math.checked_add(u64(18446744073709551615), 0), math.checked_mul(i128(-1), 5));
+
+	lanes: Simd(i8, 4) = {127, -128, 5, -3};
+	wide: Simd(i64, 2) = {9223372036854775807, -9223372036854775807 - 1};
+	fmt.println(math.wrapping_add(lanes, 1), math.wrapping_sub(lanes, lanes - lanes + 1), math.wrapping_mul(lanes, 2));
+	fmt.println(math.wrapping_mul(wide, wide), math.wrapping_add(Simd(u16, 2){65535, 1}, 1), WRAPPED_LANES);
 }

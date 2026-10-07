@@ -146,5 +146,5 @@ L0682
 @136:6
 `Colour` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
 L0687
-@77:29
+@79:29
 `Add` folds numeric lanes, and `Simd(bool, 4)` is a lane mask

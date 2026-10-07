@@ -67,6 +67,8 @@ all :: proc(mask: Simd(bool, $N)) -> bool {
 // design.md: "`reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each
 // folding a vector to one scalar. A floating-point sum and product are ordered,
 // left to right, so their results do not depend on the target's vector width; a
+// signed integer sum and product fold left to right too, through the checked
+// scalar operator, so they panic where that loop over the lanes would; a
 // minimum and a maximum need no such rule, because they do not depend on order.
 // A floating-point sum starts from `-0.0` and a product from `1.0`, so a vector
 // of nothing but `-0.0` sums to `-0.0`. `reduce_min` and `reduce_max` ignore NaN
