@@ -20,6 +20,7 @@ Token_Kind :: enum {
 	Break,
 	Case,
 	Continue,
+	Default,
 	Defer,
 	Distinct,
 	Dyn,
@@ -311,6 +312,8 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Case
 	case "continue":
 		kind = .Continue
+	case "default":
+		kind = .Default
 	case "defer":
 		kind = .Defer
 	case "distinct":

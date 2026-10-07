@@ -1,3 +1,6 @@
 L0220
 @8:7
 expected an expression
+L0248
+@20:10
+`default` takes no values

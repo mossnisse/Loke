@@ -719,7 +719,7 @@ path_digest_separates_paths_and_folds_case :: proc(t: ^testing.T) {
 @(test)
 lexer_golden :: proc(t: ^testing.T) {
 	text := `name 123 1.5 "text" ` + "`raw`" + ` 'x'
-break case continue defer distinct dyn dynamic else enum for foreach foreign if impl import in inout interface map move mut operator or_else or_return package proc return struct switch type union via when where
+break case continue default defer distinct dyn dynamic else enum for foreach foreign if impl import in inout interface map move mut operator or_else or_return package proc return struct switch type union via when where
 static self slot using delegate thread_local manual
 + - * / % & &~ | ~ << >> && || ! == != < <= > >= = += -= *= /= %= |= ~= &= &~= <<= >>= : ; , . .. ..= ..< -> --- ? $ ^ @ ( ) [ ] { }
 /* nested /* block */ comment */`
@@ -729,7 +729,7 @@ static self slot using delegate thread_local manual
 	defer delete(tokens)
 	expected := []Token_Kind {
 		.Ident, .Int, .Float, .String, .Raw_String, .Rune,
-		.Break, .Case, .Continue, .Defer, .Distinct, .Dyn, .Dynamic, .Else,
+		.Break, .Case, .Continue, .Default, .Defer, .Distinct, .Dyn, .Dynamic, .Else,
 		.Enum, .For, .Foreach, .Foreign, .If, .Impl, .Import, .In,
 		.Inout, .Interface, .Map, .Move, .Mut, .Operator, .Or_Else, .Or_Return,
 		.Package, .Proc, .Return, .Struct, .Switch, .Type, .Union, .Via, .When, .Where,

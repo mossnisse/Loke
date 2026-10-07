@@ -3999,7 +3999,7 @@ if (x := next_value(); x < 0) {
 
 ### switch statement
 
-A switch statement selects a case by comparing its required subject expression with case values. It may include an initialization statement before the subject, separated by a semicolon. The default case is denoted by `case` without a value.
+A switch statement selects a case by comparing its required subject expression with case values. It may include an initialization statement before the subject, separated by a semicolon. The default case is written `default:`; `case:` with no value is the same case.
 
 ```odin
 switch (os := LOKE_OS; os) {
@@ -4080,7 +4080,7 @@ case .West:  fmt.println("left");
 // An empty default explicitly acknowledges the variants not handled here.
 switch (d) {
 case .North: fmt.println("up");
-case:
+default:
 }
 ```
 
@@ -4096,11 +4096,11 @@ case .flag:   fmt.println("flag");
 
 switch (s) {
 case .flag: fmt.println("flag");
-case: // intentionally ignore `.number`
+default: // intentionally ignore `.number`
 }
 ```
 
-A switch over an enum must either list every variant or include `case:`, exactly as a union variant switch must. Covering every variant guarantees that a case runs. If every case terminates with a return, panic, or other non-fallthrough control flow, the switch cannot fall through and needs no trailing return. A case that completes normally continues after the switch; `break` [passes through](#break-statement) any enclosing switch. The default may be empty; writing it explicitly acknowledges that the remaining cases are intentionally ignored.
+A switch over an enum must either list every variant or include `default:`, exactly as a union variant switch must. Covering every variant guarantees that a case runs. If every case terminates with a return, panic, or other non-fallthrough control flow, the switch cannot fall through and needs no trailing return. A case that completes normally continues after the switch; `break` [passes through](#break-statement) any enclosing switch. The default may be empty; writing it explicitly acknowledges that the remaining cases are intentionally ignored.
 
 ```odin
 degrees :: proc(d: Direction) -> int {
@@ -4234,7 +4234,7 @@ for (cond) {
 		if (cond) {
 			break; // exits the enclosing for loop
 		}
-	case:
+	default:
 	}
 }
 ```

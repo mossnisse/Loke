@@ -541,10 +541,7 @@ Prefer changes that remove an ambiguity or semantic exception:
    destructuring is flat but `foreach` nesting is recursive. Either support
    the same small nested pattern in bindings or explicitly keep this limited;
    do not grow several subtly different pattern languages.
-4. **Consider a `default:` switch arm.** It names the intent more clearly than
-   bare `case:`. This is a readability preference with lower value than the
-   capability and matching changes.
-5. **Protect important fields from silent zero fill.** Keep explicit `T{}`
+4. **Protect important fields from silent zero fill.** Keep explicit `T{}`
    zero construction for zeroable types, but consider requiring named literals
    to supply every field unless a field declares a default. An opt-in
    constructor-only/no-default-initialization record is a smaller alternative.

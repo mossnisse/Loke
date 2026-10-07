@@ -14,4 +14,14 @@ sign :: proc(n: int) -> int {
 	}
 }
 
+// `default` takes no values; the rest up to its `:` is skipped the same way.
+parity :: proc(n: int) -> int {
+	switch (n % 2) {
+	default 0:
+		return 0;
+	default:
+		return 1;
+	}
+}
+
 sentinel :: proc() { }

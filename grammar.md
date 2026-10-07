@@ -55,8 +55,8 @@ wherever a name is bound but introduces no binding.
 Reserved in every position:
 
 ```
-break       case       continue   defer      distinct   dyn        dynamic
-else        enum       for        foreach    foreign
+break       case       continue   default    defer      distinct   dyn
+dynamic     else       enum       for        foreach    foreign
 hook        if         impl       import     in         inout      interface
 map         move       move_only  mut        operator   or_else    or_return
 package     proc       return     struct     switch     type       union
@@ -528,7 +528,7 @@ Switch_Statement = Value_Switch | Type_Switch
 
 Value_Switch = Attributes? "switch" "(" Init_Statement? Expression ")"
                "{" Value_Case* "}"
-Value_Case   = "case" (Branch_Pattern | Expression_List)? ":" Statement*
+Value_Case   = ("case" (Branch_Pattern | Expression_List)? | "default") ":" Statement*
 // A branch pattern is recognized only when the switch subject is a union. It
 // is deliberately shallow: one variant, one identifier binding, no nesting.
 // `&` binds the payload as a writable place (design.md "Switch ownership").
@@ -536,14 +536,14 @@ Branch_Pattern = "." Identifier "(" "&"? Identifier ")"
 
 Type_Switch  = Attributes? "switch" "(" Init_Statement? Identifier "in" Expression ")"
                "{" Type_Case* "}"
-Type_Case    = "case" (Case_Selector ("," Case_Selector)*)? ":" Statement*
+Type_Case    = ("case" (Case_Selector ("," Case_Selector)*)? | "default") ":" Statement*
 // A union case names variants; an `any_view` case names types. Which one a
 // case list is read as follows from the subject's type, and a `.` at case
 // position can never begin a type expression.
 Case_Selector = ("." Identifier) | Type
 ```
 
-`case` with no values is the default case. Case values may be ranges, since
+`default` is the default case; `case` with no values means the same. Case values may be ranges, since
 `..=` and `..<` are ordinary binary operators in the expression grammar.
 
 # Expressions

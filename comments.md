@@ -628,6 +628,16 @@ case:
 The same logic is clearer as an `if`/`else if` chain, so Loke requires a switch
 expression and avoids a second conditional construct with overlapping purpose.
 
+### `default:` switch arm
+
+Odin writes the default arm as `case:`, which reads as a case whose values were
+forgotten. Loke also accepts `default:`, which says what the arm is, at the cost
+of reserving `default`. It is a reserved word rather than a contextual one
+because `:=` is two tokens: inside an arm, `default: int = 0;` would declare a
+local, and no fixed lookahead tells that from the next arm. No Loke code named
+anything `default`. `case:` stays accepted, so code written for Odin's habit
+keeps compiling.
+
 ### Compiler-defined domain types
 
 Complex numbers, quaternions, matrices, and similar domains are library types

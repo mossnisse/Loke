@@ -1,0 +1,38 @@
+package main; import "core:fmt";
+
+// design.md "switch statement": `default:` is the default arm; `case:` is the same.
+Direction :: enum { North, East, South, West }
+Setting :: union { number: int, flag: bool, off }
+
+name :: proc(d: Direction) -> string {
+	switch (d) {
+	case .North: return "up";
+	default:     return "elsewhere";
+	}
+}
+
+main :: proc() {
+	foreach (n in 0 ..< 3) {
+		switch (n) {
+		case 0:  fmt.println("zero");
+		default: fmt.println("other", n);
+		}
+	}
+	fmt.println(name(.North), name(.West));
+
+	s: Setting = .flag(true);
+	switch (s) {
+	case .number(n): fmt.println(n);
+	default:         fmt.println("not a number");
+	}
+	switch (payload in s) {
+	case .off: fmt.println("off");
+	default:   fmt.println("on", payload);
+	}
+
+	value: any_view = 2.5;
+	switch (v in value) {
+	case int: fmt.println("int", v);
+	default:  fmt.println("something else");
+	}
+}

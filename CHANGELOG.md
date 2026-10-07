@@ -10,6 +10,9 @@ checklist.
 
 ### Breaking changes
 
+- A switch's default arm may be written `default:` (design.md "switch
+  statement"); `case:` still means the same. `default` is now a reserved
+  word: rename a variable, parameter, field, or procedure spelled `default`.
 - References are never null and have no zero value: `^T`, `^mut T`,
   procedure values, `dyn I`, `any_view`, `cstring_view`, and `shared(T)`.
   `nil` is now only the null `rawptr` or `[^]T` (`L0310`), a reference is not

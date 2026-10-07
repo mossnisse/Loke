@@ -220,7 +220,7 @@ indent :: proc(l: ^Layout, first: Token, comment: bool) {
 	switch {
 	case !comment && (first.kind == .Rparen || first.kind == .Rbracket || first.kind == .Rbrace):
 		depth -= 1
-	case first.kind == .Case && top.kind == .Lbrace:
+	case (first.kind == .Case || first.kind == .Default) && top.kind == .Lbrace:
 		depth -= 1
 	case continues(l, top):
 		depth += 1
@@ -241,7 +241,7 @@ continues :: proc(l: ^Layout, top: Open) -> bool {
 		return false
 	case .Colon:
 		// `case .a:` ends its line; `TEXT ::` continues onto the next.
-		if l.line_first.kind == .Case {
+		if l.line_first.kind == .Case || l.line_first.kind == .Default {
 			return false
 		}
 	case .Comma:

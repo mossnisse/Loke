@@ -1571,7 +1571,7 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 
 	_, body_opened := expect(p, .Lbrace, "L0248", "`{` to open the switch body")
 	cases := make([dynamic]Switch_Case, 0, 0, p.allocator)
-	for at(p, .Case) {
+	for at(p, .Case) || at(p, .Default) {
 		append(&cases, parse_switch_case(p, kind))
 	}
 	body_closed := close_body(p, body_opened, "L0248", "`}` to close the switch body")
@@ -1592,15 +1592,19 @@ at_type_switch_binding :: proc(p: ^Parser) -> bool {
 	return at(p, .Ident) && peek_token(p, 1).kind == .In
 }
 
-// A case runs until the next `case` or the switch body's `}`.
+// A case runs until the next `case`, `default`, or the switch body's `}`.
+// `default:` is the same arm as `case:` (grammar.md "Switch").
 @(private = "file")
 parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
-	start := advance(p) // `case`
+	start := advance(p) // `case` or `default`
 
 	entry: Switch_Case
 	values := make([dynamic]Expr, 0, 0, p.allocator)
 	bad_label := false
-	if !at(p, .Colon) {
+	if start.kind == .Default && !at(p, .Colon) {
+		errorf(p.c, span_of(p, current(p)), "L0248", "`default` takes no values; an arm with values is written `case`")
+		bad_label = true
+	} else if start.kind == .Case && !at(p, .Colon) {
 		for {
 			// The checker distinguishes a type from an implicit union selector.
 			append(&values, kind == .Type && !at(p, .Period) ? parse_type(p) : parse_expr(p))
@@ -1614,7 +1618,7 @@ parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
 	// A label that failed to parse has reported itself; the rest of it up to
 	// the `:` is not statements, so skip it rather than report it again.
 	if bad_label && !at(p, .Colon) {
-		for !at(p, .Colon) && !at(p, .Semicolon) && !at(p, .Case) && !at(p, .Rbrace) && !at(p, .EOF) {
+		for !at(p, .Colon) && !at(p, .Semicolon) && !at(p, .Case) && !at(p, .Default) && !at(p, .Rbrace) && !at(p, .EOF) {
 			advance(p)
 		}
 		allow(p, .Colon)
@@ -1623,7 +1627,7 @@ parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
 	}
 
 	stmts := make([dynamic]Stmt, 0, 0, p.allocator)
-	for !at(p, .Case) && !at(p, .Rbrace) && !at(p, .EOF) {
+	for !at(p, .Case) && !at(p, .Default) && !at(p, .Rbrace) && !at(p, .EOF) {
 		before := p.index
 		if s, got := parse_statement(p); got {
 			append(&stmts, s)
