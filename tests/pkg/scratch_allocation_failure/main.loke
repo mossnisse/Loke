@@ -1,0 +1,54 @@
+@(default_allocator = "./provider:allocator_factory")
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:mem";
+import "core:process";
+
+// standard-library "Shared I/O contract" and "`core:process`": a procedure
+// returning `io.Error` reports a failed scratch allocation as `Out_Of_Memory`
+// rather than panicking. Every call here finds the default allocator used up.
+
+exhaust :: proc() -> [dynamic][dynamic]u8 {
+	hoard := make([dynamic][dynamic]u8, 0, 1000);
+	for (size := 32768; size >= 1; size /= 2) {
+		for (more := true; more;) {
+			chunk := [dynamic]u8{};
+			switch (chunk.try_reserve(size)) {
+			case .ok:  hoard.append(move(chunk));
+			case .err: more = false;
+			}
+		}
+	}
+	return hoard;
+}
+
+show :: proc(what: string_view, outcome: Result(Unit, io.Error)) {
+	switch (outcome) {
+	case .ok:         fmt.println(what, "succeeded");
+	case .err(error): fmt.println(what, io.code_of(error));
+	}
+}
+
+main :: proc() {
+	// The result storage is the caller's own; only scratch is short.
+	buffer: [65536]u8 = {};
+	results := mem.Arena.from_buffer(&mut buffer[:]);
+	hoard := exhaust();
+
+	switch (fs.read_directory(".", results.allocator())) {
+	case .ok:         show("read_directory", .ok);
+	case .err(error): show("read_directory", .err(error));
+	}
+	// A path, used as written, and a name searched for on `PATH`.
+	switch (process.run(process.Command{program = "C:/Windows/System32/cmd.exe", arguments = []string_view{"/c", "exit 0"}})) {
+	case .ok:         show("run path", .ok);
+	case .err(error): show("run path", .err(error));
+	}
+	switch (process.run(process.Command{program = "cmd", arguments = []string_view{"/c", "exit 0"}})) {
+	case .ok:         show("run name", .ok);
+	case .err(error): show("run name", .err(error));
+	}
+}

@@ -248,23 +248,25 @@ find_program :: proc(program: string_view) -> Result(string, io.Error) {
 		return .err(io.make_error(.Invalid_Path, .Spawn));
 	}
 	if (strings.contains(program, "/") || strings.contains(program, "\\")) {
-		return .ok(strings.copy(program));
+		return scratch_join([]string_view{program});
 	}
 	directories := "";
 	switch (os.get_environment("PATH")) {
 	case .ok(found):
 		directories = found or_else "";
-	case .err:
+	case .err(error):
+		// Without memory to read `PATH`, no search could be honest.
+		if (io.is(error, .Out_Of_Memory)) { return .err(io.from_allocator_error(.Spawn)); }
 	}
 	foreach (entry in strings.split(directories, ";")) {
 		directory := strings.trim(entry, "\"");
 		if (directory.len() == 0) { continue; }
 		separator: string_view = "" if strings.ends_with(directory, "\\") || strings.ends_with(directory, "/") else "\\";
-		candidate := strings.join([]string_view{directory, program}, separator);
-		if (is_file(candidate)) { return .ok(candidate); }
+		candidate := scratch_join([]string_view{directory, separator, program}) or_return;
+		if (is_file(candidate) or_return) { return .ok(candidate); }
 		if (path.extension(program).len() == 0) {
-			with_extension := strings.join([]string_view{candidate, ".exe"}, "");
-			if (is_file(with_extension)) { return .ok(with_extension); }
+			with_extension := scratch_join([]string_view{candidate, ".exe"}) or_return;
+			if (is_file(with_extension) or_return) { return .ok(with_extension); }
 		}
 	}
 	return .err(io.make_error(.Not_Found, .Spawn));
@@ -274,20 +276,24 @@ find_program :: proc(program: string_view) -> Result(string, io.Error) {
 // `CommandLineToArgvW` and the C runtime parse back exactly what was given: a
 // run of backslashes is doubled only where a quote follows it.
 @(private)
-command_line :: proc(command: Command) -> string {
+command_line :: proc(command: Command) -> Result(string, io.Error) {
 	line: strings.String_Builder = {};
-	line.append("\"");
-	line.append(command.program);
-	line.append("\"");
+	built := put(inout line, "\"") && put(inout line, command.program) && put(inout line, "\"");
 	foreach (argument in command.arguments) {
-		line.append(" ");
-		quote_argument(inout line, argument);
+		built = built && put(inout line, " ") && quote_argument(inout line, argument);
 	}
-	return line.finish();
+	if (built) {
+		switch (line.try_finish()) {
+		case .ok(text): return .ok(text);
+		case .err:
+		}
+	}
+	return .err(io.from_allocator_error(.Spawn));
 }
 
+// False once the line cannot grow.
 @(private)
-quote_argument :: proc(line: inout strings.String_Builder, argument: string_view) {
+quote_argument :: proc(line: inout strings.String_Builder, argument: string_view) -> bool {
 	plain := argument.len() > 0;
 	foreach (character in argument) {
 		if (character == ' ' || character == '\t' || character == '\n' || character == '\v' || character == '"') {
@@ -295,10 +301,9 @@ quote_argument :: proc(line: inout strings.String_Builder, argument: string_view
 		}
 	}
 	if (plain) {
-		line.append(argument);
-		return;
+		return put(inout line, argument);
 	}
-	line.append("\"");
+	built := put(inout line, "\"");
 	backslashes := 0;
 	foreach (character in argument) {
 		if (character == '\\') {
@@ -309,12 +314,46 @@ quote_argument :: proc(line: inout strings.String_Builder, argument: string_view
 		if (character == '"') {
 			backslashes = backslashes * 2 + 1;
 		}
-		for (; backslashes > 0; backslashes -= 1) { line.append("\\"); }
-		line.append(character);
+		for (; backslashes > 0; backslashes -= 1) { built = built && put(inout line, "\\"); }
+		built = built && put(inout line, character);
 	}
 	// And before the closing quote, themselves.
-	for (; backslashes > 0; backslashes -= 1) { line.append("\\\\"); }
-	line.append("\"");
+	for (; backslashes > 0; backslashes -= 1) { built = built && put(inout line, "\\\\"); }
+	return built && put(inout line, "\"");
+}
+
+// standard-library "`core:process`": spawning reports a failed scratch
+// allocation as `Out_Of_Memory`, never a panic, so every step that grows
+// scratch storage is a fallible one.
+@(private)
+put_text :: proc(line: inout strings.String_Builder, text: string_view) -> bool {
+	switch (line.try_append(text)) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+}
+
+@(private)
+put_rune :: proc(line: inout strings.String_Builder, value: rune) -> bool {
+	switch (line.try_append(value)) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+}
+
+@(private)
+put :: proc{put_text, put_rune};
+
+@(private)
+scratch_join :: proc(parts: []string_view) -> Result(string, io.Error) {
+	line: strings.String_Builder = {};
+	foreach (part in parts) {
+		if (!put(inout line, part)) { return .err(io.from_allocator_error(.Spawn)); }
+	}
+	switch (line.try_finish()) {
+	case .ok(text): return .ok(text);
+	case .err:      return .err(io.from_allocator_error(.Spawn));
+	}
 }
 
 when (LOKE_OS == .Windows) {
@@ -450,7 +489,7 @@ Handles :: struct {
 @(private)
 spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io.Error) {
 	application := wide(program) or_return;
-	line := wide(command_line(command)) or_return;
+	line := wide(command_line(command) or_return) or_return;
 	directory: [dynamic]u16 = {};
 	if (command.directory.len() > 0) {
 		directory = wide(command.directory) or_return;
@@ -490,7 +529,11 @@ spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io
 	}
 	size := 0;
 	_ = rt_initialize_attributes(nil, 1, 0, &mut size);
-	attributes := make([dynamic]u64, size / 8 + 1);
+	attributes: [dynamic]u64 = {};
+	switch (try_make([dynamic]u64, size / 8 + 1, size / 8 + 1, mem.default_allocator())) {
+	case .ok(made): attributes = move(made);
+	case .err:      return .err(io.from_allocator_error(.Spawn));
+	}
 	list := unsafe.raw_data(attributes);
 	if (rt_initialize_attributes(list, 1, 0, &mut size) == 0) {
 		return .err(from_last_error(.Spawn));
@@ -596,13 +639,21 @@ close_all :: proc(handles: Handles) {
 environment_block :: proc(variables: []Variable) -> Result([dynamic]u16, io.Error) {
 	block: [dynamic]u16 = {};
 	foreach (variable in variables) {
-		entry := strings.join([]string_view{variable.name, variable.value}, "=");
+		entry := scratch_join([]string_view{variable.name, "=", variable.value}) or_return;
 		units := wide(entry) or_return;
-		foreach (unit in units) { block.append(unit); }
+		append_units(inout block, units[:]) or_return;
 	}
-	if (variables.len() == 0) { block.append(0); }
-	block.append(0);
+	if (variables.len() == 0) { append_units(inout block, []u16{0}) or_return; }
+	append_units(inout block, []u16{0}) or_return;
 	return .ok(move(block));
+}
+
+@(private)
+append_units :: proc(block: inout [dynamic]u16, units: []u16) -> Result(Unit, io.Error) {
+	switch (block.try_append(..units)) {
+	case .ok:  return .ok;
+	case .err: return .err(io.from_allocator_error(.Spawn));
+	}
 }
 
 @(private)
@@ -630,14 +681,17 @@ kill_native :: proc(handle: Handle) -> Result(Unit, io.Error) {
 	return .ok;
 }
 
+// A name that cannot be a path is not a file; running out of memory to ask is
+// an error rather than a missing program.
 @(private)
-is_file :: proc(path: string_view) -> bool {
+is_file :: proc(path: string_view) -> Result(bool, io.Error) {
 	switch (utf16.encode(path, mem.default_allocator())) {
 	case .ok(units):
 		attributes := rt_file_attributes(unsafe.raw_data(units));
-		return attributes != INVALID_FILE_ATTRIBUTES && (attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) == 0;
-	case .err:
-		return false;
+		return .ok(attributes != INVALID_FILE_ATTRIBUTES && (attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) == 0);
+	case .err(error):
+		if (error == .Out_Of_Memory) { return .err(io.from_allocator_error(.Spawn)); }
+		return .ok(false);
 	}
 }
 

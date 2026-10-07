@@ -122,7 +122,7 @@ table in Open questions.
 | `base/interfaces/interfaces.loke` | backend-library | No independent actionable finding after full reading. |
 | `base/meta/meta.loke` | backend-library | No independent actionable finding after full reading. |
 | `base/runtime/runtime.loke` | backend-library | No independent actionable finding after full reading. |
-| `base/runtime/shared.loke` | backend-library | G17: failure policy bypass; C01: final-release panic cleanup. |
+| `base/runtime/shared.loke` | backend-library | G17: failure policy bypass; C01 (fixed): final-release panic cleanup. |
 | `bench/collections.loke` | backend-library | No independent actionable finding after full reading. |
 | `bench/nbody.loke` | backend-library | No independent actionable finding after full reading. |
 | `check-citations.ps1` | analysis-harness | No independent actionable finding after full reading. |
@@ -133,7 +133,7 @@ table in Open questions.
 | `core/encoding/utf16/utf16.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/endian/endian.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/fmt/fmt.loke` | backend-library | G17: final string allocation wrapper hardcodes panic. |
-| `core/fs/fs.loke` | backend-library | C03: infallible scratch allocation in fallible API. |
+| `core/fs/fs.loke` | backend-library | C03 (fixed): infallible scratch allocation in fallible API. |
 | `core/io/io.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/log/log.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/math/complex.loke` | backend-library | No independent actionable finding after full reading. |
@@ -142,7 +142,7 @@ table in Open questions.
 | `core/os/os.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/os/process.loke` | backend-library | C04: empty-variable removal race. |
 | `core/path/path.loke` | backend-library | No independent actionable finding after full reading. |
-| `core/process/process.loke` | backend-library | G19: high-bit exit conversion; C03: infallible scratch allocation. |
+| `core/process/process.loke` | backend-library | G19: high-bit exit conversion; C03 (fixed): infallible scratch allocation. |
 | `core/simd/simd.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/slice/slice.loke` | backend-library | G17: same allocation-wrapper policy pattern, source-traced. |
 | `core/strconv/strconv.loke` | backend-library | G18: parse_i64 negative zero panics. |
@@ -151,7 +151,7 @@ table in Open questions.
 | `core/strings/strings.loke` | backend-library | G17: same allocation-wrapper policy pattern, source-traced. |
 | `core/sync/sync.loke` | backend-library | No independent actionable finding after full reading. |
 | `core/term/term.loke` | backend-library | No independent actionable finding after full reading. |
-| `core/thread/thread.loke` | backend-library | C02: native start failure after ownership transfer. |
+| `core/thread/thread.loke` | backend-library | C02 (fixed): native start failure after ownership transfer. |
 | `core/unsafe/unsafe.loke` | backend-library | No independent actionable finding after full reading. |
 | `examples/aliasing.loke` | backend-library | No independent actionable finding after full reading. |
 | `examples/arena_pipeline.loke` | backend-library | No independent actionable finding after full reading. |

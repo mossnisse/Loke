@@ -584,6 +584,13 @@ checklist.
 
 ### Fixed
 
+- `fs.read_directory`, and spawning a child through `process.spawn`, `run`,
+  or `output`, report a failed scratch allocation as `Out_Of_Memory` instead of
+  panicking, as standard-library.md's shared I/O contract promises.
+- `thread.spawn` that cannot create a thread still drops the argument it was
+  given, and frees its start block, before panicking.
+- When the final `shared(T)` handle's payload drop panics, the shared block is
+  still returned to its allocator during the unwind.
 - `perf.ps1` refuses a `-Repeat` below 1, which PowerShell's inclusive
   ranges turned into extra runs, and removes its temporary directory when a
   build, run, or output check fails.

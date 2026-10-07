@@ -126,7 +126,16 @@ spawn_with :: proc(entry: proc(value: move $T), @(escape=static) arg: move T) ->
 	unsafe.write(block^.arg[0], move(arg));
 	block^.live = 1;
 	handle := rt_create_thread(nil, 0, thread_main, rawptr(block), 0, nil);
-	if (handle == 0) { panic("thread creation failed"); }
+	if (handle == 0) {
+		// No thread took the block, so it and the argument are still this
+		// call's: the argument comes back out, as `begin` takes it, and the
+		// unwind drops it (design.md "What the unwind runs, and what it does
+		// not").
+		block^.live = 0;
+		unclaimed := unsafe.take(block^.arg[0]);
+		unsafe.free(block);
+		panic("thread creation failed");
+	}
 	return Thread{handle};
 }
 

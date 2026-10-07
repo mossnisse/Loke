@@ -705,7 +705,7 @@ read_directory_native :: proc(
 	// root rather than the current directory of drive C.
 	last := path.bytes()[path.len() - 1];
 	separator: string_view = "" if is_separator(last) || last == u8(':') else "\\";
-	pattern := strings.join([]string_view{path, "*"}, separator, mem.default_allocator());
+	pattern := scratch_join([]string_view{path, separator, "*"}, .Read_Directory) or_return;
 	wide := wide_path(pattern, .Read_Directory) or_return;
 
 	reader: Directory_Reader = {};
@@ -722,6 +722,23 @@ read_directory_native :: proc(
 	reader.handle = handle;
 	reader.pending = true;
 	return .ok(move(reader));
+}
+
+// standard-library "Shared I/O contract": scratch text as one string from the
+// default allocator, whose failure is `Out_Of_Memory` rather than a panic.
+@(private)
+scratch_join :: proc(parts: []string_view, operation: io.Operation) -> Result(string, io.Error) {
+	builder: strings.String_Builder = {};
+	foreach (part in parts) {
+		switch (builder.try_append(part)) {
+		case .ok:
+		case .err: return .err(io.from_allocator_error(operation));
+		}
+	}
+	switch (builder.try_finish()) {
+	case .ok(joined): return .ok(joined);
+	case .err:        return .err(io.from_allocator_error(operation));
+	}
 }
 
 @(private)

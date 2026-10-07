@@ -1,0 +1,17 @@
+@(public)
+package provider;
+
+import "core:mem";
+
+// A small fixed default allocator, which the program can use up, so the
+// libraries' scratch allocations fail where the test chooses.
+@(private)
+storage: static [65536]u8 = {};
+
+@(private)
+region: static mem.Arena = {};
+
+allocator_factory :: proc() -> Allocator {
+	region = mem.Arena.from_buffer(&mut storage[:]);
+	return region.allocator();
+}

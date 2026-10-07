@@ -1,0 +1,57 @@
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+// standard-library "`core:thread`": running out of threads or memory panics.
+// The argument was moved into the spawn, and no thread took it, so the unwind
+// still drops it. A job object caps this process's committed memory, and the
+// program commits all of it, so `CreateThread` cannot commit a stack.
+foreign import kernel32 "system:kernel32.lib";
+
+foreign kernel32 {
+	@(link_name="CreateJobObjectW")
+	create_job :: proc "stdcall" (attributes: rawptr, name: rawptr) -> int ---;
+	@(link_name="SetInformationJobObject")
+	set_job_information :: proc "stdcall" (job: int, class: i32, information: rawptr, length: u32) -> i32 ---;
+	@(link_name="AssignProcessToJobObject")
+	assign_to_job :: proc "stdcall" (job: int, process: int) -> i32 ---;
+	@(link_name="GetCurrentProcess")
+	current_process :: proc "stdcall" () -> int ---;
+}
+
+Ticket :: struct { id: int }
+impl Ticket {
+	release :: hook(drop) proc(self: inout Ticket) { fmt.println("ticket dropped", self.id); }
+}
+
+work :: proc(ticket: move Ticket) {}
+
+main :: proc() {
+	// Before the cap, so stdout has its buffer.
+	fmt.println("capping memory");
+	// JOBOBJECT_EXTENDED_LIMIT_INFORMATION: `LimitFlags` at byte 16 and
+	// `ProcessMemoryLimit` at byte 112. Class 9 is the extended information.
+	info: [18]u64 = {};
+	info[2] = 0x100; // JOB_OBJECT_LIMIT_PROCESS_MEMORY
+	info[14] = 64 * 1024 * 1024;
+	job := create_job(nil, nil);
+	if (set_job_information(job, 9, rawptr(&info), 144) == 0 || assign_to_job(job, current_process()) == 0) {
+		fmt.println("no job object");
+		return;
+	}
+	// Whatever commit remains goes to chunks, largest first, down to a page.
+	hoard := make([dynamic][dynamic]u8, 0, 100000);
+	for (size := 1024 * 1024; size >= 4096; size /= 2) {
+		for (more := true; more;) {
+			chunk := [dynamic]u8{};
+			switch (chunk.try_reserve(size)) {
+			case .ok:  hoard.append(move(chunk));
+			case .err: more = false;
+			}
+		}
+	}
+	worker := thread.spawn(work, Ticket{7});
+	worker.join();
+	fmt.println("the thread started");
+}

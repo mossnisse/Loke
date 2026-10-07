@@ -1268,7 +1268,11 @@ did not ask for:
   detached.
 
 `spawn` fails with operation `Spawn`, `wait` with `Wait`, and `kill` with
-`Kill`. `run` reports either of the first two.
+`Kill`. `run` reports either of the first two. Spawning takes its scratch
+storage — the program path, the command line, the environment block — from the
+default allocator, and reports a failed allocation as `Out_Of_Memory` rather
+than panicking. `output` also starts a thread to read stderr, and running out
+of memory or threads there panics, as `thread.spawn` does.
 
 ## `core:math`
 

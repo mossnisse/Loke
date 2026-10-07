@@ -1,0 +1,32 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "What the unwind runs, and what it does not": when the final
+// strong handle's payload drop panics, the block still goes back to its
+// allocator during the unwind. A fixed-buffer arena reclaims its newest
+// allocation, so the probe, dropped later in the same unwind, can only reserve
+// 128 bytes once the block is gone.
+Payload :: struct { id: int }
+impl Payload {
+	release :: hook(drop) proc(self: inout Payload) { panic("payload drop failed"); }
+}
+
+Probe :: struct { allocator: Allocator }
+impl Probe {
+	release :: hook(drop) proc(self: inout Probe) {
+		bytes := make([dynamic]u8, 0, 0, self.allocator);
+		switch (bytes.try_reserve(128)) {
+		case .ok:  fmt.println("block returned");
+		case .err: fmt.println("block still held");
+		}
+	}
+}
+
+main :: proc() {
+	buffer: [256]u8 = {};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	probe := Probe{arena.allocator()};
+	handle := shared(Payload{1}, arena.allocator());
+}

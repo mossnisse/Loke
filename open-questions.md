@@ -504,9 +504,6 @@ These are investigation notes, not additional confirmed spec gaps.
 
 | ID | Location | Remaining question and smallest next check |
 | --- | --- | --- |
-| C01 | `base/runtime/shared.loke`, final `Shared.release` | A panicking payload drop bypasses the final strong-group weak-reference release. Check observable cleanup, then defer `release_block` before dropping the payload. |
-| C02 | `core/thread/thread.loke`, `spawn_with` | Native thread creation failure follows transfer into raw `Start(T)` without freeing it or dropping its argument. Inject a native creation failure before choosing the cleanup change. |
-| C03 | `core/fs/fs.loke` and `core/process/process.loke` | Result-returning paths use infallible string builders, joins, copies, and other scratch allocation. Check a bounded selected default allocator to establish which APIs panic instead of returning `Out_Of_Memory`. |
 | C04 | `core/os/process.loke`, environment lookup | A variable removed between the one-unit size probe and second read can be mistaken for a present empty value. Inject the native results and last-error states. |
 | C05 | `src/emit_llvm_box.odin`, boxed drop thunk | A payload panic may skip remaining field cleanup and block release. Check observable field cleanup under unwind; process-memory retention alone is insufficient evidence of material harm. |
 | C06 | `src/parser.odin`, `parse_type_name` | Selector chains bypass the parser's nesting guard. A 5,000-selector source produced ordinary `L0306`; a 50,000-selector source exceeded a bounded 1,500 ms run. No stack overflow or crash was established. |

@@ -186,11 +186,14 @@ impl Shared($T) {
 		// Taking the payload out and dropping it is what drops it exactly once:
 		// the block itself outlives this whenever a weak handle still names it, so
 		// the payload cannot be destroyed by freeing the block. The block stops
-		// claiming a value first, because the drop hook can panic.
+		// claiming a value first, because the drop hook can panic, and the strong
+		// group's weak reference is given back by a `defer`, so a panicking hook
+		// still returns the block to its allocator during the unwind (design.md
+		// "What the unwind runs, and what it does not").
 		block^.live = 0;
 		retired := unsafe_take(block^.payload[0]);
+		defer release_block(block);
 		drop(retired);
-		release_block(block);
 	}
 }
 
