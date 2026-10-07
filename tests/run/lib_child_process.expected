@@ -7,6 +7,7 @@
 [tab	here]
 [naïve ✓] .ok(0)
 exit status: .ok(7)
+negative status: .ok(-1)
 HELLO PIPE .ok(0)
 inherited true .ok(0)
 replaced false .ok(0)

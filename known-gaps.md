@@ -95,29 +95,3 @@ This is rejected with `L0341` ("`T` has a `hook(drop)`, which compile-time evalu
 ```odin
 package main; T :: struct { n: int } impl T { release :: hook(drop) proc(self: inout T) { panic("drop ran"); } } compute :: proc() -> int { value := T{1}; drop(value); return 1; } VALUE :: compute(); main :: proc() { _ = VALUE; }
 ```
-
-### Windows process wait panics on high-bit exit statuses
-
-[standard-library.md "`core:process`"](standard-library.md#coreprocess).
-
-A Windows child that exits with code `0xffffffff` must yield `.ok(-1)`. Instead, `core/process/process.loke` checked-casts the `u32` code to `i32` and panics. Reinterpret the DWORD bits rather than range-checking them.
-
-Build `exit-negative.exe` in the working directory from this Odin helper, then run the Loke program below:
-
-```odin
-package main
-import os "core:os"
-main :: proc() { os.exit(-1) }
-```
-
-```odin
-package main;
-import "core:fmt";
-import "core:process";
-main :: proc() {
-    switch (process.run(process.Command{program = "./exit-negative.exe"})) {
-    case .ok(code): fmt.println(code);
-    case .err(error): fmt.println(error);
-    }
-}
-```

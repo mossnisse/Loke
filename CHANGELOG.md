@@ -579,6 +579,9 @@ checklist.
 
 ### Fixed
 
+- `process.run` and `Child.wait` on Windows return a child's exit code
+  reinterpreted as `i32`, as documented, instead of panicking when its top bit
+  is set: an exit code of `0xffffffff` is `.ok(-1)`.
 - `source_location`, `caller_location`, `type_info_of`, `type_of`,
   `typeid_of`, `fields_of`, `enum_values_of`, `unsafe.raw_data`,
   `unsafe.string_view`, and `unsafe.cstring_view` reject a named or `inout`

@@ -31,6 +31,8 @@ child :: proc(mode: string_view) {
 		}
 	} else if (mode == "exit") {
 		os.exit(7);
+	} else if (mode == "negative") {
+		os.exit(-1);
 	} else if (mode == "echo") {
 		// Upper-cases its input until the parent closes it.
 		input_stream := term.stdin();
@@ -77,6 +79,8 @@ parent :: proc(exe: string_view) {
 	fmt.println(captured(process.Command{program = exe, arguments = arguments, stdout = .Pipe}));
 
 	fmt.println("exit status:", process.run(process.Command{program = exe, arguments = []string_view{"exit"}}));
+	// A Windows exit code with its top bit set is a negative status.
+	fmt.println("negative status:", process.run(process.Command{program = exe, arguments = []string_view{"negative"}}));
 
 	// Input reaches the child through its pipe, and `wait` closes it.
 	{

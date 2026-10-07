@@ -614,7 +614,9 @@ wait_native :: proc(handle: Handle) -> Result(i32, io.Error) {
 	if (rt_exit_code(handle, &mut code) == 0) {
 		return .err(from_last_error(.Wait));
 	}
-	return .ok(i32(code));
+	// standard-library "`core:process`": the exit code is reinterpreted as
+	// `i32`, so a crash shows as its negative `NTSTATUS` rather than panicking.
+	return .ok(unsafe.transmute(i32, code));
 }
 
 @(private)

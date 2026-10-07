@@ -39,7 +39,7 @@ P2 denotes another material correctness defect.
 | G16: Reflection builtins accept invalid argument names and modes (fixed) | P2 | `src/check_builtin.odin · location/type-info handlers` | Compile/IR reproduction. Bogus named inout operands accepted. |
 | G17: Shared allocation failure ignores the allocator Trap policy (fixed) | P2 | `base/runtime/shared.loke; allocation wrappers` | Runtime reproduction. Trap allocator unwinds and prints unwound. |
 | G18: Parsing negative zero as an integer panics (fixed) | P2 | `core/strconv/strconv.loke · parse_i64` | Runtime reproduction. parse_i64("-0") panics instead of returning zero. |
-| [G19: Windows process wait panics on high-bit exit statuses](known-gaps.md#windows-process-wait-panics-on-high-bit-exit-statuses) | P2 | `core/process/process.loke · wait_native` | Runtime reproduction. Child status 0xffffffff panics instead of returning -1. |
+| G19: Windows process wait panics on high-bit exit statuses (fixed) | P2 | `core/process/process.loke · wait_native` | Runtime reproduction. Child status 0xffffffff panics instead of returning -1. |
 
 The most urgent fixes were G01, G02, and G06, now fixed with regression
 tests; a fixed row no longer links to Known gaps. The cleanup findings G03–G05
