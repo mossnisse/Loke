@@ -261,21 +261,109 @@ what the body does with its captures. That makes which APIs accept a literal
 depend on its body: adding an assignment deep in the body silently changes it,
 the objection that rules out declarations in the body.
 
+**The literal's own type.** A capture literal's type is the record its
+hand-written form would declare in the body, without a name: a
+[body-local type](design.md#methods-and-implementation-blocks) whose fields are the captures and whose
+`call` is the body. Each literal is its own type, and in a generic procedure
+each instance's is its own, as any body-local type's is. Whether it is
+copyable follows its fields, so a `move` capture of a move-only value makes a
+move-only callable. Its captures are not fields a caller can select, and it has
+no equality or printed form: a callable is used by calling it, as a `dyn` view
+is not compared.
+
+| Use | How |
+| --- | --- |
+| store it in a local | `less := proc(...) capture(limit) { ... };` |
+| pass it to a generic API | `$C` with an interface, such as `Comparator(C, T)` |
+| name it in the same body | `Less :: type_of(less);`, so `Sorter(type_of(less)){less}` holds one in a generic record |
+| pass it to a non-generic API | convert it to a [`dyn proc` view](#a-borrowed-callable-view-dyn-proc) |
+| return it, or use it in a file-scope type | not possible: a signature cannot name a body-local type |
+
+A callable that is returned or kept past its frame is either a file-scope
+record written by hand or an owning erased value under
+[Owning runtime polymorphism](#owning-runtime-polymorphism). Revisit when the
+first returned closure is needed. One answer then is an opaque result type,
+`-> some Comparator(int)`, as Rust's `-> impl Fn` is; it makes a caller depend
+on the body for the result's size, which works against
+[Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own),
+and it overlaps an owning `dyn`.
+
+**Why not a structural type.** A closure could instead be an environment
+record plus a code pointer, so two literals with the same captures and
+signature share a type that a signature can name. It is rejected: every
+capture's name and type would be part of a public signature, so adding one
+breaks callers; each call becomes indirect, losing the direct, inlinable call
+that `slice.sort_by`'s generated adapter makes; and it still does not hide the
+state, since different captures stay different types.
+
+### A borrowed callable view, `dyn proc`
+
+A callback API should see only the parameters and the result, never the
+captures. A generic API already does: `sort_by_comparator` names only
+`Comparator`'s `call` slot, whatever the caller captured. What a generic cannot
+give is one type written without `$`, for a non-generic parameter, a record
+field, or an array of different callbacks.
+
+**Proposal.** `dyn proc(parameters) -> Result` is a borrowed view of anything
+callable with that signature: a data pointer and a code pointer, as a
+[`dyn` interface view](design.md#borrowed-dynamic-interface-values) is a data
+pointer and a witness. A capture literal converts to it, the view borrowing the
+literal's record; a plain procedure converts to it too.
+
+```odin
+visit :: proc(tree: ^Tree, f: dyn proc(node: ^Node)) { ... f(node); ... }
+
+count := 0;
+visit(&tree, proc(node: ^Node) capture(&mut count) { count += 1; });
+visit(&tree, print_node);   // a plain procedure converts too
+```
+
+Nothing allocates: the record stays in the caller's frame, as `fmt.Writer`
+borrows its sink. The view is a borrow carrier, so it suits a callback that
+runs during the call, such as visiting, mapping, or a formatting sink, and a
+record that stores one carries the borrow. An API chooses what it writes:
+`$C` with an interface for a direct call the optimizer can inline, which
+suits `sort_by`, or `dyn proc` for one non-generic type and an indirect call.
+Neither names the captures.
+
+**Why not make the literal a `proc` value.** The simplest answer gives a
+capture literal the type `proc(a, b: int) -> bool` itself. A procedure value is
+one code pointer with no room for captures, and making room costs every
+procedure value, not only closures:
+
+- Two words for every procedure value: a `proc "c"` callback no longer matches
+  the C ABI, and every procedure-typed field doubles.
+- An owned environment: captures vary in size, so they would go to the heap,
+  and every procedure value would allocate, clone, and drop. Loke allocates
+  only through a written allocator, and creating a callable should not imply
+  heap allocation.
+- A borrowed environment: every procedure value becomes a borrow carrier, so
+  storing or returning even a plain procedure, free today, is lifetime-checked.
+
+The [removed context pointer](comments.md#build-selected-services-and-explicit-runtime-state)
+was kept out on the same ground: procedure values stay thin.
+
 **Still open:**
 
 - The keyword: `capture(...)` or `use(...)`.
 - Whether an entry may be a path, `self.limit` or `a[i]`, or only a name and
   `name = expr`.
-- The literal's type. Each literal is its own type, as a body-local type is, so
-  two identical literals do not share one; it reaches a generic parameter or a
-  `dyn` view, never a `proc` type. Whether that type can be named, or only
-  inferred.
+- Whether a literal or procedure converts to `dyn proc` implicitly where one
+  is expected, such as at an argument; a `dyn I` conversion is explicit today.
+- The spelling `dyn proc(...)`, and whether a `dyn mut proc` is needed once an
+  `inout` call exists.
+- Whether `slice.sort_by` and other callback APIs also accept a `dyn proc`.
 
 ## Owning runtime polymorphism
 
 Borrowed `dyn Interface` views are now defined. Should a later version add an
 owning erased value, and if so should it be a language type such as `box(dyn I)`
 or a library owner built over an exposed witness primitive?
+
+A closure that is returned or kept past its frame is a concrete use: a
+[capture literal](#a-capture-clause-after-the-signature) and its borrowed
+[`dyn proc` view](#a-borrowed-callable-view-dyn-proc) cannot leave the body
+that wrote it.
 
 The proposal must specify allocator identity, alignment, fallible construction,
 move, clone, drop, thread-affine destruction, and whether inline small-object
