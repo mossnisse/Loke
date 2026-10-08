@@ -136,14 +136,36 @@ per := proc(x: int) -> int capture(n = len(items)) { return x / n; };
 
 Each entry reuses a spelling the language already has:
 
-- `limit` copies the place, as a record field initialization does
+- `limit` copies the place, as a binding does
   ([Value semantics and the ownership rule](design.md#value-semantics-and-the-ownership-rule)):
-  a managed value is cloned;
+  a managed value is cloned, unless this is the place's last use, which
+  transfers it as [Last-use transfer](design.md#last-use-transfer) does for a
+  binding;
+- `&limit` borrows it read-only, spelled as the `&place` that forms a `^T`;
+- `&mut count` borrows it writably, as a `&mut` binding does in a `foreach`
+  header or a case;
 - `move(buffer)` transfers the value and ends `buffer`;
-- `&mut count` binds `count` writably, as a `&mut` binding does in a `foreach`
-  header or a case. The body reads and writes `count` itself, and the callable
-  borrows it, so the callable cannot outlive it;
 - `n = len(items)` captures a computed value under a new name.
+
+The mode is written only in the clause. The body names every capture the same
+way, `limit` or `count`, as the place itself: a borrowed capture is read as a
+borrowed `foreach` leaf is, with no `^`, and `&limit` in the body yields a
+`^T` carrying the root's provenance. A callable with a borrowed capture
+carries that borrow and is checked as a record holding a `^T` or `^mut T` is
+([Values that contain borrows](design.md#values-that-contain-borrows)): it may
+be passed to `slice.sort_by`, but not returned or stored past the root, and
+the root may not be written, moved, or dropped while the callable is live.
+
+```odin
+// Borrowed: sorts by a lookup table without cloning the map.
+slice.sort_by(ids, proc(a, b: Id) -> bool capture(&priority) {
+    return priority[a] < priority[b];
+});
+
+less := proc(a, b: int) -> bool capture(&limit) { ... };
+limit += 1;          // ERROR: `limit` is borrowed by `less`, used below
+slice.sort_by(values, less);
+```
 
 The clause is evaluated once, left to right, where the literal is evaluated.
 The literal lowers to the record and `call` method written by hand today, with
@@ -175,14 +197,37 @@ what the procedure takes and returns, and gives `[...]` a new meaning after
 `proc`. The clause keeps the signature first and puts the captures where
 creation ends and the body begins.
 
+**Why a plain name copies.** The alternative makes an unmarked capture
+borrow, as an ordinary parameter borrows its argument, so the default never
+allocates. It is rejected:
+
+- Sharing is written in Loke. A variable holds a value, and a pointer, slice,
+  or view is the written opt-out; a capture is a binding, and a binding of a
+  place clones. An unmarked borrowing capture would be the one binding that
+  shares silently.
+- A parameter borrows because, for one call, a borrow cannot be told from a
+  copy. A callable outlives the expression that made it, so the difference
+  shows: a borrow rejects `limit += 1` while the callable is live where a copy
+  keeps the old value, and a borrowing callable cannot be returned or stored
+  past `limit`. That should be chosen, not met.
+- Borrowing only when the callable cannot escape makes its size, and whether
+  it carries a borrow, depend on its uses, the objection that rules out
+  declarations in the body.
+
+The cost is a silent clone when `capture(table)` names a map that is read
+again later. That is the cost `saved := table` already has; last-use transfer
+removes it when `table` is not read again, and
+[copy-cost diagnostics](design.md#copy-cost-diagnostics) can report the rest.
+
+`&name` stays an error as a `foreach` or case leaf. There the traversal's
+[yield mode](design.md#yield-modes) decides between owning and borrowing, and
+an unmarked leaf already borrows; a bare `&` was removed there because it bound
+a writable place. A capture has no yield mode to defer to, so it states the
+mode itself, and `&limit` is read-only as `&place` is.
+
 **Still open:**
 
 - The keyword: `capture(...)` or `use(...)`.
-- A read-only borrow. A bare `&name` binding is not a spelling any more, and
-  copying a large `[dynamic]T` only to read it wastes an allocation. Should a
-  plain `name` borrow when the callable cannot escape, as an ordinary parameter
-  borrows its argument? That makes the callable's type depend on how it is
-  used.
 - Whether an entry may be a path, `self.limit` or `a[i]`, or only a name and
   `name = expr`.
 - Mutable by-value state: a literal that assigns to a copied capture needs a
@@ -193,8 +238,6 @@ creation ends and the body begins.
   two identical literals do not share one; it reaches a generic parameter or a
   `dyn` view, never a `proc` type. Whether that type can be named, or only
   inferred.
-- Whether the last use of a local in the clause transfers, as an
-  initialization's does under [Last-use transfer](design.md#last-use-transfer).
 
 ## Owning runtime polymorphism
 
