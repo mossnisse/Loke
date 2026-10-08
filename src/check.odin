@@ -457,6 +457,7 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 		outer, owner := lookup_symbol_with_scope(k.scope.parent, name_id)
 		if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
 			errorf(k.c, name.span, "L0305", "`%s` shadows an outer declaration", name.text)
+			note_shadowed_capture(k, outer)
 		}
 
 		sym := Symbol {

@@ -811,6 +811,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.adapter_members = make(map[Adapter_Key]Symbol_Id, c.semantic_allocator)
 	c.item_states = make(map[Item_Key]Item_State, c.semantic_allocator)
 	c.capture_records = make(map[Type_Id]^Expr_Proc, c.semantic_allocator)
+	c.capture_placeholders = make(map[Symbol_Id]Capture_Placeholder, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)

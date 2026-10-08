@@ -188,6 +188,9 @@ Compiler :: struct {
 	// design.md "Capture literals": the records capture literals lower to,
 	// each with its `call`'s literal, the one body that reads its fields.
 	capture_records:    map[Type_Id]^Expr_Proc,
+	// The names a capture literal reserves in its lowering scope, each with the
+	// field it stands for and the `call` whose body may read it.
+	capture_placeholders: map[Symbol_Id]Capture_Placeholder,
 	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,

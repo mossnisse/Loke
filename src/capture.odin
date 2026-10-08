@@ -24,39 +24,71 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 		return capture.record
 	}
 	literal := capture.procedure
-	if !capture_literal_shape_ok(k, v) {
-		check_capture_values(k, capture)
+	// design.md "where clauses": a literal is a value, so never generic.
+	if !proc_shape_ok(k, literal, is_value = true) || !capture_literal_shape_ok(k, v) {
 		return INVALID_TYPE
 	}
 
-	// Each entry's type, from a copy of its value checked and then forgotten:
-	// the value itself is checked once, as the record literal's element.
+	// The literal is the record's: each entry's value, taken as its mode says,
+	// is checked once, here, and its field has the type that check gives it.
+	// A second check could give a different type: a capture literal inside
+	// one makes a new record each time it is checked.
+	v.elements = make([]Element, len(capture.entries), k.c.semantic_allocator)
 	types := make([]Type_Id, len(capture.entries), k.c.semantic_allocator)
+	checked := true
 	for entry, index in capture.entries {
-		probe := begin_probe(k.c)
-		trial := clone_expr(k.c, entry.value)
-		type := check_single_expr(k, trial, position = entry.mode == .Copy ? .Value : .Place)
-		end_probe(k.c, probe)
-		if type == INVALID_TYPE {
-			check_capture_values(k, capture)
-			return INVALID_TYPE
-		}
-		type = default_type(k.c, type)
+		value := entry.value
 		switch entry.mode {
-		case .Copy, .Move:
-		case .Borrow:
-			type = pointer_to(k.c, type, false)
-		case .Borrow_Mut:
-			type = pointer_to(k.c, type, true)
+		case .Copy:
+		case .Borrow, .Borrow_Mut:
+			address := new(Expr_Unary, k.c.semantic_allocator)
+			address.span = entry.span
+			address.op, address.op_span = .Amp, entry.span
+			address.mutable = entry.mode == .Borrow_Mut
+			address.operand = entry.value
+			value = address
+		case .Move:
+			moved := new(Expr_Move, k.c.semantic_allocator)
+			moved.span = entry.span
+			moved.value = entry.value
+			value = moved
 		}
-		types[index] = type
+		v.elements[index] = Element{span = entry.span, value = value}
+		type := check_single_expr(k, value)
+		if type == INVALID_TYPE {
+			checked = false
+			continue
+		}
+		types[index] = default_type(k.c, type)
+	}
+	if !checked {
+		return INVALID_TYPE
 	}
 
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
 
+	// Each captured name, reserved where the body can see it: declaring a local
+	// of the same name in the body shadows it, and a position the body's
+	// rewrite leaves alone resolves to it rather than to an enclosing local.
+	fields := make([]Capture_Field, len(capture.entries), k.c.semantic_allocator)
+	placeholders := make([]Symbol_Id, len(capture.entries), k.c.semantic_allocator)
+	for entry, index in capture.entries {
+		text := strings.concatenate({"capture$", entry.name.text}, k.c.semantic_allocator)
+		fields[index] = Capture_Field {
+			mode  = entry.mode,
+			field = Name{text = text, span = entry.name.span, id = intern_identifier(k.c, text)},
+		}
+		id := name_identifier(k.c, entry.name)
+		placeholder := new_symbol(k.c, Symbol{name = id, span = entry.name.span, kind = .Var, pkg = k.pkg})
+		k.scope.names[id] = placeholder
+		placeholders[index] = placeholder
+	}
+
 	// The record, with each field's type bound to a name only this scope has.
+	// Its fields are named apart from the source, so a capture called `call`
+	// leaves room for the method.
 	span := Span{file = v.span.file, lo = v.span.lo, hi = capture.clause_span.hi}
 	text := strings.clone(k.c.sources[span.file].text[span.lo:span.hi], k.c.semantic_allocator)
 	record_name := Name{text = text, span = span, id = intern_identifier(k.c, text)}
@@ -72,7 +104,7 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 		field_type.name = entry.name.text
 		field_type.name_id = alias
 		names := make([]Name, 1, k.c.semantic_allocator)
-		names[0] = entry.name
+		names[0] = fields[index].field
 		record.fields[index] = Field{span = entry.span, names = names, type = field_type}
 	}
 	declaration := new(Decl, k.c.semantic_allocator)
@@ -88,8 +120,11 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 		return INVALID_TYPE
 	}
 	// Its fields are the captures, which only its `call` reads.
-	method := capture_call_method(k, capture)
+	method := capture_call_method(k, capture, fields)
 	k.c.capture_records[record_symbol.type] = method
+	for placeholder, index in placeholders {
+		k.c.capture_placeholders[placeholder] = Capture_Placeholder{field = fields[index], method = method}
+	}
 	if info := type_of(k.c, record_symbol.type); info != nil {
 		for field in info.fields {
 			if sym := symbol_of(k.c, field); sym != nil {
@@ -118,27 +153,6 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 	check_local_impl(k, block)
 	capture.method = method
 
-	// The literal is the record's: each entry's value, taken as its mode says.
-	v.elements = make([]Element, len(capture.entries), k.c.semantic_allocator)
-	for entry, index in capture.entries {
-		value := entry.value
-		switch entry.mode {
-		case .Copy:
-		case .Borrow, .Borrow_Mut:
-			address := new(Expr_Unary, k.c.semantic_allocator)
-			address.span = entry.span
-			address.op, address.op_span = .Amp, entry.span
-			address.mutable = entry.mode == .Borrow_Mut
-			address.operand = entry.value
-			value = address
-		case .Move:
-			moved := new(Expr_Move, k.c.semantic_allocator)
-			moved.span = entry.span
-			moved.value = entry.value
-			value = moved
-		}
-		v.elements[index] = Element{span = entry.span, value = value}
-	}
 	// A probe's record has no hoisted `call`, so the check that commits makes
 	// its own.
 	if committing(k.c) {
@@ -169,13 +183,6 @@ capture_literal_shape_ok :: proc(k: ^Checker, v: ^Expr_Composite) -> bool {
 		)
 		ok = false
 	}
-	if len(literal.where_clauses) > 0 {
-		errorf(
-			k.c, expr_span(literal.where_clauses[0]), "L0716",
-			"a procedure literal has no generic parameters, so it cannot have a `where` clause; bound the enclosing declaration",
-		)
-		ok = false
-	}
 	seen := make(map[Identifier_Id]Span, len(capture.entries), context.temp_allocator)
 	for entry in capture.entries {
 		id := name_identifier(k.c, entry.name)
@@ -203,18 +210,10 @@ capture_literal_shape_ok :: proc(k: ^Checker, v: ^Expr_Composite) -> bool {
 	return ok
 }
 
-// Reports what is wrong with the values when no record could be made.
-@(private = "file")
-check_capture_values :: proc(k: ^Checker, capture: ^Capture_Literal) {
-	for entry in capture.entries {
-		check_single_expr(k, entry.value, position = entry.mode == .Copy ? .Value : .Place)
-	}
-}
-
 // `call :: proc(self, <the literal's parameters>) -> <its result> { <body> }`,
 // with every captured name in the body rewritten to the receiver's field.
 @(private = "file")
-capture_call_method :: proc(k: ^Checker, capture: ^Capture_Literal) -> ^Expr_Proc {
+capture_call_method :: proc(k: ^Checker, capture: ^Capture_Literal, fields: []Capture_Field) -> ^Expr_Proc {
 	literal := capture.procedure
 	receiver := intern_identifier(k.c, CAPTURE_RECEIVER)
 	signature := clone_expr(k.c, literal.signature).(^Type_Proc)
@@ -226,9 +225,9 @@ capture_call_method :: proc(k: ^Checker, capture: ^Capture_Literal) -> ^Expr_Pro
 	signature.params = params
 
 	rewrite := Capture_Rewrite{receiver = receiver}
-	rewrite.modes = make(map[Identifier_Id]Capture_Mode, len(capture.entries), k.c.semantic_allocator)
-	for entry in capture.entries {
-		rewrite.modes[name_identifier(k.c, entry.name)] = entry.mode
+	rewrite.captures = make(map[Identifier_Id]Capture_Field, len(capture.entries), k.c.semantic_allocator)
+	for entry, index in capture.entries {
+		rewrite.captures[name_identifier(k.c, entry.name)] = fields[index]
 	}
 	saved := k.c.capture_rewrite
 	k.c.capture_rewrite = &rewrite
@@ -240,6 +239,23 @@ capture_call_method :: proc(k: ^Checker, capture: ^Capture_Literal) -> ^Expr_Pro
 	method.signature = signature
 	method.body = body
 	return method
+}
+
+// The place a name reserved for a capture reads, as the body's rewrite would
+// have written it, when a position that rewrite left alone resolves to it.
+// Nil for any other name.
+capture_place_of :: proc(k: ^Checker, name: ^Expr_Ident) -> Expr {
+	placeholder, reserved := k.c.capture_placeholders[lookup_symbol(k.scope, identifier_of(k.c, name))]
+	if !reserved || placeholder.method != k.proc_literal {
+		return nil
+	}
+	return capture_field_place(k.c, intern_identifier(k.c, CAPTURE_RECEIVER), placeholder.field, name.span)
+}
+
+// A name a capture literal reserves for one of its captures.
+Capture_Placeholder :: struct {
+	field:  Capture_Field,
+	method: ^Expr_Proc,
 }
 
 // Whether `type` is a capture literal's record: its fields are its own
@@ -256,4 +272,14 @@ capture_field_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 		return true
 	}
 	return k.body.proc_literal == method || k.body.building_capture == sym.owner_type
+}
+
+// A local in a capture literal's body cannot take a capture's name: every use
+// of that name in the body is the capture.
+note_shadowed_capture :: proc(k: ^Checker, outer: Symbol_Id) {
+	if _, reserved := k.c.capture_placeholders[outer]; reserved {
+		if sym := symbol_of(k.c, outer); sym != nil {
+			add_notef(k.c, sym.span, "it is captured here, and in the literal's body the name is the capture")
+		}
+	}
 }

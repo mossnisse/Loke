@@ -471,6 +471,15 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident, callee: bool) {
 	// for design.md "@(require_results)".
 	sym.named = true
 
+	// design.md "Capture literals": the body's rewrite reads every capture
+	// through the receiver, so a name that reaches the reserved one is in a
+	// position the rewrite cannot see.
+	if placeholder, reserved := k.c.capture_placeholders[symbol_id]; reserved && placeholder.method == k.proc_literal {
+		errorf(k.c, v.span, "L0716", "`%s` is a capture, which cannot be read in this position", v.name)
+		v.type = INVALID_TYPE
+		return
+	}
+
 	// A procedure literal has no closure.
 	if owner != nil && owner.owner_proc != nil && owner.owner_proc != k.proc_literal {
 		if sym.kind == .Var || sym.kind == .Parameter {
@@ -2734,7 +2743,14 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 		seen[slot] = true
 		values[slot] = element.value
 		v.field_indices[index] = slot
-		if !check_value_expr(k, element.value, symbol.type, "initialise") {
+		// A capture literal's lowering checked its elements to type its fields.
+		initialised: bool
+		if v.capture != nil {
+			initialised = materialize_value_expr(k, element.value, symbol.type, "initialise")
+		} else {
+			initialised = check_value_expr(k, element.value, symbol.type, "initialise")
+		}
+		if !initialised {
 			ok = false
 		} else {
 			classify_composite_element(k, v, index, symbol.type)
@@ -2982,7 +2998,14 @@ check_map_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info
 			)
 			continue
 		}
-		if !check_value_expr(k, element.key, info.key, "use as a key") {
+		// design.md "Capture literals": a capture's bare name before `=`, which
+		// the body's rewrite took for a field name, is the capture here.
+		if name, is_name := element.key.(^Expr_Ident); is_name {
+			if place := capture_place_of(k, name); place != nil {
+				v.elements[index].key = place
+			}
+		}
+		if !check_value_expr(k, v.elements[index].key, info.key, "use as a key") {
 			continue
 		}
 		if !check_value_expr(k, element.value, info.element, "initialise") {

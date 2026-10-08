@@ -107,30 +107,41 @@ clone_elements :: proc(c: ^Compiler, list: []Element) -> []Element {
 // points at for a borrow.
 Capture_Rewrite :: struct {
 	receiver: Identifier_Id,
-	modes:    map[Identifier_Id]Capture_Mode,
+	captures: map[Identifier_Id]Capture_Field,
+}
+
+// A capture's field, whose name the source cannot spell, and its mode.
+Capture_Field :: struct {
+	mode:  Capture_Mode,
+	field: Name,
 }
 
 @(private = "file")
 rewrite_capture :: proc(c: ^Compiler, v: ^Expr_Ident) -> Expr {
 	id := v.name_id != INVALID_IDENTIFIER ? v.name_id : intern_identifier(c, v.name)
-	mode, captured := c.capture_rewrite.modes[id]
+	field, captured := c.capture_rewrite.captures[id]
 	if !captured {
 		return nil
 	}
+	return capture_field_place(c, c.capture_rewrite.receiver, field, v.span)
+}
+
+// `self.field`, or `self.field^` for a borrow, spelled at `span`.
+capture_field_place :: proc(c: ^Compiler, receiver_id: Identifier_Id, field: Capture_Field, span: Span) -> Expr {
 	receiver := new(Expr_Ident, c.semantic_allocator)
-	receiver.span = v.span
-	receiver.name, receiver.name_id = "self", c.capture_rewrite.receiver
-	field := new(Expr_Selector, c.semantic_allocator)
-	field.span = v.span
-	field.operand = receiver
-	field.name = Name{text = v.name, span = v.span, id = id}
-	if mode == .Copy || mode == .Move {
-		return field
+	receiver.span = span
+	receiver.name, receiver.name_id = "self", receiver_id
+	selected := new(Expr_Selector, c.semantic_allocator)
+	selected.span = span
+	selected.operand = receiver
+	selected.name = Name{text = field.field.text, span = span, id = field.field.id}
+	if field.mode == .Copy || field.mode == .Move {
+		return selected
 	}
 	place := new(Expr_Postfix, c.semantic_allocator)
-	place.span = v.span
-	place.op, place.op_span = .Caret, v.span
-	place.operand = field
+	place.span = span
+	place.op, place.op_span = .Caret, span
+	place.operand = selected
 	return place
 }
 

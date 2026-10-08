@@ -4388,7 +4388,7 @@ Each entry is a mode, a name, and optionally `= value`. The short forms capture 
 - A borrow's value must be a place, as `&` requires. `move(name)` names a local and ends it, as `move` does.
 - A captured path is named: `capture(self.limit)` is an error, written `limit = self.limit`.
 - The values are evaluated once, left to right, where the literal is evaluated, so `a[i]` uses `i` as it was then.
-- A name is captured once, and no capture shares a name with a parameter.
+- A name is captured once, and no capture shares a name with a parameter. In the body the name is the capture, so no local declared there may take it.
 - In the body, a borrowed capture is read as the place, with no `^`, and `&name` is that place's address.
 - The body may read every capture and write through a `&mut` one. It may not assign a copied capture or move one out; capturing the local with `&mut` writes the local instead.
 

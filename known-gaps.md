@@ -7,31 +7,6 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A captured name as a map literal's bare key
-
-[design.md "Capture literals"](design.md#capture-literals) makes every use of a
-captured name in the body the capture. The lowering rewrites those names while
-it copies the body into the record's `call`, and leaves a bare name before `=`
-in a composite literal alone, since in a struct literal that is a field. In a
-map literal it is a key expression, so a captured local used there is still the
-enclosing procedure's, and this valid program is `L0374`:
-
-```odin
-package main;
-main :: proc() {
-    key := "a";
-    f := proc() -> int capture(key) {
-        counts := map[string]int{key = 1};   // L0374
-        return counts.len();
-    };
-    _ = f();
-}
-```
-
-`counts[key] = 1;` is accepted. Deciding struct field against map key needs
-the literal's type, which the rewrite runs before; rewriting the key once the
-composite is checked would close it.
-
 ### Every statement is taken to be able to panic
 
 [design.md "Panics and unwinding"](design.md#panics-and-unwinding) runs the

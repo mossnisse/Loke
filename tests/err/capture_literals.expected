@@ -28,15 +28,27 @@ L0716
 L0716
 @54:37
 a capture literal is called through a `call` method, which has no `"c"` calling convention
-L0471
+L0363
 @63:6
-`limit` is a capture of `proc(a: int) -> bool capture(limit)`, which only the literal's body reads
+`proc(a: int) -> bool capture(limit)` has no field or member `limit`
 L0355
 @64:11
 `proc(a: int) -> bool capture(limit)` is not comparable
 L0310
 @65:14
 is a capture literal, which has no printed form, so no `any_view` can view it
+L0474
+@67:11
+`limit` is a capture of `proc(a: int) -> bool capture(limit)`, which only the literal's body reads
+L0305
+@74:12
+it is captured here, and in the literal's body the name is the capture
+L0305
+@77:38
+`m` shadows an outer declaration
+L0431
+@83:7
+a procedure literal is a value, and a generic procedure is not one
 L0341
-@74:11
+@93:11
 a capture literal has no compile-time value

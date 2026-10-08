@@ -5,6 +5,8 @@
 // an unused import cannot change what an expression means.
 package lokec
 
+import "core:strings"
+
 // ------------------------------------------------------------- declaration --
 
 // Runs in the discovery fixed point, so it must be idempotent and tolerate a
@@ -419,7 +421,7 @@ require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: 
 		errorf(
 			k.c, span, code,
 			"`%s` is a capture of `%s`, which only the literal's body reads, so it cannot be %s here",
-			identifier_text(k.c, sym.name), type_name(k.c, subject), action,
+			strings.trim_prefix(identifier_text(k.c, sym.name), "capture$"), type_name(k.c, subject), action,
 		)
 		return false
 	}

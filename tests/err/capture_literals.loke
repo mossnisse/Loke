@@ -63,6 +63,25 @@ opaque :: proc() {
 	_ = less.limit;
 	_ = less == other;
 	fmt.println(less);
+	Less :: type_of(less);
+	_ = Less{3};
+}
+
+// In the body a captured name is the capture, so no local may take it.
+shadowed :: proc() -> int {
+	n := 100;
+	f := proc() capture(&mut x = n) {
+		foreach (x in 0 ..< 3) { }
+	};
+	f();
+	g := proc() -> int capture(m = 1) { m := 2; return m; };
+	return g();
+}
+
+// A literal is a value, so never generic, with or without a clause.
+generic :: proc() -> int {
+	f := proc(x: $T) -> T capture(n = 1) { return x; };
+	return f(2);
 }
 
 // A capture runs when the literal is evaluated, which compile time cannot do.
@@ -82,5 +101,7 @@ main :: proc() {
 	_ = moved_then_used();
 	shapes();
 	opaque();
+	_ = shadowed();
+	_ = generic();
 	_ = global();
 }

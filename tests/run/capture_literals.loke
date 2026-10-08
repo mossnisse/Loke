@@ -140,4 +140,25 @@ main :: proc() {
 
 	// Called where it is written, as a procedure literal can be.
 	fmt.println(proc(n: int) -> int capture(offset) { return n * offset; }(5));
+
+	// A capture literal captured by another keeps the one type it was checked
+	// with.
+	seven := 7;
+	twice := proc() -> int capture(
+		inner = proc() -> int capture(seven) { return seven; },
+	) { return inner() * 2; };
+	fmt.println(twice());
+
+	// A capture named `call` leaves room for the record's `call`.
+	call := 9;
+	named_call := proc() -> int capture(call) { return call; };
+	fmt.println(named_call());
+
+	// A captured name before `=` in a map literal is the capture.
+	key := "k";
+	counted := proc() -> int capture(key) {
+		counts := map[string]int{key = 3};
+		return counts["k"];
+	};
+	fmt.println(counted());
 }

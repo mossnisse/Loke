@@ -442,6 +442,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 			outer, owner := lookup_symbol_with_scope(case_scope, name)
 			if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
 				errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
+				note_shadowed_capture(k, outer)
 			}
 			reject_reserved_name(k, name, binding.span)
 			entry.binding_symbol = new_symbol(k.c, Symbol {
