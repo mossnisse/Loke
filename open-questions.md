@@ -481,11 +481,11 @@ procedure value, not only closures:
 The [removed context pointer](comments.md#build-selected-services-and-explicit-runtime-state)
 was kept out on the same ground: procedure values stay thin.
 
-**Still open:**
-
-- The spelling `dyn proc(...)`, and whether a `dyn mut proc` is needed once an
-  `inout` call exists.
-- Whether `slice.sort_by` and other callback APIs also accept a `dyn proc`.
+**Still open:** whether a `dyn mut proc` is needed once an `inout` call
+exists. The spelling and `sort_by` are settled under
+[One callable constraint](#one-callable-constraint): `dyn proc(...)` is the
+short form of `dyn interfaces.Callable(proc(...))`, and a `dyn proc` satisfies
+`Callable`, so every callback API taking one accepts it.
 
 ### One callable constraint
 
@@ -504,27 +504,78 @@ three things break:
   `Comparator` and a wrapper for a plain procedure. Every new callback API
   would repeat the pair.
 
-**Proposal.** One built-in constraint, called `Callable` here with its spelling
-open:
+**Proposal.** A catalogue interface in `base:interfaces`, satisfied by a
+built-in rule as `Cloneable` is for built-in types, and needing no new syntax:
 
-1. A procedure value of the signature satisfies it, and so does any type with
-   one `call` method of that signature taking a plain `self`: a capture literal
-   or a hand-written record.
-2. It can bind the result type, so `map_error` is one generic signature
-   inferring `F` from whatever `f` is.
-3. `x(args)` means `x.call(args)` for any value that satisfies it, so adding a
-   capture changes no call site.
-4. [`dyn proc(...)`](#a-borrowed-callable-view-dyn-proc) is its borrowed view,
-   as `dyn I` is an interface's.
+```odin
+Callable :: interface($Self: type, $Signature: type)   // satisfied by built-in rule
+```
 
-A callable then has one meaning and three representations: a thin procedure, a
-record, and a view. `sort_by` and `map_error` become one member each, and the
-procedure wrappers go away. This answers the first two questions under
+- `Signature` is a procedure type. `Self` satisfies `Callable` when it is a
+  procedure type that converts to `Signature`, or when it has a `call` method
+  meeting the slot `call: proc(self, <Signature's parameters>) -> <its result>`
+  under the [named slot](design.md#interface-bodies) rules: parameter modes and
+  escape levels match exactly, and a plain `self` also meets a `self: ^` slot.
+  A capture literal, a hand-written record, and a `dyn proc` all satisfy it.
+- `C.Result` is an [associated type](design.md#interface-bodies): the result of
+  the one matching `call`. It is an error where an overloaded `call` leaves it
+  ambiguous, as any associated type is.
+- A [bare bound](design.md#where-clauses) `Callable(C, ...)` grants `c(args)` in
+  the constrained declaration, as a bare bound grants an interface's slots.
+  Outside generic code, `x(args)` is valid on any value whose type satisfies
+  `Callable` for those arguments, so adding a capture changes no call site.
+- [`dyn proc(...)`](#a-borrowed-callable-view-dyn-proc) is the short form of
+  `dyn interfaces.Callable(proc(...))`, the existing `dyn` form with its
+  subject omitted.
+- A field named `call` holding a procedure does not satisfy it: a slot is met
+  only by a method. `c(args)` therefore calls the method, never the text
+  `c.call(args)`, which field lookup would resolve to the field.
+
+```odin
+// One member instead of a group of two, and no wrapper record.
+sort_by :: proc(values: []mut $T, less: $C)
+	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	... less(a, b) ...
+}
+
+// F is inferred through the associated type.
+map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
+	where interfaces.Callable(C, proc(error: move E) -> C.Result) {
+	switch (move(self)) {
+	case .ok(payload):  return .ok(move(payload));
+	case .err(payload): return .err(f(move(payload)));
+	}
+}
+```
+
+Each accepts a plain procedure, a capture literal, a hand-written record, and a
+`dyn proc`. A callable then has one meaning and three representations: a thin
+procedure, a record, and a view. This answers the first two questions under
 [Callable records, procedures, and closures](#callable-records-procedures-and-closures).
 
-**Still open:** the spelling, how the signature's result is bound (a `$`
-binding in a `where` clause, or an associated type), and whether a field named
-`call` that holds a procedure satisfies it.
+The cost is verbosity: `map_error` writes `C.Result` twice, and a callback API
+spells a `where` clause rather than a parameter type. Rust's
+`F: FnOnce(E) -> G` restates its result the same way.
+
+**Migration.** `slice.Comparator`, `sort_by_procedure`, and
+`Procedure_Comparator` go away; `sort_by` and `Result.map_error` take the form
+above, as does any other `proc`-typed callback in `core`. A hand-written
+comparator record keeps working, since its `call` already has the slot's shape.
+
+**Why not let a generic procedure type accept records.** Letting
+`f: proc(error: move E) -> $F` take a record would make adding a `$` to a
+parameter change what it accepts, and make `proc(...)` mean a thin value in one
+parameter and anything callable in another.
+
+**Why not bind `$F` in the `where` clause.** `Callable(C, proc(error: move E) -> $F)`
+would add a fourth `$` binding site beside parameter types, static `foreach`,
+and explicit generic parameters, for this one case. `C.Result` reuses the
+associated-type mechanism.
+
+**Why not new parameter syntax.** A form like Rust's `impl Fn(...)`, such as
+`less: some proc(left, right: T) -> bool`, is shorter but is a second way to
+write a generic constraint. It can come later as sugar for the `where` form, if
+real APIs show the verbosity matters.
 
 ### Implementation order
 
