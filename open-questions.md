@@ -225,15 +225,47 @@ an unmarked leaf already borrows; a bare `&` was removed there because it bound
 a writable place. A capture has no yield mode to defer to, so it states the
 mode itself, and `&limit` is read-only as `&place` is.
 
+**How `call` takes `self`.** A literal's `call` takes a plain `self`. The body
+may read every capture and write through a `&mut` one, since a `^mut` field is
+writable through a plain receiver: capability is in the carrier
+([Capabilities and the one rule](design.md#capabilities-and-the-one-rule)). It
+may not assign to a copied capture or move one out. Either is an error naming
+the two ways out: capture an outer local with `&mut`, or write the record and
+its `call` by hand with a `self: inout` or `self: move` receiver.
+
+```odin
+compares := 0;
+slice.sort_by(values, proc(a, b: int) -> bool capture(&mut compares) {
+    compares += 1;
+    return a < b;
+});
+```
+
+A plain `self` is the mode the most APIs accept. Receiver modes must match an
+interface slot exactly, except that a plain `self` also meets a `self: ^` slot
+([Receiver forms](design.md#receiver-forms)), and `slice.Comparator`'s slot is
+`call: proc(self, left, right: T) -> bool`. A literal with an `inout` or `move`
+`call` would be rejected by every callback API in the standard library.
+
+What a plain `self` cannot do is keep mutable state inside the callable, or
+hand a capture away when called and so be callable once. Both matter only for
+a callable that outlives its scope: a stored generator, a deferred job, a
+thread worker. Those wait on
+[Owning runtime polymorphism](#owning-runtime-polymorphism) and
+[Thread transfer needs a visible contract](#thread-transfer-needs-a-visible-contract).
+Revisit `inout` and `move` calls when the first API takes such a callable; the
+receiver mode is then written, for example on the clause.
+
+**Why not infer the receiver.** Rust infers `Fn`, `FnMut`, or `FnOnce` from
+what the body does with its captures. That makes which APIs accept a literal
+depend on its body: adding an assignment deep in the body silently changes it,
+the objection that rules out declarations in the body.
+
 **Still open:**
 
 - The keyword: `capture(...)` or `use(...)`.
 - Whether an entry may be a path, `self.limit` or `a[i]`, or only a name and
   `name = expr`.
-- Mutable by-value state: a literal that assigns to a copied capture needs a
-  `call` that takes `self` mutably, and APIs that accept such a callable.
-- Consuming calls: whether a callable holding a `move` capture may give it away
-  when called, and so be callable once.
 - The literal's type. Each literal is its own type, as a body-local type is, so
   two identical literals do not share one; it reaches a generic parameter or a
   `dyn` view, never a `proc` type. Whether that type can be named, or only
