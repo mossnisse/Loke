@@ -111,6 +111,9 @@ procedure through a library wrapper. Possible extensions remain exploratory:
   its open points need deciding together with the two questions above. No
   closure syntax is committed.
 
+The first two are prerequisites of the third, not separate extensions: see
+[One callable constraint](#one-callable-constraint).
+
 A callable that outlives its creation scope is a separate ownership question.
 `fmt.Writer` and `log.Logger` do not establish a need for one: a formatter lends
 its sink for the call, and a logger lends process-lifetime storage, both through
@@ -147,6 +150,50 @@ Each entry reuses a spelling the language already has:
 - `move(buffer)` transfers the value and ends `buffer`;
 - `n = len(items)` captures a computed value under a new name.
 
+**Entries and paths.** Every entry is a mode, a name, and optionally
+`= expression`. The forms above are shorthand for an entry naming the same
+place on both sides, and a path is captured under a written name:
+
+| Written | Means | The body sees |
+| --- | --- | --- |
+| `limit` | `limit = limit` | a copy |
+| `&limit` | `&limit = limit` | the place, read-only |
+| `&mut count` | `&mut count = count` | the place, writable |
+| `move(buffer)` | `buffer = move(buffer)` | the owned value |
+| `lim = self.limit` | a copy of a path | a copy, as `lim` |
+| `&cfg = self.config` | a read-only borrow of a path | `self.config`, as `cfg` |
+| `&mut slot = a[i]` | a writable borrow of an element | `a[i]`, as `slot` |
+
+A path matters because capturing all of `&self` to read one field borrows the
+whole receiver, and blocks writes to its other fields while the callable is
+live; distinct struct fields are disjoint, so borrowing `self.config` leaves
+the rest writable. The name is required: the last segment, `limit` from
+`self.limit`, has no counterpart for `a[i]`, and it hides a rename the reader
+must work out, so `capture(self.limit)` is an error suggesting
+`limit = self.limit`. The rest follows from existing rules:
+
+- The mode marker sits on the name, as in a `foreach (&mut v in ...)` binding,
+  so the mode is in the clause and the body names the place for every entry.
+- A borrowing entry's right side must be a place, as `&place` requires; a
+  copying entry takes any expression.
+- `buf = move(self.buffer)` is rejected: `move` does not consume a field or
+  element.
+- Right sides are evaluated once, left to right, in the enclosing scope, so
+  `a[i]` uses `i` as it was at creation. Capture names exist only in the body,
+  so one entry cannot name another.
+- `cfg = &self.config` stays legal: it copies a `^T`, which the body reads as
+  `cfg^`, where `&cfg = self.config` reads as `cfg`.
+
+**The keyword.** `capture` is a contextual keyword, reserved only directly
+after a procedure literal's signature and followed by `(`. There a name and
+`(` can begin nothing else, since a complete signature is otherwise followed
+only by `where` or `{`. It names what happens and matches the word the
+diagnostics and documentation use. `use` was rejected: it sits beside `using`,
+reads as an import to a Rust reader, and is a common name (a test declares
+`use :: proc`). Reserving `capture` everywhere was rejected for the reason
+[Keywords reserved in every position](#keywords-reserved-in-every-position)
+gives: it is a plausible name, for a regex group or captured output.
+
 The mode is written only in the clause. The body names every capture the same
 way, `limit` or `count`, as the place itself: a borrowed capture is read as a
 borrowed `foreach` leaf is, with no `^`, and `&limit` in the body yields a
@@ -171,6 +218,42 @@ The clause is evaluated once, left to right, where the literal is evaluated.
 The literal lowers to the record and `call` method written by hand today, with
 one field per entry in clause order. A literal without the clause still
 captures nothing and is an ordinary procedure value.
+
+**Retention and write effects.** The body is checked as any procedure body is.
+A `&mut` capture is storage reached through a `^mut` the call received, so it
+is a retention destination under
+[Retaining a borrow](design.md#retaining-a-borrow): storing an argument's
+borrow in it needs `@(escape=stored)` on that parameter. Escape levels are
+part of procedure type identity, so an API that lets a callback collect its
+arguments declares it too:
+
+```odin
+visit :: proc(tree: ^Tree, f: dyn proc(@(escape=stored) node: ^Node)) { ... }
+
+found: [dynamic]^Node;
+visit(&tree, proc(@(escape=stored) node: ^Node) capture(&mut found) {
+    found.append(node);
+});
+```
+
+This is the commonest closure pattern, and it needs no new rule. Nor do
+[global write effects](design.md#global-write-effects): a literal's `call` has
+an inferred effect like any procedure, a direct call through a generic takes
+it, and a `dyn proc` call takes the union of every procedure and literal the
+program converts to that signature, as a `dyn` call does for its witnesses.
+
+**Smaller rules.**
+
+| Case | Rule |
+| --- | --- |
+| `helper :: proc() capture(x) { ... }` in a body | an error: `::` declares a constant, and a capture literal is a runtime value; write `:=` |
+| a `proc "c"` literal with captures | an error: a record's `call` has no C calling convention |
+| an empty `capture()` | an error, rather than a third kind of literal |
+| a capture named as a parameter is | an error |
+| the body names a local it did not capture | the existing error, with a note offering `x`, `&x`, and `&mut x` |
+| a literal inside a literal | the inner one captures the outer one's captures by the same rules |
+| a literal inside a loop | a fresh record each iteration; its borrows end at their last use |
+| compile-time evaluation | rejected at first, as having no compile-time value; a record could be supported later |
 
 **Why not declarations in the body.** The alternative leaves the signature
 unmarked and declares each capture as a statement, `capture limit;`, beside
@@ -310,6 +393,11 @@ callable with that signature: a data pointer and a code pointer, as a
 pointer and a witness. A capture literal converts to it, the view borrowing the
 literal's record; a plain procedure converts to it too.
 
+For a plain procedure the data word holds the procedure itself, and the code
+word an adapter generated once per signature. Converting a procedure, or a
+local holding one, therefore borrows nothing, where a data word pointing at the
+procedure value would make `f: dyn proc() = g` borrow the local `g`.
+
 ```odin
 visit :: proc(tree: ^Tree, f: dyn proc(node: ^Node)) { ... f(node); ... }
 
@@ -395,12 +483,60 @@ was kept out on the same ground: procedure values stay thin.
 
 **Still open:**
 
-- The keyword: `capture(...)` or `use(...)`.
-- Whether an entry may be a path, `self.limit` or `a[i]`, or only a name and
-  `name = expr`.
 - The spelling `dyn proc(...)`, and whether a `dyn mut proc` is needed once an
   `inout` call exists.
 - Whether `slice.sort_by` and other callback APIs also accept a `dyn proc`.
+
+### One callable constraint
+
+A literal without a capture clause is a procedure value; with one, it is a
+record. Adding the first capture therefore changes what the literal is, and
+three things break:
+
+- A direct call: `less(1, 2)` works on the procedure, but a record with a
+  `call` method is not callable (`L0320`), so every call becomes
+  `less.call(1, 2)`.
+- An API taking a procedure type: `Result.map_error` takes
+  `proc(error: move E) -> $F`, so a mapper that captures anything cannot be
+  passed. The implicit `dyn proc` conversion does not apply to a `proc`
+  parameter.
+- A generic API needs two members, as `slice.sort_by` has: one for a
+  `Comparator` and a wrapper for a plain procedure. Every new callback API
+  would repeat the pair.
+
+**Proposal.** One built-in constraint, called `Callable` here with its spelling
+open:
+
+1. A procedure value of the signature satisfies it, and so does any type with
+   one `call` method of that signature taking a plain `self`: a capture literal
+   or a hand-written record.
+2. It can bind the result type, so `map_error` is one generic signature
+   inferring `F` from whatever `f` is.
+3. `x(args)` means `x.call(args)` for any value that satisfies it, so adding a
+   capture changes no call site.
+4. [`dyn proc(...)`](#a-borrowed-callable-view-dyn-proc) is its borrowed view,
+   as `dyn I` is an interface's.
+
+A callable then has one meaning and three representations: a thin procedure, a
+record, and a view. `sort_by` and `map_error` become one member each, and the
+procedure wrappers go away. This answers the first two questions under
+[Callable records, procedures, and closures](#callable-records-procedures-and-closures).
+
+**Still open:** the spelling, how the signature's result is bound (a `$`
+binding in a `where` clause, or an associated type), and whether a field named
+`call` that holds a procedure satisfies it.
+
+### Implementation order
+
+Each step can ship and be tested on its own:
+
+1. The callable constraint and `x(args)` call syntax, moving `slice.sort_by`
+   and `Result.map_error` to one member each. This is worth having without
+   closures.
+2. Capture literals, with the four modes and paths, lowered to the body-local
+   record.
+3. `dyn proc`, with its implicit conversion and the procedure representation
+   above.
 
 ## Owning runtime polymorphism
 
