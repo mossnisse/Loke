@@ -591,6 +591,9 @@ checklist.
 - A file-scope `when` condition whose array literal is keyed by a name, as in
   `[3]bool{SLOT = true}`, waits for a later branch that declares the name
   instead of reporting it unknown.
+- A struct literal naming a field its type lacks reports only that error when a
+  constant, array size, or `when` condition reads it. Before, compile-time
+  evaluation added an internal error (`L0405`) for the same literal.
 - The `typeid` of a type declared inside a generic procedure no longer depends
   on the order that procedure's instances were made in.
 - When waiting on clang, NASM, or the layout probe fails, `lokec` reports an

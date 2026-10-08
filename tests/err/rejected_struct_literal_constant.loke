@@ -1,0 +1,15 @@
+// A struct literal the checker rejects has no type, so a compile-time context
+// reading it reports the literal's error once and does not evaluate past it.
+package main;
+
+Later :: struct { x: int };
+Needed :: struct { @(required) x: int, y: int };
+
+K :: Later{main = 5}.x;
+R :: Needed{y = 1}.y;
+when (Later{main = 5}.x == 5) { C :: 1; } else { C :: 2; }
+
+main :: proc() {
+	a: [Later{main = 5}.x]int;
+	when (Later{main = 5}.x == 5) {}
+}

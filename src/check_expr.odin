@@ -2713,7 +2713,10 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 			classify_composite_element(k, v, index, symbol.type)
 		}
 	}
+	// A rejected literal has no type, as a rejected array literal has none: a
+	// constant or `when` condition reading it must not evaluate past the error.
 	if !ok {
+		v.type = INVALID_TYPE
 		return
 	}
 	// design.md "Zero values": an omitted field is filled with its type's zero,
@@ -2741,6 +2744,7 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 		}
 	}
 	if !ok {
+		v.type = INVALID_TYPE
 		return
 	}
 	fold_aggregate(k, v, target, values, info.fields)
