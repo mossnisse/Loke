@@ -326,6 +326,56 @@ record that stores one carries the borrow. An API chooses what it writes:
 suits `sort_by`, or `dyn proc` for one non-generic type and an indirect call.
 Neither names the captures.
 
+**Conversion.** A procedure or a capture literal converts to `dyn proc`
+implicitly where one is expected: at a parameter or a typed destination. A
+hand-written callable record converts explicitly, as any `dyn` view does.
+
+```odin
+visit(&tree, proc(node: ^Node) capture(&mut count) { count += 1; });   // implicit
+visit(&tree, print_node);                                              // implicit
+visit(&tree, (dyn proc(node: ^Node))(&by_depth));   // a named record: explicit
+```
+
+This is one more entry of a kind the
+[implicit conversions](design.md#implicit-type-conversions) already have:
+built-in, borrowing, chosen by the destination type alone, and checked.
+`[dynamic]T` to `[]T`, `string` to `string_view`, `box(T)` to `^T`, and a
+concrete value to `any_view` are the others. No import adds or changes it, so
+it is not the facility
+[User-defined implicit conversions](comments.md#user-defined-implicit-conversions)
+rejects. The rest follows from existing rules:
+
+- A temporary literal at an argument lives through the complete expression, so
+  passing one is fine. Stored straight into a `dyn proc` local, it dies at the
+  end of that declaration, and
+  [Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)
+  rejects the view; naming the literal first is the fix:
+
+  ```odin
+  f: dyn proc() = proc() capture(&mut n) { n += 1; };   // ERROR: borrows a temporary
+  bump := proc() capture(&mut n) { n += 1; };
+  f: dyn proc() = bump;                                 // borrows `bump`
+  ```
+
+- It ranks with the other built-in implicit conversions in
+  [overload resolution](design.md#operator-lookup-and-overload-resolution), so
+  an exact `proc` parameter or a generic `$C` member wins, and a `dyn proc`
+  member added to a group such as `sort_by` does not take over existing calls.
+- The signature matches exactly, parameter modes and result included, as
+  procedure types do.
+- `dyn mut proc` is not needed while `call` takes a plain `self`: a read-only
+  view writes through a `^mut` field it reaches, as a plain receiver does, so a
+  `dyn proc` covers `&mut` captures.
+
+**Why not explicit, as `dyn I` is.** Written out, the main use reads
+`visit(&tree, (dyn proc(node: ^Node))(&proc(node: ^Node) capture(&mut count) { ... }))`:
+the signature twice and the address of a temporary. The explicit `dyn I`
+conversion is kept because it does two things a reader should see: it chooses
+the capability, `&` or `&mut`, and it narrows a type with other members and
+roles to one interface. Neither applies here: `dyn proc` has one capability,
+and a procedure or capture literal has nothing but its call to hide. A named
+record can have other roles, so turning one into a callback stays written.
+
 **Why not make the literal a `proc` value.** The simplest answer gives a
 capture literal the type `proc(a, b: int) -> bool` itself. A procedure value is
 one code pointer with no room for captures, and making room costs every
@@ -348,8 +398,6 @@ was kept out on the same ground: procedure values stay thin.
 - The keyword: `capture(...)` or `use(...)`.
 - Whether an entry may be a path, `self.limit` or `a[i]`, or only a name and
   `name = expr`.
-- Whether a literal or procedure converts to `dyn proc` implicitly where one
-  is expected, such as at an argument; a `dyn I` conversion is explicit today.
 - The spelling `dyn proc(...)`, and whether a `dyn mut proc` is needed once an
   `inout` call exists.
 - Whether `slice.sort_by` and other callback APIs also accept a `dyn proc`.
