@@ -106,14 +106,95 @@ procedure through a library wrapper. Possible extensions remain exploratory:
   currently matches `proc(error: move E) -> $F`. Supporting records would need
   a way to derive the result from `call`, as an iterator derives `Iterator`
   from `iter`, and a rule for an overloaded `call`.
-- Would closure syntax usefully abbreviate that record and method? Written
-  captures, mutation, allocation, and escape rules need deciding together with
-  the two questions above. No closure syntax is committed.
+- Would closure syntax usefully abbreviate that record and method? The
+  proposed spelling is [a capture clause](#a-capture-clause-after-the-signature);
+  its open points need deciding together with the two questions above. No
+  closure syntax is committed.
 
 A callable that outlives its creation scope is a separate ownership question.
 `fmt.Writer` and `log.Logger` do not establish a need for one: a formatter lends
 its sink for the call, and a logger lends process-lifetime storage, both through
 [`dyn mut` views](comments.md#formatting-and-logging-sinks-are-dyn-views).
+
+### A capture clause after the signature
+
+**Proposal.** A procedure literal lists what it captures in a clause between
+its signature and its body, where a [`where` clause](design.md#where-clauses)
+goes:
+
+```odin
+less := proc(a, b: int) -> bool capture(limit) {
+    return (a < limit) && !(b < limit);
+};
+slice.sort_by(values, less);
+
+count := 0;
+bump := proc() capture(&mut count) { count += 1; };
+job := proc() capture(move(buffer)) { ... };
+per := proc(x: int) -> int capture(n = len(items)) { return x / n; };
+```
+
+Each entry reuses a spelling the language already has:
+
+- `limit` copies the place, as a record field initialization does
+  ([Value semantics and the ownership rule](design.md#value-semantics-and-the-ownership-rule)):
+  a managed value is cloned;
+- `move(buffer)` transfers the value and ends `buffer`;
+- `&mut count` binds `count` writably, as a `&mut` binding does in a `foreach`
+  header or a case. The body reads and writes `count` itself, and the callable
+  borrows it, so the callable cannot outlive it;
+- `n = len(items)` captures a computed value under a new name.
+
+The clause is evaluated once, left to right, where the literal is evaluated.
+The literal lowers to the record and `call` method written by hand today, with
+one field per entry in clause order. A literal without the clause still
+captures nothing and is an ordinary procedure value.
+
+**Why not declarations in the body.** The alternative leaves the signature
+unmarked and declares each capture as a statement, `capture limit;`, beside
+its use. It is rejected:
+
+- A body statement runs on every call, but a capture runs once, when the
+  literal is created. `capture move(buffer);` inside the body would end
+  `buffer` before the first call, which no other statement in a body does.
+- The captures decide what the value is: its size, whether it is copyable or
+  move-only, and whether it borrows and so cannot escape. Body declarations
+  hide that behind what reads as a thin `proc(a, b: int) -> bool`, so a
+  reader, and the escape check, must scan the body. That works against
+  [Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own).
+- A capture under an `if`, in a loop, or after an early `return` has no
+  meaning. Restricting captures to the start of the body makes them a header
+  written inside the braces, as Swift's `{ [weak self] in ... }` is.
+
+What the body form does better is keep a capture beside its use and leave
+`proc(...)` looking exactly as it does today.
+
+**Why not a list before the parameters.** The earlier sketch,
+`proc [limit] (a, b: int) -> bool`, puts state captured at creation ahead of
+what the procedure takes and returns, and gives `[...]` a new meaning after
+`proc`. The clause keeps the signature first and puts the captures where
+creation ends and the body begins.
+
+**Still open:**
+
+- The keyword: `capture(...)` or `use(...)`.
+- A read-only borrow. A bare `&name` binding is not a spelling any more, and
+  copying a large `[dynamic]T` only to read it wastes an allocation. Should a
+  plain `name` borrow when the callable cannot escape, as an ordinary parameter
+  borrows its argument? That makes the callable's type depend on how it is
+  used.
+- Whether an entry may be a path, `self.limit` or `a[i]`, or only a name and
+  `name = expr`.
+- Mutable by-value state: a literal that assigns to a copied capture needs a
+  `call` that takes `self` mutably, and APIs that accept such a callable.
+- Consuming calls: whether a callable holding a `move` capture may give it away
+  when called, and so be callable once.
+- The literal's type. Each literal is its own type, as a body-local type is, so
+  two identical literals do not share one; it reaches a generic parameter or a
+  `dyn` view, never a `proc` type. Whether that type can be named, or only
+  inferred.
+- Whether the last use of a local in the clause transfers, as an
+  initialization's does under [Last-use transfer](design.md#last-use-transfer).
 
 ## Owning runtime polymorphism
 
@@ -452,14 +533,9 @@ First unify the existing callable-record convention in library
 APIs. Then consider an explicit-capture procedure literal that lowers to that
 same record and method. Captures should say whether they copy, borrow, or move;
 escaping a borrowed capture must be checked, and creating a generic stack
-callable should not imply heap allocation. Example *proposed syntax*:
-
-```odin
-less := proc [limit] (a, b: int) -> bool {
-    return (a < limit) && !(b < limit);
-};
-slice.sort_by(values, less);
-```
+callable should not imply heap allocation. The proposed spelling is
+[a capture clause after the signature](#a-capture-clause-after-the-signature),
+`proc(a, b: int) -> bool capture(limit) { ... }`.
 
 Specify mutable/consuming captures and callable result inference before making
 this syntax normative. Owning runtime type erasure is a separate question;
