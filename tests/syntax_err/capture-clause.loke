@@ -1,0 +1,14 @@
+// grammar.md "Procedures": a capture clause names at least one capture, a
+// captured path is given a name, and a literal with a clause has a body.
+package main;
+
+main :: proc() {
+	limit := 1;
+	empty := proc() capture() { };
+	path := proc() -> int capture(self.limit) { return 0; };
+	nameless := proc() capture(&) { };
+	declared := proc() capture(limit) ---;
+	_ = limit;
+}
+
+sentinel :: proc() { }

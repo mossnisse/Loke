@@ -1052,6 +1052,9 @@ ends_with_brace :: proc(e: Expr) -> bool {
 		return true
 	case ^Expr_Proc:
 		return v.body != nil
+	case ^Expr_Composite:
+		// A capture literal ends with its body, as the procedure it lowers does.
+		return v.capture != nil && v.capture.procedure.body != nil
 	case ^Expr_Operator:
 		return ends_with_brace(v.value)
 	}
@@ -1989,6 +1992,9 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 	if _, ok := e.(^Expr_Proc); ok {
 		direct_type_is_expression = true
 	}
+	if literal, ok := e.(^Expr_Composite); ok && literal.capture != nil {
+		direct_type_is_expression = true
+	}
 
 	// Count the postfix AST spine against the recursion budget.
 	spine := 0
@@ -2290,6 +2296,9 @@ parse_argument_value :: proc(p: ^Parser) -> Expr {
 
 	candidate := parse_type(p)
 	_, proc_literal := candidate.(^Expr_Proc)
+	if literal, is_composite := candidate.(^Expr_Composite); is_composite && literal.capture != nil {
+		proc_literal = true
+	}
 	composite_literal := at(p, .Lbrace) && is_composite_type(candidate) && !p.no_composite
 	if !proc_literal && !composite_literal {
 		if _, proc_group := candidate.(^Expr_Proc_Group); proc_group && !expr_has_error(candidate) {
@@ -2821,6 +2830,14 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 	signature.result = result
 	signature.has_error = bad
 
+	// grammar.md "Procedure literals": `capture` is a keyword only here, before
+	// `(`, where nothing else can follow a complete signature.
+	capture: ^Capture_Literal
+	if is_contextual(p, "capture") && peek_token(p, 1).kind == .Lparen {
+		capture = parse_capture_clause(p)
+		bad = bad || capture == nil
+	}
+
 	where_clauses := parse_where_clause(p)
 
 	body: ^Block
@@ -2865,7 +2882,117 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 	for clause in where_clauses {
 		e.has_error = e.has_error || expr_has_error(clause)
 	}
-	return e
+	if capture == nil {
+		return e
+	}
+	if bodiless {
+		parse_error(p, capture.clause_span, "L0259", "a capture clause", "a procedure with a capture clause needs a body, not `---`")
+		e.has_error = true
+	}
+	// The literal with its captures is a value of a record checking declares.
+	capture.procedure = e
+	literal := new_expr(p, Expr_Composite, lo)
+	literal.capture = capture
+	literal.has_error = e.has_error
+	return literal
+}
+
+// `capture(limit, &cfg = self.config, &mut count, move(buffer))`. Each entry
+// is a mode, a name, and optionally `= value`; a written path needs the name.
+@(private = "file")
+parse_capture_clause :: proc(p: ^Parser) -> ^Capture_Literal {
+	start := advance(p) // `capture`
+	advance(p) // `(`
+	entries := make([dynamic]Capture_Entry, 0, 4, p.allocator)
+	bad := false
+	for !at(p, .Rparen) && !at(p, .EOF) {
+		entry, ok := parse_capture_entry(p)
+		if ok {
+			append(&entries, entry)
+		}
+		bad = bad || !ok
+		more, separated := next_element(p, .Rparen, !ok, "`,` or `)` after the capture")
+		bad = bad || !separated
+		if !more {
+			break
+		}
+	}
+	_, closed := expect(p, .Rparen, "L0259", "`)` to close the capture clause")
+	clause_span := span_to_here(p, start)
+	if len(entries) == 0 && !bad {
+		parse_error(p, clause_span, "L0259", "`capture()`", "a capture clause names at least one capture; a literal that captures nothing has no clause")
+		bad = true
+	}
+	if bad || !closed {
+		return nil
+	}
+	capture := new(Capture_Literal, p.allocator)
+	capture.entries = entries[:]
+	capture.clause_span = clause_span
+	return capture
+}
+
+@(private = "file")
+parse_capture_entry :: proc(p: ^Parser) -> (Capture_Entry, bool) {
+	start := current(p)
+	entry := Capture_Entry{mode = .Copy}
+	if at(p, .Move) && peek_token(p, 1).kind == .Lparen {
+		// `move(buffer)` names one local, which it ends.
+		advance(p)
+		advance(p)
+		name, ok := expect(p, .Ident, "L0259", "the local `move` captures")
+		if !ok {
+			return entry, false
+		}
+		entry.mode = .Move
+		entry.name = name_of(p, name)
+		value := new_expr(p, Expr_Ident, name.lo)
+		value.name, value.name_id = entry.name.text, entry.name.id
+		value.span = entry.name.span
+		entry.value = value
+		if _, closed := expect(p, .Rparen, "L0259", "`)` after the moved local"); !closed {
+			return entry, false
+		}
+		entry.span = span_to_here(p, start)
+		return entry, true
+	}
+	if allow(p, .Amp) {
+		entry.mode = allow(p, .Mut) ? .Borrow_Mut : .Borrow
+	}
+	at_name := p.index
+	name, ok := expect(p, .Ident, "L0259", "a capture name")
+	if !ok {
+		return entry, false
+	}
+	entry.name = name_of(p, name)
+	if allow(p, .Assign) {
+		entry.value = parse_expr(p)
+		entry.span = span_to_here(p, start)
+		return entry, !expr_has_error(entry.value)
+	}
+	// A path has no name of its own to give the capture.
+	#partial switch current(p).kind {
+	case .Period, .Lbracket, .Caret:
+		p.index = at_name
+		path := parse_postfix(p)
+		// `self.limit` suggests its last segment; `a[i]` has none to offer.
+		suggested := "name"
+		if selector, is_selector := path.(^Expr_Selector); is_selector {
+			suggested = selector.name.text
+		}
+		parse_error(
+			p, expr_span(path), "L0259", "a captured path",
+			"a captured path is named: write `%s = %s`",
+			suggested, p.c.sources[p.file].text[expr_span(path).lo:expr_span(path).hi],
+		)
+		return entry, false
+	}
+	value := new_expr(p, Expr_Ident, name.lo)
+	value.name, value.name_id = entry.name.text, entry.name.id
+	value.span = entry.name.span
+	entry.value = value
+	entry.span = span_to_here(p, start)
+	return entry, true
 }
 
 @(private = "file")

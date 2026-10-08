@@ -429,7 +429,10 @@ decode_rune_literal :: proc(text: string) -> (value: rune, ok: bool) {
 // value parameter share one immutability flag, so the construct the programmer
 // wrote has to be recovered here or the diagnostic calls all three a parameter.
 @(private = "file")
-immutable_name_reason :: proc(sym: ^Symbol) -> Immutable_Reason {
+immutable_name_reason :: proc(c: ^Compiler, sym: ^Symbol) -> Immutable_Reason {
+	if sym.kind == .Parameter && identifier_text(c, sym.name) == CAPTURE_RECEIVER {
+		return .Captured_Copy
+	}
 	switch sym.borrowed_binding {
 	case .Loop_Element:
 		return .Loop_Binding
@@ -477,6 +480,12 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident, callee: bool) {
 				"L0374",
 				"`%s` belongs to an enclosing procedure; a procedure literal cannot capture it",
 				v.name,
+			)
+			// design.md "Capture literals": a literal names what it captures.
+			add_notef(
+				k.c, v.span,
+				"capture it after the signature: `capture(%s)` copies it, `capture(&%s)` borrows it, and `capture(&mut %s)` lets the body write it",
+				v.name, v.name, v.name,
 			)
 			v.type = INVALID_TYPE
 			return
@@ -608,7 +617,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.type = sym.type
 		v.addressable = true
 		v.assignable = !sym.immutable
-		v.immutable = sym.immutable ? immutable_name_reason(sym) : .None
+		v.immutable = sym.immutable ? immutable_name_reason(k.c, sym) : .None
 
 	case .Field:
 		v.resolution = Resolution{kind = .Field, symbol = symbol_id}
@@ -2489,7 +2498,14 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	v.value_category = .Value
 	target := expected
-	if array, is_array := v.type_expr.(^Type_Array); is_array && array.inferred {
+	if v.capture != nil {
+		// design.md "Capture literals": a literal of the record it lowers to.
+		target = lower_capture_literal(k, v)
+		if target == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+	} else if array, is_array := v.type_expr.(^Type_Array); is_array && array.inferred {
 		// `[?]T` takes its length from the literal it types.
 		element := resolve_type_syntax(k, array.elem)
 		if element == INVALID_TYPE {
@@ -2548,7 +2564,17 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 
 	#partial switch info.kind {
 	case .Struct:
+		outer_capture := k.body.building_capture
+		if v.capture != nil {
+			k.body.building_capture = target
+		}
 		check_struct_literal(k, v, target, info)
+		k.body.building_capture = outer_capture
+		// A capture runs where the literal is evaluated: never folded.
+		if v.capture != nil {
+			v.is_const = false
+			v.const_value = {}
+		}
 	case .Array, .Simd:
 		// design.md "SIMD vectors": one element per lane, as for an array.
 		check_array_literal(k, v, target, info)
@@ -3198,6 +3224,14 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 			// Erasing a descriptor would materialise it at run time.
 			if offender := compile_time_only_component(k.c, base.type); offender != INVALID_TYPE {
 				report_compile_time_only(k, offender, base.span)
+			}
+			// design.md "Capture literals": a callable has no printed form.
+			if type_is_capture_record(k.c, base.type) {
+				errorf(
+					k.c, base.span, "L0310",
+					"`%s` is a capture literal, which has no printed form, so no `any_view` can view it",
+					type_name(k.c, base.type),
+				)
 			}
 			return false
 		}

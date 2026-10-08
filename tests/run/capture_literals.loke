@@ -1,0 +1,143 @@
+package main; import "core:fmt"; import "core:slice"; import "base:interfaces";
+
+// design.md "Capture literals": each mode, paths, nesting, loops, generic
+// instances, retention through `&mut`, and the lifecycle of what is captured.
+
+Config :: struct { limit: int, label: string }
+
+Sorter :: struct { config: Config, sorts: int }
+
+impl Sorter {
+	// A path of the receiver, borrowed under its own name, while another field
+	// stays writable.
+	sort :: proc(self: inout, values: []mut int) {
+		slice.sort_by(values, proc(a, b: int) -> bool capture(&cfg = self.config) {
+			return (a < cfg.limit) && !(b < cfg.limit);
+		});
+		self.sorts += 1;
+	}
+}
+
+// The drops print, so a lost or doubled drop shows.
+Token :: move_only struct { id: int }
+
+impl Token {
+	release :: hook(drop) proc(self: inout Token) { fmt.println("drop token", self.id); }
+}
+
+apply :: proc(value: int, f: $C) -> int where interfaces.Callable(C, proc(n: int) -> int) {
+	return f(value);
+}
+
+// Each instance lowers its own record.
+offset_all :: proc(values: []$T, by: T) -> [dynamic]T where interfaces.Numeric(T) {
+	out := [dynamic]T{};
+	add := proc(x: T) -> T capture(by) { return x + by; };
+	foreach (v in values) { out.append(add(v)); }
+	return out;
+}
+
+collect :: proc(@(escape=stored) nodes: []^int, f: $C) where interfaces.Callable(C, proc(@(escape=stored) node: ^int)) {
+	foreach (n in nodes) { f(n); }
+}
+
+copies_and_borrows :: proc() {
+	limit := 5;
+	less := proc(a, b: int) -> bool capture(limit) {
+		return (a < limit) && !(b < limit);
+	};
+	values := []mut int{9, 1, 7, 3};
+	slice.sort_by(values, less);
+	fmt.println(values[0], values[1], less(1, 9));
+
+	count := 0;
+	bump := proc() capture(&mut count) { count += 1; };
+	bump();
+	bump();
+	fmt.println(count);
+
+	compares := 0;
+	slice.sort_by(values, proc(a, b: int) -> bool capture(&mut compares) {
+		compares += 1;
+		return a < b;
+	});
+	fmt.println(values[0], compares > 0);
+
+	// A computed value and a borrowed path, each under its own name.
+	cfg := Config{3, "cfg"};
+	items := [dynamic]int{1, 2, 3, 4};
+	per := proc(x: int) -> int capture(n = items.len(), &c = cfg.limit) { return x / n + c; };
+	fmt.println(per(8));
+
+	// `&name` in the body is the captured place's address.
+	address := proc() -> bool capture(&limit) { p := &limit; return p^ == 5; };
+	fmt.println(address());
+}
+
+managed :: proc() {
+	// A copy clones, so the original stays usable; a last use transfers.
+	words := [dynamic]string{"a", "b"};
+	greeting := "hello";
+	count_words := proc() -> int capture(words = words.clone()) { return words.len(); };
+	greet := proc() -> int capture(greeting) { return greeting.len(); };
+	words.append("c");
+	fmt.println(count_words(), words.len(), greet());
+
+	// A moved move-only value drops once, with the callable.
+	token := Token{7};
+	read := proc() -> int capture(move(token)) { return token.id; };
+	fmt.println(read());
+
+	name := "owned";
+	shout := proc() -> int capture(move(name)) { return name.len(); };
+	fmt.println(shout());
+}
+
+main :: proc() {
+	copies_and_borrows();
+	managed();
+
+	s := Sorter{Config{5, "five"}, 0};
+	values := []mut int{9, 1, 7, 3};
+	s.sort(values);
+	fmt.println(values[0], values[1], s.sorts);
+
+	// A literal inside a literal captures the outer one's captures.
+	base := 10;
+	outer := proc(x: int) -> int capture(base) {
+		inner := proc(y: int) -> int capture(base) { return y + base; };
+		return inner(x) * 2;
+	};
+	fmt.println(outer(1));
+
+	// A fresh record each iteration.
+	total := 0;
+	foreach (i in 0 ..< 3) {
+		f := proc(n: int) -> int capture(i) { return n + i; };
+		total += apply(total, f);
+	}
+	fmt.println(total);
+
+	ints := offset_all([]int{1, 2}, 10);
+	floats := offset_all([]f64{0.5}, 1.0);
+	fmt.println(ints[0], ints[1], floats[0]);
+
+	// Storing an argument needs `@(escape=stored)`, as any `^mut` destination does.
+	a := 1;
+	b := 2;
+	nodes := [2]^int{&a, &b};
+	found := [dynamic]^int{};
+	collect(nodes[:], proc(@(escape=stored) node: ^int) capture(&mut found) { found.append(node); });
+	fmt.println(found.len(), found[1]^);
+
+	// Named in the same body, it satisfies `Callable` with its `Result`.
+	offset := 3;
+	add := proc(n: int) -> int capture(offset) { return n + offset; };
+	Add :: type_of(add);
+	static_assert(interfaces.Callable(Add, proc(n: int) -> int));
+	static_assert(Add.Result == int);
+	fmt.println(apply(4, add));
+
+	// Called where it is written, as a procedure literal can be.
+	fmt.println(proc(n: int) -> int capture(offset) { return n * offset; }(5));
+}

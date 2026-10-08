@@ -373,6 +373,39 @@ Expr_Composite :: struct {
 	backing:    Type_Id,
 	// The destination's `via` a container literal constructs with, or nil.
 	via:        Expr,
+	// A procedure literal with a capture clause, which checking lowers to this
+	// literal of a body-local record whose `call` is the procedure (design.md
+	// "Capture literals"). `type_expr` and `elements` are then the checker's.
+	capture:    ^Capture_Literal,
+}
+
+// How a capture entry takes its place: `x`, `&x`, `&mut x`, or `move(x)`.
+Capture_Mode :: enum {
+	Copy,
+	Borrow,
+	Borrow_Mut,
+	Move,
+}
+
+// One `capture(...)` entry. `value` is what is captured, written after `=` or
+// the entry's own name; the mode's `&`, `&mut`, or `move` is not part of it.
+Capture_Entry :: struct {
+	span:  Span,
+	mode:  Capture_Mode,
+	name:  Name,
+	value: Expr,
+}
+
+Capture_Literal :: struct {
+	// The literal as written, minus the clause. It is never checked itself:
+	// its body becomes the record's `call`.
+	procedure:   ^Expr_Proc,
+	entries:     []Capture_Entry,
+	clause_span: Span,
+	// The record checking lowered it to, and its checked `call` method's
+	// literal, for queries over the body.
+	record:      Type_Id,
+	method:      ^Expr_Proc,
 }
 
 // `^T` is a read-only borrow, `^mut T` a mutable one.

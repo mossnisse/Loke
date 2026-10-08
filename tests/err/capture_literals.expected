@@ -1,0 +1,42 @@
+L0716
+@6:25
+a capture literal belongs in a procedure body, whose locals it captures
+L0374
+@13:46
+`capture(self)` copies it
+L0374
+@20:30
+capture it after the signature: `capture(limit)` copies it, `capture(&limit)` borrows it, and `capture(&mut limit)` lets the body write it
+L0511
+@27:2
+this write of `limit` is not compatible with the read-only pointer of it that is still in use
+L0358
+@34:31
+this capture is the literal's own copy and cannot be an assignment destination
+L0500
+@43:9
+`name` cannot be used here: it has already been moved
+L0716
+@48:26
+a capture literal is a runtime value, so it is declared with `:=`, not `::`
+L0716
+@50:41
+`limit` is already captured by this literal
+L0716
+@52:16
+`limit` is both a parameter and a capture of this literal; rename one
+L0716
+@54:37
+a capture literal is called through a `call` method, which has no `"c"` calling convention
+L0471
+@63:6
+`limit` is a capture of `proc(a: int) -> bool capture(limit)`, which only the literal's body reads
+L0355
+@64:11
+`proc(a: int) -> bool capture(limit)` is not comparable
+L0310
+@65:14
+is a capture literal, which has no printed form, so no `any_view` can view it
+L0341
+@74:11
+a capture literal has no compile-time value

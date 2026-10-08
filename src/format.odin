@@ -44,7 +44,9 @@ ensure_format_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 }
 
 type_is_printable :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	return type != INVALID_TYPE && type_is_supported(c, type) && !type_is_compile_time_only(c, type)
+	// design.md "Capture literals": a callable has no printed form.
+	return type != INVALID_TYPE && type_is_supported(c, type) && !type_is_compile_time_only(c, type) &&
+		!type_is_capture_record(c, type)
 }
 
 // Whether a type declares its own `format`, as `formatter_of` would find it.

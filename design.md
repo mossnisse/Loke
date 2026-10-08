@@ -2155,7 +2155,7 @@ sort_pending :: proc(values: []mut int, limit: int) {
 }
 ```
 
-A body-local type is nominal like any other: two bodies declaring the same name declare two types, and each carries its own members. The record's fields are the capture, written by hand — a procedure literal still captures nothing, so the state a callback needs is the state its record holds.
+A body-local type is nominal like any other: two bodies declaring the same name declare two types, and each carries its own members. The record's fields are the capture, written by hand. A [capture literal](#capture-literals) declares the same record and `call` from a clause, and the hand-written form remains for a receiver other than a plain `self`.
 
 The subject must be declared in the same body. An `impl` on any other type would be a caller-local extension, which definition-site lookup exists to rule out. A body-local block names one concrete type, so a generic `impl` belongs at file scope.
 
@@ -4354,7 +4354,80 @@ fibonacci :: proc(n: int) -> int {
 fmt.println(fibonacci(3)); // 2
 ```
 
-**Procedure literals do not capture local state.** They may refer to constants, types, and file-scope declarations, but not local variables or parameters of an enclosing procedure. Pass callback state explicitly: as a typed parameter, or as a record whose method is the callback, taken as a [borrowed `dyn` view](#borrowed-dynamic-interface-values) as `fmt.Writer` is.
+**A procedure literal captures only what it names.** It may refer to constants, types, and file-scope declarations. A local variable or parameter of an enclosing procedure is reachable only through a [capture clause](#capture-literals); without one, naming it is an error.
+
+### Capture literals
+
+A procedure literal may list what it captures in a clause between its signature and its body:
+
+```odin
+limit := 5;
+less := proc(a, b: int) -> bool capture(limit) {
+	return (a < limit) && !(b < limit);
+};
+slice.sort_by(values, less);
+
+count := 0;
+bump := proc() capture(&mut count) { count += 1; };
+bump();   // count == 1
+```
+
+Each entry is a mode, a name, and optionally `= value`. The short forms capture the local of the same name:
+
+| Entry | Captures | In the body, the name is |
+| --- | --- | --- |
+| `limit` | a copy of `limit` | the copy |
+| `&limit` | a read-only borrow of `limit` | `limit` itself, read-only |
+| `&mut count` | a writable borrow of `count` | `count` itself, writable |
+| `move(buffer)` | `buffer`'s value, ending `buffer` | the owned value |
+| `n = items.len()` | a copy of any value | the copy |
+| `&cfg = self.config` | a read-only borrow of any place | that place |
+| `&mut slot = a[i]` | a writable borrow of any place | that place |
+
+- A copy is taken as a binding takes one: a managed value is cloned, unless this is the place's last use, which transfers it as [Last-use transfer](#last-use-transfer) describes.
+- A borrow's value must be a place, as `&` requires. `move(name)` names a local and ends it, as `move` does.
+- A captured path is named: `capture(self.limit)` is an error, written `limit = self.limit`.
+- The values are evaluated once, left to right, where the literal is evaluated, so `a[i]` uses `i` as it was then.
+- A name is captured once, and no capture shares a name with a parameter.
+- In the body, a borrowed capture is read as the place, with no `^`, and `&name` is that place's address.
+- The body may read every capture and write through a `&mut` one. It may not assign a copied capture or move one out; capturing the local with `&mut` writes the local instead.
+
+**Its type.** The literal is a value of a record: the type a programmer would declare in the body, with one field per capture in clause order and a `call` method that takes a plain `self` and the literal's parameters and returns its result. Each literal is its own type, and in a generic procedure each instance's is its own, as for any [body-local type](#methods-and-implementation-blocks). The value is [called](#calling-a-value) like a procedure, and a generic API takes it through [`interfaces.Callable`](#standard-interface-catalogue):
+
+```odin
+apply :: proc(value: int, f: $C) -> int where interfaces.Callable(C, proc(n: int) -> int) {
+	return f(value);
+}
+
+offset := 3;
+add := proc(n: int) -> int capture(offset) { return n + offset; };
+apply(4, add);           // 7
+Add :: type_of(add);     // names it in the same body
+```
+
+No signature can name it, so it cannot be returned or held in a file-scope type. Whether it is copyable follows its fields, so a `move` capture of a move-only value makes a move-only callable. Its captures are not fields anything else can select or reflect on, and it has no `==` and no printed form, so no `any_view` can view it.
+
+**Borrows.** A literal with a borrowed capture carries that borrow and is checked as a record holding a `^T` or `^mut T` is ([Values that contain borrows](#values-that-contain-borrows)): it cannot outlive the captured root, and the root may not be written, moved, or dropped while the literal is live.
+
+```odin
+less := proc(a, b: int) -> bool capture(&limit) { return a < limit && b < limit; };
+limit += 1;   // ERROR: `limit` is borrowed by `less`, which is used below
+slice.sort_by(values, less);
+```
+
+A `&mut` capture is storage reached through a `^mut` the call received, so storing an argument's borrow in it needs `@(escape=stored)` on that parameter, as for any destination under [Retaining a borrow](#retaining-a-borrow):
+
+```odin
+collect :: proc(@(escape=stored) nodes: []^Node, f: $C)
+	where interfaces.Callable(C, proc(@(escape=stored) node: ^Node)) {
+	foreach (node in nodes) { f(node); }
+}
+
+found: [dynamic]^Node;
+collect(nodes, proc(@(escape=stored) node: ^Node) capture(&mut found) { found.append(node); });
+```
+
+A capture literal is a runtime value. It is declared with `:=`, never `::`; it appears only in a procedure body; it has no calling convention; and compile-time evaluation rejects it. A literal without a clause captures nothing and is an ordinary procedure value.
 
 ### Parameters
 

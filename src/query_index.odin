@@ -177,6 +177,10 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 			} else { index_query_expr(index, element.key) }
 			index_query_expr(index, element.value)
 		}
+		// A capture literal's body is checked as its record's `call`.
+		if v.capture != nil && v.capture.method != nil {
+			index_query_expr(index, v.capture.method)
+		}
 	case ^Expr_Proc:
 		index_query_expr(index, v.signature)
 		for clause in v.where_clauses { index_query_expr(index, clause) }

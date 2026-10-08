@@ -1,0 +1,86 @@
+package main; import "core:fmt"; import "core:slice";
+
+// design.md "Capture literals": what a capture literal may not do.
+
+// Outside a body there is nothing to capture.
+global := proc() -> int capture(n = 1) { return n; };
+
+Holder :: struct { limit: int }
+
+impl Holder {
+	// An enclosing method's `self` is captured only if the clause says so.
+	uncaptured_self :: proc(self) -> int {
+		f := proc() -> int capture(n = 1) { return self.limit + n; };
+		return f();
+	}
+}
+
+uncaptured :: proc() -> int {
+	limit := 3;
+	f := proc() -> int { return limit; };
+	return f();
+}
+
+borrowed_then_written :: proc() {
+	limit := 5;
+	less := proc(a, b: int) -> bool capture(&limit) { return a < limit && b < limit; };
+	limit += 1;
+	values := []mut int{3, 1};
+	slice.sort_by(values, less);
+}
+
+assigns_copy :: proc() -> int {
+	total := 0;
+	f := proc() capture(total) { total += 1; };
+	f();
+	return total;
+}
+
+moved_then_used :: proc() -> int {
+	name := "owned";
+	f := proc() -> int capture(move(name)) { return name.len(); };
+	_ = f();
+	return name.len();
+}
+
+shapes :: proc() {
+	limit := 3;
+	helper :: proc() -> int capture(limit) { return limit; }
+	_ = helper();
+	twice := proc() -> int capture(limit, &limit) { return limit; };
+	_ = twice();
+	param := proc(limit: int) -> int capture(limit) { return limit; };
+	_ = param(1);
+	foreign_call := proc "c" () -> int capture(limit) { return limit; };
+	_ = foreign_call();
+}
+
+// Its captures are its body's, and a callable is neither compared nor printed.
+opaque :: proc() {
+	limit := 5;
+	less := proc(a: int) -> bool capture(limit) { return a < limit; };
+	other := less;
+	_ = less.limit;
+	_ = less == other;
+	fmt.println(less);
+}
+
+// A capture runs when the literal is evaluated, which compile time cannot do.
+folded :: proc() -> int {
+	f := proc() -> int capture(n = 2) { return n; };
+	return f();
+}
+
+FOLDED :: folded();
+
+main :: proc() {
+	h := Holder{1};
+	_ = h.uncaptured_self();
+	_ = uncaptured();
+	borrowed_then_written();
+	_ = assigns_copy();
+	_ = moved_then_used();
+	shapes();
+	opaque();
+	_ = global();
+}

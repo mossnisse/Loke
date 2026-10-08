@@ -41,6 +41,9 @@ Checker :: struct {
 Body_Context :: struct {
 	// The procedure being checked, and so the frame a name may come from.
 	proc_literal:      ^Expr_Proc,
+	// The capture record whose literal is being checked, which alone may
+	// initialise its fields (design.md "Capture literals").
+	building_capture:  Type_Id,
 	// design.md "One result": at most one result. INVALID_TYPE means the
 	// procedure has none.
 	result_type:       Type_Id,
@@ -2625,6 +2628,35 @@ hoist_body_local_proc :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
+// The package phases, in the same order, for a declaration in a body: one
+// written there, or a capture literal's record.
+check_local_declaration :: proc(k: ^Checker, d: ^Decl) {
+	// design.md "Capture literals": a capture runs where the literal is
+	// evaluated, so a capture literal is a runtime value, never a constant.
+	if d.kind == .Const {
+		for value in d.values {
+			if literal, is_composite := value.(^Expr_Composite); is_composite && literal.capture != nil {
+				errorf(
+					k.c, literal.capture.clause_span, "L0716",
+					"a capture literal is a runtime value, so it is declared with `:=`, not `::`",
+				)
+				// Checked as the `:=` it should be, so its uses report nothing more.
+				d.kind = .Var
+				break
+			}
+		}
+	}
+	declare_all(k, d)
+	install_symbols(k.scope, k.c, d.symbols)
+	create_nominal_type_shell(k, d)
+	resolve_declaration_signature(k, d)
+	hoist_body_local_proc(k, d)
+	// Local symbols do not exist during the package-wide attribute pass.
+	validate_decl_attributes(k, d, .Local)
+	check_decl(k, d)
+	classify_declaration_copies(k, d)
+}
+
 check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	#partial switch _ in stmt {
 	case ^Decl, ^Item_Impl:
@@ -2642,16 +2674,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		return FLOWS
 
 	case ^Decl:
-		declare_all(k, s)
-		install_symbols(k.scope, k.c, s.symbols)
-		// The package phases, in the same order, for a local declaration.
-		create_nominal_type_shell(k, s)
-		resolve_declaration_signature(k, s)
-		hoist_body_local_proc(k, s)
-		// Local symbols do not exist during the package-wide attribute pass.
-		validate_decl_attributes(k, s, .Local)
-		check_decl(k, s)
-		classify_declaration_copies(k, s)
+		check_local_declaration(k, s)
 		return FLOWS
 
 	case ^Stmt_Expr:
@@ -3359,6 +3382,12 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 		)
 	case .Read_Only_Name:
 		errorf(k.c, base.span, "L0358", "this name is read-only and cannot be %s", what)
+	case .Captured_Copy:
+		errorf(
+			k.c, base.span, "L0358",
+			"this capture is the literal's own copy and cannot be %s; capture the local with `&mut` to write it, or write the record and a `self: inout` `call` by hand",
+			what,
+		)
 	case .Temporary:
 		errorf(k.c, base.span, "L0359", "a temporary value cannot be %s", what)
 	case .Discard:

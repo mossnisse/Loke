@@ -91,6 +91,11 @@ Compiler :: struct {
 	// checking ends (`release_held_diagnostics`).
 	held_diagnostics: [dynamic]Diagnostic,
 
+	// While a capture literal's body is cloned into its record's `call`: the
+	// captured names, which the clone rewrites to the receiver's fields
+	// (`ast_clone.odin`). Nil for every other clone.
+	capture_rewrite: ^Capture_Rewrite,
+
 	// Hypothetical checks (overload bounds and interface requirements) may use
 	// the ordinary checker, but must not enroll backend artifacts in the final
 	// module. Nested checks share this counter so every registry has one gate.
@@ -180,6 +185,9 @@ Compiler :: struct {
 	view_types:         map[View_Key]Type_Id,
 	adapter_members:    map[Adapter_Key]Symbol_Id,
 	item_states:        map[Item_Key]Item_State,
+	// design.md "Capture literals": the records capture literals lower to,
+	// each with its `call`'s literal, the one body that reads its fields.
+	capture_records:    map[Type_Id]^Expr_Proc,
 	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,

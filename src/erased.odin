@@ -112,8 +112,9 @@ any_view_accepts :: proc(c: ^Compiler, from: Type_Id) -> bool {
 	}
 	// design.md "Zero values": a `type` or descriptor exists only while
 	// compiling, so there is nothing at run time for a view to point at.
+	// design.md "Capture literals": a callable has no printed form to view.
 	return type_is_supported(c, from) && !type_mentions_any_view(c, from) &&
-	       compile_time_only_component(c, from) == INVALID_TYPE
+	       compile_time_only_component(c, from) == INVALID_TYPE && !type_is_capture_record(c, from)
 }
 
 // The concrete type an `any_view` is being made from, once untyped constants

@@ -1,0 +1,12 @@
+L0259
+@7:18
+a capture clause names at least one capture
+L0259
+@8:32
+a captured path is named: write `limit = self.limit`
+L0259
+@9:30
+expected a capture name
+L0259
+@10:21
+a procedure with a capture clause needs a body, not `---`

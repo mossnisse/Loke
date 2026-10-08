@@ -83,13 +83,82 @@ clone_arguments :: proc(c: ^Compiler, list: []Argument) -> []Argument {
 clone_elements :: proc(c: ^Compiler, list: []Element) -> []Element {
 	out := clone_slice(c, list)
 	for entry, index in list {
+		// A bare name before `=` is a field, never a capture.
+		key: Expr
+		if _, is_name := entry.key.(^Expr_Ident); is_name {
+			saved := c.capture_rewrite
+			c.capture_rewrite = nil
+			key = clone_expr(c, entry.key)
+			c.capture_rewrite = saved
+		} else {
+			key = clone_expr(c, entry.key)
+		}
 		out[index] = Element {
 			span  = entry.span,
-			key   = clone_expr(c, entry.key),
+			key   = key,
 			value = clone_expr(c, entry.value),
 		}
 	}
 	return out
+}
+
+// design.md "Capture literals": in the body a captured name is the place it
+// captured, the receiver's field for a copy or a move and what the field
+// points at for a borrow.
+Capture_Rewrite :: struct {
+	receiver: Identifier_Id,
+	modes:    map[Identifier_Id]Capture_Mode,
+}
+
+@(private = "file")
+rewrite_capture :: proc(c: ^Compiler, v: ^Expr_Ident) -> Expr {
+	id := v.name_id != INVALID_IDENTIFIER ? v.name_id : intern_identifier(c, v.name)
+	mode, captured := c.capture_rewrite.modes[id]
+	if !captured {
+		return nil
+	}
+	receiver := new(Expr_Ident, c.semantic_allocator)
+	receiver.span = v.span
+	receiver.name, receiver.name_id = "self", c.capture_rewrite.receiver
+	field := new(Expr_Selector, c.semantic_allocator)
+	field.span = v.span
+	field.operand = receiver
+	field.name = Name{text = v.name, span = v.span, id = id}
+	if mode == .Copy || mode == .Move {
+		return field
+	}
+	place := new(Expr_Postfix, c.semantic_allocator)
+	place.span = v.span
+	place.op, place.op_span = .Caret, v.span
+	place.operand = field
+	return place
+}
+
+// A nested literal's body is its own: it captures nothing from this one
+// unless its clause names it, and that clause is rewritten here.
+@(private = "file")
+clone_nested_procedure :: proc(c: ^Compiler, v: ^Expr_Proc) -> ^Expr_Proc {
+	saved := c.capture_rewrite
+	c.capture_rewrite = nil
+	defer c.capture_rewrite = saved
+	return clone_expr(c, v).(^Expr_Proc)
+}
+
+@(private = "file")
+clone_capture :: proc(c: ^Compiler, v: ^Capture_Literal) -> ^Capture_Literal {
+	n := new(Capture_Literal, c.semantic_allocator)
+	n.procedure = clone_nested_procedure(c, v.procedure)
+	n.clause_span = v.clause_span
+	n.entries = clone_slice(c, v.entries)
+	for entry, index in v.entries {
+		n.entries[index] = Capture_Entry {
+			span  = entry.span,
+			mode  = entry.mode,
+			name  = entry.name,
+			value = clone_expr(c, entry.value),
+		}
+	}
+	return n
 }
 
 @(private = "file")
@@ -220,6 +289,11 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		return n
 
 	case ^Expr_Ident:
+		if c.capture_rewrite != nil {
+			if rewritten := rewrite_capture(c, v); rewritten != nil {
+				return rewritten
+			}
+		}
 		n := new_clone(c, Expr_Ident, &v.base)
 		n.name, n.name_id = v.name, v.name_id
 		return n
@@ -304,11 +378,19 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 
 	case ^Expr_Composite:
 		n := new_clone(c, Expr_Composite, &v.base)
+		if v.capture != nil {
+			// Its type and elements are what checking lowered it to.
+			n.capture = clone_capture(c, v.capture)
+			return n
+		}
 		n.type_expr = clone_expr(c, v.type_expr)
 		n.elements = clone_elements(c, v.elements)
 		return n
 
 	case ^Expr_Proc:
+		if c.capture_rewrite != nil {
+			return clone_nested_procedure(c, v)
+		}
 		n := new_clone(c, Expr_Proc, &v.base)
 		if v.signature != nil {
 			n.signature = clone_expr(c, v.signature).(^Type_Proc)

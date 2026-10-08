@@ -510,6 +510,25 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Expr_Composite:
+		if node.capture != nil {
+			// `(capture (copy limit limit) (borrow cfg self.config) (proc ...))`
+			fmt.sbprint(b, "(capture")
+			for entry in node.capture.entries {
+				mode := "copy"
+				switch entry.mode {
+				case .Copy:
+				case .Borrow:     mode = "borrow"
+				case .Borrow_Mut: mode = "borrow-mut"
+				case .Move:       mode = "move"
+				}
+				fmt.sbprintf(b, " (%s %s", mode, entry.name.text)
+				dump_child(b, entry.value, depth)
+				fmt.sbprint(b, ")")
+			}
+			dump_child(b, node.capture.procedure, depth)
+			fmt.sbprint(b, ")")
+			return
+		}
 		fmt.sbprint(b, "(composite")
 		dump_child(b, node.type_expr, depth)
 		for element in node.elements {

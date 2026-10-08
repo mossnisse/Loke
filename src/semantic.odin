@@ -333,6 +333,9 @@ Immutable_Reason :: enum {
 	Loop_Binding,
 	// A `switch` binding over a payload the subject still owns.
 	Payload_Binding,
+	// A capture literal's copied or moved capture, a field of its `call`'s
+	// plain receiver (design.md "Capture literals").
+	Captured_Copy,
 	// Any other immutable name, such as an interface requirement binding. These
 	// share one flag with a value parameter, so the reason is what keeps the
 	// diagnostic from calling every one of them a parameter.
@@ -807,6 +810,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.view_types = make(map[View_Key]Type_Id, c.semantic_allocator)
 	c.adapter_members = make(map[Adapter_Key]Symbol_Id, c.semantic_allocator)
 	c.item_states = make(map[Item_Key]Item_State, c.semantic_allocator)
+	c.capture_records = make(map[Type_Id]^Expr_Proc, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
@@ -1648,6 +1652,10 @@ type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> 
 	case .Array:
 		return type_is_comparable_walk(c, info.element, seen)
 	case .Struct:
+		// design.md "Capture literals": a callable is called, not compared.
+		if type_is_capture_record(c, under) {
+			return false
+		}
 		for field in info.fields {
 			symbol := symbol_of(c, field)
 			if symbol == nil || !type_is_comparable_walk(c, symbol.type, seen) {

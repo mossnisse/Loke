@@ -1,0 +1,13 @@
+// grammar.md "Procedures": `capture` is a keyword only directly after a
+// procedure signature and before `(`. Elsewhere it is an ordinary name: a
+// procedure, a variable, and a call of it.
+package main;
+
+capture :: proc(n: int) -> int { return n; }
+
+main :: proc() {
+	limit := capture(1);
+	capture_count := 0;
+	less := proc(a: int) -> bool capture(limit, &mut capture_count, n = capture(2)) { return a < limit; };
+	typed: proc(a: int) -> bool;
+}

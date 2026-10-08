@@ -72,6 +72,7 @@ Contextual keywords, reserved only in the positions given:
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `using` | before a promoted struct field |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
+| `capture` | directly after a procedure signature, followed by `(` |
 | `convert`, `copy`, `drop` | as the role inside `hook(...)` |
 
 `nil`, `true`, and `false` are predeclared identifiers, not keywords, but they
@@ -377,10 +378,14 @@ rules — see [design.md](design.md#dyn-compatibility).
 # Procedures
 
 ```
-Proc_Header  = "proc" Calling_Convention? Signature Where_Clause?
+Proc_Header  = "proc" Calling_Convention? Signature Capture_Clause? Where_Clause?
 Proc_Literal = Proc_Definition | Proc_Declaration
 Proc_Definition = Proc_Header Block
 Proc_Declaration= Proc_Header "---"
+
+Capture_Clause = "capture" "(" Capture_Entry ("," Capture_Entry)* ","? ")"
+Capture_Entry  = "move" "(" Identifier ")"
+               | ("&" "mut"?)? Identifier ("=" Expression)?
 
 Proc_Group   = "proc" "{" Identifier ("," Identifier)* ","? "}"
 
@@ -714,6 +719,11 @@ The productions above use the following deterministic parsing rules:
   `self: ^`; followed by anything else it starts a pointer type.
 - At the start of an `impl` member, `delegate` is the contextual keyword only
   when followed by `(`; otherwise it is an ordinary identifier.
+- After a procedure signature, `capture` followed by `(` begins a
+  `Capture_Clause`, since a complete signature is otherwise followed only by
+  `where`, `{`, or `---`. A header with a clause is a `Proc_Definition`, never a
+  `Proc_Declaration`. A captured path is named, `limit = self.limit`: an entry
+  whose identifier is followed by `.`, `[`, or `^` is an error.
 - `via` in a declaration consumes one unary expression, so that
   `b: [dynamic]u8 via arena.allocator() = ...;` needs no backtracking. A larger
   allocator expression is parenthesised.

@@ -448,6 +448,17 @@ checklist.
 
 ### Added
 
+- Capture literals (design.md "Capture literals"): a procedure literal lists
+  what it captures after its signature, as in `proc(a, b: int) -> bool
+  capture(limit, &cfg = self.config, &mut count, move(buffer)) { ... }`. A
+  plain name copies, `&` and `&mut` borrow, `move(name)` transfers, and
+  `name = value` captures any value or, after `&`, any place. The literal is a
+  value of a body-local record whose `call` is its body, so it is called as
+  `f(args)`, passes to anything `interfaces.Callable`, and its borrows are
+  checked as a record's are. `capture` is a keyword only in that position.
+  Naming an enclosing local without capturing it is still `L0374`, now with a
+  note offering the three modes; the clause's own rules are `L0259` and
+  `L0716`.
 - A value whose type has a `call` method is called like a procedure:
   `x(args)` is `x.call(args)` (design.md "Calling a value"). A field named
   `call` does not count, and calling such a record is `L0320` with a note

@@ -468,10 +468,121 @@ A record with a `call` method is the callable convention: `x(args)` calls it, an
 naming the result `C.Result`. A built-in rule rather than a written interface
 decides it, because a signature's parameter list is not a requirement an
 interface body can spell, and one rule keeps a procedure and a record
-interchangeable without a pair of overloads per callback API. Closure syntax
-and a `dyn proc` view are
-[proposals](open-questions.md#callable-records-procedures-and-closures), not
-yet part of the language.
+interchangeable without a pair of overloads per callback API. A
+[capture literal](#capture-literals) declares such a record from a clause. A
+`dyn proc` view is a
+[proposal](open-questions.md#a-borrowed-callable-view-dyn-proc), not yet part
+of the language.
+
+### Capture literals
+
+A [capture literal](design.md#capture-literals) is the record and `call` method
+a programmer writes by hand, declared from a clause. The checker lowers it to
+exactly that, a body-local record, its `call`, and a composite literal of it,
+so ownership, borrowing, and emission see only ordinary code.
+
+**Why not declarations in the body.** The alternative leaves the signature
+unmarked and declares each capture as a statement, `capture limit;`, beside
+its use. It is rejected:
+
+- A body statement runs on every call, but a capture runs once, when the
+  literal is created. `capture move(buffer);` inside the body would end
+  `buffer` before the first call, which no other statement in a body does.
+- The captures decide what the value is: its size, whether it is copyable or
+  move-only, and whether it borrows and so cannot escape. Body declarations
+  hide that behind what reads as a thin `proc(a, b: int) -> bool`, so a
+  reader, and the escape check, must scan the body. That works against
+  [Public borrow contracts should stand on their own](open-questions.md#public-borrow-contracts-should-stand-on-their-own).
+- A capture under an `if`, in a loop, or after an early `return` has no
+  meaning. Restricting captures to the start of the body makes them a header
+  written inside the braces, as Swift's `{ [weak self] in ... }` is.
+
+What the body form does better is keep a capture beside its use and leave
+`proc(...)` looking exactly as it does today.
+
+**Why not a list before the parameters.** The earlier sketch,
+`proc [limit] (a, b: int) -> bool`, puts state captured at creation ahead of
+what the procedure takes and returns, and gives `[...]` a new meaning after
+`proc`. The clause keeps the signature first and puts the captures where
+creation ends and the body begins.
+
+**Why a plain name copies.** The alternative makes an unmarked capture
+borrow, as an ordinary parameter borrows its argument, so the default never
+allocates. It is rejected:
+
+- Sharing is written in Loke. A variable holds a value, and a pointer, slice,
+  or view is the written opt-out; a capture is a binding, and a binding of a
+  place clones. An unmarked borrowing capture would be the one binding that
+  shares silently.
+- A parameter borrows because, for one call, a borrow cannot be told from a
+  copy. A callable outlives the expression that made it, so the difference
+  shows: a borrow rejects `limit += 1` while the callable is live where a copy
+  keeps the old value, and a borrowing callable cannot be returned or stored
+  past `limit`. That should be chosen, not met.
+- Borrowing only when the callable cannot escape makes its size, and whether
+  it carries a borrow, depend on its uses, the objection that rules out
+  declarations in the body.
+
+The cost is a silent clone when `capture(table)` names a map that is read
+again later. That is the cost `saved := table` already has; last-use transfer
+removes it when `table` is not read again, and
+[copy-cost diagnostics](design.md#copy-cost-diagnostics) can report the rest.
+
+`&name` stays an error as a `foreach` or case leaf. There the traversal's
+[yield mode](design.md#yield-modes) decides between owning and borrowing, and
+an unmarked leaf already borrows; a bare `&` was removed there because it bound
+a writable place. A capture has no yield mode to defer to, so it states the
+mode itself, and `&limit` is read-only as `&place` is.
+
+**The keyword.** `capture` is a contextual keyword, reserved only directly
+after a procedure literal's signature and followed by `(`. There a name and
+`(` can begin nothing else, since a complete signature is otherwise followed
+only by `where` or `{`. It names what happens and matches the word the
+diagnostics and documentation use. `use` was rejected: it sits beside `using`,
+reads as an import to a Rust reader, and is a common name (a test declares
+`use :: proc`). Reserving `capture` everywhere was rejected for the reason
+[Keywords reserved in every position](open-questions.md#keywords-reserved-in-every-position)
+gives: it is a plausible name, for a regex group or captured output.
+
+**Why `call` takes a plain `self`.** A plain `self` is the mode the most APIs
+accept. Receiver modes must match an interface slot exactly, except that a
+plain `self` also meets a `self: ^` slot
+([Receiver forms](design.md#receiver-forms)), and `interfaces.Callable` asks
+for a plain `self`. A literal with an `inout` or `move` `call` would be
+rejected by every callback API in the standard library. What it gives up is
+[open](open-questions.md#what-a-capture-literals-call-cannot-do).
+
+**Why not infer the receiver.** Rust infers `Fn`, `FnMut`, or `FnOnce` from
+what the body does with its captures. That makes which APIs accept a literal
+depend on its body: adding an assignment deep in the body silently changes it,
+the objection that rules out declarations in the body.
+
+**Why not a structural type.** A closure could instead be an environment
+record plus a code pointer, so two literals with the same captures and
+signature share a type that a signature can name. It is rejected: every
+capture's name and type would be part of a public signature, so adding one
+breaks callers; each call becomes indirect, losing the direct, inlinable call
+that `slice.sort_by`'s generated adapter makes; and it still does not hide the
+state, since different captures stay different types.
+
+**Why the callable constraint is an interface.** `interfaces.Callable` is a
+catalogue interface with a built-in rule rather than a parameter form or a
+change to procedure types:
+
+**Why not let a generic procedure type accept records.** Letting
+`f: proc(error: move E) -> $F` take a record would make adding a `$` to a
+parameter change what it accepts, and make `proc(...)` mean a thin value in one
+parameter and anything callable in another.
+
+**Why not bind `$F` in the `where` clause.** `Callable(C, proc(error: move E) -> $F)`
+would add a fourth `$` binding site beside parameter types, static `foreach`,
+and explicit generic parameters, for this one case. `C.Result` reuses the
+associated-type mechanism.
+
+**Why not new parameter syntax.** A form like Rust's `impl Fn(...)`, such as
+`less: some proc(left, right: T) -> bool`, is shorter but is a second way to
+write a generic constraint. It can come later as sugar for the `where` form, if
+real APIs show the verbosity matters.
 
 ### Typed fallibility, and the `Option` decision it reverses
 

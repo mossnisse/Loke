@@ -707,6 +707,11 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return eval_call(ev, v)
 
 	case ^Expr_Composite:
+		// design.md "Capture literals": no compile-time value yet.
+		if v.capture != nil {
+			eval_fail(ev, v.capture.clause_span, "L0341", "a capture literal has no compile-time value")
+			return Eval_Value{}, false
+		}
 		return eval_composite(ev, v)
 
 	case ^Expr_Range:

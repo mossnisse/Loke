@@ -403,6 +403,9 @@ member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 			}
 		}
 	}
+	if !capture_field_visible(k, sym) {
+		return false
+	}
 	return sym.pkg == lookup_package(k) || sym.public
 }
 
@@ -411,6 +414,14 @@ require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: 
 	sym := symbol_of(k.c, field)
 	if member_is_visible(k, sym) {
 		return true
+	}
+	if !capture_field_visible(k, sym) {
+		errorf(
+			k.c, span, code,
+			"`%s` is a capture of `%s`, which only the literal's body reads, so it cannot be %s here",
+			identifier_text(k.c, sym.name), type_name(k.c, subject), action,
+		)
+		return false
 	}
 	errorf(
 		k.c,

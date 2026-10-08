@@ -94,234 +94,23 @@ current compile-time or interface design.
 
 ## Callable records, procedures, and closures
 
-The current [callback convention](comments.md#build-selected-services-and-explicit-runtime-state)
-uses a record with a `call` method, which `x(args)` calls, and
+A record with a `call` method is the callable convention: `x(args)` calls it
+([Calling a value](design.md#calling-a-value)),
 [`interfaces.Callable`](design.md#standard-interface-catalogue) lets one generic
-signature accept a procedure or such a record and name its result. That
-settles the first two questions this section asked: whether procedures and
-callable records share one generic signature, and how an API infers a callable
-record's result. What stays open:
-
-- Would closure syntax usefully abbreviate that record and method? The
-  proposed spelling is [a capture clause](#a-capture-clause-after-the-signature).
-  No closure syntax is committed.
+signature accept a procedure or such a record, and a
+[capture literal](design.md#capture-literals) declares the record from a
+clause. Their rationale is in [comments.md](comments.md#capture-literals). What
+stays open follows.
 
 A callable that outlives its creation scope is a separate ownership question.
 `fmt.Writer` and `log.Logger` do not establish a need for one: a formatter lends
 its sink for the call, and a logger lends process-lifetime storage, both through
 [`dyn mut` views](comments.md#formatting-and-logging-sinks-are-dyn-views).
 
-### A capture clause after the signature
+### What a capture literal's `call` cannot do
 
-**Proposal.** A procedure literal lists what it captures in a clause between
-its signature and its body, where a [`where` clause](design.md#where-clauses)
-goes:
-
-```odin
-less := proc(a, b: int) -> bool capture(limit) {
-    return (a < limit) && !(b < limit);
-};
-slice.sort_by(values, less);
-
-count := 0;
-bump := proc() capture(&mut count) { count += 1; };
-job := proc() capture(move(buffer)) { ... };
-per := proc(x: int) -> int capture(n = len(items)) { return x / n; };
-```
-
-Each entry reuses a spelling the language already has:
-
-- `limit` copies the place, as a binding does
-  ([Value semantics and the ownership rule](design.md#value-semantics-and-the-ownership-rule)):
-  a managed value is cloned, unless this is the place's last use, which
-  transfers it as [Last-use transfer](design.md#last-use-transfer) does for a
-  binding;
-- `&limit` borrows it read-only, spelled as the `&place` that forms a `^T`;
-- `&mut count` borrows it writably, as a `&mut` binding does in a `foreach`
-  header or a case;
-- `move(buffer)` transfers the value and ends `buffer`;
-- `n = len(items)` captures a computed value under a new name.
-
-**Entries and paths.** Every entry is a mode, a name, and optionally
-`= expression`. The forms above are shorthand for an entry naming the same
-place on both sides, and a path is captured under a written name:
-
-| Written | Means | The body sees |
-| --- | --- | --- |
-| `limit` | `limit = limit` | a copy |
-| `&limit` | `&limit = limit` | the place, read-only |
-| `&mut count` | `&mut count = count` | the place, writable |
-| `move(buffer)` | `buffer = move(buffer)` | the owned value |
-| `lim = self.limit` | a copy of a path | a copy, as `lim` |
-| `&cfg = self.config` | a read-only borrow of a path | `self.config`, as `cfg` |
-| `&mut slot = a[i]` | a writable borrow of an element | `a[i]`, as `slot` |
-
-A path matters because capturing all of `&self` to read one field borrows the
-whole receiver, and blocks writes to its other fields while the callable is
-live; distinct struct fields are disjoint, so borrowing `self.config` leaves
-the rest writable. The name is required: the last segment, `limit` from
-`self.limit`, has no counterpart for `a[i]`, and it hides a rename the reader
-must work out, so `capture(self.limit)` is an error suggesting
-`limit = self.limit`. The rest follows from existing rules:
-
-- The mode marker sits on the name, as in a `foreach (&mut v in ...)` binding,
-  so the mode is in the clause and the body names the place for every entry.
-- A borrowing entry's right side must be a place, as `&place` requires; a
-  copying entry takes any expression.
-- `buf = move(self.buffer)` is rejected: `move` does not consume a field or
-  element.
-- Right sides are evaluated once, left to right, in the enclosing scope, so
-  `a[i]` uses `i` as it was at creation. Capture names exist only in the body,
-  so one entry cannot name another.
-- `cfg = &self.config` stays legal: it copies a `^T`, which the body reads as
-  `cfg^`, where `&cfg = self.config` reads as `cfg`.
-
-**The keyword.** `capture` is a contextual keyword, reserved only directly
-after a procedure literal's signature and followed by `(`. There a name and
-`(` can begin nothing else, since a complete signature is otherwise followed
-only by `where` or `{`. It names what happens and matches the word the
-diagnostics and documentation use. `use` was rejected: it sits beside `using`,
-reads as an import to a Rust reader, and is a common name (a test declares
-`use :: proc`). Reserving `capture` everywhere was rejected for the reason
-[Keywords reserved in every position](#keywords-reserved-in-every-position)
-gives: it is a plausible name, for a regex group or captured output.
-
-The mode is written only in the clause. The body names every capture the same
-way, `limit` or `count`, as the place itself: a borrowed capture is read as a
-borrowed `foreach` leaf is, with no `^`, and `&limit` in the body yields a
-`^T` carrying the root's provenance. A callable with a borrowed capture
-carries that borrow and is checked as a record holding a `^T` or `^mut T` is
-([Values that contain borrows](design.md#values-that-contain-borrows)): it may
-be passed to `slice.sort_by`, but not returned or stored past the root, and
-the root may not be written, moved, or dropped while the callable is live.
-
-```odin
-// Borrowed: sorts by a lookup table without cloning the map.
-slice.sort_by(ids, proc(a, b: Id) -> bool capture(&priority) {
-    return priority[a] < priority[b];
-});
-
-less := proc(a, b: int) -> bool capture(&limit) { ... };
-limit += 1;          // ERROR: `limit` is borrowed by `less`, used below
-slice.sort_by(values, less);
-```
-
-The clause is evaluated once, left to right, where the literal is evaluated.
-The literal lowers to the record and `call` method written by hand today, with
-one field per entry in clause order. A literal without the clause still
-captures nothing and is an ordinary procedure value.
-
-**Retention and write effects.** The body is checked as any procedure body is.
-A `&mut` capture is storage reached through a `^mut` the call received, so it
-is a retention destination under
-[Retaining a borrow](design.md#retaining-a-borrow): storing an argument's
-borrow in it needs `@(escape=stored)` on that parameter. Escape levels are
-part of procedure type identity, so an API that lets a callback collect its
-arguments declares it too:
-
-```odin
-visit :: proc(tree: ^Tree, f: dyn proc(@(escape=stored) node: ^Node)) { ... }
-
-found: [dynamic]^Node;
-visit(&tree, proc(@(escape=stored) node: ^Node) capture(&mut found) {
-    found.append(node);
-});
-```
-
-This is the commonest closure pattern, and it needs no new rule. Nor do
-[global write effects](design.md#global-write-effects): a literal's `call` has
-an inferred effect like any procedure, a direct call through a generic takes
-it, and a `dyn proc` call takes the union of every procedure and literal the
-program converts to that signature, as a `dyn` call does for its witnesses.
-
-**Smaller rules.**
-
-| Case | Rule |
-| --- | --- |
-| `helper :: proc() capture(x) { ... }` in a body | an error: `::` declares a constant, and a capture literal is a runtime value; write `:=` |
-| a `proc "c"` literal with captures | an error: a record's `call` has no C calling convention |
-| an empty `capture()` | an error, rather than a third kind of literal |
-| a capture named as a parameter is | an error |
-| the body names a local it did not capture | the existing error, with a note offering `x`, `&x`, and `&mut x` |
-| a literal inside a literal | the inner one captures the outer one's captures by the same rules |
-| a literal inside a loop | a fresh record each iteration; its borrows end at their last use |
-| compile-time evaluation | rejected at first, as having no compile-time value; a record could be supported later |
-
-**Why not declarations in the body.** The alternative leaves the signature
-unmarked and declares each capture as a statement, `capture limit;`, beside
-its use. It is rejected:
-
-- A body statement runs on every call, but a capture runs once, when the
-  literal is created. `capture move(buffer);` inside the body would end
-  `buffer` before the first call, which no other statement in a body does.
-- The captures decide what the value is: its size, whether it is copyable or
-  move-only, and whether it borrows and so cannot escape. Body declarations
-  hide that behind what reads as a thin `proc(a, b: int) -> bool`, so a
-  reader, and the escape check, must scan the body. That works against
-  [Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own).
-- A capture under an `if`, in a loop, or after an early `return` has no
-  meaning. Restricting captures to the start of the body makes them a header
-  written inside the braces, as Swift's `{ [weak self] in ... }` is.
-
-What the body form does better is keep a capture beside its use and leave
-`proc(...)` looking exactly as it does today.
-
-**Why not a list before the parameters.** The earlier sketch,
-`proc [limit] (a, b: int) -> bool`, puts state captured at creation ahead of
-what the procedure takes and returns, and gives `[...]` a new meaning after
-`proc`. The clause keeps the signature first and puts the captures where
-creation ends and the body begins.
-
-**Why a plain name copies.** The alternative makes an unmarked capture
-borrow, as an ordinary parameter borrows its argument, so the default never
-allocates. It is rejected:
-
-- Sharing is written in Loke. A variable holds a value, and a pointer, slice,
-  or view is the written opt-out; a capture is a binding, and a binding of a
-  place clones. An unmarked borrowing capture would be the one binding that
-  shares silently.
-- A parameter borrows because, for one call, a borrow cannot be told from a
-  copy. A callable outlives the expression that made it, so the difference
-  shows: a borrow rejects `limit += 1` while the callable is live where a copy
-  keeps the old value, and a borrowing callable cannot be returned or stored
-  past `limit`. That should be chosen, not met.
-- Borrowing only when the callable cannot escape makes its size, and whether
-  it carries a borrow, depend on its uses, the objection that rules out
-  declarations in the body.
-
-The cost is a silent clone when `capture(table)` names a map that is read
-again later. That is the cost `saved := table` already has; last-use transfer
-removes it when `table` is not read again, and
-[copy-cost diagnostics](design.md#copy-cost-diagnostics) can report the rest.
-
-`&name` stays an error as a `foreach` or case leaf. There the traversal's
-[yield mode](design.md#yield-modes) decides between owning and borrowing, and
-an unmarked leaf already borrows; a bare `&` was removed there because it bound
-a writable place. A capture has no yield mode to defer to, so it states the
-mode itself, and `&limit` is read-only as `&place` is.
-
-**How `call` takes `self`.** A literal's `call` takes a plain `self`. The body
-may read every capture and write through a `&mut` one, since a `^mut` field is
-writable through a plain receiver: capability is in the carrier
-([Capabilities and the one rule](design.md#capabilities-and-the-one-rule)). It
-may not assign to a copied capture or move one out. Either is an error naming
-the two ways out: capture an outer local with `&mut`, or write the record and
-its `call` by hand with a `self: inout` or `self: move` receiver.
-
-```odin
-compares := 0;
-slice.sort_by(values, proc(a, b: int) -> bool capture(&mut compares) {
-    compares += 1;
-    return a < b;
-});
-```
-
-A plain `self` is the mode the most APIs accept. Receiver modes must match an
-interface slot exactly, except that a plain `self` also meets a `self: ^` slot
-([Receiver forms](design.md#receiver-forms)), and `slice.Comparator`'s slot is
-`call: proc(self, left, right: T) -> bool`. A literal with an `inout` or `move`
-`call` would be rejected by every callback API in the standard library.
-
+A literal's `call` takes a plain `self`, so it reads its captures and writes
+through `&mut` ones.
 What a plain `self` cannot do is keep mutable state inside the callable, or
 hand a capture away when called and so be callable once. Both matter only for
 a callable that outlives its scope: a stored generator, a deferred job, a
@@ -331,45 +120,24 @@ thread worker. Those wait on
 Revisit `inout` and `move` calls when the first API takes such a callable; the
 receiver mode is then written, for example on the clause.
 
-**Why not infer the receiver.** Rust infers `Fn`, `FnMut`, or `FnOnce` from
-what the body does with its captures. That makes which APIs accept a literal
-depend on its body: adding an assignment deep in the body silently changes it,
-the objection that rules out declarations in the body.
+### Returning a capture literal
 
-**The literal's own type.** A capture literal's type is the record its
-hand-written form would declare in the body, without a name: a
-[body-local type](design.md#methods-and-implementation-blocks) whose fields are the captures and whose
-`call` is the body. Each literal is its own type, and in a generic procedure
-each instance's is its own, as any body-local type's is. Whether it is
-copyable follows its fields, so a `move` capture of a move-only value makes a
-move-only callable. Its captures are not fields a caller can select, and it has
-no equality or printed form: a callable is used by calling it, as a `dyn` view
-is not compared.
-
-| Use | How |
-| --- | --- |
-| store it in a local | `less := proc(...) capture(limit) { ... };` |
-| pass it to a generic API | `$C` with an interface, such as `Comparator(C, T)` |
-| name it in the same body | `Less :: type_of(less);`, so `Sorter(type_of(less)){less}` holds one in a generic record |
-| pass it to a non-generic API | convert it to a [`dyn proc` view](#a-borrowed-callable-view-dyn-proc) |
-| return it, or use it in a file-scope type | not possible: a signature cannot name a body-local type |
-
+No signature can name a capture literal's type, so it cannot be returned or
+held in a file-scope type.
 A callable that is returned or kept past its frame is either a file-scope
 record written by hand or an owning erased value under
 [Owning runtime polymorphism](#owning-runtime-polymorphism). Revisit when the
 first returned closure is needed. One answer then is an opaque result type,
-`-> some Comparator(int)`, as Rust's `-> impl Fn` is; it makes a caller depend
+`-> some interfaces.Callable(proc(a, b: int) -> bool)`, as Rust's `-> impl Fn` is; it makes a caller depend
 on the body for the result's size, which works against
 [Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own),
 and it overlaps an owning `dyn`.
 
-**Why not a structural type.** A closure could instead be an environment
-record plus a code pointer, so two literals with the same captures and
-signature share a type that a signature can name. It is rejected: every
-capture's name and type would be part of a public signature, so adding one
-breaks callers; each call becomes indirect, losing the direct, inlinable call
-that `slice.sort_by`'s generated adapter makes; and it still does not hide the
-state, since different captures stay different types.
+### Compile-time capture literals
+
+Compile-time evaluation rejects a capture literal, as having no compile-time
+value. Its record could be evaluated as any record is; support it when a
+compile-time use appears.
 
 ### A borrowed callable view, `dyn proc`
 
@@ -474,111 +242,17 @@ The [removed context pointer](comments.md#build-selected-services-and-explicit-r
 was kept out on the same ground: procedure values stay thin.
 
 **Still open:** whether a `dyn mut proc` is needed once an `inout` call
-exists. The spelling and `sort_by` are settled under
-[One callable constraint](#one-callable-constraint): `dyn proc(...)` is the
-short form of `dyn interfaces.Callable(proc(...))`, and a `dyn proc` satisfies
-`Callable`, so every callback API taking one accepts it.
-
-### One callable constraint
-
-A literal without a capture clause is a procedure value; with one, it is a
-record. Adding the first capture therefore changes what the literal is, and
-three things break:
-
-- A direct call: `less(1, 2)` works on the procedure, but a record with a
-  `call` method is not callable (`L0320`), so every call becomes
-  `less.call(1, 2)`.
-- An API taking a procedure type: `Result.map_error` takes
-  `proc(error: move E) -> $F`, so a mapper that captures anything cannot be
-  passed. The implicit `dyn proc` conversion does not apply to a `proc`
-  parameter.
-- A generic API needs two members, as `slice.sort_by` has: one for a
-  `Comparator` and a wrapper for a plain procedure. Every new callback API
-  would repeat the pair.
-
-**Decision, now implemented.** A catalogue interface in `base:interfaces`,
-satisfied by a built-in rule as `Cloneable` is for built-in types, and needing no new syntax:
-
-```odin
-Callable :: interface($Self: type, $Signature: type)   // satisfied by built-in rule
-```
-
-- `Signature` is a procedure type. `Self` satisfies `Callable` when it is a
-  procedure type that converts to `Signature`, or when it has a `call` method
-  meeting the slot `call: proc(self, <Signature's parameters>) -> <its result>`
-  under the [named slot](design.md#interface-bodies) rules: parameter modes
-  match exactly, and the method retains its arguments no further than the
-  signature's escape levels allow, as a converting procedure may not. A
-  capture literal, a hand-written record, and a `dyn proc` all satisfy it.
-- `C.Result` is an [associated type](design.md#interface-bodies): the result of
-  the one matching `call`. It is an error where an overloaded `call` leaves it
-  ambiguous, as any associated type is.
-- A [bare bound](design.md#where-clauses) `Callable(C, ...)` grants `c(args)` in
-  the constrained declaration, as a bare bound grants an interface's slots.
-  Outside generic code, `x(args)` is valid on any value whose type satisfies
-  `Callable` for those arguments, so adding a capture changes no call site.
-- [`dyn proc(...)`](#a-borrowed-callable-view-dyn-proc) is the short form of
-  `dyn interfaces.Callable(proc(...))`, the existing `dyn` form with its
-  subject omitted.
-- A field named `call` holding a procedure does not satisfy it: a slot is met
-  only by a method. `c(args)` therefore calls the method, never the text
-  `c.call(args)`, which field lookup would resolve to the field.
-
-```odin
-// One member instead of a group of two, and no wrapper record.
-sort_by :: proc(values: []mut $T, less: $C)
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
-	... less(a, b) ...
-}
-
-// F is inferred through the associated type.
-map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
-	where interfaces.Callable(C, proc(error: move E) -> C.Result) {
-	switch (move(self)) {
-	case .ok(payload):  return .ok(move(payload));
-	case .err(payload): return .err(f(move(payload)));
-	}
-}
-```
-
-Each accepts a plain procedure, a capture literal, a hand-written record, and a
-`dyn proc`. A callable then has one meaning and three representations: a thin
-procedure, a record, and a view. This answers the first two questions under
-[Callable records, procedures, and closures](#callable-records-procedures-and-closures).
-
-The cost is verbosity: `map_error` writes `C.Result` twice, and a callback API
-spells a `where` clause rather than a parameter type. Rust's
-`F: FnOnce(E) -> G` restates its result the same way.
-
-**Migration.** `slice.Comparator`, `sort_by_procedure`, and
-`Procedure_Comparator` go away; `sort_by` and `Result.map_error` take the form
-above, as does any other `proc`-typed callback in `core`. A hand-written
-comparator record keeps working, since its `call` already has the slot's shape.
-
-**Why not let a generic procedure type accept records.** Letting
-`f: proc(error: move E) -> $F` take a record would make adding a `$` to a
-parameter change what it accepts, and make `proc(...)` mean a thin value in one
-parameter and anything callable in another.
-
-**Why not bind `$F` in the `where` clause.** `Callable(C, proc(error: move E) -> $F)`
-would add a fourth `$` binding site beside parameter types, static `foreach`,
-and explicit generic parameters, for this one case. `C.Result` reuses the
-associated-type mechanism.
-
-**Why not new parameter syntax.** A form like Rust's `impl Fn(...)`, such as
-`less: some proc(left, right: T) -> bool`, is shorter but is a second way to
-write a generic constraint. It can come later as sugar for the `where` form, if
-real APIs show the verbosity matters.
+exists. `dyn proc(...)` is the short form of
+`dyn interfaces.Callable(proc(...))`, and a `dyn proc` satisfies `Callable`, so
+every callback API taking one accepts it. Until it exists, `Callable` is not
+dyn-compatible.
 
 ### Implementation order
 
-Each step can ship and be tested on its own:
-
-1. The callable constraint and `x(args)` call syntax, moving `slice.sort_by`
-   and `Result.map_error` to one member each. Done: design.md
+1. The callable constraint and `x(args)` call syntax. Done: design.md
    [Calling a value](design.md#calling-a-value) and the catalogue's `Callable`.
-2. Capture literals, with the four modes and paths, lowered to the body-local
-   record.
+2. Capture literals. Done: design.md
+   [Capture literals](design.md#capture-literals).
 3. `dyn proc`, with its implicit conversion and the procedure representation
    above.
 
@@ -589,7 +263,7 @@ owning erased value, and if so should it be a language type such as `box(dyn I)`
 or a library owner built over an exposed witness primitive?
 
 A closure that is returned or kept past its frame is a concrete use: a
-[capture literal](#a-capture-clause-after-the-signature) and its borrowed
+[capture literal](design.md#capture-literals) and its borrowed
 [`dyn proc` view](#a-borrowed-callable-view-dyn-proc) cannot leave the body
 that wrote it.
 
@@ -915,22 +589,14 @@ numeric limits alone does not solve this architectural issue.
 
 ### Callbacks deserve a small convenience
 
-A stateful comparator or error mapper requires a nominal record plus an
-`impl call`, while ordinary procedures and callable records are not accepted
-uniformly by every callback API. (The fallible-stream loop this item also
-covered is now [Conditional patterns](design.md#conditional-patterns).)
-
-First unify the existing callable-record convention in library
-APIs. Then consider an explicit-capture procedure literal that lowers to that
-same record and method. Captures should say whether they copy, borrow, or move;
-escaping a borrowed capture must be checked, and creating a generic stack
-callable should not imply heap allocation. The proposed spelling is
-[a capture clause after the signature](#a-capture-clause-after-the-signature),
-`proc(a, b: int) -> bool capture(limit) { ... }`.
-
-Specify mutable/consuming captures and callable result inference before making
-this syntax normative. Owning runtime type erasure is a separate question;
-most sorting and mapping callbacks do not need it. This refines
+Resolved. Every callback API takes a procedure or a callable record through
+[`interfaces.Callable`](design.md#standard-interface-catalogue), `x(args)`
+calls either ([Calling a value](design.md#calling-a-value)), and a
+[capture literal](design.md#capture-literals) declares the record and its
+`call` from a clause that says whether each capture copies, borrows, or moves.
+A borrowed capture is checked as any borrow a record holds, and nothing
+allocates. (The fallible-stream loop this item also covered is now
+[Conditional patterns](design.md#conditional-patterns).) What remains is under
 [Callable records, procedures, and closures](#callable-records-procedures-and-closures).
 
 ### Thread transfer needs a visible contract

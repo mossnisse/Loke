@@ -1,0 +1,29 @@
+(file package="main"
+  (const names=["capture"]
+    (proc (proc-type (param ["n"] (ident "int")) (result (ident "int")))
+      (block
+        (return (ident "n"))
+      )
+    )
+  )
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["limit"]
+          (call (ident "capture") (int "1"))
+        )
+        (var names=["capture_count"]
+          (int "0")
+        )
+        (var names=["less"]
+          (capture (copy limit (ident "limit")) (borrow-mut capture_count (ident "capture_count")) (copy n (call (ident "capture") (int "2"))) (proc (proc-type (param ["a"] (ident "int")) (result (ident "bool")))
+            (block
+              (return (binary Lt (ident "a") (ident "limit")))
+            )
+          ))
+        )
+        (var names=["typed"] type=(proc-type (param ["a"] (ident "int")) (result (ident "bool"))))
+      )
+    )
+  )
+)
