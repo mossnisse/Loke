@@ -49,8 +49,12 @@ wrong_result :: proc() -> int {
 	return apply(1, Wrong{});
 }
 
-// No written slot exists for a witness to fill.
-erased :: proc(view: dyn interfaces.Callable(proc(n: int) -> int)) { }
+// A `dyn proc` view erases `Callable` alone, never as one slot of many.
+Int_Callable :: interface($Self: type) {
+	interfaces.Callable(Self, proc(n: int) -> int);
+}
+
+erased :: proc(view: dyn Int_Callable) { }
 
 main :: proc() {
 	_ = field_only();

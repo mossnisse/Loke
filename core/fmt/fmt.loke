@@ -55,11 +55,7 @@ Format_View :: dyn Formattable;
 
 @(private)
 format_any :: proc(value: any_view, writer: Writer, options: Options) {
-	// A local, not a temporary receiver, so the slot call counts the `format`
-	// methods' global writes (known-gaps.md "A slot call on a temporary `dyn`
-	// view has no global effects").
-	view := format_view(value);
-	view.format(writer, options);
+	format_view(value).format(writer, options);
 }
 
 @(public)

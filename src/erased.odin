@@ -2,6 +2,10 @@
 //
 //   any_view       { ptr data, typeid id }
 //   dyn Interface  { ptr data, ptr witness }
+//   dyn proc(...)  { ptr data, ptr code }
+//
+// A `dyn proc` view is `dyn interfaces.Callable(...)`, whose one slot is held
+// directly: its second word is the code to call, not a table of slots.
 //
 // A witness is one private global per `(Interface, Concrete, arguments)`. Its
 // slots come from inherent members plus extensions in the slot's declaring
@@ -190,6 +194,10 @@ dyn_type :: proc(
 // through the view's own witness.
 @(private = "file")
 install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, dyn: Type_Id) {
+	if signature := dyn_proc_signature(k.c, dyn); signature != INVALID_TYPE {
+		install_dyn_call_slot(k, dyn, signature)
+		return
+	}
 	flattened := make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
 	interface_slots(k, info, interface_application(k.c, info, dyn, args), &flattened)
 
@@ -228,6 +236,113 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 	if stored := type_of(k.c, dyn); stored != nil {
 		stored.members = members
 	}
+}
+
+// design.md "Borrowed callable views": a `dyn proc` view's one member is the
+// `call` its signature describes. It keeps the signature's escape levels and
+// reset effects, so a call through the view is checked as a call of the
+// signature. A procedure the view holds is called through an adapter of the
+// same shape.
+@(private = "file")
+install_dyn_call_slot :: proc(k: ^Checker, dyn, signature: Type_Id) {
+	wanted := underlying_info(k.c, signature)
+	count := len(wanted.parameters) + 1
+	params := make([]Type_Id, count, k.c.semantic_allocator)
+	modes := make([]Param_Mode, count, k.c.semantic_allocator)
+	resets := make([]bool, count, k.c.semantic_allocator)
+	escapes := make([]Escape_Level, count, k.c.semantic_allocator)
+	params[0], modes[0], escapes[0] = dyn, .Value, .Result
+	for parameter, index in wanted.parameters {
+		params[index + 1] = parameter
+		modes[index + 1] = proc_parameter_mode(k.c, signature, index)
+		resets[index + 1] = index < len(wanted.param_resets) && wanted.param_resets[index]
+		escapes[index + 1] = proc_param_escape(k.c, signature, index)
+	}
+	proc_type := intern_proc_type(
+		k.c, params, modes, wanted.result, wanted.result_inout, "",
+		param_resets = resets, param_escapes = escapes,
+	)
+	member := new_symbol(k.c, Symbol {
+		name           = intern_identifier(k.c, "call"),
+		span           = no_span(),
+		kind           = .Proc,
+		public         = true,
+		owner_type     = dyn,
+		params         = params,
+		result         = wanted.result,
+		result_inout   = wanted.result_inout,
+		param_symbols  = make([]Symbol_Id, count, k.c.semantic_allocator),
+		param_defaults = make([]Expr, count, k.c.semantic_allocator),
+		proc_type      = proc_type,
+		synth          = .Dyn_Forward,
+		has_receiver   = true,
+		receiver       = .Value,
+	})
+	enroll_synth(k.c, member)
+	adapter_params := make([]Type_Id, count, k.c.semantic_allocator)
+	copy(adapter_params, params)
+	adapter_params[0] = TYPE_RAWPTR
+	k.c.dyn_proc_adapters[dyn] = new_symbol(k.c, Symbol {
+		name           = intern_identifier(k.c, "call$procedure"),
+		span           = no_span(),
+		kind           = .Proc,
+		owner_type     = dyn,
+		params         = adapter_params,
+		result         = wanted.result,
+		result_inout   = wanted.result_inout,
+		param_symbols  = make([]Symbol_Id, count, k.c.semantic_allocator),
+		param_defaults = make([]Expr, count, k.c.semantic_allocator),
+		proc_type      = intern_proc_type(k.c, adapter_params, modes, wanted.result, wanted.result_inout, ""),
+		synth          = .Dyn_Proc_Adapter,
+	})
+	if stored := type_of(k.c, dyn); stored != nil {
+		members := make([]Symbol_Id, 1, k.c.semantic_allocator)
+		members[0] = member
+		stored.members = members
+	}
+}
+
+// design.md "Borrowed callable views": `dyn interfaces.Callable(Signature)`,
+// spelled `dyn proc(...)`.
+dyn_is_callable :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	return info != nil && info.kind == .Dyn && len(info.dyn_args) == 1 && info.dyn_args[0].is_type &&
+	       symbol_is_callable(c, info.dyn_interface)
+}
+
+// The signature a `dyn proc` view calls, or INVALID_TYPE for any other type.
+dyn_proc_signature :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
+	info := underlying_info(c, type)
+	return dyn_is_callable(c, info) ? info.dyn_args[0].type : INVALID_TYPE
+}
+
+// design.md "Borrowed callable views": what converts to a `dyn proc` view
+// without being written: a procedure that converts to its signature, and a
+// capture literal whose `call` meets it. A named callable record converts only
+// where it is written, as any `dyn` view does.
+dyn_proc_accepts :: proc(c: ^Compiler, from, signature: Type_Id) -> bool {
+	if underlying_kind(c, from) == .Proc {
+		return assignable(c, from, signature)
+	}
+	method, is_capture := c.capture_records[from]
+	return is_capture && method != nil && call_method_matches(c, symbol_of(c, method.symbol), from, signature)
+}
+
+// Records what emission needs to build the view: the adapter for a procedure,
+// or the capture literal's witness.
+request_dyn_proc_view :: proc(k: ^Checker, from, view: Type_Id, span: Span) {
+	if underlying_kind(k.c, from) == .Proc {
+		enroll_synth(k.c, k.c.dyn_proc_adapters[dyn_abi_type(k.c, view)])
+		return
+	}
+	dyn := underlying_info(k.c, view)
+	if info := interface_info_for(k, dyn.dyn_interface); info != nil {
+		request_witness(k, info, from, dyn.dyn_args, span)
+	}
+}
+
+// The witness already requested for one key.
+lookup_witness :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id, args: []Generic_Arg) -> ^Witness {
+	return c.witnesses[witness_key(c, interface_symbol, concrete, args)]
 }
 
 // `subject` followed by the non-subject `rest`: a full interface application.
@@ -277,6 +392,10 @@ dyn_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, args: []Generic_Arg, 
 dyn_display_name :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Arg, mutable: bool) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	strings.write_string(&b, mutable ? "dyn mut " : "dyn ")
+	if interface_is_callable(c, info) && len(args) == 1 && args[0].is_type {
+		strings.write_string(&b, type_name(c, args[0].type))
+		return strings.to_string(b)
+	}
 	strings.write_string(&b, identifier_text(c, symbol_of(c, info.symbol).name))
 	if len(args) > 0 {
 		strings.write_string(&b, "(")
@@ -332,11 +451,11 @@ dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 	info.dyn_computed = true
 	info.dyn_ok = false
 
-	// Its one slot is decided by a built-in rule, so there is no written slot
-	// for a witness to fill.
+	// design.md "Borrowed callable views": its one slot, `call`, comes from the
+	// signature, and the view holds it directly.
 	if interface_is_callable(k.c, info) {
-		info.dyn_reason = "its `call` is a built-in rule, not a named `slot`"
-		return false
+		info.dyn_ok = true
+		return true
 	}
 
 	if len(info.params) == 0 {
@@ -410,6 +529,11 @@ dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 				)
 				return false
 			}
+		}
+		// Its `call` is held by a `dyn proc` view alone, never as one slot of many.
+		if interface_is_callable(k.c, composed) {
+			info.dyn_reason = "it composes `Callable`, whose `call` only a `dyn proc` view erases"
+			return false
 		}
 		if !dyn_compatible(k, composed) {
 			info.dyn_reason = fmt.aprintf(
@@ -676,6 +800,15 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	witness.concrete = concrete
 	witness.args = args
 
+	if interface_is_callable(k.c, info) {
+		witness.slots = callable_witness_slots(k, info, concrete, args)
+		if committing(k.c) {
+			k.c.witnesses[key] = witness
+			append(&k.c.witness_order, witness)
+			enroll_synth(k.c, witness.slots[0].target)
+		}
+		return witness
+	}
 	slots := make([]Witness_Slot, len(flattened), k.c.semantic_allocator)
 	saved := save_checker_location(k)
 	for entry, index in flattened {
@@ -703,6 +836,26 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 		for slot in slots { enroll_synth(k.c, slot.target) }
 	}
 	return witness
+}
+
+// A callable's one slot is its `call` method, for `Callable(concrete,
+// Signature)` with the signature as the one non-subject argument.
+@(private = "file")
+callable_witness_slots :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, args: []Generic_Arg) -> []Witness_Slot {
+	slots := make([]Witness_Slot, 1, k.c.semantic_allocator)
+	signature := args[0].type
+	wanted := underlying_info(k.c, signature)
+	params := make([]Type_Id, len(wanted.parameters) + 1, k.c.semantic_allocator)
+	params[0] = concrete
+	copy(params[1:], wanted.parameters)
+	slots[0] = Witness_Slot {
+		name   = intern_identifier(k.c, "call"),
+		target = callable_call_method(k, info, concrete, signature),
+		mode   = .Value,
+		params = params,
+		result = wanted.result,
+	}
+	return slots
 }
 
 @(private = "file")
@@ -771,6 +924,14 @@ dyn_slot_index :: proc(k: ^Checker, dyn: Type_Id, name: Identifier_Id) -> (int, 
 
 // `dyn Interface(args...)`. Satisfaction waits for a concrete subject.
 resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
+	if signature, is_proc := v.interface_expr.(^Type_Proc); is_proc {
+		info := callable_interface(k)
+		resolved := resolve_type_syntax(k, signature)
+		if info == nil || resolved == INVALID_TYPE {
+			return INVALID_TYPE
+		}
+		return callable_dyn_type(k, info, resolved, v)
+	}
 	callee := v.interface_expr
 	args: []Argument
 	if call, is_call := callee.(^Expr_Call); is_call {
@@ -807,7 +968,32 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 	if !ok {
 		return INVALID_TYPE
 	}
+	if interface_is_callable(k.c, info) {
+		return callable_dyn_type(k, info, bound[0].type, v)
+	}
 	return dyn_type(k, info, bound, v.span, v.mutable, report = true)
+}
+
+// design.md "Borrowed callable views": the view of one signature, which a
+// method's plain `self` makes read-only and a slot makes Loke-convention.
+@(private = "file")
+callable_dyn_type :: proc(k: ^Checker, info: ^Interface_Info, signature: Type_Id, v: ^Type_Dyn) -> Type_Id {
+	wanted := underlying_info(k.c, signature)
+	if wanted == nil || wanted.kind != .Proc {
+		errorf(k.c, v.span, "L0463", "a callable view takes a procedure type, found `%s`", type_name(k.c, signature))
+		return INVALID_TYPE
+	}
+	if v.mutable {
+		errorf(k.c, v.span, "L0463", "a callable view is read-only: a `call` takes a plain `self`, so write `dyn %s`", type_name(k.c, signature))
+		return INVALID_TYPE
+	}
+	if wanted.convention != "" || wanted.c_vararg {
+		errorf(k.c, v.span, "L0463", "a callable view calls through the Loke convention, so its signature cannot be `%s`", type_name(k.c, signature))
+		return INVALID_TYPE
+	}
+	args := make([]Generic_Arg, 1, k.c.semantic_allocator)
+	args[0] = Generic_Arg{is_type = true, type = signature}
+	return dyn_type(k, info, args, v.span, false, report = true)
 }
 
 // design.md: `(dyn I)(&concrete)` checks `I(Concrete, args...)` and requests
@@ -832,6 +1018,26 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	v.resolution = {}
 
 	pointer := underlying_info(k.c, source)
+	// design.md "Borrowed callable views": a procedure or a capture literal is
+	// the implicit conversion written out.
+	if signature := dyn_proc_signature(k.c, target); signature != INVALID_TYPE {
+		if pointer == nil || pointer.kind != .Pointer {
+			v.operation = Call_Conversion{}
+			if !materialize_value_expr(k, v.args[0].value, target, "convert") {
+				v.type = INVALID_TYPE
+			}
+			return
+		}
+		if underlying_kind(k.c, pointer.element) == .Proc {
+			errorf(
+				k.c, expr_span(v.args[0].value), "L0464",
+				"a procedure converts to `%s` by value, so it takes `%s`, not a pointer to one",
+				type_name(k.c, target), type_name(k.c, pointer.element),
+			)
+			v.type = INVALID_TYPE
+			return
+		}
+	}
 	if pointer == nil || pointer.kind != .Pointer {
 		errorf(
 			k.c,

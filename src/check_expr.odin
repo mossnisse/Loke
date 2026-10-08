@@ -233,9 +233,26 @@ materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: stri
 		)
 		note_overload_selection(k, e, target)
 		note_mutable_slicing(k, e, final, target)
+		note_named_callable(k, e, final, target)
 		return false
 	}
 	return true
+}
+
+// design.md "Borrowed callable views": a named callable record has other roles,
+// so it becomes a `dyn proc` view only where the conversion is written.
+@(private = "file")
+note_named_callable :: proc(k: ^Checker, e: Expr, found, target: Type_Id) {
+	signature := dyn_proc_signature(k.c, target)
+	info := callable_interface(k)
+	if signature == INVALID_TYPE || info == nil || underlying_kind(k.c, found) == .Proc ||
+	   callable_call_method(k, info, found, signature) == INVALID_SYMBOL {
+		return
+	}
+	add_notef(
+		k.c, expr_span(e), "`%s` has a matching `call`; a named callable converts where it is written: `(%s)(&value)`",
+		type_name(k.c, found), type_name(k.c, target),
+	)
 }
 
 // design.md "Slices": a `[]mut T` is asked for where the slice is written.
@@ -3272,6 +3289,15 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		base.type = target
 		return true
 	}
+	// design.md "Borrowed callable views": the procedure or capture value is
+	// kept, as for `any_view`, for the backend to hold or take the address of.
+	if signature := dyn_proc_signature(k.c, target); signature != INVALID_TYPE && base.type != target &&
+	   base.erased_from == INVALID_TYPE && dyn_proc_accepts(k.c, base.type, signature) {
+		request_dyn_proc_view(k, base.type, target, base.span)
+		base.erased_from = base.type
+		base.type = target
+		return true
+	}
 	// The concrete type is kept so the backend knows what to take the address
 	// of and which `typeid` to pair with it (design.md "any_view type").
 	if target == TYPE_ANY_VIEW && base.type != TYPE_ANY_VIEW {
@@ -3636,6 +3662,9 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		return type_accepts_nil(c, to)
+	}
+	if signature := dyn_proc_signature(c, to); signature != INVALID_TYPE {
+		return dyn_proc_accepts(c, from, signature)
 	}
 	// design.md "SIMD vectors": a scalar splats; nothing else converts.
 	if type_is_simd(c, to) && !type_is_simd(c, from) {

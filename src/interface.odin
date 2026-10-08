@@ -750,8 +750,26 @@ check_one_requirement :: proc(
 // The catalogue's `Callable`, whose one requirement the compiler states: a
 // signature's parameter list is not something an interface body can spell.
 interface_is_callable :: proc(c: ^Compiler, info: ^Interface_Info) -> bool {
-	pkg := package_of(c, info.pkg)
-	return pkg != nil && pkg.key == STD_INTERFACES && identifier_text(c, symbol_of(c, info.symbol).name) == "Callable"
+	return symbol_is_callable(c, info.symbol)
+}
+
+symbol_is_callable :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
+	sym := symbol_of(c, id)
+	if sym == nil {
+		return false
+	}
+	pkg := package_of(c, sym.pkg)
+	return pkg != nil && pkg.key == STD_INTERFACES && identifier_text(c, sym.name) == "Callable"
+}
+
+// `interfaces.Callable`, which `base:runtime` imports, so it is always loaded.
+callable_interface :: proc(k: ^Checker) -> ^Interface_Info {
+	for pkg in k.c.packages {
+		if pkg.key == STD_INTERFACES && pkg.scope != nil {
+			return interface_info_for(k, lookup_symbol(pkg.scope, intern_identifier(k.c, "Callable")))
+		}
+	}
+	return nil
 }
 
 // design.md "Standard interface catalogue": `Callable(Self, Signature)` holds
@@ -791,21 +809,8 @@ callable_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) 
 		}, false
 	}
 
-	params := make([]Type_Id, len(wanted.parameters) + 1, k.c.semantic_allocator)
-	modes := make([]Param_Mode, len(wanted.parameters) + 1, k.c.semantic_allocator)
-	params[0], modes[0] = subject, .Value
-	copy(params[1:], wanted.parameters)
-	for index in 0 ..< len(wanted.parameters) {
-		modes[index + 1] = index < len(wanted.param_modes) ? wanted.param_modes[index] : .Value
-	}
-	for candidate in slot_candidates(k, subject, intern_identifier(k.c, "call"), info.pkg) {
-		sym := symbol_of(k.c, candidate)
-		if sym != nil && sym.kind == .Proc && sym.has_receiver &&
-		   slot_matches(k, sym, params, modes, wanted.result, wanted.result_inout) &&
-		   call_escapes_weaken_to(k.c, sym.proc_type, signature) &&
-		   call_effects_match(k.c, sym.proc_type, signature) {
-			return Requirement_Failure{}, true
-		}
+	if callable_call_method(k, info, subject, signature) != INVALID_SYMBOL {
+		return Requirement_Failure{}, true
 	}
 	return Requirement_Failure {
 		span   = at,
@@ -816,6 +821,40 @@ callable_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) 
 			allocator = k.c.semantic_allocator,
 		),
 	}, false
+}
+
+// The `call` method of `subject` that meets `signature`, as `Callable` asks.
+callable_call_method :: proc(k: ^Checker, info: ^Interface_Info, subject, signature: Type_Id) -> Symbol_Id {
+	for candidate in slot_candidates(k, subject, intern_identifier(k.c, "call"), info.pkg) {
+		if call_method_matches(k.c, symbol_of(k.c, candidate), subject, signature) {
+			return candidate
+		}
+	}
+	return INVALID_SYMBOL
+}
+
+// design.md "Standard interface catalogue": a `call` method meets a signature
+// when it takes a plain `self`, then the signature's parameter types and modes,
+// returns its result, retains no argument further than it allows, and matches
+// the rest of its procedure type identity.
+call_method_matches :: proc(c: ^Compiler, sym: ^Symbol, subject, signature: Type_Id) -> bool {
+	wanted := underlying_info(c, signature)
+	if sym == nil || sym.kind != .Proc || !sym.has_receiver || wanted == nil || wanted.kind != .Proc {
+		return false
+	}
+	have := type_of(c, sym.proc_type)
+	if have == nil || len(sym.params) != len(wanted.parameters) + 1 || sym.params[0] != subject ||
+	   proc_parameter_mode(c, sym.proc_type, 0) != .Value ||
+	   sym.result != wanted.result || have.result_inout != wanted.result_inout {
+		return false
+	}
+	for parameter, index in wanted.parameters {
+		if sym.params[index + 1] != parameter ||
+		   proc_parameter_mode(c, sym.proc_type, index + 1) != proc_parameter_mode(c, signature, index) {
+			return false
+		}
+	}
+	return call_escapes_weaken_to(c, sym.proc_type, signature) && call_effects_match(c, sym.proc_type, signature)
 }
 
 // design.md "Standard interface catalogue": `C.Result` is what a callable

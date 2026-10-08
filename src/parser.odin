@@ -2513,7 +2513,8 @@ parse_type :: proc(p: ^Parser) -> Expr {
 	case .Dyn:
 		advance(p)
 		mutable := allow(p, .Mut)
-		iface := parse_type_name(p)
+		// design.md "Borrowed callable views": `dyn proc(...)` erases a callable.
+		iface := at(p, .Proc) ? parse_type(p) : parse_type_name(p)
 		n := new_expr(p, Type_Dyn, lo)
 		n.mutable = mutable
 		n.interface_expr = iface

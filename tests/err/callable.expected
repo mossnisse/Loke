@@ -11,5 +11,5 @@ L0444
 @49:9
 `Wrong` has no method `call(self, ...)` matching `proc(int) -> int`
 L0463
-@53:22
-`Callable` is not dyn-compatible: its `call` is a built-in rule, not a named `slot`
+@57:22
+`Int_Callable` is not dyn-compatible: it composes `Callable`, whose `call` only a `dyn proc` view erases

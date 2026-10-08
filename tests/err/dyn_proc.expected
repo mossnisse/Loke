@@ -1,0 +1,36 @@
+L0463
+@14:25
+a callable view is read-only
+L0463
+@15:25
+a callable view calls through the Loke convention
+L0310
+@22:13
+a named callable converts where it is written
+L0464
+@28:39
+a procedure converts to `dyn proc(int) -> int` by value
+L0310
+@32:13
+cannot pass `dyn proc(int) -> int` with `proc(n: int) -> bool capture(m = 1)`
+L0310
+@39:10
+cannot pass `dyn proc(^int, inout Kept)`
+L0513
+@46:9
+this view is used after this temporary has ended
+L0512
+@54:2
+`n` cannot be assigned here
+L0355
+@61:11
+`dyn proc(int) -> int` is not comparable
+L0512
+@74:2
+`cache` cannot be modified by a procedure this call may reach here
+L0512
+@88:2
+`cache` cannot be modified by a procedure this call may reach here
+L0341
+@92:11
+a `dyn proc` view has no compile-time value

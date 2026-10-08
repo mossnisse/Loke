@@ -1334,6 +1334,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_clone(e, symbol, name)
 		case .Dyn_Forward:
 			emit_dyn_forwarding_slot(e, symbol, name)
+		case .Dyn_Proc_Adapter:
+			emit_dyn_proc_adapter(e, symbol, name)
 		case .Container_Op:
 			emit_synth_container_op(e, symbol, name)
 			if e.consuming_ops[symbol_id] {
@@ -1487,13 +1489,43 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 	return single
 }
 
-// `(dyn I)(&value)`: the data pointer plus the witness.
+// `(dyn I)(&value)`: the data pointer plus the witness, or for a callable view
+// the witness's one thunk.
 @(private)
 emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	storage := llvm_type(e, as_type)
 	data := emit_expr(e, v.bound[0])
+	witness := v.operation.(Call_Dyn_Conversion).witness
+	second := e.witness_names[witness]
+	if dyn_proc_signature(e.c, as_type) != INVALID_TYPE {
+		second = witness_thunk_name(e, witness, 0)
+	}
 	first := insert(e, storage, "undef", "ptr", data, DYN_DATA)
-	return insert(e, storage, first, "ptr", e.witness_names[v.operation.(Call_Dyn_Conversion).witness], DYN_WITNESS)
+	return insert(e, storage, first, "ptr", second, DYN_WITNESS)
+}
+
+// design.md "Borrowed callable views": a procedure is the data word itself,
+// called by its signature's adapter, so the view borrows nothing; a capture
+// value is viewed where it is, or in a temporary, and called by its `call`.
+@(private)
+emit_dyn_proc_value :: proc(e: ^Emitter, expr: Expr, from, as_type: Type_Id) -> string {
+	storage := llvm_type(e, as_type)
+	data, code: string
+	if underlying_kind(e.c, from) == .Proc {
+		data = emit_expr_at(e, expr, from)
+		code = symbol_name(e, e.c.dyn_proc_adapters[dyn_abi_type(e.c, as_type)])
+	} else {
+		data = spill_iterable_at(e, expr, from)
+		dyn := underlying_info(e.c, as_type)
+		witness := lookup_witness(e.c, dyn.dyn_interface, from, dyn.dyn_args)
+		if witness == nil {
+			backend_fail(e, "a capture literal reached a `dyn proc` view with no witness")
+			return "undef"
+		}
+		code = witness_thunk_name(e, witness, 0)
+	}
+	first := insert(e, storage, "undef", "ptr", data, DYN_DATA)
+	return insert(e, storage, first, "ptr", code, DYN_WITNESS)
 }
 
 // A slot call: load the thunk from the witness table and call it with the
@@ -1548,7 +1580,7 @@ emit_witnesses :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "")
 }
 
-@(private = "file")
+@(private)
 witness_thunk_name :: proc(e: ^Emitter, witness: ^Witness, index: int) -> string {
 	return fmt.aprintf("%s.thunk.%d", e.witness_names[witness], index)
 }
@@ -1600,8 +1632,29 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	open_function(e, ")")
 
 	view := receiver_by_ptr ? load(e, view_type, "%arg0") : "%arg0"
-	thunk := emit_witness_slot(e, extract(e, view_type, view, DYN_WITNESS), int(symbol.index))
+	// A callable view holds its one slot's code directly.
+	thunk := extract(e, view_type, view, DYN_WITNESS)
+	if dyn_proc_signature(e.c, symbol.params[0]) == INVALID_TYPE {
+		thunk = emit_witness_slot(e, thunk, int(symbol.index))
+	}
 	emit_forwarding_call(e, symbol, signature, thunk, "ptr", extract(e, view_type, view, DYN_DATA))
+}
+
+// design.md "Borrowed callable views": the code word of a view holding a
+// procedure. The data word is the procedure, called with everything after it.
+@(private = "file")
+emit_dyn_proc_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	signature := type_of(e.c, symbol.proc_type)
+	result_type := llvm_result_type(e, symbol.result, signature.result_inout)
+	fmt.sbprintf(
+		&e.b, "define %s%s %s(%sptr %%arg0", llvm_linkage(name), result_type, name,
+		sret_param(e, symbol.result, signature.result_inout),
+	)
+	write_forwarded_params(e, symbol.params, signature.param_modes)
+	open_function(e, ")")
+	emit_forwarding_call(e, symbol, signature, "%arg0", "", "")
 }
 
 // `, T %argN` for every parameter after the receiver.
@@ -1612,25 +1665,34 @@ write_forwarded_params :: proc(e: ^Emitter, params: []Type_Id, modes: []Param_Mo
 	}
 }
 
-// Calls `callee` with the receiver and the forwarded parameters, returns its
-// result, and closes the function.
+// Calls `callee` with the receiver, if any, and the forwarded parameters,
+// returns its result, and closes the function.
 @(private = "file")
 emit_forwarding_call :: proc(
 	e: ^Emitter, symbol: ^Symbol, signature: ^Type_Info, callee, receiver_type, receiver: string,
 ) {
 	result_type := llvm_result_type(e, symbol.result, signature.result_inout)
 	sret := returns_sret(e, symbol.result, signature.result_inout)
+	args := make([dynamic]string, 0, len(symbol.params) + 1, context.temp_allocator)
+	if sret {
+		append(&args, "ptr %sret")
+	}
+	if receiver_type != "" {
+		append(&args, fmt.tprintf("%s %s", receiver_type, receiver))
+	}
+	for position in 1 ..< len(symbol.params) {
+		append(&args, fmt.tprintf("%s %%arg%d", param_llvm(e, symbol.params[position], signature.param_modes[position]), position))
+	}
+	joined := strings.join(args[:], ", ", context.temp_allocator)
 	call := ""
 	if sret {
-		fmt.sbprintf(&e.b, "  call void %s(ptr %%sret, %s %s", callee, receiver_type, receiver)
+		fmt.sbprintfln(&e.b, "  call void %s(%s)", callee, joined)
 	} else if symbol.result != INVALID_TYPE {
 		call = temp(e)
-		fmt.sbprintf(&e.b, "  %s = call %s %s(%s %s", call, result_type, callee, receiver_type, receiver)
+		fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", call, result_type, callee, joined)
 	} else {
-		fmt.sbprintf(&e.b, "  call void %s(%s %s", callee, receiver_type, receiver)
+		fmt.sbprintfln(&e.b, "  call void %s(%s)", callee, joined)
 	}
-	write_forwarded_params(e, symbol.params, signature.param_modes)
-	fmt.sbprintln(&e.b, ")")
 	if symbol.result == INVALID_TYPE || sret {
 		fmt.sbprintln(&e.b, "  ret void")
 	} else {

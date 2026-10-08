@@ -99,8 +99,10 @@ A record with a `call` method is the callable convention: `x(args)` calls it
 [`interfaces.Callable`](design.md#standard-interface-catalogue) lets one generic
 signature accept a procedure or such a record, and a
 [capture literal](design.md#capture-literals) declares the record from a
-clause. Their rationale is in [comments.md](comments.md#capture-literals). What
-stays open follows.
+clause, and a [`dyn proc` view](design.md#borrowed-callable-views) erases
+either. Their rationale is in [comments.md](comments.md#capture-literals) and
+[comments.md "Borrowed callable views"](comments.md#borrowed-callable-views).
+What stays open follows.
 
 A callable that outlives its creation scope is a separate ownership question.
 `fmt.Writer` and `log.Logger` do not establish a need for one: a formatter lends
@@ -139,122 +141,14 @@ Compile-time evaluation rejects a capture literal, as having no compile-time
 value. Its record could be evaluated as any record is; support it when a
 compile-time use appears.
 
-### A borrowed callable view, `dyn proc`
+### A mutable callable view
 
-A callback API should see only the parameters and the result, never the
-captures. A generic API already does: `sort_by_comparator` names only
-`Comparator`'s `call` slot, whatever the caller captured. What a generic cannot
-give is one type written without `$`, for a non-generic parameter, a record
-field, or an array of different callbacks.
-
-**Proposal.** `dyn proc(parameters) -> Result` is a borrowed view of anything
-callable with that signature: a data pointer and a code pointer, as a
-[`dyn` interface view](design.md#borrowed-dynamic-interface-values) is a data
-pointer and a witness. A capture literal converts to it, the view borrowing the
-literal's record; a plain procedure converts to it too.
-
-For a plain procedure the data word holds the procedure itself, and the code
-word an adapter generated once per signature. Converting a procedure, or a
-local holding one, therefore borrows nothing, where a data word pointing at the
-procedure value would make `f: dyn proc() = g` borrow the local `g`.
-
-```odin
-visit :: proc(tree: ^Tree, f: dyn proc(node: ^Node)) { ... f(node); ... }
-
-count := 0;
-visit(&tree, proc(node: ^Node) capture(&mut count) { count += 1; });
-visit(&tree, print_node);   // a plain procedure converts too
-```
-
-Nothing allocates: the record stays in the caller's frame, as `fmt.Writer`
-borrows its sink. The view is a borrow carrier, so it suits a callback that
-runs during the call, such as visiting, mapping, or a formatting sink, and a
-record that stores one carries the borrow. An API chooses what it writes:
-`$C` with an interface for a direct call the optimizer can inline, which
-suits `sort_by`, or `dyn proc` for one non-generic type and an indirect call.
-Neither names the captures.
-
-**Conversion.** A procedure or a capture literal converts to `dyn proc`
-implicitly where one is expected: at a parameter or a typed destination. A
-hand-written callable record converts explicitly, as any `dyn` view does.
-
-```odin
-visit(&tree, proc(node: ^Node) capture(&mut count) { count += 1; });   // implicit
-visit(&tree, print_node);                                              // implicit
-visit(&tree, (dyn proc(node: ^Node))(&by_depth));   // a named record: explicit
-```
-
-This is one more entry of a kind the
-[implicit conversions](design.md#implicit-type-conversions) already have:
-built-in, borrowing, chosen by the destination type alone, and checked.
-`[dynamic]T` to `[]T`, `string` to `string_view`, `box(T)` to `^T`, and a
-concrete value to `any_view` are the others. No import adds or changes it, so
-it is not the facility
-[User-defined implicit conversions](comments.md#user-defined-implicit-conversions)
-rejects. The rest follows from existing rules:
-
-- A temporary literal at an argument lives through the complete expression, so
-  passing one is fine. Stored straight into a `dyn proc` local, it dies at the
-  end of that declaration, and
-  [Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)
-  rejects the view; naming the literal first is the fix:
-
-  ```odin
-  f: dyn proc() = proc() capture(&mut n) { n += 1; };   // ERROR: borrows a temporary
-  bump := proc() capture(&mut n) { n += 1; };
-  f: dyn proc() = bump;                                 // borrows `bump`
-  ```
-
-- It ranks with the other built-in implicit conversions in
-  [overload resolution](design.md#operator-lookup-and-overload-resolution), so
-  an exact `proc` parameter or a generic `$C` member wins, and a `dyn proc`
-  member added to a group such as `sort_by` does not take over existing calls.
-- The signature matches exactly, parameter modes and result included, as
-  procedure types do.
-- `dyn mut proc` is not needed while `call` takes a plain `self`: a read-only
-  view writes through a `^mut` field it reaches, as a plain receiver does, so a
-  `dyn proc` covers `&mut` captures.
-
-**Why not explicit, as `dyn I` is.** Written out, the main use reads
-`visit(&tree, (dyn proc(node: ^Node))(&proc(node: ^Node) capture(&mut count) { ... }))`:
-the signature twice and the address of a temporary. The explicit `dyn I`
-conversion is kept because it does two things a reader should see: it chooses
-the capability, `&` or `&mut`, and it narrows a type with other members and
-roles to one interface. Neither applies here: `dyn proc` has one capability,
-and a procedure or capture literal has nothing but its call to hide. A named
-record can have other roles, so turning one into a callback stays written.
-
-**Why not make the literal a `proc` value.** The simplest answer gives a
-capture literal the type `proc(a, b: int) -> bool` itself. A procedure value is
-one code pointer with no room for captures, and making room costs every
-procedure value, not only closures:
-
-- Two words for every procedure value: a `proc "c"` callback no longer matches
-  the C ABI, and every procedure-typed field doubles.
-- An owned environment: captures vary in size, so they would go to the heap,
-  and every procedure value would allocate, clone, and drop. Loke allocates
-  only through a written allocator, and creating a callable should not imply
-  heap allocation.
-- A borrowed environment: every procedure value becomes a borrow carrier, so
-  storing or returning even a plain procedure, free today, is lifetime-checked.
-
-The [removed context pointer](comments.md#build-selected-services-and-explicit-runtime-state)
-was kept out on the same ground: procedure values stay thin.
-
-**Still open:** whether a `dyn mut proc` is needed once an `inout` call
-exists. `dyn proc(...)` is the short form of
-`dyn interfaces.Callable(proc(...))`, and a `dyn proc` satisfies `Callable`, so
-every callback API taking one accepts it. Until it exists, `Callable` is not
-dyn-compatible.
-
-### Implementation order
-
-1. The callable constraint and `x(args)` call syntax. Done: design.md
-   [Calling a value](design.md#calling-a-value) and the catalogue's `Callable`.
-2. Capture literals. Done: design.md
-   [Capture literals](design.md#capture-literals).
-3. `dyn proc`, with its implicit conversion and the procedure representation
-   above.
+A [`dyn proc` view](design.md#borrowed-callable-views) is read-only, since a
+`call` takes a plain `self`: it reads its captures and writes through a `&mut`
+one. Revisit `dyn mut proc` with the `inout` call in
+[What a capture literal's `call` cannot do](#what-a-capture-literals-call-cannot-do):
+a callable that keeps mutable state inside itself would need a mutable view to
+be called through one.
 
 ## Owning runtime polymorphism
 
@@ -264,7 +158,7 @@ or a library owner built over an exposed witness primitive?
 
 A closure that is returned or kept past its frame is a concrete use: a
 [capture literal](design.md#capture-literals) and its borrowed
-[`dyn proc` view](#a-borrowed-callable-view-dyn-proc) cannot leave the body
+[`dyn proc` view](design.md#borrowed-callable-views) cannot leave the body
 that wrote it.
 
 The proposal must specify allocator identity, alignment, fallible construction,

@@ -105,6 +105,15 @@ call_effect :: proc(c: ^Compiler, v: ^Expr_Call) -> (Effect_Call, bool) {
 		id = v.resolution.symbol
 	}
 	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
+		// A `dyn` forwarding member reaches what fills its slot, whatever the
+		// receiver expression is; a callable view also any procedure it holds.
+		if info := underlying_info(c, sym.owner_type); sym.synth == .Dyn_Forward && info != nil && info.kind == .Dyn {
+			return Effect_Call {
+				dyn_interface = info.dyn_interface,
+				dyn_index     = int(sym.index),
+				type          = dyn_proc_signature(c, sym.owner_type),
+			}, true
+		}
 		return Effect_Call{callee = id}, true
 	}
 	if base := expr_base(v.callee); base != nil && underlying_kind(c, base.type) == .Proc {
@@ -258,7 +267,7 @@ effect_call_writes :: proc(c: ^Compiler, target: Effect_Call) -> []Symbol_Id {
 @(private = "file")
 effect_key :: proc(target: Effect_Call, allocator: mem.Allocator) -> string {
 	if target.dyn_interface != INVALID_SYMBOL {
-		return fmt.aprintf("d%d.%d", int(target.dyn_interface), target.dyn_index, allocator = allocator)
+		return fmt.aprintf("d%d.%d.t%d", int(target.dyn_interface), target.dyn_index, int(target.type), allocator = allocator)
 	}
 	return fmt.aprintf("t%d", int(target.type), allocator = allocator)
 }
@@ -393,8 +402,20 @@ effect_targets :: proc(
 			if witness.interface_symbol != call.dyn_interface || call.dyn_index >= len(witness.slots) {
 				continue
 			}
+			// A callable view's witnesses are per signature.
+			if call.type != INVALID_TYPE && (len(witness.args) == 0 || witness.args[0].type != call.type) {
+				continue
+			}
 			if index, found := index_of[witness.slots[call.dyn_index].target]; found {
 				append(&out, index)
+			}
+		}
+		// design.md "Borrowed callable views": or a procedure the view holds.
+		if call.type != INVALID_TYPE {
+			for body, index in bodies {
+				if used_as_value[body.symbol] && assignable(c, body.type, call.type) {
+					append(&out, index)
+				}
 			}
 		}
 		// design.md "String format printing": the witness erased printing

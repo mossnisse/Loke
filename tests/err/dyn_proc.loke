@@ -1,0 +1,105 @@
+package main; import "core:fmt";
+
+// design.md "Borrowed callable views": what a `dyn proc` view rejects.
+
+By_Depth :: struct { limit: int }
+
+impl By_Depth {
+	call :: proc(self, n: int) -> int { return n + self.limit; }
+}
+
+run :: proc(f: dyn proc(n: int) -> int) -> int { return f(1); }
+
+// A `call` takes a plain `self` and the Loke convention.
+mutable_view :: proc(f: dyn mut proc(n: int) -> int) { }
+foreign_view :: proc(f: dyn proc "c" (n: int) -> int) { }
+
+add_one :: proc(n: int) -> int { return n + 1; }
+
+// A named callable converts where it is written.
+named :: proc() -> int {
+	by_depth := By_Depth{2};
+	return run(by_depth);
+}
+
+// A procedure converts by value.
+pointer_to_procedure :: proc() -> int {
+	g := add_one;
+	return run((dyn proc(n: int) -> int)(&g));
+}
+
+wrong_signature :: proc() -> int {
+	return run(proc(n: int) -> bool capture(m = 1) { return n > m; });
+}
+
+// A literal retaining more than the signature allows does not convert.
+Kept :: struct { slot: ^int }
+retains :: proc(f: dyn proc(p: ^int, into: inout Kept)) { }
+retaining :: proc() {
+	retains(proc(@(escape=stored) p: ^int, into: inout Kept) capture(m = 1) { into.slot = p; });
+}
+
+// A temporary literal ends with the declaration that views it.
+temporary :: proc() -> int {
+	n := 0;
+	f: dyn proc(k: int) -> int = proc(k: int) -> int capture(&mut n) { n += k; return n; };
+	return f(1);
+}
+
+// A named literal is borrowed, and its borrows with it.
+written_while_borrowed :: proc() -> int {
+	n := 0;
+	bump := proc(k: int) -> int capture(&n) { return n + k; };
+	f: dyn proc(k: int) -> int = bump;
+	n = 4;
+	return f(1);
+}
+
+compared :: proc() -> bool {
+	f: dyn proc(n: int) -> int = add_one;
+	g: dyn proc(n: int) -> int = add_one;
+	return f == g;
+}
+
+// design.md "Global write effects": a call through a view writes what any
+// procedure or `call` it may hold writes.
+cache: [dynamic]int;
+
+clear_cache :: proc() { cache.clear(); }
+
+cleared_through_view :: proc() {
+	cache.append(1);
+	view := cache[:];
+	f: dyn proc() = clear_cache;
+	f();
+	fmt.println(view[0]);
+}
+
+// So does any `dyn` slot call, whatever its receiver.
+Touch :: interface($Self: type) { slot touch: proc(self: ^Self); }
+Toucher :: struct {}
+impl Toucher { touch :: proc(self: ^Toucher) { cache.clear(); } }
+TOUCHER: Toucher = {};
+view_of :: proc() -> dyn Touch { return (dyn Touch)(&TOUCHER); }
+
+cleared_through_temporary :: proc() {
+	cache.append(1);
+	view := cache[:];
+	view_of().touch();
+	fmt.println(view[0]);
+}
+
+FOLDED :: run(add_one);
+
+main :: proc() {
+	_ = named();
+	_ = pointer_to_procedure();
+	_ = wrong_signature();
+	retaining();
+	_ = temporary();
+	_ = written_while_borrowed();
+	_ = compared();
+	cleared_through_view();
+	cleared_through_temporary();
+	fmt.println(FOLDED);
+}

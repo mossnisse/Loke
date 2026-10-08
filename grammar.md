@@ -266,6 +266,7 @@ Type = "^" "mut"? Type                                   // pointer
      | "map" "[" Type "]" Type
      | "distinct" Type
      | "dyn" "mut"? Type_Name Type_Arguments?           // borrowed dynamic interface
+     | "dyn" "mut"? Proc_Type                            // borrowed callable view
      | "type"                                           // compile-time-only type of types
      | Proc_Type
      | Type_Definition
@@ -307,7 +308,9 @@ as in `S.Iterator.Item`.
 
 In `dyn Interface(arguments...)`, the interface's first parameter is the erased
 subject and is omitted from `arguments`. The conversion is written with a
-parenthesised type, `(dyn Interface)(&value)`.
+parenthesised type, `(dyn Interface)(&value)`. `dyn proc(...)` is the
+[callable view](design.md#borrowed-callable-views); its `mut` form parses and is
+rejected.
 
 ## Records
 

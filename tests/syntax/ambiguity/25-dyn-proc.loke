@@ -1,0 +1,11 @@
+// grammar.md "Types": `dyn` followed by `proc` is a callable view, whose
+// signature is a procedure type, not a literal: a parenthesised one is a
+// conversion, and `mut` parses for the checker to reject.
+package main;
+
+visit :: proc(f: dyn proc(n: int) -> int, g: dyn mut proc()) { }
+
+main :: proc() {
+	f: dyn proc(n: int) -> int = double;
+	h := (dyn proc(n: int) -> int)(&by_tag);
+}

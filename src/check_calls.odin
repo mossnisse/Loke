@@ -70,8 +70,10 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
-		// A `dyn` slot call dispatches through the witness.
-		if operand := dyn_operand_type(k, sel.operand); operand != INVALID_TYPE {
+		// A `dyn` slot call dispatches through the witness. A callable view's
+		// `call` is its forwarding member, reached as any method is.
+		if operand := dyn_operand_type(k, sel.operand); operand != INVALID_TYPE &&
+		   dyn_proc_signature(k.c, operand) == INVALID_TYPE {
 			if check_dyn_slot_call(k, v, sel, operand) {
 				return
 			}

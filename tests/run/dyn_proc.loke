@@ -1,0 +1,111 @@
+package main; import "core:fmt"; import "base:interfaces";
+
+// design.md "Borrowed callable views": one non-generic type for anything
+// callable with a signature.
+
+Node :: struct { depth: int, name: string }
+
+visit :: proc(nodes: []Node, f: dyn proc(node: ^Node)) {
+	foreach (node in nodes) {
+		f(&node);
+	}
+}
+
+print_node :: proc(node: ^Node) { fmt.println("node", node.name); }
+
+By_Depth :: struct { limit: int }
+
+impl By_Depth {
+	call :: proc(self, node: ^Node) {
+		if (node.depth <= self.limit) { fmt.println("shallow", node.name); }
+	}
+}
+
+twice :: proc(f: dyn proc(n: int) -> int, n: int) -> int { return f(f(n)); }
+
+add_one :: proc(n: int) -> int { return n + 1; }
+
+// A view satisfies `Callable` for its own signature.
+apply :: proc(f: $C, n: int) -> C.Result where interfaces.Callable(C, proc(n: int) -> int) {
+	return f(n);
+}
+
+// A view's signature binds as a pattern.
+first :: proc(f: dyn proc(x: $T) -> T, value: T) -> T { return f(value); }
+
+// The exact procedure type ranks above the view.
+take_exact :: proc(f: proc(n: int) -> int) -> string { return "exact"; }
+take_view :: proc(f: dyn proc(n: int) -> int) -> string { return "view"; }
+take :: proc{take_exact, take_view};
+
+Holder :: struct { on_value: dyn proc(n: int) -> int }
+
+// A call through the view keeps the signature's escape levels.
+Kept :: struct { slot: ^int }
+
+keep :: proc(f: dyn proc(@(escape=stored) p: ^int, into: inout Kept), @(escape=stored) p: ^int, into: inout Kept) {
+	f(p, inout into);
+}
+
+// A view holding a procedure borrows nothing, so it may be returned.
+Step :: dyn proc(n: int) -> int;
+make_step :: proc() -> Step { return add_one; }
+
+// Each instance's literal is its own type, viewed through its own signature.
+scaled :: proc(values: []$T, factor: T) -> T {
+	total: T = 0;
+	times := proc(x: T) -> T capture(factor) { return x * factor; };
+	view: dyn proc(x: T) -> T = times;
+	foreach (value in values) { total += view(value); }
+	return total;
+}
+
+main :: proc() {
+	nodes := []Node{Node{1, "a"}, Node{2, "b"}, Node{3, "c"}};
+	count := 0;
+	// A temporary literal lives through the call that views it.
+	visit(nodes, proc(node: ^Node) capture(&mut count) { count += node.depth; });
+	fmt.println(count);
+	visit(nodes, print_node);
+	by_depth := By_Depth{2};
+	visit(nodes, (dyn proc(node: ^Node))(&by_depth));
+
+	fmt.println(twice(add_one, 5));
+	step := 10;
+	fmt.println(twice(proc(n: int) -> int capture(step) { return n + step; }, 5));
+
+	// A named literal is borrowed; the two spellings are one type.
+	bump := proc(n: int) -> int capture(step) { return n * step; };
+	f: dyn proc(n: int) -> int = bump;
+	fmt.println(f(3), f.call(4));
+	g: dyn interfaces.Callable(proc(n: int) -> int) = f;
+	fmt.println(g(2), apply(f, 7), first(g, 8));
+	written := (dyn proc(n: int) -> int)(add_one);
+	pointed := (dyn proc(n: int) -> int)(&bump);
+	fmt.println(written(9), pointed(1));
+	step_view := make_step();
+	fmt.println(step_view(41), scaled([]int{1, 2, 3}, 2), scaled([]f64{0.5}, 4.0));
+
+	h := Holder{add_one};
+	fmt.println(h.on_value(1));
+	callbacks: [2]dyn proc(n: int) -> int = {add_one, bump};
+	foreach (callback in callbacks) {
+		fmt.println(callback(5));
+	}
+	p := &f;
+	fmt.println(p(6));
+	maybe: Option(dyn proc(n: int) -> int) = .some(f);
+	if (case .some(held) = maybe) { fmt.println(held(1), size_of(maybe) == size_of(f)); }
+
+	fmt.println(take(add_one), take(proc(n: int) -> int capture(step) { return n - step; }));
+
+	// A managed capture in a temporary is dropped after the call.
+	name := "owned";
+	fmt.println(twice(proc(n: int) -> int capture(name) { return n + name.len(); }, 1));
+
+	value := 5;
+	kept := Kept{&value};
+	other := 9;
+	keep(proc(@(escape=stored) p: ^int, into: inout Kept) capture(step) { into.slot = p; }, &other, inout kept);
+	fmt.println(kept.slot^);
+}

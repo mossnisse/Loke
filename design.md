@@ -382,6 +382,7 @@ The following list defines the implicit conversions. There are no user-defined o
 - `[^]T` -> `rawptr`
 - Concrete values to `any_view` when an `any_view` parameter or local destination is expected; the result is a checked non-escaping borrow
 - `dyn Derived` -> `dyn Base` when `Derived` composes `Base`; the result keeps the same data borrow and selects the base witness
+- A procedure, or a capture literal's value, -> a [`dyn proc` view](#borrowed-callable-views) of a signature it meets, when a `dyn proc` parameter or typed destination is expected
 - Any of a union's variants to that union
 - A distinct procedure type <-> its underlying procedure type
 - Unfixed integers -> built-in integer types when in range, and built-in floating-point types under the [rounding rule](#number-literals)
@@ -2223,7 +2224,7 @@ by_tag := By_Tag{descending = true};
 before := by_tag(a, b);   // by_tag.call(a, b)
 ```
 
-Generic code accepts a procedure or such a value through the catalogue's [`Callable`](#standard-interface-catalogue) interface and calls either the same way.
+Generic code accepts a procedure or such a value through the catalogue's [`Callable`](#standard-interface-catalogue) interface and calls either the same way. A non-generic API accepts either through a [`dyn proc` view](#borrowed-callable-views), which is called the same way too.
 
 #### Generic types
 
@@ -3064,7 +3065,7 @@ Growable_Sequence :: interface($Self: type) {
 - `Ordered` means the `<` operation is available; it does not promise a mathematical total order, so floating-point types satisfy it with IEEE-754 comparisons. An algorithm needing a total or strict-weak order states that precondition or takes a comparator. `Numeric` does not compose `Ordered` and requires no ordering.
 - `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`. Every copyable type satisfies it, including plain values such as `int`, pointers, and slices, each of which is its own clone. A `move_only struct`, or a type that holds one in a field, does not.
 - `Callable(C, Signature)` takes a procedure type as `Signature`. It holds by a built-in rule, since a parameter list is not a requirement an interface body can spell. A procedure type holds when it converts to `Signature`. Any other type holds when it has a `call` method that takes a plain `self`, matches `Signature`'s parameter types, modes, reset effects, and result exactly and its Loke calling convention, and retains its arguments no further than `Signature`'s [escape levels](#escapelevel) allow. A field named `call` does not count.
-- `C.Result` is what a callable returns: a procedure type's result, or the result of the type's `call` method, unless the type declares its own `Result`. A type whose `call` methods return different types, or nothing, has none. A bare bound `Callable(C, ...)`, written directly or composed by another interface, lets the body [call](#calling-a-value) a value of type `C`, reaching its `call` method even where the declaring package could not otherwise see it. `Callable` is not dyn-compatible:
+- `C.Result` is what a callable returns: a procedure type's result, or the result of the type's `call` method, unless the type declares its own `Result`. A type whose `call` methods return different types, or nothing, has none. A bare bound `Callable(C, ...)`, written directly or composed by another interface, lets the body [call](#calling-a-value) a value of type `C`, reaching its `call` method even where the declaring package could not otherwise see it. `dyn interfaces.Callable(Signature)` is the [borrowed callable view](#borrowed-callable-views) `dyn proc(...)`:
 
 ```odin
 apply_twice :: proc(value: int, f: $C) -> int
@@ -3145,6 +3146,8 @@ An interface is **dyn-compatible** when it can be erased behind a finite set of 
 
 These rules exclude constructors, `Self`-returning methods, consuming methods, generic methods, and binary operations needing another value of the same hidden type. They remain valid static requirements; the restriction applies only when forming a `dyn` type.
 
+The catalogue's [`Callable`](#standard-interface-catalogue) has no written slot: its `call` comes from the signature by a built-in rule. A [`dyn proc` view](#borrowed-callable-views) erases it alone, so an interface composing `Callable` is not dyn-compatible.
+
 A predicate such as `size_of(Self) <= 8` may hold for a concrete type but not for its two-word erased view, so it makes the interface static-only. A predicate such as `Count > 0` is erasure-invariant and remains dyn-compatible. It is checked when `dyn I(arguments...)` is formed, then checked again as part of the concrete interface application at conversion. A dyn view satisfies its interface by the ordinary structural re-check through forwarding slots; its witness proves only the slot implementations and is not evidence for a compile-time fact about the hidden representation.
 
 #### Borrowed dynamic interface values
@@ -3207,6 +3210,39 @@ paint(&drawable, inout canvas); // T is dyn Drawable; witness dispatch
 Passing a concrete value to generic code never introduces dynamic dispatch; the caller must construct a `dyn` value first, or the parameter must ask for one.
 
 Closed heterogeneous ownership uses unions. Open ownership requires an explicit owner and callbacks; a `dyn` view never extends the payload's lifetime.
+
+#### Borrowed callable views
+
+`dyn proc(parameters) -> Result` is a borrowed view of anything [callable](#calling-a-value) with that signature. It is the short form of `dyn interfaces.Callable(proc(parameters) -> Result)`, one type under either spelling. Like any `dyn` view it is two words, a data pointer and a code pointer, but the second is the code to call rather than a table of slots. A callback API that takes one sees only the parameters and the result, never what the callable captured, and is one non-generic procedure; a generic `$C` constrained by `Callable` is the alternative when the call should be direct:
+
+```odin
+visit :: proc(nodes: []Node, f: dyn proc(node: ^Node)) {
+	foreach (node in nodes) { f(&node); }
+}
+
+count := 0;
+visit(nodes, proc(node: ^Node) capture(&mut count) { count += node.depth; });
+visit(nodes, print_node);                          // a procedure converts too
+visit(nodes, (dyn proc(node: ^Node))(&by_depth));  // a named callable record: written
+```
+
+**Conversion.** A procedure converts to a `dyn proc` view when it converts to the view's signature, and a [capture literal](#capture-literals)'s value converts when its `call` meets the signature as `Callable` requires. Both conversions are implicit where a `dyn proc` parameter or typed destination is expected, and writing one, as `(dyn proc(n: int) -> int)(add_one)`, is the same conversion. Any other type satisfying `Callable` for the signature converts only explicitly, from a pointer, as for any `dyn` view: a named record may have other roles, and the conversion shows which one is meant. A procedure converts by value, never through a pointer. In [overload resolution](#operator-lookup-and-overload-resolution) the implicit conversion ranks as a built-in conversion, so a member taking the exact procedure type, or a generic one, wins over a member taking a `dyn proc`.
+
+**What it borrows.** A procedure is the view's data word itself, so converting one, or a local holding one, borrows nothing. A capture literal's value is viewed where it is: converting a named one borrows that local, and a temporary lives until the end of its complete expression, as for any `dyn` view. Passing a literal as an argument is therefore fine, while storing one straight into a `dyn proc` local leaves a view of a temporary that has ended; naming the literal first is the fix:
+
+```odin
+f: dyn proc() = proc() capture(&mut n) { n += 1; };
+f();                                    // ERROR: the temporary `f` views has ended
+bump := proc() capture(&mut n) { n += 1; };
+g: dyn proc() = bump;                   // borrows `bump`
+g();
+```
+
+**Calling.** `f(args)` and `f.call(args)` call through the code pointer. The call is checked as a call of the signature, so its parameter modes, reset effects, and escape levels apply, and its [global write effects](#global-write-effects) are those of every `call` method and procedure a view of that signature can hold.
+
+**The signature.** It matches exactly, as procedure types do, except that a procedure or `call` method may retain its arguments less than the signature's [escape levels](#escapelevel) allow. It uses the Loke calling convention, which every `call` method has, so `dyn proc "c" (...)` is an error. A view is read-only: a `call` takes a plain `self`, which reads its captures and writes through a `&mut` one, so `dyn mut proc` is an error too. A `dyn proc` view satisfies `Callable` for its own signature, so a generic callback API accepts it.
+
+Like every `dyn` view, a `dyn proc` view has no zero value and is not comparable, and compile-time evaluation rejects one.
 
 # 4. Declarations & Storage Duration
 
@@ -4405,7 +4441,7 @@ apply(4, add);           // 7
 Add :: type_of(add);     // names it in the same body
 ```
 
-No signature can name it, so it cannot be returned or held in a file-scope type. Whether it is copyable follows its fields, so a `move` capture of a move-only value makes a move-only callable. Its captures are not fields anything else can select or reflect on, and it has no `==` and no printed form, so no `any_view` can view it.
+No signature can name it, so it cannot be returned or held in a file-scope type; a [`dyn proc` view](#borrowed-callable-views) of it can be stored and passed where its signature is all that matters. Whether it is copyable follows its fields, so a `move` capture of a move-only value makes a move-only callable. Its captures are not fields anything else can select or reflect on, and it has no `==` and no printed form, so no `any_view` can view it.
 
 **Borrows.** A literal with a borrowed capture carries that borrow and is checked as a record holding a `^T` or `^mut T` is ([Values that contain borrows](#values-that-contain-borrows)): it cannot outlive the captured root, and the root may not be written, moved, or dropped while the literal is live.
 

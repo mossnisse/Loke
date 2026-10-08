@@ -1,0 +1,20 @@
+(file package="main"
+  (const names=["visit"]
+    (proc (proc-type (param ["f"] (dyn (proc-type (param ["n"] (ident "int")) (result (ident "int"))))) (param ["g"] (dyn mut (proc-type))))
+      (block
+      )
+    )
+  )
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["f"] type=(dyn (proc-type (param ["n"] (ident "int")) (result (ident "int"))))
+          (ident "double")
+        )
+        (var names=["h"]
+          (call (dyn (proc-type (param ["n"] (ident "int")) (result (ident "int")))) (unary Amp (ident "by_tag")))
+        )
+      )
+    )
+  )
+)

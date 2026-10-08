@@ -54,7 +54,8 @@ Cloneable :: interface($T: type) {
 // that converts to it, or a value whose `call` method takes a plain `self` and
 // otherwise matches it exactly. `Self.Result` is what the call returns. The
 // compiler decides it, since a signature's parameters are no requirement this
-// body could spell (design.md "Standard interface catalogue").
+// body could spell (design.md "Standard interface catalogue"). `dyn proc(...)`
+// is its borrowed view (design.md "Borrowed callable views").
 Callable :: interface($Self: type, $Signature: type) {}
 
 // What `next` hands back is `Item`, which the iterator's `Yield` makes of the

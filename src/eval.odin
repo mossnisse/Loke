@@ -583,6 +583,12 @@ current_frame :: proc(ev: ^Evaluator) -> ^Eval_Frame {
 }
 
 eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool) {
+	// design.md "Borrowed callable views": a view is built at run time.
+	if base := expr_base(e); base != nil && base.erased_from != INVALID_TYPE &&
+	   dyn_proc_signature(ev.k.c, base.type) != INVALID_TYPE {
+		eval_fail(ev, expr_span(e), "L0341", "a `dyn proc` view has no compile-time value")
+		return Eval_Value{}, false
+	}
 	// design.md "Owned values": a box lent as the `^T` of its payload.
 	if base := expr_base(e); base != nil && base.view_from != INVALID_TYPE &&
 	   underlying_kind(ev.k.c, base.view_from) == .Box && underlying_kind(ev.k.c, base.type) == .Pointer {

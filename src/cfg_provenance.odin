@@ -1373,6 +1373,12 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 @(private)
 prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	span := expr_span(e)
+	// design.md "Borrowed callable views": a procedure is the view's data word
+	// itself, so holding one borrows nothing.
+	if base := expr_base(e); dyn_proc_signature(graph.k.c, base.type) != INVALID_TYPE &&
+	   underlying_kind(graph.k.c, base.erased_from) == .Proc {
+		return walk_flow_expr_erased(graph, e)
+	}
 	// Also a use of what a carrier already refers to, so erasure cannot hide
 	// a stale view. A view of a slice local only reads it, so it holds a
 	// read-only reborrow, as a `[]T` parameter would.
@@ -1386,8 +1392,10 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "view"))
 	}
 	// A managed temporary is dropped when its statement ends (design.md
-	// "Temporaries and procedure boundaries"), so the view ends there too.
-	if base := expr_base(e); !base.is_const && type_is_managed(graph.k.c, base.erased_from) {
+	// "Temporaries and procedure boundaries"), so the view ends there too, as a
+	// `dyn` view of any temporary does.
+	if base := expr_base(e); !base.is_const &&
+	   (type_is_managed(graph.k.c, base.erased_from) || dyn_proc_signature(graph.k.c, base.type) != INVALID_TYPE) {
 		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root(graph, span), nil, false, span, "view"))
 	}
 	if len(loans) > 0 {

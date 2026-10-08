@@ -206,6 +206,8 @@ Compiler :: struct {
 	dyn_types:     map[string]Type_Id,
 	witnesses:     map[string]^Witness,
 	witness_order: [dynamic]^Witness,
+	// Per `dyn proc` type: the code word for a procedure the view holds.
+	dyn_proc_adapters: map[Type_Id]Symbol_Id,
 
 	// Materialised constants (`src/materialize.odin`): one read-only global per
 	// constant that runtime indexing or slicing needs storage for, keyed by the

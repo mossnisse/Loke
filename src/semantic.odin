@@ -524,6 +524,8 @@ Synth_Kind :: enum {
 	Try_Clone,
 	Clone,
 	Dyn_Forward,
+	// A procedure held by a `dyn proc` view: its data word, called with the rest.
+	Dyn_Proc_Adapter,
 	// Which operation is `Symbol.container_op`.
 	Container_Op,
 	// Which operation is `Symbol.provider_op`.
@@ -819,6 +821,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.dyn_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.witnesses = make(map[string]^Witness, c.semantic_allocator)
 	c.witness_order = make([dynamic]^Witness, 0, 4, c.semantic_allocator)
+	c.dyn_proc_adapters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
 	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
 	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)

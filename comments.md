@@ -469,10 +469,9 @@ naming the result `C.Result`. A built-in rule rather than a written interface
 decides it, because a signature's parameter list is not a requirement an
 interface body can spell, and one rule keeps a procedure and a record
 interchangeable without a pair of overloads per callback API. A
-[capture literal](#capture-literals) declares such a record from a clause. A
-`dyn proc` view is a
-[proposal](open-questions.md#a-borrowed-callable-view-dyn-proc), not yet part
-of the language.
+[capture literal](#capture-literals) declares such a record from a clause, and a
+[`dyn proc` view](#borrowed-callable-views) erases either behind one
+non-generic type.
 
 ### Capture literals
 
@@ -583,6 +582,72 @@ associated-type mechanism.
 `less: some proc(left, right: T) -> bool`, is shorter but is a second way to
 write a generic constraint. It can come later as sugar for the `where` form, if
 real APIs show the verbosity matters.
+
+### Borrowed callable views
+
+A generic API already sees only a callable's parameters and result:
+`slice.sort_by` names only `Callable`'s `call`, whatever the caller captured.
+What a generic cannot give is one type written without `$`, for a non-generic
+parameter, a record field, or an array of different callbacks. A
+[`dyn proc` view](design.md#borrowed-callable-views) is that type: a data
+pointer and a code pointer, as a `dyn` interface view is a data pointer and a
+witness. Nothing allocates, since the record stays in the caller's frame as
+`fmt.Writer` borrows its sink, so the view suits a callback that runs during
+the call. An API chooses: `$C` with `Callable` for a direct call the optimizer
+can inline, which suits `sort_by`, or `dyn proc` for one type and an indirect
+call. Neither names the captures.
+
+**Why the code word is not a witness.** `Callable` has one slot, so a table
+holding it would cost a load on every call and buy nothing. The view keeps the
+`dyn` representation, two words with the same borrow rules, and its second
+word is the slot itself.
+
+**Why a procedure is the data word.** A procedure value needs no data, so the
+view holds the procedure itself and calls it through an adapter generated once
+per signature. A data word pointing at a procedure value would make
+`f: dyn proc() = g` borrow the local `g`, and converting a procedure would be
+the one way to make a procedure value a borrow.
+
+**Why the conversion is implicit.** Written out, the main use reads
+`visit(nodes, (dyn proc(node: ^Node))(&proc(node: ^Node) capture(&mut count) { ... }))`:
+the signature twice and the address of a temporary. The explicit `dyn I`
+conversion is kept because it does two things a reader should see: it chooses
+the capability, `&` or `&mut`, and it narrows a type with other members and
+roles to one interface. Neither applies here: a callable view has one
+capability, and a procedure or capture literal has nothing but its call to
+hide. A named record can have other roles, so turning one into a callback stays
+written. The conversion joins those the
+[implicit conversions](design.md#implicit-type-conversions) already have:
+built-in, borrowing, chosen by the destination type alone, and checked, as
+`[dynamic]T` to `[]T`, `string` to `string_view`, `box(T)` to `^T`, and a value
+to `any_view` are. No import adds or changes it, so it is not the facility
+[User-defined implicit conversions](#user-defined-implicit-conversions)
+rejects.
+
+**Why a temporary ends with its expression.** An `any_view` local keeps a
+trivially dropped temporary for the rest of its scope, so
+`view: any_view = 5;` works. A `dyn proc` view follows the `dyn` rule
+instead: it is a `dyn` view, and an `any_view` local exists to be printed in
+the next statement where a callback is stored to be called later. Naming the
+literal costs one line and puts what the view borrows in a name the borrow
+diagnostics can point at.
+
+**Why not make the literal a `proc` value.** The simplest answer gives a
+capture literal the type `proc(a, b: int) -> bool` itself. A procedure value is
+one code pointer with no room for captures, and making room costs every
+procedure value, not only closures:
+
+- Two words for every procedure value: a `proc "c"` callback no longer matches
+  the C ABI, and every procedure-typed field doubles.
+- An owned environment: captures vary in size, so they would go to the heap,
+  and every procedure value would allocate, clone, and drop. Loke allocates
+  only through a written allocator, and creating a callable should not imply
+  heap allocation.
+- A borrowed environment: every procedure value becomes a borrow carrier, so
+  storing or returning even a plain procedure, free today, is lifetime-checked.
+
+The [removed context pointer](#build-selected-services-and-explicit-runtime-state)
+was kept out on the same ground: procedure values stay thin.
 
 ### Typed fallibility, and the `Option` decision it reverses
 

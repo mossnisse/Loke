@@ -1,0 +1,20 @@
+6
+node a
+node b
+node c
+shallow a
+shallow b
+7
+25
+30 40
+20 70 80
+10 10
+42 12 2.0
+2
+6
+50
+60
+10 true
+exact view
+11
+9

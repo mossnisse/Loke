@@ -1027,6 +1027,12 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 @(private)
 emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
+	// design.md "Borrowed callable views": a procedure or capture value becoming
+	// a `dyn proc` view.
+	if from := base.erased_from; from != INVALID_TYPE && type_is_dyn(e.c, as_type) &&
+	   dyn_proc_signature(e.c, base.type) != INVALID_TYPE {
+		return emit_dyn_proc_value(e, expr, from, as_type)
+	}
 	// A value becoming an `any_view`: its address plus the frozen `typeid`.
 	if from := base.erased_from; from != INVALID_TYPE && as_type == TYPE_ANY_VIEW {
 		address := spill_iterable_at(e, expr, from)

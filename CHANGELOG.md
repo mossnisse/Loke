@@ -448,6 +448,17 @@ checklist.
 
 ### Added
 
+- `dyn proc(parameters) -> Result` is a borrowed view of anything callable with
+  that signature (design.md "Borrowed callable views"), the short form of
+  `dyn interfaces.Callable(...)`, so one non-generic parameter, field, or array
+  holds procedures, capture literals, and callable records alike. A procedure or
+  a capture literal converts to it implicitly where one is expected; a named
+  callable record converts explicitly, `(dyn proc(...))(&record)`. Converting a
+  procedure borrows nothing, and a capture literal is borrowed where it is, so a
+  temporary one ends with its expression. `f(args)` calls through the view,
+  checked as a call of the signature. `dyn mut proc` and a non-Loke calling
+  convention are `L0463`, and an interface composing `Callable` is not
+  dyn-compatible.
 - Capture literals (design.md "Capture literals"): a procedure literal lists
   what it captures after its signature, as in `proc(a, b: int) -> bool
   capture(limit, &cfg = self.config, &mut count, move(buffer)) { ... }`. A
@@ -614,6 +625,10 @@ checklist.
 
 ### Fixed
 
+- A `dyn` slot call whose receiver is not a named local, such as
+  `view_of().touch()`, now writes whatever the slot's methods may write
+  (design.md "Global write effects"), so a borrow of a global they write is
+  `L0512` there too.
 - A generic parameter can no longer be named `true`, `false`, or `nil`
   (`L0700`), whether written `$name`, inside a parameter's type, or in a
   generic `impl` subject. Before, `proc($false: int)` made `false` in its body
