@@ -855,6 +855,38 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 	select_field(k, v, operand, operand_base, through_pointer, pointer_mutable, field)
 }
 
+// design.md "Calling a value": the `call` method `x(args)` calls, found as
+// `x.call` finds a method, through a box, a pointer, or an unfixed receiver's
+// default type, but with no field taking its place.
+select_call_method :: proc(k: ^Checker, v: ^Expr_Selector, operand: Type_Id) -> bool {
+	if select_method(k, v, operand, true) {
+		return true
+	}
+	if boxed := underlying_info(k.c, operand); boxed != nil && boxed.kind == .Box {
+		if select_method(k, v, boxed.element, true) {
+			v.operand = implicit_box_deref(k, v.operand, boxed.element)
+			return true
+		}
+		return false
+	}
+	if pointer := underlying_info(k.c, operand); pointer != nil && pointer.kind == .Pointer {
+		if select_method(k, v, pointer.element, true) {
+			v.operand = implicit_pointer_deref(k, v.operand, pointer.element, pointer.mutable)
+			return true
+		}
+		return false
+	}
+	if type_is_untyped(k.c, operand) {
+		materialized := operand == TYPE_UNTYPED_STRING ? TYPE_STRING_VIEW : default_type(k.c, operand)
+		if materialized == operand || materialized == INVALID_TYPE ||
+		   len(method_candidates(k, materialized, v.name.id)) == 0 {
+			return false
+		}
+		return materialize(k, v.operand, materialized) && select_method(k, v, materialized, true)
+	}
+	return false
+}
+
 // Annotates `v` as selecting `field` from its already-checked operand.
 @(private = "file")
 select_field :: proc(

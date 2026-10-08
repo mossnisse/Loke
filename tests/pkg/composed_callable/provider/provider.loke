@@ -1,0 +1,10 @@
+// A callable record whose `call` is private to this package, as a comparator
+// or mapper written beside its data usually is.
+package provider;
+
+@(public)
+F :: struct {}
+
+impl F {
+	call :: proc(self, n: int) -> int { return n + 1; }
+}

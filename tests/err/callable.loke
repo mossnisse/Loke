@@ -22,6 +22,17 @@ impl Mixed {
 
 Ambiguous :: Mixed.Result;
 
+// One that returns nothing disagrees too, wherever the group lists it.
+Silent_First :: struct { }
+
+impl Silent_First {
+	call :: proc{silent, counted};
+	silent :: proc(self, n: int) { }
+	counted :: proc(self, flag: bool) -> int { return 7; }
+}
+
+Silent :: Silent_First.Result;
+
 // A bound that does not hold names the method it looked for.
 apply :: proc(value: int, f: $C) -> int
 	where interfaces.Callable(C, proc(n: int) -> int) {

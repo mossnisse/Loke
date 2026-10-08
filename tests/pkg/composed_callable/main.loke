@@ -1,0 +1,27 @@
+// design.md "Interface bodies": an interface that composes `Callable` grants
+// what a direct `Callable` bound grants, so `f(7)` reaches the provider's
+// private `call` through either.
+package main;
+
+import "core:fmt";
+import "./provider";
+import "base:interfaces";
+
+Int_Callable :: interface($C: type) {
+	interfaces.Callable(C, proc(n: int) -> int);
+}
+
+// One more level of composition.
+Wrapped :: interface($C: type) {
+	Int_Callable(C);
+}
+
+composed :: proc(f: $C) -> int where Int_Callable(C) { return f(7); }
+nested :: proc(f: $C) -> int where Wrapped(C) { return f(10); }
+direct :: proc(f: $C) -> int where interfaces.Callable(C, proc(n: int) -> int) { return f(1); }
+
+main :: proc() {
+	fmt.println(composed(provider.F{}));
+	fmt.println(nested(provider.F{}));
+	fmt.println(direct(provider.F{}));
+}

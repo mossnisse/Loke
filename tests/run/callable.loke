@@ -98,6 +98,24 @@ impl Keeper {
 	call :: proc(self: Keeper, @(escape=stored) n: ^int) -> int { return n^; }
 }
 
+// A call through an extension method: `2(5)` takes the unfixed receiver's
+// default type, as `2.call(5)` does.
+impl int {
+	call :: proc(self, n: int) -> int { return self + n; }
+}
+
+// The rest of procedure type identity is matched as well: a reset effect
+// cannot hide behind a signature without one, and a method has the Loke
+// convention.
+Resetter :: struct { }
+
+impl Resetter {
+	call :: proc(self: Resetter, @(allocator_reset) a: Allocator) { }
+}
+
+static_assert(!interfaces.Callable(Resetter, proc(a: Allocator)));
+static_assert(interfaces.Callable(Resetter, proc(@(allocator_reset) a: Allocator)));
+static_assert(!interfaces.Callable(Scale, proc "c" (n: int) -> int));
 static_assert(interfaces.Callable(Scale, proc(n: int) -> int));
 static_assert(interfaces.Callable(proc(x: int) -> int, proc(n: int) -> int));
 static_assert(!interfaces.Callable(Scale, proc(n: i32) -> int));
@@ -116,6 +134,12 @@ static_assert((proc(n: int) -> bool).Result == bool);
 main :: proc() {
 	triple := Scale{3};
 	fmt.println(triple(5));
+	// Through a pointer or a box, as `p.call(5)` reaches the method.
+	pointer := &triple;
+	fmt.println(pointer(5));
+	boxed := box(Scale{4});
+	fmt.println(boxed(5));
+	fmt.println(2(5));
 	fmt.println(apply_twice(1, triple));
 	fmt.println(apply_twice(1, double));
 	fmt.println(apply_twice(1, proc(n: int) -> int { return n + 10; }));

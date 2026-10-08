@@ -4,9 +4,12 @@ this `call` is a field; only a `call` method makes a value callable
 L0408
 @23:14
 its `call` methods return different types, so `Mixed.Result` names neither
+L0408
+@34:11
+its `call` methods return different types, so `Silent_First.Result` names neither
 L0444
-@38:9
+@49:9
 `Wrong` has no method `call(self, ...)` matching `proc(int) -> int`
 L0463
-@42:22
+@53:22
 `Callable` is not dyn-compatible: its `call` is a built-in rule, not a named `slot`

@@ -460,15 +460,17 @@ checklist.
   note offering the three modes; the clause's own rules are `L0259` and
   `L0716`.
 - A value whose type has a `call` method is called like a procedure:
-  `x(args)` is `x.call(args)` (design.md "Calling a value"). A field named
-  `call` does not count, and calling such a record is `L0320` with a note
-  saying so.
+  `x(args)` is `x.call(args)` (design.md "Calling a value"), reached through
+  a pointer or a box as `x.call` is. A field named `call` does not count, and
+  calling such a record is `L0320` with a note saying so.
 - `interfaces.Callable(C, Signature)` holds for a procedure that converts to
   the procedure type `Signature`, and for a type whose `call` method takes a
-  plain `self` and otherwise matches it (design.md "Standard interface
-  catalogue"). `C.Result` names what the call returns. A bare bound lets the
-  body write `c(args)`, reaching a `call` method its package could not
-  otherwise see. `Result.map_error` now takes any such callable, so a record
+  plain `self` and otherwise matches it, calling convention and reset effects
+  included (design.md "Standard interface catalogue"). `C.Result` names what
+  the call returns, and is `L0408` when a `call` returns nothing or two
+  disagree. A bound, bare or composed by another interface, lets the body
+  write `c(args)`, reaching a `call` method its package could not otherwise
+  see. `Result.map_error` now takes any such callable, so a record
   can map an error.
 - `if` and `for` take one switch case as their header (design.md
   "Conditional patterns"): `if (case .some(entry) = table.find(key)) { ... }

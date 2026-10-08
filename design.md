@@ -2207,7 +2207,7 @@ A `self: ^mut Type` is **not** a receiver: it is an ordinary pointer parameter w
 
 #### Calling a value
 
-A value whose type has a `call` method is called like a procedure: `x(args)` is `x.call(args)`. The method is found and ranked as any method is, so a type may group several `call` overloads, and its receiver form applies as it would to `x.call(args)`. A field named `call` that holds a procedure does not make its record callable: `x(args)` names the method, never the field that [field lookup](#methods-and-implementation-blocks) prefers for the text `x.call(args)`.
+A value whose type has a `call` method is called like a procedure: `x(args)` is `x.call(args)`. The method is found and ranked as any method is, so a type may group several `call` overloads, and its receiver form applies as it would to `x.call(args)`. It is reached as `x.call` reaches it, through a pointer or a box, and an unfixed constant takes its default type. A field named `call` that holds a procedure does not make its record callable: `x(args)` names the method, never the field that [field lookup](#methods-and-implementation-blocks) prefers for the text `x.call(args)`.
 
 ```odin
 By_Tag :: struct { descending: bool }
@@ -3063,8 +3063,8 @@ Growable_Sequence :: interface($Self: type) {
 
 - `Ordered` means the `<` operation is available; it does not promise a mathematical total order, so floating-point types satisfy it with IEEE-754 comparisons. An algorithm needing a total or strict-weak order states that precondition or takes a comparator. `Numeric` does not compose `Ordered` and requires no ordering.
 - `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`. Every copyable type satisfies it, including plain values such as `int`, pointers, and slices, each of which is its own clone. A `move_only struct`, or a type that holds one in a field, does not.
-- `Callable(C, Signature)` takes a procedure type as `Signature`. It holds by a built-in rule, since a parameter list is not a requirement an interface body can spell. A procedure type holds when it converts to `Signature`. Any other type holds when it has a `call` method that takes a plain `self`, matches `Signature`'s parameter types and modes and its result exactly, and retains its arguments no further than `Signature`'s [escape levels](#escapelevel) allow. A field named `call` does not count.
-- `C.Result` is what a callable returns: a procedure type's result, or the result of the type's `call` method, unless the type declares its own `Result`. A type whose `call` methods return different types, or nothing, has none. A bare bound `Callable(C, ...)` lets the body [call](#calling-a-value) a value of type `C`, reaching its `call` method even where the declaring package could not otherwise see it. `Callable` is not dyn-compatible:
+- `Callable(C, Signature)` takes a procedure type as `Signature`. It holds by a built-in rule, since a parameter list is not a requirement an interface body can spell. A procedure type holds when it converts to `Signature`. Any other type holds when it has a `call` method that takes a plain `self`, matches `Signature`'s parameter types, modes, reset effects, and result exactly and its Loke calling convention, and retains its arguments no further than `Signature`'s [escape levels](#escapelevel) allow. A field named `call` does not count.
+- `C.Result` is what a callable returns: a procedure type's result, or the result of the type's `call` method, unless the type declares its own `Result`. A type whose `call` methods return different types, or nothing, has none. A bare bound `Callable(C, ...)`, written directly or composed by another interface, lets the body [call](#calling-a-value) a value of type `C`, reaching its `call` method even where the declaring package could not otherwise see it. `Callable` is not dyn-compatible:
 
 ```odin
 apply_twice :: proc(value: int, f: $C) -> int

@@ -182,24 +182,19 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 }
 
 // design.md "Calling a value": `x(args)` on a value whose type has a `call`
-// method is `x.call(args)`. The method is named directly rather than looked up
-// by text, so a field named `call` never answers. The callee was checked
-// already and becomes the receiver unchanged.
+// method is `x.call(args)`. The method is selected as `x.call` would select it,
+// but never a field named `call`. The callee was checked already and becomes
+// the receiver.
 @(private = "file")
 check_callable_value_call :: proc(k: ^Checker, v: ^Expr_Call, callee_type: Type_Id) -> bool {
-	name := intern_identifier(k.c, "call")
-	candidates := method_candidates(k, callee_type, name)
-	if len(candidates) == 0 {
-		return false
-	}
 	span := expr_span(v.callee)
 	sel := new(Expr_Selector, k.c.semantic_allocator)
 	sel.span = span
 	sel.operand = v.callee
-	sel.name = Name{text = "call", span = span, id = name}
-	sel.resolution = Resolution{kind = .Method, symbol = candidates[0]}
-	sel.value_category = .Value
-	sel.type = TYPE_VOID
+	sel.name = Name{text = "call", span = span, id = intern_identifier(k.c, "call")}
+	if !select_call_method(k, sel, callee_type) {
+		return false
+	}
 	v.callee = sel
 	check_method_call(k, v, sel)
 	return true

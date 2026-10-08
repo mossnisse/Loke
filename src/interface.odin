@@ -802,7 +802,8 @@ callable_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) 
 		sym := symbol_of(k.c, candidate)
 		if sym != nil && sym.kind == .Proc && sym.has_receiver &&
 		   slot_matches(k, sym, params, modes, wanted.result, wanted.result_inout) &&
-		   call_escapes_weaken_to(k.c, sym.proc_type, signature) {
+		   call_escapes_weaken_to(k.c, sym.proc_type, signature) &&
+		   call_effects_match(k.c, sym.proc_type, signature) {
 			return Requirement_Failure{}, true
 		}
 	}
@@ -838,7 +839,9 @@ ensure_callable_result_member :: proc(k: ^Checker, type: Type_Id, name: Identifi
 			if sym == nil || sym.kind != .Proc || !sym.has_receiver {
 				continue
 			}
-			if result != INVALID_TYPE && sym.result != result {
+			// `INVALID_TYPE` is also "none seen yet", so one returning nothing
+			// settles it now, in whichever order the group lists it.
+			if sym.result == INVALID_TYPE || (result != INVALID_TYPE && sym.result != result) {
 				return
 			}
 			result = sym.result
@@ -872,6 +875,30 @@ note_missing_callable_result :: proc(k: ^Checker, type: Type_Id, name: string) {
 			return
 		}
 	}
+}
+
+// The rest of procedure type identity (design.md "Calling conventions"), as
+// a procedure converting to the signature must match it: a method has the
+// Loke convention, and each parameter's reset effect and foreign by-address
+// passing are the signature's. Its parameter `index + 1` is the signature's
+// `index`.
+@(private = "file")
+call_effects_match :: proc(c: ^Compiler, method, signature: Type_Id) -> bool {
+	have := underlying_info(c, method)
+	wanted := underlying_info(c, signature)
+	if have == nil || wanted.convention != have.convention || wanted.c_vararg != have.c_vararg {
+		return false
+	}
+	flag_at :: proc(flags: []bool, index: int) -> bool {
+		return index < len(flags) && flags[index]
+	}
+	for index in 0 ..< len(wanted.parameters) {
+		if flag_at(have.param_resets, index + 1) != flag_at(wanted.param_resets, index) ||
+		   flag_at(have.param_by_ptr, index + 1) != flag_at(wanted.param_by_ptr, index) {
+			return false
+		}
+	}
+	return true
 }
 
 // A `call` method may retain its arguments no further than the signature
@@ -1011,13 +1038,16 @@ required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 			continue
 		}
 		// `Callable` states its slot by a built-in rule, so it grants `call`
-		// directly: what `c(args)` in the constrained body reaches.
-		if interface_is_callable(k.c, info) {
-			if identifier_text(k.c, name) == "call" {
-				if found := slot_candidates(k, type, name, info.pkg); len(found) > 0 {
+		// itself, directly or composed: what `c(args)` in the constrained body
+		// reaches.
+		if identifier_text(k.c, name) == "call" {
+			if callable := composed_callable(k, info, args, type); callable != nil {
+				if found := slot_candidates(k, type, name, callable.pkg); len(found) > 0 {
 					return found
 				}
 			}
+		}
+		if interface_is_callable(k.c, info) {
 			continue
 		}
 		flattened :=make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
@@ -1030,6 +1060,46 @@ required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 			if found := slot_candidates(k, type, name, owner.pkg); len(found) > 0 {
 				return found
 			}
+		}
+	}
+	return nil
+}
+
+// The `Callable` that `info(args)` is or composes on `type`, at any depth, as
+// `interface_slots` flattens written slots (design.md "Interface bodies").
+@(private = "file")
+composed_callable :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, type: Type_Id, depth := 0) -> ^Interface_Info {
+	if interface_is_callable(k.c, info) {
+		return len(args) > 0 && args[0].is_type && args[0].type == type ? info : nil
+	}
+	if depth >= MAX_INTERFACE_DEPTH {
+		return nil
+	}
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
+	k.scope, k.pkg, k.lookup_pkg = interface_scope(k, info, args), info.pkg, info.pkg
+	if info.file_node != nil {
+		k.file, k.file_node = info.file, info.file_node
+	}
+	for requirement in info.node.requirements {
+		if requirement.kind == .Slot {
+			continue
+		}
+		composed := composed_interface_of(k, requirement)
+		if composed == nil {
+			continue
+		}
+		// Clone before annotating: one declaration serves many applications.
+		call, is_call := clone_requirement_syntax(k.c, requirement).expr.(^Expr_Call)
+		if !is_call {
+			continue
+		}
+		composed_args, valid := bound_arguments(k, call, composed)
+		if !valid {
+			continue
+		}
+		if found := composed_callable(k, composed, composed_args, type, depth + 1); found != nil {
+			return found
 		}
 	}
 	return nil
