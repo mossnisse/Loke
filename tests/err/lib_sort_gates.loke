@@ -33,8 +33,9 @@ borrowed :: proc(out: inout int) {
 	out = view[0];
 }
 
-// `sort_by` takes a `Comparator` or a plain procedure, and says why neither
-// fits: the missing `call`, or the procedure's element type.
+// `sort_by` takes anything `Callable` as a comparison of two elements, and
+// says why a comparator is not: the missing `call`, or the procedure's element
+// type.
 bad_comparator :: proc() {
 	values := []mut Opaque{Opaque{2}, Opaque{1}};
 	slice.sort_by(values, No_Comparator{});

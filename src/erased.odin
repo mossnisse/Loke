@@ -331,6 +331,13 @@ dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 	info.dyn_computed = true
 	info.dyn_ok = false
 
+	// Its one slot is decided by a built-in rule, so there is no written slot
+	// for a witness to fill.
+	if interface_is_callable(k.c, info) {
+		info.dyn_reason = "its `call` is a built-in rule, not a named `slot`"
+		return false
+	}
+
 	if len(info.params) == 0 {
 		info.dyn_reason = "it declares no subject parameter"
 		return false

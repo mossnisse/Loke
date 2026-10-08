@@ -15,38 +15,30 @@ import "core:mem";
 
 // ---------------------------------------------------------------- ordering --
 
-// A typed ordering policy. The comparator is an ordinary value, so a record
-// may carry configuration or checked borrows without allocating or passing
-// user state through `rawptr`. `call` borrows that record and the two elements;
-// sorting never retains any of them.
-Comparator :: interface($C, $T: type) {
-	slot call: proc(self, left, right: T) -> bool;
-}
-
-// Sorts in place according to `comparator`: a `Comparator` value, or a plain
-// procedure, which is a comparator with no state.
-sort_by :: proc{sort_by_comparator, sort_by_procedure};
-
+// Sorts in place according to `less`: a plain procedure, or a value whose
+// `call` method compares, such as a record carrying configuration or checked
+// borrows (design.md "Sorting slices"). It is borrowed for the call and
+// retained nowhere, and sorting allocates nothing.
+//
 // The package-private intrinsic owns only the bridge to the shared
-// byte-relocating runtime introsort: it receives the comparator's address for
-// this call and generates a typed adapter to `C.call`. The public operation and
-// all callback state remain ordinary Loke.
-sort_by_comparator :: proc(values: []mut $T, comparator: $C) where Comparator(C, T) {
-	sort_by_intrinsic(values, &comparator);
-}
-
-// An ordinary record around the procedure, so the procedure path is checked and
-// lowered exactly as a comparator a caller writes by hand.
-sort_by_procedure :: proc(values: []mut $T, less: proc(left, right: T) -> bool) {
-	comparator := Procedure_Comparator(T){less};
-	sort_by_intrinsic(values, &comparator);
+// byte-relocating runtime introsort: it receives an ordering record's address
+// for this call and generates a typed adapter to its `call`. `Ordering` makes
+// that record of either kind of `less`, so the public operation and all
+// callback state remain ordinary Loke.
+sort_by :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	ordering := Ordering(T, C){&less};
+	sort_by_intrinsic(values, &ordering);
 }
 
 @(private)
-Procedure_Comparator :: struct($T: type) { less: proc(left, right: T) -> bool }
+Ordering :: struct($T, $C: type) { less: ^C }
 
-impl Procedure_Comparator($T) {
-	call :: proc(self, left, right: T) -> bool { return self.less(left, right); }
+// The bound is repeated here because it is what grants `less(...)` the
+// caller's `call` method, which this package could not otherwise see.
+impl Ordering($T, $C) {
+	call :: proc(self, left, right: T) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
+		return self.less^(left, right);
+	}
 }
 
 // Ascending, in place. No allocation, and no comparator: `Ordered` is the

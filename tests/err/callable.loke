@@ -1,0 +1,47 @@
+package main; import "base:interfaces";
+
+// design.md "Calling a value": only a `call` method makes a value callable.
+Holder :: struct { call: proc(n: int) -> int }
+
+double :: proc(n: int) -> int { return n * 2; }
+
+field_only :: proc() -> int {
+	holder := Holder{double};
+	return holder(1);
+}
+
+// design.md "Standard interface catalogue": `call` methods that disagree on
+// their result leave no `Result` to name.
+Mixed :: struct { }
+
+impl Mixed {
+	call :: proc{mixed_int, mixed_bool};
+	mixed_int :: proc(self, n: int) -> int { return n; }
+	mixed_bool :: proc(self, flag: bool) -> bool { return flag; }
+}
+
+Ambiguous :: Mixed.Result;
+
+// A bound that does not hold names the method it looked for.
+apply :: proc(value: int, f: $C) -> int
+	where interfaces.Callable(C, proc(n: int) -> int) {
+	return f(value);
+}
+
+Wrong :: struct { }
+
+impl Wrong {
+	call :: proc(self, n: int) -> bool { return n > 0; }
+}
+
+wrong_result :: proc() -> int {
+	return apply(1, Wrong{});
+}
+
+// No written slot exists for a witness to fill.
+erased :: proc(view: dyn interfaces.Callable(proc(n: int) -> int)) { }
+
+main :: proc() {
+	_ = field_only();
+	_ = wrong_result();
+}

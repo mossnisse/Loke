@@ -16,6 +16,8 @@
 @(public)
 package runtime;
 
+import "base:interfaces";
+
 // Every kind a `typeid` can describe. `Invalid` is the zero value, which is
 // what an unknown or forged id resolves to.
 @(public)
@@ -119,10 +121,12 @@ Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 //
 // The success payload is relocated, never cloned, so a move-only `T` maps like
 // any other. `f` owns the error it is handed, so it moves a managed or
-// move-only error into the new variant rather than cloning it. `F` is `f`'s
-// result, inferred from the argument (design.md "Specialization").
+// move-only error into the new variant rather than cloning it. `f` is any
+// callable taking the error, and `C.Result`, what it returns, is the new error
+// type (design.md "Standard interface catalogue").
 impl Result($T, $E) {
-	map_error :: proc(self: move, f: proc(error: move E) -> $F) -> Result(T, F) {
+	map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
+		where interfaces.Callable(C, proc(error: move E) -> C.Result) {
 		switch (move(self)) {
 		case .ok(payload):  return .ok(move(payload));
 		case .err(payload): return .err(f(move(payload)));

@@ -1,0 +1,161 @@
+package main; import "core:fmt"; import "base:interfaces";
+
+// design.md "Calling a value" and the catalogue's `Callable`: a record with a
+// `call` method is called like a procedure, and one generic signature takes
+// either.
+
+Scale :: struct { factor: int }
+
+impl Scale {
+	call :: proc(self, n: int) -> int { return n * self.factor; }
+}
+
+// Overloaded `call`s rank as any method group does.
+Describe :: struct { prefix: string_view }
+
+impl Describe {
+	call :: proc{describe_int, describe_text};
+	describe_int :: proc(self, n: int) -> string_view { return self.prefix; }
+	describe_text :: proc(self, text: string_view) -> string_view { return text; }
+}
+
+// An `inout` receiver applies as it would to `counter.call()`.
+Counter :: struct { count: int }
+
+impl Counter {
+	call :: proc(self: inout) -> int {
+		self.count += 1;
+		return self.count;
+	}
+}
+
+// `map_error` takes a record mapper; its private `call` is reached through
+// the bound from `base:runtime`.
+Parse_Error :: enum { Bad_Digit, Empty }
+App_Error :: union { parse: Parse_Error, code: int }
+
+To_Code :: struct { base: int }
+
+impl To_Code {
+	call :: proc(self, error: move Parse_Error) -> App_Error { return .code(self.base + int(error)); }
+}
+
+failed :: proc() -> Result(int, Parse_Error) { return .err(.Empty); }
+
+mapped :: proc() -> Result(int, App_Error) {
+	n := failed().map_error(To_Code{100}) or_return;
+	return .ok(n);
+}
+
+// A field named `call` is a field: `holder.call(n)` calls what it holds.
+Holder :: struct { call: proc(n: int) -> int }
+
+double :: proc(n: int) -> int { return n * 2; }
+
+apply_twice :: proc(value: int, f: $C) -> int
+	where interfaces.Callable(C, proc(n: int) -> int) {
+	return f(f(value));
+}
+
+// `C.Result` names what the callable returns.
+result_of :: proc(f: $C, n: int) -> C.Result
+	where interfaces.Callable(C, proc(n: int) -> C.Result) {
+	return f(n);
+}
+
+// Its own `Result` member wins, so a `call` returning something else fails
+// the bound written with `C.Result`.
+Labelled :: struct { }
+
+impl Labelled {
+	Result :: string_view;
+	call :: proc(self, n: int) -> int { return n; }
+	// The contributed member does not shadow the universe's `Result` here.
+	checked :: proc(self, n: int) -> Result(int, string_view) { return .ok(n); }
+}
+
+Plain_Result :: struct { }
+
+impl Plain_Result {
+	call :: proc(self, n: int) -> int { return n + 1; }
+	checked :: proc(self, n: int) -> Result(int, string_view) {
+		if (n < 0) { return .err("negative"); }
+		return .ok(n);
+	}
+}
+
+// A `self: ^` method lends more than a plain `self` slot asks, and one keeping
+// its argument promises more than the signature does: neither satisfies it.
+Pointer_Call :: struct { }
+
+impl Pointer_Call {
+	call :: proc(self: ^, n: int) -> int { return n; }
+}
+
+Keeper :: struct { }
+
+impl Keeper {
+	call :: proc(self: Keeper, @(escape=stored) n: ^int) -> int { return n^; }
+}
+
+static_assert(interfaces.Callable(Scale, proc(n: int) -> int));
+static_assert(interfaces.Callable(proc(x: int) -> int, proc(n: int) -> int));
+static_assert(!interfaces.Callable(Scale, proc(n: i32) -> int));
+static_assert(!interfaces.Callable(Holder, proc(n: int) -> int));
+static_assert(!interfaces.Callable(Pointer_Call, proc(n: int) -> int));
+static_assert(!interfaces.Callable(Keeper, proc(n: ^int) -> int));
+static_assert(interfaces.Callable(Keeper, proc(@(escape=stored) n: ^int) -> int));
+static_assert(interfaces.Callable(Labelled, proc(n: int) -> int));
+static_assert(!interfaces.Callable(Labelled, proc(n: int) -> Labelled.Result));
+static_assert(!interfaces.Callable(int, proc(n: int) -> int));
+static_assert(!interfaces.Callable(Scale, int));
+static_assert(Scale.Result == int);
+static_assert(Labelled.Result == string_view);
+static_assert((proc(n: int) -> bool).Result == bool);
+
+main :: proc() {
+	triple := Scale{3};
+	fmt.println(triple(5));
+	fmt.println(apply_twice(1, triple));
+	fmt.println(apply_twice(1, double));
+	fmt.println(apply_twice(1, proc(n: int) -> int { return n + 10; }));
+	fmt.println(result_of(triple, 7));
+
+	describe := Describe{"number"};
+	fmt.println(describe(4), describe("text"));
+
+	counter := Counter{};
+	_ = counter();
+	fmt.println(counter());
+
+	holder := Holder{double};
+	fmt.println(holder.call(21));
+
+	p := Plain_Result{};
+	fmt.println(p(1), Plain_Result.Result == int);
+	switch (p.checked(-1)) {
+	case .ok(n):   fmt.println(n);
+	case .err(e):  fmt.println(e);
+	}
+	l := Labelled{};
+	switch (l.checked(9)) {
+	case .ok(n):   fmt.println(n);
+	case .err(e):  fmt.println(e);
+	}
+
+	// A body-local callable record, called directly and through a bound.
+	Offset :: struct { by: int }
+	impl Offset {
+		call :: proc(self, n: int) -> int { return n + self.by; }
+	}
+	fmt.println(apply_twice(0, Offset{4}));
+
+	switch (mapped()) {
+	case .ok(n): fmt.println(n);
+	case .err(e):
+		switch (e) {
+		case .parse(kind): fmt.println(kind);
+		case .code(code): fmt.println(code);
+		}
+	}
+}

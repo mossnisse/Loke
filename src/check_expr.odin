@@ -734,6 +734,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 		}
 		errorf(k.c, v.span, "L0408", "`%s` has no member `%s`", type_name(k.c, subject), v.name.text)
 		note_excluded_member(k, subject, v.name.text)
+		note_missing_callable_result(k, subject, v.name.text)
 		v.type = INVALID_TYPE
 		return
 	}

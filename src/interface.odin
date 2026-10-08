@@ -498,6 +498,9 @@ interface_check :: proc(
 	if failure, ok := interface_predicates_check(k, info, args); !ok {
 		return failure, false
 	}
+	if interface_is_callable(k.c, info) {
+		return callable_check(k, info, args)
+	}
 	// Speculation keeps a rejected probe from registering typeids or witnesses.
 	// Each requirement rolls back its own diagnostics.
 	probe := begin_probe(k.c)
@@ -744,6 +747,147 @@ check_one_requirement :: proc(
 	return Requirement_Failure{}, true
 }
 
+// The catalogue's `Callable`, whose one requirement the compiler states: a
+// signature's parameter list is not something an interface body can spell.
+interface_is_callable :: proc(c: ^Compiler, info: ^Interface_Info) -> bool {
+	pkg := package_of(c, info.pkg)
+	return pkg != nil && pkg.key == STD_INTERFACES && identifier_text(c, symbol_of(c, info.symbol).name) == "Callable"
+}
+
+// design.md "Standard interface catalogue": `Callable(Self, Signature)` holds
+// for a procedure that converts to `Signature`, and for a type with a `call`
+// method meeting the slot `call: proc(self, <Signature's parameters>) -> <its
+// result>`. A field named `call` is not a method, so it never qualifies.
+@(private = "file")
+callable_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> (Requirement_Failure, bool) {
+	at := info.node.span
+	if len(args) != 2 || !args[0].is_type || !args[1].is_type {
+		return Requirement_Failure{span = at, reason = "its arguments are not types"}, false
+	}
+	subject, signature := args[0].type, args[1].type
+	wanted := underlying_info(k.c, signature)
+	if wanted == nil || wanted.kind != .Proc {
+		return Requirement_Failure {
+			span   = at,
+			reason = fmt.aprintf(
+				"its signature `%s` is not a procedure type",
+				type_name(k.c, signature),
+				allocator = k.c.semantic_allocator,
+			),
+		}, false
+	}
+	if have := underlying_info(k.c, subject); have != nil && have.kind == .Proc {
+		if assignable(k.c, subject, signature) {
+			return Requirement_Failure{}, true
+		}
+		return Requirement_Failure {
+			span   = at,
+			reason = fmt.aprintf(
+				"`%s` does not convert to `%s`",
+				type_name(k.c, subject),
+				type_name(k.c, signature),
+				allocator = k.c.semantic_allocator,
+			),
+		}, false
+	}
+
+	params := make([]Type_Id, len(wanted.parameters) + 1, k.c.semantic_allocator)
+	modes := make([]Param_Mode, len(wanted.parameters) + 1, k.c.semantic_allocator)
+	params[0], modes[0] = subject, .Value
+	copy(params[1:], wanted.parameters)
+	for index in 0 ..< len(wanted.parameters) {
+		modes[index + 1] = index < len(wanted.param_modes) ? wanted.param_modes[index] : .Value
+	}
+	for candidate in slot_candidates(k, subject, intern_identifier(k.c, "call"), info.pkg) {
+		sym := symbol_of(k.c, candidate)
+		if sym != nil && sym.kind == .Proc && sym.has_receiver &&
+		   slot_matches(k, sym, params, modes, wanted.result, wanted.result_inout) &&
+		   call_escapes_weaken_to(k.c, sym.proc_type, signature) {
+			return Requirement_Failure{}, true
+		}
+	}
+	return Requirement_Failure {
+		span   = at,
+		reason = fmt.aprintf(
+			"`%s` has no method `call(self, ...)` matching `%s`",
+			type_name(k.c, subject),
+			type_name(k.c, signature),
+			allocator = k.c.semantic_allocator,
+		),
+	}, false
+}
+
+// design.md "Standard interface catalogue": `C.Result` is what a callable
+// returns, a procedure type's result or its one `call` method's, so a generic
+// signature can name it. A type declaring its own `Result` keeps it, and one
+// whose `call` methods disagree, or return nothing, gets none.
+ensure_callable_result_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
+	if identifier_text(k.c, name) != "Result" {
+		return
+	}
+	info := type_of(k.c, type)
+	if info == nil || member_named(k.c, info.members, name) != INVALID_SYMBOL {
+		return
+	}
+	result := INVALID_TYPE
+	if under := underlying_info(k.c, type); under != nil && under.kind == .Proc {
+		result = under.result
+	} else {
+		for candidate in slot_candidates(k, type, intern_identifier(k.c, "call"), INVALID_PACKAGE) {
+			sym := symbol_of(k.c, candidate)
+			if sym == nil || sym.kind != .Proc || !sym.has_receiver {
+				continue
+			}
+			if result != INVALID_TYPE && sym.result != result {
+				return
+			}
+			result = sym.result
+		}
+	}
+	if result == INVALID_TYPE {
+		return
+	}
+	install_impl_members(k, .Impl, type, []Symbol_Id{new_associated_type(k.c, "Result", result, type)}, INVALID_PACKAGE)
+}
+
+// Why `type.Result` is missing when `Callable` would have contributed it: two
+// `call` methods that disagree on their result.
+note_missing_callable_result :: proc(k: ^Checker, type: Type_Id, name: string) {
+	if name != "Result" {
+		return
+	}
+	first := INVALID_SYMBOL
+	for candidate in slot_candidates(k, type, intern_identifier(k.c, "call"), INVALID_PACKAGE) {
+		sym := symbol_of(k.c, candidate)
+		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
+			continue
+		}
+		if first == INVALID_SYMBOL {
+			first = candidate
+		} else if sym.result != symbol_of(k.c, first).result {
+			add_notef(
+				k.c, sym.span, "its `call` methods return different types, so `%s.Result` names neither",
+				type_name(k.c, type),
+			)
+			return
+		}
+	}
+}
+
+// A `call` method may retain its arguments no further than the signature
+// allows, as a procedure converting to it may not (design.md
+// `@(escape=<level>)`). Its parameter `index + 1` is the signature's `index`.
+@(private = "file")
+call_escapes_weaken_to :: proc(c: ^Compiler, method, signature: Type_Id) -> bool {
+	wanted := underlying_info(c, signature)
+	for index in 0 ..< len(wanted.parameters) {
+		if proc_param_escape(c, method, index + 1) > proc_param_escape(c, signature, index) {
+			return false
+		}
+	}
+	return true
+}
+
 // A slot holds when an inherent method, or an extension from the interface's
 // package, matches its signature exactly.
 @(private = "file")
@@ -866,7 +1010,17 @@ required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 		if !bound || !args[0].is_type || args[0].type != type {
 			continue
 		}
-		flattened := make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
+		// `Callable` states its slot by a built-in rule, so it grants `call`
+		// directly: what `c(args)` in the constrained body reaches.
+		if interface_is_callable(k.c, info) {
+			if identifier_text(k.c, name) == "call" {
+				if found := slot_candidates(k, type, name, info.pkg); len(found) > 0 {
+					return found
+				}
+			}
+			continue
+		}
+		flattened :=make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
 		interface_slots(k, info, args, &flattened)
 		for entry in flattened {
 			owner := interface_info_for(k, entry.owner)

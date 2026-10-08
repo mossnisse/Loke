@@ -454,19 +454,24 @@ callbacks with explicit generic state provide the useful mechanism using
 ordinary language facilities while keeping procedure values thin.
 
 `core:slice.sort_by` is the first standard generic callback algorithm built on
-that choice. Its comparator is an ordinary record with an immutable `call`
-method, so configuration and checked borrows remain typed and allocation-free. A
-plain procedure is accepted too: the library wraps it in such a record, so it is
-checked and lowered like one written by hand. The compiler erases addresses only
+that choice. Its comparator is a plain procedure or an ordinary record with an
+immutable `call` method, so configuration and checked borrows remain typed and
+allocation-free. The library wraps either in a private ordering record, so both
+are checked and lowered like one written by hand. The compiler erases addresses only
 inside a generated call-scoped adapter to the shared runtime introsort; the
 runtime neither owns nor retains the comparator. This keeps raw relocation and
 one copy of the introsort below the language boundary without making `rawptr`
 part of the user-facing callback protocol.
 
-A record with a `call` method is the current callable convention. Compiler-added
-procedure members, callable result inference, and closure syntax are
-[exploratory proposals](open-questions.md#callable-records-procedures-and-closures),
-not requirements of the current language.
+A record with a `call` method is the callable convention: `x(args)` calls it, and
+`interfaces.Callable` constrains generic code to a procedure or such a record,
+naming the result `C.Result`. A built-in rule rather than a written interface
+decides it, because a signature's parameter list is not a requirement an
+interface body can spell, and one rule keeps a procedure and a record
+interchangeable without a pair of overloads per callback API. Closure syntax
+and a `dyn proc` view are
+[proposals](open-questions.md#callable-records-procedures-and-closures), not
+yet part of the language.
 
 ### Typed fallibility, and the `Option` decision it reverses
 

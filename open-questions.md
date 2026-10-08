@@ -95,24 +95,16 @@ current compile-time or interface design.
 ## Callable records, procedures, and closures
 
 The current [callback convention](comments.md#build-selected-services-and-explicit-runtime-state)
-uses a record with a `call` method. `slice.sort_by` also accepts an ordinary
-procedure through a library wrapper. Possible extensions remain exploratory:
+uses a record with a `call` method, which `x(args)` calls, and
+[`interfaces.Callable`](design.md#standard-interface-catalogue) lets one generic
+signature accept a procedure or such a record and name its result. That
+settles the first two questions this section asked: whether procedures and
+callable records share one generic signature, and how an API infers a callable
+record's result. What stays open:
 
-- Should every procedure type gain a compiler-contributed `call` member, so one
-  generic signature accepts both procedures and callable records? One standard
-  API uses this convention today; the library wrapper covers it without a new
-  language rule.
-- How should an API infer a callable record's result type? `Result.map_error`
-  currently matches `proc(error: move E) -> $F`. Supporting records would need
-  a way to derive the result from `call`, as an iterator derives `Iterator`
-  from `iter`, and a rule for an overloaded `call`.
 - Would closure syntax usefully abbreviate that record and method? The
-  proposed spelling is [a capture clause](#a-capture-clause-after-the-signature);
-  its open points need deciding together with the two questions above. No
-  closure syntax is committed.
-
-The first two are prerequisites of the third, not separate extensions: see
-[One callable constraint](#one-callable-constraint).
+  proposed spelling is [a capture clause](#a-capture-clause-after-the-signature).
+  No closure syntax is committed.
 
 A callable that outlives its creation scope is a separate ownership question.
 `fmt.Writer` and `log.Logger` do not establish a need for one: a formatter lends
@@ -504,8 +496,8 @@ three things break:
   `Comparator` and a wrapper for a plain procedure. Every new callback API
   would repeat the pair.
 
-**Proposal.** A catalogue interface in `base:interfaces`, satisfied by a
-built-in rule as `Cloneable` is for built-in types, and needing no new syntax:
+**Decision, now implemented.** A catalogue interface in `base:interfaces`,
+satisfied by a built-in rule as `Cloneable` is for built-in types, and needing no new syntax:
 
 ```odin
 Callable :: interface($Self: type, $Signature: type)   // satisfied by built-in rule
@@ -514,9 +506,10 @@ Callable :: interface($Self: type, $Signature: type)   // satisfied by built-in 
 - `Signature` is a procedure type. `Self` satisfies `Callable` when it is a
   procedure type that converts to `Signature`, or when it has a `call` method
   meeting the slot `call: proc(self, <Signature's parameters>) -> <its result>`
-  under the [named slot](design.md#interface-bodies) rules: parameter modes and
-  escape levels match exactly, and a plain `self` also meets a `self: ^` slot.
-  A capture literal, a hand-written record, and a `dyn proc` all satisfy it.
+  under the [named slot](design.md#interface-bodies) rules: parameter modes
+  match exactly, and the method retains its arguments no further than the
+  signature's escape levels allow, as a converting procedure may not. A
+  capture literal, a hand-written record, and a `dyn proc` all satisfy it.
 - `C.Result` is an [associated type](design.md#interface-bodies): the result of
   the one matching `call`. It is an error where an overloaded `call` leaves it
   ambiguous, as any associated type is.
@@ -582,8 +575,8 @@ real APIs show the verbosity matters.
 Each step can ship and be tested on its own:
 
 1. The callable constraint and `x(args)` call syntax, moving `slice.sort_by`
-   and `Result.map_error` to one member each. This is worth having without
-   closures.
+   and `Result.map_error` to one member each. Done: design.md
+   [Calling a value](design.md#calling-a-value) and the catalogue's `Callable`.
 2. Capture literals, with the four modes and paths, lowered to the body-local
    record.
 3. `dyn proc`, with its implicit conversion and the procedure representation

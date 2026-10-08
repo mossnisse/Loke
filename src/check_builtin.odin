@@ -76,9 +76,10 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	}
 }
 
-// `core:slice.sort_by_intrinsic(values, &comparator)`. The public wrapper already
-// requires `slice.Comparator(C, T)`; this records the exact `call` method for
-// lowering and guards against a malformed replacement standard package.
+// `core:slice.sort_by_intrinsic(values, &comparator)`. The public wrapper hands
+// it an ordering record whose `call` compares two elements; this records the
+// exact `call` method for lowering and guards against a malformed replacement
+// standard package.
 @(private = "file")
 check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value

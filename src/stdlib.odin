@@ -25,6 +25,8 @@ STD_THREAD :: "core:thread"
 STD_SIMD :: "core:simd"
 STD_LOG :: "core:log"
 STD_META :: "base:meta"
+// Contributes nothing; `interface.odin` finds its `Callable` by this key.
+STD_INTERFACES :: "base:interfaces"
 STD_MATH :: "core:math"
 
 // Called once per package, right after its scope exists and before any of its

@@ -912,15 +912,14 @@ A read-only `[]T` has no `swap`, exactly as it has no `sort`.
 
 #### Sorting slices
 
-`slice.sort` sorts ascending and `slice.reverse_sort` descending according to the element type's `Ordered` implementation. `slice.sort_by` instead accepts an ordinary comparator value whose type satisfies this structural contract:
+`slice.sort` sorts ascending and `slice.reverse_sort` descending according to the element type's `Ordered` implementation. `slice.sort_by` instead takes a comparator:
 
 ```odin
-Comparator :: interface($C, $T: type) {
-	slot call: proc(self, left, right: T) -> bool;
-}
+sort_by :: proc(values: []mut $T, less: $C)
+	where interfaces.Callable(C, proc(left, right: T) -> bool)
 ```
 
-The comparator may be a record containing configuration or checked borrows, or a plain `proc(left, right: T) -> bool`, which is a comparator with no state. It is borrowed for the call, retained nowhere, and sorting allocates nothing. It must define a strict weak ordering. The sort is not stable, so elements for which neither direction is before the other may appear in either order. A comparator that is not a strict weak ordering leaves the elements in an unspecified order rather than reaching past them: the sort is still a permutation of the slice, and still terminates.
+The comparator may be a plain `proc(left, right: T) -> bool`, or a record containing configuration or checked borrows whose [`call` method](#calling-a-value) compares. It is borrowed for the call, retained nowhere, and sorting allocates nothing. It must define a strict weak ordering. The sort is not stable, so elements for which neither direction is before the other may appear in either order. A comparator that is not a strict weak ordering leaves the elements in an unspecified order rather than reaching past them: the sort is still a permutation of the slice, and still terminates.
 
 All three procedures accept `[]mut T`; passing a read-only `[]T` is a compile-time error, because a read-only slice has no mutable storage to sort.
 
@@ -2206,6 +2205,26 @@ total := move(counter).consume();  // `self: move`, transfer written
 
 A `self: ^mut Type` is **not** a receiver: it is an ordinary pointer parameter with no method-call sugar, called as `Type.method(pointer)`. Mutating methods use `self: inout`.
 
+#### Calling a value
+
+A value whose type has a `call` method is called like a procedure: `x(args)` is `x.call(args)`. The method is found and ranked as any method is, so a type may group several `call` overloads, and its receiver form applies as it would to `x.call(args)`. A field named `call` that holds a procedure does not make its record callable: `x(args)` names the method, never the field that [field lookup](#methods-and-implementation-blocks) prefers for the text `x.call(args)`.
+
+```odin
+By_Tag :: struct { descending: bool }
+
+impl By_Tag {
+	call :: proc(self, left, right: Card) -> bool {
+		if (self.descending) { return right.tag < left.tag; }
+		return left.tag < right.tag;
+	}
+}
+
+by_tag := By_Tag{descending = true};
+before := by_tag(a, b);   // by_tag.call(a, b)
+```
+
+Generic code accepts a procedure or such a value through the catalogue's [`Callable`](#standard-interface-catalogue) interface and calls either the same way.
+
 #### Generic types
 
 An `impl` block may name a generic type by writing its shape, binding parameters with `$` as a [specialized](#specialization) procedure parameter does. The bound names are in scope throughout the block:
@@ -2313,7 +2332,7 @@ impl Big_Int {
 }
 ```
 
-Assignment (`=`), declaration (`:=`), member access (`.`), address-of, dereference, `move`, and `drop` are not overloadable; they are tied to storage and lifetime rules, and user value behavior comes from the lifecycle hooks below. `&&`, `||`, `or_else`, and the conditional expression control operand evaluation and are not overloadable. A call is not an operator either: a callable object exposes an ordinary `call` method, as [`slice.sort_by`'s comparator](#sorting-slices) does.
+Assignment (`=`), declaration (`:=`), member access (`.`), address-of, dereference, `move`, and `drop` are not overloadable; they are tied to storage and lifetime rules, and user value behavior comes from the lifecycle hooks below. `&&`, `||`, `or_else`, and the conditional expression control operand evaluation and are not overloadable. A call is not an operator either: a value is made callable by an ordinary `call` method, as [Calling a value](#calling-a-value) describes.
 
 ### Operator lookup and overload resolution
 
@@ -2999,6 +3018,9 @@ Cloneable :: interface($T: type) {
 	slot try_clone: proc(self: ^, allocator: Allocator) -> Result(T, Allocator_Error);
 }
 
+// Satisfied by a built-in rule; it writes no requirement.
+Callable :: interface($Self: type, $Signature: type) {}
+
 Iterator :: interface($Self, $Item: type) {
 	slot next: proc(self: inout Self) -> Option(Item);
 }
@@ -3041,6 +3063,19 @@ Growable_Sequence :: interface($Self: type) {
 
 - `Ordered` means the `<` operation is available; it does not promise a mathematical total order, so floating-point types satisfy it with IEEE-754 comparisons. An algorithm needing a total or strict-weak order states that precondition or takes a comparator. `Numeric` does not compose `Ordered` and requires no ordering.
 - `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`. Every copyable type satisfies it, including plain values such as `int`, pointers, and slices, each of which is its own clone. A `move_only struct`, or a type that holds one in a field, does not.
+- `Callable(C, Signature)` takes a procedure type as `Signature`. It holds by a built-in rule, since a parameter list is not a requirement an interface body can spell. A procedure type holds when it converts to `Signature`. Any other type holds when it has a `call` method that takes a plain `self`, matches `Signature`'s parameter types and modes and its result exactly, and retains its arguments no further than `Signature`'s [escape levels](#escapelevel) allow. A field named `call` does not count.
+- `C.Result` is what a callable returns: a procedure type's result, or the result of the type's `call` method, unless the type declares its own `Result`. A type whose `call` methods return different types, or nothing, has none. A bare bound `Callable(C, ...)` lets the body [call](#calling-a-value) a value of type `C`, reaching its `call` method even where the declaring package could not otherwise see it. `Callable` is not dyn-compatible:
+
+```odin
+apply_twice :: proc(value: int, f: $C) -> int
+	where interfaces.Callable(C, proc(n: int) -> int) {
+	return f(f(value));
+}
+
+map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
+	where interfaces.Callable(C, proc(error: move E) -> C.Result) { ... }
+```
+
 - `Iterable` describes reading traversal, whose elements a built-in container lends rather than copies.
 - `Mutable_Iterable` describes mutable traversal, met by a container's `iter_mut(self: inout)` and a mutable view's `iter_mut(self)` alike. Generic indexed mutation uses `Mutable_Sequence`.
 - An owned iterator has `Item = Element`, so `Iterator(Self.Iterator, Self.Iterator.Item)` also accepts it.
@@ -5625,7 +5660,7 @@ read_setting :: proc(text: string_view) -> Result(int, App_Error) {
 }
 ```
 
-`map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The mapper owns the error it is handed, since its parameter is a `move` parameter. A [variant constructor](#constructing-a-variant) therefore moves any error, managed or move-only, into its variant without cloning it. Any other mapping is an ordinary procedure of the same shape, which transfers a managed error with `move(error)`. The mapper's result is the target error type, [inferred](#specialization) from the argument.
+`map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The mapper owns the error it is handed, since its parameter is a `move` parameter. A [variant constructor](#constructing-a-variant) therefore moves any error, managed or move-only, into its variant without cloning it. Any other mapping is an ordinary procedure of the same shape, which transfers a managed error with `move(error)`, or any value [callable](#calling-a-value) with that signature. The mapper's `Result` is the target error type, so `map_error` is one generic procedure, constrained by [`Callable`](#standard-interface-catalogue).
 
 An `Option` has no error to map: its failure, `none`, carries nothing. `Option.ok_or` supplies one, so an absence becomes a failure in the caller's domain:
 

@@ -50,6 +50,13 @@ Cloneable :: interface($T: type) {
 	slot try_clone: proc(self: ^, allocator: Allocator) -> Result(T, Allocator_Error);
 }
 
+// A value that can be called with `Signature`, a procedure type: a procedure
+// that converts to it, or a value whose `call` method takes a plain `self` and
+// otherwise matches it exactly. `Self.Result` is what the call returns. The
+// compiler decides it, since a signature's parameters are no requirement this
+// body could spell (design.md "Standard interface catalogue").
+Callable :: interface($Self: type, $Signature: type) {}
+
 // What `next` hands back is `Item`, which the iterator's `Yield` makes of the
 // element it traverses; with no `Yield` the two are the same type.
 Iterator :: interface($Self, $Item: type) {

@@ -361,6 +361,12 @@ checklist.
   panic on an overflowing partial result. Write `math.wrapping_add(a, b)`,
   `wrapping_sub`, or `wrapping_mul` where a kernel means to wrap; they take
   vectors and compile to the plain instruction.
+- `slice.Comparator` and the `sort_by_comparator`/`sort_by_procedure` members
+  of `slice.sort_by` are removed (design.md "Sorting slices"). `sort_by` is one
+  generic procedure taking any `interfaces.Callable(C, proc(left, right: T) ->
+  bool)`: a plain procedure, or a record whose `call` method compares, as
+  before. Calls are unchanged. Upgrade a `where slice.Comparator(C, T)` bound
+  to `where interfaces.Callable(C, proc(left, right: T) -> bool)`.
 
 ### Changed
 
@@ -442,6 +448,17 @@ checklist.
 
 ### Added
 
+- A value whose type has a `call` method is called like a procedure:
+  `x(args)` is `x.call(args)` (design.md "Calling a value"). A field named
+  `call` does not count, and calling such a record is `L0320` with a note
+  saying so.
+- `interfaces.Callable(C, Signature)` holds for a procedure that converts to
+  the procedure type `Signature`, and for a type whose `call` method takes a
+  plain `self` and otherwise matches it (design.md "Standard interface
+  catalogue"). `C.Result` names what the call returns. A bare bound lets the
+  body write `c(args)`, reaching a `call` method its package could not
+  otherwise see. `Result.map_error` now takes any such callable, so a record
+  can map an error.
 - `if` and `for` take one switch case as their header (design.md
   "Conditional patterns"): `if (case .some(entry) = table.find(key)) { ... }
   else { ... }`, and `for (case .some(entry) = reader.next() or_return)`,

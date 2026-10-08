@@ -133,6 +133,9 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 
 	info := underlying_info(k.c, callee_type)
 	if info == nil || info.kind != .Proc {
+		if check_callable_value_call(k, v, callee_type) {
+			return
+		}
 		sel, is_sel := v.callee.(^Expr_Selector)
 		if is_sel && sel.variant_union != INVALID_TYPE &&
 		   union_variant_payload(k.c, sel.variant_union, sel.variant_index) == TYPE_VOID {
@@ -145,6 +148,9 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 			return
 		}
 		errorf(k.c, expr_span(v.callee), "L0320", "`%s` is not callable", type_name(k.c, callee_type))
+		if field := symbol_of(k.c, subject_field_named(k, callee_type, intern_identifier(k.c, "call"))); field != nil {
+			add_notef(k.c, field.span, "this `call` is a field; only a `call` method makes a value callable")
+		}
 		v.type = INVALID_TYPE
 		return
 	}
@@ -173,6 +179,30 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		result_written_but_unresolved(symbol_of(k.c, declaration)),
 	)
 	check_container_call(k, v, symbol_of(k.c, declaration))
+}
+
+// design.md "Calling a value": `x(args)` on a value whose type has a `call`
+// method is `x.call(args)`. The method is named directly rather than looked up
+// by text, so a field named `call` never answers. The callee was checked
+// already and becomes the receiver unchanged.
+@(private = "file")
+check_callable_value_call :: proc(k: ^Checker, v: ^Expr_Call, callee_type: Type_Id) -> bool {
+	name := intern_identifier(k.c, "call")
+	candidates := method_candidates(k, callee_type, name)
+	if len(candidates) == 0 {
+		return false
+	}
+	span := expr_span(v.callee)
+	sel := new(Expr_Selector, k.c.semantic_allocator)
+	sel.span = span
+	sel.operand = v.callee
+	sel.name = Name{text = "call", span = span, id = name}
+	sel.resolution = Resolution{kind = .Method, symbol = candidates[0]}
+	sel.value_category = .Value
+	sel.type = TYPE_VOID
+	v.callee = sel
+	check_method_call(k, v, sel)
+	return true
 }
 
 // Whether a procedure wrote a result that did not resolve. `Symbol.result` is

@@ -1,6 +1,6 @@
-L0392
+L0444
 @14:7
-where `proc(move Parse_Error) -> App_Error` is wanted
+`proc(Parse_Error) -> App_Error [result contract: borrowing]` does not convert to `proc(move Parse_Error) -> App_Error`
 L0392
 @23:7
-`type` does not match the shape of parameter 2
+`map_error` does not apply: it takes 2 arguments, found 3
