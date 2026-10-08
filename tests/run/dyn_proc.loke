@@ -47,9 +47,26 @@ keep :: proc(f: dyn proc(@(escape=stored) p: ^int, into: inout Kept), @(escape=s
 	f(p, inout into);
 }
 
-// A view holding a procedure borrows nothing, so it may be returned.
+// A view holding a procedure borrows nothing, so it may be returned, and a
+// procedure type written as a result ends at its signature.
 Step :: dyn proc(n: int) -> int;
 make_step :: proc() -> Step { return add_one; }
+make_view :: proc() -> dyn proc(n: int) -> int { return add_one; }
+make_procedure :: proc() -> proc(n: int) -> int { return add_one; }
+
+// A signature's inferred result contract holds through the view.
+choose :: proc(input: []int, scratch: []int) -> []int { return input; }
+Choose :: type_of(choose);
+through :: proc(input: []int) -> []int {
+	scratch := [1]int{99};
+	f: dyn interfaces.Callable(Choose) = choose;
+	pick := proc(input: []int, scratch: []int) -> []int capture(m = 1) { return input; };
+	g: dyn interfaces.Callable(Choose) = pick;
+	return g(f(input, scratch[:]), scratch[:]);
+}
+
+// A distinct procedure type converts to and from the type it wraps.
+Op :: distinct proc(n: int) -> int;
 
 // Each instance's literal is its own type, viewed through its own signature.
 scaled :: proc(values: []$T, factor: T) -> T {
@@ -85,6 +102,16 @@ main :: proc() {
 	fmt.println(written(9), pointed(1));
 	step_view := make_step();
 	fmt.println(step_view(41), scaled([]int{1, 2, 3}, 2), scaled([]f64{0.5}, 4.0));
+	fmt.println(make_view()(1), make_procedure()(2));
+	xs := [1]int{5};
+	fmt.println(through(xs[:])[0]);
+	op: Op = add_one;
+	plain: proc(n: int) -> int = op;
+	wrapped: dyn proc(n: int) -> int = op;
+	fmt.println(op(1), plain(2), wrapped(3));
+	// `$T` binds from what converts to the view.
+	half := 0.5;
+	fmt.println(first(add_one, 1), first(proc(x: f64) -> f64 capture(half) { return x + half; }, 2.0));
 
 	h := Holder{add_one};
 	fmt.println(h.on_value(1));

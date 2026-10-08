@@ -425,6 +425,11 @@ Results      = Result_Type                                // exactly one, or non
 Result_Type  = "inout"? Type
 ```
 
+A `Proc_Type` written as the result ends at its own signature: a `capture`,
+`where`, `{`, or `---` after it belongs to the procedure being declared, so
+`proc() -> proc(n: int) -> int { ... }` is a procedure returning a procedure
+value. A parameter default inside that result type is an expression again.
+
 A parameter with neither a type nor a default is legal only for the receiver
 `self`, whose type comes from the enclosing `impl` block or `slot`. That is why
 `Parameter_Mode` and a lone `^` may stand alone: `self: ^`, `self: inout`, and

@@ -161,9 +161,35 @@ contract_name :: proc(c: ^Compiler, id: Symbol_Id) -> string {
 }
 
 // Members share the signature, so the first one names the parameter.
+// design.md "Borrowed callable views": `contract` with a view added as
+// parameter 0, for the `call` member of a view whose signature carries it.
+receiver_contract :: proc(c: ^Compiler, contract: Symbol_Id) -> Symbol_Id {
+	if contract == INVALID_SYMBOL { return INVALID_SYMBOL }
+	if existing, found := c.receiver_contracts[contract]; found { return existing }
+	original := symbol_of(c, contract)
+	id := new_symbol(c, Symbol{kind = .Proc, name = original.name, span = original.span, pkg = original.pkg})
+	c.receiver_contracts[contract] = id
+	c.receiver_contract_of[id] = contract
+	return id
+}
+
+// A `call` method behind a view meets the signature's inferred contract as a
+// procedure converting to it would. Its receiver is the view's parameter 0, so
+// the two types line up although no conversion joins them.
+record_call_contract_check :: proc(c: ^Compiler, method, forward: Type_Id, span: Span) {
+	if info := underlying_info(c, forward); info == nil || info.proc_contract == INVALID_SYMBOL { return }
+	for check in c.proc_contract_checks {
+		if check.from == method && check.to == forward && check.span == span { return }
+	}
+	append(&c.proc_contract_checks, Proc_Contract_Check{method, forward, span})
+}
+
 @(private = "file")
 contract_param_name :: proc(c: ^Compiler, id: Symbol_Id, index: int) -> string {
 	sym := symbol_of(c, contract_members(c, id)[0])
+	// A capture literal's `call` takes the plain `self` its captures are read
+	// through (design.md "Capture literals"), whatever the receiver is named.
+	if index == 0 && sym.has_receiver && type_is_capture_record(c, sym.owner_type) { return "self" }
 	if index < len(sym.param_symbols) { return identifier_text(c, symbol_of(c, sym.param_symbols[index]).name) }
 	return "an argument"
 }
@@ -251,7 +277,15 @@ written_contract_within :: proc(c: ^Compiler, from, to: Symbol_Id) -> int {
 call_contract_declaration :: proc(c: ^Compiler, call: ^Expr_Call) -> Symbol_Id {
 	id := call.resolution.chosen_overload
 	if id == INVALID_SYMBOL { id = call.resolution.symbol }
-	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc { return id }
+	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
+		// A `dyn` forwarding member has no body; a callable view's carries the
+		// signature's contract (design.md "Borrowed callable views").
+		if sym.synth == .Dyn_Forward {
+			info := underlying_info(c, sym.proc_type)
+			return info == nil ? INVALID_SYMBOL : info.proc_contract
+		}
+		return id
+	}
 	if base := expr_base(call.callee); base != nil {
 		if info := underlying_info(c, base.type); info != nil && info.kind == .Proc { return info.proc_contract }
 	}

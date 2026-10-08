@@ -456,8 +456,11 @@ checklist.
   callable record converts explicitly, `(dyn proc(...))(&record)`. Converting a
   procedure borrows nothing, and a capture literal is borrowed where it is, so a
   temporary one ends with its expression. `f(args)` calls through the view,
-  checked as a call of the signature. `dyn mut proc` and a non-Loke calling
-  convention are `L0463`, and an interface composing `Callable` is not
+  checked as a call of the signature, inferred result contract included, and
+  what a view holds meets that contract and the signature's escape levels as a
+  conversion to it would (`L0645`). A `$` in the signature binds from a
+  procedure or capture literal passed to it. `dyn mut proc` and a non-Loke
+  calling convention are `L0463`, and an interface composing `Callable` is not
   dyn-compatible.
 - Capture literals (design.md "Capture literals"): a procedure literal lists
   what it captures after its signature, as in `proc(a, b: int) -> bool
@@ -629,6 +632,13 @@ checklist.
   `view_of().touch()`, now writes whatever the slot's methods may write
   (design.md "Global write effects"), so a borrow of a global they write is
   `L0512` there too.
+- A distinct procedure type converts implicitly to and from the procedure type
+  it wraps, as design.md "Implicit type conversions" lists; it used to need a
+  written conversion either way (`L0310`).
+- A procedure type written as a result, as in
+  `make :: proc() -> proc(n: int) -> int { ... }`, ends at its signature
+  (grammar.md "Procedures"). The body used to be read as a procedure literal
+  in the result, reported as a compiler defect (`L0350`).
 - A generic parameter can no longer be named `true`, `false`, or `nil`
   (`L0700`), whether written `$name`, inside a parameter's type, or in a
   generic `impl` subject. Before, `proc($false: int)` made `false` in its body

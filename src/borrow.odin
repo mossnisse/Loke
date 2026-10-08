@@ -883,11 +883,60 @@ result_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> (Result_Provenan
 	if is_contract_join(c, declaration) {
 		return joined_result_summary(c, symbol_of(c, declaration).members)
 	}
+	if original, shifted := c.receiver_contract_of[declaration]; shifted {
+		summary, found := result_summary(c, original)
+		if !found {
+			return Result_Provenance{}, false
+		}
+		return receiver_result_summary(c, summary), true
+	}
 	summary, found := c.result_summaries[declaration]
 	if !found {
 		return Result_Provenance{}, false
 	}
 	return summary.result, true
+}
+
+// design.md "Borrowed callable views": the signature's summary behind a view
+// added as parameter 0, which the result does not depend on: every `call` a
+// view of the signature holds is checked to meet the contract, captures
+// included. Rebuilt on each request, as a join's is.
+@(private = "file")
+receiver_result_summary :: proc(c: ^Compiler, from: Result_Provenance) -> Result_Provenance {
+	out := from
+	out.dependencies = receiver_dependencies(c, from.dependencies)
+	out.content = make([]Result_Content_Provenance, len(from.content), c.semantic_allocator)
+	for content, index in from.content {
+		out.content[index] = Result_Content_Provenance{path = content.path, dependencies = receiver_dependencies(c, content.dependencies)}
+	}
+	out.region = receiver_region(c, from.region)
+	out.region_content = make([]Prov_Region_Content, len(from.region_content), c.semantic_allocator)
+	for content, index in from.region_content {
+		out.region_content[index] = Prov_Region_Content{path = content.path, region = receiver_region(c, content.region)}
+	}
+	return out
+}
+
+@(private = "file")
+receiver_dependencies :: proc(c: ^Compiler, from: Result_Dependencies) -> Result_Dependencies {
+	out := from
+	count := len(from.params) + 1
+	out.params = make([]bool, count, c.semantic_allocator)
+	out.param_paths = make([][]bool, count, c.semantic_allocator)
+	out.param_loads = make([]u8, count, c.semantic_allocator)
+	copy(out.params[1:], from.params)
+	copy(out.param_paths[1:], from.param_paths)
+	copy(out.param_loads[1:], from.param_loads)
+	return out
+}
+
+// The view is no allocator, so it names no region of its own.
+@(private = "file")
+receiver_region :: proc(c: ^Compiler, from: Region_Set) -> Region_Set {
+	out := from
+	out.params = make([]bool, len(from.params) + 1, c.semantic_allocator)
+	copy(out.params[1:], from.params)
+	return out
 }
 
 // A join's members share a result type, so their summaries have one shape and
@@ -1250,6 +1299,19 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 
 // The written regions of a call's declaration; a join's members are unioned.
 written_region_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> ([]Region_Set, bool) {
+	// A view's own row is empty: a plain receiver is not written.
+	if original, shifted := c.receiver_contract_of[declaration]; shifted {
+		written, found := written_region_summary(c, original)
+		if !found {
+			return nil, false
+		}
+		out := make([]Region_Set, len(written) + 1, c.semantic_allocator)
+		out[0].params = make([]bool, len(written) + 1, c.semantic_allocator)
+		for set, index in written {
+			out[index + 1] = receiver_region(c, set)
+		}
+		return out, true
+	}
 	if !is_contract_join(c, declaration) {
 		written, found := c.written_regions[declaration]
 		return written, found

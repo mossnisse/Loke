@@ -261,6 +261,7 @@ install_dyn_call_slot :: proc(k: ^Checker, dyn, signature: Type_Id) {
 	proc_type := intern_proc_type(
 		k.c, params, modes, wanted.result, wanted.result_inout, "",
 		param_resets = resets, param_escapes = escapes,
+		proc_contract = receiver_contract(k.c, wanted.proc_contract),
 	)
 	member := new_symbol(k.c, Symbol {
 		name           = intern_identifier(k.c, "call"),
@@ -325,6 +326,33 @@ dyn_proc_accepts :: proc(c: ^Compiler, from, signature: Type_Id) -> bool {
 	}
 	method, is_capture := c.capture_records[from]
 	return is_capture && method != nil && call_method_matches(c, symbol_of(c, method.symbol), from, signature)
+}
+
+// The signature a value converting implicitly to a `dyn proc` view calls with:
+// a procedure's own type, or a capture literal's `call` without its receiver.
+// INVALID_TYPE for anything else.
+dyn_proc_source_signature :: proc(c: ^Compiler, from: Type_Id) -> Type_Id {
+	if underlying_kind(c, from) == .Proc {
+		return type_underlying(c, from)
+	}
+	method, is_capture := c.capture_records[from]
+	sym := is_capture && method != nil ? symbol_of(c, method.symbol) : nil
+	info := sym == nil ? nil : type_of(c, sym.proc_type)
+	if info == nil || len(info.parameters) == 0 {
+		return INVALID_TYPE
+	}
+	escapes: []Escape_Level
+	if len(info.param_escapes) > 1 {
+		escapes = info.param_escapes[1:]
+	}
+	resets: []bool
+	if len(info.param_resets) > 1 {
+		resets = info.param_resets[1:]
+	}
+	return intern_proc_type(
+		c, info.parameters[1:], info.param_modes[1:], info.result, info.result_inout, "",
+		param_resets = resets, param_escapes = escapes,
+	)
 }
 
 // Records what emission needs to build the view: the adapter for a procedure,
@@ -802,6 +830,14 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 
 	if interface_is_callable(k.c, info) {
 		witness.slots = callable_witness_slots(k, info, concrete, args)
+		// The method behind the view meets the signature's inferred contract.
+		if method := symbol_of(k.c, witness.slots[0].target); method != nil {
+			if view, found := k.c.dyn_types[dyn_key(k.c, info.symbol, args, false)]; found {
+				if members := type_of(k.c, view).members; len(members) > 0 {
+					record_call_contract_check(k.c, method.proc_type, symbol_of(k.c, members[0]).proc_type, span)
+				}
+			}
+		}
 		if committing(k.c) {
 			k.c.witnesses[key] = witness
 			append(&k.c.witness_order, witness)

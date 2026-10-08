@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "base:interfaces";
 
 // design.md "Borrowed callable views": what a `dyn proc` view rejects.
 
@@ -89,6 +89,45 @@ cleared_through_temporary :: proc() {
 	fmt.println(view[0]);
 }
 
+// A view of a view runs what the inner one may run.
+Clear :: struct {}
+impl Clear { call :: proc(self, input: []int) { cache.clear(); } }
+
+cleared_through_view_of_view :: proc() {
+	cache.append(1);
+	clearer := Clear{};
+	f := (dyn proc(input: []int))(&clearer);
+	g := (dyn proc(@(escape=stored) input: []int))(&f);
+	view := cache[:];
+	g([]int{});
+	fmt.println(view[0]);
+}
+
+// design.md "Escape levels": what a view holds meets its signature's escape
+// levels and inferred contract as a conversion to the signature would.
+identity :: proc(p: ^int) -> ^int { return p; }
+Kept_None :: dyn proc(@(escape=none) p: ^int) -> ^int;
+
+kept_none :: proc() -> int {
+	local := 1;
+	f: Kept_None = identity;
+	g := Kept_None(identity);
+	return f(&local)^ + g(&local)^;
+}
+
+choose :: proc(input: []int, scratch: []int) -> []int { return input; }
+Choose :: type_of(choose);
+
+contracts :: proc(input: []int) -> int {
+	local := [1]int{7};
+	scratch := proc(input: []int, scratch: []int) -> []int capture(m = 1) { return scratch; };
+	f: dyn proc(input: []int, scratch: []int) -> []int = choose;
+	g: dyn interfaces.Callable(Choose) = scratch;
+	captured := proc(input: []int, scratch: []int) -> []int capture(&local) { return local[:]; };
+	h: dyn interfaces.Callable(Choose) = captured;
+	return f(input, input)[0] + g(input, input)[0] + h(input, input)[0];
+}
+
 FOLDED :: run(add_one);
 
 main :: proc() {
@@ -101,5 +140,8 @@ main :: proc() {
 	_ = compared();
 	cleared_through_view();
 	cleared_through_temporary();
+	cleared_through_view_of_view();
+	_ = kept_none();
+	_ = contracts([]int{1});
 	fmt.println(FOLDED);
 }

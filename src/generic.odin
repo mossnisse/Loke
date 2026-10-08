@@ -978,13 +978,15 @@ match_type_pattern :: proc(
 		return match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Type_Dyn:
+		// `dyn proc(...)` is the callable view: its one argument is the
+		// signature, which a procedure or capture literal converting to the view
+		// supplies too (design.md "Borrowed callable views").
+		if signature, is_proc := v.interface_expr.(^Type_Proc); is_proc {
+			called := info.kind == .Dyn ? dyn_proc_signature(k.c, actual) : dyn_proc_source_signature(k.c, actual)
+			return called != INVALID_TYPE && match_type_pattern(k, signature, called, scope, out)
+		}
 		if info.kind != .Dyn || (v.mutable && !info.mutable) {
 			return false
-		}
-		// `dyn proc(...)` is the callable view: its one argument is the signature.
-		if signature, is_proc := v.interface_expr.(^Type_Proc); is_proc {
-			return dyn_is_callable(k.c, info) &&
-			       match_type_pattern(k, signature, info.dyn_args[0].type, scope, out)
 		}
 		callee := v.interface_expr
 		args: []Argument

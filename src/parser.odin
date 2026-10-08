@@ -37,6 +37,10 @@ Parser :: struct {
 	type_value:     bool,
 	// Silences diagnostics while frames unwind from the depth limit.
 	suppress:       bool,
+	// Inside a result type, where a `proc` is a type: what follows its
+	// signature belongs to the procedure being declared (grammar.md
+	// "Procedures").
+	signature_only: bool,
 	// A procedure literal an argument's type probe already parsed, handed to
 	// the expression reparse so nested literals are not parsed exponentially.
 	probed:         Probed_Literal,
@@ -2821,7 +2825,11 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 		convention = len(raw) >= 2 ? raw[1:len(raw) - 1] : raw
 	}
 
+	// A parameter's default is an expression again, even in a result type.
+	outer_signature_only := p.signature_only
+	p.signature_only = false
 	params, params_ok := parse_parameter_list(p)
+	p.signature_only = outer_signature_only
 	result, result_ok := parse_results(p)
 	bad := !params_ok || !result_ok
 
@@ -2830,6 +2838,9 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 	signature.params = params
 	signature.result = result
 	signature.has_error = bad
+	if p.signature_only {
+		return signature
+	}
 
 	// grammar.md "Procedure literals": `capture` is a keyword only here, before
 	// `(`, where nothing else can follow a complete signature.
@@ -3160,7 +3171,10 @@ parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 		return item, true
 	}
 	item.is_inout = allow(p, .Inout)
+	outer := p.signature_only
+	p.signature_only = true
 	item.type = parse_type(p)
+	p.signature_only = outer
 	item.span = span_to_here(p, start)
 	return item, !expr_has_error(item.type)
 }

@@ -1,0 +1,34 @@
+(file package="main"
+  (const names=["make"]
+    (proc (proc-type (result (proc-type (param ["n"] (ident "int")) (result (ident "int")))))
+      (block
+        (return (ident "add_one"))
+      )
+    )
+  )
+  (const names=["nested"]
+    (proc (proc-type (result (proc-type (result (dyn (proc-type (param ["n"] (ident "int")) (result (ident "int"))))))))
+      (block
+        (return (ident "make"))
+      )
+    )
+  )
+  (const names=["guarded"]
+    (proc (proc-type (param ["x"] (poly "T")) (result (proc-type (param ["n"] (ident "int")) (result (ident "int"))))) (where (binary Gt (call (ident "size_of") (ident "T")) (int "0")))
+      (block
+        (return (ident "add_one"))
+      )
+    )
+  )
+  (const names=["defaulted"]
+    (proc (proc-type (result (proc-type (param ["f"] _ (default (proc (proc-type (result (ident "int")))
+      (block
+        (return (int "1"))
+      )
+    ))))))
+      (block
+        (return (ident "run"))
+      )
+    )
+  )
+)

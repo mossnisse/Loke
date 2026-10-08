@@ -3293,6 +3293,9 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// kept, as for `any_view`, for the backend to hold or take the address of.
 	if signature := dyn_proc_signature(k.c, target); signature != INVALID_TYPE && base.type != target &&
 	   base.erased_from == INVALID_TYPE && dyn_proc_accepts(k.c, base.type, signature) {
+		// design.md "Escape levels": a procedure meets the signature as it would
+		// converting to it, inferred contract included.
+		record_proc_contract_check(k.c, base.type, signature, base.span)
 		request_dyn_proc_view(k, base.type, target, base.span)
 		base.erased_from = base.type
 		base.type = target
@@ -3678,6 +3681,9 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if proc_escape_weakens_to(c, from, to) {
 		return true
 	}
+	if distinct_proc_converts(c, from, to) {
+		return true
+	}
 	// Above the untyped cases: a constant reaches `any_view` at its default type.
 	if to == TYPE_ANY_VIEW && any_view_accepts(c, from) {
 		return true
@@ -3710,6 +3716,19 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		}
 	}
 	return false
+}
+
+// design.md "Implicit type conversions": a distinct procedure type and the
+// procedure type it wraps convert either way, keeping the representation. Two
+// distinct types still meet only through a hook.
+@(private = "file")
+distinct_proc_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	if (type_kind(c, from) == .Distinct) == (type_kind(c, to) == .Distinct) ||
+	   underlying_kind(c, from) != .Proc || underlying_kind(c, to) != .Proc {
+		return false
+	}
+	source, dest := type_underlying(c, from), type_underlying(c, to)
+	return source == dest || proc_escape_weakens_to(c, source, dest)
 }
 
 // Is `T(v)` legal? Built-in conversions only.

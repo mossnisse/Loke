@@ -279,6 +279,10 @@ Compiler :: struct {
 	// Per parameter, the regions of owners a body may leave in the storage that
 	// argument names (design.md "Allocator regions and region provenance").
 	written_regions: map[Symbol_Id][]Region_Set,
+	// design.md "Borrowed callable views": a signature's contract with the view
+	// as an added first parameter, both ways.
+	receiver_contracts:   map[Symbol_Id]Symbol_Id,
+	receiver_contract_of: map[Symbol_Id]Symbol_Id,
 	proc_contract_checks: [dynamic]Proc_Contract_Check,
 	// The contracts a conditional between two inferred callbacks joined.
 	contract_joins: [dynamic]Symbol_Id,

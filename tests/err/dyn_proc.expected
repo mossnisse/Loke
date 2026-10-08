@@ -31,6 +31,21 @@ L0512
 L0512
 @88:2
 `cache` cannot be modified by a procedure this call may reach here
+L0512
+@102:2
+`cache` cannot be modified by a procedure this call may reach here
+L0645
+@113:17
+the result of `identity` may borrow `p`, which `proc(@(escape=none) ^int) -> ^int` marks `@(escape=none)`
+L0645
+@114:17
+the result of `identity` may borrow `p`
+L0645
+@125:39
+the result of `call` may borrow `scratch`, which that contract excludes
+L0645
+@127:39
+the result of `call` may borrow `self`, which that contract excludes
 L0341
-@92:11
+@131:11
 a `dyn proc` view has no compile-time value

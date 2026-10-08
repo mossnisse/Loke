@@ -105,14 +105,8 @@ call_effect :: proc(c: ^Compiler, v: ^Expr_Call) -> (Effect_Call, bool) {
 		id = v.resolution.symbol
 	}
 	if sym := symbol_of(c, id); sym != nil && sym.kind == .Proc {
-		// A `dyn` forwarding member reaches what fills its slot, whatever the
-		// receiver expression is; a callable view also any procedure it holds.
-		if info := underlying_info(c, sym.owner_type); sym.synth == .Dyn_Forward && info != nil && info.kind == .Dyn {
-			return Effect_Call {
-				dyn_interface = info.dyn_interface,
-				dyn_index     = int(sym.index),
-				type          = dyn_proc_signature(c, sym.owner_type),
-			}, true
+		if forwarded, is_forward := forwarding_effect(c, sym); is_forward {
+			return forwarded, true
 		}
 		return Effect_Call{callee = id}, true
 	}
@@ -120,6 +114,21 @@ call_effect :: proc(c: ^Compiler, v: ^Expr_Call) -> (Effect_Call, bool) {
 		return Effect_Call{type = base.type}, true
 	}
 	return {}, false
+}
+
+// A `dyn` forwarding member reaches what fills its slot, whatever the receiver
+// expression is; a callable view also any procedure it holds.
+@(private = "file")
+forwarding_effect :: proc(c: ^Compiler, sym: ^Symbol) -> (Effect_Call, bool) {
+	info := underlying_info(c, sym.owner_type)
+	if sym.synth != .Dyn_Forward || info == nil || info.kind != .Dyn {
+		return {}, false
+	}
+	return Effect_Call {
+		dyn_interface = info.dyn_interface,
+		dyn_index     = int(sym.index),
+		type          = dyn_proc_signature(c, sym.owner_type),
+	}, true
 }
 
 // Records the call while the effects settle; once they have, the callee's
@@ -390,8 +399,20 @@ effect_targets :: proc(
 	bodies: []Body_Effects,
 	index_of: map[Symbol_Id]int,
 	used_as_value: map[Symbol_Id]bool,
+	seen: ^map[string]bool = nil,
 ) -> []int {
 	out := make([dynamic]int, 0, 4, context.temp_allocator)
+	visited := seen
+	if visited == nil {
+		visited = new(map[string]bool, context.temp_allocator)
+		visited^ = make(map[string]bool, context.temp_allocator)
+	}
+	// A view of itself would otherwise recurse.
+	key := effect_key(call, context.temp_allocator)
+	if key in visited^ {
+		return nil
+	}
+	visited^[key] = true
 	switch {
 	case call.callee != INVALID_SYMBOL:
 		if index, found := index_of[call.callee]; found {
@@ -406,8 +427,15 @@ effect_targets :: proc(
 			if call.type != INVALID_TYPE && (len(witness.args) == 0 || witness.args[0].type != call.type) {
 				continue
 			}
-			if index, found := index_of[witness.slots[call.dyn_index].target]; found {
+			target := witness.slots[call.dyn_index].target
+			if index, found := index_of[target]; found {
 				append(&out, index)
+			}
+			// A view of a view runs what the inner view may run.
+			if sym := symbol_of(c, target); sym != nil {
+				if inner, is_forward := forwarding_effect(c, sym); is_forward {
+					append(&out, ..effect_targets(c, inner, bodies, index_of, used_as_value, visited))
+				}
 			}
 		}
 		// design.md "Borrowed callable views": or a procedure the view holds.

@@ -1,0 +1,9 @@
+// grammar.md "Procedures": a procedure type written as a result ends at its
+// signature, so the `where` and body after it belong to the procedure being
+// declared. A default in its parameters is an expression again.
+package main;
+
+make :: proc() -> proc(n: int) -> int { return add_one; }
+nested :: proc() -> proc() -> dyn proc(n: int) -> int { return make; }
+guarded :: proc(x: $T) -> proc(n: int) -> int where size_of(T) > 0 { return add_one; }
+defaulted :: proc() -> proc(f := proc() -> int { return 1; }) { return run; }
