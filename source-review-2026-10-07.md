@@ -80,17 +80,22 @@ way; G17's operation is the package-private `allocation_failed` built-in.
 
 ## Candidates and limits
 
-[Candidates still needing evidence](open-questions.md#candidates-still-needing-evidence)
-records ten bounded follow-ups. They cover panic cleanup of shared/boxed values,
-native thread-creation failure, fallible I/O scratch allocation, an environment
-race, parser depth, generic-name checks, composite-key dependency traversal,
-internal type-ID ordering, and ignored subprocess wait errors.
+Ten bounded follow-ups (C01–C10) first needed evidence. They cover panic cleanup
+of shared/boxed values, native thread-creation failure, fallible I/O scratch
+allocation, an environment race, parser depth, generic-name checks,
+composite-key dependency traversal, internal type-ID ordering, and ignored
+subprocess wait errors. Each was later reproduced and fixed, with a regression
+test named in its commit.
 
-A long selector chain did not establish a crash. Local nominal type sort-key
-collisions are an internal ordering concern; the spec does not promise numeric
-type IDs remain unchanged across changed builds. Neither is presented as a
-confirmed spec divergence. Spec-permitted reserved field/enum member names and
-foreign-call/nil-dyn false positives were excluded.
+Two outcomes differ from the notes here. A 50,000-selector type name did
+overflow the compiler's stack (C06). The environment race as written (C04) is
+harmless, since an empty variable removed mid-call may still read as present,
+but the reverse race, a value emptied mid-call, misread a stale native error.
+Local nominal type sort keys (C09) remain an internal ordering concern rather
+than a spec divergence: the spec promises unique type IDs, and the fix keeps the
+compiler's own rule that discovery order does not move them. Spec-permitted
+reserved field/enum member names and foreign-call/nil-dyn false positives were
+excluded.
 
 ## Verification
 
@@ -199,7 +204,7 @@ table in Open questions.
 | `src/check_builtin.odin` | frontend | G16: missing shared argument-shape checks. |
 | `src/check_calls.odin` | frontend | G11: one spread needs a converted variadic carrier. |
 | `src/check_expr.odin` | frontend | G07: second negation discards exact decimal spelling. |
-| `src/check.odin` | frontend | G02, G12, G15; C07: setter plans, inout returns, binding validation. |
+| `src/check.odin` | frontend | G02, G12, G15; C07 (fixed): setter plans, inout returns, binding validation. |
 | `src/const_ops.odin` | frontend | S03: use math.ldexp for power-of-two construction. |
 | `src/container.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/customization.odin` | frontend | No independent actionable finding after full reading. |
@@ -229,7 +234,7 @@ table in Open questions.
 | `src/format.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/formatter.odin` | analysis-harness | T03: bracketed directory silently skipped. |
 | `src/front_end_test.odin` | analysis-harness | No independent actionable finding after full reading. |
-| `src/generic.odin` | frontend | C07: written reserved generic parameter validation. |
+| `src/generic.odin` | frontend | C07 (fixed): written reserved generic parameter validation. |
 | `src/global_effects.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/hash.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/hooks.odin` | analysis-harness | No independent actionable finding after full reading. |
@@ -259,9 +264,9 @@ table in Open questions.
 | `src/providers.odin` | frontend | No independent actionable finding after full reading. |
 | `src/queries.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/query_index.odin` | analysis-harness | No independent actionable finding after full reading. |
-| `src/reflect.odin` | analysis-harness | C09: local nominal textual sort-key collision, no spec divergence established. |
+| `src/reflect.odin` | analysis-harness | C09 (fixed): local nominal textual sort-key collision, no spec divergence established. |
 | `src/region.odin` | analysis-harness | No independent actionable finding after full reading. |
-| `src/select.odin` | frontend | G14: offset_of token dependency; C08: composite key traversal. |
+| `src/select.odin` | frontend | G14: offset_of token dependency; C08 (fixed): composite key traversal. |
 | `src/semantic.odin` | frontend | No independent actionable finding after full reading. |
 | `src/session_test.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/session.odin` | analysis-harness | No independent actionable finding after full reading. |
@@ -270,7 +275,7 @@ table in Open questions.
 | `src/source.odin` | frontend | No independent actionable finding after full reading. |
 | `src/stack.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/stdlib.odin` | analysis-harness | No independent actionable finding after full reading. |
-| `src/subprocess/subprocess.odin` | analysis-harness | T01, T02; C10: process/pipe lifetime and discarded wait error. |
+| `src/subprocess/subprocess.odin` | analysis-harness | T01, T02; C10 (fixed): process/pipe lifetime and discarded wait error. |
 | `src/syntax_corpus_test.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/text.odin` | analysis-harness | No independent actionable finding after full reading. |
 | `src/union.odin` | analysis-harness | No independent actionable finding after full reading. |

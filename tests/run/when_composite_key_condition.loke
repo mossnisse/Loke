@@ -1,0 +1,18 @@
+// A file-scope `when` condition whose array literal is keyed by a name waits
+// for the branch that declares it, as a value naming it does. A record
+// literal's key is a field name, not a lookup, so it waits on nothing.
+package main;
+
+import "core:fmt";
+
+when ([3]bool{SLOT = true}[2]) { A :: "index"; } else { A :: "other"; }
+when ([4]int{LO..=HI = 7}[3] == 7) { B :: "range"; } else { B :: "other"; }
+when (Later{x = 5}.x == 5) { C :: "field"; } else { C :: "other"; }
+when (true) {
+	SLOT :: 2;
+	LO :: 1;
+	HI :: 3;
+	Later :: struct { x: int };
+}
+
+main :: proc() { fmt.println(A, B, C); }

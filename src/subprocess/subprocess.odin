@@ -58,9 +58,24 @@ run :: proc(
 	if err != nil {
 		_ = os2.process_kill(process)
 	}
-	state, _ = os2.process_wait(process)
+	wait_err: os2.Error
+	if wait_override != nil {
+		state, wait_err = wait_override(process)
+	} else {
+		state, wait_err = os2.process_wait(process)
+	}
+	// A failed wait leaves `state` zero, which reads as a clean exit, so it
+	// reaches the caller; a read error before it is the first cause and wins.
+	if err == nil {
+		err = wait_err
+	}
 	return
 }
+
+// Replaces `os2.process_wait` for `run` on this thread, so a test can make the
+// wait fail; nil means the real one.
+@(thread_local)
+wait_override: proc(process: os2.Process) -> (os2.Process_State, os2.Error)
 
 // One read from `pipe` if it holds anything; `done` once the writer is gone.
 @(private = "file")

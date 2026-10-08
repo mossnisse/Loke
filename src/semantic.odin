@@ -717,6 +717,9 @@ Scope :: struct {
 	// Set when a lookup finds a name here. Only a probe reads it: whether a
 	// `$` default resolves any of its procedure's parameters.
 	reached:    bool,
+	// The generic instance whose bindings this scope holds, or nil. A type
+	// declared in one instance's body is told from another's by it.
+	instance:   ^Instance,
 }
 
 // One resolved `import` edge, with the statement that wrote it: a cycle is

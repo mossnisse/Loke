@@ -222,7 +222,13 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 			for entry in parameter.names {
 				if entry.is_poly {
 					rejected |= reject_typeid_generic_parameter(k, entry.name, parameter.type)
+					rejected |= reject_reserved_name(k, entry.name.id, entry.name.span)
 				}
+			}
+			bindings := make([dynamic]Name, context.temp_allocator)
+			pattern_shape(parameter.type, &bindings)
+			for name in bindings {
+				rejected |= reject_reserved_name(k, name.id, name.span)
 			}
 		}
 	}
@@ -230,6 +236,7 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 		for group in record.generic_params {
 			for name in group.names {
 				rejected |= reject_typeid_generic_parameter(k, name, group.type)
+				rejected |= reject_reserved_name(k, name.id, name.span)
 			}
 		}
 	}
@@ -1491,6 +1498,7 @@ instantiate_generic :: proc(
 	instance.template = template.symbol
 	instance.bindings = bindings
 	instance.scope = scope
+	scope.instance = instance
 	instance.provisional = true
 	instance.span = span
 	k.c.instances[key] = instance
@@ -2155,6 +2163,13 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 	if !is_call {
 		return
 	}
+	for arg in call.args {
+		bindings := make([dynamic]Name, context.temp_allocator)
+		pattern_shape(arg.value, &bindings)
+		for name in bindings {
+			reject_reserved_name(k, name_identifier(k.c, name), name.span)
+		}
+	}
 	template := generic_template_of_callee(k, call.callee, .Record)
 	if template == nil {
 		return
@@ -2258,6 +2273,7 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		return
 	}
 	scope := new_scope(k.c, block.scope, .Local)
+	scope.instance = instance
 	saved := enter_generic_location(k, scope, block.pkg, block.pkg, INVALID_TYPE, block.file, block.file_node)
 	defer restore_checker_location(k, saved)
 

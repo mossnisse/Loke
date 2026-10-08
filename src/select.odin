@@ -288,8 +288,8 @@ callee_is_builtin :: proc(k: ^Checker, callee: Expr, kind: Builtin_Kind) -> bool
 }
 
 // The first name in `e` that does not resolve, or "" when they all do. Only
-// value positions are visited: a selector's field and a `build_config` key are
-// tokens, not lookups.
+// value positions are visited: a selector's field, a record literal's field
+// key, and a `build_config` key are tokens, not lookups.
 //
 // Type syntax is walked for the same reason expression syntax is: `size_of(^T)`
 // depends on `T` exactly as `size_of(T)` does, and answering "" for it would
@@ -339,7 +339,14 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 		if missing := first_unresolved_name(k, v.type_expr); missing != "" {
 			return missing
 		}
+		keys_are_values := composite_keys_are_values(k, v)
 		for element in v.elements {
+			_, names_field := element.key.(^Expr_Ident)
+			if !names_field || keys_are_values {
+				if missing := first_unresolved_name(k, element.key); missing != "" {
+					return missing
+				}
+			}
 			if missing := first_unresolved_name(k, element.value); missing != "" {
 				return missing
 			}
@@ -446,6 +453,25 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 	     ^Expr_Operator, ^Type_Record, ^Type_Enum, ^Type_Interface:
 	}
 	return ""
+}
+
+// Whether a literal's keys are expressions: an array's index or index range, or
+// a map's key. Only a record literal's key is a field name. A literal with no
+// written type takes it from context, which this walk does not follow, so a bare
+// name keying one is left for the check to report.
+@(private = "file")
+composite_keys_are_values :: proc(k: ^Checker, v: ^Expr_Composite) -> bool {
+	#partial switch _ in v.type_expr {
+	case nil:
+		return false
+	case ^Type_Array, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Map:
+		return true
+	}
+	probe := begin_probe(k.c)
+	target := resolve_type_syntax(k, v.type_expr)
+	end_probe(k.c, probe)
+	info := type_of(k.c, type_underlying(k.c, target))
+	return info != nil && info.kind != .Struct
 }
 
 // The branch a procedure-scope `when` selected, or nil. The backend reads this

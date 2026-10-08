@@ -41,3 +41,18 @@ subprocess_run_releases_the_process_handle :: proc(t: ^testing.T) {
 	growth := open_handle_count() - before
 	testing.expectf(t, growth <= RUNS + RUNS / 4, "%d launches kept %d handles open", RUNS, growth)
 }
+
+// A wait that fails leaves the state zero, which reads as a clean exit, so
+// `run` must report the failure rather than let a child that may have failed
+// pass as one that succeeded.
+@(test)
+subprocess_run_reports_a_failed_wait :: proc(t: ^testing.T) {
+	subprocess.wait_override = proc(process: os2.Process) -> (os2.Process_State, os2.Error) {
+		_, _ = os2.process_wait(process)
+		return {}, os2.General_Error.Invalid_Command
+	}
+	defer subprocess.wait_override = nil
+	child := os2.Process_Desc{command = {"cmd.exe", "/c", "exit 3"}}
+	_, _, _, err := subprocess.run(child, context.temp_allocator)
+	testing.expectf(t, err == os2.General_Error.Invalid_Command, "a failed wait was reported as %v", err)
+}

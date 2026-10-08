@@ -391,6 +391,40 @@ write_applied_args :: proc(
 	}
 }
 
+// A template applied to its arguments.
+@(private = "file")
+write_instance_identity :: proc(
+	c: ^Compiler,
+	b: ^strings.Builder,
+	template_symbol: Symbol_Id,
+	args: []Generic_Arg,
+	memo: ^map[Type_Id]string,
+	visiting: ^map[Type_Id]bool,
+) {
+	strings.write_string(b, symbol_key(c, template_symbol))
+	// A template declared in an `impl` block shares its name with the
+	// templates of every other block on the same owner.
+	if template := symbol_of(c, template_symbol);
+	   template != nil && template.owner_type != INVALID_TYPE {
+		fmt.sbprintf(b, ":o{%s}", typeid_sort_key_walk(c, template.owner_type, memo, visiting))
+	}
+	write_applied_args(c, b, args, memo, visiting)
+}
+
+// The declaring file's position among its package's files, which are sorted by
+// path, so the key does not depend on the order files were loaded.
+@(private = "file")
+declaring_file_index :: proc(c: ^Compiler, sym: ^Symbol) -> int {
+	if pkg := package_of(c, sym.pkg); pkg != nil {
+		for candidate, index in pkg.files {
+			if candidate.file == sym.span.file {
+				return index
+			}
+		}
+	}
+	return 0
+}
+
 // A canonical identity independent of both request order and the internal
 // Type_Id allocation order. A readable `name` is never an identity — `Token`,
 // `Box(Token)` and `dyn Drawable` are each a spelling two unrelated types can
@@ -442,18 +476,27 @@ typeid_sort_key_walk :: proc(
 	}
 	if info.instance_of != INVALID_SYMBOL {
 		b := strings.builder_make(c.semantic_allocator)
-		fmt.sbprintf(&b, "instance:%s", symbol_key(c, info.instance_of))
-		// A template declared in an `impl` block shares its name with the
-		// templates of every other block on the same owner.
-		if template := symbol_of(c, info.instance_of);
-		   template != nil && template.owner_type != INVALID_TYPE {
-			fmt.sbprintf(&b, ":o{%s}", typeid_sort_key_walk(c, template.owner_type, memo, visiting))
-		}
-		write_applied_args(c, &b, info.instance_args, memo, visiting)
+		strings.write_string(&b, "instance:")
+		write_instance_identity(c, &b, info.instance_of, info.instance_args, memo, visiting)
 		return strings.to_string(b)
 	}
-	if info.symbol != INVALID_SYMBOL && symbol_of(c, info.symbol) != nil {
-		return fmt.aprintf("nominal:%s", symbol_key(c, info.symbol), allocator = c.semantic_allocator)
+	if sym := symbol_of(c, info.symbol); info.symbol != INVALID_SYMBOL && sym != nil {
+		b := strings.builder_make(c.semantic_allocator)
+		fmt.sbprintf(&b, "nominal:%s", symbol_key(c, info.symbol))
+		// A type declared in a procedure shares its spelling with every other
+		// procedure's, and with itself in each instance of a generic one, so it
+		// also keys on where it is declared and on the instances around it.
+		if sym.def_scope != nil && sym.def_scope.kind != .Package {
+			fmt.sbprintf(&b, "@%06d:%010d", declaring_file_index(c, sym), sym.span.lo)
+			for scope := sym.def_scope; scope != nil; scope = scope.parent {
+				if instance := scope.instance; instance != nil {
+					strings.write_string(&b, ":in{")
+					write_instance_identity(c, &b, instance.template, generic_args_of(c, instance.bindings), memo, visiting)
+					strings.write_string(&b, "}")
+				}
+			}
+		}
+		return strings.to_string(b)
 	}
 	// The ordered field names plus each field type's own key — the same vector
 	// `anon_record_type` interns on.

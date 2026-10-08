@@ -16,3 +16,18 @@ L0700
 L0700
 @25:10
 `true` spells a literal, so it cannot be declared
+L0700
+@41:15
+`true` spells a literal, so it cannot be declared
+L0700
+@42:22
+`nil` spells a literal, so it cannot be declared
+L0700
+@43:16
+`false` spells a literal, so it cannot be declared
+L0700
+@44:17
+`nil` spells a literal, so it cannot be declared
+L0700
+@46:14
+`true` spells a literal, so it cannot be declared

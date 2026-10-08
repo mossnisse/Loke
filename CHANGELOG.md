@@ -584,6 +584,17 @@ checklist.
 
 ### Fixed
 
+- A generic parameter can no longer be named `true`, `false`, or `nil`
+  (`L0700`), whether written `$name`, inside a parameter's type, or in a
+  generic `impl` subject. Before, `proc($false: int)` made `false` in its body
+  mean the argument.
+- A file-scope `when` condition whose array literal is keyed by a name, as in
+  `[3]bool{SLOT = true}`, waits for a later branch that declares the name
+  instead of reporting it unknown.
+- The `typeid` of a type declared inside a generic procedure no longer depends
+  on the order that procedure's instances were made in.
+- When waiting on clang, NASM, or the layout probe fails, `lokec` reports an
+  error instead of treating the child as having exited successfully.
 - `os.get_environment` no longer misreads a value that another thread empties
   during the call as missing or as a stale error. standard-library.md no longer
   claims that Windows removes a variable set to the empty string: it stays

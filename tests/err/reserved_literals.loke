@@ -35,3 +35,14 @@ Flag :: enum { nil, other }
 main :: proc() {
 	fmt.println(Rec{1}.true, Flag.nil == .nil);
 }
+
+// A generic parameter is reached by name lookup in the body as well, whether
+// it is written `$name`, inside a parameter's type, or in an `impl` subject.
+pick :: proc($true: type, value: true) -> true { return value; }
+same :: proc(value: $nil) -> nil { return value; }
+count :: proc($false: int) -> int { return false; }
+Cell :: struct($nil: type) { value: nil }
+Holder :: struct($T: type) { value: T }
+impl Holder($true) {
+	get :: proc(self: ^) -> true { return self.value; }
+}

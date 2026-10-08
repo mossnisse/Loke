@@ -162,6 +162,53 @@ deep_typeids_are_request_order_independent :: proc(t: ^testing.T) {
 	testing.expect(t, right_first == right_reverse, "deep right typeid depends on request order")
 }
 
+// The typeids of the `Token` that `make_id(int)` and `make_id(f64)` each
+// declare, with the two instantiated in the order given.
+@(private = "file")
+local_typeid_pair :: proc(t: ^testing.T, first, second: string) -> (int_id, f64_id: u64) {
+	// Built by concatenation: `{` is a directive to core:fmt.
+	source := strings.concatenate({`package main;
+make_id :: proc($T: type) -> typeid {
+	Token :: struct { value: T };
+	return typeid_of(Token);
+}
+main :: proc() {
+	a := make_id(`, first, `);
+	b := make_id(`, second, `);
+}
+`}, context.temp_allocator)
+	p: Checked
+	check_source(&p, source)
+	defer destroy_checked(&p)
+	c := &p.c
+	if !testing.expectf(t, c.error_count == 0, "the probe source did not check") {
+		return
+	}
+	freeze_typeids(c)
+	for index in 1 ..< len(c.types) {
+		info := type_of(c, Type_Id(index))
+		if info == nil || info.kind != .Struct || identifier_text(c, info.name) != "Token" || len(info.fields) != 1 {
+			continue
+		}
+		switch symbol_of(c, info.fields[0]).type {
+		case TYPE_INT: int_id = typeid_value(c, Type_Id(index))
+		case TYPE_F64: f64_id = typeid_value(c, Type_Id(index))
+		}
+	}
+	return
+}
+
+// A type declared in a generic procedure is one type per instance, all with one
+// spelling; the order the instances were made in must not decide their ids.
+@(test)
+instance_local_typeids_are_instantiation_order_independent :: proc(t: ^testing.T) {
+	int_first, f64_second := local_typeid_pair(t, "int", "f64")
+	int_second, f64_first := local_typeid_pair(t, "f64", "int")
+	testing.expect(t, int_first != 0 && f64_second != 0 && int_first != f64_second, "the two local types were not both given ids")
+	testing.expect(t, int_first == int_second, "make_id(int)'s Token typeid depends on instantiation order")
+	testing.expect(t, f64_second == f64_first, "make_id(f64)'s Token typeid depends on instantiation order")
+}
+
 // `Box(a.Token)` and `Box(b.Token)` print alike; their sort keys must not.
 @(test)
 applied_typeids_do_not_key_on_display_names :: proc(t: ^testing.T) {

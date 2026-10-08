@@ -496,18 +496,8 @@ The [complete per-file review](source-review-2026-10-07.md) covers 168 implement
 library, example, benchmark, script, CI, and test-harness files. Small corpus
 fixtures were outside the agreed scope. The four earlier items fixed in
 `1a8aa53` remain closed. The confirmed language, library, and tooling findings
-are fixed or settled by the spec; the candidates below remain open.
-
-### Candidates still needing evidence
-
-These are investigation notes, not additional confirmed spec gaps.
-
-| ID | Location | Remaining question and smallest next check |
-| --- | --- | --- |
-| C07 | `src/generic.odin` and template declaration checking | Generic name installation appears to bypass reserved-name checks. Reproduce an instantiated written parameter named `true`; field and enum selector names with this spelling are expressly legal. |
-| C08 | `src/select.odin`, composite-expression dependency traversal | Composite keys are not visited by the pending-name prepass. Find a valid file-scope `when` whose key depends on another selected declaration. |
-| C09 | `src/reflect.odin`, nominal type sort keys | Local types with the same spelling in different procedures share the textual sort key. This may undermine internal ordering goals, but the spec promises unique type IDs, not unchanged numeric IDs across changed builds. Do not report it as a confirmed spec divergence. |
-| C10 | `src/subprocess/subprocess.odin`, `process_wait` | The wait error is discarded. Establish failure behavior and propagate it only when there is no earlier drain error to preserve. |
+are fixed or settled by the spec, and the ten candidates that needed evidence
+(C01–C10) were each reproduced and fixed.
 
 Sibling literal/container cleanup paths and large packed equality projections
 are identified beside their confirmed reproductions in
