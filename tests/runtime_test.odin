@@ -4,7 +4,6 @@ package tests
 
 import "core:fmt"
 import "core:os"
-import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
@@ -48,8 +47,8 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 		if strings.has_suffix(source, "_test.odin") {
 			continue
 		}
-		text, read := os.read_entire_file(source, context.temp_allocator)
-		testing.expectf(t, read, "cannot read %s", source)
+		text, text_err := os.read_entire_file(source, context.temp_allocator)
+		testing.expectf(t, text_err == nil, "cannot read %s", source)
 		for line, index in strings.split_lines(string(text), context.temp_allocator) {
 			for keyword in ([]string{"declare ", "define "}) {
 				name, signature, ok := runtime_signature(line, keyword)
@@ -74,7 +73,7 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 	}
 
 	state, _, stderr, err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string{compiler_path(), "examples/hello.loke", "-emit-ll", "-o", fmt.tprintf("%s/abi_module.exe", TMP)},
 		},
 		context.allocator,
@@ -82,8 +81,8 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 	if !testing.expectf(t, err == nil && state.exit_code == 0, "cannot emit a module:\n%s", string(stderr)) {
 		return
 	}
-	module, module_read := os.read_entire_file(fmt.tprintf("%s/abi_module.ll", TMP), context.temp_allocator)
-	if !testing.expect(t, module_read, "the emitted module is missing") {
+	module, module_err := os.read_entire_file(fmt.tprintf("%s/abi_module.ll", TMP), context.temp_allocator)
+	if !testing.expect(t, module_err == nil, "the emitted module is missing") {
 		return
 	}
 	triple := ""
@@ -102,8 +101,8 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 
 	// The header's side: every function it declares that the compiler names,
 	// referenced so clang lowers its declaration, and one global per record.
-	header, header_read := os.read_entire_file("runtime/loke_rt.h", context.temp_allocator)
-	if !testing.expect(t, header_read, "cannot read runtime/loke_rt.h") {
+	header, header_err := os.read_entire_file("runtime/loke_rt.h", context.temp_allocator)
+	if !testing.expect(t, header_err == nil, "cannot read runtime/loke_rt.h") {
 		return
 	}
 	unit := strings.builder_make(context.temp_allocator)
@@ -133,12 +132,12 @@ runtime_abi_matches_header :: proc(t: ^testing.T) {
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, clang, "-S", "-emit-llvm", "-O0", "-target", triple, "-Iruntime", unit_path, "-o", lowered_path)
 	append(&command, ..flags)
-	clang_state, _, clang_stderr, clang_err := exec(os2.Process_Desc{command = command[:]}, context.allocator)
+	clang_state, _, clang_stderr, clang_err := exec(os.Process_Desc{command = command[:]}, context.allocator)
 	if !testing.expectf(t, clang_err == nil && clang_state.exit_code == 0, "clang cannot lower the header:\n%s", string(clang_stderr)) {
 		return
 	}
-	lowered, lowered_read := os.read_entire_file(lowered_path, context.temp_allocator)
-	if !testing.expect(t, lowered_read, "clang wrote no module") {
+	lowered, lowered_err := os.read_entire_file(lowered_path, context.temp_allocator)
+	if !testing.expect(t, lowered_err == nil, "clang wrote no module") {
 		return
 	}
 
@@ -199,18 +198,18 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 		return
 	}
 	root := fmt.tprintf("%s/runtime_cache", TMP)
-	os2.remove_all(root)
-	os2.make_directory_all(fmt.tprintf("%s/runtime", root))
+	os.remove_all(root)
+	os.make_directory_all(fmt.tprintf("%s/runtime", root))
 	compiler := launch_path(fmt.tprintf("%s/lokec.exe", root))
-	testing.expect(t, os2.copy_file(compiler, compiler_path()) == nil, "cannot copy the compiler")
-	entries, _ := os2.read_all_directory_by_path("runtime", context.temp_allocator)
+	testing.expect(t, os.copy_file(compiler, compiler_path()) == nil, "cannot copy the compiler")
+	entries, _ := os.read_all_directory_by_path("runtime", context.temp_allocator)
 	for entry in entries {
 		if strings.has_suffix(entry.name, ".c") || strings.has_suffix(entry.name, ".h") {
-			testing.expect(t, os2.copy_file(fmt.tprintf("%s/runtime/%s", root, entry.name), entry.fullpath) == nil, "cannot copy the runtime")
+			testing.expect(t, os.copy_file(fmt.tprintf("%s/runtime/%s", root, entry.name), entry.fullpath) == nil, "cannot copy the runtime")
 		}
 	}
 
-	inherited, _ := os2.environ(context.temp_allocator)
+	inherited, _ := os.environ(context.temp_allocator)
 	with_clang :: proc(inherited: []string, clang: string) -> []string {
 		out := make([dynamic]string, context.temp_allocator)
 		for entry in inherited {
@@ -244,7 +243,7 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 			append(&command, "-collection", "base=base", "-collection", "core=core")
 			link.command = command[:]
 			threads[index] = thread.create_and_start_with_poly_data(&link, proc(link: ^Link) {
-				state, _, stderr, err := exec(os2.Process_Desc{command = link.command, env = link.env}, context.allocator)
+				state, _, stderr, err := exec(os.Process_Desc{command = link.command, env = link.env}, context.allocator)
 				link.ok, link.stderr = err == nil && state.exit_code == 0, string(stderr)
 			})
 		}
@@ -257,9 +256,9 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 		return all
 	}
 	// The installed sets, and when the one for `name` built its first object.
-	sets :: proc(root: string) -> []os2.File_Info {
-		entries, _ := os2.read_all_directory_by_path(fmt.tprintf("%s/runtime/prebuilt", root), context.temp_allocator)
-		out := make([dynamic]os2.File_Info, context.temp_allocator)
+	sets :: proc(root: string) -> []os.File_Info {
+		entries, _ := os.read_all_directory_by_path(fmt.tprintf("%s/runtime/prebuilt", root), context.temp_allocator)
+		out := make([dynamic]os.File_Info, context.temp_allocator)
 		for entry in entries {
 			if entry.type == .Directory && !strings.has_prefix(entry.name, ".") {
 				append(&out, entry)
@@ -267,8 +266,8 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 		}
 		return out[:]
 	}
-	built_at :: proc(set: os2.File_Info) -> time.Time {
-		stamp, _ := os2.modification_time_by_path(fmt.tprintf("%s/alloc.o", set.fullpath))
+	built_at :: proc(set: os.File_Info) -> time.Time {
+		stamp, _ := os.modification_time_by_path(fmt.tprintf("%s/alloc.o", set.fullpath))
 		return stamp
 	}
 	// The installed sets' names, and why the latest link could not use one, to
@@ -278,11 +277,11 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 		for set in sets(root) {
 			append(&names, set.name)
 		}
-		reason, recorded := os.read_entire_file(fmt.tprintf("%s/runtime/prebuilt/last-failure.txt", root), context.temp_allocator)
+		reason, reason_err := os.read_entire_file(fmt.tprintf("%s/runtime/prebuilt/last-failure.txt", root), context.temp_allocator)
 		return fmt.tprintf(
 			"installed sets: [%s]; last failure: %s",
 			strings.join(names[:], ", ", context.temp_allocator),
-			recorded ? strings.trim_space(string(reason)) : "none recorded",
+			reason_err == nil ? strings.trim_space(string(reason)) : "none recorded",
 		)
 	}
 
@@ -304,25 +303,25 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 	// The same bytes count and timestamp, different contents: the edited
 	// formatter must be the one linked.
 	format_c := fmt.tprintf("%s/runtime/format.c", root)
-	format_info, stat_err := os2.stat(format_c, context.temp_allocator)
-	original, read := os.read_entire_file(format_c, context.temp_allocator)
+	format_info, stat_err := os.stat(format_c, context.temp_allocator)
+	original, original_err := os.read_entire_file(format_c, context.temp_allocator)
 	edited, replaced := strings.replace(string(original), `"true", 4`, `"nope", 4`, 1, context.temp_allocator)
-	if !testing.expect(t, stat_err == nil && read && replaced, "cannot find the formatter's `true` in the runtime copy") {
+	if !testing.expect(t, stat_err == nil && original_err == nil && replaced, "cannot find the formatter's `true` in the runtime copy") {
 		return
 	}
-	testing.expect(t, os.write_entire_file(format_c, transmute([]byte)edited), "cannot edit the runtime copy")
-	testing.expect(t, os2.change_times(format_c, format_info.access_time, format_info.modification_time) == nil, "cannot restore the edited source's time")
+	testing.expect(t, os.write_entire_file(format_c, transmute([]byte)edited) == nil, "cannot edit the runtime copy")
+	testing.expect(t, os.change_times(format_c, format_info.access_time, format_info.modification_time) == nil, "cannot restore the edited source's time")
 	program := fmt.tprintf("%s/prints_true.loke", root)
 	_ = os.write_entire_file(program, transmute([]byte)string("package main; import \"core:fmt\"; main :: proc() { fmt.println(true); }\n"))
 	exe := fmt.tprintf("%s/prints_true.exe", root)
 	built, _, stderr, build_err := exec(
-		os2.Process_Desc{command = []string{compiler, program, "-o", exe, "-collection", "base=base", "-collection", "core=core"}, env = with_clang(inherited, clang)},
+		os.Process_Desc{command = []string{compiler, program, "-o", exe, "-collection", "base=base", "-collection", "core=core"}, env = with_clang(inherited, clang)},
 		context.temp_allocator,
 	)
 	if !testing.expectf(t, build_err == nil && built.exit_code == 0, "the program did not compile against the edited runtime:\n%s", string(stderr)) {
 		return
 	}
-	_, stdout, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.temp_allocator)
+	_, stdout, _, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.temp_allocator)
 	printed := strings.trim_space(string(stdout))
 	testing.expectf(t, run_err == nil && printed == "nope", "an edit that kept the size and time linked the old runtime: printed `%s`; %s", printed, cache_state(root))
 	testing.expectf(t, len(sets(root)) == 3, "the edited runtime did not get a set of its own; %s", cache_state(root))

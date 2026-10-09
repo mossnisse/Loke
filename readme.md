@@ -47,7 +47,7 @@ for people and coding agents alike, are in [AGENTS.md](AGENTS.md).
 The current compiler targets **Windows x64**. Besides the LLVM and Microsoft
 C++ tools every Loke build needs ([Getting started](tutorials/01-getting-started.md#what-you-need)),
 building `lokec` needs **Odin** on `PATH`. The tree builds with
-`dev-2025-09-nightly`; Odin nightlies change often, so another one may not.
+`dev-2026-10-nightly`; Odin nightlies change often, so another one may not.
 
 From the repository root, in PowerShell:
 

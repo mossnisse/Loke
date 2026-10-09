@@ -299,7 +299,7 @@ debug_file :: proc(d: ^Debug_Info, file: u32) -> int {
 	path, _ := filepath.abs(d.c.sources[file].path)
 	id := debug_node(
 		d, `!DIFile(filename: "%s", directory: "%s")`,
-		llvm_escape(filepath.base(path)), llvm_escape(filepath.dir(path)),
+		llvm_escape(filepath.base(path)), llvm_escape(path_dir(path)),
 	)
 	d.files[file] = id
 	return id

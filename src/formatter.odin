@@ -43,7 +43,7 @@ format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
 		if check {
 			fmt.println(path)
 			status = 1
-		} else if !os.write_entire_file(path, transmute([]u8)formatted) {
+		} else if os.write_entire_file(path, transmute([]u8)formatted) != nil {
 			errorf(c, no_span(), "L0401", "cannot write `%s`", path)
 			status = 1
 		}

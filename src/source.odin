@@ -366,7 +366,11 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 			data, read_ok = transmute([]u8)strings.clone(overlay.text), true
 		}
 	}
-	if !read_ok { data, read_ok = os.read_entire_file(path) }
+	if !read_ok {
+		read_err: os.Error
+		data, read_err = os.read_entire_file(path, context.allocator)
+		read_ok = read_err == nil
+	}
 	if !read_ok {
 		errorf(c, no_span(), "L0001", "cannot read file `%s`", path)
 		return 0, false
@@ -405,7 +409,7 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 display_path :: proc(path: string) -> string {
 	shown := path
 	if filepath.is_abs(path) {
-		cwd := os.get_current_directory(context.temp_allocator)
+		cwd := os.get_working_directory(context.temp_allocator) or_else ""
 		if relative, err := filepath.rel(cwd, path, context.temp_allocator); err == nil && !strings.has_prefix(relative, "..") {
 			shown = relative
 		}

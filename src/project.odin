@@ -4,7 +4,6 @@
 package lokec
 
 import "core:os"
-import "core:path/filepath"
 import "core:strings"
 
 PROJECT_FILE :: "loke.project"
@@ -14,9 +13,9 @@ PROJECT_FILE :: "loke.project"
 // names one directory in the whole program. A `-collection` for the name wins,
 // which is how a dependency is overridden or vendored.
 register_project :: proc(c: ^Compiler, input: string) -> bool {
-	dir := canonical_dir(is_source_directory(c, input) ? input : filepath.dir(input, context.temp_allocator))
-	for !os.exists(filepath.join({dir, PROJECT_FILE}, context.temp_allocator)) {
-		parent := filepath.dir(dir, context.temp_allocator)
+	dir := canonical_dir(is_source_directory(c, input) ? input : path_dir(input, context.temp_allocator))
+	for !os.exists(join_path({dir, PROJECT_FILE}, context.temp_allocator)) {
+		parent := path_dir(dir, context.temp_allocator)
 		if parent == dir {
 			return true
 		}
@@ -39,7 +38,7 @@ register_project :: proc(c: ^Compiler, input: string) -> bool {
 			continue
 		}
 		visited[dir_key(project)] = true
-		path := filepath.join({project, PROJECT_FILE}, c.semantic_allocator)
+		path := join_path({project, PROJECT_FILE}, c.semantic_allocator)
 		if !os.exists(path) {
 			continue
 		}
@@ -66,7 +65,7 @@ register_project :: proc(c: ^Compiler, input: string) -> bool {
 			// The path is the rest of the line, so it may contain spaces.
 			rest := strings.trim_space(line[len("require"):])
 			written := strings.trim_space(rest[len(name):])
-			target := canonical_dir(filepath.join({project, written}, context.temp_allocator))
+			target := canonical_dir(join_path({project, written}, context.temp_allocator))
 			switch {
 			case name == "base" || name == "core":
 				errorf(c, span, "L0399", "`%s` is the library bundled with the compiler; a project cannot require it", name)

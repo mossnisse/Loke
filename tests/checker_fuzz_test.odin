@@ -19,7 +19,6 @@ import "core:fmt"
 import "core:hash"
 import "core:log"
 import "core:os"
-import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
@@ -62,8 +61,8 @@ checker_mutation_fuzzing :: proc(t: ^testing.T) {
 	total, reached, clean := 0, 0, 0
 	for path in cases {
 		defer free_all(context.temp_allocator)
-		data, ok := os.read_entire_file(path, context.temp_allocator)
-		if !testing.expectf(t, ok, "%s: cannot read", path) {
+		data, data_err := os.read_entire_file(path, context.temp_allocator)
+		if !testing.expectf(t, data_err == nil, "%s: cannot read", path) {
 			continue
 		}
 		flags := extra_flags(path)
@@ -104,29 +103,28 @@ fuzz_compile :: proc(source: string, flags: []string) -> (failure: Fuzz_Failure,
 	append(&command, ..flags)
 
 	// A pipe rather than a file: Windows hands the child only inheritable
-	// handles, and `os2.pipe` is the one that makes them. It is drained while
+	// handles, and `os.pipe` is the one that makes them. It is drained while
 	// the compiler runs, so a long report cannot fill it and stall the child.
-	errors_r, errors_w, pipe_err := os2.pipe()
+	errors_r, errors_w, pipe_err := os.pipe()
 	if pipe_err != nil {
 		return .Crash, "cannot create a pipe", false, -1
 	}
-	defer _ = os2.close(errors_r)
-	process, start_err := os2.process_start({command = command[:], stderr = errors_w})
-	_ = os2.close(errors_w)
+	defer _ = os.close(errors_r)
+	process, start_err := os.process_start({command = command[:], stderr = errors_w})
+	_ = os.close(errors_w)
 	if start_err != nil {
 		return .Crash, "cannot start lokec", false, -1
 	}
-	defer _ = os2.process_close(process)
 
 	stderr := make([dynamic]byte, context.temp_allocator)
 	buf: [4096]byte
 	started := time.tick_now()
 	for {
-		exited_state, wait_err := os2.process_wait(process, 0)
+		exited_state, wait_err := os.process_wait(process, 0)
 		for {
-			has_data, _ := os2.pipe_has_data(errors_r)
+			has_data, _ := os.pipe_has_data(errors_r)
 			if !has_data { break }
-			n, read_err := os2.read(errors_r, buf[:])
+			n, read_err := os.read(errors_r, buf[:])
 			append(&stderr, ..buf[:n])
 			if read_err != nil { break }
 		}
@@ -134,9 +132,13 @@ fuzz_compile :: proc(source: string, flags: []string) -> (failure: Fuzz_Failure,
 			failure, detail, checked = judge(string(stderr[:]), exited_state.exit_code, source)
 			return failure, detail, checked, exited_state.exit_code
 		}
+		// Any failure but a timeout has already released the process.
+		if wait_err != os.General_Error.Timeout {
+			return .Crash, fmt.tprintf("cannot wait for lokec: %v", wait_err), false, -1
+		}
 		if time.tick_since(started) > FUZZ_TIMEOUT {
-			_ = os2.process_kill(process)
-			_, _ = os2.process_wait(process)
+			_ = os.process_kill(process)
+			_, _ = os.process_wait(process)
 			return .Hang, fmt.tprintf("no exit within %v", FUZZ_TIMEOUT), false, -1
 		}
 		time.sleep(time.Millisecond)

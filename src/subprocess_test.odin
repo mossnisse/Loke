@@ -1,6 +1,6 @@
 package lokec
 
-import os2 "core:os/os2"
+import "core:os"
 import win "core:sys/windows"
 import "core:testing"
 
@@ -22,13 +22,13 @@ open_handle_count :: proc() -> int {
 
 // `subprocess.run` releases the process handle it waited on, so a compiler
 // that launches clang and NASM, or a harness that launches thousands of
-// children, does not accumulate one per child. The pinned Odin `os2` still
+// children, does not accumulate one per child. Odin's `core:os` still
 // leaks each child's thread handle, which this allows; before the fix each
 // call kept two handles.
 @(test)
 subprocess_run_releases_the_process_handle :: proc(t: ^testing.T) {
 	RUNS :: 32
-	child := os2.Process_Desc{command = {"cmd.exe", "/c", "exit 0"}}
+	child := os.Process_Desc{command = {"cmd.exe", "/c", "exit 0"}}
 	// The first launch may open handles that stay for the process's life.
 	_, _, _, warm_err := subprocess.run(child, context.temp_allocator)
 	if !testing.expectf(t, warm_err == nil, "cannot launch cmd.exe: %v", warm_err) {
@@ -47,12 +47,12 @@ subprocess_run_releases_the_process_handle :: proc(t: ^testing.T) {
 // pass as one that succeeded.
 @(test)
 subprocess_run_reports_a_failed_wait :: proc(t: ^testing.T) {
-	subprocess.wait_override = proc(process: os2.Process) -> (os2.Process_State, os2.Error) {
-		_, _ = os2.process_wait(process)
-		return {}, os2.General_Error.Invalid_Command
+	subprocess.wait_override = proc(process: os.Process) -> (os.Process_State, os.Error) {
+		_, _ = os.process_wait(process)
+		return {}, os.General_Error.Invalid_Command
 	}
 	defer subprocess.wait_override = nil
-	child := os2.Process_Desc{command = {"cmd.exe", "/c", "exit 3"}}
+	child := os.Process_Desc{command = {"cmd.exe", "/c", "exit 3"}}
 	_, _, _, err := subprocess.run(child, context.temp_allocator)
-	testing.expectf(t, err == os2.General_Error.Invalid_Command, "a failed wait was reported as %v", err)
+	testing.expectf(t, err == os.General_Error.Invalid_Command, "a failed wait was reported as %v", err)
 }

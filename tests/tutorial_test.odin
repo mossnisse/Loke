@@ -2,7 +2,6 @@ package tests
 
 import "core:fmt"
 import "core:os"
-import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
@@ -54,7 +53,7 @@ Tutorial_Program :: struct {
 tutorials_compile_and_run :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/tutorials", TMP)
 	os.make_directory(TMP)
-	os2.remove_all(root)
+	os.remove_all(root)
 	os.make_directory(root)
 
 	programs := make(map[string]Tutorial_Program, context.temp_allocator)
@@ -63,8 +62,8 @@ tutorials_compile_and_run :: proc(t: ^testing.T) {
 	pages, _ := filepath.glob("tutorials/*.md", context.temp_allocator)
 	testing.expect(t, len(pages) > 0, "tutorials/ holds no pages")
 	for page in pages {
-		text, ok := os.read_entire_file(page, context.temp_allocator)
-		if !testing.expectf(t, ok, "cannot read %s", page) {
+		text, text_err := os.read_entire_file(page, context.temp_allocator)
+		if !testing.expectf(t, text_err == nil, "cannot read %s", page) {
 			continue
 		}
 		read_tutorial_page(t, page, string(text), root, &programs, &files)
@@ -85,7 +84,7 @@ tutorials_compile_and_run :: proc(t: ^testing.T) {
 		append(&command, compiler_path(), input, "-o", fmt.tprintf("%s.exe", name))
 		append(&command, ..env_flags())
 		state, _, stderr, err := exec(
-			os2.Process_Desc{command = command[:], working_dir = root},
+			os.Process_Desc{command = command[:], working_dir = root},
 			context.temp_allocator,
 		)
 		if !testing.expectf(t, err == nil, "%s: cannot run %s", label, compiler_path()) {
@@ -105,7 +104,7 @@ tutorials_compile_and_run :: proc(t: ^testing.T) {
 			append(&run_command, exe)
 			append(&run_command, ..run.args[:])
 			run_state, stdout, run_stderr, run_err := exec(
-				os2.Process_Desc{command = run_command[:], working_dir = root},
+				os.Process_Desc{command = run_command[:], working_dir = root},
 				context.temp_allocator,
 			)
 			if !testing.expectf(t, run_err == nil, "%s: cannot run %s", run.site, exe) {
@@ -136,7 +135,7 @@ compile_tutorial_c_files :: proc(t: ^testing.T, root: string, files: map[string]
 		}
 		if clang == "" {
 			state, stdout, _, err := exec(
-				os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
+				os.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
 				context.temp_allocator,
 			)
 			if !testing.expectf(t, err == nil && state.exit_code == 0, "%s: lokec -print-toolchain failed", site) {
@@ -153,7 +152,7 @@ compile_tutorial_c_files :: proc(t: ^testing.T, root: string, files: map[string]
 		}
 		object := fmt.tprintf("%s.obj", strings.trim_suffix(path, ".c"))
 		state, _, stderr, err := exec(
-			os2.Process_Desc{command = []string{clang, "-c", path, "-o", object}, working_dir = root},
+			os.Process_Desc{command = []string{clang, "-c", path, "-o", object}, working_dir = root},
 			context.temp_allocator,
 		)
 		testing.expectf(
@@ -263,8 +262,8 @@ write_tutorial_file :: proc(
 	}
 	files[path] = site
 	destination := fmt.tprintf("%s/%s", root, path)
-	os2.make_directory_all(filepath.dir(destination, context.temp_allocator))
-	written := os.write_entire_file(destination, transmute([]u8)fmt.tprintf("%s\n", body))
+	os.make_directory_all(path_dir(destination, context.temp_allocator))
+	written := os.write_entire_file(destination, transmute([]u8)fmt.tprintf("%s\n", body)) == nil
 	testing.expectf(t, written, "%s: cannot write %s", site, destination)
 	if !strings.has_suffix(path, ".loke") {
 		return

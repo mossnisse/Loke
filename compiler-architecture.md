@@ -944,7 +944,7 @@ The corpora compile and run their cases a core's worth at a time (`exec_all` in
 tests/corpus_test.odin) and judge the results afterwards on the test's own
 thread, because `testing.expect` is not safe to call from another one. Every
 launch, in the harness and in `lokec`, waits without spinning: Odin's
-`os2.process_exec` polls its pipes in a busy loop, which held a core per waiting
+`os.process_exec` polls its pipes in a busy loop, which held a core per waiting
 process and starved the parallel compiles it was waiting for.
 
 Four tests need a tool this repository does not ship — nasm, cdb (from WinDbg

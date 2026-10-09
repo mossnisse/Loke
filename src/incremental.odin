@@ -133,7 +133,7 @@ remember_incremental_inputs :: proc(s: ^Compilation_Session, input: string) {
 	cache := &s.package_cache
 	cache.order = slice.clone(package_order(&s.compiler))
 	cache.input = strings.clone(input)
-	cache.cwd = os.get_current_directory()
+	cache.cwd = os.get_working_directory(context.allocator) or_else ""
 	cache.directory_root = is_source_directory(&s.compiler, input)
 }
 
@@ -169,7 +169,7 @@ same_discovery :: proc(s: ^Compilation_Session, probe: ^Compiler, input: string)
 	// Written paths are observable in source_location and reflection, even when
 	// two spellings have the same Windows directory identity.
 	if input != cache.input ||
-	   os.get_current_directory(context.temp_allocator) != cache.cwd ||
+	   (os.get_working_directory(context.temp_allocator) or_else "") != cache.cwd ||
 	   is_source_directory(c, input) != cache.directory_root { return false }
 	if !register_project(probe, input) || len(probe.collections) != len(c.collections) { return false }
 	for name, path in c.collections {
@@ -188,7 +188,7 @@ same_discovery :: proc(s: ^Compilation_Session, probe: ^Compiler, input: string)
 	for _, id in c.package_by_dir {
 		if id == c.root_package && !cache.directory_root { continue }
 		files := package_of(c, id).files
-		dir := canonical_dir(filepath.dir(c.sources[files[0].file].path, context.temp_allocator))
+		dir := canonical_dir(path_dir(c.sources[files[0].file].path, context.temp_allocator))
 		paths := package_sources(probe, dir)
 		if len(paths) != len(files) { return false }
 		for path, index in paths {

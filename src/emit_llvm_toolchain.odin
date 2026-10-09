@@ -8,7 +8,6 @@ import "core:hash"
 import "core:mem/virtual"
 import "core:os"
 import "core:path/filepath"
-import os2 "core:os/os2"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -32,14 +31,14 @@ emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 		return 2
 	}
 	ll_path := replace_ext(opts.output, ".ll")
-	if !os.write_entire_file(ll_path, transmute([]u8)module) {
+	if os.write_entire_file(ll_path, transmute([]u8)module) != nil {
 		errorf(c, no_span(), "L0401", "cannot write `%s`", ll_path)
 		return 2
 	}
 	natvis_path := ""
 	if c.natvis != "" && c.build_mode == .Exe {
 		natvis_path = replace_ext(opts.output, ".natvis")
-		if !os.write_entire_file(natvis_path, transmute([]u8)c.natvis) {
+		if os.write_entire_file(natvis_path, transmute([]u8)c.natvis) != nil {
 			errorf(c, no_span(), "L0401", "cannot write `%s`", natvis_path)
 			return 2
 		}
@@ -79,7 +78,7 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string) -> int {
 
 	clang := find_clang()
 	command := []string{clang, "-c", ll_path, "-o", obj_path, opt_clang_flag(c.opt_mode), "-Wno-override-module"}
-	state, _, stderr, err := subprocess.run(os2.Process_Desc{command = command}, context.allocator)
+	state, _, stderr, err := subprocess.run(os.Process_Desc{command = command}, context.allocator)
 	if err != nil {
 		errorf(c, no_span(), "L0402", CLANG_MISSING, clang)
 		return 2
@@ -179,7 +178,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	fmt.sbprintln(&e.b, "}")
 
 	ll_path := replace_ext(opts.output, ".layout.ll")
-	if !os.write_entire_file(ll_path, transmute([]u8)strings.to_string(e.b)) {
+	if os.write_entire_file(ll_path, transmute([]u8)strings.to_string(e.b)) != nil {
 		errorf(c, no_span(), "L0401", "cannot write `%s`", ll_path)
 		return 2
 	}
@@ -194,7 +193,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	}
 
 	state, stdout, _, err := subprocess.run(
-		os2.Process_Desc{command = []string{opts.output}},
+		os.Process_Desc{command = []string{opts.output}},
 		context.allocator,
 	)
 	if err != nil || state.exit_code != 0 {
@@ -280,28 +279,28 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opt_mod
 		return runtime_cache_failed(runtime_dir, "cannot read the runtime sources in `%s`", runtime_dir)
 	}
 	name := fmt.tprintf("%v-%16x", opt_mode, hash.fnv64a(transmute([]byte)manifest))
-	dir := filepath.join({runtime_dir, "prebuilt", name})
+	dir := join_path({runtime_dir, "prebuilt", name})
 	objects := make([]string, len(sources))
 	for source, index in sources {
-		objects[index] = filepath.join({dir, replace_ext(filepath.base(source), ".o")})
+		objects[index] = join_path({dir, replace_ext(filepath.base(source), ".o")})
 	}
 	if prebuilt_current(dir, objects, manifest) {
 		return objects
 	}
-	staging := filepath.join({runtime_dir, "prebuilt", fmt.tprintf(".staging-%d", os2.get_pid())})
-	defer os2.remove_all(staging)
-	if err := os2.make_directory_all(staging); err != nil {
+	staging := join_path({runtime_dir, "prebuilt", fmt.tprintf(".staging-%d", os.get_pid())})
+	defer os.remove_all(staging)
+	if err := os.make_directory_all(staging); err != nil {
 		return runtime_cache_failed(runtime_dir, "cannot create `%s`: %v", staging, err)
 	}
 	if reason := compile_runtime_sources(command, staging); reason != "" {
 		return runtime_cache_failed(runtime_dir, "%s", reason)
 	}
-	if !os.write_entire_file(filepath.join({staging, RUNTIME_MANIFEST}), transmute([]byte)manifest) {
+	if os.write_entire_file(join_path({staging, RUNTIME_MANIFEST}), transmute([]byte)manifest) != nil {
 		return runtime_cache_failed(runtime_dir, "cannot write `%s` in `%s`", RUNTIME_MANIFEST, staging)
 	}
 	// A concurrent link that installed the same set first wins; either copy
 	// serves.
-	if err := os2.rename(staging, dir); err != nil && !prebuilt_current(dir, objects, manifest) {
+	if err := os.rename(staging, dir); err != nil && !prebuilt_current(dir, objects, manifest) {
 		return runtime_cache_failed(runtime_dir, "cannot rename `%s` to `%s`: %v", staging, dir, err)
 	}
 	return objects
@@ -317,9 +316,9 @@ RUNTIME_CACHE_FAILURE :: "last-failure.txt"
 @(private = "file")
 runtime_cache_failed :: proc(runtime_dir: string, format: string, args: ..any) -> []string {
 	reason := fmt.tprintfln(format, ..args)
-	prebuilt := filepath.join({runtime_dir, "prebuilt"}, context.temp_allocator)
-	if os2.make_directory_all(prebuilt) == nil {
-		os.write_entire_file(filepath.join({prebuilt, RUNTIME_CACHE_FAILURE}, context.temp_allocator), transmute([]byte)reason)
+	prebuilt := join_path({runtime_dir, "prebuilt"}, context.temp_allocator)
+	if os.make_directory_all(prebuilt) == nil {
+		_ = os.write_entire_file(join_path({prebuilt, RUNTIME_CACHE_FAILURE}, context.temp_allocator), transmute([]byte)reason)
 	}
 	return nil
 }
@@ -336,17 +335,17 @@ runtime_build_manifest :: proc(runtime_dir: string, command: []string) -> (manif
 		strings.write_string(&b, word)
 		strings.write_byte(&b, '\n')
 	}
-	stamp, _ := os2.modification_time_by_path(command[0])
+	stamp, _ := os.modification_time_by_path(command[0])
 	fmt.sbprintfln(&b, "clang modified %d", time.to_unix_nanoseconds(stamp))
-	entries, err := os2.read_all_directory_by_path(runtime_dir, context.temp_allocator)
+	entries, err := os.read_all_directory_by_path(runtime_dir, context.temp_allocator)
 	if err != nil {
 		return "", false
 	}
-	slice.sort_by(entries, proc(a, b: os2.File_Info) -> bool { return a.name < b.name })
+	slice.sort_by(entries, proc(a, b: os.File_Info) -> bool { return a.name < b.name })
 	for entry in entries {
 		if strings.has_suffix(entry.name, ".c") || strings.has_suffix(entry.name, ".h") {
-			contents, read := os.read_entire_file(entry.fullpath, context.temp_allocator)
-			if !read {
+			contents, read_err := os.read_entire_file(entry.fullpath, context.temp_allocator)
+			if read_err != nil {
 				return "", false
 			}
 			fmt.sbprintfln(&b, "%s %16x", entry.name, hash.fnv64a(contents))
@@ -358,8 +357,8 @@ runtime_build_manifest :: proc(runtime_dir: string, command: []string) -> (manif
 // Every object present, in a set made from `manifest`.
 @(private = "file")
 prebuilt_current :: proc(dir: string, objects: []string, manifest: string) -> bool {
-	recorded, found := os.read_entire_file(filepath.join({dir, RUNTIME_MANIFEST}), context.temp_allocator)
-	if !found || string(recorded) != manifest {
+	recorded, read_err := os.read_entire_file(join_path({dir, RUNTIME_MANIFEST}), context.temp_allocator)
+	if read_err != nil || string(recorded) != manifest {
 		return false
 	}
 	for object in objects {
@@ -389,7 +388,7 @@ runtime_compile_command :: proc(runtime_dir: string, sources: []string, opt_mode
 @(private = "file")
 compile_runtime_sources :: proc(command: []string, staging: string) -> (reason: string) {
 	state, _, stderr, err := subprocess.run(
-		os2.Process_Desc{command = command, working_dir = staging},
+		os.Process_Desc{command = command, working_dir = staging},
 		context.temp_allocator,
 	)
 	if err != nil {
@@ -467,7 +466,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	append_c_includes(&command, runtime_dir)
 
 	state, _, stderr, err := subprocess.run(
-		os2.Process_Desc{command = command[:]},
+		os.Process_Desc{command = command[:]},
 		context.allocator,
 	)
 	if err != nil {
@@ -559,10 +558,10 @@ collect_foreign_link_inputs :: proc(
 			}
 			continue
 		}
-		dir := filepath.dir(c.sources[imp.span.file].path)
-		resolved := filepath.is_abs(imp.path) ? imp.path : filepath.join({dir, imp.path})
+		dir := path_dir(c.sources[imp.span.file].path)
+		resolved := filepath.is_abs(imp.path) ? imp.path : join_path({dir, imp.path})
 		// Windows: one file in any spelling is one link input.
-		input_key := strings.concatenate({"file:", strings.to_lower(filepath.clean(resolved))})
+		input_key := strings.concatenate({"file:", strings.to_lower(filepath.clean(resolved) or_else resolved)})
 		if seen[input_key] {
 			continue
 		}
@@ -588,13 +587,13 @@ collect_foreign_link_inputs :: proc(
 
 @(private = "file")
 assemble_nasm :: proc(c: ^Compiler, source, exe_path: string, span: Span) -> (obj: string, ok: bool) {
-	nasm := os2.get_env("LOKE_NASM", context.allocator)
+	nasm := os.get_env("LOKE_NASM", context.allocator)
 	if nasm == "" {
 		nasm = "nasm"
 	}
 	obj = assembly_object_path(source, exe_path)
 	state, _, stderr, err := subprocess.run(
-		os2.Process_Desc{command = []string{nasm, "-f", "win64", source, "-o", obj}},
+		os.Process_Desc{command = []string{nasm, "-f", "win64", source, "-o", obj}},
 		context.allocator,
 	)
 	if err != nil {
@@ -610,8 +609,8 @@ assemble_nasm :: proc(c: ^Compiler, source, exe_path: string, span: Span) -> (ob
 
 // Hashing the path keeps two packages' `helper.asm` objects apart.
 assembly_object_path :: proc(source, exe_path: string) -> string {
-	name := fmt.aprintf("%s.%x.obj", filepath.stem(source), path_digest(filepath.clean(source)))
-	return filepath.join({filepath.dir(exe_path), name})
+	name := fmt.aprintf("%s.%x.obj", filepath.stem(source), path_digest(filepath.clean(source) or_else source))
+	return join_path({path_dir(exe_path), name})
 }
 
 // `-print-toolchain`: the clang, MSVC toolset, and extra flags a link would use,
@@ -622,7 +621,7 @@ print_toolchain :: proc() -> int {
 	clang := find_clang()
 	// A bare `clang` is only known to exist once it runs.
 	_, _, _, probe := subprocess.run(
-		os2.Process_Desc{command = []string{clang, "--version"}},
+		os.Process_Desc{command = []string{clang, "--version"}},
 		context.allocator,
 	)
 	fmt.printfln("clang=%s", clang)
@@ -646,7 +645,7 @@ print_toolchain :: proc() -> int {
 
 @(private = "file")
 find_clang :: proc() -> string {
-	if configured := os2.get_env("LOKE_CLANG", context.allocator); configured != "" {
+	if configured := os.get_env("LOKE_CLANG", context.allocator); configured != "" {
 		return configured
 	}
 	candidates := []string {
@@ -665,11 +664,11 @@ find_clang :: proc() -> string {
 // or nothing was found (incomplete).
 @(private = "file")
 msvc_lib_dir :: proc() -> (dir: string, complete: bool) {
-	if os2.get_env("LIB", context.allocator) != "" {
+	if os.get_env("LIB", context.allocator) != "" {
 		return "", true
 	}
 	if root := msvc_tools_dir(); root != "" {
-		return filepath.join({root, "lib", "x64"}), true
+		return join_path({root, "lib", "x64"}), true
 	}
 	return "", false
 }
@@ -677,19 +676,19 @@ msvc_lib_dir :: proc() -> (dir: string, complete: bool) {
 // The MSVC and UCRT headers, or none when INCLUDE already supplies them.
 @(private = "file")
 msvc_include_dirs :: proc() -> (dirs: []string, complete: bool) {
-	if os2.get_env("INCLUDE", context.allocator) != "" {
+	if os.get_env("INCLUDE", context.allocator) != "" {
 		return nil, true
 	}
 	out := make([dynamic]string)
 	root := msvc_tools_dir()
 	if root != "" {
-		append(&out, filepath.join({root, "include"}))
+		append(&out, join_path({root, "include"}))
 	}
 	sdk := newest_containing(
 		{`C:\Program Files (x86)\Windows Kits\10\Include\*`, `C:\Program Files\Windows Kits\10\Include\*`},
 		"ucrt",
 	)
-	ucrt := sdk != "" ? filepath.join({sdk, "ucrt"}) : ""
+	ucrt := sdk != "" ? join_path({sdk, "ucrt"}) : ""
 	if ucrt != "" {
 		append(&out, ucrt)
 	}
@@ -723,7 +722,7 @@ newest_containing :: proc(patterns: []string, children: ..string) -> string {
 	})
 	candidates: for candidate in found {
 		for child in children {
-			if !os.is_dir(filepath.join({candidate, child}, context.temp_allocator)) {
+			if !os.is_dir(join_path({candidate, child}, context.temp_allocator)) {
 				continue candidates
 			}
 		}

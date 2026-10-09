@@ -1,8 +1,7 @@
 package lokec
 
-import os2 "core:os/os2"
+import "core:os"
 import "core:mem/virtual"
-import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -11,13 +10,13 @@ import "core:testing"
 session_incremental_reuses_dependencies_and_reclaims_edits :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental")
 	if root == "" { return }
-	defer os2.remove_all(root)
+	defer os.remove_all(root)
 	for name in ([]string{"steady", "values", "bridge"}) {
-		if !testing.expect(t, os2.make_directory_all(filepath.join({root, name}, context.temp_allocator)) == nil) { return }
+		if !testing.expect(t, os.make_directory_all(join_path({root, name}, context.temp_allocator)) == nil) { return }
 	}
-	path := filepath.join({root, "main.loke"}, context.temp_allocator)
-	values := filepath.join({root, "values", "values.loke"}, context.temp_allocator)
-	bridge := filepath.join({root, "bridge", "bridge.loke"}, context.temp_allocator)
+	path := join_path({root, "main.loke"}, context.temp_allocator)
+	values := join_path({root, "values", "values.loke"}, context.temp_allocator)
+	bridge := join_path({root, "bridge", "bridge.loke"}, context.temp_allocator)
 	main_text := `package main; import "steady"; import "bridge";
 main :: proc() {
     assert(steady.answer() == 8);
@@ -29,7 +28,7 @@ main :: proc() {
 	if !write_session_source(t, path, main_text) ||
 	   !write_session_source(t, values, values_text) ||
 	   !write_session_source(t, bridge, bridge_text) ||
-	   !write_session_source(t, filepath.join({root, "steady", "steady.loke"}, context.temp_allocator), "package steady; @(public) answer :: proc() -> int { return 8; }") { return }
+	   !write_session_source(t, join_path({root, "steady", "steady.loke"}, context.temp_allocator), "package steady; @(public) answer :: proc() -> int { return 8; }") { return }
 	config := session_test_config()
 	config.debug_info = true
 	s: Compilation_Session
@@ -39,9 +38,9 @@ main :: proc() {
 	stats := session_check_stats(&s)
 	testing.expect(t, len(stats.reused_packages) == 0 && len(stats.rechecked_packages) == len(s.compiler.packages) - 1)
 	testing.expect(t, stats.cache_bytes > 0 && stats.cache_bytes <= MAX_PACKAGE_CACHE_BYTES)
-	steady := s.compiler.package_by_dir[dir_key(canonical_dir(filepath.join({root, "steady"}, context.temp_allocator)))]
-	values_id := s.compiler.package_by_dir[dir_key(canonical_dir(filepath.join({root, "values"}, context.temp_allocator)))]
-	bridge_id := s.compiler.package_by_dir[dir_key(canonical_dir(filepath.join({root, "bridge"}, context.temp_allocator)))]
+	steady := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "steady"}, context.temp_allocator)))]
+	values_id := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "values"}, context.temp_allocator)))]
+	bridge_id := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "bridge"}, context.temp_allocator)))]
 	for edit in 0 ..< 8 {
 		switch edit {
 		case 0: if !write_session_source(t, path, strings.concatenate({main_text, "\nextra :: proc() -> int { return 123; }"}, context.temp_allocator)) { return }
@@ -108,11 +107,11 @@ main :: proc() {
 session_incremental_reuses_prefix_before_an_error :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental-error-prefix")
 	if root == "" { return }
-	defer os2.remove_all(root)
-	if !testing.expect(t, os2.make_directory_all(filepath.join({root, "dep"}, context.temp_allocator)) == nil) { return }
-	path := filepath.join({root, "main.loke"}, context.temp_allocator)
+	defer os.remove_all(root)
+	if !testing.expect(t, os.make_directory_all(join_path({root, "dep"}, context.temp_allocator)) == nil) { return }
+	path := join_path({root, "main.loke"}, context.temp_allocator)
 	main_text := `package main; import "dep"; main :: proc() { assert(dep.answer() == 1); }`
-	if !write_session_source(t, filepath.join({root, "dep", "dep.loke"}, context.temp_allocator), "package dep; @(public) answer :: proc() -> int { return missing; }") ||
+	if !write_session_source(t, join_path({root, "dep", "dep.loke"}, context.temp_allocator), "package dep; @(public) answer :: proc() -> int { return missing; }") ||
 	   !write_session_source(t, path, main_text) { return }
 	config := session_test_config()
 	s: Compilation_Session
@@ -122,7 +121,7 @@ session_incremental_reuses_prefix_before_an_error :: proc(t: ^testing.T) {
 	edited, _ := strings.replace_all(main_text, "== 1", "== 2", context.temp_allocator)
 	if !write_session_source(t, path, edited) { return }
 	expect_session_matches_fresh(t, &s, path, config, false)
-	dep := s.compiler.package_by_dir[dir_key(canonical_dir(filepath.join({root, "dep"}, context.temp_allocator)))]
+	dep := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "dep"}, context.temp_allocator)))]
 	stats := session_check_stats(&s)
 	testing.expect(t, len(stats.reused_packages) > 0, "an edit after a failing dependency rechecked everything")
 	testing.expect(t, slice.contains(stats.rechecked_packages, dep) && slice.contains(stats.rechecked_packages, s.compiler.root_package))
@@ -132,14 +131,14 @@ session_incremental_reuses_prefix_before_an_error :: proc(t: ^testing.T) {
 session_incremental_discovery_changes_use_full_checks :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental-discovery")
 	if root == "" { return }
-	defer os2.remove_all(root)
-	lib := filepath.join({root, "lib"}, context.temp_allocator)
-	if !testing.expect(t, os2.make_directory_all(lib) == nil) { return }
-	path := filepath.join({root, "main.loke"}, context.temp_allocator)
-	other := filepath.join({lib, "other.loke"}, context.temp_allocator)
+	defer os.remove_all(root)
+	lib := join_path({root, "lib"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory_all(lib) == nil) { return }
+	path := join_path({root, "main.loke"}, context.temp_allocator)
+	other := join_path({lib, "other.loke"}, context.temp_allocator)
 	main_text := `package main; import "lib"; main :: proc() { assert(lib.answer() > 0); }`
 	if !write_session_source(t, path, main_text) ||
-	   !write_session_source(t, filepath.join({lib, "lib.loke"}, context.temp_allocator), "package lib; @(public) answer :: proc() -> int { return 1; }") { return }
+	   !write_session_source(t, join_path({lib, "lib.loke"}, context.temp_allocator), "package lib; @(public) answer :: proc() -> int { return 1; }") { return }
 	config := session_test_config()
 	s: Compilation_Session
 	defer destroy_session(&s)
@@ -147,14 +146,14 @@ session_incremental_discovery_changes_use_full_checks :: proc(t: ^testing.T) {
 	for edit in 0 ..< 10 {
 		switch edit {
 		case 1: if !write_session_source(t, other, "package lib; other :: 2;") { return }
-		case 2: if !testing.expect(t, os2.remove(other) == nil) { return }
+		case 2: if !testing.expect(t, os.remove(other) == nil) { return }
 		case 3: if !write_session_source(t, path, "package main; main :: proc() {}") { return }
 		case 4: if !write_session_source(t, path, main_text) { return }
 		case 5: if !write_session_source(t, path, strings.concatenate({main_text, "\nwhen (true) { selected :: 1; }"}, context.temp_allocator)) { return }
 		case 6: if !write_session_source(t, path, main_text) { return }
 		case 7: if !write_session_source(t, path, "package main; main :: proc() {") { return }
 		case 8: if !write_session_source(t, path, main_text) { return }
-		case 9: if !write_session_source(t, filepath.join({root, PROJECT_FILE}, context.temp_allocator), "# newly nearer manifest\n") { return }
+		case 9: if !write_session_source(t, join_path({root, PROJECT_FILE}, context.temp_allocator), "# newly nearer manifest\n") { return }
 		}
 		expect_session_matches_fresh(t, &s, path, config, edit != 7)
 		testing.expectf(t, len(session_check_stats(&s).reused_packages) == 0, "edit %d reused an invalid graph", edit)
@@ -196,11 +195,11 @@ session_incremental_cache_limit_evicts_old_boundaries :: proc(t: ^testing.T) {
 session_incremental_rebuilds_final_registry_demands :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental-registries")
 	if root == "" { return }
-	defer os2.remove_all(root)
-	data_dir := filepath.join({root, "data"}, context.temp_allocator)
-	if !testing.expect(t, os2.make_directory_all(data_dir) == nil) { return }
-	path := filepath.join({root, "main.loke"}, context.temp_allocator)
-	if !write_session_source(t, filepath.join({data_dir, "data.loke"}, context.temp_allocator), "@(public) package data; Value :: struct { item: int }") { return }
+	defer os.remove_all(root)
+	data_dir := join_path({root, "data"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory_all(data_dir) == nil) { return }
+	path := join_path({root, "main.loke"}, context.temp_allocator)
+	if !write_session_source(t, join_path({data_dir, "data.loke"}, context.temp_allocator), "@(public) package data; Value :: struct { item: int }") { return }
 	rich := `package main; import "core:fmt"; import "data";
 main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(data.Value)); assert(type_info_of(typeid_of(data.Value)).id == typeid_of(data.Value)); }`
 	simple := `package main; import "core:fmt"; import "data"; main :: proc() {}`

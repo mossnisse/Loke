@@ -3,7 +3,7 @@ package lokec
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import os2 "core:os/os2"
+import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
@@ -100,11 +100,11 @@ test_compiler :: proc(text: string) -> Compiler {
 // its whole path, both with `/`.
 @(test)
 diagnostics_show_paths_relative_to_the_working_directory :: proc(t: ^testing.T) {
-	cwd, _ := os2.get_working_directory(context.temp_allocator)
-	inside := filepath.join({cwd, "stock", "report.loke"}, context.temp_allocator)
+	cwd, _ := os.get_working_directory(context.temp_allocator)
+	inside := join_path({cwd, "stock", "report.loke"}, context.temp_allocator)
 	testing.expect_value(t, display_path(inside), "stock/report.loke")
 	testing.expect_value(t, display_path(`stock\report.loke`), "stock/report.loke")
-	outside := filepath.join({filepath.dir(cwd, context.temp_allocator), "elsewhere", "x.loke"}, context.temp_allocator)
+	outside := join_path({path_dir(cwd, context.temp_allocator), "elsewhere", "x.loke"}, context.temp_allocator)
 	shown, _ := strings.replace_all(outside, "\\", "/", context.temp_allocator)
 	testing.expect_value(t, display_path(outside), shown)
 }
@@ -583,15 +583,15 @@ N :: 7;`
 @(test)
 package_loading_handles_literal_paths_and_regular_files :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
-	root := fmt.tprintf("loke-packages-test-%d-[files]", os2.get_pid())
-	_ = os2.remove_all(root)
-	defer os2.remove_all(root)
-	if !testing.expect(t, os2.make_directory_all(filepath.join({root, "ignored.loke"})) == nil) {
+	root := fmt.tprintf("loke-packages-test-%d-[files]", os.get_pid())
+	_ = os.remove_all(root)
+	defer os.remove_all(root)
+	if !testing.expect(t, os.make_directory_all(join_path({root, "ignored.loke"})) == nil) {
 		return
 	}
 	if !testing.expect(
 		t,
-		os2.write_entire_file(filepath.join({root, "main.LOKE"}), transmute([]u8)string("package fixture;")) == nil,
+		os.write_entire_file(join_path({root, "main.LOKE"}), transmute([]u8)string("package fixture;")) == nil,
 	) {
 		return
 	}
@@ -611,11 +611,11 @@ package_loading_handles_literal_paths_and_regular_files :: proc(t: ^testing.T) {
 @(test)
 failed_package_loads_are_not_cached :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
-	root := fmt.tprintf("loke-packages-retry-%d", os2.get_pid())
-	_ = os2.remove_all(root)
-	defer os2.remove_all(root)
-	path := filepath.join({root, "main.loke"})
-	if !testing.expect(t, os2.make_directory_all(root) == nil && os2.write_entire_file(path, []u8{0xff}) == nil) {
+	root := fmt.tprintf("loke-packages-retry-%d", os.get_pid())
+	_ = os.remove_all(root)
+	defer os.remove_all(root)
+	path := join_path({root, "main.loke"})
+	if !testing.expect(t, os.make_directory_all(root) == nil && os.write_entire_file(path, []u8{0xff}) == nil) {
 		return
 	}
 
@@ -626,7 +626,7 @@ failed_package_loads_are_not_cached :: proc(t: ^testing.T) {
 	id, loaded := load_package_dir(&c, root, root, no_span())
 	testing.expect(t, !loaded && id == INVALID_PACKAGE && len(c.packages) == before, "a failed load created a package")
 
-	if !testing.expect(t, os2.write_entire_file(path, transmute([]u8)string("package retry;")) == nil) {
+	if !testing.expect(t, os.write_entire_file(path, transmute([]u8)string("package retry;")) == nil) {
 		return
 	}
 	id, loaded = load_package_dir(&c, root, root, no_span())
@@ -638,8 +638,8 @@ package_paths_handle_root_collections_and_trailing_slashes :: proc(t: ^testing.T
 	c: Compiler
 	defer destroy_compilation(&c)
 	init_semantic_stores(&c)
-	root, ok := filepath.abs("/", context.temp_allocator)
-	if !testing.expect(t, ok) {
+	root, abs_err := filepath.abs("/", context.temp_allocator)
+	if !testing.expect(t, abs_err == nil) {
 		return
 	}
 	c.collections["drive"] = strings.clone(root, c.semantic_allocator)

@@ -2986,7 +2986,7 @@ bind_index_place :: proc(
 		if !lowered_pure(index) {
 			digits: [20]u8
 			index_names[position] = strings.concatenate(
-				{prefix, "index", strconv.itoa(digits[:], position)}, k.c.semantic_allocator,
+				{prefix, "index", strconv.write_int(digits[:], i64(position), 10)}, k.c.semantic_allocator,
 			)
 			append(stmts, lowered_temporary(k, index_names[position], clone_expr(k.c, index), span))
 		}
@@ -3060,7 +3060,7 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 @(private = "file")
 lowered_position_name :: proc(k: ^Checker, prefix: string, position: int, suffix: string) -> string {
 	digits: [20]u8
-	return strings.concatenate({prefix, strconv.itoa(digits[:], position), suffix}, k.c.semantic_allocator)
+	return strings.concatenate({prefix, strconv.write_int(digits[:], i64(position), 10), suffix}, k.c.semantic_allocator)
 }
 
 // `&mut place`.

@@ -18,9 +18,9 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 	paths := corpus(t, "tests/syntax/*.loke")
 	defer delete_corpus(paths)
 	for path in paths {
-		data, readable := os.read_entire_file(path)
+		data, read_err := os.read_entire_file(path, context.allocator)
 		defer delete(data)
-		if !testing.expectf(t, readable, "%s: cannot read", path) {
+		if !testing.expectf(t, read_err == nil, "%s: cannot read", path) {
 			continue
 		}
 		p: Checked
@@ -59,13 +59,13 @@ ambiguity_goldens :: proc(t: ^testing.T) {
 	paths := corpus(t, "tests/syntax/ambiguity/*.loke")
 	defer delete_corpus(paths)
 	for path in paths {
-		data, readable := os.read_entire_file(path)
+		data, read_err := os.read_entire_file(path, context.allocator)
 		defer delete(data)
 		golden := strings.concatenate({strings.trim_suffix(path, ".loke"), ".expected"})
 		defer delete(golden)
-		expected, has_expected := os.read_entire_file(golden)
+		expected, golden_err := os.read_entire_file(golden, context.allocator)
 		defer delete(expected)
-		if !testing.expectf(t, readable && has_expected, "%s: missing source or golden", path) {
+		if !testing.expectf(t, read_err == nil && golden_err == nil, "%s: missing source or golden", path) {
 			continue
 		}
 		p: Checked
@@ -127,9 +127,9 @@ mutation_fuzzing :: proc(t: ^testing.T) {
 	defer delete_corpus(paths)
 	state: u64 = 0x9e3779b97f4a7c15
 	for path in paths {
-		data, readable := os.read_entire_file(path)
+		data, read_err := os.read_entire_file(path, context.allocator)
 		defer delete(data)
-		if !testing.expectf(t, readable, "%s: cannot read", path) {
+		if !testing.expectf(t, read_err == nil, "%s: cannot read", path) {
 			continue
 		}
 		text := string(data)

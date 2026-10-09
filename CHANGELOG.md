@@ -370,6 +370,9 @@ checklist.
 
 ### Changed
 
+- Building `lokec` from source needs Odin `dev-2026-10`, up from
+  `dev-2025-09` (readme.md "Building from source"); the compiler moved to
+  Odin's rewritten `core:os`. What `lokec` compiles is unchanged.
 - Compile-time evaluation rejecting a value whose drop or copy runs a
   hand-written `hook(drop)` or `hook(copy)` is now a language rule (design.md
   "Compile-time procedure evaluation") rather than a known gap, and `L0341`

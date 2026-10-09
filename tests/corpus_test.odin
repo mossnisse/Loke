@@ -57,7 +57,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:os"
-import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
@@ -70,7 +69,7 @@ import "../src/subprocess"
 LOKEC_DEFAULT :: "lokec.exe"
 TMP :: "tests/tmp"
 
-// `os2.process_exec` passes the command line to `CreateProcess` with no explicit
+// `os.process_exec` passes the command line to `CreateProcess` with no explicit
 // application name, so Windows resolves `command[0]` on its own: a bare name, or
 // a relative path spelled with forward slashes, is looked up on `PATH` and not
 // found even when it sits in the working directory. Everything the harness
@@ -81,8 +80,8 @@ launch_path :: proc(path: string) -> string {
 	if filepath.is_abs(path) {
 		return path
 	}
-	cwd := os.get_current_directory(context.temp_allocator)
-	return filepath.join({cwd, path}, context.temp_allocator)
+	cwd := os.get_working_directory(context.temp_allocator) or_else ""
+	return join_path({cwd, path}, context.temp_allocator)
 }
 
 // Every launch in the harness goes through here, so none of them holds a core
@@ -162,7 +161,7 @@ compiler_sources :: proc() -> []string {
 
 @(private)
 collect_odin_files :: proc(dir: string, into: ^[dynamic]string) {
-	entries, _ := os2.read_all_directory_by_path(dir, context.temp_allocator)
+	entries, _ := os.read_all_directory_by_path(dir, context.temp_allocator)
 	for entry in entries {
 		path := fmt.tprintf("%s/%s", dir, entry.name)
 		if entry.type == .Directory {
@@ -187,7 +186,7 @@ compiler_sources_include_subpackages :: proc(t: ^testing.T) {
 @(test)
 perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
 	refused, _, refused_stderr, refused_err := exec(
-		os2.Process_Desc{command = []string{"powershell", "-NoProfile", "-File", "perf.ps1", "-Repeat", "0"}},
+		os.Process_Desc{command = []string{"powershell", "-NoProfile", "-File", "perf.ps1", "-Repeat", "0"}},
 		context.allocator,
 	)
 	if !testing.expectf(t, refused_err == nil, "cannot run powershell: %v", refused_err) {
@@ -201,29 +200,29 @@ perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
 	// A compiler that always fails stops the first measurement.
 	os.make_directory(TMP)
 	source := fmt.tprintf("%s/perf-failing-compiler.loke", TMP)
-	os.write_entire_file(source, transmute([]u8)string("package main;\nimport \"core:os\";\nmain :: proc() { os.exit(1); }\n"))
+	_ = os.write_entire_file(source, transmute([]u8)string("package main;\nimport \"core:os\";\nmain :: proc() { os.exit(1); }\n"))
 	failing := fmt.tprintf("%s/perf-failing-compiler.exe", TMP)
 	built, _, build_stderr, build_err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), source, "-o", failing}}, context.allocator,
+		os.Process_Desc{command = []string{compiler_path(), source, "-o", failing}}, context.allocator,
 	)
 	if !testing.expectf(t, build_err == nil && built.exit_code == 0, "cannot build the failing compiler:\n%s", string(build_stderr)) {
 		return
 	}
 	failed, _, _, failed_err := exec(
-		os2.Process_Desc{command = []string{"powershell", "-NoProfile", "-File", "perf.ps1", "-Lokec", failing}},
+		os.Process_Desc{command = []string{"powershell", "-NoProfile", "-File", "perf.ps1", "-Lokec", failing}},
 		context.allocator,
 	)
 	testing.expectf(t, failed_err == nil && failed.exit_code != 0, "perf.ps1 succeeded with a failing compiler")
-	temp, _ := os2.temp_directory(context.temp_allocator)
-	work := filepath.join({temp, fmt.tprintf("loke-perf-%d", failed.pid)}, context.temp_allocator)
+	temp, _ := os.temp_directory(context.temp_allocator)
+	work := join_path({temp, fmt.tprintf("loke-perf-%d", failed.pid)}, context.temp_allocator)
 	testing.expectf(t, !os.exists(work), "the failed run left %s behind", work)
-	os2.remove_all(work)
+	os.remove_all(work)
 }
 
 @(test)
 front_end_modes :: proc(t: ^testing.T) {
 	parse_state, parse_stdout, parse_stderr, parse_err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-parse-only"}},
+		os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-parse-only"}},
 		context.allocator,
 	)
 	testing.expectf(t, parse_err == nil, "cannot run %s in parse-only mode", compiler_path())
@@ -231,7 +230,7 @@ front_end_modes :: proc(t: ^testing.T) {
 	testing.expectf(t, len(parse_stdout) == 0, "parse-only unexpectedly wrote output: %s", string(parse_stdout))
 
 	dump_state, dump_stdout, dump_stderr, dump_err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-dump-ast"}},
+		os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-dump-ast"}},
 		context.allocator,
 	)
 	testing.expectf(t, dump_err == nil, "cannot run %s in AST-dump mode", compiler_path())
@@ -247,7 +246,7 @@ front_end_modes :: proc(t: ^testing.T) {
 @(test)
 driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 	toolchain, toolchain_stdout, toolchain_stderr, toolchain_err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain", "-unknown"}},
+		os.Process_Desc{command = []string{compiler_path(), "-print-toolchain", "-unknown"}},
 		context.allocator,
 	)
 	testing.expect(t, toolchain_err == nil, "cannot run malformed toolchain command")
@@ -256,7 +255,7 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 	testing.expect(t, !strings.contains(string(toolchain_stdout), "clang="), "toolchain probe still ran")
 
 	directory, _, directory_stderr, directory_err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "examples", "-parse-only"}},
+		os.Process_Desc{command = []string{compiler_path(), "examples", "-parse-only"}},
 		context.allocator,
 	)
 	testing.expect(t, directory_err == nil, "cannot run directory parse command")
@@ -269,7 +268,7 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 
 	for collection in ([]string{"-collection:foo=", "-collection:foo:bar=tests"}) {
 		state, _, stderr, err := exec(
-			os2.Process_Desc {
+			os.Process_Desc {
 				command = []string{compiler_path(), "examples/hello.loke", "-parse-only", collection},
 			},
 			context.allocator,
@@ -287,14 +286,14 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 @(test)
 seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	cwd := os.get_current_directory(context.temp_allocator)
+	cwd := os.get_working_directory(context.temp_allocator) or_else ""
 	compiler := compiler_path()
-	source := filepath.join({cwd, "examples", "hello.loke"}, context.temp_allocator)
-	exe := filepath.join({cwd, TMP, "runtime-elsewhere.exe"}, context.temp_allocator)
-	elsewhere := filepath.join({cwd, TMP}, context.temp_allocator)
+	source := join_path({cwd, "examples", "hello.loke"}, context.temp_allocator)
+	exe := join_path({cwd, TMP, "runtime-elsewhere.exe"}, context.temp_allocator)
+	elsewhere := join_path({cwd, TMP}, context.temp_allocator)
 
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler, source, "-o", exe}, working_dir = elsewhere},
+		os.Process_Desc{command = []string{compiler, source, "-o", exe}, working_dir = elsewhere},
 		context.allocator,
 	)
 	testing.expectf(t, err == nil, "cannot run %s from %s", compiler, elsewhere)
@@ -302,10 +301,10 @@ seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
 
 	// An empty directory is a directory that exists and holds no `.c` inputs, so
 	// the override really replaced the bundled tree.
-	bare := filepath.join({cwd, TMP, "empty-runtime"}, context.temp_allocator)
+	bare := join_path({cwd, TMP, "empty-runtime"}, context.temp_allocator)
 	os.make_directory(bare)
 	replaced, _, replaced_stderr, replaced_err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string{compiler, source, "-o", exe, fmt.tprintf("-runtime=%s", bare)},
 		},
 		context.allocator,
@@ -334,16 +333,16 @@ a_partial_seed_runtime_is_not_a_foreign_failure :: proc(t: ^testing.T) {
 	os.make_directory(partial)
 	// The header plus one source: enough to compile, far too little to link.
 	for name in ([]string{"loke_rt.h", "alloc.c"}) {
-		content, read := os.read_entire_file(filepath.join({"runtime", name}, context.temp_allocator))
-		if !testing.expectf(t, read, "cannot read runtime/%s", name) {
+		content, content_err := os.read_entire_file(join_path({"runtime", name}, context.temp_allocator), context.allocator)
+		if !testing.expectf(t, content_err == nil, "cannot read runtime/%s", name) {
 			return
 		}
 		defer delete(content)
-		os.write_entire_file(filepath.join({partial, name}, context.temp_allocator), content)
+		_ = os.write_entire_file(join_path({partial, name}, context.temp_allocator), content)
 	}
 
 	state, _, stderr, err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string {
 				compiler_path(), "examples/hello.loke",
 				"-o", fmt.tprintf("%s/partial-runtime.exe", TMP),
@@ -399,7 +398,7 @@ unreachable_inputs_and_outputs_are_named :: proc(t: ^testing.T) {
 	// program for its link, and a stray `.loke` under `tests/` is swept up by a
 	// glob that means something else.
 	source := fmt.tprintf("%s/missing-foreign-import.loke", TMP)
-	os.write_entire_file(source, transmute([]u8)string(
+	_ = os.write_entire_file(source, transmute([]u8)string(
 `package main;
 
 foreign import missing "./no-such-library.lib";
@@ -426,7 +425,7 @@ main :: proc() { _ = absent(); }
 @(test)
 a_missing_tool_is_named_by_the_path_it_tried :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	inherited, environ_err := os2.environ(context.allocator)
+	inherited, environ_err := os.environ(context.allocator)
 	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
 		return
 	}
@@ -473,7 +472,7 @@ expect_diagnostic_with_env :: proc(t: ^testing.T, command: []string, env: []stri
 @(private)
 expect_diagnostic_env :: proc(t: ^testing.T, command: []string, env: []string, exit: int, code, names: string) {
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = command, env = env},
+		os.Process_Desc{command = command, env = env},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil, "cannot run %s", command[0]) {
@@ -498,7 +497,7 @@ a_temporary_path_alias_preserves_the_output :: proc(t: ^testing.T) {
 		out := fmt.tprintf("%s/path-alias-output-%d.%s", TMP, index, extension)
 		os.remove(out)
 		state, _, stderr, err := exec(
-			os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-g", "-o", out}},
+			os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-g", "-o", out}},
 			context.allocator,
 		)
 		if !testing.expectf(t, err == nil && state.exit_code == 0, "building to %s failed:\n%s", out, string(stderr)) {
@@ -508,7 +507,7 @@ a_temporary_path_alias_preserves_the_output :: proc(t: ^testing.T) {
 			continue
 		}
 		run_state, stdout, run_stderr, run_err := exec(
-			os2.Process_Desc{command = []string{launch_path(out)}}, context.allocator,
+			os.Process_Desc{command = []string{launch_path(out)}}, context.allocator,
 		)
 		testing.expectf(t, run_err == nil && run_state.exit_code == 0, "cannot run %s:\n%s", out, string(run_stderr))
 		testing.expectf(t, normalise(string(stdout)) == "The answer is 42", "%s printed %q", out, string(stdout))
@@ -527,21 +526,21 @@ a_debug_build_carries_its_natvis :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	out := fmt.tprintf("%s/natvis.exe", TMP)
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "tests/ll/debug_info.loke", "-g", "-keep-temps", "-o", out}},
+		os.Process_Desc{command = []string{compiler_path(), "tests/ll/debug_info.loke", "-g", "-keep-temps", "-o", out}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil && state.exit_code == 0, "the -g build failed:\n%s", string(stderr)) {
 		return
 	}
-	natvis, has_natvis := os.read_entire_file(fmt.tprintf("%s/natvis.natvis", TMP), context.allocator)
-	if !testing.expect(t, has_natvis, "-g -keep-temps left no .natvis") {
+	natvis, natvis_err := os.read_entire_file(fmt.tprintf("%s/natvis.natvis", TMP), context.allocator)
+	if !testing.expect(t, natvis_err == nil, "-g -keep-temps left no .natvis") {
 		return
 	}
 	for rule in ([]string{`<Type Name="string$">`, `<Type Name="map$`, `$key*)((char*)table + table->keys_offset + slot * 24)`, `<Type Name="any_view">`, `{*(typeid$`, `Condition="witness == &amp;witness$`}) {
 		testing.expectf(t, strings.contains(string(natvis), rule), "the .natvis has no `%s`:\n%s", rule, string(natvis))
 	}
-	pdb, has_pdb := os.read_entire_file(fmt.tprintf("%s/natvis.pdb", TMP), context.allocator)
-	testing.expect(t, has_pdb && strings.contains(string(pdb), "<CustomListItems"), "the PDB does not carry the natvis rules")
+	pdb, pdb_err := os.read_entire_file(fmt.tprintf("%s/natvis.pdb", TMP), context.allocator)
+	testing.expect(t, pdb_err == nil && strings.contains(string(pdb), "<CustomListItems"), "the PDB does not carry the natvis rules")
 }
 
 // The same rules read by a real debugger: cdb, from WinDbg or the Windows SDK,
@@ -553,7 +552,7 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 	candidates := cdb != "" ? []string{cdb} : []string{"cdb", "cdbX64", `C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe`}
 	cdb = ""
 	for candidate in candidates {
-		if state, _, _, err := exec(os2.Process_Desc{command = []string{candidate, "-version"}}, context.allocator); err == nil && state.exit_code == 0 {
+		if state, _, _, err := exec(os.Process_Desc{command = []string{candidate, "-version"}}, context.allocator); err == nil && state.exit_code == 0 {
 			cdb = candidate
 			break
 		}
@@ -566,7 +565,7 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 	dir, _ := filepath.abs(TMP, context.temp_allocator)
 	exe := fmt.tprintf("%s\\debugger_values.exe", dir)
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "tests/debugger/values.loke", "-g", "-o", exe}},
+		os.Process_Desc{command = []string{compiler_path(), "tests/debugger/values.loke", "-g", "-o", exe}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil && state.exit_code == 0, "the -g build failed:\n%s", string(stderr)) {
@@ -574,7 +573,7 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 	}
 	commands := "ld debugger_values; bp debugger_values!stop; g; .frame 1; dv /t; dx ages; dx ids; dx shape; q"
 	run, stdout, stderr2, err2 := exec(
-		os2.Process_Desc{command = []string{cdb, "-lines", "-y", dir, "-c", commands, exe}},
+		os.Process_Desc{command = []string{cdb, "-lines", "-y", dir, "-c", commands, exe}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err2 == nil && run.exit_code == 0, "%s failed:\n%s", cdb, string(stderr2)) {
@@ -633,8 +632,8 @@ every_diagnostic_code_is_pinned :: proc(t: ^testing.T) {
 		if strings.has_suffix(path, "_test.odin") {
 			continue
 		}
-		text, ok := os.read_entire_file(path, context.temp_allocator)
-		if !ok {
+		text, text_err := os.read_entire_file(path, context.temp_allocator)
+		if text_err != nil {
 			continue
 		}
 		for code in quoted_codes(string(text)) {
@@ -656,8 +655,8 @@ every_diagnostic_code_is_pinned :: proc(t: ^testing.T) {
 	for pattern in patterns {
 		files, _ := filepath.glob(pattern, context.temp_allocator)
 		for path in files {
-			text, ok := os.read_entire_file(path, context.temp_allocator)
-			if !ok {
+			text, text_err := os.read_entire_file(path, context.temp_allocator)
+			if text_err != nil {
 				continue
 			}
 			for code in bare_codes(string(text)) {
@@ -791,8 +790,8 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 	}
 
 	for path in cases {
-		expected, has_expected := os.read_entire_file(expected_path(path))
-		if !testing.expectf(t, has_expected, "%s: missing .expected file", path) {
+		expected, expected_err := os.read_entire_file(expected_path(path), context.allocator)
+		if !testing.expectf(t, expected_err == nil, "%s: missing .expected file", path) {
 			continue
 		}
 
@@ -800,7 +799,7 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 		command := make([dynamic]string, context.temp_allocator)
 		append(&command, compiler_path(), path, "-o", exe, "-emit-ll")
 		append(&command, ..extra_flags(path))
-		state, _, stderr, err := exec(os2.Process_Desc{command = command[:]}, context.allocator)
+		state, _, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
 		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
 			continue
 		}
@@ -809,13 +808,13 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 		}
 
 		ll_path := fmt.tprintf("%s/%s.ll", dir, filepath.stem(path))
-		ir, read_ok := os.read_entire_file(ll_path)
-		if !testing.expectf(t, read_ok, "%s: no IR at %s", path, ll_path) {
+		ir, ir_err := os.read_entire_file(ll_path, context.allocator)
+		if !testing.expectf(t, ir_err == nil, "%s: no IR at %s", path, ll_path) {
 			continue
 		}
 		if has_clang {
 			assembled, _, reject, assemble_err := exec(
-				os2.Process_Desc {
+				os.Process_Desc {
 					command = []string {
 						clang, "-x", "ir", "-c", ll_path,
 						"-o", fmt.tprintf("%s/%s.ll.o", dir, filepath.stem(path)),
@@ -908,7 +907,7 @@ generated_ir_is_reproducible :: proc(t: ^testing.T) {
 	baseline: string
 	for run := 0; run < 12; run += 1 {
 		state, _, stderr, err := exec(
-			os2.Process_Desc{command = []string{
+			os.Process_Desc{command = []string{
 				compiler_path(), "tests/run/m3_eval.loke", "-o", exe, "-emit-ll",
 			}},
 			context.allocator,
@@ -919,8 +918,8 @@ generated_ir_is_reproducible :: proc(t: ^testing.T) {
 		if !testing.expectf(t, state.exit_code == 0, "run %d: compile failed\n%s", run + 1, string(stderr)) {
 			return
 		}
-		ir, read_ok := os.read_entire_file(ll_path)
-		if !testing.expectf(t, read_ok, "run %d: no IR at %s", run + 1, ll_path) {
+		ir, ir_err := os.read_entire_file(ll_path, context.allocator)
+		if !testing.expectf(t, ir_err == nil, "run %d: no IR at %s", run + 1, ll_path) {
 			return
 		}
 		if run == 0 {
@@ -946,7 +945,7 @@ layout_agrees_with_llvm :: proc(t: ^testing.T) {
 	for path in cases {
 		exe := fmt.tprintf("%s/layout-%s.exe", TMP, filepath.stem(path))
 		state, stdout, stderr, err := exec(
-			os2.Process_Desc{command = []string{compiler_path(), path, "-o", exe, "-check-layout"}},
+			os.Process_Desc{command = []string{compiler_path(), path, "-o", exe, "-check-layout"}},
 			context.allocator,
 		)
 		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
@@ -987,7 +986,7 @@ package_keys_come_from_the_directory :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	exe := fmt.tprintf("%s/spelling-ir.exe", TMP)
 	state, _, stderr, err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string {
 				compiler_path(), "tests/pkg/spelling", "-o", exe, "-emit-ll",
 				"-collection", "myc=tests/pkg/spelling",
@@ -1001,8 +1000,8 @@ package_keys_come_from_the_directory :: proc(t: ^testing.T) {
 	if !testing.expectf(t, state.exit_code == 0, "compile failed:\n%s", string(stderr)) {
 		return
 	}
-	ir, read_ok := os.read_entire_file(fmt.tprintf("%s/spelling-ir.ll", TMP))
-	if !testing.expect(t, read_ok, "no IR was emitted") {
+	ir, ir_err := os.read_entire_file(fmt.tprintf("%s/spelling-ir.ll", TMP), context.allocator)
+	if !testing.expect(t, ir_err == nil, "no IR was emitted") {
 		return
 	}
 	testing.expect(
@@ -1028,15 +1027,15 @@ formatting_settles_and_keeps_tokens :: proc(t: ^testing.T) {
 	}
 	for corpus in ([]string{"tests/run", "tests/syntax", "tests/ll", "tests/trap", "tests/layout", "examples"}) {
 		copy := fmt.tprintf("%s/fmt/%s", TMP, filepath.base(corpus))
-		os2.remove_all(copy)
-		os2.make_directory_all(copy)
+		os.remove_all(copy)
+		os.make_directory_all(copy)
 		sources, _ := filepath.glob(fmt.tprintf("%s/*.loke", corpus), context.temp_allocator)
 		for source in sources {
 			text, _ := os.read_entire_file(source, context.temp_allocator)
-			os.write_entire_file(fmt.tprintf("%s/%s", copy, filepath.base(source)), text)
+			_ = os.write_entire_file(fmt.tprintf("%s/%s", copy, filepath.base(source)), text)
 		}
 		formatted, _, stderr, err := exec(
-			os2.Process_Desc{command = []string{compiler_path(), copy, "-fmt"}},
+			os.Process_Desc{command = []string{compiler_path(), copy, "-fmt"}},
 			context.allocator,
 		)
 		testing.expectf(t, err == nil && formatted.exit_code == 0, "%s: -fmt failed\n%s", corpus, string(stderr))
@@ -1058,17 +1057,17 @@ formatting_settles_and_keeps_tokens :: proc(t: ^testing.T) {
 @(test)
 formatting_a_directory_reads_its_name_literally :: proc(t: ^testing.T) {
 	dir := fmt.tprintf("%s/fmt-literal/fmt[one]", TMP)
-	os2.remove_all(fmt.tprintf("%s/fmt-literal", TMP))
-	os2.make_directory_all(dir)
+	os.remove_all(fmt.tprintf("%s/fmt-literal", TMP))
+	os.make_directory_all(dir)
 	path := fmt.tprintf("%s/messy.loke", dir)
-	os.write_entire_file(path, transmute([]u8)string("package main;\nmain :: proc() {\nx := 1;\n_ = x;\n}\n"))
+	_ = os.write_entire_file(path, transmute([]u8)string("package main;\nmain :: proc() {\nx := 1;\n_ = x;\n}\n"))
 
-	checked, stdout, _, err := exec(os2.Process_Desc{command = []string{compiler_path(), dir, "-fmt-check"}}, context.allocator)
+	checked, stdout, _, err := exec(os.Process_Desc{command = []string{compiler_path(), dir, "-fmt-check"}}, context.allocator)
 	testing.expectf(
 		t, err == nil && checked.exit_code == 1 && strings.contains(string(stdout), "messy.loke"),
 		"-fmt-check passed a directory holding an unformatted file:\n%s", string(stdout),
 	)
-	formatted, _, stderr, format_err := exec(os2.Process_Desc{command = []string{compiler_path(), dir, "-fmt"}}, context.allocator)
+	formatted, _, stderr, format_err := exec(os.Process_Desc{command = []string{compiler_path(), dir, "-fmt"}}, context.allocator)
 	testing.expectf(t, format_err == nil && formatted.exit_code == 0, "-fmt failed:\n%s", string(stderr))
 	text, _ := os.read_entire_file(path, context.temp_allocator)
 	testing.expectf(t, strings.contains(string(text), "\tx := 1;"), "-fmt left the file unformatted:\n%s", string(text))
@@ -1085,7 +1084,7 @@ format_check :: proc(dir: string) -> Exec {
 @(private)
 walk_directories :: proc(dir: string, jobs: ^[dynamic]Exec) {
 	append(jobs, format_check(dir))
-	entries, _ := os2.read_all_directory_by_path(dir, context.temp_allocator)
+	entries, _ := os.read_all_directory_by_path(dir, context.temp_allocator)
 	for entry in entries {
 		if entry.type == .Directory {
 			walk_directories(fmt.tprintf("%s/%s", dir, entry.name), jobs)
@@ -1101,14 +1100,14 @@ documentation_lists_the_public_api :: proc(t: ^testing.T) {
 	testing.expect(t, len(cases) > 0, "no documentation cases found")
 	for path in cases {
 		state, stdout, stderr, err := exec(
-			os2.Process_Desc{command = []string{compiler_path(), path, "-doc"}},
+			os.Process_Desc{command = []string{compiler_path(), path, "-doc"}},
 			context.allocator,
 		)
 		if !testing.expectf(t, err == nil && state.exit_code == 0, "%s: -doc failed\n%s", path, string(stderr)) {
 			continue
 		}
-		expected, has_expected := os.read_entire_file(expected_path(path), context.temp_allocator)
-		if !testing.expectf(t, has_expected, "%s: missing .expected file", path) {
+		expected, expected_err := os.read_entire_file(expected_path(path), context.temp_allocator)
+		if !testing.expectf(t, expected_err == nil, "%s: missing .expected file", path) {
 			continue
 		}
 		testing.expectf(
@@ -1130,7 +1129,7 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	exe := fmt.tprintf("%s/os-args.exe", TMP)
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "tests/os/args.loke", "-o", exe}},
+		os.Process_Desc{command = []string{compiler_path(), "tests/os/args.loke", "-o", exe}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
@@ -1140,12 +1139,12 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 		return
 	}
 
-	expected, has_expected := os.read_entire_file("tests/os/args.expected")
-	if !testing.expect(t, has_expected, "missing tests/os/args.expected") {
+	expected, expected_err := os.read_entire_file("tests/os/args.expected", context.allocator)
+	if !testing.expect(t, expected_err == nil, "missing tests/os/args.expected") {
 		return
 	}
 	run_state, stdout, _, run_err := exec(
-		os2.Process_Desc{command = []string{launch_path(exe), "alpha", "héllo", "日本", "🙂"}},
+		os.Process_Desc{command = []string{launch_path(exe), "alpha", "héllo", "日本", "🙂"}},
 		context.allocator,
 	)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
@@ -1168,7 +1167,7 @@ empty_environment_values_are_values :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	exe := fmt.tprintf("%s/os-environment.exe", TMP)
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "tests/os/environment.loke", "-o", exe}},
+		os.Process_Desc{command = []string{compiler_path(), "tests/os/environment.loke", "-o", exe}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
@@ -1178,15 +1177,15 @@ empty_environment_values_are_values :: proc(t: ^testing.T) {
 		return
 	}
 
-	expected, has_expected := os.read_entire_file("tests/os/environment.expected")
-	if !testing.expect(t, has_expected, "missing tests/os/environment.expected") {
+	expected, expected_err := os.read_entire_file("tests/os/environment.expected", context.allocator)
+	if !testing.expect(t, expected_err == nil, "missing tests/os/environment.expected") {
 		return
 	}
 
 	// `env` replaces the block wholesale, so the inherited one is carried over:
 	// dropping it would change what the child can do for reasons unrelated to
 	// the three variables under test.
-	inherited, environ_err := os2.environ(context.allocator)
+	inherited, environ_err := os.environ(context.allocator)
 	if !testing.expectf(t, environ_err == nil, "cannot read this process' environment") {
 		return
 	}
@@ -1195,7 +1194,7 @@ empty_environment_values_are_values :: proc(t: ^testing.T) {
 	append(&block, "LOKE_EMPTY_PROBE=", "LOKE_VALUE_PROBE=fivec")
 
 	run_state, stdout, _, run_err := exec(
-		os2.Process_Desc{command = []string{launch_path(exe)}, env = block[:]},
+		os.Process_Desc{command = []string{launch_path(exe)}, env = block[:]},
 		context.allocator,
 	)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
@@ -1222,7 +1221,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 		nasm = "nasm"
 	}
 	if _, _, _, probe := exec(
-		os2.Process_Desc{command = []string{nasm, "-v"}},
+		os.Process_Desc{command = []string{nasm, "-v"}},
 		context.allocator,
 	); probe != nil {
 		skipped_capability(t, "no nasm, so an assembly import never reaches a link")
@@ -1239,7 +1238,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 	exe := fmt.tprintf("%s/asm-exe.exe", dir)
 
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "tests/obj/asm_exe.loke", "-o", exe}},
+		os.Process_Desc{command = []string{compiler_path(), "tests/obj/asm_exe.loke", "-o", exe}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
@@ -1248,7 +1247,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 	if !testing.expectf(t, state.exit_code == 0, "an assembly import failed to link:\n%s", string(stderr)) {
 		return
 	}
-	run_state, _, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	run_state, _, _, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t,
@@ -1261,7 +1260,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 	// `-keep-temps` governs it too: the object is a build temporary like the
 	// generated module, not something the build set out to produce.
 	kept_state, _, kept_stderr, kept_err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string{compiler_path(), "tests/obj/asm_exe.loke", "-o", exe, "-keep-temps"},
 		},
 		context.allocator,
@@ -1310,7 +1309,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	for assembly_case in assembly_cases {
 		source, assembler := assembly_case[0], assembly_case[1]
 		asm_state, _, asm_stderr, asm_err := exec(
-			os2.Process_Desc {
+			os.Process_Desc {
 				command = []string {
 					compiler_path(), source, "-build-mode=obj",
 					"-o", fmt.tprintf("%s/%s.obj", TMP, filepath.stem(source)),
@@ -1341,7 +1340,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 
 	obj := fmt.tprintf("%s/widget.obj", TMP)
 	state, _, stderr, err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string{compiler_path(), "tests/obj/lib.loke", "-build-mode=obj", "-o", obj},
 		},
 		context.allocator,
@@ -1355,10 +1354,10 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 
 	// The object owns no entry: a compiler-generated `main`/`wmain` would collide
 	// with the host's own, and the runtime references it keeps are the point.
-	nm := filepath.join({filepath.dir(clang), "llvm-nm.exe"}, context.temp_allocator)
+	nm := join_path({path_dir(clang), "llvm-nm.exe"}, context.temp_allocator)
 	if os.is_file(nm) {
 		nm_state, symbols, _, nm_err := exec(
-			os2.Process_Desc{command = []string{nm, obj}},
+			os.Process_Desc{command = []string{nm, obj}},
 			context.allocator,
 		)
 		if testing.expectf(t, nm_err == nil && nm_state.exit_code == 0, "cannot list %s", obj) {
@@ -1388,7 +1387,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	// The host link: the object, the C entry, and the seed runtime sources.
 	exe := fmt.tprintf("%s/widget-host.exe", TMP)
 	link_state, _, link_stderr, link_err := exec(
-		os2.Process_Desc{command = c_host_link_command(clang, "tests/obj/host.c", obj, exe, include_flags)},
+		os.Process_Desc{command = c_host_link_command(clang, "tests/obj/host.c", obj, exe, include_flags)},
 		context.allocator,
 	)
 	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {
@@ -1398,7 +1397,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 		return
 	}
 
-	run_state, _, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	run_state, _, _, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(t, run_state.exit_code == 0, "the C host got the wrong answer (exit %d)", run_state.exit_code)
 
@@ -1432,7 +1431,7 @@ c_host_link_command :: proc(clang, host, obj, exe: string, include_flags: []stri
 atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flags: []string) {
 	obj := fmt.tprintf("%s/conc.obj", TMP)
 	state, _, stderr, err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string {
 				compiler_path(), "tests/obj/concurrentlib", "-build-mode=obj", "-o", obj,
 			},
@@ -1448,7 +1447,7 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 
 	exe := fmt.tprintf("%s/conc-host.exe", TMP)
 	link_state, _, link_stderr, link_err := exec(
-		os2.Process_Desc{command = c_host_link_command(clang, "tests/obj/concurrent_host.c", obj, exe, include_flags)},
+		os.Process_Desc{command = c_host_link_command(clang, "tests/obj/concurrent_host.c", obj, exe, include_flags)},
 		context.allocator,
 	)
 	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {
@@ -1457,7 +1456,7 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 	if !testing.expectf(t, link_state.exit_code == 0, "the concurrency host link failed:\n%s", string(link_stderr)) {
 		return
 	}
-	run_state, _, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	run_state, _, _, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t, run_state.exit_code == 0,
@@ -1483,27 +1482,27 @@ output_returns_a_failed_collection :: proc(t: ^testing.T) {
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, clang, "-c", "tests/obj/process_output_fault.c", "-I", "runtime", "-o", obj)
 	append(&command, ..include_flags)
-	cc_state, _, cc_stderr, cc_err := exec(os2.Process_Desc{command = command[:]}, context.allocator)
+	cc_state, _, cc_stderr, cc_err := exec(os.Process_Desc{command = command[:]}, context.allocator)
 	if !testing.expectf(t, cc_err == nil && cc_state.exit_code == 0, "cannot compile the allocator:\n%s", string(cc_stderr)) {
 		return
 	}
 	exe := fmt.tprintf("%s/process-output-fault.exe", TMP)
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "tests/obj/process_output_fault.loke", "-o", exe}},
+		os.Process_Desc{command = []string{compiler_path(), "tests/obj/process_output_fault.loke", "-o", exe}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil && state.exit_code == 0, "cannot build the program:\n%s", string(stderr)) {
 		return
 	}
-	process, start_err := os2.process_start(os2.Process_Desc{command = []string{launch_path(exe)}})
+	process, start_err := os.process_start(os.Process_Desc{command = []string{launch_path(exe)}})
 	if !testing.expectf(t, start_err == nil, "cannot run %s", exe) {
 		return
 	}
-	defer _ = os2.process_close(process)
-	run_state, wait_err := os2.process_wait(process, 60 * time.Second)
-	if wait_err != nil {
-		_ = os2.process_kill(process)
-		_, _ = os2.process_wait(process)
+	run_state, wait_err := os.process_wait(process, 60 * time.Second)
+	// Only a timeout leaves the process to kill; any other failure released it.
+	if wait_err == os.General_Error.Timeout {
+		_ = os.process_kill(process)
+		_, _ = os.process_wait(process)
 	}
 	testing.expectf(t, wait_err == nil, "`output` hung after its stdout collection failed")
 	testing.expectf(t, wait_err != nil || run_state.exit_code == 0, "`output` returned the wrong outcome (exit %d)", run_state.exit_code)
@@ -1518,7 +1517,7 @@ output_returns_a_failed_collection :: proc(t: ^testing.T) {
 selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, include_flags: []string) {
 	obj := fmt.tprintf("%s/hostlib.obj", TMP)
 	state, _, stderr, err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string {
 				compiler_path(), "tests/obj/providerlib", "-build-mode=obj",
 				"-o", obj,
@@ -1533,10 +1532,10 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 		return
 	}
 
-	nm := filepath.join({filepath.dir(clang), "llvm-nm.exe"}, context.temp_allocator)
+	nm := join_path({path_dir(clang), "llvm-nm.exe"}, context.temp_allocator)
 	if os.is_file(nm) {
 		nm_state, symbols, _, nm_err := exec(
-			os2.Process_Desc{command = []string{nm, obj}},
+			os.Process_Desc{command = []string{nm, obj}},
 			context.allocator,
 		)
 		if testing.expectf(t, nm_err == nil && nm_state.exit_code == 0, "cannot list %s", obj) {
@@ -1553,7 +1552,7 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 
 	exe := fmt.tprintf("%s/provider-host.exe", TMP)
 	link_state, _, link_stderr, link_err := exec(
-		os2.Process_Desc{command = c_host_link_command(clang, "tests/obj/provider_host.c", obj, exe, include_flags)},
+		os.Process_Desc{command = c_host_link_command(clang, "tests/obj/provider_host.c", obj, exe, include_flags)},
 		context.allocator,
 	)
 	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {
@@ -1562,7 +1561,7 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 	if !testing.expectf(t, link_state.exit_code == 0, "the selected host link failed:\n%s", string(link_stderr)) {
 		return
 	}
-	run_state, _, _, run_err := exec(os2.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	run_state, _, _, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(
 		t, run_state.exit_code == 0,
@@ -1580,7 +1579,7 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	state, stdout, _, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
+		os.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
@@ -1602,7 +1601,7 @@ the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
 	ready := strings.contains(report, "ready=yes")
 
 	build, _, build_stderr, build_err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string {
 				compiler_path(), "examples/hello.loke",
 				"-o", fmt.tprintf("%s/toolchain-report.exe", TMP),
@@ -1638,7 +1637,7 @@ the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
 @(private)
 host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
 	state, stdout, _, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
+		os.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
 		context.allocator,
 	)
 	if err != nil || state.exit_code != 0 {
@@ -1679,7 +1678,7 @@ diagnostics_reported :: proc(t: ^testing.T) {
 @(test)
 generic_errors_keep_unique_instantiation_contexts :: proc(t: ^testing.T) {
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = []string{compiler_path(), "tests/err/generic_field_diagnostics.loke", "-emit-ll"}},
+		os.Process_Desc{command = []string{compiler_path(), "tests/err/generic_field_diagnostics.loke", "-emit-ll"}},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil && state.exit_code == 1, "generic field errors were not reported") { return }
@@ -1738,10 +1737,10 @@ case_directories :: proc(t: ^testing.T, root: string) -> []string {
 @(private)
 Exec :: struct {
 	command: []string,
-	state:   os2.Process_State,
+	state:   os.Process_State,
 	stdout:  []byte,
 	stderr:  []byte,
-	err:     os2.Error,
+	err:     os.Error,
 }
 
 // Runs every command, a core's worth at a time, and returns once all have
@@ -1755,7 +1754,7 @@ Exec :: struct {
 exec_all :: proc(jobs: []Exec) {
 	context.allocator = runtime.heap_allocator()
 	pool: thread.Pool
-	thread.pool_init(&pool, context.allocator, os.processor_core_count())
+	thread.pool_init(&pool, context.allocator, os.get_processor_core_count())
 	defer thread.pool_destroy(&pool)
 	for &job in jobs {
 		if job.command == nil {
@@ -1764,7 +1763,7 @@ exec_all :: proc(jobs: []Exec) {
 		thread.pool_add_task(&pool, context.allocator, proc(task: thread.Task) {
 			job := (^Exec)(task.data)
 			job.state, job.stdout, job.stderr, job.err = exec(
-				os2.Process_Desc{command = job.command},
+				os.Process_Desc{command = job.command},
 				runtime.heap_allocator(),
 			)
 		}, &job)
@@ -1823,9 +1822,9 @@ run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
 			testing.expectf(t, run.state.exit_code == 0, "%s: exited with %d", c.path, run.state.exit_code)
 		}
 
-		expected, has_expected := os.read_entire_file(c.expected_file, context.temp_allocator)
-		testing.expectf(t, has_expected || trap, "%s: missing .expected file", c.path)
-		if has_expected {
+		expected, expected_err := os.read_entire_file(c.expected_file, context.temp_allocator)
+		testing.expectf(t, expected_err == nil || trap, "%s: missing .expected file", c.path)
+		if expected_err == nil {
 			testing.expectf(
 				t,
 				normalise(string(run.stdout)) == normalise(string(expected)),
@@ -1836,9 +1835,9 @@ run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
 			)
 		}
 
-		errors, has_errors := os.read_entire_file(fmt.tprintf("%s-err", c.expected_file), context.temp_allocator)
-		testing.expectf(t, has_errors || !trap, "%s: missing .expected-err naming the panic", c.path)
-		if has_errors {
+		errors, errors_err := os.read_entire_file(fmt.tprintf("%s-err", c.expected_file), context.temp_allocator)
+		testing.expectf(t, errors_err == nil || !trap, "%s: missing .expected-err naming the panic", c.path)
+		if errors_err == nil {
 			testing.expectf(
 				t,
 				normalise(string(run.stderr)) == normalise(string(errors)),
@@ -1855,8 +1854,8 @@ run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
 // message substring, and `@line:column` span.
 @(private)
 check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, sentinel: string, job: Exec) {
-	expected, has_expected := os.read_entire_file(expected_file, context.temp_allocator)
-	if !testing.expectf(t, has_expected, "%s: missing .expected file", path) {
+	expected, expected_err := os.read_entire_file(expected_file, context.temp_allocator)
+	if !testing.expectf(t, expected_err == nil, "%s: missing .expected file", path) {
 		return
 	}
 	state, stdout, stderr, err := job.state, job.stdout, job.stderr, job.err
@@ -1987,8 +1986,8 @@ own_diagnostics :: proc(output, path, kind: string) -> (count: int) {
 // without a second harness.
 @(private)
 extra_flags :: proc(path: string) -> []string {
-	text, ok := os.read_entire_file(fmt.tprintf("%s.flags", strings.trim_suffix(path, ".loke")))
-	if !ok {
+	text, text_err := os.read_entire_file(fmt.tprintf("%s.flags", strings.trim_suffix(path, ".loke")), context.allocator)
+	if text_err != nil {
 		return nil
 	}
 	flags := make([dynamic]string, context.temp_allocator)
@@ -2003,6 +2002,17 @@ extra_flags :: proc(path: string) -> []string {
 @(private)
 expected_path :: proc(path: string) -> string {
 	return fmt.tprintf("%s.expected", strings.trim_suffix(path, ".loke"))
+}
+
+// As the compiler's own `join_path` and `path_dir` in src/packages.odin.
+@(private)
+join_path :: proc(elems: []string, allocator := context.allocator) -> string {
+	return filepath.join(elems, allocator) or_else ""
+}
+
+@(private)
+path_dir :: proc(path: string, allocator := context.allocator) -> string {
+	return filepath.clean(filepath.dir(path), allocator) or_else "."
 }
 
 @(private)
@@ -2108,13 +2118,13 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 // prevent, so the copy is checked rather than trusted.
 @(test)
 design_first_program_matches_tour_example :: proc(t: ^testing.T) {
-	spec, spec_ok := os.read_entire_file("design.md")
-	if !testing.expect(t, spec_ok, "cannot read design.md") {
+	spec, spec_err := os.read_entire_file("design.md", context.allocator)
+	if !testing.expect(t, spec_err == nil, "cannot read design.md") {
 		return
 	}
 	defer delete(spec)
-	source, source_ok := os.read_entire_file("examples/tour.loke")
-	if !testing.expect(t, source_ok, "cannot read examples/tour.loke") {
+	source, source_err := os.read_entire_file("examples/tour.loke", context.allocator)
+	if !testing.expect(t, source_err == nil, "cannot read examples/tour.loke") {
 		return
 	}
 	defer delete(source)
@@ -2155,7 +2165,7 @@ design_first_program_matches_tour_example :: proc(t: ^testing.T) {
 example_greeting_appends_to_its_file :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	dir := fmt.tprintf("%s/example-greeting", TMP)
-	os2.remove_all(dir)
+	os.remove_all(dir)
 	os.make_directory(dir)
 
 	// Built into the directory it runs in, so the redirect below needs no path.
@@ -2179,21 +2189,21 @@ example_greeting_appends_to_its_file :: proc(t: ^testing.T) {
 	)
 }
 
-// The redirect goes through the shell rather than `Process_Desc.stdin`: os2
+// The redirect goes through the shell rather than `Process_Desc.stdin`: core:os
 // hands a supplied handle straight to `CreateProcessW`, and a handle from
-// `os2.open` is not marked inheritable, so the child receives an invalid one and
+// `os.open` is not marked inheritable, so the child receives an invalid one and
 // the example reports `Not_A_Terminal` instead of reading a name.
 @(private)
 run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 	if !testing.expect(
 		t,
-		os.write_entire_file(fmt.tprintf("%s/stdin.txt", dir), transmute([]u8)input),
+		os.write_entire_file(fmt.tprintf("%s/stdin.txt", dir), transmute([]u8)input) == nil,
 		"cannot write the greeting input file",
 	) {
 		return false
 	}
 	state, _, stderr, err := exec(
-		os2.Process_Desc{
+		os.Process_Desc{
 			command     = []string{"cmd", "/c", ".\\greeting.exe < stdin.txt"},
 			working_dir = dir,
 		},
@@ -2223,11 +2233,11 @@ run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 example_streaming_reads_its_input :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	dir := fmt.tprintf("%s/example-streaming", TMP)
-	os2.remove_all(dir)
+	os.remove_all(dir)
 	os.make_directory(dir)
 
-	exe, exe_ok := filepath.abs(fmt.tprintf("%s/example-streaming.exe", TMP), context.allocator)
-	if !testing.expect(t, exe_ok, "cannot resolve the streaming executable path") {
+	exe, exe_err := filepath.abs(fmt.tprintf("%s/example-streaming.exe", TMP), context.allocator)
+	if !testing.expect(t, exe_err == nil, "cannot resolve the streaming executable path") {
 		return
 	}
 	if !compile_example(t, "examples/streaming.loke", exe, nil) {
@@ -2242,7 +2252,7 @@ example_streaming_reads_its_input :: proc(t: ^testing.T) {
 		os.write_entire_file(
 			fmt.tprintf("%s/three.txt", dir),
 			transmute([]u8)string("alpha\nbeta\ngamma\n"),
-		),
+		) == nil,
 		"cannot write the streaming input file",
 	) {
 		return
@@ -2256,7 +2266,7 @@ example_streaming_reads_its_input :: proc(t: ^testing.T) {
 	}
 	if !testing.expect(
 		t,
-		os.write_entire_file(fmt.tprintf("%s/big.txt", dir), over_limit),
+		os.write_entire_file(fmt.tprintf("%s/big.txt", dir), over_limit) == nil,
 		"cannot write the over-limit input file",
 	) {
 		return
@@ -2278,10 +2288,10 @@ example_streaming_reads_its_input :: proc(t: ^testing.T) {
 @(test)
 example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	scratch, scratch_ok := filepath.abs(fmt.tprintf("%s/example-corpus_runner", TMP), context.allocator)
-	exe, exe_ok := filepath.abs(fmt.tprintf("%s/example-corpus_runner-driven.exe", TMP), context.allocator)
-	compiler, compiler_ok := filepath.abs(compiler_path(), context.allocator)
-	if !testing.expect(t, scratch_ok && exe_ok && compiler_ok, "cannot resolve the corpus_runner paths") {
+	scratch, scratch_err := filepath.abs(fmt.tprintf("%s/example-corpus_runner", TMP), context.allocator)
+	exe, exe_err := filepath.abs(fmt.tprintf("%s/example-corpus_runner-driven.exe", TMP), context.allocator)
+	compiler, compiler_err := filepath.abs(compiler_path(), context.allocator)
+	if !testing.expect(t, scratch_err == nil && exe_err == nil && compiler_err == nil, "cannot resolve the corpus_runner paths") {
 		return
 	}
 	os.make_directory(scratch)
@@ -2305,7 +2315,7 @@ example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 		if run.flag != "" {
 			append(&command, run.flag)
 		}
-		state, stdout, stderr, err := exec(os2.Process_Desc{command = command[:]}, context.allocator)
+		state, stdout, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
 		if !testing.expectf(t, err == nil, "corpus_runner on %s: cannot run", run.corpus) {
 			continue
 		}
@@ -2323,12 +2333,12 @@ example_corpus_runner_checks_a_corpus :: proc(t: ^testing.T) {
 		skipped_capability(t, "no usable toolchain, so the runner never assembles IR")
 		return
 	}
-	inherited, environ_err := os2.environ(context.allocator)
+	inherited, environ_err := os.environ(context.allocator)
 	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
 		return
 	}
 	state, stdout, _, err := exec(
-		os2.Process_Desc {
+		os.Process_Desc {
 			command = []string{launch_path(exe), compiler, "tests/examples/corpus_runner/ir", scratch, "-ir"},
 			env = append_env(inherited, fmt.tprintf("LOKE_CLANG=%s", exe)),
 		},
@@ -2379,7 +2389,7 @@ example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
 	encoding_start := len(files)
 	for c in encoding_cases {
 		file := fmt.tprintf("%s/example-lexer-%s.loke", TMP, c.name)
-		if !testing.expectf(t, os.write_entire_file(file, transmute([]u8)c.input), "cannot write %s", file) {
+		if !testing.expectf(t, os.write_entire_file(file, transmute([]u8)c.input) == nil, "cannot write %s", file) {
 			return
 		}
 		append(&files, file)
@@ -2455,7 +2465,7 @@ expect_streaming :: proc(
 		append(&command, arg)
 	}
 	state, stdout, stderr, err := exec(
-		os2.Process_Desc{command = command[:], working_dir = dir},
+		os.Process_Desc{command = command[:], working_dir = dir},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil, "streaming with %s: cannot run", what) {
@@ -2489,7 +2499,7 @@ compile_example :: proc(t: ^testing.T, source, exe: string, flags: []string) -> 
 		append(&command, flag)
 	}
 	state, _, stderr, err := exec(
-		os2.Process_Desc{command = command[:]},
+		os.Process_Desc{command = command[:]},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil, "%s: cannot run %s", source, compiler_path()) {
@@ -2505,8 +2515,8 @@ expect_example_output :: proc(
 	args: []string,
 	working_dir, expected_file: string,
 ) {
-	expected, has_expected := os.read_entire_file(expected_file)
-	if !testing.expectf(t, has_expected, "%s: missing %s", label, expected_file) {
+	expected, expected_err := os.read_entire_file(expected_file, context.allocator)
+	if !testing.expectf(t, expected_err == nil, "%s: missing %s", label, expected_file) {
 		return
 	}
 	command := make([dynamic]string, context.temp_allocator)
@@ -2515,7 +2525,7 @@ expect_example_output :: proc(
 		append(&command, arg)
 	}
 	state, stdout, stderr, err := exec(
-		os2.Process_Desc{command = command[:], working_dir = working_dir},
+		os.Process_Desc{command = command[:], working_dir = working_dir},
 		context.allocator,
 	)
 	if !testing.expectf(t, err == nil, "%s: cannot run %s", label, exe) {
@@ -2537,8 +2547,8 @@ expect_example_output :: proc(
 
 @(private)
 expect_file_contents :: proc(t: ^testing.T, path, expected, what: string) {
-	actual, ok := os.read_entire_file(path)
-	if !testing.expectf(t, ok, "%s: %s was not written", what, path) {
+	actual, actual_err := os.read_entire_file(path, context.allocator)
+	if !testing.expectf(t, actual_err == nil, "%s: %s was not written", what, path) {
 		return
 	}
 	testing.expectf(

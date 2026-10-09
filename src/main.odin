@@ -368,7 +368,7 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 // Directories keep their final component; files shed their extension.
 default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 	stem := input
-	if info, err := os.stat(input, context.temp_allocator); err == nil && info.is_dir {
+	if info, err := os.stat(input, context.temp_allocator); err == nil && info.type == .Directory {
 		trimmed := strings.trim_right(input, "/\\")
 		volume := filepath.volume_name(input)
 		if (trimmed == "" && input != "") ||
@@ -376,8 +376,8 @@ default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 			return ""
 		}
 		if base := filepath.base(trimmed); base == "." || base == ".." {
-			if absolute, ok := filepath.abs(trimmed, context.temp_allocator); ok {
-				trimmed = filepath.clean(absolute, context.temp_allocator)
+			if absolute, abs_err := filepath.abs(trimmed, context.temp_allocator); abs_err == nil {
+				trimmed = filepath.clean(absolute, context.temp_allocator) or_else absolute
 			}
 		}
 		if trimmed != "" {

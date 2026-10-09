@@ -5,7 +5,6 @@ package lokec
 import "core:fmt"
 import "core:mem"
 import "core:os"
-import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
@@ -133,7 +132,7 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		c.root_dir = strings.clone(canonical_dir(input), c.semantic_allocator)
 		return load_package_dir(c, input, "", no_span())
 	}
-	c.root_dir = strings.clone(canonical_dir(filepath.dir(input, context.temp_allocator)), c.semantic_allocator)
+	c.root_dir = strings.clone(canonical_dir(path_dir(input, context.temp_allocator)), c.semantic_allocator)
 	file, ok := parse_file(c, input)
 	if !ok {
 		return INVALID_PACKAGE, false
@@ -199,7 +198,7 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 @(private)
 package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 	overlays := compiler_overlays(c)
-	entries, err := os2.read_all_directory_by_path(dir, context.temp_allocator)
+	entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
 	if err != nil && len(overlays) == 0 {
 		return nil
 	}
@@ -215,7 +214,7 @@ package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 	if len(overlays) > 0 {
 		key := dir_key(canonical_dir(dir))
 		for path, overlay in overlays {
-			if !seen[path] && dir_key(canonical_dir(filepath.dir(overlay.path, context.temp_allocator))) == key {
+			if !seen[path] && dir_key(canonical_dir(path_dir(overlay.path, context.temp_allocator))) == key {
 				append(&paths, strings.clone(overlay.path, c.semantic_allocator))
 			}
 		}
@@ -370,7 +369,7 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 	if file == nil {
 		return "", .No_Collection
 	}
-	source_dir := filepath.dir(c.sources[file.file].path, context.temp_allocator)
+	source_dir := path_dir(c.sources[file.file].path, context.temp_allocator)
 	return canonical_dir(strings.concatenate({source_dir, "/", path}, context.temp_allocator)), .Ok
 }
 
@@ -550,13 +549,25 @@ visit_for_order :: proc(c: ^Compiler, id: Package_Id, visited: []bool, order: ^[
 
 is_directory :: proc(path: string) -> bool {
 	info, err := os.stat(path, context.temp_allocator)
-	return err == nil && info.is_dir
+	return err == nil && info.type == .Directory
+}
+
+// `filepath.join` with its allocation error dropped: a path the compiler
+// cannot allocate is not one it can go on with either.
+join_path :: proc(elems: []string, allocator := context.allocator) -> string {
+	return filepath.join(elems, allocator) or_else ""
+}
+
+// The cleaned directory part of `path`, `.` when it has none. `filepath.dir`
+// only splits, so `a/../b/x` would keep its `..` and `x` would give "".
+path_dir :: proc(path: string, allocator := context.allocator) -> string {
+	return filepath.clean(filepath.dir(path), allocator) or_else "."
 }
 
 // Produces a temporary absolute, cleaned, `/`-separated path.
 canonical_dir :: proc(path: string) -> string {
-	absolute, ok := filepath.abs(path, context.temp_allocator)
-	cleaned := filepath.clean(ok ? absolute : path, context.temp_allocator)
+	absolute, abs_err := filepath.abs(path, context.temp_allocator)
+	cleaned := filepath.clean(abs_err == nil ? absolute : path, context.temp_allocator) or_else path
 	slashed, _ := strings.replace_all(cleaned, "\\", "/", context.temp_allocator)
 	return slashed
 }
