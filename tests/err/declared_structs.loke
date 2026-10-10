@@ -1,0 +1,25 @@
+// design.md "Structs", "Distinct types": a `struct` is the value of a
+// declaration, so every nominal record has a name, and `distinct` does not make
+// an anonymous record nominal. A record written in place is an anonymous
+// record. A parenthesised declaration is still a declaration.
+package main;
+
+Window :: struct {
+	position: struct { x, y: int },
+	size: (width: int, height: int),
+}
+Pair :: (a: int, b: int);
+Tag :: distinct (n: int);
+Wrapped :: distinct Pair;
+Box :: (struct($T: type) where size_of(T) > 0, true { value: T });
+Meters :: distinct f64;
+
+main :: proc() {
+	local: struct { a: int } = {};
+	held: Option(move_only struct { b: int }) = .none;
+	inline: distinct (x: int, y: int) = {};
+	w: Window = {};
+	b: Box(int) = {1};
+	m: Meters = 1.0;
+	_ = local; _ = held; _ = inline; _ = w; _ = b; _ = m;
+}

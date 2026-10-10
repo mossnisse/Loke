@@ -10,6 +10,16 @@ checklist.
 
 ### Breaking changes
 
+- `struct` declares and parentheses describe (design.md "Structs", "Distinct
+  types"). A `struct { ... }` type written in place, such as a field's type or
+  a generic argument, is now `L0717`: it was a new nominal type at each
+  occurrence, equal to nothing, even an identical one beside it. `distinct`
+  over an anonymous record, `Tag :: distinct (n: int)`, is `L0717` too.
+  Upgrade a nested `position: struct { x, y: int }` to the anonymous record
+  `position: (x, y: int)`, which reads and writes the same way
+  (`w.position.x`), or declare the struct and name it when it needs private
+  fields, hooks, `move_only`, or attributes. Upgrade `distinct (fields)` to a
+  `struct` declaration. Inline `enum` and `union` types are unchanged.
 - One matching form: the header binding `switch (name in subject)` is
   removed (design.md "Inspecting a union", "any_view type"). A case binds what
   it matches, `case .variant(name):` over a union and `case T(name):` over an

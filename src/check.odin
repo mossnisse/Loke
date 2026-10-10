@@ -744,6 +744,7 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		if value.elem != nil && underlying == INVALID_TYPE && k.c.error_count == before {
 			report_unresolved_type(k, value.elem)
 		}
+		reject_distinct_record(k, underlying, value.span)
 		if info := type_of(k.c, symbol.type); info != nil {
 			info.element = underlying
 		}
@@ -751,6 +752,18 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	case ^Type_Interface:
 		check_interface_declaration(k, d.symbols[0])
 		apply_type_metadata(k, d, symbol.type)
+	}
+}
+
+// design.md "Distinct types": a nominal record is declared with `struct`, so
+// `distinct` does not give an anonymous record a second way to become one.
+@(private = "file")
+reject_distinct_record :: proc(k: ^Checker, underlying: Type_Id, span: Span) {
+	if info := type_of(k.c, underlying); info != nil && info.anonymous_record {
+		errorf(
+			k.c, span, "L0717",
+			"`distinct` does not make an anonymous record nominal; declare a `struct` for that",
+		)
 	}
 }
 
@@ -1759,6 +1772,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			if value.elem != nil && element == INVALID_TYPE && k.c.error_count == before {
 				report_unresolved_type(k, value.elem)
 			}
+			reject_distinct_record(k, element, value.span)
 			value.denoted_type = new_type(k.c, Type_Info{kind = .Distinct, element = element})
 		}
 		value.resolution.kind = .Type
@@ -1766,6 +1780,17 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 
 	case ^Type_Record:
 		if value.denoted_type == INVALID_TYPE {
+			// design.md "Structs": a `struct` is a declaration's value, so every
+			// nominal record has a name; a record described in place is the
+			// structural `(name: Type, ...)`. The type is still made, once, so
+			// nothing that uses it reports again.
+			if value.kind == .Struct {
+				errorf(
+					k.c, value.span, "L0717",
+					"a `struct` type is declared, `Name :: struct {{ ... }}`, not written in place",
+				)
+				add_notef(k.c, value.span, "a record written in place is an anonymous record, `(x: int, y: int)`")
+			}
 			validate_record_attributes(k, value)
 			if value.kind == .Struct {
 				value.denoted_type = new_type(k.c, Type_Info{kind = .Struct, move_only = value.move_only})

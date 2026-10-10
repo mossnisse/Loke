@@ -1,0 +1,24 @@
+L0717
+@8:12
+a `struct` type is declared, `Name :: struct { ... }`, not written in place
+a record written in place is an anonymous record, `(x: int, y: int)`
+
+L0717
+@12:8
+`distinct` does not make an anonymous record nominal; declare a `struct` for that
+
+L0717
+@13:12
+`distinct` does not make an anonymous record nominal; declare a `struct` for that
+
+L0717
+@18:9
+a `struct` type is declared, `Name :: struct { ... }`, not written in place
+
+L0717
+@19:15
+a `struct` type is declared, `Name :: struct { ... }`, not written in place
+
+L0717
+@20:10
+`distinct` does not make an anonymous record nominal; declare a `struct` for that

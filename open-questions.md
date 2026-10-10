@@ -45,24 +45,6 @@ And the policy-following half is load-bearing rather than convenient. Copy assig
 
 The allocation built-ins are a third instance, and they keep the pair: `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The allocation built-ins follow the `try_` convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
 
-## Records versus structs
-
-Loke has two kinds of record. A `struct` is
-nominal: its declaration is its identity, a field may be private, a positional
-literal or a destructure is allowed only in the declaring package, and it can
-carry hooks and attributes such as `move_only`. An anonymous record is
-structural: its ordered field names and types are its identity, every field is
-public, and positional use is allowed anywhere. No package declares it, so an
-`impl` on one, through an alias such as `Pair :: (a: int, b: int)`, is an
-extension block: it may add methods but no hooks (`L0486`). Could they be one
-concept, with a `struct` as a named, nominal record over the same field list, so
-literals, destructuring, equality, formatting, reflection, and layout have one
-set of rules, and the tutorials explain records once? The questions it raises
-are the differences above: privacy, the field-order rule, which package owns
-a record's hooks, and whether naming a record type always makes it nominal or
-only when it is declared `struct`. Nothing is wrong today; the question is
-whether two kinds are worth their extra rules.
-
 ## Pure procedures
 
 Should there be a form of procedure, distinct from `proc`, that is guaranteed by the compiler to be free of side effects?

@@ -346,8 +346,10 @@ A `Where_Clause` expression is a compile-time boolean (see
 [design.md](design.md#where-clauses)) and may not have a `Composite_Literal` at
 its top level (see [Resolved ambiguities](#resolved-ambiguities)).
 
-A field named `_` is an unnamed padding field. A field type may itself be a
-`Struct_Type`, which is how anonymous nested records are written.
+A field named `_` is an unnamed padding field. `Struct_Type` and
+`Move_Only_Struct_Type` parse wherever a `Type` does, but [design.md](design.md#structs)
+accepts one only as the value of a `Constant_Decl`, parentheses included; a
+nested record is written as a `Record_Type`.
 
 ## Interfaces
 

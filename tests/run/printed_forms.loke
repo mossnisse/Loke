@@ -4,7 +4,8 @@ import "core:fmt";
 
 Point :: struct { @(public) x: f64, @(public) label: string }
 Pair :: (key: string, value: int);
-Tag :: distinct (n: int);
+Counter :: struct { @(public) n: int }
+Tag :: distinct Counter;
 Name :: distinct string;
 Shout :: struct { @(public) text: string }
 Shape :: union { none:, label: string, mark: rune }
@@ -32,7 +33,7 @@ main :: proc() {
 	// A box prints its payload, quoted where the payload would be.
 	b := box("boxed");
 	fmt.println(b, [1]box(string){box("in")});
-	// An anonymous record is its field list; a distinct one keeps its name.
+	// An anonymous record is its field list; a distinct record keeps its own name.
 	pair: Pair = {"one", 1};
 	fmt.println(pair, Tag{3});
 }

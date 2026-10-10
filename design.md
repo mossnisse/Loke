@@ -171,7 +171,7 @@ Identifiers are case-sensitive, ASCII only, and match `[A-Za-z_][A-Za-z0-9_]*`. 
 
 `true`, `false`, and `nil` are **reserved**: no name a lookup can reach may be one of them. A declaration, parameter, loop binding, or pattern binding that takes one is rejected.
 
-A field or enum member is reached through a selector rather than by name lookup, so `struct { true: int }` and `enum { nil, other }` are legal and mean what they say.
+A field or enum member is reached through a selector rather than by name lookup, so `S :: struct { true: int }` and `E :: enum { nil, other }` are legal and mean what they say.
 
 Every other predeclared name may be shadowed by a declaration like any other name. They are:
 
@@ -1408,12 +1408,15 @@ A distinct type may define its own methods, operators, named constructors, conve
 - **Copying** is not inherited either: a copyable distinct type has its own generated `try_clone` and `clone`, typed in the distinct name and copying as its underlying type does, so it satisfies `Cloneable`.
 - **Converting** between a distinct type and its underlying type keeps the representation, so it follows the ordinary copy rule: a managed operand read from a place is cloned, and `move(x)` or a temporary transfers instead. A move-only operand must be moved.
 
-Each named aggregate type (`struct`, `enum`, or `union`) is distinct.
+Each named aggregate type (`struct`, `enum`, or `union`) is distinct: two declarations with the same fields are two types.
 
 ```odin
 Marker :: struct {}
-static_assert(Marker != (struct{}));
+Other :: struct {}
+static_assert(Marker != Other);
 ```
+
+`distinct` over an [anonymous record](#anonymous-records), written in place or through an alias, is rejected: a nominal record is declared with `struct`, which also gives it what a nominal record owns.
 
 #### Delegating operators
 
@@ -1441,7 +1444,11 @@ A mixed-operand operator such as `Meters * f64 -> Meters` is written by hand. Li
 
 ### Structs
 
-A struct is a record that contains named fields. The dot operator selects a field:
+A struct is a record that contains named fields.
+
+A `struct` type is written only as the value of a constant declaration, `Name :: struct { ... }`, so every struct has a name and is a new **nominal** type, owned by the package that declares it. A record described in place, such as a field's type or a procedure's result, is an [anonymous record](#anonymous-records), whose identity is **structural**. A struct carries what needs an owner: private fields, [lifecycle hooks](#lifecycle-hooks-and-resource-types), `move_only`, field and [layout attributes](#struct-layout-attributes), and the [field order](#destructuring) its package alone may rely on. Literals, selection, destructuring, equality, layout, formatting, and reflection follow one set of record rules for both kinds.
+
+The dot operator selects a field:
 
 ```odin
 Vector2 :: struct {
@@ -1575,13 +1582,13 @@ b := Account{name = "x"};    // error: the literal must supply `id`
 
 A struct with a required field has [no zero value](#types-with-no-zero-value), so `Account{}`, a static-duration `Account` without an initializer, a `make` length, and `resize` are rejected too, and so is anything that contains an `Account` and would manufacture one. Use it where zero is representable but not a valid value of the field: an identifier, a handle whose zero is a live resource, a count that must be positive.
 
-Structs can be nested by defining a field as a struct.
+A field that groups values without needing a type of its own is an anonymous record; a nested group that needs hooks, privacy, or attributes is a declared struct of its own.
 
 ```odin
 Window :: struct {
 	title: string,
-	position: struct { x, y: int },
-	size: struct { width, height: int },
+	position: (x, y: int),
+	size: (width, height: int),
 }
 
 w := Window{title = "Editor"};

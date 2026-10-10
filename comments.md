@@ -724,6 +724,31 @@ the group's own depth. An expression has one only between a definition's
 the compiler an unlabeled field is named by its position, `0`, `1`, ..., a name
 no source can spell; interning, layout, and destructuring needed no new case.
 
+### Structs declare, parentheses describe
+
+Records came in three forms: a declared `struct`, which is nominal; a
+parenthesized anonymous record, which is structural; and a `struct { ... }`
+written in place, which was a fresh nominal type at every occurrence. The
+third equaled nothing, not even an identical one beside it, so two variables
+of the same written type could not be assigned to each other. The corpus used
+it in three tests and a comment, and the anonymous record already served
+each of those places.
+
+Merging struct and anonymous record into one form was considered and
+rejected. Every difference between them follows from one fact: a struct has a
+package that owns it. That ownership is what makes private fields the default,
+what lets copy and drop hooks and `move_only` mean something, and what lets
+the declaring package reorder fields while no other package depends on their
+order. A single form would either give up encapsulation for every record or
+make every returned pair a declaration. So the two kinds stay, the rules they
+share are stated once, and each spelling has one meaning: `struct` creates a
+type, and parentheses describe one.
+
+`distinct` over an anonymous record was a second way to make a nominal record,
+without the ownership a struct carries, so it is rejected for the same reason.
+Inline `enum` and `union` types stay: neither has a structural spelling to
+write instead.
+
 ### One pattern grammar, flat declarations
 
 Every form that binds names takes a subset of one pattern: a leaf is a name or

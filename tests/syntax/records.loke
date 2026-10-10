@@ -19,7 +19,7 @@ Fields :: struct {
 	name: string,
 	using base: Base,
 	_: [4]u8,
-	nested: struct { a: int },
+	nested: (a: int),
 	trailing: int,
 }
 

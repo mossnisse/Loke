@@ -7,7 +7,7 @@
 // points. That is the whole reason to have the type instead of remembering to
 // swap at each use.
 //
-//     header: struct { magic: endian.Big_Endian(u32) };
+//     header: (magic: endian.Big_Endian(u32)) = {};
 //     header.magic = endian.Big_Endian(u32).store(0xCAFEBABE);
 //     fmt.println(header.magic.load());
 //
