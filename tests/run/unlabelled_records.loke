@@ -1,7 +1,7 @@
 // design.md "Anonymous records": an unlabelled record is reached by position.
 // It destructures, takes positional literals, nests, compares, prints without
 // names, reflects with empty names, and is its own type apart from any
-// labelled record with the same field types.
+// labelled record with the same field types, which converts to it implicitly.
 package main;
 
 import "core:fmt";
@@ -16,6 +16,16 @@ find :: proc(xs: []int, wanted: int) -> (int, bool) {
 }
 
 Pair :: (int, string_view);
+
+minmax :: proc(a, b: int) -> (low: int, high: int) {
+	if (a < b) { return {a, b}; }
+	return {b, a};
+}
+sum_pair :: proc(pair: (int, int)) -> int { low, high := pair; return low + high; }
+plain_minmax :: proc(a, b: int) -> (int, int) { return minmax(a, b); }
+owned_words :: proc() -> (first: string, second: string) { return {"lo" + "ke", "records"}; }
+Bounds :: (low: int, high: int);
+ORIGIN :: Bounds{0, 0};
 
 // The labelled and unlabelled shapes are different types, so they overload.
 describe :: proc { describe_unlabelled, describe_labelled }
@@ -63,4 +73,19 @@ main :: proc() {
 	fmt.println(describe(bare), describe(named));
 	fmt.println((1 + 2) * 3);
 	names((int, bool));
+
+	// design.md "Implicit type conversions": a labelled record drops its labels
+	// where the unlabelled one is expected, owned fields included.
+	as_pair: (int, int) = minmax(4, 2);
+	fmt.println(as_pair, sum_pair(minmax(9, 3)), plain_minmax(7, 8));
+	words := owned_words();
+	copied: (string, string) = words;
+	moved: (string, string) = move(words);
+	fmt.println(copied, moved);
+	constant: (int, int) = ORIGIN;
+	fmt.println(constant);
+	held: [dynamic](int, int) = {};
+	held.append(minmax(5, 1));
+	maybe: Option((int, int)) = .some(minmax(0, 3));
+	fmt.println(held, maybe);
 }

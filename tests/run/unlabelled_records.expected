@@ -13,3 +13,7 @@ unlabelled labelled
 9
 0 [  ] true
 1 [  ] false
+(2, 4) 12 (7, 8)
+("loke", "records") ("loke", "records")
+(0, 0)
+[(1, 5)] .some((0, 3))

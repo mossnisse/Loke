@@ -205,6 +205,10 @@ Type_Info :: struct {
 	// `(key: string_view, value: int)`: a structural record whose identity is the
 	// ordered `(field name, field type)` vector, not the `name` it displays as.
 	anonymous_record: bool,
+	// A labelled anonymous record's unlabelled counterpart, its field types by
+	// position: a value converts to it implicitly, and the two share one backend
+	// type (design.md "Implicit type conversions").
+	unlabelled: Type_Id,
 	convention: string,
 	// Set once the finite-size check has visited this nominal type, so a cycle
 	// is reported at one place instead of once per reference.
@@ -1287,6 +1291,17 @@ anon_record_type :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> Type_Id {
 		}
 	}
 
+	// The counterpart first: interning it may grow this bucket.
+	unlabelled := INVALID_TYPE
+	if len(fields) >= 2 && !name_is_positional(identifier_text(c, fields[0].name)) {
+		positional := make([]Anon_Record_Field, len(fields), context.temp_allocator)
+		for field, index in fields {
+			positional[index] = {name = positional_field_name(c, index), type = field.type}
+		}
+		unlabelled = anon_record_type(c, positional)
+		bucket = c.anon_record_types[hash]
+	}
+
 	id := new_type(c, Type_Info{kind = .Struct, anonymous_record = true})
 	members := make([]Symbol_Id, len(fields), c.semantic_allocator)
 	for field, index in fields {
@@ -1305,6 +1320,7 @@ anon_record_type :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> Type_Id {
 		info.fields = members
 		info.name = display
 		info.backend_label = label
+		info.unlabelled = unlabelled
 	}
 	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
 	copy(grown, bucket)
@@ -1521,6 +1537,25 @@ field_is_positional :: proc(c: ^Compiler, field: Symbol_Id) -> bool {
 @(private = "file")
 name_is_positional :: proc(text: string) -> bool {
 	return len(text) > 0 && text[0] >= '0' && text[0] <= '9'
+}
+
+// design.md "Implicit type conversions": a labelled anonymous record converts
+// to the unlabelled one with its field types, dropping the names. Nothing
+// converts the other way, or between two sets of names.
+record_drops_labels_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	info := type_of(c, from)
+	return info != nil && info.anonymous_record && info.unlabelled != INVALID_TYPE && info.unlabelled == to
+}
+
+// The type whose backend representation a record shares: the unlabelled
+// counterpart of a labelled anonymous record, so dropping the labels emits
+// nothing, as weakening a carrier emits nothing.
+record_abi_type :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
+	info := type_of(c, type)
+	if info != nil && info.anonymous_record && info.unlabelled != INVALID_TYPE {
+		return info.unlabelled
+	}
+	return type
 }
 
 // What reflection and formatting call a field: a positional field has no name.

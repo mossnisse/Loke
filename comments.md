@@ -699,11 +699,20 @@ it needed was decided this way:
   also lex as the number `0.1`.
 - **One field.** `(T)` stays grouping, and an unlabeled record has at least two
   fields: one value is its type alone.
-- **Relation to labeled records.** Unrelated types. Erasing names from
-  identity, as C# tuples do, would let `(width: int, height: int)` become
+- **Relation to labeled records.** Different types, with one implicit
+  conversion: a labeled record drops its names to become the unlabeled record
+  of its field types. Without it, a library that names its results, as it
+  should when the types alone are unclear, would force its names on every
+  caller that stores the result in an unlabeled record. Dropping names is
+  safe because the unlabeled side reads by position anyway. Nothing converts
+  the other way or between two sets of names. Erasing names from identity
+  instead, as C# tuples do, would let `(width: int, height: int)` become
   `(height: int, width: int)` silently, the reordering mistake the
   [field-order rule](#field-order-stays-inside-the-declaring-package) guards
-  against.
+  against. As with `[dynamic]T` to `[]T`, the conversion is of values only,
+  so a procedure type whose result is labeled is still not one whose result
+  is unlabeled. A labeled record shares its unlabeled counterpart's
+  backend type, so the conversion emits nothing.
 - **Mixing.** All fields are labeled or none, so a record is read one way.
   `(int, found: bool)` parses as the labeled list `int, found: bool`, the same
   reading a parameter list gives it.

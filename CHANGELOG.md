@@ -457,8 +457,12 @@ checklist.
   `q, r := divmod(17, 5)`. An unlabeled record has at least two fields, is
   taken apart by destructuring and built by positional literals, prints as
   `(3, 2)`, reflects with empty field names, and is a different type from any
-  labeled record. A record's fields are all labeled or none (`L0254`). The
-  unlabeled-result error `L0238` is gone.
+  labeled record. A labeled record converts implicitly to the unlabeled record
+  of its field types (design.md "Implicit type conversions"), so a library can
+  name its results without imposing the names on callers; nothing converts
+  back, between two sets of names, or inside a procedure type. A record's
+  fields are all labeled or none (`L0254`). The unlabeled-result error `L0238`
+  is gone.
 - `dyn proc(parameters) -> Result` is a borrowed view of anything callable with
   that signature (design.md "Borrowed callable views"), the short form of
   `dyn interfaces.Callable(...)`, so one non-generic parameter, field, or array

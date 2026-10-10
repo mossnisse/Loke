@@ -390,6 +390,7 @@ The following list defines the implicit conversions. There are no user-defined o
 - Unfixed booleans -> `bool`
 - Unfixed rune constants -> rune types
 - `string` -> `string_view`; a non-owning borrow subject to [Borrows and lifetimes](#borrows-and-lifetimes)
+- A labeled anonymous record -> the unlabeled record of its field types, in order; the value is unchanged and only the names are dropped; see [Anonymous records](#anonymous-records)
 - `[dynamic]T` -> `[]T`, a read-only view of the live elements under the same borrow rules; see [Dynamic arrays](#dynamic-arrays)
 - `[N]T` -> `[]T`, a read-only view of all `N` elements under the same borrow rules; see [Fixed arrays](#fixed-arrays)
 - `box(T)` -> `^T`, a read-only borrow of the payload under the same borrow rules; see [Owned values](#owned-values)
@@ -1477,7 +1478,7 @@ pairs: [dynamic](int, string_view) = {};
 
 A labeled record has at least one field and an unlabeled one at least two. One value needs no record: it is written as its type alone.
 
-Its identity is **structural**: the ordered sequence of its fields' names and types. Two records with the same fields in the same order are the same type wherever they are written; the same fields in a different order are different types. A field name is part of the type, so `(a: int, b: int)` and `(x: int, y: int)` are unrelated. An unlabeled field's position is its name: `(int, int)` is one type wherever it is written, and it is unrelated to every labeled record, `(a: int, b: int)` included.
+Its identity is **structural**: the ordered sequence of its fields' names and types. Two records with the same fields in the same order are the same type wherever they are written; the same fields in a different order are different types. A field name is part of the type, so `(a: int, b: int)` and `(x: int, y: int)` are unrelated. An unlabeled field's position is its name: `(int, int)` is one type wherever it is written, and it is a different type from every labeled record, `(a: int, b: int)` included. A labeled record [converts implicitly](#implicit-type-conversions) to the unlabeled record of its field types, dropping the names, so `pair: (int, int) = bounds();` and passing `bounds()` to a `(int, int)` parameter both work. Nothing converts the other way or between two sets of names, and the conversion is of values: a procedure type that returns `(low: int, high: int)` is not one that returns `(int, int)`.
 
 Every field is public. A labeled field is selected by name; an unlabeled field has no name to select, so an unlabeled record is taken apart only by [destructuring](#destructuring) and built only by positional literal elements. Copy, move, drop, equality, formatting, and reflection follow the ordinary structural rules. An unlabeled record prints as `(1, true)`, and reflection reports each of its fields with the empty name `""`.
 
@@ -4621,7 +4622,7 @@ a, b := swap(1, 2);
 fmt.println(a, b); // 2 1
 ```
 
-The parenthesized result spelling is therefore one record type, at any arity. Label the fields when their types alone do not say what each one means, `-> (index: int, found: bool)`: the names document the result, and a caller that keeps the whole value selects its fields by them.
+The parenthesized result spelling is therefore one record type, at any arity. Label the fields when their types alone do not say what each one means, `-> (index: int, found: bool)`: the names document the result, and a caller that keeps the whole value selects its fields by them. Labeling costs a caller nothing, since the result also converts to the unlabeled record, `(int, bool)`.
 
 #### `inout` results
 

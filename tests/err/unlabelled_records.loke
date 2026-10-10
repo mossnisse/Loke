@@ -1,6 +1,7 @@
-// design.md "Anonymous records": an unlabelled field has no name to select or
-// to name in a literal, an unlabelled record is unrelated to a labelled one
-// with the same field types, and `(a, b)` is a record type, not a value.
+// design.md "Anonymous records", "Implicit type conversions": an unlabelled
+// field has no name to select, a labelled record converts implicitly only to
+// the unlabelled one with its field types (never back, never to other names,
+// and never inside a procedure type), and `(a, b)` is a record type, not a value.
 package main;
 
 two :: proc() -> (int, bool) { return {1, true}; }
@@ -10,8 +11,10 @@ main :: proc() {
 	r := two();
 	_ = r.n;
 	l: (n: int, ok: bool) = two();
-	u: (int, bool) = labelled();
+	m: (m: int, ok: bool) = labelled();
+	f: proc() -> (int, bool) = labelled;
 	a, b := 1, 2;
 	v := (a, b);
-	_ = l; _ = u; _ = v;
+	same := labelled() == two();
+	_ = l; _ = m; _ = f; _ = v; _ = same;
 }

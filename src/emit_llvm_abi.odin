@@ -138,6 +138,12 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 	if info == nil || emitted[type] {
 		return
 	}
+	// A labelled record is spelled by its unlabelled counterpart's definition.
+	if shared := record_abi_type(e.c, type); shared != type {
+		emitted[type] = true
+		define_struct(e, shared, emitted)
+		return
+	}
 	// A generic record's own shell is a placeholder for its instances and has no
 	// layout of its own.
 	if sym := symbol_of(e.c, info.symbol); sym != nil && sym.generic {
@@ -285,8 +291,9 @@ struct_dependency :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 @(private)
 struct_name :: proc(e: ^Emitter, raw: Type_Id) -> string {
 	// Both capabilities of a carrier share one backend type, so `[]mut T` and
-	// `dyn mut I` weakening is the no-op the design says it is.
-	type := carrier_abi_type(e.c, raw)
+	// `dyn mut I` weakening is the no-op the design says it is, and so do a
+	// labelled record and its unlabelled counterpart.
+	type := record_abi_type(e.c, carrier_abi_type(e.c, raw))
 	if name, ok := e.struct_names[type]; ok {
 		return name
 	}

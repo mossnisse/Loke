@@ -3610,8 +3610,8 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 }
 
 // A struct, array, or union constant keeps its representation when it converts
-// to its own type or, written out, between a distinct type and its underlying
-// one (design.md "Distinct types").
+// to its own type, when a labelled record drops its labels, or, written out,
+// between a distinct type and its underlying one (design.md "Distinct types").
 @(private = "file")
 retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool, storage: mem.Allocator) -> (Const_Value, bool) {
 	if value.kind != .Aggregate || value.aggregate == nil {
@@ -3621,7 +3621,8 @@ retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, expl
 	if source == target {
 		return value, true
 	}
-	if !explicit || type_underlying(c, source) != type_underlying(c, target) {
+	relabelled := record_drops_labels_to(c, source, target)
+	if !relabelled && (!explicit || type_underlying(c, source) != type_underlying(c, target)) {
 		return value, false
 	}
 	retyped := new_clone(value.aggregate^, storage)
@@ -3674,7 +3675,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		element := type_of(c, type_underlying(c, to)).element
 		return from == element || assignable(c, from, element)
 	}
-	if carrier_weakens_to(c, from, to) {
+	if carrier_weakens_to(c, from, to) || record_drops_labels_to(c, from, to) {
 		return true
 	}
 	// design.md "Escape levels".
