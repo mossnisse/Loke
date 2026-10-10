@@ -512,6 +512,27 @@ a_temporary_path_alias_preserves_the_output :: proc(t: ^testing.T) {
 		testing.expectf(t, run_err == nil && run_state.exit_code == 0, "cannot run %s:\n%s", out, string(run_stderr))
 		testing.expectf(t, normalise(string(stdout)) == "The answer is 42", "%s printed %q", out, string(stdout))
 	}
+
+	// The linker reads the natvis rules while it writes the executable, so
+	// rules that would share its path are kept beside it instead.
+	out := fmt.tprintf("%s/path-alias-kept.natvis", TMP)
+	rules := fmt.tprintf("%s.natvis", out)
+	os.remove(out)
+	os.remove(rules)
+	state, _, stderr, err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-g", "-keep-temps", "-o", out}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "building to %s failed:\n%s", out, string(stderr)) {
+		return
+	}
+	kept, kept_err := os.read_entire_file(rules, context.temp_allocator)
+	testing.expectf(
+		t,
+		kept_err == nil && strings.contains(string(kept), "<AutoVisualizer"),
+		"-keep-temps left no natvis rules at %s",
+		rules,
+	)
 }
 
 // `-g` writes natvis rules for a map's entries and an `any_view`'s value, and

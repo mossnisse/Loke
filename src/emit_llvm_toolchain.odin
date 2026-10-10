@@ -38,6 +38,12 @@ emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	natvis_path := ""
 	if c.natvis != "" && c.build_mode == .Exe {
 		natvis_path = replace_ext(opts.output, ".natvis")
+		// The linker reads the rules while it writes the executable, and MSVC
+		// 14.51's cannot open one file as both (LNK1104): `-o x.natvis` moves
+		// them aside.
+		if strings.equal_fold(natvis_path, opts.output) {
+			natvis_path = strings.concatenate({opts.output, ".natvis"})
+		}
 		if os.write_entire_file(natvis_path, transmute([]u8)c.natvis) != nil {
 			errorf(c, no_span(), "L0401", "cannot write `%s`", natvis_path)
 			return 2
@@ -51,7 +57,7 @@ emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	defer if !opts.keep_temps && !strings.equal_fold(ll_path, opts.output) {
 		os.remove(ll_path)
 	}
-	defer if !opts.keep_temps && natvis_path != "" && !strings.equal_fold(natvis_path, opts.output) {
+	defer if !opts.keep_temps && natvis_path != "" {
 		os.remove(natvis_path)
 	}
 

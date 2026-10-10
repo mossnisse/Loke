@@ -23,7 +23,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # readme.md "Build and run" names the Odin the tree builds with; the
       # dev-2026-10 release is that nightly's commit, 84bc3fc.

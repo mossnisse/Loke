@@ -18,7 +18,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The release gate: no open divergence from the spec, the tag names the
       # version the compiler reports as LOKE_VERSION, and CHANGELOG.md has its
@@ -105,7 +105,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           sparse-checkout: CHANGELOG.md
           sparse-checkout-cone-mode: false

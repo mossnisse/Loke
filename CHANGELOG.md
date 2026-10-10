@@ -631,6 +631,10 @@ checklist.
 
 ### Fixed
 
+- `-g -o name.natvis` builds again with MSVC 14.51 (Visual Studio 18), whose
+  linker failed with LNK1104 when the natvis rules and the executable shared a
+  path. The rules now go to `name.natvis.natvis`, where `-keep-temps` keeps
+  them.
 - A `dyn` slot call whose receiver is not a named local, such as
   `view_of().touch()`, now writes whatever the slot's methods may write
   (design.md "Global write effects"), so a borrow of a global they write is

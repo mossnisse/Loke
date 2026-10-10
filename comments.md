@@ -1845,7 +1845,9 @@ checks shared record graphs and the array placement rule.
 
 The debug-code review found five correctness bugs. Temporary cleanup now
 preserves output paths that alias `.ll` or `.natvis`, including Windows case
-variants. Every emitted deferred block binds its locals to that copy's storage
+variants. An output named `.natvis` moves the rules to `<output>.natvis`
+instead of sharing its path: the linker reads them while it writes the
+executable, which MSVC 14.51's linker refuses (LNK1104). Every emitted deferred block binds its locals to that copy's storage
 and scope. Exported debug names use the literal linker name, while internal
 names use Loke's decoder. Statement locations belong to the shared emitter
 entry, and conditions restore their own locations after initializers.
