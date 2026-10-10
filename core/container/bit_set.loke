@@ -4,7 +4,7 @@
 // A member's bit is its *declaration position*, not its numeric value, so an
 // enum with holes — `enum { A, B = 4, C = 7 }` — still needs exactly three
 // bits. That is also why this is not a hardware register layout: design.md
-// keeps those on integer masks with explicit accessors in version 1.
+// keeps those on integer masks with explicit accessors.
 //
 // The zero value is the empty set.
 @(public)

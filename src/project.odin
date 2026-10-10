@@ -1,6 +1,6 @@
 // `loke.project`: the dependencies a program imports, each registered as a
 // collection so `require json ../json` lets source write `import "json:parse";`
-// (readme.md "Projects").
+// (compiler-guide.md "Projects").
 package lokec
 
 import "core:os"

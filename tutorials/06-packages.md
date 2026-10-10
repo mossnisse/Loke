@@ -130,7 +130,7 @@ prefix, such as `"core:fmt"`, comes from a *collection* instead: `core:` and
 `base:` are the libraries that come with the compiler. A library of your own that
 lives elsewhere gets a name the same way: a `loke.project` file beside
 `main.loke` with the line `require shapes ../shapes` lets any file import
-`"shapes:area"` (readme.md "Projects").
+`"shapes:area"` (compiler-guide.md "Projects").
 
 Every file in a package starts with the same `package` line, and each file lists
 its own imports: `report.loke` imports `core:fmt` because it uses it, and

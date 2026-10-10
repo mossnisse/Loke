@@ -1,9 +1,10 @@
 # Working in this repository
 
 Loke is a programming language; `lokec` is its compiler, written in Odin.
-[readme.md](readme.md) covers building, running, and the command line. This file
-tells agents (and humans) where each kind of knowledge lives and how to keep it
-true. Keep it short: point to a document rather than repeat it.
+[readme.md](readme.md) covers getting started;
+[compiler-guide.md](compiler-guide.md) covers the command line. This file tells
+agents (and humans) where each kind of knowledge lives and how to keep it true.
+Keep it short: point to a document rather than repeat it.
 
 ## Which document decides
 
@@ -11,6 +12,7 @@ true. Keep it short: point to a document rather than repeat it.
 | --- | --- |
 | What the language means | [design.md](design.md) (normative) |
 | What parses | [grammar.md](grammar.md) (normative) |
+| How to use the compiler | [compiler-guide.md](compiler-guide.md) |
 | Why a choice was made, differences from Odin | [comments.md](comments.md) |
 | Open questions and unresolved findings | [open-questions.md](open-questions.md) |
 | How the compiler is built, and how to change it | [compiler-architecture.md](compiler-architecture.md) |

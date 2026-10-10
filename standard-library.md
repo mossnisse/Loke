@@ -1341,7 +1341,7 @@ Smaller omissions, each additive over what exists and waiting for a caller:
 allocating string transformations; Unicode case mapping (case conversion is
 ASCII-only); in `core:math`, hyperbolics, `cbrt`/`fma`/`ldexp`/`frexp`/`modf`,
 `erf`, `gamma`, lane-wise math over `Simd(T, N)`, and integer bit helpers; in
-`core:simd`, the version-1 omissions design.md names; in `core:thread`,
+`core:simd`, the omissions design.md names; in `core:thread`,
 `try_spawn`, `try_lock`, condition variables, and a thread identity.
 
 ## Test requirements

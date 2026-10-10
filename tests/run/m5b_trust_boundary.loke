@@ -8,8 +8,7 @@ package main; import "core:fmt";
 
 Holder :: struct { view: []int }
 
-// A user record that happens to contain a pointer is not a compiler-known
-// borrow carrier: "Version 1 has no user-defined provenance annotation."
+// A typed pointer stored in a record carries its inferred provenance.
 Handle :: struct { target: ^int }
 
 global_view: []int;

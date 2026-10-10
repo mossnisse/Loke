@@ -8,7 +8,7 @@ Design rationale and differences from Odin are recorded in [comments.md](comment
 
 Should import paths encode package versions, and should a package declaration remain mandatory in every file? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
 
-Decided so far, and built as `loke.project` (readme.md "Projects"):
+Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
 
 - Imports carry no version and no location. A project gives each dependency a
   name, and the name is a collection prefix: `import "json:parse";`. Where
@@ -185,7 +185,7 @@ an untyped token macro system by default.
 
 ## Recoverable panics
 
-Version 1 makes a panic unrecoverable: unwinding runs `defer`s and managed
+Loke makes a panic unrecoverable: unwinding runs `defer`s and managed
 `drop`s for cleanup, but there is no `recover`, `try`, or catch construct that
 lets Loke code observe or resume from one. The [panic semantics](design.md#panics-and-unwinding)
 are otherwise fully defined, including the two build-selected strategies.

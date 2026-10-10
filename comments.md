@@ -1552,7 +1552,7 @@ returns other text than was asked for.
 `string` is an immutable owning value. Implementations may share backing storage,
 so a shared reference count is atomic. The allocator that eventually frees the
 storage must separately support the thread on which the last drop occurs; as for
-other owner lifecycles, version 1 leaves that transfer check to the programmer.
+other owner lifecycles, Loke leaves that transfer check to the programmer.
 Code that does not want shared ownership uses a byte slice or `string_view`.
 
 ### Allocation failure

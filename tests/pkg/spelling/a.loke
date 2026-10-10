@@ -7,7 +7,7 @@ package main; import "core:fmt";
 // the `myc:` collection it actually lives in, and the directory is what decides:
 // the key is `myc:lib` whichever import the discovery walk binds first.
 //
-// `z.LOKE` also spells its extension in upper case. Windows is the only v1
+// `z.LOKE` also spells its extension in upper case. Windows is the only current
 // target and its filesystem is case-insensitive, so a file matched
 // case-sensitively would be silently invisible and `through_collection` would be
 // an unknown name.

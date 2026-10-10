@@ -1,6 +1,6 @@
 # Getting started
 
-This page tells how to install the compiler, then how to build and runs a first program.
+This page tells how to install the compiler, then how to build and run a first program.
 
 ## What you need
 
@@ -44,8 +44,8 @@ lokec -print-toolchain
 The first prints the version. The second prints where Clang and the Microsoft
 tools are, and ends with `ready=yes` when a program can be built. If it ends
 with `ready=no`, one of the two was not found;
-[Toolchain troubleshooting](../readme.md#toolchain-troubleshooting) in the
-readme says where lokec looks for each.
+[Toolchain troubleshooting](../compiler-guide.md#toolchain-troubleshooting) in the
+compiler guide says where lokec looks for each.
 
 You can also build the compiler from source instead; the
 [readme](../readme.md#building-from-source) explains how.

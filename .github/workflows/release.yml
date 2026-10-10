@@ -50,8 +50,9 @@ jobs:
           $name = "loke-$env:GITHUB_REF_NAME-windows-amd64"
           $stage = "$env:RUNNER_TEMP\$name"
           New-Item -ItemType Directory $stage | Out-Null
-          Copy-Item lokec.exe, LICENSE, readme.md $stage
-          Copy-Item base, core, runtime, examples $stage -Recurse
+          Copy-Item lokec.exe, LICENSE $stage
+          Get-ChildItem -File *.md | Copy-Item -Destination $stage
+          Copy-Item base, core, runtime, examples, tutorials $stage -Recurse
           # A compile cache lokec rebuilds on demand, never shipped.
           Remove-Item "$stage\runtime\prebuilt" -Recurse -Force -ErrorAction SilentlyContinue
           Compress-Archive $stage "$name.zip"
@@ -62,7 +63,7 @@ jobs:
           path: loke-*.zip
 
   # A fresh runner with no checkout and no Odin: only the bundle and the
-  # LLVM/MSVC toolchain readme.md "Build and run" asks a user to install.
+  # LLVM/MSVC toolchain readme.md "Getting started" asks a user to install.
   verify:
     needs: bundle
     runs-on: windows-latest
@@ -79,6 +80,21 @@ jobs:
           $zip = Get-Item loke-*.zip
           Expand-Archive $zip "$env:RUNNER_TEMP\install"
           "LOKEC=$env:RUNNER_TEMP\install\$($zip.BaseName)\lokec.exe" >> $env:GITHUB_ENV
+
+      - name: Check bundled documentation links
+        run: |
+          $installRoot = Split-Path $env:LOKEC
+          foreach ($doc in Get-ChildItem -LiteralPath $installRoot -Recurse -Filter *.md -File) {
+            $links = [regex]::Matches((Get-Content -LiteralPath $doc.FullName -Raw), '\]\(([^)#]+\.md)(?:#[^)]*)?\)')
+            foreach ($link in $links) {
+              $target = $link.Groups[1].Value
+              if ($target -match '^[a-zA-Z][a-zA-Z0-9+.-]*:') { continue }
+              $path = Join-Path $doc.DirectoryName $target
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "$($doc.FullName) links to missing document $target"
+              }
+            }
+          }
 
       - name: Compile and run a single file
         working-directory: ${{ runner.temp }}

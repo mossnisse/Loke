@@ -1441,9 +1441,9 @@ c_host_link_command :: proc(clang, host, obj, exe: string, include_flags: []stri
 }
 
 // design.md "Concurrency and the memory model": the atomic
-// claims under real contention. There is no thread API in version 1 Loke, so
-// the threads come from a C host that attaches and detaches each one, which is
-// also the documented way a foreign thread calls into an object build.
+// claims under real contention. The threads come from a C host that attaches
+// and detaches each one, exercising the documented way a foreign thread calls
+// into an object build.
 //
 // Every assertion inside is an invariant — a count, a publication, a single run
 // — never an interleaving, because an interleaving is the scheduler's answer
@@ -2139,29 +2139,41 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 // prevent, so the copy is checked rather than trusted.
 @(test)
 design_first_program_matches_tour_example :: proc(t: ^testing.T) {
-	spec, spec_err := os.read_entire_file("design.md", context.allocator)
-	if !testing.expect(t, spec_err == nil, "cannot read design.md") {
+	expect_documented_example(t, "design.md", "examples/tour.loke")
+}
+
+// readme.md "A first program" is the same hello program the example suite runs.
+@(test)
+readme_first_program_matches_hello_example :: proc(t: ^testing.T) {
+	expect_documented_example(t, "readme.md", "examples/hello.loke")
+}
+
+@(private)
+expect_documented_example :: proc(t: ^testing.T, page, example: string) {
+	spec, spec_err := os.read_entire_file(page, context.allocator)
+	if !testing.expectf(t, spec_err == nil, "cannot read %s", page) {
 		return
 	}
 	defer delete(spec)
-	source, source_err := os.read_entire_file("examples/tour.loke", context.allocator)
-	if !testing.expect(t, source_err == nil, "cannot read examples/tour.loke") {
+	source, source_err := os.read_entire_file(example, context.allocator)
+	if !testing.expectf(t, source_err == nil, "cannot read %s", example) {
 		return
 	}
 	defer delete(source)
 
-	start := strings.index(string(spec), "## A first program")
-	if !testing.expect(t, start >= 0, "design.md has no \"A first program\" section") {
+	text := normalise_newlines(string(spec))
+	start := strings.index(text, "## A first program")
+	if !testing.expectf(t, start >= 0, "%s has no \"A first program\" section", page) {
 		return
 	}
-	rest := string(spec)[start:]
+	rest := text[start:]
 	open_fence := strings.index(rest, "```odin\n")
-	if !testing.expect(t, open_fence >= 0, "\"A first program\" has no odin block") {
+	if !testing.expectf(t, open_fence >= 0, "%s: \"A first program\" has no odin block", page) {
 		return
 	}
 	rest = rest[open_fence + len("```odin\n"):]
 	close_fence := strings.index(rest, "\n```")
-	if !testing.expect(t, close_fence >= 0, "the odin block is not closed") {
+	if !testing.expectf(t, close_fence >= 0, "%s: the odin block is not closed", page) {
 		return
 	}
 
@@ -2170,10 +2182,14 @@ design_first_program_matches_tour_example :: proc(t: ^testing.T) {
 	testing.expectf(
 		t,
 		printed == expected,
-		"design.md \"A first program\" has drifted from examples/tour.loke; "+
+		"%s \"A first program\" has drifted from %s; "+
 		"update the fenced block to match the example."+
-		"\ndesign.md:\n%s\nexamples/tour.loke:\n%s",
+		"\n%s:\n%s\n%s:\n%s",
+		page,
+		example,
+		page,
 		printed,
+		example,
 		expected,
 	)
 }

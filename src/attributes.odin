@@ -128,7 +128,7 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 		if len(attribute.path) == 0 {
 			continue
 		}
-		// No toolchain extension is enabled in v1.
+		// No toolchain extension is currently enabled.
 		if len(attribute.path) > 1 {
 			names := make([]string, len(attribute.path), context.temp_allocator)
 			for part, index in attribute.path {

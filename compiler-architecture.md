@@ -6,7 +6,7 @@ definition is [design.md](design.md), the accepted syntax is
 [readme.md](readme.md). This document explains how the compiler is assembled and
 where to make changes.
 
-Loke v1 is a whole-program Windows x64 compiler written in Odin. It parses into
+`lokec` is a whole-program Windows x64 compiler written in Odin. It parses into
 one AST, annotates that AST with semantic decisions, runs ownership and
 provenance analyses over a disposable control-flow view, emits textual LLVM IR,
 and invokes clang with a versioned C runtime. There is no durable MIR and no
@@ -623,7 +623,7 @@ more loads through its caller storage read, up to the depth its type allows,
 and a call substitutes that many `Load`s through the argument, the last one
 deep. A call also counts as a write to every global its
 callee may write, settled over the whole program first. What these analyses
-trust rather than check is listed under "Deliberate v1 boundaries".
+trust rather than check is listed under [Deliberate boundaries](#deliberate-boundaries).
 
 ### Closed semantic registries
 
@@ -777,7 +777,7 @@ Debug locations start in `emit_stmt`, including direct statement emission;
 conditions and switch subjects restore their own locations after initializers.
 Each emitted copy of a deferred local has its own debug declaration and scope.
 CodeView's enumerator limit requires 128-bit integers and enums to expose their
-two 64-bit words; see [readme.md "Common options"](readme.md#common-options).
+two 64-bit words; see [compiler-guide.md "Common options"](compiler-guide.md#common-options).
 
 Fixed-array clone failure paths use a reverse-prefix drop loop, keeping cleanup
 IR linear in the array length while destroying only the elements already built.
@@ -971,7 +971,7 @@ For a structural backend refactor, compare emitted `.ll` with the same source
 path and options before and after the change. Reproducible IR catches naming and
 ordering drift that successful execution may hide.
 
-## Deliberate v1 boundaries
+## Deliberate boundaries
 
 - Windows x64 is the only target and the foreign ABI follows its classification.
 - The backend is annotated AST to textual LLVM; a durable MIR and direct native
@@ -979,14 +979,14 @@ ordering drift that successful execution may hide.
 - The compiler shells out to clang and NASM and links a versioned C runtime.
 - Emission is whole-program and single-process. Optional session checking reuses
   dependency prefixes; there is no separate object or parallel package compilation.
-- The compiler remains in Odin; v1 has no self-hosting path (future-plans.md
-  sketches one).
+- The compiler remains in Odin; [Self-hosting](future-plans.md#self-hosting)
+  sketches a future bootstrap path.
 - Debug information covers procedures, statement lines, a loop header's, a
   closing `}`'s, and a deferred statement's lines, and locals scoped to their
   blocks; compiler-provided members such as iterators and `clone` have none. Natvis rules in the PDB show a map's entries and the value an
   `any_view` or `dyn` points at.
 - Non-Windows targets, recoverable panic, macros, owning type
-  erasure, and a GC allocator are not part of v1.
+  erasure, and a GC allocator are not currently supported.
 - Raw-pointer provenance, `core:unsafe`, foreign retention/aliasing, and
   cross-thread transfer remain explicit trust boundaries.
 

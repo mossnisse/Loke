@@ -640,7 +640,7 @@ checklist.
   lines, and each name becomes a collection, so `import "shapes:area";` builds
   without `-collection` flags. Dependencies' own `loke.project` files are read
   too; one name naming two directories is an error, and `-collection` overrides
-  a name (readme.md "Projects").
+  a name (compiler-guide.md "Projects").
 - `lokec -debug` sets `LOKE_DEBUG` to `true`; it used to be `false` always.
 - A fixed array `[N]T` converts implicitly to a read-only `[]T` of its
   elements, as a `[dynamic]T` already did, so `total(primes)` needs no
@@ -1172,6 +1172,15 @@ checklist.
 
 ### Documentation
 
+- Removed separate language-generation labels from the specification, guides,
+  roadmap, and source comments. Releases identify the specification at their
+  own tag; runtime ABI versioning is unchanged.
+- [readme.md](readme.md) now leads with installation and a checked first
+  program. Detailed compiler options and C-host linking instructions live in
+  [compiler-guide.md](compiler-guide.md). Collection overrides and executable
+  location are clarified, and the library overview links to the full API docs.
+  Release bundles include the Markdown documentation and tutorials, and the
+  release verification checks their local document links.
 - The [tutorials](tutorials/README.md) explain non-null references and omitted
   fields that have no zero value, document nullable C pointers and their
   `Option` ABI, and repair the initialization cross-reference. Checked examples
@@ -1212,7 +1221,7 @@ checklist.
 
 ## [0.7.1] - 2026-09-27
 
-The first published release: the v1 language specified by
+The first published release: the language specified by
 [design.md](design.md) and [grammar.md](grammar.md), implemented by `lokec` with
 no open entries in [known-gaps.md](known-gaps.md).
 

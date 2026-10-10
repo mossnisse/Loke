@@ -1,334 +1,117 @@
 # Loke
 
-Loke is an experimental general-purpose programming language that builds on ideas from Odin.
+Loke is an experimental general-purpose programming language inspired by Odin.
+It combines higher-level types and abstractions with explicit control over
+memory allocation and C interoperability.
 
-It aims to provide higher-level language features and ergonomic abstractions
-while preserving low-level access and control over generated binaries comparable
-to Odin and C.
+- Strings and owning containers release their storage at scope exit.
+- Local borrow checking tracks views and their lifetimes.
+- Generics, interfaces, and compile-time execution support reusable code.
+- `Option` and `Result` represent absence and failure as values.
 
-Loke is intended to make memory allocation and compound types such as strings
-and dynamic arrays easier to manage. It does not attempt to provide Rust-style
-complete memory safety.
+Loke does not provide complete memory safety. The compiler, `lokec`, is written
+in Odin and currently supports **Windows x64**. Releases are **pre-1.0** and
+minor releases may break compatibility; see the
+[version policy](releasing.md#version-policy) and [changelog](CHANGELOG.md).
+Current implementation limits are in [known gaps](known-gaps.md).
 
-The language supports compiled C libraries through the C ABI and provides
-C-compatible data types for interoperability.
+## Getting started
 
-Loke aims to be expressive enough that separate preprocessors, macro systems,
-and bespoke build scripts are unnecessary.
+Install **LLVM/Clang** and the **Microsoft C++ build tools with the Windows SDK**,
+then download and extract a compiler bundle from the
+[releases page](https://github.com/mossnisse/Loke/releases).
+[Getting started](tutorials/01-getting-started.md) walks through installation
+and adding the compiler to `PATH`.
 
-Procedure calls and package imports should not change a caller's behavior in
-unexpected ways. Mutation through an explicitly passed mutable pointer is
-allowed because the possibility is visible at the call boundary. Hidden
-allocations are also allowed, but a returned value that requires manual cleanup
-should make that responsibility clear in its type or API.
-
-To try it, install a release and follow
-[Getting started](tutorials/01-getting-started.md), the first of the
-[tutorials](tutorials/README.md); to work on the compiler, build it from source
-as [below](#building-from-source).
-
-The normative language specification is in [design.md](design.md), and its grammar
-in [grammar.md](grammar.md). Differences from Odin and non-normative design
-motivations are collected in [comments.md](comments.md). Open questions and
-unresolved findings are in [open-questions.md](open-questions.md).
-
-## The compiler
-
-`lokec` is written in Odin and lives in [src/](src). The v1 compiler implements
-the language described by `design.md`, subject to the documented
-[known gaps](known-gaps.md). Its pipeline, phase contracts, allocation ownership,
-and source-code map are documented in
-[compiler-architecture.md](compiler-architecture.md). Longer-term work is
-summarized in [future-plans.md](future-plans.md). Contributor conventions,
-for people and coding agents alike, are in [AGENTS.md](AGENTS.md).
-
-### Building from source
-
-The current compiler targets **Windows x64**. Besides the LLVM and Microsoft
-C++ tools every Loke build needs ([Getting started](tutorials/01-getting-started.md#what-you-need)),
-building `lokec` needs **Odin** on `PATH`. The tree builds with
-`dev-2026-10-nightly`; Odin nightlies change often, so another one may not.
-
-From the repository root, in PowerShell:
+Keep `lokec.exe`, `base/`, `core/`, and `runtime/` together. The compiler finds
+these directories beside its executable, so you can invoke it from any working
+directory. In PowerShell, check the installation:
 
 ```powershell
-odin build src -out:lokec.exe
-.\lokec.exe examples\hello.loke -o hello.exe
+lokec -version
+lokec -print-toolchain
 ```
 
-The compiler finds `base/`, `core/`, and `runtime/` beside its own executable,
-so a `lokec.exe` built here is used from here; copying it alone elsewhere is not
-an installation. Program arguments go to the built executable, not to `lokec`:
+The toolchain report should end with `ready=yes`. Otherwise, see
+[Toolchain troubleshooting](compiler-guide.md#toolchain-troubleshooting).
 
-```powershell
-.\lokec.exe tests\os\args.loke -o args.exe
-if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
-```
+## A first program
 
-More programs are listed in [examples/README.md](examples/README.md).
-`greeting.loke` prompts for input and writes `greetings.txt` in the working directory; `keys.loke` requires a real console and exits on Escape.
-
-### Inputs and output paths
-
-```text
-lokec <file.loke | directory> [options]
-```
-
-Each invocation accepts one root input:
-
-- A **file** compiles that file as the root package, plus its imports. Other `.loke` files beside it are not automatically included in the root package.
-- A **directory** compiles all `.loke` files directly inside it as one package, plus its imports. It does not recursively compile every subdirectory.
-
-Executable builds require a root package named `main` with a `main :: proc()` entry point. For a multi-file package, pass its directory:
-
-```powershell
-.\lokec.exe tests\pkg\diamond -o diamond.exe
-```
-
-Use `-o <path>` to choose an output location. Without it, `examples\hello.loke` produces `examples\hello.exe`, and `tests\pkg\diamond` produces `tests\pkg\diamond.exe`. Object builds use `.obj` instead. Create the destination directory first if it does not exist,
-and quote paths containing spaces. Output files at the selected path can be overwritten.
-
-Compile examples individually: `examples/` contains separate programs, not one multi-file package.
-
-### Common options
-
-| Option | Purpose and default |
-| --- | --- |
-| `-o <path>` | Set the executable or object output path. Defaults to the input path with `.exe` or `.obj`. |
-| `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`. |
-| `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
-| `-define:NAME=VALUE` | Supply a project-wide `build_config` value. Repeat for different names. |
-| `-collection name=path` | Map an import prefix to a directory. Repeat for different prefixes. |
-| `-copy-cost=N` | Warn about copies that may allocate, and about copies of at least `N` inline bytes. Default: `512`; use `-copy-cost=off` to disable both. |
-| `-build-mode=exe\|obj` | Produce an executable (default) or one relocatable object. |
-| `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
-| `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
-| `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (comments.md "Formatting"); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
-| `-doc` | Print the package's public API as Markdown and stop: the comments above its `package` clauses, then each public declaration's signature and public struct field, with the comments directly above it, then a page for each package of the project it imports. A standard-library directory works too: `lokec core\strings -doc`. |
-| `-g` | Emit debug information at any `-opt` level: procedures, local variables and their types, and a line for each statement, loop update, and block's closing `}`. An executable gets a `.pdb` beside it, carrying natvis rules that show a string's text, a map's entries, and the value an `any_view` or `dyn` points at in Visual Studio and WinDbg, and a panic prints the Loke call stack after its report. |
-| `-debug` | Set `LOKE_DEBUG` to `true`. It does not imply `-g`, and `-g` does not imply it. |
-
-Under `-g`, 128-bit integers and enums are shown as two unsigned 64-bit fields,
-`low` and `high`. Signed values use two's complement; this avoids CodeView's
-64-bit enumerator limit.
-
-For an optimized executable:
-
-```powershell
-.\lokec.exe examples\word_frequency.loke -opt=speed -o word_frequency.exe
-```
-
-#### Build configuration
-
-`-define` supplies values read by `build_config(NAME, default)` in source; it is
-not a textual macro. Values are parsed as `true`/`false`, integers, or otherwise
-strings. A name may be defined only once per invocation. Quote the whole option
-when its value contains spaces, for example `'-define:APP_NAME=My App'`.
-
-The compile-time example uses `build_config(SIEVE_LIMIT, 50)`:
-
-```powershell
-.\lokec.exe examples\compile_time.loke -define:SIEVE_LIMIT=200 -o compile_time.exe
-if ($LASTEXITCODE -eq 0) { .\compile_time.exe }
-```
-
-#### Import collections
-
-`base:` and `core:` resolve to directories beside `lokec.exe` automatically.
-Ordinary use of the bundled library needs no collection flags. For example,
-`import "core:fmt";` resolves to the `fmt/` package inside that `core/` directory.
-
-An explicit collection replaces the default for that prefix. This command uses
-the repository's `core/` explicitly:
-
-```powershell
-.\lokec.exe examples\hello.loke -collection core=core -o hello.exe
-```
-
-Custom collections use the same form: `-collection vendor=path\to\packages`
-lets source import `"vendor:package_name"`. Collection paths supplied on the
-command line are relative to the shell's working directory; relative imports
-in source are resolved from the importing file.
-
-#### Projects
-
-A `loke.project` file names the directories a program's collections come from,
-so a build needs no `-collection` flags. `lokec` reads the nearest one at or
-above its input:
-
-```text
-# Each line: require <name> <path>. The path is relative to this file.
-require shapes ../shapes
-require json vendor/json
-```
-
-Source then imports `"shapes:area"` as if `-collection shapes=../shapes` had
-been passed. A dependency's own `loke.project` is read too, and one name must
-name one directory across all of them. A `-collection` for a name replaces the
-project's directory for it, which is how a dependency is patched or vendored.
-`base` and `core` are always the bundled library. Dependencies are local
-directories for now ([open-questions.md "Package and import versioning"](open-questions.md#package-and-import-versioning)).
-
-#### Default allocator and logger
-
-The root package keeps its allocator and logger choices in source. The value
-names a public zero-argument provider factory; its package does not also need
-to be imported:
+Save this as `hello.loke`:
 
 ```odin
-@(
-	default_allocator = "./providers:allocator_factory",
-	default_logger = "./providers:logger_factory",
-)
 package main;
-```
+import "core:fmt";
 
-Relative provider paths resolve from this file. Collection-qualified paths such
-as `"platform:runtime:allocator_factory"` work as well. Only the root package
-may use these attributes, so an import cannot change the program's
-process-wide policy, and each may be written once across a multi-file root
-package. An `obj` build selects the same way.
-
-### Inspecting a compilation
-
-| Option | Result |
-| --- | --- |
-| `-parse-only` | Lex and parse one source file, then stop. No import discovery, type checking, or executable. |
-| `-dump-ast` | Print that file's syntax tree, then stop at the same stage. |
-| `-dump-tokens` | Print that file's tokens, one `lo hi Kind` line each with the byte span, then stop after lexing. |
-| `-emit-ll` | Check the program and write LLVM IR, without invoking Clang or linking. The `.ll` path is derived from `-o`. |
-| `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, the `-g` natvis rules, and any object NASM assembled for a `.asm` foreign import. Normally they are removed after the Clang step. |
-| `-check-layout` | Build and run an LLVM layout probe and compare sizes, alignments, and field offsets with the compiler's calculations. Requires the native toolchain. |
-| `-print-toolchain` | Print the Clang, MSVC toolset, and `-isystem`/`-L` flags a link would use on this machine, and whether one could run at all (`ready=yes`), then stop. Takes no input. |
-
-The parsing modes take a **file**, not a package directory:
-
-```powershell
-.\lokec.exe examples\hello.loke -parse-only
-.\lokec.exe examples\hello.loke -dump-ast
-.\lokec.exe examples\hello.loke -dump-tokens
-.\lokec.exe examples\hello.loke -emit-ll -o hello.exe  # writes hello.ll only
-.\lokec.exe tests\layout\types.loke -check-layout
-```
-
-`.\lokec.exe -h` prints the built-in usage summary and `-version` the compiler
-version.
-Compiler exit codes are `0` for success, `1` for source/configuration diagnostics,
-and `2` for invalid command-line usage or backend/toolchain failure. In
-PowerShell, inspect `$LASTEXITCODE` immediately after the command.
-
-### Building an object for a C host
-
-```powershell
-.\lokec.exe tests\obj\lib.loke -build-mode=obj -o widget.obj
-```
-
-An object build accepts a root package without `main` and emits no executable
-entry point. Declarations marked `@(export)` provide symbols to the host.
-The final C host link must supply the required Loke runtime and foreign
-libraries; the object does not bundle them.
-
-Every host thread must attach to the runtime before calling a Loke export and
-detach before the thread exits:
-
-```c
-void loke_rt_v1_thread_attach(void);
-void loke_rt_v1_thread_detach(void);
-
-int main(void) {
-    loke_rt_v1_thread_attach();
-    /* Call Loke exports here. */
-    loke_rt_v1_thread_detach();
-    return 0;
+main :: proc() {
+	x := 40;
+	y: int = x + 2;
+	fmt.println("The answer is", y);
 }
 ```
 
-If the object's root package selected a provider, it also exports
-`loke_rt_v1_program_init()`. Call that once on the attached startup thread,
-after `loke_rt_v1_thread_attach()` and before calling any Loke export or
-starting worker threads. Repeated calls after initialization are harmless. An
-object built without a selected provider does not export this initializer.
+Compile and run it in PowerShell:
 
-An `.asm` import cannot be included in this single-object build: assemble it
-separately and link it at the host's final link step.
+```powershell
+lokec hello.loke
+if ($LASTEXITCODE -eq 0) { .\hello.exe }
+```
 
-### Toolchain troubleshooting
+```text
+The answer is 42
+```
 
-- **Clang cannot be found:** `lokec` checks `LOKE_CLANG` first, then the standard
-  Windows LLVM installation directories, then `PATH`. To select an installation
-  for the current PowerShell session, set
-  `$env:LOKE_CLANG = 'C:\Program Files\LLVM\bin\clang.exe'`.
-- **C headers or runtime libraries cannot be found:** check that the MSVC C++
-  toolset and Windows SDK are installed. An x64 Visual Studio developer shell
-  can provide the required include and library environment.
-- **Bundled packages or runtime sources cannot be found:** keep `base/`, `core/`,
-  and `runtime/` beside the compiler, or select their locations with
-  `-collection base=...`, `-collection core=...`, and `-runtime=...`.
-- **An output file cannot be written:** make sure its parent directory exists
-  and the previous executable is not still running.
+`lokec` writes an executable; run that executable to start the program.
+Use `-o <path>` to choose its output path, `-opt=speed` to optimize, and `-g`
+for debug information. A file input builds that file and its imports; a
+[directory input](compiler-guide.md#inputs-and-output-paths) builds all `.loke`
+files directly inside it as one package. `lokec -h` lists the options.
 
-### Compiler tests
+Continue with the [tutorials](tutorials/README.md), or explore the
+[examples](examples/README.md). The [language tour](examples/tour.loke) shows
+records, methods, operators, typed errors, and ownership in one program.
 
-For compiler development, the test script checks spec citations and backend
-layering, runs unit tests with leak tracking, rebuilds `lokec.exe` with Odin's
-vet checks, and runs the integration tests. `-Full` also runs the checker
-mutation fuzzer and reruns the test programs, packages, examples, and tutorials
-across all five optimization modes:
+## Building from source
+
+In addition to the tools above, install **Odin** on `PATH`. CI uses
+`dev-2026-10` (commit `84bc3fc`); other versions may not build this tree.
+From the repository root:
+
+```powershell
+odin build src -out:lokec.exe
+if ($LASTEXITCODE -eq 0) { .\lokec.exe examples\hello.loke -o hello.exe }
+if ($LASTEXITCODE -eq 0) { .\hello.exe }
+```
+
+## Documentation
+
+| To learn about | Read |
+| --- | --- |
+| Using the language | [Tutorials](tutorials/README.md) and [examples](examples/README.md) |
+| Compiler options, projects, and C-host builds | [Compiler guide](compiler-guide.md) |
+| Standard-library packages and APIs | [Standard library](standard-library.md) |
+| Language rules and syntax | [Design](design.md) and [grammar](grammar.md), both normative |
+| Design rationale and differences from Odin | [Comments](comments.md) |
+| Open questions and planned work | [Open questions](open-questions.md) and [future plans](future-plans.md) |
+
+The library covers text, containers, files, processes, threads, synchronization,
+math, and allocators. Import the packages you use, such as `core:fmt` or
+`core:thread`; `base:` is reserved for language and runtime support.
+
+## Compiler development
+
+Read [AGENTS.md](AGENTS.md) for contributor conventions and
+[Compiler architecture](compiler-architecture.md) for the implementation.
+Run the quick gate from the repository root:
 
 ```powershell
 .\test-all.ps1
-.\test-all.ps1 -Full
 ```
 
-Known divergences between the specification and the compiler are recorded in
-[known-gaps.md](known-gaps.md), each with a reproduction. The test corpus does
-not cover them, which is why they are written down.
+CI runs the full gate. [Testing and verification](compiler-architecture.md#testing-and-verification)
+describes individual suites and optional tools; [Releasing](releasing.md)
+covers the release process.
 
-Add `-RequireTools` on a machine that has nasm, cdb,
-and a C host toolset, so tests that would skip for a missing tool fail instead.
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs
-`.\test-all.ps1 -Full -RequireTools` on Windows x64 for every push to `main` and every
-pull request. Pushing a tag `v<LOKE_VERSION_STRING>` runs
-[.github/workflows/release.yml](.github/workflows/release.yml), which publishes a
-zip of `lokec.exe` with `base/`, `core/`, `runtime/`, and `examples/` once the
-gate passes, [known-gaps.md](known-gaps.md) lists no gaps, the version has a
-section in [CHANGELOG.md](CHANGELOG.md) (its release notes), and the unzipped
-bundle builds and runs programs on a fresh machine. [releasing.md](releasing.md)
-has the version policy and the release checklist. The suites can also be run separately:
+## License
 
-```powershell
-odin test src -vet-unused -vet-shadowing -vet-packages:lokec
-odin build src -out:lokec.exe -vet-unused -vet-shadowing
-odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -vet-unused -vet-shadowing -vet-packages:tests
-```
-
-## Standard library
-
-The **standard library** is ordinary Loke code over the compiler and runtime
-foundation; [standard-library.md](standard-library.md) documents its design
-rules and each package's API. `base:` stays reserved for declarations that
-participate in the language or its runtime ABI. General-purpose code lives in
-`core:`, in small packages a program imports by name, with no prelude:
-
-```text
-core:container        fixed-capacity and enum-indexed containers and sets
-core:cstrings         owned zero-terminated buffers for foreign APIs
-core:encoding/utf16   UTF-8 to UTF-16 conversion and back
-core:endian           endian-specific storage wrappers
-core:fmt              value formatting and process diagnostics
-core:fs               files, directories, and file metadata
-core:io               byte-stream protocols and shared I/O errors
-core:log              logging through the build-selected provider
-core:math             elementary functions, complex numbers, and quaternions
-core:mem              allocators, arenas, and scratch regions
-core:os               arguments, exit, environment, and process state
-core:process          child processes and their pipes
-core:path             lexical path operations
-core:simd             cross-lane SIMD operations
-core:slice            slice algorithms
-core:strconv          scalar parsing
-core:strings          UTF-8 algorithms, iterators, and String_Builder
-core:sync             atomics, fences, and one-time initialization
-core:term             standard streams and terminal key input
-core:unsafe           explicit unchecked operations and conversions
-```
+Loke uses the [zlib License](LICENSE).

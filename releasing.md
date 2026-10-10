@@ -11,9 +11,8 @@ It versions the whole bundle: `lokec.exe` and the `base/`, `core/`, and
 `runtime/` trees beside it are supported only as the matched set one release
 ships, never mixed across releases.
 
-The language version is separate. [design.md](design.md) specifies the v1
-language, and every release implements the spec as of its own tag. A release
-that changes the spec says so in its changelog section.
+Every release implements the [language specification](design.md) as of its
+own tag. A release that changes the spec says so in its changelog section.
 
 ### Before 1.0
 
@@ -40,8 +39,9 @@ promise:
 - **Diagnostic text.** Messages may be reworded in any release. A diagnostic
   code (`L0001`…) keeps its meaning and is never reused for another one, and a
   warning never becomes an error in a patch release.
-- **Inspection output.** What the options in [readme.md](readme.md)
-  "Inspecting a compilation" print or write, such as `-dump-ast` trees and
+- **Inspection output.** What the options in
+  [Inspecting a compilation](compiler-guide.md#inspecting-a-compilation) print
+  or write, such as `-dump-ast` trees and
   `-emit-ll` IR. The options themselves are kept.
 - **Unspecified behavior.** Anything [design.md](design.md) and
   [standard-library.md](standard-library.md) do not specify.

@@ -1,9 +1,9 @@
 # Future plans
 
-This is the implementation roadmap beyond the current v1 compiler. The
+This is the implementation roadmap beyond the current compiler. The
 language contract remains in [design.md](design.md) and [grammar.md](grammar.md).
-Existing divergences belong in [known-gaps.md](known-gaps.md) and are v1 fixes,
-including while the work below proceeds.
+Existing divergences belong in [known-gaps.md](known-gaps.md) and remain
+correctness fixes to address while the work below proceeds.
 
 Each phase states its starting point, implementation order, and completion
 checks. The order is a priority order, with prerequisites called out separately;
@@ -65,7 +65,7 @@ Implementation order:
 
 **Completion check:** every shipped milestone has its regression evidence and
 updated documentation; every release has comparable conformance, robustness,
-and performance evidence. This phase does not end after v1.
+and performance evidence. This work continues throughout the roadmap.
 
 ## Standard-library maturity
 
@@ -103,7 +103,7 @@ requirement to finish every optional package before phase 2 or phase 3.
 
 ## Packages and dependencies
 
-**Phase 2.** Extend the existing [Projects](readme.md#projects) workflow while
+**Phase 2.** Extend the existing [Projects](compiler-guide.md#projects) workflow while
 keeping imports independent of a registry. Today `loke.project` registers local
 dependency directories as collections, follows their manifests, and permits
 explicit `-collection` overrides.
@@ -245,7 +245,7 @@ foundation already exists: `-fmt` formats source, `-doc` emits public API and
 declaration comments, and Windows `-g` emits CodeView/PDB information for
 procedures, scoped locals, and statement locations. Debug executables include
 Loke panic frames; natvis covers strings, maps, `any_view`, and `dyn` values.
-See [Common options](readme.md#common-options) and
+See [Common options](compiler-guide.md#common-options) and
 [Formatting](comments.md#formatting).
 
 Implementation order:

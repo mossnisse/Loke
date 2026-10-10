@@ -170,8 +170,8 @@ impl Once {
 	//
 	// An action must not reach its own `once`: the thread running it is the one
 	// the wait below spins on, so a re-entrant `do` waits for itself and never
-	// returns. Telling that case apart needs a thread identity, and version 1 has
-	// no source of one -- so it is a rule rather than a diagnostic.
+	// returns. Detecting that case needs a thread identity, which the library
+	// does not expose, so it is a rule rather than a diagnostic.
 	do :: proc(self: ^Once, action: proc()) {
 		if (self.state.load(Memory_Order.Acquire) == ONCE_DONE) { return; }
 		observed, won := self.state.compare_exchange(
@@ -186,8 +186,8 @@ impl Once {
 			return;
 		}
 		// Another thread is running it. Spin on the acquire load rather than
-		// blocking: this is initialization, so the wait is short and there is no
-		// scheduler primitive in version 1 to block on.
+		// blocking: this implementation has no blocking wait for an atomic
+		// state change.
 		//
 		// ponytail: a spin, with no yield and no backoff. If a `Once` ever guards
 		// something slow, give this a platform wait — the state values already

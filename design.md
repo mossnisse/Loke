@@ -1,6 +1,6 @@
 # Loke language design
 
-This document is the normative specification of Loke v1.
+This document is the normative specification of Loke.
 [grammar.md](grammar.md) defines the formal syntax, [comments.md](comments.md)
 collects non-normative design rationale, [open-questions.md](open-questions.md)
 records open questions and unresolved findings, and [known-gaps.md](known-gaps.md)
@@ -6526,7 +6526,7 @@ pick :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
 
 ## Minimum provenance precision
 
-Version 1 guarantees the following carrier-path precision. These are minimum analysis budgets for conforming implementations, not limits on legal type sizes. Each guarantee applies while the other budgets are also satisfied:
+This specification guarantees the following carrier-path precision. These are minimum analysis budgets for conforming implementations, not limits on legal type sizes. Each guarantee applies while the other budgets are also satisfied:
 
 | Dimension | Minimum guarantee |
 | --- | --- |
