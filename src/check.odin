@@ -277,7 +277,9 @@ check_file_scope_static_assert :: proc(k: ^Checker, item: ^Item_Static_Assert) {
 
 @(private = "file")
 create_nominal_type_shell :: proc(k: ^Checker, d: ^Decl) {
-	if len(d.values) != 1 || len(d.symbols) != 1 || d.symbols[0] == INVALID_SYMBOL {
+	// design.md "Structs": only a constant declaration names a type; a variable
+	// initialised with a definition is a type used as a value, reported as one.
+	if d.kind != .Const || len(d.values) != 1 || len(d.symbols) != 1 || d.symbols[0] == INVALID_SYMBOL {
 		return
 	}
 	symbol := symbol_of(k.c, d.symbols[0])
@@ -717,6 +719,14 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	symbol := symbol_of(k.c, d.symbols[0])
+	// Only a constant declaration got a type shell to fill; a variable's
+	// definition is a type used as a value, which `check_decl` reports.
+	if d.kind != .Const {
+		#partial switch _ in d.values[0] {
+		case ^Type_Record, ^Type_Enum, ^Type_Distinct, ^Type_Interface:
+			return
+		}
+	}
 	#partial switch value in d.values[0] {
 	case ^Type_Record:
 		if value.kind == .Struct {

@@ -653,6 +653,11 @@ checklist.
 
 ### Fixed
 
+- A variable initialised with a parenthesised type definition, such as
+  `E := (enum { a, b });` or `D := (distinct int);`, no longer declares a type
+  named by the variable: only a constant declaration names a type (design.md
+  "Structs"). It is now `L0378`, a type stored in a variable, and a struct
+  written that way is `L0717`. Upgrade by writing `::` for the declaration.
 - `-g -o name.natvis` builds again with MSVC 14.51 (Visual Studio 18), whose
   linker failed with LNK1104 when the natvis rules and the executable shared a
   path. The rules now go to `name.natvis.natvis`, where `-keep-temps` keeps

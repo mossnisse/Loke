@@ -22,3 +22,19 @@ a `struct` type is declared, `Name :: struct { ... }`, not written in place
 L0717
 @20:10
 `distinct` does not make an anonymous record nominal; declare a `struct` for that
+
+L0717
+@29:16
+a `struct` type is declared, `Name :: struct { ... }`, not written in place
+
+L0378
+@30:1
+`type` is compile-time only and cannot be stored in a variable
+
+L0378
+@31:1
+`type` is compile-time only and cannot be stored in a variable
+
+L0717
+@34:19
+a `struct` type is declared, `Name :: struct { ... }`, not written in place

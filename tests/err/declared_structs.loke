@@ -1,4 +1,4 @@
-// design.md "Structs", "Distinct types": a `struct` is the value of a
+// design.md "Structs", "Distinct types": a `struct` is the value of a constant
 // declaration, so every nominal record has a name, and `distinct` does not make
 // an anonymous record nominal. A record written in place is an anonymous
 // record. A parenthesised declaration is still a declaration.
@@ -22,4 +22,15 @@ main :: proc() {
 	b: Box(int) = {1};
 	m: Meters = 1.0;
 	_ = local; _ = held; _ = inline; _ = w; _ = b; _ = m;
+}
+
+// A variable initialised with a definition declares no type, at package or
+// local scope; the enum and distinct forms are types stored in a variable.
+Var_Struct := (struct { x: int });
+Var_Enum := (enum { a, b });
+Var_Distinct := (distinct int);
+
+locals :: proc() {
+	local_struct := (struct { y: int });
+	_ = local_struct;
 }
