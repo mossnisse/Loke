@@ -1172,6 +1172,10 @@ checklist.
 
 ### Documentation
 
+- [Releasing](releasing.md) uses one version-selection table and a shorter
+  checklist. Shared compatibility rules explicitly apply to current releases;
+  failed workflows distinguish retries from unpublished source fixes, and
+  published tags remain immutable.
 - Removed separate language-generation labels from the specification, guides,
   roadmap, and source comments. Releases identify the specification at their
   own tag; runtime ABI versioning is unchanged.
