@@ -687,7 +687,10 @@ a block. A slice literal's type is the one written: `[]T{...}` is read-only and
 
 A parenthesised group is a `Record_Type` when its first field group is
 labelled, found by the same bounded `Identifier_List ":"` scan a `Variable_Decl`
-uses, or when it holds a `,` at its own bracket depth, which no expression does.
+uses, or when it holds a `,` at its own bracket depth. An expression holds such
+a comma only between a definition's `Where_Clause` conditions, and that one does
+not count: the clause ends at the definition's `{` (see
+[Resolved ambiguities](#resolved-ambiguities)).
 The first field decides which kind it is: in a labelled record every field is
 `Identifier_List ":" Type`, and in an unlabelled one every field is a bare
 `Type` and there are at least two. `(T)` in expression position stays a

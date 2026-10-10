@@ -1,0 +1,12 @@
+// grammar.md "Primary expressions": a parenthesised group with a comma at its
+// own depth is a record type, except for the commas between a definition's
+// `where` conditions, which its `{` ends. A group whose comma is nested is an
+// expression.
+package main;
+
+Box :: (struct($T: type) where size_of(T) > 0, align_of(T) > 0 { value: T });
+Either :: (union($T: type) where size_of(T) > 0, true { left: T, right: int });
+twice :: (proc(x: $T) -> T where size_of(T) > 0, true { return x + x; });
+Pair :: (int, Box(int));
+Labelled :: (low: int, high: int);
+grouped :: (max(1, 2));

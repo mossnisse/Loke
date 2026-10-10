@@ -1490,7 +1490,7 @@ return .ok({key = k, value = v});
 q, r := divmod(17, 5);
 ```
 
-A parenthesized group is a record type when its first field is **labeled** or when it holds a comma at its own depth; an expression never does. `(T)` in expression position stays grouping and is not a type, `(a, b)` is a record type of two types rather than a value, and `Foo(x: int)` is not a generic application.
+A parenthesized group is a record type when its first field is **labeled** or when it holds a comma at its own depth. The only such comma an expression holds separates the [`where` conditions](#where-clauses) of a definition such as `struct($T: type) where A, B { ... }`, and it does not count: the definition's `{` ends the list. `(T)` in expression position stays grouping and is not a type, `(a, b)` is a record type of two types rather than a value, and `Foo(x: int)` is not a generic application.
 
 #### Destructuring
 

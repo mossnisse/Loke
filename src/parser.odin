@@ -837,8 +837,9 @@ scans_nested_pattern :: proc(p: ^Parser) -> (group: Token, found: bool) {
 }
 
 // grammar.md "Primary expressions": a labelled first field, or a comma at the
-// group's own depth, distinguishes a record type from `(expression)`. An
-// expression holds no top-level comma, so `(int, bool)` is nothing else.
+// group's own depth, distinguishes a record type from `(expression)`. The one
+// such comma an expression holds separates a definition's `where` conditions,
+// and the definition's `{` ends that list ("Resolved ambiguities").
 @(private = "file")
 starts_anon_record_type :: proc(p: ^Parser) -> bool {
 	if !at(p, .Lparen) {
@@ -848,9 +849,19 @@ starts_anon_record_type :: proc(p: ^Parser) -> bool {
 		return true
 	}
 	depth := 0
+	in_where := false
 	for offset := 0; ; offset += 1 {
 		#partial switch peek_token(p, offset).kind {
-		case .Lparen, .Lbracket, .Lbrace:
+		case .Where:
+			if depth == 1 {
+				in_where = true
+			}
+		case .Lbrace:
+			if depth == 1 {
+				in_where = false
+			}
+			depth += 1
+		case .Lparen, .Lbracket:
 			depth += 1
 		case .Rparen, .Rbracket, .Rbrace:
 			depth -= 1
@@ -858,7 +869,7 @@ starts_anon_record_type :: proc(p: ^Parser) -> bool {
 				return false
 			}
 		case .Comma:
-			if depth == 1 {
+			if depth == 1 && !in_where {
 				return true
 			}
 		case .EOF:

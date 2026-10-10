@@ -1,0 +1,24 @@
+(file package="main"
+  (const names=["Box"]
+    (struct (generic ["T"] (type)) (where (binary Gt (call (ident "size_of") (ident "T")) (int "0"))) (where (binary Gt (call (ident "align_of") (ident "T")) (int "0"))) (field ["value"] (ident "T")))
+  )
+  (const names=["Either"]
+    (union (generic ["T"] (type)) (where (binary Gt (call (ident "size_of") (ident "T")) (int "0"))) (where (ident "true")) (variant "left" (ident "T")) (variant "right" (ident "int")))
+  )
+  (const names=["twice"]
+    (proc (proc-type (param ["x"] (poly "T")) (result (ident "T"))) (where (binary Gt (call (ident "size_of") (ident "T")) (int "0"))) (where (ident "true"))
+      (block
+        (return (binary Plus (ident "x") (ident "x")))
+      )
+    )
+  )
+  (const names=["Pair"]
+    (record (field [] (ident "int")) (field [] (call (ident "Box") (ident "int"))))
+  )
+  (const names=["Labelled"]
+    (record (field ["low"] (ident "int")) (field ["high"] (ident "int")))
+  )
+  (const names=["grouped"]
+    (call (ident "max") (int "1") (int "2"))
+  )
+)

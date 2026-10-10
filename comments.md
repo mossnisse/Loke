@@ -708,8 +708,10 @@ it needed was decided this way:
   `(int, found: bool)` parses as the labeled list `int, found: bool`, the same
   reading a parameter list gives it.
 
-The parser tells `(int, bool)` from a parenthesized expression by its top-level
-comma, which no expression has, so the change made nothing ambiguous. Inside
+The parser tells `(int, bool)` from a parenthesized expression by a comma at
+the group's own depth. An expression has one only between a definition's
+`where` conditions, which end at the definition's `{`, so the scan skips from
+`where` to that brace and the change made nothing ambiguous. Inside
 the compiler an unlabeled field is named by its position, `0`, `1`, ..., a name
 no source can spell; interning, layout, and destructuring needed no new case.
 
