@@ -946,6 +946,28 @@ odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -vet-unused -vet-shadowing 
 .\test-all.ps1
 ```
 
+Direct integration runs use an existing `lokec.exe` (or the executable named by
+`LOKEC`). After changing the compiler, rebuild it with the command above before
+running `odin test tests`; that command does not rebuild the compiler for you.
+
+To isolate a failure, add `-define:ODIN_TEST_NAMES=<name>` to the appropriate
+`odin test src` or `odin test tests` command. The name is an Odin test procedure;
+for example, `programs_run` selects the executable corpus, not one `.loke` file.
+`tutorials_compile_and_run` checks tutorial examples and reports the page and
+block when output or diagnostics differ.
+
+For a direct integration run at another optimization level, set
+`$env:LOKE_TEST_FLAGS = "-opt=speed"` in PowerShell, then restore or remove that
+environment variable after the run. Run/trap, package, example, and tutorial
+compilations honor it, and their expected output must match at every level.
+`test-all.ps1` manages this variable itself for its baseline and full gate.
+
+If Windows PowerShell reports Odin's stderr as `NativeCommandError`, use
+PowerShell 7 (`pwsh`, as CI does), or run the individual native commands from a
+POSIX shell with their environment settings translated. Check exit codes;
+running only the native commands does not replace the script's citation and
+layering checks.
+
 `odin test src` tracks every unit test's memory and reports leaks and bad
 frees. For a whole compilation, build with `-define:LOKE_TRACK_MEMORY=true`,
 which makes `lokec` print every allocation still live at exit, and every bad
@@ -985,6 +1007,10 @@ it after the gate, compares with the latest release's `perf.json`, and a
 release attaches its own. Measure before and after a change meant to make the
 compiler faster, on one machine, because figures from different CI runners
 vary by more than most changes.
+
+Build the baseline compiler and run `.\perf.ps1 -Out before.json` before making
+the change. Rebuild afterward, then run `.\perf.ps1 -Baseline before.json` on
+the same machine and workloads.
 
 For a structural backend refactor, compare emitted `.ll` with the same source
 path and options before and after the change. Reproducible IR catches naming and

@@ -1172,6 +1172,10 @@ checklist.
 
 ### Documentation
 
+- [Contributor instructions](AGENTS.md) scope coordinated updates and regression
+  tests to behavior changes, define documentation checks, and clarify compiler
+  rebuilds and local full-gate use. Detailed test commands move to
+  [Testing and verification](compiler-architecture.md#testing-and-verification).
 - [Standard library](standard-library.md) adds a task index and usage examples,
   corrects UTF-8 byte-search boundaries, allocator selection, resource
   lifecycles, package ordering, finite-float round trips, and fallible string

@@ -2,8 +2,8 @@
 param(
     # The quick run is every check once, at the default optimization level. Full
     # adds what multiplies the cost: the whole corpus again at each -opt level,
-    # and the checker mutation fuzzer. CI runs it; so should the last run before
-    # a merge.
+    # and the checker mutation fuzzer. CI runs it; use it locally for changes
+    # targeting that extra coverage or to investigate a CI failure (AGENTS.md).
     [switch]$Full,
     # Turns the harness's tool skips into failures: nasm and a C host toolset are
     # not shipped here, and without this a machine missing one still runs green
