@@ -70,8 +70,8 @@ and performance evidence. This work continues throughout the roadmap.
 ## Standard-library maturity
 
 **Phase 1.** Establish library contracts through real command-line programs and
-compiler workloads. The API inventory and test requirements remain in
-[standard-library.md](standard-library.md).
+compiler workloads. The API inventory is in
+[standard-library.md](standard-library.md); required coverage is in [Standard-library verification](compiler-architecture.md#standard-library-verification).
 
 Already available: [examples/lexer.loke](examples/lexer.loke) is checked against
 `lokec -dump-tokens`. [examples/corpus_runner.loke](examples/corpus_runner.loke)
@@ -94,7 +94,19 @@ Implementation order:
    only when a caller establishes their contracts.
 4. For every public API, add an example and the applicable allocator-failure,
    cleanup, Unicode, short-I/O, and platform-conformance cases from
-   [Test requirements](standard-library.md#test-requirements).
+   [Standard-library verification](compiler-architecture.md#standard-library-verification).
+
+Current optional gaps, to add only when a caller establishes their contract:
+`core:bytes`, `core:time`, `core:random`, `core:unicode`, `core:encoding/base64`,
+`core:encoding/json`, and `core:testing`; buffered streams, `fs.replace_atomic`,
+`fs.absolute`, `fs.canonicalize`, symlinks, and file locking; fallible twins of
+allocating string transformations other than `copy`, Unicode case mapping,
+normalization, and grapheme segmentation; terminal colors, cursor movement,
+mouse and resize events; `thread.try_spawn`, `try_lock`, condition variables,
+and thread identity. Math gaps include hyperbolics,
+`cbrt`/`fma`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
+integer bit helpers. `core:simd`'s remaining gaps are specified in
+[What SIMD does not do](design.md#what-simd-does-not-do).
 
 **Completion check:** the lexer, parser, and test harness run on the shared
 library without private substitutes for foundational services. Further library

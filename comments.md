@@ -1777,6 +1777,41 @@ analysis joined unrelated fields, and named call arguments ran in parameter
 order rather than source order. Both now use the field or parameter slot
 already selected by the checker.
 
+## Standard-library API choices
+
+The API contracts are in [standard-library.md](standard-library.md). Keep these
+design reasons separate from the signatures and behavior a caller needs:
+
+- Files belong in `core:fs`; `core:os` owns process state. There is no `os.open`
+  alias, so file opening has one spelling.
+- `io.Error` stores an `Operation` enum rather than borrowed diagnostic text.
+  This avoids lifetime and allocation concerns. Its scalar constructors are
+  public because other packages and third-party stream implementations need
+  them. Accessors keep the representation private; `code_of` avoids colliding
+  with the enum name `Code`.
+- `fmt` has no `append_to` builder helper. Importing `core:strings` solely for
+  it roughly quadrupled hello world's IR when imported packages were emitted
+  whole. `builder.append(fmt.to_string(allocator, ...))` provides the operation
+  without that dependency.
+- `String_Builder` groups text and rune append methods under `append`, with
+  distinct declarations in one `impl`. This satisfies method-based structural
+  interfaces without duplicate free aliases. `len` and `cap` stay ordinary
+  shadowable names. `C_String` likewise exposes method accessors and a free
+  constructor.
+- Directory enumeration uses a streaming reader with borrowed names to avoid
+  allocating and retaining an owned name at every step of a read-only walk.
+  Callers that need a collection can copy each name. End of enumeration and
+  failure are separate variants, so iteration uses an explicit fallible loop.
+- `strings.join` and `path.join` take slices. A variadic consumes all trailing
+  arguments, making a following allocator impossible to supply and a defaulted
+  allocator before it impossible to omit.
+- String case conversion is ASCII-only until a caller justifies Unicode tables.
+  Its owning result already allows byte and rune counts to change. Locale rules
+  must not depend silently on the process locale.
+- `sqrt` and the other floating-point functions use separate `f64` and `_f32`
+  names. Overloading both would make an untyped call such as `math.sqrt(2.0)`
+  ambiguous; callers also avoid double rounding through a wider intermediate.
+
 ## Implementation notes and review history
 
 ### Last-use transfer implementation

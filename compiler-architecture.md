@@ -663,6 +663,25 @@ it. `stdlib.odin` contributes only identities or primitives the compiler already
 owns or that Loke cannot express, such as atomic instructions, erased formatting
 dispatch, allocator-aware string allocation, and selected provider access.
 
+String allocation is the bridge between ordinary library code and the runtime
+ABI. The compiler contributes package-private `allocate_string` to
+`core:strings` and `core:fmt`; it copies a valid `string_view` with the selected
+allocator and returns `Result(string, Allocator_Error)`. `strings.copy` and
+`try_copy` wrap it, while `fmt.to_string` calls it directly. The contributed
+`allocation_failed` primitive applies the allocator's failure policy, including
+aborting without unwinding under `.Trap` (design.md "Allocation failure").
+It is available to `base:runtime`, `core:slice`, `core:strings`, and `core:fmt`.
+
+`String_Builder.finish` copies because a dynamic byte array owns raw storage
+while a string points past a reference-counted allocation header. Those layouts
+cannot transfer storage directly.
+
+Platform code lives in a file with `when (LOKE_OS == .Windows)` around its
+foreign declarations. There is no target-based filename filtering such as
+`_windows.loke`. `LOKE_OS` is currently fixed to `.Windows` in
+`src/build_config.odin`; a future source-selection convention requires a
+compiler and specification change before ports rely on it.
+
 An executable build links the generated module with the compiled C runtime.
 `prebuilt_runtime_objects` keeps compiled runtime objects under
 `runtime/prebuilt/<mode>-<hash>/`, one set per C build. The hash is of the
@@ -970,6 +989,38 @@ vary by more than most changes.
 For a structural backend refactor, compare emitted `.ll` with the same source
 path and options before and after the change. Reproducible IR catches naming and
 ordering drift that successful execution may hide.
+
+### Standard-library verification
+
+Library behavior is tested by the corpus programs `tests/run/lib_*.loke`, which
+run at the default optimization level in the quick gate and at every supported
+level in the full gate, and by the programs in `examples/`. A new or changed
+public API covers whichever of these cases apply:
+
+- empty input, empty files, and empty strings;
+- binary data containing zero bytes;
+- valid multi-byte UTF-8 and deliberately invalid UTF-8;
+- Unicode file names and long Windows paths;
+- missing, inaccessible, read-only, and already-existing paths;
+- partial reads/writes, end of input, interruption, and broken pipes;
+- bounded reads one byte below, exactly at, and one byte above the limit, with
+  `Limit_Exceeded` destroying partial owning results;
+- allocator failure at every growing operation, with the destination unchanged
+  (a deliberately small `mem.Arena` makes this deterministic);
+- explicit close followed by drop, double close, and panic unwinding;
+- redirected standard handles; and
+- byte offsets around one-, two-, three-, and four-byte runes.
+
+Protocol tests drive fake short readers and writers, as `lib_io` does.
+Filesystem tests work in an isolated temporary directory, as `lib_fs` does, and
+never depend on the repository working directory or a developer's environment.
+
+Terminal input is not automated, because a corpus program has no console of its
+own: `lib_term` covers only output and redirected handles. Raw-mode restoration
+on scope exit, on `close`, and on panic in an `unwind` build, and the console
+control handler's restore, are checked by hand with `examples/keys.loke`.
+Testing the key decoder from synthetic console records would automate
+everything but that last layer.
 
 ## Deliberate boundaries
 

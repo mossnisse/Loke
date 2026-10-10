@@ -1172,6 +1172,11 @@ checklist.
 
 ### Documentation
 
+- [Standard library](standard-library.md) adds a task index and usage examples,
+  corrects UTF-8 byte-search boundaries, allocator selection, resource
+  lifecycles, package ordering, finite-float round trips, and fallible string
+  allocation descriptions. Rationale, compiler support, testing guidance, and
+  planned APIs move to their owning documents.
 - [Releasing](releasing.md) uses one version-selection table and a shorter
   checklist. Shared compatibility rules explicitly apply to current releases;
   failed workflows distinguish retries from unpublished source fixes, and

@@ -1,0 +1,32 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:mem";
+import "core:strconv";
+import "core:strings";
+
+// standard-library.md "Boundaries": a raw byte search can find a continuation
+// byte, so its offset must be checked before slicing UTF-8 text.
+// standard-library.md "`core:strconv`": only finite default f64 formatting
+// promises a parsing round trip; the printed inf and nan spellings are rejected.
+check_printed :: proc(value: f64) {
+	text := fmt.to_string(mem.default_allocator(), value);
+	fmt.println(text);
+	switch (strconv.parse_f64(text)) {
+	case .ok: fmt.println(false);
+	case .err(error): fmt.println(error == .Invalid_Syntax);
+	}
+}
+
+main :: proc() {
+	text: string_view = "é";
+	fmt.println(strings.index_byte(text, 0xA9) or_else -1);
+	switch (strings.try_slice(text, 0, 1)) {
+	case .some: fmt.println(false);
+	case .none: fmt.println(true);
+	}
+	fmt.println(strings.index_rune(text, 'é') or_else -1);
+	check_printed(math.F64_INFINITY);
+	check_printed(math.F64_NAN);
+}
