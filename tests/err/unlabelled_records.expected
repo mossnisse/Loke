@@ -1,0 +1,20 @@
+L0363
+@11:6
+`(int, bool)` has no field or member `n`
+
+L0310
+@12:26
+cannot initialise `(n: int, ok: bool)` with `(int, bool)`
+
+L0310
+@13:19
+cannot initialise `(int, bool)` with `(n: int, ok: bool)`
+
+L0306
+@15:8
+unknown type `a`
+parentheses around a comma list describe a record type; a record value is written `{...}`
+
+L0306
+@15:11
+unknown type `b`

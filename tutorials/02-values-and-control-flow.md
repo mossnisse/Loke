@@ -338,7 +338,8 @@ A few things to notice:
 - `dividend, divisor: int` gives two parameters one type.
 - A procedure returns one value. To return several, return a record with named
   fields, `(quotient: int, remainder: int)`. The caller can take it apart,
-  `q, r := divide(17, 5)`, or keep it whole and read its fields.
+  `q, r := divide(17, 5)`, or keep it whole and read its fields. When every
+  caller takes it apart, the names can go: `-> (int, int)`.
 - `punctuation = "?"` names the argument it sets. Named arguments come after
   the positional ones, in any order.
 - `+` joins strings.

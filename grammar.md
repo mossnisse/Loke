@@ -276,7 +276,8 @@ Type = "^" "mut"? Type                                   // pointer
      | Type_Name Type_Arguments?
 
 Record_Type    = "(" Record_Field ("," Record_Field)* ","? ")"
-Record_Field   = Identifier_List ":" Type
+Record_Field   = Identifier_List ":" Type                // labelled
+               | Type                                    // unlabelled
 
 Type_Name      = Identifier ("." Identifier)*            // qualified or associated
 Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ","? ")"
@@ -684,10 +685,14 @@ may not begin an expression statement, because `{` at statement position starts
 a block. A slice literal's type is the one written: `[]T{...}` is read-only and
 `[]mut T{...}` has mutable elements.
 
-A parenthesised group is a `Record_Type` only when its first field group is
+A parenthesised group is a `Record_Type` when its first field group is
 labelled, found by the same bounded `Identifier_List ":"` scan a `Variable_Decl`
-uses; `(T)` in expression position stays a parenthesised expression, and
-`Foo(x: int)` is an error rather than generic arguments. A
+uses, or when it holds a `,` at its own bracket depth, which no expression does.
+The first field decides which kind it is: in a labelled record every field is
+`Identifier_List ":" Type`, and in an unlabelled one every field is a bare
+`Type` and there are at least two. `(T)` in expression position stays a
+parenthesised expression, `(int,)` is an error, and `Foo(x: int)` is an error
+rather than generic arguments. A
 `Record_Type` is never a `Composite_Type`: a record value comes from a
 contextually typed literal or from an alias used as a literal prefix, never
 `(field: T){...}`.
@@ -722,7 +727,8 @@ The productions above use the following deterministic parsing rules:
 - After the first `:` of a declaration, `static` and `thread_local` are storage
   modifiers only when followed by an identifier, by a type-start token, by a
   labelled `(` that opens a `Record_Type`, or by `=`. Otherwise they are
-  ordinary type names, so `static(int)` applies a type named `static`.
+  ordinary type names, so `static(int)` and `static(int, bool)` apply a type
+  named `static`; a `static` unlabelled record is written through an alias.
 - After the `:` of a parameter, a `^` closed by `,` or `)` is the receiver form
   `self: ^`; followed by anything else it starts a pointer type.
 - At the start of an `impl` member, `delegate` is the contextual keyword only

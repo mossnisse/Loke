@@ -525,7 +525,7 @@ A generated method prints:
 | array, slice, dynamic array, `Simd` | `[1, 2, 3]` |
 | map | `[key = value, ...]` in [iteration order](#maps) |
 | struct | `Name{x = 1, y = 2}`, with the public fields in declaration order |
-| anonymous record | `(x = 1, y = 2)` |
+| anonymous record | `(x = 1, y = 2)`, or `(1, 2)` when unlabeled |
 | union, including `Option` | `.none` or `.some(3)`: the variant, and its payload in parentheses |
 | `box(T)` | its payload |
 | `any_view` | the value it views |
@@ -1465,17 +1465,21 @@ For a pointer to a struct, `p.field` is equivalent to `p^.field`.
 
 #### Anonymous records
 
-`(name: Type, ...)` is a record type with no declaration site — the lightweight product type, written wherever a type is written:
+A parenthesized field list is a record type with no declaration site — the lightweight product type, written wherever a type is written. Its fields are either all **labeled**, `(name: Type, ...)`, or all **unlabeled**, `(Type, Type, ...)`:
 
 ```odin
 entry: (key: string_view, value: int);
 Entry :: (key: string_view, value: int);   // an alias, not a new nominal type
 lookup :: proc(k: string_view) -> (value: int, found: bool) { ... }
+divmod :: proc(a, b: int) -> (int, int) { return {a / b, a % b}; }
+pairs: [dynamic](int, string_view) = {};
 ```
 
-Its identity is **structural**: the ordered sequence of its `(field name, field type)` pairs. Two records with the same fields in the same order are the same type wherever they are written; the same fields in a different order are different types. A field name is part of the type, so `(a: int, b: int)` and `(x: int, y: int)` are unrelated.
+A labeled record has at least one field and an unlabeled one at least two. One value needs no record: it is written as its type alone.
 
-Every field is named and public. Copy, move, drop, equality, formatting, and reflection follow the ordinary structural rules.
+Its identity is **structural**: the ordered sequence of its fields' names and types. Two records with the same fields in the same order are the same type wherever they are written; the same fields in a different order are different types. A field name is part of the type, so `(a: int, b: int)` and `(x: int, y: int)` are unrelated. An unlabeled field's position is its name: `(int, int)` is one type wherever it is written, and it is unrelated to every labeled record, `(a: int, b: int)` included.
+
+Every field is public. A labeled field is selected by name; an unlabeled field has no name to select, so an unlabeled record is taken apart only by [destructuring](#destructuring) and built only by positional literal elements. Copy, move, drop, equality, formatting, and reflection follow the ordinary structural rules. An unlabeled record prints as `(1, true)`, and reflection reports each of its fields with the empty name `""`.
 
 A record is constructed by a contextually typed composite literal or through a type alias:
 
@@ -1483,13 +1487,14 @@ A record is constructed by a contextually typed composite literal or through a t
 entry: Entry = {key = "port", value = 8080};
 named := Entry{key = "port", value = 8080};
 return .ok({key = k, value = v});
+q, r := divmod(17, 5);
 ```
 
-A parenthesized group is a record type only when it is **labeled**. `(T)` in expression position stays grouping and is not a type, and `Foo(x: int)` is not a generic application.
+A parenthesized group is a record type when its first field is **labeled** or when it holds a comma at its own depth; an expression never does. `(T)` in expression position stays grouping and is not a type, `(a, b)` is a record type of two types rather than a value, and `Foo(x: int)` is not a generic application.
 
 #### Destructuring
 
-Two or more bindings on the left of `:=` or `=`, with one record on the right, project that record's fields positionally. A single binding takes the whole value. `foreach`'s binding list is the same rule. A `_` padding field has no name, so it fills no binding.
+Two or more bindings on the left of `:=` or `=`, with one record on the right, project that record's fields positionally. A single binding takes the whole value. `foreach`'s binding list is the same rule. A `_` padding field has no name, so it fills no binding. An [unlabeled](#anonymous-records) field is not padding: its position is its name, and it fills its binding.
 
 ```odin
 q, r := divmod(17, 5);
@@ -4606,17 +4611,17 @@ fmt.println(sum(..odds));        // 9, passing a slice as varargs
 
 A procedure returns at most one value. `Results` is one `Result_Type`, never a list, and the result is anonymous — there is no name to fill in and no result local to assign. A procedure with a result must `return expression;` on every path that leaves it; a bare `return;` there is an error.
 
-To hand back several values, return one [anonymous record](#anonymous-records) and [destructure](#destructuring) it at the call site:
+To hand back several values, return one [anonymous record](#anonymous-records) and [destructure](#destructuring) it at the call site. Its fields need no names when the caller destructures it:
 
 ```odin
-swap :: proc(x, y: int) -> (first: int, second: int) {
-	return {first = y, second = x};
+swap :: proc(x, y: int) -> (int, int) {
+	return {y, x};
 }
 a, b := swap(1, 2);
 fmt.println(a, b); // 2 1
 ```
 
-The parenthesized result spelling is therefore one record type, at any arity. An unlabeled `(T, U)` result is not a type and is rejected.
+The parenthesized result spelling is therefore one record type, at any arity. Label the fields when their types alone do not say what each one means, `-> (index: int, found: bool)`: the names document the result, and a caller that keeps the whole value selects its fields by them.
 
 #### `inout` results
 

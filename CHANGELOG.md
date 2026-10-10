@@ -451,6 +451,14 @@ checklist.
 
 ### Added
 
+- Anonymous records may leave their fields unlabeled, `(int, bool)` (design.md
+  "Anonymous records", "One result"), so a procedure that hands back several
+  values no longer names them: `divmod :: proc(a, b: int) -> (int, int)`,
+  `q, r := divmod(17, 5)`. An unlabeled record has at least two fields, is
+  taken apart by destructuring and built by positional literals, prints as
+  `(3, 2)`, reflects with empty field names, and is a different type from any
+  labeled record. A record's fields are all labeled or none (`L0254`). The
+  unlabeled-result error `L0238` is gone.
 - `dyn proc(parameters) -> Result` is a borrowed view of anything callable with
   that signature (design.md "Borrowed callable views"), the short form of
   `dyn interfaces.Callable(...)`, so one non-generic parameter, field, or array

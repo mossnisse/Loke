@@ -871,14 +871,22 @@ resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 	specs := make([dynamic]Anon_Record_Field, 0, len(value.fields), context.temp_allocator)
 	names := make([dynamic]Identifier_Id, 0, len(value.fields), context.temp_allocator)
 	bad := false
-	for &field in value.fields {
+	for &field, index in value.fields {
 		field_type := resolve_type_syntax(k, field.type)
 		if field_type == INVALID_TYPE {
 			report_unresolved_type(k, field.type)
+			// `(a, b)` written for a value is a record type of two types.
+			if !bad && len(field.names) == 0 {
+				add_notef(k.c, value.span, "parentheses around a comma list describe a record type; a record value is written `{{...}}`")
+			}
 			bad = true
 			continue
 		}
 		reject_any_view_position(k, field_type, field.span, "a record field")
+		if len(field.names) == 0 {
+			append(&specs, Anon_Record_Field{name = positional_field_name(k.c, index), type = field_type})
+			continue
+		}
 		for name in field.names {
 			name_id := name_identifier(k.c, name)
 			if name.text != "_" && identifier_list_contains(names[:], name_id) {

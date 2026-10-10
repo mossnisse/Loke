@@ -196,7 +196,7 @@ fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Cons
 			continue
 		}
 		values := make([]Const_Value, 4, k.c.semantic_allocator)
-		values[META_FIELD_NAME] = string_view_const(identifier_text(k.c, sym.name))
+		values[META_FIELD_NAME] = string_view_const(field_label(k.c, member))
 		values[META_FIELD_TYPE] = type_const(sym.type)
 		// A filtered descriptor still addresses the field's physical slot in the
 		// original record; its position in this compact array is not a storage index.

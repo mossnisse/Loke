@@ -10,12 +10,15 @@ a record type field cannot be variadic
 L0254
 @8:23
 a record type field has no default value
-L0238
+L0254
 @9:23
-a procedure returns at most one value
+an unlabelled record type has at least two fields
 L0254
 @10:34
 a record field is `name: Type`
 L0254
 @11:24
 a record type is written on its own
+L0254
+@12:31
+a record field is a type

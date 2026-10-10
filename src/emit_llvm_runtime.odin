@@ -873,7 +873,8 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
 	// An anonymous record's type is its field list, so it prints as `(x = 1)`
-	// rather than spelling that list out again as a name.
+	// rather than spelling that list out again as a name, and an unlabelled one
+	// as `(1, true)`.
 	anonymous := type_of(e.c, type).anonymous_record
 	if anonymous {
 		emit_format_literal(e, "(")
@@ -891,8 +892,10 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 			emit_format_literal(e, ", ")
 		}
 		written += 1
-		emit_format_literal(e, identifier_text(e.c, sym.name))
-		emit_format_literal(e, " = ")
+		if label := field_label(e.c, field); label != "" {
+			emit_format_literal(e, label)
+			emit_format_literal(e, " = ")
+		}
 		slot := gep_field(e, llvm_type(e, under), address, index)
 		// A formatter reads its value at the type's alignment, which a packed
 		// field may not have (design.md "@(packed)"), so it reads an aligned copy.
@@ -1157,7 +1160,7 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 			values := make(map[string]string)
 			defer delete(values)
 			values["kind"] = fmt.aprintf("%d", int(Runtime_Member_Kind.Field))
-			values["name"] = text_constant(e, Const_Value{kind = .String, text = identifier_text(e.c, sym.name)}, false)
+			values["name"] = text_constant(e, Const_Value{kind = .String, text = field_label(e.c, field)}, false)
 			values["type"] = fmt.aprintf("%d", typeid_value(e.c, sym.type))
 			values["offset"] = fmt.aprintf("%d", type_field_offset(e.c, type, index))
 			append(&entries, named_field_constant(e, member, values))

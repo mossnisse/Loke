@@ -1321,8 +1321,11 @@ anon_record_display :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string
 		if index > 0 {
 			strings.write_string(&b, ", ")
 		}
-		strings.write_string(&b, identifier_text(c, field.name))
-		strings.write_string(&b, ": ")
+		// A positional field is spelled by its type alone.
+		if text := identifier_text(c, field.name); !name_is_positional(text) {
+			strings.write_string(&b, text)
+			strings.write_string(&b, ": ")
+		}
 		strings.write_string(&b, type_name(c, field.type))
 	}
 	strings.write_string(&b, ")")
@@ -1497,6 +1500,36 @@ type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 field_is_padding :: proc(c: ^Compiler, field: Symbol_Id) -> bool {
 	sym := symbol_of(c, field)
 	return sym != nil && sym.kind == .Field && sym.name == INVALID_IDENTIFIER
+}
+
+// design.md "Anonymous records": an unlabelled record's fields are named by
+// their positions, `0`, `1`, ..., which no selector or literal element can
+// spell. The names keep it apart from every labelled record when interned.
+positional_field_name :: proc(c: ^Compiler, position: int) -> Identifier_Id {
+	text := fmt.tprintf("%d", position)
+	if id, ok := c.identifier_by_name[text]; ok {
+		return id
+	}
+	return intern_identifier(c, strings.clone(text, c.semantic_allocator))
+}
+
+field_is_positional :: proc(c: ^Compiler, field: Symbol_Id) -> bool {
+	sym := symbol_of(c, field)
+	return sym != nil && sym.kind == .Field && name_is_positional(identifier_text(c, sym.name))
+}
+
+@(private = "file")
+name_is_positional :: proc(text: string) -> bool {
+	return len(text) > 0 && text[0] >= '0' && text[0] <= '9'
+}
+
+// What reflection and formatting call a field: a positional field has no name.
+field_label :: proc(c: ^Compiler, field: Symbol_Id) -> string {
+	if field_is_positional(c, field) {
+		return ""
+	}
+	sym := symbol_of(c, field)
+	return sym == nil ? "" : identifier_text(c, sym.name)
 }
 
 // A record's fields without its padding: what a literal's positional elements,

@@ -836,10 +836,35 @@ scans_nested_pattern :: proc(p: ^Parser) -> (group: Token, found: bool) {
 	}
 }
 
-// A labelled first group distinguishes a record type from `(expression)`.
+// grammar.md "Primary expressions": a labelled first field, or a comma at the
+// group's own depth, distinguishes a record type from `(expression)`. An
+// expression holds no top-level comma, so `(int, bool)` is nothing else.
 @(private = "file")
 starts_anon_record_type :: proc(p: ^Parser) -> bool {
-	return at(p, .Lparen) && scans_name_list_colon(p, 1)
+	if !at(p, .Lparen) {
+		return false
+	}
+	if scans_name_list_colon(p, 1) {
+		return true
+	}
+	depth := 0
+	for offset := 0; ; offset += 1 {
+		#partial switch peek_token(p, offset).kind {
+		case .Lparen, .Lbracket, .Lbrace:
+			depth += 1
+		case .Rparen, .Rbracket, .Rbrace:
+			depth -= 1
+			if depth == 0 {
+				return false
+			}
+		case .Comma:
+			if depth == 1 {
+				return true
+			}
+		case .EOF:
+			return false
+		}
+	}
 }
 
 @(private = "file")
@@ -2586,15 +2611,18 @@ parse_type :: proc(p: ^Parser) -> Expr {
 	return error_expr(p, span_of(p, t))
 }
 
-// Anonymous record fields deliberately exclude parameter-only syntax.
+// Anonymous record fields deliberately exclude parameter-only syntax. Whether
+// the first field is labelled decides the record's kind, and every other field
+// agrees (design.md "Anonymous records").
 @(private = "file")
 parse_anon_record_type :: proc(p: ^Parser) -> Expr {
 	open := advance(p) // `(`
 	lo := open.lo
+	labelled := scans_name_list_colon(p, 0)
 	fields := make([dynamic]Field, 0, 0, p.allocator)
 	bad := false
 	for !at(p, .Rparen) && !at(p, .EOF) {
-		field, ok := parse_anon_record_field(p)
+		field, ok := parse_anon_record_field(p, labelled)
 		bad = bad || !ok
 		append(&fields, field)
 		if !allow(p, .Comma) {
@@ -2606,22 +2634,34 @@ parse_anon_record_type :: proc(p: ^Parser) -> Expr {
 	n.fields = fields[:]
 	n.span = span_to_here(p, open)
 	n.has_error = bad || !closed
-	if len(fields) == 0 && closed {
-		parse_error(p, n.span, "L0254", "found `()`", "a record type has at least one named field")
+	switch {
+	case len(fields) == 0 && closed:
+		parse_error(p, n.span, "L0254", "found `()`", "a record type has at least one field")
 		n.has_error = true
+	case len(fields) == 1 && !labelled && !bad && closed:
+		parse_error(
+			p, n.span, "L0254", "found one unlabelled field",
+			"an unlabelled record type has at least two fields; one value is written as its type alone",
+		)
+		n.has_error = true
+	}
+	// Every error above is reported, so whatever needs this type stays silent.
+	if n.has_error {
+		return error_expr(p, n.span)
 	}
 	return n
 }
 
 @(private = "file")
-parse_anon_record_field :: proc(p: ^Parser) -> (Field, bool) {
+parse_anon_record_field :: proc(p: ^Parser, labelled: bool) -> (Field, bool) {
 	start := current(p)
 	field: Field
-	if !scans_name_list_colon(p, 0) {
-		parse_error(
-			p, span_of(p, start), "L0254", fmt_found(p, start),
-			"a record field is `name: Type`; every field of a record type is named",
-		)
+	if scans_name_list_colon(p, 0) != labelled {
+		what := "a record field is a type; every field of an unlabelled record type is unnamed"
+		if labelled {
+			what = "a record field is `name: Type`; every field of a labelled record type is named"
+		}
+		parse_error(p, span_of(p, start), "L0254", fmt_found(p, start), what)
 		// Resume at the next field.
 		for !at(p, .Comma) && !at(p, .Rparen) && !at(p, .EOF) {
 			advance(p)
@@ -2629,19 +2669,21 @@ parse_anon_record_field :: proc(p: ^Parser) -> (Field, bool) {
 		field.span = span_to_here(p, start)
 		return field, false
 	}
-	names := make([dynamic]Name, 0, 0, p.allocator)
-	for {
-		name, ok := expect(p, .Ident, "L0254", "a record field name")
-		if !ok {
-			break
+	if labelled {
+		names := make([dynamic]Name, 0, 0, p.allocator)
+		for {
+			name, ok := expect(p, .Ident, "L0254", "a record field name")
+			if !ok {
+				break
+			}
+			append(&names, name_of(p, name))
+			if !allow(p, .Comma) {
+				break
+			}
 		}
-		append(&names, name_of(p, name))
-		if !allow(p, .Comma) {
-			break
-		}
+		field.names = names[:]
+		expect(p, .Colon, "L0254", "`:` after the record field names")
 	}
-	field.names = names[:]
-	expect(p, .Colon, "L0254", "`:` after the record field names")
 	ok := true
 	if what := anon_record_excluded_spelling(p); what != "" {
 		parse_error(p, span_of(p, current(p)), "L0254", fmt_found(p, current(p)), what)
@@ -3132,7 +3174,8 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 	return param, named && !expr_has_error(param.type) && !expr_has_error(param.default)
 }
 
-// A procedure returns one type; a labelled group is one anonymous record type.
+// A procedure returns one type; a parenthesised group is one anonymous record
+// type, labelled or not (design.md "One result").
 @(private = "file")
 parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 	if !allow(p, .Arrow) {
@@ -3141,30 +3184,6 @@ parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 
 	start := current(p)
 	item := new(Result, p.allocator)
-	if at(p, .Lparen) && !starts_anon_record_type(p) {
-		parse_error(
-			p, span_of(p, start), "L0238", "found an unlabelled `(`",
-			"a procedure returns at most one value; write `(name: Type, ...)` to return a record",
-		)
-		// Consume the obsolete result list to avoid cascading.
-		depth := 0
-		for !at(p, .EOF) {
-			if at(p, .Lparen) {
-				depth += 1
-			} else if at(p, .Rparen) {
-				depth -= 1
-				if depth == 0 {
-					advance(p)
-					break
-				}
-			}
-			advance(p)
-		}
-		item.type = error_expr(p, span_to_here(p, start))
-		item.span = span_to_here(p, start)
-		return item, false
-	}
-
 	if allow(p, .Not) {
 		item.diverges = true
 		item.span = span_to_here(p, start)

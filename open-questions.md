@@ -45,26 +45,9 @@ And the policy-following half is load-bearing rather than convenient. Copy assig
 
 The allocation built-ins are a third instance, and they keep the pair: `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The allocation built-ins follow the `try_` convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
 
-## Unnamed record fields, and records versus structs
+## Records versus structs
 
-**Unnamed fields.** `divide :: proc(dividend, divisor: int) -> (int, int)` is
-rejected (`L0238`): an [anonymous record](design.md#anonymous-records) names
-every field, and the names are part of its type. A caller that destructures,
-`q, r := divide(17, 5)`, never reads them, so they can look like ceremony.
-Allowing the unnamed form would need:
-
-- an unnamed record type, and a way to reach its fields without names, such as
-  `.0` and `.1`, which Loke does not have;
-- a spelling for one field, since `(T)` must stay grouping;
-- a rule for how `(int, int)` relates to `(quotient: int, remainder: int)`:
-  unrelated types, or a conversion between them.
-
-Against it: the names document each result where the procedure is declared,
-and [One result](comments.md#one-result-and-the-compatibility-break-that-came-with-it)
-accepted them as part of procedure-type identity, the price of structural
-record identity. Revisit if real call sites keep writing names nobody reads.
-
-**Records versus structs.** Loke has two kinds of record. A `struct` is
+Loke has two kinds of record. A `struct` is
 nominal: its declaration is its identity, a field may be private, a positional
 literal or a destructure is allowed only in the declaring package, and it can
 carry hooks and attributes such as `move_only`. An anonymous record is

@@ -409,10 +409,13 @@ debug_type :: proc(d: ^Debug_Info, type: Type_Id) -> int {
 			if field_is_padding(c, field) {
 				continue
 			}
-			debug_member(
-				d, &members, identifier_text(c, member.name), member.type,
-				type_field_offset(c, type, index),
-			)
+			// A debugger's expression evaluator reads a positional field as
+			// `__0`, as it does a Rust tuple's; `0` is no member name it parses.
+			member_name := identifier_text(c, member.name)
+			if field_is_positional(c, field) {
+				member_name = fmt.aprintf("__%s", member_name)
+			}
+			debug_member(d, &members, member_name, member.type, type_field_offset(c, type, index))
 		}
 		debug_composite(d, id, "DW_TAG_structure_type", name, size, strings.to_string(members))
 	case .String, .String_View, .Slice, .Dynamic_Array:

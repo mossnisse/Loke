@@ -682,6 +682,37 @@ unrelated types named `Token` do not become interchangeable.
 The [one-result migration](#one-result-migration) records the compatibility
 break and compiler defects found while migrating named fields.
 
+### Records without field names
+
+`-> (int, int)` was rejected at first: every record field had a name, and the
+names were part of the type. In practice nobody read them. The library had five
+procedures that returned a record, and every caller destructured the result, so
+the names were spelled at every declaration only to be dropped at every call.
+
+An unlabeled record is the same structural record with positions in place of
+names, which keeps one record model rather than adding tuples beside it. What
+it needed was decided this way:
+
+- **Reaching a field.** Only destructuring and positional literals, never
+  `.0`. Names are how a field is selected and positions how a record is taken
+  apart; a caller that wants `r.found` asks for a labeled result. `r.0.1` would
+  also lex as the number `0.1`.
+- **One field.** `(T)` stays grouping, and an unlabeled record has at least two
+  fields: one value is its type alone.
+- **Relation to labeled records.** Unrelated types. Erasing names from
+  identity, as C# tuples do, would let `(width: int, height: int)` become
+  `(height: int, width: int)` silently, the reordering mistake the
+  [field-order rule](#field-order-stays-inside-the-declaring-package) guards
+  against.
+- **Mixing.** All fields are labeled or none, so a record is read one way.
+  `(int, found: bool)` parses as the labeled list `int, found: bool`, the same
+  reading a parameter list gives it.
+
+The parser tells `(int, bool)` from a parenthesized expression by its top-level
+comma, which no expression has, so the change made nothing ambiguous. Inside
+the compiler an unlabeled field is named by its position, `0`, `1`, ..., a name
+no source can spell; interning, layout, and destructuring needed no new case.
+
 ### One pattern grammar, flat declarations
 
 Every form that binds names takes a subset of one pattern: a leaf is a name or
@@ -1648,7 +1679,9 @@ It kept the distinction between nominal structs and structural records: privacy,
 hook ownership, and cross-package positional construction have real semantics,
 so the two share rules and implementation where they can rather than merge into
 one form, and named record results stay rather than unnamed tuples without a
-demonstrated need. It found no reason to remove `defer`, semicolons,
+demonstrated need, which a later count supplied (see
+[Records without field names](#records-without-field-names)). It found no
+reason to remove `defer`, semicolons,
 parenthesized control-flow headers, explicit overload groups, or hermetic
 compile-time evaluation; see [`defer`](#defer),
 [One language at compile time](#one-language-at-compile-time), and
