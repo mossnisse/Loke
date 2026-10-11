@@ -588,13 +588,19 @@ on its left. Level 4 is **non-associative**: `a == b == c` and
 is parenthesised. Level 5 is non-associative too: a range takes exactly two
 endpoints, so `a ..< b ..< c` is a syntax error.
 
+After `or_else`, `break`, `continue`, and `return` begin an `Or_Else_Exit`, the
+statement the failure runs ([design.md](design.md#or_else-expression)). A
+`return` takes a value unless `;`, `)`, `]`, `}`, or `,` follows it, and the
+value, like any fallback, runs to the end of the expression.
+
 `in` sits at level 4 with the comparisons because it produces a `bool`; at the
 additive level `x in values + extra` would group as `(x in values) + extra`.
 Ranges sit between the comparisons and addition, so `c in 'a' ..= 'z'` tests a
 range and `0 ..< n + 1` ends at `n + 1`.
 
 ```
-Expression   = Level_2 (("or_else" Expression) | ("if" Level_2 "else" Expression))?  // 1
+Expression   = Level_2 (("or_else" (Expression | Or_Else_Exit)) | ("if" Level_2 "else" Expression))?  // 1
+Or_Else_Exit = "break" | "continue" | "return" ("inout"? Expression)?
 Level_2      = Level_3 ("||" Level_3)*                                          // 2
 Level_3      = Level_4 ("&&" Level_4)*                                          // 3
 Level_4      = Level_5 (("==" | "!=" | "<" | ">" | "<=" | ">=" | "in") Level_5)? // 4

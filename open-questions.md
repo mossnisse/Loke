@@ -485,6 +485,7 @@ the headings named, and comments.md records the reasoning:
 
 - `in` tests ranges, which bind tighter than comparison ("Ranges",
   "Operator precedence").
+- `or_else` may `break`, `continue`, or `return` ("or_else expression").
 
 ### Recommended order
 
@@ -493,7 +494,6 @@ the headings named, and comments.md records the reasoning:
 | Next | Print a checked reference as its referent | A map loop prints values, not addresses |
 | Next | Let `package main` print its own fields | A first struct prints its fields |
 | Next | Generate `hash` where `==` is generated | Plain records become map keys |
-| Next | Control-flow fallbacks after `or_else` | Skip or leave without nesting |
 | Next | `main` may return a fallible union | `or_return` in `main`, a failing exit status |
 | Later | One temporary-lifetime rule | Three lifetime rules become one |
 | Later | Field bindings in a case | Recursive unions without clones |
@@ -543,26 +543,6 @@ anonymous record that declares no `==` of its own and whose parts are all
 `Hashable`, mixing the parts in declaration order as a fixed array's elements
 already are. A type that writes its own `==` still writes its own `hash`, so
 coherence holds by construction.
-
-### Control-flow fallbacks after `or_else`
-
-An absent value in a loop is skipped with a nested switch or `if (case ...)`.
-No fallback can leave the loop or the procedure:
-
-```odin
-foreach (name in names) {
-	entry := table.find(name) or_else continue;   // today L0220: expected an expression
-	use(entry);
-}
-```
-
-`or_else` already takes a [diverging call](design.md#diverging-procedures) as
-its fallback. Admit `continue`, `break`, and `return expression` there too, as
-Zig's `orelse` does. Each diverges, so the result keeps the success payload's
-type, and a temporary's failure is still dropped before the fallback runs.
-They become expressions in that position only, and not inside a `defer`, where
-`or_return` is already rejected. `or_return` stays the spelling that propagates
-the failure itself.
 
 ### `main` may return a fallible union
 

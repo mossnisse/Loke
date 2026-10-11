@@ -1,0 +1,11 @@
+// After `or_else`, `break`, `continue`, and `return` are the failure's exit; a
+// returned value runs to the end of the expression, as a fallback does.
+package main;
+
+f :: proc() {
+	a := x or_else break;
+	b := y or_else continue;
+	c := z or_else return .err(e);
+	d := w or_else return;
+	e := v or_else u or_else continue;
+}

@@ -307,6 +307,15 @@ remain unambiguous even when success and failure have the same payload type.
 not privileged type names. This replaces special trailing-status rules while
 letting library unions use `or_else` and `or_return`.
 
+### Leaving from `or_else`
+
+`or_else continue`, `or_else break`, and `or_else return value` cover the
+common case of an absent value that ends a step, without a nested switch or
+`if (case ...)`. They are the statements themselves in the fallback position,
+not new expressions, so they keep the statements' rules and cleanups. A loop's
+header cannot use `break` or `continue` this way: it is evaluated outside the
+body, so whether it leaves the loop or an enclosing one would be a new rule.
+
 ### One result
 
 A procedure returns at most one value. Several results form an anonymous record

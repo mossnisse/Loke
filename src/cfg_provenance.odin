@@ -299,7 +299,9 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 	case ^Expr_Or_Else:
 		out := prov_empty_region(graph)
 		region_merge(&out, prov_result_region_at(graph, v.value, path))
-		region_merge(&out, prov_result_region_at(graph, v.fallback, path))
+		if v.fallback != nil {
+			region_merge(&out, prov_result_region_at(graph, v.fallback, path))
+		}
 		return out
 	case ^Expr_Call:
 		if result, found := graph.call_results[v]; found && len(result.region_content) > 0 {
@@ -1891,7 +1893,9 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 	case ^Expr_Or_Else:
 		out := prov_empty_region(graph)
 		region_merge(&out, prov_region_of(graph, v.value))
-		region_merge(&out, prov_region_of(graph, v.fallback))
+		if v.fallback != nil {
+			region_merge(&out, prov_region_of(graph, v.fallback))
+		}
 		return out
 	case ^Expr_Selector, ^Expr_Index:
 		if call := prov_call_node(graph, e); call != nil {

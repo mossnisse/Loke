@@ -315,7 +315,11 @@ Expr_Range :: struct {
 Expr_Or_Else :: struct {
 	using base: Expr_Base,
 	value:      Expr,
+	// Nil when the failure leaves instead (design.md "or_else expression").
 	fallback:   Expr,
+	// `break`, `continue`, or `return value` in the fallback position: a
+	// `^Stmt_Branch` or `^Stmt_Return`, nil for an ordinary fallback.
+	exit:       Stmt,
 	// A place operand is copied from and stays live; a temporary is moved.
 	borrows:    bool,
 	// A managed fallback place is cloned into the result.
@@ -951,6 +955,14 @@ Return_Value :: struct {
 	expr:     Expr,
 	// A borrowed managed value is cloned on return rather than moved.
 	clone_on_return: bool,
+}
+
+// The value a `return` exit of an `or_else` carries, or nil.
+or_else_exit_value :: proc(v: ^Expr_Or_Else) -> Expr {
+	if ret, is_return := v.exit.(^Stmt_Return); is_return && ret.value != nil {
+		return ret.value.expr
+	}
+	return nil
 }
 
 Stmt_Return :: struct {

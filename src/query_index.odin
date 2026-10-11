@@ -161,6 +161,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	case ^Expr_Or_Else:
 		index_query_expr(index, v.value)
 		index_query_expr(index, v.fallback)
+		index_query_expr(index, or_else_exit_value(v))
 	case ^Expr_Cond:
 		index_query_expr(index, v.cond)
 		index_query_expr(index, v.then)

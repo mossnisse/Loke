@@ -1,0 +1,12 @@
+.ok(10) .err(Missing) .ok(10)
+drop iteration
+drop iteration
+drop iteration
+-1
+5 5
+drop held
+.ok([1, 2])
+took held
+drop held
+.ok([1, 2, 3])
+drop before continue

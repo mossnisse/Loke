@@ -1,0 +1,74 @@
+// design.md "or_else expression": `break`, `continue`, and `return value` after
+// `or_else` leave on failure, running the cleanups the statement would, at run
+// time and in compile-time evaluation.
+package main;
+import "core:fmt";
+
+Error :: enum { Missing }
+
+Tracked :: struct { name: string }
+impl Tracked {
+	done :: hook(drop) proc(self: inout Tracked) { if (self.name.len() > 0) { fmt.println("drop", self.name); } }
+}
+
+Token :: move_only struct { name: string }
+impl Token {
+	done :: hook(drop) proc(self: inout Token) { if (self.name.len() > 0) { fmt.println("drop", self.name); } }
+}
+
+make :: proc(name: string) -> Tracked { return {name}; }
+show :: proc(t: Tracked, n: int) { fmt.println("show", t.name, n); }
+take :: proc(t: move Token) { fmt.println("took", t.name); }
+
+lookup :: proc(m: map[string]int, key: string_view) -> Result(int, Error) {
+	value := m.lookup_value(key) or_else return .err(.Missing);
+	return .ok(value * 10);
+}
+
+first_even :: proc(values: []Option(int)) -> int {
+	for (i := 0; ; i += 1) {
+		guard := Tracked{"iteration"};
+		v := values[i] or_else break;
+		if (v % 2 == 0) { return v; }
+	}
+	return -1;
+}
+
+sum_present :: proc(values: []Option(int)) -> int {
+	total := 0;
+	foreach (o in values) {
+		x := o or_else continue;
+		total += x;
+	}
+	return total;
+}
+
+// A returned local transfers on the exit, and a live owner is dropped.
+pick :: proc(o: Option(int)) -> Result([dynamic]int, string) {
+	buf := [dynamic]int{1, 2};
+	t := Token{"held"};
+	n := o or_else return .ok(move(buf));
+	take(move(t));
+	buf.append(n);
+	return .ok(move(buf));
+}
+
+COUNT :: sum_present([]Option(int){.some(1), .none, .some(4)});
+FOUND :: lookup(map[string]int{"a" = 1}, "a");
+
+main :: proc() {
+	m := map[string]int{"a" = 1};
+	fmt.println(lookup(m, "a"), lookup(m, "b"), FOUND);
+	fmt.println(first_even([]Option(int){.some(1), .some(3), .none, .some(4)}));
+	fmt.println(sum_present([]Option(int){.some(1), .none, .some(4)}), COUNT);
+	fmt.println(pick(.none));
+	fmt.println(pick(.some(3)));
+	values := [?]Option(int){.some(1), .none, .some(-2), .some(3)};
+	// An argument made before the exit is dropped on the exit's path.
+	foreach (o in values) {
+		if (x := o or_else continue; x > 1) {
+			missing: Option(int) = .none;
+			show(make("before continue"), missing or_else continue);
+		}
+	}
+}

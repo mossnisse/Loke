@@ -461,6 +461,12 @@ checklist.
 
 ### Added
 
+- An `or_else` fallback may leave: `entry := table.find(name) or_else continue;`,
+  `or_else break`, and `or_else return value` run that statement on failure,
+  with its cleanups, and the expression yields the success payload (design.md
+  "or_else expression"). They follow the statement's rules, so they need a loop
+  or may not leave a `defer`, and a loop's own header cannot use the loop forms
+  (`L0718`).
 - `x in r` tests a value against a `Range(T)` (design.md "Ranges"), at run
   time and in compile-time evaluation, and range operators now bind between the
   comparisons and addition (design.md "Operator precedence"), so

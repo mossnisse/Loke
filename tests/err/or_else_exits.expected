@@ -1,0 +1,21 @@
+L0368
+@6:17
+`break` is only valid inside a loop
+L0718
+@11:26
+`or_else break` cannot appear in a loop's header; test the value in the body
+L0718
+@12:37
+`or_else continue` cannot appear in a loop's header; test the value in the body
+L0369
+@17:26
+a deferred statement cannot leave the construct it is registered in
+L0369
+@18:26
+a deferred statement cannot leave the construct it is registered in
+L0365
+@26:11
+this procedure can end without returning a value
+L0310
+@34:24
+this constant is not a value of `int`

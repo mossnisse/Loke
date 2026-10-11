@@ -716,7 +716,8 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 	case ^Expr_Range:
 		return type_syntax_names(v.lo, name) || type_syntax_names(v.hi, name)
 	case ^Expr_Or_Else:
-		return type_syntax_names(v.value, name) || type_syntax_names(v.fallback, name)
+		return type_syntax_names(v.value, name) || type_syntax_names(v.fallback, name) ||
+		       type_syntax_names(or_else_exit_value(v), name)
 	case ^Expr_Cond:
 		return type_syntax_names(v.then, name) ||
 		       type_syntax_names(v.cond, name) ||

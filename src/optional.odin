@@ -130,6 +130,18 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else) {
 	if v.borrows {
 		contribute_lifecycle_members(k, payload)
 	}
+	// design.md "or_else expression": a failure that leaves supplies no value.
+	if v.exit != nil {
+		if !check_or_else_exit(k, v) {
+			v.type = INVALID_TYPE
+			return
+		}
+		if v.borrows {
+			report_copy_cost(k, .Or_Else, expr_span(v.value), v.value, payload)
+		}
+		v.type = payload
+		return
+	}
 	if !check_value_expr(k, v.fallback, payload, "supply") {
 		v.type = INVALID_TYPE
 		return

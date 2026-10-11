@@ -58,6 +58,13 @@ Body_Context :: struct {
 	// own, already reported once on its written body (L0455).
 	branches_reported: bool,
 	in_defer:          bool,
+	// `loop_depth` where the current `defer` began: a loop inside it is a
+	// target its statement may leave to.
+	defer_loop_depth:  int,
+	// Checking a loop's header, which no `or_else` exit may leave from.
+	loop_header:       bool,
+	// An `or_else` exit in the innermost loop's body has broken out of it.
+	loop_broken:       bool,
 	// One flag slot per syntactic `defer` in the procedure being checked.
 	defer_slots:       int,
 }
@@ -2772,7 +2779,12 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		if any_static_binding(s.bindings) {
 			return check_static_foreach(k, s)
 		}
-		return check_runtime_foreach(k, s)
+		// The iterable is the header; `check_foreach_block` clears this for the body.
+		outer_header := k.loop_header
+		k.loop_header = true
+		flow := check_runtime_foreach(k, s)
+		k.loop_header = outer_header
+		return flow
 	}
 	unsupported_construct(k, stmt_span(stmt))
 	return FLOWS
@@ -3532,21 +3544,28 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 	defer if s.init != nil {
 		report_unread_required_results(k, []Stmt{s.init})
 	}
+	outer_header, outer_broken := k.loop_header, k.loop_broken
+	defer k.loop_header, k.loop_broken = outer_header, outer_broken
+	k.loop_header = true
 	if s.init != nil {
 		check_stmt(k, s.init)
 	}
 	check_condition(k, s.cond)
 
 	k.loop_depth += 1
+	k.loop_header, k.loop_broken = false, false
 	body := check_scoped_block(k, s.body)
+	broken := k.loop_broken
+	k.loop_header = true
 	if s.post != nil {
 		check_stmt(k, s.post)
 	}
 	k.loop_depth -= 1
-	// `for (;;)` without a `break` never falls out of the loop.
+	// `for (;;)` without a `break` never falls out of the loop; an `or_else`
+	// exit in its body is one (design.md "or_else expression").
 	infinite := s.cond == nil
 	return Flow_Info {
-		can_fall_through = !infinite || body.breaks,
+		can_fall_through = !infinite || body.breaks || broken,
 		returns          = body.returns,
 	}
 }
@@ -3792,6 +3811,7 @@ check_defer :: proc(k: ^Checker, s: ^Stmt_Defer) -> Flow_Info {
 	s.slot = k.defer_slots
 	k.defer_slots += 1
 	k.in_defer = true
+	k.defer_loop_depth = k.loop_depth
 	flow := check_stmt(k, s.stmt)
 	k.in_defer = false
 
@@ -3879,6 +3899,44 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		classify_return_value(k, value, k.result_type)
 	}
 	return terminated
+}
+
+// design.md "or_else expression": `break`, `continue`, and `return value` in the
+// fallback position are the statements, run where the failure is found.
+check_or_else_exit :: proc(k: ^Checker, v: ^Expr_Or_Else) -> bool {
+	exit_span := stmt_span(v.exit)
+	_, is_return := v.exit.(^Stmt_Return)
+	keyword := "return"
+	if branch, is_branch := v.exit.(^Stmt_Branch); is_branch {
+		keyword = branch.kind == .Break ? "break" : "continue"
+	}
+	if k.proc_literal == nil {
+		errorf(k.c, exit_span, "L0718", "`or_else %s` is only valid inside a procedure", keyword)
+		return false
+	}
+	if k.in_defer && (is_return || k.loop_depth <= k.defer_loop_depth) {
+		errorf(k.c, exit_span, "L0369", "a deferred statement cannot leave the construct it is registered in")
+		return false
+	}
+	if !is_return {
+		if k.loop_header {
+			errorf(
+				k.c, exit_span, "L0718",
+				"`or_else %s` cannot appear in a loop's header; test the value in the body", keyword,
+			)
+			return false
+		}
+		if k.loop_depth == 0 {
+			errorf(k.c, exit_span, "L0368", "`%s` is only valid inside a loop", keyword)
+			return false
+		}
+	}
+	errors := k.c.error_count
+	flow := check_stmt(k, v.exit)
+	if flow.breaks {
+		k.loop_broken = true
+	}
+	return k.c.error_count == errors
 }
 
 @(private = "file")

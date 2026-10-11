@@ -1,0 +1,23 @@
+(file package="main"
+  (const names=["f"]
+    (proc (proc-type)
+      (block
+        (var names=["a"]
+          (or_else (ident "x") (break))
+        )
+        (var names=["b"]
+          (or_else (ident "y") (continue))
+        )
+        (var names=["c"]
+          (or_else (ident "z") (return (call (selector _ "err") (ident "e"))))
+        )
+        (var names=["d"]
+          (or_else (ident "w") (return))
+        )
+        (var names=["e"]
+          (or_else (ident "v") (or_else (ident "u") (continue)))
+        )
+      )
+    )
+  )
+)

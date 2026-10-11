@@ -3682,7 +3682,7 @@ b := move(xs) if flag else ys.clone(); // one transferred, one written copy
 
 ### Other operators
 
-- `or_else` — unwrap a fallible value or evaluate a fallback
+- `or_else` — unwrap a fallible value or evaluate a fallback, or leave with `break`, `continue`, or `return`
 - `or_return` — unwrap a fallible value or return its failure
 - `in` — map, range, or set membership
 - `..=` — inclusive range
@@ -5609,6 +5609,28 @@ The same rule applies to validating conversions, erased extractions, and other
 `Option`/`Result` producers. Failure cleanup follows [Operator ownership](#operator-ownership):
 a temporary's managed failure is dropped before the fallback, while a place
 keeps its own. To inspect the error, use `switch`; to propagate it, use `or_return`.
+
+The fallback may instead leave: `break`, `continue`, or `return value`, written
+where the fallback would be. On failure it runs as that statement would at the
+same point, with the same cleanups, and the expression produces only the
+success payload:
+
+```odin
+foreach (name in names) {
+	entry := table.find(name) or_else continue;   // skip a name not in the table
+	use(entry);
+}
+port := settings.lookup_value("port") or_else return .err(.Missing_Port);
+```
+
+A `return` value extends to the end of the expression, as any fallback does.
+The rules of the statement apply: `break` and `continue` need an enclosing loop,
+and none of the three may leave a deferred statement. A loop's header — a
+`for` header or a `foreach` iterable — cannot `break` or `continue` this way
+(`L0718`), since it is not inside the loop it would leave; test the value in
+the body. An exit after a call's earlier arguments, or anything else an
+operation already holds, drops those values on its way out, as `or_return`
+does.
 
 ### or_return operator
 

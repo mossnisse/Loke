@@ -158,8 +158,8 @@ Function_State :: struct {
 	// value temporary dies at its end.
 	temporaries: [dynamic][dynamic]Deferred,
 	// Owned values an operation holds while it evaluates its later operands,
-	// such as a call's earlier arguments: an `or_return` in one of those
-	// operands drops them on its own path.
+	// such as a call's earlier arguments: an exit from one of those operands,
+	// `or_return` or an `or_else` exit, drops them on its own path.
 	held: [dynamic]Deferred,
 	// How many operands that may not run enclose the code being written: the
 	// right of `&&` and `||`, a conditional's arms, an `or_else` fallback.

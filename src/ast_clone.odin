@@ -373,6 +373,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n := new_clone(c, Expr_Or_Else, &v.base)
 		n.value = clone_expr(c, v.value)
 		n.fallback = clone_expr(c, v.fallback)
+		n.exit = clone_stmt(c, v.exit)
 		return n
 
 	case ^Expr_Cond:

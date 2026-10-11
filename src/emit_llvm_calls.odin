@@ -526,6 +526,25 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	   !v.borrows && emit_lifecycle(e, failure_type).managed {
 		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
 	}
+	// design.md "or_else expression": an exit leaves here, and only the success
+	// arm reaches the rest of the expression.
+	if v.exit != nil {
+		emit_stmt(e, v.exit)
+		if !e.terminated {
+			fmt.sbprintln(&e.b, "  unreachable")
+			e.terminated = true
+		}
+		place_label(e, done)
+		out := make([]string, 1)
+		out[0] = joined_slot
+		if joined_slot == "" {
+			out[0] = temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = phi %s [ %s, %%%s ]", out[0], llvm_type(e, payload_type), taken, success_exit,
+			)
+		}
+		return out
+	}
 	begin_conditional(e)
 	fallback := emit_expr(e, v.fallback)
 	if v.fallback_clone {

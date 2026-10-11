@@ -414,6 +414,9 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 		if missing := first_unresolved_name(k, v.value); missing != "" {
 			return missing
 		}
+		if missing := first_unresolved_name(k, or_else_exit_value(v)); missing != "" {
+			return missing
+		}
 		return first_unresolved_name(k, v.fallback)
 	case ^Expr_Checked_Extract:
 		if missing := first_unresolved_name(k, v.operand); missing != "" {

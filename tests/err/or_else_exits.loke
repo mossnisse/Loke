@@ -1,0 +1,38 @@
+// design.md "or_else expression": `break`, `continue`, and `return` after
+// `or_else` leave as the statements would, and only from where they may.
+package main;
+
+outside :: proc(o: Option(int)) -> int {
+	x := o or_else break;
+	return x;
+}
+
+header :: proc(xs: []Option(int)) {
+	for (i := xs[0] or_else break; i < 3; i += 1) { }
+	foreach (n in 0 ..< (xs[0] or_else continue)) { }
+}
+
+deferred :: proc(o: Option(int)) -> int {
+	for (;;) {
+		defer { x := o or_else break; _ = x; }
+		defer { y := o or_else return 1; _ = y; }
+		defer { foreach (n in 0 ..< 2) { z := o or_else continue; _ = z; } }
+		break;
+	}
+	return 0;
+}
+
+// The `break` makes the loop finite, so the end is reachable.
+leaves :: proc(o: Option(int)) -> int {
+	for (;;) {
+		x := o or_else break;
+		_ = x;
+	}
+}
+
+wrong_value :: proc(o: Option(int)) -> int {
+	x := o or_else return "no";
+	return x;
+}
+
+main :: proc() {}

@@ -58,6 +58,8 @@ Eval_Frame :: struct {
 	result_place: ^Eval_Value,
 	// Set by a failing `or_return`; the enclosing statement turns it into `.Return`.
 	returning:    bool,
+	// Set by an `or_else` exit; the enclosing statement turns it into this flow.
+	exiting:      Eval_Flow,
 }
 
 Evaluator :: struct {
@@ -1996,6 +1998,21 @@ eval_or_else :: proc(ev: ^Evaluator, v: ^Expr_Or_Else) -> (Eval_Value, bool) {
 		return Eval_Value{}, false
 	}
 	if value.variant == shape.failure {
+		// design.md "or_else expression": run the exit, then unwind to the
+		// enclosing statement as a failing `or_return` does.
+		if v.exit != nil {
+			flow := eval_stmt(ev, v.exit)
+			frame := current_frame(ev)
+			if flow == .Fail || frame == nil {
+				return Eval_Value{}, false
+			}
+			if flow == .Return {
+				frame.returning = true
+			} else {
+				frame.exiting = flow
+			}
+			return Eval_Value{}, false
+		}
 		return eval_expr(ev, v.fallback)
 	}
 	return eval_union_payload(value, INVALID_TYPE), true
@@ -2862,6 +2879,12 @@ eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 		if frame := current_frame(ev); frame != nil && frame.returning && !ev.failed {
 			frame.returning = false
 			return .Return
+		}
+		// So is an `or_else` exit's (design.md "or_else expression").
+		if frame := current_frame(ev); frame != nil && frame.exiting != .Normal && !ev.failed {
+			flow := frame.exiting
+			frame.exiting = .Normal
+			return flow
 		}
 	}
 	return result

@@ -1896,6 +1896,18 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Or_Else:
 		value_loans := walk_flow_expr(graph, v.value)
+		// design.md "or_else expression": the failure leaves through its exit,
+		// which runs the cleanups the statement would, and only success resumes.
+		if v.exit != nil {
+			entry := graph.current
+			resume := new_flow_block(graph)
+			link(graph, entry, resume)
+			graph.current = new_flow_block(graph)
+			link(graph, entry, graph.current)
+			walk_flow_stmt(graph, v.exit)
+			graph.current = resume
+			return prov_payload_content(graph, value_loans, expr_base(v.value).type, v.type, v.span)
+		}
 		entry := graph.current
 		merge := new_flow_block(graph)
 		link(graph, entry, merge)

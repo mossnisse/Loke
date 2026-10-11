@@ -1703,6 +1703,37 @@ parse_return :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
+// `break`, `continue`, or `return value` after `or_else`: the statement the
+// failure runs, without the `;` that ends the enclosing statement. A value
+// runs to the end of the expression, as any `or_else` fallback does.
+@(private = "file")
+parse_or_else_exit :: proc(p: ^Parser) -> Stmt {
+	keyword := advance(p)
+	if keyword.kind != .Return {
+		s := new_stmt(p, Stmt_Branch, keyword)
+		s.kind = keyword.kind
+		return s
+	}
+	value: Return_Value
+	has_value := false
+	#partial switch current(p).kind {
+	case .Semicolon, .Rbrace, .Rparen, .Rbracket, .Comma, .EOF:
+	case:
+		value_start := current(p)
+		value.is_inout = allow(p, .Inout)
+		value.expr = parse_expr(p)
+		value.span = span_to_here(p, value_start)
+		has_value = true
+	}
+	s := new_stmt(p, Stmt_Return, keyword)
+	if has_value {
+		s.value = new(Return_Value, p.allocator)
+		s.value^ = value
+		s.has_error = expr_has_error(value.expr)
+	}
+	return s
+}
+
 @(private = "file")
 parse_branch :: proc(p: ^Parser) -> Stmt {
 	keyword := advance(p) // `break` or `continue`
@@ -1842,6 +1873,16 @@ parse_expr :: proc(p: ^Parser) -> Expr {
 	#partial switch current(p).kind {
 	case .Or_Else:
 		advance(p)
+		// design.md "or_else expression": the failure may leave instead.
+		#partial switch current(p).kind {
+		case .Break, .Continue, .Return:
+			exit := parse_or_else_exit(p)
+			e := new_expr(p, Expr_Or_Else, lo)
+			e.value = lhs
+			e.exit = exit
+			e.has_error = expr_has_error(lhs) || stmt_has_error(exit)
+			return e
+		}
 		fallback := parse_expr(p)
 		e := new_expr(p, Expr_Or_Else, lo)
 		e.value = lhs

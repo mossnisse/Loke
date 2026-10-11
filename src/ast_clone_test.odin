@@ -33,7 +33,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Expr_Unary, "op op_span mutable operand", ""},
 		{Expr_Binary, "op op_span lhs rhs", "negated"},
 		{Expr_Range, "op op_span lo hi", ""},
-		{Expr_Or_Else, "value fallback", "borrows fallback_clone"},
+		{Expr_Or_Else, "value fallback exit", "borrows fallback_clone"},
 		{Expr_Cond, "then cond otherwise", "then_clone else_clone"},
 		{Expr_Move, "value", "implicit"},
 		{Expr_Composite, "type_expr elements capture", "field_indices slot_ends element_clones backing via"},

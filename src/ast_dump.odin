@@ -412,6 +412,27 @@ literal_tag :: proc(kind: Literal_Kind) -> string {
 	return "literal"
 }
 
+// The exit of an `or_else`, inline: `(break)`, `(continue)`, `(return x)`.
+@(private = "file")
+dump_or_else_exit :: proc(b: ^strings.Builder, exit: Stmt, depth: int) {
+	#partial switch node in exit {
+	case ^Stmt_Branch:
+		fmt.sbprint(b, node.kind == .Break ? " (break)" : " (continue)")
+	case ^Stmt_Return:
+		fmt.sbprint(b, " (return")
+		if value := node.value; value != nil {
+			if value.is_inout {
+				fmt.sbprint(b, " (inout")
+				dump_child(b, value.expr, depth)
+				fmt.sbprint(b, ")")
+			} else {
+				dump_child(b, value.expr, depth)
+			}
+		}
+		fmt.sbprint(b, ")")
+	}
+}
+
 @(private = "file")
 dump_child :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	fmt.sbprint(b, " ")
@@ -494,7 +515,11 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	case ^Expr_Or_Else:
 		fmt.sbprint(b, "(or_else")
 		dump_child(b, node.value, depth)
-		dump_child(b, node.fallback, depth)
+		if node.exit != nil {
+			dump_or_else_exit(b, node.exit, depth)
+		} else {
+			dump_child(b, node.fallback, depth)
+		}
 		fmt.sbprint(b, ")")
 
 	case ^Expr_Cond:
