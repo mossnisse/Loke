@@ -6,7 +6,7 @@ Design rationale and differences from Odin are recorded in [comments.md](comment
 
 ## Package and import versioning
 
-Should import paths encode package versions, and should a package declaration remain mandatory in every file? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
+Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
 
 Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
 
@@ -28,10 +28,6 @@ Decided so far, and built as `loke.project` (compiler-guide.md "Projects"):
   alone does not pin source content: the lock must record the selected source,
   version, immutable commit ID, and content checksum for every dependency, as
   planned in [Packages and dependencies](future-plans.md#packages-and-dependencies).
-
-## package declaration
-
-is the package declaration needed or is it unessesary sermony?
 
 ## The `op`/`try_op` pair
 
@@ -149,9 +145,11 @@ The current [memory model](design.md#concurrency-and-the-memory-model) defines d
 
 The cost of keeping immutable `string` safe to copy and drop across threads is treated separately under [Thread-affine strings](#thread-affine-strings).
 
-high level concurrency constructs
-Should we have some monady thing for concurency like futures?
-Should we have some language help for reactivity, like procedures that automatically get called when an variable is changed?
+Higher-level constructs are a separate question: futures or a similar
+composable asynchronous result, and language help for reactivity, such as a
+procedure rerun when a variable it reads changes. Each needs a use of its own;
+[Thread transfer needs a visible contract](#thread-transfer-needs-a-visible-contract)
+already rules them out as the answer to borrowing across a join.
 
 ## Thread-affine strings
 
@@ -243,13 +241,6 @@ profiles contain.
   in Loke (Eisel-Lemire with a big-decimal fallback) would fix both. Is either
   worth that much code?
 
-## Open questions in `core:term`
-
-- Every console test writes records into the console the test run is using,
-  because Windows 10 cannot allocate a hidden console. Anything typed into that
-  console while `tests/run/lib_term_console` runs is read along with the
-  records it wrote.
-
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md "Formatting"](comments.md#formatting).
@@ -297,13 +288,11 @@ fewer exceptions, rather than shortening keywords.
 | Next | Compiler-selected ordinary union layout | Compact nested results | Representation contract |
 | Next | Stable written borrow contracts | Public signatures do not depend on implementation bodies | Procedure types |
 | Later | Localize unchecked operations | Unsafe obligations are visible where introduced | Syntax and APIs |
-| Later | Explicit-capture callables | Shorter callbacks | Small syntax additions |
 | Later | Checked disjoint access | Hand mutable halves to parallel workers | One compiler-known slice operation |
 | Later | Checked thread transfer and scoped workers | Reduce races and permit borrowed parallel work | Thread APIs and capabilities |
 
-The decided change should precede a broad syntax rewrite. The next group should
-be tried on concrete programs: a parser, a resource container, a sorting or
-partitioning algorithm, and a parallel numeric kernel.
+Try each on concrete programs before deciding: a parser, a resource container,
+a sorting or partitioning algorithm, and a parallel numeric kernel.
 
 ### Put unchecked obligations at their operation
 
@@ -446,18 +435,6 @@ the limit, add acceptance tests just beyond each boundary, and make written
 contracts/disjoint primitives reduce dependence on inferred shape. Raising
 numeric limits alone does not solve this architectural issue.
 
-### Callbacks deserve a small convenience
-
-Resolved. Every callback API takes a procedure or a callable record through
-[`interfaces.Callable`](design.md#standard-interface-catalogue), `x(args)`
-calls either ([Calling a value](design.md#calling-a-value)), and a
-[capture literal](design.md#capture-literals) declares the record and its
-`call` from a clause that says whether each capture copies, borrows, or moves.
-A borrowed capture is checked as any borrow a record holds, and nothing
-allocates. (The fallible-stream loop this item also covered is now
-[Conditional patterns](design.md#conditional-patterns).) What remains is under
-[Callable records, procedures, and closures](#callable-records-procedures-and-closures).
-
 ### Thread transfer needs a visible contract
 
 [The memory model](design.md#concurrency-and-the-memory-model) deliberately leaves
@@ -480,18 +457,3 @@ solely on a handle's destructor is insufficient when `unsafe.forget` can skip
 it. Process termination may end the guarantee because no parent continues.
 Do not add futures, async syntax, or reactive variables merely to solve this
 borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements).
-
-
-## Source review follow-up (2026-10-07)
-
-The [complete per-file review](source-review-2026-10-07.md) covers 168 implementation,
-library, example, benchmark, script, CI, and test-harness files. Small corpus
-fixtures were outside the agreed scope. The four earlier items fixed in
-`1a8aa53` remain closed. The confirmed language, library, and tooling findings
-are fixed or settled by the spec, and the ten candidates that needed evidence
-(C01–C10) were each reproduced and fixed.
-
-Sibling literal/container cleanup paths and large packed equality projections
-are identified beside their confirmed reproductions in
-[Known gaps](known-gaps.md#gaps). They still need separate checks when those
-families are fixed.

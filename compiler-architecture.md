@@ -484,9 +484,13 @@ Use `tests/run/lib_*.loke` and examples. Cover the boundaries relevant to the AP
   deterministic. Also check close followed by drop, double close, and unwind.
 
 Use fake short readers/writers as in `lib_io` and isolated temporary directories
-as in `lib_fs`. Terminal input and raw-mode restoration remain manual checks
-with `examples/keys.loke`, including close, scope exit, unwind, and the console
-control handler; `lib_term` automates output and redirected handles only.
+as in `lib_fs`. `lib_term` covers output and redirected handles;
+`lib_term_console` drives console input by writing records into the input
+buffer of the console the test run is using, because Windows 10 cannot allocate
+a hidden one. Do not type into that console while it runs, or the keys are read
+along with the records. It also checks that leaving raw mode restores the
+console's mode. Restoration during unwinding and the console control handler
+remain manual checks with `examples/keys.loke`.
 
 ## Reusable batch sessions
 
