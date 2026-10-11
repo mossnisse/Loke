@@ -5,7 +5,7 @@ package main; import "core:fmt";
 // call, survives the probe's rollback. A bound naming a map key already
 // rejected elsewhere adds no second error calling it "not a boolean".
 
-Bare :: struct { v: int }
+Bare :: struct { v: f64 }
 
 @(deprecated = "use fresh") old :: proc() -> bool { return true; }
 

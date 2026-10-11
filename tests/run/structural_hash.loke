@@ -1,0 +1,50 @@
+// design.md "Maps": a record or union that keeps its generated `==` hashes
+// structurally, as a map key and through its `hash` member, at run time and in
+// compile-time evaluation alike.
+package main;
+import "core:fmt";
+import "base:interfaces";
+
+Point :: struct { x, y: int }
+Shape :: union { circle: Point, square: Point, empty }
+
+// A part with its own `==` hashes by its own `hash`.
+Name :: struct { text: string }
+impl Name {
+	same :: operator(==) proc(a, b: Name) -> bool { return a.text.len() == b.text.len(); }
+	hash :: proc(self, seed: uint) -> uint { return seed ~ uint(self.text.len()); }
+}
+Tagged :: struct { name: Name, at: Point }
+
+count_keys :: proc(m: map[$K]int) -> int where interfaces.Hashable(K) { return m.len(); }
+
+H1 :: Point{1, 2}.hash(7);
+H2 :: Shape.circle({1, 2}).hash(7);
+H3 :: Tagged{{"ab"}, {3, 4}}.hash(7);
+
+main :: proc() {
+	m: map[Point]string = {};
+	m[Point{1, 2}] = "a";
+	m[Point{2, 1}] = "b";
+	m[Point{1, 2}] = "c";
+	fmt.println(m.len(), m[Point{1, 2}], m[{2, 1}], Point{3, 4} in m);
+
+	shapes: map[Shape]int = {};
+	shapes[.circle({1, 1})] = 1;
+	shapes[.square({1, 1})] = 2;
+	shapes[.empty] = 3;
+	fmt.println(shapes.len(), shapes[.circle({1, 1})], shapes[.square({1, 1})], shapes[.empty]);
+
+	pairs: map[(int, string)]int = {};
+	pairs[{1, "one"}] = 1;
+	fmt.println(pairs[{1, "one"}], count_keys(pairs));
+
+	tagged: map[Tagged]int = {};
+	tagged[{{"ab"}, {3, 4}}] = 5;
+	fmt.println(tagged[{{"xy"}, {3, 4}}]);   // `Name`'s `==` compares lengths
+
+	p := Point{1, 2};
+	s := Shape.circle({1, 2});
+	t := Tagged{{"ab"}, {3, 4}};
+	fmt.println(p.hash(7) == H1, s.hash(7) == H2, t.hash(7) == H3, Shape.circle({1, 2}).hash(7) != Shape.square({1, 2}).hash(7));
+}

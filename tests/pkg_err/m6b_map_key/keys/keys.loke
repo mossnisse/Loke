@@ -3,4 +3,4 @@
 package keys;
 
 @(public)
-Id :: struct { @(public) v: int }
+Id :: struct { @(public) v: int, @(public) weight: f64 }

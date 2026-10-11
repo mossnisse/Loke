@@ -7,6 +7,7 @@
 // hash-flooding defence needs, is not derived here.
 package lokec
 
+import "core:fmt"
 import "core:mem"
 
 // The 64-bit FNV prime.
@@ -14,8 +15,19 @@ HASH_MULTIPLIER :: u64(1099511628211)
 
 // design.md: `bool`, integers, runes, `string`, `string_view`, pointers,
 // enums, `typeid`, and fixed arrays of hashable elements. Not floats: NaN is
-// unequal to itself, so no `==` over floats is coherent with any hash.
+// unequal to itself, so no `==` over floats is coherent with any hash. A
+// record or union that keeps its generated `==` hashes structurally too
+// (design.md "Maps"), part by part.
 type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	seen: Type_Walk
+	defer delete(seen)
+	return type_is_hashable_walk(c, id, &seen)
+}
+
+// Guarded because a record diagnosed as containing itself still reaches
+// body checking.
+@(private = "file")
+type_is_hashable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bool {
 	under := type_underlying(c, id)
 	info := type_of(c, under)
 	if info == nil {
@@ -28,9 +40,72 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	     .Untyped_Int, .Untyped_Bool, .Untyped_Rune, .Untyped_String:
 		return true
 	case .Array:
-		return type_is_hashable(c, info.element)
+		return type_is_hashable_walk(c, info.element, seen)
+	case .Struct, .Union:
+		if !record_hashes_structurally(c, id, under, info) {
+			return false
+		}
+		// A type seen before answers as it did then, or is a diagnosed cycle.
+		if !type_walk_enter(seen, under, info) {
+			return true
+		}
+		parts := make([dynamic]Type_Id, 0, len(info.fields) + len(info.variants))
+		defer delete(parts)
+		if info.kind == .Struct {
+			for field in info.fields {
+				sym := symbol_of(c, field)
+				// design.md "Uninitialized capacity": a counted prefix is no structural part.
+				if sym == nil || sym.initialized_by != INVALID_SYMBOL {
+					return false
+				}
+				append(&parts, sym.type)
+			}
+		} else {
+			for variant in info.variants {
+				if variant != TYPE_VOID {
+					append(&parts, variant)
+				}
+			}
+		}
+		for part in parts {
+			// A part with its own `==` is hashed by its own `hash`.
+			if type_own_equality(c, part) != INVALID_SYMBOL {
+				if part_own_hash(c, part) == INVALID_SYMBOL {
+					return false
+				}
+			} else if !type_is_hashable_walk(c, part, seen) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
+}
+
+// A record or union with the generated `==`, which a structural `hash` is the
+// coherent partner of: none of its own, no `hash` of its own, not a callable,
+// and not packed, whose fields are read in place.
+@(private = "file")
+record_hashes_structurally :: proc(c: ^Compiler, id, under: Type_Id, info: ^Type_Info) -> bool {
+	if info.packed || type_is_capture_record(c, under) {
+		return false
+	}
+	if type_own_equality(c, id) != INVALID_SYMBOL || inherent_member_named(c, under, "hash") != INVALID_SYMBOL {
+		return false
+	}
+	return true
+}
+
+// The `hash` a part with its own `==` must also declare, which a structural
+// hash calls for it; INVALID_SYMBOL when the part hashes structurally.
+part_own_hash :: proc(c: ^Compiler, part: Type_Id) -> Symbol_Id {
+	if type_own_equality(c, part) == INVALID_SYMBOL {
+		return INVALID_SYMBOL
+	}
+	if found := inherent_member_named(c, part, "hash"); found != INVALID_SYMBOL {
+		return found
+	}
+	return inherent_member_named(c, type_underlying(c, part), "hash")
 }
 
 // A float, or a fixed array of them, as `type_is_hashable` excludes.
@@ -47,6 +122,33 @@ type_holds_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
 		return type_holds_float(c, info.element)
 	}
 	return false
+}
+
+// The first field or variant that keeps a record or union from hashing
+// structurally, for the diagnostic.
+@(private = "file")
+first_unhashable_part :: proc(c: ^Compiler, type: Type_Id) -> (string, Type_Id, bool) {
+	info := type_of(c, type_underlying(c, type))
+	if info == nil || (info.kind != .Struct && info.kind != .Union) {
+		return "", INVALID_TYPE, false
+	}
+	unhashable :: proc(c: ^Compiler, part: Type_Id) -> bool {
+		return part != TYPE_VOID && part_own_hash(c, part) == INVALID_SYMBOL && !type_is_hashable(c, part)
+	}
+	if info.kind == .Union {
+		for variant, index in info.variants {
+			if unhashable(c, variant) {
+				return union_variant_name(c, type_underlying(c, type), index), variant, true
+			}
+		}
+		return "", INVALID_TYPE, false
+	}
+	for field in info.fields {
+		if sym := symbol_of(c, field); sym != nil && unhashable(c, sym.type) {
+			return identifier_text(c, sym.name), sym.type, true
+		}
+	}
+	return "", INVALID_TYPE, false
 }
 
 // design.md "Maps": the compiler supplies a key's `==`/`hash` pair, or the key
@@ -76,6 +178,12 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 		}
 		if type_holds_float(c, key) {
 			return Key_Policy{}, "holds a float, and NaN never equals itself, so no float is hashable; key by an integer image of the value instead"
+		}
+		if part, part_type, found := first_unhashable_part(c, key); found {
+			return Key_Policy{}, fmt.aprintf(
+				"has `%s: %s`, which is not hashable, so it needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package",
+				part, type_name(c, part_type), allocator = c.semantic_allocator,
+			)
 		}
 		return Key_Policy{}, "needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package"
 	}

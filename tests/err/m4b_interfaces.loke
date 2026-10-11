@@ -12,7 +12,7 @@ Named :: interface($T: type) {
 
 Bad :: interface() { }
 
-Flag :: struct { on: bool }
+Flag :: struct { on: bool, level: f32 }
 
 // An interface is compile-time metadata, not a runtime type.
 stored: Additive;
@@ -26,6 +26,6 @@ main :: proc() {
 	fmt.println(sum3(f, f, f));
 	b: Boxed(Flag) = {};
 	static_assert(Additive(int, f64));
-	// A record or union needs its own coherent equality and hash pair.
+	// A record holding a float has no generated hash (design.md "Maps").
 	fmt.println(int(f.hash(uint(0))));
 }

@@ -163,8 +163,72 @@ emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 }
 
 emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {
+	// design.md "Maps": a part with its own `==` hashes by its own `hash`, which
+	// is the coherent partner of the `==` structural equality calls for it.
+	if own := part_own_hash(e.c, type); own != INVALID_SYMBOL {
+		address := value
+		if !is_large_value(e, type) {
+			address = alloca(e, llvm_type(e, type))
+			store(e, type, value, address)
+		}
+		out := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i64 %s(%s, i64 %s)",
+			out, symbol_name(e, own), hook_argument(e, own, 0, type, address), seed,
+		)
+		return out
+	}
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
+	// A record mixes its fields in declaration order, as an array mixes its
+	// elements; a large one is an address, read in place.
+	if info != nil && info.kind == .Struct {
+		current := seed
+		for field, index in info.fields {
+			symbol := symbol_of(e.c, field)
+			part := ""
+			if is_large_value(e, under) {
+				address := element_address(e, under, value, index)
+				part = is_large_value(e, symbol.type) ? address : load_place(e, symbol.type, address)
+			} else {
+				part = extract(e, llvm_type(e, under), value, index)
+			}
+			current = emit_hash_value(e, symbol.type, part, current)
+		}
+		return current
+	}
+	// A union mixes its tag, then the active payload, so two variants with one
+	// payload type hash apart.
+	if info != nil && info.kind == .Union {
+		shape := union_layout(e.c, under)
+		tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+		tag := emit_union_tag(e, under, value)
+		widened, mixed, tagged := temp(e), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = zext %s %s to i64", widened, tag_llvm, tag)
+		fmt.sbprintfln(&e.b, "  %s = xor i64 %s, %s", mixed, seed, widened)
+		fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", tagged, mixed, HASH_MULTIPLIER)
+		slot := emit_union_spill(e, under, value)
+		state := alloca(e, "i64")
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", tagged, state)
+		done := new_label(e, "unionhash.done")
+		for variant, index in info.variants {
+			if variant == TYPE_VOID {
+				continue
+			}
+			active := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", active, tag_llvm, tag, index)
+			hit, next := new_label(e, "unionhash.hit"), new_label(e, "unionhash.next")
+			branch_if(e, active, hit, next)
+			place_label(e, hit)
+			payload := emit_union_payload(e, under, variant, slot)
+			payload_hash := emit_hash_value(e, variant, payload, tagged)
+			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", payload_hash, state)
+			branch(e, done)
+			place_label(e, next)
+		}
+		place_label(e, done)
+		return load(e, "i64", state)
+	}
 	if info != nil && info.kind == .Array && is_large_value(e, under) {
 		// A large array is an address, so its elements are hashed in place, in a
 		// loop rather than unrolled.

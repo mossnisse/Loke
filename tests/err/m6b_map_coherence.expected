@@ -1,6 +1,6 @@
 L0586
 @35:2
-`Bare` cannot be a map key: it needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package
+`Bare` cannot be a map key: it has `v: f64`, which is not hashable, so it needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package
 L0586
 @36:2
 `Half` cannot be a map key: it has an inherent `hash` but no inherent `==`

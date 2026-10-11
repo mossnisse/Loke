@@ -688,6 +688,15 @@ Signed `x << n` equals multiplication by a power of two only when that product
 fits. Explicitly separating bit operations from checked arithmetic keeps both
 uses predictable.
 
+### Generated `hash` follows generated `==`
+
+A record already compares field by field without a written `==`, so requiring a
+written `hash` before it could be a map key cost a hand-written pair for every
+key type. The inherent-pair rule exists so one policy holds across packages; a
+generated member is inherent, and a structural hash is coherent with structural
+equality by construction. A part with its own `==` must bring its own `hash`,
+which the generated one calls, so the pair stays coherent at every depth.
+
 ### `in` is a comparison, not an additive operator
 
 `in` produces a Boolean, so it shares comparison precedence. Giving it additive

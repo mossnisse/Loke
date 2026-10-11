@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-Bare :: struct { v: int }
+Bare :: struct { v: f64 }
 
 // Discovery first declares this block quietly and rolls back its diagnostics;
 // that attempt must not mark the key as reported, or the bad key is never

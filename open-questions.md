@@ -489,12 +489,12 @@ the headings named, and comments.md records the reasoning:
 - A `package main` prints its fields and cannot be imported ("Exported
   names").
 - A checked pointer prints as its referent ("String format printing").
+- A record that keeps its generated `==` gets a generated `hash` ("Maps").
 
 ### Recommended order
 
 | Priority | Proposal | Main benefit |
 | --- | --- | --- |
-| Next | Generate `hash` where `==` is generated | Plain records become map keys |
 | Next | `main` may return a fallible union | `or_return` in `main`, a failing exit status |
 | Later | One temporary-lifetime rule | Three lifetime rules become one |
 | Later | Field bindings in a case | Recursive unions without clones |
@@ -503,18 +503,6 @@ the headings named, and comments.md records the reasoning:
 | Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
 | Later | No public mutable globals | Effects stop crossing packages invisibly |
 | Later | Test procedures | Unit tests for package-private code |
-
-### Generate `hash` where `==` is generated
-
-`Point :: struct { x, y: int }` compares with generated structural `==`, yet
-`map[Point]int` is `L0586` until the package writes both an inherent `==` and
-`hash`. The inherent-pair rule in [Maps](design.md#maps) keeps one hashing
-policy per key type across packages, and a generated member is inherent, so
-generation keeps that property. Generate `hash` for a record, union, or
-anonymous record that declares no `==` of its own and whose parts are all
-`Hashable`, mixing the parts in declaration order as a fixed array's elements
-already are. A type that writes its own `==` still writes its own `hash`, so
-coherence holds by construction.
 
 ### `main` may return a fallible union
 

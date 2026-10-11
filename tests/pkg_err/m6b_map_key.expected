@@ -1,3 +1,3 @@
 L0586
 @21:2
-`Id` cannot be a map key: it needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package
+`Id` cannot be a map key: it has `weight: f64`, which is not hashable, so it needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package

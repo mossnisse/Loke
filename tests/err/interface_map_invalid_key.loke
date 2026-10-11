@@ -3,7 +3,7 @@ package main; import "core:fmt"; import "base:interfaces";
 // A map type named only as an interface argument is checked like a declared
 // one: its key needs a coherent `==`/`hash` pair. This used to reach the
 // backend and fail its contract (L0405) instead.
-Bare :: struct { id: int }
+Bare :: struct { id: f64 }
 
 main :: proc() {
 	fmt.println(interfaces.Iterable(map[Bare]int));

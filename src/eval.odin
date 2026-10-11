@@ -2285,11 +2285,11 @@ eval_standard_customization :: proc(ev: ^Evaluator, v: ^Expr_Call, chosen: ^Symb
 		value, value_ok := eval_expr(ev, v.bound[0])
 		seed, seed_ok := eval_expr(ev, v.bound[1])
 		if !value_ok || !seed_ok { return Eval_Value{}, false }
-		frozen_value, froze_value := freeze(ev, value, ev.alloc)
 		frozen_seed, froze_seed := freeze(ev, seed, ev.alloc)
-		if !froze_value || !froze_seed { return Eval_Value{}, false }
+		if !froze_seed { return Eval_Value{}, false }
 		start, _ := bi_to_u64(ev.alloc, bi_wrap(ev.alloc, frozen_seed.integer, 64, false))
-		mixed := hash_const(ev.k.c, frozen_value, expr_base(v.bound[0]).type, start, ev.alloc)
+		mixed, mixed_ok := eval_hash(ev, value, expr_base(v.bound[0]).type, start, v.span)
+		if !mixed_ok { return Eval_Value{}, false }
 		return Eval_Value{kind = .Integer, type = TYPE_UINT, integer = bi_from_u64(ev.alloc, mixed)}, true
 
 	case:
@@ -3663,4 +3663,67 @@ eval_return :: proc(ev: ^Evaluator, s: ^Stmt_Return) -> Eval_Flow {
 	}
 	frame.result = copied
 	return .Return
+}
+
+// The same mix the backend's `emit_hash_value` makes: a part with its own `==`
+// by its own `hash`, a record's fields and an array's elements in order, a
+// union's tag and then its payload, and a scalar as `hash_const` does.
+@(private = "file")
+eval_hash :: proc(ev: ^Evaluator, value: Eval_Value, type: Type_Id, seed: u64, span: Span) -> (u64, bool) {
+	c := ev.k.c
+	if own := part_own_hash(c, type); own != INVALID_SYMBOL {
+		if !ensure_proc_typed_for_eval(ev.k, own) {
+			return 0, eval_fail(ev, span, "L0341", "this `hash` cannot be evaluated")
+		}
+		seed_value := Eval_Value{kind = .Integer, type = TYPE_UINT, integer = bi_from_u64(ev.alloc, seed)}
+		result, ok := eval_invoke(ev, own, nil, span, []Eval_Value{value, seed_value})
+		if !ok || result.kind != .Integer {
+			return 0, false
+		}
+		mixed, _ := bi_to_u64(ev.alloc, bi_wrap(ev.alloc, result.integer, 64, false))
+		return mixed, true
+	}
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info != nil && value.kind == .Aggregate {
+		#partial switch info.kind {
+		case .Struct:
+			current := seed
+			for field, index in info.fields {
+				sym := symbol_of(c, field)
+				if sym == nil || index >= len(value.elements) {
+					return 0, eval_fail(ev, span, "L0341", "this value cannot be hashed at compile time")
+				}
+				ok: bool
+				if current, ok = eval_hash(ev, value.elements[index], sym.type, current, span); !ok {
+					return 0, false
+				}
+			}
+			return current, true
+		case .Array:
+			current := seed
+			for element in value.elements {
+				ok: bool
+				if current, ok = eval_hash(ev, element, info.element, current, span); !ok {
+					return 0, false
+				}
+			}
+			return current, true
+		case .Union:
+			tagged := (seed ~ u64(value.variant)) * HASH_MULTIPLIER
+			if value.variant < 0 || value.variant >= len(info.variants) {
+				return 0, eval_fail(ev, span, "L0341", "this value cannot be hashed at compile time")
+			}
+			payload := info.variants[value.variant]
+			if payload == TYPE_VOID || len(value.elements) == 0 {
+				return tagged, true
+			}
+			return eval_hash(ev, value.elements[0], payload, tagged, span)
+		}
+	}
+	frozen, froze := freeze(ev, value, ev.alloc)
+	if !froze {
+		return 0, false
+	}
+	return hash_const(c, frozen, type, seed, ev.alloc), true
 }

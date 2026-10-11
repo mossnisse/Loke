@@ -1259,6 +1259,14 @@ A map maps keys to values. Its zero value is empty and immediately usable. Like 
 
 Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `value.hash(seed: uint) -> uint` (equal values produce equal hashes). Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
 
+A struct, union, or anonymous record that keeps the generated [structural `==`](#comparison-operators) — it declares no `==` and no `hash` of its own — has a generated `hash` too, and so is a key with nothing written, when every part is hashable: each field, or each variant's payload. A part with its own `==` counts when it also has its own `hash`, which the generated one calls for it. The generated `hash` mixes the fields in declaration order, or a union's variant and then its payload, the way a fixed array mixes its elements, and it is coherent with the generated `==` by construction. A packed struct, one with an [`@(initialized)`](#uninitialized-capacity) field, and a capture literal's record have none.
+
+```odin
+Point :: struct { x, y: int }
+visits: map[Point]int = {};    // no `==` or `hash` written
+visits[Point{1, 2}] = 1;
+```
+
 A key must also be copyable. It is copied into the map on insertion, and a lookup has to write a second value equal to it — which a `move_only` type exists to prevent. A move-only key is rejected where the map type is named; a move-only *value* is fine (see [Container insertion](#container-insertion)).
 
 ```odin
@@ -3062,7 +3070,7 @@ Built-in satisfaction follows the operations the language already defines:
 
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers including `rawptr` and C pointers, enums, `typeid`, and recursively comparable fixed arrays satisfy `Equatable`; records and unions do so when their generated or inherent equality is available;
 - integers, floats, runes, `string`, `string_view`, pointers on targets that support pointer ordering, and enums satisfy `Ordered`;
-- `bool`, integers, runes, `string`, `string_view`, pointers, enums, `typeid`, and fixed arrays of hashable elements satisfy `Hashable`. Floats do not: a NaN is unequal to itself, so no hash is coherent with float `==`, and a float key could be inserted repeatedly and never found. A map keyed by a float value keys by an integer image of it instead, such as its bits through [`unsafe.transmute`](#unsafetransmute) or a scaled, rounded integer. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
+- `bool`, integers, runes, `string`, `string_view`, pointers, enums, `typeid`, fixed arrays of hashable elements, and records and unions with a [generated `hash`](#maps) satisfy `Hashable`. Floats do not: a NaN is unequal to itself, so no hash is coherent with float `==`, and a float key could be inserted repeatedly and never found. A map keyed by a float value keys by an integer image of it instead, such as its bits through [`unsafe.transmute`](#unsafetransmute) or a scaled, rounded integer. Other user records and unions require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`;
 - every copyable type satisfies `Cloneable`. A plain value — `bool`, integers, floats, runes, enums, pointers, slices, views, `typeid`, and procedures — is its own clone; owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, and aggregates containing them, clone ownership-recursively.
 

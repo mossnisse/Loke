@@ -472,6 +472,13 @@ checklist.
 
 ### Added
 
+- A struct, union, or anonymous record that keeps its generated `==` gets a
+  generated `hash`, so `map[Point]int` needs no hand-written pair for
+  `Point :: struct { x, y: int }` (design.md "Maps"). It exists when every
+  field or payload is hashable, a part with its own `==` counting when it also
+  has its own `hash`, which the generated one calls. Such a type satisfies
+  `interfaces.Hashable` and has a `hash(seed)` member. A key that is still
+  rejected (`L0586`) now names the field or variant that is not hashable.
 - An `or_else` fallback may leave: `entry := table.find(name) or_else continue;`,
   `or_else break`, and `or_else return value` run that statement on failure,
   with its cleanups, and the expression yields the success payload (design.md

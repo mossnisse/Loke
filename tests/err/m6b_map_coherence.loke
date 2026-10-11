@@ -10,7 +10,7 @@ package main; import "core:fmt";
 // it has.
 
 // Neither operation.
-Bare :: struct { v: int }
+Bare :: struct { v: f64 }
 
 // One half only.
 Half :: struct { v: int }

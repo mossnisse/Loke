@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-Bare :: struct { v: int }
+Bare :: struct { v: f64 }
 
 // Probed and rejected for `pick(1)`: its `$` default names a map with a bad
 // key. The probe's diagnostics are rolled back, so it must not also mark the

@@ -335,6 +335,7 @@ lookup_package :: proc(k: ^Checker) -> Package_Id {
 ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	ensure_format_member(k, type, name)
 	ensure_standard_customization_members(k, type)
+	ensure_record_hash_member(k, type, name)
 	ensure_iteration_members(k, type)
 	ensure_mutable_iteration_members(k, type)
 	ensure_item_member(k, type)
