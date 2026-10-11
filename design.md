@@ -6,7 +6,14 @@ collects non-normative design rationale, [open-questions.md](open-questions.md)
 records open questions and unresolved findings, and [known-gaps.md](known-gaps.md)
 records where the current compiler does not yet implement what is written here.
 
-Headings here are cited by name from source comments and checked by `check-citations.ps1`, so renaming or removing one is an interface change.
+For a guided introduction, use the [tutorials](tutorials/README.md). Within this
+reference, [Type conversion](#type-conversion), [Value semantics and the ownership
+rule](#value-semantics-and-the-ownership-rule), and [Borrows and
+lifetimes](#borrows-and-lifetimes) define rules shared by the individual features.
+Library APIs are documented in [standard-library.md](standard-library.md).
+
+Headings are cited by name from source comments and checked by
+`check-citations.ps1`; renaming or removing one is an interface change.
 
 ## Contents
 
@@ -63,7 +70,8 @@ Headings here are cited by name from source comments and checked by `check-citat
 
 ## A first program
 
-Enough of the language to read the rest: a package and its imports, a record with an inherent method and an operator, failure as a type, an owning container, and one variant switch at the top.
+This program creates a list of points and prints them, or reports an error if a
+coordinate is negative. It introduces features explained in the sections below.
 
 ```odin
 package main;
@@ -414,49 +422,54 @@ A method receiver is not a destination, so an unfixed receiver takes its default
 
 ### string type
 
-`string` is an immutable, owning UTF-8 value. It behaves like a simple local variable: it can be assigned, returned, and stored with no explicit construction, cleanup, or `defer`.
+`string` is an immutable, owning UTF-8 value. Assignment, return, and storage
+use ordinary [managed-value semantics](#managed-values-and-storage): copies may
+share immutable backing storage, and cleanup uses its original allocator.
+That allocator must allow deallocation on any thread receiving the string.
 
 ```odin
 first := "hello";
-second := first;              // cheap value copy; backing storage may be shared
-message := first + " world";
+second := first;              // cheap copy; backing storage may be shared
+message := first + " world";  // a new string
 ```
 
-A string literal uses static storage. As a method receiver, a literal or a named string constant is a `string_view` of that storage, so it has the view's operations and what they borrow outlives every scope: a procedure may return `"hello".bytes()`. A runtime string owns managed storage and releases it through the allocator used to create it. Copies may share immutable storage. When a string is transferred between threads, its allocator must permit deallocation on the receiving thread. Use `[]u8` or `string_view` for a non-owning view.
+Literals use static storage. A literal or named string constant used as a method
+receiver is a `string_view` of that storage; its borrows outlive every scope,
+so a procedure may return `"hello".bytes()`.
 
-A `string` always holds valid UTF-8; arbitrary bytes use `[]u8` or `[dynamic]u8`. A string literal is held to this at compile time (see [Escape characters](#escape-characters)). The named constructor `string.from_utf8(bytes)` validates a byte slice and returns `.none` for invalid UTF-8.
+A string always holds valid UTF-8. Literals are checked at compile time;
+`string.from_utf8(bytes)` validates a byte slice and returns `.none` on invalid
+input. Arbitrary bytes use `[]u8` or `[dynamic]u8`.
 
-String operations name their unit:
+| Operation | Result |
+| --- | --- |
+| `text.byte_len()`, `text.len()` | Byte length, O(1). |
+| `text.rune_count()` | Unicode scalar count, O(n). |
+| `text.bytes()` | Read-only borrowed `[]u8`. |
 
-```odin
-text := "Hej, världen";
-byte_count := text.byte_len();   // O(1)
-rune_count := text.rune_count(); // O(n)
-bytes := text.bytes();           // read-only borrowed []u8
-```
-
-`text.len()` is shorthand for `text.byte_len()` (constant time). A string cannot be indexed by integer, since a code point may span several bytes; use `text.bytes()[i]`, iteration, or Unicode procedures. Grapheme clusters are handled by the Unicode library, not the core string type.
-
-Use `core:strings.String_Builder` for repeated concatenation:
-
-```odin
-builder: String_Builder = {};
-builder.append("hello");
-builder.append(' ');
-builder.append("world");
-message := builder.finish(); // copies the text into an immutable string; the buffer is kept for reuse
-```
+Strings cannot be indexed by integer; use `text.bytes()[i]` or rune iteration.
+Grapheme segmentation is outside the core string model and is
+[planned library work](future-plans.md#standard-library-maturity), not a shipped
+standard-library facility. For repeated concatenation, use
+[`String_Builder`](standard-library.md#string_builder); `finish` copies into an
+immutable string and retains the builder's buffer for reuse.
 
 #### String iteration
 
-String iteration yields Unicode scalar values (runes) by default; byte iteration is explicit. A string's `Element` is `rune`, so a plain loop binds exactly one name.
+String iteration yields Unicode scalar values (`rune`). Its `Element` is `rune`,
+so a plain loop binds one name. Byte offsets and rune ordinals are distinct:
 
-`rune_offsets()` yields each rune with the byte index where it begins. The index advances by 1–4 bytes and can be used with `x.bytes()`, slicing, or a low-level API. Use `indexed()` when a rune ordinal is needed instead.
+| Traversal | Element |
+| --- | --- |
+| `x`, `x.runes()` | A rune. `runes()` returns a `string_view` of the same bytes. |
+| `x.rune_offsets()` | `(value: rune, offset: int)`, with each rune's starting byte offset. |
+| `x.indexed()` | A rune and its zero-based ordinal. |
+| `x.bytes().indexed()` | A byte and its zero-based byte index. |
 
-`x.runes()` names the same traversal a bare loop over `x` performs, and returns the `string_view` over the same bytes. `x.rune_offsets()` returns a borrowed view whose `Element` carries the offset beside the value. Both are ordinary values that can be stored and passed; neither copies or allocates.
+The views borrow their source, can be stored and passed, and do not copy or
+allocate. Byte offsets advance by 1–4 bytes and can be used for slicing:
 
 ```odin
-// by runes with byte offsets: `Element` is `(value: rune, offset: int)`
 x := "AÅ✓";
 foreach (codepoint, offset in x.rune_offsets()) {
 	fmt.println(offset, codepoint);
@@ -465,25 +478,9 @@ foreach (codepoint, offset in x.rune_offsets()) {
 	// 3 ✓     (3 bytes)
 }
 assert(x.len() == 6);
-
-// by bytes: `index` is an ordinary slice index
-foreach (b, index in x.bytes().indexed()) {
-	fmt.println(index, b);
-}
 ```
 
-Code needing a running rune ordinal asks for one; `indexed()` counts the elements it is applied to, which for a string are runes:
-
-```odin
-foreach (codepoint, ordinal in x.indexed()) {
-	fmt.println(ordinal, codepoint);
-	// 0 A
-	// 1 Å
-	// 2 ✓
-}
-```
-
-Low-level string indices are byte offsets throughout; Unicode procedures state their unit in their names.
+Low-level string indices are byte offsets; Unicode procedures name their unit.
 
 #### String format printing
 
@@ -632,12 +629,15 @@ A pointer contains the memory address of a value. `^T` is a read-only pointer to
 p: Option(^int) = .none;
 ```
 
-`&` returns a read-only borrow of a readable addressable operand, and `&mut` an exclusive mutable borrow of one this body may write:
+Use `&value` to create a pointer that can read the value. Use `&mut value` to
+create a pointer that can also change it; this borrow is exclusive. Both require
+an initialized value whose address can be taken, and `&mut` additionally requires
+permission to modify it:
 
 ```odin
 i := 423;
-reader := &i;      // ^int
-writer := &mut i;  // ^mut int
+reader := &i;      // ^int: can read i
+writer := &mut i;  // ^mut int: can read and change i
 ```
 
 `&` reaches every place that can be read: a local, a value parameter, an element of a `[]T`, and a [materialized constant](#materialization). `&mut` additionally requires that the place be assignable, so a value parameter, a `[]T` element, and a constant all reject it. Neither reaches a [packed](#packed) field or an `any_view`.
@@ -744,22 +744,19 @@ For a nested fixed array, `unsafe.raw_data` exposes one array level at a time. I
 
 ### Fixed arrays
 
-A fixed array contains a compile-time known number of elements of one type. An array index has an integer or rune type.
-
-This declaration constructs a fixed array:
+`[N]T` contains a compile-time known number of contiguous `T` elements, with the
+layout of a record containing one field per element. Indices are integers or
+runes, starting at zero:
 
 ```odin
 x := [5]int{1, 2, 3, 4, 5};
-foreach (i in 0..=4) {
-	fmt.println(x[i]);
-}
+fmt.println(x[0]); // 1
 ```
 
-A fixed array stores its elements contiguously. Its layout is equivalent to a record with one field for each element.
-
-`x[i]` accesses element `i` of `x`. The first element has index 0.
-
-**A `[N]T` converts implicitly to a `[]T`** of all its elements, as a [`[dynamic]T`](#dynamic-arrays) does: a zero-cost read-only borrow of the array, which the view cannot outlive. `total(x)` therefore passes a slice of `x` to `total :: proc(values: []int) -> int`, and a generic `[]$T` parameter binds `T` to the element. The writable `[]mut T` stays explicit, `x[:]` from a mutable place.
+A fixed array converts implicitly to a read-only `[]T` of all its elements.
+This zero-cost borrow cannot outlive the array, and a generic `[]$T` parameter
+binds `T` to the element type. A writable view requires `&mut x[:]` from a mutable
+place; ordinary `x[:]` remains read-only. See [Slices](#slices).
 
 #### Multidimensional arrays
 
@@ -817,67 +814,50 @@ p[n] = 123; // unchecked; the programmer proves that n is valid
 
 ### Slices
 
-A slice is a non-owning view of a sequence. Its length is a runtime value. `[]T` has read-only elements. `[]mut T` has mutable elements. Both types have the same runtime representation. Mutability is a static capability and does not change the ABI.
+A slice is a non-owning pointer-and-length view. `[]T` has read-only elements;
+`[]mut T` has writable elements. Both have the same ABI representation, with
+mutability enforced as a static capability.
 
-Slice mutability follows the capability, not the storage:
+| Expression or conversion | Capability |
+| --- | --- |
+| `a[lo:hi]` over an array, dynamic array, or slice | Always `[]T`, regardless of storage or expected type. |
+| `&mut a[lo:hi]` | `[]mut T`; requires a mutable array/dynamic-array place or an existing mutable slice. |
+| `[]mut T` to `[]T` | Implicit weakening. The reverse is never permitted, even if the original storage is mutable. |
+| String or string-view slicing | A [`string_view`](#string-views). |
+| [C-pointer slicing](#c-pointers) with both bounds | `[]mut T`; the unchecked-pointer exception. |
 
-- A mutable slice implicitly weakens to a read-only slice. A read-only slice never converts to a mutable slice, even when its original owner is mutable.
-- `a[lo:hi]` is always a `[]T`, as `&x` is always a `^T`, whatever the storage and whatever the destination. `&mut a[lo:hi]` is the one way to ask for a `[]mut T`, as `&mut x` asks for a `^mut T`; the operand must be writable: a mutable array or dynamic array place, or an existing `[]mut T`. So a call that may change elements shows it, `fill(&mut buffer[:])`, and adding a type annotation or an adapter never changes what a slice expression means. A [C pointer](#c-pointers) is the exception: slicing one with both bounds gives a `[]mut T`.
-- Slicing a `string` or `string_view` produces a [`string_view`](#string-types-and-views) over those bytes, not a slice.
+Annotations and adapters cannot upgrade a slice's capability. A mutating call
+therefore spells its borrow explicitly: `fill(&mut buffer[:])`.
 
-A slice expression has a low bound and a high bound separated by a colon:
-
-```text
-a[low : high]
-```
-
-The range includes the low bound and excludes the high bound. Either bound may be omitted: the low defaults to 0 and the high to the length, so for `a: [6]int` the expressions `a[0:6]`, `a[:6]`, `a[0:]`, and `a[:]` are equivalent.
+`a[low:high]` includes `low` and excludes `high`. Omitted bounds default to zero
+and length, so `a[:]` views the whole sequence. `x.len()` returns a slice's length.
 
 ```odin
 fibonaccis := [6]int{0, 1, 1, 2, 3, 5};
-s: []int = fibonaccis[1:4]; // creates a slice which includes elements 1 through 3
+s: []int = fibonaccis[1:4];
 fmt.println(s); // [1, 1, 2]
 ```
 
-A slice does not own element storage. Its runtime value contains a pointer and a length.
-
-**A slice is a borrow.** It is not an owning value: it has no allocator, it is never cleaned up at scope exit. Creating a slice over a dynamic array therefore constrains that container for as long as the slice is live, and the rules in [Borrows and lifetimes](#borrows-and-lifetimes) apply in full:
+A slice has no allocator or scope-exit cleanup. It borrows its owner's storage
+under [Borrows and lifetimes](#borrows-and-lifetimes), preventing invalidation
+while live:
 
 ```odin
 numbers := [dynamic]int{1, 2, 3};
-view: []int = numbers[:]; // a read-only slice
+view: []int = numbers[:];
 numbers.append(4);   // ERROR: `numbers` may reallocate while `view` is live
 fmt.println(view[0]);
 ```
 
-A slice over a fixed array is a borrow of that array's storage, and so is bound by the array's scope in the same way. A slice over a string literal borrows static storage and is therefore valid for the whole program.
-
-To keep the data after the owner expires, make an owned copy. `slice.clone(view)` returns an owned `[dynamic]T`.
-
-`x.len()` returns the slice length. Element assignment and iteration by reference require `[]mut T`:
-
-```odin
-x: []mut int = ...;
-x[0] = 10;
-foreach (&mut value in x) {
-	value += 1;
-}
-length_of_x := x.len();
-```
+A fixed-array slice is bounded by that array's scope; a view of literal string
+storage has static lifetime. `slice.clone(view)` returns an owned `[dynamic]T`
+when an independent copy is needed. Element assignment and
+[mutable iteration](#by-reference-iteration) require `[]mut T`.
 
 #### Slice literals
 
-A slice literal does not specify a length. This is an array literal:
-
-```odin
-[3]int{1, 6, 3}
-```
-
-This slice literal creates the same hidden array and returns a read-only slice of it:
-
-```odin
-[]int{1, 6, 3}
-```
+A slice literal omits the array length: `[]int{1, 6, 3}` creates a hidden
+`[3]int` and returns a read-only slice of it.
 
 **A slice literal has the type it is written with.** `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability is never inferred. A `[]mut T` literal may still be weakened by an explicit `[]T` destination, like any other mutable slice. A bare `{}` at a slice type is not a slice literal but the [empty view](#empty-slices), a constant with no backing array, so it may be returned.
 
@@ -927,27 +907,8 @@ The comparator may be a plain `proc(left, right: T) -> bool`, or a record contai
 
 All three procedures accept `[]mut T`; passing a read-only `[]T` is a compile-time error, because a read-only slice has no mutable storage to sort.
 
-```odin
-s := []mut int{1, 6, 3, 5, 7, 3, 0};
-slice.sort(s);
-slice.reverse_sort(s);
-
-Card :: struct { rank: int, tag: int }
-By_Tag :: struct { descending: bool }
-
-impl By_Tag {
-	call :: proc(self, left, right: Card) -> bool {
-		if (self.descending) { return right.tag < left.tag; }
-		return left.tag < right.tag;
-	}
-}
-
-cards := []mut Card{Card{2, 20}, Card{1, 30}};
-slice.sort_by(cards, By_Tag{descending = true});
-
-by_rank :: proc(left, right: Card) -> bool { return left.rank < right.rank; }
-slice.sort_by(cards, by_rank);
-```
+See [Calling a value](#calling-a-value) and [Capture literals](#capture-literals)
+for callable comparators.
 
 #### Slice queries and copies
 
@@ -968,51 +929,40 @@ slice.sort_by(cards, by_rank);
 
 ### Dynamic arrays
 
-Dynamic arrays are mutable owning values whose length may change at runtime. The value behaves like a local variable; its variable-sized backing storage is obtained through an allocator and released automatically when the array leaves scope.
+`[dynamic]T` is a mutable owning sequence whose length and capacity may change
+at runtime. Its zero value is empty and immediately usable:
 
 ```odin
 x: [dynamic]int = {};
-x.append(10); // the zero value is immediately usable
+x.append(10);
 ```
 
-**A `[dynamic]T` converts implicitly to a `[]T`** of its live elements, as a `string` does to a `string_view`: a zero-cost borrow of the array, which cannot be modified while the view is in use and which the view cannot outlive. A procedure that only reads a sequence therefore takes `[]T` and accepts a slice, a dynamic array, or a [fixed array](#fixed-arrays). The writable `[]mut T` stays explicit, `x[:]` from a mutable place. A generic `[]$T` parameter accepts a dynamic array the same way, binding `T` to its element.
+It converts implicitly to a read-only `[]T` of its live elements, including for
+a generic `[]$T` parameter. The borrow cannot outlive the array and prevents
+conflicting mutation while live. A writable view requires `&mut x[:]`; see
+[Slices](#slices). `len()` reports live elements and `cap()` reports capacity.
 
-```odin
-total :: proc(values: []int) -> int { ... }
+Assignment recursively clones owned elements; `move` transfers the allocation
+and its allocator. Each array records the allocator used for cleanup:
 
-numbers := [dynamic]int{1, 2, 3};
-n := total(numbers);   // implicit borrow, no copy
-```
+- A declaration's `via allocator` binds it explicitly.
+- Without `via`, a zero-valued array remains unbound until its first allocating
+  operation, then binds `mem.default_allocator()`.
+- Copies use the destination allocator; `value.clone(allocator)` chooses one
+  explicitly. See [Assignment statements](#assignment-statements).
 
-Along with `len`, dynamic arrays provide `cap` to report their current underlying capacity. Assignment creates an independent array by recursively cloning owned elements, while `move` transfers its backing allocation:
-
-```odin
-x := [dynamic]int{1, 2, 3};
-y := x;       // independent ownership-recursive clone
-z := move(x); // allocation transfer; x becomes dead
-```
-
-Each array records the allocator responsible for its backing storage and cleanup:
-
-- `via allocator` binds that allocator at the declaration.
-- Without `via`, a zero-valued array is allocator-unbound until an operation needs an allocator; it then binds `mem.default_allocator()`.
-
-`via` applies only to declarations. It neither introduces names nor changes cleanup. Procedures receive allocators through ordinary parameters, with [ordinary default-argument rules](#default-values).
-
-A copy allocates from the destination's allocator, `move` transfers the allocation and its allocator without relocating the data, and `value.clone(allocator)` picks one explicitly. [Assignment statements](#assignment-statements) has the full rule.
-
-Backing storage need not be on the heap. An arena over a local buffer provides frame-local storage while the array's own size remains fixed by its type:
+`via` applies only to declarations and neither introduces names nor changes
+cleanup. Procedures take allocators through ordinary parameters and defaults.
+Backing storage can be frame-local:
 
 ```odin
 buffer: [4096]u8 = {};
 arena := mem.Arena.from_buffer(&mut buffer[:]);
 data: [dynamic]int via arena.allocator() = {};
-data.append(1, 2, 3); // backing storage is in buffer; no heap allocation
+data.append(1, 2, 3); // storage is in buffer; no heap allocation
 ```
 
-Allocator lifetime and reset requirements are specified under [Allocators](#allocators).
-
-A slice of a dynamic array is a borrowed view: while it is live, operations that may reallocate the array are rejected, as shown under [Slices](#slices).
+[Allocators](#allocators) specifies allocator lifetime and reset requirements.
 
 #### Appending to a dynamic array
 
@@ -1317,9 +1267,9 @@ m := map[string]int{
 };
 ```
 
-A map literal allocates from the destination's allocator: the declaration's `via` allocator, or `mem.default_allocator()` without one, as for [dynamic arrays](#dynamic-arrays). Code that must handle allocation failure itself uses `make`, which returns a `Result`.
+A map literal allocates from the destination's allocator: the declaration's `via` allocator, or `mem.default_allocator()` without one, as for [dynamic arrays](#dynamic-arrays). Use `try_make` to handle allocation failure as a `Result`; `make` returns the owning map and follows the [allocator failure policy](#allocation-failure).
 
-**Only `m[key] = elem` creates an entry.** The whole element is written, so nothing is manufactured. Insertion may reallocate the map, so that index is a mutable borrow of `m` for the statement. A map key is not positional, which is why this differs from [dynamic-array assignment](#assigning-to-a-dynamic-array), where an index past the end panics.
+**Among index expressions, only `m[key] = elem` creates an entry.** The whole element is written, so nothing is manufactured. Insertion may reallocate the map, so that index is a mutable borrow of `m` for the statement. A map key is not positional, which is why this differs from [dynamic-array assignment](#assigning-to-a-dynamic-array), where an index past the end panics.
 
 **Every other index position requires the entry** and panics for a missing key, exactly as a dynamic array's index panics out of range: a read, a field or element chain (`m[key].wins = 7`), a compound assignment (`m[key] += 1`), an `inout` argument, and `&m[key]`. Part of an element cannot be written into an element that is not there, so a partly updated element is never created by accident. Because no index form manufactures a value, an element type with no zero is used like any other.
 
@@ -1377,7 +1327,7 @@ The built-in map supports these container operations:
 - `some_map.shrink()` removes excess capacity.
 - `some_map.try_insert(key, elem)` inserts or updates the entry, returning the [allocation error](#allocation-failure) rather than following the policy. It is the recoverable call form of `m[key] = elem`.
 - `some_map.find(key)` returns `Option(^V)`: a read-only pointer to the existing value, or `.none`. It does not insert, and its receiver is immutable.
-- `some_map.find_mut(key)` returns `Option(^mut V)`: the same lookup through a mutable borrow of the map. It does not insert. `&m[key]` is the same pointer without the `Option`, and panics instead.
+- `some_map.find_mut(key)` returns `Option(^mut V)`: the same lookup through a mutable borrow of the map. It does not insert. `&mut m[key]` returns the same mutable pointer without the `Option`, and panics if the key is absent. `&m[key]` returns a read-only `^V`.
 - `some_map.find_or_insert(key, elem)` returns `^mut V`: a pointer to the existing value, or to `elem` after inserting it under `key`. `elem` is evaluated either way and taken as any [inserted element](#container-insertion) is; when the key is already present, it is dropped. Allocation failure follows the [policy](#allocation-failure); `try_find_or_insert` returns the error instead.
 - `some_map.remove(key)` returns `Option(V)`: the removed value, or `.none` when the key was absent.
 - `some_map.lookup_value(key)` returns `Option(V)`: an independently owned copy of the existing value, or `.none`. It does not insert, and its receiver is immutable. It evaluates its receiver before its key and performs exactly one lookup; a managed element is cloned once, inside the operation.
@@ -3820,7 +3770,7 @@ This differs from C, where such a shift count is undefined behavior.
 
 #### Integer overflow
 
-For unsigned integers, the operations +, -, *, and << are computed modulo `2^n`, where `n` is the bit width of the unsigned integer’s type. In a sense, these unsigned integer operations discard the high bits upon overflow, and programs may rely on “wrap around”.
+Unsigned `+`, `-`, `*`, and `<<` wrap modulo `2^n`, where `n` is the type's bit width.
 
 Every signed integer uses two’s-complement representation. For a signed type, and for `rune`, binary `+`, `-`, `*`, `/`, and unary `-` **panic** when the mathematical result does not fit the type: `i32(2147483647) + one` and `MIN / -1` both stop the program, at every optimization level. Where the operation is evaluated at compile time — a constant expression or [compile-time evaluation](#compile-time-procedure-evaluation) — the same overflow is a compilation diagnostic instead. An unfixed constant is exact and never overflows; it is checked when it converts to a type.
 
@@ -3834,7 +3784,24 @@ LIMIT :: i8(127) + 1;            // ERROR: the result 128 does not fit `i8`
 
 These operations stay modular for signed operands: `<<`, which keeps the low bits exactly as for an unsigned type; `%`, which cannot overflow (`MIN % -1` is 0); atomic `add` and `sub`; and [`math.wrap`](#type-conversion). [SIMD lanes](#lane-wise-operators) follow the scalar rule. On the path that continues past a checked operation it did not overflow, so the optimizer may assume that result is in range.
 
-`core:math` names the two other policies for `+`, `-`, and `*`. `math.wrapping_add`, `wrapping_sub`, and `wrapping_mul` keep the low bits of the result; `math.checked_add`, `checked_sub`, and `checked_mul` return `Option(T)`, `.none` where the operator would panic. Each takes two operands of one integer type, signed or unsigned, and the second may be an unfixed constant that takes the first's type. The wrapping forms also take two vectors of one `Simd` type with integer lanes, and wrap each lane.
+`core:math` provides explicit policies for `+`, `-`, and `*`:
+
+| Operations | Policy |
+| --- | --- |
+| `math.wrapping_add`, `wrapping_sub`, `wrapping_mul` | Keep the result's low bits. |
+| `math.checked_add`, `checked_sub`, `checked_mul` | Return `Option(T)`: `.some(result)` when the mathematical result fits `T`, otherwise `.none`. |
+
+Each accepts two operands of one signed or unsigned integer type; an unfixed
+second operand takes the first's type. Checked operations report unsigned
+overflow even though ordinary unsigned operators wrap:
+
+```odin
+value: u8 = 255;
+fmt.println(value + 1, math.checked_add(value, 1)); // 0 .none
+```
+
+The wrapping forms also accept two vectors of one integer-lane `Simd` type and
+wrap each lane.
 
 ### Floating-point operators
 
@@ -3933,13 +3900,11 @@ The language has two loop statements. `for` repeats according to control express
 
 #### Basic `for` loop
 
-A basic `for` loop has three parts separated by semicolons:
-
-- The initial statement runs before the first iteration.
-- The condition is evaluated before each iteration.
-- The post statement runs after each iteration.
-
-The loop stops when the condition is false.
+A three-part header is `for (initial; condition; post)`: the initial statement
+runs once, the condition before each iteration, and the post statement after
+each iteration. A false condition ends the loop. The initial and post statements
+are optional; both separators remain. An omitted condition is true, so `for (;;) {}`
+loops indefinitely.
 
 ```odin
 for (i := 0; i < 10; i += 1) {
@@ -3947,39 +3912,18 @@ for (i := 0; i < 10; i += 1) {
 }
 ```
 
-The initial and post statements are optional:
+`for (condition)` is the condition-only form. A whole condition of
+`name in expression` requires another pair of parentheses; use `foreach` to
+iterate instead:
 
 ```odin
-i := 0;
-for (; i < 10;) {
-	i += 1;
-}
+for (key in counts) { }     // ERROR: iterate with `foreach (key in counts)`
+for ((key in counts)) { }   // repeat while `key` is a member
 ```
 
-The separators in a three-part `for` header are required. A condition-only loop is equivalent to a `while` loop in languages that have one:
-
-```odin
-i := 0;
-for (i < 10) {
-	i += 1;
-}
-```
-
-A condition-only header whose whole condition is `name in expression` is rejected, since it is the spelling of iteration in Odin; iteration is written with [`foreach`](#foreach-statement). A loop that repeats while `name` is a member needs a second pair of parentheses, as a [switch header](#switch-statement) does:
-
-```odin
-for (key in counts) { }     // error: iterate with `foreach (key in counts)`
-for ((key in counts)) { }   // repeats while `key` is in `counts`
-```
-
-The rule applies only to the whole condition: `for (key in counts && ready)` and the condition of a three-part header are ordinary expressions.
-
-If the condition is omitted, this produces an infinite loop:
-
-```odin
-for (;;) {
-}
-```
+This restriction applies only to the whole condition-only `for` header.
+`for (key in counts && ready)`, membership in a three-part header, and
+`switch (key in counts)` use ordinary expression syntax.
 
 ### foreach statement
 
@@ -4086,23 +4030,9 @@ A map does not reverse, because its [iteration order](#maps) is unspecified. To 
 
 ### if statement
 
-The condition is parenthesized and the body is braced.
-
-```odin
-if (x > 0) {
-	fmt.println("x is positive");
-}
-```
-
-Like `for`, the `if` statement can start with an initial statement to execute before the condition. Variables declared by the initial statement are only in the scope of that `if` statement.
-
-```odin
-if (x := next_value(); x < 0) {
-	fmt.println("x is negative");
-}
-```
-
-Variables declared inside an if initial statement are also available to any of the else blocks:
+`if` has a parenthesized condition and braced branches. An optional initial
+statement runs before the condition, separated by `;`. Its variables are scoped
+to the entire `if`, including `else if` and `else` branches:
 
 ```odin
 if (x := next_value(); x < 0) {
@@ -4158,59 +4088,17 @@ case 'A'..='Z', 'a'..='z', '0'..='9':
 	fmt.println("c is alphanumeric");
 }
 
-switch (x) {
-case 0..<10:
-	fmt.println("units");
-case 10..<13:
-	fmt.println("pre-teens");
-case 13..<20:
-	fmt.println("teens");
-case 20..<30:
-	fmt.println("twenties");
-}
 ```
 
 #### Exhaustive switch
 
-With enum values:
+An enum or union switch must list every variant or include `default:`. An empty
+default explicitly ignores the remaining variants. Exhaustive coverage
+guarantees a case runs; if every case terminates, no trailing return is needed:
 
 ```odin
 Direction :: enum { North, East, South, West }
 
-d := Direction.North;
-switch (d) {
-case .North: fmt.println("up");
-case .East:  fmt.println("right");
-case .South: fmt.println("down");
-case .West:  fmt.println("left");
-}
-
-// An empty default explicitly acknowledges the variants not handled here.
-switch (d) {
-case .North: fmt.println("up");
-default:
-}
-```
-
-With union types (see [Inspecting a union](#inspecting-a-union)):
-
-```odin
-Setting :: union { number: int, flag: bool }
-s: Setting = .number(123);
-switch (s) {
-case .number: fmt.println("number");
-case .flag:   fmt.println("flag");
-}
-
-switch (s) {
-case .flag: fmt.println("flag");
-default: // intentionally ignore `.number`
-}
-```
-
-A switch over an enum must either list every variant or include `default:`, exactly as a union variant switch must. Covering every variant guarantees that a case runs. If every case terminates with a return, panic, or other non-fallthrough control flow, the switch cannot fall through and needs no trailing return. A case that completes normally continues after the switch; `break` [passes through](#break-statement) any enclosing switch. The default may be empty; writing it explicitly acknowledges that the remaining cases are intentionally ignored.
-
-```odin
 degrees :: proc(d: Direction) -> int {
 	switch (d) {
 	case .North: return 0;
@@ -4221,7 +4109,13 @@ degrees :: proc(d: Direction) -> int {
 }
 ```
 
-Unknown external integers are handled by [`Enum.from_int`](#integer-conversion) before switching over the validated enum. They are not extra enum variants requiring a default arm.
+A normally completing case continues after the switch; `break`
+[passes through](#break-statement) an enclosing switch. For union patterns, see
+[Inspecting a union](#inspecting-a-union).
+
+Unknown external integers must pass through [`Enum.from_int`](#integer-conversion)
+before switching over the validated enum. They are not extra variants requiring
+a default.
 
 ### Conditional patterns
 
@@ -4252,8 +4146,6 @@ A defer statement defers the execution of a statement until the end of the scope
 
 Deferred code may not transfer control out of the deferred statement. `return` and `or_return` are invalid there. `break` or `continue` may target only a loop wholly inside the deferred statement. A deferred statement may not contain another `defer`.
 
-So once scope exit begins, a deferred action runs to completion; it cannot replace the return, break, or continue that caused the exit, nor register more work in a defer stack already draining.
-
 The following will print 4 then 234:
 
 ```odin
@@ -4274,21 +4166,9 @@ main :: proc() {
 }
 ```
 
-A `defer` statement can defer a complete block or an `if` statement. For a deferred `if`, the condition is evaluated when the deferred action runs, not when the `defer` is registered:
-
-```odin
-{
-	defer {
-		unlock();
-		log_exit();
-	}
-	// This is equivalent to `defer { if (failed) { rollback(); } }` because the
-	// `if` is a statement in its own right.
-	defer if (failed) {
-		rollback();
-	}
-}
-```
+`defer` accepts a block or an `if` statement. In `defer if (failed) { rollback(); }`,
+the condition is evaluated when cleanup runs, not when registered; it is
+equivalent to `defer { if (failed) { rollback(); } }`.
 
 A deferred operation that returns a `Result` must handle that result within the deferred action. It cannot propagate failure with `or_return`:
 
@@ -4474,7 +4354,7 @@ collect :: proc(@(escape=stored) nodes: []^Node, f: $C)
 	foreach (node in nodes) { f(node); }
 }
 
-found: [dynamic]^Node;
+found: [dynamic]^Node = {};
 collect(nodes, proc(@(escape=stored) node: ^Node) capture(&mut found) { found.append(node); });
 ```
 
@@ -5701,34 +5581,27 @@ Both operators read their operand once, and what they do with the payload depend
 | operand | success payload | failure payload |
 | --- | --- | --- |
 | a place | copied out, source stays live | copied by `or_return`; left alone by `or_else` |
-| a temporary, or `move(x)` | transferred | dropped by `or_else` before the fallback runs |
+| a temporary, or `move(x)` | transferred | transferred by `or_return`; dropped by `or_else` before the fallback runs |
 
 A place operand therefore requires a copyable payload: a move-only one must be written `move(x)`. `or_else` never copies the error.
 
 ### or_else expression
 
-`or_else` is an infix binary operator that supplies a fallback for a [fallible expression](#typed-fallibility). The left operand's success variant must carry a payload; the fallback must be assignable to that payload type, and is evaluated only on the failure path. The result is the payload. Ordinary value semantics apply to the fallback: selecting a managed place clones it and leaves the place live, while a temporary or `move(x)` transfers ownership.
+`left or_else fallback` extracts the success payload of a
+[fallible expression](#typed-fallibility). The success variant must carry a
+payload; the fallback must be assignable to its type and runs only on failure.
+Selecting a managed fallback place clones it; a temporary or `move(x)` transfers.
 
 ```odin
 m: map[string]int = {};
-
-// `lookup_value` returns `Option(int)`.
 i := m.lookup_value("hellope") or_else 123;
 assert(i == 123);
 ```
 
-It applies to every producer of that shape — a container read, a validating conversion, an erased extraction, and any procedure returning `Option` or `Result`:
-
-```odin
-n := numbers.pop() or_else 0;
-text := string.from_utf8(bytes) or_else "";
-data := files.read_bytes("data.bin") or_else no_bytes();
-
-view: any_view = 42;
-number := view.as(int) or_else 0;
-```
-
-`or_else` **discards** the failure on both paths. A managed failure payload of a temporary is dropped before the fallback is evaluated; a place keeps its own. There is no form that binds the failure to a name — code that needs the error uses `or_return` or a `switch`.
+The same rule applies to validating conversions, erased extractions, and other
+`Option`/`Result` producers. Failure cleanup follows [Operator ownership](#operator-ownership):
+a temporary's managed failure is dropped before the fallback, while a place
+keeps its own. To inspect the error, use `switch`; to propagate it, use `or_return`.
 
 ### or_return operator
 
@@ -5741,32 +5614,20 @@ On failure, control returns from the innermost enclosing procedure. That procedu
 The operand's temporaries are destroyed before the return completes, and the ordinary `defer` and cleanup rules run. `or_return` cannot appear outside a procedure or inside a deferred statement. A nested procedure propagates only from itself, never from its lexical parent.
 
 ```odin
-Error_Code :: enum { Something_Bad, Something_Worse, The_Worst }
-
-// The two shapes a fallible procedure has. `Result(Unit, E)` is the one with
-// nothing to hand back on success.
+Error_Code :: enum { Failed }
 step  :: proc() -> Result(Unit, Error_Code) { return .ok; }
 value :: proc() -> Result(int, Error_Code)  { return .ok(123); }
 
 work :: proc() -> Result(int, Error_Code) {
-	// The common idiom, written out.
-	first: int;
-	switch (value()) {
-	case .ok(n):  first = n;
-	case .err(n): return .err(n);
-	}
-
-	// The same thing, as one operator.
 	n := value() or_return;
-
-	// A `Unit` success is used as a statement.
-	step() or_return;
-
+	step() or_return;       // a Unit success is used as a statement
 	return .ok(n * 2);
 }
 ```
 
-The failure payload is rewrapped as the enclosing procedure's failure variant, so a procedure may propagate into a different error type as long as the payloads are assignable. A place operand copies both payloads and leaves the source whole; see [Operator ownership](#operator-ownership).
+Failure is rewrapped in the enclosing result's failure variant. A place
+operand copies the selected payload and stays live; a temporary transfers it.
+See [Operator ownership](#operator-ownership).
 
 ### Changing error domains
 
@@ -5784,7 +5645,15 @@ read_setting :: proc(text: string_view) -> Result(int, App_Error) {
 }
 ```
 
-`map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The mapper owns the error it is handed, since its parameter is a `move` parameter. A [variant constructor](#constructing-a-variant) therefore moves any error, managed or move-only, into its variant without cloning it. Any other mapping is an ordinary procedure of the same shape, which transfers a managed error with `move(error)`, or any value [callable](#calling-a-value) with that signature. The mapper's `Result` is the target error type, so `map_error` is one generic procedure, constrained by [`Callable`](#standard-interface-catalogue).
+`map_error` consumes its receiver and transfers the success payload, including
+move-only values. A temporary needs no marker; a bound result uses
+`move(outcome).map_error(...)`.
+
+The mapper takes the error through a `move` parameter and returns the target
+error type. A [variant constructor](#constructing-a-variant) transfers the error
+directly; an ordinary mapper transfers a managed error with `move(error)`.
+Any value satisfying the corresponding [`Callable`](#standard-interface-catalogue)
+signature is accepted.
 
 An `Option` has no error to map: its failure, `none`, carries nothing. `Option.ok_or` supplies one, so an absence becomes a failure in the caller's domain:
 

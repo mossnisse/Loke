@@ -1172,6 +1172,11 @@ checklist.
 
 ### Documentation
 
+- [Language specification](design.md) corrects mutable slice/map-pointer syntax,
+  recoverable map allocation, capture initialization, unsigned checked arithmetic,
+  and the status of grapheme support. Shortens repeated examples and explanations,
+  clarifies `for` versus `switch` membership syntax, and completes the fallible
+  operator ownership table.
 - [Compiler architecture](compiler-architecture.md) is shorter and organized
   around the pipeline, semantic contracts, source map, and contributor workflow,
   followed by the session APIs. Corrects package boundaries and tool-dependent
