@@ -1,723 +1,288 @@
 # Compiler architecture
 
-This is the durable implementation guide for `lokec`. The normative language
-definition is [design.md](design.md), the accepted syntax is
-[grammar.md](grammar.md), and user-facing build instructions are in
-[readme.md](readme.md). This document explains how the compiler is assembled and
-where to make changes.
+`lokec` is a whole-program Windows x64 compiler written in Odin. It checks one
+annotated AST, analyzes ownership and provenance through disposable control-flow
+graphs, emits textual LLVM IR, and invokes clang with a versioned C runtime.
 
-`lokec` is a whole-program Windows x64 compiler written in Odin. It parses into
-one AST, annotates that AST with semantic decisions, runs ownership and
-provenance analyses over a disposable control-flow view, emits textual LLVM IR,
-and invokes clang with a versioned C runtime. There is no durable MIR and no
-second backend.
+This guide explains where to make changes and which phase contracts to preserve.
+[design.md](design.md) defines the language, [grammar.md](grammar.md) defines its
+syntax, and [compiler-guide.md](compiler-guide.md) covers the command line.
+
+- [Pipeline](#pipeline-at-a-glance) and [phase order](#driver-and-phase-order)
+- [Representations and ownership](#core-representations-and-ownership)
+- [Semantic architecture](#semantic-architecture) and [runtime boundary](#runtime-and-library-boundary)
+- [Source-code map](#source-code-map)
+- [Making changes](#how-to-make-a-compiler-change) and [testing](#testing-and-verification)
+- [Sessions](#reusable-batch-sessions), [queries](#snapshots-and-queries),
+  [invalidation](#invalidation-rules), and [incremental checking](#incremental-checking)
+- [Deliberate boundaries](#deliberate-boundaries)
 
 ## Pipeline at a glance
 
 ```text
-CLI and build configuration
-        |
-        v
-source loading -> lexing -> parsing
-        |
-        v
-package/import/when fixed point
-        |
-        v
-declaration collection and signature preparation
-        |
-        v
-body checking, overload resolution, CTFE, and monomorphization
-        |
-        v
-ownership/lifecycle analysis -> whole-program borrow and region analysis
-        |
-        v
-typeid freeze -> formatter discovery -> lifecycle snapshot
-        |
-        v
-emission contract -> textual LLVM module
-        |
-        v
-clang/NASM + versioned C runtime -> .exe or .obj
+configuration -> source loading -> lexing -> parsing
+    -> package/import/when discovery and declaration preparation
+    -> body checking, CTFE, monomorphization, and lifecycle analysis
+    -> whole-program borrow/region analysis and provider resolution
+    -> entry/export validation and semantic finalization
+    -> emission contract -> textual LLVM IR
+    -> .ll, .obj, or executable linked with runtime and foreign inputs
 ```
 
-The important architectural seam is between checking and consumption. The
-checker chooses symbols, overloads, conversions, map policies, lifecycle
-operations, witnesses, and other runtime dependencies once. Compile-time
-evaluation and LLVM lowering consume those recorded choices; they do not repeat
-source lookup or repair incomplete semantic state.
+The checker records symbols, overloads, conversions, lifecycle operations,
+witnesses, and runtime dependencies. Compile-time evaluation and LLVM lowering
+consume those decisions; neither repeats source lookup nor repairs missing
+semantic state. There is no durable MIR or second backend.
 
 ## Driver and phase order
 
-`main` in `src/main.odin` calls the file-private `run`, which parses CLI options
-and creates a `Compilation_Session` through `init_session` in
-`src/session.odin`. The session seeds immutable build configuration, collection
-roots, panic strategy, optimization mode, and build mode before source discovery
-begins. `check_session` calls `register_project` in `src/project.odin` to add the
-collections `loke.project` files require, then runs the normal compilation path.
+`main.odin` parses options and initializes a `Compilation_Session` in
+`session.odin`. Configuration is fixed before discovery. `check_session` loads
+project collections through `register_project`, then follows this order:
 
-The normal compilation path is:
+1. `compile_program` loads `base:runtime`, the root package, and providers
+   selected by the root's package attributes.
+2. Discover imports and reject cycles. Static graphs prepare and check each
+   dependency before its dependents. Graphs with file-scope `when` or providers
+   repeat discovery, declaration preparation, and selection until stable, then
+   check bodies. Only `File.active_items` have semantic effect; inactive branches
+   are still parsed.
+3. Check concrete bodies and their ownership. Generic instances and pending
+   generic `impl` bodies are checked when concrete uses commit them.
+4. `finish_program_analysis` runs whole-program provenance analysis, including
+   global writes, result summaries, callback contracts, borrows, escapes, and
+   allocator regions. It resolves provider factories, releases held diagnostics,
+   and records `program_analyzed`.
+5. Validate entry and exports. `finalize_semantics` freezes `typeid` values,
+   discovers `fmt.Formattable` witnesses, snapshots lifecycle operations, and
+   installs `any_view` fields. These steps are idempotent.
+6. `emit_session` calls `emit_package`, then `emit_llvm_module`. Before allocating
+   an emitter, `validate_emission_dependencies` verifies the checked state. One
+   module contains every package in deterministic dependency order.
+7. Write `.ll`, compile a relocatable `.obj`, or link an executable with the
+   C runtime and foreign inputs. Object builds leave those references to the host.
 
-1. `compile_program` in `src/packages.odin` initializes semantic stores, loads
-   `base:runtime`, loads the root package, reads the provider selections from
-   its package-clause attributes, and adds the selected provider packages.
-2. For graphs with file-scope selection or providers, package discovery runs to
-   a fixed point. Each round rebuilds the selected
-   `File.active_items`, discovers newly active imports, rejects import cycles,
-   prepares package declarations, and evaluates file-scope `when` conditions.
-   An unselected branch is parsed but has no semantic effect.
-3. Once the graph is stable, package bodies are checked in dependency order.
-   Static graphs discover all imports first, then prepare and check each package
-   before its dependents; incremental checkpoints sit before package preparation.
-   Generic instances and pending generic `impl` bodies are checked as concrete
-   uses commit them.
-4. Ownership analysis runs per concrete procedure while it is checked.
-   `analyze_program_provenance` then settles each body's global write effects,
-   computes cross-procedure result summaries, checks inferred callback
-   contracts, and checks borrows, escapes, allocator regions, and reset effects
-   over the completed program. `resolve_provider_factories` then resolves the
-   selected providers' factory signatures, once every package has been checked.
-   Last, diagnostics held aside during checking rejoin the list.
-   `finish_program_analysis` runs this step and records `program_analyzed`.
-5. The session validates the executable entry point and exported names. Then
-   `finalize_semantics` freezes runtime `typeid` values, discovers the coherent
-   `fmt.Formattable` witness for each printable concrete type, finalizes immutable
-   lifecycle-operation records, and installs `any_view`'s fields, the one
-   carrier whose fields cannot be made with its type. Each step is idempotent.
-6. `emit_session` calls `emit_package`, which calls `emit_llvm_module`. The module
-   boundary first runs `validate_emission_dependencies` to reject an incomplete
-   checked state before an emitter is allocated, then produces one textual LLVM module containing
-   every package in deterministic dependency order.
-7. `emit_package` writes the module and either stops at `.ll`, compiles a
-   relocatable `.obj`, or links an executable with the C runtime and foreign
-   inputs.
-
-`-parse-only`, `-dump-ast`, and `-dump-tokens` deliberately take a shorter path
-through source loading, lexing, and parsing for one file. `-check-layout` stops after the
-semantic closure passes and compares the compiler's layout facts with LLVM.
-
-## Reusable batch sessions
-
-`src/session.odin` is the reusable orchestration boundary in the existing Odin
-`lokec` package. A session owns one `Compiler`, a copied `Compilation_Config`,
-and configuration, scratch, query, and statistics arenas, plus copied source
-overlays and optional package checkpoints. CLI
-presentation, option parsing, and exit handling remain in `src/main.odin`;
-filesystem and toolchain policy remain in `src/emit_llvm_toolchain.odin`.
-
-| Operation | Contract |
-| --- | --- |
-| `init_session(&s, config)` | Initialize a zeroed session in place. Copy all configuration strings and arrays; the caller can release them immediately. Default to `DEFAULT_COMPILATION_CONFIG`, matching CLI defaults. Return false with diagnostics for invalid configuration; reject reinitializing a live session. |
-| `check_session(&s, input)` | Replace the previous compilation, reload source and project files (using source overlays), and run whole-program checking, entry/export validation, and semantic finalization. Return false for source/configuration errors, retaining diagnostics. The caller can release its input path on return. |
-| `check_session(&s, input, documentation = true)` | Preserve `-doc` behavior: check declarations and exports without requiring executable entry or finalizing emission dependencies. This result cannot be emitted. |
-| `check_session_incremental(&s, input)` | Validate inputs and reuse a checked dependency prefix when the package graph is static and unchanged. Otherwise perform a full check. Preserve batch diagnostics, queries, and finalization; every call expires previous snapshots. See [Incremental checking](#incremental-checking). Documentation mode always performs a full check. |
-| `session_check_stats(&s)` | Return package IDs rechecked/reused by the last check, current semantic-arena bytes used, and retained checkpoint-image bytes. ID slices expire at the next check or destruction. |
-| `invalidate_session(&s)` | Invalidate the entire checked result after an external input change. Reject old snapshots/handles and emission, release query storage, and keep copied configuration, overlays, and package checkpoints. `check_session` then rebuilds the whole program; `check_session_incremental` re-reads every input before reusing a checkpoint. Return false only for a zeroed/destroyed session; repeated invalidation is safe. Requires exclusive use. |
-| `emit_session_ir(&s)` | Return LLVM module text and a success flag from a successfully finalized check. Create no files and invoke no external tools. Repeated emission consumes the same checked state; each module stays allocated until the next check or destruction. |
-| `emit_session(&s, options)` | Write IR, an object, or an executable using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Return 2 without a diagnostic for an empty output path, so the check can still be emitted; take optimization and build mode from the checked configuration. Return the existing toolchain exit status. |
-| `destroy_session(&s)` | Release all compilation, configuration, scratch, overlay, and query storage. Safe on a zeroed session, after any failure, and repeatedly. |
-
-Do not copy a live session or its `Compiler`: their allocators contain pointers
-into those structs. Use one operation at a time on a session, except for the
-concurrent queries in [Snapshots and queries](#snapshots-and-queries). Its allocator is
-captured at creation and must remain alive until destruction. Configuration is
-fixed until destruction; create a new session to change it.
-
-The current compiler state is available through `s.compiler`. Sources, syntax,
-semantic IDs, diagnostics, and emitted strings are borrowed and remain valid
-until explicit invalidation, an overlay edit, the next check, or destruction,
-including when the next check fails.
-Copy data a caller needs longer. Each batch check destroys the previous compiler and
-scratch arena before loading the new program, so sources, manifest collections,
-generic instances, held diagnostics, and emission state cannot survive an edit.
-`check_session` remains the batch oracle; `check_session_incremental` can retain
-a dependency prefix under [Incremental checking](#incremental-checking).
-Switching to batch or documentation checking drops every checkpoint.
-
-`session_test.odin` compares reused sessions with fresh sessions after edits to
-generic procedures, dependency manifests, and invalid source. It also covers
-configuration/input ownership, repeated emission, documentation and object
-entry policy, recovery after an emission error, and repeated creation/destruction
-with memory tracking and virtual-arena release checks.
-
-## Snapshots and queries
-
-`src/overlays.odin` supplies unsaved `.loke` sources to the ordinary loader;
-`src/queries.odin` exposes read-only views of recorded checking results.
-`src/query_index.odin` walks checked syntax and committed generic/static-loop
-clones. Queries never resolve names, instantiate generics, check bodies, or
-enroll semantic/backend artifacts. The index and formatted type names are
-created once, lazily, in a separate query arena, so CLI compilations do not
-build an index they will not use.
-
-| Operation | Contract |
-| --- | --- |
-| `set_session_overlay(&s, path, text)` | Copy a `.loke` path and its text, replacing any overlay for that path. Normalize absolute paths, separators, and case as package loading does on Windows. Empty text still replaces disk contents. Accept new unsaved files and directories, including imported packages and manifest-selected dependencies; package directories include only their direct `.loke` children. Do not write to disk. Return false for an uninitialized session or an invalid path/extension. |
-| `remove_session_overlay(&s, path)` | Remove an overlay and restore disk loading. Return false for an absent overlay without invalidating the current result. Removing a new unsaved file removes it from package discovery. |
-| `session_snapshot(&s)` | Return the current `Compilation_Snapshot` and a success flag, including after failed initialization/checking. Capture diagnostics and build query views on first use. Return false on a zeroed/destroyed session or after an overlay edit until a check runs. |
-| `query_file(&s, snapshot, path)` / `query_source(&s, snapshot, file)` | Find a loaded file by normalized path; return its path, text, and byte offsets of line starts. Includes loaded project manifests. Reject missing files and invalid file IDs. |
-| `query_symbols(&s, snapshot, file)` / `query_symbol(&s, handle)` | List source-backed bindings once per written definition, including locals, parameters, fields, and enum members; inspect a binding's name, kind, type, visibility, generic status, and definition. |
-| `query_at(&s, snapshot, file, offset)` | Return the narrowest written node's available symbol/type at a half-open byte offset. An identifier may denote a type rather than a value. Calls expose the recorded selected overload or generic instance. A symbol or type can be absent independently. |
-| `query_type(&s, handle)` | Inspect a type's name, kind, scalar/aggregate properties, element/key/result types, fields, members, and parameter types/modes. IDs of zero mean unavailable. |
-| `query_definition(&s, handle)` | Return the written definition's snapshot-scoped location, including across packages. Return false for builtins/synthetic bindings without a source definition. |
-| `query_references(&s, handle, include_definition = false)` | Return recorded named uses of the exact binding, including field keys and selected overload calls. Group generic/static-loop clones by written binding and deduplicate locations. Exclude implicit/generated operations. Optionally include the definition. The caller owns this array and must `delete` it with the allocator used for the query. |
-| `query_signatures(&s, handle)` | Return available procedure signatures, or the available members of a procedure group, with written text, parameter names/types/modes/default flags, result type, and result/termination properties. A generic template returns written syntax with `complete = false`; a concrete instance has typed parameters/results. |
-| `query_diagnostics(&s, snapshot)` | Return captured severity, code, message, label, locations, and notes without rendering or terminating. Capture before emission to obtain checking diagnostics; diagnostics appended by later emission do not change that snapshot's view. |
-
-All operations return a success flag. Every snapshot and symbol/type/location
-handle carries a process-unique snapshot ID. Explicit invalidation, overlay
-replacement/removal, every new compilation check (even the same bytes or a failed check), and destruction
-invalidate the previous snapshot. All query entry points reject stale or foreign snapshot
-IDs and out-of-range IDs rather than using reused semantic IDs. A destroyed and
-reinitialized session cannot resurrect old handles. Overlay edits also disable
-emission until a successful check. Overlays persist across checks; manifests,
-imports, configuration, and the whole semantic state are reloaded/rechecked.
-
-Except for the owned reference array, returned strings and slices are borrowed,
-must not be modified or deleted, and expire on invalidation. Copy needed data
-before editing/checking. Keeping a token does not retain an older compilation;
-invalidation releases its query arena immediately and the next check releases
-the preceding compiler state.
-
-Once `session_snapshot` has built a check's views, later `session_snapshot` and
-query calls only read the session, so several threads may run them at once.
-Allocating queries use the calling thread's `context`. That first
-`session_snapshot` call, invalidation, overlay edits, checks, emission, and
-destruction need exclusive use of the session.
-
-On incomplete or erroneous programs, loaded sources and diagnostics remain
-available. Collected bindings, recorded definitions/references, and checked
-types remain queryable where checking reached them. Uncollected declarations,
-unresolved names, and inactive `when` branches supply no semantic result;
-signature queries omit erroneous signatures. Position queries do not fall back
-to an enclosing expression when the narrowest node is unresolved. If checked specializations at a written
-position disagree on a binding or type, that part is unavailable; shared binding
-identity and references still work when only the types differ. Reference results
-on a failed check are partial, and generic templates expose only written syntax
-until instantiated. No query repairs missing information by running the checker.
-
-The snapshot tests in `src/session_test.odin` compare overlays with a fresh disk
-compilation's diagnostics and IR; cover new unsaved packages, path aliases,
-removal/recovery, caller-owned storage, broken syntax/UTF-8/signatures, cross-package
-definitions, shadowed bindings, fields, overloads, generic clones, and exclusion
-of inferred bindings at argument positions; and verify stale-handle rejection,
-diagnostic capture, unchanged semantic state under
-repeated queries, and reclamation with memory tracking.
-
-## Invalidation rules
-
-The unit of public snapshot invalidation is the **whole compilation**.
-`invalidate_session(&s)` is the conservative external
-notification boundary for disk/project changes; overlay edits and new checks
-use that same boundary. It expires all snapshot IDs and query views, clears
-emission readiness, and releases the query arena. Configuration, overlays,
-and package checkpoints remain owned by the session; an incremental check
-validates every input before reusing a checkpoint. The next `check_session` destroys the previous
-compiler and scratch storage, reloads the inputs, and runs the entire
-[Driver and phase order](#driver-and-phase-order), including whole-program
-analysis and semantic finalization. A failed check replaces previous results
-with its own diagnostics and partial query views and cannot emit.
-
-Disk changes do not mutate a captured snapshot automatically. A tool must call
-`invalidate_session` when it observes a relevant change, or call `check_session`
-directly when it wants a new result. Until notified/rechecked, a snapshot still
-describes the bytes it checked. Notification alone performs no filesystem reads
-or checking; several events can be followed by one check. Unknown or unclassified
-events take the same whole-program fallback. Do not filter notifications solely
-by `query_file`: a missing file, newly selected import, new package member, or
-new nearer manifest is not necessarily among the previously loaded sources.
-
-Inputs to a cache must include the following facts. The opt-in incremental path
-validates its complete input set before reusing a dependency prefix; unclassified
-changes still require a full check.
-
-| Input | Facts that affect reuse | Existing reader/consumer |
-| --- | --- | --- |
-| Root and check mode | Input path, file versus directory roots, current directory for relative paths, executable/object mode, and documentation versus finalized checking. A standalone file does not acquire its siblings. Documentation results cannot enable emission. | `check_session`, `register_project`, `load_root_package` |
-| Source contents and membership | Exact source bytes, including comments/locations and invalid UTF-8; normalized path identity; overlay contents/presence; direct `.loke` directory entries, additions, deletions, renames, and read failures. Removing an overlay exposes disk contents. A directory scan and failed lookup are dependencies even when no source was loaded. | `load_source`, `package_sources`, `is_source_directory` |
-| Imports and conditional selection | Written paths/aliases, their resolved packages, visibility, extension/operator sets, and all declarations/CTFE values/configuration used by file/body `when` conditions. Parsed inactive branches can become active after another input changes. | Package/import/`when` discovery fixed point; `src/select.odin` |
-| Project manifests | Existence and contents of the nearest `loke.project` at or above the root and of required dependencies' manifests; searched ancestor directories, including previously absent files; required collection names, paths, and conflicts. | `register_project` in `src/project.odin` |
-| Collections and libraries | Explicit collection entries and precedence over manifests; effective absolute roots; bundled `base:`/`core:` installation roots and their source contents; current directory when entries are relative. The same import spelling can resolve to a different package. | `register_collections`, `install_component`, `resolve_import_path` |
-| Providers | Root package attributes, selected paths/factories, provider package sources, conditional factory declarations, public visibility, handle/signature shape, and destination bindings. Provider packages are dependencies even when no source imports them. | `collect_source_provider_defaults`, `load_provider_packages`, `resolve_provider_factories` |
-| Build configuration | All `Compilation_Config` fields: defines, collections, copy-cost threshold/enabling, panic strategy, optimization/build modes, debug information, `LOKE_DEBUG`, and log level. These affect diagnostics, `LOKE_*` constants, selection, and/or IR. Configuration is copied and fixed; recreate the session to change it. | `configure_session`; `src/build_config.odin` |
-| Compiler identity | Compiler build/release and its checking, builtin, query, and emission rules, including `LOKE_VERSION`; bundled language libraries are also source inputs. Persistent results must not cross compiler builds merely because a release string is unchanged. Use a new compiler process/session after replacing the compiler. | `LOKE_VERSION_STRING`; compiler implementation |
-| Target | Target triple, ABI, integer/pointer widths, scalar alignment and layout rules, OS/architecture/endianness constants. The current API fixes these to Windows x64 (`WINDOWS_X64`); it cannot change a live session's target. | `init_semantic_stores`, `Target_Info`, build constants, layout and lowering |
-
-The dependency closure extends beyond exported signatures:
-
-- **Compile-time evaluation.** A changed callee body, transitive callee, constant,
-  layout/reflection fact, or build value can change a folded value, array bound,
-  static assertion, `when` branch, or static-loop expansion without changing its
-  signature. Discard evaluated constants, declaration/body checked states, held
-  diagnostics, active items, expansions, and any decisions they caused.
-- **Generics and lookup.** Discard positive and negative instance entries,
-  templates/scopes, bounds/probe outcomes, pending generic implementations,
-  selected overloads, witnesses, and contributed members. Instance keys use
-  compilation-local semantic IDs and arguments; they are not cross-check cache
-  keys. A repaired rejected instantiation must be tried again, and changes to
-  bodies, bounds, imports, or implementation candidates can affect a specialization
-  whose parameter/result types did not change.
-- **Inferred effects and provenance.** Recompute global/indirect write sets,
-  result summaries and their dependency solver, written allocator regions,
-  callback contract checks/joins, liveness, ownership, and borrow
-  analysis. A callee body or a newly reachable indirect/dynamic target can change
-  a caller's legality. The existing result-summary solver edges schedule that
-  analysis within one compilation; they do not establish complete incremental
-  dependencies for source checking.
-- **Final semantic registries.** Rebuild requested/frozen typeids and runtime
-  metadata, formatter discovery, lifecycle classification/final operation
-  snapshots, map-key/order policies, erased witnesses, materialized constants,
-  synthesized procedures, runtime bindings, provider factories, and entry/export
-  validation. Their IDs, pointers, order, readiness flags, and demand sets belong
-  to one compilation. Deleting a use must remove obsolete demands and artifacts.
-  An unchanged type name/signature does not preserve a formatter or drop hook.
-- **Queries, diagnostics, and emission.** Query indexes and borrowed strings,
-  diagnostic spans/notes (including held diagnostics), emitted text, debug data,
-  and artifact readiness belong to the discarded result. No consumer may resolve
-  or finalize its way around invalidation. Recheck and acquire a new snapshot.
-
-Foreign inputs, runtime C/NASM sources, clang/toolchain identity, environment
-used by the toolchain, output path, and artifact options also affect emitted
-objects/executables. They are read by artifact emission, not by source checking;
-there is no reusable artifact cache. Re-emitting for a changed artifact option
-does not make old semantic IDs usable in a new check. A future artifact cache
-must include these inputs in addition to the checked program and target.
-
-The invalidation tests in `src/session_test.odin` compare every reused result's
-diagnostics, semantic registry sizes, and LLVM IR against a fresh session.
-They cover explicit stale-handle rejection, retained overlays/configuration,
-directory additions/deletions, manifest removal/recreation and collection
-retargeting, body-only CTFE/conditional imports, failed generic bounds and fixes,
-global writes and result provenance, provider selection/signature failures and
-fixes, changed formatting/drop hooks, and removal of final registry demands.
-
-## Incremental checking
-
-`check_session_incremental` is an opt-in checking path. The CLI continues to use
-`check_session` and allocates no package cache. Both paths discover a static
-import graph before preparing/checking packages in dependency order; programs
-with file-scope `when` use the existing discovery/preparation fixed point.
-Every check still runs whole-program provenance/provider analysis, entry/export
-validation, and semantic finalization. LLVM remains whole-program emission.
-
-For a static graph without selected providers, the incremental path records a
-checkpoint immediately before preparing each package. A checkpoint saves the
-compiler's fields, a semantic-arena watermark, and the used bytes of its arena
-blocks. Incremental source buffers, line/comment tables, parser syntax, file
-objects, diagnostics, and semantic registries all use that arena, so the saved
-image includes mutations to earlier types, templates, scopes, and syntax as
-well as newly allocated state. Ordinary batch parsing retains per-file arenas.
-Allocator pointers continue to name the same live `Compiler`; internal field
-restoration preserves its live semantic arena and recreates disposable analysis
-and emission arenas. Checkpoints cannot be moved into another compiler/session.
-
-Before reuse, a temporary batch loader re-resolves the nearest/transitive
-manifests and collections, enumerates every loaded package directory, and reads
-the exact bytes of every loaded source through current overlays. It compares
-root identity, file/directory mode, working directory, manifest paths/contents,
-effective collections, package membership, and each changed file's package name
-and ordered import paths/aliases. Configuration, compiler, and target identity
-are fixed by the live session. No timestamp or hash substitutes for byte equality.
-
-The nearest checkpoint at or before the earliest changed package is restored;
-checkpoints stop at a package with errors, so an edit after it restarts there. Restoring it discards all
-later allocations and restores earlier mutable data exactly. The whole suffix
-is then checked again, including every affected dependent. Unrelated packages
-before the boundary retain their checked state; unrelated packages after it are
-conservatively rechecked. With no changed bytes, the final package is rechecked
-and whole-program analyses still run. This prefix strategy avoids incomplete
-dependency tracking for generic instances, CTFE, inferred effects, and final
-registries: their cross-package mutations are rolled back to the checking
-boundary rather than retained on signature equality.
-
-Every suffix source is compared with the currently read inputs after restoring,
-including files edited since an older checkpoint was captured. Changed files
-are reparsed at their original source indices, and their package's imports are
-rebound to refresh diagnostic spans. The restored boundary stays before those
-replacement allocations, so repeated edits cannot accumulate old syntax.
-Later checkpoints are discarded and rebuilt. Query storage and previous
-emission are reclaimed on every check, and a new snapshot ID is always issued.
-
-The following cases use a full check:
-
-- First incremental check; switching input,
-  working directory, root mode, batch mode, or documentation mode.
-- File/package additions or removals; changed manifests or collection roots;
-  changed package clauses or import paths/aliases; changed package attributes.
-- Any program with file-scope `when` or selected providers, including conditional
-  import graphs and their compile-time body dependencies.
-- Source read/UTF-8/BOM/parse failures, or an unavailable package checkpoint.
-
-Semantic errors can retain an unaffected prefix and are retried after a fix.
-The full-check fallback rebuilds whatever eligible checkpoints its new inputs
-permit. Configuration changes require a new session as before.
-
-Checkpoint images have a 64 MiB payload limit per session. Older boundaries are
-evicted first; a boundary whose image alone exceeds the limit is not cached.
-Retained images never form a growing edit history. `session_check_stats` exposes
-rechecked/reused package IDs, semantic-arena used bytes (including incremental
-source/syntax), and checkpoint payload bytes. The latter excludes small image
-metadata, configuration, overlays, scratch, queries, emission, and OS reservation
-overhead; these are accounting counters, not a process working-set measurement.
-Recreating a session or destroying it releases every cache image and arena.
-
-`incremental_test.odin` checks dependency reuse, arbitrary-length edits,
-multi-package generic/CTFE changes, rejected instantiation fixes, stale snapshots,
-final-registry demand removal, bounded cache eviction, and constant memory across
-repeated overlay edits. The invalidation edit sequences
-also use the incremental API, comparing diagnostics, registry sizes, and exact
-IR with fresh batch checks. Discovery and selection changes verify the full
-fallback. Representative latency/working-set evaluation remains the separate
-[Equivalence and cost](future-plans.md#compiler-services) milestone; the bounded
-image strategy makes no blanket performance claim. Local before/after CLI runs
-with `perf.ps1` retain identical executable sizes and peak memory within about 1%;
-these batch measurements do not establish warm incremental latency.
+`-parse-only`, `-dump-ast`, and `-dump-tokens` take the single-file parsing path.
+`-check-layout` compares finalized compiler layout facts with LLVM.
+Documentation checking omits executable-entry validation and finalization.
 
 ## Core representations and ownership
 
 ### Source and syntax
 
-`Span` is a byte range into a loaded `Source`. Line and column numbers are
-derived only when diagnostics are rendered. The token stream has no comments;
-the lexer records each comment's span on its `Source` instead, in source order,
-for the tools that need them. Every AST node has a span, including
-recovery nodes, so later phases never need to reconstruct source locations.
-
-Each batch-parsed `File` owns a syntax arena; incremental syntax shares the
-checkpointed semantic arena. The parser keeps errors in the tree as
-explicit error nodes and continues after synchronization points. Types and
-expressions share the `Expr` node domain because constructs such as generic
-applications and calls cannot always be classified from syntax alone.
+`Span` is a byte range in a `Source`. Every AST node, including recovery nodes,
+has one. Comments are recorded separately on the source in lexical order.
+The parser retains explicit error nodes and resumes at synchronization points.
+Types and expressions share `Expr`, since syntax alone cannot distinguish all
+generic applications and calls.
 
 ### Stable semantic state
 
-`Compiler` is the compilation-wide state owner. Identifiers, symbols, types, and
-packages are referenced by `Identifier_Id`, `Symbol_Id`, `Type_Id`, and
-`Package_Id`; AST annotations contain these stable IDs rather than pointers into
-growable arrays. Semantic declarations, interned data, specialization records,
-and frozen constants live in the compilation-lifetime semantic arena.
-
-The symbol and type stores hold one allocation per entry, so a `^Symbol` or
-`^Type_Info` from `symbol_of` or `type_of` stays valid while checking appends
-more. `c.packages` is still a plain dynamic array: retain a `Package_Id` across
-anything that may load a package.
+`Compiler` owns compilation-wide state. AST annotations use `Identifier_Id`,
+`Symbol_Id`, `Type_Id`, and `Package_Id`. Symbol and type entries are individually
+allocated, so pointers from `symbol_of` and `type_of` survive store growth.
+Packages live in a dynamic array: retain a `Package_Id`, not a pointer, across
+operations that may load packages. These identities last only for the current
+checked result; external consumers use [snapshot handles](#snapshots-and-queries).
 
 ### One annotated AST
 
-There is no separate typed tree. `check.odin` and `check_expr.odin` annotate the
-parsed AST in place with types, constants, value categories, place capabilities,
-resolved symbols, chosen overloads, bound arguments, conversions, and lowering
-tags. Backend code should consume these annotations instead of inferring
-semantics from syntax.
+Checking annotates parsed syntax with types, constants, places, resolved symbols,
+arguments, conversions, and lowering operations. `Expr_Call.operation` is a
+tagged `Call_Operation`; nil means unchecked. Symbol identity remains in
+`Expr_Base.resolution`, while argument binding and evaluation order stay on the
+call. LLVM dispatches on the recorded operation.
 
-`Expr_Call.operation` is a tagged `Call_Operation`: procedure calls, intrinsic
-families, conversions, reflection, text operations, union construction,
-extraction, and dynamic dispatch carry only their operation-specific metadata.
-Symbol identity stays in `Expr_Base.resolution`; written arguments, bound
-arguments, variadic packing, and evaluation order remain shared on the call.
-Nil means unchecked, and syntax cloning clears the operation along with the
-other checked annotations. LLVM call dispatch switches on the operation and
-rejects an unchecked call instead of inferring its meaning from a symbol.
+Struct literals record field indices in source order; entry validation records
+the entry symbol; extraction uses the checked union's failure metadata.
+Consumers must use these facts rather than reconstructing them.
 
-Struct literals retain resolved field indices in source order for both CTFE and
-LLVM. Executable validation retains the entry procedure's `Symbol_Id`; emission
-requires its registered name. Optional extraction reads the checked union's
-failure-variant metadata to identify its success variant.
-
-A generic specialization cannot reuse an already annotated template. It clones
-the declaration through `ast_clone.odin`, installs concrete generic bindings in
-the clone's definition-site scope, and checks the clone. Static `foreach` uses
-the same cloning rule for each expansion.
+Generic specialization and static `foreach` clone syntax through `ast_clone.odin`,
+clear semantic annotations, then check each clone in its definition-site scope.
+An annotated template cannot serve as a fresh specialization.
 
 ### Disposable control-flow graphs
 
-`cfg.odin` builds a per-procedure `Flow_Graph` whose blocks reference typed AST
-nodes. It owns traversal, control-flow topology, and lifecycle events;
-`cfg_provenance.odin` owns the provenance event vocabulary and construction,
-including carrier projections, allocator regions, and call effects;
-`global_effects.odin` records which globals a body writes.
-The graph is an analysis view, not a lowering IR, built in one of three modes:
+`cfg.odin` builds `Flow_Graph` blocks referencing typed AST nodes.
+`cfg_provenance.odin` supplies carrier projections, allocator regions, and call
+effects. Graphs serve analysis; LLVM still walks the AST directly.
 
-- `Lifecycle` records initialization, move, drop, cleanup, and control-flow
-  events used by `lifecycle.odin`, and is the only mode that reports;
-- `Prov_Summary` and `Prov_Diagnose` rebuild the same topology without mutating
-  settled lifecycle annotations and record the event stream consumed by
-  `borrow.odin`: the first while result summaries settle, the second to check
-  each body. Their state is a `Prov_State`, which a lifecycle graph does not
-  have.
+| Mode | Purpose |
+| --- | --- |
+| `Lifecycle` | Initialization, moves, drops, cleanup, and lifecycle diagnostics. |
+| `Prov_Summary` | Provenance events while cross-procedure summaries settle. |
+| `Prov_Diagnose` | Provenance events for checking each body's borrows and regions. |
 
-Every concrete body gets a fresh graph per mode, and one per summary round, in
-the analysis arena; each is discarded after its analysis. A provenance build
-with allocator-region facts is repeated, seeded with the previous pass's
-facts, until they stop growing: the facts are flow-insensitive, but each pass
-reads them as it walks, so a later write reaches an earlier read only on the
-next pass. A superseded pass is reclaimed once its region facts are copied
-out, so the arena holds one graph, however many passes a body takes. Building a
-provenance graph reports nothing and leaves no compiler state changed, so a
-repeat is safe (two walks clear an expression's view or erasure conversion while
-they walk its source, and restore it before returning); what a build finds, such as `thread.spawn` calls,
-stays on the graph for its caller to take. LLVM lowering still
-walks the annotated AST directly.
+Each body/mode/summary round gets a fresh graph. Provenance construction preserves
+settled lifecycle annotations and emits no diagnostics or lasting compiler
+mutations. Allocator-region facts are accumulated to a fixed point, so later
+writes can reach earlier reads. Copy retained facts before reclaiming each pass;
+only one graph needs to remain allocated at a time.
 
 ### Allocation domains
 
-- Batch source buffers and diagnostics use ordinary process-owned storage;
-  incremental inputs and diagnostics share the checkpointed semantic arena. A
-  diagnostic's strings come from the allocator its list was first grown with,
-  so one raised during emission is still freed correctly.
-- Each batch-parsed file owns its AST arena; incremental source/syntax lives in
-  the checkpointed semantic arena.
-- Compilation-wide semantic stores use the semantic arena, and so does cloned
-  syntax: generic instances and static `foreach` copies.
-- Ownership and provenance analysis use the analysis arena, reset after each
-  body, so no flow graph outlives its analysis.
-- Each CTFE invocation has bounded scratch storage for frames, mutable values,
-  strings, big integers, and containers. Values that escape evaluation are
-  frozen into semantic storage. A constant built outside evaluation, by
-  folding a literal or making a zero value, is held to the same budget
-  (`MAX_CONST_ELEMENTS`); the backend writes a zero without building one.
-- LLVM strings and temporary maps belong to the emitter invocation and never
-  become semantic annotations. Emission, `-check-layout`, and the toolchain run
-  on the compilation's emission arena, freed by `destroy_compilation`.
+| Storage | Lifetime and contents |
+| --- | --- |
+| Batch inputs | Process-owned source buffers and diagnostics; one syntax arena per parsed file. |
+| Semantic arena | Stores, interned data, specializations, cloned syntax, and frozen constants. Incremental inputs, syntax, and diagnostics also live here for checkpointing. |
+| Analysis arena | Disposable ownership/provenance graphs, reclaimed after analysis. |
+| CTFE scratch | Bounded frames and mutable values; escaping constants are frozen into semantic storage. |
+| Emission arena | LLVM text, temporary maps, layout probes, and toolchain scratch; released with the compilation. |
+| Session arenas | Copied configuration, scratch, queries, and statistics; see [sessions](#reusable-batch-sessions). |
+
+Diagnostic strings use their list's original allocator, including diagnostics
+raised during emission. Constants built outside CTFE obey the same
+`MAX_CONST_ELEMENTS` budget; the backend can emit zero without constructing an
+aggregate constant. Emission temporaries never become semantic annotations.
 
 ## Semantic architecture
 
 ### Package preparation and source selection
 
-Packages are directory identities. Imports form a dependency DAG, and package
-order is a deterministic post-order traversal of that graph. `when` selection
-is structural: only `File.active_items` may be collected, checked, or emitted.
-Conditional imports are why package discovery, declaration preparation, and
-compile-time evaluation cooperate in a fixed point rather than running once in
-a simple sequence.
+Packages are directory identities in a dependency DAG with deterministic
+post-order traversal. Conditional imports require discovery, preparation, and
+CTFE to cooperate until selection stabilizes.
 
-`base:runtime` is loaded before user code because `Unit`, `Option`, `Result`,
-`Shared`, `Weak`, and `try_shared` are ordinary Loke declarations whose
-identities the compiler uses. `bootstrap.odin` binds those declarations into the predeclared
-universe instead of synthesizing lookalikes; `Shared` and `Weak` are bound as
-`shared` and `weak`, and a call `shared(value)` resolves to `shared_construct`.
+`bootstrap.odin` binds ordinary `base:runtime` declarations into the predeclared
+universe instead of synthesizing duplicate types. These include `Unit`, `Option`,
+`Result`, `Shared`, `Weak`, and `try_shared`; `Shared` and `Weak` appear as
+`shared` and `weak`, and `shared(value)` resolves to `shared_construct`.
 
 ### Checking and overload resolution
 
-`check.odin` owns declarations, signatures, statements, scopes, and type syntax.
-`check_expr.odin` owns expressions, contextual typing, conversions, place
-capabilities, and leaf folding. It dispatches calls to `check_calls.odin`, which
-owns call checking, argument binding, and explicit call-form conversions. An
-expected type flows down into untyped constants, implicit enum members, `nil`,
-and typeless composite literals.
+`check.odin` handles declarations, signatures, statements, and type syntax.
+`check_expr.odin` handles contextual typing, conversions, places, and folding;
+`check_calls.odin` handles call forms and argument binding. Expected types guide
+untyped constants, implicit enum members, `nil`, and typeless literals.
 
-All named groups, methods, user operators, `init` conversions, and indexing
-share the candidate engine in `overload.odin`. Feature modules form candidates
-and validate their special rules; overload viability, conversion vectors,
-tie-breakers, and ambiguity reporting remain centralized.
+`overload.odin` centralizes viability, conversion ranking, tie-breakers, and
+ambiguity for named groups, methods, operators, `init`, and indexing. Feature
+modules supply candidates and their special constraints.
 
-Hypothetical interface and overload checks increment `Compiler.speculation_depth`.
-They may inspect or annotate cloned syntax, but they must not enroll generic
-bodies, witnesses, materialized globals, type IDs, or backend helpers in the
-final program.
+**Any check whose diagnostics may be rolled back must run as a probe.**
+`begin_probe` raises `speculation_depth` and marks diagnostics; `end_probe`
+discards them before lowering the depth. Probes may annotate cloned syntax but
+must not enroll final-program artifacts. All such decisions ask `committing(c)`
+in `source.odin`; `test-all.ps1` forbids reading the depth elsewhere.
 
-Rolling back a check removes only its diagnostics, so **any check whose
-diagnostics may be truncated runs with `speculation_depth` raised**:
-`begin_probe` raises it and marks the diagnostics, and `end_probe` rolls them
-back before lowering it again. Whether what a check finds belongs to the
-program is one question, `committing(c)` in `source.odin`, and every write it
-decides asks it: enrollment in the registries emission reads (checked and
-hoisted bodies, generic bodies, witnesses, synthesized procedures, static
-locals, materialized globals, type IDs, the format and type-info requests),
-report-once caches (map-key and sort-order policies, validated attributes,
-runtime types), and the last-use annotations the backend reads. A rollback
-outside speculation would let a cache record a report that no longer exists.
-`end_probe` asserts that the registries emission reads are no larger than when
-the probe began, unless a sanctioned commit (below) ran inside it, so a write
-that skips the gate fails in whichever corpus program reaches it. A
-synthesized member stays on its type once a probe creates it, so the use that
-commits it enrolls it (`enroll_synth`): a call, a procedure value, a
-`foreach`, or a witness slot, with an adapter's target. `test-all.ps1` rejects a read of `speculation_depth` outside `source.odin`. The
-one sanctioned commit from inside speculation is `ensure_proc_typed_for_eval`,
-which checks a body for compile-time execution between `begin_commit` and
-`end_commit`, at depth zero, and holds that body's diagnostics aside
-(`hold_diagnostics`), so a later rollback cannot take them. Held errors are left out of `error_count` until
-`release_held_diagnostics` returns them at the end of `compile_program`.
+Gate registry enrollment, report-once caches, and last-use annotations on that
+same decision. Otherwise a rolled-back diagnostic can leave a cache suppressing
+the real report. `end_probe` checks registry growth, except for sanctioned
+commits. Synthesized members may remain on a type after probing; a committed
+call, value, loop, or witness must enroll them through `enroll_synth`, including
+adapter targets.
 
-A call usually probes a generic instance's `where` bounds speculatively first.
-Committing that instance's body checks the bounds again at depth zero, so what a
-holding bound reports, such as a deprecated call, is not lost with the probe.
+The sanctioned nested commit is `ensure_proc_typed_for_eval`: it checks a CTFE
+body at depth zero between `begin_commit` and `end_commit`. Its diagnostics are
+held outside rollback and `error_count`, then released by
+`finish_program_analysis`.
 
-A silent instantiation (`instantiate_generic` with `report = false`, as an
-overload candidate asks) is itself a probe. Its signature is cached either way,
-but nothing it resolves is enrolled, and a rejection rolls its diagnostics back
-and keeps the head one as the instance's rejection for a later request that
-reports. Enrollment waits for a use that commits the instance
-(`promote_generic_instance`).
+Silent generic instantiation (`report = false`) is also a probe. It caches the
+signature or rejection without enrollment; `promote_generic_instance` commits
+the body. Bounds checked speculatively are checked again on commitment so their
+diagnostics and dependencies are retained.
 
 ### Compile-time execution and generics
 
-Simple constant semantics live in `const_ops.odin` and are shared by the checker
-and evaluator. `eval.odin` is a tree-walking interpreter over already typed AST;
-it adds frames, mutation, calls, loops, containers, and `defer`, but it is not a
-second type checker. Assignment deep-copies an aggregate, except a slice, which
-shares the elements it was taken from, as a pointer shares its target.
+`const_ops.odin` supplies shared constant semantics. `eval.odin` interprets
+already typed AST with bounded frames, mutation, calls, loops, containers, and
+`defer`. Aggregate assignment deep-copies, except that slices share elements
+and pointers share targets.
 
-Generic procedures and records are monomorphized. `generic.odin` owns template
-recognition, inference, specialization, `where` evaluation, instance caching,
-and body commitment. Lookup inside an instance is definition-site lookup, so a
-caller's local extension cannot change the meaning of a specialization.
-
-Human-readable generic arguments are separate from `const_key_text` cache
-encodings. Aggregates display their types and elements; diagnostic instantiation
-names have bounded width. Each error from resolving a generic record's fields
-receives its instantiation context, and rendering merges identical causes while
-retaining their additional notes. Diagnostic storage remains intact for probes
-and error accounting.
+`generic.odin` owns inference, specialization, `where` checks, caching, and body
+commitment. Procedures and records are monomorphized with definition-site
+lookup; caller-local extensions cannot change a specialization. Human-readable
+arguments and bounded diagnostic names are separate from `const_key_text`
+cache encodings.
 
 ### Ownership, lifecycle, and provenance
 
-Managed values have language-defined clone, move, and drop behavior.
-`hooks.odin` classifies types and records canonical lifecycle operations;
-`lifecycle.odin` assigns copy obligations, tracks liveness, diagnoses invalid
-uses, and determines cleanup slots. The checker decides clone or move at each
-copy site as it checks it, and reports copy costs there; a report of an
-allocating binding or assignment is held until the body's last-use transfer
-has settled, and each body flushes only the reports it held. The lifecycle
-walk writes only its own results: last-use moves, liveness, and cleanup slots.
-Before liveness is solved, a backward
-pass over the same graph (`settle_last_uses` in `cfg.odin`) replaces a clone
-at a local's last use with a `move` in the syntax tree (design.md "Last-use
-transfer"), so every later phase sees an ordinary written move and checks it as
-one. It runs only outside hypothetical checks. Liveness follows every local, because a
-local starts dead and definite initialization is checked for all of them; only
-a managed one also carries a scope-exit cleanup obligation. Normal exits and
-panic unwind consume the same settled cleanup facts.
+`hooks.odin` classifies managed types and lifecycle operations. Checking selects
+clone/move behavior and records copy costs. Before liveness analysis,
+`settle_last_uses` rewrites eligible last-use clones as ordinary moves, outside
+probes. Allocating-copy diagnostics wait for that decision. `lifecycle.odin`
+then settles initialization, liveness, and cleanup slots. All locals have
+initialization state; only managed locals need scope-exit cleanup.
 
-Where a `defer` is registered, `cfg.odin` also branches from the start of each
-statement to a dead-end walk of the cleanups a panic there would run
-(`emit_unwind_branch`), so provenance sees a deferred statement run after the
-locals registered later have been dropped. Blocks on that path are marked
-`unwind`: the lifecycle pass records liveness there for provenance to look up,
-but reports nothing and counts no cleanup point, so the emitter's drop flags
-are those of the normal exits.
+Normal exits and panic unwind consume the same cleanup facts. Where `defer`
+is registered, CFG construction models a possible panic at each statement and
+walks the applicable cleanups. Unwind blocks record liveness for provenance but
+do not report lifecycle errors or add normal-path cleanup points.
 
-`borrow.odin` runs two related dataflow analyses over provenance events:
+`borrow.odin` tracks two related facts:
 
-- root provenance follows which storage a slice, text view, `any_view`, `dyn`,
-  pointer-like result, or aggregate carrier borrows and checks exclusivity,
-  invalidation, retention, and escape;
-- region provenance follows allocator identity through owners and borrows and
-  proves that values do not escape or survive an allocator reset. A copy of an
-  owner keeps its source's region, even a clone that allocates from its
-  destination: a clone of a container still shares its strings with the
-  source. A carrier stands for the regions of what it views, so a copy read
-  through it keeps those.
+- **Root provenance:** which storage a view, pointer-like result, or aggregate
+  carrier borrows; checks exclusivity, invalidation, retention, and escape.
+- **Region provenance:** which allocator backs an owner or borrow; checks
+  escape and reset. A clone may still retain its source's regions through
+  shared strings, even when container storage uses the destination allocator.
 
-A user operator, a compound assignment's overload, and `operator([]=)` have no
-`Expr_Call`; the provenance walk treats each as a synthesized call to the
-procedure it resolved to, so it borrows, invalidates, and summarizes like any
-other call.
-
-Procedure result summaries, the regions each body may leave in the arguments
-it writes, and escape levels carry these facts through direct, generic, and
-indirect calls. A summary tells a borrow of what a parameter reaches from a
-value read out of it: a parameter's `content_loans` stand for what one, two, or
-more loads through its caller storage read, up to the depth its type allows,
-and a call substitutes that many `Load`s through the argument, the last one
-deep. A call also counts as a write to every global its
-callee may write, settled over the whole program first. What these analyses
-trust rather than check is listed under [Deliberate boundaries](#deliberate-boundaries).
+Result summaries, written-argument regions, and escape levels propagate these
+facts through direct, generic, and indirect calls. `content_loans` represent
+loads through caller storage, substituted through the actual arguments.
+Whole-program global-write effects also apply at calls. Operators without an
+`Expr_Call` use synthesized call events for the selected procedure.
 
 ### Closed semantic registries
 
-Several semantic choices are compilation-wide records rather than facts to
-rediscover during lowering:
-
-- map key and ordering policies store exact operation `Symbol_Id`s;
-- generic bodies are checked and enrolled in their defining package;
-- materialized constants store their definition and immutable value;
-- erased interface witnesses store concrete slot targets;
-- runtime type identities are requested symbolically and numbered by
-  `freeze_typeids`;
-- formatter discovery records the ordinary `fmt.Formattable` witness for each
-  printable concrete type; generated defaults are ordinary synthesized methods;
-- lifecycle finalization snapshots clone/drop classification and hook IDs.
-
-`emission_contract.odin` verifies that these registries are closed and mutually
-consistent, and that the stages feeding them finished: the whole-program
-analyses (`program_analyzed`), formatter discovery, the release of held
-diagnostics, and every carrier's fields. It never invokes the checker or fills
-missing state. Local emitter
-assertions remain a second line of defense, and failed emission returns no
-partial module.
+Before emission, the checked program must contain exact map/order policies,
+committed generic bodies, materialized constants, erased witnesses, frozen
+type IDs, formatter witnesses, and immutable lifecycle operations.
+`emission_contract.odin` validates those records and phase-completion flags,
+including released diagnostics and completed carrier fields. It never checks
+or fills missing state. Local emitter assertions provide a second check;
+failure returns no partial module.
 
 ## Runtime and library boundary
 
-The repository has three implementation layers outside `src/`:
-
-| Location | Role |
+| Location | Responsibility |
 | --- | --- |
-| `base/` | Foundational Loke declarations needed by the compiler itself: runtime result/option/shared types, reflection metadata, and structural interfaces. |
-| `core/` | The standard library written in ordinary Loke: formatting, memory, containers, strings and string conversion, I/O, logging, filesystem and paths, OS, terminal, synchronization, SIMD helpers, math, encoding, and related packages. |
-| `runtime/` | The versioned C ABI for allocation, arenas, process arguments, atomics, managed containers, failure, panic and its `-g` stack trace, formatting, and text storage. `loke_rt.h` is the ABI contract. |
+| `base/` | Foundational Loke declarations: runtime types, reflection metadata, and structural interfaces. |
+| `core/` | Standard library in ordinary Loke; see [standard-library.md](standard-library.md). |
+| `runtime/` | Versioned C ABI for allocation, managed storage, atomics, formatting, failure, and panic. `loke_rt.h` is the ABI contract. |
 
-The rule is to keep a feature in Loke source whenever the language can express
-it. `stdlib.odin` contributes only identities or primitives the compiler already
-owns or that Loke cannot express, such as atomic instructions, erased formatting
-dispatch, allocator-aware string allocation, and selected provider access.
+Prefer Loke source when it can express the feature. `stdlib.odin` contributes
+compiler-owned primitives such as atomic operations, erased formatting,
+allocator-aware string allocation, and provider access.
 
-String allocation is the bridge between ordinary library code and the runtime
-ABI. The compiler contributes package-private `allocate_string` to
-`core:strings` and `core:fmt`; it copies a valid `string_view` with the selected
-allocator and returns `Result(string, Allocator_Error)`. `strings.copy` and
-`try_copy` wrap it, while `fmt.to_string` calls it directly. The contributed
-`allocation_failed` primitive applies the allocator's failure policy, including
-aborting without unwinding under `.Trap` (design.md "Allocation failure").
-It is available to `base:runtime`, `core:slice`, `core:strings`, and `core:fmt`.
+Package-private `allocate_string` bridges `core:strings` and `core:fmt` to the
+runtime, returning `Result(string, Allocator_Error)`. `allocation_failed` applies
+allocator policy, including non-unwinding `.Trap` failure. `String_Builder.finish`
+copies because raw dynamic-array storage cannot become a string's
+reference-counted allocation directly.
 
-`String_Builder.finish` copies because a dynamic byte array owns raw storage
-while a string points past a reference-counted allocation header. Those layouts
-cannot transfer storage directly.
+Platform declarations use `when (LOKE_OS == .Windows)`; filenames such as
+`_windows.loke` have no selection effect. Windows is currently the only target.
 
-Platform code lives in a file with `when (LOKE_OS == .Windows)` around its
-foreign declarations. There is no target-based filename filtering such as
-`_windows.loke`. `LOKE_OS` is currently fixed to `.Windows` in
-`src/build_config.odin`; a future source-selection convention requires a
-compiler and specification change before ports rely on it.
-
-An executable build links the generated module with the compiled C runtime.
-`prebuilt_runtime_objects` keeps compiled runtime objects under
-`runtime/prebuilt/<mode>-<hash>/`, one set per C build. The hash is of the
-set's `build-inputs.txt`: the clang command (the clang path, the flags, and the
-MSVC and SDK include roots), the clang binary's modification time, and each
-`runtime/*.c` and `*.h` file's name and a hash of its contents. A changed
-input names a new set rather than replacing one a parallel link may be reading;
-an installed set is never modified, and superseded sets are left in place. A
-link that cannot build or install a set compiles the sources itself and writes
-the reason to `runtime/prebuilt/last-failure.txt`. The
-first build after editing `runtime/` or changing `LOKE_CLANG` is slow by
-design, and the rest are not. An object build emits one
-relocatable compiler module and leaves its runtime and foreign references for
-the host to supply.
+`prebuilt_runtime_objects` caches C objects under `runtime/prebuilt/<mode>-<hash>/`.
+The key covers the clang path, flags, MSVC/SDK include roots, clang modification
+time, and runtime source/header names and contents. Installed sets are immutable
+for concurrent links; changed inputs create a new set. On cache build/install
+failure, the link compiles sources directly and records the reason in
+`runtime/prebuilt/last-failure.txt`.
 
 ## Source-code map
 
-All Odin files under `src/` belong to the same `lokec` package. The file split is
-for ownership and navigation, not separate package APIs. Helpers shared by
-subsystems are package-private; a helper used only within one component should
-be file-private.
+Files directly in `src/` form the `lokec` package; `src/subprocess/` is a
+separate package shared with the test harness. Shared subsystem helpers are
+package-private; helpers used only within one file should be file-private.
+Paths below are relative to `src/`.
 
 ### Driver, source, and syntax
 
 | Files | Responsibility |
 | --- | --- |
-| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI options and presentation, reusable batch sessions and phase order, build constants, provider selection, and exit codes. |
+| `main.odin`, `session.odin`, `build_config.odin`, `providers.odin` | CLI presentation, session orchestration, build configuration, and provider selection. |
+| `overlays.odin`, `queries.odin`, `query_index.odin` | Unsaved sources, snapshot APIs, and the read-only query index. |
 | `incremental.odin` | Bounded package checkpoints, input validation, dependency-prefix replay, reclamation, and checking statistics. |
-| `stack.odin` | The 64 MB compiler stack reservation that bounds nesting (`MAX_NEST`) and compile-time recursion. |
+| `stack.odin` | 64 MiB compiler stack reservation and nesting budget. |
 | `install.odin`, `packages.odin`, `project.odin`, `select.odin` | Installation-relative roots, `loke.project` dependencies, package loading/import graph, dependency order, and `when` selection. |
-| `source.odin` | `Compiler`, source buffers, spans, and the diagnostics engine. Start here when locating global state; `destroy_compilation` is `semantic.odin`'s. |
+| `source.odin` | `Compiler`, sources, spans, and diagnostics; destruction lives in `semantic.odin`. |
 | `lexer.odin` | Tokens and lexical scanning. |
 | `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
-| `formatter.odin` | `-fmt` and `-fmt-check`: whitespace-only layout over the lexer's tokens and comments, refused for a file that does not parse and checked to keep every token. |
-| `doc.odin` | `-doc`: the public API of the checked root package and each project package it imports, as Markdown, with the comments above each package clause, declaration, and struct field. |
-| `semantic.odin`, `universe.odin` | Stable IDs, symbols, types, scopes, packages, type interning, and predeclared names; compiler-contributed members (`synth_proc`, `enroll_synth`, `add_members`, associated types) for every feature that synthesizes them. |
+| `formatter.odin` | Token-preserving `-fmt` and `-fmt-check` for parseable source. |
+| `doc.odin` | `-doc` Markdown for the checked root and imported project packages. |
+| `semantic.odin`, `universe.odin` | Semantic stores, interning, predeclared names, and compiler-contributed members. |
 
 ### Checking and language features
 
@@ -727,12 +292,12 @@ be file-private.
 | `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations, zero-value rules, and required-result classification. |
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and the built-in `len`/`cap`/`hash` receiver members. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
-| `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Closed enum validation, tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. A `dyn proc` view is `dyn interfaces.Callable(...)` whose second word is the `call` itself: a capture literal's witness thunk, or for a procedure, held in the data word, a per-signature adapter. Its implicit conversion is recorded as `erased_from`, as an `any_view`'s is. |
+| `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Enums, unions, extraction/failure protocol, erased views, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | The slice type, its shared ABI type and queries; managed-container, text, SIMD, and atomic semantics, and the member tables of the built-in carriers. |
-| `capture.odin` | Capture literals: the parser makes `proc(...) capture(...) { ... }` a composite literal carrying the clause, and checking lowers it to a body-local record, its `call` (the body cloned with each captured name rewritten to the receiver's field), and a literal of that record, so ownership, borrowing, and emission see only ordinary code. Each literal's value is checked once, typing its field; each captured name is reserved in the scope the body sees, so a local cannot take it; and the captures are invisible outside that `call`. |
-| `box.odin` | `box(T)`: the type constructor, `box`/`try_box` construction, `unbox`, the `^T` loan, and the allocation layout the emitter shares. A box dereference is written into the typed AST as a `b^` postfix marked `boxed`, a projection of the box's own place, so provenance treats it as it treats a dynamic array's element. |
+| `capture.odin` | Lower capture literals to ordinary records, `call` methods, and record literals. |
+| `box.odin` | Box types, construction, unboxing, dereference projections, and shared allocation layout. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
-| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Fallback `indexed`/`reversed`/`copied` adapters, peeled so `foreach` lowers directly; mutable lending over arrays, dynamic arrays, mutable slices, and maps, and the `iter_mut` protocol check; and the yield modes, derived from `next`, that decide whether a loop binding owns, borrows, or mutably borrows each part. |
+| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Iterable adapters, mutable lending, and ownership/borrow modes of yielded bindings. |
 
 ### Generics, compile-time features, and bootstrap
 
@@ -754,7 +319,7 @@ be file-private.
 | `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
 | `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
-| `global_effects.odin` | Whole-program global write effects: which globals each body, and each call through it, may write; the L0707 warning for a `thread.spawn` entry that writes a shared global; and the L0711 error for a copy hook that writes any global. |
+| `global_effects.odin` | Whole-program global writes and their copy-hook and thread-entry diagnostics. |
 | `region.odin` | `Arena`/`Scratch` semantic types. |
 
 ### LLVM and toolchain
@@ -771,305 +336,323 @@ be file-private.
 | `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, and typed-comparator sort adapters. |
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
-| `emit_llvm_box.odin` | Box construction, `unbox`, and the per-type drop and clone thunks, which let a type reach itself through a box without recursive emission. |
+| `emit_llvm_box.odin` | Box construction, unboxing, and recursive drop/clone thunks. |
 | `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
-| `emit_llvm_debug.odin` | `-g`: procedure, statement, scope, and local markers, turned into `!dbg` attachments, `llvm.dbg.declare` calls, and debug metadata once the module is complete, and the natvis rules the linker puts in the PDB. |
+| `emit_llvm_debug.odin` | Debug locations, scopes, locals, CodeView metadata, and Natvis rules. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |
-| `subprocess/subprocess.odin` | `subprocess.run`, which waits on a child without polling its pipes in a busy loop; the test harness imports it too. |
+| `subprocess/subprocess.odin` | Child-process execution without busy-waiting; also used by the test harness. |
 
-`emit_llvm_module` is an artifact boundary: it consumes a checked compilation
-and returns module text in memory. It creates no types or symbols; the only
-semantic state it writes is the layout cache `layout.odin` shares with the
-checker. It compares `semantic_extent` before and after, so a new symbol, type,
-or registry entry fails emission instead of repairing the program. Filesystem and process policy
-belongs in `emit_llvm_toolchain.odin`. Backend names and temporary values belong
-to `Emitter`, never to semantic symbols: the checker records identities (an
-instance's template and arguments, a compiler-made type's `backend_label`, a
-witness's interface and arguments), and the emitter spells and escapes them.
-No non-test backend file
-(`emit_llvm*.odin`, `emission_contract.odin`) names `Checker`, and no front-end
-file other than `main.odin` and `session.odin` calls a procedure an `emit_llvm*.odin`
-file defines: a helper both sides need lives with its semantic owner.
-`test-all.ps1` enforces both.
+`emit_llvm_module` consumes checked state and returns text without filesystem or
+process operations. It creates no types, symbols, or registry entries; only the
+shared layout cache may change. `semantic_extent` checks this boundary. Backend
+names and temporaries belong to `Emitter`, not semantic symbols.
 
-Debug locations start in `emit_stmt`, including direct statement emission;
-conditions and switch subjects restore their own locations after initializers.
-Each emitted copy of a deferred local has its own debug declaration and scope.
-CodeView's enumerator limit requires 128-bit integers and enums to expose their
-two 64-bit words; see [compiler-guide.md "Common options"](compiler-guide.md#common-options).
+Non-test backend files (`emit_llvm*.odin`, `emission_contract.odin`) must not name
+`Checker`. Front-end files other than `main.odin` and `session.odin` must not call
+emitter procedures. Shared helpers belong with their semantic owner;
+`test-all.ps1` enforces both directions.
 
-Fixed-array clone failure paths use a reverse-prefix drop loop, keeping cleanup
-IR linear in the array length while destroying only the elements already built.
-`fixed_array_clone_ir_grows_linearly` checks that doubling an array stays below
-three times the emitted module size, and the run corpus checks cleanup order.
+Preserve these lowering rules:
 
-Implicit conversions use `emit_expr_at` with an explicit effective type; address
-and value helpers carry that type without changing the checker's AST annotations.
-Child expressions continue to use their own checked types.
-
-A value larger than `LARGE_VALUE_BYTES` never becomes an LLVM first-class value,
-because clang crashes on one with 65536 or more scalars in it. Such a value is
-instead the address of storage that nothing else writes. It travels by pointer,
-and it is returned through a leading `ptr %sret`. Its temporaries are shared
-between full expressions, so a function's frame holds what one statement needs.
-Every load, store, call, and return of a Loke-typed value therefore goes
-through the typed helpers: `load_place`, `store`, `temporary_slot`,
-`emit_call_result`, `emit_ret`, and `sret_param`. A raw `store %s` or `ret %s`
-of such a value is a bug.
+- Implicit conversions pass an effective type through `emit_expr_at` and typed
+  helpers without changing checked AST annotations.
+- Values above `LARGE_VALUE_BYTES` travel by address and return through `sret`,
+  avoiding LLVM first-class aggregates that can crash clang. Route Loke values
+  through `load_place`, `store`, `temporary_slot`, `emit_call_result`, `emit_ret`,
+  and `sret_param`; reuse temporary storage between full expressions.
+- Fixed-array clone failures drop the built prefix in reverse order with a loop,
+  keeping cleanup IR linear. `fixed_array_clone_ir_grows_linearly` guards this.
+- Debug locations follow statements, conditions, and switch subjects. Each
+  emitted copy of a deferred local needs its own declaration and scope.
 
 ## How to make a compiler change
 
-Use the narrowest path that preserves the phase contracts:
+1. Settle behavior in [design.md](design.md). For syntax changes, update
+   [grammar.md](grammar.md), lexer/parser, AST, dump, clone rules, and recovery
+   fixtures together. Exhaustive walkers and `ast_clone_classifies_every_node_field`
+   help catch missing cases; place-path walkers deliberately remain partial.
+2. Implement the decision in its semantic owner and record the result on the
+   AST or in a registry. Comments cite exact headings, such as `design.md "Maps"`.
+3. Add compile-time value semantics to `const_ops.odin` or `eval.odin` when
+   applicable. Ownership, borrowing, retention, and allocator changes belong in
+   CFG events and their solvers.
+4. Register runtime dependencies during committed checking and extend the
+   emission contract. Lower the recorded operation in its `emit_llvm_*` file;
+   keep layout in `layout.odin` and foreign classification in `abi.odin`.
+5. Prefer `base/` or `core/` implementations over new compiler/runtime primitives
+   when the language can express them. Add a focused regression and run the
+   relevant checks below. Follow [AGENTS.md](AGENTS.md) for accompanying documents
+   and changelog entries.
 
-1. If syntax changes, update `grammar.md`, tokens/lexer, AST nodes, parser, AST
-   dump, `ast_clone.odin`, and syntax recovery fixtures together. A new node
-   kind fails to compile until it has a clone case, and a new field on a node
-   fails `ast_clone_classifies_every_node_field` until it is listed as copied
-   or dropped; a written field must also be copied by the clone. A walker that
-   asks one question of a whole subtree (`first_unresolved_name`,
-   `type_syntax_names`, `pattern_shape`) switches exhaustively, so a new
-   expression form fails to compile there too until the walker says whether it
-   descends into it. A walker that follows one place path (`place_root_symbol`
-   and the `prov_` place walkers) stays `#partial`.
-2. Settle the language decision in `design.md` first, then put it in the
-   checker or the relevant semantic feature module. Record the chosen symbol,
-   type, operation, conversion, or policy on the AST or in a semantic registry.
-   Source comments cite design.md sections by heading (`design.md "Maps"`);
-   `check-citations.ps1` fails on a heading that no longer exists.
-3. If the feature works at compile time, implement its value semantics in
-   `const_ops.odin` or its evaluator path in `eval.odin`; do not create a second
-   checker inside CTFE.
-4. If it affects ownership, borrowing, retention, or allocator identity, add a
-   CFG/provenance event and update the corresponding solver. Do not infer these
-   facts during LLVM emission.
-5. If it adds a runtime dependency, register that dependency during committed
-   checking and extend `validate_emission_dependencies` when an incomplete
-   registry could otherwise reach lowering.
-6. Lower the already resolved operation in the matching `emit_llvm_*` component.
-   Keep layout in `layout.odin` and foreign ABI classification in `abi.odin`.
-7. Prefer an ordinary implementation in `base/` or `core/` when the language can
-   express the feature. Add a compiler contribution or C runtime primitive only
-   for an actual language/runtime seam.
-8. Add the smallest unit or corpus regression that would have caught the bug,
-   then run the broader suite appropriate to its risk.
-
-Useful navigation commands:
-
-```powershell
-rg "^[A-Za-z_][A-Za-z0-9_]* :: proc" src
-rg "L[0-9]{4}" src tests
-rg "resolution\.kind|chosen_overload|container_op" src
-rg "Builtin_Kind|Synth_Kind" src
-rg "@\(test\)" src tests
-```
-
-When debugging a backend failure, trace backward from the emitter assertion to
-the AST annotation or semantic registry that should have been settled. The usual
-fix belongs at that earlier boundary, not in a fresh backend lookup.
+For backend failures, trace the assertion back to the missing annotation or
+registry entry. Fix the phase responsible for that fact rather than adding a
+backend lookup. Use `rg` for procedure names, diagnostic codes, or `@(test)`.
 
 ## Testing and verification
 
-Compiler unit tests live beside the implementation:
+From the repository root:
 
-- `front_end_test.odin` covers the lexer, parser recovery, package loading,
-  semantic helpers, and hand-built packages;
-- `bigint_test.odin` covers exact integer arithmetic;
-- `carrier_test.odin` covers aggregate carrier shapes and provenance;
-- `syntax_corpus_test.odin` runs the valid syntax corpus, the AST goldens and the parser mutation fuzzer in process;
-- `emit_llvm_test.odin` checks emission contracts and structural backend rules.
-- `session_test.odin` and `incremental_test.odin` check batch/incremental reuse,
-  diagnostics/IR equivalence, invalidation, reclamation, entry policy, ownership,
-  and destruction.
-- `subprocess_test.odin` checks that `subprocess.run` releases the handles of
-  the children it waits on.
+```powershell
+.\test-all.ps1                     # quick gate
+.\test-all.ps1 -Full -RequireTools  # CI gate
+```
 
-The integration harness is `tests/corpus_test.odin`:
+The quick gate checks heading citations and layering, runs unit tests, rebuilds
+`lokec.exe`, and runs baseline integration tests. `-Full` adds the checker mutation
+fuzzer and reruns optimization-sensitive corpora at every supported level. Use
+it locally for that additional coverage or to investigate CI failures.
 
-| Directory | Contract |
+Some checks need external tools: NASM, clang with a C-host toolset, or cdb (WinDbg/
+Windows SDK, optionally selected by `LOKE_CDB`). Missing capabilities are reported
+as skips. `-RequireTools`, or `LOKE_TEST_REQUIRE_TOOLS=1`, turns those skips into
+failures; CI uses both switches.
+
+Unit tests live beside the compiler implementation in `src/*_test.odin`.
+`session_test.odin` and `incremental_test.odin` compare diagnostics, semantic
+registries, and IR with fresh batch checks, and verify invalidation and memory
+reclamation. The integration harness is in `tests/`:
+
+| Cases | Checks |
 | --- | --- |
-| `tests/run/` | Compile, execute, and compare stdout with `.expected`. |
-| `tests/trap/` | Compile, require a failing process result, and match the panic report with `.expected-err`. |
-| `tests/err/` | Match diagnostic count, codes, message fragments, and optional `@line:column` spans. Warnings the case's own sources raise are counted too, written as `warning[L0507]: ...`. |
-| `tests/syntax_err/` | Parser recovery: diagnostics, and the file's trailing sentinel survives. (`tests/syntax/` is run in process by `syntax_corpus_test.odin`.) |
-| `tests/ll/` | Require stable shapes in emitted LLVM IR, forbid shapes listed after `not `, and require LLVM to accept the module. |
-| `tests/layout/` | Compare compiler and LLVM layout. |
-| `tests/pkg/`, `tests/pkg_err/` | Multi-package success and import/package diagnostics. |
-| `tests/obj/`, `tests/os/` | C-host object linking, and real process arguments and environment values. |
-| `tests/doc/` | Document with `-doc`, and compare stdout with `.expected`. |
-| `tests/examples/` | Every program in `examples/` is built from its real source and must carry a classification; an output example's stdout is compared with `tests/examples/<name>.expected`. |
+| `run/`, `trap/` | Stdout against `.expected`; failing processes against `.expected-err`. |
+| `err/`, `pkg_err/` | Diagnostic counts, codes, fragments, optional spans, and source warnings. |
+| `syntax/`, `syntax_err/` | Valid syntax, AST goldens, and recovery with a surviving trailing sentinel. Valid syntax and parser fuzzing run in-process in `src/syntax_corpus_test.odin`. |
+| `ll/`, `layout/` | Required/forbidden LLVM shapes and LLVM acceptance; compiler/LLVM layout agreement. |
+| `pkg/`, `obj/`, `os/` | Multi-package programs, C-host linking, process arguments, and environment. |
+| `doc/`, `examples/` | Generated documentation and classified real example programs with expected output. |
+| `tutorial_test.odin` | Programs, auxiliary files, outputs, panics, and diagnostics extracted from tutorial fences. |
+| `runtime_test.odin` | Runtime-header ABI agreement and concurrent runtime-cache creation/reuse. |
+| `checker_fuzz_test.odin` | Deterministic source mutation; failures reduced and saved under `tests/tmp/fuzz/`. |
 
-`tests/checker_fuzz_test.odin` mutates the `tests/run/` programs (another name
-from the same file, another number or operator, a duplicated or deleted line)
-and runs `lokec -emit-ll` on each mutant. The compiler must exit 0 or 1 within
-a time limit, report no internal contract violation (`L0405`), never repeat a
-whole diagnostic, and report no more errors than the mutant has lines. A
-failure is reduced line by line, printed, and kept in `tests/tmp/fuzz/`; it
-becomes a `tests/err/` or `tests/run/` case with the fix. The fixed run is
-deterministic, and each program's mutants come from a seed of its own, so a new
-`tests/run/` case leaves every other program's mutants unchanged;
-`LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` (per program) explore further.
+`every_diagnostic_code_is_pinned` requires each diagnostic to have a test or a
+reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become
+regressions with their fixes; `LOKE_FUZZ_SEED` and `LOKE_FUZZ_MUTANTS` explore more
+cases. Harness workers collect results and assertions run on the test thread;
+child processes use the shared `subprocess` package without busy-waiting.
 
-`tests/runtime_test.odin` checks the runtime as the driver links it. clang
-lowers `runtime/loke_rt.h` for the compiler's target, and every literal
-`declare` or `define` of a `loke_rt_v1_` function in `src/emit_llvm*.odin`, the
-default allocator record, and the string and container records a module
-carries must match that lowering, including argument-passing attributes. It
-also checks, on a private copy of the compiler and runtime, that a changed
-`LOKE_CLANG` gets its own prebuilt runtime objects, installed by eight parallel
-links without any losing its objects, and that the first set is reused after.
-
-`tests/tutorial_test.odin` checks the pages under `tutorials/` from their own
-text, so a reader copies exactly what was compiled. A fenced block whose info
-string says `file=` is written out: a `.loke` file of a program, a data file, or
-C source that clang compiles to an object for a `foreign import`. A following
-`output=`, `panic=`, or `error=` block names a program and says what the console
-shows when it runs, with any `args=` and `exit=`, or what lokec reports when it
-rejects it. Every program is built and run from one directory, as a reader
-following the pages would, and each needs a result block. A page therefore
-cannot show a program, an output, or a diagnostic the suite does not check.
-
-Every diagnostic code the compiler can write is pinned by a case in one of those
-directories, or by a harness or unit test for the ones no corpus shape reaches
-— a missing input, an unwritable module, an absent clang or assembler, a
-malformed literal the lexer rejects. The
-exceptions are the `UNPINNED` list in `tests/corpus_test.odin`: invariant guards
-that no source can reach, and `require_const`'s fallback message, each with the
-reasoning recorded at its site. `every_diagnostic_code_is_pinned` fails when a
-new code arrives without either.
-
-Common commands from the repository root:
+For individual suites:
 
 ```powershell
 odin test src -vet-unused -vet-shadowing -vet-packages:lokec
 odin build src -out:lokec.exe -vet-unused -vet-shadowing
 odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -vet-unused -vet-shadowing -vet-packages:tests
-.\test-all.ps1
 ```
 
-Direct integration runs use an existing `lokec.exe` (or the executable named by
-`LOKEC`). After changing the compiler, rebuild it with the command above before
-running `odin test tests`; that command does not rebuild the compiler for you.
+**Rebuild before direct integration runs after compiler changes.** The harness
+uses existing `lokec.exe` (or `LOKEC`); `odin test tests` does not rebuild it.
+Add `-define:ODIN_TEST_NAMES=<name>` to select an Odin test procedure:
+`programs_run` selects the executable corpus, and `tutorials_compile_and_run`
+selects tutorial programs, not a single source file.
 
-To isolate a failure, add `-define:ODIN_TEST_NAMES=<name>` to the appropriate
-`odin test src` or `odin test tests` command. The name is an Odin test procedure;
-for example, `programs_run` selects the executable corpus, not one `.loke` file.
-`tutorials_compile_and_run` checks tutorial examples and reports the page and
-block when output or diagnostics differ.
+For direct optimization runs, set `$env:LOKE_TEST_FLAGS = "-opt=speed"`, then
+restore/remove it afterward. Run/trap, package, example, and tutorial compilations
+honor it; `test-all.ps1` manages it itself.
 
-For a direct integration run at another optimization level, set
-`$env:LOKE_TEST_FLAGS = "-opt=speed"` in PowerShell, then restore or remove that
-environment variable after the run. Run/trap, package, example, and tutorial
-compilations honor it, and their expected output must match at every level.
-`test-all.ps1` manages this variable itself for its baseline and full gate.
+Unit tests track allocations. Build with `-define:LOKE_TRACK_MEMORY=true` to
+report whole-compilation leaks and bad frees. `-vet-packages` confines test vetting
+to the repository package. If Windows PowerShell treats native stderr as
+`NativeCommandError`, use PowerShell 7 (`pwsh`, as CI does) and check exit codes.
 
-If Windows PowerShell reports Odin's stderr as `NativeCommandError`, use
-PowerShell 7 (`pwsh`, as CI does), or run the individual native commands from a
-POSIX shell with their environment settings translated. Check exit codes;
-running only the native commands does not replace the script's citation and
-layering checks.
+For documentation-only changes, check local links and run `check-citations.ps1`;
+compile affected examples or run the tutorial suite when needed. A full compiler
+gate is unnecessary. Preserve cited headings when reorganizing this guide.
 
-`odin test src` tracks every unit test's memory and reports leaks and bad
-frees. For a whole compilation, build with `-define:LOKE_TRACK_MEMORY=true`,
-which makes `lokec` print every allocation still live at exit, and every bad
-free, on stderr. Test code is vetted with `-vet-packages`, because plain vet
-also reaches Odin's own `core:testing` and fails there.
+For performance changes, build the baseline compiler and run:
 
-`test-all.ps1` checks design-document citations and backend layering, runs the
-unit tests, rebuilds the compiler, and runs the baseline corpus. `-Full` adds
-the costly part: the checker mutation fuzzer, which runs only when
-`LOKE_TEST_FULL` is set, and a rerun of every test that honours
-`LOKE_TEST_FLAGS` (the run/trap corpus, multi-package programs, the examples,
-and the tutorials) at every supported optimization level. CI runs `-Full`.
+```powershell
+.\perf.ps1 -Out before.json
+# Make the change and rebuild lokec.exe, then:
+.\perf.ps1 -Baseline before.json
+```
 
-The corpora compile and run their cases a core's worth at a time (`exec_all` in
-tests/corpus_test.odin) and judge the results afterwards on the test's own
-thread, because `testing.expect` is not safe to call from another one. Every
-launch, in the harness and in `lokec`, waits without spinning: Odin's
-`os.process_exec` polls its pipes in a busy loop, which held a core per waiting
-process and starved the parallel compiles it was waiting for.
-
-Four tests need a tool this repository does not ship — nasm, cdb (from WinDbg
-or the Windows SDK's debugging tools, or named by `LOKE_CDB`), and a clang or
-MSVC toolset to link a C host — and record what they skipped when it is absent. Pass
-`-RequireTools` (or set `LOKE_TEST_REQUIRE_TOOLS=1`) on a machine that is
-supposed to have them: the skips become failures, so the assembly link, the
-object-build host link, the IR validation and the debugger's reading of `-g`
-cannot go missing on a green run.
-
-`perf.ps1` records performance rather than testing it. For every program in
-`examples/` and `bench/` it takes the front end's time (`-emit-ll`, which stops
-before clang), the whole build's time at `-opt=speed`, lokec's peak working
-set, and the executable's size, each timing the fastest of three runs. It also
-runs the `bench/` programs, which are sized to take a measurable time, and
-requires each one's output to match its `.expected`. `-Out` writes the record
-as JSON; `-Baseline` shows each figure's change from an earlier record. CI runs
-it after the gate, compares with the latest release's `perf.json`, and a
-release attaches its own. Measure before and after a change meant to make the
-compiler faster, on one machine, because figures from different CI runners
-vary by more than most changes.
-
-Build the baseline compiler and run `.\perf.ps1 -Out before.json` before making
-the change. Rebuild afterward, then run `.\perf.ps1 -Baseline before.json` on
-the same machine and workloads.
-
-For a structural backend refactor, compare emitted `.ll` with the same source
-path and options before and after the change. Reproducible IR catches naming and
-ordering drift that successful execution may hide.
+Use the same machine and workloads. The script measures front-end and full-build
+time, peak working set, executable size, and benchmark runtime; timings use the
+fastest of three runs and benchmark output must match. CI compares with the
+latest release's `perf.json`; releases attach their own record. For structural
+backend refactors, also compare emitted `.ll` using identical source paths and
+options to catch naming or ordering drift.
 
 ### Standard-library verification
 
-Library behavior is tested by the corpus programs `tests/run/lib_*.loke`, which
-run at the default optimization level in the quick gate and at every supported
-level in the full gate, and by the programs in `examples/`. A new or changed
-public API covers whichever of these cases apply:
+Use `tests/run/lib_*.loke` and examples. Cover the boundaries relevant to the API:
 
-- empty input, empty files, and empty strings;
-- binary data containing zero bytes;
-- valid multi-byte UTF-8 and deliberately invalid UTF-8;
-- Unicode file names and long Windows paths;
-- missing, inaccessible, read-only, and already-existing paths;
-- partial reads/writes, end of input, interruption, and broken pipes;
-- bounded reads one byte below, exactly at, and one byte above the limit, with
-  `Limit_Exceeded` destroying partial owning results;
-- allocator failure at every growing operation, with the destination unchanged
-  (a deliberately small `mem.Arena` makes this deterministic);
-- explicit close followed by drop, double close, and panic unwinding;
-- redirected standard handles; and
-- byte offsets around one-, two-, three-, and four-byte runes.
+- Empty/binary data, valid/invalid UTF-8, and rune offsets.
+- Unicode and long paths; missing, inaccessible, read-only, and existing paths.
+- Short reads/writes, EOF, interruption, broken pipes, and redirected handles.
+- Limits just below/at/above the boundary; `Limit_Exceeded` destroys partial owners.
+- Allocation failure with unchanged destinations; a small `mem.Arena` makes it
+  deterministic. Also check close followed by drop, double close, and unwind.
 
-Protocol tests drive fake short readers and writers, as `lib_io` does.
-Filesystem tests work in an isolated temporary directory, as `lib_fs` does, and
-never depend on the repository working directory or a developer's environment.
+Use fake short readers/writers as in `lib_io` and isolated temporary directories
+as in `lib_fs`. Terminal input and raw-mode restoration remain manual checks
+with `examples/keys.loke`, including close, scope exit, unwind, and the console
+control handler; `lib_term` automates output and redirected handles only.
 
-Terminal input is not automated, because a corpus program has no console of its
-own: `lib_term` covers only output and redirected handles. Raw-mode restoration
-on scope exit, on `close`, and on panic in an `unwind` build, and the console
-control handler's restore, are checked by hand with `examples/keys.loke`.
-Testing the key decoder from synthetic console records would automate
-everything but that last layer.
+## Reusable batch sessions
+
+`src/session.odin` owns one `Compiler`, copied configuration and overlays,
+session arenas, and optional package checkpoints. CLI presentation stays in
+`main.odin`; filesystem/toolchain policy stays in `emit_llvm_toolchain.odin`.
+
+| Operation | Contract |
+| --- | --- |
+| `init_session(&s, config)` | Initialize a zeroed session; copy configuration strings/arrays. Defaults to `DEFAULT_COMPILATION_CONFIG`. Invalid configuration returns false with diagnostics; a live session cannot be reinitialized. |
+| `check_session(&s, input)` | Replace the compilation, reload inputs, check, validate entry/exports, and finalize. Return false with diagnostics on errors. The input path is copied. |
+| `check_session(&s, input, documentation = true)` | Check for `-doc`, without executable-entry validation or emission finalization. Cannot emit. |
+| `check_session_incremental(&s, input)` | Reuse an eligible dependency prefix; otherwise perform a full check. See [Incremental checking](#incremental-checking). |
+| `session_check_stats(&s)` | Rechecked/reused package IDs and semantic/checkpoint byte counts. ID slices expire on the next check or destruction. |
+| `invalidate_session(&s)` | Expire the result after external changes. Repeated calls are safe; false only for an uninitialized/destroyed session. |
+| `emit_session_ir(&s)` | Return module text and a success flag; no files or tools. Requires a successful finalized check. Each module remains allocated until the next check or destruction. |
+| `emit_session(&s, options)` | Write artifacts using `Emission_Options` (`output`, `emit_ll`, `keep_temps`, `runtime_dir`). Optimization/build mode come from configuration. An empty output returns 2 without a diagnostic and permits retry; otherwise return toolchain status. |
+| `destroy_session(&s)` | Release all owned storage. Safe on zeroed sessions, after failures, and repeatedly. |
+
+Do not copy a live session or `Compiler`: allocator pointers refer into them.
+The allocator captured at initialization must outlive the session. Configuration
+is fixed; create a new session to change it. Operations require exclusive access
+except for the concurrent queries described below.
+
+`s.compiler` exposes borrowed sources, syntax, IDs, diagnostics, and emitted text.
+Their lifetime ends at invalidation, an overlay edit, the next check (even if it
+fails), or destruction. Copy anything needed longer. Batch/documentation checks
+discard checkpoints; batch checking remains the reference for incremental results.
+
+## Snapshots and queries
+
+`overlays.odin` supplies unsaved sources; `queries.odin` exposes recorded checking
+results; `query_index.odin` indexes checked syntax and committed generic/static-loop
+clones. The query arena and formatted type names are built lazily on the first
+snapshot. Queries never resolve names, check bodies, instantiate generics, or
+enroll artifacts.
+
+All operations below return a success flag. Query handles carry a process-unique
+snapshot ID; entry points reject stale/foreign handles and out-of-range IDs,
+including after destroying and reinitializing a session.
+
+| Operation | Result or effect |
+| --- | --- |
+| `set_session_overlay(&s, path, text)` | Copy a `.loke` path/text, normalized as Windows package loading does. Empty text replaces disk content. New files/directories and imported packages are supported; directory discovery includes direct `.loke` children. No disk writes. Invalid paths/extensions or uninitialized sessions return false. |
+| `remove_session_overlay(&s, path)` | Restore disk loading or remove an unsaved-only file. An absent overlay returns false without invalidation. |
+| `session_snapshot(&s)` | Capture current views, even after failed initialization/checking. False for zeroed/destroyed sessions or after invalidation until a check runs. |
+| `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. |
+| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. |
+| `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. |
+| `query_type` | Recorded type properties, components, fields, members, and parameter types/modes. Zero IDs mean unavailable. |
+| `query_definition` | Snapshot-scoped written location; false for builtins/synthetic bindings without definitions. |
+| `query_references` | Exact-binding named uses, deduplicated across generic/static-loop clones; excludes implicit operations. `include_definition` defaults to false. Caller owns the array and must `delete` it with the query allocator. |
+| `query_signatures` | Procedure/group signatures, parameters/defaults, result and termination properties. Generic templates expose written syntax with `complete = false`. |
+| `query_diagnostics` | Captured severity, code, message, labels, locations, and notes. Snapshot before emission to capture checking diagnostics; later emission cannot alter that view. |
+
+See [queries.odin](src/queries.odin) for full signatures. Except for reference
+arrays, returned strings/slices are borrowed, read-only, and expire on
+[invalidation](#invalidation-rules); snapshot tokens do not retain compilations.
+
+After the first `session_snapshot` builds views, later snapshot/query calls may
+run concurrently. Allocating queries use the calling thread's `context`.
+The first snapshot, invalidation, overlay edits, checks, emission, and destruction
+all require exclusive access.
+
+Failed checks expose loaded sources, diagnostics, and whatever semantics were
+recorded. Unresolved/inactive nodes have no semantic result; signature queries
+omit erroneous signatures. Position queries never substitute a parent for an
+unresolved narrowest node. If specializations disagree at one written position,
+that symbol/type component is unavailable; shared binding identity can remain
+when only types differ. References from failed checks are partial.
+
+## Invalidation rules
+
+Invalidation expires the **whole compilation's public snapshot**, clears emission
+readiness, and releases query storage. Configuration, overlays, and package
+checkpoints remain. Overlay replacement/removal and each new check invalidate
+old views; a failed check replaces the preceding result and cannot emit.
+
+Disk changes do not update snapshots automatically. Call `invalidate_session`
+when notified, or check again directly. Notification performs no reads/checking;
+events may be batched. Do not filter solely by `query_file`: new or missing files,
+imports, package members, and nearer manifests may affect previously loaded code.
+
+Batch checks rebuild everything. Incremental checks validate the full input set
+before reusing a prefix. Reuse depends on root identity/mode, working directory,
+exact source bytes and directory membership, overlays, import/selection state,
+nearest/transitive manifests (including previously absent ones), collection
+roots, and provider selections. Configuration, compiler identity, and target are
+fixed by the live session.
+
+Exported signatures alone are insufficient: CTFE bodies, generic bounds and
+lookup, inferred global writes/provenance, and formatting/drop hooks can change
+dependents without changing a signature. Their derived registries, diagnostics,
+queries, and emission must be rebuilt or restored to a valid checking boundary.
+Semantic IDs and generic-instance keys are compilation-local cache keys.
+
+Foreign inputs, runtime sources, toolchain identity/environment, output paths,
+and artifact options are read during emission. There is no cache of complete
+program artifacts; the [runtime-object cache](#runtime-and-library-boundary) is
+separate. A future persistent cache must include compiler identity and all
+relevant inputs rather than treating version strings or signatures as sufficient.
+
+## Incremental checking
+
+The CLI uses batch checking and allocates no package cache. The opt-in incremental
+API reuses only static graphs without selected providers. Whole-program
+provenance/provider analysis, entry/export validation, and finalization still run;
+LLVM emission remains whole-program.
+
+Before preparing each package, a checkpoint saves compiler fields, the semantic
+arena watermark, and its used bytes. Incremental sources, syntax, diagnostics,
+and registries share that arena, so images capture earlier mutable data as well
+as new allocations. Allocator pointers keep naming the same live `Compiler`;
+checkpoints cannot move between sessions. Restoration recreates disposable
+analysis/emission arenas.
+
+Before reuse, a temporary loader re-resolves manifests and collections, enumerates
+packages, and reads source bytes through overlays. It compares root/mode/current
+directory, manifests, roots, membership, package clauses, and ordered imports.
+Timestamps and hashes do not substitute for byte equality.
+
+Restore the nearest checkpoint at or before the earliest changed package and
+recheck the entire suffix, including unrelated later packages. Checkpoints stop
+at errors, so edits after an error restart there. Even unchanged inputs recheck
+the final package. This rolls back cross-package effects from generics, CTFE,
+and registries rather than trusting unchanged signatures.
+
+After restoration, compare every suffix source with current inputs, including
+edits made since older checkpoints. Reparse changes at their original source
+indices and rebind imports to refresh spans. Keep the checkpoint before those
+replacement allocations, discard/rebuild later checkpoints, reclaim query and
+emission storage, and issue a new snapshot ID.
+
+Full-check fallbacks are:
+
+- First use; changed input, working directory, root mode, or switching from
+  batch/documentation checking. Documentation always uses a full check.
+- Added/removed files or packages; changed manifests, collection roots, package
+  clauses/attributes, or import paths/aliases.
+- File-scope `when` or selected providers.
+- Source read, UTF-8, BOM, or parse failures; unavailable checkpoints.
+
+Semantic errors may retain an unaffected prefix and are retried after repair.
+Fallbacks rebuild eligible checkpoints. Images have a 64 MiB payload limit;
+oldest boundaries are evicted first and oversized images are not cached.
+`session_check_stats` reports package reuse, semantic-arena usage, and image
+payload, excluding metadata, other arenas, and OS overhead. These are accounting
+counters, not working-set measurements. Representative incremental latency and
+cost evaluation remains in [Compiler services](future-plans.md#compiler-services).
 
 ## Deliberate boundaries
 
-- Windows x64 is the only target and the foreign ABI follows its classification.
-- The backend is annotated AST to textual LLVM; a durable MIR and direct native
-  debug backend should be introduced only with a real second consumer.
-- The compiler shells out to clang and NASM and links a versioned C runtime.
-- Emission is whole-program and single-process. Optional session checking reuses
-  dependency prefixes; there is no separate object or parallel package compilation.
-- The compiler remains in Odin; [Self-hosting](future-plans.md#self-hosting)
-  sketches a future bootstrap path.
-- Debug information covers procedures, statement lines, a loop header's, a
-  closing `}`'s, and a deferred statement's lines, and locals scoped to their
-  blocks; compiler-provided members such as iterators and `clone` have none. Natvis rules in the PDB show a map's entries and the value an
-  `any_view` or `dyn` points at.
-- Non-Windows targets, recoverable panic, macros, owning type
-  erasure, and a GC allocator are not currently supported.
+- Windows x64 only, with its foreign ABI classification.
+- Whole-program, single-process emission through textual LLVM, clang/NASM, and
+  the C runtime. Object output exists; separate or parallel package compilation
+  does not. Introduce a durable MIR only for a concrete consumer.
+- The compiler remains in Odin; [self-hosting](future-plans.md#self-hosting) is
+  future work.
+- Debug information covers source procedures, statements, scopes, and locals;
+  compiler-contributed methods lack it. Natvis describes maps and erased values.
+  See [compiler options](compiler-guide.md#common-options) for debug limitations.
+- Recoverable panic, macros, owning type erasure, and a GC allocator are absent.
 - Raw-pointer provenance, `core:unsafe`, foreign retention/aliasing, and
-  cross-thread transfer remain explicit trust boundaries.
+  cross-thread transfer remain trust boundaries.
 
-These are boundaries, not hidden unfinished phases. Where the shipped compiler
-does diverge from design.md, the divergence is recorded in
-[known-gaps.md](known-gaps.md) with its own repro, not here. New
-work should extend this architecture only when its consumer and semantic
-contract are concrete. The next intended initiatives are summarized in
+Record spec divergences with reproductions in [known-gaps.md](known-gaps.md).
+Rationale belongs in [comments.md](comments.md), unresolved questions in
+[open-questions.md](open-questions.md), and later initiatives in
 [future-plans.md](future-plans.md).

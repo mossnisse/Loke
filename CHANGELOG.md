@@ -1172,6 +1172,10 @@ checklist.
 
 ### Documentation
 
+- [Compiler architecture](compiler-architecture.md) is shorter and organized
+  around the pipeline, semantic contracts, source map, and contributor workflow,
+  followed by the session APIs. Corrects package boundaries and tool-dependent
+  test coverage, and adds the missing query/overlay files to the source map.
 - [Design rationale](comments.md) is organized around a topic index and shorter
   explanations of current choices. Cuts obsolete migration inventories and
   resolved implementation reports; corrects slicing, UTF-8 boundaries, cleanup,
