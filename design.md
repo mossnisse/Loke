@@ -259,7 +259,7 @@ closed := 0 ..= 3;      // Range(int): 0, 1, 2, 3
 letters := 'a' ..= 'c'; // Range(rune): a, b, c
 ```
 
-The endpoints unify to one integer or rune type under the ordinary binary-operand rule. These forms use the binary [range operators](#other-operators), so endpoints may also be runtime expressions, as in `start ..< start + count`.
+The endpoints unify to one integer or rune type under the ordinary binary-operand rule, and two unfixed endpoints take the endpoint type of an expected `Range(T)`. These forms use the binary [range operators](#other-operators), so endpoints may also be runtime expressions, as in `start ..< start + count`.
 
 See [Ranges](#ranges) for the type's fields and supported interfaces. The same spelling in [`switch` case lists](#switch-statement) and [designated array initializers](#fixed-arrays) is matching syntax and does not construct a range value.
 
@@ -1153,7 +1153,14 @@ foreach (i in window(3)) { fmt.println(i); }   // 0 1 2
 assert(low_of(3 ..= 7) == 3);
 ```
 
-`Range(T)` has three public fields — `low: T`, `high: T`, and `closed: bool` — so code that must inspect a range rather than walk it reads them directly. It satisfies [`Iterable`](#standard-interface-catalogue) with `Element` equal to `T`, which is what lets a range reach generic code written against that interface. It is not a [`Sequence`](#standard-interface-catalogue): a range stores no elements, so it has neither `len` nor indexing.
+`Range(T)` has three public fields — `low: T`, `high: T`, and `closed: bool` — so code that must inspect a range rather than walk it reads them directly. `x in r` tests membership: it holds when `r.low <= x` and `x < r.high`, or `x <= r.high` for a closed range, evaluating `x` and then `r` once each. A written range takes its endpoint type from a typed `x`, so `ch in 'a' ..= 'z'` tests a `u8` against a `Range(u8)`; a range of unfixed endpoints otherwise defaults to `int` or `rune` as a range literal does, and the element converts to the range's endpoint type.
+
+```odin
+is_lower :: proc(c: rune) -> bool { return c in 'a' ..= 'z'; }
+static_assert(3 in 0 ..< 10);
+```
+
+A range satisfies [`Iterable`](#standard-interface-catalogue) with `Element` equal to `T`, which is what lets a range reach generic code written against that interface. It is not a [`Sequence`](#standard-interface-catalogue): a range stores no elements, so it has neither `len` nor indexing.
 
 ## SIMD vectors
 
@@ -3677,7 +3684,7 @@ b := move(xs) if flag else ys.clone(); // one transferred, one written copy
 
 - `or_else` — unwrap a fallible value or evaluate a fallback
 - `or_return` — unwrap a fallible value or return its failure
-- `in` — set or map membership
+- `in` — map, range, or set membership
 - `..=` — inclusive range
 - `..<` — half-open range
 
@@ -3713,16 +3720,16 @@ There are seven precedence levels for binary operators and the conditional expre
 Precedence    Operator
      7           *   /   %   &   &~  <<   >>
      6           +   -   |   ~
-     5           ==  !=  <   >    <=  >=   in
-     4           &&
-     3           ||
-     2           ..=    ..<
+     5           ..=    ..<
+     4           ==  !=  <   >    <=  >=   in
+     3           &&
+     2           ||
      1           or_else     if
 ```
 
-`in` sits at the comparison level because it produces a `bool` and is used where a comparison would be.
+`in` sits at the comparison level because it produces a `bool` and is used where a comparison would be. A range binds tighter, so `c in 'a' ..= 'z'` tests [membership in a range](#ranges), and looser than addition, so `0 ..< n + 1` ends at `n + 1`.
 
-Binary operators of the same precedence associate from left to right. For instance `x / y * z` is the same as `(x / y) * z`. Levels 2 and 5 are **non-associative**. `a ..< b ..< c` is a syntax error rather than a nested range, because a range takes two endpoints and neither grouping means anything. `a == b == c` and `a < b < c` are syntax errors because they read as a chain of comparisons and left grouping would compare a `bool` result instead; `(a == b) == c` compares the result, and `a < b && b < c` is the chain.
+Binary operators of the same precedence associate from left to right. For instance `x / y * z` is the same as `(x / y) * z`. Levels 4 and 5 are **non-associative**. `a ..< b ..< c` is a syntax error rather than a nested range, because a range takes two endpoints and neither grouping means anything. `a == b == c` and `a < b < c` are syntax errors because they read as a chain of comparisons and left grouping would compare a `bool` result instead; `(a == b) == c` compares the result, and `a < b && b < c` is the chain.
 
 **Level 1 is the exception: it associates from right to left.** This is what makes both of its forms chain the way they read:
 

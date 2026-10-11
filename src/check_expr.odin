@@ -90,7 +90,7 @@ check_expr :: proc(
 		check_proc_literal(k, v)
 
 	case ^Expr_Range:
-		check_range(k, v)
+		check_range(k, v, expected)
 
 	case ^Expr_Move:
 		check_move(k, v)
@@ -1343,12 +1343,40 @@ check_integer_index :: proc(k: ^Checker, e: Expr) -> bool {
 	return true
 }
 
-// `ok := key in m` (design.md "Maps").
+// `ok := key in m` (design.md "Maps") and `ok := x in low ..< high`
+// (design.md "Ranges").
 @(private = "file")
 check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
+	// A written range takes its endpoint type from a typed element, so
+	// `ch in 'a' ..= 'z'` tests a `u8` against a `Range(u8)`.
+	if written, is_range := v.rhs.(^Expr_Range); is_range {
+		element := check_single_expr(k, v.lhs)
+		if element == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		hint := INVALID_TYPE
+		if !type_is_untyped(k.c, element) && (type_is_integer(k.c, element) || type_is_rune(k.c, element)) {
+			hint = range_type(k.c, element)
+		}
+		if check_single_expr(k, written, hint) == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		check_range_membership(k, v, written.type)
+		return
+	}
 	container := check_single_expr(k, v.rhs)
 	if container == INVALID_TYPE {
 		v.type = INVALID_TYPE
+		return
+	}
+	if info := type_of(k.c, container); info != nil && info.is_range {
+		if check_single_expr(k, v.lhs, info.element) == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		check_range_membership(k, v, container)
 		return
 	}
 	if !type_is_map(k.c, container) {
@@ -1362,12 +1390,24 @@ check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 		}
 		errorf(
 			k.c, v.op_span, "L0587",
-			"`in` tests a `map[K]V` for a key, found `%s`", type_name(k.c, container),
+			"`in` tests a `map[K]V` for a key or a `Range(T)` for a value, found `%s`", type_name(k.c, container),
 		)
 		v.type = INVALID_TYPE
 		return
 	}
 	if !check_map_key(k, v.lhs, container_key(k.c, container), true) {
+		v.type = INVALID_TYPE
+		return
+	}
+	v.type = TYPE_BOOL
+}
+
+// design.md "Ranges": `x in r` holds when `r.low <= x` and `x` is below
+// `r.high`, or at it for a closed range. The element is already checked.
+@(private = "file")
+check_range_membership :: proc(k: ^Checker, v: ^Expr_Binary, range: Type_Id) {
+	element := type_of(k.c, range).element
+	if !materialize_value_expr(k, v.lhs, element, "test a range of") {
 		v.type = INVALID_TYPE
 		return
 	}

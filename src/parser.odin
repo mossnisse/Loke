@@ -1837,7 +1837,7 @@ parse_expr :: proc(p: ^Parser) -> Expr {
 	}
 
 	lo := current(p).lo
-	lhs := parse_level_2(p)
+	lhs := parse_binary(p, 2)
 
 	#partial switch current(p).kind {
 	case .Or_Else:
@@ -1850,7 +1850,7 @@ parse_expr :: proc(p: ^Parser) -> Expr {
 		return e
 	case .If:
 		advance(p)
-		cond := parse_level_2(p)
+		cond := parse_binary(p, 2)
 		_, has_else := expect(p, .Else, "L0221", "`else` to complete the conditional expression")
 		otherwise: Expr
 		if has_else {
@@ -1870,17 +1870,18 @@ parse_expr :: proc(p: ^Parser) -> Expr {
 	return lhs
 }
 
-// Ranges are non-associative.
+// Ranges are non-associative and bind tighter than comparison, so
+// `c in 'a'..='z'` tests a range (design.md "Operator precedence").
 @(private = "file")
-parse_level_2 :: proc(p: ^Parser) -> Expr {
+parse_range :: proc(p: ^Parser) -> Expr {
 	lo := current(p).lo
-	lhs := parse_binary(p, 3)
+	lhs := parse_binary(p, 6)
 	if !is_range_op(current(p).kind) {
 		return lhs
 	}
 
 	op := advance(p)
-	rhs := parse_binary(p, 3)
+	rhs := parse_binary(p, 6)
 	e := new_expr(p, Expr_Range, lo)
 	e.op = op.kind
 	e.op_span = span_of(p, op)
@@ -1902,7 +1903,7 @@ parse_level_2 :: proc(p: ^Parser) -> Expr {
 				text_of(p, extra),
 			)
 		}
-		parse_binary(p, 3) // consume the operand so recovery lands past it
+		parse_binary(p, 6) // consume the operand so recovery lands past it
 		e.has_error = true
 		e.span = Span{file = p.file, lo = lo, hi = p.last.hi}
 	}
@@ -1914,17 +1915,18 @@ is_range_op :: proc(kind: Token_Kind) -> bool {
 	return kind == .Range_Incl || kind == .Range_Excl
 }
 
-// Binary levels 3, 4, 6 and 7 are left-associative and level 5 does not
-// chain (design.md "Operator precedence"); zero is not an operator.
+// Binary levels 2, 3, 6 and 7 are left-associative and level 4 does not
+// chain (design.md "Operator precedence"); level 5, ranges, is parsed by
+// `parse_range`, and zero is not an operator.
 @(private = "file")
 binary_level :: proc(kind: Token_Kind) -> int {
 	#partial switch kind {
 	case .Or_Or:
-		return 3
+		return 2
 	case .And_And:
-		return 4
+		return 3
 	case .Eq_Eq, .Not_Eq, .Lt, .Gt, .Lt_Eq, .Gt_Eq, .In:
-		return 5
+		return 4
 	case .Plus, .Minus, .Pipe, .Tilde:
 		return 6
 	case .Star, .Slash, .Percent, .Amp, .Amp_Tilde, .Shl, .Shr:
@@ -1937,7 +1939,8 @@ binary_level :: proc(kind: Token_Kind) -> int {
 @(private = "file")
 parse_binary :: proc(p: ^Parser, min_level: int) -> Expr {
 	lo := current(p).lo
-	lhs := parse_unary(p)
+	// An operand of a level at or below the comparisons may be a range.
+	lhs := parse_range(p) if min_level <= 5 else parse_unary(p)
 
 	spine := 0
 	defer p.depth -= spine
@@ -1970,7 +1973,7 @@ parse_binary :: proc(p: ^Parser, min_level: int) -> Expr {
 
 		// `a == b == c` reads as a chain and is not one. Recovery groups it
 		// left, so the error comes once per chain.
-		if level == 5 && binary_level(current(p).kind) == 5 {
+		if level == 4 && binary_level(current(p).kind) == 4 {
 			e.has_error = true
 			if !chain_reported {
 				chain_reported = true

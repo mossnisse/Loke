@@ -1,0 +1,11 @@
+(file package="main"
+  (var names=["lower"]
+    (binary In (ident "c") (range Range_Incl (rune "'a'") (rune "'z'")))
+  )
+  (var names=["tail"]
+    (range Range_Excl (int "0") (binary Plus (ident "n") (int "1")))
+  )
+  (var names=["both"]
+    (binary And_And (binary In (ident "x") (range Range_Excl (ident "lo") (ident "hi"))) (binary Eq_Eq (ident "y") (int "2")))
+  )
+)

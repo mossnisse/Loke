@@ -1054,8 +1054,9 @@ bind_loop_name :: proc(
 
 // ------------------------------------------------------- range expressions --
 
-// `a ..< b` and `a ..= b` as a value.
-check_range :: proc(k: ^Checker, v: ^Expr_Range) {
+// `a ..< b` and `a ..= b` as a value. An expected `Range(T)` gives two
+// unfixed endpoints their type.
+check_range :: proc(k: ^Checker, v: ^Expr_Range, expected := INVALID_TYPE) {
 	v.value_category = .Value
 	low := check_single_expr(k, v.lo)
 	high := check_single_expr(k, v.hi)
@@ -1063,7 +1064,11 @@ check_range :: proc(k: ^Checker, v: ^Expr_Range) {
 		v.type = INVALID_TYPE
 		return
 	}
-	element, unified := unify_range_endpoints(k, v, low, high)
+	hint := INVALID_TYPE
+	if info := type_of(k.c, expected); expected != INVALID_TYPE && info != nil && info.is_range {
+		hint = info.element
+	}
+	element, unified := unify_range_endpoints(k, v, low, high, hint)
 	if !unified {
 		v.type = INVALID_TYPE
 		return
@@ -1084,14 +1089,14 @@ check_range :: proc(k: ^Checker, v: ^Expr_Range) {
 }
 
 @(private = "file")
-unify_range_endpoints :: proc(k: ^Checker, v: ^Expr_Range, low, high: Type_Id) -> (Type_Id, bool) {
+unify_range_endpoints :: proc(k: ^Checker, v: ^Expr_Range, low, high, hint: Type_Id) -> (Type_Id, bool) {
 	if low == high && !type_is_untyped(k.c, low) {
 		return low, true
 	}
 	// Untyped endpoints are materialized, so an out-of-range constant is reported.
 	switch {
 	case type_is_untyped(k.c, low) && type_is_untyped(k.c, high):
-		merged := default_type(k.c, low)
+		merged := hint != INVALID_TYPE ? hint : default_type(k.c, low)
 		return merged, materialize(k, v.lo, merged) && materialize(k, v.hi, merged)
 	case type_is_untyped(k.c, low):
 		return high, materialize(k, v.lo, high)

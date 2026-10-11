@@ -1336,6 +1336,9 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 	case .And_And, .Or_Or:
 		return emit_short_circuit(e, v)
 	case .In:
+		if info := type_of(e.c, expr_base(v.rhs).type); info != nil && info.is_range {
+			return emit_range_membership(e, v)
+		}
 		return emit_map_membership(e, v)
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		operand_type := expr_base(v.lhs).type

@@ -1,0 +1,19 @@
+// design.md "Ranges": `x in r` and its compile-time evaluation.
+package main;
+import "core:fmt";
+is_lower :: proc(c: rune) -> bool { return c in 'a'..='z'; }
+LIMIT :: 10;
+static_assert(3 in 0 ..< LIMIT);
+static_assert(!(10 in 0 ..< LIMIT));
+static_assert(is_lower('q'));
+main :: proc() {
+	ch: u8 = 'm';
+	fmt.println(ch in 'a'..='z', 'Z' in 'a'..='z', is_lower('z'));
+	r := 0 ..< 5;
+	fmt.println(4 in r, 5 in r, -1 in r);
+	n: i8 = -128;
+	fmt.println(n in -128 ..= 127, n + 1 in 0 ..< 3);
+	fmt.println(3 in 1 ..< 2 + 2, 0 ..< 3 == 0 ..< 3);
+	window: Range(u8) = 1 ..< 4;
+	fmt.println(window, u8(3) in window);
+}

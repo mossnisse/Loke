@@ -1,0 +1,7 @@
+// Ranges bind tighter than comparison and looser than addition, so membership
+// tests a range and an endpoint may be a sum (design.md "Operator precedence").
+package main;
+
+lower := c in 'a' ..= 'z';
+tail := 0 ..< n + 1;
+both := x in lo ..< hi && y == 2;

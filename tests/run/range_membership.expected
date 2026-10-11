@@ -1,0 +1,5 @@
+true false true
+true false false
+true false
+true true
+Range(u8){low = 1, high = 4, closed = false} true

@@ -6,7 +6,7 @@ L0457
 `key` is lent read-only, so it cannot be taken by reference
 L0587
 @18:8
-`in` tests a `map[K]V` for a key, found `[]int`
+`in` tests a `map[K]V` for a key or a `Range(T)` for a value, found `[]int`
 L0360
 @22:12
 `Point` has 2 fields, so it fills 2 bindings, not 3

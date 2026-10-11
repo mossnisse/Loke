@@ -1712,6 +1712,18 @@ eval_map_membership :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, boo
 	if !key_ok || !subject_ok {
 		return Eval_Value{}, false
 	}
+	// design.md "Ranges": `x in r`.
+	if info := type_of(ev.k.c, subject.type); info != nil && info.is_range &&
+	   subject.kind == .Aggregate && len(subject.elements) == 3 {
+		above, above_ok := eval_compare(ev, .Lt_Eq, subject.elements[RANGE_LOW], key)
+		below, below_ok := eval_compare(ev, .Lt, key, subject.elements[RANGE_HIGH])
+		at, at_ok := eval_compare(ev, .Eq_Eq, key, subject.elements[RANGE_HIGH])
+		if !above_ok || !below_ok || !at_ok {
+			return Eval_Value{}, false
+		}
+		within := above && (below || (subject.elements[RANGE_CLOSED].boolean && at))
+		return Eval_Value{kind = .Boolean, type = TYPE_BOOL, boolean = within}, true
+	}
 	at, found := map_find(ev, &subject, key)
 	if !found {
 		return Eval_Value{}, false

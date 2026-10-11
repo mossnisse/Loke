@@ -25,6 +25,28 @@ emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range, as_type: Type_Id) -> strin
 	return insert(e, storage, step2, "i1", closed, RANGE_CLOSED)
 }
 
+// design.md "Ranges": `x in r` evaluates `x`, then `r`, once each, and holds
+// when `r.low <= x` and `x` is below `r.high`, or equal to it when closed.
+@(private)
+emit_range_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
+	range := expr_base(v.rhs).type
+	element := type_of(e.c, range).element
+	x := emit_expr(e, v.lhs)
+	value := emit_expr(e, v.rhs)
+	storage := llvm_type(e, range)
+	low := extract(e, storage, value, RANGE_LOW)
+	high := extract(e, storage, value, RANGE_HIGH)
+	closed := extract(e, storage, value, RANGE_CLOSED)
+	above := emit_compare(e, .Lt_Eq, element, low, x)
+	below := emit_compare(e, .Lt, element, x, high)
+	at := emit_compare(e, .Eq_Eq, element, x, high)
+	at_closed, within, out := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", at_closed, closed, at)
+	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", within, below, at_closed)
+	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, above, within)
+	return out
+}
+
 @(private)
 emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	if s.kind == .Static {

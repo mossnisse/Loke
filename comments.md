@@ -667,7 +667,10 @@ uses predictable.
 
 `in` produces a Boolean, so it shares comparison precedence. Giving it additive
 precedence would regroup `x in values + extra` as `(x in values) + extra`, making
-the apparent collection expression mean something else.
+the apparent collection expression mean something else. Ranges bind between the
+two, as Swift's do, so `c in 'a' ..= 'z'` tests a range while `0 ..< n + 1`
+still ends at `n + 1`; no grouping the move changed had a meaning before,
+because each put a `bool` at a range's end.
 
 ### Comparisons do not chain
 

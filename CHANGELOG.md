@@ -461,6 +461,14 @@ checklist.
 
 ### Added
 
+- `x in r` tests a value against a `Range(T)` (design.md "Ranges"), at run
+  time and in compile-time evaluation, and range operators now bind between the
+  comparisons and addition (design.md "Operator precedence"), so
+  `c in 'a' ..= 'z'` reads as it is written and `0 ..< n + 1` still ends at
+  `n + 1`. A written range takes its endpoint type from a typed element, so
+  `ch in 'a' ..= 'z'` tests a `u8`, and two unfixed endpoints take the type of
+  an expected `Range(T)`. No program that compiled before changes meaning:
+  every grouping the move affects had a `bool` endpoint, which a range rejects.
 - Anonymous records may leave their fields unlabeled, `(int, bool)` (design.md
   "Anonymous records", "One result"), so a procedure that hands back several
   values no longer names them: `divmod :: proc(a, b: int) -> (int, int)`,

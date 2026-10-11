@@ -478,6 +478,14 @@ whole-program facts than a library's signatures show; see
 [No public mutable globals](#no-public-mutable-globals) and
 [Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own).
 
+### Adopted
+
+These proposals ranked "Next" were adopted. design.md defines each under
+the headings named, and comments.md records the reasoning:
+
+- `in` tests ranges, which bind tighter than comparison ("Ranges",
+  "Operator precedence").
+
 ### Recommended order
 
 | Priority | Proposal | Main benefit |
@@ -486,7 +494,6 @@ whole-program facts than a library's signatures show; see
 | Next | Let `package main` print its own fields | A first struct prints its fields |
 | Next | Generate `hash` where `==` is generated | Plain records become map keys |
 | Next | Control-flow fallbacks after `or_else` | Skip or leave without nesting |
-| Next | `in` for ranges | Character classes read as ranges |
 | Next | `main` may return a fallible union | `or_return` in `main`, a failing exit status |
 | Later | One temporary-lifetime rule | Three lifetime rules become one |
 | Later | Field bindings in a case | Recursive unions without clones |
@@ -556,16 +563,6 @@ type, and a temporary's failure is still dropped before the fallback runs.
 They become expressions in that position only, and not inside a `defer`, where
 `or_return` is already rejected. `or_return` stays the spelling that propagates
 the failure itself.
-
-### `in` for ranges
-
-Built-in `in` tests maps only (`L0587`), so a character class is written
-`c >= 'a' && c <= 'z'`, though `case 'a'..='z':` reads it as a range. Define
-`x in r` for `Range(T)`, honouring `closed`. Range operators must then bind
-tighter than comparison: at [level 2](design.md#operator-precedence),
-`c in 'a'..='z'` parses as `(c in 'a') ..= 'z'`. Move `..<` and `..=` between
-levels 5 and 6, where Swift puts range formation. `0 ..< n + 1` still groups as
-`0 ..< (n + 1)`, and `foreach` headers and `case` lists are unaffected.
 
 ### `main` may return a fallible union
 
