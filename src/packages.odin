@@ -303,6 +303,13 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 	if !loaded {
 		return
 	}
+	// design.md "Exported names": `package main` is an executable's root, which
+	// nothing imports, so its declarations are public by default.
+	if identifier_text(c, package_of(c, target).name) == "main" {
+		errorf(c, imported.span, "L0719", "`%s` is a `package main`, which cannot be imported", path)
+		add_notef(c, no_span(), "move what both programs share into a package of its own")
+		return
+	}
 	// Loading may have reallocated the package store.
 	append(&package_of(c, id).imports, Package_Import {
 		target = target,

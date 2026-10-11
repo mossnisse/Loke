@@ -10,6 +10,12 @@ checklist.
 
 ### Breaking changes
 
+- A `package main` cannot be imported (`L0719`), and its struct fields are
+  public by default (design.md "Exported names"), so a program printing its own
+  `Point{1, 2}` sees `Point{x = 1, y = 2}` rather than `Point{}`. Generated
+  printing and `fields_of` from another package now show those fields; mark one
+  `@(private)` to keep it out. Move code two programs import into a package of
+  its own.
 - `struct` declares and parentheses describe (design.md "Structs", "Distinct
   types"). A `struct { ... }` type written in place, such as a field's type or
   a generic argument, is now `L0717`: it was a new nominal type at each

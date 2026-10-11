@@ -503,14 +503,18 @@ declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
 	return attributes_are_public(k, d.attributes, d.span, "declaration")
 }
 
-// `declaration_is_public`'s rule, for a struct field.
+// `declaration_is_public`'s rule, for a struct field. design.md "Exported
+// names": nothing imports a `package main`, so its fields are public by
+// default, which is what reflection and printing see. Its declarations keep the
+// package default: a public extension would export a name.
 @(private = "file")
 field_is_public :: proc(k: ^Checker, field: ^Field) -> bool {
-	return attributes_are_public(k, field.attributes, field.span, "field")
+	in_main := k.file_node != nil && k.file_node.package_name == "main"
+	return attributes_are_public(k, field.attributes, field.span, "field", in_main)
 }
 
 @(private = "file")
-attributes_are_public :: proc(k: ^Checker, attributes: []Attribute, span: Span, what: string) -> bool {
+attributes_are_public :: proc(k: ^Checker, attributes: []Attribute, span: Span, what: string, by_default := false) -> bool {
 	own_public := has_attribute(attributes, "public")
 	own_private := has_attribute(attributes, "private")
 	if own_public && own_private {
@@ -523,7 +527,7 @@ attributes_are_public :: proc(k: ^Checker, attributes: []Attribute, span: Span, 
 	if own_private {
 		return false
 	}
-	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
+	return by_default || k.file_node != nil && has_attribute(k.file_node.attributes, "public")
 }
 
 // design.md `@(escape=...)`: the written level, which only a parameter carrying

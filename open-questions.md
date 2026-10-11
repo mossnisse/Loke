@@ -486,13 +486,14 @@ the headings named, and comments.md records the reasoning:
 - `in` tests ranges, which bind tighter than comparison ("Ranges",
   "Operator precedence").
 - `or_else` may `break`, `continue`, or `return` ("or_else expression").
+- A `package main` prints its fields and cannot be imported ("Exported
+  names").
 
 ### Recommended order
 
 | Priority | Proposal | Main benefit |
 | --- | --- | --- |
 | Next | Print a checked reference as its referent | A map loop prints values, not addresses |
-| Next | Let `package main` print its own fields | A first struct prints its fields |
 | Next | Generate `hash` where `==` is generated | Plain records become map keys |
 | Next | `main` may return a fallible union | `or_return` in `main`, a failing exit status |
 | Later | One temporary-lifetime rule | Three lifetime rules become one |
@@ -519,18 +520,6 @@ Rust formats `&T`, and keep addresses for `rawptr` and `[^]T`, the unchecked
 addresses; a program that wants an address converts to `rawptr`. The one rule
 should make a cycle through checked borrows unconstructible, but a depth bound
 is a cheap guard.
-
-### Let `package main` print its own fields
-
-Fields are package-private by default and generated `format` prints public
-fields only, so in a `package main`, `fmt.println(Point{1, 2})` prints
-`Point{}`, and `Option(Point)` prints `.some(Point{})`. The tour prints
-`target.x` and `target.y` separately. Nothing imports an executable's root
-package, so its declarations have no outside view to protect. State that an
-executable's root package cannot be imported, and make it public by default,
-as `@(public) package main;` already does when written. Each type keeps one
-printed form, as [String format printing](design.md#string-format-printing)
-requires.
 
 ### Generate `hash` where `==` is generated
 

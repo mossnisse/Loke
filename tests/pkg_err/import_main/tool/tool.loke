@@ -1,0 +1,5 @@
+package main;
+
+helper :: proc() -> int { return 1; }
+
+main :: proc() {}

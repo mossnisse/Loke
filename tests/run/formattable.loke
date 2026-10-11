@@ -4,7 +4,7 @@ import "core:fmt";
 
 // design.md "String format printing": defaults and custom methods satisfy the
 // same interface, including constraints, explicit views, and erased printing.
-Point :: struct { @(public) x: int, hidden: int }
+Point :: struct { @(public) x: int, @(private) hidden: int }
 Token :: move_only struct { number: int }
 
 impl Token {

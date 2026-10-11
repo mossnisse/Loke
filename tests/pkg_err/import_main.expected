@@ -1,0 +1,3 @@
+L0719
+@5:1
+`./tool` is a `package main`, which cannot be imported

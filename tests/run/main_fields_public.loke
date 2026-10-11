@@ -1,0 +1,17 @@
+// design.md "Exported names": a `package main`'s fields are public by default,
+// so printing and reflection see them; `@(private)` leaves one out.
+package main;
+
+import "core:fmt";
+
+Point :: struct { x, y: int }
+Account :: struct { id: int, @(private) secret: string }
+
+main :: proc() {
+	fmt.println(Point{1, 2});
+	fmt.println(Option(Point).some({3, 4}));
+	fmt.println(Account{7, "hunter2"});
+	count := 0;
+	foreach ($field in fields_of(Account)) { count += 1; }
+	fmt.println(count);
+}

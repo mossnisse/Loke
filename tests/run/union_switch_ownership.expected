@@ -9,14 +9,14 @@ continue 0 2
 return 0 1
 copied out 5
 return a copy 1 2
-grouped .held(Owned{})
+grouped .held(Owned{id = 6})
 grouped 0 1
-default .held(Owned{})
+default .held(Owned{id = 7})
 default 0 1
 discarded
 discarded 0 1
 borrowed 9
-still held .held(Owned{})
+still held .held(Owned{id = 9})
 place subject 0 1
 moved out 10
 move out 0 2

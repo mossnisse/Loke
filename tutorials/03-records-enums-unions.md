@@ -19,12 +19,6 @@ Point :: struct {
 	y: int,
 }
 
-// Fields are private to their package unless marked `@(public)`.
-Size :: struct {
-	@(public) width: int,
-	@(public) height: int,
-}
-
 main :: proc() {
 	origin := Point{0, 0};
 	p := Point{x = 3, y = 4};
@@ -35,26 +29,24 @@ main :: proc() {
 	fmt.println(p == Point{13, 4}, p == origin);
 
 	fmt.println(p);
-	fmt.println(Size{640, 480});
 }
 ```
 
 ```text output=records
 13 4 0 9
 true false
-Point{}
-Size{width = 640, height = 480}
+Point{x = 13, y = 4}
 ```
 
 Two records are equal when all their fields are.
 
-The last two lines show something that surprises most people once. A field is
-private to the package that declares it unless it is marked `@(public)`, and
-`fmt` is a different package, so it sees none of `Point`'s fields and prints
-`Point{}`. `Size` marks its fields public, so they print. The other way to
-choose how a type prints is a `format` method, covered later in
+`fmt` prints a record's public fields. A `package main`'s fields are public
+by default, since no other package can import it. In a package that others
+import, a field is private unless marked `@(public)`, and printing from outside
+shows only the public ones; [Packages](06-packages.md) explains what
+`@(public)` controls. A type can also choose how it prints with a `format`
+method, covered later in
 [Reflection and formatting](15-reflection-and-formatting.md#give-a-type-a-printed-representation).
-[Packages](06-packages.md) explains what else `@(public)` controls.
 
 Some fields cannot be left out. A pointer such as `^int` has no zero value,
 because it is never null. This program is rejected:

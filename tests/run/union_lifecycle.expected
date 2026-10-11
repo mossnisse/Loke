@@ -2,7 +2,7 @@ true 0 0
 .empty
 empty 0 0
 true 1 0
-.held(Owned{})
+.held(Owned{id = 7})
 held 1 2
 .empty
 zero 0 0
@@ -11,6 +11,6 @@ true false
 right 9
 .one("first") .two("second") .one("first") .two("second")
 true true false
-.held(Owned{}) 1
-.held(Owned{}) 2
+.held(Owned{id = 5}) 1
+.held(Owned{id = 6}) 2
 nested 2 4

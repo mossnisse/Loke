@@ -1,0 +1,4 @@
+Point{x = 1, y = 2}
+.some(Point{x = 3, y = 4})
+Account{id = 7}
+2

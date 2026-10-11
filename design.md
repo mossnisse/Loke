@@ -529,7 +529,7 @@ A generated method prints:
 | `any_view` | the value it views |
 | `dyn` view | its type's name |
 
-A struct prints its public fields only, as reflection from another package sees it, because one printed form serves every package: in a `package main` whose fields are private by default, `Point{1, 2}` prints `Point{}`. A `distinct` type prints as the type it wraps, under its own name where that form has one.
+A struct prints its public fields only, as reflection from another package sees it, because one printed form serves every package. A `package main`'s fields are [public by default](#exported-names), so a program's own `Point{1, 2}` prints `Point{x = 1, y = 2}`; one with a `@(private)` field leaves it out. A `distinct` type prints as the type it wraps, under its own name where that form has one.
 
 A field, element, map key, or union payload whose type is a string type, `rune`, or a `box` of one prints quoted, escaping the backslash, the quote, `\n`, `\r`, `\t`, and other control characters as a literal would: `["a b", "c"]` and `.some('x')`. Printed on its own, as `fmt.println("a b")`, it is its text. A type with its own `format` prints by it in both places.
 
@@ -5485,6 +5485,8 @@ All declarations in a package are private to that package by default. A package'
 **Loke has two visibility levels: package and public.** It has no file-private visibility. The package is the encapsulation boundary. Put code in a separate package when it needs a separate visibility boundary.
 
 Struct fields use the same two levels. A field inherits the default selected by the package declaration in its source file and may override that default with `@(public)` or `@(private)`. Code in the declaring package may read, write, and initialize package-visible fields; importing packages may do so only for public fields. Positional aggregate construction does not bypass this rule: an initializer that supplies an inaccessible field is rejected. The file-level default chooses a field's visibility but does not create file-private access.
+
+**A `package main` cannot be imported** (`L0719`): it is an executable's root, and code two programs share belongs in a package of its own. With no importer, nothing outside it reads its fields but reflection and printing, so **its fields are public by default**, and `fmt.println(point)` shows them. Its other declarations keep the package default, since a public [extension](#methods-and-implementation-blocks) would export a name.
 
 One predicate answers this question for reflection descriptors, field reads and writes, `offset_of`, and both aggregate literal forms, so no path can reach a field another path hides.
 

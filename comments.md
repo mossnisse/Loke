@@ -406,6 +406,15 @@ predictable without that second ordering system.
 break target. Multi-level exits use a helper return or an explicit loop condition,
 keeping control flow structured without labels.
 
+### `package main` shows its fields
+
+Nothing imports an executable's root, so package-private fields there protect
+nothing, yet they hid every field from printing: a first program's
+`fmt.println(Point{1, 2})` printed `Point{}`. Making `main` unimportable and its
+fields public by default fixes that without a second printed form per type.
+Declarations keep the package default, because a public extension exports a
+name into its package's scope.
+
 ### File-private visibility
 
 The package is the encapsulation boundary. `@(private)` means package-private;

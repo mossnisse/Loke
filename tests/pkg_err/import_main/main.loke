@@ -1,0 +1,7 @@
+// design.md "Exported names": a `package main` is an executable's root, so no
+// package imports one.
+package main;
+
+import "./tool";
+
+main :: proc() {}
