@@ -1172,6 +1172,11 @@ checklist.
 
 ### Documentation
 
+- [Design rationale](comments.md) is organized around a topic index and shorter
+  explanations of current choices. Cuts obsolete migration inventories and
+  resolved implementation reports; corrects slicing, UTF-8 boundaries, cleanup,
+  allocation, and switch rationale. The spec and container tutorial also clarify
+  raw byte offsets and explicit mutable slicing.
 - [Contributor instructions](AGENTS.md) scope coordinated updates and regression
   tests to behavior changes, define documentation checks, and clarify compiler
   rebuilds and local full-gate use. Detailed test commands move to

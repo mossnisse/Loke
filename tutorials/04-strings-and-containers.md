@@ -136,7 +136,7 @@ main :: proc() {
 	middle := primes[1:4];
 	fmt.println(middle, total(primes), total(scores));
 
-	// The parameter's `[]mut int` type selects a mutable slice.
+	// `&mut` explicitly borrows a mutable slice.
 	add_bonus(&mut scores[:]);
 	foreach (score, index in scores.indexed()) {
 		fmt.println(index, score);

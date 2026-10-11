@@ -1,1668 +1,871 @@
 # Differences from Odin and design motivations
 
-This document is non-normative. It records why Loke differs from Odin and why
-some larger design choices were made. [`design.md`](design.md) remains the
-authoritative language definition.
-Open questions and unresolved findings are in [open-questions.md](open-questions.md).
+This non-normative document explains Loke's design decisions and tradeoffs.
+[design.md](design.md) defines the language, [grammar.md](grammar.md) its syntax,
+and [open-questions.md](open-questions.md) the unresolved choices. API contracts
+belong in [standard-library.md](standard-library.md); release history is in
+[CHANGELOG.md](CHANGELOG.md).
 
-The main sections explain current design choices. [Design history](#design-history)
-records migrations; [implementation notes and review history](#implementation-notes-and-review-history)
-provide the compiler details.
+| Topic | Start here |
+| --- | --- |
+| Ownership and cleanup | [Borrow checking](#local-borrow-checking), [assignment](#value-semantic-assignment), [panics](#panics-run-lexical-cleanup) |
+| Types and errors | [Zeros](#zeros-that-are-values), [records](#structs-declare-parentheses-describe), [fallibility](#typed-fallibility) |
+| Procedures and callbacks | [Methods](#methods-interfaces-and-operator-overloading), [captures](#capture-literals), [callable views](#borrowed-callable-views) |
+| Compilation and configuration | [Compile time](#one-language-at-compile-time), [providers](#build-selected-services-and-explicit-runtime-state) |
+| Simpler language surface | [Removed or narrowed features](#removed-or-narrowed-features) |
+| Values and operations | [Overflow](#signed-overflow-panics), [slicing](#mutable-slicing-is-written-mut-alohi), [text](#slicing-text-keeps-its-panic) |
+| Syntax and layout | [Syntax choices](#changed-syntax), [formatter](#formatting) |
+| Library and compiler decisions | [Library APIs](#standard-library-api-choices), [compiler audit](#compiler-architecture-audit-2026-09-28) |
 
 ## Added features compared to Odin
 
 ### Local borrow checking
 
-Loke's procedure-local borrow checker prevents a live view's storage from being
-invalidated and catches local borrows escaping their scope, without lifetime
-syntax. An inferred [result contract](design.md#procedure-result-contracts)
-records which arguments or allocator regions a result depends on. For a borrow
-inside a record, it also records the field path to that borrow, called a
-[carrier path](design.md#values-that-contain-borrows). Returning one field uses
-that field's storage rather than all storage reachable from the argument.
+The procedure-local checker catches invalidated views and escaping local
+borrows without lifetime annotations. Inferred [result contracts](design.md#procedure-result-contracts)
+track which arguments or allocator regions a result depends on, including the
+field carrying a borrow. That gives ordinary code useful precision without a
+whole-program lifetime type system.
 
-[Inferred callback types](design.md#procedure-result-contracts) preserve those
-contracts: both `callback := choose` and `Chooser :: type_of(choose)` retain the
-same information about borrowed storage as a direct call. Copies and generic
-forwarding preserve it too. The contract participates in type identity and
-compatibility, so changing a
-published procedure's result dependencies can break clients.
+Inferred callback types preserve those contracts. A written `proc(...) -> T`
+type erases them and uses conservative dependencies instead; converting back
+cannot recover precision. Raw pointers, foreign calls, stored borrows, and
+cross-thread lifetimes still require programmer discipline.
 
-Converting to a plain written `proc(...) -> T` signature erases that information;
-converting back cannot recover it. Calls through that plain type conservatively
-derive borrowed results from every borrowed argument not excluded by
-[`@(escape=none)`](design.md#escapelevel). Owning results retain the region
-dependencies of every moved owner and allocator argument. Plain signatures keep
-this conservative precision tradeoff.
-
-Raw pointers, stored borrows, foreign calls, and cross-thread lifetimes remain
-explicit trust boundaries. This keeps low-level optimization and interop
-possible without making unsafe behavior the default.
-
-Hooks the language calls are counted in [global write
-effects](design.md#global-write-effects) rather than forbidden from writing
-globals: a guard whose drop restores or clears global state is a legitimate
-idiom, and counting rejects only the programs where that write would invalidate
-a live borrow. Printing reaches every `format` method because the witness for
-an erased value is chosen by its run-time type; tracking which types reach
-`any_view` would be more precise, but only a `format` that writes globals pays
-for the approximation.
-
-Copy hooks are the exception: one that writes a global is rejected instead of
-counted. Copies happen in more places than the borrow walk has points for —
-bindings, arguments, container insertion, generated clones of records holding
-the type — and under the copy contract their number is unspecified, so a
-global write there is either a count, which `Atomic(T)` keeps without a write
-and which copies on several threads need anyway, or a bug.
+Lifecycle and formatting hooks contribute to [global write effects](design.md#global-write-effects):
+cleanup may legitimately restore global state, but must not invalidate a live
+borrow. Copy hooks cannot write globals because copies can be inserted or
+elided in many contexts and their count is unspecified.
 
 ### Threads the language can start
 
-The memory model, `thread_local` teardown, `Once` poisoning, `shared(T)`, and
-atomic handle accounting on every `string` copy were specified and paid for
-before anything in `core` or `base` started a thread, so no program exercised
-them. `core:thread` is the smallest library that gives them a caller: `spawn`,
-`join`, and `Mutex`.
+`core:thread` moves an argument into a new thread and checks its borrows with
+`@(escape=static)`. Static text can travel; a slice of a local cannot. Several
+arguments travel as one record, avoiding untyped callback state.
 
-Odin's `thread.create` hands the new thread a `rawptr` of data. `spawn` takes an
-entry procedure and one moved argument instead, and the argument is checked
-with `@(escape=static)`: any borrow it carries must be of process-lifetime
-storage. The audit proposed "no checked borrow" at all; the escape level is the
-rule the checker already had, and it lets a string literal travel while a
-slice of a local does not. A static root can still race, but that is the case
-the effect warning below covers. One argument is enough: several travel as a
-record, and a procedure with no argument has its own overload.
+`Mutex(T)` owns its protected value, and its guard lends an `inout` result.
+Keeping lock and data together makes the borrow follow the lock's lifetime.
+Dropping an unjoined thread joins it, so the thread cannot outlive its handle.
 
-A mutex beside its data would be of little use here. A `^T` cannot be written
-through, so a `shared(T)` payload guarded by a `Mutex` field could not be
-updated, and data in a global beside a mutex is exactly what the race warning
-reports. So `Mutex(T)` owns the value, as Rust's does, and the guard returns it
-as an `inout` result, whose provenance the language already ties to the guard.
-Dropping an unjoined `Thread` joins it rather than detaching, so the owner of a
-handle always outlives the thread.
-
-The race check is a warning over the existing
-[global write effects](design.md#global-write-effects): a spawned entry whose
-effect writes shared, non-`thread_local` storage. Atomic operations and the
-mutex take read-only receivers, so they are not writes and need no exemption.
-It is a warning because it sees only globals and cannot prove that a global is
-written only before a thread starts or after it is joined.
+The global-write warning catches spawned entries that write shared globals.
+It is a warning because it cannot establish whether the writes happen only
+before spawning or after joining. The [memory model](design.md#concurrency-and-the-memory-model)
+defines the synchronization guarantees.
 
 ### Child processes
 
-`core:process` was deferred until handle inheritance, quoting, environment
-replacement, and pipe ownership could be decided together, because on Windows
-each default is something the caller did not ask for. `CreateProcessW` searches
-the working directory before `PATH`, which runs whatever a downloaded folder
-names `git.exe`; a child given `bInheritHandles` gets every inheritable handle
-in the parent, including another thread's pipe; and the command line is one
-string that the child splits by rules no caller should have to know. So a name
-is looked up on `PATH` alone, the arguments are quoted to come back exactly as
-given, and the handle list names the three standard handles and nothing else.
+A child process needs explicit choices about argument quoting, handle
+inheritance, environment, and waiting. `core:process` searches a bare program
+name on `PATH`, quotes arguments, and restricts inherited handles to the
+requested standard streams. Those choices prevent ambient process state from
+silently changing which program runs or which resources it receives.
 
-Dropping a `Child` detaches it, where dropping a `Thread` joins it. A thread
-shares the parent's memory, so it must not outlive its owner, but a child shares
-nothing and is often meant to outlive it. Waiting in `drop` would hide a block,
-and killing would hide a lost result, so both are calls.
+Dropping a `Child` closes handles without waiting or killing. A separate process
+may be intended to outlive its parent; silently blocking or destroying its work
+would be surprising. See the [process contract](standard-library.md#coreprocess).
 
 ### Managed lexical storage
 
-Strings, dynamic arrays, maps, and user resource types are owning values with
-automatic scope cleanup. [`unsafe.forget`](design.md#unsafeforget) consumes an
-individual value without cleanup; a lexical place is passed as
-`unsafe.forget(move(value))`. `static` and `thread_local` control storage duration
-without creating a second type.
+Owning values release storage at scope exit. `unsafe.forget(move(value))`
+explicitly suppresses cleanup for one value; `static` and `thread_local` select
+storage duration without creating another type.
 
-File-scope and `static` managed values are not automatically dropped. A global
-destruction order across packages would make shutdown depend on initialization
-order and on whether other threads can still reach a value. Externally
-observable process cleanup therefore uses a lexical owner, `defer`, or
-`drop` in `main`. To extract a static-duration value for cleanup, use
-[`exchange`](design.md#exchange) to leave a live replacement; direct `move` and
-`drop` on that storage are forbidden. A managed `thread_local` has a natural
-local endpoint and is dropped on normal thread return, in reverse initialization order;
-aborting termination makes no such guarantee.
+File-scope and static owners have no automatic shutdown order: their cleanup
+could depend on other globals or running threads. Use a lexical owner for
+observable cleanup, or `exchange` to extract a static value while leaving a
+live replacement. Thread-local owners do have an endpoint and drop on normal
+thread return, in reverse initialization order.
 
 ### An owner for one value
 
-Odin's `new` hands back a `^T` that the caller must remember to `free`; the
-type of the result is the type of a borrow. [`box(T)`](design.md#owned-values)
-is the owning form: it is to `^T` what `[dynamic]T` is to `[]T`, so ownership,
-cleanup, region provenance, copying, and the implicit read-only loan follow
-rules the language already had for containers. That is also why a box is
-copyable when its payload is: the [ownership rule](design.md#value-semantics-and-the-ownership-rule)
-makes a copy of an owner an independent value, last-use transfer removes the
-common copy, and the copy-cost diagnostic reports the rest. A move-only box
-would have been the one owner that broke that rule.
+[`box(T)`](design.md#owned-values) gives one allocated value the same ownership
+rules that a dynamic array gives many: cleanup, region tracking, copying, and
+read-only borrowing. It is copyable when its payload is; last-use transfer
+avoids unnecessary clones and copy-cost diagnostics expose the rest.
 
-It is a compiler type rather than a library record over a `rawptr`, for three
-reasons. A record over a raw pointer has a zero value, the null one, which a box
-must not have. It carries no borrows, so a box of a view would drop what the
-view owes; `shared(T)` had exactly that hole until the compiler supplied its
-payload's carrier shape. And `b^`, the payload as a
-place with the box's capability, is a projection the borrow checker has to
-see, as it sees a dynamic array's element. The cost is one more type kind
-handled where `[dynamic]T` is.
+A library record over `rawptr` cannot express the same contract. It would admit
+a null zero, hide borrows carried by its payload, and need the checker to
+recognize payload projection separately. A built-in box makes those properties
+part of the type. It occupies one address, as does an optional box.
 
-A box is one address and its allocation records the allocator, so a child
-link in a tree is one word, and an `Option` of it is one word too
-([Zeros that are values](#zeros-that-are-values)).
-
-Checked `new`, `new_clone`, and `free` went when `box` arrived. They were a
-second way to own one value whose type still said nothing about who releases
-it, and the borrow checker kept an allocation-root category and a same-region
-rule for `free` that no program in `examples/` used. What is left for raw
-storage, `unsafe.new` and `unsafe.free`, answers a `[^]T` and checks nothing,
-which is what the library's two callers, `shared(T)` and `core:thread`, were
-already doing through `unsafe.free`.
+Raw allocation remains available as `unsafe.new` and `unsafe.free`. Checked
+ownership uses `box`, so the result's type says who releases it.
 
 ### Zeros that are values
 
-In Odin, `nil` is the zero of a slice, a `typeid`, an allocator, and a string
-view as well as of a pointer, and a nil slice compares unequal to an empty
-subslice that behaves identically. Loke gives each such type a zero that
-supports every operation the type has, written `{}` like any other zero: the
-empty view, the invalid id with its `Invalid` reflection entry, the default
-provider, an empty `weak` handle. `nil` is then only ever an address that is
-not there, which is what lets references stop having one at all.
-Slices stop comparing with `nil` because the only question that comparison
-could answer, besides emptiness, was which of two empty views had been sliced
-from memory.
+`{}` means a usable zero: an empty view, invalid type id, default allocator,
+or empty weak handle. `nil` means an absent raw address. A reference has no valid
+zero, so `^T`, procedure values, `dyn` views, `any_view`, `cstring_view`, and
+`shared(T)` cannot be null. Absence is represented by `Option`.
 
-A reference has no such zero, so it has none at all: `^T`, a procedure value,
-`dyn I`, `any_view`, `cstring_view`, and `shared(T)` are never null, and absence
-is `Option(^T)`, as it already was for every other type. Odin's `^T` has three
-states inside an `Option` where two are meant, and every dereference and
-indirect call pays a null test. Loke used to keep those tests and add a
-whole-body diagnostic for a local given only `nil`; it caught the certain cases
-and nothing that arrived through a field, a parameter, or a container. Now the
-null test happens once, where an unchecked address becomes a reference, and the
-type promises the rest. The cost is that a record holding a reference has no
-`{}`, which the language already handled for unions and enums without a zero,
-and that a global reference is an `Option`, since no address is a compile-time
-constant.
+This moves the null check to the conversion from an unchecked address rather
+than every dereference. It also avoids a nullable reference inside an optional
+reference having two representations of absence. The freed null representation
+lets `Option(^T)` and `Option(box(T))` occupy one word.
 
-Absence costs nothing in return. With the null address free, `Option(^T)` is
-that address alone, as Rust's `Option<&T>` is, so a chain of
-`Option(box(Node))` links is one word per link and `Option(^T)` is what C
-means by a nullable pointer, both across the foreign boundary and inside an
-`Atomic`. design.md "Representation" states the rule by shape rather than by
-naming `Option`, so a hand-written two-variant union gets the same layout.
-
-Two other designs were rejected. A nullable `^T` with a flow-sensitive nil
-analysis keeps three states inside an `Option` and a test on every
-dereference, and promises nothing across a field, a parameter, or a container.
-A second, non-null pointer type beside `^T` would make every API choose
-between two pointer types to say what `Option` already says.
+The cost is explicit construction: records containing references have no `{}`,
+and globals cannot initialize a reference from a runtime address. A second
+non-null pointer type would instead make every API choose between two pointer
+families for a distinction `Option` already expresses.
 
 ### Required fields
 
-A zero being representable does not make it a valid value: an account id of 0,
-a handle whose 0 is a live resource. `@(required)` marks such a field, and the
-struct then joins the types with no zero value, so every operation that would
-manufacture one is already rejected by the rules references introduced.
+A representable zero need not be meaningful for a particular field.
+`@(required)` prevents a literal from omitting that field and prevents implicit
+construction of the record's zero.
 
-Two broader designs were weighed. Requiring every literal to name every field
-unless the field declares a default would need field defaults, which records do
-not have, and would turn every literal that relies on zero fill today into an
-error. A record-wide "no zero value" mark would reject `T{}` but still accept a
-literal that omits the very field whose zero is invalid, since it does not say
-which field that is. The per-field mark is opt-in, closes both, and keeps zero
-fill for every field that has a valid zero.
-
-`fs.File` does not use it: its zero is its closed state, which `drop` treats as
-inert, so a zero `File` is a valid value and containers of files keep working.
+Requiring every field in every literal would discard useful zero filling.
+A record-wide prohibition on `{}` would still allow a literal to omit the
+specific invalid field. A field-level requirement covers both problems while
+remaining opt-in. A file handle needs no such mark: its zero is a valid closed
+state.
 
 ### Conditional patterns
 
-Reading a `Result(Option(T), E)` stream to its end took a loop, an `or_return`,
-and a switch whose other case broke out. `for (case .some(entry) = next()
-or_return)` says that in one header, and `if (case ...)` is its one-shot form.
-Both are defined as the switch they abbreviate, and the parser builds exactly
-that switch, so they add no rule of their own for ownership, binding scope,
-lifetime, or control flow; whatever a switch case can write, the header can.
-Rust's `while let` and Swift's `if case` are the same idea. Nested patterns,
-several cases, and an initialization statement in the header were left out:
-each would be a rule a switch does not already have.
+`if (case ...)` and `for (case ...)` abbreviate a switch over one variant.
+For a fallible stream, `for (case .some(entry) = next() or_return)` combines
+error propagation and end detection without an extra switch body.
+
+The parser lowers these headers to the switch they describe, preserving its
+ownership, scope, and control-flow rules. Nested patterns, multiple cases, and
+header initialization are omitted to keep the abbreviation small.
 
 ### Updating a payload in place
 
-Once absence is an `Option`, updating a payload in place is common, as in
-inserting into an `Option(box(Tree))`. Without a mutable binding that update is
-an `exchange` of the field for `.none`, a consuming switch, and an assignment
-back. `case .some(&mut node):` binds the payload as a writable place instead,
-spelled as `foreach (&mut value in items)` binds an element
-([Switch ownership](design.md#switch-ownership)). Both were once a bare `&`,
-which in an expression takes a read-only address; a writable binding now reads
-as the `&mut place` it acts like.
+`case .some(&mut node):` exposes the payload as a writable place. Without it,
+an update would require exchanging the union for an empty value, consuming it,
+and assigning the result back. The spelling matches mutable `foreach` bindings
+and `&mut` expressions.
 
-A borrow taken through the binding is a borrow of that field of the binding,
-tracked as precisely as one of a local, and it also carries the subject's
-borrow. When the case runs again the binding names different storage, so the
-checker stops counting the earlier pass's borrows against it; the subject's
-borrow they carry still guards what they point into. That is what makes a
-cursor walk work: in `switch (cursor^) { case .some(&mut node): cursor = &mut
-node.next; }`, the new pointer reborrows `cursor` and is stored back into it,
-the self-store that `xs = &mut xs[1:]` already was, and the next pass's `node`
-is free to borrow again. Treating every borrow through the binding as the
-subject's whole borrow would also work for the cursor, but it lost field
-tracking: growing a buffer under a pointer into it went unreported. A list's `push_back` and an
-in-place `remove` are written that way, with no unchecked code.
+The binding retains the subject's borrow and tracks its fields separately.
+This permits checked cursor walks without overlooking invalidation of another
+borrowed field. A second mutable path into an owning chain still requires a
+different representation, such as indices into a slot array.
 
-Two limits stay. Generated drop, clone, and formatting recurse once per box, so
-a long chain can exhaust the stack; a list type declares an iterative drop hook
-that moves each node's `next` out before the node drops, while a tree, whose
-depth is logarithmic, can keep the generated hooks. And a tail pointer or a
-`prev` link is a second mutable path into storage the chain owns, which no
-checked reference may be: an O(1) queue or a doubly linked list uses handles,
-`prev` and `next` as `Option(int)` into a `[dynamic]` slot array, or a
-container that uses `unsafe.new` inside and exposes a checked cursor.
+Generated box lifecycle operations recurse. Long linked chains may need an
+iterative drop hook to avoid exhausting the stack.
 
 ### Storage modifiers instead of storage attributes
 
-Odin spells static-duration locals `@(static)` and thread locals
-`@(thread_local)`. Loke writes `static` and `thread_local` in the declaration
-because they specify where and how long the variable lives. The two modifiers
-are mutually exclusive.
-
-Storage duration belongs in the declaration because it determines lifetime and
-cleanup: removing `static` resets a counter on every call and can make a returned
-borrow invalid. Attributes describe other properties, including layout,
-allocator effects, and linkage. `@(link_name)` and `@(export)` affect external
-linking; they do not select the variable's storage duration.
-
-Cleanup suppression is a per-value operation through `unsafe.forget`, not a
-declaration modifier.
+`static` and `thread_local` are declaration modifiers because they determine
+lifetime and cleanup. Removing one can reset state on every call or invalidate
+a returned borrow. Attributes such as `@(link_name)` describe other properties;
+they do not choose storage duration. Cleanup suppression belongs to the
+per-value `unsafe.forget` operation.
 
 ### No `stack` modifier, and no heap-promoted locals
 
-An earlier draft let the compiler place a large fixed-size local on the heap when
-the frame would otherwise be impractical, and added a `stack` duration modifier
-so that embedded and real-time code could forbid it per declaration.
-
-Both are gone. A local with lexical duration lives in its frame, full stop; a
-declaration too large for the stack overflows it, as in C. The promotion rule was
-a silent allocation — and a silent allocation-failure path — behind a declaration
-that reads as free, and `stack` existed only to buy back the property the
-declaration started with. Deleting the pair removes a modifier, a placement rule,
-and a guarantee, and puts the cost of eight megabytes of local back in the
-declaration that asks for it.
+Lexical locals stay in their stack frame. Automatically moving a large local
+to the heap would hide an allocation and a failure path behind an ordinary
+declaration. A `stack` modifier would then exist only to undo that policy.
+Programs needing a large heap allocation can use an owning value. Oversized
+stack frames can still overflow.
 
 ### Value-semantic assignment
 
-Copying a `[dynamic]T` or map creates an independent value. Unlike Odin's
-header-only assignment, it does not silently share mutable backing storage.
-For `[dynamic]int`, `b := a` clones using `b`'s declaration allocation policy
-when `a` is used afterwards. Immutable `string` and `shared(T)` retain their
-storage instead. A pointer or `shared(T)` makes shared mutable ownership explicit.
+Copying a dynamic array or map produces an independent value; pointers and
+`shared(T)` make sharing explicit. Strings share immutable storage. Implicit
+copying keeps generic assignment uniform and lets records gain owning fields
+without breaking every caller.
 
-Allocating copies are implicit so assignment works uniformly in generic code
-and adding an owning field does not break every caller that copies a record.
-The cost is a possible allocation. [Last-use transfer](design.md#last-use-transfer)
-avoids it for eligible bindings and assignments whose source is finished;
-the copy-cost diagnostic reports each allocating copy that remains, and large
-inline copies. It is on by default: measured when it was added, it reported
-nothing in `examples/` or the standard library they use, so the noise that
-sank the explicit-copy policy does not return as warnings.
+The cost is possible allocation. [Last-use transfer](design.md#last-use-transfer)
+avoids a clone when an eligible local is finished, and copy-cost diagnostics
+report allocating copies and large inline copies that remain. Borrow-related
+exclusions keep this optimization conservative.
 
-Last-use transfer is conservative about borrows. A local ever stored into a
-borrow-carrying value, or passed as one to a call with an `inout` argument, is
-not transferred automatically, even if that borrow has ended. Arguments,
-aggregate elements, and insertions still follow their ordinary copy rules.
-This keeps transfer checking simple while preserving borrow safety.
-
-Last-use transfer is sound only because a copy hook must preserve its source's
-value (design.md "Lifecycle hooks and resource types"). Without that contract,
-a hook that traced or renumbered its copies let a debug print of the source,
-added after an assignment, change the assignment's result. The alternatives
-were worse: excluding types with custom copy hooks from transfer would make
-every `shared(T)` assignment pay an atomic increment and a later decrement,
-and no checker can prove a hook preserves a value, since the effect analysis
-deliberately does not see foreign I/O. C++ copy elision makes the same choice.
-A duplicate that must differ from its source belongs on a `move_only` type as
-a named method, where every call is written.
-
-The [assignment history](#assignment-history) records the rejected explicit-copy
-policy; [last-use transfer implementation](#last-use-transfer-implementation)
-explains the analysis order and generated moves.
+A copy hook must preserve the source's value, since an eligible copy may become
+a move. Otherwise adding a later read could change an earlier assignment's
+meaning. A duplicate that intentionally differs belongs in a named operation,
+not a copy hook. Analysis order and generated moves are documented under
+[Ownership, lifecycle, and provenance](compiler-architecture.md#ownership-lifecycle-and-provenance).
 
 ### Panics run lexical cleanup
 
-Odin's managed model has no destructors, so a crash has nothing to unwind. Loke
-adds managed `drop` and lifecycle hooks, which forces a decision Odin never had
-to make: what runs when a program panics. The [answer](design.md#panics-and-unwinding)
-is that a panic under the unwinding strategy runs exactly the cleanup attached to
-live owners and `defer`s as it unwinds the faulting thread — so `defer os.close(f)`
-and a resource's `drop` are reliable when they are on that thread's stack — and
-nothing else. Loke has no automatic package shutdown hooks. An owner in `main`
-is cleaned only when `main` is on the panicking thread's stack; a worker panic
-does not unwind other threads.
+Managed resources need a defined answer when execution fails. Under `unwind`,
+a panic runs the faulting thread's live owners and `defer`s. A file's `drop`,
+for example, closes its handle. It does not run package shutdown hooks or unwind
+other threads.
 
-Two strategies exist because the machinery is not free: hosted builds default to
-`unwind` for the cleanup, while freestanding and embedded builds default to
-`abort`, which runs no cleanup and needs no unwind tables. Because a panic cannot
-be caught either way, the choice never changes which programs are valid, only what
-observable cleanup happens on the way down.
+`abort` exists for builds that cannot afford unwind machinery; it runs no
+cleanup. Neither strategy permits catching a panic. The choice changes cleanup
+on termination, not program validity. See [Panics and unwinding](design.md#panics-and-unwinding).
 
 ### Methods, interfaces, and operator overloading
 
-Methods and `impl` blocks let libraries attach behavior to records and
-other types without embedding procedure declarations in every type definition.
-An extension affects implicit lookup only in its declaring package. A public
-extension procedure is an ordinary export of that package, so importers call it
-as `adapter.procedure(value)` unless they add a local forwarding extension. This
-keeps an unrelated import from changing an existing expression.
-Interfaces describe capabilities used by generic code. Named `slot`
-requirements additionally supply a [witness table](design.md#runtime-polymorphism),
-a table of method addresses used for runtime dispatch through `dyn` values.
-Free-form expression requirements remain
-static-only, so adding runtime dispatch does not weaken the concise structural
-constraints used by numeric and container algorithms. The name `interface`
-replaced the earlier draft's `concept` because it now describes both roles
-directly.
+Methods attach behavior to types without putting procedure declarations in
+their data representation. An explicit `self` parameter distinguishes instance
+methods from type-level procedures and exposes the receiver's parameter mode.
 
-Generic bodies and their interface requirements use definition-site lookup, so
-a caller-local extension cannot change an existing instantiation. The built-in
-map is stricter still: equality and hashing for a user key must be inherent to
-the key type. Without that restriction, two packages could operate on the same
-map using different hash policies and invalidate its contents.
+Structural interfaces serve generic constraints; named `slot` requirements also
+provide runtime dispatch through `dyn` views. Expression requirements remain
+static-only. Operators, indexing, iteration, and lifecycle hooks use the same
+lookup and overload rules as other calls.
 
-The receiver is an explicit first parameter named `self`. A procedure in an
-`impl` block is a method exactly when it declares one, so the declaration shows
-whether it is called on a value or on the type, as instance and static methods
-differ in Java. Writing it also places the receiver's mode where every other
-parameter's mode is written: `self`, `self: ^`, `self: inout`, or
-`self: move`.
-
-Operator overloading, indexing, iteration, conversions, and lifecycle hooks let
-library types be as convenient as built-in types.
+Extensions affect implicit lookup only inside their declaring package. Generic
+bodies use definition-site lookup, and map key equality and hashing must be
+inherent to the key type. Those limits prevent an import or caller-local
+extension from changing existing code or corrupting a shared map's policy.
 
 ### One language at compile time
 
-`$`, `::`, `when`, and static `foreach` have separate jobs. `$` introduces a
-specialization input or pattern, `::` binds a computed constant, `when` selects
-which source is present, and `foreach ($item in values)` expands heterogeneous
-typed code. Keeping those meanings separate avoids a general sigil that can
-silently move arbitrary runtime work into compilation.
+Ordinary procedures execute when a constant context requires their result.
+They keep ordinary types, loops, mutation, and reflection rather than introducing
+an untyped macro language. `$` names specialization inputs, `::` binds constants,
+`when` selects source, and static `foreach` expands typed code; no single marker
+silently moves arbitrary runtime work into compilation.
 
-Ordinary procedures are interpreted when a constant context requires their
-result. Their values retain ordinary Loke types; only `type` and the opaque
-reflection descriptors are compile-time-only. This gives libraries loops,
-local mutation, type computation, and reflection without a parallel untyped
-macro language. File and environment access remain in an explicit build program
-rather than becoming ambient compiler effects: an explicit build input can be
-made reproducible, and ambient file-system access cannot. What runs at compile
-time is visible in the source, because evaluation happens only where a context
-requires a constant, and
-[Compile-time phases](design.md#compile-time-phases) lists those contexts; a
-runtime call with constant arguments stays a runtime call.
+File and environment access belong in explicit build inputs. Ambient compiler
+I/O would make evaluation depend on the machine instead of the source and build
+configuration. A runtime call with constant arguments remains a runtime call.
 
-An evaluated path cannot make a value whose drop or copy runs a hand-written
-lifecycle hook. Running hooks at compile time would need the evaluator to
-reproduce every runtime ownership decision exactly: liveness, last-use
-transfer, temporaries, container and union drops, and their order, since a
-hook can observe all of them. Getting any of it wrong would make a constant
-differ from the same call at run time, silently. In practice the cost is small:
-the hooks in the standard library guard files, processes, threads, terminals,
-and shared allocations, which compile-time evaluation cannot use anyway.
-
-Built-in operations on built-in types cannot be shadowed. Domain-specific
-behavior over a primitive representation uses a `distinct` type, keeping the
-changed meaning visible at its declaration.
-
-A `distinct` type inherits none of its underlying type's operators apart from
-comparisons — `Meters :: distinct f64` starts with no arithmetic at all — which
-is what stops a unit type from silently behaving like its representation.
-Comparisons are the exception because they cannot produce a wrong-dimensioned
-value: both operands already have the same distinct type, and the result is a
-`bool`. Requiring `delegate(==, !=, <, ...)` on nearly every identifier and unit
-type would be boilerplate that protects nothing. The cost is per-operator
-boilerplate for numeric newtypes, so `delegate` re-exports a chosen set of the
-underlying operators in one line. It is deliberately a list rather than blanket
-inheritance: `Meters` delegates `+` and `-` but not `*`, because two lengths add
-to a length but do not multiply to one. Selective delegation keeps the newtype
-convenient without reintroducing the wrong-dimensioned operations that
-distinctness exists to forbid.
+User lifecycle hooks are excluded from evaluated paths. Running them correctly
+would require reproducing runtime copies, moves, cleanup, and their order;
+getting that wrong could make compile-time and runtime results disagree. See
+[Compile-time phases](design.md#compile-time-phases).
 
 ### Build-selected services and explicit runtime state
 
-An earlier draft gave every Loke call a hidden pointer to an immutable ambient
-context containing allocators, logging, tracing, clocks, and related services.
-It made call-tree overrides concise, but also changed every procedure ABI and
-introduced context derivation, installation, snapshotting, and thread
-propagation rules for services most procedures never use.
+The final build selects one default allocator and one logging provider.
+Per-import configuration would require separately instantiated packages, with
+rules for duplicated globals, initialization, symbols, and public type identity.
+That is too much machinery for selecting services.
 
-Loke instead lets the final build select one default allocator provider and one
-logging provider for the whole program. Imports cannot configure separate copies
-of a package. Per-import configuration would require generic package instances:
-two imports with different providers would need rules for duplicated code,
-globals, initialization, symbol identity, transitive dependencies, and whether
-public nominal types from the two instances are compatible. That is a package
-type system, not a small service-selection feature.
+Request-specific allocators, log fields, clocks, cancellation, and other state
+remain ordinary values. An ambient context pointer on every call would change
+every ABI and require installation, derivation, and thread-propagation rules.
+It would also pass the caller's current environment, not a callback's captured
+environment.
 
-Only the provider implementation is static. Allocator regions, scratch arenas,
-request log fields, trace spans, clocks used by simulations, cancellation, and
-other execution state remain ordinary runtime values. They are passed directly
-or retained in application-defined state objects. This makes nondefault policy
-visible and lets two concurrent requests use different state without a global or
-thread-local override.
-
-The removed context pointer is not retained as a closure substitute. It would
-provide the caller's environment when a procedure is invoked, not the lexical
-environment in effect when a procedure value was created, and retained work
-would still need ownership and lifetime rules. Typed `state + proc` records and
-callbacks with explicit generic state provide the useful mechanism using
-ordinary language facilities while keeping procedure values thin.
-
-`core:slice.sort_by` is the first standard generic callback algorithm built on
-that choice. Its comparator is a plain procedure or an ordinary record with an
-immutable `call` method, so configuration and checked borrows remain typed and
-allocation-free. The library wraps either in a private ordering record, so both
-are checked and lowered like one written by hand. The compiler erases addresses only
-inside a generated call-scoped adapter to the shared runtime introsort; the
-runtime neither owns nor retains the comparator. This keeps raw relocation and
-one copy of the introsort below the language boundary without making `rawptr`
-part of the user-facing callback protocol.
-
-A record with a `call` method is the callable convention: `x(args)` calls it, and
-`interfaces.Callable` constrains generic code to a procedure or such a record,
-naming the result `C.Result`. A built-in rule rather than a written interface
-decides it, because a signature's parameter list is not a requirement an
-interface body can spell, and one rule keeps a procedure and a record
-interchangeable without a pair of overloads per callback API. A
-[capture literal](#capture-literals) declares such a record from a clause, and a
-[`dyn proc` view](#borrowed-callable-views) erases either behind one
-non-generic type.
+Generic callback APIs instead accept a procedure or a record with `call`, checked
+by `interfaces.Callable`. Captures remain typed and can borrow without allocation.
+For one non-generic callback type, use a borrowed callable view.
 
 ### Capture literals
 
-A [capture literal](design.md#capture-literals) is the record and `call` method
-a programmer writes by hand, declared from a clause. The checker lowers it to
-exactly that, a body-local record, its `call`, and a composite literal of it,
-so ownership, borrowing, and emission see only ordinary code.
+A [capture literal](design.md#capture-literals) abbreviates an ordinary record,
+its fields, and its `call` method. Captures are initialized when the literal is
+created. Keeping them in a clause after the signature makes ownership and escape
+visible without reading the body.
 
-**Why not declarations in the body.** The alternative leaves the signature
-unmarked and declares each capture as a statement, `capture limit;`, beside
-its use. It is rejected:
+Unmarked captures follow bindings: a place copies, while a temporary or explicit
+move transfers. Borrowing is written. A borrowing default would silently share
+state and constrain the source's later use; captures do not have the call-scoped
+lifetime that makes ordinary parameter borrowing convenient. Copying a captured
+owner can allocate, just as copying that owner into a local can.
 
-- A body statement runs on every call, but a capture runs once, when the
-  literal is created. `capture move(buffer);` inside the body would end
-  `buffer` before the first call, which no other statement in a body does.
-- The captures decide what the value is: its size, whether it is copyable or
-  move-only, and whether it borrows and so cannot escape. Body declarations
-  hide that behind what reads as a thin `proc(a, b: int) -> bool`, so a
-  reader, and the escape check, must scan the body. That works against
-  [Public borrow contracts should stand on their own](open-questions.md#public-borrow-contracts-should-stand-on-their-own).
-- A capture under an `if`, in a loop, or after an early `return` has no
-  meaning. Restricting captures to the start of the body makes them a header
-  written inside the braces, as Swift's `{ [weak self] in ... }` is.
+The main rejected alternatives were:
 
-What the body form does better is keep a capture beside its use and leave
-`proc(...)` looking exactly as it does today.
+- **Capture statements inside the body:** they appear to run on every call,
+  hide the callable's layout and lifetime, and need rules for conditional or
+  unreachable captures.
+- **Inferred receiver modes:** a body edit could change which callback APIs
+  accept the literal. The current plain `self` matches the library's callable
+  constraint; mutable and consuming callable designs remain
+  [open](open-questions.md#what-a-capture-literals-call-cannot-do).
+- **A structural environment plus code pointer:** it would expose captures in
+  type identity and make calls indirect. An ordinary generated record keeps
+  generic calls direct and optimizable.
+- **New generic parameter syntax:** `interfaces.Callable` and its associated
+  result type reuse existing constraints rather than giving `proc(...)` a
+  different meaning when a `$` appears inside it.
 
-**Why not a list before the parameters.** The earlier sketch,
-`proc [limit] (a, b: int) -> bool`, puts state captured at creation ahead of
-what the procedure takes and returns, and gives `[...]` a new meaning after
-`proc`. The clause keeps the signature first and puts the captures where
-creation ends and the body begins.
-
-**Why a plain name copies.** The alternative makes an unmarked capture
-borrow, as an ordinary parameter borrows its argument, so the default never
-allocates. It is rejected:
-
-- Sharing is written in Loke. A variable holds a value, and a pointer, slice,
-  or view is the written opt-out; a capture is a binding, and a binding of a
-  place clones. An unmarked borrowing capture would be the one binding that
-  shares silently.
-- A parameter borrows because, for one call, a borrow cannot be told from a
-  copy. A callable outlives the expression that made it, so the difference
-  shows: a borrow rejects `limit += 1` while the callable is live where a copy
-  keeps the old value, and a borrowing callable cannot be returned or stored
-  past `limit`. That should be chosen, not met.
-- Borrowing only when the callable cannot escape makes its size, and whether
-  it carries a borrow, depend on its uses, the objection that rules out
-  declarations in the body.
-
-The cost is a silent clone when `capture(table)` names a map that is read
-again later. That is the cost `saved := table` already has; last-use transfer
-removes it when `table` is not read again, and
-[copy-cost diagnostics](design.md#copy-cost-diagnostics) can report the rest.
-
-`&name` stays an error as a `foreach` or case leaf. There the traversal's
-[yield mode](design.md#yield-modes) decides between owning and borrowing, and
-an unmarked leaf already borrows; a bare `&` was removed there because it bound
-a writable place. A capture has no yield mode to defer to, so it states the
-mode itself, and `&limit` is read-only as `&place` is.
-
-**The keyword.** `capture` is a contextual keyword, reserved only directly
-after a procedure literal's signature and followed by `(`. There a name and
-`(` can begin nothing else, since a complete signature is otherwise followed
-only by `where` or `{`. It names what happens and matches the word the
-diagnostics and documentation use. `use` was rejected: it sits beside `using`,
-reads as an import to a Rust reader, and is a common name (a test declares
-`use :: proc`). Reserving `capture` everywhere was rejected for the reason
-[Keywords reserved in every position](open-questions.md#keywords-reserved-in-every-position)
-gives: it is a plausible name, for a regex group or captured output.
-
-**Why `call` takes a plain `self`.** A plain `self` is the mode the most APIs
-accept. Receiver modes must match an interface slot exactly, except that a
-plain `self` also meets a `self: ^` slot
-([Receiver forms](design.md#receiver-forms)), and `interfaces.Callable` asks
-for a plain `self`. A literal with an `inout` or `move` `call` would be
-rejected by every callback API in the standard library. What it gives up is
-[open](open-questions.md#what-a-capture-literals-call-cannot-do).
-
-**Why not infer the receiver.** Rust infers `Fn`, `FnMut`, or `FnOnce` from
-what the body does with its captures. That makes which APIs accept a literal
-depend on its body: adding an assignment deep in the body silently changes it,
-the objection that rules out declarations in the body.
-
-**Why not a structural type.** A closure could instead be an environment
-record plus a code pointer, so two literals with the same captures and
-signature share a type that a signature can name. It is rejected: every
-capture's name and type would be part of a public signature, so adding one
-breaks callers; each call becomes indirect, losing the direct, inlinable call
-that `slice.sort_by`'s generated adapter makes; and it still does not hide the
-state, since different captures stay different types.
-
-**Why the callable constraint is an interface.** `interfaces.Callable` is a
-catalogue interface with a built-in rule rather than a parameter form or a
-change to procedure types:
-
-**Why not let a generic procedure type accept records.** Letting
-`f: proc(error: move E) -> $F` take a record would make adding a `$` to a
-parameter change what it accepts, and make `proc(...)` mean a thin value in one
-parameter and anything callable in another.
-
-**Why not bind `$F` in the `where` clause.** `Callable(C, proc(error: move E) -> $F)`
-would add a fourth `$` binding site beside parameter types, static `foreach`,
-and explicit generic parameters, for this one case. `C.Result` reuses the
-associated-type mechanism.
-
-**Why not new parameter syntax.** A form like Rust's `impl Fn(...)`, such as
-`less: some proc(left, right: T) -> bool`, is shorter but is a second way to
-write a generic constraint. It can come later as sugar for the `where` form, if
-real APIs show the verbosity matters.
+`capture` is contextual after a procedure literal's signature, preserving its
+use as an ordinary identifier elsewhere.
 
 ### Borrowed callable views
 
-A generic API already sees only a callable's parameters and result:
-`slice.sort_by` names only `Callable`'s `call`, whatever the caller captured.
-What a generic cannot give is one type written without `$`, for a non-generic
-parameter, a record field, or an array of different callbacks. A
-[`dyn proc` view](design.md#borrowed-callable-views) is that type: a data
-pointer and a code pointer, as a `dyn` interface view is a data pointer and a
-witness. Nothing allocates, since the record stays in the caller's frame as
-`fmt.Writer` borrows its sink, so the view suits a callback that runs during
-the call. An API chooses: `$C` with `Callable` for a direct call the optimizer
-can inline, which suits `sort_by`, or `dyn proc` for one type and an indirect
-call. Neither names the captures.
+A [`dyn proc` view](design.md#borrowed-callable-views) gives heterogeneous
+callbacks one non-generic type. It holds data and code pointers and borrows its
+target. Generic `Callable` parameters permit direct, inlinable calls; a view
+trades that specialization for one signature and indirect dispatch.
 
-**Why the code word is not a witness.** `Callable` has one slot, so a table
-holding it would cost a load on every call and buy nothing. The view keeps the
-`dyn` representation, two words with the same borrow rules, and its second
-word is the slot itself.
+There is only one call slot, so a separate witness table would add a load
+without adding capability. A procedure value occupies the data word itself,
+with a shared adapter, so converting a procedure does not borrow the local
+variable that happened to hold it.
 
-**Why a procedure is the data word.** A procedure value needs no data, so the
-view holds the procedure itself and calls it through an adapter generated once
-per signature. A data word pointing at a procedure value would make
-`f: dyn proc() = g` borrow the local `g`, and converting a procedure would be
-the one way to make a procedure value a borrow.
+Conversion from a procedure or capture literal is implicit because the
+destination fixes the complete call signature and capability. Converting a
+named record stays explicit: it can expose roles other than calling. Temporary
+targets follow the `dyn` lifetime rule; name a literal before storing a view
+that must survive its creation expression.
 
-**Why the conversion is implicit.** Written out, the main use reads
-`visit(nodes, (dyn proc(node: ^Node))(&proc(node: ^Node) capture(&mut count) { ... }))`:
-the signature twice and the address of a temporary. The explicit `dyn I`
-conversion is kept because it does two things a reader should see: it chooses
-the capability, `&` or `&mut`, and it narrows a type with other members and
-roles to one interface. Neither applies here: a callable view has one
-capability, and a procedure or capture literal has nothing but its call to
-hide. A named record can have other roles, so turning one into a callback stays
-written. The conversion joins those the
-[implicit conversions](design.md#implicit-type-conversions) already have:
-built-in, borrowing, chosen by the destination type alone, and checked, as
-`[dynamic]T` to `[]T`, `string` to `string_view`, `box(T)` to `^T`, and a value
-to `any_view` are. No import adds or changes it, so it is not the facility
-[User-defined implicit conversions](#user-defined-implicit-conversions)
-rejects.
+Making every procedure value carry an environment was rejected. It would widen
+thin procedure pointers, disrupt C callbacks, and require either owned
+environments with allocation and lifecycle rules or borrowed environments with
+lifetime tracking on every procedure value. Capture records can still allocate
+when they copy owning fields; the decision avoids requiring a heap environment
+merely to represent a callable.
 
-**Why a temporary ends with its expression.** An `any_view` local keeps a
-trivially dropped temporary for the rest of its scope, so
-`view: any_view = 5;` works. A `dyn proc` view follows the `dyn` rule
-instead: it is a `dyn` view, and an `any_view` local exists to be printed in
-the next statement where a callback is stored to be called later. Naming the
-literal costs one line and puts what the view borrows in a name the borrow
-diagnostics can point at.
+### Typed fallibility
 
-**Why not make the literal a `proc` value.** The simplest answer gives a
-capture literal the type `proc(a, b: int) -> bool` itself. A procedure value is
-one code pointer with no room for captures, and making room costs every
-procedure value, not only closures:
+`Option(T)` represents absence and `Result(T, E)` represents failure. Each is
+one ordinary union value that can be stored, passed, or returned. Named variants
+remain unambiguous even when success and failure have the same payload type.
 
-- Two words for every procedure value: a `proc "c"` callback no longer matches
-  the C ABI, and every procedure-typed field doubles.
-- An owned environment: captures vary in size, so they would go to the heap,
-  and every procedure value would allocate, clone, and drop. Loke allocates
-  only through a written allocator, and creating a callable should not imply
-  heap allocation.
-- A borrowed environment: every procedure value becomes a borrow carrier, so
-  storing or returning even a plain procedure, free today, is lifetime-checked.
+[Typed fallibility](design.md#typed-fallibility) recognizes declared union shape,
+not privileged type names. This replaces special trailing-status rules while
+letting library unions use `or_else` and `or_return`.
 
-The [removed context pointer](#build-selected-services-and-explicit-runtime-state)
-was kept out on the same ground: procedure values stay thin.
+### One result
 
-### Typed fallibility, and the `Option` decision it reverses
+A procedure returns at most one value. Several results form an anonymous record
+and use the same destructuring as other records. That removes separate rules
+for result lists and implicitly initialized named-result locals.
 
-`Option(T)` represents absence and `Result(T, E)` represents failure. Both are
-ordinary generic unions in `base:runtime`. [Typed fallibility](design.md#typed-fallibility)
-recognizes their declared shape rather than their names, so library unions can
-use the same `or_else` and `or_return` operations.
-
-A fallible answer is one value that can be stored in a field, passed to generic
-code, or returned through a procedure value. Named variants also distinguish
-success from failure when both payloads have the same type, as in `Result(int, int)`.
-This replaces special rules for trailing Boolean or error results with ordinary
-value semantics.
-
-The [fallibility migration](#fallibility-migration) records the reversed decision,
-measured costs, and changed reader contract.
-
-### One result, and the compatibility break that came with it
-
-A procedure returns at most one value. Several values travel as one
-[anonymous record](design.md#anonymous-records), then are unpacked by
-[destructuring](design.md#destructuring). The same unpacking rule serves
-declarations, assignments, and `foreach`; there is no separate result-list rule
-or named-result local to initialize implicitly.
-
-Field names are part of an anonymous record's type. For example,
-`proc() -> (a: int, b: int)` and `proc() -> (x: int, y: int)` are incompatible.
-This keeps a returned record's identity the same whether it is stored, passed,
-or returned. Type identity uses the field names and actual field types, so two
-unrelated types named `Token` do not become interchangeable.
-
-The [one-result migration](#one-result-migration) records the compatibility
-break and compiler defects found while migrating named fields.
+Labeled result names participate in type identity: `(width: int, height: int)`
+is not `(height: int, width: int)`. Keeping the same identity when a record is
+stored or returned prevents field-name changes from silently reinterpreting it.
 
 ### Records without field names
 
-`-> (int, int)` was rejected at first: every record field had a name, and the
-names were part of the type. In practice nobody read them. The library had five
-procedures that returned a record, and every caller destructured the result, so
-the names were spelled at every declaration only to be dropped at every call.
+Unlabeled records serve results whose names callers would immediately discard
+through destructuring. They are structural records with positions instead of
+names, not a separate tuple model.
 
-An unlabeled record is the same structural record with positions in place of
-names, which keeps one record model rather than adding tuples beside it. What
-it needed was decided this way:
-
-- **Reaching a field.** Only destructuring and positional literals, never
-  `.0`. Names are how a field is selected and positions how a record is taken
-  apart; a caller that wants `r.found` asks for a labeled result. `r.0.1` would
-  also lex as the number `0.1`.
-- **One field.** `(T)` stays grouping, and an unlabeled record has at least two
-  fields: one value is its type alone.
-- **Relation to labeled records.** Different types, with one implicit
-  conversion: a labeled record drops its names to become the unlabeled record
-  of its field types. Without it, a library that names its results, as it
-  should when the types alone are unclear, would force its names on every
-  caller that stores the result in an unlabeled record. Dropping names is
-  safe because the unlabeled side reads by position anyway. Nothing converts
-  the other way or between two sets of names. Erasing names from identity
-  instead, as C# tuples do, would let `(width: int, height: int)` become
-  `(height: int, width: int)` silently, the reordering mistake the
-  [field-order rule](#field-order-stays-inside-the-declaring-package) guards
-  against. As with `[dynamic]T` to `[]T`, the conversion is of values only,
-  so a procedure type whose result is labeled is still not one whose result
-  is unlabeled. A labeled record shares its unlabeled counterpart's
-  backend type, so the conversion emits nothing.
-- **Mixing.** All fields are labeled or none, so a record is read one way.
-  `(int, found: bool)` parses as the labeled list `int, found: bool`, the same
-  reading a parameter list gives it.
-
-The parser tells `(int, bool)` from a parenthesized expression by a comma at
-the group's own depth. An expression has one only between a definition's
-`where` conditions, which end at the definition's `{`, so the scan skips from
-`where` to that brace and the change made nothing ambiguous. Inside
-the compiler an unlabeled field is named by its position, `0`, `1`, ..., a name
-no source can spell; interning, layout, and destructuring needed no new case.
+Only destructuring and positional construction access their fields; there is
+no `.0` selector. `(T)` remains grouping, so an unlabeled record needs at least
+two fields. A labeled record can implicitly lose its names, but the reverse
+conversion and conversion between different labels are absent. All fields must
+be labeled or all unlabeled. See [Anonymous records](design.md#anonymous-records).
 
 ### Structs declare, parentheses describe
 
-Records came in three forms: a declared `struct`, which is nominal; a
-parenthesized anonymous record, which is structural; and a `struct { ... }`
-written in place, which was a fresh nominal type at every occurrence. The
-third equaled nothing, not even an identical one beside it, so two variables
-of the same written type could not be assigned to each other. The corpus used
-it in three tests and a comment, and the anonymous record already served
-each of those places.
+A struct is nominal and belongs to a package. That ownership supports private
+fields, hooks, `move_only`, and changes to field order without changing outside
+callers. An anonymous record describes a structural value without those rights.
 
-Merging struct and anonymous record into one form was considered and
-rejected. Every difference between them follows from one fact: a struct has a
-package that owns it. That ownership is what makes private fields the default,
-what lets copy and drop hooks and `move_only` mean something, and what lets
-the declaring package reorder fields while no other package depends on their
-order. A single form would either give up encapsulation for every record or
-make every returned pair a declaration. So the two kinds stay, the rules they
-share are stated once, and each spelling has one meaning: `struct` creates a
-type, and parentheses describe one.
+Combining the two would either weaken encapsulation or make every returned pair
+a declaration. Instead, `struct` declares a type and parentheses describe one.
+Inline anonymous `struct { ... }` types and `distinct` over anonymous records
+would add nominal identities without useful ownership, so they are rejected.
 
-`distinct` over an anonymous record was a second way to make a nominal record,
-without the ownership a struct carries, so it is rejected for the same reason.
-Inline `enum` and `union` types stay: neither has a structural spelling to
-write instead.
+### Distinct types
+
+A `distinct` type inherits comparisons but no other operators by default.
+Comparisons cannot produce a value with the wrong dimension; arithmetic can.
+`delegate` exposes a chosen set of underlying operators so a unit type can
+permit addition without also permitting meaningless multiplication. This costs
+some explicit declarations while keeping representation and meaning separate.
 
 ### One pattern grammar, flat declarations
 
-Every form that binds names takes a subset of one pattern: a leaf is a name or
-`_`, `&mut` marks a leaf that names a place, `$` a leaf a static expansion
-fixes, and a parenthesized group descends into a record field. A `foreach`
-header uses all of it, a switch case one leaf, and `:=` and `=` one flat list.
-That is one language with stated subsets, not several that differ in the
-details.
-
-Declarations stay flat because nothing asks for more. Nesting in a header
-exists because adapters wrap elements the program did not shape, as
-`table.indexed()` yields `(entry, index)` around a map entry. A declaration
-destructures a value the program built, and a nested field takes a second
-line. Nesting there would also need a recursive form of the consume, hook, and
-drop-order rules, and a statement-start scan past `(` to tell a pattern from a
-parenthesized expression. If a real program wants it, the grammar already has
-the production to extend.
+Binding forms use subsets of one pattern grammar: names and `_`, writable
+`&mut` leaves, static `$` leaves, and groups that descend into record fields.
+`foreach` supports nested groups because adapters may wrap the yielded value.
+Declarations stay flat: a nested value the program constructed can be unpacked
+in another statement, without adding recursive declaration and cleanup rules.
 
 ## Removed or narrowed features
 
 ### Generics are not ABI surface
 
-Generics are resolved before ABI lowering, so a generic procedure or type has no
-representation of its own and is excluded from every binary interface: it cannot
-be exported, given a foreign calling convention, placed in a `foreign` block, or
-held in a procedure value. Only concrete instantiations reach the ABI, and
-exposing generic functionality to C means instantiating it and wrapping the
-result in a foreign-ABI-safe procedure. Saying so explicitly keeps the choice
-between monomorphization and dictionary passing an implementation detail with no
-observable consequence, and keeps the foreign boundary defined over concrete
-types only.
+Generic declarations have no runtime representation and cannot themselves be
+exported or passed as procedure values. Only concrete instantiations reach ABI
+lowering. A foreign wrapper exposes a concrete signature, keeping generic
+specialization separate from the binary interface.
 
 ### Colon annotations on inferred generic bindings
 
-The parser used to accept `x: $T: Shape`, but the checker bound `T` without
-checking `Shape`; even `x: $T: []int` accepted `3.5`. The specification gave
-the annotation no meaning. It is now rejected (`L0258`) at the declaration,
-including an unused generic, rather than carrying an unenforced constraint.
-
-[Specialization](design.md#specialization) already writes the shape in the
-parameter type, such as `[]$Element`, and [where clauses](design.md#where-clauses)
-filter inferred types by compile-time predicates. A fixed `[]int` parameter
-needs no generic binding. Explicit parameters such as `$T: type` keep their
-ordinary parameter-list type annotation. A new annotation would need a defined
-matching and conversion rule before it could add anything to those mechanisms.
-The parser recovery regression is
-[tests/syntax_err/inferred-constraint.loke](tests/syntax_err/inferred-constraint.loke).
+`x: $T: Shape` had no specified constraint semantics. Parameter patterns such
+as `[]$Element` already describe shape, and `where` clauses filter candidates.
+Rejecting the extra colon avoids accepting an annotation that checks nothing;
+explicit generic parameters such as `$T: type` keep their ordinary annotation.
 
 ### Floating generic arguments use representation identity
 
-The converted IEEE-754 encoding identifies a floating generic argument. Generic
-code can observe a zero's sign through division or inspect a NaN's payload with
-`unsafe.transmute`, so merging numerically equal arguments would let the first
-instantiation's value replace the next caller's. Numeric equality also fails to
-identify a NaN with itself, making it unsuitable for repeated bindings.
-
-Instance and witness keys use the constant's retained encoding at its converted
-width, and repeated bindings, concrete `impl` arguments, and `dyn` conversions
-compare that same key. Using the widened numeric field alone lost the signalling
-bit of an `f32` NaN and could merge distinct arguments. The rule applies inside
-aggregates too; ordinary numeric comparisons keep their floating-point semantics.
-See [Generic argument identity](design.md#generic-argument-identity) and the
-[run](tests/run/generic_float_identity.loke) and
-[error](tests/err/generic_float_identity.loke) regressions.
+A floating generic argument is identified by its converted IEEE-754 encoding.
+Positive and negative zero can behave differently, and code can inspect NaN
+payloads. Numeric equality would merge observable distinctions and cannot even
+identify a NaN with itself. [Generic argument identity](design.md#generic-argument-identity)
+uses representation recursively through aggregates; ordinary numeric comparisons
+keep their usual meaning.
 
 ### Constraint entailment in overload resolution
 
-An earlier draft let [the specialization tie-breaker](design.md#operator-lookup-and-overload-resolution)
-order two structurally identical candidates by constraint strength: the one whose
-normalized constraint set syntactically entailed the other's won. Constraints now
-decide only whether a candidate is *viable*; structure alone decides which viable
-candidate wins, and a tie is an ambiguity error.
+Constraints decide whether a candidate is viable; structural specialization
+decides which viable candidate wins. A tie remains an ambiguity.
 
-Entailment carried the most machinery of any single rule in the language — normalize
-as an unordered conjunction, expand interface composition transitively, alpha-rename
-bound names, test atom-subset — plus the caveat that an implementation reasoning more
-strongly must not thereby change which overload is selected. It bought one pattern:
-Rust-style automatic selection of a strictly-more-constrained refinement. Making that
-refinement an explicit call is consistent with how the language treats every other
-ambiguity, and it means a reader never has to perform a subset test to know which
-procedure runs.
+Ordering candidates by logical constraint strength would require normalization,
+interface expansion, and entailment rules just to select a refinement
+automatically. Explicitly naming the refinement keeps overload resolution
+predictable without that second ordering system.
 
 ### Statement labels and multi-level breaks
 
-Labels made structured control flow read like a hidden `goto`. The common
-multi-level exit cases can use a returned helper procedure, a loop condition,
-or an `if` chain. Loke therefore keeps `break` and `continue` limited to the
-innermost loop. A switch is selection rather than iteration and is not a break
-target; its cases already stop automatically.
+`break` and `continue` target the innermost loop. A switch selects and is not a
+break target. Multi-level exits use a helper return or an explicit loop condition,
+keeping control flow structured without labels.
 
 ### File-private visibility
 
-`@(private="file")` is gone; `@(private)` now takes no argument and names package
-visibility explicitly, which is only load-bearing inside a file whose package
-clause carries `@(public)`. A package is the encapsulation boundary, and one
-level of hiding *inside* that boundary cost an attribute value, a package-clause
-form, a mutual-exclusion rule against `@(public)`, and a rule for opting back out
-of a file-wide private default. A file that wants its own boundary wants to be a
+The package is the encapsulation boundary. `@(private)` means package-private;
+`@(private="file")` would add another visibility level and rules for interacting
+with public defaults. Code needing an independent boundary belongs in another
 package.
 
 ### Standard free aliases
 
-A closed set of nine names — `len`, `cap`, `hash`, `format`, `compare`, `iter`,
-`iter_reverse`, `clone`, `try_clone` — used to perform receiver lookup, so
-`len(x)` and `x.len()` selected one declaration. The second spelling bought no
-expressiveness and cost four rules: the closed set itself, a restriction to
-immutable receivers, a matching rule keeping mutators method-only so their
-receiver borrow could not hide in free-call syntax, and a rule that an alias
-contributes no overload candidates of its own. All four exist only to keep the
-two spellings from disagreeing.
+`f(x)` uses lexical lookup; `x.f()` uses receiver lookup. Special aliases such
+as rewriting `len(x)` to `x.len()` would duplicate spellings and need exceptions
+to stop mutating receiver borrows from hiding in free-call syntax.
 
-The method is the only built-in spelling. `len(x)` performs ordinary lexical
-lookup and works only when a procedure named `len` is in scope; it does not
-look for `x.len()`. The remaining rule is uniform: `f(x)` is a lexical call
-and `x.f()` is a receiver call. Built-in types keep their compiler-contributed
-`len`, `cap`, and `hash` members,
-which is what `x.len()` selects on a slice exactly as on a user record. A fixed
-array's and a vector's lengths stay properties of their type, but `x.len()` is
-still an ordinary call and still evaluates `x`; the unevaluated operand is
-`size_of`'s job, not a method call's.
+Built-in types keep ordinary contributed members such as `len`, `cap`, and
+`hash`. Even a fixed array's `x.len()` evaluates its receiver; unevaluated
+operands belong to operations such as `size_of`.
 
 ### `mem.` spellings of the allocation built-ins
 
-`design.md` once promised that the allocation built-ins, `make`, `free_all`,
-and `drop` among them, were also available in package `mem`. No compiler ever contributed
-them, and a second name for each built-in would buy nothing: each allocating
-built-in has a `try_` form returning `Result(T, Allocator_Error)`, so there is
-no stricter error handling left for a `mem.` spelling to add. The universe name
-is the only spelling.
+Allocation built-ins have one spelling in the universe. A duplicate `mem.make`
+or `mem.drop` would add no capability; fallible allocation is already available
+through the corresponding `try_` operation.
 
 ### `fallthrough`
 
-Multi-value case lists cover what most C fallthrough chains are written for, and
-a case that must run another case's body calls a shared procedure. Keeping a
-keyword to reintroduce the C behaviour that Loke's `switch` exists to remove was
-not worth the reserved word, the statement, and the extra clause in the `defer`
-restrictions.
+A switch case stops automatically. Multi-value cases cover shared choices;
+shared procedures cover shared work. `fallthrough` would add control-flow and
+cleanup exceptions to reintroduce an accidental behavior the switch avoids.
 
 ### Named-result initializers
 
-`-> (color := "blue")` was removed first, then named results themselves. The
-initializer resembled a parameter default but fired on a different condition —
-every entry, rather than every call that omits an argument — and two similar
-spellings with different trigger conditions is a poor use of syntax. What
-remains is simpler still: a result is anonymous and `return` always carries its
-value.
+Results are values supplied by `return`, not implicit locals initialized on
+procedure entry. A result initializer resembling a parameter default would
+attach similar syntax to a different trigger and complicate initialization.
 
 ### Reflection beyond fields and enum values
 
-Compile-time reflection is `fields_of` and `enum_values_of` with two descriptor
-types. An earlier draft also had `procedures_of`, `parameters_of`,
-`requirements_of`, and `attributes_of`, with three further descriptors and a rule
-about which extension members `procedures_of` observes. Field and enum shape is
-what serialization, bindings, and GUI generation walk; the rest was a guess at
-what an RPC or documentation generator might want. Adding a descriptor later is
-additive.
+`fields_of` and `enum_values_of` cover data shape used by serialization and
+bindings. Reflecting procedures, parameters, requirements, and attributes would
+need more descriptors and lookup rules without a demonstrated consumer.
+Additional reflection can be introduced when an actual tool needs it.
 
 ### Associated interface members use expressions
 
-`const T.NAME: Type;` is gone. `T.NAME -> Type;` is an ordinary expression
-requirement that says the same thing, since `T.NAME` already names its owner
-unambiguously. The dedicated form bought only the additional demand that the
-member be a compile-time constant, which value requirements did not need. An
-associated type uses the same mechanism as `T.Element -> type;`; because its
-result is itself a type, that selected member is necessarily compile-time known.
-No second member-declaration grammar is needed.
+`T.NAME -> Type;` is an expression requirement. Associated types use the same
+form, `T.Element -> type;`, whose result is necessarily compile-time known.
+A separate associated-constant declaration grammar adds little to that model.
 
 ### Headless switch
 
-Odin permits a condition-only switch:
-
-```odin
-switch {
-case x < 0:
-	fmt.println("x is negative");
-case x == 0:
-	fmt.println("x is zero");
-case:
-	fmt.println("x is positive");
-}
-```
-
-The same logic is clearer as an `if`/`else if` chain, so Loke requires a switch
-expression and avoids a second conditional construct with overlapping purpose.
+An `if`/`else if` chain already selects among unrelated conditions. Requiring
+a switch subject avoids a second construct with the same purpose.
 
 ### `default:` switch arm
 
-Odin writes the default arm as `case:`, which reads as a case whose values were
-forgotten. Loke also accepts `default:`, which says what the arm is, at the cost
-of reserving `default`. It is a reserved word rather than a contextual one
-because `:=` is two tokens: inside an arm, `default: int = 0;` would declare a
-local, and no fixed lookahead tells that from the next arm. No Loke code named
-anything `default`. `case:` stays accepted, so code written for Odin's habit
-keeps compiling.
+`default:` names the fallback arm clearly; `case:` remains accepted. Reserving
+`default` avoids ambiguity with a declaration at the end of an arm, where
+`default: int = 0;` would otherwise also be valid syntax.
 
 ### Compiler-defined domain types
 
-Complex numbers, quaternions, matrices, and similar domains are library types
-instead of compiler-defined primitives because ordinary records and overloads
-can express their behavior. SIMD vectors remain built in because their
-semantics include lowering to target vector operations, which an ordinary
-record cannot guarantee.
+Complex numbers, quaternions, and matrices belong in libraries because records
+and overloads can express them. SIMD remains built in because its semantics
+include target vector operations that a record cannot promise.
 
 ### Owning type erasure
 
-`any_view` remains borrowed and call-scoped, while `dyn Interface` is a more
-capable borrowed view carrying a coherent interface witness. Neither owns the
-erased payload. An owning `any` or `dyn` would need stable payload allocation,
-allocator provenance, alignment, erased clone/drop behavior, borrow rules across
-moves, thread-affine destruction, and an allocation-failure contract.
-
-Keeping ownership out of the initial design lets generic and dynamic dispatch
-interoperate without silently allocating. Closed owning sets use unions;
-libraries that need open ownership can first validate an explicit owner record
-around raw storage and their own callback record.
+`any_view` and `dyn` borrow their payloads. An owning erased value would also
+need allocation, alignment, clone/drop dispatch, region tracking, and rules for
+borrows across moves. Keeping those out makes dynamic dispatch usable without
+silently allocating. Closed owning sets use unions; an open owning abstraction
+needs an explicit storage and lifecycle contract.
 
 ### User-defined implicit conversions
 
-There are none, at either scale. A general facility would have converted runtime
-values silently based on what happened to be imported, so it was cut early; what
-survived it was `@(implicit)`, a narrowed form that applied a one-argument
-`hook(convert)` to an unfixed constant only. That went too.
+User-defined conversions are written at the call site. Otherwise an import or
+an overload could silently select runtime conversion work, requiring ranking
+and chaining rules to contain the effect. Even a special case limited to
+unfixed literals adds those interactions for little saved text.
 
-Its motivating case was literals entering library numeric types: `z*z + 2.0`
-should mean what it looks like. But the version that does is `z*z +
-Complex_F64(2.0)`, which is four characters longer and needs no language feature.
-Against that, `@(implicit)` cost an attribute, a rank below every built-in
-conversion in overload resolution, an interaction with the unfixed-constant
-rule, and a standing proof obligation that conversions cannot chain.
-
-Removing it also removed the rules that existed only to contain the general
-version: the cap on conversion chain depth, the argument that lookup terminates,
-and the advice that implementations warn about lossy implicit conversions.
-A conversion now happens exactly where one is written.
+Built-in implicit conversions remain, including owner-to-view borrowing. Their
+meaning depends on the source and destination types, not imported conversion
+code.
 
 ### A read-only-data attribute
 
-Odin has `@(rodata)` for a global that lives in the read-only section. Loke
-uses [materialized constants](design.md#materialization) instead: runtime
-indexing, slicing, taking an address, or borrowing a traversal creates one
-shared read-only object. `&C` yields a read-only `^T`; `&mut C` is rejected.
-Low-level access needing a mutable foreign pointer uses a slice and an explicit
-`unsafe.raw_data` conversion.
-
-`@(rodata)` existed for exactly one reason — a constant had no storage, so
-`TABLE[index]` with a runtime index did not work. Everything else it provided,
-process lifetime and immutability, a constant already had. Deleting it removed
-the attribute, the rule that such a declaration's type had to be written `[]int`
-rather than the `[]mut int` a literal would otherwise produce, and the last
-exception to "there is no general `const` qualifier in the language."
-
-The cost is that "constants exist only at compile time" is no longer literally
-true, and the language has to say that all uses of a materialized constant share
-one backing object. Rust keeps `const` and `static` separate to avoid exactly that
-question. The trade was taken because a runtime-indexable read-only table is
-ordinary systems code, and spending a declaration attribute on it — one that
-looks like metadata but changes whether the program compiles — put it in the
-wrong category.
+Constants materialize as shared read-only storage when runtime indexing,
+slicing, or an address requires it. They already provide immutability and
+process lifetime, so a separate `@(rodata)` attribute would duplicate them.
+The cost is an explicit [materialization](design.md#materialization) rule:
+constants are not exclusively compile-time objects, and all uses share one
+backing object.
 
 ### No octal escapes
 
-Odin's `\NNN` is a byte, as in C and Go. Loke's named a code point up to U+01FF
-and UTF-8 encoded it, so `"\377"` was the two bytes of `ÿ` where C gives the
-one byte `0xFF`: the escape a C programmer uses to write a byte meant something
-else. `\x` spells a byte and `\u` a character, so it added nothing, and only
-one test used it. It is removed; a backslash followed by a digit is an error
-that names `\x` and `\u`.
+Octal escapes added an ambiguous byte-versus-character spelling. Loke's former
+`"\377"` encoded the Unicode character `ÿ`, rather than one byte `0xFF`.
+`\x` already spells bytes and `\u` characters, so octal escapes are rejected
+and the diagnostic points to those alternatives.
 
 ### Sized boolean types
 
-Loke has a single one-byte `bool`. Boolean-looking foreign typedefs bind as their
-actual integer representation and are converted in a wrapper. This also handles
-encodings such as `VARIANT_BOOL`, whose true value is `-1`, without pretending
-that every foreign boolean is just a differently sized Loke `bool`.
+Loke has one byte-sized `bool`. Foreign boolean typedefs bind as their actual
+integer representation and convert in a wrapper. That handles conventions such
+as true being `-1` without pretending every foreign boolean is a wider Loke bool.
 
 ### Unchecked union extractions
 
-A union has no unchecked extraction: it is inspected with a `switch`, whose
-cases are variant names and which the compiler requires to be exhaustive. A
-branch pattern such as `.some(value)` exposes the payload only in the arm that
-has already checked that variant. There is no spelling that reads one variant's
-payload while another is active.
+A union is inspected by exhaustive switch or checked `value.as(.variant)`,
+which returns an optional copy. Move-only payloads need a switch. Reading an
+inactive payload as an owner could manufacture a container header and later
+free an invalid address, so no unchecked extraction is part of ordinary syntax.
 
-`value.as(.name)` is the checked read for code that wants one variant without a
-switch. It tests the tag and yields an `Option`, the union counterpart of
-`view.as(T)` and `Enum.from_int`, so `or_else`, `or_return`, and a switch on the
-`Option` all apply. It returns a copy of the payload rather than lending the
-original storage, so a move-only payload still needs a switch. An `Option` can
-contain a borrow, as `Option(^T)` does; wrapping it preserves its lifetime checks.
-There is no panicking `value.(.name)`: `or_else` makes the safe form just as short.
-Interpreting the wrong payload as an owning type can manufacture a container
-header from unrelated bits and later pass an invalid pointer to `drop`.
-`unsafe.transmute` and raw storage in `core:unsafe` remain available for explicit
-low-level work, and the checked extraction that does exist — `view.(T)` on an
-`any_view`, where the set of types is open — traps rather than guessing.
+Raw representation work remains in `core:unsafe`. The open type set of
+`any_view` has a separate checked, panicking extraction; neither form guesses
+the active payload.
 
 ### Nominal conformance declarations
 
-An `implements Drawable(Circle);` declaration was proposed and rejected. With no
-semantic force it is only a second spelling of `static_assert(Drawable(Circle));`
-while suggesting a nominal relationship the language does not create. The
-structural interface model is complete without it, and a file-scope assertion
-stays a check rather than a registry.
-
-Reconsider it only as a proposal in which it *has* force. That proposal must
-define ownership and orphan rules, coherence, generic and conditional
-conformances, conformances for built-in types, compatibility with existing
-structural code, and whether a claim gates static satisfaction or only `dyn`
-witness construction.
+Structural interfaces need no `implements` registry. A declaration with no
+semantic force would only repeat `static_assert(Interface(Type))` while implying
+nominal membership. Giving it force would require a different design for
+coherence, generic conformance, and witness construction.
 
 ### A `()` unit type
 
-`()` is not a type. The library's `Unit :: struct {}` already covers
-`Result(Unit, E)`, and the product, call-matching, and one-result work all
-shipped without a second spelling for one zero-sized type. Reopen it if a second
-zero-sized use appears that `Unit` serves badly.
+`Unit :: struct {}` already represents the empty result payload in
+`Result(Unit, E)`. A second spelling for a zero-sized type is unnecessary;
+`()` is not a type.
 
 ### Reviving a variable without a write
 
-`core:unsafe` has no operation that makes a dead variable live without writing
-a value into it. A full assignment already revives one (see
-[Assignment statements](design.md#assignment-statements)), and
-[`unsafe.forget`](design.md#unsafeforget) covers the opposite direction. Liveness
-is a compile-time property, so a definitely-live or definitely-dead variable
-costs nothing at runtime. Only a conditionally live one keeps a hidden drop
-flag, and the operation would only let a programmer delete that flag and its
-branch. No program has shown the flag mattering; reopen this when one does.
+A full assignment revives a dead variable; `unsafe.forget` consumes a live
+value without cleanup. A separate unsafe operation that marks dead storage live
+would mainly let callers bypass conditional drop tracking. It has no demonstrated
+use that justifies pretending unwritten storage contains a value.
 
 ### Hand-written package header files
 
-A separate file declaring a package's public signatures, checked against the
-package, was proposed to make a package's surface easy to read for people and
-tools. As a hand-written source it would be a second declaration of everything
-public, maintained alongside the first. `lokec -doc` already prints the public
-API from the package itself. Reopen it as a manifest the compiler generates and
-checks, for instance so that a release can show an unintended API change; not
-as a file someone writes.
+A public-signature file maintained beside the implementation would duplicate
+every public declaration. `lokec -doc` already derives the API from source.
+A future compatibility tool could generate and compare manifests; it should
+not require authors to maintain another set of declarations.
 
 ## Changed features
 
 ### Reading a carrier under a read-only reborrow
 
-A read-only reborrow used to suspend its source for every use, so
-`slice.equal(xs, xs)` with `xs: []mut int` was rejected although both
-arguments only read, and so was `view: []int = xs; x := xs[1];`. The
-suspension exists so that no mutable alias writes behind the reborrow, and a
-read cannot, so only writes and mutable reborrows now conflict with a
-read-only one. A mutable reborrow still excludes reads, because the reader
-could observe a half-done update. The compiler accepts a read only where the
-provenance walk tags it as one, so a read it has not been taught to recognize
-stays rejected rather than letting a write through. A read through a field, a
-pointer, or an element qualifies when what it yields carries no mutable
-borrow, and an unnamed value read out of a mutable carrier takes the
-capability of the destination it is stored into, as a fresh borrow does.
+A read-only reborrow prevents writes through another path, but need not prevent
+another read. Permitting recognized read-only uses allows `slice.equal(xs, xs)`
+without weakening exclusivity. A mutable reborrow still excludes other reads,
+which could observe a partially updated value.
 
 ### Each required result is asked about
 
-`@(require_results)` used to ask only whether a binding's name was ever read,
-so `outcome = fail();` after one `_ = outcome` dropped the second error
-unseen, and so did `r := fail(); r = fail(); use(r)`, losing the first. Each
-result a call stores in a local is now asked about. The check reuses the
-backward read analysis last-use transfer already runs, so it cost no new
-analysis. It reports only a result no path reads, the same certainty the nil
-diagnostic asks for: a result read on one branch and not another is quiet,
-because rejecting it would reject a program whose author knows the other path
-cannot fail. A value built in place, such as `.err(0)`, is not asked about; it
-is the program's own value, not a failure handed to it. No program in the
-tree tripped the check.
+`@(require_results)` checks each result stored in a local, not merely whether
+the variable is ever read. Overwriting an unexamined error must not become valid
+because an earlier value was examined. The check reports results no path reads;
+values explicitly constructed by the caller do not represent an ignored call
+result.
 
 ### Unchecked operations need the import
 
-design.md [The `unsafe` package](design.md#the-unsafe-package) always said the
-`core:unsafe` import was the review mechanism, but three operations that give an
-unchecked address a usable shape were ordinary syntax. With no import at all, a
-procedure could return `(^mut int)(r)` for `r: rawptr = &mut local`, slice a
-freed dynamic array through `([^]int)(rawptr(&mut values[0]))[0:3]`, and write
-`d: [dynamic]int = ---; d.append(1);`, which stopped at run time with
-"allocator record does not match this runtime's ABI".
+`core:unsafe` is the visible review boundary for operations that discard
+lifetime or initialization guarantees. The file using unchecked pointer
+conversions, C-pointer access, `---`, or `@(initialized=...)` must import it.
+Converting to raw storage alone does not grant checked access back into it.
 
-The conversions and C-pointer accesses now need the import in the file that
-writes them, and `---` is limited to plain data. Losing provenance stays free —
-anything converts to `rawptr`, and `^T` to `[^]T` — because nothing can be read
-through the result without one of the gated operations. The rule is per file
-rather than per expression because the import is already the unit a reviewer
-searches for, and the cost was two library files: `core:fmt` and `core:io`,
-both for `fmt.Writer`'s `rawptr` state, which the `dyn` sinks below have since
-removed. `base:` packages are exempt: they are
-the runtime, reach the same operations through compiler-contributed names, and
-cannot import `core:`.
-
-Two unchecked declarations stayed ungated after that: `x: T = ---` on plain
-data, whose reads go unchecked, and `@(initialized = count)`, whose count
-generated copy and drop trust, so `Bad{count = 2}` over a one-element array
-dropped past its end. Both now need the import too. Removing `---` behind a
-new uninitialized-storage API was considered, but nothing in `base`, `core`, or
-`examples` used it, so gating kept its two uses (a foreign out-parameter, and a
-`static` of a type with no zero) for one rule. Nor did the gate cost the
-library anything: `core:container` and `core:thread` already imported
-`core:unsafe` for `unsafe.write` and `unsafe.take`, and `shared(T)` lives in
-`base`. Generated traversals also check `0 <= count <= N`, which turns a count
-past the capacity into a panic, though it cannot show the prefix holds values.
+A file-level gate makes these operations searchable without adding an unsafe
+expression language. `base:` packages are exempt because they implement runtime
+facilities and cannot import `core:`. Generated traversal checks bound an
+initialized prefix, but cannot prove those slots contain valid values.
 
 ### Formatting and logging sinks are `dyn` views
 
-`fmt.Writer :: dyn mut fmt.Sink` and `log.Logger :: dyn mut log.Sink` are
-borrowed views. A formatting sink implements `write(bytes: []u8)`; the view
-keeps the record's type and borrow checks without a user-written `rawptr` cast.
-The collector and latch adapters are ordinary records, and neither library
-needs `core:unsafe`.
+`fmt.Writer` and `log.Logger` are borrowed `dyn mut` views. Records implement
+their write slot and keep ordinary type and borrow checks, avoiding raw state
+pointers in user-facing adapters.
 
-A formatter uses its sink only during the call. A logger factory must return
-process-lifetime storage, so it can lend a `static` sink. Neither use needs an
-owning closure. A view always names a sink, and views are not comparable.
-The [sink implementation notes](#formatting-and-logging-sink-implementation)
-record the migration from raw state pointers and the runtime adapter.
+A formatter uses the sink during its call. A logger provider lends static
+storage for process lifetime. Neither requires an owned closure, and neither
+view has a null state.
 
 ### Generated printed forms say what they print
 
-Go's `Println` prints `1.0` as `1` and a nested string bare, and Loke's
-generated formats did too. They ([String format printing](design.md#string-format-printing))
-now differ in three places, each so the output cannot be read as something
-else:
+Generated formatting distinguishes values that would otherwise look identical:
 
-- A float always has a fraction or an exponent. `1` printed for `1.0` is the
-  integer's form, so a reader of `[1, 2]` could not tell `[]f64` from `[]int`;
-  `1.0` and `1e21` are also float literals that read back as the same value.
-  The exponent is bare, `1e-7` rather than C's `1e-07`.
-- A string or rune nested in an aggregate is quoted and escaped. Bare,
-  `["a b", "c"]` and `["a", "b c"]` both printed `[a b c]`, and a field
-  holding `", y = 2"` could forge another field. Printed on its own a string
-  is still its text, since that is what `println("hello")` is for.
-- An anonymous record prints `(x = 1, y = 2)`. It had printed its type as
-  a struct prints its name, `(x: int, y: string){x = 1, y = s}`, repeating
-  every field name for no information.
+- Finite floats include a fraction or exponent, so a printed integer and float
+  do not share the same spelling.
+- Strings and runes inside aggregates are quoted and escaped, preserving
+  element boundaries. A string printed alone remains plain text.
+- An anonymous record prints its fields without repeating its type.
 
-A struct still prints only its public fields. One printed form serves every
-package, so it can show only what every package may see; a type that wants its
-private fields printed declares `format`.
+Struct formatting includes only public fields because one generated form serves
+all packages. A type wanting a different representation declares `format`.
+See [String format printing](design.md#string-format-printing).
 
 ### Explicit overload groups
 
-Overloads are assembled in named procedure groups. Each implementation keeps an
-ordinary callable name, the overload set is visible, and ambiguity is diagnosed
-instead of being resolved by declaration order. Methods and operators use the
-same resolution rules.
+Named groups make the overload set visible while each implementation keeps an
+ordinary callable name. Ambiguity is diagnosed rather than settled by declaration
+order. Methods and operators follow the same resolution rules.
 
 ### `+` concatenates strings at runtime
 
-Odin's `+` on strings works only between constants; runtime concatenation is
-`strings.concat` with an explicit allocator. Loke lets `+` concatenate at runtime
-too, allocating from `mem.default_allocator()`.
-
-The convenience costs an allocation, as `append`, map insertion, and copying
-owners can too. It keeps short messages easy to write. Each `+` copies the
-accumulated result, so repeated concatenation is quadratic; use `String_Builder`
-for loops and for choosing an allocator. Copy-cost diagnostics report large
-inline copies, not the allocation or growing text copied by concatenation.
+Runtime `+` keeps short text expressions convenient, allocating through the
+default allocator. Each concatenation copies its operands, so repeated growth
+can be quadratic. Use `String_Builder` for loops or allocator selection.
+Copy-cost diagnostics do not measure concatenation's allocation cost.
 
 ### No enum arithmetic or bitwise operators
 
-An earlier draft allowed `+`, `-`, and the bitwise operators on enums, inherited
-from treating them as thin wrappers over integers. Enum members may have holes,
-so the result of `Foo.A + Foo.B` need not be a member of `Foo`, and the language
-has `Bit_Set(Enum)` for flag sets. Enums remain comparable and ordered, and
-converting to the backing integer type is one call.
+Enum values can have gaps, so arithmetic or bitwise operations can produce a
+non-member. Enums remain comparable and ordered; `Bit_Set(Enum)` represents
+flag sets, and explicit integer conversion supports representation-level work.
 
 ### Closed enums and payloadless unions
 
-Enums are closed sums whose variants carry no payload. They retain `enum`
-syntax, explicit integer representations, and integer ordering, while sharing
-the meaning of variants and exhaustive control flow with tagged unions. A switch
-covering every variant now guarantees that a case runs; when every arm returns,
-no trailing return is needed.
+Enums are closed sets, allowing exhaustive control flow to guarantee a matching
+arm. `Enum.from_int` validates membership and returns an `Option`; foreign or
+wire values remain integers until validated. An enum without a zero member has
+no zero value.
 
-The former unchecked integer conversion made member coverage weaker than value
-coverage. [`Enum.from_int`](design.md#integer-conversion) now validates the
-backing integer and returns `Option(Enum)`. Foreign APIs and wire formats keep
-unknown numbers in an integer or `distinct` integer wrapper until validated.
-Its argument may be any integer type: validation, not the argument's type,
-decides membership, so demanding the backing type only moved a narrowing
-conversion, which is what `from_int` exists to avoid, onto the caller. It also
-keeps a small explicit backing type (`enum u8`) cheap to choose, which is why
-the default stays `int` rather than shrinking to fit the members and tying the
-enum's layout to its member list.
-An enum without a variant represented by zero has no zero value, and that
-restriction propagates through aggregates just as it does for unions.
-
-A payloadless union variant is a bare name, `union { none, some: T }`. It was
-once `none:`, a colon kept so that Odin's `union { int, string }` could not
-quietly become two payloadless variants. The guard is now narrower and louder:
-a payloadless variant may not be named by a type in scope, so that Odin spelling
-is an error that says how to name a payload. `name:` stays accepted so existing
-code keeps compiling.
+Payloadless union variants use bare names. A type name cannot accidentally become
+a payloadless variant, so Odin-style `union { int, string }` is diagnosed instead
+of silently changing meaning. The older `name:` spelling remains accepted.
 
 ### Signed overflow panics
 
-Signed `+`, `-`, `*`, and `<<` used to wrap two's-complement, defended against
-C's undefined overflow: a meaning that does not change under optimization is
-worth more than the loop optimizations undefined overflow buys, because the
-alternative is a program whose correctness depends on a compiler flag.
-Trapping was never weighed, and it keeps that property while catching the bugs
-the library had guarded by hand:
+Signed arithmetic panics when the mathematical result cannot fit. This catches
+bad sizes and bounds while keeping behavior independent of optimization level.
+The cost is an overflow check where the compiler cannot prove the range.
 
-- `strings.repeat` reserved `text.len() * times`, which wrapped to a small
-  reservation (fixed in `c2f30eb` with a hand-written bound);
-- `String_Builder.try_reserve` computed `len + additional`, which wrapped
-  negative (same commit);
-- `core:fs` documents a tick subtraction in `unix_nanoseconds` that would wrap
-  an unrecorded time into the far future.
-
-All three are `int` or `i64`. Nothing in `core`, `base`, or the examples relied
-on signed wrap: turning the rule on changed three corpus programs, each of which
-existed to demonstrate wrapping. The rule is also what the rest of the language
-already did where a value does not fit — `u32(-0.5)` panics, while
-`i32(2147483647) + 1` gave `-2147483648` silently.
-
-So signed `+`, `-`, `*`, `/`, and unary `-` panic when the mathematical result
-does not fit, at every optimization level, and are a diagnostic (L0397) where
-they are evaluated at compile time. Unsigned arithmetic stays modular, since
-hashing and bit manipulation are written in it, and signed wrap is asked for
-by name, with `math.wrapping_add` and its siblings.
-The exceptions each keep an existing definition: `<<` is a bit operation whose
-limit is already defined for every count; `%` cannot overflow; an atomic `add`
-is a hardware read-modify-write whose other readers have already seen the
-result.
-
-The cost is a checked operation, `llvm.sadd.with.overflow` and its siblings, per
-signed arithmetic step, much of it removed where loop bounds already prove the
-range. It returns part of what wrapping cost: on the path that continues, the
-result is known to be in range, so the optimizer may widen induction variables
-the old rule forbade it to.
+Unsigned arithmetic stays modular for hashing and bit manipulation. Named
+`math.wrapping_*` operations request signed wrapping, and `checked_*` operations
+return an `Option`. Shifts remain bit operations and atomic arithmetic keeps its
+hardware read-modify-write semantics. See [Integer overflow](design.md#integer-overflow).
 
 ### Integer conversions keep the value
 
-`T(v)` between integer types used to keep the low bits, so a runtime `int` of
-300 became a `u8` of 44, while the constant `u8(300)` was rejected and a float
-out of range panicked. Which policy applied depended on whether the operand was
-a literal, a typed constant, or a variable, and moving a value between those
-silently changed it. Converting is now one rule: the value is kept or the
-program stops, at compile time where it can.
+Integer conversion preserves the value or fails, whether the operand is a
+literal or a runtime variable. Keeping only low bits for runtime values would
+make a refactor from constant to variable change behavior silently.
 
-Wrapping is still needed, so it got a name, `math.wrap`, rather than staying
-the meaning of the shortest spelling. Measuring before the change, a compiler
-that panicked on every lossy integer conversion ran all 276 run programs and
-every example. Three stopped: `math.to`, whose body was the round trip it now
-writes with `wrap`, and two tests of the old signed-wrap idiom
-`i8(u8(b) + 1)`. The hashing, UTF-8, `strconv`, and formatting code they run
-through already did its bit work in unsigned types. Masking first, as in
-`u8(x & 0xFF)`, needs no `wrap`, and the optimizer removes the check.
-
-With conversion no longer wrapping, `i8(u8(b) + 1)` has no meaning left, so the
-policies for signed arithmetic are named too: `wrapping_add`, `wrapping_sub`,
-and `wrapping_mul` keep the low bits; `checked_add`, `checked_sub`, and
-`checked_mul` answer `Option(T)`, which is what a parser accumulating digits
-wants. They are ordinary library procedures over `math.wrap`, computing in
-`u128`. A saturating family was left out until a caller needs one.
+`math.wrap` names truncation and `math.to` offers a checked optional conversion.
+Those explicit operations also make wrapping arithmetic possible without
+relying on lossy ordinary casts.
 
 ### Signed SIMD lanes follow the scalar rule
 
-Signed SIMD lanes first stayed modular, on the grounds that a vector instruction
-has no per-lane overflow flag. That made replacing a scalar kernel with a vector
-one change its results at the boundary values. LLVM's `*.with.overflow`
-intrinsics take vectors, so a lane is now checked as a scalar is: the overflow
-lanes are ORed together and the operation branches once.
-
-Looking at `a * x + y` over `Simd(i32, 8)` at `-O2` with AVX2: the checked `+`
-is `vpaddd` plus two compares, an xor, a movemask, and one branch; the checked
-`*` adds about nine instructions, because x86 has no vector high-half multiply
-for 32-bit lanes and the high halves come from two `vpmuldq`. A kernel that
-means to wrap says so with `math.wrapping_add` and its siblings, which take
-vectors and compile to the bare `vpaddd` and `vpmulld`. Signed `reduce_add` and
-`reduce_mul` fold through the scalar checked operator, lane by lane, so they
-agree with the loop they replace; a reduction usually runs once per kernel,
-outside its loop.
+Replacing a scalar kernel with SIMD should not change overflow behavior.
+Signed vector arithmetic therefore checks lanes and panics if any overflows;
+wrapping operations remain available by name. Reductions fold through the scalar
+checked operation so they agree with the loop they replace. This costs checks
+but preserves the numerical contract across optimization strategies.
 
 ### Signed shifts stay bit operations
 
-When signed `+`, `-`, and `*` started panicking on overflow, and again when
-integer conversions started keeping the value, signed `<<` was weighed and left
-modular: the bits shifted out are discarded, the sign bit included, and no shift
-panics.
+Shifts build masks and pack representations. Bits shifted out are discarded,
+including the sign bit, and every count has a defined result. Treating a shift
+as checked multiplication would reject useful expressions such as `i64(1) << 63`.
 
-A shift is written for its bits: building a mask, packing a field, reaching
-`MIN` as `i64(1) << 63`. Checking it would need a definition of overflow that
-code written that way breaks. If overflow means "a bit that differs from the
-result's sign was shifted out", then `i64(1) << 63` panics. If it means "the
-result is not `x * 2^n`", the shift is a multiplication with a different
-spelling. Rust reaches the same answer and checks only the count, and Loke
-defines every count already, as the limit of the repeated one-bit shift, so
-there is nothing left to check.
-
-The arithmetic meaning has its own spelling. `x * 2` panics where the product
-does not fit, and `math.checked_mul(x, 2)` asks whether it does, so code that
-means multiplication writes multiplication. The same reasoning keeps unsigned
-`<<` modular, as all unsigned arithmetic is.
+Signed `x << n` equals multiplication by a power of two only when that product
+fits. Explicitly separating bit operations from checked arithmetic keeps both
+uses predictable.
 
 ### `in` is a comparison, not an additive operator
 
-Odin places `in` at the comparison precedence level and Loke had moved it to the
-additive one. That silently regrouped `x in values + extra` as
-`(x in values) + extra`. `in` produces a `bool`, so it belongs with `==` and `<`.
+`in` produces a Boolean, so it shares comparison precedence. Giving it additive
+precedence would regroup `x in values + extra` as `(x in values) + extra`, making
+the apparent collection expression mean something else.
 
 ### Comparisons do not chain
 
-Odin, like C, groups comparisons left, so `a == b == false` is
-`(a == b) == false`: for `a := 1; b := 2` it is `true`, although it reads as a
-chain and is not one. Ordering chains such as `1 < 2 < 3` were already rejected
-by type, leaving only the misleading `bool` equality chains. Making the
-comparison level non-associative, as the range level already is, turns every
-such chain into a syntax error whose note gives both the parenthesised form and
-the `&&` chain. Nothing expressible is lost: `(a == b) == c` still means what it
-says.
+`a == b == false` looks like a chain but a left-associative reading means
+`(a == b) == false`. Requiring parentheses or an explicit `&&` avoids that
+ambiguity for both equality and ordering comparisons.
 
 ### Field order stays inside the declaring package
 
-Odin accepts an imported struct's positional literal, so reordering the
-struct's fields, a routine change to remove padding, silently swaps any two of
-the same type at every such site; destructuring would add more. With
-`Point :: struct { y: int, x: int }`, formerly `{ x: int, y: int }`,
-`x, y := origin_offset()` would put the old `y` in `x`, and `Point{3, 4}` would
-set `y` to 3, and both would compile. Outside the declaring package both forms
-are therefore rejected in favour of named fields, as Go vet treats unkeyed
-fields of an imported struct. Inside the package, a reordering is a change its
-author can see. Anonymous records are unaffected, since their field order is
-their type identity, so `core:container`'s `Enum_Array` yields
-`(key: E, value: T)` rather than a nominal entry struct. The migration was 85
-literals, all in tests; 50 of them were `core:math` `Complex` and `Quaternion`
-values in one file.
+Positional construction or destructuring of an imported struct would make
+field reordering silently swap values at outside call sites. Requiring names
+outside the owning package preserves encapsulation. Anonymous records remain
+positional because their field order participates in structural identity.
 
 ### Diverging procedures belong to the declaration
 
-Loke takes Odin's `-> !`. Before it, a call that never returned could not say
-so: `os.exit` at the end of a value-returning procedure was L0365, and `panic`
-was not a value, so `m.lookup_value(key) or_else panic("missing")` was L0309.
-The library wrote a one-line procedure per fallback type instead, ten in core
-and nine in tests, all now gone.
-
-Unlike Odin, divergence is not part of the procedure type. A diverging call
-takes whatever type its context expects, which the checker settles from the
-callee's declaration; carrying it through procedure values would add a
-subtyping rule (`proc() -> !` wherever `proc() -> T` is expected) for a case
-nothing in the tree needs. A later change can add it without breaking code.
+`-> !` lets calls such as `panic` satisfy any expected result position and lets
+the checker recognize paths that cannot return. Divergence belongs to the
+declaration rather than the procedure-value type: propagating it through values
+would require a subtyping rule without an established use.
 
 ### The allocation built-ins follow the `try_` convention
 
-Odin's `new` and `make` return the value and an error. Loke's returned a
-`Result` under the plain name, the opposite of the library-wide convention
-that `try_` marks the form returning the failure its plain form would panic
-on. Callers wanted both: of the twelve calls in `core` and `base`, seven
-returned or reported the error and five turned it into a panic through a
-one-line helper, and design.md's `make` examples used `or_else {}`, which
-turns an allocation failure into an empty container. `make` now follows the
-allocator's failure policy and `try_make` returns the `Result`, as `box` and
-`try_box` later did. About a hundred calls in `tests/` changed spelling.
+`make`, `box`, and other policy-following forms apply the allocator's failure
+policy. Their `try_` counterparts return a failure value. Keeping that convention
+across built-ins and libraries makes error handling visible in the name without
+forcing every allocation into a separate panic wrapper.
 
 ### `main` may return an `i32` status
 
-Odin's `main` has no result, and neither had Loke's. Since `os.exit` runs no
-cleanup, a program that had to fail after cleanup moved its body into a
-helper and called `os.exit` on what the helper returned. `main :: proc() ->
-i32` returns the status instead, after its scope-exit actions, as C's `main`
-does. The status is `i32` because that is what the process gets: `os.exit`
-took an `int` and narrowed it, so `os.exit(4294967297)` exited with 1. It now
-takes an `i32` as well, and a wider value needs an explicit conversion.
+Returning a status from `main` allows normal scope cleanup before the process
+exits. `os.exit` terminates immediately and skips cleanup. An `i32` status matches
+the process interface and avoids silently narrowing a wider integer.
 
 ### `assert` and `panic` print values after the message
 
-Odin's `assert` and `panic` take a runtime message string, and `fmt.assertf`
-and `fmt.panicf` format one. Loke's message is a compile-time string, so the
-report never needs an allocation that could itself fail, and a failed check
-could not say which value failed it. Values now follow the message as
-`..any_view` arguments. The generated code formats them onto the report line
-through the same per-type formatters `fmt.print` uses, writing straight to
-the error stream, so `base` and `core` code can use them without importing
-`core:fmt`. The runtime's panic entry is split into a begin and an end so the
-values land between the message and the newline. An `assert`'s arguments are
-evaluated only on the failing path, like its message in C, so an expensive
-argument costs nothing while the check holds.
+A compile-time message plus value arguments can report the failing state
+without first allocating a formatted string. Formatting writes directly to the
+error stream. `assert` evaluates those arguments only on failure, keeping an
+expensive diagnostic expression off the successful path.
 
 ### An iterator's yield mode follows from `next`
 
-An iterator used to declare a `Yield` descriptor, built from the predeclared
-markers `Yield_Owned`, `Yield_Borrowed`, and `Yield_Mutable`, and the checker
-computed `Item` from it and `Element`. The declaration carried no
-information: `next` already says what it returns, and a `Yield` that
-disagreed with it was an error. The checker now reads the mode off `next`'s
-`Item`, as it reads `Iterator` off `iter`, and the three markers are gone from
-the universe. The library declared `Yield` three times, in
-`Small_Array_Iterator` and the two `Enum_Array` iterators, and the compiler
-no longer synthesizes one for its own iterators. The derivation tries owned
-before borrowed, so an element that is itself a pointer, returned unchanged,
-stays owned; the old descriptor could say otherwise only by making `Item` a
-pointer to the pointer, which `next` would then have to return anyway.
+`next` already determines the item type and whether iteration owns or borrows
+it. Reading that information from the signature avoids a redundant `Yield`
+descriptor that could disagree. An owned pointer element remains an owned
+element; yielding a borrow of it requires another reference level.
 
 ### A map's mutable lookup is the marked one
 
-Everywhere else the mutable form is the marked one: `^mut`, `[]mut`,
-`dyn mut`, `iter_mut`, `get_mut`. The map had it the other way round, with
-`find` returning `Option(^mut V)` from an `inout` receiver and the read-only
-probe spelled `find_ref`. `find` now returns `Option(^V)` and `find_mut`
-`Option(^mut V)`. Every call in the tree was renamed to keep its meaning.
+`find` returns a read-only optional reference and `find_mut` a mutable one.
+This follows the same convention as `^mut`, `[]mut`, and `iter_mut`: the spelling
+that can write is visibly marked.
 
 ### Mutable slicing is written `&mut a[lo:hi]`
 
-A slice of a mutable place used to be `[]mut T` or `[]T` depending on where it
-went: a `:=` binding took `[]T`, a `[]mut T` parameter or annotation took
-`[]mut T`, and a user `operator([:])` was selected by its destination. That
-made `view := a[:].indexed()` a mutable view where `view := a[:]` was not,
-and it was the one place a destination selected an overload. Pointers never
-worked that way: `&x` is always `^T` and `&mut x` always `^mut T`. Slicing now
-matches them. `a[lo:hi]` is always read-only and `&mut a[lo:hi]` is mutable,
-for built-in and user slicing alike, so a call that may write elements says
-so, and an annotation or an adapter never changes a slice's capability.
+`a[lo:hi]` is read-only; `&mut a[lo:hi]` is mutable. The destination type does
+not select the capability or change which slicing overload runs. This matches
+`&x` and `&mut x` and makes mutation visible at the call site.
 
-The spelling reuses `&mut`, which already means an exclusive mutable borrow,
-and a slice is a borrow. Rust writes the same `&mut a[lo..hi]`. A method
-spelling such as `a.mut_slice(lo, hi)` was the alternative, but passing a
-buffer to a reader is the most common use, and `read(&mut buffer[:])` is
-shorter than `read(buffer.mut_slice())`. The cost is parentheses around a
-mutable slice whose member is called, `(&mut a[:]).indexed()`, because a
-suffix binds tighter than `&mut`. Measured before the change, 146 places in
-the tree needed the spelling, about 20 of them outside tests.
+Consequently, `fmt.println(primes[1:4], total(primes[:]))` can use both read-only
+slices in one call. It needs no intermediate binding to change a slice's type.
+Parenthesize a mutable slice before selecting a member:
+`(&mut a[:]).indexed()`.
 
 ### A string literal receiver is a static `string_view`
 
-`"hello".len()` compiled and `"hello".bytes()` was L0363, because an unfixed
-receiver took its default type, `string`, through ordinary method lookup,
-while the text operations looked only at receivers whose type was already
-fixed. A literal's storage is static, so the receiver that describes it
-without an owner is a `string_view`, and nothing borrowed from it can end:
-`"hello".bytes()` may be returned from a procedure. An extension method
-declared on `string` alone no longer applies to a literal receiver; the
-view is what the literal is.
+A literal's storage is static and needs no owner. Member lookup treats it as
+a `string_view`, so `"hello".bytes()` can lend static bytes without creating
+a temporary owning string. Extensions declared only on `string` do not change
+that receiver type.
 
 ### Map element mutation
 
-Odin prohibits `m[key].field = value`. Loke permits it because indexing a user
-type can already return an `inout` place, and built-in maps should follow the
-same place rules. It writes a field of an element that must already be there:
-creating one to hold a partial update was a way to end up with a half-written
-object nobody asked for, and it made the read depend on whether the element type
-had a zero at all. So the whole-element assignment `m[key] = elem` is the one
-index form that creates an entry — it writes the value, so nothing is
-manufactured — and every other position panics for a missing key, as a dynamic
-array's index does. `m.find(key)` returns `Option(^V)` and `m.find_mut(key)`
-returns `Option(^mut V)`, both without inserting. `m.find_or_insert(key, elem)`
-returns the slot either way, so a caller that
-wants a default names the default rather than inheriting the element's zero.
+Whole-element assignment `m[key] = value` may insert because it supplies the
+complete value. Reading or modifying a field requires an existing entry and
+panics if it is missing. Automatically inserting a zero for partial mutation
+would make behavior depend on whether the element type has a meaningful zero.
+`find`, `find_mut`, and `find_or_insert` provide explicit alternatives.
 
 ### Container insertion takes its element like an initialization
 
-`append`, `insert`, `try_insert` and `find_or_insert` once borrowed their
-element and cloned it in, which left a move-only element no way into a
-container but `m[key] = elem` and a literal. Giving them `move` parameters was
-rejected: `move(...)` needs a lexical owner, so `d.append(File{...})` could not
-be written at all, and `d.append(move(x))` would be required for every `int`.
-Instead the element is taken exactly as `x := elem` takes it — a temporary or
-`move(x)` transfers, a borrowed place copies — which is already what assignment
-and literals do. A copyable element reads and behaves as before; a move-only one
-needs `move(x)` only where any other copy of it would. The operation owns the
-element from the call, so it drops the one it does not store: the duplicate a
-`find_or_insert` hit makes unnecessary, or a pack an allocation failure left out.
+Insertion follows initialization: a temporary or `move(x)` transfers; a borrowed
+place copies. Always borrowing would exclude move-only elements, while a `move`
+parameter would require explicit moves even for simple values.
 
-The `try_` forms follow the same rule. They once copied even a temporary, so
-that a failure could leave the caller's argument untouched, and so rejected
-every move-only element. That promise only means something for a borrowed
-place, which is still copied: a temporary has no binding to restore, and
-`move(x)` has already ended `x`. So a failed `try_` form drops what it took. The
-alternative, returning the element inside the error, would change the error
-type from `Allocator_Error`, so `or_return` would stop composing with the other
-allocation failures, all to support retrying after running out of memory. A
-caller who wants that reserves first and then moves the element in.
+Fallible insertion uses the same rule. On failure it drops an argument it took;
+an explicitly moved source is already dead. Returning the element inside the
+error would disrupt the shared allocator-error type. A caller needing to retain
+the value on allocation failure can reserve capacity before moving it.
 
 ### `string` borrows as `string_view`
 
-`string` converts implicitly to `string_view`. Without it the two types compete
-for every signature that reads text: an API taking `string` cannot accept a
-substring without allocating one, and an API taking `string_view` makes every
-caller holding a `string` write a conversion. The conversion is a borrow, costs
-nothing, and needs no validation, so the division is simply that `string_view`
-reads and `string` owns. It is one-way; going back allocates, via `.copy()`.
+Implicit conversion lets a read-only text API accept owners, substrings, and
+literals through one signature. It is a validated, allocation-free borrow.
+The reverse conversion must acquire ownership and is explicit through `.copy()`.
 
 ### Slicing text keeps its panic
 
-`text[a:b]` panics when a bound falls inside a code point, as an out-of-range
-index does. An offset from a search or `rune_offsets()` is always a boundary,
-so the risk is only an offset from outside the program or from arithmetic, and
-`core:strings` names what such code wants instead: `try_slice`, which answers
-`.none`, and `floor_boundary`/`ceil_boundary`, which move the offset. "At most
-`n` bytes" is `text[:floor_boundary(text, n)]`, so it got no name of its own;
-"the first `n` runes" did, as `prefix_runes`, because it counts in another
-unit.
+A text slice must preserve UTF-8: a bound inside a code point panics. Rounding
+silently would return different text, while an opaque index type would burden
+every ordinary byte offset with a conversion.
 
-Two other designs were weighed and rejected. An opaque index type, as in Swift,
-makes a bad cut a compile error, but then `text[0:3]` stops compiling and every
-offset needs a conversion. Rounding inside `[a:b]` never crashes, but quietly
-returns other text than was asked for.
+Text and rune searches, and `rune_offsets()`, locate code-point boundaries.
+Raw byte searches can locate continuation bytes: `strings.index_byte("é", 0xA9)`
+returns `.some(1)`, but `strings.try_slice("é", 0, 1)` returns `.none`.
+Use `try_slice`, `floor_boundary`, or `ceil_boundary` for untrusted byte offsets;
+`prefix_runes` expresses a limit in scalar values. See [Boundaries](standard-library.md#boundaries).
 
 ### String ownership and concurrency
 
-`string` is an immutable owning value. Implementations may share backing storage,
-so a shared reference count is atomic. The allocator that eventually frees the
-storage must separately support the thread on which the last drop occurs; as for
-other owner lifecycles, Loke leaves that transfer check to the programmer.
-Code that does not want shared ownership uses a byte slice or `string_view`.
+Immutable strings can share storage, so reference counting is atomic. The
+allocator must separately support the thread performing the final drop; that
+transfer obligation remains with the programmer. A `string_view` borrows text
+without sharing ownership.
 
 ### Allocation failure
 
-Implicitly allocating expressions have no result slot for an error, so each
-allocator carries a failure policy. `.Panic` is the default because continuing
-with a silently truncated value would corrupt later results, and `.Trap` is the
-freestanding alternative. Recoverable allocation uses `try_` operations. The
-earlier `.Error` policy was removed with ambient context because its sticky error
-slot was a hidden side channel and could not identify which implicit operation
-had failed.
+Copies, container growth, and string concatenation can allocate implicitly.
+Because those expressions have no error-result slot, the allocator selects a
+failure policy. Recoverable allocation uses `try_` operations.
+
+A hidden sticky error flag would not identify which implicit operation failed.
+An explicit result or termination is preferable to continuing with a silently
+truncated value. The policies are defined under [Allocation failure](design.md#allocation-failure).
 
 ## Changed syntax
 
 ### Statement termination
 
-Statements end in `;` unless their outermost form ends in a declaration or
-statement block. A block-closing `}` terminates that form; a trailing semicolon
-is accepted only as a separate empty statement. This keeps termination
-deterministic without requiring a redundant `;` after a block.
+Semicolons terminate statements unless their outermost form ends in a block.
+This keeps termination independent of line breaks without requiring a redundant
+semicolon after a procedure body.
 
-A procedure constant therefore ends at its body's `}`, and calling the literal
-in place needs parentheses: `VALUE :: (proc() -> int { return 7; })();`.
-Continuing into a call suffix would make the statement after a local
-procedure constant ambiguous: in `f :: proc() { }` followed by `(p)^ = 3;`, the
-`(` would call `f`. Odin avoids this through newline-based semicolon insertion,
-which Loke does not have.
+Calling a procedure literal immediately requires parentheses:
+`VALUE :: (proc() -> int { return 7; })();`. Otherwise a following statement
+beginning with `(` could be mistaken for a call on the preceding declaration.
 
 ### `transmute` is a procedure in `core:unsafe`, not an operator
 
-Odin spells a bit cast `transmute(T)value`, which needs a reserved word and its
-own unary binding rule. Loke writes `unsafe.transmute(T, value)` and makes it an
-ordinary call — types are already passable as arguments, so nothing was gained
-by the operator form except a keyword. `move` stays a keyword because it is also
-a parameter mode and has to be reserved regardless.
-
-It is not predeclared either. Reinterpreting bits is not a safe, universally
-valid conversion: nothing about the source value says the destination
-representation is one its type ever admits. That is the same loss `raw_data` and
-`unsafe.free` make visible, so it is spelled at the same boundary and an import says
-the program does it.
+Bit reinterpretation uses `unsafe.transmute(T, value)`. Types are already call
+arguments, so a separate operator would add a keyword and precedence rule.
+The import also exposes a trust boundary: a bit pattern valid for the source
+need not represent a valid destination value.
 
 ### Parenthesized control-flow headers
 
-Loke requires parentheses around every control-flow header, for example
-`if (x >= 0) {}`. Odin omits them and needs a special parsing rule to
-distinguish some condition expressions from composite literals. Loke's uniform
-header shape keeps the header separate from the body brace.
+Parentheses separate a control-flow header from its body. A uniform boundary
+avoids special parsing rules for composite literals in conditions.
 
 ### Slice literals state their capability
 
-Odin's `[]int{1, 2, 3}` produces a mutable slice. Loke has two slice types, so
-the literal is written with the one it produces: `[]int{...}` is read-only and
-`[]mut int{...}` is not. Inferring `[]mut T` from a literal spelled `[]T` would
-have made the most common example of a mutable slice the one place in the
-language where a written type does not describe the value.
+`[]T{...}` produces a read-only slice and `[]mut T{...}` a mutable one.
+Inferring mutability from surrounding context would make the written type fail
+to describe the value.
 
 ### No uniform call syntax
 
-`x.f()` resolves only to a `self` receiver declared in an `impl`
-block, or to a built-in container operation. There is no rule rewriting `f(x)`
-as `x.f()`, and none rewriting `f(x)` to a receiver either — see
-[Standard free aliases](#standard-free-aliases) above. Free procedures therefore
-never acquire a method spelling by accident, and every receiver operation reads
-the same way: `x.len()` and `x.append(v)` are both calls on a named receiver.
+Free calls use lexical lookup and receiver calls use methods or contributed
+built-in operations. An unrelated free procedure never acquires a method spelling
+through an import. See [Standard free aliases](#standard-free-aliases).
 
 ### `foreach`
 
-Odin's `for value in values` form is written `foreach (value in values)`.
-Keeping `for` and `foreach` separate makes the repetition form visible at the
-keyword and lets `in` retain its membership-operator meaning in an ordinary
-`for` condition.
+`foreach` marks traversal; `for` handles ordinary repetition. A bare
+`for (key in counts)` is rejected because it resembles a mistyped traversal.
+The explicit membership loop is `for ((key in counts))`.
 
-`for (key in counts)` is nonetheless rejected: it is the header a programmer from
-Odin, or one who forgot `foreach`, writes, and as a membership loop it compiled
-and ran whenever `key` happened to be declared, or failed with only "unknown
-name `key`". `for` therefore takes the rule `switch` already uses for the same
-collision: the membership loop is `for ((key in counts))`.
+Switch has no competing traversal or header-binding form, so
+`switch (key in counts)` needs no extra parentheses. Payload bindings belong
+in its cases.
 
 ## Features kept close to Odin
 
 ### Standard output is binary
 
-Odin writes its standard handles without translation, and so does Loke. The C
-library opens `stdout` and `stderr` in text mode on Windows, which turned each
-`\n` that `core:fmt` printed into `\r\n` while `core:term` wrote the handles
-directly, so one redirected stream could mix both endings and `fmt` could not
-print a bare `\n`. Text mode for both would instead make a program's bytes
-depend on the platform, which Linux support would then have to undo. The
-runtime sets both streams to binary at startup; an object build leaves them to
-its host.
+Writing `\n` produces that byte, without Windows text-mode translation to
+`\r\n`. Formatting and direct stream writes therefore agree even when output
+is redirected. The runtime configures process streams at startup; an object
+build leaves stream configuration to its host.
 
 ### `defer`
 
-`defer` stays. The standard library no longer uses it: every deferred release it
-carried was one the compiler already performed at scope exit, and deleting them
-left `defer` with no user in `core/` or `base/`. That argues against `defer` for
-releasing resources, which managed locals and resource types do. It does not
-cover a scoped side effect with no resource behind it — rolling back a partial
-update, restoring a plain variable, logging or counting on every exit — and a
-custom resource type for each of those would be more ceremony than the
-statement it replaces.
+Managed owners handle resource lifetimes, but not every cleanup is an owner's
+destruction. `defer` can restore state, roll back a partial operation, or publish
+completion on every exit without introducing a resource type for one statement.
+
+The library uses it: `Once` publishes completion or poisoning, shared ownership
+releases its allocation even if a payload drop panics, and process spawning
+cleans up native handles. It follows the same panic-strategy limits as other
+lexical cleanup.
 
 ### Foreign declarations
 
-The foreign system intentionally remains close enough to Odin that maintained
-bindings can be ported mechanically. A port mainly updates visibility and
-attributes and replaces owning C-string assumptions with `cstring_view` or the
-appropriate explicit foreign-string type. Bindings keep foreign symbol spelling
-and can expose an idiomatic wrapper separately.
+Foreign bindings keep external symbol names and ABI types, then expose ordinary
+Loke wrappers where useful. Staying close to Odin's declaration model makes
+bindings easier to port, while explicit foreign-string and nullable-pointer
+types keep ownership and representation promises visible.
 
 ## Formatting
 
@@ -1697,359 +900,46 @@ formats every program corpus to a layout that formats to itself.
 
 Possible refinements are recorded in [open-questions.md "Formatting"](open-questions.md#formatting).
 
-## Design history
-
-### Syntax and construction cleanup
-
-A review asked which forms to remove because they duplicated another or carried
-a special case. It led to: payloadless union variants without a dangling colon,
-a `default:` switch arm, `@(required)` struct fields, `&mut` writable bindings,
-one stated pattern grammar with flat declarations, and one union matching form.
-The last removed the header binding `switch (name in subject)`. A switch now
-binds only in its cases, `.variant(name)` over a union and `T(name)` over an
-`any_view`, so `name in subject` in a header is the ordinary membership test and
-needs no second pair of parentheses. What the header binding uniquely gave, a
-grouped case naming a temporary union whole, is a local before the switch.
-
-It kept the distinction between nominal structs and structural records: privacy,
-hook ownership, and cross-package positional construction have real semantics,
-so the two share rules and implementation where they can rather than merge into
-one form, and named record results stay rather than unnamed tuples without a
-demonstrated need, which a later count supplied (see
-[Records without field names](#records-without-field-names)). It found no
-reason to remove `defer`, semicolons,
-parenthesized control-flow headers, explicit overload groups, or hermetic
-compile-time evaluation; see [`defer`](#defer),
-[One language at compile time](#one-language-at-compile-time), and
-[Hand-written package header files](#hand-written-package-header-files).
-
-### Assignment history
-
-Allocating copies were initially implicit. Version 0.7.1 rejected them with
-`L0504`, suggesting `move(a)`, `a.clone()`, or a borrow. A corpus count found
-such copies only in tests of the rule, but that missed the cost to library APIs:
-adding an owning field broke clients' copies, generic code needed `clone` on
-every copyable type, and beginners had to choose among three alternatives to
-ordinary assignment.
-
-Implicit copies were restored with conservative last-use transfer to avoid
-unnecessary allocations. The generic fixed-array `clone` and compile-time
-evaluation of generated `clone`, added while the explicit-copy policy stood,
-remain useful independently of it.
-
-### Fallibility migration
-
-The earlier design rejected standard `Option` and `Result` types and used
-trailing Boolean or error results. Its two result conventions required
-optional-result-count rules and a status-result category. Unions also had a nil
-state and `active_typeid()`, which could not distinguish variants with the same
-payload type. Named variants and ordinary `Option`/`Result` values replaced
-these special cases.
-
-The recorded migration measurements compared with baseline `d2e3f6f`:
-front-end time rose 7–18% because `base:runtime` adds a fixed cost, an empty
-program's binary was unchanged, and two example binaries grew about 3%.
-The migration also exposed nine compiler defects, fixed during adoption.
-These are historical measurements, not benchmarks of the current compiler.
-
-`io.Reader.read` also changed from returning progress and an error together to
-returning `Result`. A read reports any progress first and surfaces a following
-failure on the next call. The helpers in `core:io` loop until they have their
-requested input, so they work with that contract.
-
-### One-result migration
-
-Typed fallibility had already reduced the library to single results. At the
-migration, `core:` had one multi-result procedure (`strings.encode_rune`),
-`base:` and `examples:` had none, and the live corpus contained five bare
-returns. The remaining uses were test fixtures.
-
-`-> (a: int, b: int)` changed from two named results to one record result.
-Result names had not participated in procedure-type identity; record field
-names do. Consequently, differently named results became incompatible through
-procedure values, overloads, interface slots, reflection, and ABI lowering.
-`-> (n: T)` likewise became a one-field record, and `-> (T, U)` was rejected.
-Named result locals and the initialization analysis supporting their bare
-returns were removed.
-
-The migration exposed two defects in named-field handling: result-borrow
-analysis joined unrelated fields, and named call arguments ran in parameter
-order rather than source order. Both now use the field or parameter slot
-already selected by the checker.
-
 ## Standard-library API choices
 
-The API contracts are in [standard-library.md](standard-library.md). Keep these
-design reasons separate from the signatures and behavior a caller needs:
+Public contracts live in [standard-library.md](standard-library.md). The package
+boundaries and API shapes follow a few common choices:
 
-- Files belong in `core:fs`; `core:os` owns process state. There is no `os.open`
-  alias, so file opening has one spelling.
-- `io.Error` stores an `Operation` enum rather than borrowed diagnostic text.
-  This avoids lifetime and allocation concerns. Its scalar constructors are
-  public because other packages and third-party stream implementations need
-  them. Accessors keep the representation private; `code_of` avoids colliding
-  with the enum name `Code`.
-- `fmt` has no `append_to` builder helper. Importing `core:strings` solely for
-  it roughly quadrupled hello world's IR when imported packages were emitted
-  whole. `builder.append(fmt.to_string(allocator, ...))` provides the operation
-  without that dependency.
-- `String_Builder` groups text and rune append methods under `append`, with
-  distinct declarations in one `impl`. This satisfies method-based structural
-  interfaces without duplicate free aliases. `len` and `cap` stay ordinary
-  shadowable names. `C_String` likewise exposes method accessors and a free
-  constructor.
-- Directory enumeration uses a streaming reader with borrowed names to avoid
-  allocating and retaining an owned name at every step of a read-only walk.
-  Callers that need a collection can copy each name. End of enumeration and
-  failure are separate variants, so iteration uses an explicit fallible loop.
-- `strings.join` and `path.join` take slices. A variadic consumes all trailing
-  arguments, making a following allocator impossible to supply and a defaulted
-  allocator before it impossible to omit.
-- String case conversion is ASCII-only until a caller justifies Unicode tables.
-  Its owning result already allows byte and rune counts to change. Locale rules
-  must not depend silently on the process locale.
-- `sqrt` and the other floating-point functions use separate `f64` and `_f32`
-  names. Overloading both would make an untyped call such as `math.sqrt(2.0)`
-  ambiguous; callers also avoid double rounding through a wider intermediate.
+- **Files and process state are separate.** `core:fs` owns files; `core:os` owns
+  process state. There is one spelling for opening a file.
+- **I/O errors own scalar data.** An operation enum and native code avoid
+  allocating or borrowing diagnostic text. Public constructors let callers
+  implement streams without exposing the error's fields.
+- **Formatting avoids a builder dependency.**
+  `builder.append(fmt.to_string(allocator, ...))` provides formatted append
+  without making every `fmt` importer also depend on `core:strings`.
+- **Directory iteration streams borrowed names.** Walkers avoid allocating a
+  name at every step; callers retaining entries copy them. An explicit loop
+  distinguishes failure from end of input.
+- **Joining takes a slice.** A variadic would absorb trailing allocator
+  arguments or prevent a preceding default allocator from being omitted.
+- **Case conversion is ASCII-only.** Full Unicode mapping requires tables and
+  a defined contract. The owning result already permits text length to change;
+  locale rules must not depend silently on process state.
+- **Float widths have separate names.** `sqrt` takes `f64` and `sqrt_f32` takes
+  `f32`. Overloading both would make an unfixed literal ambiguous; converting
+  through a wider result can round twice.
 
-## Implementation notes and review history
+## Compiler architecture audit (2026-09-28)
 
-### Last-use transfer implementation
+The audit of `b2cc712` and its follow-up favored enforcing existing phase
+boundaries over introducing another IR or splitting the compiler into packages.
+The current contracts are in [compiler-architecture.md](compiler-architecture.md).
+Two labels remain useful to the regression cases citing this review:
 
-Last-use transfer is decided by a backward control-flow analysis. Exact borrow
-liveness would require the provenance pass, which runs after lifecycle analysis
-has fixed each local's cleanup. The earlier pass therefore excludes locals that
-have carried borrows rather than trying to prove those borrows have ended.
+- **A1:** compile-time construction obeys an element budget; large runtime
+  literals do not require eager constant construction.
+- **A5:** speculative checks use `committing(c)`, and assertions detect changes
+  to registries that must remain unchanged during a probe.
 
-An accepted transfer becomes an ordinary `move(x)` in the syntax tree, so later
-borrow and allocator-region checks see it as written. A borrow that prevents a
-copy still produces a diagnostic at the copy site; conservative transfer does
-not bypass that check. See [design.md "Last-use transfer"](design.md#last-use-transfer).
-
-### Formatting and logging sink implementation
-
-The former `state + proc` sink cast a `rawptr` back to a typed pointer in
-`core:fmt`'s collector and `core:io`'s latch adapter. Borrowed `dyn mut` views
-removed those casts without requiring retained closures. A nil `Writer`, which
-used to discard output, first panicked like every other nil view's slot call,
-and then stopped existing when references lost their null state.
-
-The generated module supplies `loke_rt_v1_sink_write` for the runtime's scalar
-formatters. It calls the witness slot with a slice built in LLVM, avoiding a C
-prototype for LLVM's two-word aggregate convention. Process streams use a
-compiler-emitted witness whose data pointer identifies the stream.
-
-Because views are not comparable, the logger-provider test checks sink
-output instead of comparing `current().write` with `standard_logger().write`.
-
-### Extended UNC volume boundaries
-
-Extended UNC paths use the same server/share boundary as ordinary UNC paths,
-after the `\\?\UNC\` marker. Recognizing that boundary in `path.volume` fixes
-every lexical operation that stops at a root and lets `fs.create_directories`
-begin below the share. It does not normalize the path: [Windows's extended-path
-rules](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
-require preserving its text, so `clean` continues to return it unchanged.
-The contract is in [standard-library.md "`core:path`"](standard-library.md#corepath),
-with regression cases in [tests/run/lib_path.loke](tests/run/lib_path.loke).
-
-### Portable process input and path errors
-
-Environment names are non-empty and exclude `=` and U+0000. Rejecting them
-before a platform call gives reads, writes, and removals the same `Invalid_Data`
-answer without confusing an invalid name with a missing variable. The existing
-`Result(Option(string), io.Error)` already separates those outcomes; no API
-signature change or native allocation is needed for validation.
-
-Windows [path errors](https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-)
-123, 161, 206, and 267 normalize to `Invalid_Path` in both process and filesystem
-operations. In particular, giving an existing file to an operation requiring a
-directory preserves that identity and the native code instead of reporting
-`Other`. The contracts are in [standard-library.md "`core:os` additions"](standard-library.md#coreos-additions)
-and ["`core:fs`"](standard-library.md#corefs); regressions live in
-[tests/run/lib_process.loke](tests/run/lib_process.loke) and
-[tests/run/lib_fs.loke](tests/run/lib_fs.loke). Every package now translates
-through the one table in `io.from_native_code`, so a code means the same thing
-whichever package reports it; only `core:term` reads `ERROR_INVALID_HANDLE` as
-`Not_A_Terminal`, because there it means the handle is not a console.
-
-### Malformed console input
-
-Programs can write arbitrary UTF-16 units into the console input buffer.
-`read_key` reports unmatched surrogates as `Invalid_Data`, matching `read_line`
-and letting callers decide how to recover. This keeps character events valid
-Unicode scalars without silently replacing or dropping malformed input.
-
-The existing repeat buffer holds a valid key following an unmatched high half,
-so reporting the error preserves that key's order, modifiers, and repeats.
-Another high half remains pending and can begin a valid pair. The contract is
-in [standard-library.md "Raw mode and key events"](standard-library.md#raw-mode-and-key-events),
-with injected-input regressions in
-[tests/run/lib_term_console.loke](tests/run/lib_term_console.loke).
-
-### Two slices of one local array in one call
-
-`fmt.println(primes[1:4], total(primes[:]))` is rejected (`L0511`): slicing a
-mutable local gives `[]mut int`, which keeps that type inside the `any_view`,
-so the second slice conflicts with it. That follows [design.md "Slices"](design.md#slices),
-and an extracted `[]mut int` could indeed write. A reader who only prints binds
-`middle := primes[1:4];` first, as in
-[Arrays and slices](tutorials/04-strings-and-containers.md#arrays-and-slices).
-
-Erasing a fresh slice into an `any_view` could settle it read-only, as a `[]T`
-destination does, but that would make an erased slice's type depend on where
-it lands. The rule stays: one extra binding is a small price for a slice type
-that does not change.
-
-### Compiler regression fixes
-
-The checker fuzzer's fixed-array slowdown came from emitting every earlier
-element's cleanup separately at every possible copy failure. The backend now
-uses its existing reverse-prefix drop loop at each failure point, so generated
-cleanup grows linearly with array length. This preserves the completed-prefix
-and reverse-order guarantees in [design.md "Lifecycle hooks and resource types"](design.md#lifecycle-hooks-and-resource-types).
-[src/emit_llvm_test.odin](src/emit_llvm_test.odin) checks IR growth and
-[tests/run/fixed_array_clone_failure.loke](tests/run/fixed_array_clone_failure.loke)
-checks success and failures at each element.
-
-An index whose integer conversion failed previously continued into the bounds
-check. Returning immediately preserves its `L0352` cause and avoids a false
-`L0361` follow-on. Every field error receives its instantiation context; the
-reporter prints an identical cause once with the additional contexts. Human
-argument spellings are separate from cache keys: arrays print their type and
-elements, signed zeros remain distinct, and NaNs retain their encoding in the
-display. Instantiation notes abbreviate long names at UTF-8 boundaries.
-Regressions include [generic field errors](tests/err/generic_field_diagnostics.loke),
-[index conversion errors](tests/err/invalid_index_materialization.loke), and
-[floating generic identities](tests/err/generic_float_identity.loke).
-
-Ctrl+letter key events retain the console's control character rather than
-inventing a printable letter. The explicit contract is in
-[standard-library.md "Raw mode and key events"](standard-library.md#raw-mode-and-key-events),
-with Ctrl+C/I/M regressions in [tests/run/lib_term_console.loke](tests/run/lib_term_console.loke).
-
-### Foreign ABI validation
-
-The Win64 boundary checks an enum's written backing rather than assuming every
-enum is a supported scalar. Zero-sized records are rejected recursively:
-Loke's empty record occupies no bytes, while Clang's Windows C extension gives
-it four, changing both enclosing field offsets and argument classification.
-Pointers remain permitted under [design.md "Foreign-ABI-safe types"](design.md#foreign-abi-safe-types).
-[Enum](tests/err/foreign_abi_enum_backings.loke),
-[empty-record](tests/err/foreign_abi_empty_records.loke), and
-[export](tests/err/foreign_abi_exports.loke) regressions cover the shared rule;
-[tests/obj/host.c](tests/obj/host.c) checks a valid enum against a C caller.
-
-Completed, acyclic safety answers are cached within one traversal. Cycles and
-unresolved fields remain provisional, and a fixed array's placement is checked
-before consulting the cache. [src/front_end_test.odin](src/front_end_test.odin)
-checks shared record graphs and the array placement rule.
-
-### Debug build regression fixes
-
-The debug-code review found five correctness bugs. Temporary cleanup now
-preserves output paths that alias `.ll` or `.natvis`, including Windows case
-variants. An output named `.natvis` moves the rules to `<output>.natvis`
-instead of sharing its path: the linker reads them while it writes the
-executable, which MSVC 14.51's linker refuses (LNK1104). Every emitted deferred block binds its locals to that copy's storage
-and scope. Exported debug names use the literal linker name, while internal
-names use Loke's decoder. Statement locations belong to the shared emitter
-entry, and conditions restore their own locations after initializers.
-
-LLVM's CodeView writer saturates enum constants above 64 bits. Representing
-128-bit integers and enums as `low` and `high` unsigned words preserves their
-exact bits without changing language types or adding a second debug backend.
-[src/emit_llvm_test.odin](src/emit_llvm_test.odin) checks deferred bindings,
-literal names, wide storage, and actual condition locations;
-[tests/corpus_test.odin](tests/corpus_test.odin) runs outputs whose names alias
-the temporary extensions.
-
-The gate also exposed two example tests compiling the same executable in
-parallel. The driven corpus runner now uses a separate output path.
-
-### Compiler architecture audit (2026-09-28)
-
-The audit reviewed revision `b2cc712`, tracing the driver, checking, CTFE,
-generics, ownership, emission, runtime interface, and test harnesses. Its
-corrective findings A1–A10 have since been addressed. Their original priority
-order is no longer a work list; the current contracts are in
-[compiler-architecture.md](compiler-architecture.md), and the remaining
-structural questions were settled in a follow-up review, below.
-
-The review favored enforcing the existing phase boundaries over adding an IR
-or splitting the compiler into packages. Stable IDs, arena ownership, one
-annotated AST, explicit call operations, shared constant operations, and a
-separate toolchain layer already fit the compiler. The completed follow-ups:
-
-- **A1: Bound constant construction.** Literal folding and zero values use the
-  CTFE element budget, while large runtime literals need no eager constant.
-  Regressions include [large constant arrays](tests/err/large_constant_arrays.loke),
-  [runtime literals](tests/run/large_literal_runtime.loke), and
-  [LLVM arrays](tests/ll/large_arrays.loke).
-- **A2: Collect generic bindings from syntax.** `pattern_shape` replaced the
-  raw-source scanner, so comments cannot introduce or hide bindings.
-- **A3–A4: Close the emission boundary.** Carrier fields and semantic registries
-  are settled before emission; the backend validates them and checks that
-  emission cannot grow semantic state. Tests in
-  [src/emit_llvm_test.odin](src/emit_llvm_test.odin) cover the production path
-  and reject incomplete phase state.
-- **A5: Centralize speculative commitment.** Enrollment uses `committing(c)`;
-  probe rollback and cached rejection diagnostics follow the same protocol.
-  [src/front_end_test.odin](src/front_end_test.odin) checks registry isolation,
-  and [generic probe then use](tests/run/generic_probe_then_use.loke) and its
-  [error cases](tests/err/generic_probe_then_use.loke) cover later real uses.
-- **A6–A7: Fix analysis storage and reset identities.** Superseded provenance
-  graphs are reclaimed, and reset points retain the exit and `defer` expansion
-  identity needed to check owners live at each exit.
-- **A8–A9: Validate runtime ABI and cache inputs.** `runtime_abi_matches_header`
-  lowers the C header with clang and compares signatures, calling-convention
-  attributes, and record layouts with LLVM emission. `runtime_cache_follows_build_inputs`
-  checks reuse and invalidation of prebuilt objects. Both live in
-  [tests/runtime_test.odin](tests/runtime_test.odin).
-- **A10: Resolve generic member applicability consistently.** Specialization
-  and ambiguity use the overload rules, including instances created before a
-  more specialized block is registered.
-
-The original review's quick gate passed 1,010 specification citations, 100
-compiler unit tests, the vetted build, and 33 integration functions. NASM was
-unavailable; the optimization matrix and mutation fuzzer were not run locally.
-Those counts describe the reviewed revision, not the current test inventory.
-
-No registry wrapper or package split was justified after centralizing the
-mutation gate and enforcing the emission boundary. Revisit one when a concrete
-failure or independent consumer requires it.
-
-The query walkers it named (`first_unresolved_name`, `type_syntax_names`,
-`pattern_shape`) now switch exhaustively rather than sharing one child
-enumeration. Each deliberately covers different positions: value and type
-names, every name, or pattern layers. A shared enumeration would have made
-them all descend everywhere. Making `first_unresolved_name` exhaustive found
-that it skipped anonymous-record field types and `move`
-([tests/run/when_anonymous_record_condition.loke](tests/run/when_anonymous_record_condition.loke)).
-
-A follow-up review (2026-10-06) settled the three structural questions the
-audit left open:
-
-- **Probes keep the `committing(c)` gate.** Journaling registry writes for
-  rollback needs the same discipline at every write, and would have to tell
-  enrollment from caches that must outlive a probe. Stopping probes before
-  body-level work would change what a requirement means: an interface
-  requirement may hold a procedure literal whose body decides it, and a
-  `where` bound runs bodies at compile time. What was missing was detection,
-  so `end_probe` now asserts that the registries emission reads did not grow.
-  Its first run found synthesized members enrolled during probes; they now
-  enroll from the use that commits them (`enroll_synth`).
-- **Lifecycle and provenance keep their shared `Reset_Key`s.** The provenance
-  walk reads liveness while it builds, and lifecycle must still run first
-  because last-use transfer rewrites the syntax provenance walks, so solving
-  liveness on the provenance graph would solve it twice per body and again per
-  summary round and region pass. The keys agree because one walk builds both
-  graphs; a missing one is an assertion failure at every lookup.
-- **One walk keeps building every mode's graph.** Blocks begin inside
-  expressions, and the provenance walk returns loans from each one, so
-  separate topology would be a recorded list of event sites per block: the IR
-  this audit declined. The mode branches at one syntax position are what keep
-  the graphs, and so the reset keys, in agreement. The copy decisions the
-  lifecycle walk used to make moved to the checker instead, which already
-  made the others; a declaration in a `defer` is now classified once, not once
-  per expansion.
+The other lasting choices are shared lifecycle/provenance reset identities,
+one walk building their related graphs, and exhaustive specialized query walkers
+instead of a universal child traversal. Each avoids duplicating facts or visiting
+positions that a particular analysis should ignore. Implementation details belong
+with the [semantic architecture](compiler-architecture.md#semantic-architecture);
+historical fix lists and test counts are available in Git history.
