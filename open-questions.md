@@ -457,3 +457,250 @@ solely on a handle's destructor is insufficient when `unsafe.forget` can skip
 it. Process termination may end the guarantee because no parent continues.
 Do not add futures, async syntax, or reactive variables merely to solve this
 borrow-and-join problem. See [Concurrency refinements](#concurrency-refinements).
+
+## Language design review (2026-10-11)
+
+A second set of proposals, not an amendment to the specification. The review
+read design.md and grammar.md in full, checked each idea against comments.md
+and the questions above, and confirmed every behavior it cites with the
+shipped compiler at `1ba3c84`. Backward compatibility is not a constraint; a
+proposal that reverses a recorded decision says so. The compiler/spec
+divergence it found is in
+[known-gaps.md](known-gaps.md#rune-constants-convert-to-integer-and-floating-point-types).
+
+The core holds together: one capability axis spelled `mut`, non-null
+references with `Option` niches, fallibility by union shape, exhaustive
+switches, checked arithmetic and conversions, definition-site lookup, and
+hermetic compile-time evaluation. Most proposals here are about where everyday
+code meets that core: printing, map keys, early exits, error plumbing, and
+temporaries. The structural concern is that more checking depends on inferred,
+whole-program facts than a library's signatures show; see
+[No public mutable globals](#no-public-mutable-globals) and
+[Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own).
+
+### Recommended order
+
+| Priority | Proposal | Main benefit |
+| --- | --- | --- |
+| Next | Print a checked reference as its referent | A map loop prints values, not addresses |
+| Next | Let `package main` print its own fields | A first struct prints its fields |
+| Next | Generate `hash` where `==` is generated | Plain records become map keys |
+| Next | Control-flow fallbacks after `or_else` | Skip or leave without nesting |
+| Next | `in` for ranges | Character classes read as ranges |
+| Next | `main` may return a fallible union | `or_return` in `main`, a failing exit status |
+| Later | One temporary-lifetime rule | Three lifetime rules become one |
+| Later | Field bindings in a case | Recursive unions without clones |
+| Later | A failure-only `defer` | Rollback without a flag |
+| Later | Declared error wrapping for `or_return` | No mapper at every propagation |
+| Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
+| Later | No public mutable globals | Effects stop crossing packages invisibly |
+| Later | Test procedures | Unit tests for package-private code |
+
+### Print a checked reference as its referent
+
+A map lends its entry as `(key: ^K, value: ^V)`, so a loop that binds the
+whole entry prints addresses:
+
+```odin
+foreach (entry in counts) { fmt.println(entry.key, entry.value); }   // 0x1811D541660 0x1811D5416B0
+```
+
+Every other checked carrier prints what it views — a slice its elements,
+`string_view` its text, `any_view` its value — and `box(T)` prints its payload.
+Only `^T` prints an address. Print a `^T` or `^mut T` as its referent, as
+Rust formats `&T`, and keep addresses for `rawptr` and `[^]T`, the unchecked
+addresses; a program that wants an address converts to `rawptr`. The one rule
+should make a cycle through checked borrows unconstructible, but a depth bound
+is a cheap guard.
+
+### Let `package main` print its own fields
+
+Fields are package-private by default and generated `format` prints public
+fields only, so in a `package main`, `fmt.println(Point{1, 2})` prints
+`Point{}`, and `Option(Point)` prints `.some(Point{})`. The tour prints
+`target.x` and `target.y` separately. Nothing imports an executable's root
+package, so its declarations have no outside view to protect. State that an
+executable's root package cannot be imported, and make it public by default,
+as `@(public) package main;` already does when written. Each type keeps one
+printed form, as [String format printing](design.md#string-format-printing)
+requires.
+
+### Generate `hash` where `==` is generated
+
+`Point :: struct { x, y: int }` compares with generated structural `==`, yet
+`map[Point]int` is `L0586` until the package writes both an inherent `==` and
+`hash`. The inherent-pair rule in [Maps](design.md#maps) keeps one hashing
+policy per key type across packages, and a generated member is inherent, so
+generation keeps that property. Generate `hash` for a record, union, or
+anonymous record that declares no `==` of its own and whose parts are all
+`Hashable`, mixing the parts in declaration order as a fixed array's elements
+already are. A type that writes its own `==` still writes its own `hash`, so
+coherence holds by construction.
+
+### Control-flow fallbacks after `or_else`
+
+An absent value in a loop is skipped with a nested switch or `if (case ...)`.
+No fallback can leave the loop or the procedure:
+
+```odin
+foreach (name in names) {
+	entry := table.find(name) or_else continue;   // today L0220: expected an expression
+	use(entry);
+}
+```
+
+`or_else` already takes a [diverging call](design.md#diverging-procedures) as
+its fallback. Admit `continue`, `break`, and `return expression` there too, as
+Zig's `orelse` does. Each diverges, so the result keeps the success payload's
+type, and a temporary's failure is still dropped before the fallback runs.
+They become expressions in that position only, and not inside a `defer`, where
+`or_return` is already rejected. `or_return` stays the spelling that propagates
+the failure itself.
+
+### `in` for ranges
+
+Built-in `in` tests maps only (`L0587`), so a character class is written
+`c >= 'a' && c <= 'z'`, though `case 'a'..='z':` reads it as a range. Define
+`x in r` for `Range(T)`, honouring `closed`. Range operators must then bind
+tighter than comparison: at [level 2](design.md#operator-precedence),
+`c in 'a'..='z'` parses as `(c in 'a') ..= 'z'`. Move `..<` and `..=` between
+levels 5 and 6, where Swift puts range formation. `0 ..< n + 1` still groups as
+`0 ..< (n + 1)`, and `foreach` headers and `case` lists are unaffected.
+
+### `main` may return a fallible union
+
+`or_return` needs a fallible result, and `main` returns nothing or an `i32`, so
+a program that can fail ends in a switch at the top. The examples show what
+that costs: `greeting.loke` and `keys.loke` print the error and exit with
+status 0. Accept a `main` that returns a [fallible union](design.md#typed-fallibility)
+whose success carries no payload, such as `Result(Unit, E)`. On failure the
+runtime prints the failure payload to standard error, as `panic` prints its
+arguments without `core:fmt`, and exits with status 1, after scope-exit cleanup
+as for an `i32` status. Rust's `main` returning `Result` is the precedent.
+
+### One temporary-lifetime rule
+
+How long a temporary lives depends on what views it:
+
+- a [slice literal](design.md#slice-literals)'s backing array lives until the
+  enclosing scope ends;
+- a temporary erased into a local [`any_view`](design.md#any_view-type) lives
+  until the scope ends when its lifecycle is trivial, and until its statement
+  ends otherwise;
+- a temporary viewed by a `dyn proc` local ends with its expression, so
+  `f: dyn proc() = proc() capture(&mut n) { n += 1; }; f();` is an error
+  ([Borrowed callable views](design.md#borrowed-callable-views)).
+
+Adopt the rule C++ and Rust apply to a reference a declaration binds: a
+temporary whose borrow initializes a local declaration, directly or through a
+field, index, or slice projection, lives until that local's scope ends and is
+dropped with the locals in reverse order. All three cases above follow from it.
+A temporary passed to a call still ends with its complete expression, so
+`first_half([dynamic]int{1, 2, 3, 4}[:])` stays an error. The cost is a later
+drop for a managed temporary, the one a named local would have had.
+
+### Field bindings in a case
+
+A case binds one name for a payload. When the payload is a record, the next
+step is selection or [destructuring](design.md#destructuring), and destructuring
+a borrowed payload clones: in a switch over a place,
+`case .add(pair): left, right := pair;` copies both boxes and everything under
+them. Let a case bind a record payload's fields, as a `foreach` header binds an
+element's:
+
+```odin
+switch (e^) {
+case .number(n):        return n;
+case .add(left, right): return eval(left) + eval(right);   // borrowed; nothing cloned
+}
+```
+
+Over a place the leaves borrow, `&mut` leaves included; over a temporary the
+fields transfer, as consuming destructuring does. It stays one level, a variant
+and its record's fields, so patterns still do not nest. A compiler written in
+Loke is the program this pays for most.
+
+### A failure-only `defer`
+
+A result is anonymous, so a `defer` cannot tell a failure exit from a success.
+Undoing partial work on failure, such as removing a half-written file, needs a
+flag cleared before every successful return, which is what
+[`defer if (failed)`](design.md#defer-statement) leaves to the programmer. Add a
+deferred statement, spelling to be designed, that runs only when the procedure
+returns its result's failure variant, by `or_return` or by `return`, in the
+ordinary LIFO order. It requires a fallible result. Zig's `errdefer` is the
+precedent; whether it also runs during panic unwinding must be decided, and
+Zig's does not.
+
+### Declared error wrapping for `or_return`
+
+[Changing error domains](design.md#changing-error-domains) puts
+`.map_error(App_Error.parse)` at every propagation site, because two variants
+may carry one payload type and nothing should guess between them. The union can
+decide once instead: let an attribute on a variant, `@(wraps)` say, make it the
+target for its payload type, at most one variant per type, and let `or_return`
+wrap an operand failure of exactly that type. There is no chaining, and a union
+without the attribute still needs `map_error`. This reverses that section's
+statement that `map_error` and `ok_or` are the only adaptations; it trades one
+declaration-site rule for a mapper at every call in application code.
+
+### Checked unsigned arithmetic
+
+Signed `+`, `-`, and `*` panic on overflow; unsigned ones wrap. The compiler
+prints `4294967294` for `u32(3) - u32(5)` and `240` for `u8(' ') - u8('0')`,
+and `1 << k` is `0` for `k := -1`. Lengths are `int`, so unsigned values appear
+in byte, `u32`, and `u64` code — parsers, codecs, bindings — which is where an
+unnoticed wrap does harm. [Signed overflow panics](comments.md#signed-overflow-panics)
+keeps unsigned arithmetic modular for hashing and bit manipulation, which
+already have `math.wrapping_*` and could take Zig's `+%`, `-%`, and `*%` if the
+calls are heavy; the FNV hash in
+[Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
+would need one. Proposal: check unsigned `+`, `-`, and `*` as signed ones are,
+keep shifts and atomics modular, and panic on a negative signed shift count,
+which a constant count already rejects. This reverses a recorded decision and
+costs a check wherever the optimizer cannot discharge it.
+
+### No public mutable globals
+
+[Global write effects](design.md#global-write-effects) are inferred over the
+whole program and are not part of a procedure's type. A print takes the union
+of every `format` method's effect, a `dyn` call that of every witness for its
+slot. A library that adds a write to one of its globals can therefore break a
+caller in another package with no signature changed, and incremental checking
+must track inferred effects as a dependency that signatures miss.
+
+A caller conflicts only over a global it can borrow. Reject `@(public)` on
+mutable file-scope, `static`, and `thread_local` variables, and an importer can
+borrow another package's global only through a procedure returning that borrow,
+whose result contract already shows static provenance. Effects then cross a
+package boundary only for statics a package visibly lends. `core` pays almost
+nothing: its one public mutable global, `os.args`, is a zero-sized view that
+could be a constant.
+
+### Test procedures
+
+The roadmap's parser and self-hosted compiler need unit tests, and
+`core:testing` is an [optional gap](future-plans.md#standard-library-maturity).
+A unit test reaches package-private code, which only code in the package can.
+Mark zero-argument procedures `@(test)` and compile them only in a test build
+that runs each and reports a failed `assert` or `panic` by location. A panic
+cannot be caught, so the runner either runs each test in its own process or
+stops at the first failure; see [Recoverable panics](#recoverable-panics). Zig's
+`test` blocks and Go's `_test.go` files are the precedents; an attribute needs
+no new syntax.
+
+### Smaller items
+
+- **Ordered anonymous records.** Sorting by `(priority, id)` needs a
+  comparator. An anonymous record has no encapsulation to protect and its field
+  order is its identity, so generate a lexicographic `<` where every field is
+  `Ordered`. A struct keeps writing its own.
+- **A name for non-null handles.** [Types with no zero value](design.md#types-with-no-zero-value)
+  lists `shared(T)` as a *reference*, then says a reference "is still a borrow,
+  checked as one", which an owning handle is not. [Representation](design.md#representation)
+  derives its niche rule from that list but names `box(T)`, which the list
+  omits. One term covering references and owning handles would fix both.
+- **Lower-case `box`, `shared`, and `weak`.** Every other predeclared generic
+  type is capitalised (`Option`, `Result`, `Range`, `Simd`); these are lower-case
+  because each name is also its constructor. Capitalise the types and keep the
+  lower-case constructors, or record why handles differ.

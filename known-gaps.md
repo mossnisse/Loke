@@ -37,3 +37,27 @@ main :: proc() { _ = dropped_first(true); }
 Registering the `defer` before `xs` is accepted and is the safer order anyway.
 Narrowing the unwind points to the operations that can panic (calls, checked
 indexing and arithmetic, conversions) would accept the program as written.
+
+### Rune constants convert to integer and floating-point types
+
+[design.md "Implicit type conversions"](design.md#implicit-type-conversions)
+converts an unfixed rune constant only to rune types. The compiler converts one
+as it does an unfixed integer: to any integer type that holds it, and to a
+floating-point type. This program should be rejected at both declarations, but
+it compiles and prints `65 97.0`:
+
+```odin
+package main;
+import "core:fmt";
+main :: proc() {
+    ch: u8 = 'A';     // no rune-to-`u8` conversion is listed
+    x: f64 = 'a';     // accepted as 97.0
+    fmt.println(ch, x);
+}
+```
+
+`core:strconv` writes `u8('0')`, as the spec requires; `examples/lexer.loke`
+relies on the implicit form (`ch >= '0'` with `ch: u8`). Either the spec admits
+integer destinations that hold the value, or the compiler rejects them and the
+lexer converts explicitly. A floating-point destination looks unintended either
+way.
