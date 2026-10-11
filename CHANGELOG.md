@@ -10,6 +10,11 @@ checklist.
 
 ### Breaking changes
 
+- Printing a `^T` or `^mut T` prints the value it points to, as a `box(T)`
+  already did, instead of its address (design.md "String format printing"), so
+  `foreach (entry in m) { fmt.println(entry.key); }` prints the key. Convert to
+  `rawptr` to print an address; `rawptr`, `[^]T`, and procedures still print
+  addresses.
 - A `package main` cannot be imported (`L0719`), and its struct fields are
   public by default (design.md "Exported names"), so a program printing its own
   `Point{1, 2}` sees `Point{x = 1, y = 2}` rather than `Point{}`. Generated

@@ -592,6 +592,8 @@ emit_format_nested :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_quoted_rune(ptr %%w, i32 %s)", value)
 	case .Box:
 		emit_format_nested(e, info.element, emit_box_payload_address(e, under, load(e, "ptr", address)))
+	case .Pointer:
+		emit_format_nested(e, info.element, load(e, "ptr", address))
 	case:
 		emit_format_call(e, type, address)
 	}
@@ -660,7 +662,13 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		}
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f32(ptr %%w, float %s)", widened)
 
-	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator:
+	// design.md "String format printing": a checked pointer always names a
+	// value, so it prints that value, as a box does; an unchecked address prints
+	// as one.
+	case .Pointer:
+		emit_format_call(e, info.element, load(e, "ptr", address))
+
+	case .C_Pointer, .Raw_Pointer, .Proc, .Allocator:
 		value := load(e, "ptr", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_ptr(ptr %%w, ptr %s)", value)
 

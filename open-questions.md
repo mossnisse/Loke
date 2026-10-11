@@ -488,12 +488,12 @@ the headings named, and comments.md records the reasoning:
 - `or_else` may `break`, `continue`, or `return` ("or_else expression").
 - A `package main` prints its fields and cannot be imported ("Exported
   names").
+- A checked pointer prints as its referent ("String format printing").
 
 ### Recommended order
 
 | Priority | Proposal | Main benefit |
 | --- | --- | --- |
-| Next | Print a checked reference as its referent | A map loop prints values, not addresses |
 | Next | Generate `hash` where `==` is generated | Plain records become map keys |
 | Next | `main` may return a fallible union | `or_return` in `main`, a failing exit status |
 | Later | One temporary-lifetime rule | Three lifetime rules become one |
@@ -503,23 +503,6 @@ the headings named, and comments.md records the reasoning:
 | Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
 | Later | No public mutable globals | Effects stop crossing packages invisibly |
 | Later | Test procedures | Unit tests for package-private code |
-
-### Print a checked reference as its referent
-
-A map lends its entry as `(key: ^K, value: ^V)`, so a loop that binds the
-whole entry prints addresses:
-
-```odin
-foreach (entry in counts) { fmt.println(entry.key, entry.value); }   // 0x1811D541660 0x1811D5416B0
-```
-
-Every other checked carrier prints what it views — a slice its elements,
-`string_view` its text, `any_view` its value — and `box(T)` prints its payload.
-Only `^T` prints an address. Print a `^T` or `^mut T` as its referent, as
-Rust formats `&T`, and keep addresses for `rawptr` and `[^]T`, the unchecked
-addresses; a program that wants an address converts to `rawptr`. The one rule
-should make a cycle through checked borrows unconstructible, but a depth bound
-is a cheap guard.
 
 ### Generate `hash` where `==` is generated
 

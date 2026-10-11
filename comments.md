@@ -598,6 +598,13 @@ A formatter uses the sink during its call. A logger provider lends static
 storage for process lifetime. Neither requires an owned closure, and neither
 view has a null state.
 
+### A checked pointer prints its referent
+
+Every other checked view prints what it views, and a box prints its payload. A
+`^T` printing its address made a map loop with one binding print addresses.
+A checked pointer is never null, so it prints the value; an unchecked address,
+which may be null or dangling, still prints as an address.
+
 ### Generated printed forms say what they print
 
 Generated formatting distinguishes values that would otherwise look identical:

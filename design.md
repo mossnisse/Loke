@@ -517,7 +517,8 @@ A generated method prints:
 | integer | its digits in `Options.base`, decimal by default |
 | float | the shortest decimal that reads back as the same value, never spelled as an integer: fixed notation with at least one fractional digit from `1e-4` to below `1e17`, as `1.0`, `0.1`, and `-0.0`, and a bare exponent outside it, as `1e21` and `2.5e-5`; `nan`, `inf`, or `-inf` |
 | `string`, `string_view`, `cstring_view`, `rune` | its text |
-| pointer, `rawptr`, `[^]T`, procedure | `0x` and the address in hexadecimal, or `<nil>` |
+| `^T`, `^mut T` | the value it points to, as for `box(T)` |
+| `rawptr`, `[^]T`, procedure | `0x` and the address in hexadecimal, or `<nil>` |
 | `typeid` | the type's name |
 | enum | the member's name, or the number of a value no member names |
 | array, slice, dynamic array, `Simd` | `[1, 2, 3]` |
@@ -531,7 +532,9 @@ A generated method prints:
 
 A struct prints its public fields only, as reflection from another package sees it, because one printed form serves every package. A `package main`'s fields are [public by default](#exported-names), so a program's own `Point{1, 2}` prints `Point{x = 1, y = 2}`; one with a `@(private)` field leaves it out. A `distinct` type prints as the type it wraps, under its own name where that form has one.
 
-A field, element, map key, or union payload whose type is a string type, `rune`, or a `box` of one prints quoted, escaping the backslash, the quote, `\n`, `\r`, `\t`, and other control characters as a literal would: `["a b", "c"]` and `.some('x')`. Printed on its own, as `fmt.println("a b")`, it is its text. A type with its own `format` prints by it in both places.
+A checked pointer is never null and always names a value, so it prints that value, as every other checked view prints what it views: a map entry lent as `(key: ^K, value: ^V)` prints its key and value. A program that wants the address converts to `rawptr`. Printing follows a chain of pointers, as it follows a chain of boxes; a cycle, which only [unchecked code](#the-unsafe-package) can build, does not terminate.
+
+A field, element, map key, or union payload whose type is a string type, `rune`, or a `box` or pointer to one prints quoted, escaping the backslash, the quote, `\n`, `\r`, `\t`, and other control characters as a literal would: `["a b", "c"]` and `.some('x')`. Printed on its own, as `fmt.println("a b")`, it is its text. A type with its own `format` prints by it in both places.
 
 The print procedures accept mixed `..any_view` arguments. For each erased argument, they recover the concrete type's `Formattable` witness and call its `format` slot with the borrowed value, writer, and options. The same method is selected by an explicit `(dyn fmt.Formattable)(&value)` conversion.
 

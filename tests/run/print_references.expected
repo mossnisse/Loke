@@ -1,0 +1,5 @@
+a 1 (key = "a", value = 1)
+5 [5, 5]
+Node{value = 1, next = .some(Node{value = 2, next = .none})}
+hi ["hi"]
+true true
