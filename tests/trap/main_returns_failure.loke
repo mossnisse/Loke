@@ -1,0 +1,29 @@
+// design.md "Program entry and exit": a `main` returning a fallible union runs
+// its cleanup, then the startup code prints the failure to standard error after
+// what the program printed, and the process exits with status 1.
+package main;
+
+import "core:fmt";
+
+Guard :: struct { name: string }
+impl Guard {
+	done :: hook(drop) proc(self: inout Guard) {
+		if (self.name.len() > 0) { fmt.println("cleanup", self.name); }
+	}
+}
+
+Error :: enum { Missing_Input, Bad_Number }
+
+parse :: proc(text: string_view) -> Result(int, Error) {
+	if (text.len() == 0) { return .err(.Missing_Input); }
+	return .ok(text.len());
+}
+
+main :: proc() -> Result(Unit, Error) {
+	guard := Guard{"main"};
+	n := parse("abc") or_return;
+	fmt.println("parsed", n);
+	parse("") or_return;
+	fmt.println("unreachable");
+	return .ok;
+}

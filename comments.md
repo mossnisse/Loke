@@ -316,6 +316,15 @@ not new expressions, so they keep the statements' rules and cleanups. A loop's
 header cannot use `break` or `continue` this way: it is evaluated outside the
 body, so whether it leaves the loop or an enclosing one would be a new rule.
 
+### A fallible `main`
+
+`or_return` needs a fallible result, so a `main` returning nothing or an `i32`
+ended every program that could fail in a switch, and examples that printed the
+error forgot the status. A `main` returning `Result(Unit, E)` reports the
+failure the way a formatted panic reports its arguments, after cleanup, and
+exits 1. The success arm carries nothing because there is nowhere for a value
+to go.
+
 ### One result
 
 A procedure returns at most one value. Several results form an anonymous record

@@ -338,14 +338,47 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	} else if symbol := symbol_of(c, entry); symbol == nil || symbol.kind != .Proc {
 		span := symbol == nil ? no_span() : symbol.span
 		errorf(c, span, "L0303", "`main` must be a procedure: `%s`", "main :: proc() { ... }")
-	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || (info.result != INVALID_TYPE && info.result != TYPE_I32) {
-		errorf(c, symbol.span, "L0303", "`main` takes no parameters and returns nothing or an `i32` status: `%s`", "main :: proc() -> i32 { ... }")
+	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 ||
+	   (info.result != INVALID_TYPE && info.result != TYPE_I32 && !entry_result_is_fallible(c, info.result)) {
+		errorf(
+			c, symbol.span, "L0303",
+			"`main` takes no parameters and returns nothing, an `i32` status, or a fallible union such as `Result(Unit, E)`: `%s`",
+			"main :: proc() -> i32 { ... }",
+		)
 	} else if info.result_inout || convention_is_foreign(info.convention) {
 		// The startup wrapper calls an ordinary `loke` procedure for an `i32` value.
 		errorf(c, symbol.span, "L0303", "`main` is an ordinary `loke` procedure returning its status by value: `%s`", "main :: proc() -> i32 { ... }")
 	} else if c.error_count == errors_before {
 		c.entry_point = entry
+		// design.md "Program entry and exit": a failure is printed by its type.
+		if failure, fallible := entry_failure_type(c, info.result); fallible {
+			request_typeid(c, failure)
+			c.format_requested = true
+		}
 	}
+}
+
+// design.md "Program entry and exit": `main` may return a fallible union whose
+// success carries nothing, such as `Result(Unit, E)`.
+entry_result_is_fallible :: proc(c: ^Compiler, result: Type_Id) -> bool {
+	_, fallible := entry_failure_type(c, result)
+	return fallible
+}
+
+// What the startup code prints for a failing `main`: the failure's payload,
+// or the whole union when the failure carries none.
+entry_failure_type :: proc(c: ^Compiler, result: Type_Id) -> (Type_Id, bool) {
+	under := type_underlying(c, result)
+	info := type_of(c, under)
+	if info == nil || info.kind != .Union || !info.failure_designated || len(info.variants) != 2 {
+		return INVALID_TYPE, false
+	}
+	success := info.variants[1 - info.failure_variant]
+	if success != TYPE_VOID && success != c.unit_type {
+		return INVALID_TYPE, false
+	}
+	failure := info.variants[info.failure_variant]
+	return failure == TYPE_VOID ? result : failure, true
 }
 
 // design.md "@(export)": a whole-program pass, so clashing external symbols are

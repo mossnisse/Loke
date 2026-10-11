@@ -5407,7 +5407,19 @@ A Loke program contains one or more packages. A Loke source file uses the `.loke
 
 ### Program entry and exit
 
-An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()` or `main :: proc() -> i32`: no parameters, the `loke` calling convention. Command-line arguments are read from `os.args`. When `main` returns normally, the exit status is its result, or 0 when it has none. `os.exit(status: i32)` terminates the process immediately with the specified status; it is [`-> !`](#diverging-procedures).
+An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()`, `main :: proc() -> i32`, or `main :: proc() -> F` for a [fallible union](#typed-fallibility) `F` whose success variant carries nothing, such as `Result(Unit, E)`: no parameters, the `loke` calling convention. Command-line arguments are read from `os.args`. When `main` returns normally, the exit status is its `i32` result, or 0 when it has none.
+
+A fallible `main` exits with status 0 on success. On failure the startup code writes `error: ` and the failure payload, as a formatted [`panic`](#built-in-procedures) prints its arguments, and a newline to standard error, after anything the program wrote to standard output; it then drops the payload and exits with status 1. A failure variant with no payload prints the whole value, such as `.failed`. The program need not import `core:fmt`. This is what lets `main` use `or_return`:
+
+```odin
+main :: proc() -> Result(Unit, Config_Error) {
+	config := load_config("app.conf") or_return;
+	run(config);
+	return .ok;
+}
+```
+
+`os.exit(status: i32)` terminates the process immediately with the specified status; it is [`-> !`](#diverging-procedures).
 
 Program startup has this order:
 
@@ -5418,7 +5430,7 @@ Importing a package does not run package code. A package that needs runtime init
 
 Normal return from `main` runs its scope-exit actions before the process ends. Managed values at file scope are [not dropped](#values-that-outlive-every-scope). `os.exit` terminates immediately. It does not run `defer`, automatic `drop`, or thread-local cleanup. A [panic](#panics-and-unwinding) follows its selected panic strategy.
 
-A status returned from `main` takes effect after those scope-exit actions, so cleanup runs before a nonzero exit:
+A status returned from `main`, or a failure it reports, takes effect after those scope-exit actions, so cleanup runs before a nonzero exit:
 
 ```odin
 main :: proc() -> i32 {

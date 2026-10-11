@@ -54,6 +54,7 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_flush_stdout()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_args_init(i32, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
@@ -437,6 +438,54 @@ emit_formatted_panic :: proc(e: ^Emitter, v: ^Expr_Call, message_index: int, fal
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_panic_end()")
 	fmt.sbprintln(&e.b, "  unreachable")
 	e.terminated = true
+}
+
+// design.md "Program entry and exit": a `main` returning a fallible union
+// exits 0 on success. On failure, after `main`'s own cleanup, the startup code
+// prints `error: ` and the failure to standard error as a formatted panic
+// prints its arguments, drops it, and exits 1.
+@(private)
+emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: Type_Id, attributes: string) -> string {
+	under := type_underlying(e.c, result)
+	value := ""
+	if returns_sret(e, result, false) {
+		value = temporary_slot(e, result)
+		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)%s", entry, value, attributes)
+	} else {
+		value = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call %s %s()%s", value, llvm_type(e, result), entry, attributes)
+	}
+	slot := emit_union_spill(e, under, value)
+	failed := emit_union_failed(e, under, value)
+	status := alloca(e, "i32")
+	fmt.sbprintfln(&e.b, "  store i32 0, ptr %s", status)
+	report, done := new_label(e, "main.failed"), new_label(e, "main.done")
+	branch_if(e, failed, report, done)
+
+	place_label(e, report)
+	// What the program printed comes first, even when both streams are redirected.
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_flush_stdout()")
+	writer := alloca(e, "{ ptr, ptr }")
+	strings.write_string(&e.b, strings.concatenate({
+		"  store { ptr, ptr } { ptr inttoptr (i64 ", fmt.tprint(SINK_STDERR), " to ptr), ptr ", SINK_STD_WITNESS, " }, ptr ", writer, "\n",
+	}))
+	prefix := text_literal_global(e, "error: ")
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 7)", writer, prefix)
+	data := slot
+	if failure != result {
+		data = gep_field(e, llvm_type(e, under), slot, 0)
+	}
+	emit_format_dispatch_at(e, data, fmt.tprintf("%d", typeid_value(e.c, failure)), writer, PANIC_OPTIONS)
+	newline := text_literal_global(e, "\n")
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 1)", writer, newline)
+	if emit_lifecycle(e, failure).managed {
+		emit_drop_place(e, failure, data)
+	}
+	fmt.sbprintfln(&e.b, "  store i32 1, ptr %s", status)
+	branch(e, done)
+
+	place_label(e, done)
+	return load(e, "i32", status)
 }
 
 // A synthesized body copying a move-only value is dead (L0491), so it aborts

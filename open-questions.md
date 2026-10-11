@@ -471,8 +471,8 @@ divergence it found is in
 The core holds together: one capability axis spelled `mut`, non-null
 references with `Option` niches, fallibility by union shape, exhaustive
 switches, checked arithmetic and conversions, definition-site lookup, and
-hermetic compile-time evaluation. Most proposals here are about where everyday
-code meets that core: printing, map keys, early exits, error plumbing, and
+hermetic compile-time evaluation. Most proposals were about where everyday code
+meets that core: printing, map keys, early exits, error plumbing, and
 temporaries. The structural concern is that more checking depends on inferred,
 whole-program facts than a library's signatures show; see
 [No public mutable globals](#no-public-mutable-globals) and
@@ -490,12 +490,12 @@ the headings named, and comments.md records the reasoning:
   names").
 - A checked pointer prints as its referent ("String format printing").
 - A record that keeps its generated `==` gets a generated `hash` ("Maps").
+- `main` may return a fallible union ("Program entry and exit").
 
 ### Recommended order
 
 | Priority | Proposal | Main benefit |
 | --- | --- | --- |
-| Next | `main` may return a fallible union | `or_return` in `main`, a failing exit status |
 | Later | One temporary-lifetime rule | Three lifetime rules become one |
 | Later | Field bindings in a case | Recursive unions without clones |
 | Later | A failure-only `defer` | Rollback without a flag |
@@ -503,17 +503,6 @@ the headings named, and comments.md records the reasoning:
 | Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
 | Later | No public mutable globals | Effects stop crossing packages invisibly |
 | Later | Test procedures | Unit tests for package-private code |
-
-### `main` may return a fallible union
-
-`or_return` needs a fallible result, and `main` returns nothing or an `i32`, so
-a program that can fail ends in a switch at the top. The examples show what
-that costs: `greeting.loke` and `keys.loke` print the error and exit with
-status 0. Accept a `main` that returns a [fallible union](design.md#typed-fallibility)
-whose success carries no payload, such as `Result(Unit, E)`. On failure the
-runtime prints the failure payload to standard error, as `panic` prints its
-arguments without `core:fmt`, and exits with status 1, after scope-exit cleanup
-as for an `i32` status. Rust's `main` returning `Result` is the precedent.
 
 ### One temporary-lifetime rule
 

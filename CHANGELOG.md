@@ -472,6 +472,11 @@ checklist.
 
 ### Added
 
+- `main` may return a fallible union whose success carries nothing, such as
+  `Result(Unit, E)`, so it can use `or_return` (design.md "Program entry and
+  exit"). A failure is printed to standard error as `error: ` and its payload,
+  after `main`'s cleanup and anything already printed, and the exit status is
+  1; success exits 0.
 - A struct, union, or anonymous record that keeps its generated `==` gets a
   generated `hash`, so `map[Point]int` needs no hand-written pair for
   `Point :: struct { x, y: int }` (design.md "Maps"). It exists when every

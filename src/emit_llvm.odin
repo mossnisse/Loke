@@ -658,6 +658,8 @@ emit_entry :: proc(e: ^Emitter) {
 	if symbol := symbol_of(e.c, e.c.entry_point); symbol != nil && symbol.result == TYPE_I32 {
 		status = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i32 %s()%s", status, entry, attributes)
+	} else if failure, fallible := entry_failure_type(e.c, symbol.result); symbol != nil && fallible {
+		status = emit_entry_failure_report(e, entry, symbol.result, failure, attributes)
 	} else {
 		fmt.sbprintfln(&e.b, "  call void %s()%s", entry, attributes)
 	}

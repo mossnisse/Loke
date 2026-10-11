@@ -1,0 +1,10 @@
+// design.md "Program entry and exit": a `main` returning a fallible union that
+// succeeds exits with status 0 and prints nothing more.
+package main;
+
+import "core:fmt";
+
+main :: proc() -> Result(Unit, string) {
+	fmt.println("done");
+	return .ok;
+}
