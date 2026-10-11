@@ -157,6 +157,10 @@ Function_State :: struct {
 	// design.md "Borrows and lifetimes": one frame per full expression, since a
 	// value temporary dies at its end.
 	temporaries: [dynamic][dynamic]Deferred,
+	// Owned values an operation holds while it evaluates its later operands,
+	// such as a call's earlier arguments: an `or_return` in one of those
+	// operands drops them on its own path.
+	held: [dynamic]Deferred,
 	// How many operands that may not run enclose the code being written: the
 	// right of `&&` and `||`, a conditional's arms, an `or_else` fallback.
 	conditional: int,

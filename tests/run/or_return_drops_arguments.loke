@@ -1,0 +1,23 @@
+// design.md "or_return operator": a failure found after a call's earlier
+// arguments are made returns without the call, so it drops those arguments.
+// They used to leak.
+package main;
+import "core:fmt";
+
+Tracked :: struct { name: string }
+impl Tracked {
+	done :: hook(drop) proc(self: inout Tracked) { if (self.name.len() > 0) { fmt.println("drop", self.name); } }
+}
+
+make :: proc(name: string) -> Tracked { return {name}; }
+show :: proc(t: Tracked, n: int) { fmt.println("show", t.name, n); }
+
+pass :: proc(o: Option(int)) -> Option(int) {
+	show(make("argument"), o or_return);
+	return .some(1);
+}
+
+main :: proc() {
+	fmt.println(pass(.none));
+	fmt.println(pass(.some(2)));
+}

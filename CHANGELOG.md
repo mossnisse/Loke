@@ -661,6 +661,10 @@ checklist.
 
 ### Fixed
 
+- An `or_return` that failed after a call's earlier arguments were made leaked
+  them: `show(make_tracked(), maybe or_return)` returned without dropping the
+  `make_tracked()` temporary. Such an exit now drops what the call already
+  holds.
 - A variable initialised with a parenthesised type definition, such as
   `E := (enum { a, b });` or `D := (distinct int);`, no longer declares a type
   named by the variable: only a constant declaration names a type (design.md

@@ -443,6 +443,15 @@ begin_box_release :: proc(e: ^Emitter, payload: Type_Id, block: string) -> Defer
 @(private)
 finish_temporary_drop :: proc(e: ^Emitter, entry: Deferred) {
 	unwind_clear(e, entry.slot)
+	if entry.place == "" {
+		return
+	}
+	for index := len(e.held) - 1; index >= 0; index -= 1 {
+		if e.held[index].place == entry.place {
+			ordered_remove(&e.held, index)
+			break
+		}
+	}
 }
 
 // A completed owned value borrowed by an operation. Register it before
@@ -462,7 +471,9 @@ hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> Defer
 	if !emit_lifecycle(e, type).managed { return Deferred{slot = -1} }
 	place := alloca(e, llvm_type(e, type))
 	store(e, type, value, place)
-	return begin_temporary_drop(e, type, place)
+	entry := begin_temporary_drop(e, type, place)
+	append(&e.held, entry)
+	return entry
 }
 
 // A place whose drop belongs to the innermost lexical scope, such as a variant
@@ -566,6 +577,18 @@ save_stack_for_expression :: proc(e: ^Emitter) {
 // exit that branches away owes their drops, while the fall-through path pops.
 @(private)
 drain_temporaries :: proc(e: ^Emitter, down_to: int) {
+	// An exit from inside an operation owes what it holds; its other paths
+	// still drop those values themselves, so the list survives.
+	if down_to == 0 && len(e.held) > 0 {
+		held := make([]Deferred, len(e.held))
+		defer delete(held)
+		copy(held, e.held[:])
+		for index := len(held) - 1; index >= 0; index -= 1 {
+			drop_temporary_value(e, held[index])
+		}
+		clear(&e.held)
+		append(&e.held, ..held)
+	}
 	for depth := len(e.temporaries) - 1; depth >= down_to; depth -= 1 {
 		entries := e.temporaries[depth]
 		for index := len(entries) - 1; index >= 0; index -= 1 {
