@@ -1,0 +1,10 @@
+// design.md "Comparison operators": ordering a record that holds itself by
+// value, through a `distinct` type, reports the invalid type rather than
+// recursing without end.
+package main;
+
+Node :: distinct (next: Node);
+
+less :: proc(a, b: Node) -> bool { return a < b; }
+
+main :: proc() {}

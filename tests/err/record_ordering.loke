@@ -24,3 +24,27 @@ main :: proc() {
 	values.sort();
 	_ = a; _ = b; _ = c; _ = d;
 }
+
+// A `<` in a group, and a `delegate` that forwards to a user `<`, are each a
+// comparison of the field type's own.
+Grouped :: distinct int;
+
+impl Grouped {
+	reversed :: proc(a, b: Grouped) -> bool { return int(b) < int(a); }
+	less :: operator(<) proc { reversed };
+}
+
+Forward :: distinct Reverse;
+
+impl Forward { delegate(<); }
+
+GI :: (g: Grouped, n: int);
+FI :: (f: Forward, n: int);
+
+more :: proc() {
+	e := GI{1, 0} < GI{2, 0};
+	f := FI{1, 0} < FI{2, 0};
+	sorted: [dynamic]FI = {};
+	sorted.sort();
+	_ = e; _ = f;
+}

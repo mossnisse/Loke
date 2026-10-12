@@ -21,3 +21,17 @@ its 1st field is `[2]int`, which is not ordered
 L0651
 @24:2
 its element `(flag: bool, n: int)` does not satisfy `interfaces.Ordered`: its field `flag` is `bool`, which is not ordered
+
+L0355
+@45:16
+`<` does not order `(g: Grouped, n: int)`
+its field `g` is `Grouped`, which declares a comparison operator of its own
+
+L0355
+@46:16
+`<` does not order `(f: Forward, n: int)`
+its field `f` is `Forward`, which declares a comparison operator of its own
+
+L0651
+@48:2
+its element `(f: Forward, n: int)` does not satisfy `interfaces.Ordered`: its field `f` is `Forward`, which declares a comparison operator of its own

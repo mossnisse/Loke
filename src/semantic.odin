@@ -1760,30 +1760,55 @@ type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	case .Pointer, .C_Pointer, .Raw_Pointer:
 		return true
 	case .Struct:
-		info := underlying_info(c, id)
-		return info != nil && info.anonymous_record && record_order_blocker(c, id) == ""
+		seen: Type_Walk
+		defer delete(seen)
+		return record_order_blocker_walk(c, id, &seen) == ""
 	}
 	return false
 }
 
 // design.md "Comparison operators": an anonymous record is ordered when every
 // field is, by the built-in operators. Answers what stops it, as a diagnostic
-// note, or "" when nothing does. A record cannot hold itself by value, so the
-// recursion through `type_is_ordered` ends.
+// note, or "" when nothing does.
 record_order_blocker :: proc(c: ^Compiler, id: Type_Id) -> string {
 	info := underlying_info(c, id)
-	if info == nil || !info.anonymous_record {
+	if info == nil || info.kind != .Struct || !info.anonymous_record {
 		return ""
 	}
+	seen: Type_Walk
+	defer delete(seen)
+	return record_order_blocker_walk(c, id, &seen)
+}
+
+// `seen` holds the records being walked, so one met again is a cycle: a record
+// that holds itself by value through a `distinct` type is diagnosed, but still
+// reaches body checking. A record met twice side by side is no cycle.
+@(private = "file")
+record_order_blocker_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> string {
+	under := type_underlying(c, id)
+	info := type_of(c, under)
+	if info == nil || info.kind != .Struct || !info.anonymous_record {
+		return "is not an anonymous record"
+	}
+	if !type_walk_enter(seen, under, info) {
+		return "holds itself by value"
+	}
+	defer delete_key(seen, under)
 	for field, index in info.fields {
 		symbol := symbol_of(c, field)
 		if symbol == nil {
 			return "a field's type did not resolve"
 		}
 		why := ""
+		field_ordered := false
+		if underlying_kind(c, symbol.type) == .Struct {
+			field_ordered = record_order_blocker_walk(c, symbol.type, seen) == ""
+		} else {
+			field_ordered = type_is_ordered(c, symbol.type)
+		}
 		if type_declares_comparison(c, symbol.type) {
 			why = "declares a comparison operator of its own"
-		} else if !type_is_ordered(c, symbol.type) {
+		} else if !field_ordered {
 			why = "is not ordered"
 		} else {
 			continue
@@ -1806,25 +1831,54 @@ record_order_blocker :: proc(c: ^Compiler, id: Type_Id) -> string {
 	return ""
 }
 
-// Whether the type, or the type a `distinct` one is over, declares a comparison
-// operator of its own; a delegated one forwards to the built-in operator.
+// Whether the type declares a comparison operator of its own over two of its
+// values. A group declares one when a member does, and a `delegate` does when
+// it forwards, however indirectly, to a user operator rather than the built-in
+// one (design.md "Delegating operators"). A `distinct` type that delegates
+// nothing compares by its underlying built-in operators.
 @(private = "file")
 type_declares_comparison :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	for type in ([2]Type_Id{id, type_underlying(c, id)}) {
-		info := type_of(c, type)
-		if info == nil {
+	info := type_of(c, id)
+	if info == nil {
+		return false
+	}
+	for member in info.members {
+		sym := symbol_of(c, member)
+		if sym == nil {
 			continue
 		}
-		for member in info.members {
-			sym := symbol_of(c, member)
-			if sym == nil || sym.delegated || !operator_on_self(sym, type) {
-				continue
-			}
-			switch sym.operator {
-			case "==", "!=", "<", "<=", ">", ">=":
-				return true
-			}
+		switch sym.operator {
+		case "==", "!=", "<", "<=", ">", ">=":
+		case:
+			continue
 		}
+		if sym.kind == .Proc_Group {
+			for nested in sym.members {
+				if inner := symbol_of(c, nested); inner != nil && operator_on_self(inner, id) &&
+				   !operator_is_builtin(c, inner) {
+					return true
+				}
+			}
+		} else if operator_on_self(sym, id) && !operator_is_builtin(c, sym) {
+			return true
+		}
+	}
+	return false
+}
+
+// A delegated operator with no target is the built-in one; one with a target
+// forwards to that operator, which may itself delegate.
+@(private = "file")
+operator_is_builtin :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
+	current := sym
+	for _ in 0 ..< len(c.symbols) + 1 {
+		if current == nil || !current.delegated {
+			return false
+		}
+		if current.delegate_target == INVALID_SYMBOL {
+			return true
+		}
+		current = symbol_of(c, current.delegate_target)
 	}
 	return false
 }

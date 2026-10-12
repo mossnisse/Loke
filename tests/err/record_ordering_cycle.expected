@@ -1,0 +1,11 @@
+L0364
+@6:1
+`Node` contains itself by value
+
+L0717
+@6:9
+`distinct` does not make an anonymous record nominal
+
+L0355
+@8:45
+`<` does not order `Node`
