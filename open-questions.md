@@ -465,8 +465,8 @@ read design.md and grammar.md in full, checked each idea against comments.md
 and the questions above, and confirmed every behavior it cites with the
 shipped compiler at `1ba3c84`. Backward compatibility is not a constraint; a
 proposal that reverses a recorded decision says so. The compiler/spec
-divergence it found is in
-[known-gaps.md](known-gaps.md#rune-constants-convert-to-integer-and-floating-point-types).
+divergence it found, rune constants converting to floating-point types, has
+since been fixed.
 
 The core holds together: one capability axis spelled `mut`, non-null
 references with `Option` niches, fallibility by union shape, exhaustive
@@ -480,8 +480,9 @@ whole-program facts than a library's signatures show; see
 
 ### Adopted
 
-These proposals ranked "Next" were adopted. design.md defines each under
-the headings named, and comments.md records the reasoning:
+These proposals, the ones ranked "Next" and the smaller items since, were
+adopted. design.md defines each under the headings named, and comments.md
+records the reasoning:
 
 - `in` tests ranges, which bind tighter than comparison ("Ranges",
   "Operator precedence").
@@ -491,6 +492,8 @@ the headings named, and comments.md records the reasoning:
 - A checked pointer prints as its referent ("String format printing").
 - A record that keeps its generated `==` gets a generated `hash` ("Maps").
 - `main` may return a fallible union ("Program entry and exit").
+- An anonymous record whose fields are ordered orders lexicographically
+  ("Comparison operators").
 
 ### Recommended order
 
@@ -617,10 +620,6 @@ no new syntax.
 
 ### Smaller items
 
-- **Ordered anonymous records.** Sorting by `(priority, id)` needs a
-  comparator. An anonymous record has no encapsulation to protect and its field
-  order is its identity, so generate a lexicographic `<` where every field is
-  `Ordered`. A struct keeps writing its own.
 - **A name for non-null handles.** [Types with no zero value](design.md#types-with-no-zero-value)
   lists `shared(T)` as a *reference*, then says a reference "is still a borrow,
   checked as one", which an owning handle is not. [Representation](design.md#representation)

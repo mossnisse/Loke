@@ -358,6 +358,22 @@ a declaration. Instead, `struct` declares a type and parentheses describe one.
 Inline anonymous `struct { ... }` types and `distinct` over anonymous records
 would add nominal identities without useful ownership, so they are rejected.
 
+### Ordered anonymous records
+
+Sorting by `(priority, id)` would otherwise need a comparator. An anonymous
+record has no encapsulation to protect, and its field order is its identity, so
+lexicographic order is the only one it can mean. A struct may reorder its
+fields, so it keeps writing its own `<`.
+
+The first unequal field decides, rather than the first field where either
+operand is less. A record of one float then orders exactly as the float does,
+NaN included, and the four operators need only each field's `==` and `<`, as
+`interfaces.Ordered` provides. A field whose type declares its own comparison
+makes the record unordered. Comparing that field by the built-in operator would
+contradict its type, and calling the type's operators would make record order
+run user code; that can come later if programs need it. See
+[Comparison operators](design.md#comparison-operators).
+
 ### Distinct types
 
 A `distinct` type inherits comparisons but no other operators by default.

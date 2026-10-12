@@ -1,0 +1,11 @@
+true false true
+false true
+true false
+true true
+false false false true
+false true true false
+(1, "y")
+[(priority = 1, id = 3), (priority = 1, id = 9), (priority = 2, id = 1)]
+[("b", 2), ("b", 1), ("a", 3)]
+[(1, 1), (1, 2), (3, 1)]
+mid

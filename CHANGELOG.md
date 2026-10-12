@@ -477,6 +477,13 @@ checklist.
 
 ### Added
 
+- An anonymous record whose fields are all ordered is ordered
+  lexicographically (design.md "Comparison operators"), so
+  `[dynamic](priority: int, id: int)` sorts without a comparator and such a
+  record satisfies `interfaces.Ordered`. The first unequal field decides, by
+  its own `<`. A field whose type is not ordered, or declares a comparison
+  operator of its own, leaves the record unordered, and the `L0355` or `L0651`
+  error names that field.
 - `main` may return a fallible union whose success carries nothing, such as
   `Result(Unit, E)`, so it can use `or_return` (design.md "Program entry and
   exit"). A failure is printed to standard error as `error: ` and its payload,

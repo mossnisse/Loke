@@ -1552,6 +1552,9 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 		fmt.sbprintfln(&e.b, "  %s = icmp %s i32 %s, 0", out, compare_predicate(op).signed, order)
 		return out
 	}
+	if op != .Eq_Eq && op != .Not_Eq && underlying_kind(e.c, type) == .Struct {
+		return emit_record_order(e, op, type, lhs, rhs)
+	}
 	if type_is_aggregate(e.c, type) || type_is_union(e.c, type) || type_is_erased_view(e.c, type) {
 		equal := emit_equal(e, type, lhs, rhs)
 		if op == .Eq_Eq {
@@ -1572,6 +1575,43 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 	name := signed ? predicate.signed : predicate.unsigned
 	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", out, name, llvm, lhs, rhs)
 	return out
+}
+
+// design.md "Comparison operators": an anonymous record orders by its first
+// unequal field, under that field's `<` with the operands swapped for `>` and
+// `>=`; equal records answer `<=` and `>=`. Built from the last field back, so
+// each field's answer selects between its own `<` and the fields after it.
+//
+// ponytail: every field is compared, as `emit_equal` does, rather than
+// branching at the first difference.
+@(private = "file")
+emit_record_order :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
+	under := type_underlying(e.c, type)
+	info := type_of(e.c, under)
+	large := is_large_value(e, under)
+	field_value :: proc(e: ^Emitter, record: Type_Id, large: bool, value: string, index: int, type: Type_Id) -> string {
+		if !large {
+			return extract(e, llvm_type(e, record), value, index)
+		}
+		address := element_address(e, record, value, index)
+		return is_large_value(e, type) ? address : load_place(e, type, address)
+	}
+	swapped := op == .Gt || op == .Gt_Eq
+	result := op == .Lt_Eq || op == .Gt_Eq ? "true" : "false"
+	for index := len(info.fields) - 1; index >= 0; index -= 1 {
+		field := symbol_of(e.c, info.fields[index]).type
+		left := field_value(e, under, large, lhs, index, field)
+		right := field_value(e, under, large, rhs, index, field)
+		if swapped {
+			left, right = right, left
+		}
+		equal := emit_equal(e, field, left, right)
+		less := emit_compare(e, .Lt, field, left, right)
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", out, equal, result, less)
+		result = out
+	}
+	return result
 }
 
 // Structural equality, since LLVM has no aggregate `icmp`.

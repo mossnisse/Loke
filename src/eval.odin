@@ -1081,8 +1081,27 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 		return equal == (op == .Eq_Eq), true
 	}
 	if a.kind == .Aggregate && b.kind == .Aggregate {
+		// design.md "Comparison operators": an anonymous record orders by its
+		// first unequal field, and equal records answer `<=` and `>=`.
 		if op != .Eq_Eq && op != .Not_Eq {
-			return false, false
+			if len(a.elements) != len(b.elements) || !type_is_ordered(ev.k.c, a.type) {
+				return false, false
+			}
+			for element, index in a.elements {
+				other := b.elements[index]
+				equal, ok := eval_compare(ev, .Eq_Eq, element, other)
+				if !ok {
+					return false, false
+				}
+				if equal {
+					continue
+				}
+				if op == .Gt || op == .Gt_Eq {
+					return eval_compare(ev, .Lt, other, element)
+				}
+				return eval_compare(ev, .Lt, element, other)
+			}
+			return op == .Lt_Eq || op == .Gt_Eq, true
 		}
 		// design.md "Comparison operators": a part with its own `==` runs it.
 		if equal := type_own_equality(ev.k.c, a.type); equal != INVALID_SYMBOL {

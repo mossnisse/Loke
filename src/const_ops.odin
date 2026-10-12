@@ -422,7 +422,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		return (a.type_value == b.type_value) == (op == .Eq_Eq), true
 	case a.kind == .Aggregate && b.kind == .Aggregate:
 		if op != .Eq_Eq && op != .Not_Eq {
-			return false, false
+			return aggregate_order(c, op, a.aggregate, b.aggregate, storage)
 		}
 		equal := aggregate_equal(c, a.aggregate, b.aggregate, storage)
 		return equal == (op == .Eq_Eq), true
@@ -486,6 +486,30 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 		}
 	}
 	return true
+}
+
+// design.md "Comparison operators": an anonymous record orders by its first
+// unequal field, and equal records answer `<=` and `>=`.
+@(private = "file")
+aggregate_order :: proc(c: ^Compiler, op: Token_Kind, a, b: ^Const_Aggregate, allocator: mem.Allocator) -> (bool, bool) {
+	if a == nil || b == nil || len(a.elements) != len(b.elements) || !type_is_ordered(c, a.type) {
+		return false, false
+	}
+	for element, index in a.elements {
+		other := b.elements[index]
+		equal, ok := fold_comparison(c, .Eq_Eq, element, other, allocator)
+		if !ok {
+			return false, false
+		}
+		if equal {
+			continue
+		}
+		if op == .Gt || op == .Gt_Eq {
+			return fold_comparison(c, .Lt, other, element, allocator)
+		}
+		return fold_comparison(c, .Lt, element, other, allocator)
+	}
+	return op == .Lt_Eq || op == .Gt_Eq, true
 }
 
 // One lane at a time at the element type. A non-aggregate operand is a

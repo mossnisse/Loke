@@ -2319,6 +2319,9 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 			)
 		} else {
 			errorf(k.c, v.op_span, "L0355", "`%s` does not order `%s`", operator_text(v.op), type_name(k.c, operand_type))
+			if blocker := record_order_blocker(k.c, operand_type); blocker != "" {
+				add_notef(k.c, v.op_span, "an anonymous record is ordered when every field is; %s", blocker)
+			}
 		}
 		v.type = INVALID_TYPE
 		return

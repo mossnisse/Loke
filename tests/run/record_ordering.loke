@@ -1,0 +1,71 @@
+// design.md "Comparison operators": an anonymous record whose fields are all
+// ordered is ordered lexicographically. The first unequal field decides, so a
+// NaN field ends the comparison false, as it does for the float itself; equal
+// records are `<=` and `>=`. It holds at run time, in constants, at compile
+// time, through `interfaces.Ordered`, in a sort, and in a switch range case.
+package main;
+
+import "base:interfaces";
+import "core:fmt";
+import "core:slice";
+
+Color :: enum { Red, Green, Blue }
+
+P :: (int, int);
+SI :: (int, string);
+IS :: (string, int);
+Named :: (x: string, n: int);
+Nest :: (P, int);
+CI :: (Color, int);
+FI :: (f64, int);
+F :: (x: f64);
+Plain :: distinct int;
+DI :: (d: Plain, n: int);
+Big :: (a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: string);
+
+smallest :: proc(values: []$T) -> T where interfaces.Ordered(T) {
+	best := values[0];
+	foreach (value in values) {
+		if (value < best) { best = value; }
+	}
+	return best;
+}
+
+ORDERED :: SI{1, "b"} < SI{1, "c"};
+static_assert(ORDERED);
+static_assert(P{2, 0} > P{1, 9});
+static_assert(P{1, 1} <= P{1, 1} && !(P{1, 1} < P{1, 1}));
+static_assert(Nest{P{1, 2}, 9} < Nest{P{1, 3}, 0});
+
+sorted_at_compile_time :: proc() -> [3]P {
+	values: [dynamic]P = {{3, 1}, {1, 2}, {1, 1}};
+	values.sort();
+	return {values[0], values[1], values[2]};
+}
+SORTED :: sorted_at_compile_time();
+
+main :: proc() {
+	fmt.println(P{1, 2} < P{1, 3}, P{1, 2} < P{0, 9}, P{1, 2} >= P{1, 2});
+	fmt.println(Named{x = "apple", n = 2} < Named{x = "apple", n = 1}, IS{"b", 1} > IS{"a", 9});
+	fmt.println(Nest{P{1, 2}, 3} < Nest{P{1, 2}, 4}, Nest{P{1, 3}, 0} < Nest{P{1, 2}, 9});
+	fmt.println(CI{.Green, 1} < CI{.Blue, 0}, DI{1, 1} < DI{2, 0});
+	zero := 0.0;
+	nan := zero / zero;
+	fmt.println(FI{nan, 1} < FI{nan, 2}, FI{nan, 1} <= FI{nan, 1}, F{nan} <= F{nan}, FI{1.0, 5} < FI{2.0, 0});
+	p: Big = {1, 2, 3, 4, 5, 6, 7, "z"};
+	q: Big = {1, 2, 3, 4, 5, 6, 7, "a"};
+	fmt.println(p < q, p > q, p <= p, q >= p);
+	fmt.println(smallest([]SI{{2, "x"}, {1, "z"}, {1, "y"}}));
+	tasks: [dynamic](priority: int, id: int) = {{2, 1}, {1, 9}, {1, 3}};
+	tasks.sort();
+	fmt.println(tasks);
+	words: [dynamic]IS = {{"b", 2}, {"a", 3}, {"b", 1}};
+	slice.reverse_sort(&mut words[:]);
+	fmt.println(words);
+	fmt.println(SORTED);
+	switch (P{2, 5}) {
+	case P{1, 0} ..< P{2, 0}: fmt.println("low");
+	case P{2, 0} ..= P{2, 9}: fmt.println("mid");
+	case: fmt.println("high");
+	}
+}

@@ -1,0 +1,26 @@
+// design.md "Comparison operators": an anonymous record is ordered only when
+// every field is ordered by the built-in operators; the note names the field
+// that is not. A struct, or a type with a comparison of its own, is not.
+package main;
+
+Point :: struct { x, y: int }
+Reverse :: distinct int;
+
+impl Reverse {
+	less :: operator(<) proc(a, b: Reverse) -> bool { return int(b) < int(a); }
+}
+
+BI :: (flag: bool, n: int);
+PI :: (p: Point, n: int);
+RI :: (r: Reverse, n: int);
+AI :: ([2]int, int);
+
+main :: proc() {
+	a := BI{true, 1} < BI{false, 2};
+	b := PI{{1, 2}, 1} >= PI{{1, 2}, 2};
+	c := RI{1, 1} < RI{2, 1};
+	d := AI{{1, 2}, 1} > AI{{1, 2}, 1};
+	values: [dynamic]BI = {};
+	values.sort();
+	_ = a; _ = b; _ = c; _ = d;
+}

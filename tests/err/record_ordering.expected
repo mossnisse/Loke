@@ -1,0 +1,23 @@
+L0355
+@19:19
+`<` does not order `(flag: bool, n: int)`
+its field `flag` is `bool`, which is not ordered
+
+L0355
+@20:21
+`>=` does not order `(p: Point, n: int)`
+its field `p` is `Point`, which is not ordered
+
+L0355
+@21:16
+`<` does not order `(r: Reverse, n: int)`
+its field `r` is `Reverse`, which declares a comparison operator of its own
+
+L0355
+@22:21
+`>` does not order `([2]int, int)`
+its 1st field is `[2]int`, which is not ordered
+
+L0651
+@24:2
+its element `(flag: bool, n: int)` does not satisfy `interfaces.Ordered`: its field `flag` is `bool`, which is not ordered

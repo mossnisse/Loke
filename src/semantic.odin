@@ -1759,6 +1759,72 @@ type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	// total order within one execution (design.md).
 	case .Pointer, .C_Pointer, .Raw_Pointer:
 		return true
+	case .Struct:
+		info := underlying_info(c, id)
+		return info != nil && info.anonymous_record && record_order_blocker(c, id) == ""
+	}
+	return false
+}
+
+// design.md "Comparison operators": an anonymous record is ordered when every
+// field is, by the built-in operators. Answers what stops it, as a diagnostic
+// note, or "" when nothing does. A record cannot hold itself by value, so the
+// recursion through `type_is_ordered` ends.
+record_order_blocker :: proc(c: ^Compiler, id: Type_Id) -> string {
+	info := underlying_info(c, id)
+	if info == nil || !info.anonymous_record {
+		return ""
+	}
+	for field, index in info.fields {
+		symbol := symbol_of(c, field)
+		if symbol == nil {
+			return "a field's type did not resolve"
+		}
+		why := ""
+		if type_declares_comparison(c, symbol.type) {
+			why = "declares a comparison operator of its own"
+		} else if !type_is_ordered(c, symbol.type) {
+			why = "is not ordered"
+		} else {
+			continue
+		}
+		which := fmt.tprintf("field `%s`", identifier_text(c, symbol.name))
+		if field_is_positional(c, field) {
+			position := index + 1
+			suffix := "th"
+			if position % 100 < 11 || position % 100 > 13 {
+				switch position % 10 {
+				case 1: suffix = "st"
+				case 2: suffix = "nd"
+				case 3: suffix = "rd"
+				}
+			}
+			which = fmt.tprintf("%d%s field", position, suffix)
+		}
+		return fmt.tprintf("its %s is `%s`, which %s", which, type_name(c, symbol.type), why)
+	}
+	return ""
+}
+
+// Whether the type, or the type a `distinct` one is over, declares a comparison
+// operator of its own; a delegated one forwards to the built-in operator.
+@(private = "file")
+type_declares_comparison :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	for type in ([2]Type_Id{id, type_underlying(c, id)}) {
+		info := type_of(c, type)
+		if info == nil {
+			continue
+		}
+		for member in info.members {
+			sym := symbol_of(c, member)
+			if sym == nil || sym.delegated || !operator_on_self(sym, type) {
+				continue
+			}
+			switch sym.operator {
+			case "==", "!=", "<", "<=", ">", ">=":
+				return true
+			}
+		}
 	}
 	return false
 }

@@ -8,6 +8,8 @@
 // each element type's clone, drop, hash, and compare operations.
 package lokec
 
+import "core:fmt"
+
 // design.md "Container insertion": a `try_` form copies its element in, so a
 // failure leaves the caller's argument untouched, and a move-only element has
 // no such form.
@@ -410,6 +412,9 @@ resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Order_P
 	}
 	if type_is_ordered(c, element) {
 		return Order_Policy{kind = .Builtin}, ""
+	}
+	if blocker := record_order_blocker(c, element); blocker != "" {
+		return Order_Policy{}, fmt.tprintf("does not satisfy `interfaces.Ordered`: %s", blocker)
 	}
 	return Order_Policy{}, "does not satisfy `interfaces.Ordered`: it has no `<`"
 }
