@@ -310,10 +310,10 @@ warn_thread_races :: proc(c: ^Compiler) {
 }
 
 // Dropping a value runs its `hook(drop)`s, which write what a call of each
-// would.
-prov_drop_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span, dropped := "") {
+// would. `dropped` names the value, as source text unless it is `unnamed`.
+prov_drop_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span, dropped := "", unnamed := false) {
 	for hook in type_drop_hooks(graph.k.c, type) {
-		prov_effect_call(graph, Effect_Call{callee = hook}, span, dropped)
+		prov_effect_call(graph, Effect_Call{callee = hook}, span, dropped, unnamed = unnamed)
 	}
 }
 
@@ -351,7 +351,7 @@ prov_scope_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 }
 
 @(private = "file")
-prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dropped := "", described := "") {
+prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dropped := "", described := "", unnamed := false) {
 	c := graph.k.c
 	if !c.global_writes_ready {
 		append(&graph.effect_calls, target)
@@ -360,7 +360,9 @@ prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dr
 	name := ""
 	if described != "" {
 		name = described
-	} else if sym := symbol_of(c, target.callee); sym != nil && dropped != "" {
+	} else if sym := symbol_of(c, target.callee); sym != nil && dropped != "" && unnamed {
+		name = fmt.tprintf("modified by `%s` when %s is dropped", identifier_text(c, sym.name), dropped)
+	} else if sym != nil && dropped != "" {
 		name = fmt.tprintf("modified by `%s` when `%s` is dropped", identifier_text(c, sym.name), dropped)
 	} else if sym != nil {
 		name = fmt.tprintf("modified by `%s`", identifier_text(c, sym.name))

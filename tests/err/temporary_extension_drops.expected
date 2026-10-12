@@ -1,0 +1,11 @@
+L0512
+@23:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+and is still used when this is dropped at the end of its scope
+L0512
+@32:2
+`values` cannot be dropped here: a read-only slice of it is still in use
+and is still used when this is dropped at the end of its scope
+L0512
+@60:20
+`shared_values` cannot be modified by `retire` when this temporary is dropped here

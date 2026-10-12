@@ -378,7 +378,7 @@ symbol_outlives_bodies :: proc(sym: ^Symbol) -> bool {
 
 @(private = "file")
 prov_new_root :: proc(graph: ^Flow_Graph, kind: Root_Kind, span: Span, name: string) -> Root_Id {
-	append(&graph.roots, Prov_Root{kind = kind, span = span, name = name, param_index = -1})
+	append(&graph.roots, Prov_Root{kind = kind, span = span, name = name, param_index = -1, content = -1})
 	return Root_Id(len(graph.roots) - 1)
 }
 
@@ -868,6 +868,22 @@ prov_drop_use :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span, at_scope_ex
 		}
 		graph.scope_drops[span] = true
 	}
+}
+
+// design.md "Temporaries and procedure boundaries": an extended temporary is
+// dropped with its block's locals. Nothing can name it, so nothing moves it
+// first: its drop hooks always run there, and what they read stays live.
+@(private)
+prov_extended_drop :: proc(graph: ^Flow_Graph, root: Prov_Root, effects_at, span: Span) {
+	prov_drop_effects(graph, root.dropped, effects_at, "this temporary", unnamed = true)
+	if root.content < 0 {
+		return
+	}
+	prov_emit(graph, Prov_Event{kind = .Live, sources = prov_one(graph, root.content), span = span})
+	if graph.scope_drops == nil {
+		graph.scope_drops = make(map[Span]bool, 4, graph.alloc)
+	}
+	graph.scope_drops[span] = true
 }
 
 // A dropped or moved-out local holds no borrows until it is assigned again.
@@ -1396,7 +1412,7 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	// A temporary ends with its statement unless a local's value extends it
 	// (design.md "Temporaries and procedure boundaries"), and the view with it.
 	if !expr_base(e).is_const {
-		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e), nil, false, span, "view"))
+		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e, loans), nil, false, span, "view"))
 	}
 	if len(loans) > 0 {
 		return loans
@@ -1437,7 +1453,7 @@ prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	if base.is_const || !prov_expr_is_temporary(e) {
 		return loans
 	}
-	return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e), nil, false, span, noun))
+	return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e, loans), nil, false, span, noun))
 }
 
 // A compiler-created root ending with its scope.
@@ -3061,7 +3077,7 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 		}
 		// A borrow of a temporary cannot escape its expression (design.md), even
 		// when the temporary also holds borrows, as `&box(view)^` does.
-		temporary := prov_borrow(graph, prov_temp_root_of(graph, operand), nil, mutable, span, what)
+		temporary := prov_borrow(graph, prov_temp_root_of(graph, operand, loans), nil, mutable, span, what)
 		return prov_join(graph, loans, temporary)
 	}
 	prov_walk_subscripts(graph, operand)
@@ -3122,7 +3138,7 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 		return source
 	}
 	if prov_expr_is_temporary(v.operand) {
-		temporary := prov_borrow(graph, prov_temp_root_of(graph, v.operand), nil, mutable, v.span, "slice")
+		temporary := prov_borrow(graph, prov_temp_root_of(graph, v.operand, source), nil, mutable, v.span, "slice")
 		return prov_join(graph, source, temporary)
 	}
 	return source
@@ -3171,16 +3187,62 @@ prov_temp_root :: proc(graph: ^Flow_Graph, span: Span) -> Root_Id {
 
 // The root of the temporary `e` holds: one ending with its block when the
 // statement extends it (design.md "Temporaries and procedure boundaries"), and
-// with the statement otherwise.
+// with the statement otherwise. `content` is what the borrowed value carries.
 @(private)
-prov_temp_root_of :: proc(graph: ^Flow_Graph, e: Expr) -> Root_Id {
+prov_temp_root_of :: proc(graph: ^Flow_Graph, e: Expr, content: []int) -> Root_Id {
 	span := expr_span(e)
 	if !graph.extended[expr_base(e)] {
 		return prov_temp_root(graph, span)
 	}
 	root := prov_hidden_root(graph, span, "this temporary")
-	graph.roots[int(root)].extended = true
+	extended := &graph.roots[int(root)]
+	extended.extended = true
+	// Dropped with the block's locals, so its drop hooks run there and read
+	// what it borrows then, as a named local's would (design.md "Global write
+	// effects", "Capabilities and the one rule").
+	holder := extended_temporary(e)
+	extended.dropped = expr_base(holder).type
+	if erased := expr_base(holder).erased_from; erased != INVALID_TYPE {
+		extended.dropped = erased
+	}
+	held := content
+	if holder != e {
+		held = prov_join(graph, held, graph.extended_content[expr_base(holder)])
+	}
+	if len(held) > 0 && type_drop_runs_hook(graph.k.c, extended.dropped) {
+		slot := prov_temp_slot(graph)
+		prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = held, span = span})
+		graph.roots[int(root)].content = slot
+	}
 	return root
+}
+
+// The temporary that holds the borrowed value `e`: a field, an element, or a
+// box's payload is part of it. An erased value's own type is its source's.
+@(private = "file")
+extended_temporary :: proc(e: Expr) -> Expr {
+	node := e
+	for {
+		#partial switch v in node {
+		case ^Expr_Selector:
+			if v.resolution.kind == .Field {
+				node = v.operand
+				continue
+			}
+		case ^Expr_Index:
+			if v.resolution.kind != .User_Operator {
+				node = v.operand
+				continue
+			}
+		case ^Expr_Postfix:
+			if v.boxed {
+				node = v.operand
+				continue
+			}
+		}
+		break
+	}
+	return node
 }
 
 // A value no name holds, which ends with its statement: a call or literal

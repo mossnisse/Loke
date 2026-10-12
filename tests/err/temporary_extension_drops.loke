@@ -1,0 +1,71 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": an extended temporary is
+// dropped with its block's locals, so its drop hook runs at the block's end.
+// What the hook reads stays borrowed until then ("Capabilities and the one
+// rule"), and what it writes counts there ("Global write effects").
+
+Read :: struct { data: []int, n: int }
+
+impl Read {
+	retire :: hook(drop) proc(self: inout Read) { fmt.println(self.data[0]); }
+}
+
+make_read :: proc(data: []int) -> Read { return Read{data, 1}; }
+
+// Overwriting the view does not end the temporary it extended.
+overwritten :: proc() {
+	values := [dynamic]int{7};
+	view: any_view = make_read(values[:]);
+	view = 0;
+	drop(values);
+	fmt.println(view);
+}
+
+// The borrow may name one field; the whole temporary is still dropped.
+projected :: proc() {
+	values := [dynamic]int{7};
+	p := &Read{values[:], 1}.n;
+	fmt.println(p^);
+	drop(values);
+}
+
+// Without a drop hook nothing reads the slice at the block's end.
+Plain :: struct { data: []int, n: int }
+
+unhooked :: proc() {
+	values := [dynamic]int{7};
+	view: any_view = Plain{values[:], 1};
+	fmt.println(view);
+	drop(values);
+}
+
+shared_values: [dynamic]int = {};
+
+Clear :: struct { id: int }
+
+impl Clear {
+	retire :: hook(drop) proc(self: inout Clear) { shared_values = {}; }
+}
+
+make_clear :: proc() -> Clear { return Clear{1}; }
+
+// The hook's write happens where the block ends, while `borrowed` is live.
+writes_at_block_end :: proc() {
+	shared_values.append(7);
+	borrowed := shared_values[:];
+	{
+		view: any_view = make_clear();
+		fmt.println(view);
+	}
+	fmt.println(borrowed[0]);
+}
+
+main :: proc() {
+	overwritten();
+	projected();
+	unhooked();
+	writes_at_block_end();
+}

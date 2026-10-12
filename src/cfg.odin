@@ -160,6 +160,7 @@ Flow_Graph :: struct {
 	// The borrowed temporaries a statement extends to its block's end
 	// (`mark_extended_temporaries`).
 	extended:       map[^Expr_Base]bool,
+	extended_content: map[^Expr_Base][]int,
 	// Set while a panic's unwind path is walked, from the statement at
 	// `unwind_at`; its blocks are marked.
 	unwinding:      bool,
@@ -341,6 +342,7 @@ build_flow_pass :: proc(
 	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.extended = make(map[^Expr_Base]bool, 4, allocator)
+	graph.extended_content = make(map[^Expr_Base][]int, 4, allocator)
 	graph.aliased_moves = make(map[rawptr]bool, 4, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new(Prov_State, allocator)
@@ -819,13 +821,17 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr, unwinding 
 			append(&graph.in_scope, ..tail)
 			resize(&graph.owners_in_scope, owners)
 		case .Prov_Root:
-			provider_region_end(graph, graph.roots[int(action.root)].symbol, action.span, exit)
-			if unwinding {
-				unwind_drop_effects(graph, graph.roots[int(action.root)].symbol, graph.unwind_at, exit)
-			} else {
-				prov_scope_drop_effects(graph, graph.roots[int(action.root)].symbol, action.span)
+			root := graph.roots[int(action.root)]
+			if root.extended && root.dropped != INVALID_TYPE {
+				prov_extended_drop(graph, root, unwinding ? graph.unwind_at : action.span, action.span)
 			}
-			prov_drop_use(graph, graph.roots[int(action.root)].symbol, action.span, at_scope_exit = true)
+			provider_region_end(graph, root.symbol, action.span, exit)
+			if unwinding {
+				unwind_drop_effects(graph, root.symbol, graph.unwind_at, exit)
+			} else {
+				prov_scope_drop_effects(graph, root.symbol, action.span)
+			}
+			prov_drop_use(graph, root.symbol, action.span, at_scope_exit = true)
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
 		case .Local:
 			id := graph.tracked[action.slot].symbol
@@ -1835,10 +1841,17 @@ track_case_binding :: proc(graph: ^Flow_Graph, entry: Switch_Case, consumes: boo
 // Walks an expression (nil is a no-op) in evaluation order and returns the
 // carrier slots holding the loans its value carries.
 @(private)
-walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	prov := graph.mode != .Lifecycle
 	if prov {
 		prov_note_proc_value(graph, e)
+	}
+	// An extended temporary keeps what it carries live until its drop, though
+	// the borrow extending it may name only a field of it.
+	defer if prov {
+		if base := expr_base(e); base != nil && graph.extended[base] {
+			graph.extended_content[base] = carried
+		}
 	}
 	// design.md "any_view type": an erased view borrows the place it came from.
 	if prov {
