@@ -4,3 +4,6 @@ L0355
 L0355
 @11:10
 `Holder` holds `Key`, whose inherent `==` is not `@(public)`
+L0355
+@18:39
+`[1]Grouped` holds `Grouped`, whose inherent `==` is not `@(public)`

@@ -1838,28 +1838,9 @@ record_order_blocker_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -
 // nothing compares by its underlying built-in operators.
 @(private = "file")
 type_declares_comparison :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, id)
-	if info == nil {
-		return false
-	}
-	for member in info.members {
-		sym := symbol_of(c, member)
-		if sym == nil {
-			continue
-		}
-		switch sym.operator {
-		case "==", "!=", "<", "<=", ">", ">=":
-		case:
-			continue
-		}
-		if sym.kind == .Proc_Group {
-			for nested in sym.members {
-				if inner := symbol_of(c, nested); inner != nil && operator_on_self(inner, id) &&
-				   !operator_is_builtin(c, inner) {
-					return true
-				}
-			}
-		} else if operator_on_self(sym, id) && !operator_is_builtin(c, sym) {
+	for text in ([6]string{"==", "!=", "<", "<=", ">", ">="}) {
+		callable, _ := inherent_self_operator(c, id, text)
+		if sym := symbol_of(c, callable); sym != nil && !operator_is_builtin(c, sym) {
 			return true
 		}
 	}

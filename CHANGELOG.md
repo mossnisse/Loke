@@ -702,6 +702,15 @@ checklist.
 
 ### Fixed
 
+- A type's own `<` or `==` declared as a procedure group counts as its own
+  (design.md "Comparison operators", "Sorting slices"). A sort orders by a
+  grouped `<`, and a grouped `==` compares the type wherever it is nested and
+  as a map key; both used to fall back to the built-in operators. Another
+  package may compare a part by its `==` when the group is `@(public)`, as for
+  a single procedure.
+- A constant that compares a record or array holding a scalar `distinct` part
+  with its own `==` uses that `==`, as the same comparison at run time does.
+  `[1]Loose{1} == [1]Loose{2}` used to fold structurally.
 - A procedure's result keeps the borrows of globals its body put in it, so
   writing that global, directly or through a call, while the result is in use
   is `L0512` (design.md "Global write effects"). It used to compile.

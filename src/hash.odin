@@ -194,7 +194,7 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 		return Key_Policy{}, "is not a type"
 	}
 	hash := inherent_member_named(c, key, "hash")
-	equal := inherent_operator_named(c, key, "==")
+	equal, _ := inherent_operator_named(c, key, "==")
 	// Declaring either half opts out of the catalogue, so a `distinct` scalar
 	// never pairs its own `==` with its underlying type's hash.
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
@@ -256,12 +256,25 @@ inherent_member_named :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symb
 // distinct type's underlying type does. A value of the type compares by it
 // wherever it is nested, as a map key does.
 type_own_equality :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
-	if found := inherent_operator_named(c, type, "=="); found != INVALID_SYMBOL {
-		return found
+	callable, _ := own_equality(c, type)
+	return callable
+}
+
+// The declaration that `type_own_equality`'s procedure belongs to, the group
+// when it is in one: what `@(public)` is written on, so what visibility asks.
+type_own_equality_declared :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
+	_, declared := own_equality(c, type)
+	return declared
+}
+
+@(private = "file")
+own_equality :: proc(c: ^Compiler, type: Type_Id) -> (callable, declared: Symbol_Id) {
+	if callable, declared = inherent_operator_named(c, type, "=="); callable != INVALID_SYMBOL {
+		return
 	}
 	under := type_underlying(c, type)
 	if under == type {
-		return INVALID_SYMBOL
+		return INVALID_SYMBOL, INVALID_SYMBOL
 	}
 	return inherent_operator_named(c, under, "==")
 }
@@ -303,20 +316,15 @@ own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id,
 	}
 }
 
+// A delegated `==` keeps the underlying type's policy, so it is not one of the
+// type's own.
 @(private = "file")
-inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string) -> Symbol_Id {
-	info := type_of(c, type)
-	if info == nil {
-		return INVALID_SYMBOL
+inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string) -> (callable, declared: Symbol_Id) {
+	callable, declared = inherent_self_operator(c, type, symbol_text)
+	if sym := symbol_of(c, callable); sym == nil || sym.delegated {
+		return INVALID_SYMBOL, INVALID_SYMBOL
 	}
-	for member in info.members {
-		sym := symbol_of(c, member)
-		// A delegated `==` keeps the underlying type's policy.
-		if sym != nil && sym.operator == symbol_text && !sym.delegated && operator_on_self(sym, type) {
-			return member
-		}
-	}
-	return INVALID_SYMBOL
+	return
 }
 
 // --------------------------------------------------------- compile time --

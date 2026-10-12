@@ -2376,7 +2376,7 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 // not `@(public)` cannot be compared field-wise from here either.
 own_equalities_visible :: proc(k: ^Checker, owned: []Type_Id, compared: Type_Id, span: Span) -> bool {
 	for part in owned {
-		sym := symbol_of(k.c, type_own_equality(k.c, part))
+		sym := symbol_of(k.c, type_own_equality_declared(k.c, part))
 		if sym == nil || member_is_visible(k, sym) {
 			continue
 		}

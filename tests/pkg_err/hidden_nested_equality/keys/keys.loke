@@ -7,3 +7,21 @@ Key :: struct { @(public) id: int, @(public) annotation: int }
 impl Key {
 	equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
 }
+
+// A group is what `@(public)` is written on, so its private member does not
+// hide it, and a group left private hides the operator.
+@(public)
+Shown :: struct { @(public) id: int, @(public) annotation: int }
+
+impl Shown {
+	same :: proc(a, b: Shown) -> bool { return a.id == b.id; }
+	@(public) equal :: operator(==) proc { same };
+}
+
+@(public)
+Grouped :: struct { @(public) id: int, @(public) annotation: int }
+
+impl Grouped {
+	same :: proc(a, b: Grouped) -> bool { return a.id == b.id; }
+	equal :: operator(==) proc { same };
+}

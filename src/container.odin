@@ -421,16 +421,37 @@ resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Order_P
 
 @(private = "file")
 inherent_less_operator :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
+	callable, _ := inherent_self_operator(c, type, "<")
+	return callable
+}
+
+// The procedure a type's own `symbol_text` operator runs over two of its
+// values, and the declaration naming it: that procedure, or the group it is a
+// member of (design.md "Explicit procedure overloading"), which is what
+// visibility asks about. A delegated operator is returned as itself.
+inherent_self_operator :: proc(c: ^Compiler, type: Type_Id, symbol_text: string) -> (callable, declared: Symbol_Id) {
 	info := type_of(c, type)
 	if info == nil {
-		return INVALID_SYMBOL
+		return INVALID_SYMBOL, INVALID_SYMBOL
 	}
 	for member in info.members {
-		if sym := symbol_of(c, member); sym != nil && sym.operator == "<" && operator_on_self(sym, type) {
-			return member
+		sym := symbol_of(c, member)
+		if sym == nil || sym.operator != symbol_text {
+			continue
+		}
+		if sym.kind != .Proc_Group {
+			if operator_on_self(sym, type) {
+				return member, member
+			}
+			continue
+		}
+		for nested in sym.members {
+			if inner := symbol_of(c, nested); inner != nil && operator_on_self(inner, type) {
+				return nested, member
+			}
 		}
 	}
-	return INVALID_SYMBOL
+	return INVALID_SYMBOL, INVALID_SYMBOL
 }
 
 // A binary operator over two values of `type`, the one a sort or a map key
