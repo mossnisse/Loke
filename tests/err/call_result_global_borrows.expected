@@ -1,0 +1,9 @@
+L0512
+@16:2
+`value` cannot be modified by `touch` here
+L0512
+@22:2
+`value` cannot be assigned here
+L0512
+@38:2
+`value` cannot be modified by printing a failure `main` returns here

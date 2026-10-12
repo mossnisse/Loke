@@ -9,15 +9,39 @@ impl Tracked {
 	done :: hook(drop) proc(self: inout Tracked) { if (self.name.len() > 0) { fmt.println("drop", self.name); } }
 }
 
+Owner :: struct { name: string, items: [dynamic]int }
+impl Owner {
+	done :: hook(drop) proc(self: inout Owner) { fmt.println("drop", self.name); }
+}
+
 make :: proc(name: string) -> Tracked { return {name}; }
+own :: proc(name: string) -> Owner { return {name, [dynamic]int{1}}; }
 show :: proc(t: Tracked, n: int) { fmt.println("show", t.name, n); }
+view :: proc(t: Tracked, items: []int, n: int) { fmt.println("view", t.name, items.len(), n); }
+show_all :: proc(items: ..Tracked) { fmt.println("shown", items.len()); }
+missing :: proc() -> Option(Tracked) { return .none; }
 
 pass :: proc(o: Option(int)) -> Option(int) {
 	show(make("argument"), o or_return);
 	return .some(1);
 }
 
+// What the call holds and what the full expression owns are dropped newest
+// first together (design.md "Evaluation order").
+ordered :: proc(o: Option(int)) -> Option(int) {
+	view(make("held"), own("owner").items[:], o or_return);
+	return .some(1);
+}
+
+// A variadic call drops the elements it staged.
+variadic :: proc() -> Option(int) {
+	show_all(make("staged"), missing() or_return);
+	return .some(1);
+}
+
 main :: proc() {
 	fmt.println(pass(.none));
 	fmt.println(pass(.some(2)));
+	fmt.println(ordered(.none));
+	fmt.println(variadic());
 }

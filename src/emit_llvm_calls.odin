@@ -591,9 +591,12 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
 	}
 	// design.md "or_else expression": an exit leaves here, and only the success
-	// arm reaches the rest of the expression.
+	// arm reaches the rest of the expression. A temporary of a `return` value is
+	// made only on this path, so the success path must not drop it.
 	if v.exit != nil {
+		begin_conditional(e)
 		emit_stmt(e, v.exit)
+		end_conditional(e)
 		if !e.terminated {
 			fmt.sbprintln(&e.b, "  unreachable")
 			e.terminated = true
@@ -789,6 +792,8 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 		alloca_named(e, staging_count, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %d, ptr %s", static_count, staging_count)
 		staging_cleanup = register_array_cleanup(e, element, staging, staging_flags, staging_count)
+		// An exit from a later operand drops the elements staged so far.
+		append(&e.held, staging_cleanup)
 	}
 
 	// Spread lengths are collected while evaluating operands in written order.
@@ -960,6 +965,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 	}
 	if staging_cleanup.array_cleanup {
 		unwind_clear(e, staging_cleanup.slot)
+		release_held(e, staging_cleanup)
 	}
 	return Variadic_Pack{value = emit_slice_value(e, pack_type, buffer, total), cleanup = cleanup}
 }

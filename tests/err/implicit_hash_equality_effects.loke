@@ -1,0 +1,66 @@
+// design.md "Global write effects": the `hash` and `==` the language calls for
+// a type, where it hashes or compares one, write what a call of each would: a
+// generated `hash` calling a part's own, a map operation on its key, and a
+// structural `==` calling a part's own `==`.
+package main;
+
+global: int = 1;
+
+Name :: struct { value: int }
+impl Name {
+	same :: operator(==) proc(a, b: Name) -> bool { global = 3; return a.value == b.value; }
+	hash :: proc(self, seed: uint) -> uint { global = 2; return seed; }
+}
+Outer :: struct { name: Name }
+
+generated_hash :: proc() -> int {
+	borrowed := &global;
+	value := Outer{{3}};
+	_ = value.hash(0);
+	return borrowed^;
+}
+
+map_index :: proc() -> int {
+	m: map[Name]int = {};
+	borrowed := &global;
+	m[Name{3}] = 1;
+	return borrowed^;
+}
+
+map_member :: proc() -> int {
+	m: map[Outer]int = {};
+	borrowed := &global;
+	_ = m.lookup_value(Outer{{3}});
+	return borrowed^;
+}
+
+membership :: proc() -> int {
+	m: map[Name]int = {};
+	borrowed := &global;
+	_ = Name{3} in m;
+	return borrowed^;
+}
+
+literal :: proc() -> int {
+	borrowed := &global;
+	m := map[Name]int{Name{3} = 1};
+	_ = m;
+	return borrowed^;
+}
+
+structural_equality :: proc() -> int {
+	borrowed := &global;
+	_ = Outer{{3}} == Outer{{4}};
+	return borrowed^;
+}
+
+// Through a procedure, the write is part of its effect.
+count :: proc(m: map[Name]int) -> bool { return Name{1} in m; }
+through_call :: proc() -> int {
+	m: map[Name]int = {};
+	borrowed := &global;
+	_ = count(m);
+	return borrowed^;
+}
+
+main :: proc() {}

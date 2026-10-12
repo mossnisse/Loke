@@ -1,0 +1,25 @@
+// design.md "or_else expression": a temporary in an `or_else return` value is
+// made only when the value fails, so the success path does not drop it. It
+// used to drop the never-made storage.
+package main;
+import "core:fmt";
+
+drops: int = 0;
+
+Tracked :: struct { items: [1]int }
+impl Tracked {
+	done :: hook(drop) proc(self: inout Tracked) { drops += 1; }
+	read :: proc(self: ^) -> int { return self.items[0]; }
+}
+
+make :: proc() -> Tracked { return {[1]int{7}}; }
+
+test :: proc(o: Option(int)) -> int {
+	x := o or_else return make().read();
+	return x;
+}
+
+main :: proc() {
+	fmt.println(test(.some(9)), drops);
+	fmt.println(test(.none), drops);
+}

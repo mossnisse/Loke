@@ -135,6 +135,7 @@ forwarding_effect :: proc(c: ^Compiler, sym: ^Symbol) -> (Effect_Call, bool) {
 // writes become accesses at the call, after its arguments' loans are taken.
 prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
+	prov_implicit_call_effects(graph, v)
 	target, ok := call_effect(c, v)
 	if !ok {
 		return
@@ -143,6 +144,113 @@ prov_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		note_thread_spawn(graph, v, target.callee)
 	}
 	prov_effect_call(graph, target, v.span)
+}
+
+// Map operations that hash or compare keys: a lookup, an insertion, and a
+// rehash.
+@(private = "file")
+KEY_HASHING_OPS :: bit_set[Container_Op]{
+	.Map_Find, .Map_Find_Or_Insert, .Map_Lookup_Value, .Map_Try_Insert, .Map_Remove, .Map_Reserve, .Map_Shrink,
+}
+
+// A member the compiler supplies that calls a type's own `hash` or `==`: a
+// generated `hash`, or a map operation on its keys.
+@(private = "file")
+prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	c := graph.k.c
+	sym := symbol_of(c, v.resolution.chosen_overload)
+	if sym == nil || len(v.bound) == 0 || v.bound[0] == nil {
+		return
+	}
+	subject := expr_base(v.bound[0]).type
+	#partial switch sym.synth {
+	case .Standard_Hash:
+		prov_hash_effects(graph, subject, v.span)
+	case .Container_Op:
+		if sym.container_op in KEY_HASHING_OPS {
+			prov_key_effects(graph, subject, v.span)
+		}
+	}
+}
+
+// design.md "Global write effects": the language calls a type's own `hash` and
+// `==` where it hashes or compares one, and each counts as a call there. A
+// generated `hash` calls each part's own `hash`.
+prov_hash_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
+	c := graph.k.c
+	parts: [dynamic]Type_Id
+	defer delete(parts)
+	own_equalities_within(c, type, &parts)
+	for part in parts {
+		if own := part_own_hash(c, part); own != INVALID_SYMBOL {
+			prov_effect_call(graph, Effect_Call{callee = own}, span)
+		}
+	}
+}
+
+// A structural `==` calls each part's own `==`.
+prov_equality_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
+	c := graph.k.c
+	parts: [dynamic]Type_Id
+	defer delete(parts)
+	own_equalities_within(c, type, &parts)
+	for part in parts {
+		if own := type_own_equality(c, part); own != INVALID_SYMBOL {
+			prov_effect_call(graph, Effect_Call{callee = own}, span)
+		}
+	}
+}
+
+// design.md "Program entry and exit": a fallible `main`'s failure is printed
+// after its cleanup, while what the result borrows is still in use, so each
+// return from it reaches every `format` printing does.
+prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
+	c := graph.k.c
+	if c.build_mode != .Exe || graph.literal == nil {
+		return
+	}
+	// The entry point is validated after this pass, so it is found by name.
+	sym := symbol_of(c, graph.literal.symbol)
+	if sym == nil || sym.has_receiver || identifier_text(c, sym.name) != "main" {
+		return
+	}
+	if pkg := package_of(c, sym.pkg); pkg == nil || identifier_text(c, pkg.name) != "main" {
+		return
+	}
+	if _, fallible := entry_failure_type(c, sym.result); !fallible {
+		return
+	}
+	view, found := c.runtime_types["Format_View"]
+	if !found {
+		return
+	}
+	prov_effect_call(
+		graph, Effect_Call{dyn_interface = underlying_info(c, view).dyn_interface}, span,
+		described = "modified by printing a failure `main` returns",
+	)
+}
+
+// A built-in `==` or `!=` compares structurally, and `in` looks a key up in a
+// map.
+prov_operator_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Binary) {
+	#partial switch v.op {
+	case .Eq_Eq, .Not_Eq:
+		prov_equality_effects(graph, expr_base(v.lhs).type, v.span)
+	case .In:
+		if container := expr_base(v.rhs).type; underlying_kind(graph.k.c, container) == .Map {
+			prov_key_effects(graph, container, v.span)
+		}
+	}
+}
+
+// A map operation on a key hashes it and compares it with the keys stored.
+prov_key_effects :: proc(graph: ^Flow_Graph, map_type: Type_Id, span: Span) {
+	key := container_key(graph.k.c, map_type)
+	if key == INVALID_TYPE {
+		return
+	}
+	prov_hash_effects(graph, key, span)
+	prov_equality_effects(graph, key, span)
 }
 
 // design.md "Global write effects": a `thread.spawn` whose entry is a named
@@ -243,14 +351,16 @@ prov_scope_drop_effects :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 }
 
 @(private = "file")
-prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dropped := "") {
+prov_effect_call :: proc(graph: ^Flow_Graph, target: Effect_Call, span: Span, dropped := "", described := "") {
 	c := graph.k.c
 	if !c.global_writes_ready {
 		append(&graph.effect_calls, target)
 		return
 	}
 	name := ""
-	if sym := symbol_of(c, target.callee); sym != nil && dropped != "" {
+	if described != "" {
+		name = described
+	} else if sym := symbol_of(c, target.callee); sym != nil && dropped != "" {
 		name = fmt.tprintf("modified by `%s` when `%s` is dropped", identifier_text(c, sym.name), dropped)
 	} else if sym != nil {
 		name = fmt.tprintf("modified by `%s`", identifier_text(c, sym.name))

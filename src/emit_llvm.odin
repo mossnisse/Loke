@@ -655,17 +655,31 @@ emit_entry :: proc(e: ^Emitter) {
 	// `wmain` has no debug information, and LLVM drops the locations of code
 	// inlined into it, so a `-g` build keeps `main` a frame of its own.
 	attributes := e.c.debug_info ? " noinline" : ""
-	if symbol := symbol_of(e.c, e.c.entry_point); symbol != nil && symbol.result == TYPE_I32 {
+	symbol := symbol_of(e.c, e.c.entry_point)
+	failure, fallible := entry_failure_type(e.c, symbol.result)
+	// design.md "What the unwind runs, and what it does not": the failure a
+	// fallible `main` hands back is registered while it is printed and dropped.
+	header: strings.Builder
+	if fallible {
+		header = begin_generated_frame(e, "@wmain")
+	}
+	if symbol.result == TYPE_I32 {
 		status = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i32 %s()%s", status, entry, attributes)
-	} else if failure, fallible := entry_failure_type(e.c, symbol.result); symbol != nil && fallible {
+	} else if fallible {
 		status = emit_entry_failure_report(e, entry, symbol.result, failure, attributes)
 	} else {
 		fmt.sbprintfln(&e.b, "  call void %s()%s", entry, attributes)
 	}
+	if fallible {
+		emit_unwind_pop(e)
+	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
 	fmt.sbprintfln(&e.b, "  ret i32 %s", status)
 	fmt.sbprintln(&e.b, "}")
+	if fallible {
+		end_generated_frame(e, header)
+	}
 }
 
 // design.md "Build-selected providers": run once, allocator first so the logger

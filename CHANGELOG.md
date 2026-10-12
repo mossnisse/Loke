@@ -388,6 +388,11 @@ checklist.
   bool)`: a plain procedure, or a record whose `call` method compares, as
   before. Calls are unchanged. Upgrade a `where slice.Comparator(C, T)` bound
   to `where interfaces.Callable(C, proc(left, right: T) -> bool)`.
+- A rune constant no longer converts implicitly to a floating-point type
+  (`L0353`), and an unfixed rune and an unfixed float no longer meet in an
+  operation (`L0354`); `x: f64 = 'a'` used to be `97.0`, and `1.5 + 'a'` folded
+  to `1.5`. It still converts to integer types that hold it, as `ch: u8 = 'A'`
+  (design.md "Implicit type conversions"). Write `f64('a')`.
 
 ### Changed
 
@@ -690,6 +695,28 @@ checklist.
 
 ### Fixed
 
+- A procedure's result keeps the borrows of globals its body put in it, so
+  writing that global, directly or through a call, while the result is in use
+  is `L0512` (design.md "Global write effects"). It used to compile.
+- A `defer` registered after an owner its allocator backs is rejected only
+  where a statement between them can panic (design.md "Panics and
+  unwinding"): a statement of plain scalar operations, unsigned arithmetic,
+  and a `drop` that runs no `drop` hook no longer counts as an unwind point.
+- A `hash` or `==` the language calls implicitly (a map operation on a key,
+  a structural `==`, a generated `hash`) now counts toward global write
+  effects, so one that writes a global still borrowed is `L0512` (design.md
+  "Global write effects").
+- A failing `or_return` drops what a call holds and the expression's
+  temporaries newest first together, and drops a variadic call's arguments
+  staged so far, which used to leak.
+- A `distinct` type that declares neither `==` nor `hash`, such as
+  `Tag :: distinct int`, was a map key without satisfying
+  `interfaces.Hashable` or having a `hash` member (design.md "Maps"). It now
+  has its wrapped type's `hash`.
+- Compile-time evaluation of `m.find_or_insert(key, elem)` and
+  `m.try_insert(key, elem)` evaluated `elem` after `key` failed an
+  `or_return`, so an assertion there stopped the build. It now leaves first,
+  as the program does at run time.
 - An `or_return` that failed after a call's earlier arguments were made leaked
   them: `show(make_tracked(), maybe or_return)` returned without dropping the
   `make_tracked()` temporary. Such an exit now drops what the call already

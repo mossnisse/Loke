@@ -2885,6 +2885,10 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := fa
 				key_sources = loans
 			}
 		}
+		// A map index hashes its key and compares it with the stored ones.
+		if len(v.bound) == 0 && underlying_kind(graph.k.c, expr_base(v.operand).type) == .Map {
+			prov_key_effects(graph, expr_base(v.operand).type, v.span)
+		}
 		if !publish_map_keys || len(v.bound) > 0 || len(v.indices) != 1 || len(key_sources) == 0 ||
 		   underlying_kind(graph.k.c, expr_base(v.operand).type) != .Map {
 			return
@@ -4708,6 +4712,14 @@ prov_substitute_result :: proc(
 				out = prov_join(graph, out, prov_select_content(graph, actuals[index], param_type, shape[position].steps))
 			}
 		}
+	}
+	// design.md "Global write effects": a borrow of a named global is a loan on
+	// that global's own root, as the same borrow written here would be.
+	for global in dependencies.globals {
+		out = prov_join(graph, out, prov_borrow(
+			graph, prov_root_for_symbol(graph, global), nil, type_carries_borrow(graph.k.c, type).mutable,
+			v.span, carrier_noun(graph.k.c, type),
+		))
 	}
 	kinds := [3]Root_Kind{.Static, .Thread_Local, .Unknown}
 	wanted := [3]bool{dependencies.static, dependencies.thread, dependencies.unknown || dependencies.local}

@@ -1,0 +1,16 @@
+// design.md "Program entry and exit": the startup code drops a failing
+// `main`'s result as a procedure drops a value, so a field's drop hook that
+// panics still leaves the remaining fields to the unwind.
+package main;
+import "core:fmt";
+
+Part :: struct { tag: int }
+impl Part {
+	done :: hook(drop) proc(self: inout Part) {
+		fmt.println("drop", self.tag);
+		if (self.tag == 2) { panic("second"); }
+	}
+}
+Error :: struct { first: Part, second: Part }
+
+main :: proc() -> Result(Unit, Error) { return .err(Error{{1}, {2}}); }

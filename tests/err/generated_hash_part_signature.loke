@@ -1,0 +1,17 @@
+// design.md "Maps": a part with its own `==` is hashed by its own `hash`, which
+// must have the protocol's signature. One with another signature used to be
+// called as if it had it.
+package main;
+
+K :: struct { value: int }
+impl K {
+	same :: operator(==) proc(a, b: K) -> bool { return a.value == b.value; }
+	hash :: proc(self) -> string { return "x"; }
+}
+Outer :: struct { key: K }
+Many :: struct { keys: [2]K }
+
+main :: proc() {
+	m: map[Outer]int = {};
+	n: map[Many]int = {};
+}

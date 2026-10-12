@@ -1,0 +1,14 @@
+// design.md "Program entry and exit" and "What the unwind runs, and what it
+// does not": the failure a fallible `main` returns stays registered while the
+// startup code prints it, so a formatter that panics still drops it. It used
+// to leak.
+package main;
+import "core:fmt";
+
+Error :: struct { id: int }
+impl Error {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { panic("formatter failed"); }
+	done :: hook(drop) proc(self: inout Error) { fmt.println("drop error", self.id); }
+}
+
+main :: proc() -> Result(Unit, Error) { return .err(Error{42}); }

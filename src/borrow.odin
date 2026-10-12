@@ -734,6 +734,10 @@ Result_Dependencies :: struct {
 	param_loads:  []u8,
 	static:       bool,
 	thread:       bool,
+	// The globals the result may borrow, so a caller's write to one, or a call
+	// that writes one, conflicts with the result (design.md "Global write
+	// effects"). `static` and `thread` cover storage no symbol names.
+	globals:      []Symbol_Id,
 	local:        bool, // already an error in the callee
 	unknown:      bool,
 }
@@ -969,7 +973,7 @@ joined_result_summary :: proc(c: ^Compiler, members: []Symbol_Id) -> (Result_Pro
 
 @(private = "file")
 merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_Dependencies) {
-	merge_provenance(into, from)
+	merge_provenance(c, into, from)
 	merge_precision(&into.precision, from.precision)
 	for depths, index in from.param_loads {
 		if index < len(into.param_loads) {
@@ -1001,8 +1005,17 @@ merge_result_dependencies :: proc(c: ^Compiler, into: ^Result_Dependencies, from
 
 // Joins the non-parameter components; returns whether `into` grew.
 @(private = "file")
-merge_provenance :: proc(into: ^Result_Dependencies, from: Result_Dependencies) -> bool {
+merge_provenance :: proc(c: ^Compiler, into: ^Result_Dependencies, from: Result_Dependencies) -> bool {
 	changed := false
+	for global in from.globals {
+		if slice.contains(into.globals, global) {
+			continue
+		}
+		grown := make([]Symbol_Id, len(into.globals) + 1, c.semantic_allocator)
+		copy(grown, into.globals)
+		grown[len(into.globals)] = global
+		into.globals, changed = grown, true
+	}
 	if from.static && !into.static   { into.static, changed  = true, true }
 	if from.thread && !into.thread   { into.thread, changed  = true, true }
 	if from.local && !into.local     { into.local, changed   = true, true }
@@ -1427,16 +1440,22 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, in
 			return changed
 		}
 		one.unknown = true
-	case .Static, .Materialized:
+	case .Static, .Thread_Local:
+		if root.symbol != INVALID_SYMBOL {
+			one.globals = []Symbol_Id{root.symbol}
+		} else if root.kind == .Static {
+			one.static = true
+		} else {
+			one.thread = true
+		}
+	case .Materialized:
 		one.static = true
-	case .Thread_Local:
-		one.thread = true
 	case .Local, .Slice_Literal, .Temporary, .Provider:
 		one.local = true
 	case .Unknown:
 		one.unknown = true
 	}
-	return merge_provenance(into, one)
+	return merge_provenance(state.k.c, into, one)
 }
 
 // Narrows a parameter dependency to the shape paths the loan overlaps, so a

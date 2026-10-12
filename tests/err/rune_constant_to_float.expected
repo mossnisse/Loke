@@ -1,0 +1,9 @@
+L0353
+@10:11
+a rune does not convert implicitly to `f64`
+L0354
+@11:11
+mismatched operand types `untyped float` and `untyped rune`
+L0353
+@12:48
+a rune does not convert implicitly to `f64`

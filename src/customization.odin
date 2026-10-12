@@ -18,7 +18,7 @@ ensure_standard_customization_members :: proc(k: ^Checker, type: Type_Id) {
 	if type_is_container(k.c, under) {
 		append(&members, standard_receiver_member(k.c, "cap", .Standard_Cap, under, []Type_Id{under}, TYPE_INT))
 	}
-	if standard_hash_type(k.c, under) {
+	if settle_part_hashes(k, under); standard_hash_type(k.c, under) {
 		append(&members, standard_receiver_member(
 			k.c, "hash", .Standard_Hash, under,
 			[]Type_Id{under, TYPE_UINT}, TYPE_UINT,
@@ -52,15 +52,17 @@ standard_hash_type :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 // design.md "Maps": a record or union that keeps its generated `==` hashes
-// structurally. As with a generated `format`, the member appears only when
-// `hash` is looked up and the type has no member of that name, so it never
-// stands beside one an `impl` declares.
+// structurally, and a `distinct` type that declares neither half keys a map by
+// its underlying type's policy, so each has that `hash` as a member. As with a
+// generated `format`, the member appears only when `hash` is looked up and the
+// type has no member of that name, so it never stands beside one an `impl`
+// declares.
 ensure_record_hash_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	if identifier_text(k.c, name) != "hash" {
 		return
 	}
 	info := type_of(k.c, type)
-	if info == nil || (info.kind != .Struct && info.kind != .Union) {
+	if info == nil || (info.kind != .Struct && info.kind != .Union && info.kind != .Distinct) {
 		return
 	}
 	for member in info.members {
@@ -68,12 +70,30 @@ ensure_record_hash_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_I
 			return
 		}
 	}
+	if type_own_equality(k.c, type) != INVALID_SYMBOL {
+		return
+	}
+	settle_part_hashes(k, type)
 	if !type_is_hashable(k.c, type) {
 		return
 	}
 	add_members(k.c, type, []Symbol_Id{
 		standard_receiver_member(k.c, "hash", .Standard_Hash, type, []Type_Id{type, TYPE_UINT}, TYPE_UINT),
 	})
+}
+
+// design.md "Maps": a part with its own `==` is hashed by its own `hash`,
+// called with the protocol's shape, so that signature is resolved before
+// `type_is_hashable` reads it.
+settle_part_hashes :: proc(k: ^Checker, type: Type_Id) {
+	parts: [dynamic]Type_Id
+	defer delete(parts)
+	own_equalities_within(k.c, type, &parts)
+	for part in parts {
+		if own, _ := part_hash_member(k.c, part); own != INVALID_SYMBOL {
+			resolve_symbol_signature_in_place(k, own)
+		}
+	}
 }
 
 @(private = "file")

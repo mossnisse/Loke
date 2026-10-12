@@ -396,7 +396,7 @@ The following list defines the implicit conversions. There are no user-defined o
 - Unfixed integers -> built-in integer types when in range, and built-in floating-point types under the [rounding rule](#number-literals)
 - Unfixed floats -> built-in floating-point types under the same rounding rule; never implicitly to integer types
 - Unfixed booleans -> `bool`
-- Unfixed rune constants -> rune types
+- Unfixed rune constants -> rune types, and built-in integer types when in range; never implicitly to floating-point types
 - `string` -> `string_view`; a non-owning borrow subject to [Borrows and lifetimes](#borrows-and-lifetimes)
 - A labeled anonymous record -> the unlabeled record of its field types, in order; the value is unchanged and only the names are dropped; see [Anonymous records](#anonymous-records)
 - `[dynamic]T` -> `[]T`, a read-only view of the live elements under the same borrow rules; see [Dynamic arrays](#dynamic-arrays)

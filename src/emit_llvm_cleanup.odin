@@ -4,6 +4,7 @@
 package lokec
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 
 @(private)
@@ -37,6 +38,9 @@ Deferred :: struct {
 	box_release: bool,
 	// Index in the procedure's registration state, or -1 under `-panic=abort`.
 	slot: int,
+	// When a compiler-owned value was registered, so an exit that owes several
+	// drops them newest first (design.md "Evaluation order").
+	order: int,
 }
 
 Unwind_Env_Binding :: struct {
@@ -415,7 +419,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 // the builder clears it once complete.
 @(private)
 begin_temporary_drop :: proc(e: ^Emitter, type: Type_Id, place: string) -> Deferred {
-	entry := Deferred{type = type, place = place, temporary_place = true, slot = -1, place_env = -1}
+	entry := Deferred{type = type, place = place, temporary_place = true, slot = -1, place_env = -1, order = next_id(e)}
 	if unwind_enabled(e) {
 		entry.place_env = unwind_reserve_env(e)
 	}
@@ -443,11 +447,17 @@ begin_box_release :: proc(e: ^Emitter, payload: Type_Id, block: string) -> Defer
 @(private)
 finish_temporary_drop :: proc(e: ^Emitter, entry: Deferred) {
 	unwind_clear(e, entry.slot)
-	if entry.place == "" {
+	release_held(e, entry)
+}
+
+// An operation no longer holds `entry`: it consumed or dropped it.
+@(private)
+release_held :: proc(e: ^Emitter, entry: Deferred) {
+	if entry.order == 0 {
 		return
 	}
 	for index := len(e.held) - 1; index >= 0; index -= 1 {
-		if e.held[index].place == entry.place {
+		if e.held[index].order == entry.order {
 			ordered_remove(&e.held, index)
 			break
 		}
@@ -577,24 +587,33 @@ save_stack_for_expression :: proc(e: ^Emitter) {
 // exit that branches away owes their drops, while the fall-through path pops.
 @(private)
 drain_temporaries :: proc(e: ^Emitter, down_to: int) {
-	// An exit from inside an operation owes what it holds; its other paths
-	// still drop those values themselves, so the list survives.
-	if down_to == 0 && len(e.held) > 0 {
-		held := make([]Deferred, len(e.held))
-		defer delete(held)
-		copy(held, e.held[:])
-		for index := len(held) - 1; index >= 0; index -= 1 {
-			drop_temporary_value(e, held[index])
-		}
-		clear(&e.held)
-		append(&e.held, ..held)
+	// An exit from inside an operation also owes what it holds; its other
+	// paths still drop those values themselves, so the list survives. Both
+	// kinds are dropped newest first, across the two lists (design.md
+	// "Evaluation order").
+	owed := make([dynamic]Deferred)
+	defer delete(owed)
+	held := make([]Deferred, len(e.held))
+	defer delete(held)
+	copy(held, e.held[:])
+	if down_to == 0 {
+		append(&owed, ..held)
 	}
-	for depth := len(e.temporaries) - 1; depth >= down_to; depth -= 1 {
-		entries := e.temporaries[depth]
-		for index := len(entries) - 1; index >= 0; index -= 1 {
-			drop_temporary_value(e, entries[index])
+	for depth in down_to ..< len(e.temporaries) {
+		append(&owed, ..e.temporaries[depth][:])
+	}
+	slice.stable_sort_by(owed[:], proc(a, b: Deferred) -> bool { return a.order > b.order })
+	for entry in owed {
+		if entry.array_cleanup {
+			// A variadic call's staged elements, each flagged while it is owned.
+			unwind_clear(e, entry.slot)
+			emit_drop_flagged_array(e, entry.type, entry.array_buffer, entry.array_flags, entry.array_count)
+		} else {
+			drop_temporary_value(e, entry)
 		}
 	}
+	clear(&e.held)
+	append(&e.held, ..held)
 }
 
 // With no frame open the enclosing scope is the boundary, which is the extended
@@ -908,6 +927,7 @@ register_array_cleanup :: proc(
 		array_flags_env  = -1,
 		array_count_env  = -1,
 		slot             = -1,
+		order            = next_id(e),
 	}
 	if unwind_enabled(e) {
 		entry.array_buffer_env = unwind_reserve_env(e)

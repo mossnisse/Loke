@@ -1,0 +1,6 @@
+L0586
+@15:2
+`Outer` cannot be a map key: it has `key: K`, whose `hash` must be written `proc(self, seed: uint) -> uint`
+L0586
+@16:2
+`Many` cannot be a map key: it has `keys: [2]K`, which is not hashable

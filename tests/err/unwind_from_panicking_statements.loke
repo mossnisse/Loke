@@ -1,0 +1,66 @@
+// design.md "Panics and unwinding": a statement that can panic unwinds
+// through the registered cleanups, so a `defer` registered after an owner its
+// region backs is rejected there, and only there.
+package main;
+import "core:mem";
+
+tick :: proc() {}
+
+through_call :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	tick();
+	drop(xs);
+}
+
+signed_addition :: proc(count: int) -> int {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	next := count + 1;
+	drop(xs);
+	return next;
+}
+
+runtime_divisor :: proc(divisor: uint) -> uint {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	quotient := 10 / divisor;
+	drop(xs);
+	return quotient;
+}
+
+checked_index :: proc(values: []int) -> int {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	first := values[0];
+	drop(xs);
+	return first;
+}
+
+// Nothing here can panic: unsigned arithmetic wraps, a constant nonzero
+// divisor cannot fault, and dropping `xs` runs no `drop` hook.
+cannot_panic :: proc(flag: bool, count: uint, scale: f64) -> uint {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	defer drop(arena);
+	next := count * 3 + 1;
+	half := next / 2;
+	ratio := scale / 0.0;
+	if (flag && ratio > 1.0 || half == 0) {
+		drop(xs);
+		return half;
+	}
+	drop(xs);
+	return next;
+}
+
+main :: proc() {
+	through_call();
+	values := [1]int{1};
+	_ = signed_addition(1) + checked_index(values);
+	_ = runtime_divisor(2) + cannot_panic(true, 2, 1.0);
+}

@@ -1,0 +1,21 @@
+L0512
+@19:6
+`global` cannot be modified by `hash` here: a read-only pointer of it is still in use
+L0512
+@26:2
+`global` cannot be modified by `hash` here: a read-only pointer of it is still in use
+L0512
+@33:6
+`global` cannot be modified by `hash` here: a read-only pointer of it is still in use
+L0512
+@40:6
+`global` cannot be modified by `hash` here: a read-only pointer of it is still in use
+L0512
+@46:7
+`global` cannot be modified by `hash` here: a read-only pointer of it is still in use
+L0512
+@53:6
+`global` cannot be modified by `same` here: a read-only pointer of it is still in use
+L0512
+@62:6
+`global` cannot be modified by `count` here: a read-only pointer of it is still in use

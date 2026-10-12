@@ -2467,6 +2467,11 @@ merge_untyped_types :: proc(a, b: Type_Id) -> (Type_Id, bool) {
 	if ra == 0 || rb == 0 {
 		return INVALID_TYPE, false
 	}
+	// design.md "Implicit type conversions": a rune constant never becomes a
+	// float, so the two meet at neither.
+	if min(ra, rb) == 2 && max(ra, rb) == 3 {
+		return INVALID_TYPE, false
+	}
 	return ra > rb ? a : b, true
 }
 
@@ -3417,6 +3422,15 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 	switch base.const_value.kind {
 	case .Integer, .Rune:
+		// design.md "Implicit type conversions": a rune constant converts to
+		// integer types, but not to floating-point ones.
+		if base.const_value.kind == .Rune && (underlying_kind(k.c, target) == .Float || type_kind(k.c, target) == .Untyped_Float) {
+			errorf(
+				k.c, base.span, "L0353", "a rune does not convert implicitly to `%s`; write `%s(...)` to convert it",
+				type_name(k.c, target), type_name(k.c, target),
+			)
+			return
+		}
 		errorf(
 			k.c,
 			base.span,
@@ -3512,7 +3526,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Float {
 			return value, true
 		}
-		if value.kind == .Integer || value.kind == .Rune {
+		if value.kind == .Integer || (value.kind == .Rune && explicit) {
 			converted, fits := bi_to_float(storage, value.integer, 64)
 			return fits ? float_const(converted, 64) : value, fits
 		}
@@ -3601,6 +3615,11 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			}
 			return converted, !math.is_inf(converted.float) || math.is_inf(value.float)
 		case .Integer, .Rune:
+			// design.md "Implicit type conversions": a rune constant never
+			// becomes a float implicitly.
+			if value.kind == .Rune && !explicit {
+				return value, false
+			}
 			converted, fits := bi_to_float(storage, value.integer, info.bits)
 			return fits ? float_const(converted, info.bits) : value, fits
 		}
@@ -3745,7 +3764,10 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if type_is_untyped(c, from) {
 		#partial switch underlying_kind(c, to) {
-		case .Int, .Float, .Rune, .Bool:
+		case .Float:
+			// design.md "Implicit type conversions": never a rune constant.
+			return type_kind(c, from) != .Untyped_Rune
+		case .Int, .Rune, .Bool:
 			return true
 		}
 		return false

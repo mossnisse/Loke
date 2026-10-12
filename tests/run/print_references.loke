@@ -4,6 +4,9 @@ package main;
 import "core:fmt";
 import "core:unsafe";
 Node :: struct { value: int, next: Option(^Node) }
+// A referent chain that returns to itself prints through its own formatter.
+P :: distinct ^P;
+B :: distinct box(Option(B));
 main :: proc() {
 	m := map[string]int{"a" = 1};
 	foreach (entry in m) { fmt.println(entry.key, entry.value, entry); }
@@ -15,6 +18,9 @@ main :: proc() {
 	fmt.println(head);
 	s := "hi";
 	fmt.println(&s, [1]^string{&s});
+	cyclic: Option(P) = .none;
+	boxed: Option(B) = .none;
+	fmt.println(cyclic, boxed);
 	r: rawptr = &x;
 	fmt.println(r == r, unsafe.raw_data([]int{1}[:]) != nil);
 }

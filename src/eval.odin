@@ -1636,8 +1636,11 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 	// design.md "Map container operations": `elem` is stored only for a new key.
 	case .Map_Find_Or_Insert:
 		key, key_ok := argument(ev, v, 1)
+		if !key_ok {
+			return nil, false
+		}
 		value, value_ok := argument(ev, v, 2)
-		if !key_ok || !value_ok {
+		if !value_ok {
 			return nil, false
 		}
 		before := len(self.elements)
@@ -1652,8 +1655,11 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 
 	case .Map_Try_Insert:
 		key, key_ok := argument(ev, v, 1)
+		if !key_ok {
+			return nil, false
+		}
 		value, value_ok := argument(ev, v, 2)
-		if !key_ok || !value_ok {
+		if !value_ok {
 			return nil, false
 		}
 		slot, slot_ok := map_entry_place(ev, self, key)
@@ -1709,9 +1715,13 @@ eval_map_read :: proc(ev: ^Evaluator, v: ^Expr_Index, m: ^Eval_Value) -> (Eval_V
 // `key in m`.
 @(private = "file")
 eval_map_membership :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
+	// A failing `or_return` in the key leaves before the subject is evaluated.
 	key, key_ok := eval_expr(ev, v.lhs)
+	if !key_ok {
+		return Eval_Value{}, false
+	}
 	subject, subject_ok := eval_expr(ev, v.rhs)
-	if !key_ok || !subject_ok {
+	if !subject_ok {
 		return Eval_Value{}, false
 	}
 	// design.md "Ranges": `x in r`.

@@ -3,3 +3,8 @@ drop argument
 show argument 2
 drop argument
 .some(1)
+drop owner
+drop held
+.none
+drop staged
+.none

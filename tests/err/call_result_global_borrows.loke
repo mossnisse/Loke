@@ -1,0 +1,40 @@
+// design.md "Global write effects": a result keeps the borrows of globals its
+// callee put in it, so a later write to one, directly or by a call, conflicts
+// with the result while it is in use. A failing `main` prints what `or_return`
+// passes out, so that printing conflicts too.
+package main;
+import "core:fmt";
+
+value: int = 1;
+
+Holder :: struct { borrowed: ^int }
+get :: proc() -> Holder { return Holder{&value}; }
+touch :: proc() { value = 3; }
+
+through_call :: proc() -> int {
+	h := get();
+	touch();
+	return h.borrowed^;
+}
+
+directly :: proc() -> int {
+	h := get();
+	value = 4;
+	return h.borrowed^;
+}
+
+Error :: struct { borrowed: ^int }
+impl Error {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {
+		value = 2;
+		fmt.format_to(w, self.borrowed^);
+	}
+}
+
+fail :: proc() -> Result(Unit, Error) { return .err(Error{&value}); }
+
+main :: proc() -> Result(Unit, Error) {
+	_ = through_call() + directly();
+	fail() or_return;
+	return .ok(Unit{});
+}

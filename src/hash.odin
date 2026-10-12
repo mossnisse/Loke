@@ -40,7 +40,7 @@ type_is_hashable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 	     .Untyped_Int, .Untyped_Bool, .Untyped_Rune, .Untyped_String:
 		return true
 	case .Array:
-		return type_is_hashable_walk(c, info.element, seen)
+		return part_is_hashable(c, info.element, seen)
 	case .Struct, .Union:
 		if !record_hashes_structurally(c, id, under, info) {
 			return false
@@ -68,18 +68,23 @@ type_is_hashable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 			}
 		}
 		for part in parts {
-			// A part with its own `==` is hashed by its own `hash`.
-			if type_own_equality(c, part) != INVALID_SYMBOL {
-				if part_own_hash(c, part) == INVALID_SYMBOL {
-					return false
-				}
-			} else if !type_is_hashable_walk(c, part, seen) {
+			if !part_is_hashable(c, part, seen) {
 				return false
 			}
 		}
 		return true
 	}
 	return false
+}
+
+// A field, variant payload, or array element: one with its own `==` is hashed
+// by its own `hash`, and any other hashes as its type does.
+@(private = "file")
+part_is_hashable :: proc(c: ^Compiler, part: Type_Id, seen: ^Type_Walk) -> bool {
+	if type_own_equality(c, part) != INVALID_SYMBOL {
+		return part_own_hash(c, part) != INVALID_SYMBOL
+	}
+	return type_is_hashable_walk(c, part, seen)
 }
 
 // A record or union with the generated `==`, which a structural `hash` is the
@@ -97,15 +102,28 @@ record_hashes_structurally :: proc(c: ^Compiler, id, under: Type_Id, info: ^Type
 }
 
 // The `hash` a part with its own `==` must also declare, which a structural
-// hash calls for it; INVALID_SYMBOL when the part hashes structurally.
+// hash calls for it with the protocol's shape; INVALID_SYMBOL when the part
+// hashes structurally, or its `hash` is missing or has another signature.
 part_own_hash :: proc(c: ^Compiler, part: Type_Id) -> Symbol_Id {
-	if type_own_equality(c, part) == INVALID_SYMBOL {
+	found, holder := part_hash_member(c, part)
+	if found == INVALID_SYMBOL || !key_hash_signature_ok(symbol_of(c, found), holder) {
 		return INVALID_SYMBOL
 	}
-	if found := inherent_member_named(c, part, "hash"); found != INVALID_SYMBOL {
-		return found
+	return found
+}
+
+// A part with its own `==`, and the `hash` member beside it whatever its
+// signature, with the type that declares it; a checker resolves the signature
+// before `part_own_hash` reads it.
+part_hash_member :: proc(c: ^Compiler, part: Type_Id) -> (Symbol_Id, Type_Id) {
+	if type_own_equality(c, part) == INVALID_SYMBOL {
+		return INVALID_SYMBOL, INVALID_TYPE
 	}
-	return inherent_member_named(c, type_underlying(c, part), "hash")
+	if found := inherent_member_named(c, part, "hash"); found != INVALID_SYMBOL {
+		return found, part
+	}
+	under := type_underlying(c, part)
+	return inherent_member_named(c, under, "hash"), under
 }
 
 // A float, or a fixed array of them, as `type_is_hashable` excludes.
@@ -128,12 +146,19 @@ type_holds_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // structurally, for the diagnostic.
 @(private = "file")
 first_unhashable_part :: proc(c: ^Compiler, type: Type_Id) -> (string, Type_Id, bool) {
+	// An array's element is the part its elements share.
 	info := type_of(c, type_underlying(c, type))
 	if info == nil || (info.kind != .Struct && info.kind != .Union) {
 		return "", INVALID_TYPE, false
 	}
 	unhashable :: proc(c: ^Compiler, part: Type_Id) -> bool {
-		return part != TYPE_VOID && part_own_hash(c, part) == INVALID_SYMBOL && !type_is_hashable(c, part)
+		if part == TYPE_VOID {
+			return false
+		}
+		if type_own_equality(c, part) != INVALID_SYMBOL {
+			return part_own_hash(c, part) == INVALID_SYMBOL
+		}
+		return !type_is_hashable(c, part)
 	}
 	if info.kind == .Union {
 		for variant, index in info.variants {
@@ -180,6 +205,12 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 			return Key_Policy{}, "holds a float, and NaN never equals itself, so no float is hashable; key by an integer image of the value instead"
 		}
 		if part, part_type, found := first_unhashable_part(c, key); found {
+			if own, _ := part_hash_member(c, part_type); own != INVALID_SYMBOL {
+				return Key_Policy{}, fmt.aprintf(
+					"has `%s: %s`, whose `hash` must be written `proc(self, seed: uint) -> uint`",
+					part, type_name(c, part_type), allocator = c.semantic_allocator,
+				)
+			}
 			return Key_Policy{}, fmt.aprintf(
 				"has `%s: %s`, which is not hashable, so it needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package",
 				part, type_name(c, part_type), allocator = c.semantic_allocator,

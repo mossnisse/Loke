@@ -1,0 +1,13 @@
+// design.md "Implicit type conversions": an unfixed rune constant converts to
+// rune types and to integer types that hold it, never implicitly to a
+// floating-point type, and so never meets an unfixed float in an operation.
+package main;
+import "core:fmt";
+takes :: proc(x: f64) -> f64 { return x; }
+main :: proc() {
+	byte_value: u8 = 'A';
+	explicit := f64('a');
+	x: f64 = 'a';
+	y := 1.5 + 'b';
+	fmt.println(byte_value, explicit, x, y, takes('c'));
+}

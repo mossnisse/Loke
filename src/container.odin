@@ -499,6 +499,7 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		)
 		return false
 	}
+	settle_part_hashes(k, key)
 	policy, reason := resolve_map_key_policy(k.c, key)
 	if reason == "" && policy.kind == .Inherent {
 		resolve_symbol_signature_in_place(k, policy.hash)

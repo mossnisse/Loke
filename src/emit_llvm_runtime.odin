@@ -475,12 +475,15 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 	if failure != result {
 		data = gep_field(e, llvm_type(e, under), slot, 0)
 	}
+	// A formatter that panics still drops the failure.
+	held := Deferred{slot = -1}
+	if emit_lifecycle(e, failure).managed {
+		held = begin_temporary_drop(e, failure, data)
+	}
 	emit_format_dispatch_at(e, data, fmt.tprintf("%d", typeid_value(e.c, failure)), writer, PANIC_OPTIONS)
 	newline := text_literal_global(e, "\n")
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 1)", writer, newline)
-	if emit_lifecycle(e, failure).managed {
-		emit_drop_place(e, failure, data)
-	}
+	drop_temporary_value(e, held)
 	fmt.sbprintfln(&e.b, "  store i32 1, ptr %s", status)
 	branch(e, done)
 
@@ -639,12 +642,39 @@ emit_format_nested :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	case .Rune:
 		value := load(e, "i32", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_quoted_rune(ptr %%w, i32 %s)", value)
-	case .Box:
-		emit_format_nested(e, info.element, emit_box_payload_address(e, under, load(e, "ptr", address)))
-	case .Pointer:
-		emit_format_nested(e, info.element, load(e, "ptr", address))
+	case .Box, .Pointer:
+		// A chain that returns to itself, as `P :: distinct ^P` does, ends in no
+		// string to quote, so its own formatter prints it rather than an
+		// endless inline expansion.
+		if referent_chain_cycles(e.c, under) {
+			emit_format_call(e, type, address)
+		} else if info.kind == .Box {
+			emit_format_nested(e, info.element, emit_box_payload_address(e, under, load(e, "ptr", address)))
+		} else {
+			emit_format_nested(e, info.element, load(e, "ptr", address))
+		}
 	case:
 		emit_format_call(e, type, address)
+	}
+}
+
+// Whether following boxes and checked pointers from `type` comes back to a
+// type already passed.
+@(private = "file")
+referent_chain_cycles :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	seen := make(map[Type_Id]bool)
+	defer delete(seen)
+	current := type_underlying(c, type)
+	for {
+		info := type_of(c, current)
+		if info == nil || (info.kind != .Box && info.kind != .Pointer) {
+			return false
+		}
+		if current in seen {
+			return true
+		}
+		seen[current] = true
+		current = type_underlying(c, info.element)
 	}
 }
 

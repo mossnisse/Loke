@@ -581,10 +581,10 @@ walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
 // registered so far, newest first, as an exit from the procedure does. Only a
 // registered `defer` can observe them afterwards, so the path is modeled where
 // one is in scope, from the statement's start, which no later state in it can
-// make less live.
+// make less live. A statement that cannot panic has no such path.
 @(private = "file")
 emit_unwind_branch :: proc(graph: ^Flow_Graph, stmt: Stmt) {
-	if graph.current == NO_BLOCK || graph.unwinding {
+	if graph.current == NO_BLOCK || graph.unwinding || stmt_cannot_panic(graph.k.c, stmt) {
 		return
 	}
 	deferred := false
@@ -607,6 +607,188 @@ emit_unwind_branch :: proc(graph: ^Flow_Graph, stmt: Stmt) {
 	emit_cleanups(graph, 0, (^rawptr)(&node)^, unwinding = true)
 	graph.unwinding = false
 	graph.current = resume
+}
+
+// Whether no operation in this statement, its nested statements included, is
+// one design.md "Panics and unwinding" lists as able to panic. Conservative: a
+// call, an index, a slice, an extraction, a copy of a managed value, a signed
+// or rune `+`, `-`, `*`, or negation, and a division whose divisor is not a
+// nonzero constant all may. A `drop` panics only through a `drop` hook it runs.
+@(private = "file")
+stmt_cannot_panic :: proc(c: ^Compiler, stmt: Stmt) -> bool {
+	switch s in stmt {
+	case ^Decl:
+		if s.kind == .Const {
+			return true
+		}
+		if s.via != nil || s.duration != .None || (len(s.values) != 0 && len(s.values) != len(s.symbols)) {
+			return false
+		}
+		for id in s.symbols {
+			sym := symbol_of(c, id)
+			if sym == nil || !type_is_panic_free_scalar(c, sym.type) {
+				return false
+			}
+		}
+		for value in s.values {
+			if !expr_cannot_panic(c, value) {
+				return false
+			}
+		}
+		return true
+	case ^Stmt_Expr:
+		for e in s.exprs {
+			if !expr_cannot_panic(c, e) && !drop_cannot_panic(c, e) {
+				return false
+			}
+		}
+		return true
+	case ^Stmt_Assign:
+		if s.op != .Assign || len(s.lhs) != len(s.rhs) {
+			return false
+		}
+		for target in s.lhs {
+			if !is_effect_free_place(target) || !expr_cannot_panic(c, target) {
+				return false
+			}
+		}
+		for value in s.rhs {
+			if !expr_cannot_panic(c, value) {
+				return false
+			}
+		}
+		return true
+	case ^Stmt_If:
+		return (s.init == nil || stmt_cannot_panic(c, s.init)) && expr_cannot_panic(c, s.cond) &&
+			stmt_cannot_panic(c, s.then) && (s.otherwise == nil || stmt_cannot_panic(c, s.otherwise))
+	case ^Stmt_For:
+		return (s.init == nil || stmt_cannot_panic(c, s.init)) && (s.cond == nil || expr_cannot_panic(c, s.cond)) &&
+			(s.post == nil || stmt_cannot_panic(c, s.post)) && stmt_cannot_panic(c, s.body)
+	case ^Block:
+		if s == nil {
+			return true
+		}
+		for inner in s.stmts {
+			if !stmt_cannot_panic(c, inner) {
+				return false
+			}
+		}
+		return true
+	case ^Stmt_Return:
+		return s.value == nil || (!s.value.is_inout && expr_cannot_panic(c, s.value.expr))
+	case ^Stmt_Branch:
+		return true
+	case ^Item_Impl, ^Stmt_Error, ^Stmt_Foreach, ^Stmt_When, ^Stmt_Switch, ^Stmt_Defer:
+	}
+	return false
+}
+
+// A type whose values copy as plain bits and whose built-in comparisons call
+// nothing.
+@(private = "file")
+type_is_panic_free_scalar :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	#partial switch underlying_kind(c, type) {
+	case .Bool, .Int, .Float, .Rune, .Enum, .Pointer, .C_Pointer, .Raw_Pointer:
+		return true
+	}
+	return false
+}
+
+@(private = "file")
+expr_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
+	base := expr_base(e)
+	if base == nil || base.has_error {
+		return false
+	}
+	if base.is_const {
+		return true
+	}
+	if !type_is_panic_free_scalar(c, base.type) {
+		return false
+	}
+	#partial switch v in e {
+	case ^Expr_Literal, ^Expr_Ident:
+		return true
+	case ^Expr_Selector:
+		return v.resolution.kind == .Field && expr_cannot_panic_operand(c, v.operand)
+	case ^Expr_Postfix:
+		// A reference is never null (design.md "Pointers").
+		return v.op == .Caret && !v.boxed && expr_cannot_panic(c, v.operand)
+	case ^Expr_Unary:
+		#partial switch v.op {
+		case .Amp:
+			return is_effect_free_place(v.operand) && expr_cannot_panic_operand(c, v.operand)
+		case .Not, .Tilde:
+			return expr_cannot_panic(c, v.operand)
+		case .Minus:
+			return wraps_on_overflow(c, base.type) && expr_cannot_panic(c, v.operand)
+		}
+	case ^Expr_Binary:
+		if v.resolution.kind != .Builtin_Operator || !expr_cannot_panic(c, v.lhs) || !expr_cannot_panic(c, v.rhs) {
+			return false
+		}
+		#partial switch v.op {
+		case .And_And, .Or_Or, .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq,
+		     .Amp, .Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr:
+			return true
+		case .Plus, .Minus, .Star:
+			return wraps_on_overflow(c, base.type)
+		case .Slash, .Percent:
+			// design.md "Integer operators": only an integer divisor of zero, or a
+			// signed `MIN / -1`, panics.
+			if underlying_kind(c, base.type) == .Float {
+				return true
+			}
+			divisor := expr_base(v.rhs)
+			return !type_signed(c, base.type) && divisor.is_const && divisor.const_value.kind == .Integer &&
+				!bi_is_zero(divisor.const_value.integer)
+		}
+	case ^Expr_Cond:
+		return expr_cannot_panic(c, v.cond) && expr_cannot_panic(c, v.then) && expr_cannot_panic(c, v.otherwise)
+	}
+	return false
+}
+
+// A place a selector or `&` only names, which reads nothing it could copy.
+@(private = "file")
+expr_cannot_panic_operand :: proc(c: ^Compiler, e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return true
+	case ^Expr_Selector:
+		return v.resolution.kind == .Field && expr_cannot_panic_operand(c, v.operand)
+	case ^Expr_Postfix:
+		return v.op == .Caret && !v.boxed && expr_cannot_panic(c, v.operand)
+	}
+	return false
+}
+
+// design.md "Integer overflow": unsigned and floating-point arithmetic never
+// panics; signed and rune arithmetic does when the result does not fit.
+@(private = "file")
+wraps_on_overflow :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	#partial switch underlying_kind(c, type) {
+	case .Float:
+		return true
+	case .Int:
+		return !type_signed(c, type)
+	}
+	return false
+}
+
+// `drop(x)` of a local whose cleanup runs no `drop` hook: releasing storage is
+// not among the operations that panic.
+@(private = "file")
+drop_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
+	if !is_builtin_call(c, e, .Drop) {
+		return false
+	}
+	call := e.(^Expr_Call)
+	if len(call.args) != 1 {
+		return false
+	}
+	ident, is_ident := call.args[0].value.(^Expr_Ident)
+	return is_ident && len(type_drop_hooks(c, ident.type)) == 0
 }
 
 // Cleanup events for every registration above `down_to`, innermost first
@@ -1037,6 +1219,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 			}
 			emit_cleanups(graph, 0, s)
 			graph.returning = outer
+			prov_entry_report_effects(graph, s.span)
 			if len(held) > 0 {
 				prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = expr_span(s.value.expr)})
 			}
@@ -1707,6 +1890,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			graph.current = merge
 		} else {
 			walk_flow_expr(graph, v.rhs)
+			if prov {
+				prov_operator_effects(graph, v)
+			}
 		}
 
 	case ^Expr_Unary:
@@ -1780,6 +1966,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				}
 			}
 			emit_cleanups(graph, 0, v)
+			if prov {
+				prov_entry_report_effects(graph, v.span)
+			}
 			if len(held) > 0 {
 				prov_emit(graph, Prov_Event{kind = .Live, sources = held, span = v.span})
 			}
@@ -1877,6 +2066,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				walk_flow_expr(graph, element.key)
 			}
 			walk_flow_expr(graph, element.value)
+		}
+		if prov && is_map && len(v.elements) > 0 {
+			prov_key_effects(graph, v.type, v.span)
 		}
 
 	case ^Expr_Cond:
