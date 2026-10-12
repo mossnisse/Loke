@@ -540,7 +540,7 @@ subset of it:
 | Form | Leaf markers | Groups |
 | --- | --- | --- |
 | `foreach` header | `$`, `&mut` | nested to any depth |
-| `Branch_Pattern` | `&mut` | none: one leaf |
+| `Branch_Pattern` | `&mut` | none: one flat list |
 | `:=` and `=` destructuring | none | none: one flat list |
 
 A leaf is always an `Identifier`, `_` included. Declarations and assignments
@@ -564,10 +564,14 @@ Switch_Case  = ("case" (Branch_Pattern | Case_Value_List)? | "default") ":" Stat
 Case_Value_List = Case_Value ("," Case_Value)*
 Case_Value   = Expression | Type
 // A branch pattern is recognized only when the switch subject is a union, as
-// `.variant(name)`, or an `any_view`, as `Type(name)`. It is deliberately
-// shallow: one variant or type, one identifier binding, no nesting. `&mut`
-// binds a union payload as a writable place (design.md "Switch ownership").
-Branch_Pattern = ("." Identifier | Type) "(" ("&" "mut")? Identifier ")"
+// `.variant(name)` or `.variant(a, b)`, or an `any_view`, as `Type(name)`. It
+// is deliberately shallow: one variant or type, then identifier bindings, no
+// nesting. Two or more bind a union payload's record fields (design.md
+// "Inspecting a union"); `&mut` binds a payload or field as a writable place
+// (design.md "Switch ownership").
+Branch_Pattern = "." Identifier "(" Binding_Leaf ("," Binding_Leaf)* ")"
+               | Type "(" Identifier ")"
+Binding_Leaf   = ("&" "mut")? Identifier
 ```
 
 `default` is the default case; `case` with no values means the same. Case values
@@ -729,7 +733,7 @@ The productions above use the following deterministic parsing rules:
   `for ((name in expression))`; iteration is `foreach`.
 - A switch parses its cases as expressions, a type among them. When the
   subject's type is a union, the checker reads a singleton case of the exact
-  shape `.name(binding)` as a branch-local pattern, and when it is an
+  shape `.name(binding, ...)` as a branch-local pattern, and when it is an
   `any_view`, one of the shape `Type(binding)` whose whole is not itself a
   type, so `Option(int)` stays a type case; calls of any other shape, and
   every case of any other switch, remain expressions. A switch header binds

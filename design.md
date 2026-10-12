@@ -1480,7 +1480,7 @@ low, high = minmax(a, b);
 foreach (key, value in table) { ... }
 ```
 
-The record must have exactly as many **directly declared** fields as there are bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is. Only a `foreach` header [nests](#element-bindings), because an adapter such as `indexed()` wraps an element that is itself a record; a declaration destructures a nested field in a second step, `entry, index := pair; key, value := entry;`. Every binding form takes a subset of one pattern grammar; see [grammar.md](grammar.md#statements).
+The record must have exactly as many **directly declared** fields as there are bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is. Only a `foreach` header [nests](#element-bindings), because an adapter such as `indexed()` wraps an element that is itself a record; a declaration destructures a nested field in a second step, `entry, index := pair; key, value := entry;`. A switch case takes a record payload's fields by the same rule, one level deep (see [Inspecting a union](#inspecting-a-union)). Every binding form takes a subset of one pattern grammar; see [grammar.md](grammar.md#statements).
 
 A nominal record — a struct, or a `distinct` type over one — destructures only in the package that declares its fields, since that package may reorder them. Elsewhere the value is bound whole and its fields selected by name. An [anonymous record](#anonymous-records) destructures anywhere: its field order is its type identity.
 
@@ -1642,7 +1642,7 @@ v = number(7);
 
 #### Inspecting a union
 
-A union is inspected with a `switch`, whose cases are variant names. A case may bind that variant's payload locally with `.name(binding)`, or as a writable place with `.name(&mut binding)` (see [Switch ownership](#switch-ownership)). This is a deliberately small pattern: the binding is one identifier (or `_`), and patterns do not nest. Payloadless variants are written as bare `.name`.
+A union is inspected with a `switch`, whose cases are variant names. A case may bind that variant's payload locally with `.name(binding)`, or as a writable place with `.name(&mut binding)` (see [Switch ownership](#switch-ownership)). Two or more bindings, `.name(left, right)`, bind the fields of a record payload instead. This is a deliberately small pattern: each binding is one identifier (or `_`), and patterns do not nest. Payloadless variants are written as bare `.name`.
 
 ```odin
 switch (v) {
@@ -1659,6 +1659,22 @@ case .absent:
 ```
 
 The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while each branch-local name has the payload type of the variant that introduced it.
+
+Field bindings take a record payload apart as a `foreach` header takes apart its element: by the [destructuring](#destructuring) rule, so the payload must be a record with exactly as many directly declared, visible fields as there are bindings, a nominal record only in the package that declares its fields. A `&mut` marks one binding, and only that field is a writable place. Each binding is the payload's field itself under [Switch ownership](#switch-ownership), so a switch over a place clones nothing:
+
+```odin
+Expr :: union {
+	number: int,
+	add:    (left: Box(Expr), right: Box(Expr)),
+}
+
+eval :: proc(e: ^Expr) -> int {
+	switch (e^) {
+	case .number(n):        return n;
+	case .add(left, right): return eval(&left^) + eval(&right^);   // borrowed
+	}
+}
+```
 
 A case that lists several variants, and a default case, bind nothing: their variants carry different payloads. Such a case reads the subject itself, which keeps the union type. A temporary subject has no name to read, so a switch that needs the whole value there switches over a local holding it:
 
@@ -1690,7 +1706,9 @@ A switch over a **place** borrows it: a payload binding is immutable and non-own
 
 A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
 
-A case written `.name(&mut binding)` binds the payload as a writable place instead, as `foreach (&mut value in items)` binds an element. The subject must be a writable place, and the case borrows it exclusively: the subject cannot be read or written while the binding, or anything borrowed through it, is still used. Assigning the binding replaces the payload in place, and like any binding over a place it cannot be moved or dropped. A borrow taken through the binding borrows that part of the payload, with field precision as for a local, and also carries the subject's borrow. Each time the case runs, the binding names the payload the subject holds then, so a borrow kept from an earlier pass does not conflict with the new binding; the subject's borrow it carries still does. Storing one back into the carrier the subject was reached through, as `cursor = &mut node.next` does below, is therefore the self-store of [Weakening and reborrows](#weakening-and-reborrows) and suspends nothing:
+Field bindings follow the same two rules field by field. Over a place each binding views its field of the stored payload. Over a temporary each retained field transfers into its binding without cloning and drops with it, and a `_` field drops when the case ends; as for any consuming destructure, the payload record must have neither a custom `hook(copy)` nor a custom `hook(drop)`.
+
+A case written `.name(&mut binding)` binds the payload as a writable place instead, as `foreach (&mut value in items)` binds an element. The subject must be a writable place, and the case borrows it exclusively: the subject cannot be read or written while the binding, or anything borrowed through it, is still used. Assigning the binding replaces the payload in place, and like any binding over a place it cannot be moved or dropped. A field binding written `&mut` needs the same writable subject and borrows only its field of the payload, so `.add(&mut left, &mut right)` takes two disjoint places and an unmarked sibling stays read-only. A borrow taken through the binding borrows that part of the payload, with field precision as for a local, and also carries the subject's borrow. Each time the case runs, the binding names the payload the subject holds then, so a borrow kept from an earlier pass does not conflict with the new binding; the subject's borrow it carries still does. Storing one back into the carrier the subject was reached through, as `cursor = &mut node.next` does below, is therefore the self-store of [Weakening and reborrows](#weakening-and-reborrows) and suspends nothing:
 
 ```odin
 Node :: struct { value: int, next: Option(Box(Node)) }

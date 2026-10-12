@@ -1,0 +1,82 @@
+// design.md "Inspecting a union": field bindings follow design.md
+// "Destructuring" and "Switch ownership".
+package main;
+
+import "core:fmt";
+
+Pair :: struct { a: int, b: int }
+Hooked :: struct { a: int, b: int }
+impl Hooked {
+	release :: hook(drop) proc(self: inout Hooked) { }
+}
+
+Value :: union { pair: Pair, number: int, hooked: Hooked, boxes: (Box(int), Box(int)), none }
+
+make_value :: proc() -> Value { return .none; }
+take :: proc(value: move Box(int)) { }
+
+too_many :: proc(v: Value) {
+	switch (v) {
+	case .pair(a, b, c): fmt.println(a, b, c);
+	default:
+	}
+}
+
+not_a_record :: proc(v: Value) {
+	switch (v) {
+	case .number(a, b): fmt.println(a, b);
+	default:
+	}
+}
+
+payloadless :: proc(v: Value) {
+	switch (v) {
+	case .none(a, b): fmt.println(a, b);
+	default:
+	}
+}
+
+hooked_temporary :: proc() {
+	switch (make_value()) {
+	case .hooked(a, b): fmt.println(a, b);
+	default:
+	}
+}
+
+twice :: proc(v: Value) {
+	switch (v) {
+	case .pair(a, a): fmt.println(a);
+	default:
+	}
+}
+
+read_only_field :: proc(v: Value) {
+	switch (v) {
+	case .pair(a, b): a = b;
+	default:
+	}
+}
+
+moves_borrowed :: proc(v: Value) {
+	switch (v) {
+	case .boxes(first, _): take(move(first));
+	default:
+	}
+}
+
+mutable_temporary :: proc() {
+	switch (make_value()) {
+	case .pair(&mut a, b): a += b;
+	default:
+	}
+}
+
+writes_subject :: proc() {
+	v: Value = .pair(Pair{1, 2});
+	switch (v) {
+	case .pair(&mut a, b): v = .none; a += b;
+	default:
+	}
+}
+
+main :: proc() {}

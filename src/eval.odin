@@ -3617,6 +3617,9 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 		return .Normal
 	}
 	entry := s.cases[chosen]
+	if len(entry.fields) > 0 {
+		return eval_case_fields(ev, s, entry, subject, place)
+	}
 	if entry.binding_symbol != INVALID_SYMBOL {
 		frame := current_frame(ev)
 		if frame == nil {
@@ -3629,6 +3632,37 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 		}
 		bound, copied := copy_value(ev, eval_union_payload(subject, entry.binding_type))
 		if !copied || !bind_local(ev, frame, entry.binding_symbol, bound) {
+			return .Fail
+		}
+	}
+	return eval_stmts(ev, entry.stmts, true)
+}
+
+// design.md "Inspecting a union": each field binding reads its field of the
+// payload, and an `&mut` one names it in the subject's storage.
+@(private = "file")
+eval_case_fields :: proc(ev: ^Evaluator, s: ^Stmt_Switch, entry: Switch_Case, subject: Eval_Value, place: ^Eval_Value) -> Eval_Flow {
+	frame := current_frame(ev)
+	if frame == nil {
+		eval_fail(ev, s.span, "L0341", "a case binding needs a compile-time frame")
+		return .Fail
+	}
+	for field in entry.fields {
+		if field.symbol == INVALID_SYMBOL {
+			continue
+		}
+		payload := place != nil ? &place.elements[0] : nil
+		record := payload^ if payload != nil else eval_union_payload(subject, entry.binding_type)
+		if record.kind != .Aggregate || field.slot >= len(record.elements) {
+			eval_fail(ev, s.span, "L0341", "this payload has no compile-time fields to bind")
+			return .Fail
+		}
+		if field.is_ref {
+			frame.locals[field.symbol] = &payload.elements[field.slot]
+			continue
+		}
+		bound, copied := copy_value(ev, record.elements[field.slot])
+		if !copied || !bind_local(ev, frame, field.symbol, bound) {
 			return .Fail
 		}
 	}

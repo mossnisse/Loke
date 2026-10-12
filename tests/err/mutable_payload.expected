@@ -18,7 +18,7 @@ L0512
 `x` cannot be assigned here: a mutable payload of it is still in use
 L0690
 @63:32
-`move` views the payload of a switch over a place, which still owns it; `switch (b in move(...))` hands it over first
+`move` views the payload of a switch over a place, which still owns it; `switch (move(...))` hands it over first
 L0358
 @71:17
 a case binding names storage the subject still owns and cannot be an assignment destination; bind it with `&mut` for a mutable payload

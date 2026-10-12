@@ -607,6 +607,7 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 				stmts   = clone_stmts(c, entry.stmts),
 				binding = entry.binding,
 				binding_ref = entry.binding_ref,
+				fields  = clone_case_fields(c, entry.fields),
 			}
 		}
 		return n
@@ -747,4 +748,14 @@ clone_foreach_bindings :: proc(c: ^Compiler, source: []Foreach_Binding) -> []For
 		}
 	}
 	return bindings
+}
+
+// A case's field bindings, unresolved (design.md "Inspecting a union").
+@(private = "file")
+clone_case_fields :: proc(c: ^Compiler, source: []Case_Field) -> []Case_Field {
+	fields := clone_slice(c, source)
+	for field, index in source {
+		fields[index] = Case_Field{name = field.name, is_ref = field.is_ref}
+	}
+	return fields
 }

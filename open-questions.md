@@ -500,38 +500,19 @@ records the reasoning:
   `shared` are only constructors ("Owned values", "Shared ownership").
 - A temporary that a local's declaration or whole assignment borrows lives
   until its block ends ("Temporaries and procedure boundaries").
+- A case binds a record payload's fields, `case .add(left, right):`, borrowed
+  over a place and transferred over a temporary ("Inspecting a union", "Switch
+  ownership").
 
 ### Recommended order
 
 | Priority | Proposal | Main benefit |
 | --- | --- | --- |
-| Later | Field bindings in a case | Recursive unions without clones |
 | Later | A failure-only `defer` | Rollback without a flag |
 | Later | Declared error wrapping for `or_return` | No mapper at every propagation |
 | Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
 | Later | No public mutable globals | Effects stop crossing packages invisibly |
 | Later | Test procedures | Unit tests for package-private code |
-
-### Field bindings in a case
-
-A case binds one name for a payload. When the payload is a record, the next
-step is selection or [destructuring](design.md#destructuring), and destructuring
-a borrowed payload clones: in a switch over a place,
-`case .add(pair): left, right := pair;` copies both boxes and everything under
-them. Let a case bind a record payload's fields, as a `foreach` header binds an
-element's:
-
-```odin
-switch (e^) {
-case .number(n):        return n;
-case .add(left, right): return eval(left) + eval(right);   // borrowed; nothing cloned
-}
-```
-
-Over a place the leaves borrow, `&mut` leaves included; over a temporary the
-fields transfer, as consuming destructuring does. It stays one level, a variant
-and its record's fields, so patterns still do not nest. A compiler written in
-Loke is the program this pays for most.
 
 ### A failure-only `defer`
 

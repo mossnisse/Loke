@@ -119,9 +119,8 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 				k.c,
 				expr_span(e),
 				"L0690",
-				"`%s` views the payload of a switch over a place, which still owns it; `switch (%s in move(...))` hands it over first",
+				"`%s` views the payload of a switch over a place, which still owns it; `switch (move(...))` hands it over first",
 				form,
-				identifier_text(k.c, sym.name),
 			)
 		} else {
 			errorf(

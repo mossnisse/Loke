@@ -152,6 +152,18 @@ prov_case_payload :: proc(
 	)
 }
 
+// One field of the payload a case binds (design.md "Inspecting a union").
+@(private)
+prov_case_field :: proc(
+	graph: ^Flow_Graph, s: ^Stmt_Switch, field: Case_Field, subject: []int, span: Span,
+) -> []int {
+	if len(subject) == 0 || s.subject == nil {
+		return subject
+	}
+	path := []Proj_Step{proj_wild(), proj_field(field.slot)}
+	return prov_project_content(graph, subject, expr_base(s.subject).type, path, field.type, span)
+}
+
 // The loan a binding that views another place holds. A lending binding's
 // `&binding` names the source rather than the binding's frame slot; one whose
 // loans end with its step names both.
@@ -181,16 +193,32 @@ prov_root_view :: proc(graph: ^Flow_Graph, root: Root_Id) -> []int {
 }
 
 // A `.name(&mut binding)` case borrows the subject exclusively for the case, as
-// `&mut subject` would (design.md "Switch ownership").
+// `&mut subject` would (design.md "Switch ownership"). A field binding, `slot`
+// at or above zero, borrows only its field of the payload where the subject is
+// a place with a path.
 @(private)
-prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool) -> []int {
+prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot := -1) -> []int {
 	if subject == nil {
 		return nil
+	}
+	root, path, ok := prov_place_of(graph, subject)
+	if slot >= 0 && ok {
+		path = prov_extend(graph, prov_extend(graph, path, proj_wild()), proj_field(slot))
+		if !mutable {
+			return prov_borrow(graph, root, path, false, expr_span(subject), "payload")
+		}
+		if ident, is_ident := subject.(^Expr_Ident); is_ident {
+			if loans, viewed := graph.view_loans[ident.symbol]; viewed && !graph.step_views[ident.symbol] {
+				return loans
+			}
+		}
+		prov_walk_subscripts(graph, subject)
+		access_block, access_index := prov_access(graph, root, path, .Write, expr_span(subject))
+		return prov_borrow(graph, root, path, true, expr_span(subject), "payload", access_block, access_index)
 	}
 	if mutable {
 		return prov_borrow_place(graph, subject, true, expr_span(subject), "payload")
 	}
-	root, path, ok := prov_place_of(graph, subject)
 	if !ok {
 		return nil
 	}

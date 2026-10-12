@@ -257,61 +257,74 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 // ---------------------------------------------------------- type switch --
 
 // A union subject turns `.name(binding)` and `.name(&mut binding)` calls into
-// branch patterns, and an `any_view` subject turns `T(binding)` into one.
+// branch patterns, and `.name(a, &mut b)` into field bindings; an `any_view`
+// subject turns `T(binding)` into one.
 adopt_branch_patterns :: proc(k: ^Checker, s: ^Stmt_Switch, erased: bool) {
 	s.kind = .Pattern
 	for &entry in s.cases {
 		if len(entry.values) != 1 {
 			continue
 		}
-		if pattern, binding, ref, ok := branch_variant_pattern(k, entry.values[0], erased); ok {
+		if pattern, leaves, ok := branch_variant_pattern(k, entry.values[0], erased); ok {
 			entry.values[0] = pattern
-			entry.binding = binding
-			entry.binding_ref = ref
+			if len(leaves) == 1 {
+				entry.binding = leaves[0].name
+				entry.binding_ref = leaves[0].is_ref
+				continue
+			}
+			entry.fields = leaves
+			for leaf in leaves {
+				entry.binding_ref ||= leaf.is_ref
+			}
 		}
 	}
 }
 
 @(private = "file")
-branch_variant_pattern :: proc(k: ^Checker, value: Expr, erased: bool) -> (Expr, Name, bool, bool) {
+branch_variant_pattern :: proc(k: ^Checker, value: Expr, erased: bool) -> (Expr, []Case_Field, bool) {
 	call, is_call := value.(^Expr_Call)
-	if !is_call || len(call.args) != 1 {
-		return nil, Name{}, false, false
+	if !is_call || len(call.args) == 0 {
+		return nil, nil, false
 	}
 	// A union case names `.variant`; an `any_view` case names a type, which is
 	// checked as one later.
 	selector, is_selector := call.callee.(^Expr_Selector)
 	implicit := is_selector && selector.operand == nil
 	if implicit == erased {
-		return nil, Name{}, false, false
+		return nil, nil, false
 	}
 	// design.md "any_view type": a call that already names a type, such as
 	// `Option(int)`, is a type case; only `T(name)` around a complete `T` binds.
-	if erased && names_type_silently(k, value) {
-		return nil, Name{}, false, false
+	if erased && (len(call.args) != 1 || names_type_silently(k, value)) {
+		return nil, nil, false
 	}
-	arg := call.args[0]
-	written := arg.value
-	ref := false
-	plain: ^Expr_Unary
-	if unary, is_unary := written.(^Expr_Unary); is_unary && unary.op == .Amp {
-		written, ref = unary.operand, true
-		if !unary.mutable {
-			plain = unary
+	leaves := make([]Case_Field, len(call.args), k.c.semantic_allocator)
+	for arg, index in call.args {
+		written := arg.value
+		ref := false
+		plain: ^Expr_Unary
+		if unary, is_unary := written.(^Expr_Unary); is_unary && unary.op == .Amp {
+			written, ref = unary.operand, true
+			if !unary.mutable {
+				plain = unary
+			}
+		}
+		ident, is_ident := written.(^Expr_Ident)
+		if !is_ident || arg.name.text != "" || arg.mode != .Value {
+			return nil, nil, false
+		}
+		// design.md "Inspecting a union": `&` alone would read as a read-only
+		// pointer, but the binding is a writable place. Bound anyway, so the case
+		// reports only its spelling.
+		if plain != nil {
+			errorf(k.c, plain.op_span, "L0367", "a writable payload binding is written `&mut name`")
+		}
+		leaves[index] = Case_Field {
+			name   = Name{text = ident.name, span = ident.span, id = ident.name_id},
+			is_ref = ref,
 		}
 	}
-	ident, is_ident := written.(^Expr_Ident)
-	if !is_ident || arg.name.text != "" || arg.mode != .Value {
-		return nil, Name{}, false, false
-	}
-	// design.md "Inspecting a union": `&` alone would read as a read-only
-	// pointer, but the binding is a writable place. Bound anyway, so the case
-	// reports only its spelling.
-	if plain != nil {
-		errorf(k.c, plain.op_span, "L0367", "a writable payload binding is written `&mut name`")
-	}
-	binding := Name{text = ident.name, span = ident.span, id = ident.name_id}
-	return call.callee, binding, ref, true
+	return call.callee, leaves, true
 }
 
 @(private = "file")
@@ -379,6 +392,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	any_case_falls := false
 	for &entry in s.cases {
 		binding_type := subject
+		payloadless := false
 		if len(entry.values) == 0 {
 			if has_default {
 				errorf(k.c, entry.span, "L0367", "this switch already has a default case")
@@ -432,15 +446,21 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		} else if len(entry.variant_indices) == 1 {
 			payload := union_variant_payload(k.c, subject, entry.variant_indices[0])
 			binding_type = payload == TYPE_VOID ? k.c.unit_type : payload
-			if entry.binding.text != "" && payload == TYPE_VOID {
+			if (entry.binding.text != "" || len(entry.fields) > 0) && payload == TYPE_VOID {
+				span := entry.binding.span if entry.binding.text != "" else entry.fields[0].name.span
 				errorf(
-					k.c, entry.binding.span, "L0426",
+					k.c, span, "L0426",
 					"the payloadless variant `.%s` has nothing to bind",
 					union_variant_name(k.c, subject, entry.variant_indices[0]),
 				)
+				payloadless = true
 			}
 		}
 		entry.binding_type = binding_type
+		// Fields that cannot be bound are still declared, untyped, so the case
+		// reports only its pattern.
+		resolved := len(entry.fields) > 0 && len(entry.variant_indices) == 1 && !payloadless &&
+			resolve_case_fields(k, &entry, binding_type, borrows)
 
 		// design.md "any_view type": an `any_view` lends its value read-only.
 		if erased && entry.binding_ref {
@@ -448,26 +468,14 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		}
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
-		binding := entry.binding
-		if binding.text != "" && binding.text != "_" {
-			name := intern_identifier(k.c, binding.text)
-			outer, owner := lookup_symbol_with_scope(case_scope, name)
-			if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
-				errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
-				note_shadowed_capture(k, outer)
-			}
-			reject_reserved_name(k, name, binding.span)
-			entry.binding_symbol = new_symbol(k.c, Symbol {
-				name       = name,
-				span       = binding.span,
-				kind       = .Var,
-				type       = binding_type,
-				pkg        = k.pkg,
-				owner_proc = k.proc_literal,
-				immutable  = borrows && !entry.binding_ref,
-				borrowed_binding = borrows ? .Switch_Payload : .None,
-			})
-			k.scope.names[name] = entry.binding_symbol
+		if len(entry.fields) == 0 {
+			entry.binding_symbol = bind_case_name(k, case_scope, entry.binding, binding_type, entry.binding_ref, borrows)
+		}
+		for &field in entry.fields {
+			field.symbol = bind_case_name(k, case_scope, field.name, field.type, field.is_ref, borrows)
+		}
+		if !resolved {
+			entry.fields = nil
 		}
 		case_flow := check_stmts(k, entry.stmts)
 		k.scope = case_scope
@@ -496,6 +504,65 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		breaks           = flow.breaks,
 		continues        = flow.continues,
 	}
+}
+
+// One name a case binds: the payload, or one of its fields. Over a place it
+// names storage the subject still owns (design.md "Switch ownership").
+@(private = "file")
+bind_case_name :: proc(
+	k: ^Checker, case_scope: ^Scope, binding: Name, type: Type_Id, is_ref, borrows: bool,
+) -> Symbol_Id {
+	if binding.text == "" || binding.text == "_" {
+		return INVALID_SYMBOL
+	}
+	name := intern_identifier(k.c, binding.text)
+	if _, declared := k.scope.names[name]; declared {
+		errorf(k.c, binding.span, "L0304", "`%s` is already declared in this scope", binding.text)
+		return INVALID_SYMBOL
+	}
+	outer, owner := lookup_symbol_with_scope(case_scope, name)
+	if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
+		errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
+		note_shadowed_capture(k, outer)
+	}
+	reject_reserved_name(k, name, binding.span)
+	symbol := new_symbol(k.c, Symbol {
+		name       = name,
+		span       = binding.span,
+		kind       = .Var,
+		type       = type,
+		pkg        = k.pkg,
+		owner_proc = k.proc_literal,
+		immutable  = borrows && !is_ref,
+		borrowed_binding = borrows ? .Switch_Payload : .None,
+	})
+	k.scope.names[name] = symbol
+	return symbol
+}
+
+// design.md "Inspecting a union": `.name(a, b)` destructures a record payload
+// as a `foreach` header does an element, under the rules of design.md
+// "Destructuring". Over a temporary the fields transfer, which a custom hook
+// forbids.
+@(private = "file")
+resolve_case_fields :: proc(k: ^Checker, entry: ^Switch_Case, payload: Type_Id, borrows: bool) -> bool {
+	span := entry.fields[0].name.span
+	fields, eligible := destructure_fields(k, payload, len(entry.fields), span, "L0426", "bound by a case")
+	if !eligible {
+		return false
+	}
+	if !borrows && reject_hooked_destructure(k, payload, span) {
+		return false
+	}
+	for &leaf, index in entry.fields {
+		field := symbol_of(k.c, fields[index])
+		if field == nil {
+			return false
+		}
+		leaf.slot = int(field.index)
+		leaf.type = field.type
+	}
+	return true
 }
 
 @(private = "file")

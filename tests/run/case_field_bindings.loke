@@ -1,0 +1,139 @@
+// design.md "Inspecting a union": a case binds a record payload's fields, as a
+// `foreach` header binds an element's. Over a place the fields are borrowed,
+// `&mut` ones as writable places; over a temporary they transfer.
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+drops: int;
+copies: sync.Atomic(int);
+
+Noisy :: struct { id: int }
+impl Noisy {
+	copy_noisy :: hook(copy) proc(self, allocator: Allocator) -> Result(Noisy, Allocator_Error) {
+		copies.add(1);
+		return .ok(Noisy{self.id});
+	}
+	release :: hook(drop) proc(self: inout Noisy) { drops += 1; }
+}
+
+Expr :: union {
+	number: int,
+	add:    (left: Box(Expr), right: Box(Expr)),
+	mul:    (Box(Expr), Box(Expr)),
+}
+
+// Borrowed: walking the tree clones nothing.
+eval :: proc(e: ^Expr) -> int {
+	switch (e^) {
+	case .number(n):        return n;
+	case .add(left, right): return eval(&left^) + eval(&right^);
+	case .mul(a, b):        return eval(&a^) * eval(&b^);
+	}
+}
+
+// `&mut` fields write the payload in place, and one is borrowed apart from
+// the other.
+double_leaves :: proc(e: ^mut Expr) {
+	switch (e^) {
+	case .number(&mut n):           n *= 2;
+	case .add(&mut left, &mut right): double_leaves(&mut left^); double_leaves(&mut right^);
+	case .mul(&mut a, _):           double_leaves(&mut a^);
+	}
+}
+
+Pair :: struct { first: Noisy, second: Noisy }
+Held :: union { pair: Pair, none }
+
+make_pair :: proc(a, b: int) -> Held { return .pair(Pair{Noisy{a}, Noisy{b}}); }
+
+Point :: struct { x, _: int, y: int }
+Shape :: union { at: Point, empty }
+
+sum_point :: proc() -> int {
+	shape: Shape = .at(Point{x = 3, y = 4});
+	switch (shape) {
+	case .at(&mut x, y): x += 10 * y;
+	case .empty:
+	}
+	switch (shape) {
+	case .at(x, y): return x + y;
+	case .empty:    return 0;
+	}
+}
+
+SUM_POINT :: sum_point();
+
+// Two `&mut` fields are disjoint places, so borrows of both may be live at once.
+swap_point :: proc(shape: ^mut Shape) {
+	switch (shape^) {
+	case .at(&mut x, &mut y): p := &mut x; q := &mut y; p^, q^ = q^, p^;
+	case .empty:
+	}
+}
+
+local_swap :: proc() -> Shape {
+	shape: Shape = .at(Point{x = 1, y = 2});
+	switch (shape) {
+	case .at(&mut x, &mut y): p := &mut x; q := &mut y; p^ += q^; q^ = 0;
+	case .empty:
+	}
+	return shape;
+}
+
+main :: proc() {
+	tree: Expr = .add({box(Expr.number(2)), box(Expr.mul({box(Expr.number(3)), box(Expr.number(4))}))});
+	fmt.println(eval(&tree));
+	double_leaves(&mut tree);
+	fmt.println(eval(&tree));
+
+	// A consumed payload's fields transfer: no copy, each dropped once.
+	{
+		switch (make_pair(1, 2)) {
+		case .pair(first, second): fmt.println("pair", first.id, second.id);
+		case .none:
+		}
+	}
+	fmt.println("consumed", copies.load(), drops);
+
+	// A discarded field drops with the case.
+	drops = 0;
+	{
+		switch (make_pair(3, 4)) {
+		case .pair(_, second): fmt.println("second", second.id);
+		case .none:
+		}
+	}
+	fmt.println("discarded", copies.load(), drops);
+
+	// A field moves out of a consumed payload.
+	drops = 0;
+	{
+		kept: Noisy = {};
+		switch (make_pair(5, 6)) {
+		case .pair(first, _): kept = move(first);
+		case .none:
+		}
+		fmt.println("kept", kept.id);
+	}
+	fmt.println("moved", copies.load(), drops);
+
+	// Over a place the switch clones and drops nothing; `held` drops both at
+	// the end of its block.
+	drops = 0;
+	{
+		held := make_pair(7, 8);
+		switch (held) {
+		case .pair(first, second): fmt.println("borrowed", first.id + second.id);
+		case .none:
+		}
+		fmt.println("still", held);
+	}
+	fmt.println("place", copies.load(), drops);
+
+	fmt.println(SUM_POINT, sum_point());
+	shape: Shape = .at(Point{x = 5, y = 6});
+	swap_point(&mut shape);
+	fmt.println(shape, local_swap());
+}

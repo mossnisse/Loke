@@ -184,6 +184,21 @@ different representation, such as indices into a slot array.
 Generated box lifecycle operations recurse. Long linked chains may need an
 iterative drop hook to avoid exhausting the stack.
 
+### Field bindings in a case
+
+A payload is often a record, and binding it whole leaves selection or
+destructuring as the next step. Destructuring a borrowed payload clones it, so
+`case .add(pair): left, right := pair;` over a place copied both boxes and
+everything under them. `case .add(left, right):` binds the fields as a
+`foreach` header binds an element's: borrowed over a place, `&mut` leaves
+included, and transferred over a temporary, as consuming destructuring does.
+A recursive union, such as a syntax tree a compiler written in Loke walks, is
+where this pays most.
+
+It stays one level, a variant and its record's fields, so patterns still do
+not nest. One binding still names the whole payload, as one `foreach` binding
+names the whole element, so the arity of a pattern decides which it means.
+
 ### Storage modifiers instead of storage attributes
 
 `static` and `thread_local` are declaration modifiers because they determine
@@ -427,6 +442,7 @@ some explicit declarations while keeping representation and meaning separate.
 Binding forms use subsets of one pattern grammar: names and `_`, writable
 `&mut` leaves, static `$` leaves, and groups that descend into record fields.
 `foreach` supports nested groups because adapters may wrap the yielded value.
+A switch case takes one flat list over its payload's fields.
 Declarations stay flat: a nested value the program constructed can be unpacked
 in another statement, without adding recursive declaration and cleanup rules.
 

@@ -336,6 +336,9 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 			if entry.binding.text != "" {
 				fmt.sbprintf(b, " (bind %s%q)", entry.binding_ref ? "&mut " : "", entry.binding.text)
 			}
+			for field in entry.fields {
+				fmt.sbprintf(b, " (bind %s%q)", field.is_ref ? "&mut " : "", field.name.text)
+			}
 			fmt.sbprintln(b)
 			for inner in entry.stmts {
 				dump_stmt(b, inner, depth + 2)

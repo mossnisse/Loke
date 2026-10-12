@@ -711,13 +711,15 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	for entry, index in s.cases {
 		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
-		if entry.binding_ref && entry.binding_symbol != INVALID_SYMBOL {
+		if len(entry.fields) > 0 {
+			emit_case_fields(e, entry, union_type, place != "" ? place : slot, consumes)
+		} else if entry.binding_ref && entry.binding_symbol != INVALID_SYMBOL {
 			bind_local(e, entry.binding_symbol, gep_field(e, llvm_type(e, union_type), place, 0))
 		} else {
 			emit_type_case_binding(e, entry, union_type, value, slot, erased)
 		}
 		// A consumed payload drops with the binding, or with the case if unbound.
-		if consumes {
+		if consumes && len(entry.fields) == 0 {
 			if entry.binding_symbol != INVALID_SYMBOL {
 				register_implicit_drop(e, entry.binding_symbol)
 			} else {
@@ -754,6 +756,33 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 		payload = emit_union_payload(e, union_type, entry.binding_type, slot)
 	}
 	store(e, entry.binding_type, payload, binding)
+}
+
+// design.md "Inspecting a union": over a place each field binding names its
+// field of the stored payload. A consumed payload is taken apart: a retained
+// field moves into its binding, which drops it, and a discarded one drops with
+// the case.
+@(private = "file")
+emit_case_fields :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, storage: string, consumes: bool) {
+	payload := gep_field(e, llvm_type(e, union_type), storage, 0)
+	for field in entry.fields {
+		address := element_address(e, entry.binding_type, payload, field.slot)
+		if !consumes {
+			if field.symbol != INVALID_SYMBOL {
+				bind_local(e, field.symbol, address)
+			}
+			continue
+		}
+		if field.symbol == INVALID_SYMBOL {
+			register_scope_place(e, field.type, address)
+			continue
+		}
+		binding := fmt.aprintf("%%bind.%d", next_id(e))
+		alloca_named(e, binding, llvm_type(e, field.type))
+		store(e, field.type, load_place(e, field.type, address), binding)
+		bind_local(e, field.symbol, binding)
+		register_implicit_drop(e, field.symbol)
+	}
 }
 
 @(private = "file")

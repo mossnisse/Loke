@@ -1,0 +1,13 @@
+14
+28
+pair 1 2
+consumed 0 2
+second 4
+discarded 0 2
+kept 5
+moved 0 3
+borrowed 15
+still .pair(Pair{first = Noisy{id = 7}, second = Noisy{id = 8}})
+place 0 2
+47 47
+.at(Point{x = 6, y = 5}) .at(Point{x = 3, y = 0})

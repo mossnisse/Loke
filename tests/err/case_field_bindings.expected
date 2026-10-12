@@ -1,0 +1,27 @@
+L0426
+@20:13
+`Pair` has 2 fields, so it fills 2 bindings, not 3
+L0426
+@27:15
+`int` is not a record, so it cannot fill 2 bindings
+L0426
+@34:13
+the payloadless variant `.none` has nothing to bind
+L0508
+@41:15
+`Hooked` has a custom `hook(copy)` or `hook(drop)`, so it cannot be taken apart by a destructure
+L0304
+@48:16
+`a` is already declared in this scope
+L0358
+@55:20
+a case binding names storage the subject still owns and cannot be an assignment destination
+L0690
+@62:35
+`move` views the payload of a switch over a place, which still owns it; `switch (move(...))` hands it over first
+L0359
+@68:10
+this expression cannot be switched with a mutable payload binding
+L0512
+@77:25
+`v` cannot be assigned here: a mutable payload of it is still in use

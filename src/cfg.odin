@@ -1784,25 +1784,23 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		graph.current = bodies[index]
 		enter_flow_scope(graph)
 		if graph.mode != .Lifecycle {
-			// Over a place, the binding is the stored payload, not a copy of it.
-			prov_bind_value(graph, c.binding_symbol, prov_case_payload(graph, s, c, subject), c.span, copies = consumes)
-			prov_bind_case_region(graph, c.binding_symbol, s.subject)
-			// A place subject keeps its payload, so the binding views its storage;
-			// a consumed one is the binding's own, which ends with its case
-			// (design.md "Switch ownership").
-			if !consumes {
-				// design.md "Switch ownership": `cursor = &mut node.next` keeps a
-				// loan of this case's `node`, which the next pass binds afresh.
-				if c.binding_ref && c.binding_symbol != INVALID_SYMBOL {
-					prov_emit(graph, Prov_Event{kind = .Rebind, root = prov_root_for_symbol(graph, c.binding_symbol), span = c.span})
+			if len(c.fields) == 0 {
+				prov_bind_case_name(graph, s, c.binding_symbol, c.binding_ref, prov_case_payload(graph, s, c, subject), c.span, consumes)
+			}
+			// design.md "Inspecting a union": each field binding is that field of
+			// the payload, borrowed apart from its siblings.
+			for field in c.fields {
+				if field.symbol == INVALID_SYMBOL {
+					continue
 				}
-				prov_bind_view(graph, c.binding_symbol, prov_subject_view(graph, s.subject, c.binding_ref))
-			} else if c.binding_symbol != INVALID_SYMBOL {
-				root := prov_root_for_symbol(graph, c.binding_symbol)
-				append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = c.span})
+				sources := prov_case_field(graph, s, field, subject, c.span)
+				prov_bind_case_name(graph, s, field.symbol, field.is_ref, sources, c.span, consumes, field.slot)
 			}
 		} else {
-			track_case_binding(graph, c, consumes)
+			track_case_binding(graph, c.binding_symbol, consumes)
+			for field in c.fields {
+				track_case_binding(graph, field.symbol, consumes)
+			}
 		}
 		walk_flow_stmts(graph, c.stmts)
 		leave_flow_scope(graph)
@@ -1811,21 +1809,46 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	graph.current = merge
 }
 
+// One name a case binds: the payload, or with `slot` one of its fields.
+@(private = "file")
+prov_bind_case_name :: proc(
+	graph: ^Flow_Graph, s: ^Stmt_Switch, symbol: Symbol_Id, is_ref: bool, sources: []int, span: Span,
+	consumes: bool, slot := -1,
+) {
+	// Over a place, the binding is the stored payload, not a copy of it.
+	prov_bind_value(graph, symbol, sources, span, copies = consumes)
+	prov_bind_case_region(graph, symbol, s.subject)
+	// A place subject keeps its payload, so the binding views its storage;
+	// a consumed one is the binding's own, which ends with its case
+	// (design.md "Switch ownership").
+	if !consumes {
+		// design.md "Switch ownership": `cursor = &mut node.next` keeps a
+		// loan of this case's `node`, which the next pass binds afresh.
+		if is_ref && symbol != INVALID_SYMBOL {
+			prov_emit(graph, Prov_Event{kind = .Rebind, root = prov_root_for_symbol(graph, symbol), span = span})
+		}
+		prov_bind_view(graph, symbol, prov_subject_view(graph, s.subject, is_ref, slot))
+	} else if symbol != INVALID_SYMBOL {
+		root := prov_root_for_symbol(graph, symbol)
+		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
+	}
+}
+
 // A consuming switch's binding is an ordinary managed local of its case.
 @(private = "file")
-track_case_binding :: proc(graph: ^Flow_Graph, entry: Switch_Case, consumes: bool) {
-	if !consumes || entry.binding_symbol == INVALID_SYMBOL {
+track_case_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, consumes: bool) {
+	if !consumes || symbol == INVALID_SYMBOL {
 		return
 	}
-	sym := symbol_of(graph.k.c, entry.binding_symbol)
+	sym := symbol_of(graph.k.c, symbol)
 	if sym == nil || !type_is_managed(graph.k.c, sym.type) {
 		return
 	}
-	slot, already := graph.by_symbol[entry.binding_symbol]
+	slot, already := graph.by_symbol[symbol]
 	if !already {
-		append(&graph.tracked, Tracked_Local{symbol = entry.binding_symbol})
+		append(&graph.tracked, Tracked_Local{symbol = symbol})
 		slot = len(graph.tracked) - 1
-		graph.by_symbol[entry.binding_symbol] = slot
+		graph.by_symbol[symbol] = slot
 	}
 	append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
 	emit(graph, Flow_Event {

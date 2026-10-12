@@ -921,14 +921,29 @@ Switch_Case :: struct {
 	stmts:  []Stmt,
 	// The binding in `.variant(name)`, or empty.
 	binding: Name,
-	// `.variant(&mut name)`: the binding is the subject's payload place.
+	// `.variant(&mut name)`: the binding is the subject's payload place, or,
+	// with `fields`, some field binding is.
 	binding_ref: bool,
+	// `.variant(a, &mut b)`: the bindings of a record payload's fields, set
+	// instead of `binding`.
+	fields: []Case_Field,
 	// A type switch's per-case binding: the payload type for one variant, the
 	// union type for a grouped or default case.
 	binding_symbol: Symbol_Id,
 	binding_type:   Type_Id,
 	// A union switch's cases as variant indices.
 	variant_indices: []int,
+}
+
+// One field binding of a case (design.md "Inspecting a union").
+Case_Field :: struct {
+	name:   Name,
+	is_ref: bool,
+	// Resolved by the checker: the field's slot in the payload record, which
+	// counts padding, and its symbol, none for `_`.
+	slot:   int,
+	type:   Type_Id,
+	symbol: Symbol_Id,
 }
 
 Stmt_Switch :: struct {

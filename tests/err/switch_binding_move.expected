@@ -1,7 +1,7 @@
 L0690
 @12:34
 views the payload of a switch over a place
-`switch (owned in move(...))`
+`switch (move(...))`
 bound here
 L0690
 @20:25

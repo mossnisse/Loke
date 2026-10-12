@@ -499,6 +499,14 @@ checklist.
 
 ### Added
 
+- A switch case binds a record payload's fields: `case .add(left, right):`
+  (design.md "Inspecting a union"). Over a place the fields are borrowed and
+  nothing is cloned, `&mut left` binding one field as a writable place apart
+  from its siblings; over a temporary they transfer into their bindings, and a
+  `_` field drops when the case ends (design.md "Switch ownership"). The
+  payload must be a record that the destructuring rules let the case take
+  apart, and the form works in `if (case ...)` and `for (case ...)` headers
+  too.
 - An anonymous record whose fields are all ordered is ordered
   lexicographically (design.md "Comparison operators"), so
   `[dynamic](priority: int, id: int)` sorts without a comparator and such a
@@ -724,6 +732,9 @@ checklist.
 
 ### Fixed
 
+- `L0690`, for `move` or `drop` of a borrowed case binding, suggested the
+  removed header binding `switch (name in move(...))`; it now suggests
+  `switch (move(...))`.
 - A temporary borrowed by `&`, by slicing, or by a view conversion is dropped
   when its statement ends (design.md "Temporaries and procedure boundaries").
   A literal such as `&Tracked{1}` or `[dynamic]Tracked{...}[:]` passed to a
