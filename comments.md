@@ -94,9 +94,13 @@ ownership uses `box`, so the result's type says who releases it.
 ### Zeros that are values
 
 `{}` means a usable zero: an empty view, invalid type id, default allocator,
-or empty weak handle. `nil` means an absent raw address. A reference has no valid
-zero, so `^T`, procedure values, `dyn` views, `any_view`, `cstring_view`, and
-`shared(T)` cannot be null. Absence is represented by `Option`.
+or empty weak handle. `nil` means an absent raw address. A non-null type has no
+valid zero, so `^T`, procedure values, `dyn` views, `any_view`, `cstring_view`,
+`box(T)`, and `shared(T)` cannot be null. Absence is represented by `Option`.
+The non-null types split into references, which are borrows and checked as
+such, and owning handles, which are owners. Calling them all references would
+make an owning handle look like a borrow; the shared name is what the zero rule
+and the `Option` niche need.
 
 This moves the null check to the conversion from an unchecked address rather
 than every dereference. It also avoids a nullable reference inside an optional

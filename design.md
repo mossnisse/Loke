@@ -338,7 +338,7 @@ Compile-time-only `type` and reflection descriptors have no zero value.
 
 ##### Types with no zero value
 
-A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A struct with a [`@(required)`](#required-fields) field has none. A [`box(T)`](#owned-values) has none, since it always owns a payload. A **reference** always refers to something, so it has no null state and no zero value: `^T`, `^mut T`, a procedure value, `dyn I` and `dyn mut I`, `any_view`, `cstring_view`, and `shared(T)`. An absent reference is an `Option` of it, such as `Option(^T)`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
+A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A struct with a [`@(required)`](#required-fields) field has none. A **non-null type** has no null state and so no zero value. It is either a **reference**, which always refers to something: `^T`, `^mut T`, a procedure value, `dyn I` and `dyn mut I`, `any_view`, and `cstring_view`; or an **owning handle**, which always owns a payload: [`box(T)`](#owned-values) and [`shared(T)`](#shared-ownership). An absent one is an `Option` of it, such as `Option(^T)`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
 
 Every operation that manufactures a zero is rejected for a no-zero type:
 
@@ -351,7 +351,7 @@ A map of a no-zero element is indexed like any other, because no map operation m
 
 The diagnostic names the operation and suggests the two ways out: give the union a zero with `@(zero=first_variant)`, or construct the value explicitly. A record that may lack a reference holds an `Option` of it instead, which has the zero `.none`.
 
-Not being null proves neither lifetime nor exclusivity: a reference is still a borrow, checked as one. A reference stays non-null because nothing produces a null one: `nil` is not a value of a reference type, and the [unchecked conversions](#the-unsafe-package) from an address panic on a null one. So no dereference, indirect call, or slot dispatch tests for null.
+Not being null proves nothing else: a reference is still a borrow, checked as one, and an owning handle is still an owner. A non-null value stays non-null because nothing produces a null one: `nil` is not a value of a non-null type, and the [unchecked conversions](#the-unsafe-package) from an address panic on a null one. So no dereference, indirect call, or slot dispatch tests for null.
 
 #### Type conversion
 
@@ -1736,7 +1736,7 @@ See [Types with no zero value](#types-with-no-zero-value) for how the property p
 
 A union's storage is its payload region, then the tag, then whatever padding the alignment asks for. The tag is the narrowest unsigned integer that indexes `0 ..< variant_count`: 256 variants still fit in one byte and 257 need two. The first declared variant has tag 0, and there is no nil tag. A union with no variants keeps one byte. A tag wider than every payload raises the union's alignment, as any other member would.
 
-One exception stores no tag. A union of exactly two variants, one without a payload and the other with a [reference](#types-with-no-zero-value) payload, is the payload alone: a reference is never null, so the null first word is the payloadless variant. `Option(^T)` is one address, as is `Option` of a procedure value, `cstring_view`, `box(T)`, or `shared(T)`; `Option(dyn I)` and `Option(any_view)` are their two words. Nothing else changes: the variants keep their declaration order, and the all-zero value is still the payloadless one.
+One exception stores no tag. A union of exactly two variants, one without a payload and the other with a [non-null](#types-with-no-zero-value) payload, is the payload alone: that payload's first word is a non-null address, so the null first word is the payloadless variant. `Option(^T)` is one address, as is `Option` of a procedure value, `cstring_view`, `box(T)`, or `shared(T)`; `Option(dyn I)` and `Option(any_view)` are their two words. Nothing else changes: the variants keep their declaration order, and the all-zero value is still the payloadless one.
 
 ### Enumerations
 

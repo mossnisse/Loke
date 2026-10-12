@@ -494,6 +494,8 @@ records the reasoning:
 - `main` may return a fallible union ("Program entry and exit").
 - An anonymous record whose fields are ordered orders lexicographically
   ("Comparison operators").
+- References and owning handles are together the non-null types, which the
+  `Option` niche covers ("Types with no zero value", "Representation").
 
 ### Recommended order
 
@@ -620,11 +622,6 @@ no new syntax.
 
 ### Smaller items
 
-- **A name for non-null handles.** [Types with no zero value](design.md#types-with-no-zero-value)
-  lists `shared(T)` as a *reference*, then says a reference "is still a borrow,
-  checked as one", which an owning handle is not. [Representation](design.md#representation)
-  derives its niche rule from that list but names `box(T)`, which the list
-  omits. One term covering references and owning handles would fix both.
 - **Lower-case `box`, `shared`, and `weak`.** Every other predeclared generic
   type is capitalised (`Option`, `Result`, `Range`, `Simd`); these are lower-case
   because each name is also its constructor. Capitalise the types and keep the

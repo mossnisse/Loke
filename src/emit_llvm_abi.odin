@@ -625,8 +625,8 @@ param_llvm :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
 	return param_mode_is_pointer(mode) || is_large_value(e, type) ? "ptr" : llvm_type(e, type)
 }
 
-// design.md "Types with no zero value": a reference, and the address a pointer-
-// mode or large parameter arrives at, is never null.
+// design.md "Types with no zero value": a non-null type held as one address,
+// and the address a pointer-mode or large parameter arrives at, is never null.
 @(private)
 param_nonnull :: proc(e: ^Emitter, type: Type_Id, mode: Param_Mode) -> string {
 	if param_mode_is_pointer(mode) || is_large_value(e, type) {

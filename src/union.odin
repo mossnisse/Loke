@@ -194,16 +194,16 @@ union_niche_variant :: proc(c: ^Compiler, type: Type_Id) -> int {
 		return -1
 	}
 	for payload, index in info.variants {
-		if info.variants[1 - index] == TYPE_VOID && type_is_reference(c, payload) {
+		if info.variants[1 - index] == TYPE_VOID && type_is_non_null(c, payload) {
 			return index
 		}
 	}
 	return -1
 }
 
-// design.md "Types with no zero value": a reference, whose first word is a
-// non-null address.
-type_is_reference :: proc(c: ^Compiler, type: Type_Id) -> bool {
+// design.md "Types with no zero value": a non-null type, a reference or an
+// owning handle, whose first word is a non-null address.
+type_is_non_null :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	info := underlying_info(c, type)
 	if info == nil {
 		return false

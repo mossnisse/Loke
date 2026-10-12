@@ -1256,6 +1256,11 @@ checklist.
 
 ### Documentation
 
+- design.md "Types with no zero value" names the **non-null types**: the
+  references, which are borrows, and the owning handles `box(T)` and
+  `shared(T)`, which are owners. It no longer calls `shared(T)` a reference,
+  and the `Option` niche in "Representation" now cites the list that names
+  `box(T)`.
 - The `greeting` and `keys` examples declare a fallible `main` and exit with
   status 1 when they report a failure; they used to exit 0. Examples, the
   command-line tutorial, and the standard library name a `case .err(...)`
