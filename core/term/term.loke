@@ -305,8 +305,8 @@ read_console_line :: proc(
 	switch (utf16.decode(line[0:kept], allocator)) {
 	case .ok(text):
 		return .ok(text);
-	case .err(text):
-		code := io.Code.Out_Of_Memory if text == .Out_Of_Memory else io.Code.Invalid_Data;
+	case .err(error):
+		code := io.Code.Out_Of_Memory if error == .Out_Of_Memory else io.Code.Invalid_Data;
 		return .err(io.make_error(code, .Read_Line));
 	}
 }

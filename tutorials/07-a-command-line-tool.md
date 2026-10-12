@@ -137,8 +137,8 @@ main :: proc() -> i32 {
 	switch (fs.read_text(path)) {
 	case .ok(contents):
 		text = contents;
-	case .err(contents):
-		fmt.eprintln("tally: cannot read", path, "-", contents);
+	case .err(error):
+		fmt.eprintln("tally: cannot read", path, "-", error);
 		return 1;
 	}
 
@@ -146,8 +146,8 @@ main :: proc() -> i32 {
 	switch (ledger.parse(text)) {
 	case .ok(parsed):
 		totals = move(parsed);
-	case .err(parsed):
-		fmt.eprintln("tally:", path, "line", parsed.line, "-", parsed.reason);
+	case .err(error):
+		fmt.eprintln("tally:", path, "line", error.line, "-", error.reason);
 		return 1;
 	}
 

@@ -1,6 +1,5 @@
 package main;
 
-import "core:fmt";
 import "core:fs";
 import "core:io";
 import "core:term";
@@ -8,8 +7,11 @@ import "core:term";
 // The standard library's acceptance program: a command-line
 // program that reads a line, reads and writes a text file, and reports a
 // failure — with no compiler-specific I/O built-in anywhere in it.
-
-run :: proc() -> Result(Unit, io.Error) {
+//
+// design.md "Program entry and exit": a failure `main` returns is printed as
+// `error: ` and the payload, and the program exits with status 1, so
+// `or_return` is the whole of error handling at the top of a program.
+main :: proc() -> Result(Unit, io.Error) {
 	name := term.prompt("Name: ") or_return;
 
 	// The file does not exist on the first run, which is not a failure here.
@@ -20,13 +22,4 @@ run :: proc() -> Result(Unit, io.Error) {
 
 	line := "Hello, " + name + "!\n";
 	return fs.write_text("greetings.txt", old + line);
-}
-
-main :: proc() {
-	// design.md "Typed fallibility": one variant switch is the whole of error
-	// handling at the top of a program.
-	switch (run()) {
-	case .ok:
-	case .err(outcome): fmt.eprintln("error:", outcome);
-	}
 }

@@ -53,16 +53,16 @@ main :: proc() {
 	is_directory := false;
 	switch (fs.metadata(target)) {
 	case .ok(metadata):  is_directory = metadata.kind == .Directory;
-	case .err(metadata):
-		fmt.eprintln("cannot read", target, "-", metadata);
+	case .err(error):
+		fmt.eprintln("cannot read", target, "-", error);
 		os.exit(1);
 	}
 	if (is_directory) {
 		totals := Totals{};
 		switch (walk(target, inout totals)) {
 		case .ok:
-		case .err(walked):
-			fmt.eprintln("cannot read", target, "-", walked);
+		case .err(error):
+			fmt.eprintln("cannot read", target, "-", error);
 			os.exit(1);
 		}
 		fmt.println(totals.files, "files,", totals.tokens, "tokens,", totals.diagnostics, "diagnostics");
@@ -72,8 +72,8 @@ main :: proc() {
 	switch (lex_file(target, inout found)) {
 	case .ok(tokens):
 		foreach (token in tokens) { fmt.println(token.lo, token.hi, token.kind); }
-	case .err(tokens):
-		fmt.eprintln("cannot read", target, "-", tokens);
+	case .err(error):
+		fmt.eprintln("cannot read", target, "-", error);
 		os.exit(1);
 	}
 	foreach (diagnostic in found) { fmt.eprintln(diagnostic.at, diagnostic.code); }

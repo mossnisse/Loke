@@ -2255,8 +2255,7 @@ run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 	) {
 		return false
 	}
-	// The example reports a failure and still exits 0, so the exit code alone
-	// cannot tell a successful run from a reported one.
+	// A failure `main` returns also exits 1, checked above; the report says which.
 	return testing.expectf(
 		t, normalise(string(stderr)) == "",
 		"greeting reported %q", normalise(string(stderr)),

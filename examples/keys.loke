@@ -13,7 +13,9 @@ import "core:term";
 // strategy — during panic unwinding. It is *not* a termination guarantee:
 // `os.exit` runs no cleanup at all. That is why `begin_raw` also registers a
 // console control handler, which restores the mode when the window is closed or
-// Ctrl+C ends the process.
+// Ctrl+C ends the process. A failure `main` returns, such as
+// `Not_A_Terminal`, is printed after `raw` is dropped, and the program exits
+// with status 1 (design.md "Program entry and exit").
 
 describe :: proc(event: term.Key_Event) {
 	if (event.control) { fmt.print("ctrl+"); }
@@ -26,7 +28,7 @@ describe :: proc(event: term.Key_Event) {
 	fmt.println(event.key);
 }
 
-run :: proc() -> Result(Unit, io.Error) {
+main :: proc() -> Result(Unit, io.Error) {
 	raw := term.begin_raw() or_return;
 	fmt.println("keys (escape quits)");
 	for (;;) {
@@ -36,11 +38,4 @@ run :: proc() -> Result(Unit, io.Error) {
 	}
 	// The explicit close is what reports a failed restore; `drop` cannot.
 	return raw.close();
-}
-
-main :: proc() {
-	switch (run()) {
-	case .ok:
-	case .err(outcome): fmt.eprintln("error:", outcome);
-	}
 }

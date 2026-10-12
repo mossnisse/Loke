@@ -389,7 +389,7 @@ impl Latch {
 		}
 		switch (write_all(inout self.writer, bytes)) {
 		case .ok:
-		case .err(written): self.error = .some(written);
+		case .err(error): self.error = .some(error);
 		}
 	}
 }

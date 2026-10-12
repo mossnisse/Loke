@@ -1240,6 +1240,10 @@ checklist.
 
 ### Documentation
 
+- The `greeting` and `keys` examples declare a fallible `main` and exit with
+  status 1 when they report a failure; they used to exit 0. Examples, the
+  command-line tutorial, and the standard library name a `case .err(...)`
+  binding `error` rather than after the success value it is not.
 - [Language specification](design.md) corrects mutable slice/map-pointer syntax,
   recoverable map allocation, capture initialization, unsigned checked arithmetic,
   and the status of grapheme support. Shortens repeated examples and explanations,

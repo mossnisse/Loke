@@ -169,22 +169,22 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 	result: Output = {};
 	reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), collected.clone()});
 	switch (io.read_to_end(inout child.stdout)) {
-	case .ok(bytes):  result.stdout = move(bytes);
-	case .err(bytes):
+	case .ok(bytes): result.stdout = move(bytes);
+	case .err(error):
 		// The child may be blocked writing stdout, and then never closes
 		// stderr, so it is ended before the stderr reader is joined.
 		_ = child.kill();
 		reader.join();
-		return .err(bytes);
+		return .err(error);
 	}
 	reader.join();
 	{
 		guard := collected.get().lock();
 		switch (exchange(inout guard.get(), .ok({}))) {
-		case .ok(bytes):  result.stderr = move(bytes);
-		case .err(bytes):
+		case .ok(bytes): result.stderr = move(bytes);
+		case .err(error):
 			_ = child.kill();
-			return .err(bytes);
+			return .err(error);
 		}
 	}
 	result.status = child.wait() or_return;
@@ -513,7 +513,7 @@ spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io
 		case .ok(opened):
 			handles.child[index] = opened[0];
 			handles.parent[index] = opened[1];
-		case .err(opened): return .err(opened);
+		case .err(error): return .err(error);
 		}
 	}
 
@@ -740,8 +740,8 @@ wide :: proc(text: string_view) -> Result([dynamic]u16, io.Error) {
 	switch (utf16.encode(text, mem.default_allocator())) {
 	case .ok(units):
 		return .ok(move(units));
-	case .err(units):
-		code := io.Code.Invalid_Data if units == .Contains_Zero else io.Code.Out_Of_Memory;
+	case .err(error):
+		code := io.Code.Invalid_Data if error == .Contains_Zero else io.Code.Out_Of_Memory;
 		return .err(io.make_error(code, .Spawn));
 	}
 }

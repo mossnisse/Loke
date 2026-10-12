@@ -98,8 +98,8 @@ wide :: proc(text: string_view, operation: io.Operation) -> Result([dynamic]u16,
 	switch (utf16.encode(text, mem.default_allocator())) {
 	case .ok(units):
 		return .ok(move(units));
-	case .err(units):
-		code := io.Code.Out_Of_Memory if units == .Out_Of_Memory else io.Code.Invalid_Data;
+	case .err(error):
+		code := io.Code.Out_Of_Memory if error == .Out_Of_Memory else io.Code.Invalid_Data;
 		return .err(io.make_error(code, operation));
 	}
 }
@@ -112,8 +112,8 @@ from_wide :: proc(
 	switch (utf16.decode(units[0:count], allocator)) {
 	case .ok(text):
 		return .ok(text);
-	case .err(text):
-		code := io.Code.Out_Of_Memory if text == .Out_Of_Memory else io.Code.Invalid_Data;
+	case .err(error):
+		code := io.Code.Out_Of_Memory if error == .Out_Of_Memory else io.Code.Invalid_Data;
 		return .err(io.make_error(code, operation));
 	}
 }

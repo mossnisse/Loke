@@ -164,8 +164,8 @@ read_bytes :: proc(
 	case .ok(bytes):
 		closed or_return;
 		return .ok(move(bytes));
-	case .err(bytes):
-		return .err(bytes);
+	case .err(error):
+		return .err(error);
 	}
 }
 
@@ -445,8 +445,8 @@ wide_path :: proc(path: string_view, operation: io.Operation) -> Result([dynamic
 	switch (utf16.encode(path, mem.default_allocator())) {
 	case .ok(units):
 		return .ok(move(units));
-	case .err(units):
-		code := io.Code.Invalid_Path if units == .Contains_Zero else io.Code.Out_Of_Memory;
+	case .err(error):
+		code := io.Code.Invalid_Path if error == .Contains_Zero else io.Code.Out_Of_Memory;
 		return .err(io.make_error(code, operation));
 	}
 }
@@ -687,8 +687,8 @@ impl Directory_Reader {
 			units := self.data.name[:];
 			count := utf16.length_of(units);
 			switch (utf16.decode(units[0:count], self.allocator)) {
-			case .ok(decoded):  self.current = decoded;
-			case .err(decoded): return .err(from_utf16_error(decoded, .Read_Directory));
+			case .ok(decoded): self.current = decoded;
+			case .err(error): return .err(from_utf16_error(error, .Read_Directory));
 			}
 			if (self.current == "." || self.current == "..") { continue; }
 			return .ok(.some(Directory_Entry{self.current, kind_of(self.data.attributes)}));
