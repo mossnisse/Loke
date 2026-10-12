@@ -1,0 +1,16 @@
+L0513
+@18:14
+this slice is used after this temporary has ended
+this temporary ends with the statement that created it
+L0513
+@24:14
+this slice is used after this temporary has ended
+this temporary ends with the statement that created it
+L0513
+@33:14
+this slice is used after this temporary has ended
+this temporary is kept until the end of the block that created it
+L0513
+@40:15
+this pointer is used after this temporary has ended
+this temporary ends with the statement that created it

@@ -91,10 +91,10 @@ main :: proc() {
 	}
 
 	// design.md "Temporaries and procedure boundaries" draws the other half: a
-	// slice literal's hidden `[N]T` is "an ordinary frame owner in the
-	// surrounding lexical scope", not a full-expression temporary. So it is the
-	// scope that owes these drops, and it owes them for a `[]T` literal as much
-	// as a `[]mut T` one.
+	// slice literal's backing array "is always extended", whatever takes the
+	// slice, rather than ending with its full expression. So it is the scope
+	// that owes these drops, and it owes them for a `[]T` literal as much as a
+	// `[]mut T` one.
 	{
 		held := []mut Held{Held{1}, Held{2}};
 		fmt.println("held", held[0].tag);

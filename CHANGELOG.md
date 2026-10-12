@@ -10,6 +10,19 @@ checklist.
 
 ### Breaking changes
 
+- A temporary that a local's declaration or whole assignment borrows lives
+  until the end of the block holding the statement (design.md "Temporaries and
+  procedure boundaries"). `p := &Point{1, 2}`, `items := [dynamic]int{1, 2}[:]`,
+  `view: any_view = make_guard()`, and a capture literal stored into a
+  `dyn proc` local can now be used on later lines, where they reported
+  `L0513`; the borrow may pass through `&`, slicing, a field or element, or an
+  implicit view conversion, but not through a call. Two upgrade notes: such a
+  temporary is now dropped with the block's locals, so its `hook(drop)` runs
+  at the end of the block rather than the statement; and slicing an array
+  literal, as in `first([2]int{1, 2}[:])`, no longer outlives its statement
+  when a call takes the slice, so keeping that call's result is `L0513`.
+  Write a slice literal, `[]int{1, 2}`, which is still extended wherever it
+  appears, or name the array.
 - The handle types are capitalised like every other predeclared generic type:
   `Box(T)`, `Shared(T)`, and `Weak(T)` (design.md "Owned values", "Shared
   ownership"). Lower-case `box(value)` and `shared(value)` remain the
@@ -711,6 +724,11 @@ checklist.
 
 ### Fixed
 
+- A temporary borrowed by `&`, by slicing, or by a view conversion is dropped
+  when its statement ends (design.md "Temporaries and procedure boundaries").
+  A literal such as `&Tracked{1}` or `[dynamic]Tracked{...}[:]` passed to a
+  call, and a dynamic array a call returned and the statement sliced, were
+  never dropped.
 - A file-scope `when` condition can name the predeclared type constructors
   (design.md "when statement"): `size_of(Simd(f32, 4))`, `size_of(Range(int))`,
   and `size_of(Box(int))` reported `L0389`, saying the name was not declared,

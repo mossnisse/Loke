@@ -3,7 +3,9 @@ package main; import "core:fmt";
 // design.md "Temporaries and procedure boundaries": a value temporary lives
 // until the end of its complete expression. A call or literal is not the only
 // temporary: an operator's result, a conditional's, an `or_else`'s, and a moved
-// value are too, and a borrow of any of them may not outlive its statement.
+// value are too. A local's value that borrows one keeps it until the block
+// ends; a borrow that reaches the local through a call may not outlive its
+// statement.
 
 byte_count :: proc(text: string_view) -> int { return text.len(); }
 prefix :: proc(text: string_view) -> string_view { return text[0:1]; }
@@ -23,15 +25,18 @@ main :: proc() {
 	fmt.println(first(make_dyn() if flag else make_dyn()));
 	fmt.println(first(maybe() or_else [dynamic]int{3}));
 
-	// Escaping it: rejected.
+	// Borrowed by a local's value: kept until the block ends.
 	joined: string_view = a + "yz";
 	sliced := (a + "yz")[1:];
-	bytes := (a + "yz").bytes();
-	called := make_string().bytes();
-	passed := prefix(a + "yz");
 	chosen: []int = make_dyn() if flag else make_dyn();
 	fallback: []int = maybe() or_else [dynamic]int{3};
 	xs := [dynamic]int{1, 2};
 	moved: []int = move(xs);
-	fmt.println(joined, sliced, bytes[0], called[0], passed, chosen[0], fallback[0], moved[0]);
+	fmt.println(joined, sliced, chosen[0], fallback[0], moved[0]);
+
+	// Escaping through a call: rejected.
+	bytes := (a + "yz").bytes();
+	called := make_string().bytes();
+	passed := prefix(a + "yz");
+	fmt.println(bytes[0], called[0], passed);
 }

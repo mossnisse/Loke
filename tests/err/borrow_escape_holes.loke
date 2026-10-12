@@ -14,7 +14,7 @@ impl Guard {
 }
 make_guard :: proc() -> Guard { return {42}; }
 
-// design.md "any_view type": a managed temporary is dropped with its statement.
+// design.md "any_view type": an erased temporary lives until the block ends.
 erased :: proc() {
 	view: any_view = make_guard();
 	guard := view.as(Guard);

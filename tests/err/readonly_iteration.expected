@@ -10,9 +10,6 @@ L0512
 L0526
 @30:9
 `values` ends when this procedure returns
-L0513
-@36:19
-this temporary has ended
 L0641
 @43:2
 a mutable reborrow of it is still in use

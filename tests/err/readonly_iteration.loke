@@ -32,7 +32,7 @@ escape_local :: proc() -> ^int {
 
 make_values :: proc() -> [dynamic]int { return [dynamic]int{1, 2}; }
 escape_temporary :: proc() {
-	view := make_values()[:];
+	view := make_values()[:]; // keeps the temporary until the block ends
 	foreach (item in view) { fmt.println(item); }
 }
 

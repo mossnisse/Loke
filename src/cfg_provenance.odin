@@ -1393,18 +1393,18 @@ prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	if root, path, ok := prov_place_of(graph, e); ok {
 		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "view"))
 	}
-	// A managed temporary is dropped when its statement ends (design.md
-	// "Temporaries and procedure boundaries"), so the view ends there too, as a
-	// `dyn` view of any temporary does.
-	if base := expr_base(e); !base.is_const &&
-	   (type_is_managed(graph.k.c, base.erased_from) || dyn_proc_signature(graph.k.c, base.type) != INVALID_TYPE) {
-		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root(graph, span), nil, false, span, "view"))
+	// A temporary ends with its statement unless a local's value extends it
+	// (design.md "Temporaries and procedure boundaries"), and the view with it.
+	if !expr_base(e).is_const {
+		return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e), nil, false, span, "view"))
 	}
 	if len(loans) > 0 {
 		return loans
 	}
-	// Other hidden storage is a frame slot that follows the lexical scope.
-	return prov_borrow(graph, prov_hidden_root(graph, span, "this erased value"), nil, false, span, "view")
+	// A constant's hidden storage is a frame slot that follows the lexical scope.
+	root := prov_hidden_root(graph, span, "this erased value")
+	graph.roots[int(root)].extended = true
+	return prov_borrow(graph, root, nil, false, span, "view")
 }
 
 // design.md "string type conversions", "Dynamic arrays", and "Fixed arrays": a
@@ -1434,10 +1434,10 @@ prov_owner_view :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return carriers
 	}
 	loans := walk_flow_expr(graph, e)
-	if base.is_const || len(loans) > 0 || !prov_expr_is_temporary(e) {
+	if base.is_const || !prov_expr_is_temporary(e) {
 		return loans
 	}
-	return prov_borrow(graph, prov_temp_root(graph, span), nil, false, span, noun)
+	return prov_join(graph, loans, prov_borrow(graph, prov_temp_root_of(graph, e), nil, false, span, noun))
 }
 
 // A compiler-created root ending with its scope.
@@ -3061,7 +3061,7 @@ prov_borrow_place :: proc(graph: ^Flow_Graph, operand: Expr, mutable: bool, span
 		}
 		// A borrow of a temporary cannot escape its expression (design.md), even
 		// when the temporary also holds borrows, as `&box(view)^` does.
-		temporary := prov_borrow(graph, prov_temp_root(graph, expr_span(operand)), nil, mutable, span, what)
+		temporary := prov_borrow(graph, prov_temp_root_of(graph, operand), nil, mutable, span, what)
 		return prov_join(graph, loans, temporary)
 	}
 	prov_walk_subscripts(graph, operand)
@@ -3115,25 +3115,21 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	if v.hi != nil {
 		walk_flow_expr(graph, v.hi)
 	}
-	// Reslicing a carrier keeps its loans; slicing an owner also borrows it. An
-	// unmanaged literal's hidden array follows the lexical scope; a managed one
-	// such as `[dynamic]int{1, 2}[:]` ends with its statement.
+	// Reslicing a carrier keeps its loans; slicing an owner also borrows it, and
+	// a temporary owner such as `[dynamic]int{1, 2}` ends with its statement
+	// unless a local's value extends it.
 	if !array {
 		return source
 	}
-	_, is_literal := v.operand.(^Expr_Composite)
-	if is_literal && !type_is_managed(graph.k.c, expr_base(v.operand).type) {
-		return prov_slice_literal(graph, expr_span(v.operand), mutable, source)
-	}
 	if prov_expr_is_temporary(v.operand) {
-		temporary := prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, mutable, v.span, "slice")
+		temporary := prov_borrow(graph, prov_temp_root_of(graph, v.operand), nil, mutable, v.span, "slice")
 		return prov_join(graph, source, temporary)
 	}
 	return source
 }
 
-// design.md "Slice literals": the hidden array is a fixed-array owner in the
-// enclosing lexical scope, and a slice of it also carries its elements' loans.
+// design.md "Slice literals": the hidden array is always extended, an owner
+// ending with its block, and a slice of it also carries its elements' loans.
 @(private)
 prov_slice_literal :: proc(graph: ^Flow_Graph, span: Span, mutable: bool, elements: []int) -> []int {
 	root := prov_new_root(graph, .Slice_Literal, span, "this slice literal")
@@ -3170,6 +3166,20 @@ prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> [
 prov_temp_root :: proc(graph: ^Flow_Graph, span: Span) -> Root_Id {
 	root := prov_new_root(graph, .Temporary, span, "this temporary")
 	append(&graph.temp_roots, root)
+	return root
+}
+
+// The root of the temporary `e` holds: one ending with its block when the
+// statement extends it (design.md "Temporaries and procedure boundaries"), and
+// with the statement otherwise.
+@(private)
+prov_temp_root_of :: proc(graph: ^Flow_Graph, e: Expr) -> Root_Id {
+	span := expr_span(e)
+	if !graph.extended[expr_base(e)] {
+		return prov_temp_root(graph, span)
+	}
+	root := prov_hidden_root(graph, span, "this temporary")
+	graph.roots[int(root)].extended = true
 	return root
 }
 

@@ -39,7 +39,7 @@ retaining :: proc() {
 	retains(proc(@(escape=stored) p: ^int, into: inout Kept) capture(m = 1) { into.slot = p; });
 }
 
-// A temporary literal ends with the declaration that views it.
+// A temporary literal a local views lives until the block ends: fine.
 temporary :: proc() -> int {
 	n := 0;
 	f: dyn proc(k: int) -> int = proc(k: int) -> int capture(&mut n) { n += k; return n; };

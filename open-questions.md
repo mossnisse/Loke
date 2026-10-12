@@ -498,39 +498,19 @@ records the reasoning:
   `Option` niche covers ("Types with no zero value", "Representation").
 - The handle types are `Box(T)`, `Shared(T)`, and `Weak(T)`; `box` and
   `shared` are only constructors ("Owned values", "Shared ownership").
+- A temporary that a local's declaration or whole assignment borrows lives
+  until its block ends ("Temporaries and procedure boundaries").
 
 ### Recommended order
 
 | Priority | Proposal | Main benefit |
 | --- | --- | --- |
-| Later | One temporary-lifetime rule | Three lifetime rules become one |
 | Later | Field bindings in a case | Recursive unions without clones |
 | Later | A failure-only `defer` | Rollback without a flag |
 | Later | Declared error wrapping for `or_return` | No mapper at every propagation |
 | Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
 | Later | No public mutable globals | Effects stop crossing packages invisibly |
 | Later | Test procedures | Unit tests for package-private code |
-
-### One temporary-lifetime rule
-
-How long a temporary lives depends on what views it:
-
-- a [slice literal](design.md#slice-literals)'s backing array lives until the
-  enclosing scope ends;
-- a temporary erased into a local [`any_view`](design.md#any_view-type) lives
-  until the scope ends when its lifecycle is trivial, and until its statement
-  ends otherwise;
-- a temporary viewed by a `dyn proc` local ends with its expression, so
-  `f: dyn proc() = proc() capture(&mut n) { n += 1; }; f();` is an error
-  ([Borrowed callable views](design.md#borrowed-callable-views)).
-
-Adopt the rule C++ and Rust apply to a reference a declaration binds: a
-temporary whose borrow initializes a local declaration, directly or through a
-field, index, or slice projection, lives until that local's scope ends and is
-dropped with the locals in reverse order. All three cases above follow from it.
-A temporary passed to a call still ends with its complete expression, so
-`first_half([dynamic]int{1, 2, 3, 4}[:])` stays an error. The cost is a later
-drop for a managed temporary, the one a named local would have had.
 
 ### Field bindings in a case
 

@@ -95,6 +95,8 @@ Prov_Root :: struct {
 	// `Provider`: the region the control block belongs to. Empty means
 	// unrecorded, which every reset reaches.
 	region: Region_Set,
+	// `Temporary`: a local's value extended it to the end of its block.
+	extended: bool,
 }
 
 // ---------------------------------------------------------- projections --
@@ -2427,7 +2429,9 @@ report_root_outlived :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_L
 		)
 	}
 	if root.span.file != NO_FILE {
-		if root.kind == .Temporary {
+		if root.kind == .Temporary && root.extended {
+			add_notef(k.c, root.span, "%s is kept until the end of the block that created it", label)
+		} else if root.kind == .Temporary {
 			add_notef(k.c, root.span, "%s ends with the statement that created it", label)
 		} else {
 			add_notef(k.c, root.span, "%s is declared here and ends with its scope", label)

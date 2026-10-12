@@ -34,14 +34,20 @@ emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
 		// A block statement's full-expression boundary; initial statements and loop
 		// updates declare their own.
 		push_temporaries(e)
-		emit_stmt(e, stmt)
+		emit_stmt(e, stmt, lends = true)
 		pop_temporaries(e)
 	}
 }
 
+// A statement that `lends` is one of its block's own, so a temporary a local's
+// value borrows is dropped with the block (design.md "Temporaries and procedure
+// boundaries"); a `for` update and a deferred statement lend nothing.
 @(private)
-emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
+emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
 	debug_mark_location(e, stmt_span(stmt))
+	if lends {
+		mark_extended_temporaries(e.c, stmt, &e.extended)
+	}
 	switch s in stmt {
 	case ^Stmt_Error:
 
@@ -489,7 +495,7 @@ inserting_map_index :: proc(target: Expr) -> ^Expr_Index {
 emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 	push_scope(e, nil)
 	if s.init != nil {
-		emit_stmt(e, s.init)
+		emit_stmt(e, s.init, lends = true)
 	}
 	debug_mark_location(e, expr_span(s.cond))
 	// The condition's temporaries end before either branch runs.
@@ -528,7 +534,7 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 	e.break_depth = len(e.cleanups)
 	push_scope(e, nil)
 	if s.init != nil {
-		emit_stmt(e, s.init)
+		emit_stmt(e, s.init, lends = true)
 	}
 
 	head := new_label(e, "for.head")
@@ -576,7 +582,7 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	push_scope(e, nil)
 	if s.init != nil {
-		emit_stmt(e, s.init)
+		emit_stmt(e, s.init, lends = true)
 	}
 	debug_mark_location(e, expr_span(s.subject))
 	subject_type := expr_base(s.subject).type
@@ -656,7 +662,7 @@ or_match :: proc(e: ^Emitter, matched, test: string) -> string {
 emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	push_scope(e, nil)
 	if s.init != nil {
-		emit_stmt(e, s.init)
+		emit_stmt(e, s.init, lends = true)
 	}
 	debug_mark_location(e, expr_span(s.subject))
 	union_type := expr_base(s.subject).type

@@ -673,18 +673,42 @@ record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_
 @(private)
 emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 	if expression_converts_storage(expr) {
+		e.lending = false
 		type := expr_base(expr).type
-		slot := temporary_slot(e, type)
+		slot := temporary_slot_for(e, expr, type)
 		store(e, type, emit_expr(e, expr), slot)
-		register_temporary_place(e, type, slot)
+		hold_addressed_temporary(e, expr, type, slot)
 		return slot
 	}
 	return emit_address_at(e, expr, expr_base(expr).type)
 }
 
+// The address of `expr` for a borrow, such as `&`, slicing, or a view
+// conversion: a temporary literal under it is dropped when the borrow's
+// temporaries are, rather than handed on as an owned value.
+@(private)
+emit_lent_address :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
+	e.lending = true
+	return emit_address_at(e, expr, as_type)
+}
+
+// Storage for the temporary `expr` makes. A large one is shared between full
+// expressions, so one a local's value extends past its own gets storage of its
+// own instead.
+@(private)
+temporary_slot_for :: proc(e: ^Emitter, expr: Expr, type: Type_Id) -> string {
+	if e.extended[expr_base(expr)] {
+		return alloca(e, llvm_type(e, type))
+	}
+	return temporary_slot(e, type)
+}
+
 // The storage type can precede an implicit conversion on the same node.
 @(private)
 emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
+	// Only the operand a projection forms its address from is lent with it.
+	lending := e.lending
+	e.lending = false
 	// design.md "Materialization": every use of one constant shares one global.
 	if entry := materialization_of(e.c, expr); entry != nil {
 		return entry.name
@@ -719,7 +743,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			return "null"
 		}
 		symbol := symbol_of(e.c, v.resolution.symbol)
-		base_type, base_address := emit_base_address(e, v.operand)
+		base_type, base_address := emit_base_address(e, v.operand, lending)
 		out := gep_field(e, llvm_type(e, base_type), base_address, int(symbol.index))
 		record_field_align(e, base_type, base_address, out, symbol.type)
 		return out
@@ -732,7 +756,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			if sym := symbol_of(e.c, v.resolution.symbol); sym != nil && sym.result_inout {
 				return emit_operator_call(e, v.resolution.symbol, v.bound)
 			}
-			slot := temporary_slot(e, as_type)
+			slot := temporary_slot_for(e, expr, as_type)
 			store(e, as_type, emit_operator_call(e, v.resolution.symbol, v.bound), slot)
 			hold_addressed_temporary(e, expr, as_type, slot)
 			return slot
@@ -741,7 +765,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			return emit_slice_element_address(e, v)
 		}
 		if type_is_dynamic_array(e.c, operand_type) {
-			return emit_dynamic_element_address(e, v)
+			return emit_dynamic_element_address(e, v, lending)
 		}
 		// Whole-element map assignment never asks for an address; every other
 		// map index names an element that must already exist (design.md "Maps").
@@ -755,7 +779,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
 			return gep_at(e, llvm_type(e, operand_info.element), data, index)
 		}
-		base_type, base_address := emit_base_address(e, v.operand)
+		base_type, base_address := emit_base_address(e, v.operand, lending)
 		info := underlying_info(e.c, base_type)
 		index := emit_expr(e, v.indices[0])
 		index = emit_bounds_check(e, index, expr_base(v.indices[0]).type, info.count)
@@ -772,8 +796,11 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return out
 
 	case ^Expr_Composite:
-		slot := temporary_slot(e, as_type)
+		slot := temporary_slot_for(e, expr, as_type)
 		emit_composite_into(e, v, slot, as_type)
+		if lending {
+			hold_addressed_temporary(e, expr, as_type, slot)
+		}
 		return slot
 
 	case ^Expr_Call:
@@ -784,7 +811,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	}
 	// Any other value is materialised into a temporary. A folded conversion like
 	// `u8(3)` stores its constant, not its unconverted operand.
-	slot := temporary_slot(e, as_type)
+	slot := temporary_slot_for(e, expr, as_type)
 	store(e, as_type, emit_expr_at(e, expr, as_type), slot)
 	hold_addressed_temporary(e, expr, as_type, slot)
 	return slot
@@ -797,6 +824,12 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 @(private)
 hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: string) {
 	if expression_is_borrowed_place(expr) {
+		return
+	}
+	// A local's value may extend it to the end of the block (design.md
+	// "Temporaries and procedure boundaries").
+	if e.extended[expr_base(expr)] {
+		register_scope_place(e, type, place)
 		return
 	}
 	register_temporary_place(e, type, place)
@@ -812,9 +845,9 @@ emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 	if base.is_const || !emit_lifecycle(e, base.type).managed || expression_is_borrowed_place(expr) {
 		return value
 	}
-	slot := temporary_slot(e, base.type)
+	slot := temporary_slot_for(e, expr, base.type)
 	store(e, base.type, value, slot)
-	register_temporary_place(e, base.type, slot)
+	hold_addressed_temporary(e, expr, base.type, slot)
 	return value
 }
 
@@ -832,8 +865,9 @@ emit_index_below :: proc(e: ^Emitter, v: ^Expr_Index, length: string) -> string 
 // `xs[i]`: an address in the current allocation, valid only as long as it is
 // (the M5b invalidation events enforce that).
 @(private = "file")
-emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
+emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index, lending: bool) -> string {
 	operand_type := expr_base(v.operand).type
+	e.lending = lending
 	header := emit_address(e, v.operand)
 	data := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_STORAGE))
 	length := load(e, "i64", gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN))
@@ -850,14 +884,16 @@ emit_slice_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	return gep_at(e, llvm_type(e, slice_element(e.c, operand_type)), data, index)
 }
 
-// `p.x` and `p[i]` accept one pointer hop, whose value is the base address.
+// `p.x` and `p[i]` accept one pointer hop, whose value is the base address. A
+// `lending` projection lends its own operand, never what a pointer names.
 @(private = "file")
-emit_base_address :: proc(e: ^Emitter, operand: Expr) -> (Type_Id, string) {
+emit_base_address :: proc(e: ^Emitter, operand: Expr, lending: bool) -> (Type_Id, string) {
 	type := expr_base(operand).type
 	info := underlying_info(e.c, type)
 	if info != nil && info.kind == .Pointer {
 		return info.element, emit_expr(e, operand)
 	}
+	e.lending = lending
 	return type, emit_address(e, operand)
 }
 
@@ -897,11 +933,11 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> str
 	case .Slice:
 		data, length = emit_byte_slice_parts(e, v.operand)
 	case .Dynamic_Array:
-		value := emit_expr(e, v.operand)
+		value := emit_borrowed_operand(e, v.operand)
 		data = extract(e, CONTAINER_TYPE, value, CONTAINER_STORAGE)
 		length = extract(e, CONTAINER_TYPE, value, CONTAINER_LEN)
 	case:
-		data = emit_address(e, v.operand)
+		data = emit_lent_address(e, v.operand, operand_type)
 		length = fmt.aprintf("%d", info.count)
 	}
 
@@ -1049,7 +1085,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	// addressing the source keeps an owned temporary alive.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .String_View {
 		// A packed field's header may be byte-aligned (design.md "@(packed)").
-		value := load_place(e, from, emit_address_at(e, expr, from))
+		value := load_place(e, from, emit_lent_address(e, expr, from))
 		data := extract(e, STRING_TYPE, value, STRING_DATA)
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
@@ -1057,18 +1093,18 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	// A `Box(T)` lent as the `^T` of its payload.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, from) == .Box &&
 	   underlying_kind(e.c, as_type) == .Pointer {
-		return emit_box_payload_address(e, from, load_place(e, from, emit_address_at(e, expr, from)))
+		return emit_box_payload_address(e, from, load_place(e, from, emit_lent_address(e, expr, from)))
 	}
 	// A `[N]T` read as a `[]T` of all its elements.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .Slice &&
 	   underlying_kind(e.c, from) == .Array {
-		address := emit_address_at(e, expr, from)
+		address := emit_lent_address(e, expr, from)
 		length := fmt.tprintf("%d", underlying_info(e.c, from).count)
 		return emit_slice_value(e, as_type, address, length)
 	}
 	// A `[dynamic]T` read as a `[]T` of its live elements.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .Slice {
-		value := load_place(e, from, emit_address_at(e, expr, from))
+		value := load_place(e, from, emit_lent_address(e, expr, from))
 		data := extract(e, CONTAINER_TYPE, value, CONTAINER_STORAGE)
 		length := extract(e, CONTAINER_TYPE, value, CONTAINER_LEN)
 		return emit_slice_value(e, as_type, data, length)
@@ -1283,7 +1319,10 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 @(private = "file")
 emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string {
 	if v.op == .Amp {
-		return emit_address(e, v.operand)
+		if expression_converts_storage(v.operand) {
+			return emit_address(e, v.operand)
+		}
+		return emit_lent_address(e, v.operand, expr_base(v.operand).type)
 	}
 	if v.resolution.kind == .User_Operator {
 		operands := [1]Expr{v.operand}

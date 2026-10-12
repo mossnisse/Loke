@@ -1,0 +1,23 @@
+using 1 2 3 Tracked{id = 4}
+end of declarations
+drop 5
+drop 4
+drop 3
+drop 2
+drop 1
+assigned Tracked{id = 6} 2
+drop 6
+call 1 10
+drop 10
+drop 9
+after call
+head 11
+called 2
+iteration 20
+drop 20
+iteration 21
+drop 21
+after loop
+header 30
+drop 30
+after if

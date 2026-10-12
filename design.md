@@ -871,7 +871,7 @@ writable[0] = 99;
 readable[0] = 99;                  // ERROR: elements of `[]int` are read-only
 ```
 
-The backing array of a slice literal is a hidden fixed-array owner in the surrounding lexical scope, so the slice remains valid until that scope exits. At file scope it has static lifetime. Returning a slice literal from a procedure is rejected because its hidden owner is local, just as returning a slice of a named local array is rejected.
+The backing array of a slice literal is a hidden fixed-array owner that is always [extended](#temporaries-and-procedure-boundaries): it lives until the end of the block holding the statement, wherever the literal appears, so a view of it that a call returns can be kept. At file scope it has static lifetime. Returning a slice literal from a procedure is rejected because its hidden owner is local, just as returning a slice of a named local array is rejected.
 
 #### Empty slices
 
@@ -2001,14 +2001,12 @@ Reflection values may be inspected, compared for identity, passed to `$` paramet
 
 `any_view` is a non-owning, type-erased view used for formatting, logging, and runtime reflection. Creating one borrows its source. It always views a value, so it has no zero value.
 
-It may be a local variable or parameter, but it cannot be a result type, global, struct or union field, container element, or captured/stored value. The ordinary local borrow checker ensures a local `any_view` does not outlive or overlap an invalidating operation on its source. A temporary converted for a call remains valid through that complete call expression. A temporary converted into a local `any_view` keeps its storage for the rest of the scope when its type has a trivial lifecycle; a managed temporary is dropped when its statement ends, like any other, so the view cannot be used after that statement:
+It may be a local variable or parameter, but it cannot be a result type, global, struct or union field, container element, or captured/stored value. The ordinary local borrow checker ensures a local `any_view` does not outlive or overlap an invalidating operation on its source. A temporary converted for a call remains valid through that complete call expression. A temporary converted into a local `any_view` is [extended](#temporaries-and-procedure-boundaries) to the end of the block, and dropped there:
 
 ```odin
 view: any_view = make_guard();
-guard := view.as(Guard); // ERROR: the view is used after the temporary it erased has ended
+fmt.println(view);       // fine: the guard lives until the block ends
 ```
-
-Bind the value to a local first, and erase the local.
 
 **A variadic `..any_view` parameter is the only exception to the container rule.** Formatting procedures such as `fmt.println(a, b, c)` use this form. The caller converts each argument to `any_view`. It materializes a temporary `[]any_view` for the duration of the call.
 
@@ -3211,11 +3209,11 @@ visit(nodes, (dyn proc(node: ^Node))(&by_depth));  // a named callable record: w
 
 **Conversion.** A procedure converts to a `dyn proc` view when it converts to the view's signature, and a [capture literal](#capture-literals)'s value converts when its `call` meets the signature as `Callable` requires. Both conversions are implicit where a `dyn proc` parameter or typed destination is expected, and writing one, as `(dyn proc(n: int) -> int)(add_one)`, is the same conversion. Any other type satisfying `Callable` for the signature converts only explicitly, from a pointer, as for any `dyn` view: a named record may have other roles, and the conversion shows which one is meant. A procedure converts by value, never through a pointer. In [overload resolution](#operator-lookup-and-overload-resolution) the implicit conversion ranks as a built-in conversion, so a member taking the exact procedure type, or a generic one, wins over a member taking a `dyn proc`.
 
-**What it borrows.** A procedure is the view's data word itself, so converting one, or a local holding one, borrows nothing. A capture literal's value is viewed where it is: converting a named one borrows that local, and a temporary lives until the end of its complete expression, as for any `dyn` view. Passing a literal as an argument is therefore fine, while storing one straight into a `dyn proc` local leaves a view of a temporary that has ended; naming the literal first is the fix:
+**What it borrows.** A procedure is the view's data word itself, so converting one, or a local holding one, borrows nothing. A capture literal's value is viewed where it is: converting a named one borrows that local, and a temporary lives until the end of its complete expression, as for any `dyn` view, unless a local's value [extends](#temporaries-and-procedure-boundaries) it. Passing a literal as an argument is therefore fine, and so is storing one straight into a `dyn proc` local, which keeps the literal until the block ends:
 
 ```odin
 f: dyn proc() = proc() capture(&mut n) { n += 1; };
-f();                                    // ERROR: the temporary `f` views has ended
+f();                                    // the literal lives until the block ends
 bump := proc() capture(&mut n) { n += 1; };
 g: dyn proc() = bump;                   // borrows `bump`
 g();
@@ -3720,7 +3718,7 @@ Except for the explicitly lazy operators `&&`, `||`, `or_else`, and the conditio
 - A compound assignment evaluates its destination place once, then evaluates the right operand, then performs the operation and write.
 - A return expression is evaluated completely before it is moved into result storage.
 
-Temporaries created by a complete expression are destroyed at its end in reverse order of completed initialization. Short-circuiting and conditional expressions evaluate only the selected operands, as described by their individual rules. These rules apply equally to built-in and user-defined operations.
+Temporaries created by a complete expression are destroyed at its end in reverse order of completed initialization, except those a local's value [extends](#temporaries-and-procedure-boundaries) to the end of its block. Short-circuiting and conditional expressions evaluate only the selected operands, as described by their individual rules. These rules apply equally to built-in and user-defined operations.
 
 ### Operator precedence
 
@@ -5116,6 +5114,21 @@ A conflict diagnostic identifies the root, borrow, conflicting operation, and th
 
 A value temporary lives until the end of its complete expression. A borrow derived from it may be used during that expression, including by a called procedure, but cannot escape it. A temporary in a `foreach` iterable, `switch` subject, or `if`, `for`, or `switch` initial statement instead lives until that complete statement ends.
 
+**A temporary that a local borrows lives as long as the local's block.** When the value of a local variable's declaration, or of an assignment to a whole local variable, borrows a temporary along an *extending path*, the temporary is *extended*: it lives until the scope holding the statement ends, which is its block, or the whole statement for an `if`, `for`, or `switch` initial statement. It is dropped there with that scope's locals in reverse order of creation, so after a local it initializes and before anything declared earlier. The path starts at the value the local receives and goes on through:
+
+- `&` and `&mut`, which borrow their operand;
+- slicing an array, string, or dynamic array, which borrows the operand, and reslicing a view, which goes on into the view;
+- an implicit conversion to a view: a `string_view` or `[]T` of an owner, the `^T` of a box, an `any_view`, or a `dyn` or `dyn proc` view, each of which borrows the converted value;
+- a field, an element, or a box's payload, which is part of the temporary holding it.
+
+A call ends the path, a method call with a `self: ^` receiver included, and so does a field of a literal. A `for` update and a deferred statement extend nothing, since each runs again without leaving its scope. A loop body is a block of its own, so a temporary extended there ends with each iteration.
+
+```odin
+p := &Point{1, 2};                       // lives until the block ends
+items := [dynamic]int{1, 2, 3}[:];       // the dynamic array lives with `items`
+view: any_view = make_guard();           // the guard is dropped at the end of the block
+```
+
 A borrow derived from a local root cannot be returned:
 
 ```odin
@@ -5147,7 +5160,7 @@ Passing that same slice to something that consumes it within the statement is al
 fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 ```
 
-A [slice literal](#slice-literals) behaves differently, and the difference is what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation that nothing keeps alive past the statement.
+A [slice literal](#slice-literals)'s backing array is always extended, whatever takes the slice, so `first_half([]int{1, 2, 3, 4})` may outlive its statement. A `[dynamic]T` temporary is extended only along a path, and a call is not one.
 
 The default parameter binding itself is a read-only value the callee cannot outlive, whatever its type: storage a managed owner holds stays the caller's, and the callee only borrows it for the call. Taking `&parameter`, slicing it, or viewing storage it owns borrows that value and cannot produce a returned borrow. The immutable loan invalidates nothing, so several may be live at once.
 
@@ -5276,7 +5289,7 @@ make_holder :: proc() -> Holder {
 
 #### Global write effects
 
-A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through calls. A hook the language calls counts as a call where it runs: a `hook(drop)` wherever a value is dropped — at a scope exit or a `move` parameter's return, by `drop`, by an assignment replacing a value, by a container operation discarding elements, at the end of a temporary's statement, or while a panic unwinds — a `hook(convert)` at its conversion, and the `format` methods printing reaches, which are all of them, since an erased value's type is known only at run time. A copy hook writes no global (see [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types)), so a copy has no effect to count. Writes by foreign code, and writes through pointers or views stored in globals, are excluded; see [What is not checked](#what-is-not-checked). A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:
+A borrow of a global cannot be invalidated by a procedure the borrow is live across. Every procedure has an inferred **write effect**: the file-scope, `static`, and `thread_local` storage it may write, invalidate, or borrow mutably, directly or through calls. A hook the language calls counts as a call where it runs: a `hook(drop)` wherever a value is dropped — at a scope exit or a `move` parameter's return, by `drop`, by an assignment replacing a value, by a container operation discarding elements, at the end of a temporary's statement or extended block, or while a panic unwinds — a `hook(convert)` at its conversion, and the `format` methods printing reaches, which are all of them, since an erased value's type is known only at run time. A copy hook writes no global (see [Lifecycle hooks and resource types](#lifecycle-hooks-and-resource-types)), so a copy has no effect to count. Writes by foreign code, and writes through pointers or views stored in globals, are excluded; see [What is not checked](#what-is-not-checked). A call counts as a write to each global in its callee's effect, at the point where its arguments are already borrowed, so a borrow of that global still in use across the call conflicts exactly as a write in the same body would:
 
 ```odin
 cache: [dynamic]int;
@@ -6524,7 +6537,7 @@ Terms this specification gives a precise meaning, with the section that defines 
 | **slot** | A named method requirement in an interface, written `slot name: proc(...)`. A `dyn` view calls it through the witness. See [Interface bodies](#interface-bodies). |
 | **specialization binding** | A `$name` introducing a compile-time input or pattern name. `$` appears only where the name is bound. See [Compile-time phases](#compile-time-phases). |
 | **storage root** | A variable, value temporary, or allocation that owns storage, and the anchor for borrows of it. Cleanup policy does not decide what is a root. See [Storage roots and borrow carriers](#storage-roots-and-borrow-carriers). |
-| **temporary** | A value not bound to a name. It lives until the end of its complete expression, or of the enclosing statement in a `foreach`, `switch`, or `if` header. A temporary transfers where a place would be copied. See [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). |
+| **temporary** | A value not bound to a name. It lives until the end of its complete expression, or of the enclosing statement in a `foreach`, `switch`, or `if` header, or of its block when a local's value borrows it. A temporary transfers where a place would be copied. See [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). |
 | **unfixed constant** | A constant with no fixed type until context converts it, such as the literal `42`. See [Unfixed constants](#unfixed-constants). |
 | **witness** | Immutable evidence that a concrete type satisfies an interface's named slots. One per `(Interface, Concrete, arguments...)` tuple; not a source-level value. See [Runtime polymorphism](#runtime-polymorphism). |
 | **yield mode** | How an iterator hands back each element — owned, borrowed, mutable, or a record lending some fields — read from `next`'s `Item` against `Element`. It fixes what a loop binding receives. See [Yield modes](#yield-modes). |

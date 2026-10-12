@@ -1,0 +1,84 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": a temporary that a local's
+// declaration or whole assignment borrows along an extending path lives until
+// the end of the block holding the statement, and is dropped there with the
+// block's locals in reverse order of creation.
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	retire :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+
+Pair :: struct { a: Tracked, b: int }
+
+make :: proc(id: int) -> Tracked { return Tracked{id}; }
+count :: proc(values: []Tracked) -> int { return values.len(); }
+id_of :: proc(p: ^Tracked) -> int { return p^.id; }
+first :: proc(values: []int) -> []int { return values[:1]; }
+
+declarations :: proc() {
+	// `&`, a field of a literal, slicing a dynamic array, and an `any_view`.
+	pointer := &Tracked{1};
+	field := &Pair{make(2), 0}.a;
+	items := [dynamic]Tracked{make(3)}[:];
+	view: any_view = make(4);
+	fmt.println("using", pointer^.id, field^.id, items[0].id, view);
+	marker := Tracked{5};
+	fmt.println("end of declarations");
+}
+
+assignments :: proc() {
+	// A whole local's assignment extends too, to the block holding it.
+	view: any_view = 0;
+	view = make(6);
+	numbers: []int = {};
+	numbers = []int{7, 8};
+	fmt.println("assigned", view, numbers.len());
+}
+
+calls :: proc() {
+	// A temporary lent to a call still ends with its statement.
+	fmt.println("call", count([dynamic]Tracked{make(9)}[:]), id_of(&Tracked{10}));
+	fmt.println("after call");
+	// A slice literal's backing array is extended whatever takes it.
+	head := first([]int{11, 12});
+	fmt.println("head", head[0]);
+}
+
+callable :: proc() {
+	n := 0;
+	f: dyn proc() = proc() capture(&mut n) { n += 1; };
+	f();
+	f();
+	fmt.println("called", n);
+}
+
+loop :: proc() {
+	// A loop body is a block of its own, so each iteration's ends with it.
+	for (i := 0; i < 2; i += 1) {
+		p := &Tracked{20 + i};
+		fmt.println("iteration", p^.id);
+	}
+	fmt.println("after loop");
+}
+
+header :: proc() {
+	// An initial statement's temporary lives for the whole statement.
+	if (p := &Tracked{30}; p^.id > 0) {
+		fmt.println("header", p^.id);
+	}
+	fmt.println("after if");
+}
+
+main :: proc() {
+	declarations();
+	assignments();
+	calls();
+	callable();
+	loop();
+	header();
+}

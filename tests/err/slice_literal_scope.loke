@@ -1,9 +1,9 @@
 package main; import "core:fmt";
 
-// design.md "Slice literals": the hidden array of `[]T{...}` is a fixed-array
-// owner in the enclosing lexical scope, as the one of `[N]T{...}[:]` is, and a
-// slice of either carries its elements' borrows too. Slicing a temporary owner
-// ends with its statement; reslicing a carrier keeps only that carrier's loans.
+// design.md "Slice literals": the hidden array of `[]T{...}` lives until its
+// block ends, and a slice of it carries its elements' borrows too. A temporary
+// owner such as `[N]T{...}` lasts that long only when a local's value slices
+// it; reslicing a carrier keeps only that carrier's loans.
 
 static_slice :: proc() -> []int { return {}; }
 views :: proc(s: string_view) -> [dynamic]string_view { return [dynamic]string_view{s}; }

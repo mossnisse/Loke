@@ -37,6 +37,34 @@ cleanup may legitimately restore global state, but must not invalidate a live
 borrow. Copy hooks cannot write globals because copies can be inserted or
 elided in many contexts and their count is unspecified.
 
+### One temporary-lifetime rule
+
+How long a temporary lives once depended on what viewed it: a slice literal's
+backing array lived until its scope ended, a temporary erased into a local
+`any_view` did so only when its lifecycle was trivial, and a capture literal
+stored straight into a `dyn proc` local ended with its statement and made the
+next call an error. The [one rule](design.md#temporaries-and-procedure-boundaries)
+is C++'s and Rust's for a reference a declaration binds: a temporary that a
+local's value borrows along a syntactic path lives until the block ends, and
+is dropped there with the locals.
+
+The path is syntactic so that when a drop hook runs never depends on what the
+borrow checker infers; a reader sees the extension in the statement itself.
+Calls end the path because a call's result says what it borrows only through
+an inferred contract, and keeping every argument alive in case the result
+borrows it would delay drops that nothing needs. A literal's fields do not
+extend either, though Rust's do: they can be added later without breaking a
+program.
+
+Loke goes one step past C++ and Rust and extends through an assignment to a
+whole local too. The temporary still ends with the block holding the
+assignment, and a statement runs once per entry to its block, so the storage
+stays bounded; a `for` update and a deferred statement, which rerun in one
+scope, are the exceptions. That keeps assigning a fresh `any_view` or slice
+literal to an existing local working as it did. The cost is that a managed
+temporary bound this way drops at the end of the block rather than of its
+statement, the drop a named local would have had.
+
 ### Threads the language can start
 
 `core:thread` moves an argument into a new thread and checks its borrows with
@@ -298,8 +326,9 @@ variable that happened to hold it.
 Conversion from a procedure or capture literal is implicit because the
 destination fixes the complete call signature and capability. Converting a
 named record stays explicit: it can expose roles other than calling. Temporary
-targets follow the `dyn` lifetime rule; name a literal before storing a view
-that must survive its creation expression.
+targets follow the [one temporary-lifetime rule](#one-temporary-lifetime-rule),
+so a literal stored straight into a `dyn proc` local lives until the block
+ends.
 
 Making every procedure value carry an environment was rejected. It would widen
 thin procedure pointers, disrupt C callbacks, and require either owned

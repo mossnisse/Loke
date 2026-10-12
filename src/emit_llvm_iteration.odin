@@ -685,7 +685,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 spill_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
 	if base.addressable {
-		return emit_address_at(e, expr, as_type)
+		return emit_lent_address(e, expr, as_type)
 	}
 	value := emit_expr_at(e, expr, as_type)
 	slot := alloca(e, llvm_type(e, as_type))

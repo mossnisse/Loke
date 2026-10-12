@@ -1,0 +1,50 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": only a local's value
+// extends a temporary, only along a path of borrows, and only to the end of the
+// block holding the statement.
+
+first_half :: proc(values: []int) -> []int {
+	return values[:values.len()/2];
+}
+
+View :: struct { data: []int }
+
+// A call ends the path: the dynamic array is lent to the call alone.
+through_a_call :: proc() {
+	half := first_half([dynamic]int{1, 2, 3, 4}[:]);
+	fmt.println(half.len());
+}
+
+// So does a field of a literal.
+through_a_literal :: proc() {
+	view := View{[dynamic]int{1, 2}[:]};
+	fmt.println(view.data.len());
+}
+
+// An assignment extends to the block holding it, not the local's.
+outer_local :: proc() {
+	numbers: []int = {};
+	{
+		numbers = [dynamic]int{1, 2}[:];
+	}
+	fmt.println(numbers.len());
+}
+
+// A `for` update reruns in one scope, so it extends nothing.
+in_an_update :: proc() {
+	p := &[1]int{0};
+	for (i := 0; i < 2; p = &[1]int{i}) {
+		fmt.println(p^[0]);
+		i += 1;
+	}
+}
+
+main :: proc() {
+	through_a_call();
+	through_a_literal();
+	outer_local();
+	in_an_update();
+}

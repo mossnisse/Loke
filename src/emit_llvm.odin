@@ -157,6 +157,11 @@ Function_State :: struct {
 	// design.md "Borrows and lifetimes": one frame per full expression, since a
 	// value temporary dies at its end.
 	temporaries: [dynamic][dynamic]Deferred,
+	// The borrowed temporaries a statement extends to its block's end
+	// (`mark_extended_temporaries`), and whether the address being formed is
+	// borrowed, so a temporary literal under it is dropped rather than consumed.
+	extended: map[^Expr_Base]bool,
+	lending:  bool,
 	// Owned values an operation holds while it evaluates its later operands,
 	// such as a call's earlier arguments: an exit from one of those operands,
 	// `or_return` or an `or_else` exit, drops them on its own path.

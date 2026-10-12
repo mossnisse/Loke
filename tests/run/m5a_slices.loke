@@ -6,8 +6,8 @@ NUMBERS :: [3]int{7, 42, 628};
 Table :: struct { values: [2]int }
 NESTED :: Table{values = [2]int{11, 22}};
 
-// design.md "Slice literals": the hidden backing array is an owner in the
-// surrounding lexical scope, and at file scope that scope is the module -- so
+// design.md "Slice literals": the hidden backing array lives until its block
+// ends, and at file scope it has static lifetime -- so
 // these name storage that outlives every frame. The mutable one is written to
 // below, which is the reason its array cannot be shared with an equal one.
 READABLE := []int{7, 42, 628};

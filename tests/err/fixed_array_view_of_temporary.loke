@@ -2,12 +2,14 @@ package main;
 
 import "core:fmt";
 
-// design.md "Fixed arrays": the implicit `[]T` borrows the array, and a
-// temporary array ends with the statement that created it.
+// design.md "Fixed arrays": the implicit `[]T` borrows the array. A local's
+// value keeps a temporary array until the block ends; a call's does not.
 
 make_primes :: proc() -> [4]int { return {2, 3, 5, 7}; }
+first_two :: proc(values: []int) -> []int { return values[:2]; }
 
 main :: proc() {
-	dangling: []int = make_primes();
-	fmt.println(dangling);
+	kept: []int = make_primes();
+	dangling := first_two(make_primes());
+	fmt.println(kept, dangling);
 }

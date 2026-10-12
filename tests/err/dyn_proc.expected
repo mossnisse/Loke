@@ -16,9 +16,6 @@ cannot pass `dyn proc(int) -> int` with `proc(n: int) -> bool capture(m = 1)`
 L0310
 @39:10
 cannot pass `dyn proc(^int, inout Kept)`
-L0513
-@46:9
-this view is used after this temporary has ended
 L0512
 @54:2
 `n` cannot be assigned here

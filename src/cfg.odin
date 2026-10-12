@@ -157,6 +157,9 @@ Flow_Graph :: struct {
 	// Walk state both modes keep.
 	// Temporaries ending with the current statement (design.md).
 	temp_roots:     [dynamic]Root_Id,
+	// The borrowed temporaries a statement extends to its block's end
+	// (`mark_extended_temporaries`).
+	extended:       map[^Expr_Base]bool,
 	// Set while a panic's unwind path is walked, from the statement at
 	// `unwind_at`; its blocks are marked.
 	unwinding:      bool,
@@ -337,6 +340,7 @@ build_flow_pass :: proc(
 	graph.last_uses = make([dynamic]Last_Use, allocator)
 	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
+	graph.extended = make(map[^Expr_Base]bool, 4, allocator)
 	graph.aliased_moves = make(map[rawptr]bool, 4, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new(Prov_State, allocator)
@@ -573,7 +577,7 @@ leave_flow_scope :: proc(graph: ^Flow_Graph) {
 walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
 	for stmt in stmts {
 		emit_unwind_branch(graph, stmt)
-		walk_flow_stmt(graph, stmt)
+		walk_flow_stmt(graph, stmt, lends = true)
 	}
 }
 
@@ -1142,9 +1146,15 @@ end_statement_temporaries :: proc(graph: ^Flow_Graph, mark, providers: int) {
 }
 
 // Temporaries end with their statement, but a header's initial statement
-// `extend`s them to the whole enclosing statement (design.md).
+// `extend`s them to the whole enclosing statement (design.md). A statement that
+// `lends` is one of its block's own, so a local it stores a borrow of a
+// temporary into keeps that temporary until the block ends; a `for` update and
+// a deferred statement rerun in one scope and lend nothing.
 @(private = "file")
-walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
+walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends := false) {
+	if lends && graph.mode != .Lifecycle {
+		mark_extended_temporaries(graph.k.c, stmt, &graph.extended)
+	}
 	mark := len(graph.temp_roots)
 	providers := graph.prov == nil ? 0 : len(graph.temp_providers)
 	defer if !extend {
@@ -1497,7 +1507,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 enter_flow_header_scope :: proc(graph: ^Flow_Graph, init: Stmt) {
 	enter_flow_scope(graph)
 	if init != nil {
-		walk_flow_stmt(graph, init, extend = true)
+		walk_flow_stmt(graph, init, extend = true, lends = true)
 	}
 }
 
