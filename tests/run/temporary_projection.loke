@@ -1,0 +1,47 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": a field or element of a
+// temporary is a place in it, so reading one copies it and the temporary is
+// dropped whole when its statement ends, whatever produced it.
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	retire :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+	duplicate :: hook(copy) proc(self: Tracked, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		return .ok(Tracked{self.id + 100});
+	}
+}
+
+Pair :: struct { a: Tracked, b: Tracked }
+
+make :: proc(id: int) -> Tracked { return Tracked{id}; }
+make_pair :: proc(id: int) -> Pair { return Pair{make(id), make(id + 1)}; }
+
+main :: proc() {
+	// A call's result, a literal, and a literal of constants alike.
+	{
+		x := make_pair(1).a;
+		fmt.println("x", x.id);
+	}
+	{
+		y := Pair{make(3), make(4)}.b;
+		fmt.println("y", y.id);
+	}
+	{
+		z := Pair{Tracked{5}, Tracked{6}}.b;
+		fmt.println("z", z.id);
+	}
+	// An element of a fixed array, and one of a dynamic array.
+	{
+		w := [2]Tracked{make(7), make(8)}[0];
+		fmt.println("w", w.id);
+	}
+	{
+		v := [dynamic]Tracked{make(9)}[0];
+		fmt.println("v", v.id);
+	}
+	fmt.println("end");
+}

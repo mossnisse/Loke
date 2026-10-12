@@ -5112,7 +5112,7 @@ A conflict diagnostic identifies the root, borrow, conflicting operation, and th
 
 ### Temporaries and procedure boundaries
 
-A value temporary lives until the end of its complete expression. A borrow derived from it may be used during that expression, including by a called procedure, but cannot escape it. A temporary in a `foreach` iterable, `switch` subject, or `if`, `for`, or `switch` initial statement instead lives until that complete statement ends.
+A value temporary lives until the end of its complete expression. A borrow derived from it may be used during that expression, including by a called procedure, but cannot escape it. A temporary in a `foreach` iterable, `switch` subject, or `if`, `for`, or `switch` initial statement instead lives until that complete statement ends. A field or element of a temporary is a place in it: reading one by value copies it, as from any place, and the temporary is dropped whole when it ends, so `x := make_pair().a` clones `a` and drops the pair, a literal's included.
 
 **A temporary that a local borrows lives as long as the local's block.** When the value of a local variable's declaration, or of an assignment to a whole local variable, borrows a temporary along an *extending path*, the temporary is *extended*: it lives until the scope holding the statement ends, which is its block, or the whole statement for an `if`, `for`, or `switch` initial statement. It is dropped there with that scope's locals in reverse order of creation, so after a local it initializes and before anything declared earlier. The path starts at the value the local receives and goes on through:
 

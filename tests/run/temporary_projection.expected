@@ -1,0 +1,20 @@
+drop 2
+drop 1
+x 101
+drop 101
+drop 4
+drop 3
+y 104
+drop 104
+drop 6
+drop 5
+z 106
+drop 106
+drop 8
+drop 7
+w 107
+drop 107
+drop 9
+v 109
+drop 109
+end

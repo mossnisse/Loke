@@ -692,6 +692,29 @@ emit_lent_address :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	return emit_address_at(e, expr, as_type)
 }
 
+// A field or element read out of a literal whose type has a lifecycle: the
+// literal is still a temporary that is built and dropped (design.md "Evaluation
+// order"), so its read does not fold to the constant it would select.
+@(private = "file")
+projects_managed_literal :: proc(e: ^Emitter, expr: Expr) -> bool {
+	node := expr
+	for {
+		#partial switch v in node {
+		case ^Expr_Selector:
+			if v.resolution.kind != .Field {
+				return false
+			}
+			node = v.operand
+		case ^Expr_Index:
+			node = v.operand
+		case ^Expr_Composite:
+			return node != expr && emit_lifecycle(e, v.type).managed
+		case:
+			return false
+		}
+	}
+}
+
 // Storage for the temporary `expr` makes. A large one is shared between full
 // expressions, so one a local's value extends past its own gets storage of its
 // own instead.
@@ -706,7 +729,7 @@ temporary_slot_for :: proc(e: ^Emitter, expr: Expr, type: Type_Id) -> string {
 // The storage type can precede an implicit conversion on the same node.
 @(private)
 emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
-	// Only the operand a projection forms its address from is lent with it.
+	// Only the address asked for is lent; a projection lends its own operand.
 	lending := e.lending
 	e.lending = false
 	// design.md "Materialization": every use of one constant shares one global.
@@ -743,7 +766,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			return "null"
 		}
 		symbol := symbol_of(e.c, v.resolution.symbol)
-		base_type, base_address := emit_base_address(e, v.operand, lending)
+		base_type, base_address := emit_base_address(e, v.operand)
 		out := gep_field(e, llvm_type(e, base_type), base_address, int(symbol.index))
 		record_field_align(e, base_type, base_address, out, symbol.type)
 		return out
@@ -765,7 +788,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			return emit_slice_element_address(e, v)
 		}
 		if type_is_dynamic_array(e.c, operand_type) {
-			return emit_dynamic_element_address(e, v, lending)
+			return emit_dynamic_element_address(e, v)
 		}
 		// Whole-element map assignment never asks for an address; every other
 		// map index names an element that must already exist (design.md "Maps").
@@ -779,7 +802,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
 			return gep_at(e, llvm_type(e, operand_info.element), data, index)
 		}
-		base_type, base_address := emit_base_address(e, v.operand, lending)
+		base_type, base_address := emit_base_address(e, v.operand)
 		info := underlying_info(e.c, base_type)
 		index := emit_expr(e, v.indices[0])
 		index = emit_bounds_check(e, index, expr_base(v.indices[0]).type, info.count)
@@ -865,9 +888,9 @@ emit_index_below :: proc(e: ^Emitter, v: ^Expr_Index, length: string) -> string 
 // `xs[i]`: an address in the current allocation, valid only as long as it is
 // (the M5b invalidation events enforce that).
 @(private = "file")
-emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index, lending: bool) -> string {
+emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	operand_type := expr_base(v.operand).type
-	e.lending = lending
+	e.lending = true
 	header := emit_address(e, v.operand)
 	data := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_STORAGE))
 	length := load(e, "i64", gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN))
@@ -884,16 +907,17 @@ emit_slice_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	return gep_at(e, llvm_type(e, slice_element(e.c, operand_type)), data, index)
 }
 
-// `p.x` and `p[i]` accept one pointer hop, whose value is the base address. A
-// `lending` projection lends its own operand, never what a pointer names.
+// `p.x` and `p[i]` accept one pointer hop, whose value is the base address.
+// Otherwise the operand is lent: a field or element of a temporary is a place
+// in it, read by borrowing or copying, so the temporary is dropped whole.
 @(private = "file")
-emit_base_address :: proc(e: ^Emitter, operand: Expr, lending: bool) -> (Type_Id, string) {
+emit_base_address :: proc(e: ^Emitter, operand: Expr) -> (Type_Id, string) {
 	type := expr_base(operand).type
 	info := underlying_info(e.c, type)
 	if info != nil && info.kind == .Pointer {
 		return info.element, emit_expr(e, operand)
 	}
-	e.lending = lending
+	e.lending = true
 	return type, emit_address(e, operand)
 }
 
@@ -1114,7 +1138,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		value := emit_expr_at(e, expr, from)
 		return emit_simd_splat(e, value, as_type)
 	}
-	if base.is_const && base.const_value.kind != .Invalid {
+	if base.is_const && base.const_value.kind != .Invalid && !projects_managed_literal(e, expr) {
 		emit_const_len_receiver(e, expr)
 		return const_operand(e, base.const_value, as_type)
 	}

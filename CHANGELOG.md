@@ -729,6 +729,11 @@ checklist.
   A literal such as `&Tracked{1}` or `[dynamic]Tracked{...}[:]` passed to a
   call, and a dynamic array a call returned and the statement sliced, were
   never dropped.
+- A literal read through a field or element by value is dropped when its
+  statement ends, as a call's result already was (design.md "Temporaries and
+  procedure boundaries"). `y := Pair{make(3), make(4)}.b` copied `b` and
+  never dropped the pair, and a literal of constants such as
+  `Pair{Tracked{5}, Tracked{6}}.b` was folded away with its drop hooks.
 - A file-scope `when` condition can name the predeclared type constructors
   (design.md "when statement"): `size_of(Simd(f32, 4))`, `size_of(Range(int))`,
   and `size_of(Box(int))` reported `L0389`, saying the name was not declared,
