@@ -424,7 +424,10 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 		}
 		return first_unresolved_name(k, v.target)
 	case ^Expr_Call:
-		if missing := first_unresolved_name(k, v.callee); missing != "" {
+		// `Simd`, `Range`, and `Box` are predeclared type constructors recognized
+		// by name, with no universe binding to find (design.md "Predeclared names").
+		predeclared := simd_callee(k, v.callee) || range_callee(k, v.callee) || box_type_callee(k, v.callee)
+		if missing := first_unresolved_name(k, v.callee); missing != "" && !predeclared {
 			return missing
 		}
 		// `build_config(NAME, default)` names a configuration key and

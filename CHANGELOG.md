@@ -711,6 +711,10 @@ checklist.
 
 ### Fixed
 
+- A file-scope `when` condition can name the predeclared type constructors
+  (design.md "when statement"): `size_of(Simd(f32, 4))`, `size_of(Range(int))`,
+  and `size_of(Box(int))` reported `L0389`, saying the name was not declared,
+  and left the branch's declarations unresolved.
 - A type's own `<` or `==` declared as a procedure group counts as its own
   (design.md "Comparison operators", "Sorting slices"). A sort orders by a
   grouped `<`, and a grouped `==` compares the type wherever it is nested and

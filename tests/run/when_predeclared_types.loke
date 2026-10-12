@@ -1,0 +1,13 @@
+// design.md "when statement": a file-scope condition may name the predeclared
+// type constructors `Box`, `Simd`, and `Range`, which are recognized by name
+// rather than bound in the universe, so the condition is answerable at once.
+package main;
+import "core:fmt";
+
+when (size_of(Box(int)) == size_of(rawptr)) { BOXED :: 1; } else { BOXED :: 2; }
+when (size_of(Simd(f32, 4)) == 16) { LANES :: 1; } else { LANES :: 2; }
+when (size_of(Range(int)) > 0) { RANGED :: 1; } else { RANGED :: 2; }
+
+main :: proc() {
+	fmt.println(BOXED, LANES, RANGED);
+}

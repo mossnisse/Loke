@@ -668,7 +668,7 @@ report_copy_cost :: proc(
 	if name != "" && transferable && site != .Return {
 		add_notef(k.c, no_span(), "write `move(%s)` if `%s` is no longer needed", name, name)
 	}
-	add_notef(k.c, no_span(), "take a pointer or `shared(T)` if the two names should share one value")
+	add_notef(k.c, no_span(), "take a pointer or `Shared(T)` if the two names should share one value")
 }
 
 @(private = "file")
