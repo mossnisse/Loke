@@ -378,6 +378,12 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 	}
 	erased := subject == TYPE_ANY_VIEW
 	borrows := erased || expression_is_borrowed_place(s.subject)
+	// design.md "@(packed)": over a place reached through a packed struct, a
+	// binding names a packed field.
+	packed_subject := ""
+	if borrows && !erased {
+		packed_subject, _ = packed_field_reached(k, s.subject)
+	}
 	// design.md "Switch ownership": a mutable payload binding writes the
 	// subject's own storage.
 	if switch_binds_place(s) && !erased && !expr_base(s.subject).assignable {
@@ -470,9 +476,16 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		k.scope = new_scope(k.c, case_scope, .Local)
 		if len(entry.fields) == 0 {
 			entry.binding_symbol = bind_case_name(k, case_scope, entry.binding, binding_type, entry.binding_ref, borrows)
+			mark_packed_binding(k, entry.binding_symbol, entry.binding, entry.binding_ref, packed_subject)
 		}
+		packed_payload := resolved && underlying_info(k.c, binding_type).packed
 		for &field in entry.fields {
 			field.symbol = bind_case_name(k, case_scope, field.name, field.type, field.is_ref, borrows)
+			origin := packed_subject
+			if origin == "" && borrows && packed_payload {
+				origin = field_name_at(k.c, binding_type, field.slot)
+			}
+			mark_packed_binding(k, field.symbol, field.name, field.is_ref, origin)
 		}
 		if !resolved {
 			entry.fields = nil
@@ -538,6 +551,36 @@ bind_case_name :: proc(
 	})
 	k.scope.names[name] = symbol
 	return symbol
+}
+
+// design.md "@(packed)": a binding over a packed field is a copy that cannot
+// be borrowed, so one that must be a writable place is rejected, and reported
+// only there.
+@(private = "file")
+mark_packed_binding :: proc(k: ^Checker, symbol: Symbol_Id, binding: Name, is_ref: bool, field: string) {
+	if field == "" {
+		return
+	}
+	if is_ref {
+		errorf(
+			k.c, binding.span, "L0614",
+			"cannot bind `%s` with `&mut`: it is reached through a packed struct", field,
+		)
+		return
+	}
+	if sym := symbol_of(k.c, symbol); sym != nil {
+		sym.packed_field = field
+	}
+}
+
+@(private = "file")
+field_name_at :: proc(c: ^Compiler, record: Type_Id, slot: int) -> string {
+	info := underlying_info(c, record)
+	if info == nil || slot >= len(info.fields) {
+		return ""
+	}
+	field := symbol_of(c, info.fields[slot])
+	return field == nil ? "" : identifier_text(c, field.name)
 }
 
 // design.md "Inspecting a union": `.name(a, b)` destructures a record payload

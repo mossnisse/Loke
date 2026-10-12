@@ -1802,6 +1802,12 @@ packed_field_reached :: proc(k: ^Checker, operand: Expr) -> (string, bool) {
 		name: string
 		next: Expr
 		#partial switch v in cur {
+		case ^Expr_Ident:
+			// A case binding over a packed field names that field.
+			if sym := symbol_of(k.c, v.symbol); sym != nil && sym.packed_field != "" {
+				return sym.packed_field, true
+			}
+			return "", false
 		case ^Expr_Selector:
 			name, next = v.name.text, v.operand
 		case ^Expr_Index:

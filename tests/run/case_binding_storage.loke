@@ -1,0 +1,81 @@
+// design.md "Switch ownership": over a place a case binding names the payload
+// where the subject stores it, whole or field by field, at run time and in
+// compile-time evaluation alike. design.md "@(packed)": over a packed field it
+// holds a copy, which reads the same values.
+package main;
+
+import "core:fmt";
+Pair :: struct { a: int, b: int }
+Value :: union { pair: Pair, none }
+
+field_same :: proc() -> bool {
+	v: Value = .pair(Pair{1, 2});
+	switch (v) {
+	case .pair(a, _):
+		switch (v) {
+		case .pair(c, _): return &a == &c;
+		case .none:       return false;
+		}
+	case .none: return false;
+	}
+}
+whole_same :: proc() -> bool {
+	v: Value = .pair(Pair{1, 2});
+	switch (v) {
+	case .pair(p):
+		switch (v) {
+		case .pair(a, _): return &p.a == &a;
+		case .none:       return false;
+		}
+	case .none: return false;
+	}
+}
+through :: proc(v: ^Value) -> bool {
+	switch (v^) {
+	case .pair(a, _):
+		switch (v^) {
+		case .pair(q): return &a == &q.a;
+		case .none:    return false;
+		}
+	case .none: return false;
+	}
+}
+deref_same :: proc() -> bool { v: Value = .pair(Pair{1, 2}); return through(&v); }
+
+FIELD :: field_same();
+WHOLE :: whole_same();
+DEREF :: deref_same();
+
+main :: proc() {
+	fmt.println(FIELD, field_same(), WHOLE, whole_same(), DEREF, deref_same());
+	v: Value = .pair(Pair{1, 2});
+	switch (v) {
+	case .pair(a, b): fmt.println(rawptr(&a) == rawptr(&v), rawptr(&b) != rawptr(&a));
+	case .none:
+	}
+	packed_reads();
+}
+
+Pk :: struct @(packed) { tag: u8, n: i32 }
+Packed :: union { pk: Pk, num: i32, none }
+Holder :: struct @(packed) { pad: u8, v: Packed }
+
+show :: proc(h: ^Holder) {
+	switch (h.v) {
+	case .num(n):     fmt.println("num", n);
+	case .pk(tag, m): fmt.println("pk", tag, m);
+	case .none:
+	}
+}
+
+packed_reads :: proc() {
+	v: Packed = .pk(Pk{3, 70000});
+	switch (v) {
+	case .pk(tag, n): fmt.println(tag, n);
+	default:
+	}
+	h := Holder{7, .num(41)};
+	show(&h);
+	h.v = .pk(Pk{9, 123456});
+	show(&h);
+}

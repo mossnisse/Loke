@@ -3553,8 +3553,9 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 			return flow
 		}
 	}
-	// A `.name(&mut binding)` case binds the payload in the subject's own storage.
-	if switch_binds_place(s) {
+	// A `.name(&mut binding)` case binds the payload in the subject's own storage,
+	// and so does any binding over a place (design.md "Switch ownership").
+	if switch_binds_place(s) || s.kind != .Value && eval_frame_place(ev, s.subject) {
 		place, ok := eval_place(ev, s.subject)
 		if !ok {
 			return .Fail
@@ -3626,7 +3627,7 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 			eval_fail(ev, s.span, "L0341", "a case binding needs a compile-time frame")
 			return .Fail
 		}
-		if entry.binding_ref {
+		if place != nil && len(place.elements) > 0 {
 			frame.locals[entry.binding_symbol] = &place.elements[0]
 			return eval_stmts(ev, entry.stmts, true)
 		}
@@ -3638,8 +3639,52 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 	return eval_stmts(ev, entry.stmts, true)
 }
 
-// design.md "Inspecting a union": each field binding reads its field of the
-// payload, and an `&mut` one names it in the subject's storage.
+// Whether a switch subject is a place rooted in this frame's storage, which a
+// case binding then names rather than copies.
+@(private = "file")
+eval_frame_place :: proc(ev: ^Evaluator, subject: Expr) -> bool {
+	if !expression_is_borrowed_place(subject) || expr_base(subject).type == TYPE_ANY_VIEW {
+		return false
+	}
+	frame := current_frame(ev)
+	if frame == nil {
+		return false
+	}
+	cur := subject
+	for {
+		#partial switch v in cur {
+		case ^Expr_Ident:
+			_, local := frame.locals[v.symbol]
+			return local
+		case ^Expr_Selector:
+			if v.operand == nil || type_is_pointer(ev.k.c, expr_base(v.operand).type) {
+				return false
+			}
+			cur = v.operand
+		case ^Expr_Index:
+			if v.resolution.kind == .User_Operator || underlying_kind(ev.k.c, expr_base(v.operand).type) != .Array {
+				return false
+			}
+			cur = v.operand
+		case ^Expr_Postfix:
+			// A pointer's target is storage wherever it lives; a box's payload is
+			// its own.
+			if v.op != .Caret {
+				return false
+			}
+			if !v.boxed {
+				return true
+			}
+			cur = v.operand
+		case:
+			return false
+		}
+	}
+}
+
+// design.md "Inspecting a union": each field binding names its field of the
+// payload in the subject's storage when the subject is a place, and reads a
+// copy otherwise.
 @(private = "file")
 eval_case_fields :: proc(ev: ^Evaluator, s: ^Stmt_Switch, entry: Switch_Case, subject: Eval_Value, place: ^Eval_Value) -> Eval_Flow {
 	frame := current_frame(ev)
@@ -3657,7 +3702,7 @@ eval_case_fields :: proc(ev: ^Evaluator, s: ^Stmt_Switch, entry: Switch_Case, su
 			eval_fail(ev, s.span, "L0341", "this payload has no compile-time fields to bind")
 			return .Fail
 		}
-		if field.is_ref {
+		if payload != nil {
 			frame.locals[field.symbol] = &payload.elements[field.slot]
 			continue
 		}

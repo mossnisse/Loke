@@ -644,6 +644,10 @@ Symbol :: struct {
 	// have no owner here to transfer or release (design.md "Unions",
 	// "By-reference iteration").
 	borrowed_binding: Borrowed_Binding,
+	// design.md "@(packed)": a case binding over a place whose storage is a
+	// packed field, by that field's name. It is bound as a copy, and borrowing
+	// it is the misaligned borrow `&value.field` would be.
+	packed_field:     string,
 	// design.md "`@(allocator_reset)`": a successful call may end this
 	// parameter's region. Verified in the body, carried in the procedure type.
 	allocator_reset: bool,

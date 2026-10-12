@@ -1702,7 +1702,7 @@ n := shape.as(.count) or_return;    // in a procedure returning an Option
 
 #### Switch ownership
 
-A switch over a **place** borrows it: a payload binding is immutable and non-owning, and the place keeps its value.
+A switch over a **place** borrows it: a payload binding is immutable and non-owning, and the place keeps its value. The binding names the payload where the subject stores it, so `&binding` points into the subject, in compile-time evaluation too.
 
 A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
 
@@ -6413,7 +6413,7 @@ Layout and ABI annotations use the same `@(...)` syntax as declaration attribute
 
 This attribute applies to a struct. It removes the padding normally inserted between fields to satisfy their alignment requirements. Fields remain in source order.
 
-Individual packed fields are not addressable: `&value.field` is rejected even at an aligned offset. The whole packed struct remains addressable.
+Individual packed fields are not addressable: `&value.field` is rejected even at an aligned offset. The whole packed struct remains addressable. A switch case binding over a packed field, a field of a packed payload or a payload reached through a packed struct, holds a copy of it instead, and borrowing that binding is rejected as `&value.field` is; such a binding cannot be written `&mut`.
 
 ```odin
 Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }

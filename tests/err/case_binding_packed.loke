@@ -1,0 +1,49 @@
+// design.md "@(packed)": a case binding over a packed field holds a copy, so
+// borrowing it is rejected as `&value.field` is, and it cannot be `&mut`.
+package main;
+
+Pk :: struct @(packed) { tag: u8, n: i32 }
+Value :: union { pk: Pk, num: i32, none }
+Holder :: struct @(packed) { pad: u8, v: Value }
+
+read :: proc(x: ^i32) -> i32 { return x^; }
+bump :: proc(x: inout i32) { x += 1; }
+
+field_of_packed_payload :: proc() {
+	v: Value = .pk(Pk{1, 2});
+	switch (v) {
+	case .pk(_, n): read(&n);
+	default:
+	}
+}
+
+mutable_field_of_packed_payload :: proc() {
+	v: Value = .pk(Pk{1, 2});
+	switch (v) {
+	case .pk(_, &mut n): n += 1;
+	default:
+	}
+}
+
+through_packed_holder :: proc(h: ^mut Holder) {
+	switch (h.v) {
+	case .num(n): read(&n);
+	default:
+	}
+}
+
+mutable_through_packed_holder :: proc(h: ^mut Holder) {
+	switch (h.v) {
+	case .num(&mut n): n += 1;
+	default:
+	}
+}
+
+inout_argument :: proc(h: ^mut Holder) {
+	switch (h.v) {
+	case .pk(tag, n): m := n; bump(inout m); bump(inout n);
+	default:
+	}
+}
+
+main :: proc() {}

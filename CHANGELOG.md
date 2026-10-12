@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A switch case cannot bind `&mut` into storage reached through a packed
+  struct (`L0614`, design.md "@(packed)"): `switch (holder.value) { case
+  .num(&mut n): ... }` with `holder` packed wrote through a possibly
+  misaligned address. An unmarked binding there, or over a field of a packed
+  payload record, is a copy, and borrowing it with `&`, an `inout` or borrow
+  argument, or a mutating method is `L0614` as `&holder.field` is. Upgrade by
+  switching over a local copy and assigning it back:
+  `value := holder.value; switch (value) { ... } holder.value = value;`.
 - A temporary that a local's declaration or whole assignment borrows lives
   until the end of the block holding the statement (design.md "Temporaries and
   procedure boundaries"). `p := &Point{1, 2}`, `items := [dynamic]int{1, 2}[:]`,
@@ -732,6 +740,11 @@ checklist.
 
 ### Fixed
 
+- A case binding over a place names the payload in the subject's storage, as
+  design.md "Switch ownership" says, instead of a copy of it: `&binding` in
+  `switch (v) { case .pair(p): ... }` pointed into a compiler-made stack copy,
+  so it did not compare equal to a pointer into `v`. Compile-time evaluation
+  now aliases the subject the same way.
 - `L0690`, for `move` or `drop` of a borrowed case binding, suggested the
   removed header binding `switch (name in move(...))`; it now suggests
   `switch (move(...))`.

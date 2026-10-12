@@ -669,8 +669,12 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	erased := union_type == TYPE_ANY_VIEW
 	consumes := false
 	tag_llvm := "i64"
-	// A `.name(&mut binding)` case binds the payload in the subject's own storage.
-	place := switch_binds_place(s) ? emit_address(e, s.subject) : ""
+	// Over an addressable place a case binds the payload, or its fields, in the
+	// subject's own storage (design.md "Switch ownership").
+	place := ""
+	if switch_binds_place(s) || !erased && binds_subject_storage(e, s) {
+		place = emit_address(e, s.subject)
+	}
 	value := place != "" ? load_place(e, union_type, place) : emit_expr(e, s.subject)
 	slot, tag: string
 	if erased {
@@ -712,8 +716,8 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
 		if len(entry.fields) > 0 {
-			emit_case_fields(e, entry, union_type, place != "" ? place : slot, consumes)
-		} else if entry.binding_ref && entry.binding_symbol != INVALID_SYMBOL {
+			emit_case_fields(e, entry, union_type, place, slot, consumes)
+		} else if place != "" && names_storage(e, entry.binding_symbol) {
 			bind_local(e, entry.binding_symbol, gep_field(e, llvm_type(e, union_type), place, 0))
 		} else {
 			emit_type_case_binding(e, entry, union_type, value, slot, erased)
@@ -758,21 +762,50 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 	store(e, entry.binding_type, payload, binding)
 }
 
+// A binding over a place names the subject's storage unless that storage is a
+// packed field, which cannot be borrowed (design.md "@(packed)").
+@(private = "file")
+names_storage :: proc(e: ^Emitter, symbol: Symbol_Id) -> bool {
+	sym := symbol_of(e.c, symbol)
+	return sym != nil && sym.borrowed_binding == .Switch_Payload && sym.packed_field == ""
+}
+
+@(private = "file")
+binds_subject_storage :: proc(e: ^Emitter, s: ^Stmt_Switch) -> bool {
+	if !expr_base(s.subject).addressable {
+		return false
+	}
+	for entry in s.cases {
+		if names_storage(e, entry.binding_symbol) {
+			return true
+		}
+		for field in entry.fields {
+			if names_storage(e, field.symbol) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // design.md "Inspecting a union": over a place each field binding names its
 // field of the stored payload. A consumed payload is taken apart: a retained
 // field moves into its binding, which drops it, and a discarded one drops with
 // the case.
 @(private = "file")
-emit_case_fields :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, storage: string, consumes: bool) {
-	payload := gep_field(e, llvm_type(e, union_type), storage, 0)
+emit_case_fields :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, place, slot: string, consumes: bool) {
+	storage := llvm_type(e, union_type)
 	for field in entry.fields {
-		address := element_address(e, entry.binding_type, payload, field.slot)
 		if !consumes {
-			if field.symbol != INVALID_SYMBOL {
-				bind_local(e, field.symbol, address)
+			if field.symbol == INVALID_SYMBOL {
+				continue
 			}
+			// A packed field, or a subject with no address, is read from the copy.
+			from := place != "" && names_storage(e, field.symbol) ? place : slot
+			bind_local(e, field.symbol, element_address(e, entry.binding_type, gep_field(e, storage, from, 0), field.slot))
 			continue
 		}
+		address := element_address(e, entry.binding_type, gep_field(e, storage, slot, 0), field.slot)
 		if field.symbol == INVALID_SYMBOL {
 			register_scope_place(e, field.type, address)
 			continue
