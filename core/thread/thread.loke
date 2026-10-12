@@ -157,7 +157,7 @@ spawn :: proc{spawn_with, spawn_plain};
 // dropping it unlocks. An unlock happens before the next lock.
 //
 // Every operation takes a read-only `^` receiver, as `sync.Atomic`'s do, so a
-// `Mutex` works in file-scope storage and behind a `shared(T)`. It is
+// `Mutex` works in file-scope storage and behind a `Shared(T)`. It is
 // move-only: the lock word is an `Atomic`.
 Mutex :: struct($T: type) {
 	// A Windows SRWLOCK: one pointer, unlocked at zero, written only by the

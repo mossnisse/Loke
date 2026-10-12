@@ -2,7 +2,7 @@ package main;
 
 import "core:mem";
 
-// The compiler-visible half of `shared(T)` (design.md "Shared ownership").
+// The compiler-visible half of `Shared(T)` (design.md "Shared ownership").
 // Everything else about the type is ordinary library code; these four rules are
 // the language's.
 
@@ -10,11 +10,11 @@ Node :: struct {
 	value: int,
 }
 
-// "The control block stores the allocator, so a `shared(T)` declaration cannot
+// "The control block stores the allocator, so a `Shared(T)` declaration cannot
 // use `via`."
 selects_a_provider :: proc() {
 	arena := mem.Arena.init();
-	held: shared(Node) via arena.allocator() = shared(Node{1});
+	held: Shared(Node) via arena.allocator() = shared(Node{1});
 }
 
 // "`handle.get()` returns a non-owning `^T` whose root provenance derives from
@@ -32,7 +32,7 @@ outlives_its_handle :: proc() -> int {
 	return borrowed^.value;
 }
 
-// A `weak` handle names no payload, so it has no `get` to reach one with.
+// A `Weak` handle names no payload, so it has no `get` to reach one with.
 reaches_through_weak :: proc() -> int {
 	held := shared(Node{4});
 	watcher := held.downgrade();

@@ -68,10 +68,10 @@ impl Payload {
 // A handle has no zero value, so the global holds an `Option` of one until
 // `initialize` publishes it.
 @(private)
-holder: static Option(shared(Payload)) = .none;
+holder: static Option(Shared(Payload)) = .none;
 
 @(private)
-watcher: static weak(Payload) = {};
+watcher: static Weak(Payload) = {};
 
 @(private)
 shared_failures: static sync.Atomic(int) = {};

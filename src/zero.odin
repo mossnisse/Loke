@@ -40,7 +40,7 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 		// A generic instance can bind a zero variant's payload to a type with no zero.
 		return info.zero_designated && len(info.variants) > 0 && type_has_zero_walk(c, info.variants[0], seen)
 	case .Struct:
-		// design.md "Types with no zero value": a `shared(T)` is an owning handle,
+		// design.md "Types with no zero value": a `Shared(T)` is an owning handle,
 		// which always shares a payload; its record holds the block as a `rawptr`
 		// only so that it carries no borrow.
 		if info.instance_of != INVALID_SYMBOL && info.instance_of == c.shared_symbol {
@@ -62,7 +62,7 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 		return info.count == 0 || type_has_zero_walk(c, info.element, seen)
 	case .Box:
 		// design.md "Types with no zero value": a box is an owning handle, which
-		// always owns a value; `Option(box(T))` is the absent box.
+		// always owns a value; `Option(Box(T))` is the absent box.
 		return false
 	// design.md "Types with no zero value": a reference always refers to
 	// something, so there is no null one; `Option(^T)` is the absent one.

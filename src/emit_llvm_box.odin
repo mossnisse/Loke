@@ -1,4 +1,4 @@
-// `box(T)` (design.md "Owned values"): one address naming an allocation that
+// `Box(T)` (design.md "Owned values"): one address naming an allocation that
 // holds the allocator, then the payload at `box_payload_offset`. Drop and clone
 // are per-type thunks, which is also what lets a type reach itself through a
 // box without the emitter recursing forever.

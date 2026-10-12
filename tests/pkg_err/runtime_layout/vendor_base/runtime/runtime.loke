@@ -68,7 +68,7 @@ Weak :: struct($T: type) { @(private) block: rawptr }
 shared_stub :: proc(value: $T) -> Shared(T) { return Shared(T){nil}; }
 
 @(public)
-shared_construct :: proc{shared_stub};
+shared :: proc{shared_stub};
 
 @(public)
 try_shared :: proc{shared_stub};

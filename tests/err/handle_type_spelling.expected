@@ -1,0 +1,24 @@
+L0713
+@9:5
+the handle type is spelled `Box(...)`, not `box(...)`
+L0713
+@10:5
+the handle type is spelled `Shared(...)`, not `shared(...)`
+L0713
+@11:5
+the handle type is spelled `Weak(...)`, not `weak(...)`
+L0713
+@12:7
+the handle type is spelled `Box(...)`, not `box(...)`
+L0713
+@13:7
+the handle type is spelled `Shared(...)`, not `shared(...)`
+L0713
+@14:5
+`Box` needs its element type, as in `Box(Node)`
+L0713
+@15:12
+the handle type is spelled `Box(...)`, not `box(...)`
+L0713
+@16:15
+the handle type is spelled `Weak(...)`, not `weak(...)`

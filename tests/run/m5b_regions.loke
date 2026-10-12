@@ -50,11 +50,11 @@ allocations_of_another_region :: proc() -> int {
 	return mine^ + heap^;
 }
 
-allocate_in :: proc(value: int, allocator: Allocator) -> box(int) {
+allocate_in :: proc(value: int, allocator: Allocator) -> Box(int) {
 	return box(value, allocator);
 }
 
-allocate_in_default :: proc(value: int) -> box(int) {
+allocate_in_default :: proc(value: int) -> Box(int) {
 	return box(value);
 }
 

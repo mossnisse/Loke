@@ -224,7 +224,7 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 // The address operand: a pointer to a supported type. A read-only `^` is
 // enough even to write: design.md "Concurrency and the memory model" makes an
 // atomic write through one legal, since no atomic access conflicts with another,
-// which is what lets `Atomic(T)` work behind a `shared(T)`. Returns the pointee,
+// which is what lets `Atomic(T)` work behind a `Shared(T)`. Returns the pointee,
 // or INVALID_TYPE after an error.
 @(private = "file")
 check_atomic_place :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) -> Type_Id {

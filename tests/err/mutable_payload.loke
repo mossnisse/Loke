@@ -6,7 +6,7 @@ package main;
 import "core:fmt";
 
 make_opt :: proc() -> Option(int) { return .some(1); }
-take :: proc(value: move box(int)) { }
+take :: proc(value: move Box(int)) { }
 
 writes_subject :: proc() {
 	x: Option(int) = .some(1);
@@ -58,7 +58,7 @@ escapes :: proc() {
 }
 
 moves_out :: proc() {
-	x: Option(box(int)) = .some(box(1));
+	x: Option(Box(int)) = .some(box(1));
 	switch (x) {
 	case .some(&mut b): take(move(b));
 	case .none:
@@ -73,9 +73,9 @@ read_only_payload :: proc() {
 	}
 }
 
-Node :: struct { value: int, next: Option(box(Node)) }
+Node :: struct { value: int, next: Option(Box(Node)) }
 
-invalidates :: proc(head: ^mut Option(box(Node))) {
+invalidates :: proc(head: ^mut Option(Box(Node))) {
 	cursor := head;
 	switch (cursor^) {
 	case .some(&mut node):
@@ -86,7 +86,7 @@ invalidates :: proc(head: ^mut Option(box(Node))) {
 	}
 }
 
-source_after :: proc(head: ^mut Option(box(Node))) {
+source_after :: proc(head: ^mut Option(Box(Node))) {
 	cursor := &mut head^;
 	switch (cursor^) {
 	case .some(&mut node):

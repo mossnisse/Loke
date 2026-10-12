@@ -9,7 +9,7 @@ import "core:mem";
 View :: struct { items: []int }
 
 total :: proc(xs: [dynamic]int) -> int { return xs.len(); }
-first :: proc(h: shared(View)) -> int { return h.get().items[0]; }
+first :: proc(h: Shared(View)) -> int { return h.get().items[0]; }
 
 main :: proc() {
 	fmt.println(total(make([dynamic]int, 3, 4, mem.Arena.init().allocator())));

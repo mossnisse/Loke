@@ -2750,7 +2750,7 @@ check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 
 @(private = "file")
 check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
-	// A `shared(T)`'s one field has a zero, but the handle has none (design.md
+	// A `Shared(T)`'s one field has a zero, but the handle has none (design.md
 	// "Types with no zero value").
 	if len(v.elements) == 0 && info.instance_of != INVALID_SYMBOL && info.instance_of == k.c.shared_symbol {
 		require_type_has_zero(k, target, v.span, "`{}`")

@@ -78,7 +78,7 @@ thread return, in reverse initialization order.
 
 ### An owner for one value
 
-[`box(T)`](design.md#owned-values) gives one allocated value the same ownership
+[`Box(T)`](design.md#owned-values) gives one allocated value the same ownership
 rules that a dynamic array gives many: cleanup, region tracking, copying, and
 read-only borrowing. It is copyable when its payload is; last-use transfer
 avoids unnecessary clones and copy-cost diagnostics expose the rest.
@@ -89,14 +89,21 @@ recognize payload projection separately. A built-in box makes those properties
 part of the type. It occupies one address, as does an optional box.
 
 Raw allocation remains available as `unsafe.new` and `unsafe.free`. Checked
-ownership uses `box`, so the result's type says who releases it.
+ownership uses `Box(T)`, so the result's type says who releases it.
+
+The type is `Box(T)` and its constructor `box(value)`, as `Shared(T)` and
+`Weak(T)` are types and `shared(value)` a constructor. Every predeclared generic
+type is capitalised and nothing else is, so a reader can tell a type from a
+call. When one lower-case name was both, `box(x)` was a type or an allocation
+depending on whether `x` named a type, and the compiler needed a rule for each
+handle to decide which.
 
 ### Zeros that are values
 
 `{}` means a usable zero: an empty view, invalid type id, default allocator,
 or empty weak handle. `nil` means an absent raw address. A non-null type has no
 valid zero, so `^T`, procedure values, `dyn` views, `any_view`, `cstring_view`,
-`box(T)`, and `shared(T)` cannot be null. Absence is represented by `Option`.
+`Box(T)`, and `Shared(T)` cannot be null. Absence is represented by `Option`.
 The non-null types split into references, which are borrows and checked as
 such, and owning handles, which are owners. Calling them all references would
 make an owning handle look like a borrow; the shared name is what the zero rule
@@ -105,7 +112,7 @@ and the `Option` niche need.
 This moves the null check to the conversion from an unchecked address rather
 than every dereference. It also avoids a nullable reference inside an optional
 reference having two representations of absence. The freed null representation
-lets `Option(^T)` and `Option(box(T))` occupy one word.
+lets `Option(^T)` and `Option(Box(T))` occupy one word.
 
 The cost is explicit construction: records containing references have no `{}`,
 and globals cannot initialize a reference from a runtime address. A second
@@ -168,7 +175,7 @@ stack frames can still overflow.
 ### Value-semantic assignment
 
 Copying a dynamic array or map produces an independent value; pointers and
-`shared(T)` make sharing explicit. Strings share immutable storage. Implicit
+`Shared(T)` make sharing explicit. Strings share immutable storage. Implicit
 copying keeps generic assignment uniform and lets records gain owning fields
 without breaking every caller.
 

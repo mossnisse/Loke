@@ -355,7 +355,7 @@ mutex can live in file-scope storage with no initializer. `lock` blocks until
 this thread holds the lock and returns a guard; `guard.get()` is the value, as
 an `inout` result that borrows the guard, and dropping the guard unlocks. An
 unlock happens before the next lock. `lock` takes a read-only receiver, as the
-`Atomic` operations do, so a mutex behind a `shared(T)` handle or in file-scope
+`Atomic` operations do, so a mutex behind a `Shared(T)` handle or in file-scope
 storage still locks. The field `value` is public for a caller that owns the
 mutex outright, before spawning or after joining. Locking a mutex the thread
 already holds never returns. `Mutex` is move-only.

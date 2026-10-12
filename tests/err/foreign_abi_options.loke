@@ -9,6 +9,6 @@ accepted :: proc "c" (a: Option(^int), b: Option(cstring_view), c: Option(proc "
 bad_value :: proc "c" (value: Option(int)) {}
 bad_procedure :: proc "c" (value: Option(proc())) {}
 bad_view :: proc "c" (value: Option(dyn Shape)) {}
-bad_box :: proc "c" (value: Option(box(int))) {}
+bad_box :: proc "c" (value: Option(Box(int))) {}
 
 main :: proc() {}

@@ -12,7 +12,7 @@ outlive_local_arena :: proc() {
 }
 
 box_outlives_local_arena :: proc() {
-	p: Option(box(int)) = .none;
+	p: Option(Box(int)) = .none;
 	{
 		a := mem.Arena.init();
 		p = .some(box(0, a.allocator()));

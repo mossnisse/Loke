@@ -21,7 +21,7 @@ L0412
 `release` implements `hook(drop)` and is not directly accessible; use `drop(value)`
 L0698
 @47:2
-`bad` holds a `Result(box(Move_Only), Allocator_Error)` that is never used: inspect it, or discard it with `_ = ...`
+`bad` holds a `Result(Box(Move_Only), Allocator_Error)` that is never used: inspect it, or discard it with `_ = ...`
 L0503
 @47:17
 `Move_Only` is move-only, so this box cannot copy it; write `move(...)` to transfer ownership instead

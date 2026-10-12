@@ -1968,14 +1968,15 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return INVALID_TYPE
 
 	case ^Expr_Call:
-		// Predeclared type constructors: design.md "SIMD vectors" and "Ranges".
+		// Predeclared type constructors: design.md "SIMD vectors", "Ranges", and
+		// "Owned values".
 		if simd_callee(k, value.callee) {
 			return resolve_simd_application(k, value)
 		}
 		if range_callee(k, value.callee) {
 			return resolve_range_application(k, value)
 		}
-		if box_callee(k, value.callee) {
+		if box_type_callee(k, value.callee) {
 			return resolve_box_application(k, value)
 		}
 		// `Index_Type(1000)`: a call to a procedure that computes a type
@@ -2116,6 +2117,10 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 			errorf(k.c, ident.span, "L0681", "`Simd` needs its element type and lane count, as in `Simd(f32, 4)`")
 			return
 		}
+		if box_type_callee(k, ident) {
+			errorf(k.c, ident.span, "L0713", "`Box` needs its element type, as in `Box(Node)`")
+			return
+		}
 		named := lookup_symbol(k.scope, identifier_of(k.c, ident))
 		if symbol_is_generic(k, named) {
 			errorf(k.c, ident.span, "L0431", "`%s` is generic and needs its arguments, as in `%s(...)`", ident.name, ident.name)
@@ -2127,6 +2132,9 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 			return
 		}
 		errorf(k.c, ident.span, "L0306", "unknown type `%s`", ident.name)
+		return
+	}
+	if call, is_call := syntax.(^Expr_Call); is_call && report_handle_type_spelling(k, call, type_position = true) {
 		return
 	}
 	// Name the component that failed rather than the shape around it.

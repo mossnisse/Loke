@@ -28,7 +28,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	c.result_symbol = bootstrap_symbol(k, pkg, "Result", .Type)
 	c.shared_symbol = bootstrap_symbol(k, pkg, "Shared", .Type)
 	c.weak_symbol = bootstrap_symbol(k, pkg, "Weak", .Type)
-	c.shared_construct_symbol = bootstrap_symbol(k, pkg, "shared_construct", .Proc_Group)
+	c.shared_construct_symbol = bootstrap_symbol(k, pkg, "shared", .Proc_Group)
 	c.try_shared_symbol = bootstrap_symbol(k, pkg, "try_shared", .Proc_Group)
 	if sym := symbol_of(c, unit); sym != nil {
 		c.unit_type = sym.type
@@ -37,10 +37,11 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	bind_universe_name(c, universe, "Unit", unit)
 	bind_universe_name(c, universe, "Option", c.option_symbol)
 	bind_universe_name(c, universe, "Result", c.result_symbol)
-	// `shared` names the type; a call `shared(value)` is resolved to
-	// `shared_construct` at the call.
-	bind_universe_name(c, universe, "shared", c.shared_symbol)
-	bind_universe_name(c, universe, "weak", c.weak_symbol)
+	// design.md "Shared ownership": `Shared` and `Weak` are the types, and
+	// `shared` is the constructor group.
+	bind_universe_name(c, universe, "Shared", c.shared_symbol)
+	bind_universe_name(c, universe, "Weak", c.weak_symbol)
+	bind_universe_name(c, universe, "shared", c.shared_construct_symbol)
 	bind_universe_name(c, universe, "try_shared", c.try_shared_symbol)
 
 	c.alloc_result_type = result_type(k, c.unit_type, TYPE_ALLOCATOR_ERROR)
@@ -97,7 +98,7 @@ result_type :: proc(k: ^Checker, payload, error: Type_Id, span := Span{}) -> Typ
 	return instantiate_record_types(k, k.c.result_symbol, args[:], span)
 }
 
-// Is this an instance of `shared(T)` or `weak(T)`? design.md "Shared ownership"
+// Is this an instance of `Shared(T)` or `Weak(T)`? design.md "Shared ownership"
 // gives both a `nil` zero and rejects a `via` declaration of either.
 type_is_shared_handle :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	if c.shared_symbol == INVALID_SYMBOL {
@@ -110,7 +111,7 @@ type_is_shared_handle :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return info.instance_of == c.shared_symbol || info.instance_of == c.weak_symbol
 }
 
-// The payload type of a `shared(T)` or `weak(T)`, or INVALID_TYPE. The record
+// The payload type of a `Shared(T)` or `Weak(T)`, or INVALID_TYPE. The record
 // holds its block as a `rawptr`, so the compiler supplies what the handle
 // carries: its payload's borrows (design.md "Values that contain borrows").
 shared_payload_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {

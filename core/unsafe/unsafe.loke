@@ -28,7 +28,7 @@
 // The operand is still a checked `^mut T`, because the release is *sized*: a
 // pointer that travelled as a `rawptr` is cast back to the pointee type at the
 // call, and that cast is what supplies the size and alignment to release. A
-// handle over an opaque control block, `shared(T)` among them, has no other way
+// handle over an opaque control block, `Shared(T)` among them, has no other way
 // to release it.
 //
 // # `transmute(T, value)`

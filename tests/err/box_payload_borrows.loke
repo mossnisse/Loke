@@ -2,36 +2,36 @@ package main;
 
 // design.md "Values that contain borrows" and "Owned values": a box carries
 // the borrows its payload carries, so allocation does not extend a borrow.
-pointer :: proc() -> box(^int) {
+pointer :: proc() -> Box(^int) {
 	value := 42;
 	return box(&value);
 }
 
-slice :: proc() -> box([]int) {
+slice :: proc() -> Box([]int) {
 	values := [1]int{42};
 	view: []int = values[:];
 	return box(view);
 }
 
 View :: struct { values: []int }
-record :: proc() -> box(View) {
+record :: proc() -> Box(View) {
 	values := [1]int{42};
 	return box(View{values[:]});
 }
 
-fallible :: proc() -> Result(box(^int), Allocator_Error) {
+fallible :: proc() -> Result(Box(^int), Allocator_Error) {
 	value := 42;
 	return try_box(&value);
 }
 
-box_parameter :: proc(value: ^int) -> box(^int) { return box(value); }
-through_helper :: proc() -> box(^int) {
+box_parameter :: proc(value: ^int) -> Box(^int) { return box(value); }
+through_helper :: proc() -> Box(^int) {
 	value := 42;
 	return box_parameter(&value);
 }
 
 stale :: proc() {
-	p: Option(box(^int)) = .none;
+	p: Option(Box(^int)) = .none;
 	{
 		value := 42;
 		p = .some(box(&value));
@@ -39,7 +39,7 @@ stale :: proc() {
 	switch (p) { case .some(held): assert(held^^ == 42); case .none: }
 }
 
-nested :: proc() -> box(box(^int)) {
+nested :: proc() -> Box(Box(^int)) {
 	value := 42;
 	inner := box(&value);
 	return box(move(inner));
@@ -48,13 +48,13 @@ nested :: proc() -> box(box(^int)) {
 main :: proc() {}
 
 // A write into a box's payload carries its borrow too.
-written :: proc(other: ^int) -> box(^int) {
+written :: proc(other: ^int) -> Box(^int) {
 	value := 42;
 	p := box(other);
 	p^ = &value;
 	return move(p);
 }
 
-no_escape :: proc(@(escape=none) value: ^int) -> box(^int) {
+no_escape :: proc(@(escape=none) value: ^int) -> Box(^int) {
 	return box(value);
 }

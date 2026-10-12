@@ -15,12 +15,12 @@ impl Noisy {
 
 Tree :: struct {
 	value:       int,
-	left, right: Option(box(Tree)),
+	left, right: Option(Box(Tree)),
 }
 
 Holder :: struct { shape: Shape }
 
-insert :: proc(tree: ^mut Option(box(Tree)), value: int) {
+insert :: proc(tree: ^mut Option(Box(Tree)), value: int) {
 	switch (tree^) {
 	case .some(&mut node):
 		if (value < node.value) { insert(&mut node.left, value); } else { insert(&mut node.right, value); }
@@ -29,7 +29,7 @@ insert :: proc(tree: ^mut Option(box(Tree)), value: int) {
 	}
 }
 
-in_order :: proc(tree: ^Option(box(Tree))) {
+in_order :: proc(tree: ^Option(Box(Tree))) {
 	switch (tree^) {
 	case .some(node): in_order(&node.left); fmt.print(node.value, ""); in_order(&node.right);
 	case .none:
@@ -58,7 +58,7 @@ counted :: proc() -> int {
 COUNTED :: counted();
 
 // A `^mut` cursor stores each reborrow back into itself, at compile time too.
-push_back :: proc(head: ^mut Option(box(Tree)), value: int) {
+push_back :: proc(head: ^mut Option(Box(Tree)), value: int) {
 	cursor := head;
 	for (;;) {
 		switch (cursor^) {
@@ -69,7 +69,7 @@ push_back :: proc(head: ^mut Option(box(Tree)), value: int) {
 }
 
 chained :: proc() -> int {
-	chain: Option(box(Tree)) = .none;
+	chain: Option(Box(Tree)) = .none;
 	push_back(&mut chain, 1);
 	push_back(&mut chain, 2);
 	push_back(&mut chain, 3);
@@ -101,7 +101,7 @@ main :: proc() {
 	fmt.println(rect.w, rect.h, circle);
 
 	// Assigning the binding replaces the payload, dropping the old one.
-	noisy: Option(box(Noisy)) = .some(box(Noisy{1}));
+	noisy: Option(Box(Noisy)) = .some(box(Noisy{1}));
 	switch (noisy) {
 	case .some(&mut b): b = box(Noisy{2});
 	case .none:
@@ -115,7 +115,7 @@ main :: proc() {
 	case .none:
 	}
 
-	tree: Option(box(Tree)) = .none;
+	tree: Option(Box(Tree)) = .none;
 	foreach (v in []int{5, 3, 8, 1, 4, 9}) { insert(&mut tree, v); }
 	in_order(&tree);
 	fmt.println();

@@ -99,7 +99,7 @@ Type_Kind :: enum {
 	Allocator,
 	Allocator_Error,
 	Dynamic_Array,
-	// design.md "Owned values": `box(T)`, one address owning one `T` and the
+	// design.md "Owned values": `Box(T)`, one address owning one `T` and the
 	// allocator that made it.
 	Box,
 	Array,
@@ -397,7 +397,7 @@ Builtin_Kind :: enum {
 	// `allocation_builtin` pairs them. `free_all` lowers to the provider's reset
 	// entry once provenance proves no dependant survives it.
 	Free_All,
-	// design.md "Owned values": `box(value)`, which as `box(T)` also names the
+	// design.md "Owned values": `box(value)`, which as `Box(T)` also names the
 	// type, and `try_box(value)`.
 	Box_New,
 	Try_Box,
@@ -1429,7 +1429,7 @@ c_pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	)
 }
 
-// `box(T)`: an owner of one allocated `T` (design.md "Owned values"). Its
+// `Box(T)`: an owner of one allocated `T` (design.md "Owned values"). Its
 // identity is its element, as for `[dynamic]T`; the allocator is a run-time
 // property of the allocation, not of the type.
 box_of :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
@@ -2117,7 +2117,7 @@ type_name_alloc :: proc(c: ^Compiler, id: Type_Id, allocator: mem.Allocator) -> 
 	case .Dynamic_Array:
 		return fmt.aprintf("[dynamic]%s", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Box:
-		return fmt.aprintf("box(%s)", type_name_alloc(c, info.element, allocator), allocator = allocator)
+		return fmt.aprintf("Box(%s)", type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Map:
 		return fmt.aprintf("map[%s]%s", type_name_alloc(c, info.key, allocator), type_name_alloc(c, info.element, allocator), allocator = allocator)
 	case .Distinct:

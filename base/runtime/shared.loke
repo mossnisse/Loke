@@ -1,4 +1,4 @@
-// `shared(T)` and `weak(T)` (design.md "Shared ownership").
+// `Shared(T)` and `Weak(T)` (design.md "Shared ownership").
 //
 // Shared ownership is a library record with custom lifecycle hooks over an
 // atomic control block: `clone` and ordinary assignment increment a count
@@ -6,8 +6,8 @@
 // releases the final strong handle drops the payload exactly once.
 //
 // It lives in `base:runtime` rather than in `core:sync` for one reason: the
-// names `shared`, `weak`, and `try_shared` are *universe* names — design.md
-// writes `x: shared(Node)` with no import in sight — so the package that
+// names `Shared`, `Weak`, `shared`, and `try_shared` are *universe* names — design.md
+// writes `x: Shared(Node)` with no import in sight — so the package that
 // declares them is loaded by every program. `base:runtime` is the package that
 // already exists for exactly that, beside `Option` and `Result`; making a
 // second one unconditional would put an atomics package in every hello world.
@@ -15,7 +15,7 @@
 // contributes `allocate_string` to both `core:strings` and `core:fmt`.
 //
 // Five things about these types are the *language's*, not the library's, and
-// the compiler owns them: a `shared(T)` has no zero value while a `weak(T)`'s
+// the compiler owns them: a `Shared(T)` has no zero value while a `Weak(T)`'s
 // is `{}`, `via` on such a declaration is an error, `handle.get()` derives its
 // root provenance from the handle, a handle carries the borrows its payload holds, and neither
 // is ever silently moved at its last use.
@@ -51,10 +51,10 @@ Shared_Block :: struct($T: type) {
 
 // design.md: "It owns one stable, heap-allocated `T` payload and an atomic
 // strong-reference count." It has no zero value: a handle always shares a
-// payload, and `Option(shared(T))` is the absent one.
+// payload, and `Option(Shared(T))` is the absent one.
 //
 // The block travels as a `rawptr` rather than a typed pointer so the handle
-// carries no borrow: a `shared(T)` is an owner, and nothing about it should
+// carries no borrow: a `Shared(T)` is an owner, and nothing about it should
 // make it look like a view of something else.
 @(public)
 Shared :: struct($T: type) {
@@ -62,7 +62,7 @@ Shared :: struct($T: type) {
 }
 
 // design.md: "the non-owning companion: it keeps the control block but not the
-// payload alive, and `upgrade` returns `Option(shared(T))`."
+// payload alive, and `upgrade` returns `Option(Shared(T))`."
 @(public)
 Weak :: struct($T: type) {
 	@(private) block: rawptr,
@@ -70,8 +70,8 @@ Weak :: struct($T: type) {
 
 // ------------------------------------------------------------ construction --
 
-// `shared(value)` and `shared(move(value))`. The compiler routes the call form
-// of the type name here; the group is what makes the two spellings one name.
+// `shared(value)` and `shared(move(value))`. The universe binds `shared` to the
+// group below, which makes the two spellings one name.
 // A failed construction answers by the allocator's policy (design.md
 // "Allocation failure"), as every implicitly allocating operation does.
 @(private)
@@ -93,7 +93,7 @@ shared_from_move :: proc(value: move $T, allocator: Allocator = default_allocato
 }
 
 @(public)
-shared_construct :: proc{shared_from_clone, shared_from_move};
+shared :: proc{shared_from_clone, shared_from_move};
 
 // design.md: "use `try_shared` to handle a construction error locally."
 @(private)
@@ -198,7 +198,7 @@ impl Shared($T) {
 }
 
 impl Weak($T) {
-	// design.md: `upgrade` returns `Option(shared(T))`. It fails exactly when the
+	// design.md: `upgrade` returns `Option(Shared(T))`. It fails exactly when the
 	// payload is already gone, and the loop is what makes that answer honest
 	// under contention: a count read as non-zero may reach zero before the
 	// increment lands, so the increment has to be the same operation as the test.

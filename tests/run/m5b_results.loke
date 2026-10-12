@@ -32,7 +32,7 @@ constant_view :: proc() -> []int {
 
 // design.md "Owned values": a box owns its allocation, not callee-local
 // storage, so it may be returned.
-allocate :: proc(value: int) -> box(int) {
+allocate :: proc(value: int) -> Box(int) {
 	return box(value);
 }
 

@@ -47,7 +47,7 @@ Atomic :: move_only struct($T: type) {
 
 // Every operation takes a read-only `^` receiver, writes included: no atomic
 // access conflicts with another (design.md "Concurrency and the memory model"),
-// so an atomic reached through a `^T`, such as a `shared(T)` payload, still
+// so an atomic reached through a `^T`, such as a `Shared(T)` payload, still
 // updates. A copy of the receiver would be a non-atomic read, so even `load`
 // borrows rather than taking a plain `self`.
 impl Atomic($T) {
@@ -138,7 +138,7 @@ fence :: proc($order: Memory_Order = Memory_Order.Sequentially_Consistent) {
 //
 // `do` fires through a read-only `^` receiver, as every atomic operation does,
 // so a `Once` works wherever it can be reached: in `static` storage, and behind
-// the `^T` a `shared(T)` hands out.
+// the `^T` a `Shared(T)` hands out.
 Once :: struct {
 	@(private) state: Atomic(u32),
 }

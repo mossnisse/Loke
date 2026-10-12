@@ -24,12 +24,12 @@ impl Point {
 
 Tree :: struct {
 	value:       int,
-	left, right: Option(box(Tree)),
+	left, right: Option(Box(Tree)),
 }
 
 read :: proc(p: ^Point) -> int { return p.x; }
 first :: proc(p: ^$T) -> T { return p^; }
-element_size :: proc(b: box($T)) -> int { return size_of(T); }
+element_size :: proc(b: Box($T)) -> int { return size_of(T); }
 
 total :: proc(tree: ^Tree) -> int {
 	sum := tree.value;
@@ -53,7 +53,7 @@ main :: proc() {
 	p := box(Point{1, 2});
 	p.x = 5;
 	p^.y = 6;
-	fmt.println(p.x, p.y, p.sum(), read(p), first(p).y, size_of(box(Point)), element_size(p));
+	fmt.println(p.x, p.y, p.sum(), read(p), first(p).y, size_of(Box(Point)), element_size(p));
 	r := &p^;
 	fmt.println(r.x);
 	w := &mut p^;
@@ -89,7 +89,7 @@ main :: proc() {
 	// A recursive type owns its children, each one word (design.md "Representation").
 	tree := Tree{2, .some(box(Tree{value = 1})), .some(box(Tree{value = 3}))};
 	copy := tree.clone();
-	fmt.println(total(&tree), total(&copy), size_of(Option(box(Tree))));
+	fmt.println(total(&tree), total(&copy), size_of(Option(Box(Tree))));
 
 	// A box from an arena is backed by it.
 	arena := mem.Arena.init();
@@ -97,5 +97,5 @@ main :: proc() {
 	fmt.println(from_arena.x, box([3]int{1, 2, 3}, arena.allocator())[1]);
 
 	fmt.println(COMPILED, compile_time());
-	fmt.println(box(7), box(Option(box(int)).some(box(8))));
+	fmt.println(box(7), box(Option(Box(int)).some(box(8))));
 }

@@ -5,15 +5,15 @@ import "core:mem";
 // design.md "Owned values": a box carries its payload's borrows and is backed
 // by its allocator's region, through helpers, nesting, and deep providers.
 forward :: proc(allocator: Allocator) -> Allocator { return allocator; }
-box_parameter :: proc(value: ^int) -> box(^int) { return box(value); }
-box_slice :: proc(values: []int) -> box([]int) { return box(values); }
+box_parameter :: proc(value: ^int) -> Box(^int) { return box(value); }
+box_slice :: proc(values: []int) -> Box([]int) { return box(values); }
 View :: struct { values: []int }
-box_view :: proc(values: []int) -> box(View) { return box(View{values}); }
-box_nested :: proc(value: ^int) -> box(box(^int)) {
+box_view :: proc(values: []int) -> Box(View) { return box(View{values}); }
+box_nested :: proc(value: ^int) -> Box(Box(^int)) {
 	return box(box(value));
 }
 Pair :: struct { left: ^int, right: ^int }
-box_pair :: proc(value: Pair) -> box(Pair) { return box(value); }
+box_pair :: proc(value: Pair) -> Box(Pair) { return box(value); }
 
 handles :: proc() {
 	owner := mem.Arena.init();
@@ -56,7 +56,7 @@ clones :: proc() {
 
 separate_fields :: proc() {
 	value := 7;
-	right: Option(box(^int)) = .none;
+	right: Option(Box(^int)) = .none;
 	{
 		short := 3;
 		p := box_pair(Pair{&short, &value});

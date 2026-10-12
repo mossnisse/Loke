@@ -7,7 +7,7 @@ This page uses a file to make those transitions visible.
 ## A pointer is not automatically an owner
 
 `&value` borrows existing storage. A value that needs an allocation of its own
-is owned by a `box`, which releases it when the box goes out of scope:
+is owned by a `Box(T)`, which releases it when the box goes out of scope:
 
 ```odin file=explicit_allocation.loke
 package main;
@@ -16,7 +16,7 @@ import "core:fmt";
 
 Node :: struct {
 	value: int,
-	next:  Option(box(Node)),
+	next:  Option(Box(Node)),
 }
 
 main :: proc() {
@@ -38,7 +38,7 @@ main :: proc() {
 1 2
 ```
 
-`box(42)` allocates an `int` and returns a `box(int)`; `cell^` is the value
+`box(42)` allocates an `int` and returns a `Box(int)`; `cell^` is the value
 inside. A box is the only owner of its allocation, so a `Node` can hold the
 next node directly, and dropping `head` drops the whole chain. A box lends its
 value as a `^T`, so a procedure taking a pointer accepts one. Pointers made

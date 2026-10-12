@@ -618,7 +618,7 @@ Held_Copy_Report :: struct {
 
 // A copy that may allocate is reported as one whatever its size, since its
 // inline bytes say nothing of what it duplicates; any other copy by the bytes
-// it duplicates. A `string` or `shared(T)` copy retains, and costs neither.
+// it duplicates. A `string` or `Shared(T)` copy retains, and costs neither.
 report_copy_cost :: proc(
 	k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id,
 	held := Held_Copy_Report{},

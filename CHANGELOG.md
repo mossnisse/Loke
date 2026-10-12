@@ -10,6 +10,15 @@ checklist.
 
 ### Breaking changes
 
+- The handle types are capitalised like every other predeclared generic type:
+  `Box(T)`, `Shared(T)`, and `Weak(T)` (design.md "Owned values", "Shared
+  ownership"). Lower-case `box(value)` and `shared(value)` remain the
+  constructors and no longer name types, so `x: box(Node)`, `shared(Node)` as
+  a type, and any `weak(...)` are `L0713`. Upgrade by capitalising each type
+  position: `Option(box(Node))` becomes `Option(Box(Node))` and
+  `h: shared(Node) = shared(node)` becomes `h: Shared(Node) = shared(node)`.
+  Diagnostics already printed `Shared(T)` and `Weak(T)`, and now print
+  `Box(T)` too.
 - Printing a `^T` or `^mut T` prints the value it points to, as a `box(T)`
   already did, instead of its address (design.md "String format printing"), so
   `foreach (entry in m) { fmt.println(entry.key); }` prints the key. Convert to

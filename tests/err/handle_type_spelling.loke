@@ -1,0 +1,17 @@
+// design.md "Owned values", "Shared ownership": the handle types are `Box(T)`,
+// `Shared(T)`, and `Weak(T)`; lower-case `box` and `shared` only build values,
+// and `weak` names nothing.
+package main;
+
+Node :: struct { v: int }
+
+main :: proc() {
+	a: box(int);
+	b: shared(Node);
+	c: weak(Node);
+	d := box(int);
+	e := shared(Node);
+	f: Box;
+	g: Option(box(int));
+	h := size_of(weak(Node));
+}

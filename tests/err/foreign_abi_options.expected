@@ -9,4 +9,4 @@ L0619
 a foreign parameter is not ABI-safe: `Option(dyn Shape)` is a tagged union
 L0619
 @12:12
-a foreign parameter is not ABI-safe: `Option(box(int))` is a tagged union
+a foreign parameter is not ABI-safe: `Option(Box(int))` is a tagged union

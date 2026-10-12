@@ -51,7 +51,7 @@ main :: proc() {
 	fmt.println(converted.len(), Allocator(Allocator{}) == Allocator{}, e2 == Allocator_Error{}, is_default(Allocator{}), tagged.field);
 
 	// An empty weak handle upgrades to nothing.
-	w: weak(int) = {};
+	w: Weak(int) = {};
 	switch (w.upgrade()) {
 	case .some: fmt.println("upgraded");
 	case .none: fmt.println("none");

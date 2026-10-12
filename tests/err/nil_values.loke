@@ -19,7 +19,7 @@ main :: proc() {
 	id: typeid = nil;
 	a: Allocator = nil;
 	e: Allocator_Error = nil;
-	w: weak(int) = nil;
+	w: Weak(int) = nil;
 	t: []int = {};
 	if (t == nil) { }
 	if (id == nil) { }
@@ -29,9 +29,9 @@ main :: proc() {
 	f: Callback = nil;
 	d: dyn Shape = nil;
 	c: cstring_view = nil;
-	h: shared(int) = nil;
+	h: Shared(int) = nil;
 	any: any_view = {};
-	held: shared(int) = {};
+	held: Shared(int) = {};
 	node: Node = {};
 
 	// Still accepted: an unchecked address, and the absent reference.

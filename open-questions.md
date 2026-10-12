@@ -114,7 +114,7 @@ be called through one.
 ## Owning runtime polymorphism
 
 Borrowed `dyn Interface` views are now defined. Should a later version add an
-owning erased value, and if so should it be a language type such as `box(dyn I)`
+owning erased value, and if so should it be a language type such as `Box(dyn I)`
 or a library owner built over an exposed witness primitive?
 
 A closure that is returned or kept past its frame is a concrete use: a
@@ -126,8 +126,8 @@ The proposal must specify allocator identity, alignment, fallible construction,
 move, clone, drop, thread-affine destruction, and whether inline small-object
 storage changes representation. Borrowed `dyn` intentionally settles none of
 those questions and never allocates. The decided
-[`box(T)`](design.md#owned-values) settles them
-for a payload whose type is known; `box(dyn I)` would still need erased clone
+[`Box(T)`](design.md#owned-values) settles them
+for a payload whose type is known; `Box(dyn I)` would still need erased clone
 and drop, and the payload's size and alignment from the witness.
 
 Note that the witness is currently a mechanism with no user-visible spelling: the
@@ -141,7 +141,7 @@ owner that needs it.
 
 ## Concurrency refinements
 
-The current [memory model](design.md#concurrency-and-the-memory-model) defines data races, atomics, transfer between threads, and `shared(T)`. Experience with a real concurrent runtime should determine whether later versions need compiler-checked `Send` or `Sync` interfaces, additional atomic orderings, or a thread-affine owning type for code that wants non-atomic reference counts.
+The current [memory model](design.md#concurrency-and-the-memory-model) defines data races, atomics, transfer between threads, and `Shared(T)`. Experience with a real concurrent runtime should determine whether later versions need compiler-checked `Send` or `Sync` interfaces, additional atomic orderings, or a thread-affine owning type for code that wants non-atomic reference counts.
 
 The cost of keeping immutable `string` safe to copy and drop across threads is treated separately under [Thread-affine strings](#thread-affine-strings).
 
@@ -496,6 +496,8 @@ records the reasoning:
   ("Comparison operators").
 - References and owning handles are together the non-null types, which the
   `Option` niche covers ("Types with no zero value", "Representation").
+- The handle types are `Box(T)`, `Shared(T)`, and `Weak(T)`; `box` and
+  `shared` are only constructors ("Owned values", "Shared ownership").
 
 ### Recommended order
 
@@ -620,9 +622,3 @@ stops at the first failure; see [Recoverable panics](#recoverable-panics). Zig's
 `test` blocks and Go's `_test.go` files are the precedents; an attribute needs
 no new syntax.
 
-### Smaller items
-
-- **Lower-case `box`, `shared`, and `weak`.** Every other predeclared generic
-  type is capitalised (`Option`, `Result`, `Range`, `Simd`); these are lower-case
-  because each name is also its constructor. Capitalise the types and keep the
-  lower-case constructors, or record why handles differ.

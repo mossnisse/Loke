@@ -1054,7 +1054,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 	}
-	// A `box(T)` lent as the `^T` of its payload.
+	// A `Box(T)` lent as the `^T` of its payload.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, from) == .Box &&
 	   underlying_kind(e.c, as_type) == .Pointer {
 		return emit_box_payload_address(e, from, load_place(e, from, emit_address_at(e, expr, from)))

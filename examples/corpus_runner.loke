@@ -103,11 +103,11 @@ Board :: struct {
 // One worker's copy of the run, which a thread must own.
 Job :: struct {
 	compiler, corpus, scratch: string,
-	cases: shared([dynamic]string),
+	cases: Shared([dynamic]string),
 	mode:  Mode,
 	// What assembles an IR case's module, when there is one.
 	clang: Option(string),
-	board: shared(thread.Mutex(Board)),
+	board: Shared(thread.Mutex(Board)),
 }
 
 // Takes cases until none are left. A case's processes are what take the time,

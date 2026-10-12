@@ -145,8 +145,8 @@ CTFE to cooperate until selection stabilizes.
 
 `bootstrap.odin` binds ordinary `base:runtime` declarations into the predeclared
 universe instead of synthesizing duplicate types. These include `Unit`, `Option`,
-`Result`, `Shared`, `Weak`, and `try_shared`; `Shared` and `Weak` appear as
-`shared` and `weak`, and `shared(value)` resolves to `shared_construct`.
+`Result`, `Shared`, `Weak`, and the constructor groups `shared` and
+`try_shared`.
 
 ### Checking and overload resolution
 

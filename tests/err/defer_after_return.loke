@@ -28,7 +28,7 @@ written :: proc(p: []mut int) -> []int {
 
 // design.md "Allocator regions and region provenance": nor may a defer reset
 // the region backing a box the result holds.
-reset_later :: proc(@(allocator_reset) allocator: Allocator) -> box(int) {
+reset_later :: proc(@(allocator_reset) allocator: Allocator) -> Box(int) {
 	defer free_all(allocator);
 	return box(0, allocator);
 }
@@ -47,7 +47,7 @@ local :: proc() -> []int {
 }
 
 // A region that ends with this frame: one diagnostic, at the `return`.
-arena_backed :: proc() -> box(int) {
+arena_backed :: proc() -> Box(int) {
 	arena := mem.Arena.init();
 	return box(0, arena.allocator());
 }

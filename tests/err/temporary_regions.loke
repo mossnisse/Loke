@@ -19,12 +19,12 @@ reset_later :: proc(@(allocator_reset) allocator: Allocator) -> [dynamic]int {
 // design.md "Shared ownership": a handle carries what its payload borrows.
 View :: struct { items: []int }
 
-shared_handle :: proc() -> shared(View) {
+shared_handle :: proc() -> Shared(View) {
 	local := [3]int{1, 2, 3};
 	return shared(View{local[:]});
 }
 
-weak_handle :: proc() -> weak(View) {
+weak_handle :: proc() -> Weak(View) {
 	local := [3]int{1, 2, 3};
 	h := shared(View{local[:]});
 	return h.downgrade();

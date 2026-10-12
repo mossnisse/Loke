@@ -1019,7 +1019,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 
-	// `string`, `[dynamic]T`, `map[K]V` and `box(T)` carry a `try_clone` whose
+	// `string`, `[dynamic]T`, `map[K]V` and `Box(T)` carry a `try_clone` whose
 	// body is the same intrinsic copy the implicit paths use.
 	if operations.intrinsic || operations.boxed {
 		self, built := alloca(e, value_type), alloca(e, value_type)

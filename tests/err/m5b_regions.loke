@@ -91,7 +91,7 @@ loop_carried_allocation_region :: proc() {
 
 // An allocation returned through a direct call keeps the callee's allocator
 // region. A caller cannot receive one backed by a provider the callee destroys.
-return_local_region_allocation :: proc() -> box(int) {
+return_local_region_allocation :: proc() -> Box(int) {
 	arena := mem.Arena.init();
 	return box(0, arena.allocator());
 }

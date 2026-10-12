@@ -520,7 +520,7 @@ unknown_global_aggregate_read :: proc() {
 
 // An owner tied to a locally owned allocator region cannot be retained past
 // it: the arena's cleanup ends the box's storage.
-region_retained_box: Option(box(int));
+region_retained_box: Option(Box(int));
 retain_local_region_escape :: proc() {
 	arena := mem.Arena.init();
 	region_retained_box = .some(box(0, arena.allocator()));

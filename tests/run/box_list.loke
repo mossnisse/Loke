@@ -7,8 +7,8 @@ package main;
 
 import "core:fmt";
 
-Node :: struct($T: type) { value: T, next: Option(box(Node(T))) }
-List :: struct($T: type) { head: Option(box(Node(T))), count: int }
+Node :: struct($T: type) { value: T, next: Option(Box(Node(T))) }
+List :: struct($T: type) { head: Option(Box(Node(T))), count: int }
 Ticket :: move_only struct { id: int }
 
 impl List($T) {

@@ -61,7 +61,7 @@ constant_view :: proc() -> []int {
 	return f(CONSTANT);
 }
 
-allocate :: proc() -> box(int) { return box(0); }
+allocate :: proc() -> Box(int) { return box(0); }
 read_erased :: proc(value: any_view) -> int { return value.as(int) or_else 0; }
 view_length :: proc(value: string_view) -> int { return value.len(); }
 

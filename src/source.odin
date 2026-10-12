@@ -316,7 +316,7 @@ Compiler :: struct {
 	// `runtime.Memory_Order`, found by name on first use (`src/atomics.odin`).
 	memory_order_type:        Type_Id,
 	// design.md "Shared ownership": the two record templates the universe names
-	// `shared` and `weak` bind to, and the procedure group `shared(value)` means.
+	// `Shared` and `Weak` bind to, and the procedure group `shared` names.
 	shared_symbol:            Symbol_Id,
 	weak_symbol:              Symbol_Id,
 	shared_construct_symbol:  Symbol_Id,

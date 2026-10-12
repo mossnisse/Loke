@@ -184,8 +184,8 @@ A field or enum member is reached through a selector rather than by name lookup,
 Every other predeclared name may be shadowed by a declaration like any other name. They are:
 
 - types: `bool`, `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `uint`, `u8`, `u16`, `u32`, `u64`, `u128`, `uintptr`, `byte`, `f16`, `f32`, `f64`, `rune`, `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `any_view`, `Allocator`, and `Allocator_Error`;
-- generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `box`, `shared`, and `weak`;
-- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `make`, `free_all`, `drop`, `exchange`, `try_box`, and `try_shared`;
+- generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `Box`, `Shared`, and `Weak`;
+- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `make`, `free_all`, `drop`, `exchange`, `box`, `try_box`, `shared`, and `try_shared`;
 - [build constants](#build-constants): `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`, `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_LOG_LEVEL`, `LOKE_VENDOR`, and `LOKE_VERSION`.
 
 `type` and `move` are keywords, not predeclared names.
@@ -328,7 +328,7 @@ The zero value is:
 - the empty view, of length 0, for a slice and for `string_view`
 - the invalid id for `typeid`, whose [`type_info_of`](#type-and-typeid) entry has kind `Invalid`
 - the default provider for `Allocator`, and no failure for `Allocator_Error`
-- an empty handle for `weak(T)`, whose `upgrade` answers `.none`
+- an empty handle for `Weak(T)`, whose `upgrade` answers `.none`
 - `nil`, the null address, for a C pointer and `rawptr`. These are the only types `nil` converts to
 - the variant `@(zero=name)` designates, for a [union](#unions) that designates one
 
@@ -338,7 +338,7 @@ Compile-time-only `type` and reflection descriptors have no zero value.
 
 ##### Types with no zero value
 
-A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A struct with a [`@(required)`](#required-fields) field has none. A **non-null type** has no null state and so no zero value. It is either a **reference**, which always refers to something: `^T`, `^mut T`, a procedure value, `dyn I` and `dyn mut I`, `any_view`, and `cstring_view`; or an **owning handle**, which always owns a payload: [`box(T)`](#owned-values) and [`shared(T)`](#shared-ownership). An absent one is an `Option` of it, such as `Option(^T)`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
+A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. A struct with a [`@(required)`](#required-fields) field has none. A **non-null type** has no null state and so no zero value. It is either a **reference**, which always refers to something: `^T`, `^mut T`, a procedure value, `dyn I` and `dyn mut I`, `any_view`, and `cstring_view`; or an **owning handle**, which always owns a payload: [`Box(T)`](#owned-values) and [`Shared(T)`](#shared-ownership). An absent one is an `Option` of it, such as `Option(^T)`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
 
 Every operation that manufactures a zero is rejected for a no-zero type:
 
@@ -401,7 +401,7 @@ The following list defines the implicit conversions. There are no user-defined o
 - A labeled anonymous record -> the unlabeled record of its field types, in order; the value is unchanged and only the names are dropped; see [Anonymous records](#anonymous-records)
 - `[dynamic]T` -> `[]T`, a read-only view of the live elements under the same borrow rules; see [Dynamic arrays](#dynamic-arrays)
 - `[N]T` -> `[]T`, a read-only view of all `N` elements under the same borrow rules; see [Fixed arrays](#fixed-arrays)
-- `box(T)` -> `^T`, a read-only borrow of the payload under the same borrow rules; see [Owned values](#owned-values)
+- `Box(T)` -> `^T`, a read-only borrow of the payload under the same borrow rules; see [Owned values](#owned-values)
 - Unfixed strings -> `string`, `string_view`, or `cstring_view` when the destination supplies the required lifetime
 - A scalar of a vector's lane type -> that `Simd(T, N)`, the [splat](#construction-and-conversion) with every lane equal to it
 
@@ -517,7 +517,7 @@ A generated method prints:
 | integer | its digits in `Options.base`, decimal by default |
 | float | the shortest decimal that reads back as the same value, never spelled as an integer: fixed notation with at least one fractional digit from `1e-4` to below `1e17`, as `1.0`, `0.1`, and `-0.0`, and a bare exponent outside it, as `1e21` and `2.5e-5`; `nan`, `inf`, or `-inf` |
 | `string`, `string_view`, `cstring_view`, `rune` | its text |
-| `^T`, `^mut T` | the value it points to, as for `box(T)` |
+| `^T`, `^mut T` | the value it points to, as for `Box(T)` |
 | `rawptr`, `[^]T`, procedure | `0x` and the address in hexadecimal, or `<nil>` |
 | `typeid` | the type's name |
 | enum | the member's name, or the number of a value no member names |
@@ -526,7 +526,7 @@ A generated method prints:
 | struct | `Name{x = 1, y = 2}`, with the public fields in declaration order |
 | anonymous record | `(x = 1, y = 2)`, or `(1, 2)` when unlabeled |
 | union, including `Option` | `.none` or `.some(3)`: the variant, and its payload in parentheses |
-| `box(T)` | its payload |
+| `Box(T)` | its payload |
 | `any_view` | the value it views |
 | `dyn` view | its type's name |
 
@@ -534,7 +534,7 @@ A struct prints its public fields only, as reflection from another package sees 
 
 A checked pointer is never null and always names a value, so it prints that value, as every other checked view prints what it views: a map entry lent as `(key: ^K, value: ^V)` prints its key and value. A program that wants the address converts to `rawptr`. Printing follows a chain of pointers, as it follows a chain of boxes; a cycle, which only [unchecked code](#the-unsafe-package) can build, does not terminate.
 
-A field, element, map key, or union payload whose type is a string type, `rune`, or a `box` or pointer to one prints quoted, escaping the backslash, the quote, `\n`, `\r`, `\t`, and other control characters as a literal would: `["a b", "c"]` and `.some('x')`. Printed on its own, as `fmt.println("a b")`, it is its text. A type with its own `format` prints by it in both places.
+A field, element, map key, or union payload whose type is a string type, `rune`, or a box or pointer to one prints quoted, escaping the backslash, the quote, `\n`, `\r`, `\t`, and other control characters as a literal would: `["a b", "c"]` and `.some('x')`. Printed on its own, as `fmt.println("a b")`, it is its text. A type with its own `format` prints by it in both places.
 
 The print procedures accept mixed `..any_view` arguments. For each erased argument, they recover the concrete type's `Formattable` witness and call its `format` slot with the borrowed value, writer, and options. The same method is selected by an explicit `(dyn fmt.Formattable)(&value)` conversion.
 
@@ -661,19 +661,19 @@ Pointer arithmetic is not an operator. Address calculation goes through a [C poi
 
 ### Owned values
 
-`box(T)` owns one value of type `T` in an allocation of its own. It is to `^T` what `[dynamic]T` is to `[]T`: an owner whose read-only borrow is a pointer. A box is one address, and its allocation records the allocator that made it, so dropping or copying a box needs nothing else.
+`Box(T)` owns one value of type `T` in an allocation of its own. It is to `^T` what `[dynamic]T` is to `[]T`: an owner whose read-only borrow is a pointer. A box is one address, and its allocation records the allocator that made it, so dropping or copying a box needs nothing else.
 
 ```odin
 Tree :: struct {
 	value:       int,
-	left, right: Option(box(Tree)),
+	left, right: Option(Box(Tree)),
 }
 
 leaf := box(Tree{value = 1});
 root := Tree{value = 2, left = .some(move(leaf))};
 ```
 
-`box(value, allocator := mem.default_allocator())` allocates and takes `value` the way an initialization does: a place is cloned into the allocation, and a temporary or `move(x)` is handed over. It follows the allocator's [failure policy](#allocation-failure); `try_box` takes the same arguments and returns `Result(box(T), Allocator_Error)`. Written with a type, `box(T)` names the box type.
+`box(value, allocator := mem.default_allocator())` allocates and takes `value` the way an initialization does: a place is cloned into the allocation, and a temporary or `move(x)` is handed over. It follows the allocator's [failure policy](#allocation-failure); `try_box` takes the same arguments and returns `Result(Box(T), Allocator_Error)`. The type is `Box(T)`: `box` only builds one, so `box(int)` is not a type.
 
 `b^` is the payload. It is a place, writable exactly when `b` is, as an element of a dynamic array has its container's capability. Field selection, indexing, and method calls reach through a box as through a [pointer](#pointers), after the box's own members such as `clone`. A box converts implicitly to `^T`, a read-only borrow of its payload, and `&mut b^` is the mutable borrow. Either borrows `b`, so while one is live `b` cannot be moved, dropped, or assigned.
 
@@ -685,7 +685,7 @@ node.value += 1;              // the payload, through `node`
 fmt.println(lookup(node));    // 4: the box lends a `^Tree`
 ```
 
-A box has no zero value, because it always owns a payload; an absent one is `Option(box(T))`. Copying a box copies its payload into a new allocation from the destination's allocator, so `box(T)` is copyable exactly when `T` is, and [last-use transfer](#last-use-transfer) applies. Dropping a box drops its payload and releases the allocation. A box carries the borrows its payload carries, and takes [region provenance](#allocator-regions-and-region-provenance) from its allocator and from a payload handed to it: a box made from an arena cannot outlive the arena.
+A box has no zero value, because it always owns a payload; an absent one is `Option(Box(T))`. Copying a box copies its payload into a new allocation from the destination's allocator, so `Box(T)` is copyable exactly when `T` is, and [last-use transfer](#last-use-transfer) applies. Dropping a box drops its payload and releases the allocation. A box carries the borrows its payload carries, and takes [region provenance](#allocator-regions-and-region-provenance) from its allocator and from a payload handed to it: a box made from an arena cannot outlive the arena.
 
 `move(b).unbox()` consumes a box and returns its payload, releasing the allocation. It is how a move-only payload, or one without a zero value, leaves its box, since `move` cannot name `b^` and [`exchange`](#exchange) needs a replacement.
 
@@ -1693,9 +1693,9 @@ A switch over a **temporary** — or over `move(subject)` — consumes it. The a
 A case written `.name(&mut binding)` binds the payload as a writable place instead, as `foreach (&mut value in items)` binds an element. The subject must be a writable place, and the case borrows it exclusively: the subject cannot be read or written while the binding, or anything borrowed through it, is still used. Assigning the binding replaces the payload in place, and like any binding over a place it cannot be moved or dropped. A borrow taken through the binding borrows that part of the payload, with field precision as for a local, and also carries the subject's borrow. Each time the case runs, the binding names the payload the subject holds then, so a borrow kept from an earlier pass does not conflict with the new binding; the subject's borrow it carries still does. Storing one back into the carrier the subject was reached through, as `cursor = &mut node.next` does below, is therefore the self-store of [Weakening and reborrows](#weakening-and-reborrows) and suspends nothing:
 
 ```odin
-Node :: struct { value: int, next: Option(box(Node)) }
+Node :: struct { value: int, next: Option(Box(Node)) }
 
-push_back :: proc(head: ^mut Option(box(Node)), value: int) {
+push_back :: proc(head: ^mut Option(Box(Node)), value: int) {
 	cursor := head;
 	for (;;) {
 		switch (cursor^) {
@@ -1736,7 +1736,7 @@ See [Types with no zero value](#types-with-no-zero-value) for how the property p
 
 A union's storage is its payload region, then the tag, then whatever padding the alignment asks for. The tag is the narrowest unsigned integer that indexes `0 ..< variant_count`: 256 variants still fit in one byte and 257 need two. The first declared variant has tag 0, and there is no nil tag. A union with no variants keeps one byte. A tag wider than every payload raises the union's alignment, as any other member would.
 
-One exception stores no tag. A union of exactly two variants, one without a payload and the other with a [non-null](#types-with-no-zero-value) payload, is the payload alone: that payload's first word is a non-null address, so the null first word is the payloadless variant. `Option(^T)` is one address, as is `Option` of a procedure value, `cstring_view`, `box(T)`, or `shared(T)`; `Option(dyn I)` and `Option(any_view)` are their two words. Nothing else changes: the variants keep their declaration order, and the all-zero value is still the payloadless one.
+One exception stores no tag. A union of exactly two variants, one without a payload and the other with a [non-null](#types-with-no-zero-value) payload, is the payload alone: that payload's first word is a non-null address, so the null first word is the payloadless variant. `Option(^T)` is one address, as is `Option` of a procedure value, `cstring_view`, `Box(T)`, or `Shared(T)`; `Option(dyn I)` and `Option(any_view)` are their two words. Nothing else changes: the variants keep their declaration order, and the all-zero value is still the payloadless one.
 
 ### Enumerations
 
@@ -2804,7 +2804,7 @@ Receiver-shaped common behavior is defined canonically as methods, and the metho
 
 These operations use method syntax: write `x.len()`, not `len(x)`.
 
-**A clone is ownership-recursive, not deep.** It duplicates owned storage but does not follow pointers, slices, or views. Components with sharing semantics, such as immutable [`string`](#string-type) and [`shared(T)`](#shared-ownership), remain shared. Thus cloning `[dynamic]string` creates a new array whose strings still share text, while cloning a record with a `^T` field copies the pointer. Assignment follows the same rule through `try_clone`.
+**A clone is ownership-recursive, not deep.** It duplicates owned storage but does not follow pointers, slices, or views. Components with sharing semantics, such as immutable [`string`](#string-type) and [`Shared(T)`](#shared-ownership), remain shared. Thus cloning `[dynamic]string` creates a new array whose strings still share text, while cloning a record with a `^T` field copies the pointer. Assignment follows the same rule through `try_clone`.
 
 Built-in types provide the methods they support. Lifecycle behavior is customized with `hook(copy)`, not a separate `clone` method.
 
@@ -3072,7 +3072,7 @@ Built-in satisfaction follows the operations the language already defines:
 - integers, floats, runes, `string`, `string_view`, pointers on targets that support pointer ordering, enums, and anonymous records whose fields are all [ordered](#comparison-operators) satisfy `Ordered`;
 - `bool`, integers, runes, `string`, `string_view`, pointers, enums, `typeid`, fixed arrays of hashable elements, and records and unions with a [generated `hash`](#maps) satisfy `Hashable`. Floats do not: a NaN is unequal to itself, so no hash is coherent with float `==`, and a float key could be inserted repeatedly and never found. A map keyed by a float value keys by an integer image of it instead, such as its bits through [`unsafe.transmute`](#unsafetransmute) or a scaled, rounded integer. Other user records and unions require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`;
-- every copyable type satisfies `Cloneable`. A plain value — `bool`, integers, floats, runes, enums, pointers, slices, views, `typeid`, and procedures — is its own clone; owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, and aggregates containing them, clone ownership-recursively.
+- every copyable type satisfies `Cloneable`. A plain value — `bool`, integers, floats, runes, enums, pointers, slices, views, `typeid`, and procedures — is its own clone; owning built-ins such as `string`, dynamic arrays, maps, and `Shared(T)`, and aggregates containing them, clone ownership-recursively.
 
 The built-in iterables satisfy the iteration and sequence interfaces as follows. Every one satisfies `Iterable`:
 
@@ -3292,7 +3292,7 @@ A `return` evaluates and transfers its result before scope-exit actions run; a d
 
 #### Value semantics and the ownership rule
 
-A variable holds a value, not a reference to one. Copying an owning value produces an independent value, and sharing is written rather than inferred: a pointer, slice, or view is the explicit opt-out, and a [clone is ownership-recursive, not deep](#lifecycle-hooks-and-resource-types) — it duplicates owned storage and stops at the first borrow it reaches. The sharing that is not written belongs to the *type*: [`string`](#string-type) and [`shared(T)`](#shared-ownership) retain their storage when copied, because each is immutable or explicitly shared and carries the handle count that makes retention safe.
+A variable holds a value, not a reference to one. Copying an owning value produces an independent value, and sharing is written rather than inferred: a pointer, slice, or view is the explicit opt-out, and a [clone is ownership-recursive, not deep](#lifecycle-hooks-and-resource-types) — it duplicates owned storage and stops at the first borrow it reaches. The sharing that is not written belongs to the *type*: [`string`](#string-type) and [`Shared(T)`](#shared-ownership) retain their storage when copied, because each is immutable or explicitly shared and carries the handle count that makes retention safe.
 
 **A place is borrowed wherever borrowing is indistinguishable from copying, and copied otherwise. A temporary or `move(x)` transfers when the operation takes ownership; an ordinary parameter borrows it for the call.** [Borrows and lifetimes](#borrows-and-lifetimes) ensures that sharing a managed owner for an ordinary call cannot be distinguished from copying it. The table below distinguishes the contexts; [last-use transfer](#last-use-transfer) can replace an eligible binding or assignment clone.
 
@@ -3317,7 +3317,7 @@ Whether a place is copied or a temporary transferred changes what an expression 
 
 #### Last-use transfer
 
-**An eligible last-use copy of a local transfers ownership.** This applies when a binding or assignment would clone a whole local variable or `move` parameter whose copy may allocate — a `[dynamic]T`, `map[K]V`, or `box(T)`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — and no path reads the local again before reassignment or scope exit. Subject to the exclusions below, the value transfers as with `move(x)`, leaving the source dead.
+**An eligible last-use copy of a local transfers ownership.** This applies when a binding or assignment would clone a whole local variable or `move` parameter whose copy may allocate — a `[dynamic]T`, `map[K]V`, or `Box(T)`, a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or anything that holds one — and no path reads the local again before reassignment or scope exit. Subject to the exclusions below, the value transfers as with `move(x)`, leaving the source dead.
 
 ```odin
 first := [dynamic]int{1, 2, 3};
@@ -3386,7 +3386,7 @@ File-scope and `static` storage is ready before `main` starts. Thread-local stor
 The following rules also apply to `static` and `thread_local`:
 
 - A `static` has a stable address for the life of the process. A `thread_local` has a stable address for the life of its thread. A procedure can return a borrow of either one. Storing a `thread_local` borrow in process-duration storage is rejected, because thread storage does not outlive the process; see [Retaining a borrow](#retaining-a-borrow). A program must also not send a `thread_local` borrow to another thread or keep it after its thread ends, and the borrow analysis does not check those two errors.
-- An allocator-binding owner starts in the constant, allocator-unbound zero state and binds the default allocator when first needed. `via` is forbidden because its runtime allocator expression is not constant. To select another allocator, construct an owner in an explicit startup or thread-start procedure and move it into the variable. `string` and `shared(T)` retain the moved allocation's allocator.
+- An allocator-binding owner starts in the constant, allocator-unbound zero state and binds the default allocator when first needed. `via` is forbidden because its runtime allocator expression is not constant. To select another allocator, construct an owner in an explicit startup or thread-start procedure and move it into the variable. `string` and `Shared(T)` retain the moved allocation's allocator.
 
 #### Owners and `drop`
 
@@ -3395,7 +3395,7 @@ Ownership and allocation lifetime are distinct:
 - an **automatic owner** is a lexical value cleaned up at scope exit;
 - a **forgotten owner** is a value whose cleanup was explicitly suppressed.
 
-Managed locals may own allocator-supplied backing storage. Use a [`box(T)`](#owned-values), a `[dynamic]T`, or an arena for bulk storage rather than a very large fixed array local.
+Managed locals may own allocator-supplied backing storage. Use a [`Box(T)`](#owned-values), a `[dynamic]T`, or an arena for bulk storage rather than a very large fixed array local.
 
 `drop(value)` cleans up a definitely live lexical owning variable, writes the inert zero representation, and marks it **dead**. It is forbidden on static-duration storage and its subplaces. Scope exit drops every live managed lexical owner unless consumed by [`unsafe.forget`](#unsafeforget).
 
@@ -3863,7 +3863,7 @@ x:     = 123; // default type for an integer literal is `int`
 x := 123;
 ```
 
-Assignment has value semantics and is one of the contexts the [ownership rule](#value-semantics-and-the-ownership-rule) covers: assigning a place [clones](#standard-customization-procedures) it, so the destination is independent of the source, while `string` and `shared(T)` share their storage and a pointer, slice, or view still refers to what it did.
+Assignment has value semantics and is one of the contexts the [ownership rule](#value-semantics-and-the-ownership-rule) covers: assigning a place [clones](#standard-customization-procedures) it, so the destination is independent of the source, while `string` and `Shared(T)` share their storage and a pointer, slice, or view still refers to what it did.
 
 ```odin
 a := [dynamic]int{1, 2, 3};
@@ -3881,7 +3881,7 @@ a = [dynamic]int{7, 8}; // a full assignment revives `a`
 
 A clone made by copy initialization or assignment allocates from the destination variable's **declaration allocation policy**: its `via` expression, or `mem.default_allocator()` when no `via` was written. The policy belongs to the declaration, not to the value it holds, so it is the same whether the destination is live or dead, and after a move or drop. Assigning to a field or element uses the policy of the variable it belongs to. Moving an owner into a variable transfers the owner's bound allocator instead, and so does a [last-use transfer](#last-use-transfer).
 
-On failure, the compiler invokes that allocator's [failure policy](#allocation-failure) and leaves a previously live destination unchanged. A `string` or `shared(T)` copy shares storage instead of allocating and keeps that allocation's allocator, so those types select their allocator at construction and cannot use `via`.
+On failure, the compiler invokes that allocator's [failure policy](#allocation-failure) and leaves a previously live destination unchanged. A `string` or `Shared(T)` copy shares storage instead of allocating and keeps that allocation's allocator, so those types select their allocator at construction and cannot use `via`.
 
 ### Exchange
 
@@ -4421,7 +4421,7 @@ The implementation need not copy the argument. A managed owner is shared with th
 
 To return a view of an ordinary argument's own storage, a procedure must accept a view (`[]T`, `string_view`) or a pointer (`^T` or a `self: ^` receiver). [Procedure result contracts](#procedure-result-contracts) describe which storage the result may borrow.
 
-Returning such a borrowed parameter by value performs a logical clone, since the callee owns nothing to move out: a mutable owner clones into `mem.default_allocator()` unless the procedure constructs the result with another allocator, while `string` and `shared(T)` retain their shared allocation. Returning a borrowed value whose clone is disabled is a compile-time error. Returning a managed local, temporary, or `move` parameter instead transfers ownership without cloning. A procedure needing allocator-controlled result storage takes an allocator parameter and constructs against it.
+Returning such a borrowed parameter by value performs a logical clone, since the callee owns nothing to move out: a mutable owner clones into `mem.default_allocator()` unless the procedure constructs the result with another allocator, while `string` and `Shared(T)` retain their shared allocation. Returning a borrowed value whose clone is disabled is a compile-time error. Returning a managed local, temporary, or `move` parameter instead transfers ownership without cloning. A procedure needing allocator-controlled result storage takes an allocator parameter and constructs against it.
 
 An ordinary parameter borrows its argument:
 
@@ -4436,7 +4436,7 @@ sum :: proc(values: [dynamic]int) -> int {
 }
 ```
 
-`sum(values)` borrows the argument; [copying a value parameter to a local](#local-copies-of-parameters) clones it. To share a value explicitly, use a pointer or `shared(T)`.
+`sum(values)` borrows the argument; [copying a value parameter to a local](#local-copies-of-parameters) clones it. To share a value explicitly, use a pointer or `Shared(T)`.
 
 Use `inout` for a mutable borrow and `move` when a procedure must take ownership:
 
@@ -4478,7 +4478,7 @@ Machine-level argument passing does not grant extra ownership, mutation, or life
 
 Tools may warn about costly copies of aggregates and managed owners. These warnings are optional and may use a cost threshold. When enabled, the warning policy applies to all copy contexts under [the ownership rule](#value-semantics-and-the-ownership-rule): bindings, assignments, argument copies, returns, place operands and fallbacks of [`or_else` or `or_return`](#operator-ownership), [aggregate literal](#struct-literals) elements, [variant](#unions) payloads, [container insertion](#container-insertion), variadic pack elements, and explicit `clone` or [`copied()`](#iteration-adapters) calls.
 
-A warning names what a copy costs. A copy that may allocate — of a container, of a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or of anything holding one — reports as a clone whatever its inline size, since its inline bytes say nothing of what it duplicates. A copy that retains storage, of a [`string`](#string-type) or [`shared(T)`](#shared-ownership), is not costly. Any other copy is measured by the inline bytes it duplicates. A copy that [last-use transfer](#last-use-transfer) makes a move is not reported, and neither is a written `clone()`, which states the copy is intended.
+A warning names what a copy costs. A copy that may allocate — of a container, of a record with a [`hook(copy)`](#lifecycle-hooks-and-resource-types), or of anything holding one — reports as a clone whatever its inline size, since its inline bytes say nothing of what it duplicates. A copy that retains storage, of a [`string`](#string-type) or [`Shared(T)`](#shared-ownership), is not costly. Any other copy is measured by the inline bytes it duplicates. A copy that [last-use transfer](#last-use-transfer) makes a move is not reported, and neither is a written `clone()`, which states the copy is intended.
 
 Converting an operand to a destination type is not itself a copy: `print(count)` erases an `int` into a borrowing `any_view`, duplicating nothing. Ordinary `value: T` parameters borrow managed owners for the call and are not copy sites either.
 
@@ -5001,7 +5001,7 @@ bad_owner :: proc() -> [dynamic]u8 {
 }
 ```
 
-The pointee's cleanup policy does not decide whether a pointer is a borrow: a `&` pointer is a borrow whatever becomes of its root. A checked pointer never owns what it points at: storage that outlives its scope is owned by a [`box(T)`](#owned-values), a container, or a resource type with a `drop` hook, and a pointer into it is a borrow of that owner.
+The pointee's cleanup policy does not decide whether a pointer is a borrow: a `&` pointer is a borrow whatever becomes of its root. A checked pointer never owns what it points at: storage that outlives its scope is owned by a [`Box(T)`](#owned-values), a container, or a resource type with a `drop` hook, and a pointer into it is a borrow of that owner.
 
 `rawptr` and `[^]T` carry no checked provenance. A `^T` received from foreign code, reconstructed by unsafe code, or loaded from storage whose provenance the compiler does not track is also an unchecked address despite having the same machine type as a checked `^T`. Dereferencing an unchecked address is the programmer's responsibility.
 
@@ -5155,7 +5155,7 @@ An `inout` parameter, a `^T` parameter, and a [`self: ^` receiver](#receiver-for
 
 Where a procedure has several borrowed arguments, the result contract below records which of them a returned borrow derives from; a procedure value retains this precision when its type carries that contract.
 
-A procedure hands an allocation it made to its caller as an owner, such as a [`box(T)`](#owned-values), whose region provenance follows the result. A checked pointer is a borrow, so it cannot carry an allocation out of the procedure that made it.
+A procedure hands an allocation it made to its caller as an owner, such as a [`Box(T)`](#owned-values), whose region provenance follows the result. A checked pointer is a borrow, so it cannot carry an allocation out of the procedure that made it.
 
 #### Procedure result contracts
 
@@ -5303,11 +5303,11 @@ The analysis is local to one procedure body, together with the recorded summary 
 - aliases hidden by foreign code, and what a foreign procedure retains of a borrowed argument after it returns;
 - transferring borrows or unchecked addresses between threads, and keeping a `thread_local` borrow past the end of its thread;
 - concurrent access to the same storage, beyond the warning for a spawned entry's writes under [Global write effects](#global-write-effects). A data race is undefined behavior, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
-- which thread releases the last [`shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`'s `drop` and uses the control block's allocator;
+- which thread releases the last [`Shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`'s `drop` and uses the control block's allocator;
 - everything [`unsafe.free`](#the-unsafe-package) releases.
 - a global written through a pointer or view to it that was itself stored in a global, or by foreign code, while a borrow of it is live.
 
-If a view has no locally provable lifetime, make an owned copy with `clone`, use `shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.
+If a view has no locally provable lifetime, make an owned copy with `clone`, use `Shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.
 
 ### The `unsafe` package
 
@@ -5341,7 +5341,7 @@ escape :: proc() -> ^mut int {
 }
 ```
 
-`unsafe.new(value, allocator := mem.default_allocator())` allocates storage for one `T`, takes `value` into it as [`box`](#owned-values) does, and returns its address as a `[^]T`. Nothing owns that allocation: the value is never dropped and the storage is never released unless the program does it, and the address carries no provenance. `unsafe.try_new` takes the same arguments and returns `Result([^]T, Allocator_Error)`. A handle over an opaque control block, `shared(T)` among them, allocates it this way.
+`unsafe.new(value, allocator := mem.default_allocator())` allocates storage for one `T`, takes `value` into it as [`box`](#owned-values) does, and returns its address as a `[^]T`. Nothing owns that allocation: the value is never dropped and the storage is never released unless the program does it, and the address carries no provenance. `unsafe.try_new` takes the same arguments and returns `Result([^]T, Allocator_Error)`. A handle over an opaque control block, `Shared(T)` among them, allocates it this way.
 
 `unsafe.free(pointer)` and `unsafe.free(pointer, allocator)` release the allocation a `[^]T` or `^mut T` names, sized by its element type. They do not drop the value, and they check nothing: the caller promises that the pointer is the base of an allocation of that type from that allocator, that nothing still refers to it, and that it is released once.
 
@@ -5849,7 +5849,7 @@ Managed owning values use deterministic lexical cleanup, not garbage collection.
 
 Dynamic arrays, maps, runtime strings, and other managed containers remember the allocator responsible for their backing storage. Mutable containers and user-defined managed types whose lifecycle clone honors a destination allocator use `mem.default_allocator()` by default, binding it lazily when their allocator-unbound zero state first needs storage, and may select another allocator eagerly with `via`.
 
-`string` and `shared(T)` copies share their allocation rather than allocate, so they cannot use `via`: string-producing procedures accept a conventional `allocator` argument, and `shared` has the constructor argument described under [Shared ownership](#shared-ownership).
+`string` and `Shared(T)` copies share their allocation rather than allocate, so they cannot use `via`: string-producing procedures accept a conventional `allocator` argument, and `shared` has the constructor argument described under [Shared ownership](#shared-ownership).
 
 The allocator affects where backing storage comes from, but does not change value semantics or whether cleanup is automatic. Cleanup is suppressed per value with [`unsafe.forget`](#unsafeforget), never by a declaration modifier.
 
@@ -5965,7 +5965,7 @@ Two accesses conflict when they touch overlapping bytes and at least one is a wr
 The `core:sync` package provides `Atomic(T)` for booleans, integers, enums with a supported integer backing type, pointers, and an `Option(^T)`, which is one address (see [Representation](#representation)) and starts as `.none`.
 
 - Operations accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or `.Sequentially_Consistent` where meaningful. `core:sync.fence(order)` accepts every ordering except `.Relaxed`. Invalid type, operation, or ordering combinations are compile-time errors.
-- Every operation, writes included, takes a read-only `self: ^` receiver, because no atomic access conflicts with another. So an `Atomic(T)` reached through a `^T`, such as a `shared(T)` payload, can still be updated. Its plain `value` field keeps the ordinary rules.
+- Every operation, writes included, takes a read-only `self: ^` receiver, because no atomic access conflicts with another. So an `Atomic(T)` reached through a `^T`, such as a `Shared(T)` payload, can still be updated. Its plain `value` field keeps the ordinary rules.
 - `Atomic(T)` is move-only, because copying one is a non-atomic read that yields a second, unrelated atomic. `Once` holds an `Atomic` and is move-only by the same structural rule.
 
 Loke adopts the C++20 atomic ordering model, excluding dependency-ordered `consume`, as the normative model for atomics. The relevant rules are restated here so ordinary code does not need another language specification:
@@ -5974,13 +5974,13 @@ Loke adopts the C++20 atomic ordering model, excluding dependency-ordered `consu
 - An atomic load takes its value from one modification in that object's modification order, subject to the write-read, read-read, read-write, and write-write coherence requirements. A value cannot be manufactured without a contributing write; out-of-thin-air results are forbidden.
 - A read-modify-write operation is one indivisible modification and reads the value written by the immediately preceding modification in that object's modification order.
 - A release store or release read-modify-write synchronizes with an acquire load or acquire read-modify-write that reads from it or from its release sequence. A release sequence is the maximal contiguous suffix headed by that release and followed by atomic read-modify-write operations on the same object.
-- A release fence sequenced before an atomic write synchronizes with an acquire fence sequenced after an atomic read when that read observes the write or its release sequence. This is the fence relation used by the final-reference path of `shared(T)`.
+- A release fence sequenced before an atomic write synchronizes with an acquire fence sequenced after an atomic read when that read observes the write or its release sequence. This is the fence relation used by the final-reference path of `Shared(T)`.
 - Relaxed operations participate in atomicity, reads-from, coherence, and modification order but add no synchronizes-with edge. Sequentially consistent operations additionally participate in one total order consistent with happens-before and each affected object's modification order.
 
 Thread transfer follows these rules:
 
 - Moving an ordinary owning value transfers that owner. No checked borrow may remain in the sending thread.
-- Copying has the same semantics as within one thread. Ordinary owners create independent values; immutable `string` and `shared(T)` may share thread-safe handle state according to their documented copy semantics.
+- Copying has the same semantics as within one thread. Ordinary owners create independent values; immutable `string` and `Shared(T)` may share thread-safe handle state according to their documented copy semantics.
 - The programmer must ensure that a transferred owner's entire lifecycle, including custom drop hooks, foreign resources, and allocator operations, is valid on the receiving thread. The compiler does not verify this obligation.
 - Raw pointers, stored borrows, foreign handles, and unchecked views may be transferred, but the compiler does not prove their pointees remain alive or race-free.
 
@@ -6005,17 +6005,17 @@ Threads and retained tasks receive only the arguments explicitly moved or copied
 
 ### Shared ownership
 
-`shared(T)` is a library type for shared ownership of one stable `T` payload. A handle always shares a payload, so it has no zero value, and copies use thread-safe handle accounting.
+`Shared(T)` is a library type for shared ownership of one stable `T` payload. A handle always shares a payload, so it has no zero value, and copies use thread-safe handle accounting.
 
-`shared(value)` clones a borrowed value into shared storage; a temporary, or `shared(move(value))`, moves in. `clone` and assignment create another handle, `move` transfers one, and the final `drop` destroys the payload exactly once. A handle is never consumed implicitly at its last use. A handle, strong or weak, carries the borrows its payload holds, as a [box](#owned-values) does (see [Values that contain borrows](#values-that-contain-borrows)), so a `shared(View)` cannot outlive what its `View` borrows.
+`shared(value)` clones a borrowed value into shared storage; a temporary, or `shared(move(value))`, moves in. `clone` and assignment create another handle, `move` transfers one, and the final `drop` destroys the payload exactly once. A handle is never consumed implicitly at its last use. A handle, strong or weak, carries the borrows its payload holds, as a [box](#owned-values) does (see [Values that contain borrows](#values-that-contain-borrows)), so a `Shared(View)` cannot outlive what its `View` borrows.
 
-Construction uses `mem.default_allocator()` unless an `allocator` argument selects another. Use `try_shared` to handle failure. The shared allocation retains its allocator, so a `shared(T)` declaration cannot use `via`.
+Construction uses `mem.default_allocator()` unless an `allocator` argument selects another. Use `try_shared` to handle failure. The shared allocation retains its allocator, so a `Shared(T)` declaration cannot use `via`.
 
 Handle accounting is safe across threads, but destruction may be thread-affine. The thread releasing the final strong handle runs `T`'s drop hook and uses the retained allocator. The programmer must ensure that thread may do both.
 
 Shared ownership does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` that cannot outlive the handle. Conflicting access, including through different handles, still requires synchronization. State that changes behind a handle is held in `Atomic(T)` or `Once` fields, whose operations work through that `^T`.
 
-Strong-reference cycles are permitted and leak until explicitly broken. `weak(T)` is the non-owning companion: its zero value, written `{}`, is an empty handle whose `upgrade` answers `.none`, it cannot use `via` either, and it keeps the control block but not the payload alive, and `upgrade` returns `Option(shared(T))`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
+Strong-reference cycles are permitted and leak until explicitly broken. `Weak(T)` is the non-owning companion: its zero value, written `{}`, is an empty handle whose `upgrade` answers `.none`, it cannot use `via` either, and it keeps the control block but not the payload alive, and `upgrade` returns `Option(Shared(T))`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
 
 ## Foreign system
 
@@ -6546,7 +6546,7 @@ The specification uses these library declarations. Their complete APIs belong to
 | `Logger` | `core:log` | [build-selected providers](#build-selected-providers) |
 | `Source_Code_Location` | `base:runtime` | [`caller_location`](#caller_location), [`source_location`](#source_location-or-source_locationentity) |
 | `Complex(T)`, `Quaternion(T)` | `core:math` | [library numeric types](#library-numeric-types) |
-| `shared(T)`, `weak(T)` | `base:runtime` | [shared ownership](#shared-ownership) |
+| `Shared(T)`, `Weak(T)` | `base:runtime` | [shared ownership](#shared-ownership) |
 | `Atomic(T)`, `Once`, `fence` | `core:sync` | [concurrency](#concurrency-and-the-memory-model) |
 | Slice algorithms | `core:slice` | [sequence types](#sequence-types) |
 | SIMD operations | `core:simd` | [SIMD vectors](#simd-vectors) |

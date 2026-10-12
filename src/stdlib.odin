@@ -44,7 +44,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// The `LOKE_*` enum types stay unbound here: binding them eagerly would
 		// allocate one per importer and shift type numbering.
 		//
-		// `shared(T)` allocates its control block, and `base:runtime` is below
+		// `Shared(T)` allocates its control block, and `base:runtime` is below
 		// `core:mem` in the dependency order, so it cannot import the package that
 		// publishes the default provider. The control block then travels as a
 		// `rawptr`, so releasing it is exactly the unchecked release `core:unsafe`
@@ -58,7 +58,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "unsafe_write", .Unsafe_Write, public = false)
 		contribute_builtin(c, pkg, "unsafe_take", .Unsafe_Take, public = false)
 		// The control block is atomic, and `core:sync` is a package every program
-		// would then have to load — `shared` and `weak` are universe names.
+		// would then have to load — `Shared` and `Weak` are universe names.
 		contribute_atomic_intrinsics(c, pkg)
 		// design.md "Allocation failure": `shared(value)` applies the allocator's
 		// policy to the error its `try_` form reports, as each wrapper below does.

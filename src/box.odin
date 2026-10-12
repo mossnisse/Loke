@@ -1,8 +1,8 @@
-// `box(T)`: an owner of one allocated value (design.md "Owned values").
+// `Box(T)`: an owner of one allocated value (design.md "Owned values").
 //
-// `box` is a predeclared built-in that is also a type constructor, as `Simd`
-// is: `box(Node)` names the type, and `box(value)` or `box(value, allocator)`
-// builds one. A box is one address. The allocation it names holds the
+// `Box` is a predeclared type constructor, as `Simd` is: `Box(Node)` names the
+// type, and the built-in `box(value)` or `box(value, allocator)` builds one. A
+// box is one address. The allocation it names holds the
 // allocator that made it and then the payload, so dropping or cloning a box
 // needs nothing but the box.
 package lokec
@@ -40,15 +40,42 @@ box_callee :: proc(k: ^Checker, callee: Expr) -> bool {
 	return sym != nil && sym.kind == .Builtin && sym.builtin == .Box_New
 }
 
-// Whether `box(x)` names a type: `x` is one. A nested `box(...)` answers for
-// its own argument rather than being resolved as a type, which would report
-// `box(value)` as an unknown type.
-box_argument_denotes_type :: proc(k: ^Checker, e: Expr) -> bool {
-	if call, is_call := e.(^Expr_Call); is_call && box_callee(k, call.callee) {
-		return len(call.args) == 1 && call.args[0].name.text == "" && call.args[0].mode == .Value &&
-		       box_argument_denotes_type(k, call.args[0].value)
+// The predeclared type constructor `Box`, not a user declaration that shares
+// the name.
+box_type_callee :: proc(k: ^Checker, callee: Expr) -> bool {
+	ident, is_ident := callee.(^Expr_Ident)
+	if !is_ident || ident.name != "Box" {
+		return false
 	}
-	return resolve_type_syntax(k, e) != INVALID_TYPE
+	return lookup_symbol(k.scope, identifier_of(k.c, ident)) == INVALID_SYMBOL
+}
+
+// design.md "Owned values", "Shared ownership": the handle types are `Box(T)`,
+// `Shared(T)`, and `Weak(T)`, and the lower-case `box` and `shared` build
+// values. Reports a call that spells a handle type the lower-case way: in type
+// position, or in value position with a type argument. `weak` names nothing.
+report_handle_type_spelling :: proc(k: ^Checker, call: ^Expr_Call, type_position: bool) -> bool {
+	ident, is_ident := call.callee.(^Expr_Ident)
+	if !is_ident {
+		return false
+	}
+	named := lookup_symbol(k.scope, identifier_of(k.c, ident))
+	spelled := ""
+	switch {
+	case ident.name == "weak" && named == INVALID_SYMBOL:
+		spelled = "Weak"
+	case ident.name == "box" && box_callee(k, ident):
+		spelled = "Box"
+	case ident.name == "shared" && named != INVALID_SYMBOL && named == k.c.shared_construct_symbol:
+		spelled = "Shared"
+	case:
+		return false
+	}
+	if spelled != "Weak" && !type_position && !callee_argument_denotes_type(k, call) {
+		return false
+	}
+	errorf(k.c, ident.span, "L0713", "the handle type is spelled `%s(...)`, not `%s(...)`", spelled, ident.name)
+	return true
 }
 
 // The payload a successful `box(value)` holds, or nil for any other call. Not
@@ -62,13 +89,13 @@ boxed_payload :: proc(c: ^Compiler, v: ^Expr_Call) -> Expr {
 	return v.bound[0]
 }
 
-// `box(T)` in type position.
+// `Box(T)` in type position.
 resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if v.denoted_type != INVALID_TYPE {
 		return v.denoted_type
 	}
 	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
-		errorf(k.c, v.span, "L0713", "`box` as a type takes one element type, as in `box(Node)`")
+		errorf(k.c, v.span, "L0713", "`Box` takes one element type, as in `Box(Node)`")
 		return INVALID_TYPE
 	}
 	element := resolve_type_syntax(k, v.args[0].value)
@@ -96,9 +123,7 @@ resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 check_box_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind, expected: Type_Id) {
 	v.value_category = .Value
 	v.type = INVALID_TYPE
-	if kind == .Box_New && len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value &&
-	   box_argument_denotes_type(k, v.args[0].value) {
-		set_type_call(v, resolve_box_application(k, v))
+	if kind == .Box_New && report_handle_type_spelling(k, v, type_position = false) {
 		return
 	}
 	if len(v.args) < 1 || len(v.args) > 2 {
@@ -108,7 +133,7 @@ check_box_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	if !builtin_arguments_ok(k, v) {
 		return
 	}
-	// `b: box(Node) = box({1, .none})` gives the payload its type.
+	// `b: Box(Node) = box({1, .none})` gives the payload its type.
 	payload_expected := INVALID_TYPE
 	if kind == .Box_New && type_is_box(k.c, expected) {
 		payload_expected = underlying_info(k.c, expected).element

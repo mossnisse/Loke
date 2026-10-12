@@ -197,7 +197,7 @@ Collected :: Result([dynamic]u8, io.Error);
 @(private)
 Collecting :: struct {
 	pipe: Pipe,
-	into: shared(thread.Mutex(Collected)),
+	into: Shared(thread.Mutex(Collected)),
 }
 
 @(private)

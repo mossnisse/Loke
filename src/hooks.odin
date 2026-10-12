@@ -27,7 +27,7 @@ Lifecycle :: struct {
 	intrinsic:        bool,
 	container:        bool,
 	provider:         bool,
-	// design.md "Owned values": a `box(T)`. Its clone allocates and its drop
+	// design.md "Owned values": a `Box(T)`. Its clone allocates and its drop
 	// releases, both through the allocator its allocation records; the emitter
 	// supplies both.
 	boxed:            bool,
@@ -511,7 +511,7 @@ clone_part :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 }
 
 // Whether copying a `type` may allocate: a container, or a record whose own or
-// a field's copy is a custom `hook(copy)`. A `string` or `shared(T)` copy
+// a field's copy is a custom `hook(copy)`. A `string` or `Shared(T)` copy
 // retains its storage instead, and so does a record of them.
 clone_may_allocate :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE || !type_is_managed(c, type) || type_is_shared_handle(c, type) {

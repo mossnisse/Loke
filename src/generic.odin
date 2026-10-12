@@ -888,7 +888,7 @@ match_array_as_view :: proc(
 	if info == nil {
 		return false
 	}
-	// A `box(T)` reaches a `^T` pattern the same way (design.md "Owned values").
+	// A `Box(T)` reaches a `^T` pattern the same way (design.md "Owned values").
 	if pointer, is_pointer := pattern.(^Type_Pointer); is_pointer && info.kind == .Box && !pointer.mutable {
 		before := len(out)
 		if match_type_pattern(k, pattern, pointer_to(k.c, info.element, false), scope, out) {
@@ -1022,8 +1022,8 @@ match_type_pattern :: proc(
 		return match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Expr_Call:
-		// design.md "Owned values": `box($T)` matches a box and binds its element.
-		if box_callee(k, v.callee) {
+		// design.md "Owned values": `Box($T)` matches a box and binds its element.
+		if box_type_callee(k, v.callee) {
 			if info.kind != .Box || len(v.args) != 1 {
 				return false
 			}
@@ -1882,6 +1882,9 @@ bind_record_argument :: proc(
 	if wanted == TYPE_TYPE || wanted == INVALID_TYPE {
 		denoted := resolve_type_syntax(k, arg.value)
 		if denoted == INVALID_TYPE {
+			if call, is_call := arg.value.(^Expr_Call); is_call && report && report_handle_type_spelling(k, call, type_position = true) {
+				return "", false
+			}
 			return "a generic `type` parameter needs a type argument", false
 		}
 		if !bind_pattern_name(k, name, Generic_Arg{is_type = true, type = denoted}, scope, out) {

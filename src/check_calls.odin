@@ -29,6 +29,10 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 
+	if report_handle_type_spelling(k, v, type_position = false) {
+		return
+	}
+
 	// Nor is a group or a generic procedure: overloads rank before any single
 	// procedure type exists.
 	if group := callee_group(k, v.callee); group != INVALID_SYMBOL {
@@ -50,15 +54,14 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		check_interface_application(k, v, info)
 		return
 	}
-	// design.md "Shared ownership": `shared(Node)` is the type, and anything that
-	// is not a type goes to the constructor group.
-	if k.c.shared_symbol != INVALID_SYMBOL && callee_symbol == k.c.shared_symbol && !callee_argument_denotes_type(k, v) {
-		check_group_call(k, v, k.c.shared_construct_symbol)
-		return
-	}
-	// `Simd(f32, 4)`, `Range(int)`, and generic record applications denote types.
+	// `Simd(f32, 4)`, `Range(int)`, `Box(int)`, and generic record applications
+	// denote types.
 	if range_callee(k, v.callee) {
 		set_type_call(v, resolve_range_application(k, v))
+		return
+	}
+	if box_type_callee(k, v.callee) {
+		set_type_call(v, resolve_box_application(k, v))
 		return
 	}
 	if simd_callee(k, v.callee) {

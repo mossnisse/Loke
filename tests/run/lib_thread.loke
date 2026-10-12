@@ -40,7 +40,7 @@ keep :: proc(id: move int) {
 }
 
 // A handle copy moves in; the lock works through the `^T` it hands out.
-fill :: proc(list: move shared(thread.Mutex([dynamic]int))) {
+fill :: proc(list: move Shared(thread.Mutex([dynamic]int))) {
 	foreach (i in 0..<1000) {
 		guard := list.get().lock();
 		guard.get().append(i);

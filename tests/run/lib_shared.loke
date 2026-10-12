@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:mem";
 
-// `shared(T)` and `weak(T)` end to end (design.md "Shared ownership"). The
+// `Shared(T)` and `Weak(T)` end to end (design.md "Shared ownership"). The
 // point of the fixture is that design.md's paragraph runs exactly
 // as it is written: the counts, the single drop, the weak companion, and the
 // `nil` zero value.
@@ -29,12 +29,12 @@ impl Tracked {
 	}
 }
 
-// No zero value: `shared(T)` asks nothing of `T` beyond what it owns.
+// No zero value: `Shared(T)` asks nothing of `T` beyond what it owns.
 Shape :: union { circle: int, square: f64 }
 
 // `get` borrows the handle read-only, so a by-value parameter, a `foreach`
 // binding, and a `^` all reach the payload.
-radius :: proc(held: shared(Shape)) -> int {
+radius :: proc(held: Shared(Shape)) -> int {
 	switch (held.get()^) {
 	case .circle(r): return r;
 	case .square: return 0;
@@ -71,8 +71,8 @@ main :: proc() {
 	fmt.println(fourth == handle, fourth == from_move);
 	drop(fourth);
 
-	// "`weak(T)` is the non-owning companion: it keeps the control block but not
-	// the payload alive, and `upgrade` returns `Option(shared(T))`."
+	// "`Weak(T)` is the non-owning companion: it keeps the control block but not
+	// the payload alive, and `upgrade` returns `Option(Shared(T))`."
 	watcher := handle.downgrade();
 	fmt.println(handle.weak_count(), watcher.strong_count());
 	switch (watcher.upgrade()) {
@@ -108,7 +108,7 @@ main :: proc() {
 	case .err: fmt.println("no memory");
 	}
 
-	// design.md: `shared(T)` "satisfies `Cloneable`", so an explicit `clone` is
+	// design.md: `Shared(T)` "satisfies `Cloneable`", so an explicit `clone` is
 	// the same strong increment an assignment performs.
 	cloned := handle.clone();
 	fmt.println(handle.strong_count(), cloned == handle);
@@ -116,16 +116,16 @@ main :: proc() {
 
 	// It is an ordinary owning value, so it lives in containers and records and
 	// is cleaned up with them.
-	fleet: [dynamic]shared(Node) = {};
+	fleet: [dynamic]Shared(Node) = {};
 	fleet.append(handle);
 	fleet.append(handle);
 	fmt.println(fleet.len(), handle.strong_count());
 	drop(fleet);
 	fmt.println(handle.strong_count());
 
-	// A `weak` that never had a payload upgrades to nothing.
-	orphan: weak(Node) = {};
-	fmt.println(orphan == weak(Node){}, orphan.strong_count());
+	// A `Weak` that never had a payload upgrades to nothing.
+	orphan: Weak(Node) = {};
+	fmt.println(orphan == Weak(Node){}, orphan.strong_count());
 	switch (orphan.upgrade()) {
 	case .some: fmt.println("upgraded");
 	case .none: fmt.println("gone");
@@ -135,7 +135,7 @@ main :: proc() {
 	fmt.println(radius(circle));
 	through := &circle;
 	fmt.println(radius(through^));
-	shapes: [dynamic]shared(Shape) = {};
+	shapes: [dynamic]Shared(Shape) = {};
 	shapes.append(circle);
 	foreach (each in shapes) { fmt.println(each.strong_count(), radius(each)); }
 	outcome := shared(Result(int, Allocator_Error).ok(12));

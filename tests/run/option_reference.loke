@@ -13,7 +13,7 @@ impl Square { area :: proc(self) -> int { return self.side * self.side; } }
 Callback :: proc(x: int) -> int;
 double :: proc(x: int) -> int { return x * 2; }
 Flip :: union { some: ^int, none: }
-Node :: struct { value: int, next: Option(box(Node)) }
+Node :: struct { value: int, next: Option(Box(Node)) }
 
 first :: proc(xs: []int) -> Option(^int) {
 	if (xs.len() == 0) { return .none; }
@@ -27,7 +27,7 @@ main :: proc() {
 	x := 5;
 	p: Option(^int) = .some(&x);
 	q: Option(^int) = .none;
-	fmt.println(size_of(Option(^int)), size_of(Option(Callback)), size_of(Option(cstring_view)), size_of(Option(dyn Shape)), size_of(Option(box(int))), size_of(Option(shared(int))), size_of(Flip), size_of(Option(Option(^int))));
+	fmt.println(size_of(Option(^int)), size_of(Option(Callback)), size_of(Option(cstring_view)), size_of(Option(dyn Shape)), size_of(Option(Box(int))), size_of(Option(Shared(int))), size_of(Flip), size_of(Option(Option(^int))));
 	fmt.println(p == q, p == Option(^int).some(&x), q == .none, (p or_else &x)^);
 	switch (p) {
 	case .some(v): fmt.println("some", v^);
@@ -61,7 +61,7 @@ main :: proc() {
 		}
 	}
 	fmt.println(total);
-	sh: Option(shared(int)) = .some(shared(42));
+	sh: Option(Shared(int)) = .some(shared(42));
 	copy := sh;
 	switch (copy) { case .some(h): fmt.println(h.strong_count()); case .none: }
 	held = .some(&anchor);
