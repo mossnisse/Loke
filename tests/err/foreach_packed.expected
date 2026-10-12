@@ -1,0 +1,18 @@
+L0614
+@16:30
+cannot take the address of `arr`: it is reached through a packed struct
+L0614
+@21:16
+cannot bind `arr` with `&mut`: it is reached through a packed struct
+L0614
+@26:32
+cannot take the address of `n`: it is reached through a packed struct
+L0614
+@31:21
+cannot bind `n` with `&mut`: it is reached through a packed struct
+L0614
+@36:39
+cannot take the address of `inner`: it is reached through a packed struct
+L0614
+@42:41
+cannot take the address of `n`: it is reached through a packed struct

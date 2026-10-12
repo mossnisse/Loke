@@ -1,0 +1,21 @@
+// design.md "@(packed)": a `foreach` leaf over a packed field, an element of
+// an array stored in a packed struct or a field of a packed element, holds an
+// aligned copy, which reads the same values.
+package main;
+import "core:fmt";
+H :: struct @(packed) { pad: u8, arr: [2]i32 }
+P :: struct @(packed) { pad: u8, n: i32 }
+Inner :: struct { a: i32, b: i64 }
+Q :: struct @(packed) { pad: u8, inner: Inner }
+main :: proc() {
+	h := H{1, {70000, 3}};
+	foreach (x in h.arr) { fmt.println(x); }
+	ps := [2]P{{1, 2}, {4, 123456}};
+	foreach (pad, n in ps) { fmt.println(pad, n); }
+	foreach (p in ps) { fmt.println(p.n); }
+	qs := [1]Q{{1, {2, 1 << 40}}};
+	foreach (pad, (a, b) in qs) { fmt.println(pad, a, b); }
+	grown := [dynamic]P{{5, 6}};
+	defer drop(grown);
+	foreach (pad, n in grown) { fmt.println(pad, n); }
+}

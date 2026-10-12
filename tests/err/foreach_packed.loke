@@ -1,0 +1,45 @@
+// design.md "@(packed)": a `foreach` leaf over a packed field cannot be
+// borrowed, as `&value.field` cannot, and cannot be written `&mut`.
+package main;
+
+H :: struct @(packed) { pad: u8, arr: [2]i32 }
+P :: struct @(packed) { pad: u8, n: i32 }
+Inner :: struct { a: i32, b: i64 }
+Q :: struct @(packed) { pad: u8, inner: Inner }
+
+read :: proc(x: ^i32) -> i32 { return x^; }
+read64 :: proc(x: ^i64) -> i64 { return x^; }
+bump :: proc(x: inout i32) { x += 1; }
+
+element_of_packed_array :: proc() {
+	h := H{1, {2, 3}};
+	foreach (x in h.arr) { read(&x); }
+}
+
+mutable_element_of_packed_array :: proc() {
+	h := H{1, {2, 3}};
+	foreach (&mut x in h.arr) { x += 1; }
+}
+
+field_of_packed_element :: proc() {
+	ps := [1]P{{1, 2}};
+	foreach (pad, n in ps) { read(&n); }
+}
+
+mutable_field_of_packed_element :: proc() {
+	ps := [1]P{{1, 2}};
+	foreach (pad, &mut n in ps) { n += 1; }
+}
+
+nested_in_packed_element :: proc() {
+	qs := [1]Q{{1, {2, 3}}};
+	foreach (pad, (a, b) in qs) { read64(&b); }
+}
+
+inout_argument :: proc() {
+	grown := [dynamic]P{{1, 2}};
+	defer drop(grown);
+	foreach (pad, n in grown) { bump(inout n); }
+}
+
+main :: proc() {}

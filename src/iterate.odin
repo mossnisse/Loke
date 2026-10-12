@@ -676,7 +676,7 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 		}
 		s.element_type = map_entry_type(k.c, subject)
 		if !gate_type(k, s.element_type, expr_span(s.iterable)) { return FLOWS }
-		if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE, place_loop_yield(k, s)) { return FLOWS }
+		if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE, place_loop_yield(k, s), foreach_packed_source(k, s)) { return FLOWS }
 		return check_foreach_block(k, s)
 	case .Slice:
 		// design.md "Slices": the slice's own `mut`, not its variable's.
@@ -713,7 +713,7 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 		return FLOWS
 	}
 	s.element_type = s.indexed ? indexed_element_type(k.c, s.element_type) : s.element_type
-	if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE, place_loop_yield(k, s)) { return FLOWS }
+	if !check_foreach_pattern(k, s, s.bindings, s.element_type, INVALID_TYPE, place_loop_yield(k, s), foreach_packed_source(k, s)) { return FLOWS }
 	return check_foreach_block(k, s)
 }
 
@@ -853,7 +853,7 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, yield := Yield_Desc{ki
 		contribute_lifecycle_members(k, element)
 	}
 	// A value loop has no `&mut` leaf to check.
-	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type, yield) { return FLOWS }
+	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type, yield, foreach_packed_source(k, s)) { return FLOWS }
 	return check_foreach_block(k, s)
 }
 
@@ -864,16 +864,17 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, yield := Yield_Desc{ki
 // (design.md "Element bindings").
 check_foreach_pattern :: proc(
 	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical, item: Type_Id, desc: Yield_Desc,
+	packed := "",
 ) -> bool {
 	if len(bindings) == 1 && len(bindings[0].group) > 0 {
-		return check_foreach_pattern(k, s, bindings[0].group, logical, item, desc)
+		return check_foreach_pattern(k, s, bindings[0].group, logical, item, desc, packed)
 	}
 	if len(bindings) == 1 {
 		if bindings[0].is_ref && desc.kind != .Mutable {
 			report_immutable_ref_leaf(k, s, bindings[0], desc)
 			return false
 		}
-		return bind_pattern_leaf(k, s, &bindings[0], logical, item, desc)
+		return bind_pattern_leaf(k, s, &bindings[0], logical, item, desc, packed)
 	}
 	info := underlying_info(k.c, logical)
 	// A padding field fills no binding (design.md "Destructuring").
@@ -907,15 +908,21 @@ check_foreach_pattern :: proc(
 		if desc.kind == .Record && index < len(desc.fields) {
 			part = desc.fields[index]
 		}
+		// design.md "@(packed)": a field of a packed record, and everything
+		// stored inside it, may be misaligned.
+		origin := packed
+		if origin == "" && info.packed {
+			origin = identifier_text(k.c, field.name)
+		}
 		if len(binding.group) > 0 {
-			if !check_foreach_pattern(k, s, binding.group, field.type, projected, part) { return false }
+			if !check_foreach_pattern(k, s, binding.group, field.type, projected, part, origin) { return false }
 			continue
 		}
 		if binding.is_ref && part.kind != .Mutable {
 			report_immutable_ref_leaf(k, s, binding, part)
 			return false
 		}
-		if !bind_pattern_leaf(k, s, &binding, field.type, projected, part) { return false }
+		if !bind_pattern_leaf(k, s, &binding, field.type, projected, part, origin) { return false }
 	}
 	return true
 }
@@ -969,6 +976,7 @@ place_loop_yield :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Yield_Desc {
 @(private = "file")
 bind_pattern_leaf :: proc(
 	k: ^Checker, s: ^Stmt_Foreach, binding: ^Foreach_Binding, logical, item: Type_Id, part: Yield_Desc,
+	packed := "",
 ) -> bool {
 	bound := logical
 	if item != INVALID_TYPE && item != logical {
@@ -980,8 +988,32 @@ bind_pattern_leaf :: proc(
 	}
 	if !gate_type(k, bound, expr_span(s.iterable)) { return false }
 	owned := !foreach_is_place_loop(s) && (!s.borrows || part.kind == .Owned)
+	// design.md "@(packed)": a writable leaf needs the address of a field
+	// that may be misaligned; a read-only one is bound as a copy.
+	if packed != "" && !owned && binding.is_ref {
+		errorf(
+			k.c, binding.name.span, "L0614",
+			"cannot bind `%s` with `&mut`: it is reached through a packed struct", packed,
+		)
+		return false
+	}
 	binding.symbol = bind_loop_name(k, binding^, bound, binding.is_ref, !owned)
+	// It is bound as a copy, which cannot be borrowed (design.md "@(packed)").
+	if sym := symbol_of(k.c, binding.symbol); sym != nil && packed != "" && !owned {
+		sym.packed_field = packed
+	}
 	return true
+}
+
+// design.md "@(packed)": the elements of a fixed array stored in a packed
+// struct are as misaligned as the array. Every other container's elements are
+// storage of their own.
+foreach_packed_source :: proc(k: ^Checker, s: ^Stmt_Foreach) -> string {
+	if s.kind != .Array {
+		return ""
+	}
+	field, _ := packed_field_reached(k, s.iterable)
+	return field
 }
 
 @(private = "file")

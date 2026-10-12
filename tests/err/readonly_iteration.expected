@@ -16,6 +16,9 @@ a mutable reborrow of it is still in use
 L0513
 @53:9
 this temporary has ended
+L0614
+@59:40
+reached through a packed struct
 L0512
 @65:3
 `values` cannot be modified here: a read-only iterator of it is still in use

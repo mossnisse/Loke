@@ -260,6 +260,17 @@ materialize_foreach_record :: proc(
 bind_foreach_field :: proc(e: ^Emitter, symbol: Symbol_Id, field: Foreach_Field) {
 	// A by-reference binding names the container's slot and owns nothing.
 	if field.place {
+		// design.md "@(packed)": a misaligned slot is read into an aligned
+		// copy, which the checker never lets be borrowed.
+		if sym := symbol_of(e.c, symbol); sym != nil && sym.packed_field != "" {
+			if type_align(e.c, field.type) > 1 {
+				e.place_align[field.address] = 1
+			}
+			slot := alloca(e, llvm_type(e, field.type))
+			store(e, field.type, load_place(e, field.type, field.address), slot)
+			bind_foreach_place(e, symbol, slot)
+			return
+		}
 		bind_foreach_place(e, symbol, field.address)
 		return
 	}

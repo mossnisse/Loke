@@ -6413,7 +6413,7 @@ Layout and ABI annotations use the same `@(...)` syntax as declaration attribute
 
 This attribute applies to a struct. It removes the padding normally inserted between fields to satisfy their alignment requirements. Fields remain in source order.
 
-Individual packed fields are not addressable: `&value.field` is rejected even at an aligned offset. The whole packed struct remains addressable. A switch case binding over a packed field, a field of a packed payload or a payload reached through a packed struct, holds a copy of it instead, and borrowing that binding is rejected as `&value.field` is; such a binding cannot be written `&mut`.
+Individual packed fields are not addressable: `&value.field` is rejected even at an aligned offset. The whole packed struct remains addressable. A binding that would name a packed field in place holds a copy of it instead, and borrowing that binding is rejected as `&value.field` is; such a binding cannot be written `&mut`. That is a switch case binding over a field of a packed payload or over a payload reached through a packed struct, and a `foreach` leaf over an element of an array stored in a packed struct or over a field of a packed element, at any depth below it.
 
 ```odin
 Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }

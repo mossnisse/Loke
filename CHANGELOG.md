@@ -18,6 +18,13 @@ checklist.
   argument, or a mutating method is `L0614` as `&holder.field` is. Upgrade by
   switching over a local copy and assigning it back:
   `value := holder.value; switch (value) { ... } holder.value = value;`.
+- A `foreach` leaf over packed storage follows the same rule (`L0614`,
+  design.md "@(packed)"). `foreach (&mut x in holder.arr)` with `holder`
+  packed, and `foreach (tag, &mut n in records)` over packed records, wrote
+  through possibly misaligned addresses and are now rejected; a read-only leaf
+  there is an aligned copy, and `&x` or an `inout` or borrow argument of it is
+  rejected as `&holder.field` is. Upgrade by iterating a local copy and
+  assigning it back, or by indexing: `holder.arr[i] += 1`.
 - A temporary that a local's declaration or whole assignment borrows lives
   until the end of the block holding the statement (design.md "Temporaries and
   procedure boundaries"). `p := &Point{1, 2}`, `items := [dynamic]int{1, 2}[:]`,
