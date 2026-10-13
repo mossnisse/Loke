@@ -8,6 +8,8 @@ checklist.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-13
+
 ### Breaking changes
 
 - `or_return` takes an optional failure operand (design.md "The failure
