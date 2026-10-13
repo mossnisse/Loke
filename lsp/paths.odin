@@ -101,7 +101,6 @@ position_to_offset :: proc(text: string, position: Position, utf8_units: bool) -
 	return offset + len(line)
 }
 
-@(private = "file")
 utf16_length :: proc(text: string) -> int {
 	units := 0
 	for i := 0; i < len(text); {

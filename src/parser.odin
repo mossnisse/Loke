@@ -1203,7 +1203,13 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 	simple := parse_simple_statement(p)
 	if stmt_has_error(simple) || at(p, .Error) {
 		sync_to_statement(p)
-		return error_stmt(p, stmt_span(simple)), true
+		// Through where recovery stopped: a placeholder for a missing operand
+		// sits on the token that ended the statement.
+		span := stmt_span(simple)
+		span.hi = max(span.hi, p.last.hi, at(p, .Rbrace) ? current(p).hi : 0)
+		recovered := error_stmt(p, span)
+		recovered.(^Stmt_Error).partial = simple
+		return recovered, true
 	}
 	expect(p, .Semicolon, "L0216", "`;` after the statement")
 	stmt_base(simple).span = span_to_here(p, start)

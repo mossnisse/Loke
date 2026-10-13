@@ -74,6 +74,13 @@ Documentation checking omits executable-entry validation and finalization.
 `Span` is a byte range in a `Source`. Every AST node, including recovery nodes,
 has one. Comments are recorded separately on the source in lexical order.
 The parser retains explicit error nodes and resumes at synchronization points.
+A simple statement it cannot finish keeps what it parsed as `Stmt_Error.partial`.
+The checker checks that statement so queries see its names and types, then
+drops the diagnostics located inside it, and a missing name after `.` checks
+only the operand; flow analysis and emission skip the statement. A file with a
+syntax error cannot build, so that check commits like any other, and a
+report-once diagnostic first met there can stay unreported until the syntax
+error is fixed.
 Types and expressions share `Expr`, since syntax alone cannot distinguish all
 generic applications and calls.
 
@@ -542,10 +549,12 @@ including after destroying and reinitializing a session.
 | `set_session_overlay(&s, path, text)` | Copy a `.loke` path/text, normalized as Windows package loading does. Empty text replaces disk content. New files/directories and imported packages are supported; directory discovery includes direct `.loke` children. No disk writes. Invalid paths/extensions or uninitialized sessions return false. |
 | `remove_session_overlay(&s, path)` | Restore disk loading or remove an unsaved-only file. An absent overlay returns false without invalidation. |
 | `session_snapshot(&s)` | Capture current views, even after failed initialization/checking. False for zeroed/destroyed sessions or after invalidation until a check runs. |
-| `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. |
-| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. |
+| `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. `bundled` marks a file of the `base:` or `core:` library shipped with the compiler. |
+| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name. |
 | `query_documentation` | The comments directly above a binding's declaration, as `-doc` reads them; caller-owned. False when there are none. |
-| `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. |
+| `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. `type_value` marks a node that denotes its type rather than a value of it. |
+| `query_visible` | Bindings an unqualified name can reach at an offset, innermost first: locals whose `scope` holds the offset and whose name ends before it, then the file's package scope with its imports, then the predeclared names. Shadowed names are omitted. Caller-owned. |
+| `query_members` | What may follow `operand.` for a `query_at` result: a package alias's public declarations; a type's enum members or union variants and members; a value's fields and methods, through a pointer or box. Members are those recorded and visible from the file's package, so one contributed on demand appears once a lookup created it. Sorted by name; caller-owned. |
 | `query_type` | Recorded type properties, components, fields, members, and parameter types/modes. Zero IDs mean unavailable. |
 | `query_definition` | Snapshot-scoped written location; false for builtins/synthetic bindings without definitions. |
 | `query_references` | Exact-binding named uses, deduplicated across generic/static-loop clones; excludes implicit operations. `include_definition` defaults to false. Caller owns the array and must `delete` it with the query allocator. |
@@ -661,7 +670,9 @@ The server never duplicates the front end: every result comes from the
 | `jsonrpc.odin` | `Content-Length` framing, JSON output, and tolerant field access. |
 | `server.odin` | Lifecycle, request/notification dispatch, cancellation, configuration, and open documents. |
 | `roots.odin` | Root assignment, checking, diagnostic conversion, and publication. |
-| `requests.odin` | Hover, definition, and document symbols; waiting, cancelled, and stale requests. |
+| `requests.odin` | Request queueing, waiting, cancelled and stale requests; hover, definition, and document symbols. |
+| `editing.odin` | Completion and signature help, from the compiler's tokens and the queries above. |
+| `rename.odin` | References and rename across roots, and rename's refusals. |
 | `paths.odin` | `file:` URIs, path keys, and UTF-8/UTF-16 positions. |
 
 A reader thread frames stdin into an inbox. The main thread runs checks, so it
@@ -694,9 +705,9 @@ for each file and sends only changes, including an empty list when a file has no
 diagnostics left. An open document keeps the client's URI spelling and
 receives its version.
 
-Hover, definition, and document-symbol requests wait in `pending` until
-`refresh_roots` has run and their document's root is clean, so the root's
-snapshot was taken from the document's current text. `run_pending_work`
+Position requests wait in `pending` until `refresh_roots` has run and their
+document's root is clean, so the root's snapshot was taken from the document's
+current text; references and rename also wait for every other root. `run_pending_work`
 answers them before anything else and checks a requested root before other
 dirty roots. Each document records the server's edit `revision`; a request
 whose document changed or closed while it waited is answered `ContentModified`,
@@ -711,7 +722,31 @@ declarations with their fields and enum members as children. Kinds after
 `Array` are sent only to a client that lists them in `symbolKind.valueSet`;
 others get `Class` for a struct and `Constant` for an enum member.
 
-Milestones 1 and 2 of [Language server](future-plans.md#language-server) use batch
+Completion and signature help lex the document with the compiler's lexer to
+find the cursor's context, then ask the snapshot. After `operand.`, the
+operand's last byte goes to `query_at` and then `query_members`; elsewhere
+`query_visible` lists the names in scope, followed by the keywords. Signature
+help takes the innermost bracket open before the cursor, which must be a `(`
+after a name, and the procedure or group `query_at` records there; commas at
+that depth, a named argument, and a method call's implicit `self` choose the
+active parameter. Completion kinds after `Reference` are negotiated like symbol
+kinds.
+
+References and rename identify a binding by its written definition, so every
+root whose snapshot has the same binding at that place contributes its
+recorded uses. Rename refuses a predeclared binding, one defined in or used by
+a bundled file, an invalid new name, and any root that loads the binding's
+file and has errors, since references from a failed check are partial. It then lexes every
+non-bundled source of each such root. Each occurrence of the old name must have
+a recorded binding, so unchecked code such as an inactive `when` branch, or a
+name the index does not record, such as an interface slot, stops the rename. At an unqualified use or the declaration, the new name must not
+already be visible; a local declared with the new name must not share the
+binding's `scope`. These two rules also cover capture: a binding that would be
+shadowed at some use is visible at the declaration, or declared later in the
+same scope. Fields, enum members, and `impl` or `extend` members are checked
+against the members of their type instead.
+
+Milestones 1 through 3 of [Language server](future-plans.md#language-server) use batch
 checking. `lsp/server_test.odin` drives the server in process, choosing when
 checks run relative to edits. `tests/lsp_test.odin` runs the built executable
 over pipes.

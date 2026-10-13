@@ -19,7 +19,7 @@ written_query_binding :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
 	return text == identifier_text(c, symbol.name) && identifier_spelling(text)
 }
 
-@(private = "file")
+@(private)
 identifier_spelling :: proc(text: string) -> bool {
 	if text == "" || (text[0] >= '0' && text[0] <= '9') { return false }
 	for b in transmute([]byte)text {
@@ -38,7 +38,7 @@ query_index_enter :: proc(index: ^Query_Index, node: rawptr) -> bool {
 @(private = "file")
 index_query_name :: proc(index: ^Query_Index, span: Span, name: string, symbol: Symbol_Id, type: Type_Id) {
 	if !valid_query_span(index.c, span) || index.c.sources[span.file].text[span.lo:span.hi] != name || !identifier_spelling(name) { return }
-	append(&index.q.occurrences, Query_Occurrence{span, symbol, type, symbol != INVALID_SYMBOL})
+	append(&index.q.occurrences, Query_Occurrence{span, symbol, type, symbol != INVALID_SYMBOL, false})
 }
 
 // Records a written binding's declaration extent once, on the binding clones
@@ -54,6 +54,12 @@ index_query_binding :: proc(index: ^Query_Index, id: Symbol_Id, written: Span, a
 	extent := Span{file = span.file, lo = min(written_start(text, lo, attributes), span.lo), hi = max(hi, span.hi)}
 	if int(extent.hi) > len(text) { return }
 	symbol.extent.span = extent
+}
+
+// Syntax a local declared inside it cannot be reached outside of.
+@(private = "file")
+index_query_region :: proc(index: ^Query_Index, span: Span) {
+	if valid_query_span(index.c, span) { append(&index.q.regions, span) }
 }
 
 @(private = "file")
@@ -116,32 +122,40 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 	if !query_index_enter(index, base) { return }
 	index_query_attributes(index, base.attributes)
 	switch v in stmt {
-	case ^Decl, ^Item_Impl, ^Stmt_Error, ^Stmt_Branch:
-	case ^Block: for inner in v.stmts { index_query_stmt(index, inner) }
+	case ^Decl, ^Item_Impl, ^Stmt_Branch:
+	case ^Stmt_Error: index_query_stmt(index, v.partial)
+	case ^Block:
+		index_query_region(index, v.span)
+		for inner in v.stmts { index_query_stmt(index, inner) }
 	case ^Stmt_Expr: for expr in v.exprs { index_query_expr(index, expr) }
 	case ^Stmt_Assign:
 		for expr in v.lhs { index_query_expr(index, expr) }
 		for expr in v.rhs { index_query_expr(index, expr) }
 	case ^Stmt_If:
+		index_query_region(index, v.span)
 		index_query_stmt(index, v.init)
 		index_query_expr(index, v.cond)
 		index_query_stmt(index, v.then)
 		index_query_stmt(index, v.otherwise)
 	case ^Stmt_For:
+		index_query_region(index, v.span)
 		index_query_stmt(index, v.init)
 		index_query_expr(index, v.cond)
 		index_query_stmt(index, v.post)
 		index_query_stmt(index, v.body)
 	case ^Stmt_Foreach:
+		index_query_region(index, v.span)
 		index_query_expr(index, v.iterable)
 		if v.kind == .Static { for body in v.expansion { index_query_stmt(index, body) } } else { index_query_stmt(index, v.body) }
 	case ^Stmt_When:
 		index_query_expr(index, v.cond)
 		index_query_stmt(index, v.selected)
 	case ^Stmt_Switch:
+		index_query_region(index, v.span)
 		index_query_stmt(index, v.init)
 		index_query_expr(index, v.subject)
 		for entry in v.cases {
+			index_query_region(index, entry.span)
 			for value in entry.values { index_query_expr(index, value) }
 			for inner in entry.stmts { index_query_stmt(index, inner) }
 		}
@@ -157,7 +171,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	type := base.denoted_type != INVALID_TYPE ? base.denoted_type : base.type
 	if base.resolution.kind == .Package { type = INVALID_TYPE }
 	if valid_query_span(index.c, base.span) {
-		append(&index.q.occurrences, Query_Occurrence{span = base.span, type = type})
+		append(&index.q.occurrences, Query_Occurrence{span = base.span, type = type, type_value = base.denoted_type != INVALID_TYPE})
 	}
 	switch v in expr {
 	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly:
@@ -179,7 +193,18 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		index_query_expr(index, v.hi)
 	case ^Expr_Call:
 		index_query_expr(index, v.callee)
-		for argument in v.args { index_query_expr(index, argument.value) }
+		// A named argument names a parameter of the procedure the call chose.
+		callee := symbol_of(index.c, expr_base(v.callee).resolution.symbol)
+		for argument in v.args {
+			if argument.name.text != "" && callee != nil {
+				for parameter in callee.param_symbols {
+					if bound := symbol_of(index.c, parameter); bound != nil && identifier_text(index.c, bound.name) == argument.name.text {
+						index_query_name(index, argument.name.span, argument.name.text, parameter, bound.type)
+					}
+				}
+			}
+			index_query_expr(index, argument.value)
+		}
 	case ^Expr_Postfix:
 		index_query_expr(index, v.operand)
 		index_query_expr(index, v.failure)
@@ -216,6 +241,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 			index_query_expr(index, v.capture.method)
 		}
 	case ^Expr_Proc:
+		index_query_region(index, v.span)
 		index_query_expr(index, v.signature)
 		for clause in v.where_clauses { index_query_expr(index, clause) }
 		index_query_stmt(index, v.body)

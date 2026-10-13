@@ -3,6 +3,7 @@ package lokec
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 
@@ -809,4 +810,109 @@ impl Value {
 			}
 		}
 	}
+}
+
+@(private = "file")
+visible_test_names :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file: u32, text, needle: string) -> []string {
+	handles, found := query_visible(s, snapshot, file, u32(strings.index(text, needle)), context.temp_allocator)
+	if !found { return nil }
+	names := make([]string, len(handles), context.temp_allocator)
+	for handle, index in handles {
+		symbol, _ := query_symbol(s, handle)
+		names[index] = symbol.name
+	}
+	return names
+}
+
+@(private = "file")
+member_test_names :: proc(t: ^testing.T, s: ^Compilation_Session, snapshot: Compilation_Snapshot, file: u32, text, needle: string) -> string {
+	members, found := query_members(s, snapshot_test_position(t, s, snapshot, file, text, needle), file, context.temp_allocator)
+	if !found { return "<none>" }
+	b := strings.builder_make(context.temp_allocator)
+	for member, index in members {
+		if index > 0 { strings.write_byte(&b, ' ') }
+		strings.write_string(&b, member.name)
+		if member.variant { strings.write_byte(&b, '!') }
+	}
+	return strings.to_string(b)
+}
+
+// Completion reads scopes and members from the snapshot, and an unfinished
+// statement still records what its operand is.
+@(test)
+session_queries_list_visible_names_and_members :: proc(t: ^testing.T) {
+	root := session_fixture(t, "visible")
+	if root == "" { return }
+	defer os.remove_all(root)
+	path := join_path({root, "unsaved", "main.loke"}, context.temp_allocator)
+	dependency := join_path({root, "unsaved", "values", "values.loke"}, context.temp_allocator)
+	text := `package main;
+import "values";
+Color :: enum { Red, Green }
+Shape :: union { circle: f64, empty:, }
+Point :: struct { x, y: int }
+impl Point {
+	length :: proc(self) -> int { return self.x + self.y; }
+	origin :: proc() -> Point { return {}; }
+}
+total := 0;
+walk :: proc(limit: int) -> int {
+	before := limit;
+	if (before > 0) {
+		inner := before;
+		before = inner;
+	}
+	{
+		sibling := 1;
+		before = sibling;
+	}
+	after := before;
+	return after;
+}
+main :: proc() {
+	p := Point{1, 2};
+	pp := &p;
+	c := Color.Red;
+	shape := Shape.empty;
+	_ = pp.x;
+	_ = c == .Red;
+	_ = shape;
+	_ = values.shared;
+	q := p.;
+	pp.
+}
+`
+	lib_text := "package values; @(public) shared :: 1; hidden :: 2;"
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, session_test_config())) { return }
+	testing.expect(t, set_session_overlay(&s, path, text) && set_session_overlay(&s, dependency, lib_text))
+	testing.expect(t, !check_session(&s, path_dir(path, context.temp_allocator)), "the unfinished selectors are syntax errors")
+	snapshot, captured := session_snapshot(&s)
+	if !testing.expect(t, captured) { return }
+	file, found := query_file(&s, snapshot, path)
+	if !testing.expect(t, found) { return }
+	// The parser reports each missing name once; checking adds nothing.
+	diagnostics, _ := query_diagnostics(&s, snapshot)
+	if testing.expect_value(t, len(diagnostics), 2) {
+		testing.expect(t, diagnostics[0].code == "L0225" && diagnostics[1].code == "L0225")
+	}
+
+	names := visible_test_names(&s, snapshot, file, text, "before = inner")
+	testing.expect(t, len(names) > 4 && names[0] == "inner" && names[1] == "before" && names[2] == "limit", "locals come innermost first")
+	testing.expect(t, slice.contains(names, "walk") && slice.contains(names, "total") && slice.contains(names, "values") && slice.contains(names, "int"))
+	testing.expect(t, !slice.contains(names, "sibling") && !slice.contains(names, "after") && !slice.contains(names, "x") && !slice.contains(names, "Red"), "a later, sibling, field, or member binding is not reachable")
+	names = visible_test_names(&s, snapshot, file, text, "after := before")
+	testing.expect(t, !slice.contains(names, "inner") && !slice.contains(names, "sibling") && names[0] == "before")
+	source, _ := query_source(&s, snapshot, file)
+	testing.expect(t, !source.bundled, "the program is not the bundled library")
+
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "p.;"), "length x y")
+	// A statement the parser could not finish is still checked.
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "pp.\n"), "length x y")
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "pp.x"), "length x y")
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Color.Red"), "Green Red")
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Shape.empty"), "circle! empty!")
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "values.shared"), "shared")
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Point{1"), "length origin")
 }

@@ -1,0 +1,335 @@
+// References and rename across every program the server checks. A binding is
+// its written definition: each root whose program loads that file contributes
+// the uses its own check recorded, and nothing is matched by spelling alone.
+// Rename refuses rather than guess: every program involved must check without
+// errors, and every written use of the old name must be one the compiler
+// resolved.
+package lsp
+
+import "core:fmt"
+import "core:slice"
+import "core:strings"
+
+import lokec "../src"
+
+// A request that was valid but could not be carried out; the message says why.
+REQUEST_FAILED :: -32803
+
+// The binding a request names, by where it is written.
+@(private = "file")
+Target :: struct {
+	symbol:  lokec.Query_Symbol,
+	path:    string,
+	lo, hi:  u32,
+	defined: bool,
+}
+
+// The binding at the position in the document's own root.
+@(private = "file")
+find_target :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> (target: Target, found: bool) {
+	at := symbol_at(s, session, snapshot, file, text, position) or_return
+	target.symbol = lokec.query_symbol(session, at.symbol) or_return
+	definition, defined := lokec.query_definition(session, at.symbol)
+	if !defined { return target, true }
+	source := lokec.query_source(session, snapshot, definition.span.file) or_return
+	target.path, target.lo, target.hi, target.defined = source.path, definition.span.lo, definition.span.hi, true
+	return target, true
+}
+
+// The target as a root's snapshot knows it: the binding written at the same
+// place. `loaded` is false when the root's program does not read that file.
+@(private = "file")
+binding_in :: proc(root: ^Root, target: Target) -> (snapshot: lokec.Compilation_Snapshot, handle: lokec.Symbol_Handle, loaded, found: bool) {
+	if root.unconfigured { return }
+	captured: bool
+	snapshot, captured = lokec.session_snapshot(&root.session)
+	if !captured { return }
+	file, in_program := lokec.query_file(&root.session, snapshot, target.path)
+	if !in_program { return }
+	loaded = true
+	at, recorded := lokec.query_at(&root.session, snapshot, file, target.lo)
+	if !recorded { return }
+	return snapshot, at.symbol, true, same_binding(&root.session, at.symbol, target)
+}
+
+@(private = "file")
+same_binding :: proc(session: ^lokec.Compilation_Session, handle: lokec.Symbol_Handle, target: Target) -> bool {
+	definition, defined := lokec.query_definition(session, handle)
+	if !defined { return false }
+	source, found := lokec.query_source(session, lokec.Compilation_Snapshot{definition.snapshot}, definition.span.file)
+	return found && definition.span.lo == target.lo && definition.span.hi == target.hi && path_key(source.path, context.temp_allocator) == path_key(target.path, context.temp_allocator)
+}
+
+@(private = "file")
+Found_Location :: struct { key, path: string, lo: u32, range: Range }
+
+// Every recorded use of the binding, in every root, once each and in order.
+references :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position, include_declaration: bool) -> string {
+	target, found := find_target(s, session, snapshot, file, text, position)
+	if !found || !target.defined { return "null" }
+	locations := make([dynamic]Found_Location, context.temp_allocator)
+	seen := make(map[string]bool, context.temp_allocator)
+	for _, root in s.roots {
+		root_snapshot, handle, _, same := binding_in(root, target)
+		if !same { continue }
+		uses, listed := lokec.query_references(&root.session, handle, include_declaration)
+		if !listed { continue }
+		defer delete(uses)
+		for use in uses {
+			path, range, placed := place(s, &root.session, root_snapshot, use, context.temp_allocator)
+			if !placed { continue }
+			key := path_key(path, context.temp_allocator)
+			identity := fmt.tprintf("%s\x00%d", key, use.span.lo)
+			if seen[identity] { continue }
+			seen[identity] = true
+			append(&locations, Found_Location{key, path, use.span.lo, range})
+		}
+	}
+	sort_locations(locations[:])
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_byte(&b, '[')
+	for location, index in locations {
+		if index > 0 { strings.write_byte(&b, ',') }
+		write_location(s, &b, location.path, location.range)
+	}
+	strings.write_byte(&b, ']')
+	return strings.to_string(b)
+}
+
+@(private = "file")
+sort_locations :: proc(locations: []Found_Location) {
+	slice.sort_by(locations, proc(a, b: Found_Location) -> bool {
+		if a.key != b.key { return a.key < b.key }
+		return a.lo < b.lo
+	})
+}
+
+// The name's range and spelling, when a rename could start here.
+prepare_rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> (result, failure: string) {
+	target, found := find_target(s, session, snapshot, file, text, position)
+	if !found { return "null", "" }
+	if failure = renameable(s, target); failure != "" { return }
+	at, _ := symbol_at(s, session, snapshot, file, text, position)
+	_, range, _ := place(s, session, snapshot, at.location, context.temp_allocator)
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, `{"range":`)
+	write_range(&b, range)
+	strings.write_string(&b, `,"placeholder":`)
+	write_json_string(&b, target.symbol.name)
+	strings.write_byte(&b, '}')
+	return strings.to_string(b), ""
+}
+
+// Why the binding cannot be renamed at all, or "".
+@(private = "file")
+renameable :: proc(s: ^Server, target: Target) -> string {
+	name := target.symbol.name
+	if !target.defined || target.symbol.kind == .Builtin {
+		return fmt.tprintf("`%s` has no written declaration to rename.", name)
+	}
+	for _, root in s.roots {
+		if root.unconfigured { continue }
+		snapshot, captured := lokec.session_snapshot(&root.session)
+		if !captured { continue }
+		file, loaded := lokec.query_file(&root.session, snapshot, target.path)
+		if !loaded { continue }
+		if source, found := lokec.query_source(&root.session, snapshot, file); found && source.bundled {
+			return fmt.tprintf("`%s` belongs to the library bundled with the compiler.", name)
+		}
+	}
+	return ""
+}
+
+@(private = "file")
+Edit :: struct { key, path: string, lo: u32, range: Range }
+
+// A workspace edit that renames every use of the binding in every program the
+// server checks, or why it would be unsafe.
+rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position, new_name: string) -> (result, failure: string) {
+	target, found := find_target(s, session, snapshot, file, text, position)
+	if !found { return "", "There is no binding at this position to rename." }
+	if failure = renameable(s, target); failure != "" { return }
+	old := target.symbol.name
+	if !is_identifier(new_name) { return "", fmt.tprintf("`%s` is not a name.", new_name) }
+	if new_name == old { return `{"changes":{}}`, "" }
+	// Fields, enum members, and `impl` or `extend` members are reached through
+	// a value or type, so scope cannot capture them; their type's other
+	// members can.
+	member := target.symbol.kind == .Field || target.symbol.kind == .Enum_Member || target.symbol.owner.id != lokec.INVALID_TYPE
+	edits := make([dynamic]Edit, context.temp_allocator)
+	seen := make(map[string]bool, context.temp_allocator)
+	for _, root in s.roots {
+		root_snapshot, handle, loaded, same := binding_in(root, target)
+		if !loaded { continue }
+		rs := &root.session
+		diagnostics, _ := lokec.query_diagnostics(rs, root_snapshot)
+		for diagnostic in diagnostics {
+			if diagnostic.severity != .Error { continue }
+			at := ""
+			if source, placed := lokec.query_source(rs, root_snapshot, diagnostic.location.span.file); placed {
+				at = fmt.tprintf(" (%s:%d)", source.path, offset_to_position(source.text, source.line_starts, diagnostic.location.span.lo, true).line + 1)
+			}
+			return "", fmt.tprintf("Rename needs every program that loads the binding to check without errors first: %s%s", first_line(diagnostic.message), at)
+		}
+		if same {
+			// The bundled library reaches a program's names only through a
+			// generic it instantiates, which records the use.
+			uses, _ := lokec.query_references(rs, handle)
+			defer delete(uses)
+			for use in uses {
+				source, _ := lokec.query_source(rs, root_snapshot, use.span.file)
+				if source.bundled {
+					line := offset_to_position(source.text, source.line_starts, use.span.lo, true).line + 1
+					return "", fmt.tprintf("`%s` is used by the library bundled with the compiler, at %s:%d.", old, source.path, line)
+				}
+			}
+			if member {
+				if conflict := member_conflict(rs, root_snapshot, handle, new_name); conflict != "" { return "", conflict }
+			}
+		}
+		for source_file := u32(0); ; source_file += 1 {
+			source := lokec.query_source(rs, root_snapshot, source_file) or_break
+			if source.bundled || !strings.has_suffix(source.path, ".loke") { continue }
+			tokens := lex_text(source.text)
+			defer delete(tokens)
+			for token, index in tokens {
+				if token.kind != .Ident { continue }
+				word := source.text[token.lo:token.hi]
+				if word != old && (word != new_name || member) { continue }
+				// A package clause and an import alias name packages, never
+				// a binding the snapshot records.
+				if index > 0 && (tokens[index - 1].kind == .Package || tokens[index - 1].kind == .Import) { continue }
+				at, recorded := lokec.query_at(rs, root_snapshot, source_file, token.lo)
+				resolved := recorded && at.symbol.id != lokec.INVALID_SYMBOL
+				where_written := fmt.tprintf("%s:%d", source.path, offset_to_position(source.text, source.line_starts, token.lo, true).line + 1)
+				if word == old {
+					if !resolved {
+						return "", fmt.tprintf("`%s` at %s has no binding the compiler recorded, as in an inactive `when` branch, a generic that is never instantiated, or an interface slot, so rename cannot tell what it names.", old, where_written)
+					}
+					if !same_binding(rs, at.symbol, target) { continue }
+					// Through a package, a selector reads that package's
+					// declarations, not this scope.
+					if !member && (index == 0 || tokens[index - 1].kind != .Period) {
+						if other, visible := visible_named(rs, root_snapshot, source_file, token.lo, new_name); visible {
+							return "", fmt.tprintf("`%s` already names %s where `%s` appears, at %s.", new_name, describe(rs, other), old, where_written)
+						}
+					}
+					identity := fmt.tprintf("%s\x00%d", path_key(source.path, context.temp_allocator), token.lo)
+					if seen[identity] { continue }
+					seen[identity] = true
+					path, range, _ := place(s, rs, root_snapshot, at.location, context.temp_allocator)
+					append(&edits, Edit{path_key(path, context.temp_allocator), path, token.lo, range})
+				} else if resolved && same && is_redeclaration(rs, at, handle) {
+					return "", fmt.tprintf("`%s` is already declared in the same scope, at %s.", new_name, where_written)
+				}
+			}
+		}
+	}
+	slice.sort_by(edits[:], proc(a, b: Edit) -> bool {
+		if a.key != b.key { return a.key < b.key }
+		return a.lo < b.lo
+	})
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, `{"changes":{`)
+	for edit, index in edits {
+		if index == 0 || edits[index - 1].key != edit.key {
+			if index > 0 { strings.write_string(&b, "],") }
+			write_json_string(&b, uri_for(s, edit.key, edit.path))
+			strings.write_string(&b, ":[")
+		} else {
+			strings.write_byte(&b, ',')
+		}
+		strings.write_string(&b, `{"range":`)
+		write_range(&b, edit.range)
+		strings.write_string(&b, `,"newText":`)
+		write_json_string(&b, new_name)
+		strings.write_byte(&b, '}')
+	}
+	if len(edits) > 0 { strings.write_byte(&b, ']') }
+	strings.write_string(&b, "}}")
+	return strings.to_string(b), ""
+}
+
+// One identifier token and nothing else, other than the blank `_`.
+@(private = "file")
+is_identifier :: proc(name: string) -> bool {
+	if name == "" || name == "_" { return false }
+	tokens := lex_text(name)
+	defer delete(tokens)
+	count := 0
+	for token in tokens { if token.kind != .EOF { count += 1 } }
+	return count == 1 && tokens[0].kind == .Ident && tokens[0].lo == 0 && int(tokens[0].hi) == len(name)
+}
+
+@(private = "file")
+first_line :: proc(text: string) -> string {
+	if newline := strings.index_byte(text, '\n'); newline >= 0 { return text[:newline] }
+	return text
+}
+
+// The binding an unqualified `name` reaches at the offset, if any.
+@(private = "file")
+visible_named :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file, offset: u32, name: string) -> (lokec.Query_Symbol, bool) {
+	visible, found := lokec.query_visible(session, snapshot, file, offset, context.temp_allocator)
+	if !found { return {}, false }
+	for handle in visible {
+		if symbol, known := lokec.query_symbol(session, handle); known && symbol.name == name { return symbol, true }
+	}
+	return {}, false
+}
+
+// Whether `at`, written with the new name, declares a local in the renamed
+// one's own scope. One declared before the renamed binding is visible at its
+// declaration, which the use check refuses. Between them, the two checks
+// cover capture: a binding the renamed one would shadow at some use is either
+// declared before it in an enclosing scope, so visible where it is declared,
+// or later in its own scope.
+@(private = "file")
+is_redeclaration :: proc(session: ^lokec.Compilation_Session, at: lokec.Query_Position, renamed: lokec.Symbol_Handle) -> bool {
+	symbol, known := lokec.query_symbol(session, at.symbol)
+	target, found := lokec.query_symbol(session, renamed)
+	if !known || !found || symbol.definition.span != at.location.span { return false }
+	return target.scope.span.file != lokec.NO_FILE && symbol.scope.span == target.scope.span
+}
+
+// Whether the member's type already has a member spelled `new_name`, as its
+// declaration writes them or as the type is seen from where it is declared.
+@(private = "file")
+member_conflict :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, handle: lokec.Symbol_Handle, new_name: string) -> string {
+	symbol, _ := lokec.query_symbol(session, handle)
+	owner := symbol.owner
+	file := symbol.definition.span.file
+	if symbol.parent.id != lokec.INVALID_SYMBOL && (symbol.kind == .Field || symbol.kind == .Enum_Member) {
+		parent, _ := lokec.query_symbol(session, symbol.parent)
+		owner = parent.type
+		siblings, _ := lokec.query_symbols(session, snapshot, file)
+		for sibling in siblings {
+			other, known := lokec.query_symbol(session, sibling)
+			if known && other.parent == symbol.parent && other.name == new_name {
+				return fmt.tprintf("`%s` already has a member `%s`.", parent.name, new_name)
+			}
+		}
+	}
+	if owner.id == lokec.INVALID_TYPE { return "" }
+	type, _ := lokec.query_type(session, owner)
+	for type_value in ([]bool{false, true}) {
+		operand := lokec.Query_Position{location = lokec.Query_Location{snapshot = snapshot.id}, type = owner, type_value = type_value}
+		members, listed := lokec.query_members(session, operand, file, context.temp_allocator)
+		if !listed { continue }
+		for candidate in members {
+			if candidate.name == new_name { return fmt.tprintf("`%s` already has a member `%s`.", type.name, new_name) }
+		}
+	}
+	return ""
+}
+
+// "the local `count` declared at line 4", for a refusal.
+@(private = "file")
+describe :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_Symbol) -> string {
+	definition := symbol.definition.span
+	if definition.file == lokec.NO_FILE { return fmt.tprintf("the predeclared `%s`", symbol.name) }
+	source, found := lokec.query_source(session, lokec.Compilation_Snapshot{symbol.definition.snapshot}, definition.file)
+	if !found { return fmt.tprintf("`%s`", symbol.name) }
+	line := offset_to_position(source.text, source.line_starts, definition.lo, true).line + 1
+	return fmt.tprintf("`%s` declared at %s:%d", symbol.name, source.path, line)
+}

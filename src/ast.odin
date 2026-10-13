@@ -809,6 +809,9 @@ Stmt :: union {
 
 Stmt_Error :: struct {
 	using base: Node_Base,
+	// The simple statement the parser could not finish, as far as it got, or
+	// nil. Only the checker reads it, so editor queries see its names and types.
+	partial: Stmt,
 }
 
 Block :: struct {

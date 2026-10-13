@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 
@@ -566,11 +567,12 @@ position_of :: proc(t: ^testing.T, text, needle: string, offset := 0) -> Positio
 }
 
 // Sends a position request and returns its reply once every check has run.
+// `extra` adds members to its parameters, starting with a comma.
 @(private = "file")
-ask :: proc(h: ^Harness, method, relative: string, position: Position) -> json.Value {
+ask :: proc(h: ^Harness, method, relative: string, position: Position, extra := "") -> json.Value {
 	request(h, "70", method, fmt.tprintf(
-		`{{"textDocument":{{"uri":%s}},"position":{{"line":%d,"character":%d}}}}`,
-		quoted(uri_of(h, relative)), position.line, position.character,
+		`{{"textDocument":{{"uri":%s}},"position":{{"line":%d,"character":%d}}%s}}`,
+		quoted(uri_of(h, relative)), position.line, position.character, extra,
 	))
 	settle(h)
 	for message in take(h) {
@@ -827,4 +829,269 @@ describe_symbols :: proc(b: ^strings.Builder, symbols: json.Array) {
 			strings.write_byte(b, ')')
 		}
 	}
+}
+
+// A completion reply's labels, keywords left out, each with its kind when
+// `kinds` is set.
+@(private = "file")
+completion_labels :: proc(reply: json.Value, kinds := false) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for item in member_array(member(reply, "result"), "items") {
+		kind, _ := member_int(item, "kind")
+		if kind == i64(Completion_Kind.Keyword) { continue }
+		label, _ := member_string(item, "label")
+		if strings.builder_len(b) > 0 { strings.write_byte(&b, ' ') }
+		strings.write_string(&b, label)
+		if kinds { fmt.sbprintf(&b, "/%d", kind) }
+	}
+	return strings.to_string(b)
+}
+
+@(private = "file")
+completion_item :: proc(reply: json.Value, label: string) -> json.Value {
+	for item in member_array(member(reply, "result"), "items") {
+		if name, _ := member_string(item, "label"); name == label { return item }
+	}
+	return nil
+}
+
+@(test)
+completion_offers_members_and_names_in_scope :: proc(t: ^testing.T) {
+	main_text := "package main;\nimport \"lib\";\nColor :: enum { Red, Green }\nPoint :: struct { x, y: int }\nimpl Point {\n\tlength :: proc(self) -> int { return self.x + self.y; }\n}\n// Adds two numbers.\nadd :: proc(a, b: int) -> int { return a + b; }\nmain :: proc() {\n\tp := Point{1, 2};\n\tc := Color.Red;\n\t// p.\n\t_ = \"p.\";\n\t{\n\t\tinner := add(p.x, lib.twice(1));\n\t\t_ = inner;\n\t}\n\tlater := c;\n\tp.\n}\n"
+	lib_text := "package lib;\n@(public) twice :: proc(n: int) -> int { return n * 2; }\nhidden :: proc() {}\n"
+	for listed in ([]bool{false, true}) {
+		h: Harness
+		params := `{"capabilities":{"textDocument":{"completion":{"completionItem":{"documentationFormat":["markdown"]},"completionItemKind":{"valueSet":[2,3,5,6,7,9,13,14,20,21,22]}}}}}` if listed else `{"capabilities":{}}`
+		if !start(&h, t, listed ? "completion-kinds" : "completion", params) { finish(&h); continue }
+		write_file(&h, "lib/lib.loke", lib_text)
+		open(&h, "main.loke", main_text)
+		// The unfinished `p.` on the last line still knows what `p` is.
+		reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "p.\n}", 2))
+		testing.expect_value(t, completion_labels(reply, kinds = true), "length/2 x/5 y/5")
+		reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "lib.twice", 4))
+		testing.expect_value(t, completion_labels(reply), "twice")
+		reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "Color.Red;", 6))
+		testing.expect_value(t, completion_labels(reply, kinds = true), listed ? "Green/20 Red/20" : "Green/12 Red/12")
+
+		// Names in scope, innermost first; not a later local, nor a field.
+		reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "_ = inner", 4))
+		labels := strings.split(completion_labels(reply, kinds = true), " ", context.temp_allocator)
+		testing.expectf(t, len(labels) > 6 && labels[0] == "inner/6" && labels[1] == "c/6" && labels[2] == "p/6", "names: %v", labels)
+		testing.expect(t, slice.contains(labels, listed ? "Point/22" : "Point/7") && slice.contains(labels, "lib/9") && slice.contains(labels, "add/3") && slice.contains(labels, "int/7"))
+		testing.expect(t, !slice.contains(labels, "later/6") && !slice.contains(labels, "x/5") && !slice.contains(labels, "twice/3"))
+		keyword, _ := member_int(completion_item(reply, "foreach"), "kind")
+		testing.expect_value(t, keyword, i64(Completion_Kind.Keyword))
+		add_item := completion_item(reply, "add")
+		detail, _ := member_string(add_item, "detail")
+		testing.expect_value(t, detail, "proc(a, b: int) -> int")
+		documentation, _ := member_string(add_item, "documentation")
+		if listed { documentation, _ = member_string(member(add_item, "documentation"), "value") }
+		testing.expect_value(t, documentation, "Adds two numbers.")
+
+		// Nothing inside a comment or a string.
+		reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "// p.", 5))
+		testing.expect(t, len(member_array(member(reply, "result"), "items")) == 0)
+		reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, main_text, "\"p.\"", 3))
+		testing.expect(t, len(member_array(member(reply, "result"), "items")) == 0)
+		finish(&h)
+	}
+}
+
+// "label;label @signature/parameter", or "null".
+@(private = "file")
+signature_summary :: proc(reply: json.Value) -> string {
+	result := member(reply, "result")
+	if _, is_null := result.(json.Null); is_null || result == nil { return "null" }
+	b := strings.builder_make(context.temp_allocator)
+	for signature, index in member_array(result, "signatures") {
+		if index > 0 { strings.write_byte(&b, ';') }
+		label, _ := member_string(signature, "label")
+		strings.write_string(&b, label)
+	}
+	active_signature, _ := member_int(result, "activeSignature")
+	active_parameter, _ := member_int(result, "activeParameter")
+	fmt.sbprintf(&b, " @%d/%d", active_signature, active_parameter)
+	return strings.to_string(b)
+}
+
+@(test)
+signature_help_follows_the_argument_being_written :: proc(t: ^testing.T) {
+	text := "package main;\nPoint :: struct { x, y: int }\nimpl Point {\n\tscale :: proc(self, factor: int) -> Point { return {self.x * factor, self.y * factor}; }\n}\n// Adds two numbers.\nadd :: proc(a, b: int) -> int { return a + b; }\nplain :: proc(value: int) -> int { return value; }\nfloating :: proc(value: f64) -> f64 { return value; }\npick :: proc{plain, floating};\nmain :: proc() {\n\tp := Point{1, 2};\n\t_ = p.scale(2);\n\t_ = pick(1);\n\t_ = add(plain(1), 2);\n\t_ = add(b = 2, a = 1);\n\tif (add(1, 2) > 0) {}\n\tadd(1, \n}\n"
+	for offsets in ([]bool{true, false}) {
+		h: Harness
+		params := `{"capabilities":{"textDocument":{"signatureHelp":{"signatureInformation":{"parameterInformation":{"labelOffsetSupport":true}}}}}}` if offsets else `{"capabilities":{}}`
+		if !start(&h, t, offsets ? "signatures-offsets" : "signatures", params) { finish(&h); continue }
+		open(&h, "main.loke", text)
+		// The unfinished call on the last line is still a call to `add`.
+		reply := ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "add(1, \n", 7))
+		testing.expect_value(t, signature_summary(reply), "add :: proc(a, b: int) -> int @0/1")
+		signature := member_array(member(reply, "result"), "signatures")[0]
+		documentation, _ := member_string(signature, "documentation")
+		testing.expect_value(t, documentation, "Adds two numbers.")
+		first := member_array(signature, "parameters")[0]
+		if offsets {
+			bounds := member_array(first, "label")
+			testing.expect(t, len(bounds) == 2 && bounds[0].(json.Integer) == 12 && bounds[1].(json.Integer) == 13)
+		} else {
+			label, _ := member_string(first, "label")
+			testing.expect_value(t, label, "a")
+		}
+		// A method call supplies `self` before the parentheses.
+		reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "scale(2", 6))
+		testing.expect_value(t, signature_summary(reply), "scale :: proc(self, factor: int) -> Point @0/1")
+		reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "pick(1", 5))
+		testing.expect_value(t, signature_summary(reply), "plain :: proc(value: int) -> int @0/0")
+		// The innermost open call is the one shown.
+		reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "plain(1), 2", 6))
+		testing.expect_value(t, signature_summary(reply), "plain :: proc(value: int) -> int @0/0")
+		reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "plain(1), 2", 10))
+		testing.expect_value(t, signature_summary(reply), "add :: proc(a, b: int) -> int @0/1")
+		reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "b = 2, a", 4))
+		testing.expect_value(t, signature_summary(reply), "add :: proc(a, b: int) -> int @0/1")
+		// Neither a statement's parentheses nor a literal's braces are a call.
+		reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "if (add", 4))
+		testing.expect_value(t, signature_summary(reply), "null")
+		reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "Point{1, 2}", 8))
+		testing.expect_value(t, signature_summary(reply), "null")
+		finish(&h)
+	}
+}
+
+// Two programs that share a library through their manifests.
+@(private = "file")
+shared_library :: proc(h: ^Harness, app, lib: string) {
+	for name in ([]string{"app1", "app2"}) {
+		write_file(h, fmt.tprintf("%s/loke.project", name), "require lib ../lib\n")
+		write_file(h, fmt.tprintf("%s/main.loke", name), app)
+		open(h, fmt.tprintf("%s/main.loke", name), app)
+	}
+	write_file(h, "lib/lib.loke", lib)
+	open(h, "lib/lib.loke", lib)
+	settle(h)
+	take(h)
+}
+
+// "file:line" for each location, relative to the harness root.
+@(private = "file")
+describe_locations :: proc(h: ^Harness, reply: json.Value) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	prefix := path_to_uri(h.root, context.temp_allocator)
+	result, _ := member(reply, "result").(json.Array)
+	for location, index in result {
+		if index > 0 { strings.write_byte(&b, ' ') }
+		uri, _ := member_string(location, "uri")
+		fmt.sbprintf(&b, "%s:%d", strings.trim_prefix(uri, fmt.tprintf("%s/", prefix)), start_of(location).line + 1)
+	}
+	return strings.to_string(b)
+}
+
+@(test)
+references_follow_one_binding_across_programs :: proc(t: ^testing.T) {
+	app := "package main;\nimport lib \"lib:\";\nmain :: proc() {\n\tvalue := lib.twice(1);\n\t{\n\t\tvalue := 2;\n\t\t_ = value;\n\t}\n\t_ = lib.twice(value);\n}\n"
+	lib_text := "package lib;\n@(public) twice :: proc(n: int) -> int { return n * 2; }\n"
+	h: Harness
+	if !start(&h, t, "references") { finish(&h); return }
+	defer finish(&h)
+	shared_library(&h, app, lib_text)
+	testing.expect_value(t, len(h.s.roots), 2)
+	// The shadowing inner `value` is another binding.
+	reply := ask(&h, "textDocument/references", "app1/main.loke", position_of(t, app, "value := lib"), `,"context":{"includeDeclaration":true}`)
+	testing.expect_value(t, describe_locations(&h, reply), "app1/main.loke:4 app1/main.loke:9")
+	reply = ask(&h, "textDocument/references", "app1/main.loke", position_of(t, app, "value);"), `,"context":{"includeDeclaration":false}`)
+	testing.expect_value(t, describe_locations(&h, reply), "app1/main.loke:9")
+	// Both programs' uses of the library's procedure.
+	reply = ask(&h, "textDocument/references", "lib/lib.loke", position_of(t, lib_text, "twice ::"), `,"context":{"includeDeclaration":true}`)
+	testing.expect_value(t, describe_locations(&h, reply), "app1/main.loke:4 app1/main.loke:9 app2/main.loke:4 app2/main.loke:9 lib/lib.loke:2")
+	reply = ask(&h, "textDocument/references", "app2/main.loke", position_of(t, app, "{\n"), `,"context":{"includeDeclaration":true}`)
+	testing.expect(t, is_null_result(reply), "no binding, no references")
+}
+
+// "file:count" for each file a rename edits, or the refusal's message.
+@(private = "file")
+describe_rename :: proc(h: ^Harness, reply: json.Value) -> string {
+	if message, failed := member_string(member(reply, "error"), "message"); failed { return message }
+	changes, _ := member(member(reply, "result"), "changes").(json.Object)
+	prefix := fmt.tprintf("%s/", path_to_uri(h.root, context.temp_allocator))
+	files := make([dynamic]string, context.temp_allocator)
+	for uri, edits in changes {
+		append(&files, fmt.tprintf("%s:%d", strings.trim_prefix(uri, prefix), len(edits.(json.Array))))
+	}
+	slice.sort(files[:])
+	return strings.join(files[:], " ", context.temp_allocator)
+}
+
+@(private = "file")
+rename_to :: proc(h: ^Harness, relative, text, needle, name: string) -> string {
+	return describe_rename(h, ask(h, "textDocument/rename", relative, position_of(h.t, text, needle), fmt.tprintf(`,"newName":%s`, quoted(name))))
+}
+
+@(test)
+rename_changes_every_use_or_refuses :: proc(t: ^testing.T) {
+	app := "package main;\nimport lib \"lib:\";\nPoint :: struct { x, y: int }\nscaled :: proc(p: Point, factor: int) -> Point { return Point{x = p.x * factor, y = p.y * factor}; }\nmain :: proc() {\n\tvalue := lib.twice(1);\n\t{\n\t\tother := 2;\n\t\t_ = other;\n\t\textra := 3;\n\t\t_ = extra;\n\t}\n\tp := scaled(Point{1, 2}, factor = value);\n\t_ = lib.twice(p.x);\n}\n"
+	lib_text := "package lib;\n@(public) twice :: proc(n: int) -> int { return n * 2; }\n@(public) thrice :: proc(n: int) -> int { lib := n * 3; return lib; }\n"
+	h: Harness
+	if !start(&h, t, "rename", `{"capabilities":{"textDocument":{"rename":{"prepareSupport":true}}}}`) { finish(&h); return }
+	defer finish(&h)
+	shared_library(&h, app, lib_text)
+
+	// Every program that loads the library, and the library itself.
+	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "twice(1)", "double"), "app1/main.loke:2 app2/main.loke:2 lib/lib.loke:1")
+	// A parameter with its named argument; a field with its literal key.
+	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "factor: int", "scale"), "app1/main.loke:4")
+	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "x, y", "z"), "app1/main.loke:4")
+	// A name used only in a block that ended is free.
+	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "value := lib", "other"), "app1/main.loke:2")
+	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "value := lib", "value"), "")
+	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "Point ::", "Spot"), "app1/main.loke:5")
+	// The package clause and the import alias spelled `lib` name packages.
+	testing.expect_value(t, rename_to(&h, "lib/lib.loke", lib_text, "lib := n", "tripled"), "lib/lib.loke:2")
+
+	refusals := []struct { needle, name, message: string } {
+		{"other := 2", "value", "`value` already names"},
+		{"other := 2", "extra", "`extra` is already declared in the same scope"},
+		{"value := lib", "p", "`p` is already declared in the same scope"},
+		{"value := lib", "int", "the predeclared `int`"},
+		{"scaled ::", "main", "`main` already names"},
+		{"twice(1)", "thrice", "`thrice` already names"},
+		{"x, y", "y", "`Point` already has a member `y`."},
+		{"value := lib", "1x", "`1x` is not a name."},
+		{"value := lib", "proc", "`proc` is not a name."},
+		{"value := lib", "_", "`_` is not a name."},
+	}
+	for refusal in refusals {
+		got := rename_to(&h, "app1/main.loke", app, refusal.needle, refusal.name)
+		testing.expectf(t, strings.contains(got, refusal.message), "renaming at %q to %q: %s", refusal.needle, refusal.name, got)
+	}
+	reply := ask(&h, "textDocument/prepareRename", "app1/main.loke", position_of(t, app, "value := lib"))
+	placeholder, _ := member_string(member(reply, "result"), "placeholder")
+	testing.expect(t, placeholder == "value" && start_of(member(reply, "result")) == position_of(t, app, "value := lib"))
+	reply = ask(&h, "textDocument/prepareRename", "app1/main.loke", position_of(t, app, "int) -> Point"))
+	message, _ := member_string(member(reply, "error"), "message")
+	testing.expect_value(t, message, "`int` has no written declaration to rename.")
+
+	// Code the compiler did not check could use the name either way.
+	inactive := "package lib;\n@(public) twice :: proc(n: int) -> int { return n * 2; }\n@(public) thrice :: proc(n: int) -> int { lib := n * 3; return lib; }\nwhen (false) { extra :: proc() -> int { return twice(2); } }\n"
+	change(&h, "lib/lib.loke", inactive, 2)
+	got := rename_to(&h, "app1/main.loke", app, "twice(1)", "double")
+	testing.expectf(t, strings.has_prefix(got, "`twice` at ") && strings.contains(got, "has no binding the compiler recorded"), "%s", got)
+	change(&h, "lib/lib.loke", lib_text, 3)
+	// Every program that reads the binding must check first.
+	broken := "package main;\nimport lib \"lib:\";\nmain :: proc() { _ = lib.twice(\"text\"); }\n"
+	change(&h, "app2/main.loke", broken, 2)
+	got = rename_to(&h, "app1/main.loke", app, "twice(1)", "double")
+	testing.expectf(t, strings.has_prefix(got, "Rename needs every program that loads the binding to check without errors first"), "%s", got)
+	// A program that does not read it does not matter.
+	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "value := lib", "total"), "app1/main.loke:2")
+}
+
+@(test)
+rename_leaves_the_bundled_library_alone :: proc(t: ^testing.T) {
+	text := "package main;\nimport \"core:fmt\";\nmain :: proc() { fmt.println(1); }\n"
+	h: Harness
+	if !start(&h, t, "rename-bundled") { finish(&h); return }
+	defer finish(&h)
+	open(&h, "main.loke", text)
+	reply := ask(&h, "textDocument/rename", "main.loke", position_of(t, text, "println"), `,"newName":"say"`)
+	message, _ := member_string(member(reply, "error"), "message")
+	testing.expect_value(t, message, "`println` belongs to the library bundled with the compiler.")
 }

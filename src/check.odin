@@ -2790,6 +2790,35 @@ check_local_declaration :: proc(k: ^Checker, d: ^Decl) {
 	classify_declaration_copies(k, d)
 }
 
+// An unfinished statement is checked only so its names and types are recorded
+// for editor queries. The syntax error is the one report: what checking says
+// about the statement's own text is dropped. Later passes never see it.
+@(private = "file")
+check_partial_statement :: proc(k: ^Checker, s: ^Stmt_Error) {
+	if s.partial == nil {
+		return
+	}
+	mark := len(k.c.diagnostics)
+	check_stmt(k, s.partial)
+	// Reports elsewhere, such as from a declaration checked on demand, stay.
+	kept := clamp(mark, 0, len(k.c.diagnostics))
+	for index in kept ..< len(k.c.diagnostics) {
+		diagnostic := k.c.diagnostics[index]
+		span := diagnostic.span
+		if span.file == s.span.file && span.lo >= s.span.lo && span.hi <= s.span.hi {
+			if diagnostic.severity == .Error {
+				k.c.error_count -= 1
+			}
+			destroy_diagnostic(k.c, &k.c.diagnostics[index])
+			continue
+		}
+		k.c.diagnostics[kept] = diagnostic
+		kept += 1
+	}
+	resize(&k.c.diagnostics, kept)
+	k.c.last_noted_diagnostic = min(k.c.last_noted_diagnostic, kept)
+}
+
 check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	#partial switch _ in stmt {
 	case ^Decl, ^Item_Impl:
@@ -2800,6 +2829,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	switch s in stmt {
 	case ^Stmt_Error:
 		// Parser diagnostics already describe this retained recovery node.
+		check_partial_statement(k, s)
 		return FLOWS
 
 	case ^Item_Impl:

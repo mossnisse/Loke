@@ -248,12 +248,39 @@ that produced the diagnostics:
   imported package or the bundled library.
 - **Document symbols** list the file's package-level declarations, with the
   fields of each record and the members of each enum inside it.
+- **Completion** after `value.` offers the fields and methods of `value`'s
+  type, the members of an enum or union named before the `.`, or the public
+  declarations of an imported package. Elsewhere it offers every name in scope
+  at the cursor, innermost first, then the keywords. It offers nothing inside a
+  comment or a literal, or after a bare `.` whose type comes from context.
+- **Signature help** shows the parameters of the call whose argument list holds
+  the cursor, and which one is being written. It follows named arguments, and a
+  method call's receiver is not counted.
+- **Find references** lists every use of the binding under the cursor, in every
+  program the server checks. A local of the same name in another scope is a
+  different binding.
+- **Rename** changes the binding's declaration and every use, in every program
+  the server checks, including a named argument for a parameter and a
+  record literal's field name. It refuses rather than guess, and says why:
+  - when a program that loads the binding's file has errors;
+  - when the new name is already visible where the binding is used, or is
+    declared later in the same scope, so the meaning would change;
+  - when the binding's type already has a member with the new name;
+  - when the old name appears where the compiler recorded no binding for it,
+    such as an inactive `when` branch, a generic that is never instantiated,
+    an interface slot, or a named result;
+  - when the binding is predeclared, or belongs to or is used by the bundled
+    library.
 
-A name the compiler could not resolve, such as one from a missing import, has
-no hover or definition. A request waits for the check of the text it was asked
-about; if the document changes first, the server answers that the content was
-modified, and the editor asks again. Completion and rename are not available
-yet.
+These work in unfinished code: a statement the compiler could not parse to the
+end, such as `value.` or `call(first, `, is still checked for the names and
+types it contains. A name the compiler could not resolve, such as one from a
+missing import, has no hover or definition. A request waits for the check of
+the text it was asked about, and references and rename wait for every program;
+if the document changes first, the server answers that the content was
+modified, and the editor asks again. References and rename see only the
+programs of open documents, together with the packages those programs load,
+so a program that is not open and uses the binding is not changed.
 
 Each open document is checked through a root, which is what `lokec` would be
 given:

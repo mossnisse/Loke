@@ -680,6 +680,24 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id, positi
 	v.value_category = .Value
 	callee := position == .Callee
 
+	// The parser reported the missing name. The operand is still checked, so
+	// an editor sees its type, and no lookup reports a second time.
+	if v.name.text == "" {
+		if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
+			alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
+			if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
+				annotate_package_alias(ident, alias)
+				v.type = INVALID_TYPE
+				return
+			}
+		}
+		if v.operand != nil {
+			check_single_expr(k, v.operand)
+		}
+		v.type = INVALID_TYPE
+		return
+	}
+
 	// `.Member`: the implicit enum selector and the payloadless union variant,
 	// both of which take their type from the expected one.
 	if v.operand == nil {
@@ -1140,13 +1158,18 @@ method_candidates :: proc(k: ^Checker, receiver: Type_Id, name: Identifier_Id) -
 	return out[:]
 }
 
+@(private = "file")
+annotate_package_alias :: proc(ident: ^Expr_Ident, alias: Symbol_Id) {
+	ident.symbol = alias
+	ident.resolution = Resolution{kind = .Package, symbol = alias}
+	ident.type = TYPE_VOID
+}
+
 // `alias.name`. Only the target package's own scope is searched — never its
 // parents — and only a `@(public)` declaration is visible from outside.
 check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Ident, alias: Symbol_Id, callee: bool) {
 	alias_symbol := symbol_of(k.c, alias)
-	ident.symbol = alias
-	ident.resolution = Resolution{kind = .Package, symbol = alias}
-	ident.type = TYPE_VOID
+	annotate_package_alias(ident, alias)
 
 	target := package_of(k.c, alias_symbol.pkg)
 	if target == nil || target.scope == nil {

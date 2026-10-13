@@ -245,9 +245,14 @@ Implementation order:
    query API. Unresolved names answer `null`. Regressions cover unsaved
    buffers, multiple packages, syntax errors, missing imports, recovery after a
    broken edit, and stale and cancelled requests.
-3. Add completion and signature help for incomplete programs, then references
-   and rename. Check that rename respects binding identity, scope, and name
-   collisions across packages rather than replacing matching text.
+3. **Completion, signature help, references, and rename — shipped.** A
+   statement the parser cannot finish is still checked, so `value.` and
+   `call(first, ` keep their meaning. `query_visible` and `query_members` list
+   names in scope and after a `.`. References and rename follow binding
+   identity across every checked program. Rename refuses scope and member
+   collisions, unchecked code using the old name, programs with errors, and the
+   bundled library. Regressions cover unfinished code, shadowing, named
+   arguments, fields, two programs sharing a library, and each refusal.
 4. Adopt the incremental session path and measure editor latency on the same
    workspace used for compiler-service checks. Add protocol-level regressions
    for rapid edits, cancellation, stale results, and workspace changes.

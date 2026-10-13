@@ -1,7 +1,10 @@
-// Hover, go-to-definition, and document symbols, answered from the snapshot of
-// the check that read the document's current text. A request waits until its
-// document's root has been checked since the last edit; a result the compiler
-// did not record is answered as `null`, never guessed from the text.
+// Requests about a document, answered from the snapshot of the check that read
+// its current text: hover, go-to-definition, and document symbols here,
+// completion and signature help in `editing.odin`, references and rename in
+// `rename.odin`. A request waits until its document's root has been checked
+// since the last edit, and one that reads every program waits for every root;
+// a result the compiler did not record is answered as `null`, never guessed
+// from the text.
 package lsp
 
 import "core:encoding/json"
@@ -18,7 +21,10 @@ CONTENT_MODIFIED :: -32801
 // Long type declarations are cut to this many lines in a hover.
 HOVER_LINES :: 24
 
-Request_Kind :: enum { Hover, Definition, Document_Symbol }
+Request_Kind :: enum {
+	Hover, Definition, Document_Symbol, Completion, Signature_Help,
+	References, Prepare_Rename, Rename,
+}
 
 Pending_Request :: struct {
 	id:       json.Value, // an owned copy
@@ -26,6 +32,15 @@ Pending_Request :: struct {
 	key:      string,     // the document's path key
 	revision: int,        // the document's text when the request arrived
 	position: Position,
+	include_declaration: bool,   // for references
+	new_name: string,            // for rename; owned
+}
+
+// Requests that read every program the server checks, not only the
+// document's own.
+@(private = "file")
+reads_every_root :: proc(kind: Request_Kind) -> bool {
+	return kind == .References || kind == .Rename
 }
 
 queue_request :: proc(s: ^Server, id: json.Value, kind: Request_Kind, params: json.Value) {
@@ -39,6 +54,8 @@ queue_request :: proc(s: ^Server, id: json.Value, kind: Request_Kind, params: js
 	request.id = id
 	if text, is_text := id.(json.String); is_text { request.id = json.String(strings.clone(text)) }
 	if kind != .Document_Symbol { request.position = json_position(member(params, "position")) }
+	request.include_declaration = member_bool(member(params, "context"), "includeDeclaration")
+	if name, named := member_string(params, "newName"); named { request.new_name = strings.clone(name) }
 	append(&s.pending, request)
 }
 
@@ -66,6 +83,7 @@ cancel_all_requests :: proc(s: ^Server) {
 destroy_request :: proc(request: Pending_Request) {
 	if text, is_text := request.id.(json.String); is_text { delete(text) }
 	delete(request.key)
+	delete(request.new_name)
 }
 
 // The dirty root a waiting request needs, checked before any other.
@@ -88,7 +106,7 @@ answer_requests :: proc(s: ^Server) {
 		switch {
 		case doc == nil || doc.revision != request.revision:
 			send_error(s, request.id, CONTENT_MODIFIED, "the document changed before the request was answered")
-		case doc.root == nil || doc.root.dirty:
+		case doc.root == nil || doc.root.dirty || (reads_every_root(request.kind) && any_root_dirty(s)):
 			index += 1
 			continue
 		case:
@@ -97,6 +115,12 @@ answer_requests :: proc(s: ^Server) {
 		destroy_request(request)
 		ordered_remove(&s.pending, index)
 	}
+}
+
+@(private = "file")
+any_root_dirty :: proc(s: ^Server) -> bool {
+	for _, root in s.roots { if root.dirty { return true } }
+	return false
 }
 
 @(private = "file")
@@ -129,13 +153,29 @@ answer :: proc(s: ^Server, request: Pending_Request, doc: ^Document) {
 		}
 	case .Document_Symbol:
 		result = document_symbols(s, session, snapshot, file, doc)
+	case .Completion:
+		result = completion(s, session, snapshot, file, doc.text, request.position)
+	case .Signature_Help:
+		result = signature_help(s, session, snapshot, file, doc.text, request.position)
+	case .References:
+		result = references(s, session, snapshot, file, doc.text, request.position, request.include_declaration)
+	case .Prepare_Rename, .Rename:
+		failure: string
+		if request.kind == .Rename {
+			result, failure = rename(s, session, snapshot, file, doc.text, request.position, request.new_name)
+		} else {
+			result, failure = prepare_rename(s, session, snapshot, file, doc.text, request.position)
+		}
+		if failure != "" {
+			send_error(s, request.id, REQUEST_FAILED, failure)
+			return
+		}
 	}
 	send_result(s, request.id, result)
 }
 
 // The binding written at `position`, or just before it: a cursor placed at the
 // end of a name still means that name.
-@(private = "file")
 symbol_at :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> (lokec.Query_Position, bool) {
 	offset := position_to_offset(text, position, s.utf8_positions)
 	if at, found := lokec.query_at(session, snapshot, file, u32(offset)); found && at.symbol.id != lokec.INVALID_SYMBOL {
@@ -149,7 +189,6 @@ symbol_at :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lok
 	return {}, false
 }
 
-@(private = "file")
 is_name_byte :: proc(b: byte) -> bool {
 	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
@@ -268,7 +307,7 @@ document_symbols :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapsh
 		_, selection, _ := place(s, session, snapshot, symbol.definition, context.temp_allocator)
 		slot_of[handle.id] = len(entries)
 		append(&entries, Outline_Entry{
-			symbol = symbol, kind = kind, detail = outline_detail(session, symbol),
+			symbol = symbol, kind = kind, detail = symbol_detail(session, symbol),
 			range = range, selection = selection, children = make([dynamic]int, context.temp_allocator),
 		})
 	}
@@ -326,16 +365,6 @@ outline_kind :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_Sy
 	return {}, false
 }
 
-@(private = "file")
-outline_detail :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_Symbol) -> string {
-	#partial switch symbol.kind {
-	case .Proc:
-		if signatures, found := lokec.query_signatures(session, symbol.handle); found { return signatures[0].text }
-	case .Var, .Const, .Field:
-		if type, found := lokec.query_type(session, symbol.type); found { return type.name }
-	}
-	return ""
-}
 
 @(private = "file")
 sort_by_position :: proc(entries: []Outline_Entry, slots: []int) {
@@ -396,7 +425,6 @@ write_symbol_information :: proc(s: ^Server, b: ^strings.Builder, entries: []Out
 	}
 }
 
-@(private = "file")
 write_location :: proc(s: ^Server, b: ^strings.Builder, path: string, range: Range) {
 	strings.write_string(b, `{"uri":`)
 	write_json_string(b, uri_for(s, path_key(path, context.temp_allocator), path))

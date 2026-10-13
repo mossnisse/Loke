@@ -13,8 +13,16 @@ checklist.
 - `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.
   It publishes the diagnostics `lokec` reports for open documents, including
   unsaved edits and the packages they import. It also answers hover,
-  go-to-definition, and document symbols from the checked program. See
+  go-to-definition, document symbols, completion, signature help, find
+  references, and rename from the checked program. See
   [Language server](compiler-guide.md#language-server).
+
+### Changed
+
+- A statement the parser cannot finish, such as `value.` or `call(first, `,
+  is still checked so editors can see its names and types; its syntax error
+  stays the only diagnostic it produces. A missing name after `.` is no longer
+  also reported as a missing member.
 
 ## [0.8.0] - 2026-10-13
 

@@ -13,7 +13,9 @@ Symbol_Handle :: struct { snapshot: Snapshot_Id, id: Symbol_Id }
 Type_Handle :: struct { snapshot: Snapshot_Id, id: Type_Id }
 Query_Location :: struct { snapshot: Snapshot_Id, span: Span }
 
-Query_Source :: struct { path, text: string, line_starts: []u32 }
+// `bundled` marks a file of the library shipped with the compiler, `base:` or
+// `core:`, which no editor operation should rewrite.
+Query_Source :: struct { path, text: string, line_starts: []u32, bundled: bool }
 Query_Symbol :: struct {
 	handle: Symbol_Handle,
 	name: string,
@@ -28,6 +30,11 @@ Query_Symbol :: struct {
 	// the record or enum of a field or member, the procedure of a parameter,
 	// local, or loop binding. Zero for a package-level declaration or a method.
 	parent: Symbol_Handle,
+	// The type an `impl` or `extend` member belongs to; zero otherwise.
+	owner: Type_Handle,
+	// Where a local, parameter, or loop binding can be named: the innermost
+	// block, statement, or procedure holding its name. No span otherwise.
+	scope: Query_Location,
 	public, generic: bool,
 }
 Query_Type :: struct {
@@ -57,7 +64,12 @@ Query_Diagnostic :: struct {
 	location: Query_Location,
 	notes: []Query_Note,
 }
-Query_Position :: struct { location: Query_Location, symbol: Symbol_Handle, type: Type_Handle }
+// `type_value` is set when the node denotes `type` itself, as `Color` in
+// `Color.Red`, rather than a value of it.
+Query_Position :: struct { location: Query_Location, symbol: Symbol_Handle, type: Type_Handle, type_value: bool }
+// One name that may follow `operand.`. A union variant has no symbol; its type
+// is its payload's, or zero when it has none.
+Query_Member :: struct { name: string, symbol: Symbol_Handle, type: Type_Handle, variant: bool }
 
 @(private = "file")
 snapshot_counter: u64
@@ -97,7 +109,11 @@ valid_snapshot :: proc(s: ^Compilation_Session, id: Snapshot_Id) -> bool {
 query_source :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file: u32) -> (Query_Source, bool) {
 	if !valid_snapshot(s, snapshot.id) || int(file) >= len(s.compiler.sources) { return {}, false }
 	source := s.compiler.sources[file]
-	return Query_Source{source.path, source.text, source.line_starts}, true
+	bundled := false
+	if pkg := package_of(&s.compiler, s.queries.packages[file]); pkg != nil {
+		bundled = strings.has_prefix(pkg.key, "base:") || strings.has_prefix(pkg.key, "core:")
+	}
+	return Query_Source{source.path, source.text, source.line_starts, bundled}, true
 }
 
 query_file :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, path: string) -> (u32, bool) {
@@ -196,6 +212,7 @@ query_at :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, 
 		} else if span == best.span {
 			// A structural wrapper may have no binding/type of its own. Merge
 			// known annotations, but never restore a conflicting specialization.
+			best.type_value ||= occurrence.type_value
 			if occurrence.type != INVALID_TYPE && !type_conflict {
 				if best.type == INVALID_TYPE { best.type = occurrence.type }
 				else if occurrence.type != best.type { best.type, type_conflict = INVALID_TYPE, true }
@@ -209,11 +226,139 @@ query_at :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, 
 		}
 	}
 	if best.span.file == NO_FILE || (best.symbol == INVALID_SYMBOL && best.type == INVALID_TYPE) { return {}, false }
-	return Query_Position{Query_Location{s.snapshot, best.span}, Symbol_Handle{s.snapshot, best.symbol}, Type_Handle{s.snapshot, best.type}}, true
+	return Query_Position{
+		Query_Location{s.snapshot, best.span}, Symbol_Handle{s.snapshot, best.symbol}, Type_Handle{s.snapshot, best.type},
+		best.type_value && best.type != INVALID_TYPE,
+	}, true
+}
+
+// The bindings an unqualified name can reach at a byte offset, innermost
+// first: locals, parameters, and loop bindings written before it in an
+// enclosing block or procedure, then the file's package with its imports, then
+// the predeclared names. A shadowed binding is omitted. A local is reachable
+// from the end of its name, so its own initializer counts. The caller owns the
+// array.
+query_visible :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, offset: u32, allocator := context.allocator) -> ([]Symbol_Handle, bool) {
+	source, found := query_source(s, snapshot, file)
+	if !found || int(offset) > len(source.text) { return nil, false }
+	c, q := &s.compiler, &s.queries
+	pkg := package_of(c, q.packages[file])
+	if pkg == nil || pkg.scope == nil { return nil, false }
+	Local :: struct { size, lo: u32, id: Symbol_Id }
+	locals := make([dynamic]Local, allocator)
+	defer delete(locals)
+	for handle in q.documents[file] {
+		scope, definition := q.symbols[handle.id].scope.span, q.symbols[handle.id].definition.span
+		if scope.file != file || offset < definition.hi || offset < scope.lo || offset >= scope.hi { continue }
+		append(&locals, Local{scope.hi - scope.lo, definition.lo, handle.id})
+	}
+	slice.sort_by(locals[:], proc(a, b: Local) -> bool {
+		if a.size != b.size { return a.size < b.size }
+		return a.lo > b.lo
+	})
+	out := make([dynamic]Symbol_Handle, allocator)
+	seen := make(map[string]bool, allocator = allocator)
+	defer delete(seen)
+	for local in locals {
+		name := q.symbols[local.id].name
+		if seen[name] { continue }
+		seen[name] = true
+		append(&out, Symbol_Handle{s.snapshot, local.id})
+	}
+	for scope := pkg.scope; scope != nil; scope = scope.parent {
+		start := len(out)
+		for _, id in scope.names {
+			if int(id) <= 0 || int(id) >= len(q.symbols) { continue }
+			name := q.symbols[id].name
+			if seen[name] || !identifier_spelling(name) { continue }
+			seen[name] = true
+			append(&out, Symbol_Handle{s.snapshot, id})
+		}
+		// A map has no order; declarations do.
+		slice.sort_by(out[start:], proc(a, b: Symbol_Handle) -> bool { return a.id < b.id })
+	}
+	return out[:], true
+}
+
+// What may follow `operand.`, where `operand` is a `query_at` result in `file`.
+// A package alias lists its package's public declarations. A type lists its
+// enum members or union variants and its members. A value lists its fields and
+// methods, and through a pointer or box those of what it points at. Members are
+// the ones the snapshot recorded and the file's package can see; one the
+// checker contributes on demand appears once a lookup created it. Sorted by
+// name; the caller owns the array.
+query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u32, allocator := context.allocator) -> ([]Query_Member, bool) {
+	if !valid_snapshot(s, operand.location.snapshot) || int(file) >= len(s.queries.packages) { return nil, false }
+	Members :: struct { s: ^Compilation_Session, observer: Package_Id, out: [dynamic]Query_Member, seen: map[string]bool }
+	m := Members{s = s, observer = s.queries.packages[file], out = make([dynamic]Query_Member, allocator), seen = make(map[string]bool, allocator = allocator)}
+	defer delete(m.seen)
+	add :: proc(m: ^Members, id: Symbol_Id, methods: bool) {
+		c := &m.s.compiler
+		symbol := symbol_of(c, id)
+		if symbol == nil || symbol.bound_excluded || symbol.superseded || (methods && !symbol.has_receiver) { return }
+		if symbol.pkg != m.observer && !symbol.public { return }
+		name := identifier_text(c, symbol.name)
+		if m.seen[name] || !identifier_spelling(name) { return }
+		m.seen[name] = true
+		type := symbol.kind == .Proc ? symbol.proc_type : symbol.type
+		append(&m.out, Query_Member{name, Symbol_Handle{m.s.snapshot, id}, Type_Handle{m.s.snapshot, type}, false})
+	}
+	add_members :: proc(m: ^Members, type: Type_Id, methods: bool) {
+		c := &m.s.compiler
+		if info := type_of(c, type); info != nil {
+			for member in info.members { add(m, member, methods) }
+		}
+		if pkg := package_of(c, m.observer); pkg != nil {
+			for member in pkg.extensions[type] { add(m, member, methods) }
+		}
+	}
+	c := &s.compiler
+	alias := symbol_of(c, operand.symbol.id)
+	switch {
+	case operand.symbol.id != INVALID_SYMBOL && alias != nil && alias.kind == .Package_Alias:
+		if target := package_of(c, alias.pkg); target != nil && target.scope != nil {
+			for _, id in target.scope.names {
+				if symbol := symbol_of(c, id); symbol != nil && symbol.public && symbol.kind != .Package_Alias { add(&m, id, false) }
+			}
+		}
+	case operand.type.id == INVALID_TYPE:
+		delete(m.out)
+		return nil, false
+	case operand.type_value:
+		subject := operand.type.id
+		info := underlying_info(c, subject)
+		if info != nil && info.kind == .Enum {
+			for member in info.fields { add(&m, member, false) }
+		} else if info != nil && info.kind == .Union {
+			for name, index in info.variant_names {
+				text := identifier_text(c, name)
+				if m.seen[text] || !identifier_spelling(text) { continue }
+				m.seen[text] = true
+				payload := index < len(info.variants) ? info.variants[index] : INVALID_TYPE
+				if payload == TYPE_VOID { payload = INVALID_TYPE }
+				append(&m.out, Query_Member{text, Symbol_Handle{s.snapshot, INVALID_SYMBOL}, Type_Handle{s.snapshot, payload}, true})
+			}
+		}
+		add_members(&m, subject, false)
+	case:
+		subjects := [2]Type_Id{operand.type.id, INVALID_TYPE}
+		if info := underlying_info(c, operand.type.id); info != nil && (info.kind == .Pointer || info.kind == .Box) {
+			subjects[1] = info.element
+		}
+		for subject in subjects {
+			if subject == INVALID_TYPE { continue }
+			if info := underlying_info(c, subject); info != nil && info.kind == .Struct {
+				for field in info.fields { add(&m, field, false) }
+			}
+			add_members(&m, subject, true)
+		}
+	}
+	slice.sort_by(m.out[:], proc(a, b: Query_Member) -> bool { return a.name < b.name })
+	return m.out[:], true
 }
 
 @(private)
-Query_Occurrence :: struct { span: Span, symbol: Symbol_Id, type: Type_Id, reference: bool }
+Query_Occurrence :: struct { span: Span, symbol: Symbol_Id, type: Type_Id, reference, type_value: bool }
 @(private)
 Snapshot_Queries :: struct {
 	symbols: []Query_Symbol,
@@ -223,6 +368,10 @@ Snapshot_Queries :: struct {
 	signatures: [][dynamic]Query_Signature,
 	diagnostics: []Query_Diagnostic,
 	occurrences: [dynamic]Query_Occurrence,
+	// Each source file's package, or none for a manifest.
+	packages: []Package_Id,
+	// Syntax that opens a lexical scope, from the index.
+	regions: [dynamic]Span,
 }
 
 @(private = "file")
@@ -236,6 +385,12 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 	q.documents = make([][dynamic]Symbol_Handle, len(c.sources))
 	q.signatures = make([][dynamic]Query_Signature, len(c.symbols))
 	q.diagnostics = make([]Query_Diagnostic, len(c.diagnostics))
+	q.packages = make([]Package_Id, len(c.sources))
+	for &pkg in c.packages {
+		for file in pkg.files {
+			if file != nil && int(file.file) < len(q.packages) { q.packages[file.file] = pkg.id }
+		}
+	}
 	// Cloned syntax represents the same written binding, even when its types
 	// differ by specialization. Instance procedures point back to the template.
 	Binding_Key :: struct { span: Span, kind: Symbol_Kind, name: Identifier_Id }
@@ -256,6 +411,7 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 			handle = Symbol_Handle{s.snapshot, Symbol_Id(index)}, name = identifier_text(c, symbol.name), kind = symbol.kind,
 			type = Type_Handle{s.snapshot, type}, definition = Query_Location{s.snapshot, symbol.span},
 			extent = Query_Location{s.snapshot, no_span()}, parent = Symbol_Handle{s.snapshot, INVALID_SYMBOL},
+			owner = Type_Handle{s.snapshot, symbol.owner_type}, scope = Query_Location{s.snapshot, no_span()},
 			public = symbol.public, generic = symbol.generic,
 		}
 		if id == Symbol_Id(index) && written {
@@ -342,11 +498,53 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		}
 	}
 	for handles in q.documents { nest_query_bindings(q, handles[:]) }
-	// Clones share their written binding's declaration and parent.
+	slice.sort_by(q.regions[:], proc(a, b: Span) -> bool {
+		if a.file != b.file { return a.file < b.file }
+		if a.lo != b.lo { return a.lo < b.lo }
+		return a.hi > b.hi
+	})
+	for handles in q.documents { scope_query_locals(q, handles[:]) }
+	// Clones share their written binding's declaration, parent, and scope.
 	for &symbol, slot in q.symbols {
 		if slot == 0 || symbol.definition.span.file == NO_FILE { continue }
 		canonical := q.symbols[q.canonical[slot]]
-		symbol.extent, symbol.parent = canonical.extent, canonical.parent
+		symbol.extent, symbol.parent, symbol.scope = canonical.extent, canonical.parent, canonical.scope
+	}
+}
+
+// A local is reachable inside the innermost block, statement, or procedure
+// holding its name: syntax nests, so a sweep in source order finds it. A
+// field, member, or a record's generic parameter is not a local, nor is a
+// package-level declaration, which no region holds.
+@(private = "file")
+scope_query_locals :: proc(q: ^Snapshot_Queries, handles: []Symbol_Handle) {
+	if len(handles) == 0 { return }
+	file := q.symbols[handles[0].id].definition.span.file
+	Binding :: struct { lo: u32, id: Symbol_Id }
+	bindings := make([dynamic]Binding)
+	for handle in handles {
+		symbol := q.symbols[handle.id]
+		#partial switch symbol.kind {
+		case .Field, .Enum_Member, .Package_Alias, .Builtin, .Invalid: continue
+		}
+		if parent := symbol.parent.id; parent != INVALID_SYMBOL && q.symbols[parent].kind == .Type { continue }
+		append(&bindings, Binding{symbol.definition.span.lo, handle.id})
+	}
+	slice.sort_by(bindings[:], proc(a, b: Binding) -> bool { return a.lo < b.lo })
+	first, _ := slice.binary_search_by(q.regions[:], file, proc(region: Span, file: u32) -> slice.Ordering {
+		return region.file < file ? .Less : .Greater
+	})
+	open := make([dynamic]Span)
+	next := first
+	for binding in bindings {
+		for next < len(q.regions) && q.regions[next].file == file && q.regions[next].lo <= binding.lo {
+			region := q.regions[next]
+			for len(open) > 0 && open[len(open) - 1].hi <= region.lo { pop(&open) }
+			append(&open, region)
+			next += 1
+		}
+		for len(open) > 0 && open[len(open) - 1].hi <= binding.lo { pop(&open) }
+		if len(open) > 0 { q.symbols[binding.id].scope.span = open[len(open) - 1] }
 	}
 }
 

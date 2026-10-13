@@ -37,6 +37,8 @@ Server :: struct {
 	utf8_positions, related_information, watch_files: bool,
 	markdown_hover, hierarchical_symbols: bool,
 	symbol_kinds: bit_set[0 ..< 64], // `SymbolKind` values the client shows
+	completion_kinds: bit_set[0 ..< 64], // `CompletionItemKind` values it shows
+	markdown_completion, label_offsets, prepare_rename: bool,
 	config:       lokec.Compilation_Config,
 	config_arena: virtual.Arena,
 	documents:    map[string]^Document, // by path key
@@ -157,6 +159,16 @@ handle_request :: proc(s: ^Server, id: json.Value, method: string, params: json.
 		queue_request(s, id, .Definition, params)
 	case method == "textDocument/documentSymbol":
 		queue_request(s, id, .Document_Symbol, params)
+	case method == "textDocument/completion":
+		queue_request(s, id, .Completion, params)
+	case method == "textDocument/signatureHelp":
+		queue_request(s, id, .Signature_Help, params)
+	case method == "textDocument/references":
+		queue_request(s, id, .References, params)
+	case method == "textDocument/prepareRename":
+		queue_request(s, id, .Prepare_Rename, params)
+	case method == "textDocument/rename":
+		queue_request(s, id, .Rename, params)
 	case:
 		send_error(s, id, METHOD_NOT_FOUND, fmt.tprintf("unsupported request `%s`", method))
 	}
@@ -214,6 +226,22 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 			if value, ok := kind.(json.Integer); ok && value >= 0 && value < 64 { s.symbol_kinds += {int(value)} }
 		}
 	}
+	completion := member(member(capabilities, "textDocument"), "completion")
+	for format in member_array(member(completion, "completionItem"), "documentationFormat") {
+		if name, ok := format.(json.String); ok && name == "markdown" { s.markdown_completion = true }
+	}
+	// Without a list, `Text` through `Reference`.
+	s.completion_kinds = {}
+	for kind in 1 ..= 18 { s.completion_kinds += {kind} }
+	if kinds := member(completion, "completionItemKind"); member(kinds, "valueSet") != nil {
+		s.completion_kinds = {}
+		for kind in member_array(kinds, "valueSet") {
+			if value, ok := kind.(json.Integer); ok && value >= 0 && value < 64 { s.completion_kinds += {int(value)} }
+		}
+	}
+	signature := member(member(member(member(capabilities, "textDocument"), "signatureHelp"), "signatureInformation"), "parameterInformation")
+	s.label_offsets = member_bool(signature, "labelOffsetSupport")
+	s.prepare_rename = member_bool(member(member(capabilities, "textDocument"), "rename"), "prepareSupport")
 
 	folder := ""
 	if folders := member_array(params, "workspaceFolders"); len(folders) > 0 {
@@ -228,8 +256,8 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(
-		&b, `{{"capabilities":{{"positionEncoding":"%s","textDocumentSync":{{"openClose":true,"change":%d,"save":{{"includeText":false}}}},"hoverProvider":true,"definitionProvider":true,"documentSymbolProvider":true}},"serverInfo":{{"name":"%s","version":"%s"}}}}`,
-		s.utf8_positions ? "utf-8" : "utf-16", SYNC_FULL, SERVER_NAME, lokec.LOKE_VERSION_STRING,
+		&b, `{{"capabilities":{{"positionEncoding":"%s","textDocumentSync":{{"openClose":true,"change":%d,"save":{{"includeText":false}}}},"hoverProvider":true,"definitionProvider":true,"documentSymbolProvider":true,"completionProvider":{{"triggerCharacters":["."]}},"signatureHelpProvider":{{"triggerCharacters":["(",","]}},"referencesProvider":true,"renameProvider":%s}},"serverInfo":{{"name":"%s","version":"%s"}}}}`,
+		s.utf8_positions ? "utf-8" : "utf-16", SYNC_FULL, s.prepare_rename ? `{"prepareProvider":true}` : "true", SERVER_NAME, lokec.LOKE_VERSION_STRING,
 	)
 	send_result(s, id, strings.to_string(b))
 }

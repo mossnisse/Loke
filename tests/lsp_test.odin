@@ -156,8 +156,13 @@ lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 	if !lsp_start(&p, t) { return }
 	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
 	reply, ok := lsp_receive(&p)
-	hovers, _ := json_member(json_member(json_member(reply, "result"), "capabilities"), "hoverProvider").(json.Boolean)
-	testing.expect(t, ok && bool(hovers))
+	capabilities := json_member(json_member(reply, "result"), "capabilities")
+	hovers, _ := json_member(capabilities, "hoverProvider").(json.Boolean)
+	references, _ := json_member(capabilities, "referencesProvider").(json.Boolean)
+	renames, _ := json_member(capabilities, "renameProvider").(json.Boolean)
+	triggers, _ := json_member(json_member(capabilities, "completionProvider"), "triggerCharacters").(json.Array)
+	testing.expect(t, ok && bool(hovers) && bool(references) && bool(renames) && json_member(capabilities, "signatureHelpProvider") != nil)
+	testing.expect(t, len(triggers) == 1 && triggers[0].(json.String) == ".")
 	lsp_send(&p, `{"jsonrpc":"2.0","method":"initialized","params":{}}`)
 	text := "package main;\nmain :: proc() { x: int = \"text\"; }\n"
 	lsp_send(&p, fmt.tprintf(
@@ -187,10 +192,23 @@ lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 	reply, ok = lsp_receive(&p)
 	value, _ := json_member(json_member(json_member(reply, "result"), "contents"), "value").(json.String)
 	testing.expect(t, ok && value == "x: int")
-	lsp_send(&p, `{"jsonrpc":"2.0","id":3,"method":"shutdown"}`)
+	// What may be written there: `main` is in scope.
+	lsp_send(&p, fmt.tprintf(
+		`{{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{{"textDocument":{{"uri":%s}},"position":{{"line":1,"character":17}}}}}}`,
+		json_quoted(uri),
+	))
+	reply, ok = lsp_receive(&p)
+	items, _ := json_member(json_member(reply, "result"), "items").(json.Array)
+	offered := false
+	for item in items {
+		label, _ := json_member(item, "label").(json.String)
+		offered ||= label == "main"
+	}
+	testing.expect(t, ok && offered)
+	lsp_send(&p, `{"jsonrpc":"2.0","id":4,"method":"shutdown"}`)
 	reply, ok = lsp_receive(&p)
 	id, _ := json_member(reply, "id").(json.Integer)
-	testing.expect(t, ok && id == 3)
+	testing.expect(t, ok && id == 4)
 	lsp_send(&p, `{"jsonrpc":"2.0","method":"exit"}`)
 	code, exited := lsp_finish(&p)
 	testing.expect(t, exited && code == 0)

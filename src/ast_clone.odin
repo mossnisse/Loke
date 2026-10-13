@@ -547,6 +547,7 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 	case ^Stmt_Error:
 		n := new(Stmt_Error, c.semantic_allocator)
 		clone_node_base(c, &n.base, &v.base)
+		n.partial = clone_stmt(c, v.partial)
 		return n
 
 	case ^Stmt_Expr:
