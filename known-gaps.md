@@ -7,4 +7,4 @@ the compiler, unless the rewording is the intended fix.
 
 ## Gaps
 
-None recorded.
+None.
