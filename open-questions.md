@@ -509,7 +509,7 @@ records the reasoning:
 | Priority | Proposal | Main benefit |
 | --- | --- | --- |
 | Later | A failure-only `defer` | Rollback without a flag |
-| Later | Declared error wrapping for `or_return` | No mapper at every propagation |
+| Superseded | Declared error wrapping for `or_return` | See the [error handling proposal](#error-handling-proposal-2026-10-13) |
 | Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
 | Later | No public mutable globals | Effects stop crossing packages invisibly |
 | Later | Test procedures | Unit tests for package-private code |
@@ -524,7 +524,8 @@ deferred statement, spelling to be designed, that runs only when the procedure
 returns its result's failure variant, by `or_return` or by `return`, in the
 ordinary LIFO order. It requires a fallible result. Zig's `errdefer` is the
 precedent; whether it also runs during panic unwinding must be decided, and
-Zig's does not.
+Zig's does not. The [error handling proposal](#errdefer) proposes the spelling
+`errdefer` and running it during unwinding.
 
 ### Declared error wrapping for `or_return`
 
@@ -537,6 +538,11 @@ wrap an operand failure of exactly that type. There is no chaining, and a union
 without the attribute still needs `map_error`. This reverses that section's
 statement that `map_error` and `ok_or` are the only adaptations; it trades one
 declaration-site rule for a mapper at every call in application code.
+
+Superseded by the [error handling proposal](#error-handling-proposal-2026-10-13),
+which keeps each wrapping explicit but moves it to a failure operand after
+`or_return`, as in `fs.read_text(path) or_return .io`. Declared wrapping is
+listed there among the alternatives not taken.
 
 ### Checked unsigned arithmetic
 
@@ -582,4 +588,282 @@ cannot be caught, so the runner either runs each test in its own process or
 stops at the first failure; see [Recoverable panics](#recoverable-panics). Zig's
 `test` blocks and Go's `_test.go` files are the precedents; an attribute needs
 no new syntax.
+
+## Error handling proposal (2026-10-13)
+
+A proposal, not an amendment to the specification. It replaces
+[Declared error wrapping for `or_return`](#declared-error-wrapping-for-or_return)
+and settles the open parts of [A failure-only `defer`](#a-failure-only-defer).
+Backward compatibility is not a constraint; where a part reverses a recorded
+decision it says so. Behavior described as current was checked with `lokec`
+0.7.1.
+
+The model stays: a failure is a value of a fallible union, `or_else` and
+`or_return` act on its shape, a switch inspects it, and no conversion between
+error types happens unless the code names it. What changes is *where* the code
+names it. Today the adaptation is a method call to the left of the operator that
+consumes it, and it runs on success too:
+
+```odin
+text  := fs.read_text(path).map_error(App_Error.io) or_return;
+parts := strings.cut(text, ":").ok_or(Time_Error.Missing_Colon) or_return;
+```
+
+The call reads as "read, convert, then maybe return", though conversion matters
+only on the path that returns. `map_error` rebuilds the result on success,
+`ok_or` builds its error on every call, a bound result needs
+`move(outcome).map_error(...)`, and an enum argument is written with its type
+because `ok_or` infers it. A procedure that only fails says `Unit` in its
+signature and ends in `return .ok;`, and undoing partial work on failure needs a
+flag. Four changes address these; each stands alone:
+
+1. `or_return` takes an optional **failure operand** on its right, evaluated
+   only on failure.
+2. `Status(E)` in `base:runtime` for procedures that only fail.
+3. A procedure whose success variant carries nothing may end without `return`.
+4. `errdefer`, a deferred statement that runs only on a failure exit.
+
+### The failure operand of `or_return`
+
+`operand or_return failure` propagates as bare `or_return` does, but the error
+it returns is built from `failure`:
+
+```odin
+text    := fs.read_text(path)        or_return .io;            // wrap in a variant
+hours   := strconv.parse_int(digits) or_return .Not_A_Number;  // replace the error
+parts   := strings.cut(text, ":")    or_return .Missing_Colon; // an absence
+checked := validate_port(port)       or_return describe_port;  // any mapper
+log     := fs.append("app.log")      or_return .log_write;     // a second io.Error variant
+```
+
+Bare `or_return` keeps its meaning: the error must already be assignable. The
+operand is checked against `F`, the failure payload type of the enclosing
+procedure's result. The operand's own failure carries `E`, or nothing when the
+failure is payloadless, as `Option`'s `none` is.
+
+- A value assignable to `F` **replaces** the error. A temporary's error is
+  dropped before the operand runs and a place keeps its own, as with `or_else`.
+- Otherwise the operand is a **mapper**, a callable satisfying
+  `Callable(C, proc(error: move E) -> F)`, called with the error. A temporary
+  transfers it and a place copies it, as
+  [Operator ownership](design.md#operator-ownership) says for `or_return`. A
+  payloadless failure has no error to map, so it takes only a replacement.
+- `.name` resolves against `F`. A payloadless variant or an enum value is a
+  replacement; a variant with a payload is that variant's constructor, so `.io`
+  means `F.io`. Elsewhere a contextual `.name` is not a constructor, because a
+  destination never chooses the union
+  ([Constructing a variant](design.md#constructing-a-variant)); here the
+  procedure's result has already chosen it. When `F` is a type parameter, `.name`
+  cannot resolve and the operand names its type. A constructor whose payload is
+  not `E` is rejected with both types named: "`.io` wraps an `io.Error`, but this
+  failure carries a `Parse_Error`".
+
+The operand runs only on the failure path, after the error is taken and before
+the operand's temporaries are destroyed and the ordinary cleanups run. An error
+that is costly to build therefore costs nothing on success, which `ok_or` cannot
+offer ([Changing error domains](design.md#changing-error-domains)). It may read
+locals like any expression, and an `or_return` inside it propagates from the
+same procedure.
+
+Wrapping stays explicit. Each site names its variant, so two variants with one
+payload type need no rule, nothing depends on the union's declaration order or
+names, and adding a variant changes no existing propagation. The design.md
+sentence "These two are the only error adaptations the language provides" is
+replaced by one saying every adaptation is written where the failure propagates
+or is inspected; the clause ruling out an implicit conversion path stays.
+`map_error` and `ok_or` remain for a result that is stored or passed on rather
+than propagated, and `or_else return .err(...)` remains valid.
+
+The operand can make code much shorter. In
+[tutorial 7](tutorials/07-a-command-line-tool.md), two switches over a
+pre-declared local and two `ok_or` calls only replace an error:
+
+```odin
+parts: strings.Cut;
+switch (strings.cut(entry, ",")) {
+case .some(found): parts = found;
+case .none: return .err({number, "expected `category,amount`"});
+}
+category := strings.trim_space(parts.before);
+amount: int;
+switch (strconv.parse_int(strings.trim_space(parts.after))) {
+case .ok(parsed):  amount = parsed;
+case .err: return .err({number, "the amount is not a whole number"});
+}
+previous := totals.by_category.lookup_value(category) or_else 0;
+category_total := add_amount(previous, amount)
+	.ok_or(Problem{number, "category total is out of range"}) or_return;
+```
+
+With a failure operand, each step is one line, and the `Problem`, whose `reason`
+is an owned `string`, is built only for a bad line rather than on every line:
+
+```odin
+parts    := strings.cut(entry, ",") or_return {number, "expected `category,amount`"};
+category := strings.trim_space(parts.before);
+amount   := strconv.parse_int(strings.trim_space(parts.after))
+	or_return {number, "the amount is not a whole number"};
+previous := totals.by_category.lookup_value(category) or_else 0;
+category_total := add_amount(previous, amount)
+	or_return {number, "category total is out of range"};
+```
+
+[Tutorial 5](tutorials/05-errors.md) loses its `parse_number` helper, a switch
+that exists only to convert `strconv`'s error, to
+`strconv.parse_int(parts.before) or_return .Not_A_Number`, and
+[`config_parser.loke`](examples/config_parser.loke) writes
+`math.checked_mul(value, 10) or_return .Bad_Number`.
+
+#### Parsing the operand
+
+`or_return` stays a postfix operator, and its operand is a postfix expression,
+so the whole form is a postfix expression. A binary operator after it still
+applies to the success payload:
+
+```odin
+total := count() or_return .io * 2;   // (count() or_return .io) * 2
+n     := value() or_return + 1;       // unchanged: (value() or_return) + 1
+```
+
+After `or_return`, a token that begins a primary expression (an identifier, a
+literal, `.`, `(`, `[`, `{`, `move`, or `proc`) begins the operand. `^` and the
+unary and binary operators do not, so `f() or_return + 1` keeps the meaning
+[Operator precedence](design.md#operator-precedence) gives it. In grammar.md the
+suffix becomes `"or_return" Postfix_Expression?` under that token rule.
+
+What changes is a suffix applied to the payload of a bare `or_return`:
+`f() or_return.len()` would read `.len()` as the operand, so the payload's
+member is reached as `(f() or_return).len()`. No `.loke` or Markdown file in the
+repository writes such a suffix without those parentheses;
+[`or_return_as_operand.loke`](tests/run/or_return_as_operand.loke) already
+uses them. A misplaced operand is a type error, and its diagnostic can suggest
+the parentheses. The upgrade note says the same.
+
+### `Status(E)` for procedures that only fail
+
+A procedure that only fails returns `Result(Unit, E)`, so the empty type appears
+in every such signature: 47 lines in `core` alone. Declare beside `Result`:
+
+```odin
+@(require_results)
+Status :: union($E: type) @(failure=err) { ok, err: E }
+```
+
+It is fallible by [shape](design.md#typed-fallibility), so it needs no rule of
+its own. A `Status` procedure propagating with `or_return` compiles and runs
+today, `or_return` crosses between `Status(E)` and `Result(T, E)` in both
+directions because only the failure payloads must agree, and a `main` returning
+`Status(E)` prints `error: ` and the payload and exits 1. The change is the
+declaration, a `map_error` for it, and moving `core` from `Result(Unit, E)` to
+`Status(E)`:
+
+```odin
+save :: proc(config: Config) -> Status(App_Error) { ... }
+```
+
+`Result(Unit, E)` stays valid, and `Unit` stays as what `or_return` yields for a
+payloadless success. There are two costs. Code mixes both spellings until a
+convention settles, and a generic procedure over `Result($T, $E)` does not
+accept a `Status(E)`, so a library may need both forms. comments.md rejected a
+`()` spelling of the empty type as a second name for `Unit`; `Status` is not a
+second name for it but a way to stop writing it. `Status` could be misread as a
+process exit status; `Outcome` is the alternative name.
+
+### Ending without `return .ok`
+
+[One result](design.md#one-result) requires `return expression;` on every path.
+Let a procedure whose result is a fallible union with a payloadless success
+variant reach the end of its body, which returns that success:
+
+```odin
+store :: proc(config: Config) -> Status(App_Error) {
+	fs.create_directories(config.directory) or_return .io;
+	fs.write_text(config.path, config.text) or_return .io;
+}
+```
+
+Every failure in such a procedure is written explicitly, so reaching the end has
+one meaning, as it does in a procedure with no result. The rule covers `Status`,
+a `main` returning it, and user unions of that shape. It does not cover
+`Result(Unit, E)`, whose success carries a payload, so a generic `Result($T, E)`
+body cannot change meaning with its instance. This extends a recorded rule rather
+than reversing one, and it removes the `return .ok;` ending most of `core`'s
+fallible procedures.
+
+### `errdefer`
+
+[A failure-only `defer`](#a-failure-only-defer) asks for a deferred statement
+that runs only when the procedure returns its failure variant. Spell it
+`errdefer`, after Zig: one reserved word, found by search, and a statement shaped
+like `defer`. It replaces the flag that
+[`defer if (failed)`](design.md#defer-statement) leaves to the programmer:
+
+```odin
+add_user :: proc(db: inout Db, user: User) -> Status(Db_Error) {
+	db.users.append(user);
+	errdefer _ = db.users.pop();   // undo the append if a later step fails
+	db.index.insert(user.name) or_return;
+	db.log.write(user) or_return .io;
+}
+```
+
+It requires a fallible result and takes `defer`'s restrictions. It runs in the
+ordinary LIFO order when the procedure leaves with its failure variant, whether by
+`or_return` or by a `return` whose value has the failure tag, so `return .err(e)`
+and `return saved_outcome` behave alike. Under the `unwind` strategy it also runs
+during panic unwinding: it exists to undo incomplete work, a panic leaves work as
+incomplete as a failure return does, and `defer` already runs there. Zig's does
+not run on a panic, but Zig does not unwind. Under `abort` nothing runs, as for
+`defer`. Binding the error, Zig's `errdefer |err|`, is left for later.
+
+### Alternatives not taken
+
+- **Declared wrapping**, `@(wraps)` on a variant, as the replaced entry proposed.
+  It removes the word at each site, but the conversion is implicit there and
+  visible only at the union. It reverses the no-implicit-conversion principle
+  that the failure operand keeps.
+- **Inferring the variant from a unique payload type.** Adding a second variant
+  of an existing payload type would break every distant `or_return` that relied
+  on the first.
+- **Matching variant names to error types**, `io` to `io.Error`. Names carry no
+  meaning elsewhere: fallibility is recognized by shape, not names. A rename
+  would then change behavior, and an import alias changes the package name.
+- **A conversion interface like Rust's `From`.** It is implicit, and it needs
+  coherence rules for who may declare a conversion.
+- **A parametric alias**, `Status :: Result(Unit, $E)`. That keeps one type, so
+  `map_error` and generic code work unchanged, but a
+  [type alias](design.md#type-alias) takes no parameters. Revisit it if aliases
+  gain parameters for another reason.
+- **Renaming `Unit`.** That changes the word and keeps it in every signature.
+
+### Open points
+
+- Whether `(` and `[` begin the operand or keep their suffix meaning after a bare
+  `or_return`. `.` and `{` are the cases that matter, and a parenthesised
+  operand is rare.
+- Whether a replacement may discard an error that carries information. It is
+  explicit at the site, as the switch it replaces was, but a lint could ask for
+  a mapper when `E` is not an enum.
+- The name `Status` or `Outcome`, and whether `ok_or` keeps a job once the
+  operand covers propagation. `map_error` keeps one, converting a result that is
+  not propagated.
+- `errdefer`'s spelling, and whether it binds the error.
+
+### What it touches
+
+- design.md: "or_return operator", "Operator precedence", "Changing error
+  domains", "Constructing a variant", "Typed fallibility", "One result", "defer
+  statement", and the example under "Program entry and exit".
+- grammar.md: the `or_return` suffix and its token rule, and `errdefer` as a
+  keyword and statement.
+- `base:runtime`: `Status` and its `map_error`.
+- Compiler: the postfix `or_return` in the parser; the operand's typing in
+  `check_or_return`; evaluating it on the failure edge in lowering and
+  compile-time evaluation; the implicit success at the end of a body; and
+  `errdefer` on the failure exits and the unwind path.
+- `core`, tutorials 5 and 7, and the examples migrate. Tests cover each operand
+  form, lazy evaluation, ownership of a place and of a temporary operand, the
+  suffix-parenthesis diagnostic, `Status` interoperation, the implicit success,
+  and `errdefer` on `or_return`, `return`, and unwinding. CHANGELOG records the
+  changed suffix parse as a breaking change with an upgrade note.
 
