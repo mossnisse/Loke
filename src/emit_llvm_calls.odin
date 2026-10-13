@@ -683,7 +683,9 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 			if v.borrows && emit_lifecycle(e, failure_type).managed {
 				error = emit_clone_value(e, failure_type, error)
 			}
-			e.propagated_errors[v] = error
+			// Held until the mapper takes it, so an exit or a panic while the
+			// mapper is selected still drops it.
+			e.propagated_errors[v] = {error, hold_temporary_value(e, failure_type, error)}
 		} else if !v.borrows && failure_type != TYPE_VOID && emit_lifecycle(e, failure_type).managed {
 			emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
 		}

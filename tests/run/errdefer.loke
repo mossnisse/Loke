@@ -53,6 +53,19 @@ counted :: proc(fail: bool) -> Result(int, int) {
 	return .ok(count);
 }
 
+Tracked :: struct { name: string }
+impl Tracked {
+	done :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.name); }
+}
+
+// A return of the success variant discards the `errdefer`, so it may move
+// what the deferred statement names.
+make :: proc() -> Result(Tracked, int) {
+	item := Tracked{"owned"};
+	errdefer fmt.println("rollback", item.name);
+	return .ok(move(item));
+}
+
 FOLDED :: counted(true);
 
 main :: proc() {
@@ -63,4 +76,5 @@ main :: proc() {
 	fmt.println(by_return(true));
 	fmt.println(scoped());
 	fmt.println(FOLDED);
+	fmt.println(make());
 }

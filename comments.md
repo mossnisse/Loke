@@ -430,6 +430,12 @@ it exists to undo incomplete work, a panic leaves work as incomplete as a
 failure return does, and `defer` already runs there. Binding the error, Zig's
 `errdefer |err|`, is left for later.
 
+Once a success return has walked past an `errdefer`, it is retired: a panic in
+an older cleanup does not bring it back. Scope exit is one LIFO traversal, and
+an action it passed is behind it, as with the ordinary scope exit that already
+discards an `errdefer`. Running it then would undo work after the newer
+cleanups that depended on that work had already run.
+
 ### A fallible `main`
 
 `or_return` needs a fallible result, so a `main` returning nothing or an `i32`

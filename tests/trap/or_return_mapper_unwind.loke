@@ -1,0 +1,20 @@
+// design.md "The failure operand": a mapper's error is taken before the mapper
+// is selected, and a panic while selecting it still drops the error.
+package main;
+import "core:fmt";
+
+Tracked :: struct { name: string }
+impl Tracked {
+	done :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.name); }
+}
+Mapper :: proc(error: move Tracked) -> int;
+fail :: proc() -> Result(int, Tracked) { return .err({"error"}); }
+choose :: proc() -> Mapper { panic("choose"); }
+
+work :: proc() -> Status(int) {
+	_ = fail() or_return choose();
+}
+
+main :: proc() {
+	_ = work();
+}

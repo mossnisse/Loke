@@ -11,3 +11,5 @@ iteration 1
 outer runs
 .err(Full)
 .err(0)
+.ok(Tracked{name = "owned"})
+drop owned

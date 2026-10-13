@@ -1,0 +1,22 @@
+// design.md "The failure operand": a replacement drops a temporary's error
+// before it runs, and the drop's hook writes what a call of it would
+// (design.md "Global write effects"), so it invalidates a borrow the
+// replacement still reads.
+package main;
+
+cache: [dynamic]int;
+Guard :: move_only struct { active: bool }
+impl Guard {
+	release :: hook(drop) proc(self: inout Guard) {
+		if (self.active) { cache.clear(); cache.shrink(); }
+	}
+}
+fail :: proc() -> Result(int, Guard) { return .err({true}); }
+
+work :: proc() -> Result(int, int) {
+	view := cache[:];
+	_ = fail() or_return view[0];
+	return .ok(0);
+}
+
+main :: proc() { cache.append(42); _ = work(); }

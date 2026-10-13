@@ -1180,7 +1180,9 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 
 	case ^Expr_Propagated_Error:
 		if error, ok := e.propagated_errors[v.owner]; ok {
-			return error
+			// The mapper's argument takes it over from here.
+			finish_temporary_drop(e, error.hold)
+			return error.value
 		}
 		backend_fail(e, "an `or_return` mapper's error has no value")
 		return "0"

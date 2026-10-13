@@ -546,8 +546,9 @@ checklist.
   procedure whose result is such a union, including `Status(E)` and a `main`
   returning one, may end without `return .ok;` (design.md "One result").
 - `errdefer`, a `defer` that runs only when the procedure returns its failure
-  variant, by `or_return` or `return`, and during panic unwinding (design.md
-  "defer statement"). It needs a fallible result (`L0720`).
+  variant, by `or_return` or `return`, and during panic unwinding unless a
+  success return has already passed it (design.md "defer statement"). It needs
+  a fallible result (`L0720`).
 - `or_else` accepts a fallible union whose success carries nothing and yields
   `Unit`, as `or_return` does (design.md "or_else expression").
 

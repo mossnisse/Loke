@@ -818,6 +818,34 @@ emit_deferred :: proc(graph: ^Flow_Graph, index: int, action: Flow_Cleanup, exit
 	resize(&graph.owners_in_scope, owners)
 }
 
+// How a `return` meets a pending `errdefer` (design.md "defer statement"): one
+// that constructs the result's success variant discards it, one that constructs
+// the failure variant runs it, and otherwise the tag decides at run time.
+@(private = "file")
+returned_variant :: proc(graph: ^Flow_Graph, s: ^Stmt_Return) -> (returning, failing: bool) {
+	sym := symbol_of(graph.k.c, graph.literal.symbol)
+	if s.value == nil || s.value.is_inout || sym == nil {
+		return true, false
+	}
+	selector, is_selector := s.value.expr.(^Expr_Selector)
+	if call, is_call := s.value.expr.(^Expr_Call); is_call {
+		selector, is_selector = call.callee.(^Expr_Selector)
+	}
+	if !is_selector || selector.variant_union == INVALID_TYPE || selector.variant_union != sym.result {
+		return true, false
+	}
+	shape, fallible := fallible_of(graph.k, sym.result)
+	switch {
+	case !fallible:
+		return true, false
+	case selector.variant_index == shape.success:
+		return false, false
+	case selector.variant_index == shape.failure:
+		return false, true
+	}
+	return true, false
+}
+
 // Cleanup events for every registration above `down_to`, innermost first
 // (design.md). `exit` is the jump that runs them, nil at a scope's end; an
 // `unwinding` exit drops each local only where the lifecycle pass found it live.
@@ -1260,7 +1288,8 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				})
 				held = prov_hold_result(graph, prov_join(graph, sources, contents), result_type, expr_span(value.expr))
 			}
-			emit_cleanups(graph, 0, s, returning = true)
+			returning, failing := returned_variant(graph, s)
+			emit_cleanups(graph, 0, s, returning = returning, failing = failing)
 			graph.returning = outer
 			prov_entry_report_effects(graph, s.span)
 			if len(held) > 0 {
@@ -1285,7 +1314,8 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				walk_flow_expr(graph, value.expr)
 			}
 		}
-		emit_cleanups(graph, 0, s, returning = true)
+		returning, failing := returned_variant(graph, s)
+		emit_cleanups(graph, 0, s, returning = returning, failing = failing)
 		graph.current = NO_BLOCK
 
 	case ^Stmt_Branch:
@@ -2010,11 +2040,16 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			// its `return`, as an `or_else` exit does; a mapper's error carries
 			// the operand's failure content.
 			if v.failure_exit != nil {
+				shape, _ := fallible_of(graph.k, expr_base(v.operand).type)
 				if prov && v.failure_maps {
-					shape, _ := fallible_of(graph.k, expr_base(v.operand).type)
 					graph.propagated_errors[v] = prov_payload_content(
 						graph, operand_loans, expr_base(v.operand).type,
 						shape.info.variants[shape.failure], v.span,
+					)
+				} else if prov && !v.borrows {
+					// A replacement drops a temporary's error before it runs.
+					prov_drop_effects(
+						graph, shape.info.variants[shape.failure], v.op_span, "the replaced error", unnamed = true,
 					)
 				}
 				walk_flow_stmt(graph, v.failure_exit)

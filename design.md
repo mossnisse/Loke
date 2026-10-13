@@ -4224,7 +4224,7 @@ add_user :: proc(db: inout Db, user: User) -> Status(Db_Error) {
 }
 ```
 
-Under the `unwind` [panic strategy](#panics-and-unwinding) a pending `errdefer` also runs during unwinding, since a panic leaves the work as incomplete as a failure return does; under `abort` nothing runs. The error is not bound: the deferred statement reads locals like any other.
+Under the `unwind` [panic strategy](#panics-and-unwinding) a pending `errdefer` also runs during unwinding, since a panic leaves the work as incomplete as a failure return does; under `abort` nothing runs. An `errdefer` stops being pending once the scope-exit walk passes its place, whether it ran or was discarded, so a panic raised by an older cleanup after a success return does not run it. The error is not bound: the deferred statement reads locals like any other.
 
 A deferred operation that returns a `Result` must handle that result within the deferred action. It cannot propagate failure with `or_return`:
 

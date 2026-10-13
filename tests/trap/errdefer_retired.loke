@@ -1,0 +1,14 @@
+// design.md "defer statement": a success return walks past an `errdefer`,
+// which retires it, so a panic in an older cleanup does not run it.
+package main;
+import "core:fmt";
+
+work :: proc() -> Status(int) {
+	defer panic("cleanup");
+	errdefer fmt.println("skipped");
+	fmt.println("work");
+}
+
+main :: proc() {
+	_ = work();
+}

@@ -7,6 +7,14 @@ import "core:fmt"
 import "core:mem/virtual"
 import "core:strings"
 
+// An `or_return` mapper's error and the hold that drops it until the mapper
+// takes it.
+@(private)
+Mapper_Error :: struct {
+	value: string,
+	hold:  Deferred,
+}
+
 @(private)
 Emitter :: struct {
 	c:    ^Compiler,
@@ -24,7 +32,7 @@ Emitter :: struct {
 	witness_names: map[^Witness]string,
 	// The error each `or_return` mapper is called with, while its failure path
 	// is emitted.
-	propagated_errors: map[^Expr_Postfix]string,
+	propagated_errors: map[^Expr_Postfix]Mapper_Error,
 	// Under `-g`, the span the last location marker named.
 	debug_span:   Span,
 	// design.md "@(packed)": a place's alignment, by pointer temporary, when it is
@@ -58,7 +66,7 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		taken_names  = make(map[string]bool),
 		struct_names = make(map[Type_Id]string),
 		witness_names = make(map[^Witness]string),
-		propagated_errors = make(map[^Expr_Postfix]string),
+		propagated_errors = make(map[^Expr_Postfix]Mapper_Error),
 		place_align  = make(map[string]u64),
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),

@@ -732,6 +732,11 @@ run_cleanups :: proc(e: ^Emitter, down_to: int, failed := "") {
 				run_one_cleanup(e, entry)
 				continue
 			}
+			if entry.on_failure {
+				// Passing its place retires it either way, so a panic in an older
+				// cleanup does not replay one a success return skipped.
+				unwind_clear(e, entry.slot)
+			}
 			flag := failed
 			if entry.flag != "" {
 				flag = load(e, "i1", entry.flag)

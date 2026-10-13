@@ -13,4 +13,6 @@ drop copied
 look borrowed
 drop borrowed
 -- .err(.code(8))
+drop unselected
+-- .err(.code(9))
 -- .ok(4)

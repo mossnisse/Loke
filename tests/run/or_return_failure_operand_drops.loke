@@ -55,6 +55,16 @@ borrowed :: proc() -> Result(int, Wrapped) {
 	return .ok(value);
 }
 
+Mapper :: proc(error: move Tracked) -> Wrapped;
+
+choose :: proc() -> Result(Mapper, Wrapped) { return .err(.code(9)); }
+
+// Selecting the mapper fails, so the error it was to take is dropped.
+unselected :: proc() -> Result(int, Wrapped) {
+	value := fail("unselected") or_return (choose() or_return);
+	return .ok(value);
+}
+
 succeeds :: proc() -> Result(int, Wrapped) {
 	ok: Result(int, Tracked) = .ok(4);
 	value := ok or_return .replaced(note("never"));
@@ -67,5 +77,6 @@ main :: proc() {
 	fmt.println("--", temporary_mapped());
 	fmt.println("--", place_mapped());
 	fmt.println("--", borrowed());
+	fmt.println("--", unselected());
 	fmt.println("--", succeeds());
 }
