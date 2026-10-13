@@ -169,6 +169,8 @@ Flow_Graph :: struct {
 	// which takes the provider's region with it rather than ending it.
 	aliased_moves:    map[rawptr]bool,
 	owners_in_scope: [dynamic]Symbol_Id,
+	// The content of the error each `or_return` mapper is called with.
+	propagated_errors: map[^Expr_Postfix][]int,
 
 	k:       ^Checker,
 	literal: ^Expr_Proc,
@@ -344,6 +346,7 @@ build_flow_pass :: proc(
 	graph.extended = make(map[^Expr_Base]bool, 4, allocator)
 	graph.extended_content = make(map[^Expr_Base][]int, 4, allocator)
 	graph.aliased_moves = make(map[rawptr]bool, 4, allocator)
+	graph.propagated_errors = make(map[^Expr_Postfix][]int, 4, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new(Prov_State, allocator)
 		graph.roots = make([dynamic]Prov_Root, allocator)
@@ -797,29 +800,53 @@ drop_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 	return is_ident && len(type_drop_hooks(c, ident.type)) == 0
 }
 
+// Walked where it runs, with itself and the later registrations popped, as at
+// runtime; that also stops a diagnosed `return` inside it from expanding itself
+// again. The walk reuses the backing storage, so the entries are saved, not the
+// header.
+@(private = "file")
+emit_deferred :: proc(graph: ^Flow_Graph, index: int, action: Flow_Cleanup, exit: rawptr) {
+	tail := slice.clone(graph.in_scope[index:], graph.alloc)
+	owners := len(graph.owners_in_scope)
+	outer := graph.expansion
+	graph.expansion = {action.deferred, exit}
+	resize(&graph.in_scope, index)
+	walk_flow_stmt(graph, action.deferred.stmt)
+	graph.expansion = outer
+	resize(&graph.in_scope, index)
+	append(&graph.in_scope, ..tail)
+	resize(&graph.owners_in_scope, owners)
+}
+
 // Cleanup events for every registration above `down_to`, innermost first
 // (design.md). `exit` is the jump that runs them, nil at a scope's end; an
 // `unwinding` exit drops each local only where the lifecycle pass found it live.
+// An `errdefer` runs on an unwinding or `failing` exit, may run on another
+// `returning` one, and is discarded otherwise (design.md "defer statement").
 @(private = "file")
-emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int, exit: rawptr, unwinding := false) {
+emit_cleanups :: proc(
+	graph: ^Flow_Graph, down_to: int, exit: rawptr, unwinding := false, returning := false, failing := false,
+) {
 	for index := len(graph.in_scope) - 1; index >= down_to; index -= 1 {
 		action := graph.in_scope[index]
 		switch action.kind {
 		case .Defer:
-			// Walked where it runs, with itself and the later registrations
-			// popped, as at runtime; that also stops a diagnosed `return` inside it
-			// from expanding itself again. The walk reuses the backing storage, so
-			// the entries are saved, not the header.
-			tail := slice.clone(graph.in_scope[index:], graph.alloc)
-			owners := len(graph.owners_in_scope)
-			outer := graph.expansion
-			graph.expansion = {action.deferred, exit}
-			resize(&graph.in_scope, index)
-			walk_flow_stmt(graph, action.deferred.stmt)
-			graph.expansion = outer
-			resize(&graph.in_scope, index)
-			append(&graph.in_scope, ..tail)
-			resize(&graph.owners_in_scope, owners)
+			if action.deferred.on_failure && !unwinding && !failing {
+				if !returning {
+					continue
+				}
+				// The result's tag decides at run time, so both paths join.
+				from := graph.current
+				merge := new_flow_block(graph)
+				link(graph, from, merge)
+				graph.current = new_flow_block(graph)
+				link(graph, from, graph.current)
+				emit_deferred(graph, index, action, exit)
+				link(graph, graph.current, merge)
+				graph.current = merge
+				continue
+			}
+			emit_deferred(graph, index, action, exit)
 		case .Prov_Root:
 			root := graph.roots[int(action.root)]
 			if root.extended && root.dropped != INVALID_TYPE {
@@ -1233,7 +1260,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				})
 				held = prov_hold_result(graph, prov_join(graph, sources, contents), result_type, expr_span(value.expr))
 			}
-			emit_cleanups(graph, 0, s)
+			emit_cleanups(graph, 0, s, returning = true)
 			graph.returning = outer
 			prov_entry_report_effects(graph, s.span)
 			if len(held) > 0 {
@@ -1258,7 +1285,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 				walk_flow_expr(graph, value.expr)
 			}
 		}
-		emit_cleanups(graph, 0, s)
+		emit_cleanups(graph, 0, s, returning = true)
 		graph.current = NO_BLOCK
 
 	case ^Stmt_Branch:
@@ -1979,6 +2006,23 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 			failure := new_flow_block(graph)
 			link(graph, entry, failure)
 			graph.current = failure
+			// design.md "or_return operator": a failure operand leaves through
+			// its `return`, as an `or_else` exit does; a mapper's error carries
+			// the operand's failure content.
+			if v.failure_exit != nil {
+				if prov && v.failure_maps {
+					shape, _ := fallible_of(graph.k, expr_base(v.operand).type)
+					graph.propagated_errors[v] = prov_payload_content(
+						graph, operand_loans, expr_base(v.operand).type,
+						shape.info.variants[shape.failure], v.span,
+					)
+				}
+				walk_flow_stmt(graph, v.failure_exit)
+				graph.current = resume
+				return prov_payload_content(
+					graph, operand_loans, expr_base(v.operand).type, v.type, v.span,
+				)
+			}
 			proc_symbol := symbol_of(graph.k.c, graph.literal.symbol)
 			held: []int
 			if prov && proc_symbol != nil && proc_symbol.result != INVALID_TYPE {
@@ -2011,7 +2055,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 					held = prov_hold_result(graph, prov_join(graph, escaping, contents), proc_symbol.result, v.span)
 				}
 			}
-			emit_cleanups(graph, 0, v)
+			emit_cleanups(graph, 0, v, failing = true)
 			if prov {
 				prov_entry_report_effects(graph, v.span)
 			}
@@ -2131,6 +2175,10 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		link(graph, graph.current, merge)
 		graph.current = merge
 		return prov_join(graph, then_loans, else_loans)
+
+	case ^Expr_Propagated_Error:
+		// A fresh value: moved out of a temporary, or copied out of a place.
+		return graph.propagated_errors[v.owner]
 
 	case ^Expr_Or_Else:
 		value_loans := walk_flow_expr(graph, v.value)

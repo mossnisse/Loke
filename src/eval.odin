@@ -50,7 +50,7 @@ Eval_Frame :: struct {
 	symbol:       Symbol_Id,
 	site:         Span,
 	locals:       map[Symbol_Id]^Eval_Value,
-	defers:       [dynamic]Stmt,
+	defers:       [dynamic]^Stmt_Defer,
 	// A nil slot means no result.
 	result:      Eval_Value,
 	result_slot: ^Eval_Value,
@@ -74,6 +74,8 @@ Evaluator :: struct {
 	// The context that required this evaluation, where the diagnostic points.
 	origin: Span,
 	what:   string,
+	// The error each `or_return` mapper is called with, in the arena.
+	propagated: map[^Expr_Postfix]Eval_Value,
 }
 
 // Every compile-time-required context comes through here. `code` names the
@@ -697,6 +699,13 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 			return Eval_Value{}, false
 		}
 		return target^, true
+
+	case ^Expr_Propagated_Error:
+		if error, ok := ev.propagated[v.owner]; ok {
+			return error, true
+		}
+		eval_fail(ev, v.span, "L0341", "this `or_return` has no compile-time target")
+		return Eval_Value{}, false
 
 	case ^Expr_Unary:
 		return eval_unary(ev, v)
@@ -2047,6 +2056,9 @@ eval_or_else :: proc(ev: ^Evaluator, v: ^Expr_Or_Else) -> (Eval_Value, bool) {
 		}
 		return eval_expr(ev, v.fallback)
 	}
+	if shape.info.variants[shape.success] == TYPE_VOID {
+		return zero_value(ev, ev.k.c.unit_type)
+	}
 	return eval_union_payload(value, INVALID_TYPE), true
 }
 
@@ -2069,6 +2081,26 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 			return zero_value(ev, ev.k.c.unit_type)
 		}
 		return eval_union_payload(value, INVALID_TYPE), true
+	}
+	// design.md "or_return operator": the failure operand runs only here, as an
+	// `or_else` exit does.
+	if v.failure_exit != nil {
+		if v.failure_maps {
+			error, copied := copy_value(ev, eval_union_payload(value, INVALID_TYPE))
+			if !copied {
+				return Eval_Value{}, false
+			}
+			if ev.propagated == nil {
+				ev.propagated = make(map[^Expr_Postfix]Eval_Value, 4, ev.alloc)
+			}
+			ev.propagated[v] = error
+		}
+		flow := eval_stmt(ev, v.failure_exit)
+		if flow == .Fail {
+			return Eval_Value{}, false
+		}
+		frame.returning = true
+		return Eval_Value{}, false
 	}
 
 	target, target_ok := fallible_of(ev.k, frame.result_slot.type)
@@ -2096,10 +2128,10 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 	return Eval_Value{}, false
 }
 
-// `.ok(Unit{})`: an allocating container operation that had nothing to allocate.
+// `.ok`: an allocating container operation that had nothing to allocate.
 @(private = "file")
 eval_alloc_ok :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
-	return eval_named_union(ev, type, "ok", Eval_Value{kind = .Aggregate, type = ev.k.c.unit_type})
+	return eval_named_union(ev, type, "ok", Eval_Value{kind = .Invalid, type = TYPE_VOID})
 }
 
 // `find_or_insert`'s `^mut V`, wrapped in `.ok` for the `try_` spelling.
@@ -2391,7 +2423,7 @@ eval_invoke :: proc(
 	frame.symbol = symbol_id
 	frame.site = site
 	frame.locals = make(map[Symbol_Id]^Eval_Value, 8, ev.alloc)
-	frame.defers = make([dynamic]Stmt, 0, 4, ev.alloc)
+	frame.defers = make([dynamic]^Stmt_Defer, 0, 4, ev.alloc)
 	if !eval_memory_ok(ev) { return Eval_Value{}, false }
 
 	info := type_of(ev.k.c, symbol.proc_type)
@@ -2889,11 +2921,23 @@ eval_stmts :: proc(ev: ^Evaluator, stmts: []Stmt, scope: bool) -> Eval_Flow {
 	return flow
 }
 
+// An `errdefer` runs only when the scope is left by returning the failure
+// variant (design.md "defer statement").
 @(private = "file")
 run_defers :: proc(ev: ^Evaluator, frame: ^Eval_Frame, mark: int, flow: Eval_Flow) -> Eval_Flow {
 	result := flow
+	failing := false
+	if flow == .Return && frame.result_slot != nil {
+		if shape, fallible := fallible_of(ev.k, frame.result_slot.type); fallible {
+			failing = frame.result.variant == shape.failure
+		}
+	}
 	for index := len(frame.defers) - 1; index >= mark; index -= 1 {
-		if eval_stmt(ev, frame.defers[index]) == .Fail {
+		deferred := frame.defers[index]
+		if deferred.on_failure && !failing {
+			continue
+		}
+		if eval_stmt(ev, deferred.stmt) == .Fail {
 			result = .Fail
 		}
 	}
@@ -2974,7 +3018,7 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 
 	case ^Stmt_Defer:
 		if frame := current_frame(ev); frame != nil {
-			append(&frame.defers, s.stmt)
+			append(&frame.defers, s)
 		}
 		return .Normal
 

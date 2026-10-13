@@ -22,7 +22,7 @@ package container;
 import "core:fmt";
 import "core:unsafe";
 
-// design.md writes `try_append` as `Result(Unit, Capacity_Error)`, so this is
+// design.md writes `try_append` as `Status(Capacity_Error)`, so this is
 // the payload inside that result union, not a second fallible shape. Nothing
 // about it is compiler-known: it is an ordinary record with ordinary queries.
 Capacity_Error :: struct {
@@ -154,7 +154,7 @@ impl Small_Array($T, $N) {
 	// Nothing is written unless everything fits, which is the `try_` promise.
 	try_append_copied :: proc(
 		self: inout, @(escape=stored) values: ..T,
-	) -> Result(Unit, Capacity_Error) where is_copyable(T) {
+	) -> Status(Capacity_Error) where is_copyable(T) {
 		wanted := self.count + values.len();
 		if (wanted > N) {
 			return .err(Capacity_Error{wanted, N});
@@ -163,7 +163,7 @@ impl Small_Array($T, $N) {
 			unsafe.write(self.items[self.count], value.clone());
 			self.count += 1;
 		}
-		return .ok({});
+		return .ok;
 	}
 
 	insert_copied :: proc(
@@ -179,7 +179,7 @@ impl Small_Array($T, $N) {
 	// untouched; a bad index is always a programmer error.
 	try_insert_copied :: proc(
 		self: inout, index: int, @(escape=stored) value: T,
-	) -> Result(Unit, Capacity_Error) where is_copyable(T) {
+	) -> Status(Capacity_Error) where is_copyable(T) {
 		if (index < 0 || index > self.count) {
 			panic("Small_Array index is out of range");
 		}
@@ -187,7 +187,7 @@ impl Small_Array($T, $N) {
 		unsafe.write(self.items[self.count], value.clone());
 		self.count += 1;
 		self.move_last_to(index);
-		return .ok({});
+		return .ok;
 	}
 
 	// The consuming half of the insertion groups below. The copying members read
@@ -198,16 +198,16 @@ impl Small_Array($T, $N) {
 	// as built-in insertion does (design.md "Container insertion").
 	try_append_moved :: proc(
 		self: inout, @(escape=stored) value: move T,
-	) -> Result(Unit, Capacity_Error) {
+	) -> Status(Capacity_Error) {
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
 		unsafe.write(self.items[self.count], move(value));
 		self.count += 1;
-		return .ok({});
+		return .ok;
 	}
 
 	try_insert_moved :: proc(
 		self: inout, index: int, @(escape=stored) value: move T,
-	) -> Result(Unit, Capacity_Error) {
+	) -> Status(Capacity_Error) {
 		if (index < 0 || index > self.count) {
 			panic("Small_Array index is out of range");
 		}
@@ -215,7 +215,7 @@ impl Small_Array($T, $N) {
 		unsafe.write(self.items[self.count], move(value));
 		self.count += 1;
 		self.move_last_to(index);
-		return .ok({});
+		return .ok;
 	}
 
 	append_moved :: proc(self: inout, @(escape=stored) value: move T) {

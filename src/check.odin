@@ -342,7 +342,7 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	   (info.result != INVALID_TYPE && info.result != TYPE_I32 && !entry_result_is_fallible(c, info.result)) {
 		errorf(
 			c, symbol.span, "L0303",
-			"`main` takes no parameters and returns nothing, an `i32` status, or a fallible union such as `Result(Unit, E)`: `%s`",
+			"`main` takes no parameters and returns nothing, an `i32` status, or a fallible union such as `Status(E)`: `%s`",
 			"main :: proc() -> i32 { ... }",
 		)
 	} else if info.result_inout || convention_is_foreign(info.convention) {
@@ -359,7 +359,7 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 }
 
 // design.md "Program entry and exit": `main` may return a fallible union whose
-// success carries nothing, such as `Result(Unit, E)`.
+// success carries nothing, such as `Status(E)` or `Result(Unit, E)`.
 entry_result_is_fallible :: proc(c: ^Compiler, result: Type_Id) -> bool {
 	_, fallible := entry_failure_type(c, result)
 	return fallible
@@ -2599,6 +2599,9 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	}
 
 	flow := check_block(k, literal.body)
+	if flow.can_fall_through && implicit_success(k, literal, symbol) {
+		flow.can_fall_through = false
+	}
 	// design.md "Managed values and storage": dataflow over the finished body.
 	analyze_ownership(k, literal, held)
 	// Provenance runs later, once every body's summary is settled. A probe's body
@@ -2613,6 +2616,40 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	if symbol.diverges && flow.can_fall_through {
 		errorf(k.c, literal.span, "L0710", "this procedure is declared `-> !` but can reach its end")
 	}
+}
+
+// design.md "One result": a body whose result is a fallible union with a
+// payloadless success variant, such as `Status(E)`, may reach its end, which
+// returns that success. The `return` is appended, so every later phase sees
+// the statement it means. Its span is empty, at the closing brace, so no query
+// finds it.
+@(private = "file")
+implicit_success :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol) -> bool {
+	if literal.body == nil || symbol.result_inout {
+		return false
+	}
+	shape, fallible := fallible_of(k, symbol.result)
+	if !fallible || shape.info.variants[shape.success] != TYPE_VOID {
+		return false
+	}
+	end := literal.body.span
+	end.lo = max(end.hi, 1) - 1
+	end.hi = end.lo
+	name := union_variant_name(k.c, symbol.result, shape.success)
+	success := new(Expr_Selector, k.c.semantic_allocator)
+	success.span = end
+	success.name = Name{text = name, span = end, id = intern_identifier(k.c, name)}
+	exit := new(Stmt_Return, k.c.semantic_allocator)
+	exit.span = end
+	exit.value = new(Return_Value, k.c.semantic_allocator)
+	exit.value.span = end
+	exit.value.expr = success
+	stmts := make([]Stmt, len(literal.body.stmts) + 1, k.c.semantic_allocator)
+	copy(stmts, literal.body.stmts)
+	stmts[len(stmts) - 1] = exit
+	literal.body.stmts = stmts
+	check_stmt(k, exit)
+	return true
 }
 
 install_symbols :: proc(scope: ^Scope, c: ^Compiler, symbols: []Symbol_Id) {
@@ -3850,8 +3887,26 @@ const_equal :: proc(c: ^Compiler, a, b: Const_Value) -> (bool, bool) {
 @(private = "file")
 check_defer :: proc(k: ^Checker, s: ^Stmt_Defer) -> Flow_Info {
 	if k.in_defer {
-		errorf(k.c, s.span, "L0369", "a deferred statement cannot contain another `defer`")
+		errorf(k.c, s.span, "L0369", "a deferred statement cannot contain another `%s`", s.on_failure ? "errdefer" : "defer")
 		return FLOWS
+	}
+	// design.md "defer statement": `errdefer` runs on a failure exit, so the
+	// procedure's result must have one.
+	// A written result that did not resolve was already reported.
+	written := k.proc_literal != nil ? k.proc_literal.signature.result : nil
+	unresolved := k.result_type == INVALID_TYPE && written != nil && !written.diverges
+	if s.on_failure && !unresolved {
+		if _, fallible := fallible_of(k, k.result_type); !fallible || k.result_inout {
+			if k.result_type == INVALID_TYPE {
+				errorf(k.c, s.span, "L0720", "`errdefer` needs a result with a failure variant; this procedure returns nothing")
+			} else {
+				errorf(
+					k.c, s.span, "L0720",
+					"`errdefer` needs a result with a failure variant, found `%s%s`",
+					k.result_inout ? "inout " : "", type_name(k.c, k.result_type),
+				)
+			}
+		}
 	}
 	s.slot = k.defer_slots
 	k.defer_slots += 1

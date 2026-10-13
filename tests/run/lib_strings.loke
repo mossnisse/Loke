@@ -2,9 +2,9 @@ package main; import "core:fmt"; import "core:strings"; import "core:mem";
 
 // `core:strings` end to end (standard-library "`core:strings`").
 
-// The builder's fallible half answers with `Result(Unit, Allocator_Error)`;
+// The builder's fallible half answers with `Status(Allocator_Error)`;
 // these checks only care which variant came back.
-succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
+succeeded :: proc(outcome: Status(Allocator_Error)) -> bool {
 	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;

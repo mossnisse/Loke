@@ -10,6 +10,26 @@ checklist.
 
 ### Breaking changes
 
+- `or_return` takes an optional failure operand (design.md "The failure
+  operand"), so a token that begins an expression after it now begins that
+  operand: `f() or_return.len()` reads `.len()` as the operand, where it used
+  to select a member of the success payload. Upgrade by parenthesising,
+  `(f() or_return).len()`; the diagnostic suggests it. A binary operator after
+  `or_return` is unchanged: `f() or_return + 1` is `(f() or_return) + 1`.
+- `errdefer` is a keyword (design.md "defer statement"), so a name spelled
+  `errdefer` must be renamed.
+- The standard library's operations that produce nothing on success return
+  `Status(E)` instead of `Result(Unit, E)` (design.md "Typed fallibility"):
+  the compiler-defined `try_` container operations (`Status(Allocator_Error)`),
+  `Small_Array`'s and `String_Builder`'s `try_` forms, and `fs`, `io`, `os`,
+  `process`, and `term` procedures such as `fs.write_text`, `io.write_all`,
+  and `File.close`. `or_return`, `or_else`, `switch`, and `== .ok` work on
+  both, but code naming the old type, such as a helper taking
+  `Result(Unit, io.Error)`, is `L0310`, and the success prints as `.ok`
+  rather than `.ok(Unit{})`. Upgrade by writing `Status(E)` for
+  `Result(Unit, E)`, and `.ok` for `.ok(Unit{})` or `.ok({})` in a procedure
+  returning one.
+
 - A switch case cannot bind `&mut` into storage reached through a packed
   struct (`L0614`, design.md "@(packed)"): `switch (holder.value) { case
   .num(&mut n): ... }` with `holder` packed wrote through a possibly
@@ -513,6 +533,23 @@ checklist.
   attributes now gets the comment above them; it used to get none.
 
 ### Added
+
+- `or_return` takes a failure operand, evaluated only when the operand fails
+  (design.md "The failure operand"). A value of the procedure's error type
+  replaces the error, `strconv.parse_int(text) or_return .Not_A_Number`; any
+  other operand is a mapper called with it, `parse(text) or_return describe`;
+  and `.name` resolves against the procedure's error type, so a variant with a
+  payload wraps the error, `fs.read_text(path) or_return .io`. It replaces
+  `.map_error(...) or_return` and `.ok_or(...) or_return` at propagation sites.
+- `Status(E)`, a fallible union whose success carries nothing, in
+  `base:runtime` with a `map_error` (design.md "Typed fallibility"). A
+  procedure whose result is such a union, including `Status(E)` and a `main`
+  returning one, may end without `return .ok;` (design.md "One result").
+- `errdefer`, a `defer` that runs only when the procedure returns its failure
+  variant, by `or_return` or `return`, and during panic unwinding (design.md
+  "defer statement"). It needs a fallible result (`L0720`).
+- `or_else` accepts a fallible union whose success carries nothing and yields
+  `Unit`, as `or_return` does (design.md "or_else expression").
 
 - A switch case binds a record payload's fields: `case .add(left, right):`
   (design.md "Inspecting a union"). Over a place the fields are borrowed and

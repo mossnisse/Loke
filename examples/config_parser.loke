@@ -40,8 +40,8 @@ digits :: proc(text: string_view) -> Result(int, Error) {
 		if (ch < '0' || ch > '9') { return .err(.Bad_Number); }
 		// `value * 10` would panic on a long digit string; the checked forms
 		// make that a parse error instead.
-		value = math.checked_mul(value, 10).ok_or(Error.Bad_Number) or_return;
-		value = math.checked_add(value, int(ch - '0')).ok_or(Error.Bad_Number) or_return;
+		value = math.checked_mul(value, 10) or_return .Bad_Number;
+		value = math.checked_add(value, int(ch - '0')) or_return .Bad_Number;
 	}
 	return .ok(value);
 }
@@ -73,17 +73,16 @@ load :: proc(
 	reader: inout Reader,
 	@(escape=stored) lines: []string_view,
 	into: inout map[string_view]int,
-) -> Result(Unit, Error) {
+) -> Status(Error) {
 	foreach (line in lines) {
 		reader.line += 1;
 		// The first bad line stops the load and reports why.
 		entry := parse_entry(line) or_return;
 		into[entry.key] = entry.value;
 	}
-	return .ok;
 }
 
-describe :: proc(outcome: Result(Unit, Error)) -> string_view {
+describe :: proc(outcome: Status(Error)) -> string_view {
 	switch (outcome) {
 	case .ok:
 		return "none";

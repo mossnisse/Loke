@@ -18,12 +18,12 @@ impl Token {
 
 make_token :: proc(id: int) -> Token { return Token{id}; }
 
-fill :: proc(items: inout [dynamic]Token) -> Result(Unit, Allocator_Error) {
+fill :: proc(items: inout [dynamic]Token) -> Status(Allocator_Error) {
 	items.try_append(make_token(1)) or_return;
 	t := make_token(2);
 	items.try_append(move(t)) or_return;
 	items.try_insert(0, make_token(3)) or_return;
-	return .ok({});
+	return .ok;
 }
 
 main :: proc() {

@@ -20,7 +20,7 @@ Priority :: enum{Low = 1, High = 2};
 Slot :: enum{First, Second, Third};
 Nothing :: enum{};
 
-succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
+succeeded :: proc(outcome: Status(Allocator_Error)) -> bool {
 	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;

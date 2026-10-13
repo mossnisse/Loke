@@ -158,16 +158,17 @@ Compiler :: struct {
 	// `mem.Failure_Policy`, and the `.Panic` its constructors default to.
 	failure_policy_type:  Type_Id,
 	panic_policy_arg:     Expr,
-	// design.md "Typed fallibility": the three `base:runtime` declarations the
+	// design.md "Typed fallibility": the `base:runtime` declarations the
 	// compiler bootstraps and binds into the universe. `Unit` is a type; the
-	// other two are generic templates instantiated through `src/bootstrap.odin`.
+	// others are generic templates instantiated through `src/bootstrap.odin`.
 	universe:             ^Scope,
 	unit_type:            Type_Id,
 	option_symbol:        Symbol_Id,
-	// `Result(Unit, Allocator_Error)`, instantiated once at bootstrap: every
+	// `Status(Allocator_Error)`, instantiated once at bootstrap: every
 	// recoverable operation with no success value returns exactly this type.
 	alloc_result_type:    Type_Id,
 	result_symbol:        Symbol_Id,
+	status_symbol:        Symbol_Id,
 	bootstrap_ready:      bool,
 	typeid_requested:     map[Type_Id]bool,
 	typeid_order:         [dynamic]Type_Id,

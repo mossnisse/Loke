@@ -83,7 +83,7 @@ text_of :: proc(bytes: []u8) -> string {
 	}
 }
 
-succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
 	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;
@@ -91,8 +91,8 @@ succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
 	return false;
 }
 
-// The failure a `Result(Unit, Error)` carries. Every use below expects one.
-failed :: proc(outcome: Result(Unit, io.Error)) -> io.Error {
+// The failure a `Status(Error)` carries. Every use below expects one.
+failed :: proc(outcome: Status(io.Error)) -> io.Error {
 	switch (outcome) {
 	case .ok:  panic("this operation was supposed to fail");
 	case .err(error): return error;
@@ -221,8 +221,8 @@ main :: proc() {
 	fmt.println(!succeeded(propagate()));
 }
 
-propagate :: proc() -> Result(Unit, io.Error) {
+propagate :: proc() -> Status(io.Error) {
 	broken: Broken_Writer = {};
 	io.write_string(inout broken, "x") or_return;
-	return .ok(Unit{});
+	return .ok;
 }

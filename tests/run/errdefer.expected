@@ -1,0 +1,13 @@
+leaving ada
+.ok 2
+undo bob
+leaving bob
+.err(Duplicate) 2
+.ok(1)
+failed by return
+.err(Full)
+iteration 0
+iteration 1
+outer runs
+.err(Full)
+.err(0)

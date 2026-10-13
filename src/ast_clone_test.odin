@@ -29,7 +29,8 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Expr_Index, "operand indices", "bound map_inserts"},
 		{Expr_Slice, "operand lo hi mutable", "bound"},
 		{Expr_Call, "callee args", "bound bound_order operation overload_members group is_variadic variadic_slot variadic_forwards variadic_elements variadic_spreads variadic_order"},
-		{Expr_Postfix, "op op_span operand", "borrows boxed"},
+		{Expr_Postfix, "op op_span operand failure", "borrows boxed failure_exit failure_maps"},
+		{Expr_Propagated_Error, "", "owner"},
 		{Expr_Unary, "op op_span mutable operand", ""},
 		{Expr_Binary, "op op_span lhs rhs", "negated"},
 		{Expr_Range, "op op_span lo hi", ""},
@@ -66,7 +67,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Stmt_Foreach, "bindings iterable body", "kind adapter indexed element_type item_type borrows count iterator_type iter_symbol next_symbol expansion"},
 		{Stmt_When, "cond then otherwise", "resolved selected"},
 		{Stmt_Switch, "kind init subject cases", "exhaustive"},
-		{Stmt_Defer, "stmt", "slot"},
+		{Stmt_Defer, "stmt on_failure", "slot"},
 		{Stmt_Return, "value", ""},
 		{Stmt_Branch, "kind", ""},
 

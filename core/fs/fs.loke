@@ -80,7 +80,7 @@ impl File {
 	}
 
 	// Idempotent: the value is left inert even when the close itself failed.
-	close :: proc(self: inout File) -> Result(Unit, io.Error) {
+	close :: proc(self: inout File) -> Status(io.Error) {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
@@ -118,7 +118,7 @@ impl File {
 		return seek_handle(self.handle, offset, origin);
 	}
 
-	flush :: proc(self: inout File) -> Result(Unit, io.Error) {
+	flush :: proc(self: inout File) -> Status(io.Error) {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		return flush_handle(self.handle);
 	}
@@ -198,7 +198,7 @@ read_text :: proc(
 // Truncates an existing file only after the target has been opened. This is not
 // an atomic replacement; a `replace_atomic` with documented same-filesystem and
 // durability guarantees can be added later.
-write_bytes :: proc(path: string_view, data: []u8) -> Result(Unit, io.Error) {
+write_bytes :: proc(path: string_view, data: []u8) -> Status(io.Error) {
 	file := create(path) or_return;
 	written := io.write_all(inout file, data);
 	closed := file.close();
@@ -206,11 +206,11 @@ write_bytes :: proc(path: string_view, data: []u8) -> Result(Unit, io.Error) {
 	return closed;
 }
 
-write_text :: proc(path: string_view, text: string_view) -> Result(Unit, io.Error) {
+write_text :: proc(path: string_view, text: string_view) -> Status(io.Error) {
 	return write_bytes(path, text.bytes());
 }
 
-append_bytes :: proc(path: string_view, data: []u8) -> Result(Unit, io.Error) {
+append_bytes :: proc(path: string_view, data: []u8) -> Status(io.Error) {
 	file := append(path) or_return;
 	written := io.write_all(inout file, data);
 	closed := file.close();
@@ -218,7 +218,7 @@ append_bytes :: proc(path: string_view, data: []u8) -> Result(Unit, io.Error) {
 	return closed;
 }
 
-append_text :: proc(path: string_view, text: string_view) -> Result(Unit, io.Error) {
+append_text :: proc(path: string_view, text: string_view) -> Status(io.Error) {
 	return append_bytes(path, text.bytes());
 }
 
@@ -240,13 +240,13 @@ exists :: proc(path: string_view) -> Result(bool, io.Error) {
 	}
 }
 
-remove :: proc(path: string_view) -> Result(Unit, io.Error) { return remove_native(path); }
+remove :: proc(path: string_view) -> Status(io.Error) { return remove_native(path); }
 
-rename :: proc(old_path: string_view, new_path: string_view) -> Result(Unit, io.Error) {
+rename :: proc(old_path: string_view, new_path: string_view) -> Status(io.Error) {
 	return rename_native(old_path, new_path);
 }
 
-create_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
+create_directory :: proc(path: string_view) -> Status(io.Error) {
 	return create_directory_native(path);
 }
 
@@ -256,7 +256,7 @@ create_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 // Nothing at or above the volume is a directory anything can create — `C:` is a
 // drive and a UNC prefix is a share — so the walk starts past whatever
 // `path.volume` finds.
-create_directories :: proc(path: string_view) -> Result(Unit, io.Error) {
+create_directories :: proc(path: string_view) -> Status(io.Error) {
 	bytes := path.bytes();
 	// The separator *ending* the volume names the volume itself, so the walk skips
 	// it rather than starting after it. One `at == start` covers both `C:\x` and a
@@ -274,7 +274,7 @@ create_directories :: proc(path: string_view) -> Result(Unit, io.Error) {
 // directory and an existing non-directory alike, and `Permission_Denied` for a
 // volume root, which always exists; only a directory satisfies the operation.
 @(private)
-ensure_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
+ensure_directory :: proc(path: string_view) -> Status(io.Error) {
 	switch (create_directory(path)) {
 	case .ok: return .ok;
 	case .err(outcome):
@@ -287,7 +287,7 @@ ensure_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 	}
 }
 
-remove_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
+remove_directory :: proc(path: string_view) -> Status(io.Error) {
 	return remove_directory_native(path);
 }
 
@@ -488,11 +488,10 @@ open_native :: proc(path: string_view, options: Open_Options) -> Result(File, io
 }
 
 @(private)
-close_handle :: proc(handle: Handle) -> Result(Unit, io.Error) {
+close_handle :: proc(handle: Handle) -> Status(io.Error) {
 	if (rt_close_handle(handle) == 0) {
 		return .err(from_last_error(.Close));
 	}
-	return .ok;
 }
 
 @(private)
@@ -542,11 +541,10 @@ seek_handle :: proc(handle: Handle, offset: i64, origin: Seek_Origin) -> Result(
 }
 
 @(private)
-flush_handle :: proc(handle: Handle) -> Result(Unit, io.Error) {
+flush_handle :: proc(handle: Handle) -> Status(io.Error) {
 	if (rt_flush(handle) == 0) {
 		return .err(from_last_error(.Flush));
 	}
-	return .ok;
 }
 
 @(private)
@@ -592,40 +590,36 @@ unix_nanoseconds :: proc(time: [2]u32) -> i64 {
 }
 
 @(private)
-remove_native :: proc(path: string_view) -> Result(Unit, io.Error) {
+remove_native :: proc(path: string_view) -> Status(io.Error) {
 	wide := wide_path(path, .Remove) or_return;
 	if (rt_delete_file(unsafe.raw_data(wide)) == 0) {
 		return .err(from_last_error(.Remove));
 	}
-	return .ok;
 }
 
 @(private)
-rename_native :: proc(old_path: string_view, new_path: string_view) -> Result(Unit, io.Error) {
+rename_native :: proc(old_path: string_view, new_path: string_view) -> Status(io.Error) {
 	from := wide_path(old_path, .Rename) or_return;
 	to := wide_path(new_path, .Rename) or_return;
 	if (rt_move_file(unsafe.raw_data(from), unsafe.raw_data(to), u32(MOVEFILE_REPLACE_EXISTING)) == 0) {
 		return .err(from_last_error(.Rename));
 	}
-	return .ok;
 }
 
 @(private)
-create_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
+create_directory_native :: proc(path: string_view) -> Status(io.Error) {
 	wide := wide_path(path, .Create_Directory) or_return;
 	if (rt_create_directory(unsafe.raw_data(wide), nil) == 0) {
 		return .err(from_last_error(.Create_Directory));
 	}
-	return .ok;
 }
 
 @(private)
-remove_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
+remove_directory_native :: proc(path: string_view) -> Status(io.Error) {
 	wide := wide_path(path, .Remove_Directory) or_return;
 	if (rt_remove_directory(unsafe.raw_data(wide)) == 0) {
 		return .err(from_last_error(.Remove_Directory));
 	}
-	return .ok;
 }
 
 // The search handle plus the record Windows fills. `pending` is the entry
@@ -649,14 +643,13 @@ impl Directory_Reader {
 		}
 	}
 
-	close :: proc(self: inout Directory_Reader) -> Result(Unit, io.Error) {
+	close :: proc(self: inout Directory_Reader) -> Status(io.Error) {
 		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) { return .ok; }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
 		if (rt_find_close(handle) == 0) {
 			return .err(from_last_error(.Read_Directory));
 		}
-		return .ok;
 	}
 
 	// The next entry, or `.none` at the end of the directory. `.` and `..` are

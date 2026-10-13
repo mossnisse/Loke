@@ -1,0 +1,20 @@
+// design.md "defer statement": a panic unwinds through a pending `errdefer` as
+// through a `defer`, newest first, since it leaves the work as incomplete as a
+// failure return does. One whose scope already ended is not replayed.
+package main;
+import "core:fmt";
+
+Step_Error :: enum { Refused }
+
+step :: proc() -> Status(Step_Error) {
+	{
+		errdefer fmt.println("ended scope");
+	}
+	errdefer fmt.println("errdefer undo");
+	defer fmt.println("defer");
+	panic("step failed hard");
+}
+
+main :: proc() {
+	_ = step();
+}

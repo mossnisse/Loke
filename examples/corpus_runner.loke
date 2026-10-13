@@ -154,7 +154,7 @@ sources :: proc(directory: string_view) -> Result([dynamic]string, io.Error) {
 check :: proc(
 	compiler: string_view, corpus: string_view, scratch: string_view, entry: string_view, mode: Mode,
 	clang: Option(string),
-) -> Result(Unit, string) {
+) -> Status(string) {
 	name := path.stem(entry);
 	source := path.join([]string_view{corpus, entry});
 	exe := sibling(scratch, name, ".exe");
@@ -205,7 +205,6 @@ check :: proc(
 		if (normalise(text(ran.stderr[:])) != normalise(wanted)) { return .err("stderr differs"); }
 	case .none:
 	}
-	return .ok;
 }
 
 // The Odin suite's rules for a diagnostic case: the compile exits 1, and each
@@ -215,7 +214,7 @@ check :: proc(
 // exactly the lines starting `L0` and `warning[`.
 diagnosed :: proc(
 	source: string_view, diagnostics: string_view, status: i32, expected: string_view,
-) -> Result(Unit, string) {
+) -> Status(string) {
 	if (status != 1) { return .err(fmt.to_string(mem.default_allocator(), "exited with", status, "not 1")); }
 	output := normalise(diagnostics);
 	wanted := normalise(expected);
@@ -247,14 +246,13 @@ diagnosed :: proc(
 	if (own_warnings(output, source) != warnings) {
 		return .err(fmt.to_string(mem.default_allocator(), "has", own_warnings(output, source), "warnings, not", warnings));
 	}
-	return .ok;
 }
 
 // An IR case compiles, its module holds every line of `.expected`, and clang
 // assembles it: a shape can match IR that LLVM rejects.
 shaped :: proc(
 	ll: string_view, built: process.Output, expected: string_view, clang: Option(string),
-) -> Result(Unit, string) {
+) -> Status(string) {
 	if (built.status != 0) {
 		return .err(fmt.to_string(mem.default_allocator(), "does not compile:", text(built.stderr[:])));
 	}

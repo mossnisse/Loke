@@ -323,7 +323,9 @@ line_indent :: proc(l: ^Layout) -> int {
 @(private = "file")
 ends_operand :: proc(l: ^Layout) -> bool {
 	#partial switch l.last.kind {
-	case .Ident, .Int, .Float, .String, .Raw_String, .Rune, .Rparen, .Rbracket, .Rbrace, .Uninit:
+	// A bare `or_return` ends one too (grammar.md "Expressions"): an operator
+	// after it is binary or postfix.
+	case .Ident, .Int, .Float, .String, .Raw_String, .Rune, .Rparen, .Rbracket, .Rbrace, .Uninit, .Or_Return:
 		return true
 	case .Caret, .Question:
 		return l.postfix
@@ -384,7 +386,7 @@ maybe_prefix :: proc(kind: Token_Kind) -> bool {
 @(private = "file")
 spaced_keyword :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
-	case .If, .For, .Foreach, .Switch, .When, .Return, .Case, .In, .Else, .Or_Else, .Via, .Where, .Defer:
+	case .If, .For, .Foreach, .Switch, .When, .Return, .Case, .In, .Else, .Or_Else, .Via, .Where, .Defer, .Errdefer:
 		return true
 	}
 	return false
@@ -421,7 +423,8 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 	case .Lbrace:
 		return written // `Point{1, 2}`, `proc{a, b}`, and `if (x) {` alike
 	case .Period:
-		return operand ? "" : written
+		// `f() or_return .io`: a `.` after `or_return` begins its operand.
+		return operand && last != .Or_Return ? "" : written
 	case .Colon:
 		after := l.text[next.hi:min(next.hi + 1, u32(len(l.text)))]
 		if after == ":" || after == "=" {
@@ -440,7 +443,7 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 		}
 		// `inout (^mut T)(p)^` prefixes a parenthesized operand; every other
 		// keyword hugs its bracket: `proc(`, `move(x)`, `hook(drop)`, `map[K]V`.
-		if last == .Inout || last == .Mut || last == .Distinct {
+		if last == .Inout || last == .Mut || last == .Distinct || last == .Or_Return {
 			return written
 		}
 		// The contextual keywords of `storage: static [256]u8`.

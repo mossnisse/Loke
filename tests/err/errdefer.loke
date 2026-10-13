@@ -1,0 +1,25 @@
+// design.md "defer statement": `errdefer` needs a result with a failure
+// variant, and takes `defer`'s restrictions.
+package main;
+import "core:fmt";
+
+plain :: proc() -> int {
+	errdefer fmt.println("never");
+	return 1;
+}
+
+nothing :: proc() {
+	errdefer fmt.println("never");
+}
+
+nested :: proc() -> Status(int) {
+	defer {
+		errdefer fmt.println("never");
+	}
+}
+
+propagates :: proc() -> Status(int) {
+	errdefer nested() or_return;
+}
+
+main :: proc() {}

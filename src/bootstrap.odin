@@ -1,7 +1,7 @@
 // The `base:runtime` bootstrap (design.md "Typed fallibility"). `Unit`, `Option`,
-// `Result`, the shared handles, and the yield markers are ordinary runtime source
-// bound into the universe, so the compiler and a program name one declaration
-// each rather than two that print the same.
+// `Result`, `Status`, the shared handles, and the yield markers are ordinary
+// runtime source bound into the universe, so the compiler and a program name one
+// declaration each rather than two that print the same.
 package lokec
 
 import "core:slice"
@@ -26,6 +26,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	unit := bootstrap_symbol(k, pkg, "Unit", .Type)
 	c.option_symbol = bootstrap_symbol(k, pkg, "Option", .Type)
 	c.result_symbol = bootstrap_symbol(k, pkg, "Result", .Type)
+	c.status_symbol = bootstrap_symbol(k, pkg, "Status", .Type)
 	c.shared_symbol = bootstrap_symbol(k, pkg, "Shared", .Type)
 	c.weak_symbol = bootstrap_symbol(k, pkg, "Weak", .Type)
 	c.shared_construct_symbol = bootstrap_symbol(k, pkg, "shared", .Proc_Group)
@@ -37,6 +38,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	bind_universe_name(c, universe, "Unit", unit)
 	bind_universe_name(c, universe, "Option", c.option_symbol)
 	bind_universe_name(c, universe, "Result", c.result_symbol)
+	bind_universe_name(c, universe, "Status", c.status_symbol)
 	// design.md "Shared ownership": `Shared` and `Weak` are the types, and
 	// `shared` is the constructor group.
 	bind_universe_name(c, universe, "Shared", c.shared_symbol)
@@ -44,7 +46,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	bind_universe_name(c, universe, "shared", c.shared_construct_symbol)
 	bind_universe_name(c, universe, "try_shared", c.try_shared_symbol)
 
-	c.alloc_result_type = result_type(k, c.unit_type, TYPE_ALLOCATOR_ERROR)
+	c.alloc_result_type = status_type(k, TYPE_ALLOCATOR_ERROR)
 }
 
 @(private = "file")
@@ -96,6 +98,14 @@ result_type :: proc(k: ^Checker, payload, error: Type_Id, span := Span{}) -> Typ
 	}
 	args := [2]Type_Id{payload, error}
 	return instantiate_record_types(k, k.c.result_symbol, args[:], span)
+}
+
+status_type :: proc(k: ^Checker, error: Type_Id, span := Span{}) -> Type_Id {
+	if k.c.status_symbol == INVALID_SYMBOL || error == INVALID_TYPE {
+		return INVALID_TYPE
+	}
+	args := [1]Type_Id{error}
+	return instantiate_record_types(k, k.c.status_symbol, args[:], span)
 }
 
 // Is this an instance of `Shared(T)` or `Weak(T)`? design.md "Shared ownership"

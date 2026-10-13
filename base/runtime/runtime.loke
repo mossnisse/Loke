@@ -93,17 +93,16 @@ Source_Code_Location :: struct {
 	column:    int,
 }
 
-// design.md "Typed fallibility": the three declarations the compiler
-// bootstraps and binds into the universe, so every program spells absence and
-// failure with one pair of types rather than a trailing status convention.
+// design.md "Typed fallibility": the declarations the compiler bootstraps and
+// binds into the universe, so every program spells absence and failure with
+// these types rather than a trailing status convention.
 //
 // `Option` has a zero — `.none` is its first variant — so it may be stored in
 // a global, a container, or a zero-initialized allocation. `Result` has none:
 // there is no honest default between success and failure, so it must be
 // constructed.
 
-// The no-payload result type. A fallible operation that produces nothing on
-// success returns `Result(Unit, E)`.
+// The empty type: what `or_return` yields for a success that carries nothing.
 @(public)
 Unit :: struct {}
 
@@ -113,6 +112,13 @@ Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
 @(public)
 @(require_results)
 Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
+
+// A fallible operation that produces nothing on success. Its success carries
+// no payload, so its body may end without `return .ok;` (design.md "One
+// result").
+@(public)
+@(require_results)
+Status :: union($E: type) @(failure=err) { ok, err: E }
 
 // design.md "or_return operator": `or_return` rewraps a failure payload only
 // where it is already assignable, so changing error domains is an ordinary
@@ -129,6 +135,17 @@ impl Result($T, $E) {
 		where interfaces.Callable(C, proc(error: move E) -> C.Result) {
 		switch (move(self)) {
 		case .ok(payload):  return .ok(move(payload));
+		case .err(payload): return .err(f(move(payload)));
+		}
+	}
+}
+
+// `Status`'s counterpart of `Result.map_error`.
+impl Status($E) {
+	map_error :: proc(self: move, f: $C) -> Status(C.Result)
+		where interfaces.Callable(C, proc(error: move E) -> C.Result) {
+		switch (move(self)) {
+		case .ok:           return .ok;
 		case .err(payload): return .err(f(move(payload)));
 		}
 	}

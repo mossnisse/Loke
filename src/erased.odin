@@ -664,7 +664,7 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 	switch v in e {
 	case ^Expr_Ident:
 		return v.name_id == name
-	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly, ^Expr_Proc_Group:
+	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly, ^Expr_Proc_Group, ^Expr_Propagated_Error:
 		return false
 	case ^Type_Pointer:
 		return type_syntax_names(v.elem, name)
@@ -708,7 +708,7 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 		}
 		return type_syntax_names(v.callee, name)
 	case ^Expr_Postfix:
-		return type_syntax_names(v.operand, name)
+		return type_syntax_names(v.operand, name) || type_syntax_names(v.failure, name)
 	case ^Expr_Unary:
 		return type_syntax_names(v.operand, name)
 	case ^Expr_Binary:

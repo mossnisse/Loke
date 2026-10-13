@@ -374,7 +374,12 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 	case ^Expr_Unary:
 		return first_unresolved_name(k, v.operand)
 	case ^Expr_Postfix:
-		return first_unresolved_name(k, v.operand)
+		if missing := first_unresolved_name(k, v.operand); missing != "" {
+			return missing
+		}
+		return first_unresolved_name(k, v.failure)
+	case ^Expr_Propagated_Error:
+		return ""
 	case ^Expr_Binary:
 		if missing := first_unresolved_name(k, v.lhs); missing != "" {
 			return missing

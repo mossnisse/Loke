@@ -9,9 +9,9 @@ import "core:path";
 // Process-state allocation failures keep their normalized I/O identity. A
 // deliberately small fixed arena makes UTF-16 decoding fail without depending
 // on machine memory pressure.
-// The process calls answer with `Result(Unit, io.Error)`; these checks only
+// The process calls answer with `Status(io.Error)`; these checks only
 // care which variant came back.
-succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
 	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;

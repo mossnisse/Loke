@@ -1,0 +1,50 @@
+// design.md "Typed fallibility": `Status(E)` is a fallible union whose success
+// carries nothing. Its body may end without `return .ok;` ("One result"),
+// `or_return` crosses between it and `Result(T, E)`, `or_else` yields `Unit`
+// for it, and `map_error` converts one that is kept.
+package main;
+import "core:fmt";
+
+Disk :: enum { Full, Gone }
+App_Error :: union { disk: Disk, other: int }
+
+write :: proc(fail: bool) -> Status(Disk) {
+	if (fail) {
+		return .err(.Full);
+	}
+	fmt.println("written");
+}
+
+count :: proc(fail: bool) -> Result(int, Disk) {
+	write(fail) or_return;
+	return .ok(3);
+}
+
+store :: proc(fail: bool) -> Status(App_Error) {
+	n := count(fail) or_return .disk;
+	fmt.println("stored", n);
+}
+
+Tri :: union @(failure=broken) { fine, broken: int }
+
+user :: proc(fail: bool) -> Tri {
+	if (fail) { return .broken(7); }
+}
+
+folded :: proc() -> Status(int) {
+	x := 1;
+	x += 1;
+}
+FOLDED :: folded();
+
+main :: proc() {
+	fmt.println(store(false));
+	fmt.println(store(true));
+	fmt.println(user(false), user(true));
+	unit := write(false) or_else panic("not reached");
+	fmt.println(unit);
+	fmt.println(write(true) or_else Unit{});
+	kept := write(true).map_error(App_Error.disk);
+	fmt.println(kept);
+	fmt.println(FOLDED);
+}

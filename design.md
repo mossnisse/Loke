@@ -980,13 +980,13 @@ y: [dynamic]int = {};
 y.append(..x[:]); // append a slice
 ```
 
-Ordinary mutating operations use the allocator's configured failure policy, which normally reports an out-of-memory panic. Fallible variants such as `try_append` and `try_reserve` return `Result(Unit, Allocator_Error)` so the caller can handle failure.
+Ordinary mutating operations use the allocator's configured failure policy, which normally reports an out-of-memory panic. Fallible variants such as `try_append` and `try_reserve` return `Status(Allocator_Error)` so the caller can handle failure.
 
 The `try_` prefix is a library-wide convention: the operation reports the failure that its ordinary form would panic on, and leaves the value unchanged on failure. It returns a [`Result`](#typed-fallibility), never a bare `bool`:
 
 - An operation that can fail only by allocating uses `Allocator_Error`.
 - A never-allocating container such as [`Small_Array(T, N)`](#fixed-capacity-arrays) uses a library-declared error such as `Capacity_Error`.
-- A no-payload success uses `Result(Unit, E)`.
+- A no-payload success uses `Status(E)`.
 
 The prefix specifies the failure contract, not a particular error type. Ordinary absence is separate: `pop() -> Option(T)` returns `.none` for an empty container, for both dynamic arrays and `Small_Array`. A caller that requires an element can use `pop() or_else ...` to choose its own fallback.
 
@@ -1124,7 +1124,7 @@ Where a container must deliberately outlive its scope uncleaned, [`unsafe.forget
 
 #### Fixed-capacity arrays
 
-`Small_Array(T, N)` is a library container with inline capacity `N`. It supports indexing, slicing, iteration, and the usual container methods without allocating. Operations that exceed `N` panic; their `try_` forms leave the value unchanged and return `Result(Unit, Capacity_Error)`. Element copying follows the ordinary copy rules.
+`Small_Array(T, N)` is a library container with inline capacity `N`. It supports indexing, slicing, iteration, and the usual container methods without allocating. Operations that exceed `N` panic; their `try_` forms leave the value unchanged and return `Status(Capacity_Error)`. Element copying follows the ordinary copy rules.
 
 Its inline storage is [capacity](#uninitialized-capacity) rather than `N` values, so `T` needs no zero value: an empty `Small_Array(T, N)` imposes exactly what an empty `[dynamic]T` does. A copy clones the live elements only, and so does a drop.
 
@@ -1628,12 +1628,12 @@ A variant is identified by its name and declaration index, not its payload type.
 v = .number(7);
 v = Value.number(7);
 v = .absent;
-return .ok; // in a procedure returning Result(Unit, E)
+return .ok; // in a procedure returning Status(E) or Result(Unit, E)
 ```
 
 Record-field initialization rules apply to the payload: a place argument clones it and must be copyable; a temporary or `move(x)` transfers it.
 
-Outside a call, `U.name` of a payload variant is the variant's **constructor**: a procedure value of type `proc(payload: move P) -> U`, where `P` is the payload type. It takes its payload over, so a place is passed to it as `move(x)`, where `U.name(x)` would clone the place. The contextual `.name` is not a constructor, since a destination never chooses the union; a generic union names its instance, as in `Option(int).some`.
+Outside a call, `U.name` of a payload variant is the variant's **constructor**: a procedure value of type `proc(payload: move P) -> U`, where `P` is the payload type. It takes its payload over, so a place is passed to it as `move(x)`, where `U.name(x)` would clone the place. The contextual `.name` is not a constructor, since a destination never chooses the union; a generic union names its instance, as in `Option(int).some`. The one exception is an `or_return` [failure operand](#the-failure-operand), where the procedure's result has already chosen the union, so `.io` is the constructor of its failure payload's `io` variant.
 
 ```odin
 number := Value.number;   // proc(payload: move i32) -> Value
@@ -3766,9 +3766,17 @@ a if c1 else b if c2 else d   // a if c1 else (b if c2 else d)
 x or_else y or_else z         // x or_else (y or_else z)
 ```
 
-The conditional groups as an else-if chain. `or_else` uses the same right grouping. Its left operand must be a [fallible expression](#typed-fallibility) whose success variant carries a payload, and its result is an ordinary value. Left grouping would give the outer `or_else` an ordinary left operand and make a fallback chain invalid.
+The conditional groups as an else-if chain. `or_else` uses the same right grouping. Its left operand must be a [fallible expression](#typed-fallibility), and its result is an ordinary value. Left grouping would give the outer `or_else` an ordinary left operand and make a fallback chain invalid.
 
-The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, panicking checked extraction `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().as(T) or_else c` is `(a.b().as(T)) or_else c`. `or_return` is postfix rather than binary because it takes no right operand; [Other operators](#other-operators) lists it alongside the binary forms only for discoverability.
+The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, panicking checked extraction `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().as(T) or_else c` is `(a.b().as(T)) or_else c`. `or_return` is postfix rather than binary: its [failure operand](#the-failure-operand) is optional and is itself a postfix expression, so the whole form is one postfix expression. After `or_return`, a token that begins a primary expression (an identifier, a literal, `.`, `(`, `[`, `{`, `move`, or `proc`) begins the failure operand; `^` and the unary and binary operators do not:
+
+```odin
+total := count() or_return .io * 2;   // (count() or_return .io) * 2
+n     := value() or_return + 1;       // (value() or_return) + 1
+size  := (text() or_return).len();    // a member of the success payload
+```
+
+A suffix after a bare `or_return` would be read as the failure operand, so a member of the payload is reached through parentheses, as above. [Other operators](#other-operators) lists `or_return` alongside the binary forms only for discoverability.
 
 ### Integer operators
 
@@ -4179,7 +4187,7 @@ Each form means exactly the switch it abbreviates: `if (case P = e) A else B` is
 
 A defer statement defers the execution of a statement until the end of the scope it is in. It is registered when execution reaches the `defer` statement and participates in the unified LIFO scope-exit ordering described under [Managed values and storage](#managed-values-and-storage).
 
-Deferred code may not transfer control out of the deferred statement. `return` and `or_return` are invalid there. `break` or `continue` may target only a loop wholly inside the deferred statement. A deferred statement may not contain another `defer`.
+Deferred code may not transfer control out of the deferred statement. `return` and `or_return` are invalid there. `break` or `continue` may target only a loop wholly inside the deferred statement. A deferred statement may not contain another `defer` or `errdefer`.
 
 The following will print 4 then 234:
 
@@ -4205,10 +4213,23 @@ main :: proc() {
 the condition is evaluated when cleanup runs, not when registered; it is
 equivalent to `defer { if (failed) { rollback(); } }`.
 
+`errdefer` is a `defer` that runs only when the procedure leaves with its failure variant, whether by `or_return` or by a `return` whose value has the failure tag, so `return .err(e)` and `return saved_outcome` behave alike. It requires a result that is a [fallible union](#typed-fallibility) (`L0720`) and takes `defer`'s restrictions. It is registered and ordered as a `defer` is; a scope left any other way — its end, `break`, `continue`, or a `return` of the success variant — discards it. It undoes incomplete work, which needs no flag:
+
+```odin
+add_user :: proc(db: inout Db, user: User) -> Status(Db_Error) {
+	db.users.append(user);
+	errdefer _ = db.users.pop();   // undo the append if a later step fails
+	db.index.insert(user.name) or_return;
+	db.log.write(user) or_return .io;
+}
+```
+
+Under the `unwind` [panic strategy](#panics-and-unwinding) a pending `errdefer` also runs during unwinding, since a panic leaves the work as incomplete as a failure return does; under `abort` nothing runs. The error is not bound: the deferred statement reads locals like any other.
+
 A deferred operation that returns a `Result` must handle that result within the deferred action. It cannot propagate failure with `or_return`:
 
 ```odin
-read_file :: proc() -> Result(Unit, io.Error) {
+read_file :: proc() -> Status(io.Error) {
 	file := fs.open_read("my_file.txt") or_return;
 	defer {
 		switch (file.close()) {
@@ -4217,7 +4238,6 @@ read_file :: proc() -> Result(Unit, io.Error) {
 		}
 	}
 	// Use `file` here.
-	return .ok;
 }
 ```
 
@@ -4535,6 +4555,8 @@ fmt.println(sum(..odds));        // 9, passing a slice as varargs
 #### One result
 
 A procedure returns at most one value. `Results` is one `Result_Type`, never a list, and the result is anonymous — there is no name to fill in and no result local to assign. A procedure with a result must `return expression;` on every path that leaves it; a bare `return;` there is an error.
+
+One result type may reach the end of its body: a [fallible union](#typed-fallibility) whose success variant carries no payload, such as `Status(E)`. Reaching the end returns that success variant, as if the body ended in `return .ok;`. Every failure in such a procedure is written explicitly, so the end has one meaning, as it does in a procedure with no result. The rule covers a `main` returning one and a user union of that shape, but not `Result(Unit, E)`, whose success carries a payload, so a generic `Result($T, E)` body does not change meaning with its instance.
 
 To hand back several values, return one [anonymous record](#anonymous-records) and [destructure](#destructuring) it at the call site. Its fields need no names when the caller destructures it:
 
@@ -5439,15 +5461,14 @@ A Loke program contains one or more packages. A Loke source file uses the `.loke
 
 ### Program entry and exit
 
-An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()`, `main :: proc() -> i32`, or `main :: proc() -> F` for a [fallible union](#typed-fallibility) `F` whose success variant carries nothing, such as `Result(Unit, E)`: no parameters, the `loke` calling convention. Command-line arguments are read from `os.args`. When `main` returns normally, the exit status is its `i32` result, or 0 when it has none.
+An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()`, `main :: proc() -> i32`, or `main :: proc() -> F` for a [fallible union](#typed-fallibility) `F` whose success variant carries nothing or carries `Unit`, such as `Status(E)` or `Result(Unit, E)`: no parameters, the `loke` calling convention. Command-line arguments are read from `os.args`. When `main` returns normally, the exit status is its `i32` result, or 0 when it has none.
 
 A fallible `main` exits with status 0 on success. On failure the startup code writes `error: ` and the failure payload, as a formatted [`panic`](#built-in-procedures) prints its arguments, and a newline to standard error, after anything the program wrote to standard output; it then drops the payload and exits with status 1. A failure variant with no payload prints the whole value, such as `.failed`. The program need not import `core:fmt`. This is what lets `main` use `or_return`:
 
 ```odin
-main :: proc() -> Result(Unit, Config_Error) {
+main :: proc() -> Status(Config_Error) {
 	config := load_config("app.conf") or_return;
 	run(config);
-	return .ok;
 }
 ```
 
@@ -5615,7 +5636,7 @@ A compile-time failure prints a scalar argument's value and any other argument a
 
 ### Typed fallibility
 
-Absence and failure are **types**, not a trailing result. A procedure that may have no answer returns `Option(T)`; one that may fail returns `Result(T, E)`. Both are ordinary [unions](#unions) declared in `base:runtime`, and both are recognized by their *shape* rather than by their names:
+Absence and failure are **types**, not a trailing result. A procedure that may have no answer returns `Option(T)`; one that may fail returns `Result(T, E)`, or `Status(E)` when it produces nothing on success. All three are ordinary [unions](#unions) declared in `base:runtime`, and all are recognized by their *shape* rather than by their names:
 
 ```odin
 Unit :: struct {}
@@ -5624,9 +5645,21 @@ Option :: union($T: type) @(zero=none, failure=none) { none, some: T }
 
 @(require_results)
 Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
+
+@(require_results)
+Status :: union($E: type) @(failure=err) { ok, err: E }
 ```
 
-`Option` designates `none` as both its zero and its failure, so an `Option` has an all-zero "absent" value and participates in the failure protocol. `Result` designates `err` as its failure and requires its results to be handled; it has no zero, because neither arm is one.
+`Option` designates `none` as both its zero and its failure, so an `Option` has an all-zero "absent" value and participates in the failure protocol. `Result` designates `err` as its failure and requires its results to be handled; it has no zero, because neither arm is one. `Status` is the same with a success that carries nothing, so a procedure that only fails needs no empty type in its signature and may end without `return .ok;` ([One result](#one-result)):
+
+```odin
+save :: proc(config: Config) -> Status(io.Error) {
+	fs.create_directories(config.directory) or_return;
+	fs.write_text(config.path, config.text) or_return;
+}
+```
+
+`or_return` crosses between `Status(E)` and `Result(T, E)` in both directions, since only the failure payloads must agree. `Result(Unit, E)` remains valid, and `Unit` is still what `or_return` yields for a success that carries nothing.
 
 A **fallible expression** is one whose type is a union of exactly two variants with `@(failure=name)` written on it. That is the only thing [`or_else`](#or_else-expression) and [`or_return`](#or_return-operator) look for, so a user-declared union is a first-class participant:
 
@@ -5644,16 +5677,17 @@ Both operators read their operand once, and what they do with the payload depend
 
 | operand | success payload | failure payload |
 | --- | --- | --- |
-| a place | copied out, source stays live | copied by `or_return`; left alone by `or_else` |
-| a temporary, or `move(x)` | transferred | transferred by `or_return`; dropped by `or_else` before the fallback runs |
+| a place | copied out, source stays live | copied by `or_return` and by its mapper; left alone by `or_else` and by an `or_return` replacement |
+| a temporary, or `move(x)` | transferred | transferred by `or_return` and to its mapper; dropped by `or_else` and by an `or_return` replacement before the fallback or replacement runs |
 
-A place operand therefore requires a copyable payload: a move-only one must be written `move(x)`. `or_else` never copies the error.
+A place operand therefore requires a copyable payload: a move-only one must be written `move(x)`. `or_else` never copies the error, and neither does an `or_return` [replacement](#the-failure-operand).
 
 ### or_else expression
 
 `left or_else fallback` extracts the success payload of a
-[fallible expression](#typed-fallibility). The success variant must carry a
-payload; the fallback must be assignable to its type and runs only on failure.
+[fallible expression](#typed-fallibility); a success that carries nothing, such
+as a `Status`'s, yields `Unit`, as it does for `or_return`. The fallback must be
+assignable to the payload's type and runs only on failure.
 Selecting a managed fallback place clones it; a temporary or `move(x)` transfers.
 
 ```odin
@@ -5695,18 +5729,18 @@ does.
 
 On success it yields the success payload; a payloadless success yields `Unit`, so `or_return` is an expression in every case and no second spelling is needed for the no-value one.
 
-On failure, control returns from the innermost enclosing procedure. That procedure's result must itself be a fallible union, and the operand's failure payload must be assignable to its failure payload. An assignable conversion that creates a borrowed view is also subject to the ordinary return-escape rules: its source must outlive the returned view.
+On failure, control returns from the innermost enclosing procedure. That procedure's result must itself be a fallible union, and the operand's failure payload must be assignable to its failure payload, unless a [failure operand](#the-failure-operand) builds the error to return. An assignable conversion that creates a borrowed view is also subject to the ordinary return-escape rules: its source must outlive the returned view.
 
 The operand's temporaries are destroyed before the return completes, and the ordinary `defer` and cleanup rules run. `or_return` cannot appear outside a procedure or inside a deferred statement. A nested procedure propagates only from itself, never from its lexical parent.
 
 ```odin
 Error_Code :: enum { Failed }
-step  :: proc() -> Result(Unit, Error_Code) { return .ok; }
-value :: proc() -> Result(int, Error_Code)  { return .ok(123); }
+step  :: proc() -> Status(Error_Code)      { return .ok; }
+value :: proc() -> Result(int, Error_Code) { return .ok(123); }
 
 work :: proc() -> Result(int, Error_Code) {
 	n := value() or_return;
-	step() or_return;       // a Unit success is used as a statement
+	step() or_return;       // a success that carries nothing is used as a statement
 	return .ok(n * 2);
 }
 ```
@@ -5715,25 +5749,65 @@ Failure is rewrapped in the enclosing result's failure variant. A place
 operand copies the selected payload and stays live; a temporary transfers it.
 See [Operator ownership](#operator-ownership).
 
+#### The failure operand
+
+`operand or_return failure` propagates as a bare `or_return` does, but the error it returns is built from `failure`, which is evaluated only when the operand fails. It is checked against `F`, the failure payload type of the enclosing procedure's result, and `E` is the operand's failure payload, or nothing when the operand's failure carries none, as `Option`'s `none` does:
+
+```odin
+Time_Error :: enum { Missing_Colon, Not_A_Number }
+App_Error  :: union { time: Time_Error, io: io.Error, log_write: io.Error }
+
+parse_time :: proc(text: string_view) -> Result(int, Time_Error) {
+	parts   := strings.cut(text, ":")             or_return .Missing_Colon;  // an absence
+	hours   := strconv.parse_int(parts.before)    or_return .Not_A_Number;   // replace the error
+	minutes := strconv.parse_int(parts.after)     or_return .Not_A_Number;
+	return .ok(hours * 60 + minutes);
+}
+
+load :: proc(path: string_view) -> Result(int, App_Error) {
+	text    := fs.read_text(path)       or_return .io;          // wrap in a variant
+	minutes := parse_time(text)         or_return .time;
+	log     := fs.append("app.log")     or_return .log_write;   // a second io.Error variant
+	return .ok(minutes);
+}
+```
+
+- A value assignable to `F` **replaces** the error. A temporary operand's error is dropped before the failure operand runs; a place keeps its own.
+- Any other failure operand is a **mapper**, a callable satisfying `Callable(C, proc(error: move E) -> F)`, called with the error. A temporary transfers the error to it and a place copies it, as [Operator ownership](#operator-ownership) says. A failure that carries nothing has no error to map, so it takes only a replacement.
+- `.name` resolves against `F`. A payloadless variant or an enum value is a replacement; a variant with a payload is that variant's [constructor](#constructing-a-variant), so `.io` means `F.io`, and its payload type must accept `E`.
+
+A result whose failure carries nothing, such as `Option(T)`, takes no failure operand. The failure operand runs after the error is taken and before the operand's temporaries are destroyed and the ordinary cleanups run; it may read locals like any expression, and an `or_return` inside it propagates from the same procedure. An error that is costly to build therefore costs nothing on success:
+
+```odin
+category_total := add_amount(previous, amount)
+	or_return {number, "category total is out of range"};   // built only for a bad line
+```
+
+Each site names its variant, so two variants with one payload type need no rule, and adding a variant changes no existing propagation. [Operator precedence](#operator-precedence) says how the failure operand is parsed.
+
 ### Changing error domains
 
-Assignability is the whole rule, so a `Result(T, Parse_Error)` does not propagate into a `Result(T, App_Error)` merely because `App_Error` has a `parse: Parse_Error` variant. Nothing could choose that variant on its own: two variants may carry the same payload type, so the wrapping is named rather than guessed. `Result.map_error` names it:
+Assignability is the whole rule for a bare `or_return`, so a `Result(T, Parse_Error)` does not propagate into a `Result(T, App_Error)` merely because `App_Error` has a `parse: Parse_Error` variant. Nothing could choose that variant on its own: two variants may carry the same payload type, so the wrapping is named rather than guessed. Where the failure propagates, the [failure operand](#the-failure-operand) names it:
 
 ```odin
 Parse_Error :: enum { Bad_Digit, Empty }
 App_Error   :: union { parse: Parse_Error, io: io.Error }
 
 read_setting :: proc(text: string_view) -> Result(int, App_Error) {
-	// The variant's constructor is the mapper, and the place the intended
-	// variant is written down.
-	value := parse(text).map_error(App_Error.parse) or_return;
+	value := parse(text) or_return .parse;
 	return .ok(value);
 }
 ```
 
+A result that is stored or passed on rather than propagated is converted by `Result.map_error`, which takes the mapper as an argument:
+
+```odin
+outcome := parse(text).map_error(App_Error.parse);   // a Result(int, App_Error)
+```
+
 `map_error` consumes its receiver and transfers the success payload, including
 move-only values. A temporary needs no marker; a bound result uses
-`move(outcome).map_error(...)`.
+`move(outcome).map_error(...)`. `Status.map_error` is the same for a `Status`.
 
 The mapper takes the error through a `move` parameter and returns the target
 error type. A [variant constructor](#constructing-a-variant) transfers the error
@@ -5741,13 +5815,13 @@ directly; an ordinary mapper transfers a managed error with `move(error)`.
 Any value satisfying the corresponding [`Callable`](#standard-interface-catalogue)
 signature is accepted.
 
-An `Option` has no error to map: its failure, `none`, carries nothing. `Option.ok_or` supplies one, so an absence becomes a failure in the caller's domain:
+An `Option` has no error to map: its failure, `none`, carries nothing. A replacement supplies one where the absence propagates, so it becomes a failure in the caller's domain:
 
 ```odin
 Config_Error :: enum { Missing_Port, Bad_Port }
 
 port :: proc(settings: map[string]int) -> Result(int, Config_Error) {
-	value := settings.lookup_value("port").ok_or(Config_Error.Missing_Port) or_return;
+	value := settings.lookup_value("port") or_return .Missing_Port;
 	if (value <= 0 || value > 65535) {
 		return .err(.Bad_Port);
 	}
@@ -5755,9 +5829,9 @@ port :: proc(settings: map[string]int) -> Result(int, Config_Error) {
 }
 ```
 
-`ok_or` consumes its receiver as `map_error` does, and relocates the payload. The error is an ordinary `move` argument: it is evaluated before the call whether or not it is used, so an error that is costly to build belongs in a `switch` instead. Its type is [inferred](#specialization) from the argument, so an enum value is written with its type, `Config_Error.Missing_Port` rather than `.Missing_Port`.
+`Option.ok_or` does the same for an `Option` that is stored or passed on. It consumes its receiver as `map_error` does, and relocates the payload. The error is an ordinary `move` argument: it is evaluated before the call whether or not it is used, where a failure operand runs only on failure. Its type is [inferred](#specialization) from the argument, so an enum value is written with its type, `Config_Error.Missing_Port` rather than `.Missing_Port`.
 
-These two are the only error adaptations the language provides. Inspecting or logging a failure uses the same `switch` and mapping facilities; there is no second, implicit conversion path between error types.
+Every adaptation is written where the failure propagates or is inspected: a failure operand, `map_error`, `ok_or`, or a `switch`. There is no second, implicit conversion path between error types.
 
 ### Streaming a fallible source
 

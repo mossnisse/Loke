@@ -346,7 +346,12 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n := new_clone(c, Expr_Postfix, &v.base)
 		n.op, n.op_span = v.op, v.op_span
 		n.operand = clone_expr(c, v.operand)
+		n.failure = clone_expr(c, v.failure)
 		return n
+
+	case ^Expr_Propagated_Error:
+		// The checker builds it under a checked `or_return`, which a clone drops.
+		unreachable()
 
 	case ^Expr_Unary:
 		n := new_clone(c, Expr_Unary, &v.base)
@@ -616,6 +621,7 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		n := new(Stmt_Defer, c.semantic_allocator)
 		clone_node_base(c, &n.base, &v.base)
 		n.stmt = clone_stmt(c, v.stmt)
+		n.on_failure = v.on_failure
 		return n
 
 	case ^Stmt_Return:

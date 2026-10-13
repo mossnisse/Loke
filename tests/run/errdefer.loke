@@ -1,0 +1,66 @@
+// design.md "defer statement": an `errdefer` runs, in LIFO order with the
+// `defer`s, only when the procedure returns its failure variant, whether by
+// `or_return` or by `return`. A scope that ends otherwise discards it.
+package main;
+import "core:fmt";
+
+Db_Error :: enum { Duplicate, Full }
+
+Db :: struct { users: [dynamic]string }
+
+insert :: proc(db: inout Db, name: string, fail: bool) -> Status(Db_Error) {
+	if (fail) {
+		return .err(.Duplicate);
+	}
+	db.users.append(name);
+}
+
+add_user :: proc(db: inout Db, name: string, fail: bool) -> Status(Db_Error) {
+	db.users.append(name);
+	errdefer _ = db.users.pop();
+	defer fmt.println("leaving", name);
+	errdefer fmt.println("undo", name);
+	insert(inout db, "index", fail) or_return;
+}
+
+by_return :: proc(fail: bool) -> Result(int, Db_Error) {
+	errdefer fmt.println("failed by return");
+	outcome: Result(int, Db_Error) = .ok(1);
+	if (fail) {
+		outcome = .err(.Full);
+	}
+	return outcome;
+}
+
+scoped :: proc() -> Status(Db_Error) {
+	foreach (i in 0 ..< 2) {
+		errdefer fmt.println("never", i);
+		fmt.println("iteration", i);
+	}
+	{
+		errdefer fmt.println("inner block discarded");
+	}
+	errdefer fmt.println("outer runs");
+	return .err(.Full);
+}
+
+counted :: proc(fail: bool) -> Result(int, int) {
+	count := 0;
+	errdefer count += 10;
+	if (fail) {
+		return .err(count);
+	}
+	return .ok(count);
+}
+
+FOLDED :: counted(true);
+
+main :: proc() {
+	db := Db{};
+	fmt.println(add_user(inout db, "ada", false), db.users.len());
+	fmt.println(add_user(inout db, "bob", true), db.users.len());
+	fmt.println(by_return(false));
+	fmt.println(by_return(true));
+	fmt.println(scoped());
+	fmt.println(FOLDED);
+}

@@ -14,8 +14,8 @@ import "core:strings";
 // environment, so nothing depends on the repository working directory or on a
 // developer's machine, and the directory is removed at the end.
 
-// Every `Result(Unit, io.Error)` below is only ever asked which variant it is.
-succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
+// Every `Status(io.Error)` below is only ever asked which variant it is.
+succeeded :: proc(outcome: Status(io.Error)) -> bool {
 	switch (outcome) {
 	case .ok:  return true;
 	case .err: return false;
@@ -24,7 +24,7 @@ succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
 }
 
 // And these want the failure itself.
-failure_of :: proc(outcome: Result(Unit, io.Error)) -> io.Error {
+failure_of :: proc(outcome: Status(io.Error)) -> io.Error {
 	switch (outcome) {
 	case .ok:  return io.make_error(.Other, .Other);
 	case .err(error): return error;

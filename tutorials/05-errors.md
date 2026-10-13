@@ -72,20 +72,13 @@ Time_Error :: enum { Missing_Colon, Not_A_Number, Out_Of_Range }
 
 // Reads a time written as "HH:MM".
 parse_time :: proc(text: string_view) -> Result(Time, Time_Error) {
-	parts := strings.cut(text, ":").ok_or(Time_Error.Missing_Colon) or_return;
-	hours := parse_number(parts.before) or_return;
-	minutes := parse_number(parts.after) or_return;
+	parts := strings.cut(text, ":") or_return .Missing_Colon;
+	hours := strconv.parse_int(parts.before) or_return .Not_A_Number;
+	minutes := strconv.parse_int(parts.after) or_return .Not_A_Number;
 	if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
 		return .err(.Out_Of_Range);
 	}
 	return .ok({hours, minutes});
-}
-
-parse_number :: proc(text: string_view) -> Result(int, Time_Error) {
-	switch (strconv.parse_int(text)) {
-	case .ok(value):  return .ok(value);
-	case .err: return .err(.Not_A_Number);
-	}
 }
 
 main :: proc() {
@@ -111,19 +104,53 @@ main :: proc() {
 12:-1 is not a time: Out_Of_Range
 ```
 
-`or_return` is the operator that makes this readable. `parse_number(...)
-or_return` gives the number when the call succeeds. When it fails, `parse_time`
-returns at once, passing the same error on to its own caller. Without it, each
-call would need a `switch`.
+`or_return` is the operator that makes this readable. `strconv.parse_int(...)
+or_return .Not_A_Number` gives the number when the call succeeds. When it fails,
+`parse_time` returns at once with `.err(.Not_A_Number)`. Without it, each call
+would need a `switch`.
 
-`strings.cut` returns an `Option`, whose absence carries no error to pass on, so
-`.ok_or(Time_Error.Missing_Colon)` names the error it becomes first. The enum
-value is written with its type because `ok_or` learns the error type from its
-argument.
+A bare `x or_return` passes the same error on to the caller, which works when
+the caller's error type can hold it. Here the library reports a
+`strconv.Parse_Error`, and `parse_time` reports a `Time_Error`, so each
+`or_return` names the error to return instead. The name after `or_return` is
+checked against the caller's error type, so `.Not_A_Number` means
+`Time_Error.Not_A_Number`, and it is used only when the call fails.
+`strings.cut` returns an `Option`, whose absence carries no error at all, so it
+needs one named the same way.
 
-`parse_number` turns the library's error into a `Time_Error`, so that
-`parse_time` has one error type to report. It is also the example of a switch
-where every case returns, which is why no `return` follows it.
+When the caller's error type is a union, a variant name wraps the error rather
+than replacing it: with `App_Error :: union { time: Time_Error, ... }`,
+`parse_time(text) or_return .time` returns `.err(.time(error))`.
+
+A procedure that can fail but has nothing to return on success returns a
+`Status(E)`, whose variants are `.ok` and `.err(error)`. It may end without a
+`return`, which means success:
+
+```odin file=status.loke
+package main;
+
+import "core:fmt";
+
+Save_Error :: enum { Disk_Full }
+
+save :: proc(free_space: int) -> Status(Save_Error) {
+	if (free_space < 10) {
+		return .err(.Disk_Full);
+	}
+	fmt.println("saved");
+}
+
+main :: proc() {
+	fmt.println(save(100));
+	fmt.println(save(5));
+}
+```
+
+```text output=status
+saved
+.ok
+.err(Disk_Full)
+```
 
 A `Result` must not be ignored. Calling a procedure that returns one and doing
 nothing with the result is an error:
@@ -149,8 +176,8 @@ error[L0612]: this call produces `Result(int, Parse_Error)`, which must be used 
 `_ = strconv.parse_int("42");` discards it on purpose.
 
 [design.md "Error handling"](../design.md#error-handling) describes the rest,
-including your own fallible unions and `map_error`, which changes a `Result`'s
-error type in one step.
+including your own fallible unions and `map_error`, which changes the error type
+of a `Result` you keep rather than return.
 
 ## Cleaning up with `defer`
 
@@ -192,6 +219,38 @@ finish long
 
 Deferred statements run in reverse order, newest first, and only those the
 program reached: the early `return` skips the second one.
+
+`errdefer` is a `defer` that runs only when the procedure returns its failure,
+which is what undoing a half-finished change needs:
+
+```odin file=undo.loke
+package main;
+
+import "core:fmt";
+
+Full :: enum { Full }
+
+add :: proc(names: inout [dynamic]string, name: string, limit: int) -> Status(Full) {
+	names.append(name);
+	errdefer _ = names.pop();   // take it back if a later step fails
+	if (names.len() > limit) {
+		return .err(.Full);
+	}
+}
+
+main :: proc() {
+	names: [dynamic]string = {};
+	fmt.println(add(inout names, "ada", 2), names.len());
+	fmt.println(add(inout names, "bob", 2), names.len());
+	fmt.println(add(inout names, "cy", 2), names.len());
+}
+```
+
+```text output=undo
+.ok 1
+.ok 2
+.err(Full) 2
+```
 
 ## Panics
 

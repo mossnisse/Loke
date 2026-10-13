@@ -1,0 +1,15 @@
+L0429
+@15:25
+`.io` wraps `Io_Error`, but this failure carries `Parse_Error`
+L0429
+@20:25
+`Option(int).none` carries nothing, so this `or_return` takes no failure operand
+L0429
+@25:24
+`.parse` wraps `Parse_Error`, but this failure carries nothing
+L0385
+@30:23
+to reach the success payload, write `(text() or_return).len()`
+L0352
+@35:25
+42 is not representable by `App_Error`

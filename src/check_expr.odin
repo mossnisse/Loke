@@ -77,6 +77,15 @@ check_expr :: proc(
 	case ^Expr_Postfix:
 		check_postfix(k, v, position)
 
+	case ^Expr_Propagated_Error:
+		// The operand's failure payload, a temporary either way: a place's is a
+		// copy (design.md "Operator ownership").
+		v.value_category = .Value
+		v.type = INVALID_TYPE
+		if shape, ok := fallible_of(k, expr_base(v.owner.operand).type); ok {
+			v.type = shape.info.variants[shape.failure]
+		}
+
 	case ^Expr_Binary:
 		check_binary(k, v, expected)
 

@@ -82,6 +82,9 @@ main :: proc() {
 	defer close(handle);
 	defer { close(handle); }
 	defer if (owned) { free(p); }
+	// `errdefer` runs only on a failure exit.
+	errdefer _ = users.pop();
+	errdefer { rollback(); }
 
 	// A value switch, with an init statement and a default case.
 	switch (value) {

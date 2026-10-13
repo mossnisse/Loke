@@ -150,7 +150,10 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	case ^Expr_Call:
 		index_query_expr(index, v.callee)
 		for argument in v.args { index_query_expr(index, argument.value) }
-	case ^Expr_Postfix: index_query_expr(index, v.operand)
+	case ^Expr_Postfix:
+		index_query_expr(index, v.operand)
+		index_query_expr(index, v.failure)
+	case ^Expr_Propagated_Error:
 	case ^Expr_Unary: index_query_expr(index, v.operand)
 	case ^Expr_Binary:
 		index_query_expr(index, v.lhs)

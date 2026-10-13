@@ -80,11 +80,10 @@ impl Tracked_File {
 		return .ok({path, move(file)});
 	}
 
-	close :: proc(self: inout) -> Result(Unit, io.Error) {
+	close :: proc(self: inout) -> Status(io.Error) {
 		if (!self.file.is_open()) { return .ok; }
 		self.file.close() or_return;
 		fmt.println("closed", self.name);
-		return .ok;
 	}
 
 	release :: hook(drop) proc(self: inout Tracked_File) {
@@ -94,10 +93,9 @@ impl Tracked_File {
 
 Problem :: enum { Cancelled }
 
-process :: proc(input: move Tracked_File, cancel: bool) -> Result(Unit, Problem) {
+process :: proc(input: move Tracked_File, cancel: bool) -> Status(Problem) {
 	fmt.println("processing", input.name);
 	if (cancel) { return .err(.Cancelled); }
-	return .ok;
 }
 
 main :: proc() {

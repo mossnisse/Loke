@@ -1,0 +1,12 @@
+L0720
+@7:2
+`errdefer` needs a result with a failure variant, found `int`
+L0720
+@12:2
+`errdefer` needs a result with a failure variant; this procedure returns nothing
+L0369
+@17:3
+a deferred statement cannot contain another `errdefer`
+L0429
+@22:20
+`or_return` cannot appear inside a deferred statement

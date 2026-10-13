@@ -1,0 +1,71 @@
+// design.md "or_return operator": a replacement drops a temporary's error
+// before it runs and leaves a place's error in the place; a mapper takes a
+// temporary's error and a copy of a place's. Each error is dropped once.
+package main;
+import "core:fmt";
+
+Tracked :: struct { name: string }
+impl Tracked {
+	done :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.name); }
+}
+
+Wrapped :: union { tracked: Tracked, replaced: Tracked, code: int }
+
+fail :: proc(name: string) -> Result(int, Tracked) { return .err({name}); }
+
+note :: proc(name: string) -> Tracked {
+	fmt.println("replace", name);
+	return {name};
+}
+
+keep :: proc(error: move Tracked) -> Wrapped {
+	fmt.println("map", error.name);
+	return .tracked(move(error));
+}
+
+look :: proc(error: Tracked) -> Wrapped {
+	fmt.println("look", error.name);
+	return .code(error.name.len());
+}
+
+temporary_replaced :: proc() -> Result(int, Wrapped) {
+	value := fail("temporary") or_return .replaced(note("replacement"));
+	return .ok(value);
+}
+
+place_replaced :: proc() -> Result(int, Wrapped) {
+	outcome := fail("place");
+	value := outcome or_return .code(1);
+	return .ok(value);
+}
+
+temporary_mapped :: proc() -> Result(int, Wrapped) {
+	value := fail("mapped") or_return keep;
+	return .ok(value);
+}
+
+place_mapped :: proc() -> Result(int, Wrapped) {
+	outcome := fail("copied");
+	value := outcome or_return .tracked;
+	return .ok(value);
+}
+
+borrowed :: proc() -> Result(int, Wrapped) {
+	value := fail("borrowed") or_return look;
+	return .ok(value);
+}
+
+succeeds :: proc() -> Result(int, Wrapped) {
+	ok: Result(int, Tracked) = .ok(4);
+	value := ok or_return .replaced(note("never"));
+	return .ok(value);
+}
+
+main :: proc() {
+	fmt.println("--", temporary_replaced());
+	fmt.println("--", place_replaced());
+	fmt.println("--", temporary_mapped());
+	fmt.println("--", place_mapped());
+	fmt.println("--", borrowed());
+	fmt.println("--", succeeds());
+}

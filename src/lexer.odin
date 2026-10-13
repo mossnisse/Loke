@@ -27,6 +27,7 @@ Token_Kind :: enum {
 	Dynamic,
 	Else,
 	Enum,
+	Errdefer,
 	For,
 	Foreach,
 	Foreign,
@@ -326,6 +327,8 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Else
 	case "enum":
 		kind = .Enum
+	case "errdefer":
+		kind = .Errdefer
 	case "for":
 		kind = .For
 	case "foreach":

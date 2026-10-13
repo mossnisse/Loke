@@ -3280,7 +3280,7 @@ extended_temporary :: proc(e: Expr) -> Expr {
 @(private = "file")
 prov_expr_is_temporary :: proc(e: Expr) -> bool {
 	#partial switch v in e {
-	case ^Expr_Composite, ^Expr_Call, ^Expr_Cond, ^Expr_Or_Else, ^Expr_Move:
+	case ^Expr_Composite, ^Expr_Call, ^Expr_Cond, ^Expr_Or_Else, ^Expr_Move, ^Expr_Propagated_Error:
 		return true
 	case ^Expr_Binary:
 		return v.value_category != .Place // a user operator may return a place

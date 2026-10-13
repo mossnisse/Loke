@@ -371,11 +371,70 @@ not new expressions, so they keep the statements' rules and cleanups. A loop's
 header cannot use `break` or `continue` this way: it is evaluated outside the
 body, so whether it leaves the loop or an enclosing one would be a new rule.
 
+### The failure operand of `or_return`
+
+Before the failure operand, changing an error's domain was a method call to the
+left of the operator that consumed it, `f().map_error(App_Error.io) or_return`,
+which read as "convert, then maybe return" although conversion matters only on
+the path that returns. `map_error` rebuilt the result on success, `ok_or` built
+its error on every call, and an enum argument to `ok_or` needed its type
+because `ok_or` infers it. Writing the error to the right of `or_return` puts
+it on the failure path only, and lets `.name` resolve against the procedure's
+error type, which has already chosen the union.
+
+Wrapping stays explicit: each site names its variant. Alternatives that removed
+the name were rejected:
+
+- **Declared wrapping**, `@(wraps)` on a variant, makes the conversion implicit
+  at the site and visible only at the union.
+- **Inferring the variant from a unique payload type** breaks every distant
+  `or_return` that relied on it when a second variant of that type is added.
+- **Matching variant names to error types**, `io` to `io.Error`, gives names a
+  meaning they have nowhere else; a rename or an import alias would change
+  behavior.
+- **A conversion interface like Rust's `From`** is implicit and needs coherence
+  rules for who may declare a conversion.
+
+The operand is a postfix expression after a postfix operator, so binary
+operators still apply to the payload: `f() or_return + 1` keeps its meaning. The
+cost is that a member of a bare `or_return`'s payload needs parentheses,
+`(f() or_return).len()`; nothing in the repository wrote the unparenthesised
+form, and the diagnostic suggests the parentheses.
+
+### `Status(E)`
+
+A procedure that only fails returned `Result(Unit, E)`, so the empty type
+appeared in every such signature and every body ended in `return .ok;`.
+`Status(E)` is a fallible union of its own shape rather than a second name for
+`Unit`, which [A `()` unit type](#a--unit-type) rejected. A parametric alias,
+`Status :: Result(Unit, $E)`, would keep one type, so `map_error` and generic
+code over `Result` would work unchanged, but a type alias takes no parameters.
+The cost is that a generic procedure over `Result($T, $E)` does not accept a
+`Status(E)`. `Outcome` was the alternative name; `Status` was kept although it
+can be misread as a process exit status.
+
+A body whose success carries nothing may reach its end, which returns that
+success. Every failure in such a procedure is written explicitly, so the end
+has one meaning, as in a procedure with no result. `Result(Unit, E)` is not
+covered, so a generic `Result($T, E)` body cannot change meaning with its
+instance.
+
+### `errdefer`
+
+`defer if (failed)` left the flag to the programmer, who had to set it on every
+failure path. `errdefer` runs when the procedure returns its failure variant,
+decided by the returned value's tag, so `return .err(e)` and returning a saved
+outcome behave alike. Its spelling follows Zig: one reserved word, found by
+search, shaped like `defer`. Unlike Zig's, it also runs during panic unwinding:
+it exists to undo incomplete work, a panic leaves work as incomplete as a
+failure return does, and `defer` already runs there. Binding the error, Zig's
+`errdefer |err|`, is left for later.
+
 ### A fallible `main`
 
 `or_return` needs a fallible result, so a `main` returning nothing or an `i32`
 ended every program that could fail in a switch, and examples that printed the
-error forgot the status. A `main` returning `Result(Unit, E)` reports the
+error forgot the status. A `main` returning `Status(E)` reports the
 failure the way a formatted panic reports its arguments, after cleanup, and
 exits 1. The success arm carries nothing because there is nowhere for a value
 to go.

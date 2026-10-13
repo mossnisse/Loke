@@ -1,0 +1,10 @@
+written
+stored 3
+.ok
+.err(.disk(Full))
+.fine .broken(7)
+written
+Unit{}
+Unit{}
+.err(.disk(Full))
+.ok

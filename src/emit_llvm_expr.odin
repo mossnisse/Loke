@@ -1178,6 +1178,13 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		}
 		return load_place(e, as_type, emit_address_at(e, expr, as_type))
 
+	case ^Expr_Propagated_Error:
+		if error, ok := e.propagated_errors[v.owner]; ok {
+			return error
+		}
+		backend_fail(e, "an `or_return` mapper's error has no value")
+		return "0"
+
 	case ^Expr_Selector, ^Expr_Index:
 		if index, is_index := expr.(^Expr_Index); is_index {
 			// A read does not insert and panics for a missing key (design.md "Maps").

@@ -11,7 +11,7 @@ import "core:term";
 // design.md "Program entry and exit": a failure `main` returns is printed as
 // `error: ` and the payload, and the program exits with status 1, so
 // `or_return` is the whole of error handling at the top of a program.
-main :: proc() -> Result(Unit, io.Error) {
+main :: proc() -> Status(io.Error) {
 	name := term.prompt("Name: ") or_return;
 
 	// The file does not exist on the first run, which is not a failure here.

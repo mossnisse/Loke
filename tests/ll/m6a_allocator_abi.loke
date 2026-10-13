@@ -14,10 +14,10 @@ package main; import "core:mem"; import "core:fmt";
 Wide :: struct { a: i128, b: int }
 
 // The handle arrives as one `ptr` parameter and is forwarded unchanged.
-in_region :: proc(allocator: Allocator) -> Result(Unit, Allocator_Error) {
+in_region :: proc(allocator: Allocator) -> Status(Allocator_Error) {
 	made := try_box(Wide{}, allocator) or_return;
 	made.b = 1;
-	return .ok(Unit{});
+	return .ok;
 }
 
 main :: proc() {

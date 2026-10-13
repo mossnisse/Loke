@@ -56,7 +56,7 @@ Reserved in every position:
 
 ```
 break       case       continue   default    defer      distinct   dyn
-dynamic     else       enum       for        foreach    foreign
+dynamic     else       enum       errdefer   for        foreach    foreign
 hook        if         impl       import     in         inout      interface
 map         move       move_only  mut        operator   or_else    or_return
 package     proc       return     struct     switch     type       union
@@ -515,7 +515,7 @@ Binding         = "$"? ("&" "mut")? Identifier
 When_Statement = Attributes? "when" "(" Expression ")" Block
                  ("else" (When_Statement | Block))?
 
-Defer_Statement= Attributes? "defer" Statement      // not the empty statement
+Defer_Statement= Attributes? ("defer" | "errdefer") Statement   // not the empty statement
 
 Return_Statement = Attributes? "return" Return_Value? ";"
 Return_Value   = "inout"? Expression
@@ -550,10 +550,10 @@ start of a statement never begins a pattern.
 `return inout expr` is legal only where the procedure's result is declared
 `inout`.
 
-A `defer` body is any statement except the empty one, which would make it a
-no-op. It is narrowed further semantically: no `return`, `or_return`, or nested
-`defer`, and `break`/`continue` may target only a loop wholly inside it (see
-[design.md](design.md#defer-statement)).
+A `defer` or `errdefer` body is any statement except the empty one, which would
+make it a no-op. It is narrowed further semantically: no `return`, `or_return`,
+or nested `defer` or `errdefer`, and `break`/`continue` may target only a loop
+wholly inside it (see [design.md](design.md#defer-statement)).
 
 ## Switch
 
@@ -622,11 +622,19 @@ Suffix = "^"                                          // dereference
        | "." "(" Type ")"                             // trapping checked extraction
        | "(" Argument_List? ")"                       // call or conversion
        | "[" Index_Or_Slice "]"
-       | "or_return"
+       | "or_return" Postfix_Expression?              // failure operand
 
 Index_Or_Slice = Expression ("," Expression)* ","?     // index; comma form is user-defined
                | Expression? ":" Expression?           // slice
 ```
+
+After `or_return`, a token that begins a `Primary_Expression` (an identifier, a
+literal, `.`, `(`, `[`, `{`, `move`, or `proc`) begins the failure operand; `^`
+and the unary and binary operators do not, so `f() or_return + 1` applies `+` to
+the success payload. The operand takes every suffix that follows it, so a member
+of a bare `or_return`'s payload is reached through parentheses,
+`(f() or_return).len()` (see design.md
+[The failure operand](design.md#the-failure-operand)).
 
 `&mut` applied to a postfix expression whose last suffix is a slice,
 `&mut a[lo:hi]`, is mutable slicing rather than the address of a slice: one

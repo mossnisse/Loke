@@ -187,7 +187,7 @@ CHUNK :: 4096;
 // has already written the bytes it did read, and a `Result` carries the error
 // rather than the count, so a caller cannot learn how far it got. Read into a
 // scratch buffer instead when the destination must stay intact on failure.
-read_exact :: proc(reader: inout $R, destination: []mut u8) -> Result(Unit, Error) where Reader(R) {
+read_exact :: proc(reader: inout $R, destination: []mut u8) -> Status(Error) where Reader(R) {
 	filled := 0;
 	for (; filled < destination.len(); ) {
 		switch (reader.read(&mut destination[filled:])) {
@@ -201,11 +201,10 @@ read_exact :: proc(reader: inout $R, destination: []mut u8) -> Result(Unit, Erro
 			return .err(outcome);
 		}
 	}
-	return .ok;
 }
 
 // Writes every byte, looping over partial writes.
-write_all :: proc(writer: inout $W, source: []u8) -> Result(Unit, Error) where Writer(W) {
+write_all :: proc(writer: inout $W, source: []u8) -> Status(Error) where Writer(W) {
 	written := 0;
 	for (; written < source.len(); ) {
 		count := writer.write(source[written:]) or_return;
@@ -218,10 +217,9 @@ write_all :: proc(writer: inout $W, source: []u8) -> Result(Unit, Error) where W
 		}
 		written += count;
 	}
-	return .ok;
 }
 
-write_string :: proc(writer: inout $W, text: string_view) -> Result(Unit, Error) where Writer(W) {
+write_string :: proc(writer: inout $W, text: string_view) -> Status(Error) where Writer(W) {
 	return write_all(inout writer, text.bytes());
 }
 
@@ -358,13 +356,13 @@ read_line :: proc(
 // wrong for a file. These two format through a sink that writes into an
 // `io.Writer`, latch the first `Error`, make every later write a no-op, and
 // return the latched error when formatting is done.
-write_formatted :: proc(writer: inout $W, args: ..any_view) -> Result(Unit, Error) where Writer(W) {
+write_formatted :: proc(writer: inout $W, args: ..any_view) -> Status(Error) where Writer(W) {
 	latch := Latch{(dyn mut Writer)(&mut writer), .none};
 	fmt.format_to((fmt.Writer)(&mut latch), ..args);
 	return latched(latch.error);
 }
 
-write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Result(Unit, Error) where Writer(W) {
+write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Status(Error) where Writer(W) {
 	latch := Latch{(dyn mut Writer)(&mut writer), .none};
 	fmt.format_to((fmt.Writer)(&mut latch), ..args);
 	fmt.format_to((fmt.Writer)(&mut latch), "\n");
@@ -397,7 +395,7 @@ impl Latch {
 // The failure alone: taking the whole `Latch` would copy its `dyn mut Writer`
 // to read one scalar field beside it.
 @(private)
-latched :: proc(error: Option(Error)) -> Result(Unit, Error) {
+latched :: proc(error: Option(Error)) -> Status(Error) {
 	switch (error) {
 	case .some(failure): return .err(failure);
 	case .none: return .ok;

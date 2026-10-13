@@ -29,25 +29,24 @@ get_environment :: proc(
 
 // A variable set to the empty string is present and empty: a later
 // `get_environment` answers `.some("")`, not `.none`.
-set_environment :: proc(name: string_view, value: string_view) -> Result(Unit, io.Error) {
+set_environment :: proc(name: string_view, value: string_view) -> Status(io.Error) {
 	validate_environment_name(name) or_return;
 	return set_environment_native(name, value);
 }
 
-unset_environment :: proc(name: string_view) -> Result(Unit, io.Error) {
+unset_environment :: proc(name: string_view) -> Status(io.Error) {
 	validate_environment_name(name) or_return;
 	return unset_environment_native(name);
 }
 
 @(private)
-validate_environment_name :: proc(name: string_view) -> Result(Unit, io.Error) {
+validate_environment_name :: proc(name: string_view) -> Status(io.Error) {
 	if (name.len() == 0) { return .err(io.make_error(.Invalid_Data, .Environment)); }
 	foreach (byte in name.bytes()) {
 		if (byte == 0 || byte == u8('=')) {
 			return .err(io.make_error(.Invalid_Data, .Environment));
 		}
 	}
-	return .ok;
 }
 
 working_directory :: proc(
@@ -56,7 +55,7 @@ working_directory :: proc(
 	return working_directory_native(allocator);
 }
 
-set_working_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
+set_working_directory :: proc(path: string_view) -> Status(io.Error) {
 	return set_working_directory_native(path);
 }
 
@@ -160,23 +159,21 @@ get_environment_native :: proc(
 }
 
 @(private)
-set_environment_native :: proc(name: string_view, value: string_view) -> Result(Unit, io.Error) {
+set_environment_native :: proc(name: string_view, value: string_view) -> Status(io.Error) {
 	encoded_name := wide(name, .Environment) or_return;
 	encoded_value := wide(value, .Environment) or_return;
 	if (rt_set_environment(unsafe.raw_data(encoded_name), unsafe.raw_data(encoded_value)) == 0) {
 		return .err(from_last_error(.Environment));
 	}
-	return .ok;
 }
 
 @(private)
-unset_environment_native :: proc(name: string_view) -> Result(Unit, io.Error) {
+unset_environment_native :: proc(name: string_view) -> Status(io.Error) {
 	encoded := wide(name, .Environment) or_return;
 	// A null value removes the variable.
 	if (rt_set_environment(unsafe.raw_data(encoded), nil) == 0) {
 		return .err(from_last_error(.Environment));
 	}
-	return .ok;
 }
 
 @(private)
@@ -202,12 +199,11 @@ working_directory_native :: proc(allocator: Allocator) -> Result(string, io.Erro
 }
 
 @(private)
-set_working_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
+set_working_directory_native :: proc(path: string_view) -> Status(io.Error) {
 	encoded := wide(path, .Working_Directory) or_return;
 	if (rt_set_directory(unsafe.raw_data(encoded)) == 0) {
 		return .err(from_last_error(.Working_Directory));
 	}
-	return .ok;
 }
 
 @(private)

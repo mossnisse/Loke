@@ -86,7 +86,7 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt, lends := false) {
 
 	case ^Stmt_Defer:
 		if s.slot < len(e.defer_flags) && len(e.cleanups) > 0 {
-			entry := Deferred{flag = e.defer_flags[s.slot], stmt = s.stmt}
+			entry := Deferred{flag = e.defer_flags[s.slot], stmt = s.stmt, on_failure = s.on_failure}
 			unwind_reserve(e, &entry)
 			e.unwind.slot_by_defer[s.slot] = entry.slot
 			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", e.defer_flags[s.slot])
@@ -862,10 +862,30 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 	emit_epilogue(e)
 }
 
+// Whether the result being returned is the failure variant, when an `errdefer`
+// is registered to ask; "" otherwise.
+@(private = "file")
+returned_failure :: proc(e: ^Emitter) -> string {
+	if e.result_slot == "" || e.result_inout || !type_is_union(e.c, e.result_type) {
+		return ""
+	}
+	pending := false
+	for scope in e.cleanups {
+		for entry in scope.entries {
+			pending ||= entry.on_failure
+		}
+	}
+	if !pending {
+		return ""
+	}
+	union_type := type_underlying(e.c, e.result_type)
+	return emit_union_failed(e, union_type, load(e, llvm_type(e, union_type), e.result_slot))
+}
+
 @(private)
 emit_epilogue :: proc(e: ^Emitter) {
 	drain_temporaries(e, 0)
-	run_cleanups(e, 0)
+	run_cleanups(e, 0, returned_failure(e))
 	emit_unwind_pop(e)
 	if e.abi_foreign {
 		emit_foreign_return(e)

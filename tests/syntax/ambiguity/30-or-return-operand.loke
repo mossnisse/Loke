@@ -1,0 +1,17 @@
+// After `or_return`, a token that begins a primary expression begins its
+// failure operand, a postfix expression; an operator or `^` does not, so a
+// binary operator after either form applies to the success payload.
+package main;
+
+f :: proc() {
+	a := read() or_return .io;
+	b := count() or_return .io * 2;
+	c := value() or_return + 1;
+	d := (text() or_return).len();
+	e := text() or_return.len();
+	g := parse() or_return describe;
+	h := parse() or_return {line, "reason"};
+	read() or_return;
+	write() or_return App_Error.io;
+	i := p() or_return^;
+}

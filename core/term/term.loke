@@ -413,14 +413,13 @@ impl Raw_Mode {
 	// path left once this value is inert. It also leaves the claim held, so a
 	// later `begin_raw` answers `Already_Exists` -- the console's state is no
 	// longer known, and the mode to put back is still this one.
-	close :: proc(self: inout Raw_Mode) -> Result(Unit, io.Error) {
+	close :: proc(self: inout Raw_Mode) -> Status(io.Error) {
 		if (!self.live) { return .ok; }
 		self.live = false;
 		if (rt_set_console_mode(self.handle, self.previous) == 0) {
 			return .err(from_last_error(.Terminal_Mode));
 		}
 		handler_handle.store(0);
-		return .ok;
 	}
 
 	// One key event. Key releases, mouse events, focus changes, and window resizes

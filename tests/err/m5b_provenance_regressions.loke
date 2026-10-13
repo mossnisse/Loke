@@ -119,10 +119,10 @@ reset_after_return :: proc(@(allocator_reset) allocator: Allocator, flag: bool) 
 // The same for `or_return`, which is the idiomatic propagation form.
 reset_after_or_return :: proc(
 	@(allocator_reset) allocator: Allocator,
-) -> Result(Unit, Allocator_Error) {
+) -> Status(Allocator_Error) {
 	held := make_buffer(1, allocator);
 	p := try_box(0, allocator) or_return;
 	free_all(allocator);
 	fmt.println(held.id);
-	return .ok(Unit{});
+	return .ok;
 }

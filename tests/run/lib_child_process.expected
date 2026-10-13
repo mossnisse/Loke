@@ -18,7 +18,7 @@ before
 .ok(0)
 null:  .ok(0)
 Unsupported Unsupported Closed
-.ok(Unit{}) .ok(1) .ok(Unit{})
+.ok .ok(1) .ok
 0 4 220000
 0 1 0
 hidden: .ok(7)

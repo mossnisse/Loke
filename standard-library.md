@@ -58,8 +58,9 @@ invalid data rather than being silently changed. A path containing U+0000 is
 
 Absence alone answers `Option(T)`. A failure with useful information answers
 `Result(T, Error)`, whose failure variant carries the error value, so it
-composes with `or_return`. Neither is a trailing status: `nil` is not a failure
-and a trailing `bool` is not one either.
+composes with `or_return`; an operation with nothing to return on success
+answers `Status(Error)`. None is a trailing status: `nil` is not a failure and a
+trailing `bool` is not one either.
 
 The `try_` prefix keeps its existing meaning: it is the fallible version of an
 operation that would otherwise apply an allocation or capacity failure policy.
@@ -282,11 +283,11 @@ Core helpers:
 Line_Options :: struct { keep_ending: bool }
 
 copy(destination, source, buffer: []mut u8 = {}) -> Result(u64, Error)
-read_exact(reader, destination) -> Result(Unit, Error)
+read_exact(reader, destination) -> Status(Error)
 read_to_end(reader, allocator: Allocator = mem.default_allocator(),
 	limit: int = 0) -> Result([dynamic]u8, Error)
-write_all(writer, source) -> Result(Unit, Error)
-write_string(writer, text: string_view) -> Result(Unit, Error)
+write_all(writer, source) -> Status(Error)
+write_string(writer, text: string_view) -> Status(Error)
 read_line(reader, allocator: Allocator = mem.default_allocator(),
 	options: Line_Options = {}) -> Result(string, Error)
 ```
@@ -309,8 +310,8 @@ error; the bridge stops writing after the first stream failure and returns that
 error after formatting. `write_formatted_line` also appends a newline.
 
 ```odin
-write_formatted(writer, args: ..any_view) -> Result(Unit, Error)
-write_formatted_line(writer, args: ..any_view) -> Result(Unit, Error)
+write_formatted(writer, args: ..any_view) -> Status(Error)
+write_formatted_line(writer, args: ..any_view) -> Status(Error)
 ```
 
 `fmt` formats into memory with:
@@ -570,18 +571,18 @@ impl String_Builder {
 	cap          :: proc(self) -> int;
 	reserve      :: proc(self: inout String_Builder, additional: int);
 	try_reserve  :: proc(self: inout String_Builder, additional: int)
-		-> Result(Unit, Allocator_Error);
+		-> Status(Allocator_Error);
 	append_text  :: proc(self: inout String_Builder, text: string_view);
 	append_rune  :: proc(self: inout String_Builder, value: rune);
 	append       :: proc{append_text, append_rune};
 	append_byte_ascii :: proc(self: inout String_Builder, value: u8);
 	try_append_text :: proc(self: inout String_Builder, text: string_view)
-		-> Result(Unit, Allocator_Error);
+		-> Status(Allocator_Error);
 	try_append_rune :: proc(self: inout String_Builder, value: rune)
-		-> Result(Unit, Allocator_Error);
+		-> Status(Allocator_Error);
 	try_append   :: proc{try_append_text, try_append_rune};
 	try_append_byte_ascii :: proc(self: inout String_Builder, value: u8)
-		-> Result(Unit, Allocator_Error);
+		-> Status(Allocator_Error);
 	clear        :: proc(self: inout String_Builder);
 	finish       :: proc(self: inout String_Builder) -> string;
 	try_finish   :: proc(self: inout String_Builder)
@@ -817,8 +818,8 @@ impl File {
 	write   :: proc(self: inout File, source: []u8) -> Result(int, io.Error);
 	seek    :: proc(self: inout File, offset: i64, origin: Seek_Origin)
 		-> Result(u64, io.Error);
-	flush   :: proc(self: inout File) -> Result(Unit, io.Error);
-	close   :: proc(self: inout File) -> Result(Unit, io.Error);
+	flush   :: proc(self: inout File) -> Status(io.Error);
+	close   :: proc(self: inout File) -> Status(io.Error);
 	is_open :: proc(self) -> bool;
 }
 ```
@@ -843,10 +844,10 @@ read_bytes(path, allocator := mem.default_allocator(), limit := 0)
 	-> Result([dynamic]u8, io.Error)
 read_text(path, allocator := mem.default_allocator(), limit := 0)
 	-> Result(string, io.Error)
-write_bytes(path, data: []u8) -> Result(Unit, io.Error)
-write_text(path, text: string_view) -> Result(Unit, io.Error)
-append_bytes(path, data: []u8) -> Result(Unit, io.Error)
-append_text(path, text: string_view) -> Result(Unit, io.Error)
+write_bytes(path, data: []u8) -> Status(io.Error)
+write_text(path, text: string_view) -> Status(io.Error)
+append_bytes(path, data: []u8) -> Status(io.Error)
+append_text(path, text: string_view) -> Status(io.Error)
 ```
 
 `read_text` validates UTF-8. `write_*` truncates an existing file only after it
@@ -872,11 +873,11 @@ filesystem failures to the caller. For formatted stream output, use
 ```odin
 metadata(path) -> Result(Metadata, io.Error)
 exists(path) -> Result(bool, io.Error)
-remove(path) -> Result(Unit, io.Error)
-rename(old_path, new_path) -> Result(Unit, io.Error)
-create_directory(path) -> Result(Unit, io.Error)
-create_directories(path) -> Result(Unit, io.Error)
-remove_directory(path) -> Result(Unit, io.Error)
+remove(path) -> Status(io.Error)
+rename(old_path, new_path) -> Status(io.Error)
+create_directory(path) -> Status(io.Error)
+create_directories(path) -> Status(io.Error)
+remove_directory(path) -> Status(io.Error)
 read_directory(path, allocator := mem.default_allocator())
 	-> Result(Directory_Reader, io.Error)
 ```
@@ -890,13 +891,13 @@ if it must be retained. A fallible reader uses an explicit loop, not `foreach`.
 Example (imports `core:fmt`, `core:fs`, and `core:io`):
 
 ```loke
-list_names :: proc(path: string_view) -> Result(Unit, io.Error) {
+list_names :: proc(path: string_view) -> Status(io.Error) {
     reader := fs.read_directory(path) or_return;
     for (;;) {
         entry := reader.next() or_return;
         switch (entry) {
         case .some(found): fmt.println(found.name);
-        case .none: return .ok({});
+        case .none: return .ok;
         }
     }
 }
@@ -1010,7 +1011,7 @@ begin_raw(input: Input = stdin(), options: Raw_Options = {})
 
 impl Raw_Mode {
 	read_key :: proc(self: inout Raw_Mode) -> Result(Key_Event, io.Error);
-	close    :: proc(self: inout Raw_Mode) -> Result(Unit, io.Error);
+	close    :: proc(self: inout Raw_Mode) -> Status(io.Error);
 }
 
 Key :: enum {
@@ -1080,11 +1081,11 @@ Besides `os.args` and `os.exit`, `core:os` has these process-level operations:
 ```odin
 get_environment(name: string_view,
 	allocator := mem.default_allocator()) -> Result(Option(string), io.Error)
-set_environment(name, value: string_view) -> Result(Unit, io.Error)
-unset_environment(name: string_view) -> Result(Unit, io.Error)
+set_environment(name, value: string_view) -> Status(io.Error)
+unset_environment(name: string_view) -> Status(io.Error)
 working_directory(allocator := mem.default_allocator())
 	-> Result(string, io.Error)
-set_working_directory(path: string_view) -> Result(Unit, io.Error)
+set_working_directory(path: string_view) -> Status(io.Error)
 executable_path(allocator := mem.default_allocator())
 	-> Result(string, io.Error)
 ```
@@ -1145,7 +1146,7 @@ run(command: Command) -> Result(i32, io.Error)
 output(command: Command) -> Result(Output, io.Error)
 Child.id(self) -> u32
 Child.wait(self: inout Child) -> Result(i32, io.Error)
-Child.kill(self: inout Child) -> Result(Unit, io.Error)
+Child.kill(self: inout Child) -> Status(io.Error)
 Pipe.read / write / close / is_open
 ```
 

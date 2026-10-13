@@ -59,6 +59,9 @@ Option :: union($T: type) @(zero=none, failure=none) { none:, some: T }
 Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 
 @(public)
+Status :: union($E: type) @(failure=err) { ok, err: E }
+
+@(public)
 Shared :: struct($T: type) { @(private) block: rawptr }
 
 @(public)

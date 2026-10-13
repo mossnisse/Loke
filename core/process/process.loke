@@ -68,7 +68,7 @@ impl Child {
 	}
 
 	// Succeeds when the child has already exited.
-	kill :: proc(self: inout Child) -> Result(Unit, io.Error) {
+	kill :: proc(self: inout Child) -> Status(io.Error) {
 		if (self.handle == NO_HANDLE) {
 			return .err(io.make_error(.Closed, .Kill));
 		}
@@ -92,14 +92,13 @@ impl Pipe {
 	}
 
 	// Idempotent: the value is left inert even when the close itself failed.
-	close :: proc(self: inout Pipe) -> Result(Unit, io.Error) {
+	close :: proc(self: inout Pipe) -> Status(io.Error) {
 		if (self.handle == NO_HANDLE) { return .ok; }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
 		if (!close_handle(handle)) {
 			return .err(from_last_error(.Close));
 		}
-		return .ok;
 	}
 
 	is_open :: proc(self) -> bool { return self.handle != NO_HANDLE; }
@@ -210,7 +209,7 @@ collect :: proc(job: move Collecting) {
 // The `core:os` name rules, and each name once, ignoring ASCII case, since
 // Windows ignores case in names.
 @(private)
-validate_environment :: proc(variables: []Variable) -> Result(Unit, io.Error) {
+validate_environment :: proc(variables: []Variable) -> Status(io.Error) {
 	foreach (variable, index in variables.indexed()) {
 		if (variable.name.len() == 0 || strings.contains(variable.name, "=")) {
 			return .err(io.make_error(.Invalid_Data, .Spawn));
@@ -221,7 +220,6 @@ validate_environment :: proc(variables: []Variable) -> Result(Unit, io.Error) {
 			}
 		}
 	}
-	return .ok;
 }
 
 @(private)
@@ -649,7 +647,7 @@ environment_block :: proc(variables: []Variable) -> Result([dynamic]u16, io.Erro
 }
 
 @(private)
-append_units :: proc(block: inout [dynamic]u16, units: []u16) -> Result(Unit, io.Error) {
+append_units :: proc(block: inout [dynamic]u16, units: []u16) -> Status(io.Error) {
 	switch (block.try_append(..units)) {
 	case .ok:  return .ok;
 	case .err: return .err(io.from_allocator_error(.Spawn));
@@ -671,14 +669,13 @@ wait_native :: proc(handle: Handle) -> Result(i32, io.Error) {
 }
 
 @(private)
-kill_native :: proc(handle: Handle) -> Result(Unit, io.Error) {
+kill_native :: proc(handle: Handle) -> Status(io.Error) {
 	if (rt_terminate(handle, 1) == 0) {
 		error := from_last_error(.Kill);
 		// Access is denied to a process that has already exited.
 		if (rt_wait(handle, 0) == WAIT_OBJECT_0) { return .ok; }
 		return .err(error);
 	}
-	return .ok;
 }
 
 // A name that cannot be a path is not a file; running out of memory to ask is

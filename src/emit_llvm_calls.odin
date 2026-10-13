@@ -554,6 +554,11 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	info := type_of(e.c, operand_type)
 	success := 1 - info.failure_variant
 	payload_type := info.variants[success]
+	// A success that carries nothing yields `Unit`.
+	unit := payload_type == TYPE_VOID
+	if unit {
+		payload_type = e.c.unit_type
+	}
 
 	value := emit_expr(e, v.value)
 	slot := emit_union_spill(e, operand_type, value)
@@ -570,7 +575,10 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	branch_if(e, failed, fallback_label, success_label)
 
 	place_label(e, success_label)
-	taken := emit_union_payload(e, operand_type, payload_type, slot)
+	taken := "zeroinitializer"
+	if !unit {
+		taken = emit_union_payload(e, operand_type, payload_type, slot)
+	}
 	if v.borrows && emit_lifecycle(e, payload_type).managed {
 		taken = emit_clone_value(e, payload_type, taken)
 	}
@@ -664,7 +672,30 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	branch_if(e, failed, fail_label, ok_label)
 
 	place_label(e, fail_label)
-	if e.result_slot != "" {
+	if v.failure_exit != nil {
+		// design.md "or_return operator": the failure operand runs only here. A
+		// mapper takes the error, copied out of a place; a replacement leaves a
+		// place's error where it is and drops a temporary's first, as `or_else`
+		// does.
+		failure_type := info.variants[info.failure_variant]
+		if v.failure_maps {
+			error := emit_union_payload(e, operand_type, failure_type, slot)
+			if v.borrows && emit_lifecycle(e, failure_type).managed {
+				error = emit_clone_value(e, failure_type, error)
+			}
+			e.propagated_errors[v] = error
+		} else if !v.borrows && failure_type != TYPE_VOID && emit_lifecycle(e, failure_type).managed {
+			emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
+		}
+		// A temporary of the `return` value is made only on this path.
+		begin_conditional(e)
+		emit_stmt(e, v.failure_exit)
+		end_conditional(e)
+		if !e.terminated {
+			fmt.sbprintln(&e.b, "  unreachable")
+			e.terminated = true
+		}
+	} else if e.result_slot != "" {
 		target := type_underlying(e.c, e.result_type)
 		target_info := type_of(e.c, target)
 		error := ""
@@ -683,8 +714,10 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 		}
 		wrapped := emit_union_value(e, e.result_type, target_info.failure_variant, error)
 		store(e, e.result_type, wrapped, e.result_slot)
+		emit_epilogue(e)
+	} else {
+		emit_epilogue(e)
 	}
-	emit_epilogue(e)
 
 	place_label(e, ok_label)
 	out := make([]string, 1)

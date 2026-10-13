@@ -48,6 +48,7 @@ Expr :: union {
 	^Expr_Slice,
 	^Expr_Call,
 	^Expr_Postfix,
+	^Expr_Propagated_Error,
 	^Expr_Unary,
 	^Expr_Binary,
 	^Expr_Range,
@@ -270,7 +271,7 @@ Expr_Call :: struct {
 	variadic_order:    []bool,
 }
 
-// The suffixes that take no operand: `^` and `or_return`.
+// The suffixes `^` and `or_return`.
 Expr_Postfix :: struct {
 	using base: Expr_Base,
 	// Over a place, the payloads are copied out and the source stays live.
@@ -281,6 +282,25 @@ Expr_Postfix :: struct {
 	op:         Token_Kind,
 	op_span:    Span,
 	operand:    Expr,
+	// `or_return failure`: the written failure operand, or nil
+	// (design.md "or_return operator").
+	failure:    Expr,
+	// Set by the checker when `failure` is written: the `return` taken on
+	// failure, whose value wraps the replacement or the mapper's result in the
+	// procedure's failure variant. A mapper reads the error through an
+	// `Expr_Propagated_Error` naming this node.
+	failure_exit: ^Stmt_Return,
+	// The failure operand maps the error rather than replacing it: the error is
+	// taken from the operand instead of dropped.
+	failure_maps: bool,
+}
+
+// The error an `or_return` mapper is called with: the operand's failure
+// payload, moved out of a temporary or copied out of a place. The checker
+// builds it; it is never written.
+Expr_Propagated_Error :: struct {
+	using base: Expr_Base,
+	owner:      ^Expr_Postfix,
 }
 
 // `mutable` is `&mut place`: the exclusive borrow form. It is meaningful only
@@ -683,6 +703,8 @@ expr_base :: proc(e: Expr) -> ^Expr_Base {
 		return &v.base
 	case ^Expr_Postfix:
 		return &v.base
+	case ^Expr_Propagated_Error:
+		return &v.base
 	case ^Expr_Unary:
 		return &v.base
 	case ^Expr_Binary:
@@ -956,9 +978,13 @@ Stmt_Switch :: struct {
 	exhaustive: bool,
 }
 
+// `defer` or `errdefer` (design.md "defer statement").
 Stmt_Defer :: struct {
 	using base: Node_Base,
 	stmt:       Stmt,
+	// `errdefer`: runs only when the procedure leaves with its failure variant,
+	// or unwinds.
+	on_failure: bool,
 	// This registration's flag slot in the procedure's entry block.
 	slot:       int,
 }

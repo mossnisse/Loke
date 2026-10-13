@@ -22,6 +22,9 @@ Emitter :: struct {
 	struct_names: map[Type_Id]string,
 	// Every witness table's global, numbered in commit order (`name_witnesses`).
 	witness_names: map[^Witness]string,
+	// The error each `or_return` mapper is called with, while its failure path
+	// is emitted.
+	propagated_errors: map[^Expr_Postfix]string,
 	// Under `-g`, the span the last location marker named.
 	debug_span:   Span,
 	// design.md "@(packed)": a place's alignment, by pointer temporary, when it is
@@ -55,6 +58,7 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 		taken_names  = make(map[string]bool),
 		struct_names = make(map[Type_Id]string),
 		witness_names = make(map[^Witness]string),
+		propagated_errors = make(map[^Expr_Postfix]string),
 		place_align  = make(map[string]u64),
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),

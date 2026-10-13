@@ -1172,7 +1172,7 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 		return with_attributes(parse_when(p), attributes), true
 	case .Impl:
 		return parse_impl(p, attributes, start), true
-	case .Defer:
+	case .Defer, .Errdefer:
 		return with_attributes(parse_defer(p), attributes), true
 	case .Return:
 		return with_attributes(parse_return(p), attributes), true
@@ -1651,15 +1651,19 @@ parse_foreach :: proc(p: ^Parser) -> Stmt {
 
 @(private = "file")
 parse_defer :: proc(p: ^Parser) -> Stmt {
-	start := advance(p) // `defer`
+	start := advance(p) // `defer` or `errdefer`
 	inner_start := current(p)
 	inner, got := parse_statement(p)
 	if !got {
-		parse_error(p, span_of(p, inner_start), "L0216", "empty statement", "expected a statement after `defer`")
+		parse_error(
+			p, span_of(p, inner_start), "L0216", "empty statement",
+			start.kind == .Errdefer ? "expected a statement after `errdefer`" : "expected a statement after `defer`",
+		)
 		inner = error_stmt(p, span_of(p, inner_start))
 	}
 
 	s := new_stmt(p, Stmt_Defer, start)
+	s.on_failure = start.kind == .Errdefer
 	s.stmt = inner
 	s.has_error = !got || stmt_has_error(inner)
 	return s
@@ -2134,11 +2138,19 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 
 		case .Caret, .Or_Return:
 			advance(p)
+			// grammar.md "Expressions": a token that begins a primary
+			// expression begins the failure operand, so `f() or_return + 1`
+			// keeps its binary operator.
+			failure: Expr
+			if t.kind == .Or_Return && begins_failure_operand(p) {
+				failure = parse_postfix(p)
+			}
 			n := new_expr(p, Expr_Postfix, lo)
 			n.op = t.kind
 			n.op_span = span_of(p, t)
 			n.operand = e
-			n.has_error = expr_has_error(e)
+			n.failure = failure
+			n.has_error = expr_has_error(e) || expr_has_error(failure)
 			e = n
 
 		case .Lbrace:
@@ -2153,6 +2165,19 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 			return finish_postfix(p, e, started_as_type, direct_type_is_expression)
 		}
 	}
+}
+
+// After `or_return`: an identifier, a literal, `.`, `(`, `[`, `{`, `move`, or
+// `proc`. A unary or binary operator and `^` do not begin one.
+@(private = "file")
+begins_failure_operand :: proc(p: ^Parser) -> bool {
+	#partial switch current(p).kind {
+	case .Ident, .Int, .Float, .String, .Raw_String, .Rune, .Period, .Lparen, .Lbracket, .Move, .Proc:
+		return true
+	case .Lbrace:
+		return !p.no_composite
+	}
+	return false
 }
 
 @(private = "file")

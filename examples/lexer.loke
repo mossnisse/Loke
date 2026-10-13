@@ -81,7 +81,7 @@ main :: proc() {
 }
 
 // Every `.loke` file beneath `directory`, lexed and counted.
-walk :: proc(directory: string_view, totals: inout Totals) -> Result(Unit, io.Error) {
+walk :: proc(directory: string_view, totals: inout Totals) -> Status(io.Error) {
 	reader := fs.read_directory(directory) or_return;
 	for (;;) {
 		switch (reader.next() or_return) {

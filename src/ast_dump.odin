@@ -351,7 +351,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 
 	case ^Stmt_Defer:
 		dump_indent(b, depth)
-		fmt.sbprint(b, "(defer")
+		fmt.sbprint(b, node.on_failure ? "(errdefer" : "(defer")
 		dump_attributes(b, node.attributes)
 		fmt.sbprintln(b)
 		if node.stmt != nil {
@@ -496,7 +496,13 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	case ^Expr_Postfix:
 		fmt.sbprintf(b, "(postfix %v", node.op)
 		dump_child(b, node.operand, depth)
+		if node.failure != nil {
+			dump_child(b, node.failure, depth)
+		}
 		fmt.sbprint(b, ")")
+
+	case ^Expr_Propagated_Error:
+		fmt.sbprint(b, "(propagated-error)")
 
 	case ^Expr_Unary:
 		fmt.sbprintf(b, node.mutable ? "(unary %v mut" : "(unary %v", node.op)

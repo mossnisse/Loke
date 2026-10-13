@@ -174,7 +174,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 
 	members := make([dynamic]Symbol_Id, 0, 17, k.c.semantic_allocator)
 	none := INVALID_TYPE
-	fails := result_type(k, k.c.unit_type, TYPE_ALLOCATOR_ERROR)
+	fails := k.c.alloc_result_type
 
 	pack := slice_of(k.c, element, mutable = false)
 	append(&members, container_member(
@@ -288,7 +288,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 
 	members := make([dynamic]Symbol_Id, 0, 8, k.c.semantic_allocator)
 	none := INVALID_TYPE
-	fails := result_type(k, k.c.unit_type, TYPE_ALLOCATOR_ERROR)
+	fails := k.c.alloc_result_type
 	// design.md "Maps": a lookup takes the borrowed key form; insertion stores
 	// the owned key.
 	query := key

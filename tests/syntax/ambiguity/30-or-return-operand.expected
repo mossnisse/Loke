@@ -1,0 +1,34 @@
+(file package="main"
+  (const names=["f"]
+    (proc (proc-type)
+      (block
+        (var names=["a"]
+          (postfix Or_Return (call (ident "read")) (selector _ "io"))
+        )
+        (var names=["b"]
+          (binary Star (postfix Or_Return (call (ident "count")) (selector _ "io")) (int "2"))
+        )
+        (var names=["c"]
+          (binary Plus (postfix Or_Return (call (ident "value"))) (int "1"))
+        )
+        (var names=["d"]
+          (call (selector (postfix Or_Return (call (ident "text"))) "len"))
+        )
+        (var names=["e"]
+          (postfix Or_Return (call (ident "text")) (call (selector _ "len")))
+        )
+        (var names=["g"]
+          (postfix Or_Return (call (ident "parse")) (ident "describe"))
+        )
+        (var names=["h"]
+          (postfix Or_Return (call (ident "parse")) (composite _ (ident "line") (string "\"reason\"")))
+        )
+        (postfix Or_Return (call (ident "read")))
+        (postfix Or_Return (call (ident "write")) (selector (ident "App_Error") "io"))
+        (var names=["i"]
+          (postfix Caret (postfix Or_Return (call (ident "p"))))
+        )
+      )
+    )
+  )
+)

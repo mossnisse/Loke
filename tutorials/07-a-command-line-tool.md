@@ -79,22 +79,15 @@ parse :: proc(text: string_view) -> Result(Totals, Problem) {
 			continue;
 		}
 		number := index + 1;
-		parts: strings.Cut;
-		switch (strings.cut(entry, ",")) {
-		case .some(found): parts = found;
-		case .none: return .err({number, "expected `category,amount`"});
-		}
+		parts := strings.cut(entry, ",") or_return {number, "expected `category,amount`"};
 		category := strings.trim_space(parts.before);
-		amount: int;
-		switch (strconv.parse_int(strings.trim_space(parts.after))) {
-		case .ok(parsed):  amount = parsed;
-		case .err: return .err({number, "the amount is not a whole number"});
-		}
+		amount := strconv.parse_int(strings.trim_space(parts.after))
+			or_return {number, "the amount is not a whole number"};
 		previous := totals.by_category.lookup_value(category) or_else 0;
 		category_total := add_amount(previous, amount)
-			.ok_or(Problem{number, "category total is out of range"}) or_return;
+			or_return {number, "category total is out of range"};
 		totals.grand_total = add_amount(totals.grand_total, amount)
-			.ok_or(Problem{number, "grand total is out of range"}) or_return;
+			or_return {number, "grand total is out of range"};
 		if (category in totals.by_category) {
 			totals.by_category[category] += amount;  // checked above
 		} else {
@@ -216,11 +209,16 @@ numbers the lines from 0, which is why the line number is `index + 1`. Each line
 is a `string_view` into `text`: nothing is copied until a new category becomes a
 key of the map, with `category.copy()`.
 
+Each step that can fail ends in `or_return {number, "..."}`, as the time parser
+in [Errors](05-errors.md) ended in `or_return .Not_A_Number`. The braces build a
+`Problem`, the error type of `parse`'s result, and they are evaluated only when
+the step fails, so a good line never builds one.
+
 **Totals.** `add_amount` adds two `int` values in the wider `i128` type, then
 checks the result before converting back. Both running totals are checked
 during parsing, so an out-of-range sum reports the input line before any report
-is printed. `.ok_or(Problem{...}) or_return` turns a missing sum into the
-parser's error, just as the time parser in [Errors](05-errors.md) did.
+is printed. `add_amount` returns an `Option`, and `or_return {...}` turns its
+missing sum into the parser's error in the same way.
 
 **Ownership.** `ledger.parse` builds `totals` and hands it back with
 `move(totals)`, and `main` takes it out of the `Result` with `move(parsed)`.

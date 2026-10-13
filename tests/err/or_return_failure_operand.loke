@@ -1,0 +1,39 @@
+// design.md "or_return operator": a failure operand is checked against the
+// failure payload type of the procedure's result, and a member suffix after a
+// bare `or_return` reads as the operand.
+package main;
+
+Parse_Error :: enum { Bad }
+Io_Error :: enum { Gone }
+App_Error :: union { io: Io_Error, parse: Parse_Error, none_like }
+
+parse :: proc() -> Result(int, Parse_Error) { return .ok(1); }
+find :: proc() -> Option(int) { return .none; }
+text :: proc() -> Result(string, Parse_Error) { return .ok("x"); }
+
+wrong_variant :: proc() -> Result(int, App_Error) {
+	v := parse() or_return .io;
+	return .ok(v);
+}
+
+no_payload_target :: proc() -> Option(int) {
+	v := parse() or_return .Bad;
+	return .some(v);
+}
+
+map_nothing :: proc() -> Result(int, App_Error) {
+	v := find() or_return .parse;
+	return .ok(v);
+}
+
+suffix :: proc() -> Result(int, Parse_Error) {
+	n := text() or_return.len();
+	return .ok(n);
+}
+
+bad_mapper :: proc() -> Result(int, App_Error) {
+	v := parse() or_return 42;
+	return .ok(v);
+}
+
+main :: proc() {}

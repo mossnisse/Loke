@@ -15,6 +15,9 @@ Deferred :: struct {
 	flag: string,
 	// A written `defer`, or nil for an implicit drop of `place`.
 	stmt:  Stmt,
+	// `errdefer`: run only on an exit returning the failure variant, or by
+	// panic replay.
+	on_failure: bool,
 	place: string,
 	// A compiler-owned temporary has no symbol; its address is published at
 	// `place_env` so panic replay can reach it.
@@ -711,24 +714,41 @@ pop_scope :: proc(e: ^Emitter) {
 }
 
 // Runs every scope above `down_to`, innermost first and in reverse registration
-// order within each.
+// order within each. `failed` is the `i1` saying a returning exit carries the
+// failure variant; "" for an exit that does not return, which discards an
+// `errdefer` (design.md "defer statement").
 @(private)
-run_cleanups :: proc(e: ^Emitter, down_to: int) {
+run_cleanups :: proc(e: ^Emitter, down_to: int, failed := "") {
 	for depth := len(e.cleanups) - 1; depth >= down_to; depth -= 1 {
 		entries := e.cleanups[depth].entries
 		for index := len(entries) - 1; index >= 0; index -= 1 {
 			entry := entries[index]
-			if entry.flag == "" {
+			if entry.on_failure && failed == "" {
+				// Its scope ends without a failure, so no panic replays it either.
+				unwind_clear(e, entry.slot)
+				continue
+			}
+			if entry.flag == "" && !entry.on_failure {
 				run_one_cleanup(e, entry)
 				continue
 			}
-			flag := load(e, "i1", entry.flag)
+			flag := failed
+			if entry.flag != "" {
+				flag = load(e, "i1", entry.flag)
+				if entry.on_failure {
+					both := temp(e)
+					fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", both, flag, failed)
+					flag = both
+				}
+			}
 			run := new_label(e, "defer.run")
 			skip := new_label(e, "defer.skip")
 			branch_if(e, flag, run, skip)
 			place_label(e, run)
 			// A conditional temporary's flag is set again only if it is made again.
-			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", entry.flag)
+			if entry.flag != "" {
+				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", entry.flag)
+			}
 			run_one_cleanup(e, entry)
 			branch(e, skip)
 			place_label(e, skip)

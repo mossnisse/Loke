@@ -1,6 +1,7 @@
 // Checked extractions, variant switches, and the typed failure protocol.
 package lokec
 
+import "core:fmt"
 import "core:slice"
 
 // -------------------------------------------------- checked extractions --
@@ -105,17 +106,11 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// design.md "or_else expression": a success that carries nothing yields
+	// `Unit`, as it does for `or_return`.
 	payload := shape.info.variants[shape.success]
 	if payload == TYPE_VOID {
-		errorf(
-			k.c,
-			expr_span(v.value),
-			"L0428",
-			"`%s.%s` carries no payload, so there is nothing for `or_else` to produce",
-			type_name(k.c, shape.union_type), union_variant_name(k.c, shape.union_type, shape.success),
-		)
-		v.type = INVALID_TYPE
-		return
+		payload = k.c.unit_type
 	}
 	v.borrows = expr_base(v.value).value_category == .Place
 	if v.borrows && type_clone_disabled(k.c, payload) {
@@ -191,14 +186,21 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if !check_or_return_target(k, v, shape) {
+	if v.failure != nil {
+		if !check_or_return_failure(k, v, shape) {
+			v.type = INVALID_TYPE
+			return
+		}
+	} else if !check_or_return_target(k, v, shape) {
 		v.type = INVALID_TYPE
 		return
 	}
 	v.borrows = base.value_category == .Place
 	if v.borrows {
-		for candidate in ([2]Type_Id{shape.info.variants[shape.success], shape.info.variants[shape.failure]}) {
-			if candidate == TYPE_VOID {
+		for candidate, index in ([2]Type_Id{shape.info.variants[shape.success], shape.info.variants[shape.failure]}) {
+			// A replacement leaves the error in its place, so only a mapped or
+			// propagated one is copied out.
+			if candidate == TYPE_VOID || (index == 1 && v.failure != nil && !v.failure_maps) {
 				continue
 			}
 			if type_clone_disabled(k.c, candidate) {
@@ -219,6 +221,148 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 
 	success := shape.info.variants[shape.success]
 	v.type = success == TYPE_VOID ? k.c.unit_type : success
+}
+
+// design.md "or_return operator": `operand or_return failure` returns the
+// procedure's failure variant built from `failure`, which runs only when the
+// operand fails. A value of the failure payload type replaces the error; any
+// other operand is a mapper called with it.
+@(private = "file")
+check_or_return_failure :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -> bool {
+	if k.result_type == INVALID_TYPE {
+		errorf(k.c, v.op_span, "L0429", "`or_return` needs a result to propagate the failure into")
+		return false
+	}
+	target, target_fallible := fallible_of(k, k.result_type)
+	if !target_fallible {
+		errorf(
+			k.c,
+			v.op_span,
+			"L0429",
+			"`or_return` needs this procedure's result to be a union with a designated failure variant, found `%s`",
+			type_name(k.c, k.result_type),
+		)
+		return false
+	}
+	into := target.info.variants[target.failure]
+	if into == TYPE_VOID {
+		errorf(
+			k.c, expr_span(v.failure), "L0429",
+			"`%s.%s` carries nothing, so this `or_return` takes no failure operand",
+			type_name(k.c, k.result_type), union_variant_name(k.c, k.result_type, target.failure),
+		)
+		return false
+	}
+	from := shape.info.variants[shape.failure]
+	span := expr_span(v.failure)
+	value := v.failure
+	maps := false
+	switch {
+	case or_return_constructs(k, v.failure, into):
+		// `.io` names a variant of the failure payload type, whose constructor
+		// wraps the error (design.md "Constructing a variant").
+		selector := v.failure.(^Expr_Selector)
+		payload := union_variant_payload(k.c, into, union_index_of(k.c, into, selector.name.text))
+		if from == TYPE_VOID || !assignable(k.c, from, payload) {
+			errorf(
+				k.c, span, "L0429", "`.%s` wraps `%s`, but this failure carries %s",
+				selector.name.text, type_name(k.c, payload),
+				from == TYPE_VOID ? "nothing" : fmt.tprintf("`%s`", type_name(k.c, from)),
+			)
+			return false
+		}
+		maps = true
+	case or_return_replaces(k, v.failure, into):
+	case:
+		maps = true
+	}
+	if maps {
+		if from == TYPE_VOID {
+			errorf(
+				k.c, span, "L0429",
+				"`%s.%s` carries no error to map; write the failure to return instead",
+				type_name(k.c, shape.union_type), union_variant_name(k.c, shape.union_type, shape.failure),
+			)
+			return false
+		}
+		error := new(Expr_Propagated_Error, k.c.semantic_allocator)
+		error.span = span
+		error.owner = v
+		call := new(Expr_Call, k.c.semantic_allocator)
+		call.span = span
+		call.callee = v.failure
+		call.args = make([]Argument, 1, k.c.semantic_allocator)
+		call.args[0] = Argument{span = span, value = error}
+		value = call
+	}
+	v.failure_maps = maps
+	// `.err(value)`, checked as the `return` it is.
+	name := union_variant_name(k.c, k.result_type, target.failure)
+	variant := new(Expr_Selector, k.c.semantic_allocator)
+	variant.span = span
+	variant.name = Name{text = name, span = span, id = intern_identifier(k.c, name)}
+	wrap := new(Expr_Call, k.c.semantic_allocator)
+	wrap.span = span
+	wrap.callee = variant
+	wrap.args = make([]Argument, 1, k.c.semantic_allocator)
+	wrap.args[0] = Argument{span = span, value = value}
+	exit := new(Stmt_Return, k.c.semantic_allocator)
+	exit.span = span
+	exit.value = new(Return_Value, k.c.semantic_allocator)
+	exit.value.span = span
+	exit.value.expr = wrap
+	v.failure_exit = exit
+	errors := k.c.error_count
+	check_stmt(k, exit)
+	if k.c.error_count == errors {
+		return true
+	}
+	// `f() or_return.len()` reads `.len()` as the operand.
+	if operand := expr_span(v.operand); span.lo == v.op_span.hi && operand.file == span.file {
+		text := k.c.sources[span.file].text
+		add_notef(
+			k.c, span, "after `or_return`, `%s` is its failure operand; to reach the success payload, write `(%s or_return)%s`",
+			text[span.lo:span.hi], text[operand.lo:operand.hi], text[span.lo:span.hi],
+		)
+	}
+	return false
+}
+
+// `.name` of a variant of the failure payload type that carries a payload.
+@(private = "file")
+or_return_constructs :: proc(k: ^Checker, failure: Expr, into: Type_Id) -> bool {
+	selector, is_selector := failure.(^Expr_Selector)
+	if !is_selector || selector.operand != nil || !type_is_union(k.c, into) {
+		return false
+	}
+	index := union_index_of(k.c, into, selector.name.text)
+	if index < 0 {
+		return false
+	}
+	payload := union_variant_payload(k.c, into, index)
+	return payload != TYPE_VOID && payload != k.c.unit_type
+}
+
+// Whether the failure operand is a value of the failure payload type, decided on
+// a probe of a copy so the real operand is checked once, in its role.
+@(private = "file")
+or_return_replaces :: proc(k: ^Checker, failure: Expr, into: Type_Id) -> bool {
+	#partial switch v in failure {
+	case ^Expr_Proc:
+		return false
+	case ^Expr_Literal, ^Expr_Composite:
+		return true
+	case ^Expr_Selector:
+		if v.operand == nil {
+			return true
+		}
+	}
+	probe := begin_probe(k.c)
+	defer end_probe(k.c, probe)
+	trial := clone_expr(k.c, failure)
+	errors := k.c.error_count
+	type := check_single_expr(k, trial, into)
+	return k.c.error_count == errors && type != INVALID_TYPE && assignable(k.c, type, into)
 }
 
 @(private = "file")

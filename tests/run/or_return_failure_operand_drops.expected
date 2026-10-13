@@ -1,0 +1,16 @@
+drop temporary
+replace replacement
+-- .err(.replaced(Tracked{name = "replacement"}))
+drop replacement
+drop place
+-- .err(.code(1))
+map mapped
+-- .err(.tracked(Tracked{name = "mapped"}))
+drop mapped
+drop copied
+-- .err(.tracked(Tracked{name = "copied"}))
+drop copied
+look borrowed
+drop borrowed
+-- .err(.code(8))
+-- .ok(4)
