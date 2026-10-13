@@ -318,6 +318,8 @@ session_snapshot_queries_follow_checked_bindings :: proc(t: ^testing.T) {
 	dependency := join_path({root, "unsaved", "values", "values.loke"}, context.temp_allocator)
 	text := `package main;
 import "values";
+// A box of
+// one item.
 Box :: struct { item: int }
 Wrap :: struct($Element: type) { content: Element }
 plain :: proc(value: int = 1) -> int { return value; }
@@ -387,7 +389,15 @@ main :: proc() {
 	box_symbol, found = query_symbol(&s, box)
 	testing.expect(t, found)
 	type, found = query_type(&s, box_symbol.type)
+	testing.expect_value(t, text[box_symbol.extent.span.lo:box_symbol.extent.span.hi], "Box :: struct { item: int }")
+	testing.expect(t, box_symbol.parent.id == INVALID_SYMBOL)
+	documentation: string
+	documentation, found = query_documentation(&s, box)
+	testing.expect(t, found && documentation == "A box of\none item.")
+	delete(documentation)
 	if testing.expect(t, found && type.kind == .Struct && len(type.fields) == 1) {
+		field, field_found := query_symbol(&s, type.fields[0])
+		testing.expect(t, field_found && field.parent == box && text[field.extent.span.lo:field.extent.span.hi] == "item: int")
 		references, found = query_references(&s, type.fields[0])
 		testing.expect(t, found && len(references) == 2, "field selectors and composite keys must refer to the field")
 		delete(references)
@@ -397,6 +407,14 @@ main :: proc() {
 		testing.expect_value(t, position.symbol, type.fields[0])
 	}
 	plain := snapshot_test_symbol(t, &s, snapshot, file, "plain")
+	_, found = query_documentation(&s, plain)
+	testing.expect(t, !found, "a declaration with no comment above it has no documentation")
+	main_handle := snapshot_test_symbol(t, &s, snapshot, file, "main")
+	local, local_found := query_symbol(&s, outer.symbol)
+	testing.expect(t, local_found && local.parent == main_handle && strings.has_prefix(text[local.extent.span.lo:local.extent.span.hi], "value := 7"))
+	parameter := snapshot_test_position(t, &s, snapshot, file, text, "value: int = 1")
+	parameter_symbol, parameter_found := query_symbol(&s, parameter.symbol)
+	testing.expect(t, parameter_found && parameter_symbol.parent == plain && text[parameter_symbol.extent.span.lo:parameter_symbol.extent.span.hi] == "value: int = 1")
 	signatures: []Query_Signature
 	signatures, found = query_signatures(&s, plain)
 	if testing.expect(t, found && len(signatures) == 1 && len(signatures[0].parameters) == 1) {

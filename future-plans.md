@@ -238,10 +238,13 @@ Implementation order:
    the protocol's exit codes. Protocol regressions run in-process and over
    pipes. The design is in
    [Language server](compiler-architecture.md#language-server).
-2. Add hover, go-to-definition, and document symbols from checked semantic data.
-   Exercise unsaved buffers, multiple packages, syntax errors, missing imports,
-   and recovery after a broken edit. A missing semantic result must not crash
-   the server or be presented as a successful resolution.
+2. **Hover, go-to-definition, and document symbols — shipped.** Requests wait
+   for their document's root to be checked and are answered from its snapshot;
+   one whose document changed first is answered `ContentModified`. Symbols
+   carry their declaration extent, owning declaration, and doc comment from the
+   query API. Unresolved names answer `null`. Regressions cover unsaved
+   buffers, multiple packages, syntax errors, missing imports, recovery after a
+   broken edit, and stale and cancelled requests.
 3. Add completion and signature help for incomplete programs, then references
    and rename. Check that rename respects binding identity, scope, and name
    collisions across packages rather than replacing matching text.

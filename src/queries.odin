@@ -20,6 +20,14 @@ Query_Symbol :: struct {
 	kind: Symbol_Kind,
 	type: Type_Handle,
 	definition: Query_Location,
+	// The whole written declaration, from its first attribute through its end:
+	// `name :: value`, a field, an enum member, or a parameter. It contains
+	// `definition` and has no span exactly when `definition` has none.
+	extent: Query_Location,
+	// The written declaration this binding belongs to: the record or enum of a
+	// field or member, the procedure of a parameter or local. Zero for a
+	// package-level declaration or a method.
+	parent: Symbol_Handle,
 	public, generic: bool,
 }
 Query_Type :: struct {
@@ -154,6 +162,16 @@ query_references :: proc(s: ^Compilation_Session, handle: Symbol_Handle, include
 	return out[:], true
 }
 
+// The comments written directly above the binding's declaration, as `-doc`
+// shows them. The caller owns the text. False when there are none.
+query_documentation :: proc(s: ^Compilation_Session, handle: Symbol_Handle, allocator := context.allocator) -> (string, bool) {
+	symbol, found := query_symbol(s, handle)
+	if !found || symbol.extent.span.file == NO_FILE { return "", false }
+	context.allocator = allocator
+	text := doc_comment(&s.compiler, symbol.extent.span)
+	return text, text != ""
+}
+
 // A procedure group returns its available members. A generic template supplies
 // written syntax with complete=false; erroneous/unresolved signatures are absent.
 query_signatures :: proc(s: ^Compilation_Session, handle: Symbol_Handle) -> ([]Query_Signature, bool) {
@@ -235,8 +253,10 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		q.canonical[index] = id
 		type := symbol.kind == .Proc ? symbol.proc_type : symbol.type
 		q.symbols[index] = Query_Symbol{
-			Symbol_Handle{s.snapshot, Symbol_Id(index)}, identifier_text(c, symbol.name), symbol.kind,
-			Type_Handle{s.snapshot, type}, Query_Location{s.snapshot, symbol.span}, symbol.public, symbol.generic,
+			handle = Symbol_Handle{s.snapshot, Symbol_Id(index)}, name = identifier_text(c, symbol.name), kind = symbol.kind,
+			type = Type_Handle{s.snapshot, type}, definition = Query_Location{s.snapshot, symbol.span},
+			extent = Query_Location{s.snapshot, no_span()}, parent = Symbol_Handle{s.snapshot, INVALID_SYMBOL},
+			public = symbol.public, generic = symbol.generic,
 		}
 		if id == Symbol_Id(index) && written {
 			append(&q.documents[source.span.file], Symbol_Handle{s.snapshot, id})
@@ -312,5 +332,16 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		if symbol == nil { continue }
 		if symbol.decl != nil { index_query_decl(&index, symbol.decl) }
 		if symbol.proc_literal != nil { index_query_expr(&index, symbol.proc_literal) }
+	}
+	// Clones share their written binding's declaration; a binding the walk did
+	// not reach is described by its name alone.
+	for &symbol, slot in q.symbols {
+		if slot == 0 || symbol.definition.span.file == NO_FILE { continue }
+		canonical := q.symbols[q.canonical[slot]]
+		if canonical.extent.span.file != NO_FILE {
+			symbol.extent, symbol.parent = canonical.extent, canonical.parent
+		} else {
+			symbol.extent = symbol.definition
+		}
 	}
 }

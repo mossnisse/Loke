@@ -194,7 +194,7 @@ lifecycle_requests_follow_the_protocol :: proc(t: ^testing.T) {
 
 	handle_messages(s, {
 		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{}}`,
-		`{"jsonrpc":"2.0","id":3,"method":"textDocument/hover","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"loke/unsupported","params":{}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"textDocument/hover","params":{}}`,
 		`{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":4}}`,
 		`not json`,
@@ -551,5 +551,240 @@ notes_become_related_information_when_supported :: proc(t: ^testing.T) {
 			testing.expectf(t, strings.contains(message, "\nnote: ") == !related, "message: %q", message)
 		}
 		finish(&h)
+	}
+}
+
+// The position of `needle` in `text`, `offset` bytes in. The texts are ASCII,
+// so bytes and UTF-16 units agree.
+@(private = "file")
+position_of :: proc(t: ^testing.T, text, needle: string, offset := 0) -> Position {
+	index := strings.index(text, needle)
+	testing.expectf(t, index >= 0, "missing %q", needle)
+	index = max(index, 0) + offset
+	line_start := strings.last_index_byte(text[:index], '\n') + 1
+	return Position{strings.count(text[:index], "\n"), index - line_start}
+}
+
+// Sends a position request and returns its reply once every check has run.
+@(private = "file")
+ask :: proc(h: ^Harness, method, relative: string, position: Position) -> json.Value {
+	request(h, "70", method, fmt.tprintf(
+		`{{"textDocument":{{"uri":%s}},"position":{{"line":%d,"character":%d}}}}`,
+		quoted(uri_of(h, relative)), position.line, position.character,
+	))
+	settle(h)
+	for message in take(h) {
+		if id, _ := member_int(message, "id"); id == 70 { return message }
+	}
+	testing.expect(h.t, false, "the request was not answered")
+	return nil
+}
+
+@(private = "file")
+is_null_result :: proc(reply: json.Value) -> bool {
+	_, null_result := member(reply, "result").(json.Null)
+	return null_result && member(reply, "error") == nil
+}
+
+@(private = "file")
+hover_value :: proc(reply: json.Value) -> string {
+	value, _ := member_string(member(member(reply, "result"), "contents"), "value")
+	return value
+}
+
+@(private = "file")
+expect_definition :: proc(t: ^testing.T, reply: json.Value, uri: string, at: Position, loc := #caller_location) {
+	result := member(reply, "result")
+	got, _ := member_string(result, "uri")
+	testing.expect_value(t, got, uri, loc = loc)
+	testing.expect_value(t, start_of(result), at, loc = loc)
+}
+
+@(test)
+hover_shows_declarations_and_comments :: proc(t: ^testing.T) {
+	text := "package main;\n// Adds two numbers.\n// Never overflows here.\nadd :: proc(a: int, b: int) -> int { return a + b; }\nPoint :: struct { x: int, y: int }\nmain :: proc() {\n\ttotal := add(1, 2);\n\tp := Point{x = total, y = 0};\n\t_ = p.x;\n}\n"
+	for markdown in ([]bool{true, false}) {
+		h: Harness
+		params := `{"capabilities":{"textDocument":{"hover":{"contentFormat":["markdown","plaintext"]}}}}` if markdown else `{"capabilities":{}}`
+		if !start(&h, t, markdown ? "hover-markdown" : "hover-plain", params) { finish(&h); continue }
+		open(&h, "main.loke", text)
+		reply := ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "add(1"))
+		kind, _ := member_string(member(member(reply, "result"), "contents"), "kind")
+		value := hover_value(reply)
+		SIGNATURE :: "add :: proc(a: int, b: int) -> int"
+		testing.expect_value(t, kind, markdown ? "markdown" : "plaintext")
+		if markdown {
+			testing.expect_value(t, value, "```loke\n" + SIGNATURE + "\n```\n\nAdds two numbers.\nNever overflows here.")
+		} else {
+			testing.expect_value(t, value, SIGNATURE + "\n\nAdds two numbers.\nNever overflows here.")
+		}
+		testing.expect_value(t, start_of(member(reply, "result")), position_of(t, text, "add(1"))
+		finish(&h)
+	}
+
+	h: Harness
+	if !start(&h, t, "hover") { finish(&h); return }
+	defer finish(&h)
+	open(&h, "main.loke", text)
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "total,"))), "total: int")
+	// A cursor just past a name still means that name.
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "total :=", len("total")))), "total: int")
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "x;"))), "x: int")
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "Point{"))), "Point :: struct { x: int, y: int }")
+	// Keywords, punctuation, and comments name no binding.
+	testing.expect(t, is_null_result(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "return"))))
+	testing.expect(t, is_null_result(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "Never"))))
+}
+
+@(test)
+definitions_follow_unsaved_text_across_packages :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "definition") { finish(&h); return }
+	defer finish(&h)
+	library := "package shapes;\n@(public) area :: proc(side: int) -> int { return side * side; }\n"
+	write_file(&h, "app/shapes/shapes.loke", library)
+	text := "package main;\nimport \"shapes\";\nmain :: proc() {\n\tside := 3;\n\t_ = shapes.area(side);\n}\n"
+	write_file(&h, "app/main.loke", text)
+	open(&h, "app/main.loke", text)
+	// Into a package that is not open, read from disk.
+	reply := ask(&h, "textDocument/definition", "app/main.loke", position_of(t, text, "area(side"))
+	expect_definition(t, reply, uri_of(&h, "app/shapes/shapes.loke"), position_of(t, library, "area ::"))
+	reply = ask(&h, "textDocument/definition", "app/main.loke", position_of(t, text, "side);"))
+	expect_definition(t, reply, uri_of(&h, "app/main.loke"), position_of(t, text, "side :="))
+
+	// Unsaved text in both documents decides where the definitions are.
+	edited := "package main;\nimport \"shapes\";\nhelper :: proc() -> int { return 2; }\nmain :: proc() {\n\tside := helper();\n\t_ = shapes.area(side);\n}\n"
+	change(&h, "app/main.loke", edited, 2)
+	reply = ask(&h, "textDocument/definition", "app/main.loke", position_of(t, edited, "helper()"))
+	expect_definition(t, reply, uri_of(&h, "app/main.loke"), position_of(t, edited, "helper ::"))
+	moved := "package shapes;\n\n// Moved down.\n@(public) area :: proc(side: int) -> int { return side * side; }\n"
+	open(&h, "app/shapes/shapes.loke", moved)
+	reply = ask(&h, "textDocument/definition", "app/main.loke", position_of(t, edited, "area(side"))
+	expect_definition(t, reply, uri_of(&h, "app/shapes/shapes.loke"), position_of(t, moved, "area ::"))
+	// From inside the opened library, which its importer checks.
+	reply = ask(&h, "textDocument/definition", "app/shapes/shapes.loke", position_of(t, moved, "side * side"))
+	expect_definition(t, reply, uri_of(&h, "app/shapes/shapes.loke"), position_of(t, moved, "side: int"))
+}
+
+@(test)
+unresolved_names_have_no_semantic_result :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "unresolved") { finish(&h); return }
+	defer finish(&h)
+	text := "package main;\nimport \"nowhere\";\nmain :: proc() {\n\tnowhere.run();\n\tunknown();\n}\n"
+	open(&h, "main.loke", text)
+	for needle in ([]string{"run()", "nowhere.run", "unknown()"}) {
+		at := position_of(t, text, needle)
+		testing.expectf(t, is_null_result(ask(&h, "textDocument/definition", "main.loke", at)), "definition of %q", needle)
+		testing.expectf(t, is_null_result(ask(&h, "textDocument/hover", "main.loke", at)), "hover of %q", needle)
+	}
+
+	// A syntax error elsewhere in the file leaves recorded bindings usable.
+	broken := "package main;\ntwice :: proc(n: int) -> int { return n * 2; }\nmain :: proc() {\n\tvalue := twice(1);\n\t_ = value;\n\tbroken := twice(;\n}\n"
+	change(&h, "main.loke", broken, 2)
+	reply := ask(&h, "textDocument/definition", "main.loke", position_of(t, broken, "twice(1"))
+	expect_definition(t, reply, uri_of(&h, "main.loke"), position_of(t, broken, "twice ::"))
+
+	// After the edit is repaired, everything resolves again.
+	fixed := "package main;\ntwice :: proc(n: int) -> int { return n * 2; }\nmain :: proc() {\n\tvalue := twice(1);\n\t_ = value;\n}\n"
+	change(&h, "main.loke", fixed, 3)
+	reply = ask(&h, "textDocument/definition", "main.loke", position_of(t, fixed, "value;"))
+	expect_definition(t, reply, uri_of(&h, "main.loke"), position_of(t, fixed, "value :="))
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, fixed, "twice(1"))), "twice :: proc(n: int) -> int")
+}
+
+@(test)
+requests_wait_for_the_current_text :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "waiting") { finish(&h); return }
+	defer finish(&h)
+	text := "package main;\nmain :: proc() { x := 1; _ = x; }\n"
+	hover_at := fmt.tprintf(`{{"textDocument":{{"uri":%s}},"position":{{"line":1,"character":17}}}}`, quoted(uri_of(&h, "main.loke")))
+
+	// A document the client has not opened has no text to answer from.
+	request(&h, "1", "textDocument/hover", fmt.tprintf(`{{"textDocument":{{"uri":%s}},"position":{{"line":0,"character":0}}}}`, quoted(uri_of(&h, "other.loke"))))
+	replies := take(&h)
+	testing.expect(t, len(replies) == 1 && is_null_result(replies[0]))
+
+	// Requests wait for the check; one whose document changes meanwhile is
+	// answered as modified, and one cancelled later is answered as cancelled.
+	open(&h, "main.loke", text)
+	request(&h, "2", "textDocument/hover", hover_at)
+	request(&h, "3", "textDocument/hover", hover_at)
+	testing.expect_value(t, len(take(&h)), 0)
+	notify(&h, "$/cancelRequest", `{"id":3}`)
+	replies = take(&h)
+	testing.expect(t, len(replies) == 1 && error_code(replies[0]) == REQUEST_CANCELLED)
+	change(&h, "main.loke", "package main;\nmain :: proc() { y := 1; _ = y; }\n", 2)
+	settle(&h)
+	replies = take(&h)
+	modified := false
+	for reply in replies {
+		if id, _ := member_int(reply, "id"); id == 2 { modified = error_code(reply) == CONTENT_MODIFIED }
+	}
+	testing.expect(t, modified, "a request older than the text it was asked about must not be answered from it")
+
+	request(&h, "4", "textDocument/hover", hover_at)
+	settle(&h)
+	replies = take(&h)
+	testing.expect(t, len(replies) == 1 && hover_value(replies[0]) == "y: int")
+
+	// Shutdown answers whatever is still waiting.
+	change(&h, "main.loke", text, 3)
+	request(&h, "5", "textDocument/definition", hover_at)
+	request(&h, "6", "shutdown", "null")
+	replies = take(&h)
+	if testing.expect_value(t, len(replies), 2) {
+		testing.expect_value(t, error_code(replies[0]), REQUEST_CANCELLED)
+		testing.expect(t, is_null_result(replies[1]))
+	}
+}
+
+@(test)
+document_symbols_outline_declarations :: proc(t: ^testing.T) {
+	text := "package main;\nLIMIT :: 10;\ncounter: int;\nColor :: enum { Red, Green }\nPoint :: struct {\n\tx: int,\n\ty: int,\n}\nlength :: proc(p: Point) -> int {\n\ttotal := p.x + p.y;\n\tInner :: struct { z: int }\n\treturn total;\n}\nmain :: proc() { _ = length(Point{}); }\n"
+	for hierarchical in ([]bool{true, false}) {
+		h: Harness
+		params := `{"capabilities":{"textDocument":{"documentSymbol":{"hierarchicalDocumentSymbolSupport":true}}}}` if hierarchical else `{"capabilities":{}}`
+		if !start(&h, t, hierarchical ? "symbols-tree" : "symbols-flat", params) { finish(&h); continue }
+		open(&h, "main.loke", text)
+		request(&h, "9", "textDocument/documentSymbol", fmt.tprintf(`{{"textDocument":{{"uri":%s}}}}`, quoted(uri_of(&h, "main.loke"))))
+		settle(&h)
+		reply: json.Value
+		for message in take(&h) { if id, _ := member_int(message, "id"); id == 9 { reply = message } }
+		symbols, _ := member(reply, "result").(json.Array)
+		b := strings.builder_make(context.temp_allocator)
+		describe_symbols(&b, symbols)
+		if hierarchical {
+			testing.expect_value(t, strings.to_string(b), "LIMIT/14 counter/13 Color/10(Red/22 Green/22) Point/23(x/8 y/8) length/12 main/12")
+			if len(symbols) == 6 {
+				point := symbols[3]
+				testing.expect_value(t, start_of(point), position_of(t, text, "Point ::"))
+				end, _ := member_int(member(member(point, "range"), "end"), "line")
+				testing.expect_value(t, int(end), position_of(t, text, "}\nlength").line)
+				detail, _ := member_string(symbols[4], "detail")
+				testing.expect_value(t, detail, "proc(p: Point) -> int")
+			}
+		} else {
+			testing.expect_value(t, strings.to_string(b), "LIMIT/14 counter/13 Color/10 Red/22<Color> Green/22<Color> Point/23 x/8<Point> y/8<Point> length/12 main/12")
+		}
+		finish(&h)
+	}
+}
+
+// `name/kind`, children in parentheses and a container in angle brackets.
+@(private = "file")
+describe_symbols :: proc(b: ^strings.Builder, symbols: json.Array) {
+	for symbol, index in symbols {
+		if index > 0 { strings.write_byte(b, ' ') }
+		name, _ := member_string(symbol, "name")
+		kind, _ := member_int(symbol, "kind")
+		fmt.sbprintf(b, "%s/%d", name, kind)
+		if container, found := member_string(symbol, "containerName"); found { fmt.sbprintf(b, "<%s>", container) }
+		if children := member_array(symbol, "children"); len(children) > 0 {
+			strings.write_byte(b, '(')
+			describe_symbols(b, children)
+			strings.write_byte(b, ')')
+		}
 	}
 }

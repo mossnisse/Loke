@@ -43,19 +43,23 @@ Related :: struct { path: string, range: Range, message: string }
 // Work left for `run_pending_work`.
 has_pending_work :: proc(s: ^Server) -> bool {
 	if s.phase != .Running { return false }
-	if s.layout_dirty || s.publish_due { return true }
+	if s.layout_dirty || s.publish_due || len(s.pending) > 0 { return true }
 	for _, root in s.roots { if root.dirty { return true } }
 	return false
 }
 
-// One step: assign roots, check one dirty root, or publish once none is dirty.
-// Results are published only when every root was checked since the last
-// edit, which marks them all dirty, so a result superseded by a later edit is
-// never shown. True while more steps remain.
+// One step: assign roots and answer the requests they can, then check one
+// dirty root, a requested one first, or publish once none is dirty. Results are
+// published only when every root was checked since the last edit, which marks
+// them all dirty, so a result superseded by a later edit is never shown. True
+// while more steps remain.
 run_pending_work :: proc(s: ^Server) -> bool {
 	if s.phase != .Running { return false }
 	if s.layout_dirty { refresh_roots(s) }
-	if root := next_dirty_root(s); root != nil {
+	answer_requests(s)
+	root := requested_root(s)
+	if root == nil { root = next_dirty_root(s) }
+	if root != nil {
 		check_root(s, root)
 		return true
 	}
@@ -277,7 +281,7 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 		message := d.message if d.label == "" else fmt.tprintf("%s\n%s", d.message, d.label)
 		related := make([dynamic]Related, allocator)
 		for note in d.notes {
-			path, range, placed := place(s, root, snapshot, note.location, allocator)
+			path, range, placed := place(s, &root.session, snapshot, note.location, allocator)
 			switch {
 			case placed && s.related_information:
 				append(&related, Related{path, range, strings.clone(note.message, allocator)})
@@ -291,7 +295,7 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 			severity = d.severity, code = strings.clone(d.code, allocator),
 			message = strings.clone(message, allocator), related = related[:],
 		}
-		path, range, placed := place(s, root, snapshot, d.location, allocator)
+		path, range, placed := place(s, &root.session, snapshot, d.location, allocator)
 		out.range = range
 		if !placed {
 			append(&root.unplaced, out)
@@ -307,10 +311,10 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 	}
 }
 
-@(private = "file")
-place :: proc(s: ^Server, root: ^Root, snapshot: lokec.Compilation_Snapshot, location: lokec.Query_Location, allocator := context.allocator) -> (path: string, range: Range, ok: bool) {
+// A snapshot location as a canonical path and a client range.
+place :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, location: lokec.Query_Location, allocator := context.allocator) -> (path: string, range: Range, ok: bool) {
 	if location.span.file == lokec.NO_FILE { return }
-	source := lokec.query_source(&root.session, snapshot, location.span.file) or_return
+	source := lokec.query_source(session, snapshot, location.span.file) or_return
 	range.start = offset_to_position(source.text, source.line_starts, location.span.lo, s.utf8_positions)
 	range.end = offset_to_position(source.text, source.line_starts, max(location.span.hi, location.span.lo), s.utf8_positions)
 	return strings.clone(lokec.canonical_dir(source.path), allocator), range, true
@@ -398,7 +402,6 @@ forget_published :: proc(s: ^Server, key: string) {
 
 // The client's own spelling for a document it opened; otherwise one built
 // from the path.
-@(private = "file")
 uri_for :: proc(s: ^Server, key, path: string) -> string {
 	if doc := s.documents[key]; doc != nil { return doc.uri }
 	return path_to_uri(path, context.temp_allocator)
@@ -446,7 +449,6 @@ diagnostics_params :: proc(s: ^Server, uri: string, doc: ^Document, diagnostics:
 	return strings.to_string(b)
 }
 
-@(private = "file")
 write_range :: proc(b: ^strings.Builder, range: Range) {
 	fmt.sbprintf(
 		b, `{{"start":{{"line":%d,"character":%d}},"end":{{"line":%d,"character":%d}}}}`,

@@ -108,7 +108,7 @@ document_decl :: proc(c: ^Compiler, b: ^strings.Builder, d: ^Decl, owner: string
 
 // Where something written at `lo` starts, counting its attributes: each one's
 // span is its name's, after the `@(`.
-@(private = "file")
+@(private)
 written_start :: proc(text: string, lo: u32, attributes: []Attribute) -> u32 {
 	start := lo
 	for attribute in attributes {
@@ -170,6 +170,7 @@ doc_comment :: proc(c: ^Compiler, at: Span) -> string {
 		first = index
 	}
 	lines := make([dynamic]string)
+	defer delete(lines)
 	for comment in source.comments[first:] {
 		if comment.hi > at.lo {
 			break

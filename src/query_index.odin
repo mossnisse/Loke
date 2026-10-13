@@ -2,8 +2,9 @@
 // No lookup, checking, or compiler registry mutation happens here.
 package lokec
 
+// `owner` is the binding whose declaration the walk is inside.
 @(private)
-Query_Index :: struct { c: ^Compiler, q: ^Snapshot_Queries, visited: map[rawptr]bool }
+Query_Index :: struct { c: ^Compiler, q: ^Snapshot_Queries, visited: map[rawptr]bool, owner: Symbol_Id }
 
 valid_query_span :: proc(c: ^Compiler, span: Span) -> bool {
 	return span.file != NO_FILE && int(span.file) < len(c.sources) && span.lo < span.hi && int(span.hi) <= len(c.sources[span.file].text)
@@ -29,6 +30,22 @@ index_query_name :: proc(index: ^Query_Index, span: Span, name: string, symbol: 
 	append(&index.q.occurrences, Query_Occurrence{span, symbol, type, symbol != INVALID_SYMBOL})
 }
 
+// Records a written binding's declaration extent and owner once, on the binding
+// clones share; the first walk is over written syntax.
+@(private = "file")
+index_query_binding :: proc(index: ^Query_Index, id: Symbol_Id, written: Span, attributes: []Attribute) {
+	if id == INVALID_SYMBOL || int(id) >= len(index.q.symbols) { return }
+	symbol := &index.q.symbols[index.q.canonical[id]]
+	span := symbol.definition.span
+	if span.file == NO_FILE || span.file != written.file || symbol.extent.span.file != NO_FILE { return }
+	lo, hi := written.lo, written.hi
+	text := index.c.sources[span.file].text
+	extent := Span{file = span.file, lo = min(written_start(text, lo, attributes), span.lo), hi = max(hi, span.hi)}
+	if int(extent.hi) > len(text) { return }
+	symbol.extent.span = extent
+	if index.owner != INVALID_SYMBOL { symbol.parent.id = index.q.canonical[index.owner] }
+}
+
 @(private = "file")
 index_query_attributes :: proc(index: ^Query_Index, attributes: []Attribute) {
 	for attribute in attributes { index_query_expr(index, attribute.value) }
@@ -37,9 +54,16 @@ index_query_attributes :: proc(index: ^Query_Index, attributes: []Attribute) {
 index_query_decl :: proc(index: ^Query_Index, decl: ^Decl) {
 	if !query_index_enter(index, decl) { return }
 	index_query_attributes(index, decl.attributes)
+	if len(decl.names) > 0 {
+		for symbol in decl.symbols { index_query_binding(index, symbol, Span{file = decl.names[0].span.file, lo = decl.names[0].span.lo, hi = decl.span.hi}, decl.attributes) }
+	}
 	index_query_expr(index, decl.declared_type)
 	index_query_expr(index, decl.via)
-	for value in decl.values {
+	owner := index.owner
+	defer index.owner = owner
+	for value, slot in decl.values {
+		// A record, enum, or procedure owns what is declared inside it.
+		index.owner = decl.symbols[slot] if len(decl.symbols) == len(decl.values) else owner
 		index_query_expr(index, value)
 		if group, found := value.(^Expr_Proc_Group); found && len(decl.symbols) == 1 {
 			if symbol := symbol_of(index.c, decl.symbols[0]); symbol != nil && symbol.kind == .Proc_Group {
@@ -186,6 +210,9 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 			index_query_expr(index, v.capture.method)
 		}
 	case ^Expr_Proc:
+		owner := index.owner
+		defer index.owner = owner
+		if v.symbol != INVALID_SYMBOL { index.owner = v.symbol }
 		index_query_expr(index, v.signature)
 		for clause in v.where_clauses { index_query_expr(index, clause) }
 		index_query_stmt(index, v.body)
@@ -205,6 +232,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	case ^Type_Dyn: index_query_expr(index, v.interface_expr)
 	case ^Type_Proc:
 		for parameter in v.params {
+			for symbol in parameter.symbols { index_query_binding(index, symbol, parameter.span, parameter.attributes) }
 			index_query_attributes(index, parameter.attributes)
 			index_query_expr(index, parameter.type)
 			index_query_expr(index, parameter.default)
@@ -214,12 +242,23 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		index_query_attributes(index, v.attributes)
 		for parameter in v.generic_params { index_query_expr(index, parameter.type) }
 		for clause in v.where_clauses { index_query_expr(index, clause) }
-		for field in v.fields { index_query_attributes(index, field.attributes); index_query_expr(index, field.type) }
+		for field in v.fields {
+			for symbol in field.symbols { index_query_binding(index, symbol, field.span, field.attributes) }
+			index_query_attributes(index, field.attributes)
+			index_query_expr(index, field.type)
+		}
 		for variant in v.variants { index_query_expr(index, variant.type) }
-	case ^Type_Anon_Record: for field in v.fields { index_query_expr(index, field.type) }
+	case ^Type_Anon_Record:
+		for field in v.fields {
+			for symbol in field.symbols { index_query_binding(index, symbol, field.span, field.attributes) }
+			index_query_expr(index, field.type)
+		}
 	case ^Type_Enum:
 		index_query_expr(index, v.backing)
-		for field in v.fields { index_query_expr(index, field.value) }
+		for field in v.fields {
+			index_query_binding(index, field.symbol, field.span, nil)
+			index_query_expr(index, field.value)
+		}
 	case ^Type_Interface:
 		for parameter in v.generic_params { index_query_expr(index, parameter.type) }
 		for clause in v.where_clauses { index_query_expr(index, clause) }

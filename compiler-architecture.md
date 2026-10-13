@@ -543,7 +543,8 @@ including after destroying and reinitializing a session.
 | `remove_session_overlay(&s, path)` | Restore disk loading or remove an unsaved-only file. An absent overlay returns false without invalidation. |
 | `session_snapshot(&s)` | Capture current views, even after failed initialization/checking. False for zeroed/destroyed sessions or after invalidation until a check runs. |
 | `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. |
-| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. |
+| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute) and the declaration it belongs to (`parent`: a field's record, a member's enum, a parameter's or local's procedure). |
+| `query_documentation` | The comments directly above a binding's declaration, as `-doc` reads them; caller-owned. False when there are none. |
 | `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. |
 | `query_type` | Recorded type properties, components, fields, members, and parameter types/modes. Zero IDs mean unavailable. |
 | `query_definition` | Snapshot-scoped written location; false for builtins/synthetic bindings without definitions. |
@@ -660,13 +661,14 @@ The server never duplicates the front end: every result comes from the
 | `jsonrpc.odin` | `Content-Length` framing, JSON output, and tolerant field access. |
 | `server.odin` | Lifecycle, request/notification dispatch, cancellation, configuration, and open documents. |
 | `roots.odin` | Root assignment, checking, diagnostic conversion, and publication. |
+| `requests.odin` | Hover, definition, and document symbols; waiting, cancelled, and stale requests. |
 | `paths.odin` | `file:` URIs, path keys, and UTF-8/UTF-16 positions. |
 
 A reader thread frames stdin into an inbox. The main thread runs checks, so it
 has the compiler's [stack reservation](#driver-and-phase-order). It applies every
 queued message in order, then waits for edits to pause briefly, then performs one
 step of `run_pending_work`. A `$/cancelRequest` cancels a request queued in the
-same batch. A running check is not interrupted: its result is discarded if an
+same batch or still waiting for a check. A running check is not interrupted: its result is discarded if an
 edit arrives first. `shutdown` drops pending work; `exit` and the end of input
 stop the process.
 
@@ -692,7 +694,22 @@ for each file and sends only changes, including an empty list when a file has no
 diagnostics left. An open document keeps the client's URI spelling and
 receives its version.
 
-Milestone 1 of [Language server](future-plans.md#language-server) uses batch
+Hover, definition, and document-symbol requests wait in `pending` until
+`refresh_roots` has run and their document's root is clean, so the root's
+snapshot was taken from the document's current text. `run_pending_work`
+answers them before anything else and checks a requested root before other
+dirty roots. Each document records the server's edit `revision`; a request
+whose document changed or closed while it waited is answered `ContentModified`,
+and a later `$/cancelRequest` or `shutdown` answers it as cancelled. Before
+answering, the server confirms the snapshot's text for the file equals the
+document's; otherwise, and whenever `query_at` records no binding, the result
+is `null`. Positions just past a name fall back to the name. Hover text and the
+outline come only from `Query_Symbol`, signatures, recorded type names, written
+declaration extents, and `query_documentation`. Document symbols omit anything
+whose `parent` chain reaches a procedure, which leaves package-level
+declarations with their fields and enum members as children.
+
+Milestones 1 and 2 of [Language server](future-plans.md#language-server) use batch
 checking. `lsp/server_test.odin` drives the server in process, choosing when
 checks run relative to edits. `tests/lsp_test.odin` runs the built executable
 over pipes.

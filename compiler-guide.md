@@ -235,8 +235,25 @@ The server publishes diagnostics for open `.loke` documents as you type,
 including unsaved edits. Each one is a diagnostic `lokec` reports for the same
 inputs, with its code (such as `L0310`) and notes. A diagnostic belongs to the
 document version it was computed from; when a later edit arrives first, the
-server discards the stale result and checks again. Hover, go-to-definition,
-completion, and rename are not available yet.
+server discards the stale result and checks again.
+
+The server also answers these requests for open documents, from the same check
+that produced the diagnostics:
+
+- **Hover** shows the declaration of the name under the cursor and the comments
+  written directly above it, as [`-doc`](#common-options) shows them. A
+  procedure shows its signature, a type or constant its declaration, and a
+  variable, parameter, or field its type.
+- **Go to definition** jumps to where the name is declared, including in an
+  imported package or the bundled library.
+- **Document symbols** list the file's package-level declarations, with the
+  fields of each record and the members of each enum inside it.
+
+A name the compiler could not resolve, such as one from a missing import, has
+no hover or definition. A request waits for the check of the text it was asked
+about; if the document changes first, the server answers that the content was
+modified, and the editor asks again. Completion and rename are not available
+yet.
 
 Each open document is checked through a root, which is what `lokec` would be
 given:

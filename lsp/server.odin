@@ -35,6 +35,7 @@ Server :: struct {
 	exit_code:  int,
 	// Negotiated client capabilities.
 	utf8_positions, related_information, watch_files: bool,
+	markdown_hover, hierarchical_symbols: bool,
 	config:       lokec.Compilation_Config,
 	config_arena: virtual.Arena,
 	documents:    map[string]^Document, // by path key
@@ -44,13 +45,18 @@ Server :: struct {
 	scan_arena:   virtual.Arena,
 	last_edit:    time.Tick,
 	layout_dirty, publish_due: bool,
+	// Requests waiting for their document's root to be checked, in arrival order.
+	pending:      [dynamic]Pending_Request,
+	// Counts document opens and edits, so a request can tell its text changed.
+	revision:     int,
 }
 
 // An open `.loke` document. Its text is an overlay in every root's session.
 Document :: struct {
 	uri, path, key, text: string,
-	version: i64,
-	root:    ^Root,
+	version:  i64,
+	revision: int,
+	root:     ^Root,
 }
 
 // What the client last received for a file.
@@ -62,6 +68,8 @@ init_server :: proc(s: ^Server, write: proc(data: rawptr, message: string), writ
 }
 
 destroy_server :: proc(s: ^Server) {
+	for request in s.pending { destroy_request(request) }
+	delete(s.pending)
 	for _, root in s.roots { destroy_root(root) }
 	delete(s.roots)
 	for _, doc in s.documents { destroy_document(doc) }
@@ -140,7 +148,14 @@ handle_request :: proc(s: ^Server, id: json.Value, method: string, params: json.
 	case method == "shutdown":
 		// Pending checks are dropped: nothing published now would be read.
 		s.phase = .Shutdown
+		cancel_all_requests(s)
 		send_result(s, id, "null")
+	case method == "textDocument/hover":
+		queue_request(s, id, .Hover, params)
+	case method == "textDocument/definition":
+		queue_request(s, id, .Definition, params)
+	case method == "textDocument/documentSymbol":
+		queue_request(s, id, .Document_Symbol, params)
 	case:
 		send_error(s, id, METHOD_NOT_FOUND, fmt.tprintf("unsupported request `%s`", method))
 	}
@@ -155,6 +170,8 @@ handle_notification :: proc(s: ^Server, method: string, params: json.Value) {
 	// Before `initialize` and after `shutdown`, notifications are dropped.
 	if s.phase != .Running { return }
 	switch method {
+	case "$/cancelRequest":
+		cancel_request(s, member(params, "id"))
 	case "initialized":
 		if s.watch_files { register_watchers(s) }
 	case "textDocument/didOpen":
@@ -182,6 +199,10 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 	}
 	s.related_information = member_bool(member(member(capabilities, "textDocument"), "publishDiagnostics"), "relatedInformation")
 	s.watch_files = member_bool(member(member(capabilities, "workspace"), "didChangeWatchedFiles"), "dynamicRegistration")
+	for format in member_array(member(member(capabilities, "textDocument"), "hover"), "contentFormat") {
+		if name, ok := format.(json.String); ok && name == "markdown" { s.markdown_hover = true }
+	}
+	s.hierarchical_symbols = member_bool(member(member(capabilities, "textDocument"), "documentSymbol"), "hierarchicalDocumentSymbolSupport")
 
 	folder := ""
 	if folders := member_array(params, "workspaceFolders"); len(folders) > 0 {
@@ -196,7 +217,7 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(
-		&b, `{{"capabilities":{{"positionEncoding":"%s","textDocumentSync":{{"openClose":true,"change":%d,"save":{{"includeText":false}}}}}},"serverInfo":{{"name":"%s","version":"%s"}}}}`,
+		&b, `{{"capabilities":{{"positionEncoding":"%s","textDocumentSync":{{"openClose":true,"change":%d,"save":{{"includeText":false}}}},"hoverProvider":true,"definitionProvider":true,"documentSymbolProvider":true}},"serverInfo":{{"name":"%s","version":"%s"}}}}`,
 		s.utf8_positions ? "utf-8" : "utf-16", SYNC_FULL, SERVER_NAME, lokec.LOKE_VERSION_STRING,
 	)
 	send_result(s, id, strings.to_string(b))
@@ -250,6 +271,8 @@ did_open :: proc(s: ^Server, params: json.Value) {
 	doc := new(Document)
 	doc.uri, doc.path = strings.clone(uri), strings.clone(lokec.canonical_dir(path))
 	doc.key, doc.text, doc.version = strings.clone(key), strings.clone(text), version
+	s.revision += 1
+	doc.revision = s.revision
 	s.documents[doc.key] = doc
 	for _, root in s.roots { lokec.set_session_overlay(&root.session, doc.path, doc.text) }
 	documents_changed(s, rescan = true)
@@ -275,6 +298,8 @@ did_change :: proc(s: ^Server, params: json.Value) {
 		end := max(start, position_to_offset(doc.text, json_position(member(range, "end")), s.utf8_positions))
 		replace_text(doc, strings.concatenate({doc.text[:start], text, doc.text[end:]}))
 	}
+	s.revision += 1
+	doc.revision = s.revision
 	for _, root in s.roots { lokec.set_session_overlay(&root.session, doc.path, doc.text) }
 	documents_changed(s, rescan = false)
 }
@@ -307,7 +332,6 @@ documents_changed :: proc(s: ^Server, rescan: bool) {
 	if rescan { clear_directory_scans(s) }
 }
 
-@(private = "file")
 find_document :: proc(s: ^Server, item: json.Value) -> ^Document {
 	uri, has_uri := member_string(item, "uri")
 	if !has_uri { return nil }
@@ -331,7 +355,6 @@ destroy_document :: proc(doc: ^Document) {
 	free(doc)
 }
 
-@(private = "file")
 json_position :: proc(value: json.Value) -> Position {
 	line, _ := member_int(value, "line")
 	character, _ := member_int(value, "character")
@@ -339,7 +362,6 @@ json_position :: proc(value: json.Value) -> Position {
 }
 
 // Request IDs compare by type and value: `1` and `"1"` are different requests.
-@(private = "file")
 id_key :: proc(id: json.Value) -> string {
 	#partial switch v in id {
 	case json.Integer: return fmt.tprintf("i%d", v)

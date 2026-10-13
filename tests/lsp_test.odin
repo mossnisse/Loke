@@ -156,7 +156,8 @@ lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 	if !lsp_start(&p, t) { return }
 	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
 	reply, ok := lsp_receive(&p)
-	testing.expect(t, ok && json_member(reply, "result") != nil)
+	hovers, _ := json_member(json_member(json_member(reply, "result"), "capabilities"), "hoverProvider").(json.Boolean)
+	testing.expect(t, ok && bool(hovers))
 	lsp_send(&p, `{"jsonrpc":"2.0","method":"initialized","params":{}}`)
 	text := "package main;\nmain :: proc() { x: int = \"text\"; }\n"
 	lsp_send(&p, fmt.tprintf(
@@ -178,10 +179,18 @@ lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 			testing.expect_value(t, code, "L0310")
 		}
 	}
-	lsp_send(&p, `{"jsonrpc":"2.0","id":2,"method":"shutdown"}`)
+	// The binding at `x`, from the same check.
+	lsp_send(&p, fmt.tprintf(
+		`{{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{{"textDocument":{{"uri":%s}},"position":{{"line":1,"character":17}}}}}}`,
+		json_quoted(uri),
+	))
+	reply, ok = lsp_receive(&p)
+	value, _ := json_member(json_member(json_member(reply, "result"), "contents"), "value").(json.String)
+	testing.expect(t, ok && value == "x: int")
+	lsp_send(&p, `{"jsonrpc":"2.0","id":3,"method":"shutdown"}`)
 	reply, ok = lsp_receive(&p)
 	id, _ := json_member(reply, "id").(json.Integer)
-	testing.expect(t, ok && id == 2)
+	testing.expect(t, ok && id == 3)
 	lsp_send(&p, `{"jsonrpc":"2.0","method":"exit"}`)
 	code, exited := lsp_finish(&p)
 	testing.expect(t, exited && code == 0)
