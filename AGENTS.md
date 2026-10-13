@@ -46,8 +46,9 @@ a minimal reproduction; never reword the spec to match a bug.
 ## Testing
 
 - For code changes, run the affected suite or `.\test-all.ps1`, the quick gate.
-  Unit tests live in `src`; integration tests live in `tests`. Rebuild
-  `lokec.exe` before direct integration runs after compiler changes.
+  Unit tests live in `src` and `lsp`; integration tests live in `tests`.
+  Rebuild `lokec.exe` and `loke-lsp.exe` before direct integration runs after
+  compiler changes.
 - For documentation-only changes, check links and heading citations, and run
   any affected examples or tutorial tests. A full compiler gate is unnecessary.
 - Run `.\test-all.ps1 -Full` locally only for changes targeting its additional

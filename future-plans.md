@@ -228,10 +228,16 @@ queries exist; incremental checking can arrive during this phase.
 
 Implementation order:
 
-1. Support workspace/project loading and document open, change, save, and close.
-   Publish diagnostics for the current document version, discard results for
-   superseded versions, and handle cancellation and shutdown. Start with batch
-   checking through the session API.
+1. **Documents and diagnostics — shipped.** `loke-lsp.exe` handles document
+   open, change, save, and close. It checks each open document through its
+   package directory with a batch session, honoring `loke.project`,
+   `initializationOptions` collections/defines, and watched-file changes.
+   Diagnostics carry the document version they were computed from; results
+   superseded by a later edit are discarded. Requests queued with their
+   `$/cancelRequest` are answered as cancelled. `shutdown` and `exit` follow
+   the protocol's exit codes. Protocol regressions run in-process and over
+   pipes. The design is in
+   [Language server](compiler-architecture.md#language-server).
 2. Add hover, go-to-definition, and document symbols from checked semantic data.
    Exercise unsaved buffers, multiple packages, syntax errors, missing imports,
    and recovery after a broken edit. A missing semantic result must not crash

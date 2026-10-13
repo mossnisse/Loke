@@ -15,6 +15,7 @@ syntax, and [compiler-guide.md](compiler-guide.md) covers the command line.
 - [Making changes](#how-to-make-a-compiler-change) and [testing](#testing-and-verification)
 - [Sessions](#reusable-batch-sessions), [queries](#snapshots-and-queries),
   [invalidation](#invalidation-rules), and [incremental checking](#incremental-checking)
+- [Language server](#language-server)
 - [Deliberate boundaries](#deliberate-boundaries)
 
 ## Pipeline at a glance
@@ -264,7 +265,8 @@ failure, the link compiles sources directly and records the reason in
 ## Source-code map
 
 Files directly in `src/` form the `lokec` package; `src/subprocess/` is a
-separate package shared with the test harness. Shared subsystem helpers are
+separate package shared with the test harness. `lsp/` is the
+[language server](#language-server), a separate executable that imports `lokec`. Shared subsystem helpers are
 package-private; helpers used only within one file should be file-private.
 Paths below are relative to `src/`.
 
@@ -435,11 +437,14 @@ For individual suites:
 ```powershell
 odin test src -vet-unused -vet-shadowing -vet-packages:lokec
 odin build src -out:lokec.exe -vet-unused -vet-shadowing
+odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp
+odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing
 odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -vet-unused -vet-shadowing -vet-packages:tests
 ```
 
 **Rebuild before direct integration runs after compiler changes.** The harness
-uses existing `lokec.exe` (or `LOKEC`); `odin test tests` does not rebuild it.
+uses existing `lokec.exe` (or `LOKEC`) and `loke-lsp.exe` (or `LOKE_LSP`);
+`odin test tests` rebuilds neither.
 Add `-define:ODIN_TEST_NAMES=<name>` to select an Odin test procedure:
 `programs_run` selects the executable corpus, and `tutorials_compile_and_run`
 selects tutorial programs, not a single source file.
@@ -640,6 +645,52 @@ oldest boundaries are evicted first and oversized images are not cached.
 payload, excluding metadata, other arenas, and OS overhead. These are accounting
 counters, not working-set measurements. Representative incremental latency and
 cost evaluation remains in [Compiler services](future-plans.md#compiler-services).
+
+## Language server
+
+`lsp/` builds `loke-lsp.exe`, which speaks the Language Server Protocol on
+stdio. Behavior and configuration for users are in
+[Language server](compiler-guide.md#language-server).
+The server never duplicates the front end: every result comes from the
+[session](#reusable-batch-sessions) and [snapshot](#snapshots-and-queries) APIs.
+
+| File | Responsibility |
+| --- | --- |
+| `main.odin` | Command line, reader thread, inbox, debounce, and the main loop. |
+| `jsonrpc.odin` | `Content-Length` framing, JSON output, and tolerant field access. |
+| `server.odin` | Lifecycle, request/notification dispatch, cancellation, configuration, and open documents. |
+| `roots.odin` | Root assignment, checking, diagnostic conversion, and publication. |
+| `paths.odin` | `file:` URIs, path keys, and UTF-8/UTF-16 positions. |
+
+A reader thread frames stdin into an inbox. The main thread runs checks, so it
+has the compiler's [stack reservation](#driver-and-phase-order). It applies every
+queued message in order, then waits for edits to pause briefly, then performs one
+step of `run_pending_work`. A `$/cancelRequest` cancels a request queued in the
+same batch. A running check is not interrupted: its result is discarded if an
+edit arrives first. `shutdown` drops pending work; `exit` and the end of input
+stop the process.
+
+Each root is one `lokec` input with its own `Compilation_Session` and the same
+fixed configuration. Every open document is an overlay in every session. An
+edit marks every root dirty because any root may import the edited file.
+`refresh_roots` maps each document to its directory, or to the file itself when
+two or more sibling files declare `main`. It destroys roots that no open document
+uses. `check_root` uses `check_session`, rechecking once in documentation mode when
+the root package is not `main`. It copies snapshot diagnostics into the root's
+result arena with client positions. Diagnostics with no source location are
+shown on that root's open documents.
+
+Diagnostics are published only after every root has been checked since the
+last edit. A file's list is the deduplicated union across roots, because
+an imported package is checked by each importer. The server records what it sent
+for each file and sends only changes, including an empty list when a file has no
+diagnostics left. An open document keeps the client's URI spelling and
+receives its version.
+
+Milestone 1 of [Language server](future-plans.md#language-server) uses batch
+checking. `lsp/server_test.odin` drives the server in process, choosing when
+checks run relative to edits. `tests/lsp_test.odin` runs the built executable
+over pipes.
 
 ## Deliberate boundaries
 

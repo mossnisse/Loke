@@ -14,6 +14,7 @@ examples under `tests/` require a source checkout.
 - [Default allocator and logger](#default-allocator-and-logger)
 - [Inspecting a compilation](#inspecting-a-compilation)
 - [Building an object for a C host](#building-an-object-for-a-c-host)
+- [Language server](#language-server)
 - [Toolchain troubleshooting](#toolchain-troubleshooting)
 
 ## Inputs and output paths
@@ -222,6 +223,53 @@ object built without a selected provider does not export this initializer.
 An assembly import (`.asm`, `.s`, or `.S`) cannot be included in this
 single-object build: assemble it separately and link it at the host's final
 link step.
+
+## Language server
+
+`loke-lsp.exe` is a [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
+server for editors. Keep it beside `lokec.exe`, `base/`, and `core/`; it finds
+the bundled library the same way. An editor starts it with no arguments and
+talks to it on stdin and stdout. `loke-lsp -version` prints its version.
+
+The server publishes diagnostics for open `.loke` documents as you type,
+including unsaved edits. Each one is a diagnostic `lokec` reports for the same
+inputs, with its code (such as `L0310`) and notes. A diagnostic belongs to the
+document version it was computed from; when a later edit arrives first, the
+server discards the stale result and checks again. Hover, go-to-definition,
+completion, and rename are not available yet.
+
+Each open document is checked through a root, which is what `lokec` would be
+given:
+
+- Normally the root is the document's directory, so a package split across files
+  is checked as one package, together with everything it imports.
+- If two or more files in that directory declare `main` at the start of a line,
+  the directory holds separate programs, as `examples/` does, so each file is
+  its own root.
+- A root package named `main` is checked as `lokec <root>` checks it. Any other
+  package is checked as `lokec -doc <root>` checks it, without requiring an
+  entry point.
+
+Unsaved text in any open document is used by every root, so an edit to an
+imported package updates its importers' diagnostics. Errors found in files that
+are not open, such as an imported package, are published for those files too.
+The nearest [`loke.project`](#projects) is read as `lokec` reads it. Changes
+made outside the editor are picked up when the editor reports changed files:
+the server asks to watch `**/*.loke` and `**/loke.project` when the editor
+supports it.
+
+Editors pass configuration as `initializationOptions`. These options apply until
+the server restarts:
+
+```json
+{
+  "collections": ["shapes=../shapes"],
+  "defines": ["VERBOSE=true"]
+}
+```
+
+Each entry means what the same `-collection` or `-define` value means. A
+relative collection path is relative to the first workspace folder.
 
 ## Toolchain troubleshooting
 

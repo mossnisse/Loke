@@ -19,7 +19,8 @@ may reject previously accepted code; include an upgrade note for that break.
 
 These rules apply to every release:
 
-- Keep `lokec.exe`, `base/`, `core/`, and `runtime/` from the same release.
+- Keep `lokec.exe`, `loke-lsp.exe`, `base/`, `core/`, and `runtime/` from the
+  same release.
   Do not mix compiled objects from different compiler releases.
 - The platform C ABI is preserved. Generated code, non-C-ABI layout, runtime
   symbols, optimization results, diagnostic wording, and

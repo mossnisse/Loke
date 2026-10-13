@@ -8,6 +8,13 @@ checklist.
 
 ## [Unreleased]
 
+### Added
+
+- `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.
+  It publishes the diagnostics `lokec` reports for open documents, including
+  unsaved edits and the packages they import. See
+  [Language server](compiler-guide.md#language-server).
+
 ## [0.8.0] - 2026-10-13
 
 ### Breaking changes

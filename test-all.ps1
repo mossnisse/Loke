@@ -86,6 +86,13 @@ try {
     & odin build src -out:lokec.exe -vet-unused -vet-shadowing
     if ($LASTEXITCODE -ne 0) { throw "compiler build failed ($LASTEXITCODE)" }
 
+    # The language server compiles in the whole compiler, so it is rebuilt with
+    # it; the integration harness talks to the binary over real pipes.
+    & odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp
+    if ($LASTEXITCODE -ne 0) { throw "language server unit tests failed ($LASTEXITCODE)" }
+    & odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing
+    if ($LASTEXITCODE -ne 0) { throw "language server build failed ($LASTEXITCODE)" }
+
     # This is also the example gate: every program under examples/ is
     # compiled from its real source here, and the ones with fixed output are
     # compared against it. They are the only corpus that doubles as documentation.

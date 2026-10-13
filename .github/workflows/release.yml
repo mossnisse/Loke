@@ -1,7 +1,8 @@
 # A `v*` tag becomes a GitHub release: the tagged revision passes the full gate,
 # its bundle is installed and used from outside any checkout, and only then is
-# it published. A release is lokec.exe with the `base/`, `core/` and `runtime/`
-# trees it discovers beside itself (releasing.md "Version policy").
+# it published. A release is lokec.exe and loke-lsp.exe with the `base/`,
+# `core/` and `runtime/` trees they discover beside themselves (releasing.md
+# "Version policy").
 name: Release
 
 on:
@@ -47,10 +48,12 @@ jobs:
         run: |
           odin build src -out:lokec.exe -vet-unused -vet-shadowing
           if ($LASTEXITCODE -ne 0) { throw "compiler build failed" }
+          odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing
+          if ($LASTEXITCODE -ne 0) { throw "language server build failed" }
           $name = "loke-$env:GITHUB_REF_NAME-windows-amd64"
           $stage = "$env:RUNNER_TEMP\$name"
           New-Item -ItemType Directory $stage | Out-Null
-          Copy-Item lokec.exe, LICENSE $stage
+          Copy-Item lokec.exe, loke-lsp.exe, LICENSE $stage
           Get-ChildItem -File *.md | Copy-Item -Destination $stage
           Copy-Item base, core, runtime, examples, tutorials $stage -Recurse
           # A compile cache lokec rebuilds on demand, never shipped.
@@ -95,6 +98,11 @@ jobs:
               }
             }
           }
+
+      - name: Start the language server
+        run: |
+          $out = & (Join-Path (Split-Path $env:LOKEC) loke-lsp.exe) -version
+          if ($LASTEXITCODE -ne 0 -or $out -notmatch '^loke-lsp ') { throw "loke-lsp.exe -version printed '$out'" }
 
       - name: Compile and run a single file
         working-directory: ${{ runner.temp }}

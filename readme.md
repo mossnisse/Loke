@@ -25,7 +25,9 @@ and adding the compiler to `PATH`.
 
 Keep `lokec.exe`, `base/`, `core/`, and `runtime/` together. The compiler finds
 these directories beside its executable, so you can invoke it from any working
-directory. In PowerShell, check the installation:
+directory. The bundle also includes `loke-lsp.exe`, the
+[language server](compiler-guide.md#language-server) for editors. In
+PowerShell, check the installation:
 
 ```powershell
 lokec -version
@@ -82,6 +84,8 @@ odin build src -out:lokec.exe
 if ($LASTEXITCODE -eq 0) { .\lokec.exe examples\hello.loke -o hello.exe }
 if ($LASTEXITCODE -eq 0) { .\hello.exe }
 ```
+
+To build the language server too, run `odin build lsp -out:loke-lsp.exe`.
 
 ## Documentation
 
