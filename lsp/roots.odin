@@ -24,6 +24,8 @@ Root :: struct {
 	// Results of the last check, allocated in `result_arena`.
 	files:     map[string]File_Result, // by path key
 	unplaced:  [dynamic]Lsp_Diagnostic, // shown on the root's open documents
+	loaded:    map[string]bool, // path keys of every source the check read
+	packages:  map[string]bool, // their directories' path keys
 	result_arena: virtual.Arena,
 }
 
@@ -62,11 +64,17 @@ run_pending_work :: proc(s: ^Server) -> bool {
 }
 
 // Assigns each open document its root, creating roots it needs and destroying
-// those no document needs any more.
+// those no document needs any more. A document another root's program already
+// loads joins that root, so an imported package keeps the collections its
+// application's manifest supplies (compiler-guide.md "Projects").
 refresh_roots :: proc(s: ^Server) {
 	s.layout_dirty = false
 	for _, doc in s.documents {
 		path, key := root_of(s, doc)
+		if importer := importing_root(s, doc, key); importer != nil {
+			doc.root = importer
+			continue
+		}
 		root := s.roots[key]
 		if root == nil {
 			root = create_root(s, path, key)
@@ -85,6 +93,26 @@ refresh_roots :: proc(s: ^Server) {
 		destroy_root(root)
 		s.publish_due = true
 	}
+}
+
+// Of the other roots whose last check loaded the document, the outermost: one
+// whose own package no other candidate loads. Imports are acyclic, so there is
+// one unless two applications import the document, and then the first by path.
+@(private = "file")
+importing_root :: proc(s: ^Server, doc: ^Document, own_key: string) -> ^Root {
+	best: ^Root
+	for _, candidate in s.roots {
+		if candidate.key == own_key || !candidate.loaded[doc.key] { continue }
+		outermost := true
+		for _, other in s.roots {
+			if other != candidate && other.key != own_key && other.loaded[doc.key] &&
+			   (other.packages[candidate.key] || other.loaded[candidate.key]) {
+				outermost = false
+			}
+		}
+		if outermost && (best == nil || candidate.key < best.key) { best = candidate }
+	}
+	return best
 }
 
 // A document is checked through its package directory, as `lokec <dir>`
@@ -133,14 +161,28 @@ clear_directory_scans :: proc(s: ^Server) {
 	s.scans = nil
 }
 
-// A top-level `main ::` written from the first column, as the formatter writes
-// every top-level declaration. Only a heuristic for grouping files into
-// roots; the compiler decides what the file means.
+// Whether the file declares `main` outside any bracket: the name followed by the
+// `:` of a declaration, as the compiler's lexer reads it, so comments and
+// literals do not count. Only for grouping files into roots; a `main` inside a
+// file-scope `when` is not seen, and the compiler decides what the file means.
 declares_entry :: proc(text: string) -> bool {
-	text := text
-	for line in strings.split_lines_iterator(&text) {
-		if !strings.has_prefix(line, "main") { continue }
-		if strings.has_prefix(strings.trim_left(line[len("main"):], " \t"), "::") { return true }
+	scratch: lokec.Compiler
+	defer lokec.destroy_compilation(&scratch)
+	append(&scratch.sources, lokec.Source{text = text})
+	tokens := lokec.lex(&scratch, 0)
+	defer delete(tokens)
+	depth := 0
+	for token, index in tokens {
+		#partial switch token.kind {
+		case .Lparen, .Lbracket, .Lbrace:
+			depth += 1
+		case .Rparen, .Rbracket, .Rbrace:
+			depth = max(depth - 1, 0)
+		case .Ident:
+			if depth == 0 && text[token.lo:token.hi] == "main" && index + 1 < len(tokens) && tokens[index + 1].kind == .Colon {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -185,6 +227,8 @@ next_dirty_root :: proc(s: ^Server) -> ^Root {
 check_root :: proc(s: ^Server, root: ^Root) {
 	root.dirty = false
 	s.publish_due = true
+	// What the program loads decides which documents join this root.
+	s.layout_dirty = true
 	if root.unconfigured { return }
 	lokec.check_session(&root.session, root.path, documentation = root.library)
 	if name, known := root_package_name(root); known && (name == "main") == root.library {
@@ -212,8 +256,15 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 	allocator := virtual.arena_allocator(&root.result_arena)
 	root.files = make(map[string]File_Result, allocator)
 	root.unplaced = make([dynamic]Lsp_Diagnostic, allocator)
+	root.loaded = make(map[string]bool, allocator)
+	root.packages = make(map[string]bool, allocator)
 	snapshot, ok := lokec.session_snapshot(&root.session)
 	if !ok { return }
+	for file := u32(0); ; file += 1 {
+		source := lokec.query_source(&root.session, snapshot, file) or_break
+		root.loaded[path_key(source.path, allocator)] = true
+		root.packages[path_key(lokec.path_dir(source.path, context.temp_allocator), allocator)] = true
+	}
 	diagnostics, _ := lokec.query_diagnostics(&root.session, snapshot)
 	seen := make(map[string]bool, context.temp_allocator)
 	for d in diagnostics {

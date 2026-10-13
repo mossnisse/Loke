@@ -98,10 +98,20 @@ positions_count_bytes_or_utf16_units :: proc(t: ^testing.T) {
 }
 
 @(test)
-entry_declarations_are_found_at_the_first_column :: proc(t: ^testing.T) {
-	testing.expect(t, declares_entry("package main;\nmain :: proc() {}\n"))
-	testing.expect(t, declares_entry("package main;\r\nmain\t:: proc() -> i32 { return 0; }"))
-	testing.expect(t, !declares_entry("package main;\nmain_loop :: proc() {}\n"))
-	testing.expect(t, !declares_entry("package main;\n\tmain :: proc() {}\n"))
-	testing.expect(t, !declares_entry("package main;\n// main :: proc() {}\n"))
+entry_declarations_are_found_by_token :: proc(t: ^testing.T) {
+	Case :: struct { text: string, declares: bool }
+	for c in ([]Case{
+		{"package main;\nmain :: proc() {}\n", true},
+		{"package main;\r\n  main\t: : proc() -> i32 { return 0; }", true},
+		{"package main;\n@(private) main :: proc() {}\n", true},
+		{"package main;\nmain_loop :: proc() {}\n", false},
+		{"package main;\n// main :: proc() {}\n", false},
+		{"package main;\n/*\nmain :: proc() {}\n*/\nhelper :: proc() {}\n", false},
+		{"package main;\nusage :: `\nmain :: proc() {}\n`;\n", false},
+		{"package main;\ntext :: \"main :: proc() {}\";\n", false},
+		{"package main;\nPoint :: struct { main: int }\nf :: proc() { main := 1; _ = main; }\n", false},
+		{"package main;\nf(main = 1);\nx := \"unterminated\n", false},
+	}) {
+		testing.expectf(t, declares_entry(c.text) == c.declares, "declares_entry(%q) should be %v", c.text, c.declares)
+	}
 }

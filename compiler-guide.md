@@ -241,11 +241,15 @@ completion, and rename are not available yet.
 Each open document is checked through a root, which is what `lokec` would be
 given:
 
-- Normally the root is the document's directory, so a package split across files
+- A document that another open document's program imports is checked as part
+  of that program. It keeps the collections the program's
+  [`loke.project`](#projects) supplies, which its own directory may lack. If
+  more than one such program exists, the outermost importer is used.
+- Otherwise the root is the document's directory, so a package split across files
   is checked as one package, together with everything it imports.
-- If two or more files in that directory declare `main` at the start of a line,
+- If two or more files in that directory declare `main` outside any brackets,
   the directory holds separate programs, as `examples/` does, so each file is
-  its own root.
+  its own root. A `main` in a comment or a string does not count.
 - A root package named `main` is checked as `lokec <root>` checks it. Any other
   package is checked as `lokec -doc <root>` checks it, without requiring an
   entry point.

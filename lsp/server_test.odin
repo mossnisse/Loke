@@ -428,6 +428,76 @@ files_of_one_package_check_together :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(h.s.roots), 1)
 }
 
+// open-questions.md finding: a commented-out `main` made a package's files
+// separate roots, so `helper` was unknown.
+@(test)
+commented_entries_do_not_split_a_package :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "commented") { finish(&h); return }
+	defer finish(&h)
+	main_text := "package main;\nmain :: proc() { _ = helper(); }\n"
+	write_file(&h, "main.loke", main_text)
+	write_file(&h, "helper.loke", "package main;\n/*\nmain :: proc() {}\n*/\nhelper :: proc() -> int { return 1; }\n")
+	write_file(&h, "usage.loke", "package main;\nusage :: `\nmain :: proc() {}\n`;\n")
+	open(&h, "main.loke", main_text)
+	settle(&h)
+	testing.expect_value(t, len(publications(take(&h))), 0)
+	testing.expect_value(t, len(h.s.roots), 1)
+}
+
+// open-questions.md finding: opening an imported library gave it a root of
+// its own, without the collections its application's manifest supplies.
+@(test)
+opened_imports_keep_their_application :: proc(t: ^testing.T) {
+	main_text := "package main;\nimport lib \"lib:\";\nmain :: proc() { _ = lib.value(); }\n"
+	lib_text := "package lib;\nimport util \"util:\";\n@(public) value :: proc() -> int { return util.value(); }\n"
+	broken_lib := "package lib;\nimport util \"util:\";\n@(public) value :: proc() -> int { return util.missing(); }\n"
+	for library_first in ([]bool{false, true}) {
+		h: Harness
+		if !start(&h, t, library_first ? "library-first" : "application-first") { finish(&h); continue }
+		write_file(&h, "app/loke.project", "require lib ../lib\nrequire util ../util\n")
+		write_file(&h, "app/main.loke", main_text)
+		write_file(&h, "lib/lib.loke", lib_text)
+		write_file(&h, "util/util.loke", "package util;\n@(public) value :: proc() -> int { return 1; }\n")
+		if library_first {
+			// Alone, the library cannot find `util:`, as `lokec lib -doc` cannot.
+			open(&h, "lib/lib.loke", lib_text)
+			settle(&h)
+			published := publications(take(&h))
+			testing.expect(t, len(published) == 1 && len(published[0].diagnostics) > 0)
+			// Once the application loads it, those errors go away.
+			open(&h, "app/main.loke", main_text)
+			settle(&h)
+			published = publications(take(&h))
+			if testing.expect_value(t, len(published), 1) {
+				testing.expect_value(t, published[0].uri, uri_of(&h, "lib/lib.loke"))
+				testing.expect_value(t, len(published[0].diagnostics), 0)
+			}
+		} else {
+			open(&h, "app/main.loke", main_text)
+			settle(&h)
+			testing.expect_value(t, len(publications(take(&h))), 0)
+			open(&h, "lib/lib.loke", lib_text)
+			settle(&h)
+			testing.expect_value(t, len(publications(take(&h))), 0)
+		}
+		testing.expect_value(t, len(h.s.roots), 1)
+
+		// A real error in the library is still reported, in the application's context.
+		change(&h, "lib/lib.loke", broken_lib, 2)
+		settle(&h)
+		published := publications(take(&h))
+		if testing.expect_value(t, len(published), 1) {
+			testing.expect(t, published[0].version == 2 && len(published[0].diagnostics) == 1)
+		}
+		close(&h, "lib/lib.loke")
+		settle(&h)
+		published = publications(take(&h))
+		testing.expect(t, len(published) == 1 && len(published[0].diagnostics) == 0)
+		finish(&h)
+	}
+}
+
 @(test)
 positions_use_the_negotiated_encoding :: proc(t: ^testing.T) {
 	text := "package main;\nmain :: proc() { s := \"\U0001F600é\"; x: int = s; }\n"
