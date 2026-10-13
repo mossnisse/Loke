@@ -24,9 +24,9 @@ Query_Symbol :: struct {
 	// `name :: value`, a field, an enum member, or a parameter. It contains
 	// `definition` and has no span exactly when `definition` has none.
 	extent: Query_Location,
-	// The written declaration this binding belongs to: the record or enum of a
-	// field or member, the procedure of a parameter or local. Zero for a
-	// package-level declaration or a method.
+	// The innermost other written binding whose extent contains this one's:
+	// the record or enum of a field or member, the procedure of a parameter,
+	// local, or loop binding. Zero for a package-level declaration or a method.
 	parent: Symbol_Handle,
 	public, generic: bool,
 }
@@ -333,15 +333,54 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 		if symbol.decl != nil { index_query_decl(&index, symbol.decl) }
 		if symbol.proc_literal != nil { index_query_expr(&index, symbol.proc_literal) }
 	}
-	// Clones share their written binding's declaration; a binding the walk did
-	// not reach is described by its name alone.
+	// A written binding the walk gave no declaration, such as a loop binding,
+	// is described by its name alone.
+	for handles in q.documents {
+		for handle in handles {
+			symbol := &q.symbols[handle.id]
+			if symbol.extent.span.file == NO_FILE { symbol.extent = symbol.definition }
+		}
+	}
+	for handles in q.documents { nest_query_bindings(q, handles[:]) }
+	// Clones share their written binding's declaration and parent.
 	for &symbol, slot in q.symbols {
 		if slot == 0 || symbol.definition.span.file == NO_FILE { continue }
 		canonical := q.symbols[q.canonical[slot]]
-		if canonical.extent.span.file != NO_FILE {
-			symbol.extent, symbol.parent = canonical.extent, canonical.parent
+		symbol.extent, symbol.parent = canonical.extent, canonical.parent
+	}
+}
+
+// Parents by position: written syntax nests, so the innermost extent strictly
+// containing a binding's own is the declaration it is written in. Bindings
+// declared together, as `a, b: int`, share an extent and a parent.
+@(private = "file")
+nest_query_bindings :: proc(q: ^Snapshot_Queries, handles: []Symbol_Handle) {
+	Nest :: struct { lo, hi: u32, id: Symbol_Id }
+	nests := make([]Nest, len(handles))
+	for handle, index in handles {
+		span := q.symbols[handle.id].extent.span
+		nests[index] = Nest{span.lo, span.hi, handle.id}
+	}
+	slice.sort_by(nests, proc(a, b: Nest) -> bool {
+		if a.lo != b.lo { return a.lo < b.lo }
+		if a.hi != b.hi { return a.hi > b.hi }
+		return a.id < b.id
+	})
+	open := make([dynamic]Nest)
+	for nest in nests {
+		for len(open) > 0 && open[len(open) - 1].hi < nest.hi { pop(&open) }
+		parent := INVALID_SYMBOL
+		if len(open) > 0 {
+			enclosing := open[len(open) - 1]
+			if enclosing.lo == nest.lo && enclosing.hi == nest.hi {
+				parent = q.symbols[enclosing.id].parent.id
+			} else {
+				parent = enclosing.id
+				append(&open, nest)
+			}
 		} else {
-			symbol.extent = symbol.definition
+			append(&open, nest)
 		}
+		q.symbols[nest.id].parent.id = parent
 	}
 }

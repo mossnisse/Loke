@@ -2,19 +2,30 @@
 // No lookup, checking, or compiler registry mutation happens here.
 package lokec
 
-// `owner` is the binding whose declaration the walk is inside.
 @(private)
-Query_Index :: struct { c: ^Compiler, q: ^Snapshot_Queries, visited: map[rawptr]bool, owner: Symbol_Id }
+Query_Index :: struct { c: ^Compiler, q: ^Snapshot_Queries, visited: map[rawptr]bool }
 
 valid_query_span :: proc(c: ^Compiler, span: Span) -> bool {
 	return span.file != NO_FILE && int(span.file) < len(c.sources) && span.lo < span.hi && int(span.hi) <= len(c.sources[span.file].text)
 }
 
 // Inferred generic bindings and lowering temporaries can carry a use's span.
-// They are semantic symbols, but that span is not a written definition.
+// They are semantic symbols, but that span is not a written definition. A
+// generated declaration named after the syntax it stands for, such as a capture
+// literal's record, is not one either: a written name is an identifier.
 written_query_binding :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
-	return valid_query_span(c, symbol.span) &&
-	       c.sources[symbol.span.file].text[symbol.span.lo:symbol.span.hi] == identifier_text(c, symbol.name)
+	if !valid_query_span(c, symbol.span) { return false }
+	text := c.sources[symbol.span.file].text[symbol.span.lo:symbol.span.hi]
+	return text == identifier_text(c, symbol.name) && identifier_spelling(text)
+}
+
+@(private = "file")
+identifier_spelling :: proc(text: string) -> bool {
+	if text == "" || (text[0] >= '0' && text[0] <= '9') { return false }
+	for b in transmute([]byte)text {
+		if !(b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')) { return false }
+	}
+	return true
 }
 
 @(private = "file")
@@ -26,12 +37,12 @@ query_index_enter :: proc(index: ^Query_Index, node: rawptr) -> bool {
 
 @(private = "file")
 index_query_name :: proc(index: ^Query_Index, span: Span, name: string, symbol: Symbol_Id, type: Type_Id) {
-	if !valid_query_span(index.c, span) || index.c.sources[span.file].text[span.lo:span.hi] != name { return }
+	if !valid_query_span(index.c, span) || index.c.sources[span.file].text[span.lo:span.hi] != name || !identifier_spelling(name) { return }
 	append(&index.q.occurrences, Query_Occurrence{span, symbol, type, symbol != INVALID_SYMBOL})
 }
 
-// Records a written binding's declaration extent and owner once, on the binding
-// clones share; the first walk is over written syntax.
+// Records a written binding's declaration extent once, on the binding clones
+// share; the first walk is over written syntax.
 @(private = "file")
 index_query_binding :: proc(index: ^Query_Index, id: Symbol_Id, written: Span, attributes: []Attribute) {
 	if id == INVALID_SYMBOL || int(id) >= len(index.q.symbols) { return }
@@ -43,7 +54,6 @@ index_query_binding :: proc(index: ^Query_Index, id: Symbol_Id, written: Span, a
 	extent := Span{file = span.file, lo = min(written_start(text, lo, attributes), span.lo), hi = max(hi, span.hi)}
 	if int(extent.hi) > len(text) { return }
 	symbol.extent.span = extent
-	if index.owner != INVALID_SYMBOL { symbol.parent.id = index.q.canonical[index.owner] }
 }
 
 @(private = "file")
@@ -59,11 +69,7 @@ index_query_decl :: proc(index: ^Query_Index, decl: ^Decl) {
 	}
 	index_query_expr(index, decl.declared_type)
 	index_query_expr(index, decl.via)
-	owner := index.owner
-	defer index.owner = owner
-	for value, slot in decl.values {
-		// A record, enum, or procedure owns what is declared inside it.
-		index.owner = decl.symbols[slot] if len(decl.symbols) == len(decl.values) else owner
+	for value in decl.values {
 		index_query_expr(index, value)
 		if group, found := value.(^Expr_Proc_Group); found && len(decl.symbols) == 1 {
 			if symbol := symbol_of(index.c, decl.symbols[0]); symbol != nil && symbol.kind == .Proc_Group {
@@ -210,9 +216,6 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 			index_query_expr(index, v.capture.method)
 		}
 	case ^Expr_Proc:
-		owner := index.owner
-		defer index.owner = owner
-		if v.symbol != INVALID_SYMBOL { index.owner = v.symbol }
 		index_query_expr(index, v.signature)
 		for clause in v.where_clauses { index_query_expr(index, clause) }
 		index_query_stmt(index, v.body)

@@ -543,7 +543,7 @@ including after destroying and reinitializing a session.
 | `remove_session_overlay(&s, path)` | Restore disk loading or remove an unsaved-only file. An absent overlay returns false without invalidation. |
 | `session_snapshot(&s)` | Capture current views, even after failed initialization/checking. False for zeroed/destroyed sessions or after invalidation until a check runs. |
 | `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. |
-| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute) and the declaration it belongs to (`parent`: a field's record, a member's enum, a parameter's or local's procedure). |
+| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. |
 | `query_documentation` | The comments directly above a binding's declaration, as `-doc` reads them; caller-owned. False when there are none. |
 | `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. |
 | `query_type` | Recorded type properties, components, fields, members, and parameter types/modes. Zero IDs mean unavailable. |
@@ -707,7 +707,9 @@ is `null`. Positions just past a name fall back to the name. Hover text and the
 outline come only from `Query_Symbol`, signatures, recorded type names, written
 declaration extents, and `query_documentation`. Document symbols omit anything
 whose `parent` chain reaches a procedure, which leaves package-level
-declarations with their fields and enum members as children.
+declarations with their fields and enum members as children. Kinds after
+`Array` are sent only to a client that lists them in `symbolKind.valueSet`;
+others get `Class` for a struct and `Constant` for an enum member.
 
 Milestones 1 and 2 of [Language server](future-plans.md#language-server) use batch
 checking. `lsp/server_test.odin` drives the server in process, choosing when

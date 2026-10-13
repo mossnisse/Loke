@@ -745,7 +745,8 @@ document_symbols_outline_declarations :: proc(t: ^testing.T) {
 	text := "package main;\nLIMIT :: 10;\ncounter: int;\nColor :: enum { Red, Green }\nPoint :: struct {\n\tx: int,\n\ty: int,\n}\nlength :: proc(p: Point) -> int {\n\ttotal := p.x + p.y;\n\tInner :: struct { z: int }\n\treturn total;\n}\nmain :: proc() { _ = length(Point{}); }\n"
 	for hierarchical in ([]bool{true, false}) {
 		h: Harness
-		params := `{"capabilities":{"textDocument":{"documentSymbol":{"hierarchicalDocumentSymbolSupport":true}}}}` if hierarchical else `{"capabilities":{}}`
+		// A client that does not list the kinds it supports gets only kinds 1-18.
+		params := `{"capabilities":{"textDocument":{"documentSymbol":{"hierarchicalDocumentSymbolSupport":true,"symbolKind":{"valueSet":[5,8,10,12,13,14,22,23]}}}}}` if hierarchical else `{"capabilities":{}}`
 		if !start(&h, t, hierarchical ? "symbols-tree" : "symbols-flat", params) { finish(&h); continue }
 		open(&h, "main.loke", text)
 		request(&h, "9", "textDocument/documentSymbol", fmt.tprintf(`{{"textDocument":{{"uri":%s}}}}`, quoted(uri_of(&h, "main.loke"))))
@@ -766,10 +767,49 @@ document_symbols_outline_declarations :: proc(t: ^testing.T) {
 				testing.expect_value(t, detail, "proc(p: Point) -> int")
 			}
 		} else {
-			testing.expect_value(t, strings.to_string(b), "LIMIT/14 counter/13 Color/10 Red/22<Color> Green/22<Color> Point/23 x/8<Point> y/8<Point> length/12 main/12")
+			testing.expect_value(t, strings.to_string(b), "LIMIT/14 counter/13 Color/10 Red/14<Color> Green/14<Color> Point/5 x/8<Point> y/8<Point> length/12 main/12")
 		}
 		finish(&h)
 	}
+}
+
+@(private = "file")
+outline :: proc(h: ^Harness, text: string) -> string {
+	open(h, "main.loke", text)
+	request(h, "9", "textDocument/documentSymbol", fmt.tprintf(`{{"textDocument":{{"uri":%s}}}}`, quoted(uri_of(h, "main.loke"))))
+	settle(h)
+	b := strings.builder_make(context.temp_allocator)
+	for message in take(h) {
+		if id, _ := member_int(message, "id"); id == 9 {
+			symbols, _ := member(message, "result").(json.Array)
+			describe_symbols(&b, symbols)
+		}
+	}
+	close(h, "main.loke")
+	settle(h)
+	take(h)
+	return strings.to_string(b)
+}
+
+// Bindings that no declaration statement introduces still belong to the
+// procedure or record they are written in.
+@(test)
+outline_parents_follow_where_bindings_are_written :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "symbols-nesting", `{"capabilities":{"textDocument":{"documentSymbol":{"hierarchicalDocumentSymbolSupport":true}}}}`) { finish(&h); return }
+	defer finish(&h)
+	testing.expect_value(t, outline(&h, "package main;\nmain :: proc() { foreach (i in 0 ..< 3) { _ = i; } }\n"), "main/12")
+	capture := "package main;\nmain :: proc() { x := 1; f := proc() -> int capture(x) { return x; }; _ = f(); }\n"
+	testing.expect_value(t, outline(&h, capture), "main/12")
+	// The record a capture literal generates is not a written binding.
+	open(&h, "main.loke", capture)
+	reply := ask(&h, "textDocument/hover", "main.loke", position_of(t, capture, "proc() -> int"))
+	testing.expectf(t, !strings.contains(hover_value(reply), "capture(x)"), "hover: %q", hover_value(reply))
+	close(&h, "main.loke")
+	settle(&h)
+	take(&h)
+	testing.expect_value(t, outline(&h, "package main;\nBox :: struct($T: type) { value: T }\nmain :: proc() { _ = Box(int){}; }\n"), "Box/5(value/8) main/12")
+	testing.expect_value(t, outline(&h, "package main;\nBox :: struct($T: type) { value: T, count: int }\nmain :: proc() { _ = Box(int){}; _ = Box(f64){}; }\n"), "Box/5(value/8 count/8) main/12")
 }
 
 // `name/kind`, children in parentheses and a container in angle brackets.

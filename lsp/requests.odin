@@ -230,6 +230,18 @@ Lsp_Symbol_Kind :: enum {
 	Constant = 14, Enum_Member = 22, Struct = 23,
 }
 
+// The kind as the client can show it: the kinds after `Array` have an older
+// equivalent for clients that do not list them.
+@(private = "file")
+client_kind :: proc(s: ^Server, kind: Lsp_Symbol_Kind) -> int {
+	if int(kind) in s.symbol_kinds { return int(kind) }
+	#partial switch kind {
+	case .Struct:      return int(Lsp_Symbol_Kind.Class)
+	case .Enum_Member: return int(Lsp_Symbol_Kind.Constant)
+	}
+	return int(kind)
+}
+
 @(private = "file")
 Outline_Entry :: struct {
 	symbol:   lokec.Query_Symbol,
@@ -270,7 +282,7 @@ document_symbols :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapsh
 	for entry, index in entries { if !entry.nested { append(&top, index) } }
 	b := strings.builder_make(context.temp_allocator)
 	if s.hierarchical_symbols {
-		write_symbol_list(&b, entries[:], top[:])
+		write_symbol_list(s, &b, entries[:], top[:])
 	} else {
 		strings.write_byte(&b, '[')
 		first := true
@@ -337,7 +349,7 @@ sort_by_position :: proc(entries: []Outline_Entry, slots: []int) {
 
 // `DocumentSymbol[]`.
 @(private = "file")
-write_symbol_list :: proc(b: ^strings.Builder, entries: []Outline_Entry, slots: []int) {
+write_symbol_list :: proc(s: ^Server, b: ^strings.Builder, entries: []Outline_Entry, slots: []int) {
 	sort_by_position(entries, slots)
 	strings.write_byte(b, '[')
 	for slot, index in slots {
@@ -349,13 +361,13 @@ write_symbol_list :: proc(b: ^strings.Builder, entries: []Outline_Entry, slots: 
 			strings.write_string(b, `,"detail":`)
 			write_json_string(b, entry.detail)
 		}
-		fmt.sbprintf(b, `,"kind":%d,"range":`, int(entry.kind))
+		fmt.sbprintf(b, `,"kind":%d,"range":`, client_kind(s, entry.kind))
 		write_range(b, entry.range)
 		strings.write_string(b, `,"selectionRange":`)
 		write_range(b, entry.selection)
 		if len(entry.children) > 0 {
 			strings.write_string(b, `,"children":`)
-			write_symbol_list(b, entries, entry.children[:])
+			write_symbol_list(s, b, entries, entry.children[:])
 		}
 		strings.write_byte(b, '}')
 	}
@@ -373,7 +385,7 @@ write_symbol_information :: proc(s: ^Server, b: ^strings.Builder, entries: []Out
 		first^ = false
 		strings.write_string(b, `{"name":`)
 		write_json_string(b, entry.symbol.name)
-		fmt.sbprintf(b, `,"kind":%d,"location":`, int(entry.kind))
+		fmt.sbprintf(b, `,"kind":%d,"location":`, client_kind(s, entry.kind))
 		write_location(s, b, doc.path, entry.range)
 		if container != "" {
 			strings.write_string(b, `,"containerName":`)

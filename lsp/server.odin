@@ -36,6 +36,7 @@ Server :: struct {
 	// Negotiated client capabilities.
 	utf8_positions, related_information, watch_files: bool,
 	markdown_hover, hierarchical_symbols: bool,
+	symbol_kinds: bit_set[0 ..< 64], // `SymbolKind` values the client shows
 	config:       lokec.Compilation_Config,
 	config_arena: virtual.Arena,
 	documents:    map[string]^Document, // by path key
@@ -202,7 +203,17 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 	for format in member_array(member(member(capabilities, "textDocument"), "hover"), "contentFormat") {
 		if name, ok := format.(json.String); ok && name == "markdown" { s.markdown_hover = true }
 	}
-	s.hierarchical_symbols = member_bool(member(member(capabilities, "textDocument"), "documentSymbol"), "hierarchicalDocumentSymbolSupport")
+	symbols := member(member(capabilities, "textDocument"), "documentSymbol")
+	s.hierarchical_symbols = member_bool(symbols, "hierarchicalDocumentSymbolSupport")
+	// Without a list, a client is only known to show `File` through `Array`.
+	s.symbol_kinds = {}
+	for kind in 1 ..= 18 { s.symbol_kinds += {kind} }
+	if kinds := member(symbols, "symbolKind"); member(kinds, "valueSet") != nil {
+		s.symbol_kinds = {}
+		for kind in member_array(kinds, "valueSet") {
+			if value, ok := kind.(json.Integer); ok && value >= 0 && value < 64 { s.symbol_kinds += {int(value)} }
+		}
+	}
 
 	folder := ""
 	if folders := member_array(params, "workspaceFolders"); len(folders) > 0 {
