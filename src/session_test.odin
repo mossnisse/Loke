@@ -553,19 +553,19 @@ session_snapshot_errors_and_stale_handles :: proc(t: ^testing.T) {
 }
 
 @(private)
-expect_session_matches_fresh :: proc(t: ^testing.T, s: ^Compilation_Session, input: string, config: Compilation_Config, expected: bool) -> Compilation_Snapshot {
-	checked := check_session_incremental(s, input)
+expect_session_matches_fresh :: proc(t: ^testing.T, s: ^Compilation_Session, input: string, config: Compilation_Config, expected: bool, documentation := false) -> Compilation_Snapshot {
+	checked := check_session_incremental(s, input, documentation)
 	if checked != expected { report(&s.compiler) }
 	testing.expect_value(t, checked, expected)
 	fresh: Compilation_Session
 	defer destroy_session(&fresh)
 	if !testing.expect(t, init_session(&fresh, config)) { return {} }
-	testing.expect_value(t, check_session(&fresh, input), checked)
+	testing.expect_value(t, check_session(&fresh, input, documentation), checked)
 	expect_session_diagnostics(t, &s.compiler, &fresh.compiler)
 	testing.expect_value(t, semantic_extent(&s.compiler), semantic_extent(&fresh.compiler))
 	ir, emitted := emit_session_ir(s)
 	fresh_ir, fresh_emitted := emit_session_ir(&fresh)
-	testing.expect(t, emitted == checked && fresh_emitted == emitted && ir == fresh_ir, "recheck differs from a fresh batch's IR")
+	testing.expect(t, emitted == (checked && !documentation) && fresh_emitted == emitted && ir == fresh_ir, "recheck differs from a fresh batch's IR")
 	snapshot, captured := session_snapshot(s)
 	testing.expect(t, captured)
 	return snapshot

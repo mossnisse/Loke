@@ -1,0 +1,7 @@
+identifiers: 7 keywords: 2
+open settings.ini
+tokens: 40 diagnostics: 0
+settings: 2 error: not a number
+words: 13 of 18
+repeated: ["the", "fox", "dog"]
+close settings.ini lines read: 3

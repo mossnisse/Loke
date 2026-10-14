@@ -14,7 +14,8 @@ checklist.
   It publishes the diagnostics `lokec` reports for open documents, including
   unsaved edits and the packages they import. It also answers hover,
   go-to-definition, document symbols, completion, signature help, find
-  references, and rename from the checked program. See
+  references, and rename from the checked program. After an edit it rechecks
+  only from the first package the edit reached. See
   [Language server](compiler-guide.md#language-server).
 
 ### Changed

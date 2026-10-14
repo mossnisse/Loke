@@ -213,6 +213,11 @@ Implementation order:
    imports, generic changes, provider/configuration changes, and fixes to invalid
    source. Measure cold startup, warm edit latency, and memory on a representative
    multi-package workspace before calling the cache an improvement.
+   `bench/workspace` is that workspace, and `perf.ps1` measures the language
+   server on it. There, provenance analysis is most of an incremental check,
+   and checkpoint images, each a copy of the whole semantic arena so far, cost
+   more memory than the program's own state. Reusing provenance results for
+   unchanged packages, and sharing unchanged image bytes, come next.
 
 **Completion checks:** milestones 1 and 2 retain batch diagnostics and IR and
 support repeated tool queries. The incremental milestone gives the same results
@@ -253,9 +258,15 @@ Implementation order:
    collisions, unchecked code using the old name, programs with errors, and the
    bundled library. Regressions cover unfinished code, shadowing, named
    arguments, fields, two programs sharing a library, and each refusal.
-4. Adopt the incremental session path and measure editor latency on the same
-   workspace used for compiler-service checks. Add protocol-level regressions
-   for rapid edits, cancellation, stale results, and workspace changes.
+4. **Incremental checking — shipped.** Roots check with
+   `check_session_incremental`, in documentation mode too. A file-scope `when`
+   without imports, an edit with syntax errors, and unchanged file attributes
+   keep the reusable prefix. `perf.ps1` times the server on `bench/workspace`:
+   an edit is answered about 45 ms sooner, but whole-program provenance
+   analysis still runs on every check, and checkpoints add about 57 MiB per
+   program. Regressions cover rapid edits compared with a fresh check,
+   cancelled and stale requests during incremental checks, completion in
+   unfinished code, and files created, changed, and deleted on disk.
 5. Connect the formatter and generated documentation through the existing tools
    as described in [Debugging and developer tools](#debugging-and-developer-tools).
 

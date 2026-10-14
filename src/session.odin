@@ -118,8 +118,8 @@ check_session_impl :: proc(s: ^Compilation_Session, input: string, documentation
 	s.snapshot = next_snapshot_id()
 	virtual.arena_destroy(&s.stats_arena)
 	s.check_stats = {}
-	if incremental && !documentation && s.started && try_incremental_check(s, input_copy) {
-		return finish_session_check(s, s.compiler.root_package, s.compiler.error_count == 0, false)
+	if incremental && s.started && try_incremental_check(s, input_copy, documentation) {
+		return finish_session_check(s, s.compiler.root_package, s.compiler.error_count == 0, documentation)
 	}
 	destroy_package_cache(&s.package_cache)
 	if s.started {
@@ -130,7 +130,7 @@ check_session_impl :: proc(s: ^Compilation_Session, input: string, documentation
 	s.started, s.ready = true, false
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
 	c := &s.compiler
-	if incremental && !documentation {
+	if incremental {
 		s.package_cache.allocator = s.allocator
 		c.package_cache = &s.package_cache
 		// Configuration was already allocated; subsequent owned inputs join it.
@@ -142,7 +142,7 @@ check_session_impl :: proc(s: ^Compilation_Session, input: string, documentation
 	if !register_project(c, path) { return false }
 	root, compiled := compile_program(c, path)
 	if c.package_cache != nil && len(s.package_cache.entries) > 0 {
-		remember_incremental_inputs(s, input_copy)
+		remember_incremental_inputs(s, input_copy, documentation)
 	}
 	return finish_session_check(s, root, compiled, documentation)
 }

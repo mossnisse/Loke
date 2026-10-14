@@ -1,0 +1,39 @@
+package main;
+
+import "core:fmt";
+import "config";
+import "lexer";
+import "report";
+import "words";
+
+// A program of five packages over the bundled library: the workspace the
+// language server's latency is measured on (compiler-architecture.md
+// "Language server"). `report` imports the other three, and this package
+// imports all four.
+
+SOURCE :: "package demo;\nmain :: proc() {\n\tvalue := 0x1f + 2.5e3;\n\ttext := \"tab\\t\";\n\t/* nested /* comment */ */\n\tif (value >= 10 && text != \"\") { value -= 1; }\n}\n";
+
+TEXT ::
+	"the quick brown fox jumps over the lazy dog " +
+	"while the dog sleeps and the fox runs on";
+
+main :: proc() {
+	found: [dynamic]lexer.Diagnostic = {};
+	tokens := lexer.lex(SOURCE, inout found);
+	kinds := report.kind_counts(tokens[:]);
+	fmt.println("identifiers:", kinds[.Ident], "keywords:", kinds[.If] + kinds[.Proc]);
+
+	settings: map[string_view]int = {};
+	lines := [?]string_view{ "width=1280", "height=720", "depth=x" };
+	reader := config.Reader.init("settings.ini");
+	outcome := config.load(inout reader, lines, inout settings);
+
+	text: string = TEXT;
+	counts: map[string_view]int = {};
+	order: [dynamic]string_view = {};
+	words.count_words(text, inout counts, inout order);
+
+	summary := report.summarize(tokens[:], found[:], settings, counts);
+	report.print(summary, outcome);
+	fmt.println("repeated:", report.repeated(order[:], counts));
+}

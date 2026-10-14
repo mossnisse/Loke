@@ -27,7 +27,7 @@ Package_Check_Cache :: struct {
 	entries: [dynamic]Package_Checkpoint,
 	order: []Package_Id,
 	input, cwd: string,
-	directory_root: bool,
+	directory_root, documentation: bool,
 	bytes: u64,
 }
 
@@ -51,21 +51,30 @@ Arena_Block_Image :: struct {
 @(private)
 MAX_PACKAGE_CACHE_BYTES :: 64 * 1024 * 1024
 
+// Only an `import` inside a file-scope `when` lets selection change the
+// package graph. A `when` that selects declarations alone, such as the platform
+// code of `core:fs`, reads only its own package and what that imports, so it
+// settles before any dependent package is prepared.
 @(private)
 static_package_graph :: proc(c: ^Compiler) -> bool {
 	if any_provider_selected(c) { return false }
 	for file in c.parsed_files {
-		if items_have_when(file.items) { return false }
+		if selects_imports(file.items, false) { return false }
 	}
 	return true
 }
 
 @(private = "file")
-items_have_when :: proc(items: []Item) -> bool {
+selects_imports :: proc(items: []Item, selected: bool) -> bool {
 	for item in items {
 		#partial switch v in item {
-		case ^Item_When: return true
-		case ^Item_Block: if items_have_when(v.items) { return true }
+		case ^Item_Import:
+			if selected { return true }
+		case ^Item_Block:
+			if selects_imports(v.items, selected) { return true }
+		case ^Item_When:
+			branches := [2]Item{v.then, v.otherwise}
+			if selects_imports(branches[:] if v.otherwise != nil else branches[:1], true) { return true }
 		}
 	}
 	return false
@@ -77,8 +86,16 @@ check_static_packages :: proc(k: ^Checker, order: []Package_Id, start: int) {
 		if cache := k.c.package_cache; cache != nil && k.c.error_count == 0 {
 			cache_package_checkpoint(k.c, index)
 		}
-		prepare_package(k, order[index])
-		check_package_bodies(k, order[index])
+		id := order[index]
+		prepare_package(k, id)
+		// The package's own selection fixed point. Every package it imports is
+		// already settled, and no branch adds an import.
+		for activate_when_items(k, package_of(k.c, id)) {
+			rebuild_active_items(k.c, package_of(k.c, id))
+			prepare_package(k, id)
+		}
+		report_stalled_whens(k, package_of(k.c, id))
+		check_package_bodies(k, id)
 		check_pending_impl_instances(k)
 	}
 }
@@ -128,18 +145,25 @@ destroy_package_cache :: proc(cache: ^Package_Check_Cache) {
 }
 
 @(private)
-remember_incremental_inputs :: proc(s: ^Compilation_Session, input: string) {
+remember_incremental_inputs :: proc(s: ^Compilation_Session, input: string, documentation: bool) {
 	context.allocator = s.allocator
 	cache := &s.package_cache
 	cache.order = slice.clone(package_order(&s.compiler))
 	cache.input = strings.clone(input)
 	cache.cwd = os.get_working_directory(context.allocator) or_else ""
 	cache.directory_root = is_source_directory(&s.compiler, input)
+	cache.documentation = documentation
 }
 
+// `a_text` and `b_text` are the sources the two files were parsed from.
 @(private = "file")
-same_file_topology :: proc(a, b: ^File) -> bool {
-	if a.package_name != b.package_name || len(a.attributes) > 0 || len(b.attributes) > 0 || items_have_when(b.items) { return false }
+same_file_topology :: proc(a, b: ^File, a_text, b_text: string) -> bool {
+	if a.package_name != b.package_name || len(a.attributes) != len(b.attributes) || selects_imports(b.items, false) { return false }
+	// File attributes include provider defaults, which discovery reads.
+	for attribute, index in a.attributes {
+		other := b.attributes[index].span
+		if a_text[attribute.span.lo:attribute.span.hi] != b_text[other.lo:other.hi] { return false }
+	}
 	// Compare imports in source order, including aliases and literal spelling.
 	a_imports := make([dynamic]^Item_Import, context.temp_allocator)
 	b_imports := make([dynamic]^Item_Import, context.temp_allocator)
@@ -164,11 +188,11 @@ collect_file_imports :: proc(items: []Item, imports: ^[dynamic]^Item_Import) {
 }
 
 @(private = "file")
-same_discovery :: proc(s: ^Compilation_Session, probe: ^Compiler, input: string) -> bool {
+same_discovery :: proc(s: ^Compilation_Session, probe: ^Compiler, input: string, documentation: bool) -> bool {
 	c, cache := &s.compiler, &s.package_cache
 	// Written paths are observable in source_location and reflection, even when
 	// two spellings have the same Windows directory identity.
-	if input != cache.input ||
+	if input != cache.input || documentation != cache.documentation ||
 	   (os.get_working_directory(context.temp_allocator) or_else "") != cache.cwd ||
 	   is_source_directory(c, input) != cache.directory_root { return false }
 	if !register_project(probe, input) || len(probe.collections) != len(c.collections) { return false }
@@ -199,7 +223,7 @@ same_discovery :: proc(s: ^Compilation_Session, probe: ^Compiler, input: string)
 }
 
 @(private)
-try_incremental_check :: proc(s: ^Compilation_Session, input: string) -> bool {
+try_incremental_check :: proc(s: ^Compilation_Session, input: string, documentation: bool) -> bool {
 	context.allocator = s.allocator
 	cache, c := &s.package_cache, &s.compiler
 	if len(cache.entries) == 0 { return false }
@@ -209,9 +233,10 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string) -> bool {
 	if !init_session(&probe, s.config) { return false }
 	context.temp_allocator = virtual.arena_allocator(&probe.scratch_arena)
 	probe.compiler.source_overlays = &s.overlays
-	if !same_discovery(s, &probe.compiler, input) { return false }
+	if !same_discovery(s, &probe.compiler, input, documentation) { return false }
 	texts := make(map[u32]string, context.temp_allocator)
 	first := len(cache.order) - 1 // An unchanged check still reruns the final package.
+	syntax_errors := false
 	for id, position in cache.order {
 		for file in package_of(c, id).files {
 			path := c.sources[file.file].path
@@ -220,10 +245,12 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string) -> bool {
 			text := probe.compiler.sources[index].text
 			texts[file.file] = text
 			if text == c.sources[file.file].text { continue }
+			errors := probe.compiler.error_count
 			tokens := lex(&probe.compiler, index)
 			parsed := parse(&probe.compiler, index, tokens)
 			delete(tokens)
-			same := probe.compiler.error_count == 0 && same_file_topology(file, &parsed)
+			syntax_errors ||= probe.compiler.error_count > errors
+			same := same_file_topology(file, &parsed, c.sources[file.file].text, text)
 			destroy_ast(&parsed)
 			if !same { return false }
 			first = min(first, position)
@@ -235,6 +262,10 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string) -> bool {
 	for entry, index in cache.entries { if entry.index <= first { checkpoint_index = index } }
 	if checkpoint_index < 0 { return false }
 	first = cache.entries[checkpoint_index].index
+	// A batch reports syntax errors while loading, before the first package is
+	// checked; here they follow the boundary's diagnostics. Checkpoints hold no
+	// errors, so the order differs only if the boundary kept warnings.
+	if syntax_errors && len(cache.entries[checkpoint_index].state.diagnostics) > 0 { return false }
 
 	// Rewind exactly, including mutations to earlier types, generic templates,
 	// registries and syntax. Saved allocator pointers still target this Compiler;

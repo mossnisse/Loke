@@ -1146,3 +1146,223 @@ completion_follows_scopes_and_comments_from_review :: proc(t: ^testing.T) {
 	reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "still here", 3))
 	testing.expect(t, is_null_result(reply))
 }
+
+// Unsaved text for `fresh_codes`, relative to the harness root.
+@(private = "file")
+Unsaved :: struct { relative, text: string }
+
+// Each file's diagnostic codes, sorted, from a fresh batch check of `root`
+// with `unsaved` as overlays: what `lokec` reports for the same inputs. Files
+// without diagnostics are left out.
+@(private = "file")
+fresh_codes :: proc(h: ^Harness, root: string, unsaved: []Unsaved) -> map[string]string {
+	s: lokec.Compilation_Session
+	defer lokec.destroy_session(&s)
+	testing.expect(h.t, lokec.init_session(&s))
+	for file in unsaved {
+		testing.expect(h.t, lokec.set_session_overlay(&s, lokec.join_path({h.root, file.relative}, context.temp_allocator), file.text))
+	}
+	lokec.check_session(&s, lokec.join_path({h.root, root}, context.temp_allocator))
+	snapshot, _ := lokec.session_snapshot(&s)
+	diagnostics, _ := lokec.query_diagnostics(&s, snapshot)
+	lists := make(map[string][dynamic]string, context.temp_allocator)
+	for d in diagnostics {
+		source, found := lokec.query_source(&s, snapshot, d.location.span.file)
+		if !testing.expect(h.t, found) { continue }
+		uri := path_to_uri(lokec.canonical_dir(source.path), context.temp_allocator)
+		if uri not_in lists { lists[uri] = make([dynamic]string, context.temp_allocator) }
+		append(&lists[uri], strings.clone(d.code, context.temp_allocator))
+	}
+	out := make(map[string]string, context.temp_allocator)
+	for uri, list in lists {
+		slice.sort(list[:])
+		out[uri] = strings.join(list[:], " ", context.temp_allocator)
+	}
+	return out
+}
+
+// What the client is showing: the latest publication for each URI, with its
+// codes sorted. A publication emptying a file removes it.
+@(private = "file")
+record_publications :: proc(shown: ^map[string]string, messages: []json.Value) {
+	for p in publications(messages) {
+		list := strings.split(codes(p.diagnostics), " ", context.temp_allocator)
+		slice.sort(list)
+		if len(p.diagnostics) == 0 { delete_key(shown, p.uri) } else { shown[p.uri] = strings.join(list, " ", context.temp_allocator) }
+	}
+}
+
+@(private = "file")
+expect_shown :: proc(t: ^testing.T, shown, fresh: map[string]string, loc := #caller_location) {
+	testing.expect_value(t, len(shown), len(fresh), loc = loc)
+	for uri, list in fresh {
+		testing.expectf(t, shown[uri] == list, "%s shows %q, but a fresh check reports %q", uri, shown[uri], list, loc = loc)
+	}
+}
+
+@(private = "file")
+only_root :: proc(h: ^Harness) -> ^Root {
+	testing.expect_value(h.t, len(h.s.roots), 1)
+	for _, root in h.s.roots { return root }
+	return nil
+}
+
+// Edits that arrive faster than checks, across two packages and through broken
+// text, end with what a fresh check of the final text reports, published once
+// with the final versions. Checks reuse what the edits did not reach.
+@(test)
+rapid_edits_match_a_fresh_check :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "rapid") { finish(&h); return }
+	defer finish(&h)
+	main_text := "package main;\nimport \"core:fmt\";\nimport \"shapes\";\nmain :: proc() {\n\tfmt.println(shapes.area(shapes.Square{side = 2}), shapes.separator());\n}\n"
+	shapes_text := "@(public) package shapes;\nimport \"core:path\";\nSquare :: struct { side: int }\narea :: proc(s: Square) -> int { return s.side * s.side; }\nseparator :: proc() -> rune { return path.separator(); }\n"
+	write_file(&h, "app/main.loke", main_text)
+	write_file(&h, "app/shapes/shapes.loke", shapes_text)
+	open(&h, "app/main.loke", main_text)
+	open(&h, "app/shapes/shapes.loke", shapes_text)
+	settle(&h)
+	shown := make(map[string]string, context.temp_allocator)
+	record_publications(&shown, take(&h))
+	testing.expect_value(t, len(shown), 0)
+
+	replace :: proc(text, old, new: string) -> string {
+		out, _ := strings.replace_all(text, old, new, context.temp_allocator)
+		return out
+	}
+	Edit :: struct { relative, text: string }
+	edits := [?]Edit{
+		{"app/main.loke", replace(main_text, "Square{side = 2}", "Square{side = 2")},
+		{"app/main.loke", replace(main_text, "Square{side = 2}", "Square{side = \"two\"}")},
+		{"app/shapes/shapes.loke", replace(shapes_text, "area ::", "surface ::")},
+		{"app/main.loke", replace(main_text, "shapes.area", "shapes.surface")},
+		{"app/shapes/shapes.loke", replace(shapes_text, "s.side * s.side", "s.side * true")},
+		{"app/main.loke", replace(main_text, "shapes.area", "shapes.")},
+		{"app/main.loke", replace(main_text, "shapes.area", "shapes.surface")},
+	}
+	versions := [2]int{1, 1}
+	for edit, index in edits {
+		slot := 0 if edit.relative == "app/main.loke" else 1
+		versions[slot] += 1
+		change(&h, edit.relative, edit.text, versions[slot])
+		// Now and then a check starts between two edits.
+		if index % 3 == 1 { run_pending_work(&h.s) }
+	}
+	settle(&h)
+	messages := take(&h)
+	for p in publications(messages) {
+		testing.expectf(t, p.versioned && (p.version == i64(versions[0]) || p.version == i64(versions[1])), "published version %d is stale", p.version)
+	}
+	record_publications(&shown, messages)
+	final := []Unsaved{
+		{"app/main.loke", replace(main_text, "shapes.area", "shapes.surface")},
+		{"app/shapes/shapes.loke", replace(shapes_text, "s.side * s.side", "s.side * true")},
+	}
+	expect_shown(t, shown, fresh_codes(&h, "app", final))
+	// `main` names a procedure the library no longer has, and the library has
+	// its own error.
+	testing.expect_value(t, len(shown), 2)
+
+	// Repairing the library rechecks it; editing `main` alone reuses it.
+	change(&h, "app/shapes/shapes.loke", replace(shapes_text, "area ::", "surface ::"), versions[1] + 1)
+	settle(&h)
+	record_publications(&shown, take(&h))
+	testing.expect_value(t, len(shown), 0)
+	root := only_root(&h)
+	if root == nil { return }
+	shapes := root.session.compiler.package_by_dir[lokec.dir_key(lokec.canonical_dir(lokec.join_path({h.root, "app", "shapes"}, context.temp_allocator)))]
+	testing.expect(t, slice.contains(lokec.session_check_stats(&root.session).rechecked_packages, shapes))
+	change(&h, "app/main.loke", replace(main_text, "shapes.area(shapes.Square{side = 2})", "shapes.surface(shapes.Square{side = 3})"), versions[0] + 1)
+	settle(&h)
+	record_publications(&shown, take(&h))
+	testing.expect_value(t, len(shown), 0)
+	stats := lokec.session_check_stats(&root.session)
+	testing.expect(t, slice.contains(stats.reused_packages, shapes), "an edit to `main` rechecked the library")
+	testing.expect_value(t, len(stats.rechecked_packages), 1)
+}
+
+// Requests answered from incremental checks: one whose document changes while
+// it waits is stale, a cancelled one is answered as cancelled, and the rest see
+// unsaved edits in both packages, even while `main` does not parse.
+@(test)
+requests_follow_incremental_checks :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "incremental-requests") { finish(&h); return }
+	defer finish(&h)
+	main_text := "package main;\nimport \"shapes\";\nmain :: proc() {\n\t_ = shapes.area(shapes.Square{side = 2});\n}\n"
+	shapes_text := "@(public) package shapes;\nSquare :: struct { side: int }\narea :: proc(s: Square) -> int { return s.side * s.side; }\n"
+	write_file(&h, "app/main.loke", main_text)
+	write_file(&h, "app/shapes/shapes.loke", shapes_text)
+	open(&h, "app/main.loke", main_text)
+	open(&h, "app/shapes/shapes.loke", shapes_text)
+	settle(&h)
+	take(&h)
+
+	renamed := "@(public) package shapes;\nSquare :: struct { side: int }\n\n// The area.\nsurface :: proc(s: Square) -> int { return s.side * s.side; }\n"
+	uses := "package main;\nimport \"shapes\";\nmain :: proc() {\n\t_ = shapes.surface(shapes.Square{side = 2});\n}\n"
+	change(&h, "app/shapes/shapes.loke", renamed, 2)
+	at_area := fmt.tprintf(`{{"textDocument":{{"uri":%s}},"position":{{"line":3,"character":14}}}}`, quoted(uri_of(&h, "app/main.loke")))
+	request(&h, "10", "textDocument/hover", at_area)
+	// The check starts; `main` changes before the answer.
+	testing.expect(t, run_pending_work(&h.s))
+	change(&h, "app/main.loke", uses, 2)
+	settle(&h)
+	modified := false
+	for reply in take(&h) {
+		if id, _ := member_int(reply, "id"); id == 10 { modified = error_code(reply) == CONTENT_MODIFIED }
+	}
+	testing.expect(t, modified, "the hover was answered from text the document no longer has")
+	expect_definition(t, ask(&h, "textDocument/definition", "app/main.loke", position_of(t, uses, "surface")), uri_of(&h, "app/shapes/shapes.loke"), Position{4, 0})
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "app/main.loke", position_of(t, uses, "surface"))), "surface :: proc(s: Square) -> int\n\nThe area.")
+
+	typing := "package main;\nimport \"shapes\";\nmain :: proc() {\n\t_ = shapes.\n}\n"
+	change(&h, "app/main.loke", typing, 3)
+	request(&h, "11", "textDocument/completion", fmt.tprintf(`{{"textDocument":{{"uri":%s}},"position":{{"line":3,"character":12}}}}`, quoted(uri_of(&h, "app/main.loke"))))
+	notify(&h, "$/cancelRequest", `{"id":11}`)
+	replies := take(&h)
+	testing.expect(t, len(replies) == 1 && error_code(replies[0]) == REQUEST_CANCELLED)
+	reply := ask(&h, "textDocument/completion", "app/main.loke", Position{3, 12})
+	testing.expect_value(t, completion_labels(reply), "Square surface")
+	root := only_root(&h)
+	if root == nil { return }
+	shapes := root.session.compiler.package_by_dir[lokec.dir_key(lokec.canonical_dir(lokec.join_path({h.root, "app", "shapes"}, context.temp_allocator)))]
+	testing.expect(t, slice.contains(lokec.session_check_stats(&root.session).reused_packages, shapes), "a syntax error in `main` rechecked the library")
+}
+
+// Files created, changed, and deleted on disk reach every root through the
+// client's notifications, and the results agree with a fresh check.
+@(test)
+workspace_changes_match_a_fresh_check :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "incremental-workspace") { finish(&h); return }
+	defer finish(&h)
+	main_text := "package main;\nimport \"shapes\";\nmain :: proc() {\n\t_ = shapes.area(2) + shapes.extra();\n}\n"
+	write_file(&h, "app/main.loke", main_text)
+	write_file(&h, "app/shapes/shapes.loke", "@(public) package shapes;\narea :: proc(side: int) -> int { return side * side; }\n")
+	open(&h, "app/main.loke", main_text)
+	settle(&h)
+	shown := make(map[string]string, context.temp_allocator)
+	record_publications(&shown, take(&h))
+	unsaved := []Unsaved{{"app/main.loke", main_text}}
+	expect_shown(t, shown, fresh_codes(&h, "app", unsaved))
+	testing.expect_value(t, len(shown), 1)
+
+	watched :: proc(h: ^Harness, relative: string, type: int) {
+		notify(h, "workspace/didChangeWatchedFiles", fmt.tprintf(`{{"changes":[{{"uri":%s,"type":%d}}]}}`, quoted(uri_of(h, relative)), type))
+	}
+	steps := [?]struct { relative, text: string, type: int }{
+		{"app/shapes/extra.loke", "@(public) package shapes;\nextra :: proc() -> int { return 1; }\n", 1},
+		{"app/shapes/extra.loke", "@(public) package shapes;\nextra :: proc() -> bool { return true; }\n", 2},
+		{"app/shapes/shapes.loke", "@(public) package shapes;\narea :: proc(side: int) -> bool { return side > 0; }\n", 2},
+		{"app/shapes/extra.loke", "", 3},
+		{"app/loke.project", "# a manifest now governs the program\n", 1},
+	}
+	for step in steps {
+		path := lokec.join_path({h.root, step.relative}, context.temp_allocator)
+		if step.type == 3 { testing.expect(t, os.remove(path) == nil) } else { write_file(&h, step.relative, step.text) }
+		watched(&h, step.relative, step.type)
+		settle(&h)
+		record_publications(&shown, take(&h))
+		expect_shown(t, shown, fresh_codes(&h, "app", unsaved))
+	}
+}

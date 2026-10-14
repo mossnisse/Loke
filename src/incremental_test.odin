@@ -143,25 +143,32 @@ session_incremental_discovery_changes_use_full_checks :: proc(t: ^testing.T) {
 	s: Compilation_Session
 	defer destroy_session(&s)
 	if !testing.expect(t, init_session(&s, config)) { return }
-	for edit in 0 ..< 10 {
+	for edit in 0 ..< 12 {
 		switch edit {
 		case 1: if !write_session_source(t, other, "package lib; other :: 2;") { return }
 		case 2: if !testing.expect(t, os.remove(other) == nil) { return }
 		case 3: if !write_session_source(t, path, "package main; main :: proc() {}") { return }
 		case 4: if !write_session_source(t, path, main_text) { return }
-		case 5: if !write_session_source(t, path, strings.concatenate({main_text, "\nwhen (true) { selected :: 1; }"}, context.temp_allocator)) { return }
+		case 5: if !write_session_source(t, path, strings.concatenate({main_text, "\nwhen (true) { import again \"lib\"; }"}, context.temp_allocator)) { return }
 		case 6: if !write_session_source(t, path, main_text) { return }
 		case 7: if !write_session_source(t, path, "package main; main :: proc() {") { return }
 		case 8: if !write_session_source(t, path, main_text) { return }
 		case 9: if !write_session_source(t, join_path({root, PROJECT_FILE}, context.temp_allocator), "# newly nearer manifest\n") { return }
+		case 10: if !write_session_source(t, path, strings.concatenate({"@(public) ", main_text}, context.temp_allocator)) { return }
+		// The same number of file attributes, but a root's attribute can select
+		// a provider, which discovery reads.
+		case 11: if !write_session_source(t, path, strings.concatenate({"@(default_allocator = \"./missing:factory\") ", main_text}, context.temp_allocator)) { return }
 		}
-		expect_session_matches_fresh(t, &s, path, config, edit != 7)
+		expect_session_matches_fresh(t, &s, path, config, edit != 7 && edit != 11)
 		testing.expectf(t, len(session_check_stats(&s).reused_packages) == 0, "edit %d reused an invalid graph", edit)
 	}
-	// Switching to documentation or batch checking clears all checkpoints.
+	if !write_session_source(t, path, main_text) { return }
+	// Switching between documentation and executable checking checks fully and
+	// keeps the new mode's checkpoints; batch checking clears them.
 	testing.expect(t, check_session_incremental(&s, path, documentation = true))
-	testing.expect(t, !s.ready && session_check_stats(&s).cache_bytes == 0)
+	testing.expect(t, !s.ready && len(session_check_stats(&s).reused_packages) == 0 && session_check_stats(&s).cache_bytes > 0)
 	testing.expect(t, check_session_incremental(&s, path))
+	testing.expect(t, s.ready && len(session_check_stats(&s).reused_packages) == 0)
 	testing.expect(t, check_session(&s, path))
 	testing.expect_value(t, session_check_stats(&s).cache_bytes, u64(0))
 	// Path spelling is an input to source_location and reflection.
@@ -215,4 +222,83 @@ main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(dat
 		if edit == 1 { testing.expect(t, len(s.compiler.typeid_order) < rich_typeids, "unused metadata survived the edit") }
 		if edit > 0 { testing.expect_value(t, len(session_check_stats(&s).rechecked_packages), 1) }
 	}
+}
+
+// A file-scope `when` that selects only declarations, as the bundled library's
+// platform code does, settles inside its own package, so the package graph stays
+// static. Syntax errors in an edited file and documentation checks also keep the
+// reusable prefix.
+@(test)
+session_incremental_keeps_the_prefix_across_selection_and_syntax_errors :: proc(t: ^testing.T) {
+	root := session_fixture(t, "incremental-selection")
+	if root == "" { return }
+	defer os.remove_all(root)
+	for name in ([]string{"platform", "lib"}) {
+		if !testing.expect(t, os.make_directory_all(join_path({root, name}, context.temp_allocator)) == nil) { return }
+	}
+	path := join_path({root, "main.loke"}, context.temp_allocator)
+	platform := join_path({root, "platform", "platform.loke"}, context.temp_allocator)
+	lib := join_path({root, "lib", "lib.loke"}, context.temp_allocator)
+	main_text := `package main; import "core:fmt"; import "core:path"; import "lib";
+main :: proc() { fmt.println(lib.size(), path.separator()); }`
+	platform_text := `@(public) package platform;
+when (LOKE_OS == .Windows) { NAME :: "windows"; } else { NAME :: "other"; }
+when (WIDE) { WIDTH :: 64; } else { WIDTH :: 32; }
+WIDE :: true;`
+	lib_text := `@(public) package lib; import "../platform";
+when (platform.WIDTH == 64) { size :: proc() -> int { return platform.WIDTH; } }
+else { size :: proc() -> int { return 0; } }`
+	if !write_session_source(t, path, main_text) || !write_session_source(t, platform, platform_text) || !write_session_source(t, lib, lib_text) { return }
+	config := session_test_config()
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, config)) { return }
+	expect_session_matches_fresh(t, &s, path, config, true)
+	testing.expect(t, session_check_stats(&s).cache_bytes > 0, "selection without imports took the full path")
+	platform_id := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "platform"}, context.temp_allocator)))]
+	lib_id := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "lib"}, context.temp_allocator)))]
+	replace :: proc(text, old, new: string) -> string {
+		out, _ := strings.replace_all(text, old, new, context.temp_allocator)
+		return out
+	}
+	Reuse :: enum { None, Platform, Lib }
+	for edit in 0 ..< 12 {
+		text, file := main_text, path
+		reuse, expected := Reuse.Lib, true
+		switch edit {
+		case 0: text = replace(main_text, "path.separator()", "path.separator(), 1")
+		case 1: text, file, reuse = replace(platform_text, "WIDE :: true", "WIDE :: false"), platform, .None
+		case 2: text, file, reuse = platform_text, platform, .None
+		// A condition no round can answer is reported once the package settles.
+		case 3: text, file, reuse, expected = strings.concatenate({lib_text, "\nwhen (MISSING == 64) { unused :: 1; }"}, context.temp_allocator), lib, .Platform, false
+		case 4: text, file, reuse = lib_text, lib, .Platform
+		case 5: text, expected = replace(main_text, "lib.size()", "lib.size(), lib."), false
+		case 6:
+		case 7:
+			// Changed file attributes are a discovery input.
+			text, file, reuse = replace(replace(lib_text, "@(public) package lib;", "package lib;"), "size ::", "@(public) size ::"), lib, .None
+		case 8:
+			// Restoring the attributes is a change as well.
+			text, file, reuse = replace(lib_text, "return 0; } }", "return old(); } }\n@(deprecated = \"use size\") old :: proc() -> int { return 1; }"), lib, .None
+			text = replace(text, "WIDTH == 64", "WIDTH == 32")
+		case 9:
+			// The boundary before `main` keeps `old`'s warning, which a batch
+			// reports after the syntax error, so this checks fully.
+			text, reuse, expected = replace(main_text, "lib.size()", "lib.size(), lib."), .None, false
+		case 10: reuse = .None // no checkpoint survives a full check with syntax errors
+		case 11: text = replace(main_text, "path.separator()", "path.separator(), 2")
+		}
+		if !write_session_source(t, file, text) { return }
+		expect_session_matches_fresh(t, &s, path, config, expected)
+		stats := session_check_stats(&s)
+		testing.expectf(t, slice.contains(stats.reused_packages, platform_id) == (reuse != .None), "edit %d: platform reuse", edit)
+		testing.expectf(t, slice.contains(stats.reused_packages, lib_id) == (reuse == .Lib), "edit %d: lib reuse", edit)
+		testing.expectf(t, slice.contains(stats.rechecked_packages, s.compiler.root_package), "edit %d: main was not rechecked", edit)
+	}
+	// Documentation checks reuse their own checkpoints.
+	expect_session_matches_fresh(t, &s, path, config, true, documentation = true)
+	testing.expect_value(t, len(session_check_stats(&s).reused_packages), 0)
+	if !write_session_source(t, path, main_text) { return }
+	expect_session_matches_fresh(t, &s, path, config, true, documentation = true)
+	testing.expect(t, slice.contains(session_check_stats(&s).reused_packages, lib_id))
 }

@@ -1,0 +1,99 @@
+@(public)
+package config;
+
+import "core:fmt";
+import "core:math";
+
+// Failure and cleanup, which in Loke are the same subject.
+//
+// A fallible procedure returns `Result(T, E)`: one value that is either the
+// success payload or the error. `or_return` propagates the failure without
+// hiding the control flow, `or_else` supplies a fallback, and `Option(T)`
+// answers "was there one?". Cleanup is not part of that story at all: a value
+// with a `drop` hook is destroyed exactly once on every path out of its scope,
+// including the early returns `or_return` writes.
+
+Error :: enum { Empty_Line, Missing_Separator, Bad_Number }
+
+// A resource whose release is observable. Nothing here is reference-counted or
+// deferred to a collector: the drop runs at the closing brace, in reverse
+// declaration order, after any `defer` in the same scope.
+Reader :: struct { name: string, line: int }
+
+impl Reader {
+	init :: proc(name: string) -> Reader {
+		fmt.println("open", name);
+		return {name, 0};
+	}
+
+	// `hook(drop)` is what makes this the type's cleanup rather than an
+	// ordinary method that happens to be called `drop`.
+	close :: hook(drop) proc(self: inout Reader) {
+		fmt.println("close", self.name, "lines read:", self.line);
+	}
+}
+
+digits :: proc(text: string_view) -> Result(int, Error) {
+	if (text.len() == 0) { return .err(.Bad_Number); }
+	value := 0;
+	// Iterating text yields code points, not bytes, so this is correct for any
+	// input rather than only for ASCII.
+	foreach (ch in text) {
+		if (ch < '0' || ch > '9') { return .err(.Bad_Number); }
+		// `value * 10` would panic on a long digit string; the checked forms
+		// make that a parse error instead.
+		value = math.checked_mul(value, 10) or_return .Bad_Number;
+		value = math.checked_add(value, int(ch - '0')) or_return .Bad_Number;
+	}
+	return .ok(value);
+}
+
+// A `Result` carries one payload, so the two facts an entry produces travel in
+// a record. Every `or_return` below is one early return with full cleanup, not
+// a hidden jump.
+Entry :: struct { key: string_view, value: int }
+
+parse_entry :: proc(line: string_view) -> Result(Entry, Error) {
+	if (line.len() == 0) { return .err(.Empty_Line); }
+
+	bytes := line.bytes();
+	separator := -1;
+	// A binding list names the fields of the element, so an index is not free:
+	// `indexed()` is the view that yields one alongside each byte.
+	foreach (b, i in bytes.indexed()) {
+		if (b == '=') { separator = i; break; }
+	}
+	if (separator < 0) { return .err(.Missing_Separator); }
+
+	value := digits(line[separator + 1:]) or_return;
+	return .ok(Entry{line[0:separator], value});
+}
+
+// The keys stored in `into` are views into `lines`, so the contract says so:
+// the caller's storage is what the caller's map ends up holding.
+load :: proc(
+	reader: inout Reader,
+	@(escape=stored) lines: []string_view,
+	into: inout map[string_view]int,
+) -> Status(Error) {
+	foreach (line in lines) {
+		reader.line += 1;
+		// The first bad line stops the load and reports why.
+		entry := parse_entry(line) or_return;
+		into[entry.key] = entry.value;
+	}
+}
+
+describe :: proc(outcome: Status(Error)) -> string_view {
+	switch (outcome) {
+	case .ok:
+		return "none";
+	case .err(e):
+		switch (e) {
+		case .Empty_Line:        return "empty line";
+		case .Missing_Separator: return "missing `=`";
+		case .Bad_Number:        return "not a number";
+		}
+	}
+	return "none";
+}

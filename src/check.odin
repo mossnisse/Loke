@@ -187,7 +187,7 @@ bind_import_aliases :: proc(k: ^Checker, pkg: ^Package) {
 }
 
 // Signatures, finite size, and bodies, over the settled selected view. This
-// runs only once the whole program's selection and import graph are stable.
+// runs only once the package's selection and the import graph are stable.
 check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	pkg := package_of(k.c, package_id)
 	if pkg == nil || pkg.scope == nil {

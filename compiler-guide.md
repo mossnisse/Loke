@@ -304,8 +304,13 @@ given:
   entry point.
 
 Unsaved text in any open document is used by every root, so an edit to an
-imported package updates its importers' diagnostics. Errors found in files that
-are not open, such as an imported package, are published for those files too.
+imported package updates its importers' diagnostics. After its first check, a
+root rechecks from the first package an edit reached and reuses the packages
+before it, the bundled library among them. Adding or removing files, or
+changing imports, manifests, or file attributes, checks the whole program
+again. Reuse costs memory: up to 64 MiB per root, about 57 MiB for a program of
+five packages. Errors found in files that are not open, such as an imported
+package, are published for those files too.
 The nearest [`loke.project`](#projects) is read as `lokec` reads it. Changes
 made outside the editor are picked up when the editor reports changed files:
 the server asks to watch `**/*.loke` and `**/loke.project` when the editor

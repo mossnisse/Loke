@@ -214,6 +214,75 @@ lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 	testing.expect(t, exited && code == 0)
 }
 
+// Edits sent faster than the server checks: whatever it publishes on the way,
+// versions never go back, the last publication is the last text's, and a
+// request sent after the edits is answered from that text.
+@(test)
+lsp_rapid_edits_end_with_the_final_text :: proc(t: ^testing.T) {
+	root := fmt.tprintf("%s/lsp-rapid-%d", TMP, os.get_pid())
+	os.remove_all(root)
+	if !testing.expect(t, os.make_directory_all(root) == nil) { return }
+	defer os.remove_all(root)
+	absolute := os.get_absolute_path(root, context.temp_allocator) or_else root
+	path, _ := strings.replace_all(join_path({absolute, "main.loke"}, context.temp_allocator), "\\", "/", context.temp_allocator)
+	uri := fmt.tprintf("file:///%s", path)
+
+	p: Lsp_Process
+	if !lsp_start(&p, t) { return }
+	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
+	_, ok := lsp_receive(&p)
+	testing.expect(t, ok)
+	lsp_send(&p, `{"jsonrpc":"2.0","method":"initialized","params":{}}`)
+	// Odd versions declare `x` as an `int` and assign it text; even ones are fine.
+	text :: proc(version: int) -> string {
+		if version % 2 == 1 { return fmt.tprintf("package main;\nmain :: proc() {{\n\tx: int = \"%d\";\n\t_ = x;\n}}\n", version) }
+		return fmt.tprintf("package main;\nmain :: proc() {{\n\tx: bool = %d > 0;\n\t_ = x;\n}}\n", version)
+	}
+	LAST :: 21
+	lsp_send(&p, fmt.tprintf(
+		`{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":%s,"languageId":"loke","version":1,"text":%s}}}}}}`,
+		json_quoted(uri), json_quoted(text(1)),
+	))
+	for version in 2 ..= LAST {
+		lsp_send(&p, fmt.tprintf(
+			`{{"jsonrpc":"2.0","method":"textDocument/didChange","params":{{"textDocument":{{"uri":%s,"version":%d}},"contentChanges":[{{"text":%s}}]}}}}`,
+			json_quoted(uri), version, json_quoted(text(version)),
+		))
+	}
+	lsp_send(&p, fmt.tprintf(
+		`{{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{{"textDocument":{{"uri":%s}},"position":{{"line":2,"character":1}}}}}}`,
+		json_quoted(uri),
+	))
+	newest: json.Integer
+	last_codes := ""
+	hover := ""
+	for newest != LAST || hover == "" {
+		message, received := lsp_receive(&p)
+		if !testing.expect(t, received, "the server stopped before publishing the last version") { break }
+		if id, has_id := json_member(message, "id").(json.Integer); has_id && id == 2 {
+			hover, _ = json_member(json_member(json_member(message, "result"), "contents"), "value").(json.String)
+			continue
+		}
+		params := json_member(message, "params")
+		version, _ := json_member(params, "version").(json.Integer)
+		testing.expectf(t, version >= newest, "version %d was published after %d", version, newest)
+		newest = version
+		diagnostics, _ := json_member(params, "diagnostics").(json.Array)
+		last_codes = fmt.tprintf("%d", len(diagnostics))
+		if len(diagnostics) > 0 {
+			code, _ := json_member(diagnostics[0], "code").(json.String)
+			last_codes = string(code)
+		}
+	}
+	testing.expect_value(t, last_codes, "L0310")
+	testing.expect_value(t, hover, "x: int")
+	lsp_send(&p, `{"jsonrpc":"2.0","id":3,"method":"shutdown"}`)
+	_, ok = lsp_receive(&p)
+	lsp_send(&p, `{"jsonrpc":"2.0","method":"exit"}`)
+	code, exited := lsp_finish(&p)
+	testing.expect(t, ok && exited && code == 0)
+}
+
 @(test)
 lsp_input_ending_without_shutdown_is_an_error_exit :: proc(t: ^testing.T) {
 	p: Lsp_Process

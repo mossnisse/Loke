@@ -224,9 +224,10 @@ next_dirty_root :: proc(s: ^Server) -> ^Root {
 	return best
 }
 
-// Checks with batch sessions, exactly as `lokec <root>` or, for a package not
-// named `main`, `lokec -doc <root>` would. The first check of a library finds
-// out its name and checks again in the right mode.
+// Checks as `lokec <root>` or, for a package not named `main`, `lokec -doc
+// <root>` would, reusing the packages that come before the first changed one
+// (compiler-architecture.md "Incremental checking"). The first check of a
+// library finds out its name and checks again in the right mode.
 @(private = "file")
 check_root :: proc(s: ^Server, root: ^Root) {
 	root.dirty = false
@@ -234,10 +235,10 @@ check_root :: proc(s: ^Server, root: ^Root) {
 	// What the program loads decides which documents join this root.
 	s.layout_dirty = true
 	if root.unconfigured { return }
-	lokec.check_session(&root.session, root.path, documentation = root.library)
+	lokec.check_session_incremental(&root.session, root.path, documentation = root.library)
 	if name, known := root_package_name(root); known && (name == "main") == root.library {
 		root.library = !root.library
-		lokec.check_session(&root.session, root.path, documentation = root.library)
+		lokec.check_session_incremental(&root.session, root.path, documentation = root.library)
 	}
 	collect_results(s, root)
 }

@@ -1,0 +1,63 @@
+@(public)
+package report;
+
+import "core:fmt";
+import "../config";
+import "../lexer";
+import "../words";
+
+// What the other packages found, printed in one place. This package imports
+// all three, so an edit to any of them reaches it.
+
+Summary :: struct {
+	tokens: int,
+	diagnostics: int,
+	settings: int,
+	distinct_words: int,
+	total_words: int,
+}
+
+// How many tokens of each kind there are.
+kind_counts :: proc(tokens: []lexer.Token) -> map[lexer.Kind]int {
+	counts: map[lexer.Kind]int = {};
+	foreach (token in tokens) {
+		if (token.kind in counts) {
+			counts[token.kind] += 1;
+		} else {
+			counts[token.kind] = 1;
+		}
+	}
+	return counts;
+}
+
+summarize :: proc(
+	tokens: []lexer.Token,
+	found: []lexer.Diagnostic,
+	settings: map[string_view]int,
+	counts: map[string_view]int,
+) -> Summary {
+	total := 0;
+	foreach (_, count in counts) { total += count; }
+	return Summary{
+		tokens = tokens.len(),
+		diagnostics = found.len(),
+		settings = settings.len(),
+		distinct_words = counts.len(),
+		total_words = total,
+	};
+}
+
+print :: proc(summary: Summary, outcome: Status(config.Error)) {
+	fmt.println("tokens:", summary.tokens, "diagnostics:", summary.diagnostics);
+	fmt.println("settings:", summary.settings, "error:", config.describe(outcome));
+	fmt.println("words:", summary.distinct_words, "of", summary.total_words);
+}
+
+// The words seen more than once, in first-seen order.
+repeated :: proc(order: []string_view, counts: map[string_view]int) -> [dynamic]string_view {
+	out: [dynamic]string_view = {};
+	foreach (word in order) {
+		if (counts[word] > 1) { out.append(word); }
+	}
+	return out;
+}

@@ -478,9 +478,10 @@ For performance changes, build the baseline compiler and run:
 ```
 
 Use the same machine and workloads. The script measures front-end and full-build
-time, peak working set, executable size, and benchmark runtime; timings use the
-fastest of three runs and benchmark output must match. CI compares with the
-latest release's `perf.json`; releases attach their own record. For structural
+time, peak working set, executable size, and benchmark runtime, and times
+`loke-lsp.exe` editing `bench/workspace` (see [Language server](#language-server)).
+Timings use the fastest of three runs and benchmark output must match. CI
+compares with the latest release's `perf.json`; releases attach their own record. For structural
 backend refactors, also compare emitted `.ll` using identical source paths and
 options to catch naming or ordering drift.
 
@@ -515,7 +516,7 @@ session arenas, and optional package checkpoints. CLI presentation stays in
 | `init_session(&s, config)` | Initialize a zeroed session; copy configuration strings/arrays. Defaults to `DEFAULT_COMPILATION_CONFIG`. Invalid configuration returns false with diagnostics; a live session cannot be reinitialized. |
 | `check_session(&s, input)` | Replace the compilation, reload inputs, check, validate entry/exports, and finalize. Return false with diagnostics on errors. The input path is copied. |
 | `check_session(&s, input, documentation = true)` | Check for `-doc`, without executable-entry validation or emission finalization. Cannot emit. |
-| `check_session_incremental(&s, input)` | Reuse an eligible dependency prefix; otherwise perform a full check. See [Incremental checking](#incremental-checking). |
+| `check_session_incremental(&s, input, documentation = false)` | Reuse an eligible dependency prefix; otherwise perform a full check. Documentation checks reuse their own checkpoints. See [Incremental checking](#incremental-checking). |
 | `session_check_stats(&s)` | Rechecked/reused package IDs and semantic/checkpoint byte counts. ID slices expire on the next check or destruction. |
 | `invalidate_session(&s)` | Expire the result after external changes. Repeated calls are safe; false only for an uninitialized/destroyed session. |
 | `emit_session_ir(&s)` | Return module text and a success flag; no files or tools. Requires a successful finalized check. Each module remains allocated until the next check or destruction. |
@@ -612,9 +613,13 @@ relevant inputs rather than treating version strings or signatures as sufficient
 ## Incremental checking
 
 The CLI uses batch checking and allocates no package cache. The opt-in incremental
-API reuses only static graphs without selected providers. Whole-program
-provenance/provider analysis, entry/export validation, and finalization still run;
-LLVM emission remains whole-program.
+API reuses only static graphs without selected providers. A graph is static when
+no `import` sits inside a file-scope `when`; then each package settles its own
+`when` selection, which reads only that package and what it imports, after
+preparing its declarations and before any dependent is prepared. Batch checks
+take the same path, and the bundled library's platform `when` blocks no longer
+force a full check. Whole-program provenance/provider analysis, entry/export
+validation, and finalization still run; LLVM emission remains whole-program.
 
 Before preparing each package, a checkpoint saves compiler fields, the semantic
 arena watermark, and its used bytes. Incremental sources, syntax, diagnostics,
@@ -642,20 +647,33 @@ emission storage, and issue a new snapshot ID.
 
 Full-check fallbacks are:
 
-- First use; changed input, working directory, root mode, or switching from
-  batch/documentation checking. Documentation always uses a full check.
+- First use; changed input, working directory, or root mode; switching between
+  batch, documentation, and executable checking.
 - Added/removed files or packages; changed manifests, collection roots, package
-  clauses/attributes, or import paths/aliases.
-- File-scope `when` or selected providers.
-- Source read, UTF-8, BOM, or parse failures; unavailable checkpoints.
+  clauses, file attributes, or import paths/aliases.
+- An `import` inside a file-scope `when`, or selected providers.
+- Source read, UTF-8, or BOM failures; unavailable checkpoints.
+- Syntax errors in an edited file when the restored boundary holds warnings. A
+  batch reports syntax errors while loading, before any checking, so they
+  precede every warning; after a boundary they follow its diagnostics.
+  Checkpoints hold no errors, so with no warnings the order is the same.
 
-Semantic errors may retain an unaffected prefix and are retried after repair.
+Semantic errors and syntax errors in an edited file may retain an unaffected
+prefix and are retried after repair. A full check whose sources have syntax
+errors keeps no checkpoints, so the check after the repair is full as well.
 Fallbacks rebuild eligible checkpoints. Images have a 64 MiB payload limit;
 oldest boundaries are evicted first and oversized images are not cached.
 `session_check_stats` reports package reuse, semantic-arena usage, and image
 payload, excluding metadata, other arenas, and OS overhead. These are accounting
-counters, not working-set measurements. Representative incremental latency and
-cost evaluation remains in [Compiler services](future-plans.md#compiler-services).
+counters, not working-set measurements.
+
+On `bench/workspace`, five packages over twelve bundled ones, an edit to the
+root package rechecks one package of seventeen, and an optimized build checks
+in about 52 ms instead of 72 ms. Almost all of what remains is whole-program
+provenance analysis, about 43 ms, which runs over every checked body,
+including the bundled library's. The checkpoint images take about 57 MiB, and
+the first check takes about 45 ms longer to capture them. Equivalence and cost
+evaluation continues in [Compiler services](future-plans.md#compiler-services).
 
 ## Language server
 
@@ -694,9 +712,11 @@ the file when two or more sibling files declare `main`. `declares_entry` runs th
 compiler's lexer and looks for `main :` outside brackets. Assignment runs again
 after every check, so it does not depend on the order documents were opened.
 Roots that no open document uses are destroyed. `check_root` uses
-`check_session`, rechecking once in documentation mode when the root package is
-not `main`. It records the paths of loaded sources and copies snapshot
-diagnostics into the root's result arena with client positions. Diagnostics with no source location are
+`check_session_incremental`, rechecking once in documentation mode when the
+root package is not `main`, so a root reuses the packages before the first one
+an edit reached. A root no edit reached reruns only its last package. It
+records the paths of loaded sources and copies snapshot diagnostics into the
+root's result arena with client positions. Diagnostics with no source location are
 shown on that root's open documents.
 
 Diagnostics are published only after every root has been checked since the
@@ -752,10 +772,16 @@ operand's members, promoted fields included. A public extension is also
 checked as a package name. A method may not be renamed to or from a name in
 `query_implicit_names`, and a parameter to or from `self`.
 
-Milestones 1 through 3 of [Language server](future-plans.md#language-server) use batch
-checking. `lsp/server_test.odin` drives the server in process, choosing when
-checks run relative to edits. `tests/lsp_test.odin` runs the built executable
-over pipes.
+`lsp/server_test.odin` drives the server in process, choosing when checks run
+relative to edits, and compares results after rapid edits and disk changes with
+a fresh batch check. `tests/lsp_test.odin` runs the built executable over pipes.
+`perf.ps1` times the built server editing `bench/workspace`, from each
+notification to its answer: opening it, edits to its root package and to a
+library package, and completion in an unfinished statement. Each figure
+includes the 150 ms pause the server waits for further edits. With incremental
+checking an edit is answered in about 295 ms instead of 340 ms, and completion
+in about 290 ms instead of 340 to 470 ms; the server's peak working set grows
+from about 33 MB to about 89 MB for the checkpoints.
 
 ## Deliberate boundaries
 

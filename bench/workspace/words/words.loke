@@ -1,0 +1,46 @@
+@(public)
+package words;
+
+// Text, maps, and dynamic arrays working together.
+//
+// The counter's key is a `string_view`: every word borrows the bytes of `text`
+// rather than allocating a copy of them. That is checked, not hoped for — the
+// borrow analysis knows the map holds views into `text` and would reject any
+// attempt to outlive it.
+//
+// Map iteration order is deliberately unspecified, so the words are also
+// recorded in a dynamic array in first-seen order. Anything that needs a stable
+// order keeps one; the table itself never promises one.
+
+// Both destinations end up holding views into `text`, so `text` arrives as the
+// borrow it really is and the contract says what the call keeps of it.
+count_words :: proc(
+	@(escape=stored) text: string_view,
+	counts: inout map[string_view]int,
+	order: inout [dynamic]string_view,
+) {
+	// `text[i]` is deliberately not an index: one code point can span several
+	// bytes. `bytes()` is the explicit byte view.
+	bytes := text.bytes();
+	start := 0;
+	// A closed range stops one past the last byte, and that extra step is what
+	// flushes the final word — the loop needs no repeat of the body after it.
+	foreach (i in 0 ..= bytes.len()) {
+		if (i < bytes.len() && bytes[i] != ' ') { continue; }
+		if (i > start) {
+			word := text[start:i];
+			// No index position creates a missing element: `counts[word] += 1` names
+			// a location inside a stored entry and panics when there is none.
+			// Whole-element assignment is the one form that inserts, so the `in`
+			// test picks between them — and records first-seen order on the same
+			// branch that creates the entry.
+			if (word in counts) {
+				counts[word] += 1;
+			} else {
+				order.append(word);
+				counts[word] = 1;
+			}
+		}
+		start = i + 1;
+	}
+}
