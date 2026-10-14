@@ -4,6 +4,31 @@ Decisions that are deliberately not yet made are recorded here rather than left 
 
 Design rationale and differences from Odin are recorded in [comments.md](comments.md).
 
+## Compiler review (2026-10-14)
+
+The [stage-by-stage compiler review](compiler-review-2026-10-14.md) records
+correctness, robustness, optimization, simplification, structure, and verification
+results. Confirmed language divergences are tracked separately in
+[Known gaps](known-gaps.md#gaps), with minimal reproductions. No implementation
+changes are included in the review.
+
+Open engineering work, with source evidence and proposed bounded changes in the
+report:
+
+- [E01: complete procedure-type hash keys](compiler-review-2026-10-14.md#e01-complete-the-procedure-type-hash-key), avoiding guaranteed quadratic collision buckets and retained copies.
+- [E02: retain formatter line indentation](compiler-review-2026-10-14.md#e02-stop-rescanning-each-formatter-output-line), removing quadratic backward scans on long lines.
+- [E03: locate documentation comments by binary search](compiler-review-2026-10-14.md#e03-start-documentation-lookup-at-the-preceding-comment), skipping later comments without scanning them.
+- [E04: charge scalar CTFE sorting](compiler-review-2026-10-14.md#e04-charge-compile-time-scalar-sorting-against-its-budget), closing an uncharged quadratic loop.
+- [E05: bound composed AST depth](compiler-review-2026-10-14.md#e05-bound-ast-depth-across-parenthesized-expression-segments), preventing parenthesized segments from bypassing depth accounting and crashing later recursive stages.
+- [E06: cap carrier collection before allocation](compiler-review-2026-10-14.md#e06-apply-the-carrier-width-cap-during-collection), preserving the same conservative output without discarded path expansion.
+- [E07: schedule global effects by changed callees](compiler-review-2026-10-14.md#e07-schedule-global-effect-propagation-by-changed-callees), replacing repeated complete-program scans with caller propagation.
+- [E08: check active defers before panic classification](compiler-review-2026-10-14.md#e08-check-for-active-defers-before-classifying-statement-panic-behavior), avoiding unused recursive work.
+- [Concrete simplifications](compiler-review-2026-10-14.md#simplification-and-structure): remove duplicate CTFE buffers, repeated overload-candidate formation and independently maintained operand-joining rules; share owned-binding registration and use existing ownership facts for returns.
+
+Measure affected compilation/working-set workloads before and after performance
+fixes, as described in
+[Testing and verification](compiler-architecture.md#testing-and-verification).
+
 ## Package and import versioning
 
 Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
