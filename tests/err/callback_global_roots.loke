@@ -1,0 +1,23 @@
+package main;
+import "core:fmt";
+
+// design.md "Procedure result contracts": a callback assigned to a variable
+// must fit the contract of the procedure that variable was inferred from, and
+// a result borrowing one named global does not fit a contract borrowing
+// another (design.md "Global write effects").
+
+a: int = 1;
+b: int = 2;
+
+get_a :: proc() -> ^int { return &a; }
+get_b :: proc() -> ^int { return &b; }
+get_a_again :: proc() -> ^int { return &a; }
+
+main :: proc() {
+	f := get_a;
+	f = get_b;
+	f = get_a_again;
+	p := f();
+	b = 3;
+	fmt.println(p^);
+}

@@ -125,6 +125,9 @@ Layout :: struct {
 	// line `last` is on did.
 	continued:      bool,
 	last_continued: bool,
+	// Where the output's current line starts, after its last newline, which a
+	// comment or raw string can also write.
+	line_start: int,
 }
 
 @(private = "file")
@@ -149,11 +152,11 @@ layout :: proc(text: string, tokens: []Token, comments: []Span) -> string {
 			gap := text[previous_hi:comment.lo]
 			if started && !break_line(&l, gap) {
 				// A trailing comment keeps its alignment, and at least a space.
-				strings.write_string(&l.out, horizontal(gap) != "" ? horizontal(gap) : " ")
+				write_out(&l, horizontal(gap) != "" ? horizontal(gap) : " ")
 			} else {
 				indent(&l, index < len(tokens) ? tokens[index] : Token{kind = .EOF}, true)
 			}
-			strings.write_string(&l.out, strings.trim_right(text[comment.lo:comment.hi], " \t"))
+			write_out(&l, strings.trim_right(text[comment.lo:comment.hi], " \t"))
 			previous_hi = comment.hi
 			started = true
 		}
@@ -169,15 +172,15 @@ layout :: proc(text: string, tokens: []Token, comments: []Span) -> string {
 			if space == "" && horizontal(gap) != "" && would_merge(text[l.last.hi - 1], text[token.lo]) {
 				space = " " // `& &x` must not become `&&x`
 			}
-			strings.write_string(&l.out, space)
+			write_out(&l, space)
 		} else if started {
-			strings.write_string(&l.out, horizontal(gap) != "" ? horizontal(gap) : " ")
+			write_out(&l, horizontal(gap) != "" ? horizontal(gap) : " ")
 		}
 		write_token(&l, token)
 		previous_hi = token.hi
 		started = true
 	}
-	strings.write_string(&l.out, l.newline)
+	write_out(&l, l.newline)
 	return strings.to_string(l.out)
 }
 
@@ -207,7 +210,7 @@ break_line :: proc(l: ^Layout, gap: string) -> bool {
 		return false
 	}
 	for _ in 0 ..< min(breaks, 2) {
-		strings.write_string(&l.out, l.newline)
+		write_out(l, l.newline)
 	}
 	l.line += 1
 	l.continued = false
@@ -294,7 +297,7 @@ write_token :: proc(l: ^Layout, token: Token) {
 	l.postfix = (token.kind == .Caret || token.kind == .Question) && operand
 	l.last_binary = binary_operator(token.kind) && (operand || !maybe_prefix(token.kind))
 	l.last_tight = l.last_binary && written_tight(l, token)
-	strings.write_string(&l.out, l.text[token.lo:token.hi])
+	write_out(l, l.text[token.lo:token.hi])
 	l.before_last = l.last.kind
 	l.last, l.last_line, l.last_continued = token, l.line, l.continued
 }
@@ -314,13 +317,21 @@ flat_when :: proc(l: ^Layout, brace: Token) -> bool {
 	return at < len(l.text) && at > int(brace.hi) && l.text[at - 1] == '\n'
 }
 
+// Appends to the output, keeping track of where its current line starts.
+@(private = "file")
+write_out :: proc(l: ^Layout, text: string) {
+	if at := strings.last_index_byte(text, '\n'); at >= 0 {
+		l.line_start = strings.builder_len(l.out) + at + 1
+	}
+	strings.write_string(&l.out, text)
+}
+
 // The tabs the line being written started with.
 @(private = "file")
 line_indent :: proc(l: ^Layout) -> int {
 	written := strings.to_string(l.out)
-	start := strings.last_index_byte(written, '\n') + 1
 	depth := 0
-	for start + depth < len(written) && written[start + depth] == '\t' {
+	for l.line_start + depth < len(written) && written[l.line_start + depth] == '\t' {
 		depth += 1
 	}
 	return depth

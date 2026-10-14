@@ -1,0 +1,24 @@
+package main;
+
+// design.md "where clauses": an instance whose `hook(copy)` its bound excludes
+// is move-only, and design.md "Lifecycle hooks and resource types" makes a
+// record holding one move-only too, however the two were first asked about.
+
+Bad :: struct($T: type) { value: int }
+
+impl Bad($T) {
+	copy_bad :: hook(copy) proc(self, allocator: Allocator)
+		-> Result(Bad(T), Allocator_Error) where false {
+		return .ok(Bad(T){self.value});
+	}
+}
+
+Outer :: struct { inner: Bad(int) }
+
+main :: proc() {
+	static_assert(!is_copyable(Outer));
+	static_assert(!is_copyable(Bad(int)));
+	a := Outer{Bad(int){1}};
+	b := a;
+	_ = b;
+}

@@ -1047,6 +1047,25 @@ intern_proc_type :: proc(
 		hash = (hash ~ u64(mode)) * HASH_MULTIPLIER
 	}
 	hash = (hash ~ u64(result)) * HASH_MULTIPLIER
+	// Every field the comparison below reads contributes, normalized the same
+	// way: same-shape procedures with distinct contracts would otherwise share
+	// one bucket and make each insertion scan and copy all of them.
+	hash = (hash ~ u64(proc_contract)) * HASH_MULTIPLIER
+	hash = (hash ~ u64(result_inout) ~ u64(c_vararg) << 1) * HASH_MULTIPLIER
+	for index in 0 ..< len(convention) {
+		hash = (hash ~ u64(convention[index])) * HASH_MULTIPLIER
+	}
+	for value, index in param_resets {
+		if value { hash = (hash ~ u64(index + 1)) * HASH_MULTIPLIER }
+	}
+	for value, index in param_by_ptr {
+		if value { hash = (hash ~ u64(index + 1) << 16) * HASH_MULTIPLIER }
+	}
+	for level, index in param_escapes {
+		if level != .Result {
+			hash = (hash ~ u64(index + 1) << 32 ~ u64(level)) * HASH_MULTIPLIER
+		}
+	}
 	bucket := c.proc_types[hash]
 	for candidate in bucket {
 		info := c.types[candidate]

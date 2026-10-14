@@ -15,15 +15,39 @@ changes are included in the review.
 Open engineering work, with source evidence and proposed bounded changes in the
 report:
 
-- [E01: complete procedure-type hash keys](compiler-review-2026-10-14.md#e01-complete-the-procedure-type-hash-key), avoiding guaranteed quadratic collision buckets and retained copies.
-- [E02: retain formatter line indentation](compiler-review-2026-10-14.md#e02-stop-rescanning-each-formatter-output-line), removing quadratic backward scans on long lines.
-- [E03: locate documentation comments by binary search](compiler-review-2026-10-14.md#e03-start-documentation-lookup-at-the-preceding-comment), skipping later comments without scanning them.
-- [E04: charge scalar CTFE sorting](compiler-review-2026-10-14.md#e04-charge-compile-time-scalar-sorting-against-its-budget), closing an uncharged quadratic loop.
 - [E05: bound composed AST depth](compiler-review-2026-10-14.md#e05-bound-ast-depth-across-parenthesized-expression-segments), preventing parenthesized segments from bypassing depth accounting and crashing later recursive stages.
 - [E06: cap carrier collection before allocation](compiler-review-2026-10-14.md#e06-apply-the-carrier-width-cap-during-collection), preserving the same conservative output without discarded path expansion.
 - [E07: schedule global effects by changed callees](compiler-review-2026-10-14.md#e07-schedule-global-effect-propagation-by-changed-callees), replacing repeated complete-program scans with caller propagation.
-- [E08: check active defers before panic classification](compiler-review-2026-10-14.md#e08-check-for-active-defers-before-classifying-statement-panic-behavior), avoiding unused recursive work.
 - [Concrete simplifications](compiler-review-2026-10-14.md#simplification-and-structure): remove duplicate CTFE buffers, repeated overload-candidate formation and independently maintained operand-joining rules; share owned-binding registration and use existing ownership facts for returns.
+
+### Does an unused allocator argument back an owning result?
+
+The review's G14 reads
+[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+as giving a direct call's owning result only the regions its body's summary
+names, so this would be accepted:
+
+```loke
+package main;
+import "core:mem";
+ignore :: proc(unused: Allocator) -> Box(int) { return box(1); }
+outer :: proc() -> Box(int) {
+    arena := mem.Arena.init();
+    return ignore(arena.allocator());
+}
+main :: proc() { _ = outer(); }
+```
+
+It is L0592 today: `prov_call_region` in [cfg_provenance.odin](src/cfg_provenance.odin)
+treats an owning result of any call passed an allocator as "built with" it.
+The corpus depends on that reading: `tests/err/m5b_regions.loke`,
+`m5b_provenance_regressions.loke`, `m5b_provider_activation.loke`, and
+`m7_destructure_regions.loke` use a `make_buffer(value, allocator)` that
+ignores its allocator as a constructor whose result the allocator backs.
+Following the body instead makes those rejections disappear. The signature
+reading lets a constructor start using its allocator without breaking its
+callers; the body reading accepts more programs. The spec sentence "an owning
+result built with an allocator parameter" fits both, so it should say which.
 
 Measure affected compilation/working-set workloads before and after performance
 fixes, as described in

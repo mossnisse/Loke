@@ -714,6 +714,13 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 		v.type = INVALID_TYPE
 		return true
 	}
+	// Compiler-defined, so it has no parameter to name or mode to accept
+	// (design.md "Parameters").
+	if !builtin_arguments_ok(k, v) {
+		check_single_expr(k, v.args[0].value)
+		v.type = INVALID_TYPE
+		return true
+	}
 	operand_type := check_single_expr(k, v.args[0].value)
 	pointee := underlying_info(k.c, operand_type)
 	if pointee == nil || pointee.kind != .Pointer {

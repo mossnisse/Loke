@@ -593,14 +593,16 @@ walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
 // make less live. A statement that cannot panic has no such path.
 @(private = "file")
 emit_unwind_branch :: proc(graph: ^Flow_Graph, stmt: Stmt) {
-	if graph.current == NO_BLOCK || graph.unwinding || stmt_cannot_panic(graph.k.c, stmt) {
+	if graph.current == NO_BLOCK || graph.unwinding {
 		return
 	}
+	// Checked before classifying the statement, which visits all of it and
+	// would make nested statements quadratic where no `defer` needs the path.
 	deferred := false
 	for action in graph.in_scope {
 		deferred ||= action.kind == .Defer
 	}
-	if !deferred {
+	if !deferred || stmt_cannot_panic(graph.k.c, stmt) {
 		return
 	}
 	// The block ends here, so the unwind sees the state before the statement.
@@ -694,7 +696,6 @@ stmt_cannot_panic :: proc(c: ^Compiler, stmt: Stmt) -> bool {
 
 // A type whose values copy as plain bits and whose built-in comparisons call
 // nothing.
-@(private = "file")
 type_is_panic_free_scalar :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch underlying_kind(c, type) {
 	case .Bool, .Int, .Float, .Rune, .Enum, .Pointer, .C_Pointer, .Raw_Pointer:

@@ -154,13 +154,21 @@ public_struct :: proc(c: ^Compiler, written: string, record: ^Type_Record) -> st
 doc_comment :: proc(c: ^Compiler, at: Span) -> string {
 	source := &c.sources[at.file]
 	text := source.text
-	first := len(source.comments)
-	for index := len(source.comments) - 1; index >= 0; index -= 1 {
-		comment := source.comments[index]
-		if comment.hi > at.lo {
-			continue
+	// The comments are in source order, so the first one ending after `at`
+	// starts the search without visiting the later ones.
+	low, high := 0, len(source.comments)
+	for low < high {
+		middle := (low + high) / 2
+		if source.comments[middle].hi > at.lo {
+			high = middle
+		} else {
+			low = middle + 1
 		}
-		below := at.lo if first == len(source.comments) else source.comments[first].lo
+	}
+	first := low
+	for index := low - 1; index >= 0; index -= 1 {
+		comment := source.comments[index]
+		below := at.lo if first == low else source.comments[first].lo
 		gap := text[comment.hi:below]
 		line_start := strings.last_index_byte(text[:comment.lo], '\n') + 1
 		if strings.count(gap, "\n") != 1 || strings.trim_space(gap) != "" ||
@@ -171,10 +179,7 @@ doc_comment :: proc(c: ^Compiler, at: Span) -> string {
 	}
 	lines := make([dynamic]string)
 	defer delete(lines)
-	for comment in source.comments[first:] {
-		if comment.hi > at.lo {
-			break
-		}
+	for comment in source.comments[first:low] {
 		written := text[comment.lo:comment.hi]
 		if strings.has_prefix(written, "//") {
 			written = written[2:]

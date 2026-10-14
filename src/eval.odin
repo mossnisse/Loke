@@ -1386,21 +1386,49 @@ map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Ev
 	return &m.elements[len(m.elements) - 1], true
 }
 
-// ponytail: insertion sort, for the small arrays constants build.
+// A stable merge sort, each comparison charged as a step, so a large
+// constant array costs its budget rather than an uncharged quadratic loop.
 @(private = "file")
-eval_sort :: proc(ev: ^Evaluator, elements: []Eval_Value, descending: bool) -> bool {
-	for i in 1 ..< len(elements) {
-		for j := i; j > 0; j -= 1 {
-			left, right := elements[j], elements[j - 1]
-			before, ok := eval_compare(ev, .Lt, descending ? right : left, descending ? left : right)
-			if !ok {
-				return false
+eval_sort :: proc(ev: ^Evaluator, span: Span, elements: []Eval_Value, descending: bool) -> bool {
+	if len(elements) < 2 {
+		return true
+	}
+	scratch, err := make([]Eval_Value, len(elements), ev.alloc)
+	if err != nil {
+		return false
+	}
+	from, to := elements, scratch
+	for width := 1; width < len(elements); width *= 2 {
+		for lo := 0; lo < len(elements); lo += 2 * width {
+			middle := min(lo + width, len(elements))
+			hi := min(lo + 2 * width, len(elements))
+			left, right, out := lo, middle, lo
+			for left < middle && right < hi {
+				if !eval_step(ev, span) {
+					return false
+				}
+				a, b := from[right], from[left]
+				// The right run's element goes first only when strictly before.
+				before, ok := eval_compare(ev, .Lt, descending ? b : a, descending ? a : b)
+				if !ok {
+					return false
+				}
+				if before {
+					to[out] = from[right]
+					right += 1
+				} else {
+					to[out] = from[left]
+					left += 1
+				}
+				out += 1
 			}
-			if !before {
-				break
-			}
-			elements[j], elements[j - 1] = elements[j - 1], elements[j]
+			copy(to[out:], from[left:middle])
+			copy(to[out + middle - left:], from[right:hi])
 		}
+		from, to = to, from
+	}
+	if raw_data(from) != raw_data(elements) {
+		copy(elements, from)
 	}
 	return true
 }
@@ -1503,7 +1531,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			)
 			return nil, false
 		}
-		if !eval_sort(ev, self.elements, symbol.container_op == .Reverse_Sort) {
+		if !eval_sort(ev, v.span, self.elements, symbol.container_op == .Reverse_Sort) {
 			return nil, false
 		}
 		return none, true

@@ -330,12 +330,25 @@ type_clone_disabled_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Typ
 	if info == nil {
 		return false
 	}
-	if info.provider || info.move_only {
+	if info.provider || info.move_only || has_excluded_copy_hook(c, info) {
 		return true
 	}
 	visiting[under] = true
 	defer delete_key(visiting, under)
 	return has_move_only_part_walk(c, info, visiting)
+}
+
+// The uncached part's `copy_excluded`, as `collect_hooks` would find it, so a
+// container's answer does not depend on which was asked about first.
+@(private = "file")
+has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	for member in info.members {
+		sym := symbol_of(c, member)
+		if sym != nil && sym.synth == .None && sym.hook == .Copy && sym.bound_excluded {
+			return true
+		}
+	}
+	return false
 }
 
 // ------------------------------------------------- generated copy members --

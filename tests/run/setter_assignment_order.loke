@@ -1,0 +1,59 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": a compound or multiple assignment through
+// `operator([]=)` reads its destination's indices before the right operand
+// or an earlier write can change them, and a constant value keeps its
+// destination's type (design.md "Implicit type conversions").
+
+Grid :: struct { cells: [2]int }
+
+impl Grid {
+	get :: operator([]) proc(self: Grid, i: int) -> int { return self.cells[i]; }
+	set :: operator([]=) proc(self: inout Grid, i: int, value: int) {
+		self.cells[i] = value;
+	}
+}
+
+Small :: struct { cells: [2]i32 }
+
+impl Small {
+	get :: operator([]) proc(self: Small, i: int) -> i32 { return self.cells[i]; }
+	set :: operator([]=) proc(self: inout Small, i: int, value: i32) {
+		self.cells[i] = value;
+	}
+}
+
+LIMIT :: 5;
+
+bump :: proc(i: inout int) -> int {
+	i = 1;
+	return 10;
+}
+
+bump_param :: proc(grid: inout Grid, i: inout int) {
+	grid[i] += bump(inout i);
+}
+
+main :: proc() {
+	grid := Grid{[2]int{1, 2}};
+	i := 0;
+	grid[i] += bump(inout i);
+	fmt.println(grid.cells[0], grid.cells[1], i);
+
+	j := 0;
+	bump_param(inout grid, inout j);
+	fmt.println(grid.cells[0], grid.cells[1], j);
+
+	// The earlier write to `k` does not redirect the later setter call.
+	k := 0;
+	k, grid[k] = 1, 30;
+	fmt.println(grid.cells[0], grid.cells[1], k);
+
+	small := Small{};
+	x: i32 = 0;
+	small[0], x = 1, 2;
+	small[1], x = -LIMIT + 1, x * 2;
+	fmt.println(small.cells[0], small.cells[1], x);
+}

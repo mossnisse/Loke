@@ -18,6 +18,8 @@ main :: proc() {
 			field.get(&mut h) = 5;
 			fmt.println(field.get(&t));
 			fmt.println(field.owner);
+			fmt.println(field.get(bogus = &h));
+			fmt.println(field.pointer(inout &h));
 		}
 	}
 	static_assert(fields_of(Holder)[1] != fields_of(Twin)[1]);

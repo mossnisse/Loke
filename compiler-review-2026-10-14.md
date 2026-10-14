@@ -21,17 +21,17 @@ reporting them again.
 | G01 | P2 | Package discovery | [Package spelling changes compiler-contributed members](known-gaps.md#g01-package-spelling-changes-compiler-contributed-members): uppercase directory spelling or a second collection alias removes library members. Compile/IR reproduction. |
 | G02 | P2 | Operator selection | [Built-in priority drifts](known-gaps.md#g02-defined-built-in-operators-can-be-replaced-by-user-overloads): signed shifts and mixed text expressions call user overloads. Runtime reproduction. |
 | G03 | P2 | Lexical scope | [Local operators leak](known-gaps.md#g03-local-operators-escape-their-scope-and-fail-to-shadow): a nested overload causes ambiguity inside and after its block. Compiler reproduction. |
-| G04 | P2 | Assignment lowering | [Compound setters reread indices](known-gaps.md#g04-compound-setters-reread-indices-after-right-hand-effects): right-hand mutation redirects the write. Runtime reproduction. |
-| G05 | P2 | Contextual typing | [Parallel setters lose destination context](known-gaps.md#g05-parallel-setters-lose-assignment-type-context): legal `i32` literal assignments become `int` and fail. Compiler reproduction. |
+| G04 | P2 | Assignment lowering (fixed) | Compound setters reread indices: right-hand mutation redirects the write. Runtime reproduction. |
+| G05 | P2 | Contextual typing (fixed) | Parallel setters lose destination context: legal `i32` literal assignments become `int` and fail. Compiler reproduction. |
 | G06 | P2 | CTFE iteration | [Borrowed bindings become copies](known-gaps.md#g06-compile-time-foreach-copies-ordinary-borrowed-bindings): the same procedure returns different pointer-equality results at compile time and runtime. Runtime comparison. |
 | G07 | P2 | CTFE reflection | [Field access lacks interpreter dispatch](known-gaps.md#g07-reflected-field-access-cannot-execute-at-compile-time): a valid constant read fails L0344. Compile/IR reproduction and runtime control. |
-| G08 | P2 | Reflection argument checks | [Descriptor calls discard labels and modes](known-gaps.md#g08-reflection-descriptor-calls-discard-argument-labels-and-modes): invalid `bogus = inout` is accepted. Runtime reproduction. |
+| G08 | P2 | Reflection argument checks (fixed) | Descriptor calls discard labels and modes: invalid `bogus = inout` is accepted. Runtime reproduction. |
 | G09 | P2 | Lifecycle tracking | [Owned scalar bindings bypass liveness](known-gaps.md#g09-owned-scalar-loop-and-switch-bindings-bypass-liveness-checks): moves/drops do not invalidate some loop and case bindings. Compile/IR reproduction. |
 | G10 | P2 | Return ownership | [Owned case payloads look borrowed](known-gaps.md#g10-owned-switch-payloads-are-treated-as-borrowed-returns): returning a move-only payload is rejected. Compiler reproduction. |
-| G11 | P2 | Managed-type classification | [Nested excluded copy hooks are missed](known-gaps.md#g11-nested-excluded-copy-hooks-do-not-make-their-container-move-only): a forbidden copy is accepted and fails at runtime; query order changes classification. Runtime reproduction. |
-| G12 | P1 | Callback result contracts | [Named global roots are omitted](known-gaps.md#g12-callback-substitution-loses-named-global-borrow-roots): incompatible callbacks substitute an unrelated borrow root. Accepted/control compile probes. |
+| G11 | P2 | Managed-type classification (fixed) | Nested excluded copy hooks are missed: a forbidden copy is accepted and fails at runtime; query order changes classification. Runtime reproduction. |
+| G12 | P1 | Callback result contracts (fixed) | Named global roots are omitted: incompatible callbacks substitute an unrelated borrow root. Accepted/control compile probes. |
 | G13 | P1 | Written allocator regions | [Pointer aliases hide stored owners](known-gaps.md#g13-local-pointer-aliases-hide-written-allocator-regions): a reset is accepted before subsequent access to freed storage. Accepted/control compile probes. |
-| G14 | P2 | Region precision | [Unused allocator arguments taint results](known-gaps.md#g14-direct-owning-results-inherit-unrelated-allocator-arguments): a valid return is rejected despite the precise direct-call summary. Rejected/accepted control probes. |
+| G14 | P2 | Region precision (moved to [open questions](open-questions.md#does-an-unused-allocator-argument-back-an-owning-result)) | Unused allocator arguments taint results; the corpus relies on that reading. A return the review considers valid is rejected despite the precise direct-call summary. Rejected/accepted control probes. |
 
 Priorities distinguish memory/lifetime or compilation robustness risks (P1),
 ordinary wrong results and valid-program rejection (P2), and bounded cleanup
@@ -41,6 +41,8 @@ identified explicitly; source-derived cost counts are not measured speedups.
 ## Optimization and robustness
 
 ### E01: Complete the procedure-type hash key
+
+Fixed after the review.
 
 [semantic.odin](src/semantic.odin), `intern_proc_type`, lines 1042–1102, compares
 `proc_contract` and effect fields but hashes only parameters, modes, and result.
@@ -57,6 +59,8 @@ without introducing another representation.
 
 ### E02: Stop rescanning each formatter output line
 
+Fixed after the review.
+
 [formatter.odin](src/formatter.odin), `line_indent`, lines 319–327, searches back
 to the last newline every time an opening bracket is emitted. Many statements
 on one line produce quadratic scanning. A focused `-fmt-check` measurement for
@@ -71,6 +75,8 @@ statistical benchmark or measured before/after implementation.
 
 ### E03: Start documentation lookup at the preceding comment
 
+Fixed after the review.
+
 [doc.odin](src/doc.odin), `doc_comment`, lines 154–173, begins at the final
 comment for every declaration and skips all later comments. N documented
 declarations cause roughly N(N−1)/2 skipped-comment visits.
@@ -82,6 +88,8 @@ already ordered comment spans, then walk only the immediately attached comment
 group. This benefits documentation generation and hover documentation.
 
 ### E04: Charge compile-time scalar sorting against its budget
+
+Fixed after the review.
 
 [eval.odin](src/eval.odin), `eval_sort`, lines 1391–1403, uses insertion sort
 without `eval_step` in the comparison loop. Scalar comparison does not charge a
@@ -130,6 +138,8 @@ is needed. Benchmark both declaration orders before implementing this change;
 the cost finding here is source-derived.
 
 ### E08: Check for active defers before classifying statement panic behavior
+
+Fixed after the review.
 
 [cfg.odin](src/cfg.odin), `emit_unwind_branch`, line 596, recursively classifies
 the statement before checking whether any `Defer` is active. Without defers,

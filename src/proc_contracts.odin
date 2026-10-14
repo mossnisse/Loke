@@ -79,6 +79,13 @@ check_proc_contracts :: proc(k: ^Checker) {
 					add_notef(k.c, check.span, "`%s` may leave an owner in `%s` from a region that contract does not",
 						contract_name(k.c, a.proc_contract), contract_param_name(k.c, a.proc_contract, written))
 				} else if have && known {
+					for global in actual.globals {
+						if !slice.contains(bound.globals, global) {
+							add_notef(k.c, check.span, "the result of `%s` may borrow the global `%s`, which that contract excludes",
+								contract_name(k.c, a.proc_contract), identifier_text(k.c, symbol_of(k.c, global).name))
+							break
+						}
+					}
 					for index in 0 ..< len(actual.params) {
 						if result_uses_param(actual, index) && !result_uses_param(bound, index) {
 							add_notef(k.c, check.span, "the result of `%s` may borrow `%s`, which that contract excludes",
@@ -205,6 +212,11 @@ add_contract_notes :: proc(c: ^Compiler, id: Symbol_Id) {
 dependency_contract_within :: proc(a, b: Result_Dependencies) -> bool {
 	if (a.static && !b.static) || (a.thread && !b.thread) ||
 	   (a.local && !b.local) || (a.unknown && !b.unknown) { return false }
+	// A named global is its own root (design.md "Global write effects"):
+	// `static` covers only storage no symbol names.
+	for global in a.globals {
+		if !slice.contains(b.globals, global) { return false }
+	}
 	for depths, index in a.param_loads {
 		if depths != 0 && (index >= len(b.param_loads) || depths & ~b.param_loads[index] != 0) { return false }
 	}

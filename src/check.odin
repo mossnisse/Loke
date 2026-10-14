@@ -3097,7 +3097,7 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 // so the receiver and indices are evaluated once, then the right operand
 // (design.md "Evaluation order"). A temporary is left out where evaluating the
 // expression twice is the same: a variable or field path receiver, and a
-// literal, implicit selector, name, or constant.
+// literal, implicit selector, constant, or name other than a scalar variable's.
 @(private = "file")
 lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index) -> bool {
 	op := compound_operator(s.op)
@@ -3150,7 +3150,7 @@ bind_index_place :: proc(
 	}
 	index_names = make([]string, len(target.indices), k.c.semantic_allocator)
 	for index, position in target.indices {
-		if !lowered_pure(index) {
+		if !lowered_pure(index) || names_scalar_variable(k, index) {
 			digits: [20]u8
 			index_names[position] = strings.concatenate(
 				{prefix, "index", strconv.write_int(digits[:], i64(position), 10)}, k.c.semantic_allocator,
@@ -3161,6 +3161,19 @@ bind_index_place :: proc(
 	return
 }
 
+// design.md "Evaluation order": an index naming a scalar variable is read
+// before the right operand or an earlier write can change it, so it is bound
+// too. Copying one costs nothing; any other variable is read where it is used.
+@(private = "file")
+names_scalar_variable :: proc(k: ^Checker, index: Expr) -> bool {
+	ident, is_ident := index.(^Expr_Ident)
+	if !is_ident {
+		return false
+	}
+	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	return sym != nil && (sym.kind == .Var || sym.kind == .Parameter) && type_is_panic_free_scalar(k.c, sym.type)
+}
+
 // design.md "Evaluation order": a multiple assignment with an `operator([]=)`
 // destination is checked as the block
 //
@@ -3169,7 +3182,7 @@ bind_index_place :: proc(
 // so every value is evaluated, then every destination's receiver and indices,
 // then each write, the setter call among them, from left to right. A
 // destination that is neither indexed nor an effect-free place is bound by
-// address.
+// address, and a constant value is written where it is used.
 @(private = "file")
 lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	any_setter := false
@@ -3188,6 +3201,12 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	for value, position in s.rhs {
 		if is_discard(s.lhs[position]) {
 			append(&stmts, lowered_assign(k, clone_expr(k.c, s.lhs[position]), clone_expr(k.c, value), s.op_span, span))
+			continue
+		}
+		// A constant has no effect to order and keeps its unfixed type for
+		// its destination to settle (design.md "Implicit type conversions").
+		if lowered_constant(k, value) {
+			values[position] = clone_expr(k.c, value)
 			continue
 		}
 		name := lowered_position_name(k, "assign$value", position, "")
@@ -3222,6 +3241,24 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	s.lowered = block
 	check_scoped_block(k, block)
 	return true
+}
+
+// A literal, implicit selector, or named constant, or an operator over them,
+// recognized before checking.
+@(private = "file")
+lowered_constant :: proc(k: ^Checker, e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Expr_Literal:
+		return true
+	case ^Expr_Ident:
+		sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, v)))
+		return sym != nil && (sym.kind == .Const || sym.kind == .Enum_Member)
+	case ^Expr_Unary:
+		return (v.op == .Minus || v.op == .Plus || v.op == .Tilde || v.op == .Not) && lowered_constant(k, v.operand)
+	case ^Expr_Binary:
+		return lowered_constant(k, v.lhs) && lowered_constant(k, v.rhs)
+	}
+	return is_implicit_selector(e)
 }
 
 @(private = "file")

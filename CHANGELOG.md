@@ -28,6 +28,30 @@ checklist.
   is still checked so editors can see its names and types; its syntax error
   stays the only diagnostic it produces. A missing name after `.` is no longer
   also reported as a missing member.
+- `-fmt` on a line holding many statements, `-doc` and hover documentation
+  for files with many documented declarations, and programs declaring many
+  procedures of the same shape no longer take time quadratic in their size.
+  A compile-time `sort` is a merge sort charged against the evaluation step
+  budget, so sorting thousands of constants stays fast.
+
+### Fixed
+
+- A compound assignment through `operator([]=)` reads an index naming a
+  scalar variable before its right operand, and a multiple assignment before
+  any write (design.md "Evaluation order"): `grid[i] += bump(inout i)` wrote
+  to the element `bump` moved `i` to. A literal value in a multiple assignment
+  through a setter takes its destination's type, so `grid[0], x = 1, 2` with
+  `i32` destinations is no longer `L0310`.
+- A `meta.Field` descriptor's `get` and `pointer` take one positional value
+  argument: `field.get(bogus = inout &value)` was accepted, and is now `L0371`
+  or `L0370`.
+- A record holding an instance whose `hook(copy)` its `where` clause excludes
+  is move-only whichever was asked about first (design.md "where clauses"),
+  so copying it is `L0503` rather than a runtime abort.
+- A callback assigned in place of one whose result borrows a global must
+  borrow no other global (design.md "Procedure result contracts"):
+  `f := get_a; f = get_b;` with `get_b` returning `&b` let a later write to `b`
+  pass while `f()`'s result still pointed at it. It is now `L0645`.
 
 ## [0.8.0] - 2026-10-13
 
