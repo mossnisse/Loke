@@ -19,6 +19,8 @@ checklist.
   the layout `lokec -fmt` writes, and the `loke.documentation` command
   returns the page `lokec -doc` prints, both from unsaved text. See
   [Language server](compiler-guide.md#language-server).
+- `editors/vscode`, an extension for VS Code and VSCodium that highlights Loke
+  source and starts `loke-lsp`. See [its README](editors/vscode/README.md).
 
 ### Changed
 

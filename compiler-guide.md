@@ -230,6 +230,9 @@ link step.
 server for editors. Keep it beside `lokec.exe`, `base/`, and `core/`; it finds
 the bundled library the same way. An editor starts it with no arguments and
 talks to it on stdin and stdout. `loke-lsp -version` prints its version.
+For VS Code and VSCodium, [editors/vscode](editors/vscode/README.md) holds an
+extension that starts the server and highlights Loke source; its README says
+how to build and install it.
 
 The server publishes diagnostics for open `.loke` documents as you type,
 including unsaved edits. Each one is a diagnostic `lokec` reports for the same

@@ -1,0 +1,198 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Loke",
+  "scopeName": "source.loke",
+  "comment": "Keywords, contextual ones included, follow grammar.md \"Keywords\"; types, operations, and constants follow design.md \"Predeclared names\". tests/editor_test.odin keeps the lists in step.",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#attributes" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#package" },
+    { "include": "#import" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#builtins" },
+    { "include": "#calls" },
+    { "include": "#names" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.loke", "match": "//.*$" },
+        { "include": "#block-comment" }
+      ]
+    },
+    "block-comment": {
+      "comment": "Block comments nest.",
+      "name": "comment.block.loke",
+      "begin": "/\\*",
+      "end": "\\*/",
+      "patterns": [ { "include": "#block-comment" } ]
+    },
+    "attributes": {
+      "begin": "(@)(\\()",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.annotation.loke" },
+        "2": { "name": "punctuation.definition.annotation.begin.loke" }
+      },
+      "end": "\\)",
+      "endCaptures": { "0": { "name": "punctuation.definition.annotation.end.loke" } },
+      "name": "meta.attribute.loke",
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        { "include": "#constants" },
+        { "match": "(?<![=\\w.])[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*", "name": "entity.other.attribute-name.loke" },
+        { "include": "#nested-parens" },
+        { "include": "#operators" },
+        { "include": "#punctuation" }
+      ]
+    },
+    "nested-parens": {
+      "begin": "\\(",
+      "end": "\\)",
+      "patterns": [ { "include": "$self" } ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.loke",
+          "begin": "\"",
+          "end": "\"|$",
+          "patterns": [ { "include": "#escapes" } ]
+        },
+        {
+          "name": "string.quoted.raw.loke",
+          "begin": "`",
+          "end": "`"
+        },
+        {
+          "name": "string.quoted.single.loke",
+          "match": "'(?:[^'\\\\\\n]|\\\\(?:[abefnrtv\\\\\"']|x\\h{2}|u\\h{4}|U\\h{8}))'",
+          "captures": { "0": { "patterns": [ { "include": "#escapes" } ] } }
+        }
+      ]
+    },
+    "escapes": {
+      "patterns": [
+        { "name": "constant.character.escape.loke", "match": "\\\\(?:[abefnrtv\\\\\"']|x\\h{2}|u\\h{4}|U\\h{8})" },
+        { "name": "invalid.illegal.escape.loke", "match": "\\\\." }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.binary.loke", "match": "\\b0b[01_]+\\b" },
+        { "name": "constant.numeric.octal.loke", "match": "\\b0o[0-7_]+\\b" },
+        { "name": "constant.numeric.hex.loke", "match": "\\b0x[0-9A-Fa-f_]+\\b" },
+        { "name": "constant.numeric.float.loke", "match": "\\b[0-9][0-9_]*(?:\\.[0-9][0-9_]*)?[eE][+-]?[0-9]+\\b" },
+        { "name": "constant.numeric.float.loke", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*\\b" },
+        { "name": "constant.numeric.integer.loke", "match": "\\b[0-9][0-9_]*\\b" }
+      ]
+    },
+    "package": {
+      "match": "\\b(package)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.package.loke" },
+        "2": { "name": "entity.name.namespace.loke" }
+      }
+    },
+    "import": {
+      "match": "\\b(import)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+      "captures": {
+        "1": { "name": "keyword.other.import.loke" },
+        "2": { "name": "entity.name.namespace.loke" }
+      }
+    },
+    "declarations": {
+      "comment": "`::` is two tokens, so spaces may separate the colons.",
+      "patterns": [
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(:)\\s*(:)\\s*(?=proc\\b)",
+          "captures": {
+            "1": { "name": "entity.name.function.loke" },
+            "2": { "name": "keyword.operator.declaration.loke" },
+            "3": { "name": "keyword.operator.declaration.loke" }
+          }
+        },
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(:)\\s*(:)\\s*(?=(?:struct|enum|union|interface|distinct|map|dynamic|dyn)\\b)",
+          "captures": {
+            "1": { "name": "entity.name.type.loke" },
+            "2": { "name": "keyword.operator.declaration.loke" },
+            "3": { "name": "keyword.operator.declaration.loke" }
+          }
+        },
+        {
+          "match": "\\b(impl)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.impl.loke" },
+            "2": { "name": "entity.name.type.loke" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.loke", "match": "\\b(?:if|else|for|foreach|in|switch|case|default|break|continue|return|defer|errdefer|when|or_else|or_return)\\b" },
+        { "name": "storage.type.loke", "match": "\\b(?:proc|struct|enum|union|interface|map|dynamic|dyn|distinct|type|impl|operator|hook|foreign)\\b" },
+        { "name": "storage.modifier.loke", "match": "\\b(?:mut|inout|move|move_only|via|where)\\b" },
+        { "name": "storage.modifier.loke", "match": "(?<=:)\\s*\\b(?:static|thread_local)\\b" },
+        { "name": "storage.modifier.loke", "match": "\\busing\\b(?=\\s+[A-Za-z_])" },
+        { "name": "variable.language.self.loke", "match": "\\bself\\b" }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.loke", "match": "\\b(?:true|false|nil)\\b" },
+        { "name": "constant.language.uninitialized.loke", "match": "---" },
+        { "name": "support.constant.loke", "match": "\\b(?:LOKE_ARCH|LOKE_OS|LOKE_ENDIAN|LOKE_BUILD_MODE|LOKE_DEBUG|LOKE_OPTIMIZATION_MODE|LOKE_LOG_LEVEL|LOKE_VENDOR|LOKE_VERSION)\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "support.type.primitive.loke", "match": "\\b(?:bool|int|i8|i16|i32|i64|i128|uint|u8|u16|u32|u64|u128|uintptr|byte|f16|f32|f64|rune|string|string_view|cstring_view|rawptr|typeid|any_view)\\b" },
+        { "name": "support.type.loke", "match": "\\b(?:Allocator|Allocator_Error|Unit|Option|Result|Range|Simd|Box|Shared|Weak)\\b" },
+        { "name": "entity.name.type.parameter.loke", "match": "\\$[A-Za-z_][A-Za-z0-9_]*" }
+      ]
+    },
+    "builtins": {
+      "name": "support.function.builtin.loke",
+      "match": "\\b(?:assert|panic|static_assert|build_config|source_location|caller_location|size_of|align_of|offset_of|is_copyable|type_of|typeid_of|type_info_of|fields_of|enum_values_of|make|free_all|drop|exchange|box|try_box|shared|try_shared)\\b(?=\\s*\\()"
+    },
+    "calls": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": { "1": { "name": "entity.name.function.call.loke" } }
+    },
+    "names": {
+      "comment": "Loke writes types as `Type_Name` and constants as `NAME`.",
+      "patterns": [
+        { "name": "constant.other.loke", "match": "\\b[A-Z][A-Z0-9]*_[A-Z0-9_]*\\b|\\b[A-Z][A-Z0-9]+\\b" },
+        { "name": "entity.name.type.loke", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.loke", "match": "->" },
+        { "name": "keyword.operator.range.loke", "match": "\\.\\.[=<]?" },
+        { "name": "keyword.operator.assignment.loke", "match": "(?:&~|<<|>>|[-+*/%|~&])?=(?!=)" },
+        { "name": "keyword.operator.comparison.loke", "match": "==|!=|<=|>=|<|>" },
+        { "name": "keyword.operator.logical.loke", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.loke", "match": "&~|<<|>>|[-+*/%&|~^?$]" },
+        { "name": "keyword.operator.declaration.loke", "match": ":" }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.terminator.loke", "match": ";" },
+        { "name": "punctuation.separator.loke", "match": "," },
+        { "name": "punctuation.accessor.loke", "match": "\\." }
+      ]
+    }
+  }
+}

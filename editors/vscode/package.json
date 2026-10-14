@@ -1,0 +1,80 @@
+{
+  "name": "loke",
+  "displayName": "Loke",
+  "description": "Loke highlighting, and the loke-lsp language server for diagnostics, navigation, editing, formatting, and documentation.",
+  "publisher": "loke",
+  "version": "0.1.0",
+  "license": "Zlib",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mossnisse/Loke.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:loke"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "loke",
+        "aliases": [
+          "Loke"
+        ],
+        "extensions": [
+          ".loke"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "loke",
+        "scopeName": "source.loke",
+        "path": "./syntaxes/loke.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "loke.showDocumentation",
+        "title": "Loke: Show Documentation"
+      }
+    ],
+    "configuration": {
+      "title": "Loke",
+      "properties": {
+        "loke.serverPath": {
+          "type": "string",
+          "default": "loke-lsp",
+          "description": "The loke-lsp executable: an absolute path, or a name found on PATH. Keep it beside base/ and core/. Takes effect after reloading the window."
+        },
+        "loke.collections": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Collections, each as `lokec -collection` takes it, such as \"shapes=../shapes\". A relative path is relative to the first workspace folder. Takes effect after reloading the window."
+        },
+        "loke.defines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Defines, each as `lokec -define` takes it, such as \"VERBOSE=true\". Takes effect after reloading the window."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

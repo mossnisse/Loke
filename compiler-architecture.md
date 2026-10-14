@@ -796,6 +796,13 @@ error such as a missing `main` does not block the page, and the root's
 checkpoints stay as they are. The page is built in the request's temporary
 memory because `document_project` frees little.
 
+`editors/vscode/` is a thin client for VS Code and VSCodium: it starts the
+server, passes its settings as `initializationOptions`, and shows the page the
+documentation command returns. Its TextMate grammar highlights from the text
+alone, naming the keywords and predeclared names; `tests/editor_test.odin`
+compares those lists with grammar.md "Keywords" and design.md "Predeclared
+names" in both directions, so a new keyword or built-in also needs the grammar.
+
 `lsp/server_test.odin` drives the server in process, choosing when checks run
 relative to edits, and compares results after rapid edits and disk changes with
 a fresh batch check. It compares formatting with `format_files` and the
