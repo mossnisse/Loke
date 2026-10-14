@@ -159,6 +159,14 @@ function Wait-Lsp($server, [scriptblock]$done) {
     }
 }
 
+# A reply that reports an error, or whose result `$valid` rejects, fails the
+# measurement instead of counting as a sample. `@($null).Count` is 1, so a
+# check on items has to look at the items themselves.
+function Assert-LspReply($reply, [string]$what, [scriptblock]$valid) {
+    if ($null -ne $reply.error) { throw "loke-lsp answered $what with error $($reply.error.code): $($reply.error.message)" }
+    if (-not (& $valid $reply.result)) { throw "loke-lsp answered $what without the expected result" }
+}
+
 function Get-Median([double[]]$values) {
     [math]::Round(($values | Sort-Object)[[math]::Floor($values.Count / 2)])
 }
@@ -177,16 +185,20 @@ function Measure-Lsp {
     $server = Start-Lsp
     try {
         Send-Lsp $server @{ id = 1; method = 'initialize'; params = @{ capabilities = @{} } }
-        $null = Wait-Lsp $server { param($m) $m.id -eq 1 }
+        $reply = Wait-Lsp $server { param($m) $m.id -eq 1 }
+        Assert-LspReply $reply 'initialize' { param($r) $null -ne $r.capabilities.completionProvider }
         Send-Lsp $server @{ method = 'initialized'; params = @{} }
         $clock = [Diagnostics.Stopwatch]::StartNew()
         Send-Lsp $server @{ method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $mainUri; languageId = 'loke'; version = 1; text = $main } } }
         Send-Lsp $server @{ id = 2; method = 'textDocument/documentSymbol'; params = @{ textDocument = @{ uri = $mainUri } } }
-        $null = Wait-Lsp $server { param($m) $m.id -eq 2 }
+        $reply = Wait-Lsp $server { param($m) $m.id -eq 2 }
         $open = $clock.Elapsed.TotalMilliseconds
+        $symbols = { param($r) @($r | Where-Object { $null -ne $_.name }).Count -gt 0 }
+        Assert-LspReply $reply 'the document symbols of main.loke' $symbols
         Send-Lsp $server @{ method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $lexerUri; languageId = 'loke'; version = 1; text = $lexer } } }
         Send-Lsp $server @{ id = 3; method = 'textDocument/documentSymbol'; params = @{ textDocument = @{ uri = $lexerUri } } }
-        $null = Wait-Lsp $server { param($m) $m.id -eq 3 }
+        $reply = Wait-Lsp $server { param($m) $m.id -eq 3 }
+        Assert-LspReply $reply 'the document symbols of lexer.loke' $symbols
 
         # Each edit adds or removes an error, so each is answered by a publication.
         $versions = @{ $mainUri = 1; $lexerUri = 1 }
@@ -212,12 +224,14 @@ function Measure-Lsp {
             Send-Lsp $server @{ method = 'textDocument/didChange'; params = @{ textDocument = @{ uri = $mainUri; version = $versions[$mainUri] }; contentChanges = @(@{ text = $main.Insert($at, "`t$operand.`n") }) } }
             Send-Lsp $server @{ id = 100 + $i; method = 'textDocument/completion'; params = @{ textDocument = @{ uri = $mainUri }; position = @{ line = $line; character = $operand.Length + 2 } } }
             $reply = Wait-Lsp $server { param($m) $m.id -eq 100 + $i }
-            if (@($reply.result.items).Count -eq 0) { throw "loke-lsp offered nothing after ``$operand.``" }
-            $clock.Elapsed.TotalMilliseconds
+            $elapsed = $clock.Elapsed.TotalMilliseconds
+            Assert-LspReply $reply "completion after ``$operand.``" { param($r) @($r.items | Where-Object { $null -ne $_.label }).Count -gt 0 }
+            $elapsed
         }
 
         Send-Lsp $server @{ id = 4; method = 'shutdown' }
-        $null = Wait-Lsp $server { param($m) $m.id -eq 4 }
+        $reply = Wait-Lsp $server { param($m) $m.id -eq 4 }
+        Assert-LspReply $reply 'shutdown' { param($r) $null -eq $r }
         Send-Lsp $server @{ method = 'exit' }
         if (-not $server.Process.WaitForExit(30000)) { throw 'loke-lsp did not exit' }
         [pscustomobject][ordered]@{

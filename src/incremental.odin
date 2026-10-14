@@ -288,27 +288,40 @@ try_incremental_check :: proc(s: ^Compilation_Session, input: string, documentat
 	virtual.arena_destroy(&s.scratch_arena)
 	context.temp_allocator = virtual.arena_allocator(&s.scratch_arena)
 
+	Replacement :: struct { pkg: ^Package, index: int }
+	replacements := make([dynamic]Replacement, context.temp_allocator)
+	edited := make(map[Package_Id]bool, context.temp_allocator)
 	for id in cache.order[first:] {
 		pkg := package_of(c, id)
-		edited := false
 		for file, index in pkg.files {
-			text := texts[file.file]
-			if text == c.sources[file.file].text { continue }
-			edited = true
-			path := c.sources[file.file].path
-			new_index := add_source(c, path, strings.clone(text, c.semantic_allocator))
-			c.sources[file.file] = c.sources[new_index]
-			pop(&c.sources)
-			tokens := lex(c, file.file)
-			replacement := new(File, c.semantic_allocator)
-			replacement^ = parse(c, file.file, tokens, c.semantic_allocator)
-			delete(tokens)
-			pkg.files[index] = replacement
-			for old, parsed_index in c.parsed_files {
-				if old == file { c.parsed_files[parsed_index] = replacement; break }
-			}
+			if texts[file.file] == c.sources[file.file].text { continue }
+			append(&replacements, Replacement{pkg, index})
+			edited[id] = true
 		}
-		if edited {
+	}
+	// A batch parses each file as it loads it, so syntax diagnostics follow the
+	// loading order, which source indices record, not the dependency order.
+	slice.sort_by(replacements[:], proc(a, b: Replacement) -> bool {
+		return a.pkg.files[a.index].file < b.pkg.files[b.index].file
+	})
+	for entry in replacements {
+		file := entry.pkg.files[entry.index]
+		path := c.sources[file.file].path
+		new_index := add_source(c, path, strings.clone(texts[file.file], c.semantic_allocator))
+		c.sources[file.file] = c.sources[new_index]
+		pop(&c.sources)
+		tokens := lex(c, file.file)
+		replacement := new(File, c.semantic_allocator)
+		replacement^ = parse(c, file.file, tokens, c.semantic_allocator)
+		delete(tokens)
+		entry.pkg.files[entry.index] = replacement
+		for old, parsed_index in c.parsed_files {
+			if old == file { c.parsed_files[parsed_index] = replacement; break }
+		}
+	}
+	for id in cache.order[first:] {
+		pkg := package_of(c, id)
+		if edited[id] {
 			clear(&pkg.imports)
 			pkg.bound_aliases = 0
 			// Unchanged files in an edited multi-file package also bind again.

@@ -302,3 +302,27 @@ else { size :: proc() -> int { return 0; } }`
 	expect_session_matches_fresh(t, &s, path, config, true, documentation = true)
 	testing.expect(t, slice.contains(session_check_stats(&s).reused_packages, lib_id))
 }
+
+// Syntax errors in several edited packages keep a fresh check's order: the
+// loading order, which puts the root before what it imports.
+@(test)
+session_incremental_syntax_errors_follow_loading_order :: proc(t: ^testing.T) {
+	root := session_fixture(t, "incremental-syntax-order")
+	if root == "" { return }
+	defer os.remove_all(root)
+	if !testing.expect(t, os.make_directory_all(join_path({root, "dep"}, context.temp_allocator)) == nil) { return }
+	path := join_path({root, "main.loke"}, context.temp_allocator)
+	dep := join_path({root, "dep", "dep.loke"}, context.temp_allocator)
+	if !write_session_source(t, path, `package main; import "dep"; main :: proc() { _ = dep.answer(); }`) ||
+	   !write_session_source(t, dep, "package dep; @(public) answer :: proc() -> int { return 1; }") { return }
+	config := session_test_config()
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, config)) { return }
+	expect_session_matches_fresh(t, &s, path, config, true)
+	if !write_session_source(t, path, `package main; import "dep"; main :: proc() { _ = ; }`) ||
+	   !write_session_source(t, dep, "package dep; @(public) answer :: proc() -> int { _ = ; return 1; }") { return }
+	expect_session_matches_fresh(t, &s, path, config, false)
+	testing.expect(t, len(session_check_stats(&s).reused_packages) > 0, "the edit checked fully")
+	testing.expect_value(t, len(s.compiler.diagnostics), 2)
+}

@@ -641,7 +641,8 @@ and registries rather than trusting unchanged signatures.
 
 After restoration, compare every suffix source with current inputs, including
 edits made since older checkpoints. Reparse changes at their original source
-indices and rebind imports to refresh spans. Keep the checkpoint before those
+indices, in that loading order as a batch parses them, and rebind imports to
+refresh spans. Keep the checkpoint before those
 replacement allocations, discard/rebuild later checkpoints, reclaim query and
 emission storage, and issue a new snapshot ID.
 
