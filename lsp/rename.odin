@@ -156,6 +156,11 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	// a value or type, so scope cannot capture them; their type's other
 	// members can.
 	member := target.symbol.kind == .Field || target.symbol.kind == .Enum_Member || target.symbol.owner.id != lokec.INVALID_TYPE
+	// design.md "Receiver forms": a first parameter named `self` is what
+	// makes a procedure a method.
+	if target.symbol.kind == .Parameter && (old == "self" || new_name == "self") {
+		return "", "`self` marks a method's receiver, so a parameter cannot be renamed to or from it."
+	}
 	edits := make([dynamic]Edit, context.temp_allocator)
 	seen := make(map[string]bool, context.temp_allocator)
 	for _, root in s.roots {
@@ -185,6 +190,17 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 			}
 			if member {
 				if conflict := member_conflict(rs, root_snapshot, handle, new_name); conflict != "" { return "", conflict }
+				// A method the compiler or an interface reaches by name has
+				// uses no reference records, such as `value()` for `call`.
+				implicit: []string
+				if target.symbol.kind == .Proc || target.symbol.kind == .Proc_Group {
+					implicit, _ = lokec.query_implicit_names(rs, root_snapshot, context.temp_allocator)
+				}
+				for name in implicit {
+					if name == old || name == new_name {
+						return "", fmt.tprintf("`%s` is a member name the compiler or an interface looks up by name, so renaming `%s` could change uses no reference records.", name, old)
+					}
+				}
 			}
 		}
 		for source_file := u32(0); ; source_file += 1 {
@@ -207,11 +223,26 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 						return "", fmt.tprintf("`%s` at %s has no binding the compiler recorded, as in an inactive `when` branch, a generic that is never instantiated, or an interface slot, so rename cannot tell what it names.", old, where_written)
 					}
 					if !same_binding(rs, at.symbol, target) { continue }
+					qualified := index > 0 && tokens[index - 1].kind == .Period
 					// Through a package, a selector reads that package's
-					// declarations, not this scope.
-					if !member && (index == 0 || tokens[index - 1].kind != .Period) {
+					// declarations, not this scope. A public extension is also
+					// one of its package's names.
+					if (!member && !qualified) || (member && !qualified && reaches(rs, root_snapshot, source_file, token.lo, target, package_only = true)) {
 						if other, visible := visible_named(rs, root_snapshot, source_file, token.lo, new_name); visible {
 							return "", fmt.tprintf("`%s` already names %s where `%s` appears, at %s.", new_name, describe(rs, other), old, where_written)
+						}
+					}
+					// design.md "Promoted struct fields": the operand's own
+					// fields, promoted fields, and methods share one lookup.
+					if member && qualified && index >= 2 {
+						if operand, typed := lokec.query_at(rs, root_snapshot, source_file, tokens[index - 2].hi - 1); typed {
+							if members, listed := lokec.query_members(rs, operand, source_file, context.temp_allocator); listed {
+								for candidate in members {
+									if candidate.name == new_name {
+										return "", fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, new_name, new_name)
+									}
+								}
+							}
 						}
 					}
 					identity := fmt.tprintf("%s\x00%d", path_key(source.path, context.temp_allocator), token.lo)
@@ -219,8 +250,10 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 					seen[identity] = true
 					path, range, _ := place(s, rs, root_snapshot, at.location, context.temp_allocator)
 					append(&edits, Edit{path_key(path, context.temp_allocator), path, token.lo, range})
-				} else if resolved && same && is_redeclaration(rs, at, handle) {
-					return "", fmt.tprintf("`%s` is already declared in the same scope, at %s.", new_name, where_written)
+				} else if resolved && same {
+					if conflict := local_conflict(rs, root_snapshot, source_file, at, handle, target); conflict != "" {
+						return "", fmt.tprintf("`%s` is declared at %s, %s.", new_name, where_written, conflict)
+					}
 				}
 			}
 		}
@@ -278,18 +311,38 @@ visible_named :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compi
 	return {}, false
 }
 
-// Whether `at`, written with the new name, declares a local in the renamed
-// one's own scope. One declared before the renamed binding is visible at its
-// declaration, which the use check refuses. Between them, the two checks
-// cover capture: a binding the renamed one would shadow at some use is either
-// declared before it in an enclosing scope, so visible where it is declared,
-// or later in its own scope.
+// Why a local declared with the new name at `at` would conflict once the
+// renamed local takes that name, or "". Where the renamed one is visible, the
+// declaration either shares its scope, a redeclaration, or is nested in it,
+// and design.md "Variable declarations" forbids a local shadowing an outer
+// variable or parameter. One declared before the renamed binding is instead
+// visible at its declaration, which the use check refuses. Between them, the
+// two checks cover capture: a binding the renamed one would shadow at some use
+// is declared before it in an enclosing scope or later in its own.
 @(private = "file")
-is_redeclaration :: proc(session: ^lokec.Compilation_Session, at: lokec.Query_Position, renamed: lokec.Symbol_Handle) -> bool {
+local_conflict :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, at: lokec.Query_Position, renamed: lokec.Symbol_Handle, target: Target) -> string {
 	symbol, known := lokec.query_symbol(session, at.symbol)
-	target, found := lokec.query_symbol(session, renamed)
-	if !known || !found || symbol.definition.span != at.location.span { return false }
-	return target.scope.span.file != lokec.NO_FILE && symbol.scope.span == target.scope.span
+	outer, found := lokec.query_symbol(session, renamed)
+	if !known || !found || symbol.definition.span != at.location.span { return "" }
+	if outer.scope.span.file == lokec.NO_FILE || symbol.scope.span.file == lokec.NO_FILE { return "" }
+	if !reaches(session, snapshot, file, at.location.span.lo, target) { return "" }
+	if symbol.scope.span == outer.scope.span { return "in the same scope" }
+	if outer.kind == .Var || outer.kind == .Parameter { return fmt.tprintf("where the local `%s` is visible, and a local cannot shadow another", target.symbol.name) }
+	return ""
+}
+
+// Whether the renamed binding is what its own name reaches at the offset,
+// with `package_only` as one of its package's names rather than a local.
+@(private = "file")
+reaches :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file, offset: u32, target: Target, package_only := false) -> bool {
+	visible, found := lokec.query_visible(session, snapshot, file, offset, context.temp_allocator)
+	if !found { return false }
+	for handle in visible {
+		symbol, known := lokec.query_symbol(session, handle)
+		if !known || symbol.name != target.symbol.name { continue }
+		return same_binding(session, handle, target) && (!package_only || symbol.scope.span.file == lokec.NO_FILE)
+	}
+	return false
 }
 
 // Whether the member's type already has a member spelled `new_name`, as its

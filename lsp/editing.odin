@@ -45,9 +45,10 @@ EMPTY_COMPLETION :: `{"isIncomplete":false,"items":[]}`
 // after a `.` whose operand is unknown.
 completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> string {
 	offset := u32(position_to_offset(text, position, s.utf8_positions))
-	tokens := lex_text(text)
+	comments := make([dynamic]lokec.Span, context.temp_allocator)
+	tokens := lex_text(text, &comments)
 	defer delete(tokens)
-	if inside_comment_or_literal(text, tokens, offset) { return EMPTY_COMPLETION }
+	if inside_comment_or_literal(text, tokens, comments[:], offset) { return EMPTY_COMPLETION }
 	start := offset
 	for start > 0 && is_name_byte(text[start - 1]) { start -= 1 }
 	before := -1
@@ -168,9 +169,10 @@ symbol_detail :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_S
 // method call's receiver is not one of them.
 signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position) -> string {
 	offset := u32(position_to_offset(text, position, s.utf8_positions))
-	tokens := lex_text(text)
+	comments := make([dynamic]lokec.Span, context.temp_allocator)
+	tokens := lex_text(text, &comments)
 	defer delete(tokens)
-	if inside_comment_or_literal(text, tokens, offset) { return "null" }
+	if inside_comment_or_literal(text, tokens, comments[:], offset) { return "null" }
 	open := make([dynamic]int, context.temp_allocator)
 	for token, index in tokens {
 		if token.lo >= offset { break }
@@ -277,21 +279,22 @@ write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, p
 	}
 }
 
-// The compiler's own tokens for a text: comments are skipped, and literals
-// are whole.
-lex_text :: proc(text: string) -> []lokec.Token {
+// The compiler's own tokens for a text: literals are whole, and comments are
+// left out, their spans appended to `comments` when it is given.
+lex_text :: proc(text: string, comments: ^[dynamic]lokec.Span = nil) -> []lokec.Token {
 	scratch: lokec.Compiler
 	defer lokec.destroy_compilation(&scratch)
 	append(&scratch.sources, lokec.Source{text = text})
-	return lokec.lex(&scratch, 0)
+	tokens := lokec.lex(&scratch, 0)
+	if comments != nil { append(comments, ..scratch.sources[0].comments[:]) }
+	return tokens
 }
 
-// Whether the offset falls inside a string or rune literal, or a comment: in
-// the text between two tokens after a `//` on its line, or after a `/*` that
-// is not closed before it.
+// Whether the offset falls inside a string or rune literal, or a comment as
+// the lexer found it, nesting included. The end of a `//` comment, and of a
+// block comment the text never closes, is still inside it.
 @(private = "file")
-inside_comment_or_literal :: proc(text: string, tokens: []lokec.Token, offset: u32) -> bool {
-	gap := u32(0)
+inside_comment_or_literal :: proc(text: string, tokens: []lokec.Token, comments: []lokec.Span, offset: u32) -> bool {
 	for token in tokens {
 		if token.lo >= offset || token.kind == .EOF { break }
 		if offset < token.hi {
@@ -300,10 +303,12 @@ inside_comment_or_literal :: proc(text: string, tokens: []lokec.Token, offset: u
 			}
 			return false
 		}
-		gap = token.hi
 	}
-	between := text[gap:min(int(offset), len(text))]
-	if block := strings.last_index(between, "/*"); block >= 0 && !strings.contains(between[block:], "*/") { return true }
-	line := between[max(strings.last_index_byte(between, '\n'), 0):]
-	return strings.contains(line, "//")
+	for comment in comments {
+		if comment.lo >= offset { break }
+		written := text[comment.lo:comment.hi]
+		open_ended := strings.has_prefix(written, "//") || !strings.has_suffix(written, "*/")
+		if offset < comment.hi || (offset == comment.hi && open_ended) { return true }
+	}
+	return false
 }

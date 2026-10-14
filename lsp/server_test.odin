@@ -1039,8 +1039,6 @@ rename_changes_every_use_or_refuses :: proc(t: ^testing.T) {
 	// A parameter with its named argument; a field with its literal key.
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "factor: int", "scale"), "app1/main.loke:4")
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "x, y", "z"), "app1/main.loke:4")
-	// A name used only in a block that ended is free.
-	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "value := lib", "other"), "app1/main.loke:2")
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "value := lib", "value"), "")
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "Point ::", "Spot"), "app1/main.loke:5")
 	// The package clause and the import alias spelled `lib` name packages.
@@ -1048,8 +1046,10 @@ rename_changes_every_use_or_refuses :: proc(t: ^testing.T) {
 
 	refusals := []struct { needle, name, message: string } {
 		{"other := 2", "value", "`value` already names"},
-		{"other := 2", "extra", "`extra` is already declared in the same scope"},
-		{"value := lib", "p", "`p` is already declared in the same scope"},
+		{"other := 2", "extra", "in the same scope"},
+		// The inner `other` would shadow the renamed outer local.
+		{"value := lib", "other", "a local cannot shadow another"},
+		{"value := lib", "p", "in the same scope"},
 		{"value := lib", "int", "the predeclared `int`"},
 		{"scaled ::", "main", "`main` already names"},
 		{"twice(1)", "thrice", "`thrice` already names"},
@@ -1094,4 +1094,55 @@ rename_leaves_the_bundled_library_alone :: proc(t: ^testing.T) {
 	reply := ask(&h, "textDocument/rename", "main.loke", position_of(t, text, "println"), `,"newName":"say"`)
 	message, _ := member_string(member(reply, "error"), "message")
 	testing.expect_value(t, message, "`println` belongs to the library bundled with the compiler.")
+}
+
+// known-gaps.md findings: renames the language's own rules make unsafe.
+@(test)
+rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
+	Case :: struct { name, text, needle, new_name, expected: string }
+	cases := []Case {
+		// A promoted field loses to an outer one of the same name.
+		{"promoted", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = outer.old; }\n", "old: int", "next", "would select the existing member `next`"},
+		{"promoted-free", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = outer.old; }\n", "old: int", "renamed", "main.loke:2"},
+		// A local cannot shadow an outer local, even one not used there.
+		{"shadow", "package main;\nmain :: proc() {\n\told := 1;\n\t{ next := 2; _ = next; }\n\t_ = old;\n}\n", "old := 1", "next", "a local cannot shadow another"},
+		// A selected `when` branch opens no scope.
+		{"when", "package main;\nmain :: proc() {\n\twhen (true) { old := 1; _ = old; }\n\tnext := 2; _ = next;\n}\n", "old := 1", "next", "in the same scope"},
+		// A public extension is also one of its package's names.
+		{"extension", "package main;\nplain :: proc() -> int { return 2; }\nimpl int { @(public) old :: proc(self) -> int { return self; } }\nmain :: proc() { _ = plain(); _ = (1).old(); }\n", "old ::", "plain", "`plain` already names"},
+		{"extension-free", "package main;\nplain :: proc() -> int { return 2; }\nimpl int { @(public) old :: proc(self) -> int { return self; } }\nmain :: proc() { _ = plain(); _ = (1).old(); }\n", "old ::", "fresh", "main.loke:2"},
+		// `self` makes a method; `call` is used by `p()`.
+		{"self", "package main;\nPoint :: struct { x: int }\nimpl Point { read :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p.read(); }\n", "self) -> int", "receiver", "`self` marks a method's receiver"},
+		{"call", "package main;\nPoint :: struct { x: int }\nimpl Point { call :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p(); }\n", "call ::", "invoke", "`call` is a member name the compiler or an interface looks up by name"},
+		{"to-call", "package main;\nPoint :: struct { x: int }\nimpl Point { read :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p.read(); }\n", "read ::", "call", "`call` is a member name"},
+	}
+	h: Harness
+	if !start(&h, t, "rename-rules") { finish(&h); return }
+	defer finish(&h)
+	for c in cases {
+		relative := fmt.tprintf("%s/main.loke", c.name)
+		open(&h, relative, c.text)
+		got := rename_to(&h, relative, c.text, c.needle, c.new_name)
+		testing.expectf(t, strings.contains(got, c.expected), "%s: %s", c.name, got)
+		close(&h, relative)
+		settle(&h)
+		take(&h)
+	}
+}
+
+// known-gaps.md findings: a selected `when` branch's declarations stay in
+// scope after it, and a nested block comment holds the cursor to its end.
+@(test)
+completion_follows_scopes_and_comments_from_review :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "completion-rules") { finish(&h); return }
+	defer finish(&h)
+	text := "package main;\nmain :: proc() {\n\twhen (true) { old := 1; _ = old; }\n\t_ = old;\n\t/* outer /* inner */ still here */\n}\n"
+	open(&h, "main.loke", text)
+	reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, text, "old;\n\t/*", 2))
+	testing.expect(t, strings.has_prefix(completion_labels(reply), "old main"), completion_labels(reply))
+	reply = ask(&h, "textDocument/completion", "main.loke", position_of(t, text, "still here", 3))
+	testing.expect(t, len(member_array(member(reply, "result"), "items")) == 0, "inside the outer comment")
+	reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "still here", 3))
+	testing.expect(t, is_null_result(reply))
 }

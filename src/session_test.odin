@@ -916,3 +916,42 @@ main :: proc() {
 	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "values.shared"), "shared")
 	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "Point{1"), "length origin")
 }
+
+// known-gaps.md findings: promoted fields are members, a selected `when`
+// branch opens no scope, and names the compiler looks up itself are listed.
+@(test)
+session_queries_follow_promotion_when_and_protocols :: proc(t: ^testing.T) {
+	root := session_fixture(t, "promotion")
+	if root == "" { return }
+	defer os.remove_all(root)
+	path := join_path({root, "unsaved", "main.loke"}, context.temp_allocator)
+	text := `package main;
+Inner :: struct { deep: int, next: int }
+Outer :: struct { using inner: Inner, next: int }
+Shape :: interface($T: type) { slot area: proc(self) -> f64; }
+Square :: struct { side: f64 }
+impl Square { area :: proc(self) -> f64 { return self.side * self.side; } }
+measure :: proc(shape: dyn Shape) -> f64 { return shape.area(); }
+main :: proc() {
+	outer := Outer{Inner{1, 2}, 3};
+	when (true) { kept := outer.deep; _ = kept; }
+	square := Square{2};
+	_ = measure((dyn Shape)(&square));
+	_ = kept;
+}
+`
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, session_test_config())) { return }
+	testing.expect(t, set_session_overlay(&s, path, text))
+	if !testing.expect(t, check_session(&s, path_dir(path, context.temp_allocator))) { report(&s.compiler); return }
+	snapshot, captured := session_snapshot(&s)
+	if !testing.expect(t, captured) { return }
+	file, _ := query_file(&s, snapshot, path)
+	// The outer `next` hides the promoted one; `deep` is reached through `inner`.
+	testing.expect_value(t, member_test_names(t, &s, snapshot, file, text, "outer.deep"), "deep inner next")
+	names := visible_test_names(&s, snapshot, file, text, "kept;\n}")
+	testing.expect(t, len(names) > 0 && names[0] == "square" && slice.contains(names, "kept"), "a `when` branch's local is in the enclosing scope")
+	implicit, found := query_implicit_names(&s, snapshot, context.temp_allocator)
+	testing.expect(t, found && slice.contains(implicit, "call") && slice.contains(implicit, "area"), "protocol and interface slot names")
+}

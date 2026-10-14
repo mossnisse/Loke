@@ -282,8 +282,9 @@ query_visible :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, f
 
 // What may follow `operand.`, where `operand` is a `query_at` result in `file`.
 // A package alias lists its package's public declarations. A type lists its
-// enum members or union variants and its members. A value lists its fields and
-// methods, and through a pointer or box those of what it points at. Members are
+// enum members or union variants and its members. A value lists its fields, promoted
+// fields after them, and methods, and through a pointer or box those of what
+// it points at. Members are
 // the ones the snapshot recorded and the file's package can see; one the
 // checker contributes on demand appears once a lookup created it. Sorted by
 // name; the caller owns the array.
@@ -302,6 +303,17 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 		m.seen[name] = true
 		type := symbol.kind == .Proc ? symbol.proc_type : symbol.type
 		append(&m.out, Query_Member{name, Symbol_Handle{m.s.snapshot, id}, Type_Handle{m.s.snapshot, type}, false})
+	}
+	// design.md "Promoted struct fields": an outer field wins over a promoted
+	// one, so a `using` field's own fields come after the record's.
+	add_fields :: proc(m: ^Members, type: Type_Id, depth: int) {
+		c := &m.s.compiler
+		info := underlying_info(c, type)
+		if info == nil || info.kind != .Struct || depth > len(c.types) { return }
+		for field in info.fields { add(m, field, false) }
+		for field in info.fields {
+			if symbol := symbol_of(c, field); symbol != nil && symbol.is_using { add_fields(m, symbol.type, depth + 1) }
+		}
 	}
 	add_members :: proc(m: ^Members, type: Type_Id, methods: bool) {
 		c := &m.s.compiler
@@ -347,14 +359,53 @@ query_members :: proc(s: ^Compilation_Session, operand: Query_Position, file: u3
 		}
 		for subject in subjects {
 			if subject == INVALID_TYPE { continue }
-			if info := underlying_info(c, subject); info != nil && info.kind == .Struct {
-				for field in info.fields { add(&m, field, false) }
-			}
+			add_fields(&m, subject, 0)
 			add_members(&m, subject, true)
 		}
 	}
 	slice.sort_by(m.out[:], proc(a, b: Query_Member) -> bool { return a.name < b.name })
 	return m.out[:], true
+}
+
+// design.md "Calling a value", "Iteration protocol", "Reverse iteration",
+// "String format printing", "Maps", and "Indexing and slicing": member names
+// the compiler looks up itself, where no use spells them.
+@(private = "file")
+IMPLICIT_MEMBER_NAMES := [?]string{"call", "iter", "iter_mut", "iter_reverse", "iter_mut_reverse", "next", "format", "hash", "len"}
+
+// Member names a program can reach without writing them at a use: those the
+// compiler looks up itself, and the requirements of every interface the
+// checked program uses, as slot names and as the members their expressions
+// select. A member so named may be used where no reference records it. The
+// caller owns the array; its strings are borrowed.
+query_implicit_names :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, allocator := context.allocator) -> ([]string, bool) {
+	if !valid_snapshot(s, snapshot.id) { return nil, false }
+	out := make([dynamic]string, allocator)
+	append(&out, ..IMPLICIT_MEMBER_NAMES[:])
+	selected :: proc(out: ^[dynamic]string, expr: Expr) {
+		#partial switch v in expr {
+		case ^Expr_Selector:
+			if v.name.text != "" { append(out, v.name.text) }
+			selected(out, v.operand)
+		case ^Expr_Call:
+			selected(out, v.callee)
+			for argument in v.args { selected(out, argument.value) }
+		case ^Expr_Unary: selected(out, v.operand)
+		case ^Expr_Binary:
+			selected(out, v.lhs)
+			selected(out, v.rhs)
+		case ^Expr_Index:
+			selected(out, v.operand)
+			for index in v.indices { selected(out, index) }
+		}
+	}
+	for _, info in s.compiler.interfaces {
+		if info == nil || info.node == nil { continue }
+		for requirement in info.node.requirements {
+			if requirement.kind == .Slot { append(&out, requirement.name.text) } else { selected(&out, requirement.expr) }
+		}
+	}
+	return out[:], true
 }
 
 @(private)

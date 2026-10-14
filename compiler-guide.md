@@ -263,9 +263,14 @@ that produced the diagnostics:
   the server checks, including a named argument for a parameter and a
   record literal's field name. It refuses rather than guess, and says why:
   - when a program that loads the binding's file has errors;
-  - when the new name is already visible where the binding is used, or is
-    declared later in the same scope, so the meaning would change;
-  - when the binding's type already has a member with the new name;
+  - when the new name is already visible where the binding is used, or a
+    local with the new name is declared later where the binding is visible,
+    so the meaning would change or a local would shadow another;
+  - when the binding's type, or the type a selector reaches it through,
+    already has a member with the new name, including a promoted field;
+  - when a method's old or new name is one the compiler or an interface looks
+    up by name, such as `call`, `next`, or `format`, or when a parameter is
+    renamed to or from `self`;
   - when the old name appears where the compiler recorded no binding for it,
     such as an inactive `when` branch, a generic that is never instantiated,
     an interface slot, or a named result;

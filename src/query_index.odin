@@ -149,7 +149,11 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 		if v.kind == .Static { for body in v.expansion { index_query_stmt(index, body) } } else { index_query_stmt(index, v.body) }
 	case ^Stmt_When:
 		index_query_expr(index, v.cond)
-		index_query_stmt(index, v.selected)
+		// design.md "when statement": the selected branch's braces open no
+		// scope, so its statements belong to the enclosing one.
+		if v.selected != nil && query_index_enter(index, v.selected) {
+			for inner in v.selected.stmts { index_query_stmt(index, inner) }
+		}
 	case ^Stmt_Switch:
 		index_query_region(index, v.span)
 		index_query_stmt(index, v.init)

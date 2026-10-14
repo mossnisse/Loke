@@ -550,11 +550,12 @@ including after destroying and reinitializing a session.
 | `remove_session_overlay(&s, path)` | Restore disk loading or remove an unsaved-only file. An absent overlay returns false without invalidation. |
 | `session_snapshot(&s)` | Capture current views, even after failed initialization/checking. False for zeroed/destroyed sessions or after invalidation until a check runs. |
 | `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. `bundled` marks a file of the `base:` or `core:` library shipped with the compiler. |
-| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name. |
+| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name; a selected `when` branch is not one, since its braces open no scope. |
 | `query_documentation` | The comments directly above a binding's declaration, as `-doc` reads them; caller-owned. False when there are none. |
 | `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. `type_value` marks a node that denotes its type rather than a value of it. |
 | `query_visible` | Bindings an unqualified name can reach at an offset, innermost first: locals whose `scope` holds the offset and whose name ends before it, then the file's package scope with its imports, then the predeclared names. Shadowed names are omitted. Caller-owned. |
-| `query_members` | What may follow `operand.` for a `query_at` result: a package alias's public declarations; a type's enum members or union variants and members; a value's fields and methods, through a pointer or box. Members are those recorded and visible from the file's package, so one contributed on demand appears once a lookup created it. Sorted by name; caller-owned. |
+| `query_implicit_names` | Member names reached by name where no use spells them: those the compiler looks up itself (`call`, iteration, `format`, `hash`, `len`) and the slot names and selected members of every interface the program uses. |
+| `query_members` | What may follow `operand.` for a `query_at` result: a package alias's public declarations; a type's enum members or union variants and members; a value's fields, then the fields its `using` fields promote, and methods, through a pointer or box. Members are those recorded and visible from the file's package, so one contributed on demand appears once a lookup created it. Sorted by name; caller-owned. |
 | `query_type` | Recorded type properties, components, fields, members, and parameter types/modes. Zero IDs mean unavailable. |
 | `query_definition` | Snapshot-scoped written location; false for builtins/synthetic bindings without definitions. |
 | `query_references` | Exact-binding named uses, deduplicated across generic/static-loop clones; excludes implicit operations. `include_definition` defaults to false. Caller owns the array and must `delete` it with the query allocator. |
@@ -739,12 +740,17 @@ a bundled file, an invalid new name, and any root that loads the binding's
 file and has errors, since references from a failed check are partial. It then lexes every
 non-bundled source of each such root. Each occurrence of the old name must have
 a recorded binding, so unchecked code such as an inactive `when` branch, or a
-name the index does not record, such as an interface slot, stops the rename. At an unqualified use or the declaration, the new name must not
-already be visible; a local declared with the new name must not share the
-binding's `scope`. These two rules also cover capture: a binding that would be
-shadowed at some use is visible at the declaration, or declared later in the
-same scope. Fields, enum members, and `impl` or `extend` members are checked
-against the members of their type instead.
+name the index does not record, such as an interface slot, stops the rename.
+At an unqualified use or the declaration, the new name must not already be
+visible. A local declared with the new name where the binding is visible must
+not share its `scope`, nor shadow it when the binding is a variable or
+parameter. These two rules also cover capture: a binding that would be shadowed
+at some use is visible at the declaration, or declared later where the renamed
+binding is visible. Fields, enum members, and `impl` or `extend` members are
+checked against their type's members and, at each selector, against the
+operand's members, promoted fields included. A public extension is also
+checked as a package name. A method may not be renamed to or from a name in
+`query_implicit_names`, and a parameter to or from `self`.
 
 Milestones 1 through 3 of [Language server](future-plans.md#language-server) use batch
 checking. `lsp/server_test.odin` drives the server in process, choosing when
