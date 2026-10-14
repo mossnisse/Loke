@@ -1,0 +1,45 @@
+package main;
+import "core:fmt";
+import "core:mem";
+
+// design.md "Allocator regions and region provenance": an owner a callee
+// leaves in caller storage it reaches through a local pointer or slice set
+// from a writable parameter is backed by the allocator it was built with, as
+// one written through the parameter itself is.
+
+set_alias :: proc(dst: ^mut [dynamic]int, alloc: Allocator) {
+	alias := dst;
+	alias^ = make([dynamic]int, 4, alloc);
+}
+
+set_reassigned :: proc(dst: ^mut [dynamic]int, alloc: Allocator) {
+	other: [dynamic]int = {};
+	alias := &mut other;
+	alias = &mut dst^;
+	alias^ = make([dynamic]int, 4, alloc);
+}
+
+set_element :: proc(dst: []mut [dynamic]int, alloc: Allocator) {
+	rest := &mut dst[1:];
+	rest[0] = make([dynamic]int, 4, alloc);
+}
+
+main :: proc() {
+	xs: [dynamic]int = {};
+	arena := mem.Arena.init();
+	set_alias(&mut xs, arena.allocator());
+	free_all(arena.allocator());
+	fmt.println(xs[0]);
+
+	ys: [dynamic]int = {};
+	other := mem.Arena.init();
+	set_reassigned(&mut ys, other.allocator());
+	free_all(other.allocator());
+	fmt.println(ys[0]);
+
+	zs := [2][dynamic]int{};
+	third := mem.Arena.init();
+	set_element(&mut zs[:], third.allocator());
+	free_all(third.allocator());
+	fmt.println(zs[1][0]);
+}

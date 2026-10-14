@@ -1198,8 +1198,23 @@ main :: proc() {
 	testing.expect(t, sentinel_survived, "the statement after the bad range did not survive recovery")
 }
 
-// Deep parentheses, operator chains, prefix runs, and a type name's selector
-// chain each give one L0222.
+// `(((x` then `segments` times `count` copies of `step` and a `)`.
+@(private = "file")
+parenthesized_segments :: proc(step: string, segments, count: int) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "package main;\n\nmain :: proc() {\n\t_ = ")
+	strings.write_string(&b, strings.repeat("(", segments, context.temp_allocator))
+	strings.write_string(&b, "x")
+	for _ in 0 ..< segments {
+		strings.write_string(&b, strings.repeat(step, count, context.temp_allocator))
+		strings.write_string(&b, ")")
+	}
+	strings.write_string(&b, ";\n}\n")
+	return strings.to_string(b)
+}
+
+// Deep parentheses, operator chains, prefix runs, a type name's selector
+// chain, and chains built on parenthesized ones each give one L0222.
 @(test)
 parser_depth_is_bounded :: proc(t: ^testing.T) {
 	sources := []string {
@@ -1229,6 +1244,10 @@ parser_depth_is_bounded :: proc(t: ^testing.T) {
 			{"package main;\n\nmain :: proc() {\n\tx: T", strings.repeat(".a", 10_000, context.temp_allocator), " = {};\n}\n"},
 			context.temp_allocator,
 		),
+		// Each parenthesized segment stays under the limit, but a chain built on
+		// one is as deep as both.
+		parenthesized_segments(".a", 5, 1_000),
+		parenthesized_segments(" + x", 5, 1_000),
 	}
 
 	for text in sources {

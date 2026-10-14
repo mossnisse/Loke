@@ -278,6 +278,10 @@ Prov_State :: struct {
 	// Locals a mutable loan was ever taken of: only these can be reached through
 	// a pointer or slice. Flow-insensitive, like the region facts.
 	lent_locals: map[Symbol_Id]bool,
+	// The writable parameters each local pointer or slice was ever set from,
+	// so a write through it is a write the caller learns of. Flow-insensitive
+	// too.
+	written_aliases: map[Symbol_Id][]Symbol_Id,
 	has_region_event: bool,
 	// The uses that are a local's `drop` at scope exit, for the note naming them.
 	scope_drops:      map[Span]bool,
@@ -379,6 +383,7 @@ build_flow_pass :: proc(
 		graph.temp_provider_bits = make(map[^Expr_Call]u64, 4, allocator)
 		graph.temp_providers = make([dynamic]Temp_Provider, allocator)
 		graph.lent_locals = make(map[Symbol_Id]bool, 4, allocator)
+		graph.written_aliases = make(map[Symbol_Id][]Symbol_Id, 4, allocator)
 	}
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
@@ -1749,8 +1754,8 @@ walk_flow_loop_body :: proc(
 	graph.break_depth, graph.continue_depth = outer_break_depth, outer_continue_depth
 }
 
-// design.md "Element bindings": an owned leaf is a managed local of its step,
-// so `move` and `drop` end it as they end any local.
+// design.md "Element bindings": an owned leaf is a local of its step, so
+// `move` and `drop` end it as they end any local.
 @(private = "file")
 track_owned_foreach_leaves :: proc(graph: ^Flow_Graph, bindings: []Foreach_Binding) {
 	for binding in bindings {
@@ -1759,23 +1764,31 @@ track_owned_foreach_leaves :: proc(graph: ^Flow_Graph, bindings: []Foreach_Bindi
 			continue
 		}
 		sym := symbol_of(graph.k.c, binding.symbol)
-		if sym == nil || sym.borrowed_binding != .None || !type_is_managed(graph.k.c, sym.type) {
-			continue
+		if sym != nil && sym.borrowed_binding == .None {
+			track_owned_binding(graph, binding.symbol, sym)
 		}
-		slot, already := graph.by_symbol[binding.symbol]
-		if !already {
-			append(&graph.tracked, Tracked_Local{symbol = binding.symbol})
-			slot = len(graph.tracked) - 1
-			graph.by_symbol[binding.symbol] = slot
-		}
-		append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
-		emit(graph, Flow_Event {
-			kind = .Init,
-			slot = slot,
-			span = sym.span,
-			name = identifier_text(graph.k.c, sym.name),
-		})
 	}
+}
+
+// An owned binding starts live, and `move` and `drop` kill it whatever its
+// type; only a managed one is cleaned up (design.md "Variable declarations").
+@(private = "file")
+track_owned_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, sym: ^Symbol) {
+	slot, already := graph.by_symbol[symbol]
+	if !already {
+		append(&graph.tracked, Tracked_Local{symbol = symbol})
+		slot = len(graph.tracked) - 1
+		graph.by_symbol[symbol] = slot
+	}
+	if type_is_managed(graph.k.c, sym.type) {
+		append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
+	}
+	emit(graph, Flow_Event {
+		kind = .Init,
+		slot = slot,
+		span = sym.span,
+		name = identifier_text(graph.k.c, sym.name),
+	})
 }
 
 @(private = "file")
@@ -1892,29 +1905,15 @@ prov_bind_case_name :: proc(
 	}
 }
 
-// A consuming switch's binding is an ordinary managed local of its case.
+// A consuming switch's binding is an ordinary local of its case.
 @(private = "file")
 track_case_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id, consumes: bool) {
 	if !consumes || symbol == INVALID_SYMBOL {
 		return
 	}
-	sym := symbol_of(graph.k.c, symbol)
-	if sym == nil || !type_is_managed(graph.k.c, sym.type) {
-		return
+	if sym := symbol_of(graph.k.c, symbol); sym != nil {
+		track_owned_binding(graph, symbol, sym)
 	}
-	slot, already := graph.by_symbol[symbol]
-	if !already {
-		append(&graph.tracked, Tracked_Local{symbol = symbol})
-		slot = len(graph.tracked) - 1
-		graph.by_symbol[symbol] = slot
-	}
-	append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
-	emit(graph, Flow_Event {
-		kind = .Init,
-		slot = slot,
-		span = sym.span,
-		name = identifier_text(graph.k.c, sym.name),
-	})
 }
 
 // ------------------------------------------------------------ expressions --

@@ -543,7 +543,9 @@ carrier_shape_walk :: proc(
 	depth: int,
 	out: ^[dynamic]Carrier_Path,
 ) {
-	if type == INVALID_TYPE {
+	// One path past the width already collapses the shape to its whole value,
+	// so no more are collected (or allocated).
+	if type == INVALID_TYPE || len(out) > CARRIER_WIDTH {
 		return
 	}
 	if type_is_carrier(c, type) {

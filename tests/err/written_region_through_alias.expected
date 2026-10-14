@@ -1,0 +1,15 @@
+L0537
+@29:2
+region backing `xs`
+L0537
+@31:2
+region backing `xs`
+L0537
+@35:2
+region backing `ys`
+L0537
+@37:2
+region backing `ys`
+L0536
+@42:14
+reached through a pointer or slice

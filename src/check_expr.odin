@@ -2465,25 +2465,53 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, 
 		}
 		return lt, true
 	}
+	joined, joins := join_operand_types(k, lt, rt)
+	if !joins {
+		operand_mismatch(k, op_span, lt, rt)
+		return INVALID_TYPE, false
+	}
+	if (lt != joined && !materialize(k, lhs, joined)) || (rt != joined && !materialize(k, rhs, joined)) {
+		return INVALID_TYPE, false
+	}
+	return joined, true
+}
+
+// The type two operands meet at, decided without materialising or reporting,
+// so operator lookup asks exactly what `unify_operands` then does.
+join_operand_types :: proc(k: ^Checker, lt, rt: Type_Id) -> (Type_Id, bool) {
+	if lt == rt {
+		return lt, true
+	}
+	if type_kind(k.c, lt) == .Proc && type_kind(k.c, rt) == .Proc {
+		plain := erase_proc_contract(k.c, lt)
+		return plain, plain == erase_proc_contract(k.c, rt)
+	}
+	left_untyped := type_is_untyped(k.c, lt)
+	right_untyped := type_is_untyped(k.c, rt)
+	switch {
+	case left_untyped && right_untyped:
+		return merge_untyped_types(lt, rt)
+	case left_untyped:
+		return rt, assignable(k.c, lt, rt)
+	case right_untyped:
+		return lt, assignable(k.c, rt, lt)
+	}
 	// A `string` and a `string_view` may occur in either order (design.md
 	// "Arithmetic operators" and "Comparison operators"). They meet at the borrowed
 	// view, which is the one both sides can produce without allocating.
 	if type_is_utf8_text(k.c, lt) && type_is_utf8_text(k.c, rt) {
-		if materialize(k, lhs, TYPE_STRING_VIEW) && materialize(k, rhs, TYPE_STRING_VIEW) {
-			return TYPE_STRING_VIEW, true
-		}
+		return TYPE_STRING_VIEW, true
 	}
 	// design.md "Comparison operators": either operand may be assignable to the
 	// other, so a `^mut T` weakens to the `^T` beside it.
 	if kind := type_kind(k.c, lt); (kind == .Pointer || kind == .C_Pointer) && type_kind(k.c, rt) == kind {
-		if assignable(k.c, lt, rt) && materialize(k, lhs, rt) {
+		if assignable(k.c, lt, rt) {
 			return rt, true
 		}
-		if assignable(k.c, rt, lt) && materialize(k, rhs, lt) {
+		if assignable(k.c, rt, lt) {
 			return lt, true
 		}
 	}
-	operand_mismatch(k, op_span, lt, rt)
 	return INVALID_TYPE, false
 }
 

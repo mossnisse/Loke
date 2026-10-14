@@ -19,18 +19,18 @@ reporting them again.
 | ID | Priority | Subject | Finding and evidence |
 | --- | --- | --- | --- |
 | G01 | P2 | Package discovery | [Package spelling changes compiler-contributed members](known-gaps.md#g01-package-spelling-changes-compiler-contributed-members): uppercase directory spelling or a second collection alias removes library members. Compile/IR reproduction. |
-| G02 | P2 | Operator selection | [Built-in priority drifts](known-gaps.md#g02-defined-built-in-operators-can-be-replaced-by-user-overloads): signed shifts and mixed text expressions call user overloads. Runtime reproduction. |
-| G03 | P2 | Lexical scope | [Local operators leak](known-gaps.md#g03-local-operators-escape-their-scope-and-fail-to-shadow): a nested overload causes ambiguity inside and after its block. Compiler reproduction. |
+| G02 | P2 | Operator selection (fixed) | Built-in priority drifts: signed shifts and mixed text expressions call user overloads. Runtime reproduction. |
+| G03 | P2 | Lexical scope (fixed) | Local operators leak: a nested overload causes ambiguity inside and after its block. Compiler reproduction. |
 | G04 | P2 | Assignment lowering (fixed) | Compound setters reread indices: right-hand mutation redirects the write. Runtime reproduction. |
 | G05 | P2 | Contextual typing (fixed) | Parallel setters lose destination context: legal `i32` literal assignments become `int` and fail. Compiler reproduction. |
 | G06 | P2 | CTFE iteration | [Borrowed bindings become copies](known-gaps.md#g06-compile-time-foreach-copies-ordinary-borrowed-bindings): the same procedure returns different pointer-equality results at compile time and runtime. Runtime comparison. |
 | G07 | P2 | CTFE reflection | [Field access lacks interpreter dispatch](known-gaps.md#g07-reflected-field-access-cannot-execute-at-compile-time): a valid constant read fails L0344. Compile/IR reproduction and runtime control. |
 | G08 | P2 | Reflection argument checks (fixed) | Descriptor calls discard labels and modes: invalid `bogus = inout` is accepted. Runtime reproduction. |
-| G09 | P2 | Lifecycle tracking | [Owned scalar bindings bypass liveness](known-gaps.md#g09-owned-scalar-loop-and-switch-bindings-bypass-liveness-checks): moves/drops do not invalidate some loop and case bindings. Compile/IR reproduction. |
-| G10 | P2 | Return ownership | [Owned case payloads look borrowed](known-gaps.md#g10-owned-switch-payloads-are-treated-as-borrowed-returns): returning a move-only payload is rejected. Compiler reproduction. |
+| G09 | P2 | Lifecycle tracking (fixed) | Owned scalar bindings bypass liveness: moves/drops do not invalidate some loop and case bindings. Compile/IR reproduction. |
+| G10 | P2 | Return ownership (fixed) | Owned case payloads look borrowed: returning a move-only payload is rejected. Compiler reproduction. |
 | G11 | P2 | Managed-type classification (fixed) | Nested excluded copy hooks are missed: a forbidden copy is accepted and fails at runtime; query order changes classification. Runtime reproduction. |
 | G12 | P1 | Callback result contracts (fixed) | Named global roots are omitted: incompatible callbacks substitute an unrelated borrow root. Accepted/control compile probes. |
-| G13 | P1 | Written allocator regions | [Pointer aliases hide stored owners](known-gaps.md#g13-local-pointer-aliases-hide-written-allocator-regions): a reset is accepted before subsequent access to freed storage. Accepted/control compile probes. |
+| G13 | P1 | Written allocator regions (fixed) | Pointer aliases hide stored owners: a reset is accepted before subsequent access to freed storage. Accepted/control compile probes. |
 | G14 | P2 | Region precision (moved to [open questions](open-questions.md#does-an-unused-allocator-argument-back-an-owning-result)) | Unused allocator arguments taint results; the corpus relies on that reading. A return the review considers valid is rejected despite the precise direct-call summary. Rejected/accepted control probes. |
 
 Priorities distinguish memory/lifetime or compilation robustness risks (P1),
@@ -104,6 +104,8 @@ follow-up rather than a claim that the language promises one step per AST node.
 
 ### E05: Bound AST depth across parenthesized expression segments
 
+Fixed after the review.
+
 [parser.odin](src/parser.odin), `parse_binary` and `parse_postfix`, lines
 1991–2023 and 2080–2107, subtract their local spine depth on return. A
 parenthesized subtree then becomes the base of another suffix chain without
@@ -118,6 +120,8 @@ binary and type selector spines; adding another parser-call guard alone does
 not bound the tree handed to later recursive stages.
 
 ### E06: Apply the carrier-width cap during collection
+
+Fixed after the review.
 
 [borrow.odin](src/borrow.odin), lines 526–539, collects and allocates every leaf
 path before collapsing a shape above `CARRIER_WIDTH` to one conservative path.
@@ -155,10 +159,10 @@ review:
 
 - `shrink:` Remove the extra whole-container buffer allocation in seven CTFE update paths. Assign the already fresh arena-owned buffer to `slot.elements` and delete `set_contents`; approximately 25 lines. [eval.odin](src/eval.odin)
 - `shrink:` Form user binary-operator candidates once. Retain viability and the candidate set across fallback choice and ranking instead of calling `operator_viable` and then repeating formation in `resolve_operator`. Preserve ambiguity and promotion behavior. [check_expr.odin](src/check_expr.odin), [overload.odin](src/overload.odin)
-- `shrink:` Share built-in operand joining between applicability and checking. Remove the second independently maintained unification table while fixing G02. [operators.odin](src/operators.odin), [check_expr.odin](src/check_expr.odin)
-- `shrink:` Delete the formatter's backward indentation scan after recording current-line indentation (E02). [formatter.odin](src/formatter.odin)
-- `shrink:` Share the small owned-binding slot/Init registration sequence while fixing G09. Keep liveness for all owned locals and cleanup for managed ones; approximately 15–20 net lines. [cfg.odin](src/cfg.odin)
-- `shrink:` Remove the declaration-pointer requirement from owned-local return classification while fixing G10; existing borrowed-binding and duration facts carry the distinction. [lifecycle.odin](src/lifecycle.odin)
+- `shrink:` Share built-in operand joining between applicability and checking. Remove the second independently maintained unification table while fixing G02. [operators.odin](src/operators.odin), [check_expr.odin](src/check_expr.odin) Done after the review.
+- `shrink:` Delete the formatter's backward indentation scan after recording current-line indentation (E02). [formatter.odin](src/formatter.odin) Done after the review.
+- `shrink:` Share the small owned-binding slot/Init registration sequence while fixing G09. Keep liveness for all owned locals and cleanup for managed ones; approximately 15–20 net lines. [cfg.odin](src/cfg.odin) Done after the review.
+- `shrink:` Remove the declaration-pointer requirement from owned-local return classification while fixing G10; existing borrowed-binding and duration facts carry the distinction. [lifecycle.odin](src/lifecycle.odin) Done after the review.
 
 All seven `set_contents` callers pass fresh `kept`, `grown`, or `next` buffers
 allocated with `ev.alloc`. Retaining those buffers removes one allocation and

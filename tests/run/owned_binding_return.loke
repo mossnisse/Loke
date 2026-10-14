@@ -1,0 +1,32 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Switch ownership": a consuming switch's payload binding is an
+// owned local, so returning it transfers the payload rather than copying a
+// borrowed value, and it is dropped once, by its new owner.
+
+Token :: move_only struct { id: int }
+
+impl Token {
+	release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.id); }
+}
+
+U :: union { held: Token, empty: }
+
+get :: proc(id: int) -> U { return .held(Token{id}); }
+
+from_case :: proc(id: int) -> Token {
+	switch (get(id)) {
+	case .held(value): return value;
+	case .empty: return Token{0};
+	}
+}
+
+main :: proc() {
+	{
+		a := from_case(1);
+		fmt.println("got", a.id);
+	}
+	fmt.println("done");
+}

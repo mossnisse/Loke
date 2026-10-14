@@ -311,11 +311,13 @@ require_argument_ownership :: proc(
 	}
 }
 
-// Only ordinary lexical locals and `move` parameters own their named values.
+// Only lexical locals and `move` parameters own their named values. An owned
+// foreach leaf or consuming case binding is a local too (design.md "Element
+// bindings", "Switch ownership"); a borrowing one says so.
 @(private = "file")
 symbol_is_owned_here :: proc(sym: ^Symbol) -> bool {
 	return sym != nil && sym.borrowed_binding == .None &&
-		((sym.kind == .Var && sym.decl != nil && !symbol_outlives_bodies(sym)) ||
+		((sym.kind == .Var && !symbol_outlives_bodies(sym)) ||
 		 (sym.kind == .Parameter && sym.mode == .Move))
 }
 

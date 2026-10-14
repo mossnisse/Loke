@@ -1,0 +1,20 @@
+package main;
+
+// design.md "Element bindings" and "Switch ownership": an owned foreach leaf
+// and a consuming switch's binding are locals, so `move` and `drop` end them
+// whatever their type (design.md "Variable declarations").
+
+main :: proc() {
+	foreach (item in 0 ..< 1) {
+		_ = move(item);
+		_ = item;
+		drop(item);
+	}
+	switch (Option(int).some(7)) {
+	case .some(value):
+		drop(value);
+		_ = value;
+		drop(value);
+	case .none:
+	}
+}

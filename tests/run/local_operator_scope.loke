@@ -1,0 +1,27 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Operator lookup and overload resolution": lexical scope is
+// considered before ranking, so a local operator shadows the package's for
+// the rest of its block and is not seen outside it.
+
+V :: struct { x: int }
+
+outer :: operator(+) proc(a, b: V) -> V { return {a.x + b.x}; }
+
+elsewhere :: proc() -> V {
+	return V{1} + V{2};
+}
+
+main :: proc() {
+	{
+		inner :: operator(+) proc(a, b: V) -> V { return {99}; }
+		fmt.println((V{1} + V{2}).x);
+		{
+			fmt.println((V{1} + V{2}).x);
+		}
+	}
+	fmt.println((V{1} + V{2}).x);
+	fmt.println(elsewhere().x);
+}

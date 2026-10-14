@@ -76,8 +76,12 @@ resolve_operator_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operato
 		}
 	}
 
-	// Every operator declaration also joins its package's set, which is what an
-	// extension block and a file-scope declaration are found through.
+	// Every operator declaration outside a procedure also joins its package's
+	// set, which is what an extension block and a file-scope declaration are
+	// found through. A local one is found through its scope.
+	if in_local_scope(k.scope) {
+		return
+	}
 	pkg := package_of(k.c, k.pkg)
 	set, found := pkg.operators[value.symbol]
 	if !found {
@@ -162,8 +166,38 @@ operator_candidates :: proc(k: ^Checker, symbol: string, operands: []Type_Id) ->
 				add_operator_members(k, members, symbol, &out)
 			}
 		}
-		if set, found := pkg.operators[symbol]; found {
+		// design.md "Operator lookup and overload resolution": lexical scope comes
+		// before ranking, so the innermost local scope declaring this operator
+		// stands in for the package's set. Inherent and extension operators
+		// belong to their types and stay candidates.
+		if local := local_operator_set(k, symbol); len(local) > 0 {
+			add_operator_members(k, local, symbol, &out)
+		} else if set, found := pkg.operators[symbol]; found {
 			add_operator_members(k, set[:], symbol, &out)
+		}
+	}
+	return out[:]
+}
+
+@(private = "file")
+in_local_scope :: proc(scope: ^Scope) -> bool {
+	return scope != nil && (scope.kind == .Local || scope.kind == .Procedure)
+}
+
+// The operators named `symbol` declared in the innermost local scope that
+// declares any, in declaration order.
+@(private = "file")
+local_operator_set :: proc(k: ^Checker, symbol: string) -> []Symbol_Id {
+	out := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
+	for scope := k.scope; in_local_scope(scope); scope = scope.parent {
+		for _, id in scope.names {
+			if sym := symbol_of(k.c, id); sym != nil && sym.operator == symbol {
+				append(&out, id)
+			}
+		}
+		if len(out) > 0 {
+			slice.sort(out[:])
+			break
 		}
 	}
 	return out[:]
@@ -252,27 +286,6 @@ operand_is_builtin :: proc(k: ^Checker, type: Type_Id) -> bool {
 	return true
 }
 
-// The operand type the built-in table would work on, without mutating anything
-// — `unify_operands` decides the same thing but materialises and reports as it
-// goes, and this must be answered before either is allowed.
-@(private = "file")
-unified_builtin_type :: proc(k: ^Checker, lhs, rhs: Type_Id) -> (Type_Id, bool) {
-	if lhs == rhs {
-		return lhs, true
-	}
-	left_untyped := type_is_untyped(k.c, lhs)
-	right_untyped := type_is_untyped(k.c, rhs)
-	switch {
-	case left_untyped && right_untyped:
-		return merge_untyped_types(lhs, rhs)
-	case left_untyped:
-		return rhs, assignable(k.c, lhs, rhs)
-	case right_untyped:
-		return lhs, assignable(k.c, rhs, lhs)
-	}
-	return INVALID_TYPE, false
-}
-
 builtin_binary_defined :: proc(k: ^Checker, op: Token_Kind, lhs, rhs: Type_Id) -> bool {
 	if !operand_is_builtin(k, lhs) || !operand_is_builtin(k, rhs) {
 		return false
@@ -284,9 +297,10 @@ builtin_binary_defined :: proc(k: ^Checker, op: Token_Kind, lhs, rhs: Type_Id) -
 		if type_is_untyped(k.c, rhs) {
 			return type_is_integer(k.c, rhs) || type_is_rune(k.c, rhs)
 		}
-		return type_is_integer(k.c, rhs) && !type_signed(k.c, rhs)
+		// design.md "Arithmetic operators": a signed count is read as unsigned.
+		return type_is_integer(k.c, rhs)
 	}
-	unified, ok := unified_builtin_type(k, lhs, rhs)
+	unified, ok := join_operand_types(k, lhs, rhs)
 	if !ok {
 		return false
 	}

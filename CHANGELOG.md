@@ -33,6 +33,9 @@ checklist.
   procedures of the same shape no longer take time quadratic in their size.
   A compile-time `sort` is a merge sort charged against the evaluation step
   budget, so sorting thousands of constants stays fast.
+- An expression built on a parenthesized one counts that operand's depth
+  against the nesting limit, so `((x.a.a ... ).a.a ... )` deeper than it is
+  `L0222` instead of a stack overflow while checking.
 
 ### Fixed
 
@@ -42,6 +45,23 @@ checklist.
   to the element `bump` moved `i` to. A literal value in a multiple assignment
   through a setter takes its destination's type, so `grid[0], x = 1, 2` with
   `i32` destinations is no longer `L0310`.
+- A defined built-in operation is never replaced by a user overload (design.md
+  "Operator lookup and overload resolution"): `2 << n` with a signed `n`, and
+  `+` over a `string` and a `string_view`, called a user `operator(<<)` or
+  `operator(+)` declared for those operands.
+- A local operator declaration shadows the package's for the rest of its
+  block and is not seen outside it. It used to join the package's set, so
+  both it and the outer one applied, in and after its block, and every use
+  was `L0391`.
+- An owned scalar `foreach` leaf or consuming case binding is dead after
+  `move` or `drop` (`L0500`), as an owned local is; only managed ones were.
+- A consuming switch's payload binding can be returned by value: returning a
+  move-only `value` from `case .held(value):` was `L0502`.
+- A procedure that writes an owner through a local pointer or slice set from
+  a writable parameter, as `alias := dst; alias^ = make(..., alloc)` does,
+  leaves it in the caller's argument with its allocator's region, so
+  resetting that allocator while the argument is live is `L0537`. The write
+  used to be invisible to the caller.
 - A `meta.Field` descriptor's `get` and `pointer` take one positional value
   argument: `field.get(bogus = inout &value)` was accepted, and is now `L0371`
   or `L0370`.

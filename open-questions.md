@@ -15,10 +15,8 @@ changes are included in the review.
 Open engineering work, with source evidence and proposed bounded changes in the
 report:
 
-- [E05: bound composed AST depth](compiler-review-2026-10-14.md#e05-bound-ast-depth-across-parenthesized-expression-segments), preventing parenthesized segments from bypassing depth accounting and crashing later recursive stages.
-- [E06: cap carrier collection before allocation](compiler-review-2026-10-14.md#e06-apply-the-carrier-width-cap-during-collection), preserving the same conservative output without discarded path expansion.
 - [E07: schedule global effects by changed callees](compiler-review-2026-10-14.md#e07-schedule-global-effect-propagation-by-changed-callees), replacing repeated complete-program scans with caller propagation.
-- [Concrete simplifications](compiler-review-2026-10-14.md#simplification-and-structure): remove duplicate CTFE buffers, repeated overload-candidate formation and independently maintained operand-joining rules; share owned-binding registration and use existing ownership facts for returns.
+- [Concrete simplifications](compiler-review-2026-10-14.md#simplification-and-structure): remove duplicate CTFE buffers and repeated overload-candidate formation.
 
 ### Does an unused allocator argument back an owning result?
 

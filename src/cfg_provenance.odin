@@ -1535,6 +1535,11 @@ prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Flow_Graph) {
 	for id in seed.lent_locals {
 		graph.lent_locals[id] = true
 	}
+	for id, params in seed.written_aliases {
+		for param in params {
+			prov_add_written_alias(graph, id, param)
+		}
+	}
 	for id, content in seed.region_content {
 		copied := make([]Prov_Region_Content, len(content), graph.alloc)
 		for entry, index in content {
@@ -1556,6 +1561,7 @@ prov_carry_regions :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Flo
 	carry.region_of = make(map[Symbol_Id]Region_Set, len(graph.region_of), allocator)
 	carry.provider_parents = make(map[Symbol_Id]Region_Set, len(graph.provider_parents), allocator)
 	carry.lent_locals = make(map[Symbol_Id]bool, len(graph.lent_locals), allocator)
+	carry.written_aliases = make(map[Symbol_Id][]Symbol_Id, len(graph.written_aliases), allocator)
 	carry.region_content = make(map[Symbol_Id][]Prov_Region_Content, len(graph.region_content), allocator)
 	prov_seed_regions(carry, graph)
 	return carry
@@ -1576,6 +1582,9 @@ prov_region_weight :: proc(graph: ^Flow_Graph) -> int {
 		for entry in content {
 			weight += 1 + region_weight(entry.region)
 		}
+	}
+	for _, params in graph.written_aliases {
+		weight += len(params)
 	}
 	return weight + len(graph.lent_locals)
 }
@@ -2588,8 +2597,9 @@ prov_store_region_set :: proc(
 		prov_define_region_content(graph, root, element ? prov_extend(graph, path, proj_wild()) : path, region)
 		return
 	}
-	// A write through a parameter's carrier is what the caller learns of.
-	if param := prov_written_parameter(graph, destination); param != INVALID_SYMBOL {
+	// A write through a parameter's carrier, or a local one set from it, is
+	// what the caller learns of.
+	for param in prov_written_parameters(graph, destination) {
 		prov_define_region_content(graph, prov_root_for_symbol(graph, param), nil, region)
 	}
 	moved, rest := prov_moved_parameter(graph, region, .Stored)
@@ -2606,23 +2616,59 @@ prov_store_region_set :: proc(
 	})
 }
 
-// The parameter whose `^mut` or `[]mut` a write goes through, as `p^`, `p.x`,
-// or `p[i]` do.
+// The parameters whose `^mut` or `[]mut` a write goes through, as `p^`,
+// `p.x`, or `p[i]` do, directly or through a local carrier set from one.
 @(private = "file")
-prov_written_parameter :: proc(graph: ^Flow_Graph, destination: Expr) -> Symbol_Id {
+prov_written_parameters :: proc(graph: ^Flow_Graph, destination: Expr) -> []Symbol_Id {
 	#partial switch v in destination {
 	case ^Expr_Ident:
 		if sym := symbol_of(graph.k.c, v.symbol); sym != nil && sym.kind == .Parameter && param_writes_caller(graph.k.c, sym) {
-			return v.symbol
+			return slice.clone([]Symbol_Id{v.symbol}, graph.alloc)
 		}
+		return graph.written_aliases[v.symbol]
 	case ^Expr_Selector:
-		return prov_written_parameter(graph, v.operand)
+		return prov_written_parameters(graph, v.operand)
 	case ^Expr_Index:
-		return prov_written_parameter(graph, v.operand)
+		return prov_written_parameters(graph, v.operand)
 	case ^Expr_Postfix:
-		return prov_written_parameter(graph, v.operand)
+		return prov_written_parameters(graph, v.operand)
 	}
-	return INVALID_SYMBOL
+	return nil
+}
+
+// design.md "Allocator regions and region provenance": a local mutable
+// carrier set from a writable parameter's storage, as `alias := dst`,
+// `&mut dst^.items`, or `dst[1:]` set it, reaches the caller's storage.
+@(private = "file")
+prov_note_written_alias :: proc(graph: ^Flow_Graph, local: Symbol_Id, value: Expr) {
+	sym := symbol_of(graph.k.c, local)
+	if value == nil || sym == nil || sym.kind != .Var || sym.duration != .None || !carrier_is_mutable(graph.k.c, sym.type) {
+		return
+	}
+	source := value
+	#partial switch v in value {
+	case ^Expr_Unary:
+		if v.op == .Amp {
+			source = v.operand
+		}
+	case ^Expr_Slice:
+		source = v.operand
+	}
+	for param in prov_written_parameters(graph, source) {
+		prov_add_written_alias(graph, local, param)
+	}
+}
+
+@(private = "file")
+prov_add_written_alias :: proc(graph: ^Flow_Graph, local, param: Symbol_Id) {
+	existing := graph.written_aliases[local]
+	if slice.contains(existing, param) {
+		return
+	}
+	grown := make([]Symbol_Id, len(existing) + 1, graph.alloc)
+	copy(grown, existing)
+	grown[len(existing)] = param
+	graph.written_aliases[local] = grown
 }
 
 // design.md "Allocator regions and region provenance": a call leaves in each
@@ -3315,6 +3361,9 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 		}
 		projected := d.destructure.active ? symbol_index : -1
 		prov_declare_region(graph, id, sym, initializer, projected)
+		if projected < 0 {
+			prov_note_written_alias(graph, id, initializer)
+		}
 		slot, is_carrier := prov_slot_for_symbol(graph, id)
 		content := prov_content_slots(graph, id)
 		if !is_carrier && len(content) == 0 {
@@ -3530,6 +3579,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			    type_is_carrier(graph.k.c, target_type)) {
 				prov_merge_region_of(graph, ident.symbol, value_region)
 			}
+			prov_note_written_alias(graph, ident.symbol, value)
 			prov_retain_escape(graph, target, sources, expr_span(target))
 			// The old value is dropped here.
 			prov_drop_use(graph, ident.symbol, expr_span(target))

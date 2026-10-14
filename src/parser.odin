@@ -30,6 +30,8 @@ Parser :: struct {
 	index:          int,
 	last:           Token, // last token consumed; every node's span ends here
 	depth:          int,
+	// The deepest `depth` reached, which measures a finished subtree's height.
+	peak:           int,
 	depth_reported: bool,
 	// The next `{` opens a `where` declaration body, not a composite literal.
 	no_composite:   bool,
@@ -243,6 +245,25 @@ fmt_found :: proc(p: ^Parser, t: Token) -> string {
 		return "end of file"
 	}
 	return strings.concatenate({"found `", text_of(p, t), "`"}, context.temp_allocator)
+}
+
+@(private = "file")
+deepen :: proc(p: ^Parser, by: int) {
+	p.depth += by
+	p.peak = max(p.peak, p.depth)
+}
+
+// How much deeper than its start the subtree `parse` built goes. Once that
+// subtree returns, `depth` is back at the start, so a spine built on it, as
+// `(a.b.c).d.e` builds one, starts from this height instead.
+@(private = "file")
+measure_height :: proc(p: ^Parser, parse: proc(p: ^Parser) -> Expr) -> (Expr, int) {
+	base, outer := p.depth, p.peak
+	p.peak = base
+	e := parse(p)
+	height := p.peak - base
+	p.peak = max(outer, p.peak)
+	return e, height
 }
 
 // Report the depth limit once, then silence the unwind.
@@ -710,7 +731,7 @@ parse_delegate :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Ite
 
 @(private = "file")
 parse_top_level_when :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
-	p.depth += 1
+	deepen(p, 1)
 	defer p.depth -= 1
 	if p.depth > MAX_NEST {
 		depth_exceeded(p)
@@ -1138,7 +1159,7 @@ parse_block :: proc(p: ^Parser) -> (^Block, bool) {
 @(private = "file")
 parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 	p.suppress = false
-	p.depth += 1
+	deepen(p, 1)
 	defer p.depth -= 1
 	if p.depth > MAX_NEST {
 		depth_exceeded(p)
@@ -1346,7 +1367,7 @@ close_header :: proc(p: ^Parser, opened: bool, message: string) -> bool {
 
 @(private = "file")
 parse_if :: proc(p: ^Parser) -> Stmt {
-	p.depth += 1
+	deepen(p, 1)
 	defer p.depth -= 1
 	if p.depth > MAX_NEST {
 		depth_exceeded(p)
@@ -1446,7 +1467,7 @@ case_switch :: proc(p: ^Parser, start: Token, pattern, subject: Expr, matched: ^
 
 @(private = "file")
 parse_when :: proc(p: ^Parser) -> Stmt {
-	p.depth += 1
+	deepen(p, 1)
 	defer p.depth -= 1
 	if p.depth > MAX_NEST {
 		depth_exceeded(p)
@@ -1575,7 +1596,7 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 // A binding is a leaf or a parenthesized group; `$` and `&` apply to leaves.
 @(private = "file")
 parse_foreach_binding :: proc(p: ^Parser) -> (Foreach_Binding, bool) {
-	p.depth += 1
+	deepen(p, 1)
 	defer p.depth -= 1
 	if p.depth > MAX_NEST {
 		t := current(p)
@@ -1871,7 +1892,7 @@ is_compound_assign :: proc(kind: Token_Kind) -> bool {
 // `or_else` and conditionals are right-associative.
 @(private = "file")
 parse_expr :: proc(p: ^Parser) -> Expr {
-	p.depth += 1
+	deepen(p, 1)
 	defer p.depth -= 1
 	if p.depth > MAX_NEST {
 		return depth_exceeded(p)
@@ -1990,10 +2011,10 @@ binary_level :: proc(kind: Token_Kind) -> int {
 @(private = "file")
 parse_binary :: proc(p: ^Parser, min_level: int) -> Expr {
 	lo := current(p).lo
-	// An operand of a level at or below the comparisons may be a range.
-	lhs := parse_range(p) if min_level <= 5 else parse_unary(p)
-
-	spine := 0
+	// An operand of a level at or below the comparisons may be a range. Its
+	// height counts: a parenthesized operand is a subtree of its own.
+	lhs, spine := measure_height(p, parse_range if min_level <= 5 else parse_unary)
+	deepen(p, spine)
 	defer p.depth -= spine
 	chain_reported := false
 
@@ -2009,7 +2030,7 @@ parse_binary :: proc(p: ^Parser, min_level: int) -> Expr {
 			return depth_exceeded(p)
 		}
 		spine += 1
-		p.depth += 1
+		deepen(p, 1)
 
 		op := advance(p)
 		// level+1 on the right is what makes these left-associative.
@@ -2050,7 +2071,7 @@ parse_unary :: proc(p: ^Parser) -> Expr {
 	t := current(p)
 	#partial switch t.kind {
 	case .Plus, .Minus, .Not, .Tilde, .Amp:
-		p.depth += 1
+		deepen(p, 1)
 		defer p.depth -= 1
 		if p.depth > MAX_NEST {
 			return depth_exceeded(p)
@@ -2081,7 +2102,7 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 	lo := current(p).lo
 	started_as_type := starts_type(current(p).kind) && !p.type_value
 	p.type_value = false
-	e := parse_primary(p)
+	e, height := measure_height(p, parse_primary)
 	direct_type_is_expression := false
 	if _, ok := e.(^Expr_Proc); ok {
 		direct_type_is_expression = true
@@ -2090,8 +2111,10 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 		direct_type_is_expression = true
 	}
 
-	// Count the postfix AST spine against the recursion budget.
-	spine := 0
+	// Count the postfix AST spine against the recursion budget, from the
+	// height of the primary it is built on.
+	spine := height
+	deepen(p, spine)
 	defer p.depth -= spine
 
 	for {
@@ -2100,10 +2123,14 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 		}
 		if p.depth > MAX_NEST {
 			depth_exceeded(p)
+			// Marked, so the statement recovers past the chain it stopped in.
+			if base := expr_base(e); base != nil {
+				base.has_error = true
+			}
 			return e
 		}
 		spine += 1
-		p.depth += 1
+		deepen(p, 1)
 
 		t := current(p)
 		#partial switch t.kind {
@@ -2580,7 +2607,7 @@ parse_type :: proc(p: ^Parser) -> Expr {
 		return e
 	}
 
-	p.depth += 1
+	deepen(p, 1)
 	defer p.depth -= 1
 	if p.depth > MAX_NEST {
 		return depth_exceeded(p)
@@ -2894,7 +2921,7 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 			return depth_exceeded(p)
 		}
 		spine += 1
-		p.depth += 1
+		deepen(p, 1)
 		advance(p)
 		field := advance(p)
 		s := new_expr(p, Expr_Selector, start.lo)

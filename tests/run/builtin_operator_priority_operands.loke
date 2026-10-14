@@ -1,0 +1,21 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Operator lookup and overload resolution": a user overload never
+// replaces a defined built-in operation. A shift by a signed count is one
+// (design.md "Arithmetic operators"), and so is `+` over a `string` and a
+// `string_view` in either order.
+
+shift :: operator(<<) proc(a, b: int) -> int { return 99; }
+add :: operator(+) proc(a: string, b: string_view) -> string { return "shadowed"; }
+add_view :: operator(+) proc(a: string_view, b: string) -> string { return "shadowed"; }
+
+main :: proc() {
+	n := 1;
+	s := "a";
+	v: string_view = "b";
+	fmt.println(2 << n);
+	fmt.println(s + v);
+	fmt.println(v + s);
+}
