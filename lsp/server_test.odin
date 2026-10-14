@@ -1566,3 +1566,37 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	request(&h, "96", "workspace/executeCommand", `{"command":"loke.documentation","arguments":[]}`)
 	testing.expect_value(t, error_code(reply_to(&h, take(&h), 96)), INVALID_PARAMS)
 }
+
+// The documentation command fails where `lokec -doc` fails before the document
+// is loaded at all: a malformed manifest, and a byte order mark.
+@(test)
+documentation_fails_where_lokec_doc_fails :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "documentation-failures") { finish(&h); return }
+	defer finish(&h)
+	library := "@(public) package library;\nanswer :: 1;\n"
+	Case :: struct { relative, text, code: string }
+	cases := []Case{
+		{"manifest/lib.loke", library, "L0398"},
+		{"bom/lib.loke", strings.concatenate({"\xef\xbb\xbf", library}, context.temp_allocator), "L0002"},
+	}
+	write_file(&h, "manifest/loke.project", "not_a_manifest_directive\n")
+	for c, index in cases {
+		write_file(&h, c.relative, c.text)
+		open(&h, c.relative, c.text)
+		request_documentation(&h, i64(100 + index), c.relative)
+		settle(&h)
+		reply := reply_to(&h, take(&h), i64(100 + index))
+		message, _ := member_string(member(reply, "error"), "message")
+		testing.expectf(t, error_code(reply) == REQUEST_FAILED && strings.contains(message, c.code), "%s: %v", c.relative, reply)
+
+		s: lokec.Compilation_Session
+		testing.expect(t, lokec.init_session(&s))
+		dir := lokec.path_dir(lokec.join_path({h.root, c.relative}, context.temp_allocator), context.temp_allocator)
+		testing.expectf(t, !lokec.check_session(&s, dir, documentation = true), "%s: `lokec -doc` succeeds", c.relative)
+		lokec.destroy_session(&s)
+		close(&h, c.relative)
+		settle(&h)
+		take(&h)
+	}
+}

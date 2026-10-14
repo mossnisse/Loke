@@ -129,6 +129,10 @@ any_root_dirty :: proc(s: ^Server) -> bool {
 
 @(private = "file")
 answer :: proc(s: ^Server, request: Pending_Request, doc: ^Document) {
+	if request.kind == .Documentation {
+		answer_documentation(s, request, doc)
+		return
+	}
 	session := &doc.root.session
 	snapshot, captured := lokec.session_snapshot(session)
 	file, loaded := lokec.query_file(session, snapshot, doc.path)
@@ -175,14 +179,7 @@ answer :: proc(s: ^Server, request: Pending_Request, doc: ^Document) {
 			return
 		}
 	case .Documentation:
-		page, failure := documentation(s, doc.root)
-		if failure != "" {
-			send_error(s, request.id, REQUEST_FAILED, failure)
-			return
-		}
-		b := strings.builder_make(context.temp_allocator)
-		write_json_string(&b, page)
-		result = strings.to_string(b)
+		// Answered before the snapshot is consulted.
 	}
 	send_result(s, request.id, result)
 }

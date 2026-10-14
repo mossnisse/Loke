@@ -785,7 +785,10 @@ document's text in a scratch `Compiler` under the same encoding rules
 from the first that changed to the last in one edit, so both ends of its range
 start a line. A refusal reports the first error and its line. The
 `loke.documentation` command queues like a position request and answers with
-`document_project` for the document's root. A library root was checked as
+`document_project` for the document's root. It skips the position requests'
+check that the snapshot holds the document, so a check that failed before
+loading it, such as for a malformed manifest, still fails the command, and a
+failure names the first error `lokec -doc` would report. A library root was checked as
 `lokec -doc` checks it, so its snapshot is used directly. A program root is
 checked again with `check_session` in documentation mode, in a temporary
 session with the same configuration and overlays, so that an executable-only

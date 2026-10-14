@@ -102,22 +102,46 @@ execute_command :: proc(s: ^Server, id: json.Value, params: json.Value) {
 	queue_document_request(s, id, .Documentation, document_at(s, string(uri)), nil)
 }
 
+// The page describes the root, not the document, so it skips the guard
+// position requests use: a check that failed before loading the document, as
+// for a malformed manifest or a file with a byte order mark, still fails the
+// command, as `lokec -doc` fails.
+answer_documentation :: proc(s: ^Server, request: Pending_Request, doc: ^Document) {
+	page, failure := documentation(s, doc.root)
+	if failure != "" {
+		send_error(s, request.id, REQUEST_FAILED, failure)
+		return
+	}
+	b := strings.builder_make(context.temp_allocator)
+	write_json_string(&b, page)
+	send_result(s, request.id, strings.to_string(b))
+}
+
 // The page `lokec -doc` prints for the root, or why it would fail. A library
 // root was checked exactly as `lokec -doc` checks it, so its snapshot is used;
 // a program is checked again in documentation mode, in a session of its own,
 // so the root's reusable packages stay as they are.
 documentation :: proc(s: ^Server, root: ^Root) -> (page: string, failure: string) {
-	FAILED :: "the program has errors, so `lokec -doc` would print no documentation"
 	if root.library {
-		if root.session.compiler.error_count > 0 { return "", FAILED }
+		if root.session.compiler.error_count > 0 { return "", documentation_failure(&root.session.compiler) }
 		return temporary_page(&root.session.compiler), ""
 	}
 	session: lokec.Compilation_Session
 	defer lokec.destroy_session(&session)
-	if !lokec.init_session(&session, s.config) { return "", FAILED }
+	if !lokec.init_session(&session, s.config) { return "", documentation_failure(&session.compiler) }
 	for _, doc in s.documents { lokec.set_session_overlay(&session, doc.path, doc.text) }
-	if !lokec.check_session(&session, root.path, documentation = true) { return "", FAILED }
+	if !lokec.check_session(&session, root.path, documentation = true) { return "", documentation_failure(&session.compiler) }
 	return temporary_page(&session.compiler), ""
+}
+
+// Why `lokec -doc` would fail: the first error it would report.
+@(private = "file")
+documentation_failure :: proc(c: ^lokec.Compiler) -> string {
+	FAILED :: "the program has errors, so `lokec -doc` would print no documentation"
+	for d in c.diagnostics {
+		if d.severity == .Error { return fmt.tprintf("%s; the first is %s: %s", FAILED, d.code, d.message) }
+	}
+	return FAILED
 }
 
 // `document_project` allocates as it goes, as a command that prints once and
