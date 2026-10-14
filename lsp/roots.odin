@@ -68,14 +68,24 @@ run_pending_work :: proc(s: ^Server) -> bool {
 }
 
 // Assigns each open document its root, creating roots it needs and destroying
-// those no document needs any more. A document another root's program already
-// loads joins that root, so an imported package keeps the collections its
-// application's manifest supplies (compiler-guide.md "Projects").
+// those no document needs any more. A document that the program of another
+// open document's own root already loads joins that root, so an imported
+// package keeps the collections its application's manifest supplies
+// (compiler-guide.md "Projects"). Once no open document has that root as its
+// own, the package goes back to its own root.
 refresh_roots :: proc(s: ^Server) {
 	s.layout_dirty = false
+	Own :: struct { path, key: string }
+	own := make(map[^Document]Own, context.temp_allocator)
+	anchored := make(map[string]bool, context.temp_allocator)
 	for _, doc in s.documents {
 		path, key := root_of(s, doc)
-		if importer := importing_root(s, doc, key); importer != nil {
+		own[doc] = Own{path, key}
+		anchored[key] = true
+	}
+	for _, doc in s.documents {
+		path, key := own[doc].path, own[doc].key
+		if importer := importing_root(s, doc, key, anchored); importer != nil {
 			doc.root = importer
 			continue
 		}
@@ -99,17 +109,18 @@ refresh_roots :: proc(s: ^Server) {
 	}
 }
 
-// Of the other roots whose last check loaded the document, the outermost: one
-// whose own package no other candidate loads. Imports are acyclic, so there is
-// one unless two applications import the document, and then the first by path.
+// Of the other roots whose last check loaded the document and that are some
+// open document's own root, the outermost: one whose own package no other
+// candidate loads. Imports are acyclic, so there is one unless two
+// applications import the document, and then the first by path.
 @(private = "file")
-importing_root :: proc(s: ^Server, doc: ^Document, own_key: string) -> ^Root {
+importing_root :: proc(s: ^Server, doc: ^Document, own_key: string, anchored: map[string]bool) -> ^Root {
 	best: ^Root
 	for _, candidate in s.roots {
-		if candidate.key == own_key || !candidate.loaded[doc.key] { continue }
+		if candidate.key == own_key || !anchored[candidate.key] || !candidate.loaded[doc.key] { continue }
 		outermost := true
 		for _, other in s.roots {
-			if other != candidate && other.key != own_key && other.loaded[doc.key] &&
+			if other != candidate && other.key != own_key && anchored[other.key] && other.loaded[doc.key] &&
 			   (other.packages[candidate.key] || other.loaded[candidate.key]) {
 				outermost = false
 			}

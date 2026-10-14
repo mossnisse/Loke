@@ -707,12 +707,15 @@ stop the process.
 Each root is one `lokec` input with its own `Compilation_Session` and the same
 fixed configuration. Every open document is an overlay in every session. An
 edit marks every root dirty because any root may import the edited file.
-`refresh_roots` assigns a document to another root whose last check loaded its
-file. If several roots qualify, it picks the outermost: the one whose own package
-no other candidate loads. Otherwise it maps the document to its directory, or to
-the file when two or more sibling files declare `main`. `declares_entry` runs the
-compiler's lexer and looks for `main :` outside brackets. Assignment runs again
-after every check, so it does not depend on the order documents were opened.
+A document's own root is its directory, or the file when two or more sibling
+files declare `main`. `refresh_roots` assigns a document to another root whose
+last check loaded its file, provided that root is some other open document's
+own root, so closing an application returns its imported packages to their
+own roots. If several roots qualify, it picks the outermost: the one whose own
+package no other candidate loads. Otherwise the document gets its own root.
+`declares_entry` runs the compiler's lexer and looks for `main :` outside
+brackets. Assignment runs again after every check, so it does not depend on the
+order documents were opened.
 Roots that no open document uses are destroyed. `check_root` uses
 `check_session_incremental`, rechecking once in documentation mode when the
 root package is not `main`, so a root reuses the packages before the first one

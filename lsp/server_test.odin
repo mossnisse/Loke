@@ -495,6 +495,16 @@ opened_imports_keep_their_application :: proc(t: ^testing.T) {
 		if testing.expect_value(t, len(published), 1) {
 			testing.expect(t, published[0].version == 2 && len(published[0].diagnostics) == 1)
 		}
+		// Without the application open, the library is checked alone again and
+		// cannot find `util:`.
+		change(&h, "lib/lib.loke", lib_text, 3)
+		close(&h, "app/main.loke")
+		settle(&h)
+		published = publications(take(&h))
+		testing.expect(t, len(published) == 1 && published[0].version == 3 && len(published[0].diagnostics) > 0)
+		if root := only_root(&h); root != nil {
+			testing.expect_value(t, root.key, lokec.dir_key(lokec.canonical_dir(lokec.join_path({h.root, "lib"}, context.temp_allocator))))
+		}
 		close(&h, "lib/lib.loke")
 		settle(&h)
 		published = publications(take(&h))
@@ -1517,11 +1527,9 @@ documentation_matches_lokec_doc :: proc(t: ^testing.T) {
 	testing.expect_value(t, page, fresh_documentation(&h, "app", {{"app/shapes/shapes.loke", commented}}))
 	testing.expect(t, strings.contains(page, "A unit square."))
 
-	// Opened alone, the library is its own root, checked again after each edit.
+	// With the program closed, the library is its own root, checked again
+	// after each edit.
 	close(&h, "app/main.loke")
-	close(&h, "app/shapes/shapes.loke")
-	settle(&h)
-	open(&h, "app/shapes/shapes.loke", commented)
 	edits := []string{
 		strings.concatenate({commented, "\n// Twice the area.\ndouble :: proc(s: Square) -> int { return 2 * area(s); }\n"}, context.temp_allocator),
 		strings.concatenate({commented, "\n// Thrice the area.\ntriple :: proc(s: Square) -> int { return 3 * area(s); }\n"}, context.temp_allocator),
