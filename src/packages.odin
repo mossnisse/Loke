@@ -381,23 +381,29 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 	return canonical_dir(strings.concatenate({source_dir, "/", path}, context.temp_allocator)), .Ok
 }
 
-// Directory-derived identity makes alternate import spellings deterministic.
-// The longest registered collection root wins, for the root directory too, so
-// `lokec core/strings -doc` checks `core:strings` with what the compiler
-// contributes to it.
+// Directory-derived identity makes alternate import spellings deterministic
+// (design.md "Import statement"): the key spells the directory as it is stored,
+// whatever case an import wrote. The longest registered collection root wins,
+// for the root directory too, so `lokec core/strings -doc` checks
+// `core:strings` with what the compiler contributes to it. Of collections
+// sharing that root, `base` and `core` win, so another name for a bundled root
+// still reaches its contributed members; the rest go by name.
 @(private = "file")
 package_key :: proc(c: ^Compiler, canonical: string) -> string {
 	names := make([dynamic]string, 0, len(c.collections), context.temp_allocator)
 	for name in c.collections {
 		append(&names, name)
 	}
-	slice.sort(names[:])
+	slice.sort_by(names[:], proc(a, b: string) -> bool {
+		a_bundled, b_bundled := a == "base" || a == "core", b == "base" || b == "core"
+		return a_bundled != b_bundled ? a_bundled : a < b
+	})
 	best, best_root := "", -1
 	for name in names {
 		root := canonical_dir(c.collections[name])
 		rest, under := path_under(root, canonical)
 		if under && len(root) > best_root {
-			best = strings.concatenate({name, ":", rest}, c.semantic_allocator)
+			best = strings.concatenate({name, ":", stored_case(root, rest)}, c.semantic_allocator)
 			best_root = len(root)
 		}
 	}
@@ -456,7 +462,41 @@ root_relative_key :: proc(c: ^Compiler, dir: string) -> string {
 	if cleaned == "." {
 		return ""
 	}
-	return strings.clone(cleaned, c.semantic_allocator)
+	return strings.clone(stored_case(canonical_dir(c.root_dir), cleaned), c.semantic_allocator)
+}
+
+// `rest`, a relative directory below `root`, spelled as the directories are
+// stored. A component with no stored match, as an unsaved overlay's has, keeps
+// its spelling.
+@(private = "file")
+stored_case :: proc(root, rest: string) -> string {
+	if rest == "" {
+		return rest
+	}
+	parts := strings.split(rest, "/", context.temp_allocator)
+	dir := root
+	for &part in parts {
+		if entries, err := os.read_all_directory_by_path(dir, context.temp_allocator); err == nil {
+			match := ""
+			for entry in entries {
+				if entry.type != .Directory {
+					continue
+				}
+				if entry.name == part {
+					match = entry.name
+					break
+				}
+				if match == "" && strings.equal_fold(entry.name, part) {
+					match = entry.name
+				}
+			}
+			if match != "" {
+				part = match
+			}
+		}
+		dir = strings.concatenate({dir, "/", part}, context.temp_allocator)
+	}
+	return strings.join(parts, "/", context.temp_allocator)
 }
 
 // -------------------------------------------------------------- graph shape --

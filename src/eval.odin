@@ -1225,18 +1225,6 @@ MAP_ENTRY_KEY :: 0
 @(private = "file")
 MAP_ENTRY_VALUE :: 1
 
-// Replaces a container's contents with `next`, charging the new storage.
-@(private = "file")
-set_contents :: proc(ev: ^Evaluator, slot: ^Eval_Value, next: []Eval_Value) -> bool {
-	elements, allocated := eval_elements(ev, len(next))
-	if !allocated {
-		return false
-	}
-	copy(elements, next)
-	slot.elements = elements
-	return true
-}
-
 @(private = "file")
 eval_container_literal :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool) {
 	out := Eval_Value{kind = .Aggregate, type = v.type}
@@ -1314,9 +1302,7 @@ map_deduplicate :: proc(ev: ^Evaluator, m: Eval_Value) -> (Eval_Value, bool) {
 		}
 		append(&kept, m.elements[index], m.elements[index + MAP_ENTRY_VALUE])
 	}
-	if !set_contents(ev, &out, kept[:]) {
-		return Eval_Value{}, false
-	}
+	out.elements = kept[:]
 	return out, true
 }
 
@@ -1380,9 +1366,7 @@ map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Ev
 	if err != nil { return nil, false }
 	append(&grown, ..m.elements)
 	append(&grown, key_copy, zero)
-	if !set_contents(ev, m, grown[:]) {
-		return nil, false
-	}
+	m.elements = grown[:]
 	return &m.elements[len(m.elements) - 1], true
 }
 
@@ -1511,9 +1495,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			}
 			append(&grown, copied)
 		}
-		if !set_contents(ev, self, grown[:]) {
-			return nil, false
-		}
+		self.elements = grown[:]
 		if !fallible { return none, true }
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
@@ -1570,9 +1552,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		append(&grown, ..self.elements[:at])
 		append(&grown, value)
 		append(&grown, ..self.elements[at:])
-		if !set_contents(ev, self, grown[:]) {
-			return nil, false
-		}
+		self.elements = grown[:]
 		if !fallible { return none, true }
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
@@ -1606,9 +1586,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			append(&kept, ..self.elements[:at])
 			append(&kept, ..self.elements[at + 1:])
 		}
-		if !set_contents(ev, self, kept[:]) {
-			return nil, false
-		}
+		self.elements = kept[:]
 		return results(ev, taken), true
 
 	case .Clear, .Map_Clear:
@@ -1636,9 +1614,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			}
 			append(&next, zero)
 		}
-		if !set_contents(ev, self, next[:]) {
-			return nil, false
-		}
+		self.elements = next[:]
 		if !fallible { return none, true }
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
@@ -1745,9 +1721,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if err != nil { return nil, false }
 		append(&kept, ..self.elements[:at])
 		append(&kept, ..self.elements[at + 2:])
-		if !set_contents(ev, self, kept[:]) {
-			return nil, false
-		}
+		self.elements = kept[:]
 		return eval_one(ev, eval_option(ev, symbol.result, taken, true))
 	}
 	return nil, false
@@ -1837,6 +1811,9 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 		return eval_field(ev, v, base.elements)
 
 	case ^Expr_Call:
+		if _, reflected := v.operation.(Call_Reflect); reflected {
+			return eval_reflected_field(ev, v)
+		}
 		target, ok := eval_call_target(ev, v)
 		if !ok {
 			return nil, false
@@ -2006,6 +1983,26 @@ eval_field :: proc(ev: ^Evaluator, v: ^Expr_Selector, elements: []Eval_Value) ->
 		return nil, false
 	}
 	return &elements[field.index], true
+}
+
+// design.md "Compile-time reflection": `field.get(value)` is the reflected field
+// of the record `value` points to, and `field.pointer(value)` its address.
+@(private = "file")
+eval_reflected_field :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (^Eval_Value, bool) {
+	subject, ok := eval_expr(ev, v.bound[0])
+	if !ok {
+		return nil, false
+	}
+	record, live := eval_deref(ev, subject, expr_span(v.bound[0]))
+	if !live {
+		return nil, false
+	}
+	field := symbol_of(ev.k.c, v.operation.(Call_Reflect).field)
+	if field == nil || int(field.index) >= len(record.elements) {
+		eval_fail(ev, v.span, "L0341", "this field has no compile-time value here")
+		return nil, false
+	}
+	return &record.elements[field.index], true
 }
 
 // The aggregate a selection reads, where `p.f` means `p^.f`.
@@ -2261,6 +2258,13 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		return Eval_Value{}, false
 	case Call_Text:
 		return eval_text_op(ev, v)
+	case Call_Reflect:
+		field, ok := eval_reflected_field(ev, v)
+		if !ok { return Eval_Value{}, false }
+		if operation.op == .Field_Pointer {
+			return Eval_Value{kind = .Nil, type = v.type, target = field}, true
+		}
+		return field^, true
 	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Sort_By, Call_Simd_Reduce:
 		callee := symbol_of(ev.k.c, v.resolution.symbol)
 		if callee != nil && callee.kind == .Builtin { return eval_builtin(ev, v, callee) }
@@ -3396,8 +3400,9 @@ eval_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 		return eval_range_foreach(ev, s)
 
 	case .Array, .Slice, .Dynamic:
-		// A `&` loop needs the container's own storage.
-		if foreach_is_place_loop(s) {
+		// A `&mut` loop needs the container's own storage, and so does a
+		// borrowed binding over a place (design.md "Borrowing iteration").
+		if foreach_is_place_loop(s) || s.borrows && eval_frame_place(ev, s.iterable) {
 			container, ok := eval_place(ev, s.iterable)
 			if !ok {
 				return .Fail
@@ -3531,8 +3536,9 @@ eval_foreach_step :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value
 	return flow == .Continue ? .Normal : flow
 }
 
-// design.md "Element bindings": a value binding copies; a `&mut` binding is the
-// container's storage.
+// design.md "Element bindings": an owned binding copies; a borrowed or `&mut`
+// binding is the container's storage. A single name over a lent `indexed()`
+// record still receives a fresh record.
 @(private = "file")
 bind_foreach_element :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value, index: int) -> bool {
 	frame := current_frame(ev)
@@ -3540,7 +3546,7 @@ bind_foreach_element :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Va
 		eval_fail(ev, s.span, "L0341", "a `foreach` needs a compile-time frame")
 		return false
 	}
-	if foreach_is_place_loop(s) {
+	if foreach_is_place_loop(s) || s.borrows && (!s.indexed || len(s.bindings) == 2) {
 		if s.indexed && len(s.bindings) == 2 {
 			if !bind_eval_place_pattern(ev, frame, []Foreach_Binding{s.bindings[0]}, element) { return false }
 			return bind_local(ev, frame, s.bindings[1].symbol, eval_count_value(ev, index))

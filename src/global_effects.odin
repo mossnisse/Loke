@@ -439,15 +439,39 @@ compute_global_writes :: proc(k: ^Checker) {
 			append(&body.targets, ..effect_targets(c, call, bodies[:], index_of, used_as_value))
 		}
 	}
-	// ponytail: whole-program rounds until nothing grows; a worklist over
-	// callers would do if large programs make this slow.
-	for changed := true; changed; {
-		changed = false
-		for &body in bodies {
-			for target in body.targets {
-				for global in bodies[target].writes {
-					changed |= add_global_write(&body.writes, global)
-				}
+	// A body's set grows only when a callee's does, so only the callers of a
+	// body that grew are visited again.
+	callers := make([][dynamic]int, len(bodies), context.temp_allocator)
+	for &list in callers {
+		list = make([dynamic]int, context.temp_allocator)
+	}
+	for body, index in bodies {
+		for target in body.targets {
+			append(&callers[target], index)
+		}
+	}
+	queued := make([]bool, len(bodies), context.temp_allocator)
+	pending := make([dynamic]int, 0, len(bodies), context.temp_allocator)
+	for index := len(bodies) - 1; index >= 0; index -= 1 {
+		append(&pending, index)
+		queued[index] = true
+	}
+	for len(pending) > 0 {
+		index := pop(&pending)
+		queued[index] = false
+		grew := false
+		for target in bodies[index].targets {
+			for global in bodies[target].writes {
+				grew |= add_global_write(&bodies[index].writes, global)
+			}
+		}
+		if !grew {
+			continue
+		}
+		for caller in callers[index] {
+			if !queued[caller] {
+				queued[caller] = true
+				append(&pending, caller)
 			}
 		}
 	}

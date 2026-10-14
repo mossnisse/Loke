@@ -1,0 +1,45 @@
+// design.md "Borrowing iteration": a compile-time borrowed binding names the
+// element itself, as at run time.
+package main;
+import "core:fmt";
+Pair :: struct { a: int, b: int }
+array_match :: proc() -> bool {
+	xs := [1]int{7};
+	p := &xs[0];
+	foreach (x in xs) { return &x == p; }
+	return false;
+}
+slice_match :: proc() -> bool {
+	xs := [2]int{7, 8};
+	s := xs[:];
+	p := &xs[1];
+	foreach (x in s) { if (&x == p) { return true; } }
+	return false;
+}
+indexed_match :: proc() -> bool {
+	xs := [2]int{7, 8};
+	p := &xs[1];
+	foreach (x, i in xs.indexed()) { if (i == 1) { return &x == p; } }
+	return false;
+}
+field_match :: proc() -> bool {
+	xs := [1]Pair{Pair{1, 2}};
+	p := &xs[0].b;
+	foreach (a, b in xs) { return &b == p && a == 1; }
+	return false;
+}
+sum :: proc() -> int {
+	total := 0;
+	foreach (x in [3]int{1, 2, 3}) { total += x; }
+	foreach (x, i in [2]int{10, 20}.indexed()) { total += x * i; }
+	return total;
+}
+A :: array_match();
+B :: slice_match();
+D :: indexed_match();
+E :: field_match();
+F :: sum();
+main :: proc() {
+	fmt.println(A, B, D, E, F);
+	fmt.println(array_match(), slice_match(), indexed_match(), field_match(), sum());
+}

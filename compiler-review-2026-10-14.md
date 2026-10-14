@@ -18,13 +18,13 @@ reporting them again.
 
 | ID | Priority | Subject | Finding and evidence |
 | --- | --- | --- | --- |
-| G01 | P2 | Package discovery | [Package spelling changes compiler-contributed members](known-gaps.md#g01-package-spelling-changes-compiler-contributed-members): uppercase directory spelling or a second collection alias removes library members. Compile/IR reproduction. |
+| G01 | P2 | Package discovery (fixed) | Package spelling changes compiler-contributed members: uppercase directory spelling or a second collection alias removes library members. Compile/IR reproduction. |
 | G02 | P2 | Operator selection (fixed) | Built-in priority drifts: signed shifts and mixed text expressions call user overloads. Runtime reproduction. |
 | G03 | P2 | Lexical scope (fixed) | Local operators leak: a nested overload causes ambiguity inside and after its block. Compiler reproduction. |
 | G04 | P2 | Assignment lowering (fixed) | Compound setters reread indices: right-hand mutation redirects the write. Runtime reproduction. |
 | G05 | P2 | Contextual typing (fixed) | Parallel setters lose destination context: legal `i32` literal assignments become `int` and fail. Compiler reproduction. |
-| G06 | P2 | CTFE iteration | [Borrowed bindings become copies](known-gaps.md#g06-compile-time-foreach-copies-ordinary-borrowed-bindings): the same procedure returns different pointer-equality results at compile time and runtime. Runtime comparison. |
-| G07 | P2 | CTFE reflection | [Field access lacks interpreter dispatch](known-gaps.md#g07-reflected-field-access-cannot-execute-at-compile-time): a valid constant read fails L0344. Compile/IR reproduction and runtime control. |
+| G06 | P2 | CTFE iteration (fixed) | Borrowed bindings become copies: the same procedure returns different pointer-equality results at compile time and runtime. Runtime comparison. |
+| G07 | P2 | CTFE reflection (fixed) | Field access lacks interpreter dispatch: a valid constant read fails L0344. Compile/IR reproduction and runtime control. |
 | G08 | P2 | Reflection argument checks (fixed) | Descriptor calls discard labels and modes: invalid `bogus = inout` is accepted. Runtime reproduction. |
 | G09 | P2 | Lifecycle tracking (fixed) | Owned scalar bindings bypass liveness: moves/drops do not invalidate some loop and case bindings. Compile/IR reproduction. |
 | G10 | P2 | Return ownership (fixed) | Owned case payloads look borrowed: returning a move-only payload is rejected. Compiler reproduction. |
@@ -133,6 +133,10 @@ allocation analysis; no timing improvement was measured.
 
 ### E07: Schedule global-effect propagation by changed callees
 
+Fixed after the review. A chain of 6000 bodies declared caller first took
+1.3 s to compile before and 0.37 s after; declared callee first, 0.39 s
+before and 0.36 s after.
+
 [global_effects.odin](src/global_effects.odin), lines 444–453, rescans every
 body's calls whenever any global-write set changes. A forward-ordered N-body
 chain ending in one write requires N rounds and quadratic edge visits. Use
@@ -157,8 +161,8 @@ approximately zero code-size impact; no measured latency claim is made.
 Ranked concrete cuts, using the `ponytail-audit` skill for this part of the
 review:
 
-- `shrink:` Remove the extra whole-container buffer allocation in seven CTFE update paths. Assign the already fresh arena-owned buffer to `slot.elements` and delete `set_contents`; approximately 25 lines. [eval.odin](src/eval.odin)
-- `shrink:` Form user binary-operator candidates once. Retain viability and the candidate set across fallback choice and ranking instead of calling `operator_viable` and then repeating formation in `resolve_operator`. Preserve ambiguity and promotion behavior. [check_expr.odin](src/check_expr.odin), [overload.odin](src/overload.odin)
+- `shrink:` Remove the extra whole-container buffer allocation in seven CTFE update paths. Assign the already fresh arena-owned buffer to `slot.elements` and delete `set_contents`; approximately 25 lines. [eval.odin](src/eval.odin) Done after the review.
+- `shrink:` Form user binary-operator candidates once. Retain viability and the candidate set across fallback choice and ranking instead of calling `operator_viable` and then repeating formation in `resolve_operator`. Preserve ambiguity and promotion behavior. [check_expr.odin](src/check_expr.odin), [overload.odin](src/overload.odin) Done after the review.
 - `shrink:` Share built-in operand joining between applicability and checking. Remove the second independently maintained unification table while fixing G02. [operators.odin](src/operators.odin), [check_expr.odin](src/check_expr.odin) Done after the review.
 - `shrink:` Delete the formatter's backward indentation scan after recording current-line indentation (E02). [formatter.odin](src/formatter.odin) Done after the review.
 - `shrink:` Share the small owned-binding slot/Init registration sequence while fixing G09. Keep liveness for all owned locals and cleanup for managed ones; approximately 15–20 net lines. [cfg.odin](src/cfg.odin) Done after the review.

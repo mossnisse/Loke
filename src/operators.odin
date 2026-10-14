@@ -330,6 +330,28 @@ builtin_unary_defined :: proc(k: ^Checker, op: Token_Kind, operand: Type_Id) -> 
 
 // ------------------------------------------------------------- resolution --
 
+// One operator's visible candidates, formed once against one argument list,
+// so a fallback choice and the ranking after it share them.
+Operator_Set :: struct {
+	symbol:  string,
+	members: []Symbol_Id,
+	formed:  []Candidate,
+}
+
+// `among` is the already-filtered set an index in place position built; every
+// other caller forms the whole visible set.
+form_operator_set :: proc(
+	k: ^Checker, symbol: string, operands: []Type_Id, args: []Arg_Info, among: []Symbol_Id = nil,
+) -> Operator_Set {
+	members := among == nil ? operator_candidates(k, symbol, operands) : among
+	return Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args)}
+}
+
+// An unrelated overload must not suppress a built-in fallback.
+operator_viable :: proc(set: Operator_Set) -> bool {
+	return candidates_viable(set.formed)
+}
+
 // Resolves and binds one operator expression.
 resolve_operator :: proc(
 	k: ^Checker,
@@ -339,14 +361,16 @@ resolve_operator :: proc(
 	args: []Arg_Info,
 	among: []Symbol_Id = nil,
 ) -> (Symbol_Id, []Expr) {
-	// `among` is the already-filtered set an index in place position built; every
-	// other caller ranks the whole visible set.
-	candidates := among == nil ? operator_candidates(k, symbol, operands) : among
-	if len(candidates) == 0 {
+	return resolve_operator_set(k, span, form_operator_set(k, symbol, operands, args, among), args)
+}
+
+// Ranks a formed set and binds the chosen candidate's operands.
+resolve_operator_set :: proc(k: ^Checker, span: Span, set: Operator_Set, args: []Arg_Info) -> (Symbol_Id, []Expr) {
+	if len(set.members) == 0 {
 		return INVALID_SYMBOL, nil
 	}
-	description := fmt.aprintf("operator `%s`", symbol, allocator = k.c.semantic_allocator)
-	cand, resolved := resolve_overload(k, span, description, candidates, args)
+	description := fmt.aprintf("operator `%s`", set.symbol, allocator = k.c.semantic_allocator)
+	cand, resolved := choose_candidate(k, span, description, set.members, set.formed, args)
 	if !resolved {
 		return INVALID_SYMBOL, nil
 	}
@@ -358,8 +382,8 @@ resolve_operator :: proc(
 }
 
 // Whether a related candidate exists, used only to choose a diagnostic path.
-operator_exists :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> bool {
-	for candidate in operator_candidates(k, symbol, operands) {
+operator_exists :: proc(k: ^Checker, members: []Symbol_Id, operands: []Type_Id) -> bool {
+	for candidate in members {
 		sym := symbol_of(k.c, candidate)
 		if sym == nil {
 			continue
@@ -374,16 +398,6 @@ operator_exists :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> boo
 		}
 	}
 	return false
-}
-
-// An unrelated overload must not suppress a built-in fallback.
-operator_viable :: proc(
-	k: ^Checker,
-	symbol: string,
-	operands: []Type_Id,
-	args: []Arg_Info,
-) -> bool {
-	return overload_has_viable(k, operator_candidates(k, symbol, operands), args)
 }
 
 @(private = "file")

@@ -1,0 +1,15 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Import statement": a bundled package keeps its compiler-contributed
+// members however an import spells it, by directory case on a case-insensitive
+// file system or through another collection name for the bundled root.
+import upper "core:Strings";
+import other "std:strings";
+
+main :: proc() {
+	a := upper.copy("a");
+	b := other.copy("b");
+	fmt.println(a, b);
+}

@@ -2011,7 +2011,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) -> bool {
 	symbol := operator_text(v.op)
 	operands := []Type_Id{operand}
-	if !operator_exists(k, symbol, operands) {
+	if !operator_exists(k, operator_candidates(k, symbol, operands), operands) {
 		return false
 	}
 	args := make([]Arg_Info, 1, k.c.semantic_allocator)
@@ -2038,19 +2038,21 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bo
 	args[0] = arg_from_expr(v.lhs)
 	args[1] = arg_from_expr(v.rhs)
 	negate := false
-	if !operator_viable(k, symbol, operands, args) {
-		if v.op != .Not_Eq || !operator_viable(k, "==", operands, args) {
-			if operator_exists(k, symbol, operands) {
-				resolve_operator(k, v.op_span, symbol, operands, args)
+	set := form_operator_set(k, symbol, operands, args)
+	if !operator_viable(set) {
+		equal := v.op == .Not_Eq ? form_operator_set(k, "==", operands, args) : Operator_Set{}
+		if !operator_viable(equal) {
+			if operator_exists(k, set.members, operands) {
+				resolve_operator_set(k, v.op_span, set, args)
 				v.type = INVALID_TYPE
 				return true
 			}
 			return false
 		}
-		symbol = "=="
+		set = equal
 		negate = true
 	}
-	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args)
+	chosen, bound := resolve_operator_set(k, v.op_span, set, args)
 	if chosen == INVALID_SYMBOL {
 		v.type = INVALID_TYPE
 		return true

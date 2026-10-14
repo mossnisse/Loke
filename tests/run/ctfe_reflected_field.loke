@@ -1,0 +1,38 @@
+// design.md "Compile-time reflection": a descriptor's `get` and `pointer` run
+// at compile time as at run time.
+
+package main;
+
+import "core:fmt";
+
+P :: struct { x: int, name: string }
+
+reflected :: proc() -> int {
+	value := P{42, "p"};
+	foreach ($field in fields_of(P)) {
+		when (field.type == int) { return field.get(&value); }
+	}
+	return 0;
+}
+
+written :: proc() -> int {
+	value := P{1, "p"};
+	total := 0;
+	foreach ($field in fields_of(P)) {
+		when (field.type == int) {
+			field.pointer(&mut value)^ = 10;
+			total += field.get(&value);
+		} else {
+			total += field.get(&value).len();
+		}
+	}
+	return total + value.x;
+}
+
+A :: reflected();
+B :: written();
+
+main :: proc() {
+	fmt.println(A, B);
+	fmt.println(reflected(), written());
+}

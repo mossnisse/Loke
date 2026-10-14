@@ -10,13 +10,8 @@ The [stage-by-stage compiler review](compiler-review-2026-10-14.md) records
 correctness, robustness, optimization, simplification, structure, and verification
 results. Confirmed language divergences are tracked separately in
 [Known gaps](known-gaps.md#gaps), with minimal reproductions. No implementation
-changes are included in the review.
-
-Open engineering work, with source evidence and proposed bounded changes in the
-report:
-
-- [E07: schedule global effects by changed callees](compiler-review-2026-10-14.md#e07-schedule-global-effect-propagation-by-changed-callees), replacing repeated complete-program scans with caller propagation.
-- [Concrete simplifications](compiler-review-2026-10-14.md#simplification-and-structure): remove duplicate CTFE buffers and repeated overload-candidate formation.
+changes are included in the review. Its gaps, engineering findings and
+simplifications have since been fixed; one finding remains a question.
 
 ### Does an unused allocator argument back an owning result?
 

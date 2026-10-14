@@ -33,6 +33,9 @@ checklist.
   procedures of the same shape no longer take time quadratic in their size.
   A compile-time `sort` is a merge sort charged against the evaluation step
   budget, so sorting thousands of constants stays fast.
+- Global write effects settle by revisiting only the callers of a procedure
+  whose set grew, so a long call chain declared caller first no longer
+  compiles in quadratic time.
 - An expression built on a parenthesized one counts that operand's depth
   against the nesting limit, so `((x.a.a ... ).a.a ... )` deeper than it is
   `L0222` instead of a stack overflow while checking.
@@ -45,6 +48,16 @@ checklist.
   to the element `bump` moved `i` to. A literal value in a multiple assignment
   through a setter takes its destination's type, so `grid[0], x = 1, 2` with
   `i32` destinations is no longer `L0310`.
+- A bundled package keeps its compiler-contributed members however an import
+  reaches it: `import "core:Strings"` on Windows, or another `-collection`
+  name for the bundled root, reported unknown library members. A package's
+  key now spells its directory as stored, and `base` and `core` win a tie
+  between collections sharing a root.
+- A compile-time `foreach` binds a borrowed element in place, as at run time,
+  so `&x` inside it is the element's address (design.md "Borrowing
+  iteration"). It used to be a copy's.
+- A `meta.Field` descriptor's `get` and `pointer` run at compile time; a
+  constant computed through `field.get(&value)` was `L0344`.
 - A defined built-in operation is never replaced by a user overload (design.md
   "Operator lookup and overload resolution"): `2 << n` with a signed `n`, and
   `+` over a `string` and a `string_view`, called a user `operator(<<)` or

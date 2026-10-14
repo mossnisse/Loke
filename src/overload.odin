@@ -582,17 +582,38 @@ resolve_overload :: proc(
 	args: []Arg_Info,
 	report := true,
 ) -> (Candidate, bool) {
+	return choose_candidate(k, span, description, members, form_candidates(k, members, args), args, report)
+}
+
+// Each member built against `args`, in order, for `choose_candidate` and
+// `candidates_viable` to share.
+form_candidates :: proc(k: ^Checker, members: []Symbol_Id, args: []Arg_Info) -> []Candidate {
+	all := make([]Candidate, len(members), context.temp_allocator)
+	for member, index in members {
+		all[index] = build_candidate(k, member, args)
+	}
+	return all
+}
+
+// The best of `all`, formed from `members` against `args`.
+choose_candidate :: proc(
+	k: ^Checker,
+	span: Span,
+	description: string,
+	members: []Symbol_Id,
+	all: []Candidate,
+	args: []Arg_Info,
+	report := true,
+) -> (Candidate, bool) {
 	if len(members) == 0 {
 		if report {
 			errorf(k.c, span, "L0392", "%s has no overloads", description)
 		}
 		return Candidate{}, false
 	}
-	all := make([]Candidate, len(members), context.temp_allocator)
 	viable := make([dynamic]int, 0, len(members), context.temp_allocator)
-	for member, index in members {
-		all[index] = build_candidate(k, member, args)
-		if all[index].viable {
+	for cand, index in all {
+		if cand.viable {
 			append(&viable, index)
 		}
 	}
@@ -628,13 +649,8 @@ resolve_overload :: proc(
 }
 
 // Ambiguity counts as viable so syntax fallbacks do not hide it.
-overload_has_viable :: proc(
-	k: ^Checker,
-	members: []Symbol_Id,
-	args: []Arg_Info,
-) -> bool {
-	for member in members {
-		cand := build_candidate(k, member, args)
+candidates_viable :: proc(all: []Candidate) -> bool {
+	for cand in all {
 		if cand.viable {
 			return true
 		}
