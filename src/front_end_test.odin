@@ -584,8 +584,8 @@ N :: 7;`
 package_loading_handles_literal_paths_and_regular_files :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
 	root := fmt.tprintf("loke-packages-test-%d-[files]", os.get_pid())
-	_ = os.remove_all(root)
-	defer os.remove_all(root)
+	_ = remove_tree(root)
+	defer remove_tree(root)
 	if !testing.expect(t, os.make_directory_all(join_path({root, "ignored.loke"})) == nil) {
 		return
 	}
@@ -612,8 +612,8 @@ package_loading_handles_literal_paths_and_regular_files :: proc(t: ^testing.T) {
 failed_package_loads_are_not_cached :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
 	root := fmt.tprintf("loke-packages-retry-%d", os.get_pid())
-	_ = os.remove_all(root)
-	defer os.remove_all(root)
+	_ = remove_tree(root)
+	defer remove_tree(root)
 	path := join_path({root, "main.loke"})
 	if !testing.expect(t, os.make_directory_all(root) == nil && os.write_entire_file(path, []u8{0xff}) == nil) {
 		return

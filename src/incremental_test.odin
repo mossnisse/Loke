@@ -10,7 +10,7 @@ import "core:testing"
 session_incremental_reuses_dependencies_and_reclaims_edits :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	for name in ([]string{"steady", "values", "bridge"}) {
 		if !testing.expect(t, os.make_directory_all(join_path({root, name}, context.temp_allocator)) == nil) { return }
 	}
@@ -107,7 +107,7 @@ main :: proc() {
 session_incremental_reuses_prefix_before_an_error :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental-error-prefix")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	if !testing.expect(t, os.make_directory_all(join_path({root, "dep"}, context.temp_allocator)) == nil) { return }
 	path := join_path({root, "main.loke"}, context.temp_allocator)
 	main_text := `package main; import "dep"; main :: proc() { assert(dep.answer() == 1); }`
@@ -131,7 +131,7 @@ session_incremental_reuses_prefix_before_an_error :: proc(t: ^testing.T) {
 session_incremental_discovery_changes_use_full_checks :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental-discovery")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	lib := join_path({root, "lib"}, context.temp_allocator)
 	if !testing.expect(t, os.make_directory_all(lib) == nil) { return }
 	path := join_path({root, "main.loke"}, context.temp_allocator)
@@ -202,7 +202,7 @@ session_incremental_cache_limit_evicts_old_boundaries :: proc(t: ^testing.T) {
 session_incremental_rebuilds_final_registry_demands :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental-registries")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	data_dir := join_path({root, "data"}, context.temp_allocator)
 	if !testing.expect(t, os.make_directory_all(data_dir) == nil) { return }
 	path := join_path({root, "main.loke"}, context.temp_allocator)
@@ -232,7 +232,7 @@ main :: proc() { value := data.Value{item = 1}; fmt.println(value, typeid_of(dat
 session_incremental_keeps_the_prefix_across_selection_and_syntax_errors :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental-selection")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	for name in ([]string{"platform", "lib"}) {
 		if !testing.expect(t, os.make_directory_all(join_path({root, name}, context.temp_allocator)) == nil) { return }
 	}
@@ -309,7 +309,7 @@ else { size :: proc() -> int { return 0; } }`
 session_incremental_syntax_errors_follow_loading_order :: proc(t: ^testing.T) {
 	root := session_fixture(t, "incremental-syntax-order")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	if !testing.expect(t, os.make_directory_all(join_path({root, "dep"}, context.temp_allocator)) == nil) { return }
 	path := join_path({root, "main.loke"}, context.temp_allocator)
 	dep := join_path({root, "dep", "dep.loke"}, context.temp_allocator)

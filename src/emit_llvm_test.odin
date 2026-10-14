@@ -807,7 +807,7 @@ fixed_allocas_reach_the_entry_block :: proc(t: ^testing.T) {
 toolchain_discovery_picks_the_newest_complete_version :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
 	root := fmt.tprintf("loke-sdk-test-%d", os.get_pid())
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	// Every version holds `ucrt` except the newest, which must be skipped.
 	for version in ([]string{"10.0.19041.0", "10.0.22621.0", "10.0.26100.0"}) {
 		dir := join_path({root, version})

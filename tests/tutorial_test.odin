@@ -53,7 +53,7 @@ Tutorial_Program :: struct {
 tutorials_compile_and_run :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/tutorials", TMP)
 	os.make_directory(TMP)
-	os.remove_all(root)
+	remove_tree(root)
 	os.make_directory(root)
 
 	programs := make(map[string]Tutorial_Program, context.temp_allocator)

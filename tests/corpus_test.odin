@@ -84,6 +84,24 @@ launch_path :: proc(path: string) -> string {
 	return join_path({cwd, path}, context.temp_allocator)
 }
 
+// Deletes `path` and everything below it, entry by entry, as `lokec`'s
+// `remove_tree` does. `os.remove_all` deletes through the Windows shell, which
+// raises and then handles an access violation of its own; the test runner's
+// vectored exception handler sees that first and stops the test.
+@(private)
+remove_tree :: proc(path: string) -> os.Error {
+	if entries, err := os.read_all_directory_by_path(path, context.temp_allocator); err == nil {
+		for entry in entries {
+			if entry.type == .Directory {
+				remove_tree(entry.fullpath)
+			} else {
+				os.remove(entry.fullpath)
+			}
+		}
+	}
+	return os.remove(path)
+}
+
 // Every launch in the harness goes through here, so none of them holds a core
 // while it waits.
 exec :: subprocess.run
@@ -216,7 +234,7 @@ perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
 	temp, _ := os.temp_directory(context.temp_allocator)
 	work := join_path({temp, fmt.tprintf("loke-perf-%d", failed.pid)}, context.temp_allocator)
 	testing.expectf(t, !os.exists(work), "the failed run left %s behind", work)
-	os.remove_all(work)
+	remove_tree(work)
 }
 
 @(test)
@@ -1048,7 +1066,7 @@ formatting_settles_and_keeps_tokens :: proc(t: ^testing.T) {
 	}
 	for corpus in ([]string{"tests/run", "tests/syntax", "tests/ll", "tests/trap", "tests/layout", "examples"}) {
 		copy := fmt.tprintf("%s/fmt/%s", TMP, filepath.base(corpus))
-		os.remove_all(copy)
+		remove_tree(copy)
 		os.make_directory_all(copy)
 		sources, _ := filepath.glob(fmt.tprintf("%s/*.loke", corpus), context.temp_allocator)
 		for source in sources {
@@ -1078,7 +1096,7 @@ formatting_settles_and_keeps_tokens :: proc(t: ^testing.T) {
 @(test)
 formatting_a_directory_reads_its_name_literally :: proc(t: ^testing.T) {
 	dir := fmt.tprintf("%s/fmt-literal/fmt[one]", TMP)
-	os.remove_all(fmt.tprintf("%s/fmt-literal", TMP))
+	remove_tree(fmt.tprintf("%s/fmt-literal", TMP))
 	os.make_directory_all(dir)
 	path := fmt.tprintf("%s/messy.loke", dir)
 	_ = os.write_entire_file(path, transmute([]u8)string("package main;\nmain :: proc() {\nx := 1;\n_ = x;\n}\n"))
@@ -2202,7 +2220,7 @@ expect_documented_example :: proc(t: ^testing.T, page, example: string) {
 example_greeting_appends_to_its_file :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	dir := fmt.tprintf("%s/example-greeting", TMP)
-	os.remove_all(dir)
+	remove_tree(dir)
 	os.make_directory(dir)
 
 	// Built into the directory it runs in, so the redirect below needs no path.
@@ -2269,7 +2287,7 @@ run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
 example_streaming_reads_its_input :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	dir := fmt.tprintf("%s/example-streaming", TMP)
-	os.remove_all(dir)
+	remove_tree(dir)
 	os.make_directory(dir)
 
 	exe, exe_err := filepath.abs(fmt.tprintf("%s/example-streaming.exe", TMP), context.allocator)

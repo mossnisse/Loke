@@ -465,6 +465,13 @@ report whole-compilation leaks and bad frees. `-vet-packages` confines test vett
 to the repository package. If Windows PowerShell treats native stderr as
 `NativeCommandError`, use PowerShell 7 (`pwsh`, as CI does) and check exit codes.
 
+Test code deletes directories with `remove_tree` (`lokec.remove_tree` from the
+language server's tests, and its copy in `tests/corpus_test.odin`), never
+`os.remove_all`. On Windows that call goes through the shell, which raises and
+then handles an access violation of its own; Odin's test runner catches every
+access violation with a vectored exception handler and stops the running test
+as a `Segmentation_Fault`, intermittently and in whichever test was deleting.
+
 For documentation-only changes, check local links and run `check-citations.ps1`;
 compile affected examples or run the tutorial suite when needed. A full compiler
 gate is unnecessary. Preserve cited headings when reorganizing this guide.

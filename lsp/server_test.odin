@@ -26,7 +26,7 @@ Harness :: struct {
 start :: proc(h: ^Harness, t: ^testing.T, name: string, initialize_params := "") -> bool {
 	h.t = t
 	h.root = lokec.canonical_dir(fmt.tprintf("tests/tmp/lsp-%d-%s", os.get_pid(), name))
-	os.remove_all(h.root)
+	lokec.remove_tree(h.root)
 	if !testing.expect(t, os.make_directory_all(h.root) == nil) { return false }
 	init_server(&h.s, proc(data: rawptr, message: string) {
 		append((^[dynamic]byte)(data), ..transmute([]byte)message)
@@ -44,7 +44,7 @@ finish :: proc(h: ^Harness) {
 	destroy_server(&h.s)
 	delete(h.out)
 	virtual.arena_destroy(&h.arena)
-	if h.root != "" { os.remove_all(h.root) }
+	if h.root != "" { lokec.remove_tree(h.root) }
 }
 
 @(private = "file")

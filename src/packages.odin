@@ -606,6 +606,23 @@ join_path :: proc(elems: []string, allocator := context.allocator) -> string {
 	return filepath.join(elems, allocator) or_else ""
 }
 
+// Deletes `path` and everything below it, entry by entry. `os.remove_all`
+// deletes through the Windows shell, which raises and then handles an access
+// violation of its own; a test runner's vectored exception handler sees that
+// first and stops the test as a segmentation fault.
+remove_tree :: proc(path: string) -> os.Error {
+	if entries, err := os.read_all_directory_by_path(path, context.temp_allocator); err == nil {
+		for entry in entries {
+			if entry.type == .Directory {
+				remove_tree(entry.fullpath)
+			} else {
+				os.remove(entry.fullpath)
+			}
+		}
+	}
+	return os.remove(path)
+}
+
 // The cleaned directory part of `path`, `.` when it has none. `filepath.dir`
 // only splits, so `a/../b/x` would keep its `..` and `x` would give "".
 path_dir :: proc(path: string, allocator := context.allocator) -> string {

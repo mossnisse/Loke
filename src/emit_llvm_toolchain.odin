@@ -294,7 +294,7 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opt_mod
 		return objects
 	}
 	staging := join_path({runtime_dir, "prebuilt", fmt.tprintf(".staging-%d", os.get_pid())})
-	defer os.remove_all(staging)
+	defer remove_tree(staging)
 	if err := os.make_directory_all(staging); err != nil {
 		return runtime_cache_failed(runtime_dir, "cannot create `%s`: %v", staging, err)
 	}

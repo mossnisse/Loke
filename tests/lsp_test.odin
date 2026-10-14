@@ -145,9 +145,9 @@ json_quoted :: proc(text: string) -> string {
 @(test)
 lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/lsp-process-%d", TMP, os.get_pid())
-	os.remove_all(root)
+	remove_tree(root)
 	if !testing.expect(t, os.make_directory_all(root) == nil) { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	absolute := os.get_absolute_path(root, context.temp_allocator) or_else root
 	path, _ := strings.replace_all(join_path({absolute, "main.loke"}, context.temp_allocator), "\\", "/", context.temp_allocator)
 	uri := fmt.tprintf("file:///%s", path)
@@ -220,9 +220,9 @@ lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 @(test)
 lsp_rapid_edits_end_with_the_final_text :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/lsp-rapid-%d", TMP, os.get_pid())
-	os.remove_all(root)
+	remove_tree(root)
 	if !testing.expect(t, os.make_directory_all(root) == nil) { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	absolute := os.get_absolute_path(root, context.temp_allocator) or_else root
 	path, _ := strings.replace_all(join_path({absolute, "main.loke"}, context.temp_allocator), "\\", "/", context.temp_allocator)
 	uri := fmt.tprintf("file:///%s", path)
@@ -314,10 +314,10 @@ lsp_reply :: proc(p: ^Lsp_Process, id: i64) -> (reply: json.Value, ok: bool) {
 @(test)
 lsp_formats_and_documents_like_lokec :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/lsp-tools-%d", TMP, os.get_pid())
-	os.remove_all(root)
+	remove_tree(root)
 	if !testing.expect(t, os.make_directory_all(fmt.tprintf("%s/shapes", root)) == nil) { return }
 	os.make_directory_all(fmt.tprintf("%s/copy", root))
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	text := "// Shapes to measure.\n@(public) package shapes;\n\n// A square.\nSquare :: struct {\nside: int,\n}\n\n// Its area.\narea :: proc(s: Square) -> int {\n        return s.side*s.side;\n}\n"
 	source := fmt.tprintf("%s/shapes/shapes.loke", root)
 	copy := fmt.tprintf("%s/copy/shapes.loke", root)

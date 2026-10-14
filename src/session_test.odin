@@ -57,7 +57,7 @@ expect_session_diagnostics :: proc(t: ^testing.T, a, b: ^Compiler) {
 session_rechecks_match_fresh_compilations :: proc(t: ^testing.T) {
 	root := session_fixture(t, "edits")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	app := join_path({root, "app"}, context.temp_allocator)
 	for dir in ([]string{app, join_path({root, "lib", "values"}, context.temp_allocator), join_path({root, "replacement", "values"}, context.temp_allocator)}) {
 		if !testing.expect(t, os.make_directory_all(dir) == nil) { return }
@@ -142,7 +142,7 @@ main :: proc() {
 session_check_modes_preserve_entry_requirements :: proc(t: ^testing.T) {
 	root := session_fixture(t, "modes")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "library.loke"}, context.temp_allocator)
 	if !write_session_source(t, path, "package library; @(public) answer :: proc() -> int { return 42; }") { return }
 	s: Compilation_Session
@@ -189,7 +189,7 @@ session_check_modes_preserve_entry_requirements :: proc(t: ^testing.T) {
 session_creation_and_destruction_release_owned_state :: proc(t: ^testing.T) {
 	root := session_fixture(t, "lifetime")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "main.loke"}, context.temp_allocator)
 	if !write_session_source(t, path, "package main; main :: proc() {}") { return }
 	for iteration in 0 ..< 12 {
@@ -239,7 +239,7 @@ snapshot_test_position :: proc(t: ^testing.T, s: ^Compilation_Session, snapshot:
 session_overlays_match_disk_compilation :: proc(t: ^testing.T) {
 	root := session_fixture(t, "overlays")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "main.loke"}, context.temp_allocator)
 	extra := join_path({root, "z_extra.loke"}, context.temp_allocator)
 	dependency := join_path({root, "lib", "values", "values.loke"}, context.temp_allocator)
@@ -314,7 +314,7 @@ session_overlays_match_disk_compilation :: proc(t: ^testing.T) {
 session_snapshot_queries_follow_checked_bindings :: proc(t: ^testing.T) {
 	root := session_fixture(t, "queries")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "unsaved", "main.loke"}, context.temp_allocator)
 	dependency := join_path({root, "unsaved", "values", "values.loke"}, context.temp_allocator)
 	text := `package main;
@@ -469,7 +469,7 @@ main :: proc() {
 session_snapshot_errors_and_stale_handles :: proc(t: ^testing.T) {
 	root := session_fixture(t, "snapshot-errors")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "new.loke"}, context.temp_allocator)
 	s: Compilation_Session
 	defer destroy_session(&s)
@@ -575,7 +575,7 @@ expect_session_matches_fresh :: proc(t: ^testing.T, s: ^Compilation_Session, inp
 session_explicit_invalidation_rejects_all_cached_views :: proc(t: ^testing.T) {
 	root := session_fixture(t, "invalidate")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "main.loke"}, context.temp_allocator)
 	text := "package main; main :: proc() {}"
 	if !write_session_source(t, path, text) { return }
@@ -634,7 +634,7 @@ session_explicit_invalidation_rejects_all_cached_views :: proc(t: ^testing.T) {
 session_discovery_and_ctfe_changes_match_fresh_checks :: proc(t: ^testing.T) {
 	root := session_fixture(t, "invalidation-discovery")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	for dir in ([]string{"first/feature", "second/feature", "fast", "slow"}) {
 		if !testing.expect(t, os.make_directory_all(join_path({root, dir}, context.temp_allocator)) == nil) { return }
 	}
@@ -709,7 +709,7 @@ main :: proc() { assert(chosen() > 0); static_assert(feature.identity(7) == 7); 
 session_body_effect_changes_match_fresh_checks :: proc(t: ^testing.T) {
 	root := session_fixture(t, "invalidation-effects")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "main.loke"}, context.temp_allocator)
 	s: Compilation_Session
 	defer destroy_session(&s)
@@ -755,7 +755,7 @@ main :: proc() {
 session_provider_and_registry_changes_match_fresh_checks :: proc(t: ^testing.T) {
 	root := session_fixture(t, "invalidation-registries")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	for dir in ([]string{"provider", "data"}) {
 		if !testing.expect(t, os.make_directory_all(join_path({root, dir}, context.temp_allocator)) == nil) { return }
 	}
@@ -843,7 +843,7 @@ member_test_names :: proc(t: ^testing.T, s: ^Compilation_Session, snapshot: Comp
 session_queries_list_visible_names_and_members :: proc(t: ^testing.T) {
 	root := session_fixture(t, "visible")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "unsaved", "main.loke"}, context.temp_allocator)
 	dependency := join_path({root, "unsaved", "values", "values.loke"}, context.temp_allocator)
 	text := `package main;
@@ -923,7 +923,7 @@ main :: proc() {
 session_queries_follow_promotion_when_and_protocols :: proc(t: ^testing.T) {
 	root := session_fixture(t, "promotion")
 	if root == "" { return }
-	defer os.remove_all(root)
+	defer remove_tree(root)
 	path := join_path({root, "unsaved", "main.loke"}, context.temp_allocator)
 	text := `package main;
 Inner :: struct { deep: int, next: int }

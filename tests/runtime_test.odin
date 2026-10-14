@@ -198,7 +198,7 @@ runtime_cache_follows_build_inputs :: proc(t: ^testing.T) {
 		return
 	}
 	root := fmt.tprintf("%s/runtime_cache", TMP)
-	os.remove_all(root)
+	remove_tree(root)
 	os.make_directory_all(fmt.tprintf("%s/runtime", root))
 	compiler := launch_path(fmt.tprintf("%s/lokec.exe", root))
 	testing.expect(t, os.copy_file(compiler, compiler_path()) == nil, "cannot copy the compiler")
