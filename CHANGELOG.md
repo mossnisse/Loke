@@ -15,7 +15,9 @@ checklist.
   unsaved edits and the packages they import. It also answers hover,
   go-to-definition, document symbols, completion, signature help, find
   references, and rename from the checked program. After an edit it rechecks
-  only from the first package the edit reached. See
+  only from the first package the edit reached. Formatting a document gives
+  the layout `lokec -fmt` writes, and the `loke.documentation` command
+  returns the page `lokec -doc` prints, both from unsaved text. See
   [Language server](compiler-guide.md#language-server).
 
 ### Changed

@@ -1,8 +1,9 @@
 // Requests about a document, answered from the snapshot of the check that read
 // its current text: hover, go-to-definition, and document symbols here,
 // completion and signature help in `editing.odin`, references and rename in
-// `rename.odin`. A request waits until its document's root has been checked
-// since the last edit, and one that reads every program waits for every root;
+// `rename.odin`, and generated documentation in `tools.odin`. A request waits
+// until its document's root has been checked since the last edit, and one that
+// reads every program waits for every root;
 // a result the compiler did not record is answered as `null`, never guessed
 // from the text.
 package lsp
@@ -23,7 +24,7 @@ HOVER_LINES :: 24
 
 Request_Kind :: enum {
 	Hover, Definition, Document_Symbol, Completion, Signature_Help,
-	References, Prepare_Rename, Rename,
+	References, Prepare_Rename, Rename, Documentation,
 }
 
 Pending_Request :: struct {
@@ -44,7 +45,10 @@ reads_every_root :: proc(kind: Request_Kind) -> bool {
 }
 
 queue_request :: proc(s: ^Server, id: json.Value, kind: Request_Kind, params: json.Value) {
-	doc := find_document(s, member(params, "textDocument"))
+	queue_document_request(s, id, kind, find_document(s, member(params, "textDocument")), params)
+}
+
+queue_document_request :: proc(s: ^Server, id: json.Value, kind: Request_Kind, doc: ^Document, params: json.Value) {
 	if doc == nil {
 		// Only open documents have a checked text the client agrees on.
 		send_result(s, id, "null")
@@ -53,7 +57,7 @@ queue_request :: proc(s: ^Server, id: json.Value, kind: Request_Kind, params: js
 	request := Pending_Request{kind = kind, key = strings.clone(doc.key), revision = doc.revision}
 	request.id = id
 	if text, is_text := id.(json.String); is_text { request.id = json.String(strings.clone(text)) }
-	if kind != .Document_Symbol { request.position = json_position(member(params, "position")) }
+	if kind != .Document_Symbol && kind != .Documentation { request.position = json_position(member(params, "position")) }
 	request.include_declaration = member_bool(member(params, "context"), "includeDeclaration")
 	if name, named := member_string(params, "newName"); named { request.new_name = strings.clone(name) }
 	append(&s.pending, request)
@@ -170,6 +174,15 @@ answer :: proc(s: ^Server, request: Pending_Request, doc: ^Document) {
 			send_error(s, request.id, REQUEST_FAILED, failure)
 			return
 		}
+	case .Documentation:
+		page, failure := documentation(s, doc.root)
+		if failure != "" {
+			send_error(s, request.id, REQUEST_FAILED, failure)
+			return
+		}
+		b := strings.builder_make(context.temp_allocator)
+		write_json_string(&b, page)
+		result = strings.to_string(b)
 	}
 	send_result(s, request.id, result)
 }

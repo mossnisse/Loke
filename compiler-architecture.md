@@ -693,6 +693,7 @@ The server never duplicates the front end: every result comes from the
 | `requests.odin` | Request queueing, waiting, cancelled and stale requests; hover, definition, and document symbols. |
 | `editing.odin` | Completion and signature help, from the compiler's tokens and the queries above. |
 | `rename.odin` | References and rename across roots, and rename's refusals. |
+| `tools.odin` | Formatting and the documentation command, through `-fmt` and `-doc`. |
 | `paths.odin` | `file:` URIs, path keys, and UTF-8/UTF-16 positions. |
 
 A reader thread frames stdin into an inbox. The main thread runs checks, so it
@@ -773,9 +774,28 @@ operand's members, promoted fields included. A public extension is also
 checked as a package name. A method may not be renamed to or from a name in
 `query_implicit_names`, and a parameter to or from `self`.
 
+Formatting and documentation call the procedures behind `-fmt` and `-doc`
+rather than reimplementing them. `textDocument/formatting` needs no check, so
+it is answered as soon as it is dispatched: `format_text` registers the
+document's text in a scratch `Compiler` under the same encoding rules
+`load_source` applies, then runs `format_source`. The reply replaces the lines
+from the first that changed to the last in one edit, so both ends of its range
+start a line. A refusal reports the first error and its line. The
+`loke.documentation` command queues like a position request and answers with
+`document_project` for the document's root. A library root was checked as
+`lokec -doc` checks it, so its snapshot is used directly. A program root is
+checked again with `check_session` in documentation mode, in a temporary
+session with the same configuration and overlays, so that an executable-only
+error such as a missing `main` does not block the page, and the root's
+checkpoints stay as they are. The page is built in the request's temporary
+memory because `document_project` frees little.
+
 `lsp/server_test.odin` drives the server in process, choosing when checks run
 relative to edits, and compares results after rapid edits and disk changes with
-a fresh batch check. `tests/lsp_test.odin` runs the built executable over pipes.
+a fresh batch check. It compares formatting with `format_files` and the
+documentation command with a fresh documentation-mode check.
+`tests/lsp_test.odin` runs the built executable over pipes, and compares its
+formatting and documentation with `lokec.exe -fmt` and `-doc`.
 `perf.ps1` times the built server editing `bench/workspace`, from each
 notification to its answer: opening it, edits to its root package and to a
 library package, and completion in an unfinished statement. Each figure

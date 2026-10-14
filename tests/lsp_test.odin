@@ -299,3 +299,83 @@ json_member :: proc(value: json.Value, name: string) -> json.Value {
 	if object, is_object := value.(json.Object); is_object { return object[name] }
 	return nil
 }
+
+// The reply to request `id`, skipping the notifications sent before it.
+@(private = "file")
+lsp_reply :: proc(p: ^Lsp_Process, id: i64) -> (reply: json.Value, ok: bool) {
+	for {
+		message := lsp_receive(p) or_return
+		if got, has_id := json_member(message, "id").(json.Integer); has_id && got == id { return message, true }
+	}
+}
+
+// Formatting and the documentation command answer what `lokec -fmt` writes
+// and `lokec -doc` prints for the same text.
+@(test)
+lsp_formats_and_documents_like_lokec :: proc(t: ^testing.T) {
+	root := fmt.tprintf("%s/lsp-tools-%d", TMP, os.get_pid())
+	os.remove_all(root)
+	if !testing.expect(t, os.make_directory_all(fmt.tprintf("%s/shapes", root)) == nil) { return }
+	os.make_directory_all(fmt.tprintf("%s/copy", root))
+	defer os.remove_all(root)
+	text := "// Shapes to measure.\n@(public) package shapes;\n\n// A square.\nSquare :: struct {\nside: int,\n}\n\n// Its area.\narea :: proc(s: Square) -> int {\n        return s.side*s.side;\n}\n"
+	source := fmt.tprintf("%s/shapes/shapes.loke", root)
+	copy := fmt.tprintf("%s/copy/shapes.loke", root)
+	_ = os.write_entire_file(source, transmute([]byte)text)
+	_ = os.write_entire_file(copy, transmute([]byte)text)
+	formatted, _, fmt_stderr, fmt_err := exec(os.Process_Desc{command = []string{compiler_path(), copy, "-fmt"}}, context.allocator)
+	if !testing.expectf(t, fmt_err == nil && formatted.exit_code == 0, "-fmt failed:\n%s", string(fmt_stderr)) { return }
+	expected_text, _ := os.read_entire_file(copy, context.temp_allocator)
+	documented, page, doc_stderr, doc_err := exec(os.Process_Desc{command = []string{compiler_path(), fmt.tprintf("%s/shapes", root), "-doc"}}, context.allocator)
+	if !testing.expectf(t, doc_err == nil && documented.exit_code == 0, "-doc failed:\n%s", string(doc_stderr)) { return }
+	absolute := os.get_absolute_path(source, context.temp_allocator) or_else source
+	path, _ := strings.replace_all(absolute, "\\", "/", context.temp_allocator)
+	uri := fmt.tprintf("file:///%s", path)
+
+	p: Lsp_Process
+	if !lsp_start(&p, t) { return }
+	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
+	reply, ok := lsp_reply(&p, 1)
+	capabilities := json_member(json_member(reply, "result"), "capabilities")
+	formats, _ := json_member(capabilities, "documentFormattingProvider").(json.Boolean)
+	testing.expect(t, ok && bool(formats) && json_member(capabilities, "executeCommandProvider") != nil)
+	lsp_send(&p, `{"jsonrpc":"2.0","method":"initialized","params":{}}`)
+	lsp_send(&p, fmt.tprintf(
+		`{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":%s,"languageId":"loke","version":1,"text":%s}}}}}}`,
+		json_quoted(uri), json_quoted(text),
+	))
+	lsp_send(&p, fmt.tprintf(
+		`{{"jsonrpc":"2.0","id":2,"method":"textDocument/formatting","params":{{"textDocument":{{"uri":%s}},"options":{{"tabSize":4,"insertSpaces":true}}}}}}`,
+		json_quoted(uri),
+	))
+	reply, ok = lsp_reply(&p, 2)
+	edits, _ := json_member(reply, "result").(json.Array)
+	if testing.expect(t, ok && len(edits) == 1) {
+		// The text is ASCII, so a character is a byte.
+		lines := strings.split_after(text, "\n", context.temp_allocator)
+		offset :: proc(lines: []string, position: json.Value) -> int {
+			line, _ := json_member(position, "line").(json.Integer)
+			character, _ := json_member(position, "character").(json.Integer)
+			at := 0
+			for index in 0 ..< int(line) { at += len(lines[index]) }
+			return at + int(character)
+		}
+		range := json_member(edits[0], "range")
+		start, end := offset(lines, json_member(range, "start")), offset(lines, json_member(range, "end"))
+		new_text, _ := json_member(edits[0], "newText").(json.String)
+		testing.expect_value(t, strings.concatenate({text[:start], string(new_text), text[end:]}, context.temp_allocator), string(expected_text))
+	}
+	lsp_send(&p, fmt.tprintf(
+		`{{"jsonrpc":"2.0","id":3,"method":"workspace/executeCommand","params":{{"command":"loke.documentation","arguments":[%s]}}}}`,
+		json_quoted(uri),
+	))
+	reply, ok = lsp_reply(&p, 3)
+	result, _ := json_member(reply, "result").(json.String)
+	testing.expect(t, ok)
+	testing.expect_value(t, string(result), string(page))
+	lsp_send(&p, `{"jsonrpc":"2.0","id":4,"method":"shutdown"}`)
+	_, ok = lsp_reply(&p, 4)
+	lsp_send(&p, `{"jsonrpc":"2.0","method":"exit"}`)
+	code, exited := lsp_finish(&p)
+	testing.expect(t, ok && exited && code == 0)
+}

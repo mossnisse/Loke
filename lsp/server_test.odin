@@ -191,6 +191,10 @@ lifecycle_requests_follow_the_protocol :: proc(t: ^testing.T) {
 		encoding, _ := member_string(member(member(replies[0], "result"), "capabilities"), "positionEncoding")
 		testing.expect_value(t, id, "init")
 		testing.expect_value(t, encoding, "utf-8")
+		capabilities := member(member(replies[0], "result"), "capabilities")
+		testing.expect(t, member_bool(capabilities, "documentFormattingProvider"))
+		commands := member_array(member(capabilities, "executeCommandProvider"), "commands")
+		testing.expect(t, len(commands) == 1 && commands[0].(json.String) == DOCUMENTATION_COMMAND)
 	}
 
 	handle_messages(s, {
@@ -1365,4 +1369,192 @@ workspace_changes_match_a_fresh_check :: proc(t: ^testing.T) {
 		record_publications(&shown, take(&h))
 		expect_shown(t, shown, fresh_codes(&h, "app", unsaved))
 	}
+}
+
+@(private = "file")
+reply_to :: proc(h: ^Harness, messages: []json.Value, id: i64) -> json.Value {
+	for message in messages {
+		if got, _ := member_int(message, "id"); got == id && member(message, "method") == nil { return message }
+	}
+	testing.expectf(h.t, false, "request %d was not answered", id)
+	return nil
+}
+
+// The text `lokec -fmt` writes for a file holding `text`.
+@(private = "file")
+lokec_fmt :: proc(h: ^Harness, text: string) -> string {
+	path := write_file(h, "fmt/copy.loke", text)
+	s: lokec.Compilation_Session
+	defer lokec.destroy_session(&s)
+	testing.expect(h.t, lokec.init_session(&s))
+	testing.expect_value(h.t, lokec.format_files(&s.compiler, path, false), 0)
+	data, _ := os.read_entire_file(path, context.temp_allocator)
+	return string(data)
+}
+
+// `text` with a `TextEdit[]` applied, its positions in UTF-16 units.
+@(private = "file")
+apply_edits :: proc(text: string, edits: json.Array) -> string {
+	out := text
+	#reverse for edit in edits {
+		range := member(edit, "range")
+		start := position_to_offset(out, json_position(member(range, "start")), false)
+		end := position_to_offset(out, json_position(member(range, "end")), false)
+		new_text, _ := member_string(edit, "newText")
+		out = strings.concatenate({out[:start], new_text, out[end:]}, context.temp_allocator)
+	}
+	return out
+}
+
+// Formatting answers at once with edits that turn the unsaved text into what
+// `lokec -fmt` writes, and nothing once applied; it refuses text `-fmt` refuses.
+@(test)
+formatting_matches_lokec_fmt :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "formatting") { finish(&h); return }
+	defer finish(&h)
+	write_file(&h, "main.loke", "package main;\nmain :: proc() {}\n")
+	format :: proc(h: ^Harness, id: i64) -> json.Value {
+		request(h, fmt.tprintf("%d", id), "textDocument/formatting", fmt.tprintf(
+			`{{"textDocument":{{"uri":%s}},"options":{{"tabSize":4,"insertSpaces":true}}}}`, quoted(uri_of(h, "main.loke")),
+		))
+		// Nothing is checked first.
+		return reply_to(h, take(h), id)
+	}
+	texts := []string{
+		"package main;\n// \u00e9\nmain :: proc() {\nx := 1;\n      _ = x;\n\n\n\n}\n",
+		"package main;\r\nmain :: proc() {\r\n\tx:=1;\r\n\t_ = x;\r\n}\r\n",
+		// The last line is changed and has no line break.
+		"package main;\nmain :: proc() {\n_ = \"é\";     }",
+		"package main;\nmain :: proc() {}\n",
+	}
+	version := 1
+	for text, index in texts {
+		if index == 0 { open(&h, "main.loke", text) } else { change(&h, "main.loke", text, version) }
+		version += 1
+		reply := format(&h, 80)
+		edits := member_array(reply, "result")
+		expected := lokec_fmt(&h, text)
+		testing.expectf(t, apply_edits(text, edits) == expected, "case %d: %q formats to %q", index, apply_edits(text, edits), expected)
+		testing.expect_value(t, len(edits), 0 if text == expected else 1)
+		for edit in edits {
+			start, end := json_position(member(member(edit, "range"), "start")), json_position(member(member(edit, "range"), "end"))
+			at_end := position_to_offset(text, end, false) == len(text)
+			testing.expectf(t, start.character == 0 && (end.character == 0 || at_end), "case %d: the edit does not cover whole lines", index)
+		}
+		change(&h, "main.loke", expected, version)
+		version += 1
+		again := format(&h, 81)
+		_, is_array := member(again, "result").(json.Array)
+		testing.expectf(t, is_array && len(member_array(again, "result")) == 0, "case %d: formatting is not repeatable", index)
+	}
+
+	change(&h, "main.loke", "package main;\nmain :: proc() {\n\tx := ;\n}\n", version)
+	refused := format(&h, 82)
+	message, _ := member_string(member(refused, "error"), "message")
+	testing.expect_value(t, error_code(refused), REQUEST_FAILED)
+	testing.expectf(t, strings.contains(message, "line 3"), "the refusal does not say where: %q", message)
+	change(&h, "main.loke", "\xef\xbb\xbfpackage main;\n", version + 1)
+	testing.expect_value(t, error_code(format(&h, 83)), REQUEST_FAILED)
+	request(&h, "84", "textDocument/formatting", fmt.tprintf(`{{"textDocument":{{"uri":%s}}}}`, quoted(uri_of(&h, "other.loke"))))
+	testing.expect(t, is_null_result(reply_to(&h, take(&h), 84)))
+}
+
+// What `lokec -doc` prints for `root` with `unsaved` as overlays.
+@(private = "file")
+fresh_documentation :: proc(h: ^Harness, root: string, unsaved: []Unsaved) -> string {
+	s: lokec.Compilation_Session
+	defer lokec.destroy_session(&s)
+	testing.expect(h.t, lokec.init_session(&s))
+	for file in unsaved {
+		testing.expect(h.t, lokec.set_session_overlay(&s, lokec.join_path({h.root, file.relative}, context.temp_allocator), file.text))
+	}
+	if !testing.expect(h.t, lokec.check_session(&s, lokec.join_path({h.root, root}, context.temp_allocator), documentation = true)) { return "" }
+	context.allocator = context.temp_allocator
+	return lokec.document_project(&s.compiler, s.compiler.root_package)
+}
+
+@(private = "file")
+request_documentation :: proc(h: ^Harness, id: i64, relative: string) {
+	request(h, fmt.tprintf("%d", id), "workspace/executeCommand", fmt.tprintf(
+		`{{"command":"loke.documentation","arguments":[%s]}}`, quoted(uri_of(h, relative)),
+	))
+}
+
+@(private = "file")
+documentation_page :: proc(h: ^Harness, relative: string) -> string {
+	request_documentation(h, 90, relative)
+	settle(h)
+	reply := reply_to(h, take(h), 90)
+	page, _ := member_string(reply, "result")
+	return page
+}
+
+// The documentation command answers with the page `lokec -doc` prints for the
+// document's root, from unsaved text, for a program and for a library across
+// incremental checks; it waits for the check and refuses a program with errors.
+@(test)
+documentation_matches_lokec_doc :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "documentation") { finish(&h); return }
+	defer finish(&h)
+	main_text := "package main;\nimport \"shapes\";\nmain :: proc() {\n\t_ = shapes.area(shapes.Square{side = 2});\n}\n"
+	shapes_text := "// Shapes to measure.\n@(public) package shapes;\n\n// A square.\nSquare :: struct { side: int }\n\n// Its area.\narea :: proc(s: Square) -> int { return s.side * s.side; }\n"
+	write_file(&h, "app/main.loke", main_text)
+	write_file(&h, "app/shapes/shapes.loke", shapes_text)
+	open(&h, "app/main.loke", main_text)
+	request_documentation(&h, 91, "app/main.loke")
+	testing.expect_value(t, len(take(&h)), 0)
+	settle(&h)
+	page, _ := member_string(reply_to(&h, take(&h), 91), "result")
+	testing.expect_value(t, page, fresh_documentation(&h, "app", {}))
+	testing.expect(t, strings.contains(page, "# package shapes") && strings.contains(page, "Its area."))
+
+	// An unsaved comment in an imported package, documented through the program.
+	commented := strings.concatenate({shapes_text, "\n// A unit square.\nUNIT :: Square{side = 1};\n"}, context.temp_allocator)
+	open(&h, "app/shapes/shapes.loke", commented)
+	page = documentation_page(&h, "app/shapes/shapes.loke")
+	testing.expect_value(t, page, fresh_documentation(&h, "app", {{"app/shapes/shapes.loke", commented}}))
+	testing.expect(t, strings.contains(page, "A unit square."))
+
+	// Opened alone, the library is its own root, checked again after each edit.
+	close(&h, "app/main.loke")
+	close(&h, "app/shapes/shapes.loke")
+	settle(&h)
+	open(&h, "app/shapes/shapes.loke", commented)
+	edits := []string{
+		strings.concatenate({commented, "\n// Twice the area.\ndouble :: proc(s: Square) -> int { return 2 * area(s); }\n"}, context.temp_allocator),
+		strings.concatenate({commented, "\n// Thrice the area.\ntriple :: proc(s: Square) -> int { return 3 * area(s); }\n"}, context.temp_allocator),
+		shapes_text,
+	}
+	for text, index in edits {
+		change(&h, "app/shapes/shapes.loke", text, index + 2)
+		page = documentation_page(&h, "app/shapes/shapes.loke")
+		testing.expectf(t, page == fresh_documentation(&h, "app/shapes", {{"app/shapes/shapes.loke", text}}), "edit %d:\n%s", index, page)
+	}
+	root := only_root(&h)
+	testing.expect(t, root != nil && root.library)
+
+	change(&h, "app/shapes/shapes.loke", "@(public) package shapes;\nbroken :: proc() -> int { return \"text\"; }\n", 10)
+	request_documentation(&h, 92, "app/shapes/shapes.loke")
+	settle(&h)
+	testing.expect_value(t, error_code(reply_to(&h, take(&h), 92)), REQUEST_FAILED)
+	request_documentation(&h, 93, "app/shapes/shapes.loke")
+	change(&h, "app/shapes/shapes.loke", shapes_text, 11)
+	settle(&h)
+	testing.expect_value(t, error_code(reply_to(&h, take(&h), 93)), CONTENT_MODIFIED)
+	request_documentation(&h, 94, "app/main.loke")
+	testing.expect(t, is_null_result(reply_to(&h, take(&h), 94)))
+	// `lokec` rejects a `main` package without `main`, but `lokec -doc` still
+	// documents it.
+	tool := "package main;\nimport \"shapes\";\n\n// One square's area.\n@(public) unit_area :: proc() -> int { return shapes.area(shapes.Square{side = 1}); }\n"
+	write_file(&h, "tool/shapes/shapes.loke", shapes_text)
+	open(&h, "tool/main.loke", tool)
+	page = documentation_page(&h, "tool/main.loke")
+	testing.expect_value(t, page, fresh_documentation(&h, "tool", {{"tool/main.loke", tool}}))
+	testing.expect(t, strings.contains(page, "One square's area."))
+	request(&h, "95", "workspace/executeCommand", `{"command":"loke.unknown","arguments":[]}`)
+	testing.expect_value(t, error_code(reply_to(&h, take(&h), 95)), INVALID_PARAMS)
+	request(&h, "96", "workspace/executeCommand", `{"command":"loke.documentation","arguments":[]}`)
+	testing.expect_value(t, error_code(reply_to(&h, take(&h), 96)), INVALID_PARAMS)
 }

@@ -376,7 +376,14 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 		errorf(c, no_span(), "L0001", "cannot read file `%s`", path)
 		return 0, false
 	}
+	return add_loaded_source(c, path, data)
+}
 
+// Registers the bytes read for `path`, taking ownership of them, after
+// grammar.md's encoding rules; reports a violation itself.
+add_loaded_source :: proc(c: ^Compiler, path: string, data: []u8) -> (index: u32, ok: bool) {
+	init_semantic_stores(c)
+	data := data
 	text := string(data)
 	// grammar.md: a source file is UTF-8 *without* a BOM.
 	if strings.has_prefix(text, "\xef\xbb\xbf") {

@@ -37,6 +37,7 @@ format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
 			status = 1
 			continue
 		}
+		defer delete(formatted)
 		if formatted == c.sources[file].text {
 			continue
 		}
@@ -49,6 +50,13 @@ format_files :: proc(c: ^Compiler, input: string, check: bool) -> int {
 		}
 	}
 	return status
+}
+
+// An editor's unsaved `text` for `path`, laid out as `-fmt` would write the
+// file; false, with `c`'s diagnostics saying why, where `-fmt` would refuse it.
+format_text :: proc(c: ^Compiler, path, text: string) -> (formatted: string, ok: bool) {
+	file := add_loaded_source(c, path, transmute([]u8)strings.clone(text)) or_return
+	return format_source(c, file)
 }
 
 // The source of `file` laid out canonically, or false when it does not parse.

@@ -267,8 +267,15 @@ Implementation order:
    program. Regressions cover rapid edits compared with a fresh check,
    cancelled and stale requests during incremental checks, completion in
    unfinished code, and files created, changed, and deleted on disk.
-5. Connect the formatter and generated documentation through the existing tools
-   as described in [Debugging and developer tools](#debugging-and-developer-tools).
+5. **Formatting and documentation — shipped.** `textDocument/formatting`
+   answers the layout `lokec -fmt` writes for the unsaved text, as one edit
+   over the changed lines, without waiting for a check. The
+   `loke.documentation` command answers the page `lokec -doc` prints for the
+   document's root. Regressions compare both with the command-line tools in
+   process and over pipes, and cover repeated formatting, CRLF text, refusals,
+   unsaved imports, a library rechecked after edits, and a program `lokec`
+   would reject for its missing `main`. See
+   [Debugging and developer tools](#debugging-and-developer-tools).
 
 **Completion check:** the server handles a multi-package workspace and unsaved,
 temporarily invalid code; diagnostics and name resolution agree with a fresh
@@ -293,9 +300,10 @@ Implementation order:
 2. Add automatic column alignment when hand-maintained alignment becomes a
    demonstrated burden, settling the remaining
    [formatting questions](open-questions.md#formatting) with examples first.
-3. Expose formatting and documentation from the editor without creating another
-   front end. Preserve unsaved-buffer behavior and make formatting edits
-   repeatable: applying the formatter twice must leave the same text.
+3. **Formatting and documentation in the editor — shipped.** `loke-lsp`
+   calls the procedures behind `-fmt` and `-doc` on unsaved text; formatting
+   the result again leaves it unchanged. See
+   [Language server](compiler-guide.md#language-server).
 4. Document and test an editor/debugger workflow for each supported target:
    breakpoint, stepping, ordinary local inspection, and panic stack trace.
    Windows coverage uses the existing PDB path; platform ports must choose and

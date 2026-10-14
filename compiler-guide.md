@@ -287,6 +287,22 @@ modified, and the editor asks again. References and rename see only the
 programs of open documents, together with the packages those programs load,
 so a program that is not open and uses the binding is not changed.
 
+Two more operations reuse the command-line tools:
+
+- **Format document** lays out the document's unsaved text as
+  [`-fmt`](#common-options) would write the file, without waiting for a check.
+  Only whitespace changes, and formatting the result again changes nothing.
+  The editor's tab size and spaces setting are ignored, because the layout is
+  fixed. Text `-fmt` refuses, such as a document that does not parse, is
+  refused with the line of the first error.
+- **Documentation** is the command `loke.documentation`, which an editor sends
+  as `workspace/executeCommand` with an open document's URI as its only
+  argument. It answers with the Markdown page [`-doc`](#common-options) prints
+  for the document's root, described below, using unsaved text. It waits for
+  the root's check, as other requests do, and fails when `lokec -doc` would
+  fail because the program has errors. How the page is shown is up to the
+  editor.
+
 Each open document is checked through a root, which is what `lokec` would be
 given:
 

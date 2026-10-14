@@ -169,6 +169,10 @@ handle_request :: proc(s: ^Server, id: json.Value, method: string, params: json.
 		queue_request(s, id, .Prepare_Rename, params)
 	case method == "textDocument/rename":
 		queue_request(s, id, .Rename, params)
+	case method == "textDocument/formatting":
+		format_document(s, id, params)
+	case method == "workspace/executeCommand":
+		execute_command(s, id, params)
 	case:
 		send_error(s, id, METHOD_NOT_FOUND, fmt.tprintf("unsupported request `%s`", method))
 	}
@@ -256,8 +260,8 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(
-		&b, `{{"capabilities":{{"positionEncoding":"%s","textDocumentSync":{{"openClose":true,"change":%d,"save":{{"includeText":false}}}},"hoverProvider":true,"definitionProvider":true,"documentSymbolProvider":true,"completionProvider":{{"triggerCharacters":["."]}},"signatureHelpProvider":{{"triggerCharacters":["(",","]}},"referencesProvider":true,"renameProvider":%s}},"serverInfo":{{"name":"%s","version":"%s"}}}}`,
-		s.utf8_positions ? "utf-8" : "utf-16", SYNC_FULL, s.prepare_rename ? `{"prepareProvider":true}` : "true", SERVER_NAME, lokec.LOKE_VERSION_STRING,
+		&b, `{{"capabilities":{{"positionEncoding":"%s","textDocumentSync":{{"openClose":true,"change":%d,"save":{{"includeText":false}}}},"hoverProvider":true,"definitionProvider":true,"documentSymbolProvider":true,"completionProvider":{{"triggerCharacters":["."]}},"signatureHelpProvider":{{"triggerCharacters":["(",","]}},"referencesProvider":true,"renameProvider":%s,"documentFormattingProvider":true,"executeCommandProvider":{{"commands":["%s"]}}}},"serverInfo":{{"name":"%s","version":"%s"}}}}`,
+		s.utf8_positions ? "utf-8" : "utf-16", SYNC_FULL, s.prepare_rename ? `{"prepareProvider":true}` : "true", DOCUMENTATION_COMMAND, SERVER_NAME, lokec.LOKE_VERSION_STRING,
 	)
 	send_result(s, id, strings.to_string(b))
 }
@@ -374,6 +378,10 @@ documents_changed :: proc(s: ^Server, rescan: bool) {
 find_document :: proc(s: ^Server, item: json.Value) -> ^Document {
 	uri, has_uri := member_string(item, "uri")
 	if !has_uri { return nil }
+	return document_at(s, uri)
+}
+
+document_at :: proc(s: ^Server, uri: string) -> ^Document {
 	path, is_file := uri_to_path(uri, context.temp_allocator)
 	if !is_file { return nil }
 	return s.documents[path_key(path, context.temp_allocator)]
