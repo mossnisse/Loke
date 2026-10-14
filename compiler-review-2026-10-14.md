@@ -31,7 +31,7 @@ reporting them again.
 | G11 | P2 | Managed-type classification (fixed) | Nested excluded copy hooks are missed: a forbidden copy is accepted and fails at runtime; query order changes classification. Runtime reproduction. |
 | G12 | P1 | Callback result contracts (fixed) | Named global roots are omitted: incompatible callbacks substitute an unrelated borrow root. Accepted/control compile probes. |
 | G13 | P1 | Written allocator regions (fixed) | Pointer aliases hide stored owners: a reset is accepted before subsequent access to freed storage. Accepted/control compile probes. |
-| G14 | P2 | Region precision (moved to [open questions](open-questions.md#does-an-unused-allocator-argument-back-an-owning-result)) | Unused allocator arguments taint results; the corpus relies on that reading. A return the review considers valid is rejected despite the precise direct-call summary. Rejected/accepted control probes. |
+| G14 | P2 | Region precision (fixed: the body reading was chosen, [comments.md](comments.md#local-borrow-checking)) | Unused allocator arguments taint results; the corpus relies on that reading. A return the review considers valid is rejected despite the precise direct-call summary. Rejected/accepted control probes. |
 
 Priorities distinguish memory/lifetime or compilation robustness risks (P1),
 ordinary wrong results and valid-program rejection (P2), and bounded cleanup

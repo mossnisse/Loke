@@ -37,6 +37,14 @@ cleanup may legitimately restore global state, but must not invalidate a live
 borrow. Copy hooks cannot write globals because copies can be inserted or
 elided in many contexts and their count is unspecified.
 
+A result's [region provenance](design.md#allocator-regions-and-region-provenance)
+follows the callee's body, not its signature: an allocator a constructor takes
+but never uses backs nothing, so resetting it while the result is live is
+accepted. The signature reading would let a constructor start using its
+allocator without its callers changing, but it rejects programs that are
+safe, and the checker already infers the rest of the result contract from the
+body. A call it cannot follow keeps the signature reading.
+
 ### One temporary-lifetime rule
 
 How long a temporary lives once depended on what viewed it: a slice literal's

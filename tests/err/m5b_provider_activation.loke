@@ -19,14 +19,14 @@ bad_view :: proc() -> []int {
 
 // The region failure, a different code and a different explanation: an owner
 // backed by a received region cannot be kept past that region.
-Buffer :: struct { id: int }
+Buffer :: struct { id: int, storage: [dynamic]int }
 
 impl Buffer {
 	release :: hook(drop) proc(self: inout Buffer) { self.id = 0; }
 }
 
 make_buffer :: proc(allocator: Allocator) -> Buffer {
-	return Buffer{1};
+	return Buffer{1, make([dynamic]int, 0, 1, allocator)};
 }
 
 held: Buffer;

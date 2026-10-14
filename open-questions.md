@@ -11,40 +11,8 @@ correctness, robustness, optimization, simplification, structure, and verificati
 results. Confirmed language divergences are tracked separately in
 [Known gaps](known-gaps.md#gaps), with minimal reproductions. No implementation
 changes are included in the review. Its gaps, engineering findings and
-simplifications have since been fixed; one finding remains a question.
-
-### Does an unused allocator argument back an owning result?
-
-The review's G14 reads
-[Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
-as giving a direct call's owning result only the regions its body's summary
-names, so this would be accepted:
-
-```loke
-package main;
-import "core:mem";
-ignore :: proc(unused: Allocator) -> Box(int) { return box(1); }
-outer :: proc() -> Box(int) {
-    arena := mem.Arena.init();
-    return ignore(arena.allocator());
-}
-main :: proc() { _ = outer(); }
-```
-
-It is L0592 today: `prov_call_region` in [cfg_provenance.odin](src/cfg_provenance.odin)
-treats an owning result of any call passed an allocator as "built with" it.
-The corpus depends on that reading: `tests/err/m5b_regions.loke`,
-`m5b_provenance_regressions.loke`, `m5b_provider_activation.loke`, and
-`m7_destructure_regions.loke` use a `make_buffer(value, allocator)` that
-ignores its allocator as a constructor whose result the allocator backs.
-Following the body instead makes those rejections disappear. The signature
-reading lets a constructor start using its allocator without breaking its
-callers; the body reading accepts more programs. The spec sentence "an owning
-result built with an allocator parameter" fits both, so it should say which.
-
-Measure affected compilation/working-set workloads before and after performance
-fixes, as described in
-[Testing and verification](compiler-architecture.md#testing-and-verification).
+simplifications have since been fixed, and G14 was decided for the body
+reading.
 
 ## Package and import versioning
 

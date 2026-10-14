@@ -46,14 +46,14 @@ second_result_borrow :: proc() {
 	fmt.println(view[0]);
 }
 
-Buffer :: struct { id: int }
+Buffer :: struct { id: int, storage: [dynamic]int }
 
 impl Buffer {
 	release :: hook(drop) proc(self: inout Buffer) { self.id = 0; }
 }
 
 make_buffer :: proc(value: int, allocator: Allocator) -> Buffer {
-	return Buffer{value};
+	return Buffer{value, make([dynamic]int, 0, 1, allocator)};
 }
 
 // A later assignment transfers region provenance into an initially dead owner.

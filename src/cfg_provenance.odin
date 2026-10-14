@@ -2230,9 +2230,11 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 		if argument == nil {
 			continue
 		}
-		if type_underlying(c, expr_base(argument).type) == TYPE_ALLOCATOR && (!allocator_result || !direct) {
-			// An owner built with an allocator argument takes its region; a returned
-			// handle's summary already names one.
+		if type_underlying(c, expr_base(argument).type) == TYPE_ALLOCATOR && !direct {
+			// design.md "Allocator regions and region provenance": without a body
+			// to follow, an owner built with an allocator argument takes its
+			// region. A direct call's summary already names the allocators its
+			// result is built with, so one the body never uses backs nothing.
 			region_merge(&out, prov_region_of(graph, argument))
 			continue
 		}

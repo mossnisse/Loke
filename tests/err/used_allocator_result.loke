@@ -1,0 +1,26 @@
+// design.md "Allocator regions and region provenance": an allocator the body
+// builds the result with still backs it, and a call the checker cannot follow
+// is backed by every allocator argument.
+
+package main;
+
+import "core:mem";
+
+ignore :: proc(unused: Allocator) -> Box(int) { return box(1); }
+uses :: proc(allocator: Allocator) -> Box(int) { return box(1, allocator); }
+
+through_body :: proc() -> Box(int) {
+	arena := mem.Arena.init();
+	return uses(arena.allocator());
+}
+
+through_value :: proc() -> Box(int) {
+	arena := mem.Arena.init();
+	call: proc(unused: Allocator) -> Box(int) = ignore;
+	return call(arena.allocator());
+}
+
+main :: proc() {
+	_ = through_body();
+	_ = through_value();
+}

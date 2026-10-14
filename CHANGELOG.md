@@ -48,6 +48,11 @@ checklist.
   to the element `bump` moved `i` to. A literal value in a multiple assignment
   through a setter takes its destination's type, so `grid[0], x = 1, 2` with
   `i32` destinations is no longer `L0310`.
+- An allocator argument a procedure never uses no longer backs its owning
+  result (design.md "Allocator regions and region provenance"): returning
+  `ignore(arena.allocator())` from the arena's scope was `L0592`. A call
+  through a procedure value or a `dyn` slot still counts every allocator
+  argument.
 - A bundled package keeps its compiler-contributed members however an import
   reaches it: `import "core:Strings"` on Windows, or another `-collection`
   name for the bundled root, reported unknown library members. A package's

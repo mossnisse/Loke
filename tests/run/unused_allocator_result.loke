@@ -1,0 +1,27 @@
+// design.md "Allocator regions and region provenance": a direct call's owning
+// result is backed only by the allocators its body builds it with, so an
+// allocator argument the body ignores backs nothing.
+
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+ignore :: proc(unused: Allocator) -> Box(int) { return box(1); }
+
+outer :: proc() -> Box(int) {
+	arena := mem.Arena.init();
+	return ignore(arena.allocator());
+}
+
+reset_while_live :: proc() -> int {
+	arena := mem.Arena.init();
+	held := ignore(arena.allocator());
+	free_all(arena.allocator());
+	return held^ + 1;
+}
+
+main :: proc() {
+	kept := outer();
+	fmt.println(kept^, reset_while_live());
+}

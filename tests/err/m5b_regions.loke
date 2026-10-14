@@ -5,14 +5,14 @@ package main; import "core:mem"; import "core:fmt";
 // effect, while a live owning value or borrow still refers
 // to storage from that allocator."
 
-Buffer :: struct { id: int }
+Buffer :: struct { id: int, storage: [dynamic]int }
 
 impl Buffer {
 	release :: hook(drop) proc(self: inout Buffer) { self.id = 0; }
 }
 
 make_buffer :: proc(value: int, allocator: Allocator) -> Buffer {
-	return Buffer{value};
+	return Buffer{value, make([dynamic]int, 0, 1, allocator)};
 }
 
 release :: proc(@(allocator_reset) allocator: Allocator) {
