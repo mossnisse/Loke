@@ -21,6 +21,13 @@ checklist.
   [Language server](compiler-guide.md#language-server).
 - `editors/vscode`, an extension for VS Code and VSCodium that highlights Loke
   source and starts `loke-lsp`. See [its README](editors/vscode/README.md).
+- `core:random`: the xoshiro256++ generator `Xoshiro256`, seeded from a `u64`,
+  a saved state, or the operating system, with `split` and `jump` for parallel
+  streams. It provides integer ranges, floats, booleans, `bernoulli`, `fill`,
+  `shuffle`, `choose`, and ziggurat `normal` and `exponential`. `fill_secure`
+  and `secure_u64` read the operating system's secure generator. A seeded
+  generator gives the same values in every release. See
+  [`core:random`](standard-library.md#corerandom) and `examples/dice.loke`.
 
 ### Changed
 

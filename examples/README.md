@@ -20,6 +20,7 @@ different part of the language:
 - `tokens.loke` — declaring a union, variant switches, and `case` lists that match ranges.
 - `corpus_runner.loke` — a test harness: child processes, captured output, directory listing, sorting, and a pool of threads sharing a `Mutex`. It compiles and runs each case in a corpus directory, a file or a package directory, as the compiler's own run, trap, and package suites do, or checks each case's errors (`-diagnostics`, `-syntax`) or generated IR (`-ir`, assembled with the clang `lokec -print-toolchain` finds), as the diagnostic, syntax-error, and IR suites do.
 - `lexer.loke` — the compiler's lexer in Loke: byte scanning, enums, a constant table, `inout` parameters, and a recursive directory walk. It agrees with `lokec -dump-tokens` on every token's kind and span.
+- `dice.loke` — `core:random`: dice, a shuffled deck, and a Monte Carlo estimate of pi, replayable from the seed it prints.
 - `compile_time.loke` — ordinary procedures run during compilation, `build_config`, `static_assert`, `when`, static expansion over reflection, and folded layout.
 
 From the repository root, compile and run any example with:
@@ -44,11 +45,12 @@ automatically, so no collection flags are needed.
 
 ## How these are checked
 
-`odin test tests` compiles all thirteen from these sources — not from copies — and
+`odin test tests` compiles all sixteen from these sources — not from copies — and
 compares the output of the ones that produce a fixed result. `greeting` is run
 twice in a scratch directory with supplied input, so the second run has to find
 what the first wrote; `streaming` is run against a real file, a missing one, and
-one past its own read limit. Every example must be classified in
+one past its own read limit; `dice` is compared in full with the seed 2026, and
+run once unseeded, when it only has to print the seed it chose. Every example must be classified in
 `tests/corpus_test.odin`, so a new one cannot arrive unchecked.
 
 ### Checking `keys` by hand

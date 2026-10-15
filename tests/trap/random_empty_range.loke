@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a half-open range with equal ends is empty.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	random.in_range(inout rng, 5 ..< 5);
+}

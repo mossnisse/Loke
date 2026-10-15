@@ -22,6 +22,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
 | Start threads or protect shared state | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
+| Draw random numbers, shuffle, or get secret bytes | [`core:random`](#corerandom) |
 
 Start with the [design rules](#design-rules) for text, errors, and ownership.
 The [package layout](#package-layout) lists the remaining foundational packages.
@@ -136,6 +137,7 @@ core:cstrings         owned zero-terminated buffers
 core:encoding/utf16   UTF-8 to UTF-16 and back
 core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
+core:random           seeded generators, entropy, distributions
 core:slice            slice algorithms and sorting            *
 core:container        Small_Array, Bit_Set, Enum_Array        *
 core:log              logging over the selected provider
@@ -1262,6 +1264,165 @@ poles, and domain results documented on each one. They do not promise correctly
 rounded results, identical last bits across platforms, a particular NaN
 payload, or `errno` contents, and they never turn a floating-point exception
 into a panic.
+
+## `core:random`
+
+`core:random` draws reproducible values from seeded generators and secret bytes
+from the operating system. Every procedure takes the generator `inout`, as
+`core:io` takes a stream; the package owns no generator of its own.
+
+```odin
+Source :: interface($Self: type) {
+	slot next_u64: proc(self: inout Self) -> u64;
+}
+
+Xoshiro256 :: move_only struct { /* private state */ }
+
+impl Xoshiro256 {
+	from_seed    :: proc(seed: u64) -> Xoshiro256;
+	from_entropy :: proc() -> Xoshiro256;
+	from_state   :: proc(state: [4]u64) -> Xoshiro256;
+	state        :: proc(self) -> [4]u64;
+	next_u64     :: proc(self: inout) -> u64;
+	jump         :: proc(self: inout);
+	long_jump    :: proc(self: inout);
+	split        :: proc(self: inout) -> Xoshiro256;
+}
+
+fill_secure(destination: []mut u8)
+secure_u64() -> u64
+
+in_range(source: inout $G, range: Range($T)) -> T
+boolean(source: inout $G) -> bool
+bernoulli(source: inout $G, probability: f64) -> bool
+fill(source: inout $G, destination: []mut u8)
+shuffle(source: inout $G, values: []mut $T)
+choose(source: inout $G, values: []$T) -> Option(T)
+unit(source: inout $G) -> f64
+unit_f32(source: inout $G) -> f32
+uniform(source: inout $G, low, high: f64) -> f64
+uniform_f32(source: inout $G, low, high: f32) -> f32
+normal(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1) -> f64
+exponential(source: inout $G, rate: f64 = 1) -> f64
+```
+
+Each procedure taking a `source` requires `Source(G)`, so a caller's own source
+and a `dyn mut random.Source` view work as well as `Xoshiro256`. `in_range`
+accepts integer and rune endpoints of at most 64 bits, and `choose` a copyable
+element type.
+
+Example (imports `core:random`):
+
+```loke
+roll :: proc(rng: inout random.Xoshiro256) -> int {
+    return random.in_range(inout rng, 1 ..= 6);
+}
+```
+
+### Generators
+
+`Xoshiro256` is xoshiro256++ (Blackman and Vigna, 2018): 256 bits of state, a
+period of 2^256 − 1, and output identical to the reference implementation at
+prng.di.unimi.it. It is the general-purpose generator for simulations, games,
+sampling, and tests. Its output is predictable from earlier output, so it is
+never a source of secrets; use [`fill_secure`](#operating-system-entropy).
+
+A generator is move-only, so it cannot be duplicated by accident; a copy would
+draw the same values as the original. Moving one into `thread.spawn` leaves the
+caller without it. `split` and `from_state(rng.state())` are the explicit ways
+to get a second generator.
+
+### Seeding
+
+- `from_seed(seed)` sets the state to the first four outputs of SplitMix64
+  (Steele, Lea, and Flood, 2014) started at `seed`. The state is never all zero.
+- The zero value is unseeded. Its first draw seeds it from the operating system,
+  so `rng: thread_local random.Xoshiro256;` gives each thread its own stream,
+  and a record holding a generator needs no initializer.
+- `from_entropy()` seeds from the operating system at once.
+- `state()` returns the whole state and `from_state` restores it exactly.
+  An all-zero state is the unseeded zero value, so an unseeded generator's
+  snapshot restores to an unseeded generator.
+- `split()` returns a generator whose state is four draws from this one, each
+  passed through the SplitMix64 finalizer. The child depends only on the
+  parent's state, so splitting is reproducible however deeply it nests.
+- `jump()` and `long_jump()` advance the state as 2^128 and 2^192 draws would.
+  Giving each worker the current generator and then jumping divides one stream
+  into blocks that cannot overlap.
+
+`jump`, `long_jump`, and `split` on an unseeded generator seed it first.
+
+To make an unseeded run replayable, draw the seed with `secure_u64()`, record
+it, and construct the generator with `from_seed`, as
+[examples/dice.loke](examples/dice.loke) does. Do not seed from the clock or a
+process ID: parallel runs started together share them.
+
+Seeded generators and the procedures that only compute on integers and floats
+can run during [compile-time evaluation](design.md#compile-time-procedure-evaluation),
+for example to build a table of random constants. `from_entropy`, a draw from an
+unseeded generator, `fill_secure`, and `secure_u64` cannot, and neither can
+`normal` and `exponential`, which call `core:math`. `shuffle` should run there
+but does not yet; see [Known gaps](known-gaps.md#compile-time-swap-and-sort-reject-a-slice).
+
+### Reproducibility
+
+A seeded or restored `Xoshiro256` produces the same sequence in every release.
+The mapping from draws to values is part of each procedure's contract:
+
+| Procedure | Draws |
+| --- | --- |
+| `in_range` | Lemire's nearly-divisionless method (2019): one draw per attempt, a new attempt only when the draw would bias the result. The result is `low` plus the offset. A range of all 2^64 values uses one draw as the offset. A one-value range still takes one draw. |
+| `boolean` | One draw; its top bit. |
+| `bernoulli` | One `unit` draw, compared with `probability`, even for 0 and 1. |
+| `fill` | One draw per eight bytes, written little-endian; the unused bytes of a final partial draw are discarded. |
+| `shuffle` | Fisher–Yates from the end: for each index `i` from the last down to 1, `in_range(0 ..= i)` picks the index to swap with. Fewer than two elements take no draw. |
+| `choose` | One `in_range(0 ..< len)`; none for an empty slice, which answers `.none`. |
+| `unit` | One draw; its top 53 bits times 2^-53, in [0, 1). |
+| `unit_f32` | One draw; its top 24 bits times 2^-24, in [0, 1). |
+| `uniform` | `low + (high - low)*u` for one `unit` draw `u`, or `low*(1 - u) + high*u` when `high - low` overflows; a result equal to `high` is drawn again. `uniform_f32` likewise with `unit_f32`. |
+| `normal`, `exponential` | See [Distributions](#distributions). |
+
+Changing a generator's output or any of these mappings is a breaking change.
+An unseeded generator is not reproducible.
+
+### Distributions
+
+`normal` and `exponential` use a 256-layer ziggurat (Marsaglia and Tsang,
+2000). One draw picks a layer from its low 8 bits and a position from its top
+52 bits, so no bit serves both. About 99% of values are accepted from that one
+draw. A value in a strip's wedge takes one more `unit` draw to test against the
+density. A value in the base strip samples the tail: Marsaglia's method for the
+normal, taking two draws per attempt, and one draw for the exponential. `normal`
+returns `mean + standard_deviation*z` and `exponential` returns `x/rate`, for a
+standard `z` or `x`.
+
+The tables are constants in the source, and the common path uses no
+`core:math` call. A wedge or tail value depends on `core:math.exp` and `log`,
+which do not promise identical last bits across platforms; see
+[Random distributions across platforms](open-questions.md#random-distributions-across-platforms).
+
+### Operating-system entropy
+
+`fill_secure` fills a buffer from the operating system's cryptographically
+secure generator: `BCryptGenRandom` with the system-preferred generator on
+Windows, in requests of at most 1 GiB. These are the bytes for keys, tokens,
+and nonces. `secure_u64` is eight of them, little-endian. Neither returns an
+error: the system generator does not fail on a supported system, and if it
+ever reported failure the program panics, rather than continue with
+predictable bytes.
+
+### Panics
+
+These are programmer errors and panic, naming the procedure:
+
+- an empty range: `high < low` for `..=`, `high <= low` for `..<`;
+- `uniform` or `uniform_f32` bounds that are not finite or not `low < high`;
+- a `bernoulli` probability outside [0, 1], or NaN;
+- a `normal` mean or deviation that is not finite, or a negative deviation;
+- an `exponential` rate that is not finite or not positive.
+
+An endpoint type wider than 64 bits is rejected when `in_range` is
+instantiated.
 
 ## What is deliberately absent
 

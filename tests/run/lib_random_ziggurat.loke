@@ -1,0 +1,123 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:random";
+import "core:unsafe";
+
+// The ziggurat tables in `core:random` are literals (standard-library
+// "Distributions"). This recomputes them from R and V with `core:math`, runs
+// the same sampler over the recomputation, and requires the package's
+// `normal` and `exponential` to give the same bits from the same seed. Every
+// accepted value from a layer is `u * X[i]`, so a wrong entry in either `X`
+// table changes the output; the `F` tables steer the wedge tests, which a
+// quarter of a million draws reach in every layer.
+//
+// Bit equality holds because the recomputation uses the same C library as the
+// computation that produced the literals. Another platform's `exp` and `log`
+// could differ in the last bit; this check would then need a tolerance.
+
+NORMAL_R :: 3.6541528853610088;
+NORMAL_V :: 0.00492867323399;
+EXPONENTIAL_R :: 7.69711747013104972;
+EXPONENTIAL_V :: 0.0039496598225815571993;
+
+Tables :: struct {
+	x: [257]f64,
+	f: [257]f64,
+}
+
+normal_density :: proc(x: f64) -> f64 { return math.exp(-0.5*x*x); }
+exponential_density :: proc(x: f64) -> f64 { return math.exp(-x); }
+
+build :: proc(r, v: f64, normal: bool) -> Tables {
+	t: Tables = {};
+	t.x[0] = v / (normal_density(r) if normal else exponential_density(r));
+	t.x[1] = r;
+	foreach (i in 2 ..< 256) {
+		previous := t.x[i - 1];
+		if (normal) {
+			t.x[i] = math.sqrt(-2.0*math.log(v / previous + normal_density(previous)));
+		} else {
+			t.x[i] = -math.log(v / previous + exponential_density(previous));
+		}
+	}
+	t.x[256] = 0.0;
+	foreach (i in 0 ..< 257) {
+		t.f[i] = normal_density(t.x[i]) if normal else exponential_density(t.x[i]);
+	}
+	return t;
+}
+
+open_unit :: proc(bits: u64) -> f64 {
+	return (f64(bits >> 12) + 0.5) * (1.0 / 4503599627370496.0);
+}
+
+reference_normal :: proc(rng: inout random.Xoshiro256, t: ^Tables) -> f64 {
+	for (;;) {
+		bits := rng.next_u64();
+		layer := int(bits & 0xFF);
+		u := 2.0*open_unit(bits) - 1.0;
+		x := u*t.x[layer];
+		if (math.abs(x) < t.x[layer + 1]) { return x; }
+		if (layer == 0) {
+			for (;;) {
+				tail := math.log(open_unit(rng.next_u64())) / NORMAL_R;
+				y := math.log(open_unit(rng.next_u64()));
+				if (-2.0*y >= tail*tail) {
+					return (tail - NORMAL_R) if u < 0.0 else (NORMAL_R - tail);
+				}
+			}
+		}
+		height := t.f[layer + 1] + (t.f[layer] - t.f[layer + 1])*random.unit(inout rng);
+		if (height < normal_density(x)) { return x; }
+	}
+}
+
+reference_exponential :: proc(rng: inout random.Xoshiro256, t: ^Tables) -> f64 {
+	for (;;) {
+		bits := rng.next_u64();
+		layer := int(bits & 0xFF);
+		x := open_unit(bits)*t.x[layer];
+		if (x < t.x[layer + 1]) { return x; }
+		if (layer == 0) { return EXPONENTIAL_R - math.log(open_unit(rng.next_u64())); }
+		height := t.f[layer + 1] + (t.f[layer] - t.f[layer + 1])*random.unit(inout rng);
+		if (height < exponential_density(x)) { return x; }
+	}
+}
+
+same_bits :: proc(a, b: f64) -> bool {
+	return unsafe.transmute(u64, a) == unsafe.transmute(u64, b);
+}
+
+main :: proc() {
+	normal_tables := build(NORMAL_R, NORMAL_V, true);
+	exponential_tables := build(EXPONENTIAL_R, EXPONENTIAL_V, false);
+
+	// The strips' edges fall from the virtual base width to zero.
+	falling := true;
+	foreach (i in 0 ..< 256) {
+		if (!(normal_tables.x[i] > normal_tables.x[i + 1])) { falling = false; }
+		if (!(exponential_tables.x[i] > exponential_tables.x[i + 1])) { falling = false; }
+	}
+	fmt.println("falling", falling);
+
+	count := 250000;
+	library := random.Xoshiro256.from_seed(0xD15C0);
+	reference := random.Xoshiro256.from_seed(0xD15C0);
+	mismatches := 0;
+	foreach (_ in 0 ..< count) {
+		if (!same_bits(random.normal(inout library), reference_normal(inout reference, &normal_tables))) {
+			mismatches += 1;
+		}
+	}
+	fmt.println("normal mismatches", mismatches, library.state() == reference.state());
+
+	mismatches = 0;
+	foreach (_ in 0 ..< count) {
+		if (!same_bits(random.exponential(inout library), reference_exponential(inout reference, &exponential_tables))) {
+			mismatches += 1;
+		}
+	}
+	fmt.println("exponential mismatches", mismatches, library.state() == reference.state());
+}

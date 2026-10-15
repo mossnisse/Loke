@@ -1,0 +1,75 @@
+// The operating system's cryptographically secure generator (standard-library
+// "Operating-system entropy").
+//
+// These are the only bytes in the package fit for keys, tokens, and nonces. A
+// seeded generator is predictable from its outputs, however it was seeded.
+@(public)
+package random;
+
+import "core:math";
+import "core:unsafe";
+
+// `destination` filled from the operating system's generator. There is no error
+// to handle: the platform generator does not fail on a supported system, and if
+// it ever reported failure, carrying on with predictable bytes would be worse
+// than stopping, so the program panics.
+fill_secure :: proc(destination: []mut u8) {
+	filled := 0;
+	for (; filled < destination.len(); ) {
+		count := math.min(destination.len() - filled, ENTROPY_CHUNK);
+		if (!fill_native(&mut destination[filled:filled + count])) {
+			panic("random.fill_secure: the operating system's generator failed");
+		}
+		filled += count;
+	}
+}
+
+// Eight bytes of `fill_secure` as a `u64`, little-endian: a seed worth
+// recording, so that `Xoshiro256.from_seed` can replay the run it started.
+secure_u64 :: proc() -> u64 {
+	bytes: [8]u8 = {};
+	fill_secure(&mut bytes[:]);
+	value: u64 = 0;
+	foreach (i in 0 ..< 8) { value |= u64(bytes[i]) << uint(8*i); }
+	return value;
+}
+
+// A seeded xoshiro256 state. All zeros means unseeded, so a draw of 256 zero
+// bits, which the system generator gives once in 2^256, is drawn again.
+@(private)
+entropy_words :: proc() -> [4]u64 {
+	for (;;) {
+		bytes: [32]u8 = {};
+		fill_secure(&mut bytes[:]);
+		words: [4]u64 = {};
+		foreach (i in 0 ..< 32) { words[i / 8] |= u64(bytes[i]) << uint(8*(i % 8)); }
+		if ((words[0] | words[1] | words[2] | words[3]) != 0) { return words; }
+	}
+}
+
+// One request stays inside the platform call's 32-bit length, as `core:fs`
+// bounds a read.
+@(private) ENTROPY_CHUNK :: 0x40000000;
+
+when (LOKE_OS == .Windows) {
+
+foreign import bcrypt "system:bcrypt.lib";
+
+// `BCryptGenRandom` with no algorithm handle and the system-preferred flag is
+// the documented way to reach the system generator without opening a provider.
+@(private)
+foreign bcrypt {
+	@(link_name="BCryptGenRandom")
+	rt_gen_random :: proc "stdcall" (algorithm: rawptr, buffer: [^]u8, size: u32, flags: u32) -> i32 ---;
+}
+
+@(private) BCRYPT_USE_SYSTEM_PREFERRED_RNG :: u32(0x00000002);
+
+// True when every byte was filled; the status is an `NTSTATUS`, zero on success.
+@(private)
+fill_native :: proc(destination: []mut u8) -> bool {
+	return rt_gen_random(nil, unsafe.raw_data(destination), u32(destination.len()),
+		BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+}
+
+}

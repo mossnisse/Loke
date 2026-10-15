@@ -1,0 +1,9 @@
+L0341
+@17:9
+has no body to evaluate
+L0500
+@23:2
+`rng` cannot be used here
+L0434
+@25:10
+does not satisfy the bound `size_of(T) <= 8`

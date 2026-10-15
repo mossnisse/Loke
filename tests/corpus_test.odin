@@ -2093,6 +2093,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		{"compile_time",   .Output},
 		{"config_parser",  .Output},
 		{"corpus_runner",  .Driven},
+		{"dice",           .Driven},
 		{"game_of_life",   .Output},
 		{"greeting",       .Driven},
 		{"hello",          .Output},
@@ -2150,6 +2151,34 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 			"tests/examples/compile_time.sieve200.expected",
 		)
 	}
+}
+
+// `dice` replays a seed exactly, so a seeded run is compared in full; an
+// unseeded one is different every time and only has to report the seed it
+// chose, which is what lets it be replayed.
+@(test)
+example_dice_replays_its_seed :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/example-dice.exe", TMP)
+	if !compile_example(t, "examples/dice.loke", exe, nil) {
+		return
+	}
+	expect_example_output(t, "examples/dice.loke 2026", exe, []string{"2026"}, "", "tests/examples/dice.expected")
+
+	state, stdout, stderr, err := exec(
+		os.Process_Desc{command = []string{launch_path(exe)}},
+		context.allocator,
+	)
+	if !testing.expect(t, err == nil, "dice: cannot run the unseeded example") {
+		return
+	}
+	defer delete(stdout)
+	defer delete(stderr)
+	testing.expectf(t, state.exit_code == 0, "dice: unseeded run exited with %d", state.exit_code)
+	testing.expectf(
+		t, strings.has_prefix(string(stdout), "seed: "),
+		"dice: an unseeded run must print its seed first, got %q", string(stdout),
+	)
 }
 
 // design.md "A first program" prints `examples/tour.loke` in full. A copy in

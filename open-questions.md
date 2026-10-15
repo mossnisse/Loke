@@ -251,6 +251,34 @@ profiles contain.
   in Loke (Eisel-Lemire with a big-decimal fallback) would fix both. Is either
   worth that much code?
 
+## Open questions in `core:random`
+
+### Random distributions across platforms
+
+`normal` and `exponential` return the same bits on every release of one
+platform, but a wedge or tail value calls the C library's `exp` or `log`, which
+[`core:math`](standard-library.md#coremath) does not promise to the last bit.
+Once a second platform ships, a seeded sequence could differ there in rare
+values. Correctly rounded `exp` and `log` in Loke would close this, and would
+also let these distributions run at compile time. Is cross-platform identity
+worth that code, or is per-platform reproducibility the contract?
+
+### More generators and distributions
+
+PCG64-DXSM would add arbitrary-distance `advance` and numpy and Go
+compatibility. ChaCha would give a seedable cryptographic generator, and
+belongs with a `core:crypto`. A counter-based generator such as Philox would
+give random access into a stream. The next distributions are listed in
+[Standard-library maturity](future-plans.md#standard-library-maturity). None is
+added until a caller needs it.
+
+### Longer seeds
+
+`from_seed` takes 64 bits, which is enough to name a run but not to reach
+every state; `from_state` takes all 256. A seed sequence in the style of numpy's
+`SeedSequence`, hashing seed material of any length into a state, would sit
+between them. Does a caller need it?
+
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md "Formatting"](comments.md#formatting).

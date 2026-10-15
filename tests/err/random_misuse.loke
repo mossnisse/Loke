@@ -1,0 +1,26 @@
+package main;
+
+import "core:random";
+import "core:thread";
+
+// standard-library "`core:random`": a generator is move-only, so one moved into
+// a thread is gone here; a 128-bit range has no `in_range`; and the operating
+// system's generator is not reachable during compilation.
+
+worker :: proc(rng: move random.Xoshiro256) {}
+
+seeded_at_compile_time :: proc() -> u64 {
+	rng := random.Xoshiro256.from_entropy();
+	return rng.next_u64();
+}
+
+SEED :: seeded_at_compile_time();
+
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	t := thread.spawn(worker, move(rng));
+	t.join();
+	rng.next_u64();
+	copy := random.Xoshiro256.from_seed(2);
+	wide := random.in_range(inout copy, u128(0) ..< 10);
+}

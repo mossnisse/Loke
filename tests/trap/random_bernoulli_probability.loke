@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a probability above 1.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	random.bernoulli(inout rng, 1.5);
+}

@@ -1,0 +1,351 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:random";
+import "core:thread";
+import "core:unsafe";
+
+// `core:random` (standard-library "`core:random`").
+//
+// Everything printed is reproducible: the generators are seeded, or the line is
+// a comparison. The vectors are the reference C code's outputs
+// (prng.di.unimi.it), and the seeded draws pin the mappings standard-library
+// "Reproducibility" makes part of the contract, so a change to any of them
+// shows here as a changed line.
+
+// A source that replays its script, to reach paths a real generator reaches
+// only by chance.
+Script :: struct {
+	values: [8]u64,
+	used:   int,
+}
+
+impl Script {
+	next_u64 :: proc(self: inout) -> u64 {
+		value := self.values[self.used];
+		self.used += 1;
+		return value;
+	}
+}
+
+// Advances `rng` by `count` draws, to compare a state with what a procedure
+// left behind.
+skip :: proc(rng: inout random.Xoshiro256, count: int) {
+	foreach (_ in 0 ..< count) { rng.next_u64(); }
+}
+
+// Built during compilation and again at run time; a seeded generator is pure
+// integer code, so the two agree.
+zobrist :: proc(seed: u64) -> [8]u64 {
+	rng := random.Xoshiro256.from_seed(seed);
+	table: [8]u64 = {};
+	foreach (i in 0 ..< 8) { table[i] = rng.next_u64(); }
+	return table;
+}
+
+rolls :: proc(seed: u64) -> [6]int {
+	rng := random.Xoshiro256.from_seed(seed);
+	values: [6]int = {};
+	foreach (i in 0 ..< 6) { values[i] = random.in_range(inout rng, 1 ..= 6); }
+	return values;
+}
+
+noise :: proc(seed: u64) -> [10]u8 {
+	rng := random.Xoshiro256.from_seed(seed);
+	bytes: [10]u8 = {};
+	random.fill(inout rng, &mut bytes[:]);
+	return bytes;
+}
+
+ZOBRIST :: zobrist(0x5EED);
+ROLLS :: rolls(3);
+NOISE :: noise(5);
+
+rng_per_thread: thread_local random.Xoshiro256;
+other_thread_draw: thread.Mutex(u64);
+handed_off_draw: thread.Mutex(u64);
+
+first_draw :: proc() {
+	value := rng_per_thread.next_u64();
+	guard := other_thread_draw.lock();
+	guard.get() = value;
+}
+
+draw_in_thread :: proc(rng: move random.Xoshiro256) {
+	owned := move(rng);
+	value := owned.next_u64();
+	guard := handed_off_draw.lock();
+	guard.get() = value;
+}
+
+main :: proc() {
+	vectors();
+	seeding();
+	ranges();
+	scripted();
+	floats_and_bits();
+	permutations();
+	distributions();
+
+	fmt.println("compile time", ZOBRIST == zobrist(0x5EED), ROLLS == rolls(3), NOISE == noise(5), ROLLS);
+}
+
+vectors :: proc() {
+	// The reference state 1, 2, 3, 4.
+	rng := random.Xoshiro256.from_state([4]u64{1, 2, 3, 4});
+	outputs: [6]u64 = {};
+	foreach (i in 0 ..< 6) { outputs[i] = rng.next_u64(); }
+	fmt.println(outputs);
+
+	// SplitMix64 seeding: the state is its first four outputs.
+	fmt.println(random.Xoshiro256.from_seed(0).state());
+	fmt.println(random.Xoshiro256.from_seed(42).state());
+	seeded := random.Xoshiro256.from_seed(42);
+	seeded_outputs: [4]u64 = {};
+	foreach (i in 0 ..< 4) { seeded_outputs[i] = seeded.next_u64(); }
+	fmt.println(seeded_outputs);
+
+	jumped := random.Xoshiro256.from_state([4]u64{1, 2, 3, 4});
+	jumped.jump();
+	fmt.println(jumped.state(), jumped.next_u64());
+	far := random.Xoshiro256.from_state([4]u64{1, 2, 3, 4});
+	far.long_jump();
+	fmt.println(far.state(), far.next_u64());
+}
+
+seeding :: proc() {
+	// A snapshot restores exactly.
+	rng := random.Xoshiro256.from_seed(9);
+	skip(inout rng, 5);
+	copy := random.Xoshiro256.from_state(rng.state());
+	fmt.println("restored", rng.next_u64() == copy.next_u64(), rng.state() == copy.state());
+
+	// The zero value is unseeded until its first draw, then seeded from the
+	// operating system, so two of them differ.
+	unseeded: random.Xoshiro256 = {};
+	fmt.println("unseeded", unseeded.state() == [4]u64{});
+	other: random.Xoshiro256 = {};
+	fmt.println("self-seeded", unseeded.next_u64() != other.next_u64(), unseeded.state() != [4]u64{});
+	restored := random.Xoshiro256.from_state([4]u64{});
+	fmt.println("zero state is unseeded", restored.state() == [4]u64{});
+
+	entropy_a := random.Xoshiro256.from_entropy();
+	entropy_b := random.Xoshiro256.from_entropy();
+	fmt.println("from_entropy", entropy_a.state() != entropy_b.state());
+	fmt.println("secure_u64", random.secure_u64() != random.secure_u64());
+	secret: [40]u8 = {};
+	random.fill_secure(&mut secret[:]);
+	zeros := 0;
+	foreach (b in secret) { if (b == 0) { zeros += 1; } }
+	fmt.println("fill_secure", zeros < 10);
+	random.fill_secure(&mut secret[0:0]);
+
+	// `split` depends only on the parent's state, takes four draws from it, and
+	// gives a stream unlike the parent's.
+	parent_a := random.Xoshiro256.from_seed(7);
+	parent_b := random.Xoshiro256.from_seed(7);
+	child_a := parent_a.split();
+	child_b := parent_b.split();
+	fmt.println("split", child_a.state() == child_b.state(), child_a.next_u64() != parent_a.next_u64());
+	counted := random.Xoshiro256.from_seed(7);
+	skip(inout counted, 5);
+	fmt.println("split takes four draws", counted.state() == parent_a.state());
+
+	// One `thread_local` generator per thread, each seeded on its own.
+	here := rng_per_thread.next_u64();
+	worker := thread.spawn(first_draw);
+	worker.join();
+	fmt.println("thread_local", here != other_thread_draw.value);
+
+	// A child moved into a thread, drawing there what it would have here.
+	root := random.Xoshiro256.from_seed(11);
+	child := root.split();
+	replay := random.Xoshiro256.from_state(child.state());
+	expected := replay.next_u64();
+	carrier := thread.spawn(draw_in_thread, move(child));
+	carrier.join();
+	fmt.println("moved into a thread", handed_off_draw.value == expected);
+}
+
+ranges :: proc() {
+	rng := random.Xoshiro256.from_seed(2026);
+	fmt.println(random.in_range(inout rng, 1 ..= 6), random.in_range(inout rng, 0 ..< 1000),
+		random.in_range(inout rng, -50 ..= 50), random.in_range(inout rng, 'a' ..= 'z'),
+		random.in_range(inout rng, u8(0) ..= 255), random.in_range(inout rng, i8(-128) ..< 0));
+
+	// A die, sixty thousand times: the counts are pinned, and the chi-square
+	// statistic is well inside its 0.1% bound of 20.5 for five degrees of freedom.
+	counts: [6]int = {};
+	foreach (_ in 0 ..< 60000) { counts[random.in_range(inout rng, 1 ..= 6) - 1] += 1; }
+	chi := 0.0;
+	foreach (count in counts) {
+		difference := f64(count) - 10000.0;
+		chi += difference*difference / 10000.0;
+	}
+	fmt.println(counts, chi < 20.5);
+
+	// Every value stays inside its range.
+	inside := true;
+	foreach (_ in 0 ..< 1000) {
+		if (!(random.in_range(inout rng, -10 ..< -5) in -10 ..< -5)) { inside = false; }
+		if (!(random.in_range(inout rng, 'a' ..= 'z') in 'a' ..= 'z')) { inside = false; }
+		if (!(random.in_range(inout rng, u64(10) ..= 12) in u64(10) ..= 12)) { inside = false; }
+	}
+	fmt.println("inside", inside);
+
+	// A one-value range still takes its draw.
+	a := random.Xoshiro256.from_seed(5);
+	b := random.Xoshiro256.from_seed(5);
+	fmt.println("one value", random.in_range(inout a, 5 ..= 5), random.in_range(inout a, 7 ..< 8));
+	skip(inout b, 2);
+	fmt.println("one draw each", a.state() == b.state());
+
+	// A range of all 2^64 values offsets its low end by the draw, unrejected.
+	whole_a := random.Xoshiro256.from_seed(6);
+	whole_b := random.Xoshiro256.from_seed(6);
+	fmt.println("whole u64", random.in_range(inout whole_a, u64(0) ..= 0xFFFF_FFFF_FFFF_FFFF) == whole_b.next_u64());
+	fmt.println("whole i64", random.in_range(inout whole_a, i64(-9223372036854775808) ..= i64(9223372036854775807)) == math.wrap(i64, whole_b.next_u64() + (1 << 63)));
+}
+
+scripted :: proc() {
+	// 2^64 mod 3 is 1, so a draw whose product with 3 has a zero low half is
+	// rejected, and the next one decides.
+	script := Script{values = {0, 1 << 63}};
+	fmt.println("rejected first", random.in_range(inout script, 0 ..< 3), script.used);
+
+	// The ends of the float mappings.
+	ends := Script{values = {0, 0xFFFF_FFFF_FFFF_FFFF, 0, 0xFFFF_FFFF_FFFF_FFFF}};
+	fmt.println("unit", random.unit(inout ends), random.unit(inout ends));
+	fmt.println("unit_f32", random.unit_f32(inout ends), random.unit_f32(inout ends));
+
+	bits := Script{values = {1 << 63, (1 << 63) - 1}};
+	fmt.println("boolean", random.boolean(inout bits), random.boolean(inout bits));
+
+	// Little-endian bytes of one draw per eight; the rest of the last one is
+	// discarded.
+	bytes := Script{values = {0x0807060504030201, 0x0D0C0B0A09, 0xFF}};
+	filled: [10]u8 = {};
+	random.fill(inout bytes, &mut filled[:]);
+	fmt.println("fill", filled, bytes.used);
+
+	// Through a `dyn mut` view, as a non-generic caller would hold a source.
+	viewed := Script{values = {0, 1 << 63}};
+	view := (dyn mut random.Source)(&mut viewed);
+	fmt.println("dyn view", random.in_range(inout view, 0 ..< 3), viewed.used);
+}
+
+floats_and_bits :: proc() {
+	rng := random.Xoshiro256.from_seed(314);
+	fmt.println(random.unit(inout rng), random.unit_f32(inout rng),
+		random.uniform(inout rng, -2.0, 3.0), random.uniform_f32(inout rng, 10.0, 20.0),
+		random.boolean(inout rng), random.bernoulli(inout rng, 0.25));
+
+	bounded := true;
+	foreach (_ in 0 ..< 10000) {
+		value := random.uniform(inout rng, -2.0, 3.0);
+		if (value < -2.0 || value >= 3.0) { bounded = false; }
+		small := random.uniform_f32(inout rng, 0.0, 1.0);
+		if (small < 0.0 || small >= 1.0) { bounded = false; }
+	}
+	fmt.println("uniform bounds", bounded);
+
+	// A span wider than `F64_MAX` is interpolated rather than overflowing.
+	wide := random.uniform(inout rng, -math.F64_MAX, math.F64_MAX);
+	fmt.println("wide", math.is_finite(wide));
+
+	// Bounds one representable value apart leave only `low`.
+	next_after_one := unsafe.transmute(f64, unsafe.transmute(u64, 1.0) + 1);
+	only_low := true;
+	foreach (_ in 0 ..< 100) {
+		if (random.uniform(inout rng, 1.0, next_after_one) != 1.0) { only_low = false; }
+	}
+	fmt.println("adjacent bounds", only_low);
+
+	// Certain outcomes still take their draw.
+	a := random.Xoshiro256.from_seed(8);
+	b := random.Xoshiro256.from_seed(8);
+	never := false;
+	always := true;
+	foreach (_ in 0 ..< 500) {
+		if (random.bernoulli(inout a, 0.0)) { never = true; }
+		if (!random.bernoulli(inout a, 1.0)) { always = false; }
+	}
+	skip(inout b, 1000);
+	fmt.println("bernoulli", never, always, a.state() == b.state());
+
+	quarter := 0;
+	foreach (_ in 0 ..< 40000) { if (random.bernoulli(inout rng, 0.25)) { quarter += 1; } }
+	fmt.println("quarter", quarter, quarter > 9700 && quarter < 10300);
+
+	noise: [12]u8 = {};
+	random.fill(inout rng, &mut noise[:]);
+	fmt.println(noise);
+}
+
+permutations :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	deck := [10]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+	random.shuffle(inout rng, &mut deck[:]);
+	fmt.println(deck);
+
+	// Still a permutation.
+	seen: [10]bool = {};
+	foreach (card in deck) { seen[card] = true; }
+	whole := true;
+	foreach (present in seen) { if (!present) { whole = false; } }
+	fmt.println("permutation", whole);
+
+	// Fewer than two elements take no draw, and nine elements take nine.
+	a := random.Xoshiro256.from_seed(4);
+	b := random.Xoshiro256.from_seed(4);
+	none: [0]int = {};
+	single := [1]int{7};
+	random.shuffle(inout a, &mut none[:]);
+	random.shuffle(inout a, &mut single[:]);
+	fmt.println("no draws", a.state() == b.state(), single);
+	nine := [9]int{};
+	random.shuffle(inout a, &mut nine[:]);
+	skip(inout b, 8);
+	fmt.println("one draw per index", a.state() == b.state());
+
+	names := []string{"ada", "bo", "cy"};
+	fmt.println(random.choose(inout rng, names), random.choose(inout rng, names));
+	empty: []string = {};
+	before := rng.state();
+	fmt.println(random.choose(inout rng, empty), rng.state() == before);
+}
+
+distributions :: proc() {
+	rng := random.Xoshiro256.from_seed(1729);
+	fmt.println(random.normal(inout rng), random.normal(inout rng, 10.0, 2.0),
+		random.exponential(inout rng), random.exponential(inout rng, 4.0));
+
+	// Moments of a hundred thousand draws, well inside their sampling error.
+	count := 100000;
+	sum := 0.0;
+	squares := 0.0;
+	beyond := 0;
+	foreach (_ in 0 ..< count) {
+		z := random.normal(inout rng);
+		sum += z;
+		squares += z*z;
+		if (math.abs(z) > 3.6541528853610088) { beyond += 1; }
+	}
+	mean := sum / f64(count);
+	variance := squares / f64(count) - mean*mean;
+	fmt.println("normal", math.abs(mean) < 0.02, math.abs(variance - 1.0) < 0.02, beyond > 0);
+
+	sum = 0.0;
+	squares = 0.0;
+	foreach (_ in 0 ..< count) {
+		x := random.exponential(inout rng, 2.0);
+		sum += x;
+		squares += x*x;
+	}
+	mean = sum / f64(count);
+	variance = squares / f64(count) - mean*mean;
+	fmt.println("exponential", math.abs(mean - 0.5) < 0.01, math.abs(variance - 0.25) < 0.01);
+
+	fmt.println("zero deviation", random.normal(inout rng, 3.5, 0.0));
+}

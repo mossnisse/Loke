@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": `low` must be below `high`.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	random.uniform(inout rng, 2.0, 1.0);
+}

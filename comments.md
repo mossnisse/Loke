@@ -1115,6 +1115,40 @@ boundaries and API shapes follow a few common choices:
 - **Float widths have separate names.** `sqrt` takes `f64` and `sqrt_f32` takes
   `f32`. Overloading both would make an unfixed literal ambiguous; converting
   through a wider result can round twice.
+- **Random generators are explicit values.** Every `core:random` procedure
+  takes a generator `inout`, as `core:io` takes a stream. A package-owned
+  default would double the API with generator-free overloads and give the
+  library hidden state. A program that wants a global declares
+  `rng: thread_local random.Xoshiro256;`.
+- **A generator is move-only.** Copying one copies its future: both copies
+  draw the same values. The classic case is a generator handed to a thread and
+  then used again by its spawner. `split` and `from_state(rng.state())` make the
+  second stream explicit.
+- **An unseeded generator seeds itself.** The alternatives were a zero value
+  that acts as seed 0, which gives every `thread_local` generator the same
+  stream, and no zero value at all, which would take the zero value away from
+  every record that holds a generator. Reading entropy happens on a draw, never
+  on import. The cost is one predictable branch per draw: an all-zero
+  xoshiro state is otherwise unreachable.
+- **xoshiro256++ is the generator.** It is fast, passes BigCrush and
+  PractRand, needs only 64-bit operations, and has jumps for disjoint parallel
+  blocks; Julia and Rust's `SmallRng` use it. MT19937 has 2.5 KB of state,
+  fails linearity tests, and seeds poorly from small seeds. xorshift128+ has
+  weak low bits. Linear congruential generators fail statistical tests outright.
+  PCG64 is a reasonable second choice, kept for a caller that needs `advance`.
+- **Seeding never reads the clock.** Processes started together share a clock
+  reading and often a process-ID range. The documented idiom is to draw a seed
+  with `secure_u64`, record it, and seed with `from_seed`.
+- **OS entropy panics instead of returning an error.** The system generator does
+  not fail on a supported system, as Go 1.24's `crypto/rand` also concludes.
+  Continuing with predictable bytes would be worse than stopping. A `Status`
+  would put an `or_return` on every seed for an error no caller can handle, and
+  a new `io.Operation` would break exhaustive switches over it.
+- **Draw mappings are specified.** A seeded program's output is behavior a
+  reader can depend on, so how each procedure maps draws to values is part of
+  its contract, not an implementation detail. The ziggurat tables are constants
+  rather than computed at startup, so most normal and exponential values do not
+  depend on the C library at all.
 
 ## Compiler architecture audit (2026-09-28)
 

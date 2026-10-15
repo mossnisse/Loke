@@ -1,0 +1,83 @@
+// Dice, a shuffled deck, and a Monte Carlo estimate of pi with `core:random`
+// (standard-library "`core:random`").
+//
+// Give it a seed and it replays that run exactly, on any machine and in any
+// release:
+//
+//     dice 2026
+//
+// Without one it asks the operating system for a seed and prints it first, so
+// any run, including a surprising one, can be replayed later. Recording the
+// seed is how a test or a simulation stays reproducible without giving up
+// fresh randomness on each run (standard-library "Seeding").
+package main;
+
+import "core:fmt";
+import "core:os";
+import "core:random";
+import "core:strconv";
+
+RANKS :: [13]string{"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+SUITS :: [4]string{"S", "H", "D", "C"};
+
+main :: proc() -> i32 {
+	seed: u64 = 0;
+	if (os.args.len() > 1) {
+		switch (strconv.parse_u64(os.view_at(1))) {
+		case .ok(value): seed = value;
+		case .err:
+			fmt.eprintln("usage: dice [seed]");
+			return 2;
+		}
+	} else {
+		seed = random.secure_u64();
+	}
+	fmt.println("seed:", seed);
+
+	rng := random.Xoshiro256.from_seed(seed);
+	roll_dice(inout rng);
+	deal(inout rng);
+	estimate_pi(inout rng);
+	return 0;
+}
+
+// Two dice, thousands of times: the sums pile up around seven.
+roll_dice :: proc(rng: inout random.Xoshiro256) {
+	ROLLS :: 3600;
+	counts: [13]int = {};
+	foreach (_ in 0 ..< ROLLS) {
+		sum := random.in_range(inout rng, 1 ..= 6) + random.in_range(inout rng, 1 ..= 6);
+		counts[sum] += 1;
+	}
+	fmt.println("two dice,", ROLLS, "rolls:");
+	foreach (sum in 2 ..= 12) {
+		bar := "";
+		foreach (_ in 0 ..< counts[sum] / 20) { bar = bar + "#"; }
+		fmt.println(fmt.pad_left(sum, 4), fmt.pad_left(counts[sum], 5), bar);
+	}
+}
+
+// A shuffled deck, and the first hand dealt from it.
+deal :: proc(rng: inout random.Xoshiro256) {
+	deck: [52]int = {};
+	foreach (i in 0 ..< 52) { deck[i] = i; }
+	random.shuffle(inout rng, &mut deck[:]);
+	fmt.print("hand:");
+	foreach (card in deck[:5]) {
+		fmt.concat_to(fmt.stdout(), " ", RANKS[card % 13], SUITS[card / 13]);
+	}
+	fmt.println();
+}
+
+// The fraction of random points in the unit square that land inside the
+// quarter circle is pi/4.
+estimate_pi :: proc(rng: inout random.Xoshiro256) {
+	POINTS :: 1000000;
+	inside := 0;
+	foreach (_ in 0 ..< POINTS) {
+		x := random.unit(inout rng);
+		y := random.unit(inout rng);
+		if (x*x + y*y < 1.0) { inside += 1; }
+	}
+	fmt.println("pi is about", fmt.fixed(4.0*f64(inside)/f64(POINTS), 4));
+}

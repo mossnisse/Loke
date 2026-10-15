@@ -502,6 +502,12 @@ Use `tests/run/lib_*.loke` and examples. Cover the boundaries relevant to the AP
 - Limits just below/at/above the boundary; `Limit_Exceeded` destroys partial owners.
 - Allocation failure with unchanged destinations; a small `mem.Arena` makes it
   deterministic. Also check close followed by drop, double close, and unwind.
+- For `core:random`: known-answer vectors from each generator's reference
+  implementation, draw counts compared through `state()`, a scripted `Source`
+  for rejection paths and float ends, and seeded statistical checks with
+  generous bounds. An `.expected` file holds only seeded values and
+  comparisons, never an unseeded draw. `lib_random_ziggurat` checks the
+  distribution tables against a recomputation.
 
 Use fake short readers/writers as in `lib_io` and isolated temporary directories
 as in `lib_fs`. `lib_term` covers output and redirected handles;
