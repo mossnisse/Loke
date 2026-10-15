@@ -1370,10 +1370,21 @@ map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Ev
 	return &m.elements[len(m.elements) - 1], true
 }
 
+// The element's ordering: its own `<` when it has one (design.md "Sorting
+// slices"), otherwise the built-in comparison.
+@(private = "file")
+eval_less :: proc(ev: ^Evaluator, span: Span, less: Symbol_Id, a, b: Eval_Value) -> (bool, bool) {
+	if less == INVALID_SYMBOL {
+		return eval_compare(ev, .Lt, a, b)
+	}
+	result, ok := eval_operator_call(ev, less, nil, span, []Eval_Value{a, b})
+	return result.boolean, ok
+}
+
 // A stable merge sort, each comparison charged as a step, so a large
 // constant array costs its budget rather than an uncharged quadratic loop.
 @(private = "file")
-eval_sort :: proc(ev: ^Evaluator, span: Span, elements: []Eval_Value, descending: bool) -> bool {
+eval_sort :: proc(ev: ^Evaluator, span: Span, elements: []Eval_Value, descending: bool, less: Symbol_Id) -> bool {
 	if len(elements) < 2 {
 		return true
 	}
@@ -1393,7 +1404,7 @@ eval_sort :: proc(ev: ^Evaluator, span: Span, elements: []Eval_Value, descending
 				}
 				a, b := from[right], from[left]
 				// The right run's element goes first only when strictly before.
-				before, ok := eval_compare(ev, .Lt, descending ? b : a, descending ? a : b)
+				before, ok := eval_less(ev, span, less, descending ? b : a, descending ? a : b)
 				if !ok {
 					return false
 				}
@@ -1435,7 +1446,12 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !allocated { return nil, false }
 		self = place
 	}
+	// A slice's element too, so a slice sort sees its ordering as the checker's
+	// `require_sort_order_policy` does.
 	element := container_element(ev.k.c, self.type)
+	if element == INVALID_TYPE {
+		element = slice_element(ev.k.c, self.type)
+	}
 	none: []Eval_Value
 
 	results :: proc(ev: ^Evaluator, values: ..Eval_Value) -> []Eval_Value {
@@ -1508,15 +1524,11 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			eval_fail(ev, v.span, "L0341", "this value cannot be sorted at compile time")
 			return nil, false
 		}
-		if resolved_element_order_policy(ev.k.c, element).kind == .Inherent {
-			eval_fail(
-				ev, v.span, "L0341",
-				"a compile-time sort compares with the built-in `<`, and `%s` has its own",
-				type_name(ev.k.c, element),
-			)
-			return nil, false
+		less := INVALID_SYMBOL
+		if policy := resolved_element_order_policy(ev.k.c, element); policy.kind == .Inherent {
+			less = policy.less
 		}
-		if !eval_sort(ev, v.span, self.elements, symbol.container_op == .Reverse_Sort) {
+		if !eval_sort(ev, v.span, self.elements, symbol.container_op == .Reverse_Sort, less) {
 			return nil, false
 		}
 		return none, true

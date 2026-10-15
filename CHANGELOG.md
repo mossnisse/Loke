@@ -54,6 +54,9 @@ checklist.
   They were rejected with L0341, though an element assignment through the same
   slice was accepted. `slice.reverse` and `random.shuffle` now run in a constant
   initializer too.
+- A compile-time `sort` or `reverse_sort` uses an element's own `<`
+  (design.md "Sorting slices"), as the runtime call does, rather than being
+  rejected with L0341.
 - A compound assignment through `operator([]=)` reads an index naming a
   scalar variable before its right operand, and a multiple assignment before
   any write (design.md "Evaluation order"): `grid[i] += bump(inout i)` wrote
