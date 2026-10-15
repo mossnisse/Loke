@@ -80,6 +80,12 @@ checklist.
 
 ### Fixed
 
+- The operators a `delegate` generates are found from other packages, as
+  hand-written ones are (design.md "Delegating operators"): `a + b` on an
+  imported `distinct` type with `delegate(+)` was `L0318`.
+- `delegate(-)`, `delegate(+)`, and `delegate(~)` over a number generate the
+  unary form as well as the binary one, so `-a` on a `distinct f64` with
+  `delegate(-)` negates instead of being `L0392`.
 - `swap`, `sort`, and `reverse_sort` on a `[]mut T` work during compile-time
   evaluation, rearranging the storage the slice views, as they do at run time.
   They were rejected with L0341, though an element assignment through the same

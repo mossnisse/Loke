@@ -536,6 +536,14 @@ declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
 	return attributes_are_public(k, d.attributes, d.span, "declaration")
 }
 
+// The operators a `delegate` generates are members of the type, as a
+// declaration in the same `impl` would be, so an importer finds them as it
+// finds a hand-written one (design.md "Delegating operators"). A `delegate`
+// takes no visibility attribute (L0607), so the file's default decides.
+delegation_is_public :: proc(k: ^Checker) -> bool {
+	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
+}
+
 // `declaration_is_public`'s rule, for a struct field. design.md "Exported
 // names": nothing imports a `package main`, so its fields are public by
 // default, which is what reflection and printing see. Its declarations keep the

@@ -1,0 +1,14 @@
+package main;
+
+// design.md "Delegating operators": a delegated negation is the underlying
+// type's, so negating the most negative value overflows as it does for `i64`.
+Count :: distinct i64;
+
+impl Count {
+	delegate(-);
+}
+
+main :: proc() {
+	smallest := Count(-9223372036854775807) - Count(1);
+	_ = -smallest;
+}

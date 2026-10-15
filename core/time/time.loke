@@ -27,21 +27,8 @@ MINUTE      :: Duration(60000000000);
 HOUR        :: Duration(3600000000000);
 
 impl Duration {
-	// Written out rather than delegated: a delegated operator is not found from
-	// another package (known-gaps.md "Delegated operators stay in their
-	// package"), and a delegated `-` brings only the binary form (known-gaps.md
-	// "`delegate(-)` omits unary minus").
-	add :: operator(+) proc(left, right: Duration) -> Duration {
-		return Duration(i64(left) + i64(right));
-	}
-
-	subtract :: operator(-) proc(left, right: Duration) -> Duration {
-		return Duration(i64(left) - i64(right));
-	}
-
-	negate :: operator(-) proc(value: Duration) -> Duration {
-		return Duration(-i64(value));
-	}
+	// `-` brings negation as well as subtraction.
+	delegate(+, -, %);
 
 	scale :: operator(*) proc(left: Duration, right: i64) -> Duration {
 		return Duration(i64(left) * right);
@@ -56,10 +43,6 @@ impl Duration {
 	// `seconds()` and its siblings, or `i64(d) / i64(unit)`.
 	divide :: operator(/) proc(left: Duration, right: i64) -> Duration {
 		return Duration(i64(left) / right);
-	}
-
-	remainder :: operator(%) proc(left, right: Duration) -> Duration {
-		return Duration(i64(left) % i64(right));
 	}
 
 	// Whole units, rounding toward zero.

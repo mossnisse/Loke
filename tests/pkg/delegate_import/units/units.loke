@@ -1,0 +1,25 @@
+// The importing side of design.md "Delegating operators": the overloads a
+// `delegate` generates are inherent members, found from another package as a
+// hand-written operator is.
+@(public)
+package units;
+
+Meters :: distinct f64;
+
+impl Meters {
+	delegate(+, -, <);
+}
+
+Tally :: struct { count: i32 }
+
+impl Tally {
+	add :: operator(+) proc(a, b: Tally) -> Tally { return {a.count + b.count}; }
+}
+
+// Forwards to `Tally`'s own `+` rather than a built-in operation.
+Votes :: distinct Tally;
+
+impl Votes {
+	delegate(+);
+	total :: proc(self) -> i32 { return self.count; }
+}

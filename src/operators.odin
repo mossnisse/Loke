@@ -526,15 +526,7 @@ builtin_delegation_applies :: proc(k: ^Checker, symbol: string, underlying: Type
 	if op == .EOF {
 		return false
 	}
-	#partial switch op {
-	case .Eq_Eq, .Not_Eq:
-		return type_is_comparable(k.c, underlying)
-	case .Lt, .Lt_Eq, .Gt, .Gt_Eq:
-		return type_is_ordered(k.c, underlying)
-	case .Not:
-		return type_is_boolean(k.c, underlying)
-	}
-	return builtin_operator_applies(k.c, op, underlying)
+	return builtin_unary_defined(k, op, underlying) || op != .Not && builtin_delegation_applies_binary(k, op, underlying)
 }
 
 // design.md: the overload found for the underlying type, with the distinct type
@@ -567,14 +559,38 @@ register_forwarded_operator :: proc(
 	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, result, shape.result_inout, target)
 }
 
-// The built-in operation has no symbol to forward to: one homogeneous overload
-// over the distinct type. `!` is the only delegated unary form; the rest are
-// binary — a unary `-` on a newtype is written by hand, as design.md's example
-// does.
+// The built-in operation has no symbol to forward to: homogeneous overloads
+// over the distinct type, one for each arity the underlying type defines the
+// operator at. `-`, `+`, and `~` are both unary and binary on a number, so
+// `delegate(-)` gives negation as well as subtraction; `!` is unary only.
 @(private = "file")
 register_builtin_delegation :: proc(k: ^Checker, item: ^Item_Delegate, subject, underlying: Type_Id, symbol: string) {
 	op := operator_token(symbol)
-	params := make([]Type_Id, op == .Not ? 1 : 2, k.c.semantic_allocator)
+	if builtin_unary_defined(k, op, underlying) {
+		register_builtin_arity(k, item, subject, underlying, symbol, 1)
+	}
+	if op != .Not && builtin_delegation_applies_binary(k, op, underlying) {
+		register_builtin_arity(k, item, subject, underlying, symbol, 2)
+	}
+}
+
+@(private = "file")
+builtin_delegation_applies_binary :: proc(k: ^Checker, op: Token_Kind, underlying: Type_Id) -> bool {
+	#partial switch op {
+	case .Eq_Eq, .Not_Eq:
+		return type_is_comparable(k.c, underlying)
+	case .Lt, .Lt_Eq, .Gt, .Gt_Eq:
+		return type_is_ordered(k.c, underlying)
+	}
+	return builtin_operator_applies(k.c, op, underlying)
+}
+
+@(private = "file")
+register_builtin_arity :: proc(
+	k: ^Checker, item: ^Item_Delegate, subject, underlying: Type_Id, symbol: string, arity: int,
+) {
+	op := operator_token(symbol)
+	params := make([]Type_Id, arity, k.c.semantic_allocator)
 	modes := make([]Param_Mode, len(params), k.c.semantic_allocator)
 	for index in 0 ..< len(params) {
 		params[index] = subject
@@ -610,6 +626,7 @@ install_delegated_operator :: proc(
 		owner_type = subject,
 		pkg        = k.pkg,
 		lookup_pkg = k.pkg,
+		public     = delegation_is_public(k),
 		params     = params,
 		result     = result,
 		result_inout = inout,

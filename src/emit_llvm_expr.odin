@@ -1364,11 +1364,15 @@ emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string {
 	if type_is_simd(e.c, as_type) {
 		return emit_simd_unary(e, v, as_type)
 	}
-	operand := emit_expr(e, v.operand)
-	type := as_type
+	return emit_unary_op(e, v.op, as_type, emit_expr(e, v.operand))
+}
+
+// A scalar unary operation on an evaluated operand of `type`; a delegated
+// operator applies it to the unwrapped value too.
+emit_unary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, operand: string) -> string {
 	llvm := llvm_type(e, type)
 	out := temp(e)
-	#partial switch v.op {
+	#partial switch op {
 	case .Plus:
 		return operand
 	case .Minus:

@@ -1,0 +1,14 @@
+package main;
+
+import "core:fmt";
+import "./units";
+
+main :: proc() {
+	a := units.Meters(3.5);
+	b := units.Meters(1.0);
+	fmt.println(f64(a + b), f64(a - b), f64(-a), a < b);
+	a += b;
+	fmt.println(f64(a));
+	votes := units.Votes{count = 2} + units.Votes{count = 5};
+	fmt.println(int(votes.total()));
+}

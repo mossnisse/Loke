@@ -342,9 +342,7 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: 
 	op := operator_token(symbol.operator)
 	underlying := symbol.delegate_underlying
 	if len(bound) == 1 {
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, emit_expr(e, bound[0]))
-		return out
+		return emit_unary_op(e, op, underlying, emit_expr(e, bound[0]))
 	}
 	lhs := left_place != "" ? load_place(e, underlying, left_place) : emit_expr(e, bound[0])
 	rhs := emit_expr(e, bound[1])

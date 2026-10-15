@@ -1,0 +1,42 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Delegating operators": `delegate` generates every overload the
+// underlying type has for a symbol, so `-`, `+`, and `~` bring their unary
+// forms along with the binary ones, at run time and during compilation.
+
+Meters :: distinct f64;
+
+impl Meters {
+	delegate(-, +);
+}
+
+Mask :: distinct u32;
+
+impl Mask {
+	delegate(~);
+}
+
+Count :: distinct i64;
+
+impl Count {
+	delegate(-);
+}
+
+folded :: proc() -> i64 {
+	c := Count(5);
+	return i64(-c - Count(1));
+}
+
+FOLDED :: folded();
+static_assert(FOLDED == -6);
+
+main :: proc() {
+	a := Meters(1.5);
+	fmt.println(f64(-a), f64(+a), f64(a - a), f64(+a + -a));
+	m := Mask(1);
+	fmt.println(u32(~m), u32(m ~ Mask(3)));
+	c := Count(-9223372036854775807);
+	fmt.println(i64(-c), FOLDED);
+}

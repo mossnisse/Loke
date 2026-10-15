@@ -828,9 +828,15 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
 	if type_is_simd(ev.k.c, v.type) {
 		return eval_simd_unary(ev, v, operand)
 	}
-	value := const_of(operand)
+	return eval_unary_value(ev, v.op, v.op_span, const_of(operand), v.type)
+}
+
+// A scalar unary operation on a folded operand of `type`; a delegated operator
+// applies it to the unwrapped value too.
+@(private = "file")
+eval_unary_value :: proc(ev: ^Evaluator, op: Token_Kind, site: Span, value: Const_Value, type: Type_Id) -> (Eval_Value, bool) {
 	folded: Const_Value
-	#partial switch v.op {
+	#partial switch op {
 	case .Plus:
 		folded = value
 	case .Minus:
@@ -844,18 +850,18 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
 	case .Not:
 		folded = bool_const(!value.boolean)
 	case:
-		eval_fail(ev, v.op_span, "L0341", "`%s` has no compile-time meaning", operator_text(v.op))
+		eval_fail(ev, site, "L0341", "`%s` has no compile-time meaning", operator_text(op))
 		return Eval_Value{}, false
 	}
 	if folded.kind == .Integer || folded.kind == .Rune {
-		if v.op == .Minus && !signed_fits(ev.k.c, folded.integer, v.type, ev.alloc) {
-			report_signed_overflow(ev.k.c, v.op_span, folded.integer, v.type, ev.alloc)
+		if op == .Minus && !signed_fits(ev.k.c, folded.integer, type, ev.alloc) {
+			report_signed_overflow(ev.k.c, site, folded.integer, type, ev.alloc)
 			eval_fold_failed(ev)
 			return Eval_Value{}, false
 		}
-		folded.integer = wrap_to_type(ev.k.c, folded.integer, v.type, ev.alloc)
+		folded.integer = wrap_to_type(ev.k.c, folded.integer, type, ev.alloc)
 	}
-	return scalar(folded, v.type), true
+	return scalar(folded, type), true
 }
 
 @(private = "file")
@@ -2593,11 +2599,14 @@ eval_operator_call :: proc(
 		}
 		operands[index] = operand
 	}
-	// The one unary built-in delegation is `!`.
-	if count == 1 {
-		return scalar(bool_const(!operands[0].boolean), symbol.result), true
-	}
 	op := operator_token(symbol.operator)
+	if count == 1 {
+		applied, ok := eval_unary_value(ev, op, site, const_of(operands[0]), symbol.delegate_underlying)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		return scalar(const_of(applied), symbol.result), true
+	}
 	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		result, ok := eval_compare(ev, op, operands[0], operands[1])
