@@ -1,0 +1,95 @@
+package main;
+
+import "core:fmt";
+import "core:random";
+
+// standard-library "Generators": `Pcg64` is numpy's PCG64DXSM bit for bit. The
+// vectors below come from numpy's pcg64.h and pcg64.c, transcribed.
+
+draws :: proc(rng: inout random.Pcg64, count: int) {
+	foreach (_ in 0 ..< count) {
+		fmt.print(" ");
+		fmt.print(rng.next_u64());
+	}
+	fmt.println();
+}
+
+// A compile-time table from a seeded `Pcg64`, as for `Xoshiro256`.
+table :: proc() -> [3]u64 {
+	rng := random.Pcg64.from_seed(42);
+	return [3]u64{rng.next_u64(), rng.next_u64(), rng.next_u64()};
+}
+TABLE :: table();
+
+main :: proc() {
+	raw := random.Pcg64.from_state(
+		(u128(0x0123456789abcdef) << 64) | u128(0xfedcba9876543210),
+		(u128(0x0f1e2d3c4b5a6978) << 64) | u128(0x8796a5b4c3d2e1f1),
+	);
+	fmt.print("raw:");
+	draws(inout raw, 4);
+	// 11944377826318632098 198336668368878111 9363422035953488517 15388515540050152740
+
+	seeded := random.Pcg64.from_seed(42);
+	state, increment := seeded.state();
+	fmt.println(
+		"seed 42 state:",
+		state == (u128(0x03511465fc4360b6) << 64) | u128(0x241bd8e6828f1e45),
+		increment == (u128(0x8ea4ceae261f3ea4) << 64) | u128(0xb039c3fe1c95c729),
+	);
+	fmt.print("seed 42:");
+	draws(inout seeded, 4);
+	// 4632262861314400675 15211281405290024346 4677672211535741264 3153079880254084105
+
+	zero := random.Pcg64.from_seed(0);
+	fmt.print("seed 0:");
+	draws(inout zero, 2);
+	// 11580484839666122119 11978924969568863972
+
+	// `advance` equals stepping, reaches far, and wraps backward.
+	stepped := random.Pcg64.from_seed(42);
+	foreach (_ in 0 ..< 1000) { stepped.next_u64(); }
+	jumped := random.Pcg64.from_seed(42);
+	jumped.advance(1000);
+	fmt.println("advance 1000:", jumped.state() == stepped.state(), jumped.next_u64());
+	// 9346278815168219786
+	far := random.Pcg64.from_seed(42);
+	far.advance(u128(1) << 100);
+	fmt.print("advance 2^100:");
+	draws(inout far, 2);
+	// 15421700396904465640 5561207232365074954
+	back := random.Pcg64.from_seed(42);
+	first := back.next_u64();
+	back.advance(~u128(0));
+	fmt.println("back one:", back.next_u64() == first);
+
+	// `split`: four parent draws through the SplitMix64 finalizer seed the child.
+	parent := random.Pcg64.from_seed(42);
+	child := parent.split();
+	fmt.print("split child:");
+	draws(inout child, 2);
+	// 662883967030022725 5462562565445846432
+	fmt.println("split parent:", parent.next_u64());
+	// 14646677976196165843
+
+	// A snapshot restores exactly, and the zero value seeds itself.
+	original := random.Pcg64.from_seed(7);
+	original.next_u64();
+	s, i := original.state();
+	twin := random.Pcg64.from_state(s, i);
+	fmt.println("restored:", twin.next_u64() == original.next_u64());
+	unseeded: random.Pcg64 = {};
+	unseeded.next_u64();
+	_, unseeded_increment := unseeded.state();
+	fmt.println("self-seeded:", (unseeded_increment & 1) == 1);
+	empty := random.Pcg64.from_state(0, 0);
+	empty.next_u64();
+	_, empty_increment := empty.state();
+	fmt.println("zero state self-seeds:", empty_increment != 0);
+
+	// `Pcg64` is a `Source`, so the generic procedures take it.
+	dice := random.Pcg64.from_seed(2026);
+	fmt.println("dice:", random.in_range(inout dice, 1 ..= 6), random.in_range(inout dice, 1 ..= 6));
+
+	fmt.println("compile time:", TABLE[0] == 4632262861314400675, TABLE[2] == 4677672211535741264);
+}

@@ -1,0 +1,7 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": an even `Pcg64` increment.
+main :: proc() {
+	random.Pcg64.from_state(5, 2);
+}

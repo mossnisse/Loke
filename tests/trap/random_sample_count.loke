@@ -1,0 +1,9 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a sample larger than its values.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	values := [3]int{1, 2, 3};
+	random.sample(inout rng, &mut values[:], 4);
+}

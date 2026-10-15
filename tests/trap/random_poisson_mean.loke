@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a negative Poisson mean.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	random.poisson(inout rng, -1.0);
+}

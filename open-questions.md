@@ -255,22 +255,25 @@ profiles contain.
 
 ### Random distributions across platforms
 
-`normal` and `exponential` return the same bits on every release of one
-platform, but a wedge or tail value calls the C library's `exp` or `log`, which
-[`core:math`](standard-library.md#coremath) does not promise to the last bit.
-Once a second platform ships, a seeded sequence could differ there in rare
-values. Correctly rounded `exp` and `log` in Loke would close this, and would
-also let these distributions run at compile time. Is cross-platform identity
-worth that code, or is per-platform reproducibility the contract?
+The distributions return the same bits on every release of one platform, but
+they call the C library's `exp`, `log`, `pow`, or `sqrt`, which
+[`core:math`](standard-library.md#coremath) does not promise to the last bit;
+`normal` and `exponential` do so only for a wedge or tail value. Once a second
+platform ships, a seeded sequence could differ there: rarely for those two,
+often for the others, and a different count from `poisson` or `binomial`
+shifts every later draw. Correctly rounded functions in Loke would close this,
+and would also let the distributions run at compile time. Is cross-platform
+identity worth that code, or is per-platform reproducibility the contract?
 
 ### More generators and distributions
 
-PCG64-DXSM would add arbitrary-distance `advance` and numpy and Go
-compatibility. ChaCha would give a seedable cryptographic generator, and
-belongs with a `core:crypto`. A counter-based generator such as Philox would
-give random access into a stream. The next distributions are listed in
-[Standard-library maturity](future-plans.md#standard-library-maturity). None is
-added until a caller needs it.
+ChaCha would give a seedable cryptographic generator, and belongs with a
+`core:crypto`. A counter-based generator such as Philox would give random
+access into a stream. Floyd's sampling of indices from a range without
+materializing it needs a set. `f32` distributions would need their own
+ziggurat tables. The remaining candidates are listed in
+[Standard-library maturity](future-plans.md#standard-library-maturity).
+None is added until a caller needs it.
 
 ### Longer seeds
 

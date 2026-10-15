@@ -98,11 +98,11 @@ Implementation order:
 
 Current optional gaps, to add only when a caller establishes their contract:
 `core:bytes`, `core:time`, `core:unicode`, `core:encoding/base64`,
-`core:encoding/json`, and `core:testing`; in `core:random`, a second generator
-(PCG64-DXSM), `log_normal`, `gamma`, `beta`, `chi_squared`, `student_t`,
-`geometric`, `poisson`, `binomial`, a weighted alias table, sampling without
-replacement, and `f32` distributions; buffered streams, `fs.replace_atomic`,
-`fs.absolute`, `fs.canonicalize`, symlinks, and file locking; fallible twins of
+`core:encoding/json`, and `core:testing`; in `core:random`, `f32` distributions,
+sampling indices from a range without materializing it, and distributions such
+as the negative binomial, Cauchy, and Weibull; buffered streams,
+`fs.replace_atomic`, `fs.absolute`, `fs.canonicalize`, symlinks, and file
+locking; fallible twins of
 allocating string transformations other than `copy`, Unicode case mapping,
 normalization, and grapheme segmentation; terminal colors, cursor movement,
 mouse and resize events; `thread.try_spawn`, `try_lock`, condition variables,

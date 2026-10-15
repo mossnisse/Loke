@@ -1,0 +1,2 @@
+loke: panic: random.poisson: the mean must be finite, not negative, and at most 2^62
+loke: panicked

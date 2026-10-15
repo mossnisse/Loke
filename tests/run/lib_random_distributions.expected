@@ -1,0 +1,30 @@
+log_normal 0.8173986842822081 2.9230523158732216
+gamma 0.0015620985686167683 3.119335322638306
+beta 0.11140769549324116 0.502529239727461
+chi_squared 0.40663479584325185
+student_t -0.8027783594917208
+geometric 4 0
+poisson 0 6 253
+binomial 0 0 20 12 2514 272
+log_normal true true
+gamma below 1 true true
+gamma true true
+beta by Johnk true true
+beta by gamma true true
+chi_squared true true
+student_t true true
+support true true
+binomial by inversion true
+binomial by BTPE true
+binomial complement true
+poisson by multiplication true
+poisson by PTRS true
+geometric true
+large true true true
+weighted true
+weighted 5 true
+single 0 0
+even true
+sample [6, 3, 7, 1, 4, 5, 0, 2]
+sample all [0, 1, 2, 3, 4, 5, 6, 7]
+compile time [0, 1, 5] true

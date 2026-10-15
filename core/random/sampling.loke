@@ -1,0 +1,139 @@
+// Choosing among indices (standard-library "Sampling"): `Weighted`, an alias
+// table for drawing indices in proportion to weights, and `sample`, which draws
+// elements without replacement.
+@(public)
+package random;
+
+import "core:math";
+import "core:mem";
+
+// Indices `0 ..< n` drawn with probability proportional to `n` weights, in
+// constant time per draw: Vose's alias method ("A linear algorithm for
+// generating random numbers with a given distribution", 1991). Building it
+// takes time and two arrays proportional to `n`.
+//
+// Each index owns a column holding the chance of keeping it and the index to
+// give instead, so a draw is a uniform column and one comparison.
+Weighted :: struct {
+	@(private) keep: [dynamic]f64,
+	@(private) alias: [dynamic]int,
+}
+
+impl Weighted {
+	// A table for `weights`, which must be finite and not negative, with a
+	// finite positive sum. A zero weight's index is never drawn. Storage comes
+	// from `allocator` and follows its failure policy.
+	from_weights :: proc(weights: []f64, allocator: Allocator = mem.default_allocator()) -> Weighted {
+		total := weight_total(weights);
+		count := weights.len();
+		keep := make([dynamic]f64, count, count, allocator);
+		alias := make([dynamic]int, count, count, allocator);
+		work := make([dynamic]int, count, count, allocator);
+		build_alias(weights, total, &mut keep[:], &mut alias[:], &mut work[:]);
+		return Weighted{move(keep), move(alias)};
+	}
+
+	// `from_weights`, reporting an allocation failure instead.
+	try_from_weights :: proc(
+		weights: []f64, allocator: Allocator = mem.default_allocator(),
+	) -> Result(Weighted, Allocator_Error) {
+		total := weight_total(weights);
+		count := weights.len();
+		keep := try_make([dynamic]f64, count, count, allocator) or_return;
+		alias := try_make([dynamic]int, count, count, allocator) or_return;
+		work := try_make([dynamic]int, count, count, allocator) or_return;
+		build_alias(weights, total, &mut keep[:], &mut alias[:], &mut work[:]);
+		return .ok(Weighted{move(keep), move(alias)});
+	}
+
+	// The number of indices, `weights.len()`.
+	len :: proc(self) -> int { return self.keep.len(); }
+
+	// One index, each with probability its weight over the sum: one
+	// `in_range(0 ..< len)` picks a column and one `unit` draw keeps it or takes
+	// its alias.
+	pick :: proc(self, source: inout $G) -> int where Source(G) {
+		column := in_range(inout source, 0 ..< self.keep.len());
+		if (unit(inout source) < self.keep[column]) { return column; }
+		return self.alias[column];
+	}
+}
+
+// The sum of `weights`, after checking each one and the sum.
+@(private)
+weight_total :: proc(weights: []f64) -> f64 {
+	total := 0.0;
+	foreach (weight in weights) {
+		if (!(math.is_finite(weight) && weight >= 0.0)) {
+			panic("random.Weighted.from_weights: every weight must be finite and not negative");
+		}
+		total += weight;
+	}
+	if (!(math.is_finite(total) && total > 0.0)) {
+		panic("random.Weighted.from_weights: the weights must have a finite, positive sum");
+	}
+	return total;
+}
+
+// Vose's construction, deterministic in the order of `weights`. `work` holds
+// both worklists: indices whose column is below 1 grow up from the front, the
+// others down from the back.
+@(private)
+build_alias :: proc(weights: []f64, total: f64, keep: []mut f64, alias: []mut int, work: []mut int) {
+	count := weights.len();
+	small := 0;
+	large := count;
+	foreach (weight, index in weights.indexed()) {
+		// Divided first, so a weight near the largest `f64` cannot overflow.
+		keep[index] = weight/total*f64(count);
+		alias[index] = index;
+		if (keep[index] < 1.0) {
+			work[small] = index;
+			small += 1;
+		} else {
+			large -= 1;
+			work[large] = index;
+		}
+	}
+	// The last of each list pairs off: the small column is topped up by the
+	// large index, whose excess goes back on whichever list it now fits.
+	for (; small > 0 && large < count; ) {
+		small -= 1;
+		light := work[small];
+		heavy := work[large];
+		large += 1;
+		alias[light] = heavy;
+		keep[heavy] = (keep[heavy] + keep[light]) - 1.0;
+		if (keep[heavy] < 1.0) {
+			work[small] = heavy;
+			small += 1;
+		} else {
+			large -= 1;
+			work[large] = heavy;
+		}
+	}
+	// What is left is 1 up to rounding, and keeps itself.
+	for (; small > 0; ) {
+		small -= 1;
+		keep[work[small]] = 1.0;
+	}
+	for (; large < count; large += 1) {
+		keep[work[large]] = 1.0;
+	}
+}
+
+// Moves a uniformly random `count` of the elements of `values` to its front, in
+// random order, so `values[:count]` is a sample without replacement and the rest
+// are the elements not chosen. `count` must be in `0 ..= values.len()`. Fisher–
+// Yates from the front: for each index `i` below `count`, one
+// `in_range(i ..< values.len())` picks the element that trades places with it.
+// `shuffle` with `count` of `values.len()` is the same permutation drawn in the
+// opposite direction, not the same sequence.
+sample :: proc(source: inout $G, values: []mut $T, count: int) where Source(G) {
+	if (count < 0 || count > values.len()) {
+		panic("random.sample: the count must be between 0 and the number of values");
+	}
+	foreach (i in 0 ..< count) {
+		values.swap(i, in_range(inout source, i ..< values.len()));
+	}
+}

@@ -505,9 +505,11 @@ Use `tests/run/lib_*.loke` and examples. Cover the boundaries relevant to the AP
 - For `core:random`: known-answer vectors from each generator's reference
   implementation, draw counts compared through `state()`, a scripted `Source`
   for rejection paths and float ends, and seeded statistical checks with
-  generous bounds. An `.expected` file holds only seeded values and
-  comparisons, never an unseeded draw. `lib_random_ziggurat` checks the
-  distribution tables against a recomputation.
+  generous bounds: moments for continuous distributions, and Pearson's
+  chi-square against the exact mass function for counting ones. An
+  `.expected` file holds only seeded values and comparisons, never an unseeded
+  draw. `lib_random_ziggurat` checks the distribution tables against a
+  recomputation, and `lib_random_pcg` pins vectors from numpy's PCG64DXSM.
 
 Use fake short readers/writers as in `lib_io` and isolated temporary directories
 as in `lib_fs`. `lib_term` covers output and redirected handles;

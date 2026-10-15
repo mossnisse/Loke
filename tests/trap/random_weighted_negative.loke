@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a negative weight.
+main :: proc() {
+	weights := [3]f64{1.0, -1.0, 2.0};
+	random.Weighted.from_weights(weights[:]);
+}

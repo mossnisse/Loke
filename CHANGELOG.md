@@ -28,6 +28,11 @@ checklist.
   and `secure_u64` read the operating system's secure generator. A seeded
   generator gives the same values in every release. See
   [`core:random`](standard-library.md#corerandom) and `examples/dice.loke`.
+- `core:random`: a second generator, `Pcg64` (numpy's PCG64DXSM), with
+  `advance` to move a stream any distance. New distributions `log_normal`,
+  `gamma`, `beta`, `chi_squared`, `student_t`, `geometric`, `poisson`, and
+  `binomial`; `Weighted`, an alias table that picks indices in proportion to
+  weights; and `sample`, which draws elements without replacement.
 
 ### Changed
 

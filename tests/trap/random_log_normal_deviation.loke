@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a negative log-normal deviation.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	random.log_normal(inout rng, 0.0, -0.5);
+}

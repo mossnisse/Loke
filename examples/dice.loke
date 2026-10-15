@@ -1,5 +1,5 @@
-// Dice, a shuffled deck, and a Monte Carlo estimate of pi with `core:random`
-// (standard-library "`core:random`").
+// Dice, a shuffled deck, a Monte Carlo estimate of pi, a loaded die, and a
+// lottery draw with `core:random` (standard-library "`core:random`").
 //
 // Give it a seed and it replays that run exactly, on any machine and in any
 // release:
@@ -38,6 +38,8 @@ main :: proc() -> i32 {
 	roll_dice(inout rng);
 	deal(inout rng);
 	estimate_pi(inout rng);
+	loaded_die(inout rng);
+	lottery(inout rng);
 	return 0;
 }
 
@@ -80,4 +82,34 @@ estimate_pi :: proc(rng: inout random.Xoshiro256) {
 		if (x*x + y*y < 1.0) { inside += 1; }
 	}
 	fmt.println("pi is about", fmt.fixed(4.0*f64(inside)/f64(POINTS), 4));
+}
+
+// A die whose six weighs three times as much as each other face, so it comes
+// up three times in eight rolls (standard-library "Sampling").
+loaded_die :: proc(rng: inout random.Xoshiro256) {
+	ROLLS :: 800;
+	weights := [6]f64{1.0, 1.0, 1.0, 1.0, 1.0, 3.0};
+	die := random.Weighted.from_weights(weights[:]);
+	counts: [6]int = {};
+	foreach (_ in 0 ..< ROLLS) { counts[die.pick(inout rng)] += 1; }
+	fmt.println("a loaded die,", ROLLS, "rolls:");
+	foreach (face in 0 ..< 6) {
+		bar := "";
+		foreach (_ in 0 ..< counts[face] / 10) { bar = bar + "#"; }
+		fmt.println(fmt.pad_left(face + 1, 4), fmt.pad_left(counts[face], 5), bar);
+	}
+}
+
+// Six of the numbers 1 to 49, no number twice: `sample` moves six chosen
+// balls to the front.
+lottery :: proc(rng: inout random.Xoshiro256) {
+	balls: [49]int = {};
+	foreach (i in 0 ..< 49) { balls[i] = i + 1; }
+	random.sample(inout rng, &mut balls[:], 6);
+	drawn := [6]int{balls[0], balls[1], balls[2], balls[3], balls[4], balls[5]};
+	sorted := &mut drawn[:];
+	sorted.sort();
+	fmt.print("lottery:");
+	foreach (ball in drawn) { fmt.concat_to(fmt.stdout(), " ", ball); }
+	fmt.println();
 }

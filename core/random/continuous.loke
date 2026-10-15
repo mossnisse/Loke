@@ -1,0 +1,161 @@
+// Continuous distributions built on `normal` and the gamma family
+// (standard-library "Distributions"): `log_normal`, `gamma`, `beta`,
+// `chi_squared`, and `student_t`.
+//
+// Each procedure's draws are specified, as `unit`'s are, so a seeded generator
+// replays them; all of them call `core:math`, so none runs at compile time.
+@(public)
+package random;
+
+import "core:math";
+
+// `exp(x)` for a normal `x` of `mean` and `standard_deviation`: the parameters
+// are those of the value's logarithm. One `normal` draw, validated as
+// `normal`'s.
+log_normal :: proc(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1) -> f64
+	where Source(G) {
+	if (!(math.is_finite(mean) && math.is_finite(standard_deviation) && standard_deviation >= 0.0)) {
+		panic("random.log_normal: the mean and standard deviation must be finite, and the deviation not negative");
+	}
+	return math.exp(mean + standard_deviation*standard_normal(inout source));
+}
+
+// A gamma-distributed value of `shape` and `scale`, so of mean
+// `shape * scale`. Both must be finite and positive.
+gamma :: proc(source: inout $G, shape: f64, scale: f64 = 1) -> f64 where Source(G) {
+	if (!(math.is_finite(shape) && shape > 0.0 && math.is_finite(scale) && scale > 0.0)) {
+		panic("random.gamma: the shape and scale must be finite and positive");
+	}
+	return scale*standard_gamma(inout source, shape);
+}
+
+// A beta-distributed value in [0, 1] with shapes `alpha` and `beta`, both
+// finite and positive. Its mean is `alpha / (alpha + beta)`.
+beta :: proc(source: inout $G, alpha: f64, beta: f64) -> f64 where Source(G) {
+	if (!(math.is_finite(alpha) && alpha > 0.0 && math.is_finite(beta) && beta > 0.0)) {
+		panic("random.beta: both shapes must be finite and positive");
+	}
+	if (alpha > 1.0 || beta > 1.0) {
+		x := standard_gamma(inout source, alpha);
+		y := standard_gamma(inout source, beta);
+		return x / (x + y);
+	}
+	// Below this, a value strictly between 0 and 1 is less likely than 1e-100,
+	// and the powers below would overflow.
+	if (alpha < BETA_TINY && beta < BETA_TINY) {
+		return 1.0 if (alpha + beta)*unit(inout source) < alpha else 0.0;
+	}
+	// Jöhnk's method (1964): two `unit` draws per attempt.
+	for (;;) {
+		u := unit(inout source);
+		v := unit(inout source);
+		x := math.pow(u, 1.0/alpha);
+		y := math.pow(v, 1.0/beta);
+		if (x + y <= 1.0 && u + v > 0.0) {
+			if (x > 0.0 && y > 0.0) { return x / (x + y); }
+			// A power underflowed; the ratio is still `x / (x + y)`, from the
+			// logarithms.
+			delta := math.log(u)/alpha - math.log(v)/beta;
+			if (delta > 0.0) { return math.exp(-log1p(math.exp(-delta))); }
+			return math.exp(delta - log1p(math.exp(delta)));
+		}
+	}
+}
+
+// A chi-squared value with `degrees_of_freedom`, finite and positive: twice a
+// gamma of shape `degrees_of_freedom / 2`.
+chi_squared :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Source(G) {
+	if (!(math.is_finite(degrees_of_freedom) && degrees_of_freedom > 0.0)) {
+		panic("random.chi_squared: the degrees of freedom must be finite and positive");
+	}
+	return 2.0*standard_gamma(inout source, degrees_of_freedom/2.0);
+}
+
+// A Student's t value with `degrees_of_freedom`, finite and positive: a
+// standard normal draw, then a gamma of shape `degrees_of_freedom / 2`, as
+// `z * sqrt(degrees_of_freedom / 2 / g)`.
+student_t :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Source(G) {
+	if (!(math.is_finite(degrees_of_freedom) && degrees_of_freedom > 0.0)) {
+		panic("random.student_t: the degrees of freedom must be finite and positive");
+	}
+	z := standard_normal(inout source);
+	g := standard_gamma(inout source, degrees_of_freedom/2.0);
+	return math.sqrt(degrees_of_freedom/2.0)*z / math.sqrt(g);
+}
+
+// Marsaglia and Tsang, "A Simple Method for Generating Gamma Variables", 2000.
+// Each attempt takes standard normal draws until `1 + c*z` is positive, then one
+// `unit` draw for the squeeze and density tests. A shape below 1 samples
+// `shape + 1` and then multiplies by `open_unit^(1/shape)`, from one more draw.
+@(private)
+standard_gamma :: proc(source: inout $G, shape: f64) -> f64 where Source(G) {
+	boosted := shape < 1.0;
+	d := ((shape + 1.0) if boosted else shape) - 1.0/3.0;
+	c := 1.0 / math.sqrt(9.0*d);
+	value := 0.0;
+	for (;;) {
+		z := standard_normal(inout source);
+		v := 1.0 + c*z;
+		for (; v <= 0.0; ) {
+			z = standard_normal(inout source);
+			v = 1.0 + c*z;
+		}
+		v = v*v*v;
+		u := unit(inout source);
+		if (u < 1.0 - 0.0331*(z*z)*(z*z)) {
+			value = d*v;
+			break;
+		}
+		// `log(0)` is negative infinity, which accepts.
+		if (math.log(u) < 0.5*z*z + d*(1.0 - v + math.log(v))) {
+			value = d*v;
+			break;
+		}
+	}
+	if (boosted) {
+		value *= math.pow(open_unit(source.next_u64()), 1.0/shape);
+	}
+	return value;
+}
+
+@(private) BETA_TINY :: 3e-103;
+
+// `log(1 + x)`, accurate for small `x` (Goldberg, "What Every Computer
+// Scientist Should Know About Floating-Point Arithmetic", 1991, theorem 4):
+// the rounding of `1 + x` is divided back out.
+@(private)
+log1p :: proc(x: f64) -> f64 {
+	u := 1.0 + x;
+	if (u == 1.0) { return x; }
+	return math.log(u)*x / (u - 1.0);
+}
+
+// `log(Gamma(x))` for `x >= 1`, by Stirling's series after shifting `x` to at
+// least 7, as numpy's `random_loggam` computes it.
+@(private)
+log_gamma :: proc(x: f64) -> f64 {
+	if (x == 1.0 || x == 2.0) { return 0.0; }
+	shift := 0;
+	if (x < 7.0) { shift = int(7.0 - x); }
+	x0 := x + f64(shift);
+	x2 := (1.0/x0)*(1.0/x0);
+	series := LOG_GAMMA_SERIES[9];
+	for (k := 8; k >= 0; k -= 1) {
+		series = series*x2 + LOG_GAMMA_SERIES[k];
+	}
+	result := series/x0 + 0.5*LOG_TWO_PI + (x0 - 0.5)*math.log(x0) - x0;
+	foreach (_ in 0 ..< shift) {
+		result -= math.log(x0 - 1.0);
+		x0 -= 1.0;
+	}
+	return result;
+}
+
+// B(2k) / (2k (2k - 1)) for k = 1 through 10, numpy's values.
+@(private) LOG_GAMMA_SERIES :: [10]f64{
+	8.333333333333333e-02, -2.777777777777778e-03, 7.936507936507937e-04,
+	-5.952380952380952e-04, 8.417508417508418e-04, -1.917526917526918e-03,
+	6.410256410256410e-03, -2.955065359477124e-02, 1.796443723688307e-01,
+	-1.39243221690590e+00,
+};
+@(private) LOG_TWO_PI :: 1.8378770664093453;

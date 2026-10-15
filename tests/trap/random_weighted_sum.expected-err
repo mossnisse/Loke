@@ -1,0 +1,2 @@
+loke: panic: random.Weighted.from_weights: the weights must have a finite, positive sum
+loke: panicked

@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": an infinite beta shape.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	random.beta(inout rng, 1.0, 1.0/0.0);
+}

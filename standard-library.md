@@ -22,7 +22,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Access process state or start a child | [`core:os`](#coreos-additions), [`core:process`](#coreprocess) |
 | Start threads or protect shared state | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
-| Draw random numbers, shuffle, or get secret bytes | [`core:random`](#corerandom) |
+| Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
 
 Start with the [design rules](#design-rules) for text, errors, and ownership.
 The [package layout](#package-layout) lists the remaining foundational packages.
@@ -1289,6 +1289,18 @@ impl Xoshiro256 {
 	split        :: proc(self: inout) -> Xoshiro256;
 }
 
+Pcg64 :: move_only struct { /* private state */ }
+
+impl Pcg64 {
+	from_seed    :: proc(seed: u64) -> Pcg64;
+	from_entropy :: proc() -> Pcg64;
+	from_state   :: proc(state: u128, increment: u128) -> Pcg64;
+	state        :: proc(self) -> (state: u128, increment: u128);
+	next_u64     :: proc(self: inout) -> u64;
+	advance      :: proc(self: inout, delta: u128);
+	split        :: proc(self: inout) -> Pcg64;
+}
+
 fill_secure(destination: []mut u8)
 secure_u64() -> u64
 
@@ -1304,10 +1316,30 @@ uniform(source: inout $G, low, high: f64) -> f64
 uniform_f32(source: inout $G, low, high: f32) -> f32
 normal(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1) -> f64
 exponential(source: inout $G, rate: f64 = 1) -> f64
+log_normal(source: inout $G, mean: f64 = 0, standard_deviation: f64 = 1) -> f64
+gamma(source: inout $G, shape: f64, scale: f64 = 1) -> f64
+beta(source: inout $G, alpha: f64, beta: f64) -> f64
+chi_squared(source: inout $G, degrees_of_freedom: f64) -> f64
+student_t(source: inout $G, degrees_of_freedom: f64) -> f64
+geometric(source: inout $G, probability: f64) -> u64
+poisson(source: inout $G, mean: f64) -> u64
+binomial(source: inout $G, trials: u64, probability: f64) -> u64
+sample(source: inout $G, values: []mut $T, count: int)
+
+Weighted :: struct { /* private tables */ }
+
+impl Weighted {
+	from_weights     :: proc(weights: []f64,
+		allocator: Allocator = mem.default_allocator()) -> Weighted;
+	try_from_weights :: proc(weights: []f64,
+		allocator: Allocator = mem.default_allocator()) -> Result(Weighted, Allocator_Error);
+	len              :: proc(self) -> int;
+	pick             :: proc(self, source: inout $G) -> int;
+}
 ```
 
 Each procedure taking a `source` requires `Source(G)`, so a caller's own source
-and a `dyn mut random.Source` view work as well as `Xoshiro256`. `in_range`
+and a `dyn mut random.Source` view work as well as either generator. `in_range`
 accepts integer and rune endpoints of at most 64 bits, and `choose` a copyable
 element type.
 
@@ -1326,6 +1358,13 @@ period of 2^256 − 1, and output identical to the reference implementation at
 prng.di.unimi.it. It is the general-purpose generator for simulations, games,
 sampling, and tests. Its output is predictable from earlier output, so it is
 never a source of secrets; use [`fill_secure`](#operating-system-entropy).
+
+`Pcg64` is PCG64-DXSM (O'Neill, 2014 and 2019): a 128-bit linear congruential
+state, an odd 128-bit increment that selects one of 2^127 streams, and a period
+of 2^128 per stream. Its output, seeding step, and `advance` are those of
+numpy's `PCG64DXSM`, so a state that numpy reports draws the same 64-bit values
+here. Choose it over `Xoshiro256` to move a stream any distance with `advance`,
+or to match numpy's raw output.
 
 A generator is move-only, so it cannot be duplicated by accident; a copy would
 draw the same values as the original. Moving one into `thread.spawn` leaves the
@@ -1352,20 +1391,39 @@ to get a second generator.
 
 `jump`, `long_jump`, and `split` on an unseeded generator seed it first.
 
+`Pcg64` is seeded the same way, with these differences:
+
+- `from_seed(seed)` takes the same four SplitMix64 outputs, high word first, as
+  a 128-bit initial state and a 128-bit stream, then applies PCG's seeding: the
+  increment is the stream shifted left with its low bit set, and the state is
+  stepped once before and once after the initial state is added.
+- `state()` returns the state and the increment, and `from_state` restores
+  them. The increment must be odd; a state and increment of zero is the
+  unseeded zero value.
+- `advance(delta)` moves the state as `delta` draws would, in at most 128
+  steps. The distance wraps modulo 2^128, so `advance(~u128(0))` steps back one
+  draw. Advancing copies of one generator by multiples of a block length gives
+  each worker its own block.
+- `split()` seeds a child from four draws through the SplitMix64 finalizer, as
+  `from_seed` uses its four words.
+
+`advance` and `split` on an unseeded generator seed it first.
+
 To make an unseeded run replayable, draw the seed with `secure_u64()`, record
 it, and construct the generator with `from_seed`, as
 [examples/dice.loke](examples/dice.loke) does. Do not seed from the clock or a
 process ID: parallel runs started together share them.
 
 Seeded generators, the procedures that compute on integers and floats, and
-`fill` and `shuffle` can run during [compile-time evaluation](design.md#compile-time-procedure-evaluation),
+`fill`, `shuffle`, and `sample` can run during [compile-time evaluation](design.md#compile-time-procedure-evaluation),
 for example to build a table of random constants. `from_entropy`, a draw from an
-unseeded generator, `fill_secure`, and `secure_u64` cannot, and neither can
-`normal` and `exponential`, which call `core:math`.
+unseeded generator, `fill_secure`, and `secure_u64` cannot. Neither can the
+[distributions](#distributions), which call `core:math`, or
+`Weighted.from_weights`, which allocates from a runtime allocator.
 
 ### Reproducibility
 
-A seeded or restored `Xoshiro256` produces the same sequence in every release.
+A seeded or restored generator produces the same sequence in every release.
 The mapping from draws to values is part of each procedure's contract:
 
 | Procedure | Draws |
@@ -1379,12 +1437,34 @@ The mapping from draws to values is part of each procedure's contract:
 | `unit` | One draw; its top 53 bits times 2^-53, in [0, 1). |
 | `unit_f32` | One draw; its top 24 bits times 2^-24, in [0, 1). |
 | `uniform` | `low + (high - low)*u` for one `unit` draw `u`, or `low*(1 - u) + high*u` when `high - low` overflows; a result equal to `high` is drawn again. `uniform_f32` likewise with `unit_f32`. |
-| `normal`, `exponential` | See [Distributions](#distributions). |
+| `sample` | Fisher–Yates from the front: for each index `i` below `count`, `in_range(i ..< len)` picks the index to swap with. |
+| `Weighted.pick` | One `in_range(0 ..< len)` picks a column, then one `unit` draw keeps it or takes its alias. |
+| The distributions | See [Distributions](#distributions). |
 
 Changing a generator's output or any of these mappings is a breaking change.
 An unseeded generator is not reproducible.
 
 ### Distributions
+
+Every distribution is built from `unit`, `open_unit` (an odd multiple of
+2^-53 in (0, 1), from one draw's top 52 bits), and the standard normal and
+exponential below, so its draws follow from the algorithm named here.
+
+| Procedure | Algorithm and draws |
+| --- | --- |
+| `normal`, `exponential` | The ziggurat described below. |
+| `log_normal` | `exp` of one `normal` draw; `mean` and `standard_deviation` are the logarithm's. |
+| `gamma` | Marsaglia and Tsang (2000). Each attempt takes standard normal draws until `1 + c*z` is positive, then one `unit` draw for the squeeze and density tests. A shape below 1 samples `shape + 1`, then multiplies by `open_unit^(1/shape)`, from one more draw. |
+| `beta` | Two gammas, `x / (x + y)`, when either shape exceeds 1. Otherwise Jöhnk's method, two `unit` draws per attempt. When both shapes are below 3e-103, one `unit` draw `u` gives 1 if `(alpha + beta)*u < alpha` and 0 otherwise. |
+| `chi_squared` | Twice a gamma of shape `degrees_of_freedom / 2`. |
+| `student_t` | A standard normal `z`, then a gamma `g` of shape `degrees_of_freedom / 2`; `z * sqrt(degrees_of_freedom / 2 / g)`. |
+| `geometric` | One `unit` draw `u`: `floor(log(1 - u) / log(1 - probability))`, the number of failures before the first success, capped at the largest `u64`. |
+| `poisson` | No draw for a mean of 0. Below 10, Knuth's multiplication: one `unit` draw per unit of the result, plus one. From 10, Hörmann's PTRS (1993): two `unit` draws per attempt. |
+| `binomial` | No draw for 0 trials or a probability of 0. With `p` the smaller of the probability and its complement, inversion when `trials * p` is at most 30: one `unit` draw per pass, and a pass that runs ten standard deviations above the mean starts over. Otherwise BTPE (Kachitvichyanukul and Schmeiser, 1988): two `unit` draws per attempt. For the complement the result is `trials` minus the count. |
+
+`poisson` and `binomial` follow numpy's `random_poisson` and `random_binomial`
+step for step, including numpy's correction to BTPE's final test. `poisson`
+accepts a mean up to 2^62.
 
 `normal` and `exponential` use a 256-layer ziggurat (Marsaglia and Tsang,
 2000). One draw picks a layer from its low 8 bits and a position from its top
@@ -1397,8 +1477,26 @@ standard `z` or `x`.
 
 The tables are constants in the source, and the common path uses no
 `core:math` call. A wedge or tail value depends on `core:math.exp` and `log`,
-which do not promise identical last bits across platforms; see
+and the other distributions call `exp`, `log`, `pow`, or `sqrt` on every value.
+Those functions do not promise identical last bits across platforms; see
 [Random distributions across platforms](open-questions.md#random-distributions-across-platforms).
+
+### Sampling
+
+`sample(source, values, count)` moves a uniformly random `count` of the
+elements to the front of `values`, in random order, so `values[:count]` is a
+sample without replacement and the rest are the elements not chosen. Like
+`shuffle`, it swaps without running copy or drop hooks, so any element type
+works.
+
+`Weighted` draws an index in proportion to its weight in constant time, by
+Vose's alias method (1991). `from_weights` builds the table in time and
+storage proportional to the number of weights, and each `pick` costs two
+draws. Weights must be finite and not negative, with a finite positive sum. A
+zero weight's index is never drawn. The table's arrays come from the given
+allocator: `from_weights` follows its failure policy and `try_from_weights`
+returns the error. The construction is deterministic, so a table built from the
+same weights picks the same indices from the same draws.
 
 ### Operating-system entropy
 
@@ -1417,8 +1515,18 @@ These are programmer errors and panic, naming the procedure:
 - an empty range: `high < low` for `..=`, `high <= low` for `..<`;
 - `uniform` or `uniform_f32` bounds that are not finite or not `low < high`;
 - a `bernoulli` probability outside [0, 1], or NaN;
-- a `normal` mean or deviation that is not finite, or a negative deviation;
-- an `exponential` rate that is not finite or not positive.
+- a `normal` or `log_normal` mean or deviation that is not finite, or a
+  negative deviation;
+- an `exponential` rate that is not finite or not positive;
+- a `gamma` shape or scale, a `beta` shape, or `chi_squared` or `student_t`
+  degrees of freedom that are not finite or not positive;
+- a `geometric` probability outside (0, 1], or a `binomial` probability
+  outside [0, 1], or NaN;
+- a `poisson` mean that is negative, NaN, or above 2^62;
+- a `sample` count outside `0 ..= values.len()`;
+- a `Weighted` weight that is not finite or is negative, or weights whose sum
+  is not finite and positive;
+- a `Pcg64.from_state` increment that is even, unless the state is zero too.
 
 An endpoint type wider than 64 bits is rejected when `in_range` is
 instantiated.

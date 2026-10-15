@@ -1,0 +1,213 @@
+// Counting distributions (standard-library "Distributions"): `geometric`,
+// `poisson`, and `binomial`.
+//
+// `poisson` and `binomial` follow numpy's `random_poisson` and
+// `random_binomial` (numpy/random/src/distributions/distributions.c) step for
+// step, so their draws are specified by those algorithms, as `unit`'s are.
+// All three call `core:math`, so none runs at compile time.
+@(public)
+package random;
+
+import "core:math";
+
+// The number of failures before the first success in trials that each succeed
+// with `probability`, in (0, 1]. One `unit` draw `u`, by inversion:
+// `floor(log(1 - u) / log(1 - probability))`, and the largest `u64` when that is
+// larger.
+geometric :: proc(source: inout $G, probability: f64) -> u64 where Source(G) {
+	if (!(probability > 0.0 && probability <= 1.0)) {
+		panic("random.geometric: the probability must be above 0 and at most 1");
+	}
+	// `1 - u` is exact and at least 2^-53, so its logarithm is finite.
+	failures := math.floor(math.log(1.0 - unit(inout source)) / log1p(-probability));
+	// `-0.0` when `probability` is 1.
+	if (!(failures > 0.0)) { return 0; }
+	if (failures >= TWO_TO_64) { return ~u64(0); }
+	return u64(failures);
+}
+
+// A Poisson-distributed count with `mean`, which must be finite, not negative,
+// and at most 2^62. A mean of zero returns 0 without a draw; below 10, one
+// `unit` draw per unit of the result plus one (Knuth's multiplication); from 10,
+// Hörmann's transformed rejection with squeeze, PTRS, with two `unit` draws per
+// attempt.
+poisson :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
+	if (!(mean >= 0.0 && mean <= POISSON_MEAN_LIMIT)) {
+		panic("random.poisson: the mean must be finite, not negative, and at most 2^62");
+	}
+	if (mean >= 10.0) { return poisson_ptrs(inout source, mean); }
+	if (mean == 0.0) { return 0; }
+	limit := math.exp(-mean);
+	count := u64(0);
+	product := 1.0;
+	for (;;) {
+		product *= unit(inout source);
+		if (product <= limit) { return count; }
+		count += 1;
+	}
+}
+
+// Hörmann, "The transformed rejection method for generating Poisson random
+// variables", 1993. A candidate past 2^64 is rejected: its density is far below
+// what an `f64` holds, so this changes no accepted value.
+@(private)
+poisson_ptrs :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
+	root := math.sqrt(mean);
+	log_mean := math.log(mean);
+	b := 0.931 + 2.53*root;
+	a := -0.059 + 0.02483*b;
+	inverse_alpha := 1.1239 + 1.1328/(b - 3.4);
+	v_r := 0.9277 - 3.6224/(b - 2.0);
+	for (;;) {
+		u := unit(inout source) - 0.5;
+		v := unit(inout source);
+		u_s := 0.5 - math.abs(u);
+		k := math.floor((2.0*a/u_s + b)*u + mean + 0.43);
+		if (u_s >= 0.07 && v <= v_r) { return u64(k); }
+		if (!(k >= 0.0 && k < TWO_TO_64) || (u_s < 0.013 && v > u_s)) { continue; }
+		// `log(0)` is negative infinity, which accepts.
+		hat := math.log(v) + math.log(inverse_alpha) - math.log(a/(u_s*u_s) + b);
+		if (hat <= -mean + k*log_mean - log_gamma(k + 1.0)) { return u64(k); }
+	}
+}
+
+// The number of successes in `trials` independent trials that each succeed with
+// `probability`, in [0, 1]. No draw for zero trials or a probability of 0.
+// Otherwise, with `p` the smaller of `probability` and its complement, sequential
+// inversion when `trials * p` is at most 30, and the BTPE rejection sampler
+// otherwise; the result for the complement is `trials` minus the count.
+binomial :: proc(source: inout $G, trials: u64, probability: f64) -> u64 where Source(G) {
+	if (!(probability >= 0.0 && probability <= 1.0)) {
+		panic("random.binomial: the probability must be between 0 and 1");
+	}
+	if (trials == 0 || probability == 0.0) { return 0; }
+	if (probability <= 0.5) {
+		if (probability*f64(trials) <= 30.0) { return binomial_inversion(inout source, trials, probability); }
+		return binomial_btpe(inout source, trials, probability);
+	}
+	q := 1.0 - probability;
+	if (q*f64(trials) <= 30.0) { return trials - binomial_inversion(inout source, trials, q); }
+	return trials - binomial_btpe(inout source, trials, q);
+}
+
+// One `unit` draw per pass, walking the cumulative probabilities up from 0; a
+// pass that runs past ten standard deviations above the mean starts over.
+@(private)
+binomial_inversion :: proc(source: inout $G, trials: u64, p: f64) -> u64 where Source(G) {
+	q := 1.0 - p;
+	start := math.exp(f64(trials)*log1p(-p));
+	mean := f64(trials)*p;
+	bound := u64(math.min(f64(trials), mean + 10.0*math.sqrt(mean*q + 1.0)));
+	count := u64(0);
+	mass := start;
+	u := unit(inout source);
+	for (; u > mass; ) {
+		count += 1;
+		if (count > bound) {
+			count = 0;
+			mass = start;
+			u = unit(inout source);
+		} else {
+			u -= mass;
+			mass = (f64(trials - count + 1)*p*mass) / (f64(count)*q);
+		}
+	}
+	return count;
+}
+
+// Kachitvichyanukul and Schmeiser, "Binomial random variate generation", 1988,
+// for `p` at most 1/2 and `trials * p` above 30: two `unit` draws per attempt,
+// choosing a triangle, two parallelograms, or an exponential tail, then a
+// squeeze before the exact test. numpy's correction to the final test's signs
+// is kept.
+@(private)
+binomial_btpe :: proc(source: inout $G, trials: u64, p: f64) -> u64 where Source(G) {
+	n := f64(trials);
+	r := p;
+	q := 1.0 - r;
+	fm := n*r + r;
+	m := u64(math.floor(fm));
+	mf := f64(m);
+	p1 := math.floor(2.195*math.sqrt(n*r*q) - 4.6*q) + 0.5;
+	xm := mf + 0.5;
+	xl := xm - p1;
+	xr := xm + p1;
+	c := 0.134 + 20.5/(15.3 + mf);
+	a := (fm - xl)/(fm - xl*r);
+	lambda_left := a*(1.0 + a/2.0);
+	a = (xr - fm)/(xr*q);
+	lambda_right := a*(1.0 + a/2.0);
+	p2 := p1*(1.0 + 2.0*c);
+	p3 := p2 + c/lambda_left;
+	p4 := p3 + c/lambda_right;
+	nrq := n*r*q;
+
+	for (;;) {
+		u := unit(inout source)*p4;
+		v := unit(inout source);
+		// The triangle: accepted outright.
+		if (u <= p1) {
+			return u64(math.floor(xm - p1*v + u));
+		}
+		y := 0.0;
+		if (u <= p2) {
+			// The parallelograms.
+			x := xl + (u - p1)/c;
+			v = v*c + 1.0 - math.abs(mf - x + 0.5)/p1;
+			if (v > 1.0) { continue; }
+			y = math.floor(x);
+		} else if (u <= p3) {
+			// The left exponential tail; `v` of zero gives negative infinity.
+			y = math.floor(xl + math.log(v)/lambda_left);
+			if (!(y >= 0.0)) { continue; }
+			v = v*(u - p2)*lambda_left;
+		} else {
+			// The right tail.
+			y = math.floor(xr - math.log(v)/lambda_right);
+			if (!(y <= n)) { continue; }
+			v = v*(u - p3)*lambda_right;
+		}
+		count := u64(y);
+		k := (count - m) if count >= m else (m - count);
+		kf := f64(k);
+		if (!(kf > 20.0 && kf < nrq/2.0 - 1.0)) {
+			// The density ratio from the mode, term by term.
+			s := r/q;
+			ratio_base := s*(n + 1.0);
+			density := 1.0;
+			if (m < count) {
+				for (i := m + 1; i <= count; i += 1) { density *= ratio_base/f64(i) - s; }
+			} else if (m > count) {
+				for (i := count + 1; i <= m; i += 1) { density /= ratio_base/f64(i) - s; }
+			}
+			if (v > density) { continue; }
+			return count;
+		}
+		// The squeeze, then Stirling's approximation of the exact log ratio.
+		rho := (kf/nrq)*((kf*(kf/3.0 + 0.625) + 0.16666666666666666)/nrq + 0.5);
+		t := -kf*kf/(2.0*nrq);
+		log_v := math.log(v);
+		if (log_v < t - rho) { return count; }
+		if (log_v > t + rho) { continue; }
+		x1 := y + 1.0;
+		f1 := mf + 1.0;
+		z := n + 1.0 - mf;
+		w := n - y + 1.0;
+		bound := xm*math.log(f1/x1) + (f64(trials - m) + 0.5)*math.log(z/w) +
+			(y - mf)*math.log(w*r/(x1*q)) +
+			stirling_term(f1) + stirling_term(z) - stirling_term(x1) - stirling_term(w);
+		if (log_v > bound) { continue; }
+		return count;
+	}
+}
+
+// One of BTPE's four correction terms: `(13860 - (462 - (132 - (99 -
+// 140/x²)/x²)/x²)/x²) / x / 166320`.
+@(private)
+stirling_term :: proc(x: f64) -> f64 {
+	x2 := x*x;
+	return (13860.0 - (462.0 - (132.0 - (99.0 - 140.0/x2)/x2)/x2)/x2)/x/166320.0;
+}
+
+@(private) TWO_TO_64 :: 18446744073709551616.0;
+@(private) POISSON_MEAN_LIMIT :: 4611686018427387904.0;

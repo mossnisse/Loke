@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": weights that sum to zero.
+main :: proc() {
+	weights := [2]f64{0.0, 0.0};
+	random.Weighted.from_weights(weights[:]);
+}

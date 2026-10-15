@@ -1135,7 +1135,37 @@ boundaries and API shapes follow a few common choices:
   blocks; Julia and Rust's `SmallRng` use it. MT19937 has 2.5 KB of state,
   fails linearity tests, and seeds poorly from small seeds. xorshift128+ has
   weak low bits. Linear congruential generators fail statistical tests outright.
-  PCG64 is a reasonable second choice, kept for a caller that needs `advance`.
+- **PCG64 is numpy's DXSM variant.** The second generator exists for
+  `advance`, which moves a stream any distance in 128 steps, and for matching
+  another tool's output. numpy's `PCG64DXSM` mixes the state before stepping,
+  with the 64-bit multiplier, and is the published reference users can
+  check against; Go's `math/rand/v2` PCG uses a full 128-bit multiplier and
+  mixes after stepping, so the two disagree. The older XSL-RR output is not
+  offered: O'Neill replaced it with DXSM after it was shown to correlate
+  across closely related streams.
+- **Counting distributions follow numpy.** `unit` is numpy's `next_double`
+  bit for bit, so porting `random_poisson` and `random_binomial` step for step
+  gives algorithms with decades of use and a reference to compare against, and
+  a fixed draw accounting to specify. BTPE is long, but inversion alone costs
+  draws in proportion to the mean, and the beta-recursion alternative takes
+  about `2 log2(trials)` gamma draws per value.
+- **`geometric` counts failures, not trials.** Its support then starts at 0,
+  as `poisson` and `binomial` do, and as C++'s `geometric_distribution` and
+  Rust's `rand_distr` count. numpy counts trials, which is this value plus one.
+- **Counts are `u64`.** A count is never negative, so the type carries what a
+  panic would otherwise check, and a mean or trial count above 2^63 still has a
+  result type.
+- **`gamma` below shape 1 uses Marsaglia and Tsang's boost.** The same paper's
+  method for a shape of at least 1, with one extra `open_unit` power, keeps one
+  algorithm for every shape; numpy instead uses a separate rejection sampler
+  there.
+- **`sample` rearranges in place.** Partial Fisher–Yates needs no allocation,
+  works on any element type, and leaves the unchosen elements behind the
+  sample. Floyd's algorithm, which picks indices from a range without
+  materializing it, needs a set and waits for a caller.
+- **`Weighted` is an alias table.** Vose's construction is linear and draws in
+  constant time, against a cumulative table's logarithmic binary search. The
+  construction order is specified, so a table's picks replay from a seed.
 - **Seeding never reads the clock.** Processes started together share a clock
   reading and often a process-ID range. The documented idiom is to draw a seed
   with `secure_u64`, record it, and seed with `from_seed`.

@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": zero degrees of freedom.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	random.student_t(inout rng, 0.0);
+}

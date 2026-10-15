@@ -1,0 +1,8 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a geometric probability of zero.
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(1);
+	random.geometric(inout rng, 0.0);
+}
