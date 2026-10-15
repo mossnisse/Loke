@@ -22,4 +22,6 @@ main :: proc() {
 	fmt.println(int(adapter.init(1).x));
 	// Private inherent operators follow the same visibility rule as methods.
 	fmt.println(int((v + v).x));
+	// Nor do the operators `adapter` delegates in its extension of `Count`.
+	fmt.println(i64(vendor.Count(2) + vendor.Count(3)), i64(-adapter.count_here()));
 }

@@ -2353,7 +2353,7 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	}
 	for member in clone.members {
 		if delegate, is_delegate := member.(^Item_Delegate); is_delegate {
-			check_delegate(k, delegate, instance.type)
+			check_delegate(k, delegate, instance.type, clone.kind, block.pkg)
 		}
 	}
 	append(&k.c.pending_impl_instances, Pending_Impl{item = clone, scope = scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type, conflicts = conflicts})

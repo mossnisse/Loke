@@ -9,6 +9,9 @@ Vector2 :: struct {
 }
 
 @(public)
+Count :: distinct i64;
+
+@(public)
 Other :: struct {
 	@(public)
 	value: i32,

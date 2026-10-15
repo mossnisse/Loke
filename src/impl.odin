@@ -284,7 +284,7 @@ resolve_impl_signatures :: proc(k: ^Checker, item: ^Item_Impl) {
 	// After the signatures: delegation forwards operators already declared.
 	for member in item.members {
 		if delegate, is_delegate := member.(^Item_Delegate); is_delegate {
-			check_delegate(k, delegate, item.subject)
+			check_delegate(k, delegate, item.subject, item.kind, k.pkg)
 		}
 	}
 }

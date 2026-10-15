@@ -536,10 +536,11 @@ declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
 	return attributes_are_public(k, d.attributes, d.span, "declaration")
 }
 
-// The operators a `delegate` generates are members of the type, as a
-// declaration in the same `impl` would be, so an importer finds them as it
-// finds a hand-written one (design.md "Delegating operators"). A `delegate`
-// takes no visibility attribute (L0607), so the file's default decides.
+// The operators a `delegate` generates are members as a declaration in the
+// same `impl` would be, so an importer finds an inherent one as it finds a
+// hand-written one (design.md "Delegating operators"); an extension's stay in
+// its package's table. A `delegate` takes no visibility attribute (L0607), so
+// the file's default decides.
 delegation_is_public :: proc(k: ^Checker) -> bool {
 	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
 }

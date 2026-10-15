@@ -24,3 +24,13 @@ impl vendor.Other {
 use_here :: proc(v: vendor.Vector2) -> i32 {
 	return v.doubled();
 }
+
+// A delegate is a member like any other: in an extension block it stays in
+// this package's extension table.
+impl vendor.Count {
+	delegate(+, -);
+}
+
+count_here :: proc() -> vendor.Count {
+	return -(vendor.Count(2) + vendor.Count(3));
+}

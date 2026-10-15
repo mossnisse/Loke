@@ -16,6 +16,9 @@ impl Tally {
 	add :: operator(+) proc(a, b: Tally) -> Tally { return {a.count + b.count}; }
 }
 
+// No operators of its own; `main` delegates them in an extension.
+Score :: distinct i64;
+
 // Forwards to `Tally`'s own `+` rather than a built-in operation.
 Votes :: distinct Tally;
 

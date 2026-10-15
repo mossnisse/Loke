@@ -19,6 +19,12 @@ package `adapter` has no declaration `init`
 L0318
 @24:21
 `+` does not apply to `Vector2` and `Vector2`
+L0318
+@26:34
+`+` does not apply to `Count` and `Count`
+L0317
+@26:58
+`-` does not apply to `Count`
 L0486
 @11:2
 a semantic hook belongs with the package that declares `Vector2`; an extension block cannot add `hook(convert)`

@@ -83,7 +83,9 @@ checklist.
 
 - The operators a `delegate` generates are found from other packages, as
   hand-written ones are (design.md "Delegating operators"): `a + b` on an
-  imported `distinct` type with `delegate(+)` was `L0318`.
+  imported `distinct` type with `delegate(+)` was `L0318`. A `delegate` in an
+  extension block still applies only in the package that declares it, as the
+  block's other members do.
 - `delegate(-)`, `delegate(+)`, and `delegate(~)` over a number generate the
   unary form as well as the binary one, so `-a` on a `distinct f64` with
   `delegate(-)` negates instead of being `L0392`.

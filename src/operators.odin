@@ -464,8 +464,11 @@ operator_result_is_place :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 // design.md "Delegating operators": for each listed symbol, generate the
 // overload found for the underlying type, with the distinct type substituted
 // for it in every operand and result position — except a result of another
-// type (a comparison's `bool`), which passes through unchanged.
-check_delegate :: proc(k: ^Checker, item: ^Item_Delegate, subject: Type_Id) {
+// type (a comparison's `bool`), which passes through unchanged. The overloads
+// go where the block's other members do: the type's own for an inherent `impl`,
+// `in_pkg`'s extensions of it for an extension, which only that package's
+// lookup sees (design.md "Methods and implementation blocks").
+check_delegate :: proc(k: ^Checker, item: ^Item_Delegate, subject: Type_Id, kind: Impl_Kind, in_pkg: Package_Id) {
 	info := type_of(k.c, subject)
 	if info == nil || info.kind != .Distinct {
 		errorf(
@@ -479,12 +482,12 @@ check_delegate :: proc(k: ^Checker, item: ^Item_Delegate, subject: Type_Id) {
 	}
 	underlying := info.element
 	for symbol in item.symbols {
-		delegate_one(k, item, subject, underlying, symbol)
+		delegate_one(k, item, kind, in_pkg, subject, underlying, symbol)
 	}
 }
 
 @(private = "file")
-delegate_one :: proc(k: ^Checker, item: ^Item_Delegate, subject, underlying: Type_Id, symbol: string) {
+delegate_one :: proc(k: ^Checker, item: ^Item_Delegate, kind: Impl_Kind, in_pkg: Package_Id, subject, underlying: Type_Id, symbol: string) {
 	if _, overloadable := operator_shape(symbol); !overloadable {
 		errorf(k.c, item.span, "L0416", "`%s` is not an overloadable operator", symbol)
 		return
@@ -502,12 +505,12 @@ delegate_one :: proc(k: ^Checker, item: ^Item_Delegate, subject, underlying: Typ
 	found := operator_candidates_for_receiver(k, symbol, underlying)
 	if len(found) > 0 {
 		for target in found {
-			register_forwarded_operator(k, item, subject, underlying, symbol, target)
+			register_forwarded_operator(k, item, kind, in_pkg, subject, underlying, symbol, target)
 		}
 		return
 	}
 	if operand_is_builtin(k, underlying) && builtin_delegation_applies(k, symbol, underlying) {
-		register_builtin_delegation(k, item, subject, underlying, symbol)
+		register_builtin_delegation(k, item, kind, in_pkg, subject, underlying, symbol)
 		return
 	}
 	errorf(
@@ -537,6 +540,8 @@ builtin_delegation_applies :: proc(k: ^Checker, symbol: string, underlying: Type
 register_forwarded_operator :: proc(
 	k: ^Checker,
 	item: ^Item_Delegate,
+	kind: Impl_Kind,
+	in_pkg: Package_Id,
 	subject, underlying: Type_Id,
 	symbol: string,
 	target: Symbol_Id,
@@ -556,7 +561,7 @@ register_forwarded_operator :: proc(
 	result := source.result == INVALID_TYPE ? INVALID_TYPE : substitute(source.result, underlying, subject)
 	modes := make([]Param_Mode, len(params), k.c.semantic_allocator)
 	copy(modes, shape.param_modes)
-	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, result, shape.result_inout, target)
+	install_delegated_operator(k, item, kind, in_pkg, subject, underlying, symbol, params, modes, result, shape.result_inout, target)
 }
 
 // The built-in operation has no symbol to forward to: homogeneous overloads
@@ -564,13 +569,15 @@ register_forwarded_operator :: proc(
 // operator at. `-`, `+`, and `~` are both unary and binary on a number, so
 // `delegate(-)` gives negation as well as subtraction; `!` is unary only.
 @(private = "file")
-register_builtin_delegation :: proc(k: ^Checker, item: ^Item_Delegate, subject, underlying: Type_Id, symbol: string) {
+register_builtin_delegation :: proc(
+	k: ^Checker, item: ^Item_Delegate, kind: Impl_Kind, in_pkg: Package_Id, subject, underlying: Type_Id, symbol: string,
+) {
 	op := operator_token(symbol)
 	if builtin_unary_defined(k, op, underlying) {
-		register_builtin_arity(k, item, subject, underlying, symbol, 1)
+		register_builtin_arity(k, item, kind, in_pkg, subject, underlying, symbol, 1)
 	}
 	if op != .Not && builtin_delegation_applies_binary(k, op, underlying) {
-		register_builtin_arity(k, item, subject, underlying, symbol, 2)
+		register_builtin_arity(k, item, kind, in_pkg, subject, underlying, symbol, 2)
 	}
 }
 
@@ -587,7 +594,7 @@ builtin_delegation_applies_binary :: proc(k: ^Checker, op: Token_Kind, underlyin
 
 @(private = "file")
 register_builtin_arity :: proc(
-	k: ^Checker, item: ^Item_Delegate, subject, underlying: Type_Id, symbol: string, arity: int,
+	k: ^Checker, item: ^Item_Delegate, kind: Impl_Kind, in_pkg: Package_Id, subject, underlying: Type_Id, symbol: string, arity: int,
 ) {
 	op := operator_token(symbol)
 	params := make([]Type_Id, arity, k.c.semantic_allocator)
@@ -600,7 +607,7 @@ register_builtin_arity :: proc(
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		result = TYPE_BOOL
 	}
-	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, result, false, INVALID_SYMBOL)
+	install_delegated_operator(k, item, kind, in_pkg, subject, underlying, symbol, params, modes, result, false, INVALID_SYMBOL)
 }
 
 // The generated overload is a compiler-owned symbol, not source — no body; the
@@ -610,6 +617,8 @@ register_builtin_arity :: proc(
 install_delegated_operator :: proc(
 	k: ^Checker,
 	item: ^Item_Delegate,
+	kind: Impl_Kind,
+	in_pkg: Package_Id,
 	subject, underlying: Type_Id,
 	symbol: string,
 	params: []Type_Id,
@@ -635,7 +644,7 @@ install_delegated_operator :: proc(
 		delegate_underlying = underlying,
 		delegate_target = target,
 	})
-	add_members(k.c, subject, {id})
+	install_impl_members(k, kind, subject, {id}, in_pkg)
 }
 
 // The binary operator a compound assignment applies, or `.EOF` when the kind
