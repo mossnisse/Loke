@@ -639,10 +639,11 @@ their history are left out, for the reasons in
 [Named time zones](#named-time-zones); the API leaves room to add them later
 without changing anything here.
 
-ISO 8601 is the only text form. Every type prints in the ISO 8601 extended
-format through `fmt`, in the RFC 3339 profile where one applies, and parses it
-back. There is no locale, no month or weekday name in text, and no pattern
-language.
+Dates and times print in the ISO 8601 extended format through `fmt`, in the
+RFC 3339 profile where one applies, and parse back. A duration prints in a
+short form, `1h30m` or `153ms`, because its ISO 8601 form, `PT0.153S`, reads
+poorly; the ISO 8601 form is one style away and parses too. There is no
+locale, no month or weekday name in text, and no pattern language.
 
 ### Types
 
@@ -718,10 +719,30 @@ calendar day is not always 24 hours, so steps of days belong to `Date`.
 Arithmetic that overflows panics, as signed integer arithmetic does
 ([Integer overflow](design.md#integer-overflow)).
 
-A duration prints as an ISO 8601 duration in hours, minutes, and seconds:
-`PT1H30M`, `PT0.25S`, `PT36H`, and `PT0S` for none. Hours never roll over into
-days, for the same reason. A negative duration takes a leading sign, `-PT1.5S`,
-as Temporal writes it and Java's `Duration.parse` reads it.
+A duration prints in a short form, close to Go's:
+
+| Duration | Short form (default) | ISO 8601 (`iso = true`) |
+| --- | --- | --- |
+| 90 minutes | `1h30m` | `PT1H30M` |
+| 36 hours | `36h` | `PT36H` |
+| 2 minutes 0.5 seconds | `2m0.5s` | `PT2M0.5S` |
+| 1.5 seconds | `1.5s` | `PT1.5S` |
+| 153 milliseconds | `153ms` | `PT0.153S` |
+| 1.5 microseconds | `1.5µs` | `PT0.0000015S` |
+| 250 nanoseconds | `250ns` | `PT0.00000025S` |
+| None | `0s` | `PT0S` |
+| −1.5 seconds | `-1.5s` | `-PT1.5S` |
+
+- From one second up, the form is hours, minutes, and seconds, each written
+  only when it is not zero, with a fraction only on the seconds. Below one
+  second it is a single unit, `ms`, `µs`, or `ns`, the largest that leaves a
+  whole number in front of the point, with a fraction as needed.
+- Hours never roll over into days, for the same reason there is no `DAY`.
+- A negative duration takes a leading `-`. ISO 8601 has no negative
+  durations; `-PT1.5S` is how Temporal writes one and Java's `Duration.parse`
+  reads one.
+- Go prints `1h30m0s` where this prints `1h30m`, keeping zero components; this
+  form drops them, since every number carries its unit.
 
 ### Instants
 
@@ -741,6 +762,14 @@ Time.at_offset(self, offset: Offset) -> Offset_Date_Time
 `Time` is Unix time: every day has 86 400 seconds and leap seconds are not
 counted, as in POSIX, Go, Java, and Rust. It prints in UTC with `Z`:
 `2026-10-15T12:34:56.789Z`.
+
+An `i64` of nanoseconds is the representation, as in `fs.Metadata` and Odin.
+Arithmetic is one integer operation, and the range covers every clock reading
+and every file time. It does not cover every `Date_Time`, so `to_time` is
+partial before 1677 and after 2262; dates outside that range stay in the
+calendar types. Seconds and nanoseconds in 16 bytes, as Go and jiff hold them,
+would make `to_time` total at twice the size and with a carry in every
+operation.
 
 `fs.Metadata.modified` becomes `Option(time.Time)`, `.none` where Windows
 records no time instead of today's zero. That is a breaking change and needs
@@ -825,7 +854,7 @@ outside the range of `Time`.
 | `Date` | `2026-10-15` | `20261015` |
 | `Time_Of_Day` | `14:34:56.789` | `143456.789` |
 | `Offset` | `+02:00`, or `Z` when zero | `+0200` |
-| `Duration` | `PT1H30M0.5S` | The same |
+| `Duration` | `1h30m0.5s` | The same |
 
 - Seconds always print. A fraction prints with as few digits as are exact, and
   not at all for whole seconds, as Temporal and Go's `RFC3339Nano` do.
@@ -838,13 +867,17 @@ A wrapper chooses another form, as `fmt.fixed` does for floats:
 
 ```odin
 Precision :: enum { Shortest, Seconds, Milliseconds, Microseconds, Nanoseconds }
-Style :: struct { basic: bool, precision: Precision }
+Style :: struct { basic: bool, iso: bool, precision: Precision }
 styled(value: $T, style: Style) -> Styled(T)
 ```
 
-A fixed precision makes every value of a type print at one width, so the text
-sorts as the times do; the shortest form does not, because `.` sorts before
-`Z`. A fixed precision truncates and never rounds, so it never prints a second,
+`iso` prints a `Duration` in ISO 8601 and does nothing for the other types,
+which print ISO 8601 already. A precision truncates a duration to that unit
+before it prints, so `.Milliseconds` gives `1.234s` and `153ms`.
+
+A fixed precision makes every date and time of one type print at one width, so
+the text sorts as the times do; the shortest form does not, because `.` sorts
+before `Z`. A fixed precision truncates and never rounds, so it never prints a second,
 or a day, that has not arrived yet. `basic` drops the separators, which also
 makes a timestamp fit in a Windows file name, where `:` is not allowed:
 `backup-20261015T123456Z.zip`.
@@ -868,19 +901,50 @@ parse_duration(text: string_view) -> Result(Duration, Parse_Error)
 - A fraction of any length is read and truncated after nine digits.
 - `-00:00` reads as `Z`. ISO 8601 does not allow it; RFC 3339 used it for an
   unknown local offset, which RFC 9557 now writes as `Z`.
-- Second 60, a leap second, reads as second 59, keeping its fraction. Hour 24
-  is invalid, as in RFC 3339.
+- Second 60, a leap second, reads as second 59, keeping its fraction, when
+  the minute is 59; at any other minute it is `Invalid_Value`. Hour 24 is
+  invalid, as in RFC 3339. The leap-second rule is explained below.
 - `parse_time` requires an offset, reporting `Missing_Offset` without one, and
   converts to UTC. `parse_offset_date_time` keeps the offset.
   `parse_date_time` rejects an offset rather than drop it.
-- `parse_duration` reads hours, minutes, and seconds, with a fraction only on
-  the last. Years, months, weeks, and days are calendar units a `Duration`
-  cannot hold exactly, so they are `Invalid_Value`.
+- `parse_duration` reads the short form and the ISO 8601 form. In either, the
+  units come largest first, each at most once, with a fraction only on the
+  last, and an optional leading `-`. The short form also takes `us` for `µs`.
+  Years, months, weeks, and days are calendar units a `Duration` cannot hold
+  exactly, so they are `Invalid_Value`.
 - As in `core:strconv`, surrounding ASCII whitespace is allowed and anything
   else left over is `Invalid_Syntax`.
 - `Invalid_Syntax` is the wrong shape. `Invalid_Value` is a field outside its
   range: month 13, 2026-02-29, minute 60. `Out_Of_Range` is a valid value the
   type cannot hold: a `Time` after 2262, a duration beyond ±292 years.
+
+### Leap seconds
+
+UTC has inserted 27 leap seconds since 1972, each written `23:59:60` at the
+end of a UTC day, the last at the end of 2016. In 2022 the General Conference
+on Weights and Measures decided to stop inserting them by 2035. Unix time,
+and with it `Time`, has no place for one: the clock that reads `23:59:60`
+reads it during a second the count of 86 400 per day does not have.
+
+The choices for text that contains one were:
+
+- **Reject it.** Strict, but a valid RFC 3339 timestamp, from a log written
+  during a leap second, would fail to parse, and a program reading such logs
+  would need its own repair.
+- **Read it as the next second's start**, `00:00:00` of the next day. That
+  changes the date, and a `Time_Of_Day` or `Date` read from the text would
+  disagree with the original.
+- **Read it as second 59.** The date, hour, and minute stay as written; the
+  instant is off by one second at most, as it is in every Unix clock during a
+  leap second.
+
+The last is the proposal, and what the Rust library jiff does. It loses only
+what `Time` cannot represent anyway. Values inside the leap second keep their
+order among themselves, but can sort before the end of the second 59 they
+follow. The minute must be 59: a leap second ends a UTC minute, and offsets are
+whole minutes, so it ends a local minute too. Its local hour depends on the
+offset, so the parser does not check the hour. Printing never produces second
+60.
 
 ### The local time zone
 
@@ -971,16 +1035,12 @@ copyable, and phases 1 and 2 do not change.
 
 ### Open points
 
-- **The range of `Time`.** `i64` nanoseconds match `fs.Metadata` and Odin,
-  make arithmetic one integer operation, and cover every clock reading and
-  file time, but not every `Date_Time`, so `to_time` is partial before 1677
-  and after 2262. Seconds and nanoseconds in 16 bytes, as Go and jiff hold
-  them, would cover 0000 to 9999 and make it total.
-- **Leap seconds in text.** Reading `:60` as `:59` accepts real RFC 3339 data
-  at the cost of up to a second. Rejecting it is stricter.
-- **A short form for durations.** `PT0.153S` reads poorly in a test runner's
-  summary beside Go's `153ms`. A style could add one without changing the
-  ISO 8601 default.
+Decided on review: `Time` stays an `i64` of nanoseconds, durations print in
+the short form by default, and a leap second reads as second 59. Still open:
+
+- **The `µ` in `µs`.** It is U+00B5, two bytes of UTF-8, as Go prints it. A
+  console whose code page is not UTF-8 shows it wrongly; `us` is the ASCII
+  alternative, which the parser accepts either way.
 - **Zero-padded custom forms.** Other formats, such as `15.10.2026`, are built
   from the accessors, but `fmt` cannot pad with zeros. A `fmt.zero_pad` wrapper
   beside `pad_left` would serve every integer and is preferable to a pattern
