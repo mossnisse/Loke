@@ -49,11 +49,13 @@ poisson :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
 
 // Hörmann, "The transformed rejection method for generating Poisson random
 // variables", 1993. A candidate past 2^64 is rejected: its density is far below
-// what an `f64` holds, so this changes no accepted value.
+// what an `f64` holds, so this changes no accepted value. numpy compares with
+// `-mean + k*log(mean) - log_gamma(k + 1)`, whose terms of order
+// `mean*log(mean)` cancel to a small value: at a mean of 10^15 its accepted
+// counts spread 4% too wide. `poisson_log_mass` keeps its precision instead.
 @(private)
 poisson_ptrs :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
 	root := math.sqrt(mean);
-	log_mean := math.log(mean);
 	b := 0.931 + 2.53*root;
 	a := -0.059 + 0.02483*b;
 	inverse_alpha := 1.1239 + 1.1328/(b - 3.4);
@@ -67,8 +69,53 @@ poisson_ptrs :: proc(source: inout $G, mean: f64) -> u64 where Source(G) {
 		if (!(k >= 0.0 && k < TWO_TO_64) || (u_s < 0.013 && v > u_s)) { continue; }
 		// `log(0)` is negative infinity, which accepts.
 		hat := math.log(v) + math.log(inverse_alpha) - math.log(a/(u_s*u_s) + b);
-		if (hat <= -mean + k*log_mean - log_gamma(k + 1.0)) { return u64(k); }
+		if (hat <= poisson_log_mass(k, mean)) { return u64(k); }
 	}
+}
+
+// `log(mean^k * exp(-mean) / k!)` for an integral `k`, by Loader's saddle-point
+// form ("Fast and Accurate Computation of Binomial Probabilities", 2000):
+// `-stirling_error(k) - deviance(k, mean) - log(2*pi*k)/2`. Neither term is the
+// difference of two large ones, so the result keeps its precision when
+// `mean*log(mean)` is far larger than it.
+@(private)
+poisson_log_mass :: proc(k: f64, mean: f64) -> f64 {
+	if (k == 0.0) { return -mean; }
+	return -stirling_error(k) - deviance(k, mean) - 0.5*(LOG_TWO_PI + math.log(k));
+}
+
+// `log(n!) - log(sqrt(2*pi*n) * (n/e)^n)` for an integral `n` of at least 1:
+// Stirling's series past 15, where its first five terms are within rounding,
+// and `log_gamma` below, where nothing large cancels.
+@(private)
+stirling_error :: proc(n: f64) -> f64 {
+	if (n <= 15.0) {
+		return log_gamma(n + 1.0) - (n + 0.5)*math.log(n) + n - 0.5*LOG_TWO_PI;
+	}
+	n2 := n*n;
+	return (1.0/12.0 - (1.0/360.0 - (1.0/1260.0 - (1.0/1680.0 - 1.0/1188.0/n2)/n2)/n2)/n2)/n;
+}
+
+// `x*log(x/m) + m - x`, the deviance of `x` from `m`, without its cancellation:
+// near `m` as the series in `v = (x - m)/(x + m)`, `(x - m)*v + 2*x*(v^3/3 +
+// v^5/5 + ...)`, where `x - m` is exact; elsewhere directly.
+@(private)
+deviance :: proc(x: f64, m: f64) -> f64 {
+	difference := x - m;
+	if (math.abs(difference) >= 0.1*(x + m)) {
+		return x*math.log(x/m) + m - x;
+	}
+	v := difference/(x + m);
+	sum := difference*v;
+	term := 2.0*x*v;
+	v2 := v*v;
+	for (j := 1; j < 1000; j += 1) {
+		term *= v2;
+		next := sum + term/f64(2*j + 1);
+		if (next == sum) { break; }
+		sum = next;
+	}
+	return sum;
 }
 
 // The number of successes in `trials` independent trials that each succeed with

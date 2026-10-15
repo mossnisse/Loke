@@ -27,4 +27,9 @@ single 0 0
 even true
 sample [6, 3, 7, 1, 4, 5, 0, 2]
 sample all [0, 1, 2, 3, 4, 5, 6, 7]
+poisson rejects far tail 4611686018427387904 4
+poisson spread true true
+beta huge shapes true
+beta subnormal shapes true
+student_t smallest freedom true
 compile time [0, 1, 5] true

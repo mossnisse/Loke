@@ -1455,16 +1455,18 @@ exponential below, so its draws follow from the algorithm named here.
 | `normal`, `exponential` | The ziggurat described below. |
 | `log_normal` | `exp` of one `normal` draw; `mean` and `standard_deviation` are the logarithm's. |
 | `gamma` | Marsaglia and Tsang (2000). Each attempt takes standard normal draws until `1 + c*z` is positive, then one `unit` draw for the squeeze and density tests. A shape below 1 samples `shape + 1`, then multiplies by `open_unit^(1/shape)`, from one more draw. |
-| `beta` | Two gammas, `x / (x + y)`, when either shape exceeds 1. Otherwise Jöhnk's method, two `unit` draws per attempt. When both shapes are below 3e-103, one `unit` draw `u` gives 1 if `(alpha + beta)*u < alpha` and 0 otherwise. |
+| `beta` | Two gammas, `x / (x + y)`, when either shape exceeds 1. Otherwise Jöhnk's method, two `unit` draws per attempt. When both shapes are below 3e-103, one `unit` draw `u` gives 1 if `u < alpha / (alpha + beta)` and 0 otherwise. |
 | `chi_squared` | Twice a gamma of shape `degrees_of_freedom / 2`. |
-| `student_t` | A standard normal `z`, then a gamma `g` of shape `degrees_of_freedom / 2`; `z * sqrt(degrees_of_freedom / 2 / g)`. |
+| `student_t` | A standard normal `z`, then a gamma `g` of shape `degrees_of_freedom / 2`; `z * sqrt(degrees_of_freedom / 2 / g)`, or an infinity of `z`'s sign when `g` is zero. |
 | `geometric` | One `unit` draw `u`: `floor(log(1 - u) / log(1 - probability))`, the number of failures before the first success, capped at the largest `u64`. |
 | `poisson` | No draw for a mean of 0. Below 10, Knuth's multiplication: one `unit` draw per unit of the result, plus one. From 10, Hörmann's PTRS (1993): two `unit` draws per attempt. |
 | `binomial` | No draw for 0 trials or a probability of 0. With `p` the smaller of the probability and its complement, inversion when `trials * p` is at most 30: one `unit` draw per pass, and a pass that runs ten standard deviations above the mean starts over. Otherwise BTPE (Kachitvichyanukul and Schmeiser, 1988): two `unit` draws per attempt. For the complement the result is `trials` minus the count. |
 
 `poisson` and `binomial` follow numpy's `random_poisson` and `random_binomial`
-step for step, including numpy's correction to BTPE's final test. `poisson`
-accepts a mean up to 2^62.
+step for step, including numpy's correction to BTPE's final test, except that
+`poisson`'s exact test computes the log mass by Loader's saddle-point method
+(2000), which stays accurate where numpy's difference of large terms cancels.
+`poisson` accepts a mean up to 2^62.
 
 `normal` and `exponential` use a 256-layer ziggurat (Marsaglia and Tsang,
 2000). One draw picks a layer from its low 8 bits and a position from its top

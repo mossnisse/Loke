@@ -1148,7 +1148,13 @@ boundaries and API shapes follow a few common choices:
   gives algorithms with decades of use and a reference to compare against, and
   a fixed draw accounting to specify. BTPE is long, but inversion alone costs
   draws in proportion to the mean, and the beta-recursion alternative takes
-  about `2 log2(trials)` gamma draws per value.
+  about `2 log2(trials)` gamma draws per value. One step departs: numpy's PTRS
+  test computes the Poisson log mass as `-mean + k*log(mean) - log(k!)`, whose
+  terms cancel catastrophically at large means, so `poisson` uses Loader's
+  saddle-point form there and everywhere, for one algorithm at every mean.
+  BTPE's final test has the same shape, but its squeeze band narrows faster
+  than its error grows, and its measured spread is right up to 2^64 - 1
+  trials, so it is kept as numpy has it.
 - **`geometric` counts failures, not trials.** Its support then starts at 0,
   as `poisson` and `binomial` do, and as C++'s `geometric_distribution` and
   Rust's `rand_distr` count. numpy counts trials, which is this value plus one.

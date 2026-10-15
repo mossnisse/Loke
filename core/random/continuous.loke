@@ -38,12 +38,17 @@ beta :: proc(source: inout $G, alpha: f64, beta: f64) -> f64 where Source(G) {
 	if (alpha > 1.0 || beta > 1.0) {
 		x := standard_gamma(inout source, alpha);
 		y := standard_gamma(inout source, beta);
-		return x / (x + y);
+		sum := x + y;
+		if (math.is_finite(sum)) { return x / sum; }
+		// Shapes near the largest `f64` overflow the sum. Halving both loses
+		// nothing at that size.
+		return (0.5*x) / (0.5*x + 0.5*y);
 	}
 	// Below this, a value strictly between 0 and 1 is less likely than 1e-100,
-	// and the powers below would overflow.
+	// and the powers below would overflow. The ratio is computed first: scaling
+	// a subnormal sum by the draw would round part of the probability away.
 	if (alpha < BETA_TINY && beta < BETA_TINY) {
-		return 1.0 if (alpha + beta)*unit(inout source) < alpha else 0.0;
+		return 1.0 if unit(inout source) < alpha/(alpha + beta) else 0.0;
 	}
 	// Jöhnk's method (1964): two `unit` draws per attempt.
 	for (;;) {
@@ -73,13 +78,17 @@ chi_squared :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Sour
 
 // A Student's t value with `degrees_of_freedom`, finite and positive: a
 // standard normal draw, then a gamma of shape `degrees_of_freedom / 2`, as
-// `z * sqrt(degrees_of_freedom / 2 / g)`.
+// `z * sqrt(degrees_of_freedom / 2 / g)`. A gamma draw of zero, which degrees
+// of freedom near the smallest `f64` make likely, gives an infinity of `z`'s
+// sign, the limit of that quotient; `z` is never zero.
 student_t :: proc(source: inout $G, degrees_of_freedom: f64) -> f64 where Source(G) {
 	if (!(math.is_finite(degrees_of_freedom) && degrees_of_freedom > 0.0)) {
 		panic("random.student_t: the degrees of freedom must be finite and positive");
 	}
 	z := standard_normal(inout source);
 	g := standard_gamma(inout source, degrees_of_freedom/2.0);
+	// Half the smallest `f64` is zero, and so would be the numerator.
+	if (g == 0.0) { return math.copy_sign(math.F64_INFINITY, z); }
 	return math.sqrt(degrees_of_freedom/2.0)*z / math.sqrt(g);
 }
 

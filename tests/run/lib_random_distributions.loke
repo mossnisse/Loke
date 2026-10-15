@@ -214,6 +214,7 @@ main :: proc() {
 	continuous();
 	discrete();
 	sampling();
+	limits();
 	fmt.println("compile time", DEALT, DEALT == dealt());
 }
 
@@ -226,4 +227,48 @@ tiny_beta :: proc(rng: inout random.Xoshiro256) -> bool {
 		if (x == 1.0) { ones += 1; }
 	}
 	return ones > 2300 && ones < 2700;
+}
+
+// A scripted source: its first pair is a PTRS candidate 7.4 standard
+// deviations above a mean of 2^62, whose log mass is about -49.76, below the
+// acceptance bound of about -33.12. The second pair is accepted.
+Script :: struct { used: int }
+impl Script {
+	next_u64 :: proc(self: inout) -> u64 {
+		self.used += 1;
+		if (self.used == 1) { return 18262276632972455936; }
+		if (self.used == 2) { return 92233720368547840; }
+		return 1 << 63;
+	}
+}
+
+// The mean of the squared standardized deviation, near 1 when `poisson` has
+// the right spread.
+spread :: proc(mean: f64, seed: u64) -> f64 {
+	rng := random.Xoshiro256.from_seed(seed);
+	sum := 0.0;
+	foreach (_ in 0 ..< N) {
+		z := (f64(random.poisson(inout rng, mean)) - mean)/math.sqrt(mean);
+		sum += z*z;
+	}
+	return sum/f64(N);
+}
+
+// Parameters at the ends of their ranges.
+limits :: proc() {
+	script: Script = {};
+	fmt.println("poisson rejects far tail", random.poisson(inout script, 4611686018427387904.0), script.used);
+	fmt.println("poisson spread", math.abs(spread(1e15, 19) - 1.0) < 0.02,
+		math.abs(spread(4611686018427387904.0, 19) - 1.0) < 0.02);
+
+	rng := random.Xoshiro256.from_seed(19);
+	fmt.println("beta huge shapes", math.abs(random.beta(inout rng, 1e308, 1e308) - 0.5) < 1e-9);
+	smallest := math.F64_MIN_SUBNORMAL;
+	ones := 0;
+	foreach (_ in 0 ..< N) {
+		if (random.beta(inout rng, smallest, smallest) == 1.0) { ones += 1; }
+	}
+	fmt.println("beta subnormal shapes", math.abs(f64(ones)/f64(N) - 0.5) < 0.01);
+	t := random.student_t(inout rng, smallest);
+	fmt.println("student_t smallest freedom", math.is_infinite(t));
 }
