@@ -266,6 +266,7 @@ parse_time :: proc(text: string_view) -> Result(Time, Parse_Error) {
 	date_time := scanner.date_time() or_return;
 	if (scanner.at == scanner.bytes.len()) { return .err(.Missing_Offset); }
 	offset := scanner.offset() or_return;
+	scanner.confirm_leap(date_time.time, offset) or_return;
 	scanner.end() or_return;
 	return .ok(date_time.at_offset(offset).to_time() or_return .Out_Of_Range);
 }
@@ -275,6 +276,7 @@ parse_offset_date_time :: proc(text: string_view) -> Result(Offset_Date_Time, Pa
 	date_time := scanner.date_time() or_return;
 	if (scanner.at == scanner.bytes.len()) { return .err(.Missing_Offset); }
 	offset := scanner.offset() or_return;
+	scanner.confirm_leap(date_time.time, offset) or_return;
 	scanner.end() or_return;
 	return .ok(date_time.at_offset(offset));
 }
@@ -365,13 +367,12 @@ unit_length :: proc(unit: Unit) -> u64 {
 	}
 }
 
-// A number with an optional fraction: the whole part and the fraction's
-// digits, as many as 18 of them, the rest read and dropped.
+// A number with an optional fraction: the whole part, and the fraction's
+// digits as written, however many there are.
 @(private)
 Number :: struct {
-	whole:     u64,
-	fraction:  u64,
-	places:    int,
+	whole:    u64,
+	fraction: []u8,
 }
 
 @(private)
@@ -381,6 +382,8 @@ Scanner :: struct {
 	// The value's format, decided by its first part: all basic or all
 	// extended, as ISO 8601 requires.
 	basic: bool,
+	// The time of day read second 60, which an offset must then confirm.
+	leap:  bool,
 }
 
 impl Scanner {
@@ -422,25 +425,16 @@ impl Scanner {
 	// are read and dropped. No separator is no fraction.
 	nanoseconds :: proc(self: inout) -> Result(i64, Parse_Error) {
 		if (!self.take(u8('.')) && !self.take(u8(','))) { return .ok(0); }
-		number := self.fraction() or_return;
-		value := i64(number.fraction);
-		for (places := number.places; places < 9; places += 1) { value *= 10; }
-		for (places := number.places; places > 9; places -= 1) { value /= 10; }
-		return .ok(value);
+		fraction := self.fraction() or_return;
+		return .ok(i64(fraction_of(fraction, u64(SECOND))));
 	}
 
 	// The digits after a decimal sign, at least one.
-	fraction :: proc(self: inout) -> Result(Number, Parse_Error) {
-		number := Number{};
+	fraction :: proc(self: inout) -> Result([]u8, Parse_Error) {
 		start := self.at;
-		for (; self.peek() >= u8('0') && self.peek() <= u8('9'); self.at += 1) {
-			if (number.places < 18) {
-				number.fraction = number.fraction * 10 + u64(self.peek() - u8('0'));
-				number.places += 1;
-			}
-		}
+		for (; self.peek() >= u8('0') && self.peek() <= u8('9'); ) { self.at += 1; }
 		if (self.at == start) { return .err(.Invalid_Syntax); }
-		return .ok(number);
+		return .ok(self.bytes[start:self.at]);
 	}
 
 	// `2026-10-15` or `20261015`. The separator after the year decides the
@@ -464,10 +458,13 @@ impl Scanner {
 		self.separator(u8(':')) or_return;
 		second := self.digits(2) or_return;
 		nanosecond := self.nanoseconds() or_return;
-		// A leap second ends a UTC minute, and offsets are whole minutes, so it
-		// ends a local minute too. It reads as second 59, which is what a Unix
-		// clock shows through it (standard-library "Leap seconds").
-		if (second == 60 && minute == 59) { second = 59; }
+		// A leap second reads as second 59, which is what a Unix clock shows
+		// through it (standard-library "Leap seconds"). Without an offset any
+		// minute can end a UTC minute; an offset, read later, decides.
+		if (second == 60) {
+			second = 59;
+			self.leap = true;
+		}
 		return .ok(Time_Of_Day.from_components(hour, minute, second, int(nanosecond)) or_return .Invalid_Value);
 	}
 
@@ -497,6 +494,15 @@ impl Scanner {
 		return .ok(Offset{sign * (hours * 60 + minutes)});
 	}
 
+	// A leap second ends a UTC minute: local minute 59 at `Z`, 29 at +05:30,
+	// 44 at +05:45 (standard-library "Leap seconds").
+	confirm_leap :: proc(self, time: Time_Of_Day, offset: Offset) -> Status(Parse_Error) {
+		if (self.leap && ((time.minute() - offset.east) % 60 + 60) % 60 != 59) {
+			return .err(.Invalid_Value);
+		}
+		return .ok;
+	}
+
 	// Digits and an optional fraction, with at least one digit before it.
 	number :: proc(self: inout) -> Result(Number, Parse_Error) {
 		number := Number{};
@@ -509,9 +515,7 @@ impl Scanner {
 		}
 		if (self.at == start) { return .err(.Invalid_Syntax); }
 		if (self.take(u8('.')) || self.take(u8(','))) {
-			fraction := self.fraction() or_return;
-			number.fraction = fraction.fraction;
-			number.places = fraction.places;
+			number.fraction = self.fraction() or_return;
 		}
 		return .ok(number);
 	}
@@ -549,7 +553,7 @@ impl Scanner {
 			if (int(unit) <= last) { return .err(.Invalid_Syntax); }
 			last = int(unit);
 			total = add_component(total, number, unit) or_return;
-			fractional = number.places > 0;
+			fractional = number.fraction.len() > 0;
 			components += 1;
 		}
 		if (!timed || components == 0) { return .err(.Invalid_Syntax); }
@@ -569,7 +573,7 @@ impl Scanner {
 			if (int(unit) <= last) { return .err(.Invalid_Syntax); }
 			last = int(unit);
 			total = add_component(total, number, unit) or_return;
-			fractional = number.places > 0;
+			fractional = number.fraction.len() > 0;
 		}
 		return .ok(total);
 	}
@@ -593,15 +597,25 @@ impl Scanner {
 	}
 }
 
-// `total` plus `number` of `unit`, exactly: the fraction's share is computed
-// in 128 bits, so 18 places of a fractional hour do not overflow.
+// `total` plus `number` of `unit`. The fraction counts in full, however long,
+// and the sum is then truncated to the nanosecond.
 @(private)
 add_component :: proc(total: u64, number: Number, unit: Unit) -> Result(u64, Parse_Error) {
 	length := unit_length(unit);
 	whole := math.checked_mul(number.whole, length) or_return .Out_Of_Range;
-	scale: u128 = 1;
-	foreach (_ in 0 ..< number.places) { scale *= 10; }
-	part := u64(u128(number.fraction) * u128(length) / scale);
-	sum := math.checked_add(whole, part) or_return .Out_Of_Range;
+	sum := math.checked_add(whole, fraction_of(number.fraction, length)) or_return .Out_Of_Range;
 	return .ok(math.checked_add(total, sum) or_return .Out_Of_Range);
+}
+
+// `length` times the fraction `0.digits`, rounded down, exact for any number of
+// digits: long multiplication from the last digit, whose final carry is the
+// whole part of the product. Each carry is less than `length`, so nothing
+// overflows.
+@(private)
+fraction_of :: proc(digits: []u8, length: u64) -> u64 {
+	carry: u64 = 0;
+	for (index := digits.len(); index > 0; index -= 1) {
+		carry = (length * u64(digits[index - 1] - u8('0')) + carry) / 10;
+	}
+	return carry;
 }

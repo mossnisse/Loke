@@ -24,6 +24,9 @@ offset :: proc(minutes: int) -> time.Offset {
 Y2K :: time.Date.unix_days(time.parse_date("2000-01-01") or_else panic("no"));
 static_assert(Y2K == 10957);
 
+FOLDED_SECONDS :: time.from_seconds_f64(1.5);
+FOLDED_HALF :: time.from_seconds_f64(-0.0000000005);
+
 durations :: proc() {
 	fmt.println("-- durations");
 	// The proposal's table, short form then ISO 8601.
@@ -56,6 +59,8 @@ durations :: proc() {
 	fmt.println(time.from_seconds_f64(1.5), time.from_seconds_f64(-0.000000001), time.from_seconds_f64(9.3e9));
 	zero := 0.0;
 	fmt.println(time.from_seconds_f64(zero / zero), time.from_seconds_f64(1.0 / zero));
+	// The conversion also runs during compile-time evaluation.
+	fmt.println(FOLDED_SECONDS, FOLDED_HALF);
 
 	// Truncation toward zero; rounding halves away from it.
 	fmt.println(d.truncate(time.SECOND), (-d).truncate(time.SECOND), d.truncate(0));
@@ -283,6 +288,11 @@ parsing :: proc() {
 	// Leap seconds read as second 59, keeping their fraction, at minute 59.
 	fmt.println(time.parse_time("2016-12-31T23:59:60.5Z"), time.parse_time("2016-12-31T23:58:60Z"));
 	fmt.println(time.parse_offset_date_time("2017-01-01T00:59:60+01:00"), time.parse_time_of_day("12:59:60"));
+	// The UTC minute must be 59, whatever the local one is; without an offset
+	// any minute can be.
+	fmt.println(time.parse_time("2017-01-01T05:29:60+05:30"), time.parse_time("2017-01-01T05:44:60+05:45"));
+	fmt.println(time.parse_time("2016-12-31T18:59:60-05:00"), time.parse_offset_date_time("2017-01-01T05:59:60+05:30"));
+	fmt.println(time.parse_date_time("2016-12-31T23:58:60"), time.parse_time_of_day("05:29:60.25"));
 
 	// Every error.
 	failures := []string_view{
@@ -306,6 +316,9 @@ parsing :: proc() {
 		"-2562047h47m16.854775808s", "2562047h47m16.854775808s", "9999999999999h", "PT2562047H47M16.854775807S",
 		" 10ms ", "1s1s", "1s1h", "1.5h30m", "1", "h", "1x", "1d", "2w", "P1D", "P1Y", "PT1D", "P", "PT",
 		"PT1.5H30M", "PT1S1M", "-", "--1s", "1n", "1.s", ".5s",
+		// A long fraction counts in full before truncating to the nanosecond.
+		"0.0000000000002777778h", "PT0.0000000000002777778H", "0.0000000000166666667m",
+		"0.1666666666666666666666666667m", "1.9999999999999999999999999s", "0.99999999999999999999h",
 	};
 	foreach (spelling in durations) {
 		fmt.println(fmt.pad_right(spelling, 30), time.parse_duration(spelling));

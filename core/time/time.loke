@@ -88,12 +88,22 @@ impl Duration {
 // `seconds` rounded to the nearest nanosecond, or `.none` for a NaN, an
 // infinity, or a value beyond the range.
 from_seconds_f64 :: proc(seconds: f64) -> Option(Duration) {
-	nanoseconds := math.round(seconds * 1e9);
-	// 2^63 is exact in an `f64`. A NaN fails both comparisons.
+	nanoseconds := seconds * 1e9;
+	// 2^63 is exact in an `f64`. A NaN fails both comparisons. Past 2^52 every
+	// `f64` is whole, so rounding cannot carry a value in range out of it.
 	if (!(nanoseconds >= -9223372036854775808.0 && nanoseconds < 9223372036854775808.0)) {
 		return .none;
 	}
-	return .some(Duration(i64(nanoseconds)));
+	// Rounds half away from zero, as `math.round` does; that one calls C, which
+	// compile-time evaluation cannot.
+	whole := i64(nanoseconds);
+	rest := nanoseconds - f64(whole);
+	if (rest >= 0.5) {
+		whole += 1;
+	} else if (rest <= -0.5) {
+		whole -= 1;
+	}
+	return .some(Duration(whole));
 }
 
 // ----------------------------------------------------------------- instants --
@@ -205,11 +215,13 @@ tick_now :: proc() -> Tick {
 // monotonic clock shows the time has passed.
 sleep :: proc(duration: Duration) {
 	if (duration <= 0) { return; }
-	deadline := tick_now() + duration;
+	// The time slept, not a deadline: a reading plus the longest duration
+	// would overflow.
+	started := tick_now();
 	for (;;) {
-		remaining := deadline - tick_now();
-		if (remaining <= 0) { return; }
-		sleep_native(remaining);
+		slept := tick_now() - started;
+		if (slept >= duration) { return; }
+		sleep_native(duration - slept);
 	}
 }
 

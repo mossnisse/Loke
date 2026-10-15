@@ -1216,7 +1216,9 @@ boundaries and API shapes follow a few common choices:
   what the Rust library jiff does. Values inside a leap second keep their
   order among themselves but can sort before the end of the second 59 they
   follow. Leap seconds are rare, the last at the end of 2016, and are to stop
-  by 2035.
+  by 2035. The check is on the UTC minute, not the local one, because RFC 3339
+  shifts the leap second by the offset: it is `05:29:60` at `+05:30`. Text
+  without an offset could belong to any offset, so no minute can be ruled out.
 - **A fixed precision truncates.** Rounding could print a second, or a day,
   that has not arrived yet. A fixed width also makes timestamps sort as text;
   the shortest form does not, because `.` sorts before `Z`.

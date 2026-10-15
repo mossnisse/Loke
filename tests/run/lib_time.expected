@@ -17,6 +17,7 @@ true true
 2.7s
 .some(1.5s) .some(-1ns) .none
 .none .none
+.some(1.5s) .some(-1ns)
 3s -3s 3.7s
 4s -4s 2s
 -2s 1s
@@ -87,6 +88,9 @@ Z +05:30 -01:30 +23:59 -23:59 -1439
 .ok(+05:30) .ok(Z) .ok(+23:59)
 .ok(2016-12-31T23:59:59.5Z) .err(Invalid_Value)
 .ok(2017-01-01T00:59:59+01:00) .ok(12:59:59)
+.ok(2016-12-31T23:59:59Z) .ok(2016-12-31T23:59:59Z)
+.ok(2016-12-31T23:59:59Z) .err(Invalid_Value)
+.ok(2016-12-31T23:58:59) .ok(05:29:59.25)
                                .err(Invalid_Syntax)
 2026-10-15                     .err(Invalid_Syntax)
 2026-10-15T12:34               .err(Invalid_Syntax)
@@ -155,6 +159,12 @@ PT1S1M                         .err(Invalid_Syntax)
 1n                             .err(Invalid_Syntax)
 1.s                            .err(Invalid_Syntax)
 .5s                            .err(Invalid_Syntax)
+0.0000000000002777778h         .ok(1ns)
+PT0.0000000000002777778H       .ok(1ns)
+0.0000000000166666667m         .ok(1ns)
+0.1666666666666666666666666667m .ok(10s)
+1.9999999999999999999999999s   .ok(1.999999999s)
+0.99999999999999999999h        .ok(59m59.999999999s)
 -- clocks
 true true
 true true

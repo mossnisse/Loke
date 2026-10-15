@@ -54,9 +54,10 @@ checklist.
   nanoseconds; the calendar types `Date`, `Time_Of_Day`, `Date_Time`, and
   `Offset_Date_Time`, with ISO weeks and month arithmetic; and ISO 8601 and
   RFC 3339 text, printed through `fmt` and read back by `parse_time` and its
-  siblings, in the extended or basic format. See
-  [`core:time`](standard-library.md#coretime) and `examples/timestamps.loke`.
-  Time zones are not included yet.
+  siblings, in the extended or basic format. A leap second reads as second
+  59 wherever the UTC minute is 59, and a duration's fraction counts in full
+  however long it is. See [`core:time`](standard-library.md#coretime) and
+  `examples/timestamps.loke`. Time zones are not included yet.
 - `examples/corpus_runner.loke` reports on stderr how long the run took and
   which case was slowest.
 

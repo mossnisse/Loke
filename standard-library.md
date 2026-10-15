@@ -1783,7 +1783,9 @@ parse_duration(text: string_view) -> Result(Duration, Parse_Error)
   allowances, lower-case `t` and `z` and a space in place of `T`, and ISO
   8601's comma as the decimal sign. Seconds are required, as in RFC 3339, and
   an offset is `Z` or a sign with hours and minutes.
-- A fraction of any length is read and truncated after nine digits.
+- A fraction of any length is read. A timestamp's is truncated after nine
+  digits. A duration's counts in full before the total is truncated to whole
+  nanoseconds, so `0.0000000000002777778h`, a little over 1ns, reads as `1ns`.
 - `-00:00` reads as `Z`. RFC 3339 used it for an unknown local offset, which
   RFC 9557 now writes as `Z`.
 - Hour 24 is invalid, as in RFC 3339. Second 60 is a
@@ -1804,12 +1806,15 @@ parse_duration(text: string_view) -> Result(Duration, Parse_Error)
 
 ### Leap seconds
 
-Second 60 reads as second 59, keeping its fraction, when the minute is 59: a
-leap second ends a UTC minute, and offsets are whole minutes, so it ends a
-local minute too. At any other minute it is `Invalid_Value`. The date, hour,
-and minute stay as written, and the instant is off by one second at most, as
-it is in every Unix clock during a leap second. Printing never produces second
-60, and `Time_Of_Day.from_components` does not accept it.
+Second 60 reads as second 59, keeping its fraction. A leap second ends a UTC
+minute, so with an offset it is valid only where the UTC minute is 59: local
+minute 59 at `Z`, 29 at `+05:30`, 44 at `+05:45`. Elsewhere it is
+`Invalid_Value`. A `Date_Time` or `Time_Of_Day` has no offset, and an offset of
+whole minutes can make any minute end a UTC one, so these accept second 60 at
+every minute. The date, hour, and minute stay as written, and the instant is
+off by one second at most, as it is in every Unix clock during a leap second.
+Printing never produces second 60, and `Time_Of_Day.from_components` does not
+accept it.
 
 ## What is deliberately absent
 
