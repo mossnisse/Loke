@@ -49,6 +49,11 @@ checklist.
 
 ### Fixed
 
+- `swap`, `sort`, and `reverse_sort` on a `[]mut T` work during compile-time
+  evaluation, rearranging the storage the slice views, as they do at run time.
+  They were rejected with L0341, though an element assignment through the same
+  slice was accepted. `slice.reverse` and `random.shuffle` now run in a constant
+  initializer too.
 - A compound assignment through `operator([]=)` reads an index naming a
   scalar variable before its right operand, and a multiple assignment before
   any write (design.md "Evaluation order"): `grid[i] += bump(inout i)` wrote

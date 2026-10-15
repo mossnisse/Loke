@@ -1,0 +1,54 @@
+package main;
+
+import "core:fmt";
+import "core:random";
+import "core:slice";
+
+// design.md "Compile-time procedure evaluation" permits mutation, and a slice
+// views the storage it slices (design.md "Slices"), so `swap` and `sort`
+// through a `[]mut T` rearrange that storage during compilation exactly as
+// they do at run time.
+
+swapped :: proc() -> [3]int {
+	values := [3]int{3, 1, 2};
+	view := &mut values[:];
+	view.swap(0, 1);
+	return values;
+}
+
+// Only the viewed range moves.
+sorted_tail :: proc() -> [6]int {
+	values := [6]int{9, 5, 3, 8, 1, 7};
+	tail := &mut values[2:];
+	tail.sort();
+	head := &mut values[:2];
+	head.reverse_sort();
+	return values;
+}
+
+// A dynamic array's slice views its elements as well.
+reversed_dynamic :: proc() -> [4]int {
+	values: [dynamic]int = {};
+	values.append(1, 2, 3, 4);
+	slice.reverse(&mut values[:]);
+	return [4]int{values[0], values[1], values[2], values[3]};
+}
+
+dealt :: proc(seed: u64) -> [8]int {
+	rng := random.Xoshiro256.from_seed(seed);
+	deck := [8]int{0, 1, 2, 3, 4, 5, 6, 7};
+	random.shuffle(inout rng, &mut deck[:]);
+	return deck;
+}
+
+SWAPPED :: swapped();
+SORTED_TAIL :: sorted_tail();
+REVERSED :: reversed_dynamic();
+DEALT :: dealt(42);
+
+main :: proc() {
+	fmt.println(SWAPPED, SWAPPED == swapped());
+	fmt.println(SORTED_TAIL, SORTED_TAIL == sorted_tail());
+	fmt.println(REVERSED, REVERSED == reversed_dynamic());
+	fmt.println(DEALT, DEALT == dealt(42));
+}

@@ -1500,9 +1500,12 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
 	case .Sort, .Reverse_Sort:
-		// A slice's receiver is a borrowed header; only a dynamic array is a place.
-		if symbol.receiver != .Inout {
-			eval_fail(ev, v.span, "L0341", "a slice cannot be sorted at compile time")
+		// A dynamic array is sorted as its place. A slice's receiver is a copy of
+		// its header, but the header's elements are the viewed storage itself
+		// (`eval_slice`), so sorting them sorts what the slice views (design.md
+		// "Sorting slices").
+		if symbol.receiver != .Inout && underlying_kind(ev.k.c, self.type) != .Slice {
+			eval_fail(ev, v.span, "L0341", "this value cannot be sorted at compile time")
 			return nil, false
 		}
 		if resolved_element_order_policy(ev.k.c, element).kind == .Inherent {
@@ -1519,8 +1522,10 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		return none, true
 
 	case .Swap:
-		if symbol.receiver != .Inout {
-			eval_fail(ev, v.span, "L0341", "a slice cannot be rearranged at compile time")
+		// As for `sort`: a slice swaps the elements it views (design.md
+		// "Swapping elements").
+		if symbol.receiver != .Inout && underlying_kind(ev.k.c, self.type) != .Slice {
+			eval_fail(ev, v.span, "L0341", "this value cannot be rearranged at compile time")
 			return nil, false
 		}
 		left, left_ok := count_argument(ev, v, 1)

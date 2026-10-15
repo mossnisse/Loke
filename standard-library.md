@@ -1357,12 +1357,11 @@ it, and construct the generator with `from_seed`, as
 [examples/dice.loke](examples/dice.loke) does. Do not seed from the clock or a
 process ID: parallel runs started together share them.
 
-Seeded generators and the procedures that only compute on integers and floats
-can run during [compile-time evaluation](design.md#compile-time-procedure-evaluation),
+Seeded generators, the procedures that compute on integers and floats, and
+`fill` and `shuffle` can run during [compile-time evaluation](design.md#compile-time-procedure-evaluation),
 for example to build a table of random constants. `from_entropy`, a draw from an
 unseeded generator, `fill_secure`, and `secure_u64` cannot, and neither can
-`normal` and `exponential`, which call `core:math`. `shuffle` should run there
-but does not yet; see [Known gaps](known-gaps.md#compile-time-swap-and-sort-reject-a-slice).
+`normal` and `exponential`, which call `core:math`.
 
 ### Reproducibility
 
