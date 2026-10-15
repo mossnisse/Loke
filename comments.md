@@ -1185,6 +1185,49 @@ boundaries and API shapes follow a few common choices:
   its contract, not an implementation detail. The ziggurat tables are constants
   rather than computed at startup, so most normal and exponential values do not
   depend on the C library at all.
+- **`Time` is an `i64` of nanoseconds.** It is what `fs.Metadata` already
+  held and what Odin uses: arithmetic is one integer operation, and 1677 to
+  2262 covers every clock reading and every file time. Seconds and
+  nanoseconds in 16 bytes, as Go and jiff hold them, would make
+  `Offset_Date_Time.to_time` total, at twice the size and with a carry in
+  every operation. Dates outside the range stay in the calendar types.
+- **Dates count days.** A `Date` holds days since 1970 rather than a year,
+  month, and day, so its zero value is a date, 1970-01-01, rather than month
+  0, and comparing and stepping are integer operations. The fields come back
+  through Hinnant's `civil_from_days`, which is exact over the whole range
+  without tables.
+- **Years are 0000 to 9999.** They are the years ISO 8601 writes in four
+  digits without prior agreement and the ones RFC 3339 allows, and widening
+  the range later breaks nothing.
+- **A duration prints in a short form.** ISO 8601 spells 153 milliseconds
+  `PT0.153S`, which reads poorly in a log line. The short form is close to
+  Go's, but drops zero components, `1h30m` where Go prints `1h30m0s`, since
+  every number carries its unit. ISO 8601 remains a style away and both forms
+  parse.
+- **There is no `DAY` and no `Duration / Duration`.** With daylight saving a
+  calendar day is not always 24 hours, so steps of days belong to `Date`.
+  `Duration / Duration` beside `Duration / i64` would make `d / 2` ambiguous,
+  because the constant converts to either; the count of a unit is a method.
+- **A leap second reads as second 59.** Rejecting `23:59:60` would fail
+  valid RFC 3339 timestamps from a log written during one, and reading it as
+  the next day's 00:00:00 changes the date, so a `Date` or `Time_Of_Day` read
+  from the text would disagree with it. Second 59 keeps the date, hour, and
+  minute as written, loses only what Unix time cannot hold anyway, and is
+  what the Rust library jiff does. Values inside a leap second keep their
+  order among themselves but can sort before the end of the second 59 they
+  follow. Leap seconds are rare, the last at the end of 2016, and are to stop
+  by 2035.
+- **A fixed precision truncates.** Rounding could print a second, or a day,
+  that has not arrived yet. A fixed width also makes timestamps sort as text;
+  the shortest form does not, because `.` sorts before `Z`.
+- **`Offset_Date_Time` is not ordered.** Its fields would order 14:00+02:00
+  after 13:00Z, although it is the earlier instant. Ordering by instant
+  instead would make two unequal values neither less nor greater. `to_time()`
+  makes the comparison explicit.
+- **There are no named time zones.** Their data changes several times a year,
+  and a stale copy gives wrong local times with no error. When a caller needs
+  them, the data is the system's own, kept current by its updates: ICU on
+  Windows and the TZif files elsewhere. The compiler never ships tzdata.
 
 ## Compiler architecture audit (2026-09-28)
 

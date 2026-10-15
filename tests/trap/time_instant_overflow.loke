@@ -1,0 +1,8 @@
+package main;
+import "core:time";
+
+// standard-library "Instants": an instant past 2262 overflows.
+main :: proc() {
+	last := time.from_unix_nanoseconds(9223372036854775807);
+	_ = last + time.NANOSECOND;
+}

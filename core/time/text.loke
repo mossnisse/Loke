@@ -1,0 +1,607 @@
+// ISO 8601 text (standard-library "ISO 8601 text").
+//
+// Each type prints in the ISO 8601 extended format, in the RFC 3339 profile
+// where one applies, and its parser reads that back, the basic format, and
+// RFC 3339's allowances. A duration prints in a short form, `1h30m`, and reads
+// that or ISO 8601's `PT1H30M`.
+@(public)
+package time;
+
+import "core:fmt";
+import "core:math";
+
+// --------------------------------------------------------------- printing --
+
+// How many digits of a second print. A fixed precision truncates and never
+// rounds, so it never prints a second that has not arrived yet; for a
+// `Duration` it truncates to that unit before the short form prints.
+Precision :: enum { Shortest, Seconds, Milliseconds, Microseconds, Nanoseconds }
+
+// `basic` drops the separators: `20261015T123456Z`. `iso` prints a `Duration`
+// in ISO 8601 rather than the short form, and changes nothing for the other
+// types, which print ISO 8601 already.
+Style :: struct {
+	basic:     bool,
+	iso:       bool,
+	precision: Precision,
+}
+
+DEFAULT_STYLE :: Style{};
+
+// `value` printed in `style`, as `fmt.fixed` does for a float.
+styled :: proc(value: $T, style: Style) -> Styled(T) where is_styled(T) {
+	return Styled(T){value, style};
+}
+
+Styled :: struct($T: type) {
+	value: T,
+	style: Style,
+}
+
+impl Styled($T) {
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		when (T == Duration) {
+			text.put_duration(self.value, self.style);
+		} else when (T == Time) {
+			text.put_time(self.value, self.style);
+		} else when (T == Offset_Date_Time) {
+			text.put_offset_date_time(self.value, self.style);
+		} else when (T == Date_Time) {
+			text.put_date_time(self.value, self.style);
+		} else when (T == Date) {
+			text.put_date(self.value, self.style);
+		} else when (T == Time_Of_Day) {
+			text.put_time_of_day(self.value, self.style);
+		} else {
+			text.put_offset(self.value, self.style);
+		}
+		text.send(writer);
+	}
+}
+
+@(private)
+is_styled :: proc($T: type) -> bool {
+	return T == Duration || T == Time || T == Offset_Date_Time || T == Date_Time ||
+		T == Date || T == Time_Of_Day || T == Offset;
+}
+
+// One value's text, built in place and written in one call. The longest is an
+// `Offset_Date_Time` at 35 bytes.
+@(private)
+Text :: struct {
+	bytes: [48]u8,
+	used:  int,
+}
+
+impl Text {
+	send :: proc(self, writer: fmt.Writer) {
+		writer.write(self.bytes[:self.used]);
+	}
+
+	put :: proc(self: inout, byte: u8) {
+		self.bytes[self.used] = byte;
+		self.used += 1;
+	}
+
+	put_text :: proc(self: inout, text: string_view) {
+		foreach (byte in text.bytes()) { self.put(byte); }
+	}
+
+	// `value` in at least `width` digits, zero-padded.
+	put_number :: proc(self: inout, value: u64, width: int) {
+		digits: [20]u8 = {};
+		count := 0;
+		rest := value;
+		for (; rest > 0 || count < width; ) {
+			digits[count] = u8('0') + u8(rest % 10);
+			rest /= 10;
+			count += 1;
+		}
+		for (; count > 0; ) {
+			count -= 1;
+			self.put(digits[count]);
+		}
+	}
+
+	// A fraction of `digits` decimal places, `value` being less than
+	// 10^digits: shortest drops the trailing zeros, and nothing prints for
+	// zero; otherwise exactly `keep` places, truncated.
+	put_fraction :: proc(self: inout, value: u64, digits: int, keep: int, shortest: bool) {
+		rest := value;
+		places := digits;
+		if (shortest) {
+			if (rest == 0) { return; }
+			for (; rest % 10 == 0; ) {
+				rest /= 10;
+				places -= 1;
+			}
+		} else {
+			if (keep == 0) { return; }
+			for (; places > keep; ) {
+				rest /= 10;
+				places -= 1;
+			}
+		}
+		self.put(u8('.'));
+		self.put_number(rest, places);
+	}
+
+	put_date :: proc(self: inout, date: Date, style: Style) {
+		civil := civil_from_days(date.days);
+		self.put_number(u64(civil.year), 4);
+		if (!style.basic) { self.put(u8('-')); }
+		self.put_number(u64(civil.month), 2);
+		if (!style.basic) { self.put(u8('-')); }
+		self.put_number(u64(civil.day), 2);
+	}
+
+	put_time_of_day :: proc(self: inout, time: Time_Of_Day, style: Style) {
+		self.put_number(u64(time.hour()), 2);
+		if (!style.basic) { self.put(u8(':')); }
+		self.put_number(u64(time.minute()), 2);
+		if (!style.basic) { self.put(u8(':')); }
+		self.put_number(u64(time.second()), 2);
+		keep := 0;
+		switch (style.precision) {
+		case .Shortest, .Seconds:
+		case .Milliseconds: keep = 3;
+		case .Microseconds: keep = 6;
+		case .Nanoseconds:  keep = 9;
+		}
+		self.put_fraction(u64(time.nanosecond()), 9, keep, style.precision == .Shortest);
+	}
+
+	put_date_time :: proc(self: inout, value: Date_Time, style: Style) {
+		self.put_date(value.date, style);
+		self.put(u8('T'));
+		self.put_time_of_day(value.time, style);
+	}
+
+	put_offset :: proc(self: inout, offset: Offset, style: Style) {
+		if (offset.east == 0) {
+			self.put(u8('Z'));
+			return;
+		}
+		self.put(u8('-') if offset.east < 0 else u8('+'));
+		magnitude := u64(offset.east if offset.east > 0 else -offset.east);
+		self.put_number(magnitude / 60, 2);
+		if (!style.basic) { self.put(u8(':')); }
+		self.put_number(magnitude % 60, 2);
+	}
+
+	put_offset_date_time :: proc(self: inout, value: Offset_Date_Time, style: Style) {
+		self.put_date_time(value.date_time, style);
+		self.put_offset(value.offset, style);
+	}
+
+	put_time :: proc(self: inout, time: Time, style: Style) {
+		self.put_date_time(time.utc(), style);
+		self.put(u8('Z'));
+	}
+
+	put_duration :: proc(self: inout, duration: Duration, style: Style) {
+		value := duration;
+		switch (style.precision) {
+		case .Shortest, .Nanoseconds:
+		case .Seconds:      value = value.truncate(SECOND);
+		case .Milliseconds: value = value.truncate(MILLISECOND);
+		case .Microseconds: value = value.truncate(MICROSECOND);
+		}
+		// The magnitude as a `u64`, which holds the most negative one too.
+		magnitude := u64(i64(value)) if value >= 0 else u64(-(i64(value) + 1)) + 1;
+		if (value < 0) { self.put(u8('-')); }
+		hours := magnitude / u64(HOUR);
+		minutes := magnitude / u64(MINUTE) % 60;
+		seconds := magnitude / u64(SECOND) % 60;
+		fraction := magnitude % u64(SECOND);
+		if (style.iso) {
+			self.put_text("PT");
+			if (hours > 0) {
+				self.put_number(hours, 1);
+				self.put(u8('H'));
+			}
+			if (minutes > 0) {
+				self.put_number(minutes, 1);
+				self.put(u8('M'));
+			}
+			if (seconds > 0 || fraction > 0 || magnitude == 0) {
+				self.put_number(seconds, 1);
+				self.put_fraction(fraction, 9, 0, true);
+				self.put(u8('S'));
+			}
+			return;
+		}
+		if (magnitude == 0) {
+			self.put_text("0s");
+		} else if (magnitude < u64(MICROSECOND)) {
+			self.put_number(magnitude, 1);
+			self.put_text("ns");
+		} else if (magnitude < u64(MILLISECOND)) {
+			self.put_number(magnitude / u64(MICROSECOND), 1);
+			self.put_fraction(magnitude % u64(MICROSECOND), 3, 0, true);
+			self.put_text("µs");
+		} else if (magnitude < u64(SECOND)) {
+			self.put_number(magnitude / u64(MILLISECOND), 1);
+			self.put_fraction(magnitude % u64(MILLISECOND), 6, 0, true);
+			self.put_text("ms");
+		} else {
+			if (hours > 0) {
+				self.put_number(hours, 1);
+				self.put(u8('h'));
+			}
+			if (minutes > 0) {
+				self.put_number(minutes, 1);
+				self.put(u8('m'));
+			}
+			if (seconds > 0 || fraction > 0) {
+				self.put_number(seconds, 1);
+				self.put_fraction(fraction, 9, 0, true);
+				self.put(u8('s'));
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------- parsing --
+
+Parse_Error :: enum {
+	// The wrong shape: a missing separator, a digit too few, text left over.
+	Invalid_Syntax,
+	// A field outside its range: month 13, 2026-02-29, minute 60, or a
+	// calendar unit in a duration, which a `Duration` cannot hold exactly.
+	Invalid_Value,
+	// A date and time with no offset, given to `parse_time` or
+	// `parse_offset_date_time`.
+	Missing_Offset,
+	// A valid value the type cannot hold: a `Time` after 2262, a duration
+	// beyond 292 years.
+	Out_Of_Range,
+}
+
+// A date, time, and offset, converted to UTC. The offset is required, since a
+// local time names no instant.
+parse_time :: proc(text: string_view) -> Result(Time, Parse_Error) {
+	scanner := Scanner{bytes = trim(text)};
+	date_time := scanner.date_time() or_return;
+	if (scanner.at == scanner.bytes.len()) { return .err(.Missing_Offset); }
+	offset := scanner.offset() or_return;
+	scanner.end() or_return;
+	return .ok(date_time.at_offset(offset).to_time() or_return .Out_Of_Range);
+}
+
+parse_offset_date_time :: proc(text: string_view) -> Result(Offset_Date_Time, Parse_Error) {
+	scanner := Scanner{bytes = trim(text)};
+	date_time := scanner.date_time() or_return;
+	if (scanner.at == scanner.bytes.len()) { return .err(.Missing_Offset); }
+	offset := scanner.offset() or_return;
+	scanner.end() or_return;
+	return .ok(date_time.at_offset(offset));
+}
+
+// An offset is rejected rather than dropped.
+parse_date_time :: proc(text: string_view) -> Result(Date_Time, Parse_Error) {
+	scanner := Scanner{bytes = trim(text)};
+	date_time := scanner.date_time() or_return;
+	scanner.end() or_return;
+	return .ok(date_time);
+}
+
+parse_date :: proc(text: string_view) -> Result(Date, Parse_Error) {
+	scanner := Scanner{bytes = trim(text)};
+	date := scanner.date() or_return;
+	scanner.end() or_return;
+	return .ok(date);
+}
+
+parse_time_of_day :: proc(text: string_view) -> Result(Time_Of_Day, Parse_Error) {
+	scanner := Scanner{bytes = trim(text)};
+	// The format is the one the text uses: a colon after the hour is extended.
+	scanner.basic = scanner.bytes.len() > 2 && scanner.bytes[2] != u8(':');
+	time := scanner.time_of_day() or_return;
+	scanner.end() or_return;
+	return .ok(time);
+}
+
+parse_offset :: proc(text: string_view) -> Result(Offset, Parse_Error) {
+	scanner := Scanner{bytes = trim(text)};
+	scanner.basic = scanner.bytes.len() > 3 && scanner.bytes[3] != u8(':');
+	offset := scanner.offset() or_return;
+	scanner.end() or_return;
+	return .ok(offset);
+}
+
+// The short form, `1h30m` or `-153ms`, or ISO 8601's, `PT1H30M`. In either the
+// units come largest first, each at most once, with a fraction only on the
+// last. `us` is read as `µs`.
+parse_duration :: proc(text: string_view) -> Result(Duration, Parse_Error) {
+	scanner := Scanner{bytes = trim(text)};
+	negative := scanner.take(u8('-'));
+	magnitude: u64 = 0;
+	if (scanner.take(u8('P'))) {
+		magnitude = scanner.iso_duration() or_return;
+	} else {
+		magnitude = scanner.short_duration() or_return;
+	}
+	if (negative) {
+		if (magnitude > 0x8000000000000000) { return .err(.Out_Of_Range); }
+		if (magnitude == 0x8000000000000000) { return .ok(Duration(-9223372036854775807 - 1)); }
+		return .ok(Duration(-i64(magnitude)));
+	}
+	if (magnitude > 0x7FFFFFFFFFFFFFFF) { return .err(.Out_Of_Range); }
+	return .ok(Duration(i64(magnitude)));
+}
+
+// RFC 3339 and ISO 8601 allow nothing around a value; surrounding ASCII
+// whitespace is accepted anyway, as `core:strconv` accepts it.
+@(private)
+trim :: proc(text: string_view) -> []u8 {
+	bytes := text.bytes();
+	low, high := 0, bytes.len();
+	for (; low < high && is_space(bytes[low]); ) { low += 1; }
+	for (; high > low && is_space(bytes[high - 1]); ) { high -= 1; }
+	return bytes[low:high];
+}
+
+@(private)
+is_space :: proc(byte: u8) -> bool {
+	return byte == u8(' ') || byte == u8('\t') || byte == u8('\n') || byte == u8('\r') ||
+		byte == u8('\v') || byte == u8('\f');
+}
+
+// The short form's units, largest first.
+@(private)
+Unit :: enum { Hour, Minute, Second, Millisecond, Microsecond, Nanosecond }
+
+@(private)
+unit_length :: proc(unit: Unit) -> u64 {
+	switch (unit) {
+	case .Hour:        return u64(HOUR);
+	case .Minute:      return u64(MINUTE);
+	case .Second:      return u64(SECOND);
+	case .Millisecond: return u64(MILLISECOND);
+	case .Microsecond: return u64(MICROSECOND);
+	case .Nanosecond:  return 1;
+	}
+}
+
+// A number with an optional fraction: the whole part and the fraction's
+// digits, as many as 18 of them, the rest read and dropped.
+@(private)
+Number :: struct {
+	whole:     u64,
+	fraction:  u64,
+	places:    int,
+}
+
+@(private)
+Scanner :: struct {
+	bytes: []u8,
+	at:    int,
+	// The value's format, decided by its first part: all basic or all
+	// extended, as ISO 8601 requires.
+	basic: bool,
+}
+
+impl Scanner {
+	peek :: proc(self) -> u8 {
+		if (self.at < self.bytes.len()) { return self.bytes[self.at]; }
+		return 0;
+	}
+
+	take :: proc(self: inout, byte: u8) -> bool {
+		if (self.peek() != byte) { return false; }
+		self.at += 1;
+		return true;
+	}
+
+	// A separator the extended format writes and the basic format leaves out.
+	separator :: proc(self: inout, byte: u8) -> Status(Parse_Error) {
+		if (!self.basic && !self.take(byte)) { return .err(.Invalid_Syntax); }
+		return .ok;
+	}
+
+	end :: proc(self) -> Status(Parse_Error) {
+		if (self.at != self.bytes.len()) { return .err(.Invalid_Syntax); }
+		return .ok;
+	}
+
+	// Exactly `count` decimal digits.
+	digits :: proc(self: inout, count: int) -> Result(int, Parse_Error) {
+		value := 0;
+		foreach (_ in 0 ..< count) {
+			byte := self.peek();
+			if (byte < u8('0') || byte > u8('9')) { return .err(.Invalid_Syntax); }
+			value = value * 10 + int(byte - u8('0'));
+			self.at += 1;
+		}
+		return .ok(value);
+	}
+
+	// `.` or `,` and at least one digit, as nanoseconds; digits past the ninth
+	// are read and dropped. No separator is no fraction.
+	nanoseconds :: proc(self: inout) -> Result(i64, Parse_Error) {
+		if (!self.take(u8('.')) && !self.take(u8(','))) { return .ok(0); }
+		number := self.fraction() or_return;
+		value := i64(number.fraction);
+		for (places := number.places; places < 9; places += 1) { value *= 10; }
+		for (places := number.places; places > 9; places -= 1) { value /= 10; }
+		return .ok(value);
+	}
+
+	// The digits after a decimal sign, at least one.
+	fraction :: proc(self: inout) -> Result(Number, Parse_Error) {
+		number := Number{};
+		start := self.at;
+		for (; self.peek() >= u8('0') && self.peek() <= u8('9'); self.at += 1) {
+			if (number.places < 18) {
+				number.fraction = number.fraction * 10 + u64(self.peek() - u8('0'));
+				number.places += 1;
+			}
+		}
+		if (self.at == start) { return .err(.Invalid_Syntax); }
+		return .ok(number);
+	}
+
+	// `2026-10-15` or `20261015`. The separator after the year decides the
+	// format for the rest of the value.
+	date :: proc(self: inout) -> Result(Date, Parse_Error) {
+		year := self.digits(4) or_return;
+		self.basic = self.peek() != u8('-');
+		self.separator(u8('-')) or_return;
+		month_number := self.digits(2) or_return;
+		self.separator(u8('-')) or_return;
+		day := self.digits(2) or_return;
+		month := Month.from_int(month_number) or_return .Invalid_Value;
+		return .ok(Date.from_components(year, month, day) or_return .Invalid_Value);
+	}
+
+	// `14:34:56.789` or `143456.789`; seconds are required, as in RFC 3339.
+	time_of_day :: proc(self: inout) -> Result(Time_Of_Day, Parse_Error) {
+		hour := self.digits(2) or_return;
+		self.separator(u8(':')) or_return;
+		minute := self.digits(2) or_return;
+		self.separator(u8(':')) or_return;
+		second := self.digits(2) or_return;
+		nanosecond := self.nanoseconds() or_return;
+		// A leap second ends a UTC minute, and offsets are whole minutes, so it
+		// ends a local minute too. It reads as second 59, which is what a Unix
+		// clock shows through it (standard-library "Leap seconds").
+		if (second == 60 && minute == 59) { second = 59; }
+		return .ok(Time_Of_Day.from_components(hour, minute, second, int(nanosecond)) or_return .Invalid_Value);
+	}
+
+	date_time :: proc(self: inout) -> Result(Date_Time, Parse_Error) {
+		date := self.date() or_return;
+		if (!self.take(u8('T')) && !self.take(u8('t')) && !self.take(u8(' '))) {
+			return .err(.Invalid_Syntax);
+		}
+		time := self.time_of_day() or_return;
+		return .ok(Date_Time{date, time});
+	}
+
+	// `Z`, or a sign and hours and minutes. `-00:00`, which RFC 3339 used for
+	// an unknown local offset, reads as `Z`, the spelling RFC 9557 gives it.
+	offset :: proc(self: inout) -> Result(Offset, Parse_Error) {
+		if (self.take(u8('Z')) || self.take(u8('z'))) { return .ok(UTC); }
+		sign := 1;
+		if (self.take(u8('-'))) {
+			sign = -1;
+		} else if (!self.take(u8('+'))) {
+			return .err(.Invalid_Syntax);
+		}
+		hours := self.digits(2) or_return;
+		self.separator(u8(':')) or_return;
+		minutes := self.digits(2) or_return;
+		if (hours > 23 || minutes > 59) { return .err(.Invalid_Value); }
+		return .ok(Offset{sign * (hours * 60 + minutes)});
+	}
+
+	// Digits and an optional fraction, with at least one digit before it.
+	number :: proc(self: inout) -> Result(Number, Parse_Error) {
+		number := Number{};
+		start := self.at;
+		for (; self.peek() >= u8('0') && self.peek() <= u8('9'); self.at += 1) {
+			number.whole = math.checked_add(
+				math.checked_mul(number.whole, u64(10)) or_return .Out_Of_Range,
+				u64(self.peek() - u8('0')),
+			) or_return .Out_Of_Range;
+		}
+		if (self.at == start) { return .err(.Invalid_Syntax); }
+		if (self.take(u8('.')) || self.take(u8(','))) {
+			fraction := self.fraction() or_return;
+			number.fraction = fraction.fraction;
+			number.places = fraction.places;
+		}
+		return .ok(number);
+	}
+
+	// After the `P`: `T` and hours, minutes, and seconds, at least one of them.
+	iso_duration :: proc(self: inout) -> Result(u64, Parse_Error) {
+		total: u64 = 0;
+		components := 0;
+		timed := false;
+		last := -1;
+		fractional := false;
+		for (; self.at < self.bytes.len(); ) {
+			if (!timed && self.take(u8('T'))) {
+				timed = true;
+				continue;
+			}
+			if (fractional) { return .err(.Invalid_Syntax); }
+			number := self.number() or_return;
+			designator := self.peek();
+			self.at += 1;
+			if (!timed) {
+				// Years, months, weeks, and days.
+				if (designator == u8('Y') || designator == u8('M') || designator == u8('W') || designator == u8('D')) {
+					return .err(.Invalid_Value);
+				}
+				return .err(.Invalid_Syntax);
+			}
+			unit := Unit.Hour;
+			switch (designator) {
+			case u8('H'): unit = .Hour;
+			case u8('M'): unit = .Minute;
+			case u8('S'): unit = .Second;
+			case: return .err(.Invalid_Syntax);
+			}
+			if (int(unit) <= last) { return .err(.Invalid_Syntax); }
+			last = int(unit);
+			total = add_component(total, number, unit) or_return;
+			fractional = number.places > 0;
+			components += 1;
+		}
+		if (!timed || components == 0) { return .err(.Invalid_Syntax); }
+		return .ok(total);
+	}
+
+	// `1h30m`, `2m0.5s`, `153ms`, `1.5µs`, `250ns`.
+	short_duration :: proc(self: inout) -> Result(u64, Parse_Error) {
+		total: u64 = 0;
+		last := -1;
+		fractional := false;
+		if (self.at == self.bytes.len()) { return .err(.Invalid_Syntax); }
+		for (; self.at < self.bytes.len(); ) {
+			if (fractional) { return .err(.Invalid_Syntax); }
+			number := self.number() or_return;
+			unit := self.unit() or_return;
+			if (int(unit) <= last) { return .err(.Invalid_Syntax); }
+			last = int(unit);
+			total = add_component(total, number, unit) or_return;
+			fractional = number.places > 0;
+		}
+		return .ok(total);
+	}
+
+	unit :: proc(self: inout) -> Result(Unit, Parse_Error) {
+		if (self.take(u8('h'))) { return .ok(.Hour); }
+		if (self.take(u8('m'))) {
+			if (self.take(u8('s'))) { return .ok(.Millisecond); }
+			return .ok(.Minute);
+		}
+		if (self.take(u8('s'))) { return .ok(.Second); }
+		if (self.take(u8('n'))) {
+			if (self.take(u8('s'))) { return .ok(.Nanosecond); }
+			return .err(.Invalid_Syntax);
+		}
+		// `u`, `µ` (U+00B5), or the Greek `μ` (U+03BC), as Go reads them.
+		micro := self.take(u8('u')) || (self.take(0xC2) && self.take(0xB5)) || (self.take(0xCE) && self.take(0xBC));
+		if (micro && self.take(u8('s'))) { return .ok(.Microsecond); }
+		if (self.take(u8('d')) || self.take(u8('w')) || self.take(u8('y'))) { return .err(.Invalid_Value); }
+		return .err(.Invalid_Syntax);
+	}
+}
+
+// `total` plus `number` of `unit`, exactly: the fraction's share is computed
+// in 128 bits, so 18 places of a fractional hour do not overflow.
+@(private)
+add_component :: proc(total: u64, number: Number, unit: Unit) -> Result(u64, Parse_Error) {
+	length := unit_length(unit);
+	whole := math.checked_mul(number.whole, length) or_return .Out_Of_Range;
+	scale: u128 = 1;
+	foreach (_ in 0 ..< number.places) { scale *= 10; }
+	part := u64(u128(number.fraction) * u128(length) / scale);
+	sum := math.checked_add(whole, part) or_return .Out_Of_Range;
+	return .ok(math.checked_add(total, sum) or_return .Out_Of_Range);
+}

@@ -10,6 +10,7 @@ import "core:process";
 import "core:slice";
 import "core:strings";
 import "core:thread";
+import "core:time";
 
 // A test harness in Loke: the shape of the Odin suite's corpora. A case is a
 // `<case>.loke` file in the corpus directory, or a `<case>` package directory
@@ -24,7 +25,8 @@ import "core:thread";
 // its LLVM IR must contain (`ir_contains`), and LLVM must assemble the IR when
 // the compiler's `-print-toolchain` finds clang. A `<case>.flags` file adds one
 // compiler flag per line. Cases run on a thread per processor, and are reported
-// in name order once all have finished.
+// in name order once all have finished; the run's time and its slowest case go
+// to stderr, so the report itself stays the same from run to run.
 //
 // Usage: corpus_runner <compiler> <corpus directory> <scratch directory> [-trap | -diagnostics | -syntax | -ir]
 
@@ -57,7 +59,10 @@ main :: proc() {
 	}
 	reasons: [dynamic]Option(string) = {};
 	reasons.resize(cases.get().len());
-	board := shared(thread.Mutex(Board){value = {reasons = move(reasons)}});
+	took: [dynamic]time.Duration = {};
+	took.resize(cases.get().len());
+	board := shared(thread.Mutex(Board){value = {reasons = move(reasons), took = move(took)}});
+	started := time.tick_now();
 	{
 		workers: [dynamic]thread.Thread = {};
 		for (i := 0; i < thread.processor_count() && i < cases.get().len(); i += 1) {
@@ -77,6 +82,13 @@ main :: proc() {
 		}
 	}
 	fmt.println(passed, "passed,", failed, "failed");
+	slowest := 0;
+	foreach (spent, index in guard.get().took.indexed()) {
+		if (spent > guard.get().took[slowest]) { slowest = index; }
+	}
+	if (cases.get().len() > 0) {
+		fmt.eprintln("took", started.elapsed(), "- slowest", cases.get()[slowest], guard.get().took[slowest]);
+	}
 	if (failed > 0) { os.exit(1); }
 }
 
@@ -98,6 +110,8 @@ Board :: struct {
 	next:    int,
 	// Why each case failed; `.none` once it passed.
 	reasons: [dynamic]Option(string),
+	// How long each case took to compile and run.
+	took:    [dynamic]time.Duration,
 }
 
 // One worker's copy of the run, which a thread must own.
@@ -121,11 +135,13 @@ work :: proc(job: move Job) {
 			guard.get().next += 1;
 		}
 		if (index >= job.cases.get().len()) { return; }
-		switch (check(job.compiler, job.corpus, job.scratch, job.cases.get()[index], job.mode, job.clang)) {
+		started := time.tick_now();
+		outcome := check(job.compiler, job.corpus, job.scratch, job.cases.get()[index], job.mode, job.clang);
+		guard := job.board.get().lock();
+		guard.get().took[index] = started.elapsed();
+		switch (move(outcome)) {
 		case .ok:
-		case .err(reason):
-			guard := job.board.get().lock();
-			guard.get().reasons[index] = .some(reason);
+		case .err(reason): guard.get().reasons[index] = .some(reason);
 		}
 	}
 }

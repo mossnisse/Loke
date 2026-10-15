@@ -97,10 +97,11 @@ Implementation order:
    [Standard-library verification](compiler-architecture.md#standard-library-verification).
 
 Current optional gaps, to add only when a caller establishes their contract:
-`core:bytes`, `core:time` (see the
-[proposal](open-questions.md#coretime-proposal-2026-10-15)), `core:unicode`,
+`core:bytes`, `core:unicode`,
 `core:encoding/base64`, `core:encoding/json`, and `core:testing`; in
-`core:random`, `f32` distributions,
+`core:time`, the local and named time zones (see
+[Open questions in `core:time`](open-questions.md#open-questions-in-coretime));
+in `core:random`, `f32` distributions,
 sampling indices from a range without materializing it, and distributions such
 as the negative binomial, Cauchy, and Weibull; buffered streams,
 `fs.replace_atomic`, `fs.absolute`, `fs.canonicalize`, symlinks, and file

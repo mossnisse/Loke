@@ -1,0 +1,8 @@
+package main;
+import "core:time";
+
+// standard-library "The calendar": stepping months before 0000-01 panics.
+main :: proc() {
+	first := time.Date.from_components(0, .March, 31) or_else panic("not a date");
+	first.add_months(-3);
+}

@@ -6,6 +6,7 @@ import "core:io";
 import "core:os";
 import "core:path";
 import "core:strings";
+import "core:time";
 
 // `core:fs` and `core:path` against a real filesystem (standard-library
 // "`core:fs`" and "`core:path`").
@@ -137,9 +138,10 @@ main :: proc() {
 		fmt.println(true);
 		fmt.println(int(info.kind));
 		fmt.println(info.size);
-		// The modification time is nanoseconds since the Unix epoch, so a file
-		// written moments ago sits between 2020 and 2100 rather than in 1601.
-		fmt.println(info.modified > 1577836800000000000 && info.modified < 4102444800000000000);
+		// A file written moments ago has a time, and it sits between 2020 and
+		// 2100 rather than in 1601.
+		written := info.modified or_else time.Time{};
+		fmt.println(written > time.from_unix_nanoseconds(1577836800000000000) && written < time.from_unix_nanoseconds(4102444800000000000));
 	case .err:
 		fmt.println(false);
 		fmt.println(-1);

@@ -23,6 +23,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 | Start threads or protect shared state | [`core:thread`](#corethread) |
 | Use numeric functions and types | [`core:math`](#coremath) |
 | Draw random numbers, shuffle, sample, or get secret bytes | [`core:random`](#corerandom) |
+| Read clocks, work with dates, or print and parse ISO 8601 times | [`core:time`](#coretime) |
 
 Start with the [design rules](#design-rules) for text, errors, and ownership.
 The [package layout](#package-layout) lists the remaining foundational packages.
@@ -138,6 +139,7 @@ core:encoding/utf16   UTF-8 to UTF-16 and back
 core:endian           fixed byte-order storage wrappers
 core:math             elementary functions, Complex, Quaternion
 core:random           seeded generators, entropy, distributions
+core:time             clocks, durations, the calendar, ISO 8601 text
 core:slice            slice algorithms and sorting            *
 core:container        Small_Array, Bit_Set, Enum_Array        *
 core:log              logging over the selected provider
@@ -917,9 +919,11 @@ operation requires a directory and preserves the native error number.
 
 `exists` answers `.ok(false)` only for a definite not-found result; permission
 and I/O failures remain errors. `Metadata` holds `kind` (`File`, `Directory`,
-or `Other`), `size` in bytes, and `modified` as nanoseconds since the Unix epoch
-in an `i64`, until `core:time` gives it a type. There is no symlink support; when
-it arrives its behavior is explicit, not inherited from what Windows does.
+or `Other`), `size` in bytes, and `modified`, the last write as an
+`Option(time.Time)`: `.none` where the filesystem keeps no such time, and a
+time outside the range of `time.Time` saturating at its end. There is no
+symlink support; when it arrives its behavior is explicit, not inherited from
+what Windows does.
 
 ## `core:path`
 
@@ -1532,6 +1536,280 @@ These are programmer errors and panic, naming the procedure:
 
 An endpoint type wider than 64 bits is rejected when `in_range` is
 instantiated.
+
+## `core:time`
+
+`core:time` has clocks, durations, instants, the proleptic Gregorian calendar,
+fixed UTC offsets, and ISO 8601 text. Dates and times print in the ISO 8601
+extended format, in the RFC 3339 profile where one applies, and parse back. A
+duration prints in a short form, `1h30m` or `153ms`; its ISO 8601 form,
+`PT1H30M`, is one style away and parses too. There is no locale, no month or
+weekday name in text, and no pattern language.
+
+Named time zones and the system's local zone are not here yet; see
+[Open questions in `core:time`](open-questions.md#open-questions-in-coretime).
+
+| Type | Holds | Zero value |
+| --- | --- | --- |
+| `Duration` | Signed nanoseconds, a `distinct i64`: about ±292 years | No time |
+| `Tick` | A monotonic clock reading | A reading at an unspecified moment |
+| `Time` | An instant: nanoseconds since 1970-01-01T00:00:00Z in an `i64`, from 1677-09-21 to 2262-04-11 | The Unix epoch |
+| `Date` | A date from 0000-01-01 to 9999-12-31, held as days since 1970-01-01 | 1970-01-01 |
+| `Time_Of_Day` | Nanoseconds since midnight, less than 24 hours | Midnight |
+| `Date_Time` | A `Date` and a `Time_Of_Day`, with no offset | 1970-01-01T00:00:00 |
+| `Offset` | Whole minutes east of UTC, −23:59 to +23:59 | UTC |
+| `Offset_Date_Time` | A `Date_Time` and the `Offset` it was read at | 1970-01-01T00:00:00Z |
+
+Every zero value is a valid value. All of them are plain copyable data with no
+resource to drop, so they cross threads freely. The four calendar types are the
+four kinds of date and time ISO 8601 text distinguishes, and TOML's four:
+local date, local time, local date-time, and offset date-time.
+
+Everything except `now`, `tick_now`, and `sleep` is integer arithmetic in Loke,
+so it also runs during
+[compile-time evaluation](design.md#compile-time-procedure-evaluation).
+
+### Clocks
+
+```odin
+now() -> Time
+tick_now() -> Tick
+Tick.elapsed(self) -> Duration
+Tick - Tick -> Duration
+Tick + Duration -> Tick
+sleep(duration: Duration)
+```
+
+`now` reads the system clock: `GetSystemTimePreciseAsFileTime` on Windows, in
+100-nanosecond units. It follows changes to the clock's setting, so a reading
+can be earlier than the one before it. Measure intervals with `Tick`, which is
+monotonic: `QueryPerformanceCounter` on Windows, scaled to nanoseconds by a
+quotient and a remainder so the product cannot overflow. Only the difference
+between two ticks of one process means anything.
+
+`sleep` blocks the calling thread for at least `duration`; zero or a negative
+duration returns at once. Windows' `Sleep` counts whole milliseconds on a
+scheduler tick and can return early, so `sleep` sleeps again until a monotonic
+reading shows the time has passed.
+
+### Durations
+
+```odin
+Duration :: distinct i64
+NANOSECOND, MICROSECOND, MILLISECOND, SECOND, MINUTE, HOUR :: Duration
+
+Duration + Duration, Duration - Duration, -Duration, Duration * i64,
+i64 * Duration, Duration / i64, Duration % Duration, comparisons
+Duration.seconds(self) -> i64           // and milliseconds, microseconds;
+                                        // each rounds toward zero
+Duration.seconds_f64(self) -> f64
+from_seconds_f64(seconds: f64) -> Option(Duration)
+Duration.truncate(self, unit: Duration) -> Duration
+Duration.round(self, unit: Duration) -> Duration
+```
+
+A `Duration` is exact, and arithmetic that overflows panics, as signed integer
+arithmetic does ([Integer overflow](design.md#integer-overflow)). There is no
+`DAY`: once a zone has daylight saving, a calendar day is not always 24 hours,
+so steps of days belong to `Date`. There is no `Duration / Duration` either:
+beside `Duration / i64` it would make `d / 2` ambiguous. A count of units is
+`seconds()` and its siblings, or `i64(d) / i64(unit)`.
+
+`from_seconds_f64` rounds to the nearest nanosecond and answers `.none` for a
+NaN, an infinity, or a value beyond the range. `truncate` moves toward zero to
+a multiple of `unit` and `round` to the nearest one, halves away from zero; a
+unit of zero or less leaves the duration as it is.
+
+A duration prints in the short form:
+
+| Duration | Short form | ISO 8601 (`iso = true`) |
+| --- | --- | --- |
+| 90 minutes | `1h30m` | `PT1H30M` |
+| 36 hours | `36h` | `PT36H` |
+| 2 minutes 0.5 seconds | `2m0.5s` | `PT2M0.5S` |
+| 1.5 seconds | `1.5s` | `PT1.5S` |
+| 153 milliseconds | `153ms` | `PT0.153S` |
+| 1.5 microseconds | `1.5µs` | `PT0.0000015S` |
+| 250 nanoseconds | `250ns` | `PT0.00000025S` |
+| None | `0s` | `PT0S` |
+| −1.5 seconds | `-1.5s` | `-PT1.5S` |
+
+- From one second up, the form is hours, minutes, and seconds, each written
+  only when it is not zero, with a fraction only on the seconds. Below one
+  second it is a single unit, `ms`, `µs`, or `ns`, the largest that leaves a
+  whole number in front of the point, with a fraction as needed.
+- Hours never roll over into days, for the same reason there is no `DAY`.
+- A negative duration takes a leading `-`, which is also how Temporal writes
+  a negative ISO 8601 duration and Java's `Duration.parse` reads one.
+
+### Instants
+
+```odin
+Time :: struct { /* private: Unix nanoseconds */ }
+
+from_unix_nanoseconds(nanoseconds: i64) -> Time
+from_unix_seconds(seconds: i64) -> Option(Time)
+Time.unix_nanoseconds(self) -> i64
+Time.unix_seconds(self) -> i64          // rounds down
+Time + Duration -> Time, Time - Duration -> Time, Time - Time -> Duration,
+comparisons
+Time.utc(self) -> Date_Time
+Time.at_offset(self, offset: Offset) -> Offset_Date_Time
+```
+
+`Time` is Unix time: every day has 86 400 seconds and
+[leap seconds](#leap-seconds) are not counted, as in POSIX, Go, Java, and
+Rust. It prints in UTC with `Z`: `2026-10-15T12:34:56.789Z`. Arithmetic past
+the range panics. `at_offset` never overflows: an instant at either end of the
+range has a local date and time at every offset.
+
+### The calendar
+
+```odin
+Month :: enum { January = 1, February, ..., December }
+Weekday :: enum { Monday = 1, Tuesday, ..., Sunday }
+
+Date.from_components(year: int, month: Month, day: int) -> Option(Date)
+Date.from_unix_days(days: i64) -> Option(Date)
+Date.year(self) -> int                  // and month, day, weekday, day_of_year
+Date.iso_week(self) -> (year: int, week: int)
+Date.unix_days(self) -> i64
+Date.add_days(self, days: i64) -> Date
+Date.add_months(self, months: i64) -> Date
+Date.add_years(self, years: i64) -> Date
+Date.days_until(self, later: Date) -> i64
+is_leap_year(year: int) -> bool
+days_in_month(year: int, month: Month) -> int
+
+Time_Of_Day.from_components(hour, minute, second: int,
+	nanosecond: int = 0) -> Option(Time_Of_Day)
+Time_Of_Day.hour(self) -> int           // and minute, second, nanosecond
+
+Date_Time :: struct { date: Date, time: Time_Of_Day }
+Date_Time + Duration -> Date_Time, Date_Time - Duration -> Date_Time,
+comparisons
+Date_Time.at_offset(self, offset: Offset) -> Offset_Date_Time
+```
+
+The calendar is ISO 8601's proleptic Gregorian calendar, with year 0 the year
+before year 1. Years 0000 to 9999 are the ones ISO 8601 writes in four digits
+without prior agreement and the ones RFC 3339 allows. Weekdays are numbered as
+ISO 8601 numbers them, Monday first, and `iso_week` gives the ISO 8601
+week-numbering year and week: 2021-01-03 is in 2020's week 53.
+
+`add_months` and `add_years` keep the day of the month unless the resulting
+month is shorter, and then take its last day: 2026-01-31 plus one month is
+2026-02-28, and 2024-02-29 plus one year is 2025-02-28. A computed date
+outside the range panics, as integer overflow does. Dates read from input are
+checked by the constructors and parsers, which answer `.none` or an error
+instead.
+
+Adding a `Duration` to a `Date_Time` counts every day as 24 hours: without a
+zone there is no daylight saving.
+
+`Time`, `Date`, `Time_Of_Day`, and `Date_Time` declare `<`, `<=`, `>`, and
+`>=`, ordering chronologically, since a struct is not ordered field by field
+([Comparison operators](design.md#comparison-operators)).
+
+### Offsets
+
+```odin
+Offset :: struct { /* private: minutes east of UTC */ }
+UTC :: Offset{}
+Offset.from_minutes(minutes: int) -> Option(Offset)
+Offset.minutes(self) -> int
+
+Offset_Date_Time :: struct { date_time: Date_Time, offset: Offset }
+Offset_Date_Time.to_time(self) -> Option(Time)
+```
+
+Offsets are whole minutes up to ±23:59, the range RFC 3339 writes.
+`to_time` answers `.none` outside the range of `Time`.
+
+`Offset_Date_Time` has `==` and no `<`. Two values for one instant at
+different offsets are unequal, and ordering their fields would put the later
+instant first; compare `to_time()` instead.
+
+### ISO 8601 text
+
+| Type | Prints | With `basic = true` |
+| --- | --- | --- |
+| `Time` | `2026-10-15T12:34:56.789Z` | `20261015T123456.789Z` |
+| `Offset_Date_Time` | `2026-10-15T14:34:56.789+02:00` | `20261015T143456.789+0200` |
+| `Date_Time` | `2026-10-15T14:34:56` | `20261015T143456` |
+| `Date` | `2026-10-15` | `20261015` |
+| `Time_Of_Day` | `14:34:56.789` | `143456.789` |
+| `Offset` | `+02:00`, or `Z` when zero | `+0200` |
+| `Duration` | `1h30m0.5s` | The same |
+
+- Seconds always print. A fraction prints with as few digits as are exact, and
+  not at all for whole seconds, as Temporal and Go's `RFC3339Nano` do.
+- A zero offset prints `Z`; ISO 8601 treats `Z` and `+00:00` as the same
+  offset.
+- `fmt.Options` do not affect these types.
+
+A wrapper chooses another form, as `fmt.fixed` does for floats:
+
+```odin
+Precision :: enum { Shortest, Seconds, Milliseconds, Microseconds, Nanoseconds }
+Style :: struct { basic: bool, iso: bool, precision: Precision }
+DEFAULT_STYLE :: Style{}
+styled(value: $T, style: Style) -> Styled(T)
+```
+
+`iso` prints a `Duration` in ISO 8601 and does nothing for the other types,
+which print ISO 8601 already. A fixed precision prints exactly that many
+digits of a second, so every date and time of one type prints at one width and
+the text sorts as the times do. It truncates and never rounds, so it never
+prints a second that has not arrived yet. For a `Duration` it truncates to that
+unit before the short form prints, so `.Milliseconds` gives `1.234s` and
+`153ms`. `basic` drops the separators, which also makes a timestamp fit in a
+Windows file name, where `:` is not allowed: `backup-20261015T123456Z.zip`.
+
+```odin
+Parse_Error :: enum { Invalid_Syntax, Invalid_Value, Missing_Offset, Out_Of_Range }
+
+parse_time(text: string_view) -> Result(Time, Parse_Error)
+parse_offset_date_time(text: string_view) -> Result(Offset_Date_Time, Parse_Error)
+parse_date_time(text: string_view) -> Result(Date_Time, Parse_Error)
+parse_date(text: string_view) -> Result(Date, Parse_Error)
+parse_time_of_day(text: string_view) -> Result(Time_Of_Day, Parse_Error)
+parse_offset(text: string_view) -> Result(Offset, Parse_Error)
+parse_duration(text: string_view) -> Result(Duration, Parse_Error)
+```
+
+- Each parser reads what its type prints, in either format, but one value is
+  all basic or all extended, as ISO 8601 requires. It also takes RFC 3339's
+  allowances, lower-case `t` and `z` and a space in place of `T`, and ISO
+  8601's comma as the decimal sign. Seconds are required, as in RFC 3339, and
+  an offset is `Z` or a sign with hours and minutes.
+- A fraction of any length is read and truncated after nine digits.
+- `-00:00` reads as `Z`. RFC 3339 used it for an unknown local offset, which
+  RFC 9557 now writes as `Z`.
+- Hour 24 is invalid, as in RFC 3339. Second 60 is a
+  [leap second](#leap-seconds).
+- `parse_time` and `parse_offset_date_time` require an offset, reporting
+  `Missing_Offset` without one; `parse_time` converts to UTC.
+  `parse_date_time` rejects an offset rather than drop it.
+- `parse_duration` reads the short form and the ISO 8601 form. In either, the
+  units come largest first, each at most once, with a fraction only on the
+  last, and an optional leading `-`. The short form also takes `us` and the
+  Greek `μ` for `µs`, as Go does. Years, months, weeks, and days are calendar
+  units a `Duration` cannot hold exactly, so they are `Invalid_Value`.
+- As in `core:strconv`, surrounding ASCII whitespace is allowed and anything
+  else left over is `Invalid_Syntax`.
+- `Invalid_Syntax` is the wrong shape. `Invalid_Value` is a field outside its
+  range: month 13, 2026-02-29, minute 60. `Out_Of_Range` is a valid value the
+  type cannot hold: a `Time` after 2262, a duration beyond ±292 years.
+
+### Leap seconds
+
+Second 60 reads as second 59, keeping its fraction, when the minute is 59: a
+leap second ends a UTC minute, and offsets are whole minutes, so it ends a
+local minute too. At any other minute it is `Invalid_Value`. The date, hour,
+and minute stay as written, and the instant is off by one second at most, as
+it is in every Unix clock during a leap second. Printing never produces second
+60, and `Time_Of_Day.from_components` does not accept it.
 
 ## What is deliberately absent
 

@@ -1,0 +1,7 @@
+package main;
+import "core:time";
+
+// standard-library "Durations": a duration beyond about 292 years overflows.
+main :: proc() {
+	_ = time.HOUR * 3000000;
+}

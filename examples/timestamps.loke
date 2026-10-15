@@ -1,0 +1,71 @@
+// Timestamps, durations, and dates with `core:time` (standard-library
+// "`core:time`").
+//
+// Give it ISO 8601 timestamps and durations and it reads each one back:
+//
+//     timestamps 2026-10-15T14:34:56.789+02:00 1h30m 2026-12-24T18:00:00Z
+//
+// A timestamp prints in UTC, at its own offset, and in the basic format, with
+// its weekday, ISO week, and the time since the timestamp before it; a
+// duration prints in the short form and in ISO 8601. Without arguments it reads
+// the clock, stamps a line with the time, reads its own stamp back, and times a
+// short sleep with the monotonic clock.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:os";
+import "core:time";
+
+main :: proc() -> i32 {
+	if (os.args.len() == 1) {
+		stamp();
+		return 0;
+	}
+	previous: Option(time.Time) = .none;
+	unread := 0;
+	foreach (index in 1 ..< os.args.len()) {
+		text := os.view_at(index);
+		switch (time.parse_duration(text)) {
+		case .ok(duration):
+			fmt.println(duration, "is", time.styled(duration, time.Style{iso = true}), "or", duration.seconds_f64(), "seconds");
+			continue;
+		case .err:
+		}
+		switch (time.parse_offset_date_time(text)) {
+		case .ok(local):
+			instant := local.to_time() or_else panic("outside 1677 to 2262");
+			describe(local, instant);
+			switch (previous) {
+			case .some(before): fmt.println("  since the one before:", instant - before);
+			case .none:
+			}
+			previous = .some(instant);
+		case .err(error):
+			fmt.eprintln("cannot read", text, "-", error);
+			unread += 1;
+		}
+	}
+	return 1 if unread > 0 else 0;
+}
+
+describe :: proc(local: time.Offset_Date_Time, instant: time.Time) {
+	date := local.date_time.date;
+	year, week := date.iso_week();
+	fmt.println(local);
+	fmt.println("  in UTC:", instant, "basic:", time.styled(instant, time.Style{basic = true, precision = .Seconds}));
+	fmt.println("  a", date.weekday(), "in week", week, "of", year, "- day", date.day_of_year(), "of", date.year());
+}
+
+// The clock is different on every run, so this checks itself: the stamp it
+// prints must read back as the instant it printed.
+stamp :: proc() {
+	started := time.tick_now();
+	now := time.now();
+	text := fmt.to_string(mem.default_allocator(), now);
+	fmt.println("now:", text);
+	fmt.println("read back:", (time.parse_time(text) or_else time.Time{}) == now);
+	fmt.println("at +05:30:", now.at_offset(time.Offset.from_minutes(330) or_else time.UTC));
+	time.sleep(10 * time.MILLISECOND);
+	fmt.println("slept at least 10ms:", started.elapsed() >= 10 * time.MILLISECOND);
+}

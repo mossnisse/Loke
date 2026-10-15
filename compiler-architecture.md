@@ -510,6 +510,11 @@ Use `tests/run/lib_*.loke` and examples. Cover the boundaries relevant to the AP
   `.expected` file holds only seeded values and comparisons, never an unseeded
   draw. `lib_random_ziggurat` checks the distribution tables against a
   recomputation, and `lib_random_pcg` pins vectors from numpy's PCG64DXSM.
+- For `core:time`: known answers checked against another calendar
+  implementation, at both ends of every range and around 1970; a walk over
+  every day from 0000-01-01 to 9999-12-31; every parse error; and a
+  print-then-parse round trip for every type and style. An `.expected` file
+  holds no clock reading, only comparisons with one.
 
 Use fake short readers/writers as in `lib_io` and isolated temporary directories
 as in `lib_fs`. `lib_term` covers output and redirected handles;

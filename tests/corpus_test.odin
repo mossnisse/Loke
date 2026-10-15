@@ -2101,6 +2101,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		{"lexer",          .Driven},
 		{"shapes",         .Output},
 		{"streaming",      .Driven},
+		{"timestamps",     .Driven},
 		{"tokens",         .Output},
 		{"tour",           .Output},
 		{"word_frequency", .Output},
@@ -2178,6 +2179,40 @@ example_dice_replays_its_seed :: proc(t: ^testing.T) {
 	testing.expectf(
 		t, strings.has_prefix(string(stdout), "seed: "),
 		"dice: an unseeded run must print its seed first, got %q", string(stdout),
+	)
+}
+
+// `timestamps` reads the timestamps and durations it is given, which is
+// compared in full; without arguments it reads the clock, which is different
+// on every run, so that run only has to read its own stamp back.
+@(test)
+example_timestamps_reads_its_stamps :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/example-timestamps.exe", TMP)
+	if !compile_example(t, "examples/timestamps.loke", exe, nil) {
+		return
+	}
+	expect_example_output(
+		t, "examples/timestamps.loke", exe,
+		[]string{"2026-10-15T14:34:56.789+02:00", "1h30m", "2026-12-24T18:00:00Z", "2016-12-31 23:59:60.5-01:00", "-153ms"},
+		"", "tests/examples/timestamps.expected",
+	)
+
+	state, stdout, stderr, err := exec(
+		os.Process_Desc{command = []string{launch_path(exe)}},
+		context.allocator,
+	)
+	if !testing.expect(t, err == nil, "timestamps: cannot run the example without arguments") {
+		return
+	}
+	defer delete(stdout)
+	defer delete(stderr)
+	testing.expectf(t, state.exit_code == 0, "timestamps: a run without arguments exited with %d", state.exit_code)
+	testing.expectf(
+		t, strings.has_prefix(string(stdout), "now: ") &&
+			strings.contains(string(stdout), "read back: true") &&
+			strings.contains(string(stdout), "slept at least 10ms: true"),
+		"timestamps: a run without arguments must read its stamp back, got %q", string(stdout),
 	)
 }
 

@@ -282,6 +282,101 @@ every state; `from_state` takes all 256. A seed sequence in the style of numpy's
 `SeedSequence`, hashing seed material of any length into a state, would sit
 between them. Does a caller need it?
 
+## Open questions in `core:time`
+
+[`core:time`](standard-library.md#coretime) has clocks, durations, instants,
+the calendar, fixed offsets, and ISO 8601 text; the reasons for its shape are
+in [Standard-library API choices](comments.md#standard-library-api-choices).
+Time zones are what is left.
+
+### The local time zone
+
+The planned second phase, for a caller that wants the time on the machine's
+clock:
+
+```odin
+Zone :: struct { /* private: a fixed offset or the system's zone */ }
+local_zone() -> Zone
+fixed_zone(offset: Offset) -> Zone
+now_local() -> Offset_Date_Time
+
+Zone.offset_at(self, instant: Time) -> Offset
+Zone.to_local(self, instant: Time) -> Offset_Date_Time
+
+Resolution :: union {
+	unique:  Offset,
+	gap:     (before: Offset, after: Offset),     // clocks skipped this time
+	overlap: (earlier: Offset, later: Offset),    // clocks showed it twice
+}
+Choice :: enum { Compatible, Earlier, Later, Reject }
+Zone.resolve(self, local: Date_Time) -> Resolution
+Zone.at(self, local: Date_Time,
+	choice: Choice = .Compatible) -> Option(Offset_Date_Time)
+```
+
+The system zone is the one the operating system's clock shows. On Windows,
+`GetDynamicTimeZoneInformation` names it and `GetTimeZoneInformationForYear`
+gives each year's standard offset and daylight-saving rule, the rules
+`SystemTimeToTzSpecificLocalTimeEx` applies. Its history is what Windows
+records: changes Microsoft has published, with the earliest recorded rule
+standing in for the years before it. The package owns no zone data, and
+Windows Update keeps the system's current. The `TZ` environment variable, which
+the C runtime reads, is not consulted.
+
+Each use reads the current setting, so a long-running program follows a change
+to the system zone, and nothing is read at import
+([No hidden process behavior](standard-library.md#no-hidden-process-behavior)).
+If Windows reports a failure, which it does not on a supported system, the
+call panics, as `random.fill_secure` does.
+
+A wall-clock time can fall in a gap, when clocks skip forward, or an overlap,
+when they repeat an hour. `resolve` says which, with the offsets on each side.
+`at` chooses: `Compatible` uses the offset before a gap, which moves the time
+forward by the gap's length, and the earlier instant of an overlap, as RFC 5545
+and Temporal do; `Earlier` and `Later` take the instant before or after;
+`Reject` answers `.none` for either. `resolve` tries each offset the zone uses
+near that date and keeps those whose instant converts back to the same wall
+time. The rule evaluation takes a year's rule as data, so tests can give it
+known rules, such as the European Union's, for gaps and overlaps, and compare
+`offset_at` with `SystemTimeToTzSpecificLocalTimeEx` across a year in
+whatever zone the machine has.
+
+### Named time zones
+
+Converting in a zone chosen by name, such as `Europe/Stockholm` in 1950, needs
+the IANA time-zone database. Good C libraries exist for it. The hard part is
+the data, which changes several times a year, and a stale copy gives wrong
+local times without any error.
+
+| Route | Data and its updates | Cost |
+| --- | --- | --- |
+| ICU in Windows (`icu.dll`) | IANA data in the OS, kept current by Windows Update | A handful of `ucal_` calls, UTF-16 zone names. Windows 10 1903 and Server 2022 or later. Windows only. MSVC's `std::chrono` zones use it. |
+| IANA `tzcode`, public domain | TZif files: `/usr/share/zoneinfo` on Linux and macOS, none on Windows | Vendored C. Thread-safe through `tzalloc`, `localtime_rz`, and `mktime_z`. On Windows we would ship tzdata and follow its releases. |
+| A TZif reader in Loke (RFC 9636) | The same files as `tzcode` | A few hundred lines of Loke, and the same data problem on Windows |
+| Windows' own zones | The registry, kept current by Windows Update | Windows names (`W. Europe Standard Time`), not IANA's, and history only where Microsoft recorded it |
+
+The recommendation is to leave named zones out until a caller needs them. When
+one does, use the data each system already keeps current: ICU on Windows, the
+system's TZif files elsewhere. Never ship a copy of tzdata with the compiler.
+`Zone` then gains a named variant holding shared, immutable rules, so it stays
+copyable, and nothing already in the package changes.
+
+### Smaller open points
+
+- **The `µ` in `µs`.** It is U+00B5, two bytes of UTF-8, as Go prints it. A
+  console whose code page is not UTF-8 shows it wrongly; `us` is the ASCII
+  alternative, which the parser accepts either way.
+- **Zero-padded custom forms.** Other formats, such as `15.10.2026`, are built
+  from the accessors, but `fmt` cannot pad with zeros. A `fmt.zero_pad` wrapper
+  beside `pad_left` would serve every integer and is preferable to a pattern
+  language here.
+- **Calendar durations.** `P1Y2M3D` has no type; `add_months` and its siblings
+  do the arithmetic. A `Period` type waits for a caller that stores or parses
+  one.
+- **The system zone's name.** Windows names its zones its own way. The IANA
+  name needs CLDR's mapping, which ICU has, so `Zone` would have no name in
+  the second phase.
+
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md "Formatting"](comments.md#formatting).
@@ -628,425 +723,3 @@ records the reasoning and the alternatives not taken. These parts are open:
   over fallible results may need both forms. A parametric type alias,
   `Status :: Result(Unit, $E)`, would have avoided this, and is worth
   revisiting if aliases gain parameters for another reason.
-
-## `core:time` proposal (2026-10-15)
-
-A plan for a `core:time` package, not yet part of
-[standard-library.md](standard-library.md). It covers clocks, durations,
-instants, the proleptic Gregorian calendar, fixed UTC offsets, ISO 8601 text,
-and, in a second phase, the system's local time zone. Named time zones and
-their history are left out, for the reasons in
-[Named time zones](#named-time-zones); the API leaves room to add them later
-without changing anything here.
-
-Dates and times print in the ISO 8601 extended format through `fmt`, in the
-RFC 3339 profile where one applies, and parse back. A duration prints in a
-short form, `1h30m` or `153ms`, because its ISO 8601 form, `PT0.153S`, reads
-poorly; the ISO 8601 form is one style away and parses too. There is no
-locale, no month or weekday name in text, and no pattern language.
-
-### Types
-
-| Type | Holds | Zero value |
-| --- | --- | --- |
-| `Duration` | Signed nanoseconds, a `distinct i64`: about ±292 years | No time |
-| `Tick` | A monotonic clock reading | A reading at an unspecified moment |
-| `Time` | An instant: nanoseconds since 1970-01-01T00:00:00Z in an `i64`, from 1677-09-21 to 2262-04-11 | The Unix epoch |
-| `Date` | A date from 0000-01-01 to 9999-12-31, held as days since 1970-01-01 | 1970-01-01 |
-| `Time_Of_Day` | Nanoseconds since midnight, less than 24 hours | Midnight |
-| `Date_Time` | A `Date` and a `Time_Of_Day`, with no offset | 1970-01-01T00:00:00 |
-| `Offset` | Whole minutes east of UTC, −23:59 to +23:59 | UTC |
-| `Offset_Date_Time` | A `Date_Time` and the `Offset` it was read at | 1970-01-01T00:00:00Z |
-| `Zone` | Phase 2: the rule that maps instants to offsets | UTC |
-
-Every zero value is a valid value
-([Zeros that are values](comments.md#zeros-that-are-values)), which is why
-`Date` counts days rather than holding a month that could be zero. All of them
-are plain copyable data with no resource to drop, so they cross threads freely.
-The four calendar types are the four kinds of date and time ISO 8601 text
-distinguishes, and TOML's four: local date, local time, local date-time, and
-offset date-time.
-
-Everything is in one package. It imports `core:fmt` for printing, and
-`core:fs` will import it for file times.
-
-### Clocks
-
-```odin
-now() -> Time
-tick_now() -> Tick
-Tick.elapsed(self) -> Duration
-Tick - Tick -> Duration
-Tick + Duration -> Tick
-sleep(duration: Duration)
-```
-
-`now` reads the system clock: `GetSystemTimePreciseAsFileTime` on Windows, in
-100-nanosecond units. It follows the system clock, so a reading can be earlier
-than the one before it when the clock is set back. Measure intervals with
-`Tick`, which is monotonic: `QueryPerformanceCounter` on Windows, scaled to
-nanoseconds by a quotient and a remainder so the product cannot overflow. Only
-the difference between two ticks of one process means anything.
-
-`sleep` blocks the calling thread for at least `duration`; zero or a negative
-duration returns at once. Windows' `Sleep` counts milliseconds on a scheduler
-tick, often 15.6 ms, and can return early for a request shorter than that tick,
-so the implementation sleeps again until a monotonic reading shows the time has
-passed.
-
-`now`, `tick_now`, and `sleep` cannot run during
-[compile-time evaluation](design.md#compile-time-procedure-evaluation). The
-rest of phase 1 is integer arithmetic in Loke, and can.
-
-### Durations
-
-```odin
-Duration :: distinct i64
-NANOSECOND, MICROSECOND, MILLISECOND, SECOND, MINUTE, HOUR :: Duration
-
-+, - (binary and unary), Duration * i64, i64 * Duration, Duration / i64,
-Duration / Duration -> i64, Duration % Duration -> Duration, comparisons
-Duration.seconds(self) -> i64           // and milliseconds, microseconds;
-                                        // each rounds toward zero
-Duration.seconds_f64(self) -> f64
-from_seconds_f64(seconds: f64) -> Option(Duration)
-Duration.truncate(self, unit: Duration) -> Duration
-Duration.round(self, unit: Duration) -> Duration
-```
-
-A `Duration` is exact. There is no `DAY`: once a zone has daylight saving, a
-calendar day is not always 24 hours, so steps of days belong to `Date`.
-Arithmetic that overflows panics, as signed integer arithmetic does
-([Integer overflow](design.md#integer-overflow)).
-
-A duration prints in a short form, close to Go's:
-
-| Duration | Short form (default) | ISO 8601 (`iso = true`) |
-| --- | --- | --- |
-| 90 minutes | `1h30m` | `PT1H30M` |
-| 36 hours | `36h` | `PT36H` |
-| 2 minutes 0.5 seconds | `2m0.5s` | `PT2M0.5S` |
-| 1.5 seconds | `1.5s` | `PT1.5S` |
-| 153 milliseconds | `153ms` | `PT0.153S` |
-| 1.5 microseconds | `1.5µs` | `PT0.0000015S` |
-| 250 nanoseconds | `250ns` | `PT0.00000025S` |
-| None | `0s` | `PT0S` |
-| −1.5 seconds | `-1.5s` | `-PT1.5S` |
-
-- From one second up, the form is hours, minutes, and seconds, each written
-  only when it is not zero, with a fraction only on the seconds. Below one
-  second it is a single unit, `ms`, `µs`, or `ns`, the largest that leaves a
-  whole number in front of the point, with a fraction as needed.
-- Hours never roll over into days, for the same reason there is no `DAY`.
-- A negative duration takes a leading `-`. ISO 8601 has no negative
-  durations; `-PT1.5S` is how Temporal writes one and Java's `Duration.parse`
-  reads one.
-- Go prints `1h30m0s` where this prints `1h30m`, keeping zero components; this
-  form drops them, since every number carries its unit.
-
-### Instants
-
-```odin
-Time :: struct { /* private: Unix nanoseconds */ }
-
-from_unix_nanoseconds(nanoseconds: i64) -> Time
-from_unix_seconds(seconds: i64) -> Option(Time)
-Time.unix_nanoseconds(self) -> i64
-Time.unix_seconds(self) -> i64          // rounds down
-Time + Duration -> Time, Time - Duration -> Time, Time - Time -> Duration,
-comparisons
-Time.utc(self) -> Date_Time
-Time.at_offset(self, offset: Offset) -> Offset_Date_Time
-```
-
-`Time` is Unix time: every day has 86 400 seconds and leap seconds are not
-counted, as in POSIX, Go, Java, and Rust. It prints in UTC with `Z`:
-`2026-10-15T12:34:56.789Z`.
-
-An `i64` of nanoseconds is the representation, as in `fs.Metadata` and Odin.
-Arithmetic is one integer operation, and the range covers every clock reading
-and every file time. It does not cover every `Date_Time`, so `to_time` is
-partial before 1677 and after 2262; dates outside that range stay in the
-calendar types. Seconds and nanoseconds in 16 bytes, as Go and jiff hold them,
-would make `to_time` total at twice the size and with a carry in every
-operation.
-
-`fs.Metadata.modified` becomes `Option(time.Time)`, `.none` where Windows
-records no time instead of today's zero. That is a breaking change and needs
-an upgrade note. The `FILETIME` conversion in `core:fs` moves into `core:time`.
-
-### The calendar
-
-```odin
-Month :: enum { January = 1, February, ..., December }
-Weekday :: enum { Monday = 1, Tuesday, ..., Sunday }
-
-Date.from_components(year: int, month: Month, day: int) -> Option(Date)
-Date.from_unix_days(days: i64) -> Option(Date)
-Date.year(self) -> int                  // and month, day, weekday, day_of_year
-Date.iso_week(self) -> (year: int, week: int)
-Date.unix_days(self) -> i64
-Date.add_days(self, days: i64) -> Date
-Date.add_months(self, months: i64) -> Date
-Date.add_years(self, years: i64) -> Date
-Date.days_until(self, later: Date) -> i64
-is_leap_year(year: int) -> bool
-days_in_month(year: int, month: Month) -> int
-
-Time_Of_Day.from_components(hour, minute, second: int,
-	nanosecond: int = 0) -> Option(Time_Of_Day)
-Time_Of_Day.hour(self) -> int           // and minute, second, nanosecond
-
-Date_Time :: struct { date: Date, time: Time_Of_Day }
-Date_Time + Duration -> Date_Time, Date_Time - Duration -> Date_Time,
-comparisons
-Date_Time.at_offset(self, offset: Offset) -> Offset_Date_Time
-```
-
-The calendar is ISO 8601's proleptic Gregorian calendar, with year 0 the year
-before year 1. Years 0000 to 9999 are the ones ISO 8601 writes in four digits
-without prior agreement and the ones RFC 3339 allows; widening the range later
-breaks nothing. Day counts use Hinnant's public-domain `days_from_civil` and
-`civil_from_days` algorithms, which are exact over the whole range without
-tables. Weekdays are numbered as ISO 8601 numbers them, Monday first, and
-`iso_week` gives the ISO 8601 week-numbering year and week.
-
-`add_months` and `add_years` keep the day of the month unless the resulting
-month is shorter, and then take its last day: 2026-01-31 plus one month is
-2026-02-28, and 2024-02-29 plus one year is 2025-02-28. A result outside the
-range panics, as integer overflow does. Dates read from input are checked by
-the constructors and parsers, which answer `.none` or an error instead.
-
-Adding a `Duration` to a `Date_Time` counts every day as 24 hours: without a
-zone there is no daylight saving.
-
-A struct is not ordered field by field
-([Comparison operators](design.md#comparison-operators)), so `Time`, `Date`,
-`Time_Of_Day`, and `Date_Time` declare `<`, ordering chronologically.
-`Offset_Date_Time` has `==` and no `<`. Two values for one instant at different
-offsets are unequal, and comparing their fields would order the later instant
-first; compare `to_time()` instead.
-
-### Offsets
-
-```odin
-Offset :: struct { /* private: minutes east of UTC */ }
-UTC :: Offset{}
-Offset.from_minutes(minutes: int) -> Option(Offset)
-Offset.minutes(self) -> int
-
-Offset_Date_Time :: struct { date_time: Date_Time, offset: Offset }
-Offset_Date_Time.to_time(self) -> Option(Time)
-```
-
-Offsets are whole minutes up to ±23:59, the range RFC 3339 writes. Offsets with
-seconds occur only in the history of named zones (local mean time before
-standard time), which this package does not have. `to_time` answers `.none`
-outside the range of `Time`.
-
-### ISO 8601 text
-
-| Type | Prints | With `basic = true` |
-| --- | --- | --- |
-| `Time` | `2026-10-15T12:34:56.789Z` | `20261015T123456.789Z` |
-| `Offset_Date_Time` | `2026-10-15T14:34:56.789+02:00` | `20261015T143456.789+0200` |
-| `Date_Time` | `2026-10-15T14:34:56` | `20261015T143456` |
-| `Date` | `2026-10-15` | `20261015` |
-| `Time_Of_Day` | `14:34:56.789` | `143456.789` |
-| `Offset` | `+02:00`, or `Z` when zero | `+0200` |
-| `Duration` | `1h30m0.5s` | The same |
-
-- Seconds always print. A fraction prints with as few digits as are exact, and
-  not at all for whole seconds, as Temporal and Go's `RFC3339Nano` do.
-- A zero offset prints `Z`; ISO 8601 treats `Z` and `+00:00` as the same
-  offset. RFC 9557 now reads `Z` as "UTC is known, the local offset is not",
-  a distinction this package does not keep.
-- `fmt.Options` do not affect these types.
-
-A wrapper chooses another form, as `fmt.fixed` does for floats:
-
-```odin
-Precision :: enum { Shortest, Seconds, Milliseconds, Microseconds, Nanoseconds }
-Style :: struct { basic: bool, iso: bool, precision: Precision }
-styled(value: $T, style: Style) -> Styled(T)
-```
-
-`iso` prints a `Duration` in ISO 8601 and does nothing for the other types,
-which print ISO 8601 already. A precision truncates a duration to that unit
-before it prints, so `.Milliseconds` gives `1.234s` and `153ms`.
-
-A fixed precision makes every date and time of one type print at one width, so
-the text sorts as the times do; the shortest form does not, because `.` sorts
-before `Z`. A fixed precision truncates and never rounds, so it never prints a second,
-or a day, that has not arrived yet. `basic` drops the separators, which also
-makes a timestamp fit in a Windows file name, where `:` is not allowed:
-`backup-20261015T123456Z.zip`.
-
-```odin
-Parse_Error :: enum { Invalid_Syntax, Invalid_Value, Missing_Offset, Out_Of_Range }
-
-parse_time(text: string_view) -> Result(Time, Parse_Error)
-parse_offset_date_time(text: string_view) -> Result(Offset_Date_Time, Parse_Error)
-parse_date_time(text: string_view) -> Result(Date_Time, Parse_Error)
-parse_date(text: string_view) -> Result(Date, Parse_Error)
-parse_time_of_day(text: string_view) -> Result(Time_Of_Day, Parse_Error)
-parse_offset(text: string_view) -> Result(Offset, Parse_Error)
-parse_duration(text: string_view) -> Result(Duration, Parse_Error)
-```
-
-- Each parser reads what its type prints in either format, but one value is
-  all basic or all extended, as ISO 8601 requires. It also takes RFC 3339's
-  allowances, lower-case `t` and `z` and a space in place of `T`, and ISO
-  8601's comma as the decimal sign.
-- A fraction of any length is read and truncated after nine digits.
-- `-00:00` reads as `Z`. ISO 8601 does not allow it; RFC 3339 used it for an
-  unknown local offset, which RFC 9557 now writes as `Z`.
-- Second 60, a leap second, reads as second 59, keeping its fraction, when
-  the minute is 59; at any other minute it is `Invalid_Value`. Hour 24 is
-  invalid, as in RFC 3339. The leap-second rule is explained below.
-- `parse_time` requires an offset, reporting `Missing_Offset` without one, and
-  converts to UTC. `parse_offset_date_time` keeps the offset.
-  `parse_date_time` rejects an offset rather than drop it.
-- `parse_duration` reads the short form and the ISO 8601 form. In either, the
-  units come largest first, each at most once, with a fraction only on the
-  last, and an optional leading `-`. The short form also takes `us` for `µs`.
-  Years, months, weeks, and days are calendar units a `Duration` cannot hold
-  exactly, so they are `Invalid_Value`.
-- As in `core:strconv`, surrounding ASCII whitespace is allowed and anything
-  else left over is `Invalid_Syntax`.
-- `Invalid_Syntax` is the wrong shape. `Invalid_Value` is a field outside its
-  range: month 13, 2026-02-29, minute 60. `Out_Of_Range` is a valid value the
-  type cannot hold: a `Time` after 2262, a duration beyond ±292 years.
-
-### Leap seconds
-
-UTC has inserted 27 leap seconds since 1972, each written `23:59:60` at the
-end of a UTC day, the last at the end of 2016. In 2022 the General Conference
-on Weights and Measures decided to stop inserting them by 2035. Unix time,
-and with it `Time`, has no place for one: the clock that reads `23:59:60`
-reads it during a second the count of 86 400 per day does not have.
-
-The choices for text that contains one were:
-
-- **Reject it.** Strict, but a valid RFC 3339 timestamp, from a log written
-  during a leap second, would fail to parse, and a program reading such logs
-  would need its own repair.
-- **Read it as the next second's start**, `00:00:00` of the next day. That
-  changes the date, and a `Time_Of_Day` or `Date` read from the text would
-  disagree with the original.
-- **Read it as second 59.** The date, hour, and minute stay as written; the
-  instant is off by one second at most, as it is in every Unix clock during a
-  leap second.
-
-The last is the proposal, and what the Rust library jiff does. It loses only
-what `Time` cannot represent anyway. Values inside the leap second keep their
-order among themselves, but can sort before the end of the second 59 they
-follow. The minute must be 59: a leap second ends a UTC minute, and offsets are
-whole minutes, so it ends a local minute too. Its local hour depends on the
-offset, so the parser does not check the hour. Printing never produces second
-60.
-
-### The local time zone
-
-Phase 2:
-
-```odin
-Zone :: struct { /* private: a fixed offset or the system's zone */ }
-local_zone() -> Zone
-fixed_zone(offset: Offset) -> Zone
-now_local() -> Offset_Date_Time
-
-Zone.offset_at(self, instant: Time) -> Offset
-Zone.to_local(self, instant: Time) -> Offset_Date_Time
-
-Resolution :: union {
-	unique:  Offset,
-	gap:     (before: Offset, after: Offset),     // clocks skipped this time
-	overlap: (earlier: Offset, later: Offset),    // clocks showed it twice
-}
-Choice :: enum { Compatible, Earlier, Later, Reject }
-Zone.resolve(self, local: Date_Time) -> Resolution
-Zone.at(self, local: Date_Time,
-	choice: Choice = .Compatible) -> Option(Offset_Date_Time)
-```
-
-The system zone is the one the operating system's clock shows. On Windows,
-`GetDynamicTimeZoneInformation` names it and `GetTimeZoneInformationForYear`
-gives each year's standard offset and daylight-saving rule, the rules
-`SystemTimeToTzSpecificLocalTimeEx` applies. Its history is what Windows
-records: changes Microsoft has published, with the earliest recorded rule
-standing in for the years before it. The package owns no zone data, and
-Windows Update keeps the system's current. The `TZ` environment variable, which
-the C runtime reads, is not consulted.
-
-Each use reads the current setting, so a long-running program follows a change
-to the system zone, and nothing is read at import
-([No hidden process behavior](standard-library.md#no-hidden-process-behavior)).
-If Windows reports a failure, which it does not on a supported system, the
-call panics, as `random.fill_secure` does.
-
-A wall-clock time can fall in a gap, when clocks skip forward, or an overlap,
-when they repeat an hour. `resolve` says which, with the offsets on each side.
-`at` chooses: `Compatible` uses the offset before a gap, which moves the time
-forward by the gap's length, and the earlier instant of an overlap, as RFC 5545
-and Temporal do; `Earlier` and `Later` take the instant before or after;
-`Reject` answers `.none` for either. `resolve` tries each offset the zone uses
-near that date and keeps those whose instant converts back to the same wall
-time. The rule evaluation takes a year's rule as data, so tests can give it
-known rules instead of depending on the machine's zone.
-
-### Named time zones
-
-Converting in a zone chosen by name, such as `Europe/Stockholm` in 1950, needs
-the IANA time-zone database. Good C libraries exist for it. The hard part is
-the data, which changes several times a year, and a stale copy gives wrong
-local times without any error.
-
-| Route | Data and its updates | Cost |
-| --- | --- | --- |
-| ICU in Windows (`icu.dll`) | IANA data in the OS, kept current by Windows Update | A handful of `ucal_` calls, UTF-16 zone names. Windows 10 1903 and Server 2022 or later. Windows only. MSVC's `std::chrono` zones use it. |
-| IANA `tzcode`, public domain | TZif files: `/usr/share/zoneinfo` on Linux and macOS, none on Windows | Vendored C. Thread-safe through `tzalloc`, `localtime_rz`, and `mktime_z`. On Windows we would ship tzdata and follow its releases. |
-| A TZif reader in Loke (RFC 9636) | The same files as `tzcode` | A few hundred lines of Loke, and the same data problem on Windows |
-| Windows' own zones | The registry, kept current by Windows Update | Windows names (`W. Europe Standard Time`), not IANA's, and history only where Microsoft recorded it |
-
-The recommendation is to leave named zones out until a caller needs them. When
-one does, use the data each system already keeps current: ICU on Windows, the
-system's TZif files elsewhere. Never ship a copy of tzdata with the compiler.
-`Zone` then gains a named variant holding shared, immutable rules, so it stays
-copyable, and phases 1 and 2 do not change.
-
-### Phases and callers
-
-1. **Clocks, durations, instants, the calendar, offsets, and ISO 8601 text.**
-   The corpus runner reports how long each case took with `Tick` and
-   `Duration`; `fs.Metadata.modified` gets its type; and an example stamps its
-   output with `now()` and parses timestamps back. `lib_time` pins known
-   answers: day counts at both ends of the range and around 1970; the leap
-   years 1900, 2000, 2024, and 2100; ISO weeks across year ends (2020-12-31
-   and 2021-01-03 are both in 2020's week 53); month clamping; the `FILETIME`
-   limits; every parse error; and a print-then-parse round trip for every type
-   and style. It also walks every day of the range one at a time against
-   `from_unix_days`. Trap tests cover each overflow panic.
-2. **The system's local zone.** Tests evaluate the year rule with fixed rules,
-   such as the European Union's, for gaps and overlaps, and compare
-   `offset_at` with `SystemTimeToTzSpecificLocalTimeEx` across a year in
-   whatever zone the machine has.
-3. **Named zones**, only when a caller needs them, by the route above.
-
-### Open points
-
-Decided on review: `Time` stays an `i64` of nanoseconds, durations print in
-the short form by default, and a leap second reads as second 59. Still open:
-
-- **The `µ` in `µs`.** It is U+00B5, two bytes of UTF-8, as Go prints it. A
-  console whose code page is not UTF-8 shows it wrongly; `us` is the ASCII
-  alternative, which the parser accepts either way.
-- **Zero-padded custom forms.** Other formats, such as `15.10.2026`, are built
-  from the accessors, but `fmt` cannot pad with zeros. A `fmt.zero_pad` wrapper
-  beside `pad_left` would serve every integer and is preferable to a pattern
-  language here.
-- **Calendar durations.** `P1Y2M3D` has no type; `add_months` and its siblings
-  do the arithmetic. A `Period` type waits for a caller that stores or parses
-  one.
-- **The system zone's name.** Windows names its zones its own way. The IANA
-  name needs CLDR's mapping, which ICU has, so `Zone` has no name in phase 2.

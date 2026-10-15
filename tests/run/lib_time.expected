@@ -1,0 +1,161 @@
+-- durations
+1h30m PT1H30M
+36h PT36H
+2m0.5s PT2M0.5S
+1.5s PT1.5S
+153ms PT0.153S
+1.5µs PT0.0000015S
+250ns PT0.00000025S
+0s PT0S
+-1.5s -PT1.5S
+2562047h47m16.854775807s -2562047h47m16.854775808s -PT2562047H47M16.854775808S
+1s 1ms 1µs 1ns 1h0.000000001s
+999ns 999.999µs 999.999999ms
+7.4s -300ms -3.7s 7.4s 1.85s 700ms
+3 3700 3700000 -3 3.7
+true true
+2.7s
+.some(1.5s) .some(-1ns) .none
+.none .none
+3s -3s 3.7s
+4s -4s 2s
+-2s 1s
+2h 3.7s
+1h2m3s 1h2m3.456s 1h2m3.456789s 1h2m3.456789012s 153ms 0s
+-- calendar
+-719528 2932896 -1 0 11017 20741
+.some(0000-01-01) .none
+.some(9999-12-31) .none
+1970-01-01 00:00:00 1970-01-01T00:00:00 1970-01-01T00:00:00Z 1970-01-01T00:00:00Z Z
+false true true false
+.none .some(2000-02-29) .some(2024-02-29) .none
+.none .none
+.none .none
+28 29 30
+2026 October 15 Thursday 288
+Thursday Saturday Friday
+366 365
+2020-12-31 2020 53
+2021-01-03 2020 53
+2021-01-04 2021 1
+2008-12-29 2009 1
+2010-01-03 2009 53
+2026-10-15 2026 42
+0000-01-01 -1 52
+9999-12-31 9999 52
+2026-02-28 2024-02-29 2026-02-28 2025-02-28 2028-02-29 2016-12-15
+1971-01-01 365
+0000-12-31 9999-12-31
+true false
+14:34:56.789 14 34 56 789000000
+.none .none .none .none
+23:59:59.999999999 00:00:00.000000001 00:00:00.00000012
+2024-02-29T00:30:00 2024-03-01T00:30:00 2024-02-26T23:30:00 2024-02-29T00:30:00
+true false true
+2554-07-20T23:47:16.854775808
+-- day walk: 3652425 days, 0 wrong
+-- instants
+2026-10-15T14:34:56.789Z 1792074896789000000 1792074896 2026-10-15T14:34:56.789
+2026-10-15T16:34:56.789+02:00 2026-10-15T09:04:56.789-05:30 2026-10-15T14:34:56.789Z
+1969-12-31T23:59:58.5Z -2 .some(1969-12-31T23:59:58Z) .none
+497798h34m58.289s 2026-10-15T13:34:56.789Z true true true
+1677-09-21T00:12:43.145224192Z 2262-04-11T23:47:16.854775807Z
+1677-09-20T00:13:43.145224192-23:59 2262-04-12T23:46:16.854775807+23:59
+true true
+.some(2262-04-11T23:47:16.854775807Z) .none
+.some(2262-04-11T23:46:16.854775808Z) .none
+.none
+Z +05:30 -01:30 +23:59 -23:59 -1439
+.none .none
+2026-10-15T16:34:56.789+02:00 .some(2026-10-15T14:34:56.789Z) true false
+-- printing
+2026-10-15T14:34:56.789Z 2026-10-15T05:04:56.789-09:30 2026-10-15T05:04:56.789 2026-10-15 05:04:56.789 -09:30
+20261015T143456.789Z 20261015T050456.789-0930 20261015T050456.789 20261015 050456.789 -0930
+2026-10-15T14:34:56Z 2026-10-15T05:04:56-09:30 2026-10-15T05:04:56 2026-10-15 05:04:56 -09:30
+2026-10-15T14:34:56.789Z 2026-10-15T05:04:56.789-09:30 2026-10-15T05:04:56.789 2026-10-15 05:04:56.789 -09:30
+2026-10-15T14:34:56.789000Z 2026-10-15T05:04:56.789000-09:30 2026-10-15T05:04:56.789000 2026-10-15 05:04:56.789000 -09:30
+20261015T143456.789000000Z 20261015T050456.789000000-0930 20261015T050456.789000000 20261015 050456.789000000 -0930
+2026-10-15T14:34:56Z 2026-10-15T14:34:56.0000001Z 2026-10-15T14:34:56.12Z
+2026-10-15T14:34:56.000Z Z
+-- round trips: 318 values, 0 wrong
+-- parsing
+.ok(2026-10-15T12:34:56Z) .ok(2026-10-15T10:34:56.5Z)
+.ok(2026-10-15T14:04:56.25Z) .ok(2026-10-15T12:34:56Z)
+.ok(2026-10-15T12:34:56.123456789Z) .ok(Z)
+.ok(2026-10-15T23:30:00-05:00) .ok(2026-10-15T23:30:00)
+.ok(0000-01-01) .ok(9999-12-31) .ok(23:59:59.999)
+.ok(+05:30) .ok(Z) .ok(+23:59)
+.ok(2016-12-31T23:59:59.5Z) .err(Invalid_Value)
+.ok(2017-01-01T00:59:59+01:00) .ok(12:59:59)
+                               .err(Invalid_Syntax)
+2026-10-15                     .err(Invalid_Syntax)
+2026-10-15T12:34               .err(Invalid_Syntax)
+2026-10-15T12:34:56            .err(Missing_Offset)
+2026-10-15T12:34:56+02         .err(Invalid_Syntax)
+2026-10-15T12:34:56Zjunk       .err(Invalid_Syntax)
+2026-10-1512:34:56Z            .err(Invalid_Syntax)
+2026-10-15T123456Z             .err(Invalid_Syntax)
+20261015T12:34:56Z             .err(Invalid_Syntax)
+2026-10-15T12:34:56+0200       .err(Invalid_Syntax)
+2026-13-01T00:00:00Z           .err(Invalid_Value)
+2026-02-29T00:00:00Z           .err(Invalid_Value)
+2026-10-15T24:00:00Z           .err(Invalid_Value)
+2026-10-15T12:60:00Z           .err(Invalid_Value)
+2026-10-15T12:34:56+24:00      .err(Invalid_Value)
+2026-10-15T12:34:56.Z          .err(Invalid_Syntax)
++2026-10-15T00:00:00Z          .err(Invalid_Syntax)
+2262-04-12T00:00:00Z           .err(Out_Of_Range)
+1677-09-21T00:12:43Z           .err(Out_Of_Range)
+0000-01-01T00:00:00+00:01      .err(Out_Of_Range)
+.err(Invalid_Syntax) .err(Invalid_Syntax) .err(Invalid_Syntax)
+.err(Invalid_Syntax) .err(Invalid_Syntax) .err(Invalid_Syntax) .err(Invalid_Value)
+.err(Missing_Offset) .err(Invalid_Syntax)
+-- parsing durations
+1h30m                          .ok(1h30m)
+PT1H30M                        .ok(1h30m)
+36h                            .ok(36h)
+2m0.5s                         .ok(2m0.5s)
+1.5s                           .ok(1.5s)
+153ms                          .ok(153ms)
+1.5µs                          .ok(1.5µs)
+1.5us                          .ok(1.5µs)
+1.5μs                          .ok(1.5µs)
+250ns                          .ok(250ns)
+0s                             .ok(0s)
+PT0S                           .ok(0s)
+-1.5s                          .ok(-1.5s)
+-PT1.5S                        .ok(-1.5s)
+1.5h                           .ok(1h30m)
+PT0.5H                         .ok(30m)
+0.000000000001h                .ok(3ns)
+1h0.5m                         .ok(1h30s)
+2562047h47m16.854775807s       .ok(2562047h47m16.854775807s)
+-2562047h47m16.854775808s      .ok(-2562047h47m16.854775808s)
+2562047h47m16.854775808s       .err(Out_Of_Range)
+9999999999999h                 .err(Out_Of_Range)
+PT2562047H47M16.854775807S     .ok(2562047h47m16.854775807s)
+ 10ms                          .ok(10ms)
+1s1s                           .err(Invalid_Syntax)
+1s1h                           .err(Invalid_Syntax)
+1.5h30m                        .err(Invalid_Syntax)
+1                              .err(Invalid_Syntax)
+h                              .err(Invalid_Syntax)
+1x                             .err(Invalid_Syntax)
+1d                             .err(Invalid_Value)
+2w                             .err(Invalid_Value)
+P1D                            .err(Invalid_Value)
+P1Y                            .err(Invalid_Value)
+PT1D                           .err(Invalid_Syntax)
+P                              .err(Invalid_Syntax)
+PT                             .err(Invalid_Syntax)
+PT1.5H30M                      .err(Invalid_Syntax)
+PT1S1M                         .err(Invalid_Syntax)
+-                              .err(Invalid_Syntax)
+--1s                           .err(Invalid_Syntax)
+1n                             .err(Invalid_Syntax)
+1.s                            .err(Invalid_Syntax)
+.5s                            .err(Invalid_Syntax)
+-- clocks
+true true
+true true
+1s

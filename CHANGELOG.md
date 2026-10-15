@@ -8,6 +8,22 @@ checklist.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- `fs.Metadata.modified` is an `Option(time.Time)` instead of an `i64` of
+  nanoseconds since the Unix epoch, and `.none` where the filesystem keeps no
+  such time, which used to read as 0. Code comparing it with a number is
+  `L0354`. Upgrade by unwrapping it and comparing times, or by asking for the
+  count:
+
+  ```odin
+  // before
+  if (info.modified > cutoff_nanoseconds) { ... }
+  // after
+  modified := info.modified or_else time.Time{};
+  if (modified.unix_nanoseconds() > cutoff_nanoseconds) { ... }
+  ```
+
 ### Added
 
 - `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.
@@ -33,6 +49,16 @@ checklist.
   `gamma`, `beta`, `chi_squared`, `student_t`, `geometric`, `poisson`, and
   `binomial`; `Weighted`, an alias table that picks indices in proportion to
   weights; and `sample`, which draws elements without replacement.
+- `core:time`: `now`, a monotonic `Tick`, and `sleep`; `Duration`, printed in
+  a short form such as `1h30m` or `153ms`; `Time`, an instant in Unix
+  nanoseconds; the calendar types `Date`, `Time_Of_Day`, `Date_Time`, and
+  `Offset_Date_Time`, with ISO weeks and month arithmetic; and ISO 8601 and
+  RFC 3339 text, printed through `fmt` and read back by `parse_time` and its
+  siblings, in the extended or basic format. See
+  [`core:time`](standard-library.md#coretime) and `examples/timestamps.loke`.
+  Time zones are not included yet.
+- `examples/corpus_runner.loke` reports on stderr how long the run took and
+  which case was slowest.
 
 ### Changed
 

@@ -1,0 +1,9 @@
+package main;
+import "core:time";
+
+// standard-library "The calendar": a date and time moved past the calendar's
+// end panics in the date.
+main :: proc() {
+	late := time.Date_Time{date = time.Date.from_components(9999, .December, 31) or_else panic("not a date")};
+	_ = late + 24 * time.HOUR;
+}

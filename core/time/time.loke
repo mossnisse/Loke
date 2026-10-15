@@ -1,0 +1,282 @@
+// Clocks, durations, instants, the calendar, fixed UTC offsets, and ISO 8601
+// text (standard-library "`core:time`").
+//
+// Everything but the three clock procedures is integer arithmetic in Loke, so
+// it also runs during compile-time evaluation. `now`, `tick_now`, and `sleep`
+// ask the operating system, and sit behind `when (LOKE_OS == .Windows)` at the
+// end of this file. Named time zones are deliberately absent; see
+// open-questions.md "Named time zones".
+@(public)
+package time;
+
+import "core:fmt";
+import "core:math";
+
+// ---------------------------------------------------------------- durations --
+
+// Signed nanoseconds, about 292 years either way. There is no `DAY`: once a zone
+// has daylight saving a calendar day is not always 24 hours, so steps of days
+// belong to `Date`.
+Duration :: distinct i64;
+
+NANOSECOND  :: Duration(1);
+MICROSECOND :: Duration(1000);
+MILLISECOND :: Duration(1000000);
+SECOND      :: Duration(1000000000);
+MINUTE      :: Duration(60000000000);
+HOUR        :: Duration(3600000000000);
+
+impl Duration {
+	// Written out rather than delegated: a delegated operator is not found from
+	// another package (known-gaps.md "Delegated operators stay in their
+	// package"), and a delegated `-` brings only the binary form (known-gaps.md
+	// "`delegate(-)` omits unary minus").
+	add :: operator(+) proc(left, right: Duration) -> Duration {
+		return Duration(i64(left) + i64(right));
+	}
+
+	subtract :: operator(-) proc(left, right: Duration) -> Duration {
+		return Duration(i64(left) - i64(right));
+	}
+
+	negate :: operator(-) proc(value: Duration) -> Duration {
+		return Duration(-i64(value));
+	}
+
+	scale :: operator(*) proc(left: Duration, right: i64) -> Duration {
+		return Duration(i64(left) * right);
+	}
+
+	scale_left :: operator(*) proc(left: i64, right: Duration) -> Duration {
+		return Duration(left * i64(right));
+	}
+
+	// There is no `Duration / Duration`: beside this one it would make `d / 2`
+	// ambiguous, since the constant converts to either. A count of units is
+	// `seconds()` and its siblings, or `i64(d) / i64(unit)`.
+	divide :: operator(/) proc(left: Duration, right: i64) -> Duration {
+		return Duration(i64(left) / right);
+	}
+
+	remainder :: operator(%) proc(left, right: Duration) -> Duration {
+		return Duration(i64(left) % i64(right));
+	}
+
+	// Whole units, rounding toward zero.
+	seconds :: proc(self) -> i64 { return i64(self) / i64(SECOND); }
+	milliseconds :: proc(self) -> i64 { return i64(self) / i64(MILLISECOND); }
+	microseconds :: proc(self) -> i64 { return i64(self) / i64(MICROSECOND); }
+
+	// The whole seconds and the rest convert separately, so a duration below
+	// 2^53 nanoseconds converts exactly.
+	seconds_f64 :: proc(self) -> f64 {
+		return f64(i64(self) / i64(SECOND)) + f64(i64(self) % i64(SECOND)) / 1e9;
+	}
+
+	// A multiple of `unit`, toward zero. A unit of zero or less leaves the
+	// duration as it is, as Go's does.
+	truncate :: proc(self, unit: Duration) -> Duration {
+		if (unit <= 0) { return self; }
+		return self - self % unit;
+	}
+
+	// The nearest multiple of `unit`, halves away from zero. A result beyond the
+	// range panics, as the arithmetic would.
+	round :: proc(self, unit: Duration) -> Duration {
+		if (unit <= 0) { return self; }
+		remainder := self % unit;
+		// The remainder takes the sign of `self`; comparing it with what is left
+		// of the unit avoids doubling it, which could overflow.
+		if (self < 0) {
+			if (-remainder >= unit + remainder) { return self - remainder - unit; }
+		} else if (remainder >= unit - remainder) {
+			return self - remainder + unit;
+		}
+		return self - remainder;
+	}
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		text.put_duration(self, DEFAULT_STYLE);
+		text.send(writer);
+	}
+}
+
+// `seconds` rounded to the nearest nanosecond, or `.none` for a NaN, an
+// infinity, or a value beyond the range.
+from_seconds_f64 :: proc(seconds: f64) -> Option(Duration) {
+	nanoseconds := math.round(seconds * 1e9);
+	// 2^63 is exact in an `f64`. A NaN fails both comparisons.
+	if (!(nanoseconds >= -9223372036854775808.0 && nanoseconds < 9223372036854775808.0)) {
+		return .none;
+	}
+	return .some(Duration(i64(nanoseconds)));
+}
+
+// ----------------------------------------------------------------- instants --
+
+// An instant: nanoseconds since 1970-01-01T00:00:00Z, from 1677-09-21 to
+// 2262-04-11. Unix time, so every day has 86 400 seconds and leap seconds are
+// not counted. The zero value is the epoch.
+Time :: struct {
+	@(private) nanoseconds: i64,
+}
+
+impl Time {
+	add :: operator(+) proc(left: Time, right: Duration) -> Time {
+		return {left.nanoseconds + i64(right)};
+	}
+
+	subtract :: operator(-) proc(left: Time, right: Duration) -> Time {
+		return {left.nanoseconds - i64(right)};
+	}
+
+	since :: operator(-) proc(left, right: Time) -> Duration {
+		return Duration(left.nanoseconds - right.nanoseconds);
+	}
+
+	// A struct is not ordered field by field (design.md "Comparison
+	// operators"), so each ordering is declared.
+	less :: operator(<) proc(left, right: Time) -> bool { return left.nanoseconds < right.nanoseconds; }
+	less_equal :: operator(<=) proc(left, right: Time) -> bool { return left.nanoseconds <= right.nanoseconds; }
+	greater :: operator(>) proc(left, right: Time) -> bool { return left.nanoseconds > right.nanoseconds; }
+	greater_equal :: operator(>=) proc(left, right: Time) -> bool { return left.nanoseconds >= right.nanoseconds; }
+
+	unix_nanoseconds :: proc(self) -> i64 { return self.nanoseconds; }
+
+	// Whole seconds, rounding down, so an instant before 1970 that is not on a
+	// second reads as the second it falls in.
+	unix_seconds :: proc(self) -> i64 { return floor_div(self.nanoseconds, i64(SECOND)); }
+
+	utc :: proc(self) -> Date_Time {
+		return Date_Time{
+			Date{floor_div(self.nanoseconds, NANOSECONDS_PER_DAY)},
+			Time_Of_Day{floor_mod(self.nanoseconds, NANOSECONDS_PER_DAY)},
+		};
+	}
+
+	// The day and the time of day are split before the offset is applied, so an
+	// instant at either end of the range cannot overflow on the way.
+	at_offset :: proc(self, offset: Offset) -> Offset_Date_Time {
+		days := floor_div(self.nanoseconds, NANOSECONDS_PER_DAY);
+		clock := floor_mod(self.nanoseconds, NANOSECONDS_PER_DAY) + i64(offset.east) * i64(MINUTE);
+		if (clock >= NANOSECONDS_PER_DAY) {
+			clock -= NANOSECONDS_PER_DAY;
+			days += 1;
+		} else if (clock < 0) {
+			clock += NANOSECONDS_PER_DAY;
+			days -= 1;
+		}
+		return Offset_Date_Time{Date_Time{Date{days}, Time_Of_Day{clock}}, offset};
+	}
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		text.put_time(self, DEFAULT_STYLE);
+		text.send(writer);
+	}
+}
+
+from_unix_nanoseconds :: proc(nanoseconds: i64) -> Time {
+	return Time{nanoseconds};
+}
+
+// `.none` for a second outside the range of `Time`.
+from_unix_seconds :: proc(seconds: i64) -> Option(Time) {
+	nanoseconds := math.checked_mul(seconds, i64(SECOND)) or_return;
+	return .some(Time{nanoseconds});
+}
+
+// ------------------------------------------------------------------- clocks --
+
+// A monotonic clock reading. Only the difference between two readings of one
+// process means anything; the zero value is a reading at an unspecified moment.
+Tick :: struct {
+	@(private) nanoseconds: i64,
+}
+
+impl Tick {
+	elapsed :: proc(self) -> Duration { return tick_now() - self; }
+
+	since :: operator(-) proc(left, right: Tick) -> Duration {
+		return Duration(left.nanoseconds - right.nanoseconds);
+	}
+
+	add :: operator(+) proc(left: Tick, right: Duration) -> Tick {
+		return {left.nanoseconds + i64(right)};
+	}
+}
+
+// The system clock. It follows changes to the clock's setting, so a reading can
+// be earlier than the one before it; measure intervals with `tick_now`.
+now :: proc() -> Time {
+	return Time{system_nanoseconds()};
+}
+
+tick_now :: proc() -> Tick {
+	return Tick{monotonic_nanoseconds()};
+}
+
+// Blocks the calling thread for at least `duration`; zero or less returns at
+// once. The platform's sleep can return early, so this sleeps again until the
+// monotonic clock shows the time has passed.
+sleep :: proc(duration: Duration) {
+	if (duration <= 0) { return; }
+	deadline := tick_now() + duration;
+	for (;;) {
+		remaining := deadline - tick_now();
+		if (remaining <= 0) { return; }
+		sleep_native(remaining);
+	}
+}
+
+// ------------------------------------------------------------ the platform --
+
+when (LOKE_OS == .Windows) {
+
+foreign import kernel32 "system:kernel32.lib";
+
+@(private)
+foreign kernel32 {
+	@(link_name="GetSystemTimePreciseAsFileTime")
+	rt_system_time :: proc "stdcall" (time: rawptr) ---;
+	@(link_name="QueryPerformanceCounter")
+	rt_performance_counter :: proc "stdcall" (count: rawptr) -> i32 ---;
+	@(link_name="QueryPerformanceFrequency")
+	rt_performance_frequency :: proc "stdcall" (frequency: rawptr) -> i32 ---;
+	@(link_name="Sleep")
+	rt_sleep :: proc "stdcall" (milliseconds: u32) ---;
+}
+
+// The 100-nanosecond ticks between 1601-01-01 and 1970-01-01.
+@(private) FILETIME_UNIX_EPOCH :: 116444736000000000;
+
+// A `FILETIME` counts 100-nanosecond ticks from 1601. The system clock reads
+// well inside the range of `Time`.
+@(private)
+system_nanoseconds :: proc() -> i64 {
+	time: [2]u32 = {};
+	rt_system_time(&mut time);
+	return ((i64(time[1]) << 32 | i64(time[0])) - FILETIME_UNIX_EPOCH) * 100;
+}
+
+// Scaled by a quotient and a remainder, so the product cannot overflow however
+// long the machine has been up. Neither call fails on a supported system.
+@(private)
+monotonic_nanoseconds :: proc() -> i64 {
+	count: i64 = 0;
+	frequency: i64 = 0;
+	_ = rt_performance_counter(&mut count);
+	_ = rt_performance_frequency(&mut frequency);
+	return count / frequency * 1000000000 + count % frequency * 1000000000 / frequency;
+}
+
+// `Sleep` counts whole milliseconds, so the request rounds up. A request longer
+// than `Sleep` takes is cut short, and `sleep`'s loop asks again.
+@(private)
+sleep_native :: proc(remaining: Duration) {
+	milliseconds := (i64(remaining) - 1) / i64(MILLISECOND) + 1;
+	rt_sleep(u32(math.min(milliseconds, i64(0x7FFFFFFF))));
+}
+
+}

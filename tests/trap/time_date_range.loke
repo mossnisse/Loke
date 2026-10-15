@@ -1,0 +1,9 @@
+package main;
+import "core:time";
+
+// standard-library "The calendar": a date computed past 9999-12-31 panics, as
+// integer arithmetic past its range does.
+main :: proc() {
+	last := time.Date.from_components(9999, .December, 31) or_else panic("not a date");
+	last.add_days(1);
+}

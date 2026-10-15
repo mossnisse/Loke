@@ -1,0 +1,318 @@
+// The proleptic Gregorian calendar of ISO 8601, and fixed UTC offsets
+// (standard-library "The calendar" and "Offsets").
+//
+// Day counts use Howard Hinnant's public-domain `days_from_civil` and
+// `civil_from_days`, which are exact over the whole range without tables.
+@(public)
+package time;
+
+import "core:fmt";
+import "core:math";
+
+Month :: enum {
+	January = 1, February, March, April, May, June,
+	July, August, September, October, November, December,
+}
+
+// Numbered as ISO 8601 numbers them, Monday first.
+Weekday :: enum { Monday = 1, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }
+
+is_leap_year :: proc(year: int) -> bool {
+	return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+}
+
+days_in_month :: proc(year: int, month: Month) -> int {
+	switch (month) {
+	case .February: return 29 if is_leap_year(year) else 28;
+	case .April, .June, .September, .November: return 30;
+	case .January, .March, .May, .July, .August, .October, .December: return 31;
+	}
+}
+
+// -------------------------------------------------------------------- dates --
+
+// A date from 0000-01-01 to 9999-12-31, the years ISO 8601 writes in four
+// digits. It counts days rather than holding a month, so its zero value,
+// 1970-01-01, is a date (comments.md "Zeros that are values").
+Date :: struct {
+	@(private) days: i64,
+}
+
+impl Date {
+	from_components :: proc(year: int, month: Month, day: int) -> Option(Date) {
+		if (year < 0 || year > 9999 || day < 1 || day > days_in_month(year, month)) { return .none; }
+		return .some(Date{days_from_civil(year, int(month), day)});
+	}
+
+	from_unix_days :: proc(days: i64) -> Option(Date) {
+		if (days < FIRST_DAY || days > LAST_DAY) { return .none; }
+		return .some(Date{days});
+	}
+
+	unix_days :: proc(self) -> i64 { return self.days; }
+
+	year :: proc(self) -> int { return civil_from_days(self.days).year; }
+
+	month :: proc(self) -> Month {
+		return Month.from_int(civil_from_days(self.days).month) or_else panic("time: a month outside 1 to 12");
+	}
+
+	day :: proc(self) -> int { return civil_from_days(self.days).day; }
+
+	// 1970-01-01 was a Thursday.
+	weekday :: proc(self) -> Weekday {
+		return Weekday.from_int(floor_mod(self.days + 3, 7) + 1) or_else panic("time: a weekday outside 1 to 7");
+	}
+
+	// 1 for January 1st.
+	day_of_year :: proc(self) -> int {
+		return int(self.days - days_from_civil(self.year(), 1, 1)) + 1;
+	}
+
+	// ISO 8601's week-numbering year and week. A week belongs to the year its
+	// Thursday is in, so 2021-01-03 is in 2020's week 53.
+	iso_week :: proc(self) -> (year: int, week: int) {
+		thursday := self.days + i64(4 - int(self.weekday()));
+		year := civil_from_days(thursday).year;
+		return {year, int((thursday - days_from_civil(year, 1, 1)) / 7) + 1};
+	}
+
+	add_days :: proc(self, days: i64) -> Date {
+		return in_range(self.days + days);
+	}
+
+	// The same day of the month, or the month's last day when it is shorter:
+	// 2026-01-31 plus one month is 2026-02-28.
+	add_months :: proc(self, months: i64) -> Date {
+		civil := civil_from_days(self.days);
+		total := i64(civil.year) * 12 + i64(civil.month - 1) + months;
+		year := floor_div(total, 12);
+		if (year < 0 || year > 9999) { out_of_range(); }
+		month := Month.from_int(floor_mod(total, 12) + 1) or_else panic("time: a month outside 1 to 12");
+		day := math.min(civil.day, days_in_month(int(year), month));
+		return Date{days_from_civil(int(year), int(month), day)};
+	}
+
+	// 2024-02-29 plus one year is 2025-02-28.
+	add_years :: proc(self, years: i64) -> Date {
+		return self.add_months(years * 12);
+	}
+
+	days_until :: proc(self, later: Date) -> i64 { return later.days - self.days; }
+
+	less :: operator(<) proc(left, right: Date) -> bool { return left.days < right.days; }
+	less_equal :: operator(<=) proc(left, right: Date) -> bool { return left.days <= right.days; }
+	greater :: operator(>) proc(left, right: Date) -> bool { return left.days > right.days; }
+	greater_equal :: operator(>=) proc(left, right: Date) -> bool { return left.days >= right.days; }
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		text.put_date(self, DEFAULT_STYLE);
+		text.send(writer);
+	}
+}
+
+// ------------------------------------------------------------- times of day --
+
+// Nanoseconds since midnight, less than 24 hours. The zero value is midnight.
+Time_Of_Day :: struct {
+	@(private) nanoseconds: i64,
+}
+
+impl Time_Of_Day {
+	// Second 60 is not accepted here: a leap second has no `Time`, and only the
+	// parsers read one, as second 59 (standard-library "Leap seconds").
+	from_components :: proc(hour, minute, second: int, nanosecond: int = 0) -> Option(Time_Of_Day) {
+		if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) { return .none; }
+		if (nanosecond < 0 || nanosecond > 999999999) { return .none; }
+		return .some(Time_Of_Day{
+			i64(hour) * i64(HOUR) + i64(minute) * i64(MINUTE) + i64(second) * i64(SECOND) + i64(nanosecond),
+		});
+	}
+
+	hour :: proc(self) -> int { return int(self.nanoseconds / i64(HOUR)); }
+	minute :: proc(self) -> int { return int(self.nanoseconds / i64(MINUTE) % 60); }
+	second :: proc(self) -> int { return int(self.nanoseconds / i64(SECOND) % 60); }
+	nanosecond :: proc(self) -> int { return int(self.nanoseconds % i64(SECOND)); }
+
+	less :: operator(<) proc(left, right: Time_Of_Day) -> bool { return left.nanoseconds < right.nanoseconds; }
+	less_equal :: operator(<=) proc(left, right: Time_Of_Day) -> bool { return left.nanoseconds <= right.nanoseconds; }
+	greater :: operator(>) proc(left, right: Time_Of_Day) -> bool { return left.nanoseconds > right.nanoseconds; }
+	greater_equal :: operator(>=) proc(left, right: Time_Of_Day) -> bool { return left.nanoseconds >= right.nanoseconds; }
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		text.put_time_of_day(self, DEFAULT_STYLE);
+		text.send(writer);
+	}
+}
+
+// ------------------------------------------------------- dates with a time --
+
+// A date and a time of day, with no offset. Without a zone there is no daylight
+// saving, so adding a `Duration` counts every day as 24 hours.
+Date_Time :: struct {
+	date: Date,
+	time: Time_Of_Day,
+}
+
+impl Date_Time {
+	add :: operator(+) proc(left: Date_Time, right: Duration) -> Date_Time {
+		return left.moved(floor_div(i64(right), NANOSECONDS_PER_DAY), floor_mod(i64(right), NANOSECONDS_PER_DAY));
+	}
+
+	// `left + -right` would overflow negating the most negative duration, so the
+	// whole days and the rest are negated apart: whole days never overflow.
+	subtract :: operator(-) proc(left: Date_Time, right: Duration) -> Date_Time {
+		days := floor_div(i64(right), NANOSECONDS_PER_DAY);
+		rest := floor_mod(i64(right), NANOSECONDS_PER_DAY);
+		if (rest == 0) { return left.moved(-days, 0); }
+		return left.moved(-days - 1, NANOSECONDS_PER_DAY - rest);
+	}
+
+	// Moved by whole days and `rest` nanoseconds, less than one day. The two
+	// are kept apart because a long duration added to the time of day could
+	// overflow where the result is still in range.
+	@(private)
+	moved :: proc(self, days: i64, rest: i64) -> Date_Time {
+		carry := days;
+		clock := self.time.nanoseconds + rest;
+		if (clock >= NANOSECONDS_PER_DAY) {
+			clock -= NANOSECONDS_PER_DAY;
+			carry += 1;
+		}
+		return {self.date.add_days(carry), Time_Of_Day{clock}};
+	}
+
+	less :: operator(<) proc(left, right: Date_Time) -> bool {
+		return left.date < right.date || (left.date == right.date && left.time < right.time);
+	}
+	less_equal :: operator(<=) proc(left, right: Date_Time) -> bool { return !(right < left); }
+	greater :: operator(>) proc(left, right: Date_Time) -> bool { return right < left; }
+	greater_equal :: operator(>=) proc(left, right: Date_Time) -> bool { return !(left < right); }
+
+	at_offset :: proc(self, offset: Offset) -> Offset_Date_Time {
+		return Offset_Date_Time{self, offset};
+	}
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		text.put_date_time(self, DEFAULT_STYLE);
+		text.send(writer);
+	}
+}
+
+// ------------------------------------------------------------------ offsets --
+
+// Whole minutes east of UTC, from -23:59 to +23:59, the range RFC 3339 writes.
+// The zero value is UTC.
+Offset :: struct {
+	@(private) east: int,
+}
+
+UTC :: Offset{};
+
+impl Offset {
+	from_minutes :: proc(minutes: int) -> Option(Offset) {
+		if (minutes < -MAX_OFFSET_MINUTES || minutes > MAX_OFFSET_MINUTES) { return .none; }
+		return .some(Offset{minutes});
+	}
+
+	minutes :: proc(self) -> int { return self.east; }
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		text.put_offset(self, DEFAULT_STYLE);
+		text.send(writer);
+	}
+}
+
+// A date and time, and the offset it was read at. It has `==` and no `<`: two
+// values for one instant at different offsets are unequal, and ordering their
+// fields would put the later instant first, so compare `to_time()` instead.
+Offset_Date_Time :: struct {
+	date_time: Date_Time,
+	offset:    Offset,
+}
+
+impl Offset_Date_Time {
+	// `.none` outside the range of `Time`. The sum is taken in 128 bits: the
+	// local time can be past the range of `Time` where the instant is not.
+	to_time :: proc(self) -> Option(Time) {
+		instant := i128(self.date_time.date.days) * i128(NANOSECONDS_PER_DAY) +
+			i128(self.date_time.time.nanoseconds) - i128(self.offset.east) * i128(MINUTE);
+		if (instant < i128(-9223372036854775807 - 1) || instant > i128(9223372036854775807)) { return .none; }
+		return .some(Time{i64(instant)});
+	}
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		text := Text{};
+		text.put_offset_date_time(self, DEFAULT_STYLE);
+		text.send(writer);
+	}
+}
+
+// -------------------------------------------------------------------- guts --
+
+@(private) NANOSECONDS_PER_DAY :: i64(86400000000000);
+@(private) MAX_OFFSET_MINUTES :: 23 * 60 + 59;
+// 0000-01-01 and 9999-12-31, in days since 1970-01-01.
+@(private) FIRST_DAY :: i64(-719528);
+@(private) LAST_DAY :: i64(2932896);
+
+@(private)
+in_range :: proc(days: i64) -> Date {
+	if (days < FIRST_DAY || days > LAST_DAY) { out_of_range(); }
+	return Date{days};
+}
+
+// A date computed from a valid one has gone past the calendar's ends, as integer
+// arithmetic past its range does. Dates read from input are checked by the
+// constructors and parsers instead.
+@(private)
+out_of_range :: proc() -> ! {
+	panic("time: the date is outside 0000-01-01 to 9999-12-31");
+}
+
+// Days since 1970-01-01 for a valid date: Hinnant's `days_from_civil`, with
+// years counted from March so that February's leap day ends the year.
+@(private)
+days_from_civil :: proc(year, month, day: int) -> i64 {
+	y := i64(year) - i64(1 if month <= 2 else 0);
+	era := floor_div(y, 400);
+	year_of_era := y - era * 400;
+	day_of_year := i64((153 * (month - 3 if month > 2 else month + 9) + 2) / 5 + day - 1);
+	day_of_era := year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+	return era * 146097 + day_of_era - 719468;
+}
+
+// The inverse, Hinnant's `civil_from_days`.
+@(private)
+civil_from_days :: proc(days: i64) -> (year: int, month: int, day: int) {
+	z := days + 719468;
+	era := floor_div(z, 146097);
+	day_of_era := z - era * 146097;
+	year_of_era := (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+	day_of_year := day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+	shifted_month := (5 * day_of_year + 2) / 153;
+	day := int(day_of_year - (153 * shifted_month + 2) / 5 + 1);
+	month := int(shifted_month + 3 if shifted_month < 10 else shifted_month - 9);
+	year := int(year_of_era + era * 400) + (1 if month <= 2 else 0);
+	return {year, month, day};
+}
+
+@(private)
+floor_div :: proc(value, divisor: i64) -> i64 {
+	quotient := value / divisor;
+	if ((value % divisor != 0) && ((value < 0) != (divisor < 0))) { return quotient - 1; }
+	return quotient;
+}
+
+// From the remainder, not `value - floor_div(value, divisor) * divisor`, whose
+// product overflows for a value near the end of the `i64` range.
+@(private)
+floor_mod :: proc(value, divisor: i64) -> i64 {
+	remainder := value % divisor;
+	if ((remainder != 0) && ((remainder < 0) != (divisor < 0))) { return remainder + divisor; }
+	return remainder;
+}

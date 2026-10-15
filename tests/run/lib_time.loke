@@ -1,0 +1,338 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:time";
+
+// standard-library "`core:time`": known answers for durations, the calendar,
+// offsets, and ISO 8601 text. The dates were checked against Python's
+// `datetime`, which shares the proleptic Gregorian calendar from year 1.
+
+date :: proc(year: int, month: time.Month, day: int) -> time.Date {
+	return time.Date.from_components(year, month, day) or_else panic("not a date");
+}
+
+clock :: proc(hour, minute, second: int, nanosecond: int = 0) -> time.Time_Of_Day {
+	return time.Time_Of_Day.from_components(hour, minute, second, nanosecond) or_else panic("not a time");
+}
+
+offset :: proc(minutes: int) -> time.Offset {
+	return time.Offset.from_minutes(minutes) or_else panic("not an offset");
+}
+
+// Compile-time evaluation reaches the whole calendar and the parsers.
+Y2K :: time.Date.unix_days(time.parse_date("2000-01-01") or_else panic("no"));
+static_assert(Y2K == 10957);
+
+durations :: proc() {
+	fmt.println("-- durations");
+	// The proposal's table, short form then ISO 8601.
+	iso := time.Style{iso = true};
+	values := [9]time.Duration{
+		90 * time.MINUTE, 36 * time.HOUR, 2 * time.MINUTE + 500 * time.MILLISECOND,
+		1500 * time.MILLISECOND, 153 * time.MILLISECOND, 1500 * time.NANOSECOND,
+		250 * time.NANOSECOND, time.Duration(0), -1500 * time.MILLISECOND,
+	};
+	foreach (value in values) {
+		fmt.println(value, time.styled(value, iso));
+	}
+	// The ends of the range, and the units' boundaries.
+	largest := time.Duration(9223372036854775807);
+	smallest := -largest - time.NANOSECOND;
+	fmt.println(largest, smallest, time.styled(smallest, iso));
+	fmt.println(time.SECOND, time.MILLISECOND, time.MICROSECOND, time.NANOSECOND, time.HOUR + time.NANOSECOND);
+	fmt.println(999 * time.NANOSECOND, 999999 * time.NANOSECOND, 999999999 * time.NANOSECOND);
+
+	// Arithmetic and conversions.
+	d := 3 * time.SECOND + 700 * time.MILLISECOND;
+	fmt.println(d + d, d - 4 * time.SECOND, -d, d * 2, d / 2, d % time.SECOND);
+	fmt.println(d.seconds(), d.milliseconds(), d.microseconds(), (-d).seconds(), d.seconds_f64());
+	fmt.println(d < 4 * time.SECOND, d == 3700 * time.MILLISECOND);
+	accumulated := time.Duration(0);
+	accumulated += d;
+	accumulated -= time.SECOND;
+	fmt.println(accumulated);
+
+	fmt.println(time.from_seconds_f64(1.5), time.from_seconds_f64(-0.000000001), time.from_seconds_f64(9.3e9));
+	zero := 0.0;
+	fmt.println(time.from_seconds_f64(zero / zero), time.from_seconds_f64(1.0 / zero));
+
+	// Truncation toward zero; rounding halves away from it.
+	fmt.println(d.truncate(time.SECOND), (-d).truncate(time.SECOND), d.truncate(0));
+	fmt.println(d.round(time.SECOND), (-d).round(time.SECOND), (1500 * time.MILLISECOND).round(time.SECOND));
+	fmt.println((-1500 * time.MILLISECOND).round(time.SECOND), (1499 * time.MILLISECOND).round(time.SECOND));
+	fmt.println((90 * time.MINUTE).round(time.HOUR), d.round(-time.SECOND));
+
+	// A precision truncates before the short form prints.
+	long := time.HOUR + 2 * time.MINUTE + 3 * time.SECOND + 456789 * time.MICROSECOND + 12 * time.NANOSECOND;
+	fmt.println(
+		time.styled(long, time.Style{precision = .Seconds}),
+		time.styled(long, time.Style{precision = .Milliseconds}),
+		time.styled(long, time.Style{precision = .Microseconds}),
+		time.styled(long, time.Style{precision = .Nanoseconds}),
+		time.styled(153456 * time.MICROSECOND, time.Style{precision = .Milliseconds}),
+		time.styled(400 * time.MILLISECOND, time.Style{precision = .Seconds}),
+	);
+}
+
+calendar :: proc() {
+	fmt.println("-- calendar");
+	// Day counts at both ends of the range and around 1970.
+	fmt.println(
+		date(0, .January, 1).unix_days(), date(9999, .December, 31).unix_days(),
+		date(1969, .December, 31).unix_days(), date(1970, .January, 1).unix_days(),
+		date(2000, .March, 1).unix_days(), date(2026, .October, 15).unix_days(),
+	);
+	fmt.println(time.Date.from_unix_days(-719528), time.Date.from_unix_days(-719529));
+	fmt.println(time.Date.from_unix_days(2932896), time.Date.from_unix_days(2932897));
+	fmt.println(time.Date{}, time.Time_Of_Day{}, time.Date_Time{}, time.Offset_Date_Time{}, time.Time{}, time.UTC);
+
+	// Leap years, and what they allow.
+	fmt.println(time.is_leap_year(1900), time.is_leap_year(2000), time.is_leap_year(2024), time.is_leap_year(2100));
+	fmt.println(
+		time.Date.from_components(1900, .February, 29), time.Date.from_components(2000, .February, 29),
+		time.Date.from_components(2024, .February, 29), time.Date.from_components(2100, .February, 29),
+	);
+	fmt.println(time.Date.from_components(2026, .April, 31), time.Date.from_components(2026, .April, 0));
+	fmt.println(time.Date.from_components(10000, .January, 1), time.Date.from_components(-1, .December, 31));
+	fmt.println(time.days_in_month(2023, .February), time.days_in_month(2024, .February), time.days_in_month(2026, .September));
+
+	// Fields, weekdays, and days of the year.
+	sample := date(2026, .October, 15);
+	fmt.println(sample.year(), sample.month(), sample.day(), sample.weekday(), sample.day_of_year());
+	fmt.println(date(1970, .January, 1).weekday(), date(0, .January, 1).weekday(), date(9999, .December, 31).weekday());
+	fmt.println(date(2024, .December, 31).day_of_year(), date(2023, .December, 31).day_of_year());
+
+	// ISO weeks across year ends: 2020-12-31 and 2021-01-03 are both in
+	// 2020's week 53.
+	weeks := [8]time.Date{
+		date(2020, .December, 31), date(2021, .January, 3), date(2021, .January, 4),
+		date(2008, .December, 29), date(2010, .January, 3), date(2026, .October, 15),
+		date(0, .January, 1), date(9999, .December, 31),
+	};
+	foreach (day in weeks) {
+		fmt.print(day, "");
+		year, week := day.iso_week();
+		fmt.println(year, week);
+	}
+
+	// Month clamping.
+	fmt.println(
+		date(2026, .January, 31).add_months(1), date(2024, .January, 31).add_months(1),
+		date(2026, .March, 31).add_months(-1), date(2024, .February, 29).add_years(1),
+		date(2024, .February, 29).add_years(4), date(2026, .October, 15).add_months(-118),
+	);
+	fmt.println(date(2026, .October, 15).add_days(-20376), date(2026, .October, 15).days_until(date(2027, .October, 15)));
+	fmt.println(date(9999, .December, 31).add_years(-9999), date(0, .January, 31).add_months(119999));
+	fmt.println(date(2026, .October, 15) < date(2026, .October, 16), date(2026, .October, 15) >= date(2026, .October, 16));
+
+	// Times of day.
+	afternoon := clock(14, 34, 56, 789000000);
+	fmt.println(afternoon, afternoon.hour(), afternoon.minute(), afternoon.second(), afternoon.nanosecond());
+	fmt.println(
+		time.Time_Of_Day.from_components(24, 0, 0), time.Time_Of_Day.from_components(23, 60, 0),
+		time.Time_Of_Day.from_components(23, 59, 60), time.Time_Of_Day.from_components(0, 0, 0, 1000000000),
+	);
+	fmt.println(clock(23, 59, 59, 999999999), clock(0, 0, 0, 1), clock(0, 0, 0, 120));
+
+	// Date and time arithmetic counts every day as 24 hours.
+	evening := time.Date_Time{date = date(2024, .February, 28), time = clock(23, 30, 0)};
+	fmt.println(evening + time.HOUR, evening + 25 * time.HOUR, evening - 48 * time.HOUR, evening - (-time.HOUR));
+	fmt.println(evening < evening + time.NANOSECOND, evening > evening + time.NANOSECOND, evening <= evening);
+	fmt.println(time.Date_Time{date = date(2262, .April, 11), time = clock(0, 0, 0)} - time.Duration(-9223372036854775807 - 1));
+}
+
+day_walk :: proc() {
+	// Every day of the range, one at a time, against the counting constructor:
+	// the fields step as a calendar does, and each converts back.
+	year, month, day := 0, 1, 1;
+	checked := 0;
+	failed := 0;
+	for (days := i64(-719528); days <= 2932896; days += 1) {
+		walked := time.Date.from_unix_days(days) or_else panic("in range");
+		if (walked.year() != year || int(walked.month()) != month || walked.day() != day) { failed += 1; }
+		month_value := time.Month.from_int(month) or_else panic("a month");
+		if (date(year, month_value, day).unix_days() != days) { failed += 1; }
+		checked += 1;
+		day += 1;
+		if (day > time.days_in_month(year, month_value)) {
+			day = 1;
+			month += 1;
+			if (month > 12) {
+				month = 1;
+				year += 1;
+			}
+		}
+	}
+	fmt.println("-- day walk:", checked, "days,", failed, "wrong");
+}
+
+instants :: proc() {
+	fmt.println("-- instants");
+	moment := time.from_unix_nanoseconds(1792074896789000000);
+	fmt.println(moment, moment.unix_nanoseconds(), moment.unix_seconds(), moment.utc());
+	fmt.println(moment.at_offset(offset(120)), moment.at_offset(offset(-330)), moment.at_offset(time.UTC));
+	before := time.from_unix_nanoseconds(-1500000000);
+	fmt.println(before, before.unix_seconds(), time.from_unix_seconds(-2), time.from_unix_seconds(9223372037));
+	fmt.println(moment - before, moment - time.HOUR, moment + time.HOUR > moment, before < moment, before <= before);
+
+	// The ends of `Time`, which no offset can overflow.
+	first := time.from_unix_nanoseconds(-9223372036854775807 - 1);
+	last := time.from_unix_nanoseconds(9223372036854775807);
+	fmt.println(first, last);
+	fmt.println(first.at_offset(offset(-1439)), last.at_offset(offset(1439)));
+	fmt.println(first.at_offset(offset(-1439)).to_time() == Option(time.Time).some(first), last.at_offset(offset(1439)).to_time() == Option(time.Time).some(last));
+
+	// `to_time` is partial outside 1677 to 2262.
+	late := time.Date_Time{date = date(2262, .April, 11), time = clock(23, 47, 16, 854775807)};
+	fmt.println(late.at_offset(time.UTC).to_time(), (late + time.NANOSECOND).at_offset(time.UTC).to_time());
+	fmt.println((late + time.NANOSECOND).at_offset(offset(1)).to_time(), late.at_offset(offset(-1)).to_time());
+	fmt.println(time.Date_Time{date = date(1, .January, 1), time = clock(0, 0, 0)}.at_offset(time.UTC).to_time());
+
+	// Offsets.
+	fmt.println(offset(0), offset(330), offset(-90), offset(1439), offset(-1439), offset(-1439).minutes());
+	fmt.println(time.Offset.from_minutes(1440), time.Offset.from_minutes(-1440));
+	local := time.Date_Time{date = date(2026, .October, 15), time = clock(16, 34, 56, 789000000)}.at_offset(offset(120));
+	// One instant at two offsets: equal instants, unequal values.
+	fmt.println(local, local.to_time(), local == moment.at_offset(offset(120)), local == moment.at_offset(time.UTC));
+}
+
+text :: proc() {
+	fmt.println("-- printing");
+	moment := time.from_unix_nanoseconds(1792074896789000000);
+	local := moment.at_offset(offset(-570));
+	styles := [6]time.Style{
+		{}, {basic = true}, {precision = .Seconds}, {precision = .Milliseconds},
+		{precision = .Microseconds}, {basic = true, precision = .Nanoseconds},
+	};
+	foreach (style in styles) {
+		fmt.println(
+			time.styled(moment, style), time.styled(local, style), time.styled(local.date_time, style),
+			time.styled(local.date_time.date, style), time.styled(local.date_time.time, style),
+			time.styled(local.offset, style),
+		);
+	}
+	whole := time.from_unix_nanoseconds(1792074896000000000);
+	fmt.println(whole, time.from_unix_nanoseconds(1792074896000000100), time.from_unix_nanoseconds(1792074896120000000));
+	fmt.println(time.styled(whole, time.Style{precision = .Milliseconds}), time.styled(time.UTC, time.Style{basic = true}));
+}
+
+same :: proc(outcome: Result($T, time.Parse_Error), expected: T) -> bool {
+	switch (outcome) {
+	case .ok(value): return value == expected;
+	case .err:       return false;
+	}
+}
+
+round_trips :: proc() {
+	// Print, then parse, for every type and style.
+	moments := [4]time.Time{
+		time.from_unix_nanoseconds(1792074896789000000), time.from_unix_nanoseconds(-1500000000),
+		time.from_unix_nanoseconds(-9223372036854775807 - 1), time.from_unix_nanoseconds(9223372036854775807),
+	};
+	offsets := [4]time.Offset{time.UTC, offset(120), offset(-570), offset(1439)};
+	durations := [6]time.Duration{
+		time.Duration(0), 90 * time.MINUTE + 1500 * time.MILLISECOND, -153 * time.MILLISECOND,
+		1500 * time.NANOSECOND, time.Duration(9223372036854775807), time.Duration(-9223372036854775807 - 1),
+	};
+	styles := [3]time.Style{{}, {basic = true, iso = true}, {precision = .Nanoseconds}};
+	failed := 0;
+	checked := 0;
+	foreach (style in styles) {
+		foreach (moment in moments) {
+			printed := fmt.to_string(mem.default_allocator(), time.styled(moment, style));
+			if (!same(time.parse_time(printed), moment)) { failed += 1; }
+			foreach (zone in offsets) {
+				local := moment.at_offset(zone);
+				printed_local := fmt.to_string(mem.default_allocator(), time.styled(local, style));
+				if (!same(time.parse_offset_date_time(printed_local), local)) { failed += 1; }
+				if (!same(time.parse_time(printed_local), moment)) { failed += 1; }
+				printed_date_time := fmt.to_string(mem.default_allocator(), time.styled(local.date_time, style));
+				if (!same(time.parse_date_time(printed_date_time), local.date_time)) { failed += 1; }
+				printed_date := fmt.to_string(mem.default_allocator(), time.styled(local.date_time.date, style));
+				if (!same(time.parse_date(printed_date), local.date_time.date)) { failed += 1; }
+				printed_time := fmt.to_string(mem.default_allocator(), time.styled(local.date_time.time, style));
+				if (!same(time.parse_time_of_day(printed_time), local.date_time.time)) { failed += 1; }
+				printed_offset := fmt.to_string(mem.default_allocator(), time.styled(zone, style));
+				if (!same(time.parse_offset(printed_offset), zone)) { failed += 1; }
+				checked += 6;
+			}
+			checked += 1;
+		}
+		foreach (duration in durations) {
+			printed := fmt.to_string(mem.default_allocator(), time.styled(duration, style));
+			if (!same(time.parse_duration(printed), duration)) {
+				failed += 1;
+			}
+			checked += 1;
+		}
+	}
+	fmt.println("-- round trips:", checked, "values,", failed, "wrong");
+}
+
+parsing :: proc() {
+	fmt.println("-- parsing");
+	// RFC 3339's allowances, the basic format, and the comma.
+	fmt.println(time.parse_time("2026-10-15t12:34:56z"), time.parse_time("2026-10-15 12:34:56.5+02:00"));
+	fmt.println(time.parse_time("20261015T123456,25-0130"), time.parse_time("  2026-10-15T12:34:56Z\n"));
+	fmt.println(time.parse_time("2026-10-15T12:34:56.1234567891234Z"), time.parse_offset("-00:00"));
+	fmt.println(time.parse_offset_date_time("2026-10-15T23:30:00-05:00"), time.parse_date_time("2026-10-15T23:30:00"));
+	fmt.println(time.parse_date("0000-01-01"), time.parse_date("99991231"), time.parse_time_of_day("235959.999"));
+	fmt.println(time.parse_offset("+0530"), time.parse_offset("Z"), time.parse_offset("+23:59"));
+
+	// Leap seconds read as second 59, keeping their fraction, at minute 59.
+	fmt.println(time.parse_time("2016-12-31T23:59:60.5Z"), time.parse_time("2016-12-31T23:58:60Z"));
+	fmt.println(time.parse_offset_date_time("2017-01-01T00:59:60+01:00"), time.parse_time_of_day("12:59:60"));
+
+	// Every error.
+	failures := []string_view{
+		"", "2026-10-15", "2026-10-15T12:34", "2026-10-15T12:34:56", "2026-10-15T12:34:56+02",
+		"2026-10-15T12:34:56Zjunk", "2026-10-1512:34:56Z", "2026-10-15T123456Z", "20261015T12:34:56Z",
+		"2026-10-15T12:34:56+0200", "2026-13-01T00:00:00Z", "2026-02-29T00:00:00Z", "2026-10-15T24:00:00Z",
+		"2026-10-15T12:60:00Z", "2026-10-15T12:34:56+24:00", "2026-10-15T12:34:56.Z", "+2026-10-15T00:00:00Z",
+		"2262-04-12T00:00:00Z", "1677-09-21T00:12:43Z", "0000-01-01T00:00:00+00:01",
+	};
+	foreach (failure in failures) {
+		fmt.println(fmt.pad_right(failure, 30), time.parse_time(failure));
+	}
+	fmt.println(time.parse_date_time("2026-10-15T12:34:56Z"), time.parse_date("2026-10-15T00:00:00"), time.parse_date("2026-1-5"));
+	fmt.println(time.parse_time_of_day("12:34"), time.parse_offset("02:00"), time.parse_offset("+2:00"), time.parse_offset("+02:60"));
+	fmt.println(time.parse_offset_date_time("2026-10-15T00:00:00"), time.parse_date("10000-01-01"));
+
+	fmt.println("-- parsing durations");
+	durations := []string_view{
+		"1h30m", "PT1H30M", "36h", "2m0.5s", "1.5s", "153ms", "1.5µs", "1.5us", "1.5μs", "250ns", "0s", "PT0S",
+		"-1.5s", "-PT1.5S", "1.5h", "PT0.5H", "0.000000000001h", "1h0.5m", "2562047h47m16.854775807s",
+		"-2562047h47m16.854775808s", "2562047h47m16.854775808s", "9999999999999h", "PT2562047H47M16.854775807S",
+		" 10ms ", "1s1s", "1s1h", "1.5h30m", "1", "h", "1x", "1d", "2w", "P1D", "P1Y", "PT1D", "P", "PT",
+		"PT1.5H30M", "PT1S1M", "-", "--1s", "1n", "1.s", ".5s",
+	};
+	foreach (spelling in durations) {
+		fmt.println(fmt.pad_right(spelling, 30), time.parse_duration(spelling));
+	}
+}
+
+clocks :: proc() {
+	fmt.println("-- clocks");
+	// The machine's clock reads after 2020 and before 2100, and the monotonic
+	// clock does not go back.
+	reading := time.now();
+	fmt.println(reading > time.from_unix_nanoseconds(1577836800000000000), reading < time.from_unix_nanoseconds(4102444800000000000));
+	start := time.tick_now();
+	time.sleep(20 * time.MILLISECOND);
+	fmt.println(start.elapsed() >= 20 * time.MILLISECOND, time.tick_now() - start >= time.Duration(0));
+	time.sleep(time.Duration(0));
+	time.sleep(-time.SECOND);
+	fmt.println((start + time.SECOND) - start);
+}
+
+main :: proc() {
+	durations();
+	calendar();
+	day_walk();
+	instants();
+	text();
+	round_trips();
+	parsing();
+	clocks();
+}
