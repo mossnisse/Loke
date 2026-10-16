@@ -807,8 +807,10 @@ binding is visible. Fields, enum members, and `impl` or `extend` members are
 checked against their type's members and, at each selector, against the
 members of the operand `query_selector_operand` records, promoted fields
 included; a selector whose operand it cannot name stops the rename. A
-selector already spelled with the new name must not reach the renamed field
-through `using` fields unless a nearer field of that name wins. A public extension is also
+selector already spelled with the new name must not select the renamed field,
+or become ambiguous, once it is renamed: each `using` branch is followed as the
+checker follows it, and only a field of that name declared along the same
+branch hides the renamed one. A public extension is also
 checked as a package name. A method may not be renamed to or from a name in
 `query_implicit_names`, and a parameter to or from `self`.
 

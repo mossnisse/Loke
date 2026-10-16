@@ -1204,6 +1204,14 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 		// A use of the new name could reach the renamed field once renamed.
 		{"promoted-new", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nmain :: proc() { o := Outer{A{1}, B{2}}; _ = o.next; }\n", "old: int", "next", "could select the renamed `old`"},
 		{"promoted-new-nearer", "package main;\nA :: struct { old: int }\nOuter :: struct { using a: A, next: int }\nmain :: proc() { o := Outer{A{1}, 2}; _ = o.next; _ = o.a.old; }\n", "old: int", "next", "main.loke:2"},
+		// Two `using` branches are ambiguous whatever their depths, in either order.
+		{"promoted-new-deeper-first", "package main;\nA :: struct { old: int }\nLeft :: struct { using a: A }\nB :: struct { next: int }\nOuter :: struct { using left: Left, using b: B }\nmain :: proc() { o := Outer{Left{A{1}}, B{2}}; _ = o.next; }\n", "old: int", "next", "could select the renamed `old`"},
+		{"promoted-new-deeper-last", "package main;\nA :: struct { old: int }\nLeft :: struct { using a: A }\nB :: struct { next: int }\nOuter :: struct { using b: B, using left: Left }\nmain :: proc() { o := Outer{B{2}, Left{A{1}}}; _ = o.next; }\n", "old: int", "next", "could select the renamed `old`"},
+		// Only a field declared on the same branch hides the renamed one.
+		{"promoted-new-hidden", "package main;\nA :: struct { old: int }\nLeft :: struct { using a: A, next: int }\nOuter :: struct { using left: Left }\nmain :: proc() { o := Outer{Left{A{1}, 2}}; _ = o.next; _ = o.a.old; }\n", "old: int", "next", "main.loke:2"},
+		// Through a pointer, and a distinct one.
+		{"promoted-new-pointer", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nmain :: proc() { o := Outer{A{1}, B{2}}; p := &o; _ = p.next; }\n", "old: int", "next", "could select the renamed `old`"},
+		{"promoted-new-distinct", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nP :: distinct ^Outer;\nmain :: proc() { o := Outer{A{1}, B{2}}; p := P(&o); _ = p.next; }\n", "old: int", "next", "could select the renamed `old`"},
 		// A named argument names the callee's parameter, not a caller's local.
 		{"label", "package main;\nf :: proc(old: int) {}\nmain :: proc() { next := 1; f(old = next); }\n", "old: int", "next", "main.loke:2"},
 		// A local cannot shadow an outer local, even one not used there.

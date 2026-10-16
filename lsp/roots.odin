@@ -374,12 +374,14 @@ publish :: proc(s: ^Server) {
 		}
 		uri := uri_for(s, key, entry.path)
 		// Roots are visited in map order, so ties are broken by content.
-		slice.sort_by(entry.diagnostics[:], proc(a, b: ^Lsp_Diagnostic) -> bool {
-			if a.range.start.line != b.range.start.line { return a.range.start.line < b.range.start.line }
-			if a.range.start.character != b.range.start.character { return a.range.start.character < b.range.start.character }
-			return diagnostic_identity("", a) < diagnostic_identity("", b)
+		slice.sort_by(entry.diagnostics[:], proc(a, b: Wanted_Diagnostic) -> bool {
+			if a.d.range.start.line != b.d.range.start.line { return a.d.range.start.line < b.d.range.start.line }
+			if a.d.range.start.character != b.d.range.start.character { return a.d.range.start.character < b.d.range.start.character }
+			return a.identity < b.identity
 		})
-		params := diagnostics_params(s, uri, doc, entry.diagnostics[:])
+		diagnostics := make([]^Lsp_Diagnostic, len(entry.diagnostics), context.temp_allocator)
+		for wanted_diagnostic, index in entry.diagnostics { diagnostics[index] = wanted_diagnostic.d }
+		params := diagnostics_params(s, uri, doc, diagnostics)
 		if had && previous.uri == uri && previous.params == params { continue }
 		// The client opened the file under its own spelling of the URI after
 		// diagnostics went out under ours.
@@ -391,7 +393,11 @@ publish :: proc(s: ^Server) {
 }
 
 @(private = "file")
-Wanted_File :: struct { path: string, diagnostics: [dynamic]^Lsp_Diagnostic }
+Wanted_File :: struct { path: string, diagnostics: [dynamic]Wanted_Diagnostic }
+
+// A diagnostic with its identity, kept to order those at one position.
+@(private = "file")
+Wanted_Diagnostic :: struct { d: ^Lsp_Diagnostic, identity: string }
 
 // Two roots that import one package both report its diagnostics; the client
 // gets each once.
@@ -402,10 +408,10 @@ want_diagnostic :: proc(wanted: ^map[string]Wanted_File, seen: ^map[string]bool,
 	seen[identity] = true
 	entry, found := &wanted[key]
 	if !found {
-		wanted[key] = Wanted_File{path, make([dynamic]^Lsp_Diagnostic, context.temp_allocator)}
+		wanted[key] = Wanted_File{path, make([dynamic]Wanted_Diagnostic, context.temp_allocator)}
 		entry = &wanted[key]
 	}
-	append(&entry.diagnostics, d)
+	append(&entry.diagnostics, Wanted_Diagnostic{d, identity})
 }
 
 // What makes a published diagnostic distinct, its related locations included.

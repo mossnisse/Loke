@@ -395,39 +395,53 @@ member_conflict :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Com
 	return ""
 }
 
-// Whether the operand of the `.new_name` selector at the offset reaches the
-// renamed field through `using` fields with no field already named `new_name`
-// nearer to it. design.md "Promoted struct fields": the nearest field wins
-// and two at the same depth are ambiguous, so renaming could change what the
-// selector names or make it an error.
+// Whether the `.new_name` selector at the offset would, once the renamed field
+// is spelled `new_name`, select it or become ambiguous. design.md "Promoted
+// struct fields": a field a struct declares hides those promoted into it, and
+// two `using` fields that each lead to the name are ambiguous whatever their
+// depths, so each branch is followed on its own, as the checker's
+// `promoted_field_path` does.
 @(private = "file")
 promotes_target :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file, offset: u32, target: Target, new_name: string) -> bool {
 	if target.symbol.kind != .Field { return false }
 	operand, typed := lokec.query_selector_operand(session, snapshot, file, offset)
 	if !typed || operand.type_value { return false }
+	// A selector reaches through one pointer or box, after distinct layers on
+	// either side of it.
 	type := operand.type
-	if pointer, found := lokec.query_type(session, type); found && (pointer.kind == .Pointer || pointer.kind == .Box) { type = pointer.element }
-	Depths :: struct { target, other: int }
-	walk :: proc(session: ^lokec.Compilation_Session, type: lokec.Type_Handle, target: Target, new_name: string, depth: int, depths: ^Depths) {
-		info, found := lokec.query_type(session, type)
-		for steps := 0; found && info.kind == .Distinct && steps < 64; steps += 1 { info, found = lokec.query_type(session, info.element) }
-		if !found || info.kind != .Struct || depth > 64 || depth > min(depths.target, depths.other) { return }
+	if outer, found := underlying(session, type); found && (outer.kind == .Pointer || outer.kind == .Box) { type = outer.element }
+	Lookup :: enum { None, Target, Other, Ambiguous }
+	lookup :: proc(session: ^lokec.Compilation_Session, type: lokec.Type_Handle, target: Target, new_name: string, depth: int) -> Lookup {
+		info, found := underlying(session, type)
+		if !found || info.kind != .Struct || depth > 64 { return .None }
+		direct := Lookup.None
 		for field in info.fields {
 			symbol, known := lokec.query_symbol(session, field)
 			if !known { continue }
-			if same_binding(session, field, target) {
-				depths.target = min(depths.target, depth)
-			} else if symbol.name == new_name {
-				depths.other = min(depths.other, depth)
-			}
+			if same_binding(session, field, target) { return .Target }
+			if symbol.name == new_name { direct = .Other }
 		}
+		if direct != .None { return direct }
+		result := Lookup.None
 		for field in info.fields {
-			if symbol, known := lokec.query_symbol(session, field); known && symbol.promotes { walk(session, symbol.type, target, new_name, depth + 1, depths) }
+			symbol, known := lokec.query_symbol(session, field)
+			if !known || !symbol.promotes { continue }
+			reached := lookup(session, symbol.type, target, new_name, depth + 1)
+			if reached == .Ambiguous || (reached != .None && result != .None) { return .Ambiguous }
+			if reached != .None { result = reached }
 		}
+		return result
 	}
-	depths := Depths{max(int), max(int)}
-	walk(session, type, target, new_name, 0, &depths)
-	return depths.target < max(int) && depths.target <= depths.other
+	reached := lookup(session, type, target, new_name, 0)
+	return reached == .Target || reached == .Ambiguous
+}
+
+// The type under any distinct layers.
+@(private = "file")
+underlying :: proc(session: ^lokec.Compilation_Session, type: lokec.Type_Handle) -> (lokec.Query_Type, bool) {
+	info, found := lokec.query_type(session, type)
+	for steps := 0; found && info.kind == .Distinct && steps < 64; steps += 1 { info, found = lokec.query_type(session, info.element) }
+	return info, found
 }
 
 // "the local `count` declared at line 4", for a refusal.

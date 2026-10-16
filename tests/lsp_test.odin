@@ -263,9 +263,12 @@ lsp_rapid_edits_end_with_the_final_text :: proc(t: ^testing.T) {
 	newest: json.Integer
 	last_codes := ""
 	hover := ""
+	// One deadline for both, however many older versions are published first.
+	start := time.tick_now()
 	for newest != LAST || hover == "" {
-		message, received := lsp_receive(&p)
-		if !testing.expect(t, received, "the server stopped before publishing the last version") { break }
+		remaining := 60 * time.Second - time.tick_since(start)
+		message, received := lsp_receive(&p, max(remaining, 0))
+		if !testing.expect(t, received, "the server did not publish the last version and answer the hover in time") { break }
 		if id, has_id := json_member(message, "id").(json.Integer); has_id && id == 2 {
 			hover, _ = json_member(json_member(json_member(message, "result"), "contents"), "value").(json.String)
 			continue
