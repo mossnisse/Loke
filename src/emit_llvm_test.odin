@@ -6,6 +6,8 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "core:thread"
+import "core:time"
 
 // `check_source`, plus the bootstrap's bodies and entry validation.
 @(private = "file")
@@ -889,4 +891,35 @@ main :: proc() { assert(choose(2) == 20); }
 		conditions += 1
 	}
 	testing.expectf(t, conditions == len(expected), "expected two conditions, got %d", conditions)
+}
+
+// Installing a prebuilt runtime set renames its staging directory, which
+// Windows refuses while another process, typically a scanner, holds one of its
+// files open. `rename_directory` waits the hold out instead of giving up on the
+// cache.
+@(test)
+rename_directory_waits_for_a_held_file :: proc(t: ^testing.T) {
+	root := fmt.tprintf("loke-rename-held-%d", os.get_pid())
+	defer os.remove_all(root)
+	from, to := fmt.tprintf("%s/staging", root), fmt.tprintf("%s/installed", root)
+	if !testing.expect(t, os.make_directory_all(from) == nil, "cannot create the staging directory") {
+		return
+	}
+	held, open_err := os.open(fmt.tprintf("%s/alloc.o", from), {.Read, .Write, .Create})
+	if !testing.expectf(t, open_err == nil, "cannot create a file in it: %v", open_err) {
+		return
+	}
+	if os.rename(from, to) == nil {
+		os.close(held)
+		testing.expect(t, false, "the directory moved while a file in it was open, so nothing here is held")
+		return
+	}
+	release := thread.create_and_start_with_poly_data(held, proc(held: ^os.File) {
+		time.sleep(100 * time.Millisecond)
+		os.close(held)
+	})
+	err := rename_directory(from, to)
+	thread.join(release)
+	thread.destroy(release)
+	testing.expectf(t, err == nil && os.exists(to), "the rename gave up while the file was held: %v", err)
 }

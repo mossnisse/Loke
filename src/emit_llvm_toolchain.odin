@@ -306,10 +306,29 @@ prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opt_mod
 	}
 	// A concurrent link that installed the same set first wins; either copy
 	// serves.
-	if err := os.rename(staging, dir); err != nil && !prebuilt_current(dir, objects, manifest) {
+	if err := rename_directory(staging, dir); err != nil && !prebuilt_current(dir, objects, manifest) {
 		return runtime_cache_failed(runtime_dir, "cannot rename `%s` to `%s`: %v", staging, dir, err)
 	}
 	return objects
+}
+
+// Windows refuses to move a directory while any process holds a file in it
+// open, and a scanner opens the objects clang just wrote, so a refusal is
+// retried for about two seconds before the link gives up on the cache. A
+// directory the link cannot write fails the same way and costs that wait.
+@(private)
+rename_directory :: proc(from, to: string) -> (err: os.Error) {
+	pause := 5 * time.Millisecond
+	waited: time.Duration
+	for {
+		err = os.rename(from, to)
+		if err != .Permission_Denied || waited >= 2 * time.Second {
+			return
+		}
+		time.sleep(pause)
+		waited += pause
+		pause = min(2 * pause, 200 * time.Millisecond)
+	}
 }
 
 // Beside a prebuilt set: what it was built from.

@@ -146,6 +146,10 @@ checklist.
   borrow no other global (design.md "Procedure result contracts"):
   `f := get_a; f = get_b;` with `get_b` returning `&b` let a later write to `b`
   pass while `f()`'s result still pointed at it. It is now `L0645`.
+- A link that builds the bundled runtime's prebuilt objects waits up to two
+  seconds for another process, such as a virus scanner, to release the new
+  files before installing them. It used to give up at once, so that link and
+  the next compiled the runtime sources again.
 - `examples/lexer.loke` lexes `errdefer` as a keyword, as `lokec` does; it
   was an identifier.
 - `perf.ps1` checks the output of every benchmark run, not only the fastest,
