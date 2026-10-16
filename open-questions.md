@@ -4,16 +4,6 @@ Decisions that are deliberately not yet made are recorded here rather than left 
 
 Design rationale and differences from Odin are recorded in [comments.md](comments.md).
 
-## Compiler review (2026-10-14)
-
-The [stage-by-stage compiler review](compiler-review-2026-10-14.md) records
-correctness, robustness, optimization, simplification, structure, and verification
-results. Confirmed language divergences are tracked separately in
-[Known gaps](known-gaps.md#gaps), with minimal reproductions. No implementation
-changes are included in the review. Its gaps, engineering findings and
-simplifications have since been fixed, and G14 was decided for the body
-reading.
-
 ## Package and import versioning
 
 Should import paths encode package versions? And should a package declaration remain mandatory in every file, when every file in a directory must name the same package anyway, or is it ceremony? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.

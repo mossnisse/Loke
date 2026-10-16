@@ -63,6 +63,7 @@ checklist.
 
 ### Changed
 
+- Removed completed review reports and their documentation references.
 - A statement the parser cannot finish, such as `value.` or `call(first, `,
   is still checked so editors can see its names and types; its syntax error
   stays the only diagnostic it produces. A missing name after `.` is no longer
