@@ -24,10 +24,10 @@ Kind :: enum {
 	EOF, Error,
 	Ident, Int, Float, String, Raw_String, Rune,
 	// keywords, reserved in every position
-	Break, Case, Continue, Default, Defer, Distinct, Dyn, Dynamic, Else, Enum, For, Foreach,
-	Foreign, Hook, If, Impl, Import, In, Inout, Interface, Map, Move, Move_Only, Mut,
-	Operator, Or_Else, Or_Return, Package, Proc, Return, Struct, Switch, Type, Union,
-	Via, When, Where,
+	Break, Case, Continue, Default, Defer, Distinct, Dyn, Dynamic, Else, Enum, Errdefer, For,
+	Foreach, Foreign, Hook, If, Impl, Import, In, Inout, Interface, Map, Move, Move_Only,
+	Mut, Operator, Or_Else, Or_Return, Package, Proc, Return, Struct, Switch, Type,
+	Union, Via, When, Where,
 	// operators and punctuation
 	Plus, Minus, Star, Slash, Percent, Amp, Amp_Tilde, Pipe, Tilde, Shl, Shr, And_And,
 	Or_Or, Not, Eq_Eq, Not_Eq, Lt, Lt_Eq, Gt, Gt_Eq, Assign, Plus_Eq, Minus_Eq,
@@ -275,6 +275,7 @@ keyword :: proc(src: []u8, lo: int, hi: int) -> Kind {
 	case "dynamic":   return .Dynamic;
 	case "else":      return .Else;
 	case "enum":      return .Enum;
+	case "errdefer":  return .Errdefer;
 	case "for":       return .For;
 	case "foreach":   return .Foreach;
 	case "foreign":   return .Foreign;

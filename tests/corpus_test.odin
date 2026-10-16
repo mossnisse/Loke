@@ -204,7 +204,7 @@ compiler_sources_include_subpackages :: proc(t: ^testing.T) {
 @(test)
 perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
 	refused, _, refused_stderr, refused_err := exec(
-		os.Process_Desc{command = []string{"powershell", "-NoProfile", "-File", "perf.ps1", "-Repeat", "0"}},
+		os.Process_Desc{command = []string{"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "perf.ps1", "-Repeat", "0"}},
 		context.allocator,
 	)
 	if !testing.expectf(t, refused_err == nil, "cannot run powershell: %v", refused_err) {
@@ -227,7 +227,7 @@ perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
 		return
 	}
 	failed, _, _, failed_err := exec(
-		os.Process_Desc{command = []string{"powershell", "-NoProfile", "-File", "perf.ps1", "-Lokec", failing}},
+		os.Process_Desc{command = []string{"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "perf.ps1", "-Lokec", failing}},
 		context.allocator,
 	)
 	testing.expectf(t, failed_err == nil && failed.exit_code != 0, "perf.ps1 succeeded with a failing compiler")
@@ -235,6 +235,79 @@ perf_script_validates_and_cleans_up :: proc(t: ^testing.T) {
 	work := join_path({temp, fmt.tprintf("loke-perf-%d", failed.pid)}, context.temp_allocator)
 	testing.expectf(t, !os.exists(work), "the failed run left %s behind", work)
 	remove_tree(work)
+}
+
+// perf.ps1 driven by tests/perf/fake_compiler.loke, which builds in no time
+// and whose benchmarks print their .expected: a baseline that is also -Out is
+// compared before it is replaced, a record of other sources is not compared,
+// every run's output is checked rather than only the fastest's, and a program
+// that hangs fails the measurement after -TimeoutSeconds.
+@(test)
+perf_script_compares_and_checks_every_run :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	fake := fmt.tprintf("%s/perf-fake-compiler.exe", TMP)
+	if !compile_example(t, "tests/perf/fake_compiler.loke", fake, nil) {
+		return
+	}
+	inherited, environ_err := os.environ(context.allocator)
+	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
+		return
+	}
+	perf :: proc(fake: string, env: []string, extra: ..string) -> (os.Process_State, string, string, os.Error) {
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "perf.ps1", "-Lokec", fake, "-Lsp", "no-such-server.exe")
+		append(&command, ..extra)
+		state, stdout, stderr, err := exec(os.Process_Desc{command = command[:], env = env}, context.temp_allocator)
+		return state, normalise(string(stdout)), normalise(string(stderr)), err
+	}
+	temp, _ := os.temp_directory(context.temp_allocator)
+
+	baseline := fmt.tprintf("%s/perf-same-path.json", TMP)
+	old := `[{"program":"examples/hello.loke","check_ms":100000,"build_ms":100000,"peak_mb":1000,"exe_kb":100000,"run_ms":null},` +
+		`{"program":"bench/nbody.loke","input":"0000000000000000","check_ms":1,"build_ms":1,"peak_mb":1,"exe_kb":1,"run_ms":1}]`
+	if !testing.expect(t, os.write_entire_file(baseline, transmute([]u8)string(old)) == nil, "cannot write the baseline") {
+		return
+	}
+	state, stdout, stderr, err := perf(fake, inherited, "-Repeat", "1", "-Out", baseline, "-Baseline", baseline)
+	if testing.expectf(t, err == nil && state.exit_code == 0, "perf.ps1 with the fake compiler failed:\n%s%s", stdout, stderr) {
+		testing.expectf(t, strings.contains(stdout, "| examples/hello.loke | ") && strings.contains(stdout, "(-100%)"), "the baseline was not compared before -Out replaced it:\n%s", stdout)
+		testing.expectf(t, strings.contains(stdout, "(sources changed)") && !strings.contains(stdout, "(+"), "a record of other sources was compared:\n%s", stdout)
+		written, _ := os.read_entire_file(baseline, context.temp_allocator)
+		testing.expectf(t, !strings.contains(string(written), "100000") && strings.contains(string(written), `"input"`), "-Out did not write the new record:\n%s", string(written))
+	}
+
+	state, stdout, stderr, err = perf(fake, append_env(inherited, "LOKE_PERF_FAKE=wrong-later"), "-Repeat", "3")
+	testing.expectf(
+		t, err == nil && state.exit_code != 0 && strings.contains(stderr, "(run 2) printed"),
+		"perf.ps1 accepted a benchmark whose slower runs printed the wrong output:\n%s%s", stdout, stderr,
+	)
+
+	state, stdout, stderr, err = perf(fake, append_env(inherited, "LOKE_PERF_FAKE=hang"), "-Repeat", "1", "-TimeoutSeconds", "1")
+	testing.expectf(
+		t, err == nil && state.exit_code != 0 && strings.contains(stderr, "still running after 1 s"),
+		"perf.ps1 did not time out a hanging benchmark:\n%s%s", stdout, stderr,
+	)
+	work := join_path({temp, fmt.tprintf("loke-perf-%d", state.pid)}, context.temp_allocator)
+	testing.expectf(t, !os.exists(work), "the timed-out run left %s behind", work)
+	remove_tree(work)
+}
+
+// The median of an even count of samples is the mean of the middle two. The
+// function is taken from perf.ps1's syntax tree, so nothing else runs.
+@(test)
+perf_script_median :: proc(t: ^testing.T) {
+	script := `$ast = [Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'perf.ps1').Path, [ref]$null, [ref]$null); ` +
+		`$median = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-Median' }, $true); ` +
+		`. ([scriptblock]::Create($median.Extent.Text)); ` +
+		`Get-Median @(100, 200, 100, 200, 100, 200, 100, 200, 100, 200); Get-Median @(3, 1, 2); Get-Median @(7)`
+	state, stdout, stderr, err := exec(
+		os.Process_Desc{command = []string{"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script}},
+		context.temp_allocator,
+	)
+	if !testing.expectf(t, err == nil && state.exit_code == 0, "cannot run Get-Median: %v\n%s", err, string(stderr)) {
+		return
+	}
+	testing.expectf(t, normalise(string(stdout)) == "150\n2\n7","Get-Median returned %q, expected 150, 2 and 7", string(stdout))
 }
 
 @(test)
@@ -2487,6 +2560,17 @@ example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
 		append(&files, ..found)
 	}
 	append(&files, "tests/err/byte_order_mark.loke", "tests/err/invalid_utf8.loke")
+	// Every reserved keyword, which no example has to happen to use.
+	keywords := reserved_keywords(t)
+	if !testing.expect(t, len(keywords) > 0, "grammar.md \"Keywords\" lists no reserved keywords") {
+		return
+	}
+	keyword_file := fmt.tprintf("%s/example-lexer-keywords.loke", TMP)
+	keyword_text := strings.join(keywords, " ", context.temp_allocator)
+	if !testing.expectf(t, os.write_entire_file(keyword_file, transmute([]u8)keyword_text) == nil, "cannot write %s", keyword_file) {
+		return
+	}
+	append(&files, keyword_file)
 	// Encoding failures happen before lexing; assert their offsets as well as
 	// comparing codes, including a BOM whose remaining bytes are invalid.
 	encoding_cases := []struct { name, input, stderr: string }{
@@ -2548,6 +2632,48 @@ example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
 		t, library.err == nil && library.state.exit_code == 0 && strings.has_suffix(normalise(string(library.stdout)), " 0 diagnostics"),
 		"the lexer over core/: %s%s", string(library.stdout), string(library.stderr),
 	)
+	// Agreement alone would pass if both lexers missed the same keyword.
+	keyword_tokens := string(jobs[2 * (encoding_start - 1)].stdout)
+	testing.expectf(t, !strings.contains(keyword_tokens, "Ident"), "lokec lexes a reserved keyword as an identifier:\n%s", keyword_tokens)
+
+	// bench/workspace's lexer package is a copy of the example, which
+	// `perf.ps1` runs only on its own source, so check its keyword table here.
+	workspace_lexer, workspace_err := os.read_entire_file("bench/workspace/lexer/lexer.loke", context.temp_allocator)
+	if !testing.expect(t, workspace_err == nil, "cannot read bench/workspace/lexer/lexer.loke") {
+		return
+	}
+	for word in keywords {
+		testing.expectf(
+			t, strings.contains(string(workspace_lexer), fmt.tprintf("case \"%s\":", word)),
+			"bench/workspace/lexer/lexer.loke does not lex the keyword %q", word,
+		)
+	}
+}
+
+// The words grammar.md "Keywords" reserves in every position.
+@(private)
+reserved_keywords :: proc(t: ^testing.T) -> []string {
+	grammar, err := os.read_entire_file("grammar.md", context.temp_allocator)
+	if !testing.expect(t, err == nil, "cannot read grammar.md") {
+		return nil
+	}
+	text := string(grammar)
+	at := strings.index(text, "Reserved in every position:")
+	if at < 0 {
+		return nil
+	}
+	text = text[at:]
+	// The fence's line may end in `\r\n` in a Windows checkout.
+	opening := strings.index(text, "```")
+	if opening < 0 {
+		return nil
+	}
+	text = text[opening + 3:]
+	closing := strings.index(text, "```")
+	if closing < 0 {
+		return nil
+	}
+	return strings.fields(text[:closing], context.temp_allocator)
 }
 
 // Each `L0nnn` code in `text`, in order, space-separated.

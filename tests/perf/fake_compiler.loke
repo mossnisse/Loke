@@ -1,0 +1,50 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:path";
+import "core:strings";
+import "core:time";
+
+// A stand-in for lokec that lets the tests drive perf.ps1 in seconds. Given
+// `... -o <output>` it "compiles" by copying itself to the output. Run with no
+// arguments, as perf.ps1 runs a benchmark, it prints the bench/<name>.expected
+// its own file name selects, read from the working directory, so every
+// benchmark output matches. LOKE_PERF_FAKE changes that run:
+//
+//   wrong-later   the first run of each program prints the expected output and
+//                 every later one prints something else, more slowly
+//   hang          sleeps for a minute first
+
+main :: proc() -> Status(io.Error) {
+	self := os.executable_path() or_return;
+	if (os.args.len() > 1) {
+		for (i := 1; i + 1 < os.args.len(); i += 1) {
+			if (os.args[i] == "-o") {
+				bytes := fs.read_bytes(self) or_return;
+				fs.write_bytes(os.args[i + 1], bytes[:]) or_return;
+			}
+		}
+		return .ok;
+	}
+	mode := (os.get_environment("LOKE_PERF_FAKE") or_return) or_else "";
+	if (mode == "hang") { time.sleep(60 * time.SECOND); }
+	if (mode == "wrong-later") {
+		marker := strings.init();
+		marker.append(self);
+		marker.append(".ran");
+		if (fs.exists(marker.view()) or_return) {
+			time.sleep(200 * time.MILLISECOND);
+			fmt.println("not the expected output");
+			return .ok;
+		}
+		fs.write_text(marker.view(), "") or_return;
+	}
+	name := strings.init();
+	name.append(path.stem(self));
+	name.append(".expected");
+	fmt.print(fs.read_text(path.join([]string_view{"bench", name.view()})) or_return);
+	return .ok;
+}

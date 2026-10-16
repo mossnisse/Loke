@@ -487,10 +487,15 @@ For performance changes, build the baseline compiler and run:
 Use the same machine and workloads. The script measures front-end and full-build
 time, peak working set, executable size, and benchmark runtime, and times
 `loke-lsp.exe` editing `bench/workspace` (see [Language server](#language-server)).
-Timings use the fastest of three runs and benchmark output must match. CI
-compares with the latest release's `perf.json`; releases attach their own record. For structural
-backend refactors, also compare emitted `.ll` using identical source paths and
-options to catch naming or ordering drift.
+Timings use the fastest of three runs, and every run's benchmark output must
+match. A program or server operation slower than `-TimeoutSeconds` fails the
+run. Each record carries a hash of the program's own sources, not the standard
+library's, and a figure measured on other sources than its baseline's is shown
+as `(sources changed)` rather than compared. CI compares with the latest
+release's `perf.json`; releases attach their own record. The tests of
+`perf.ps1` itself drive it with `tests/perf/fake_compiler.loke` in place of
+`lokec`. For structural backend refactors, also compare emitted `.ll` using
+identical source paths and options to catch naming or ordering drift.
 
 ### Standard-library verification
 

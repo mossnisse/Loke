@@ -146,6 +146,17 @@ checklist.
   borrow no other global (design.md "Procedure result contracts"):
   `f := get_a; f = get_b;` with `get_b` returning `&b` let a later write to `b`
   pass while `f()`'s result still pointed at it. It is now `L0645`.
+- `examples/lexer.loke` lexes `errdefer` as a keyword, as `lokec` does; it
+  was an identifier.
+- `perf.ps1` checks the output of every benchmark run, not only the fastest,
+  and that each language-server edit reports an error exactly when it makes
+  one. A median of an even number of samples is the mean of the middle two.
+  A `-Baseline` that is also the `-Out` file is compared before it is
+  replaced. A program or language-server operation that takes longer than
+  `-TimeoutSeconds` (300 by default) fails the run instead of stalling it.
+  Each record names a hash of the sources it measured, and a figure whose
+  sources differ from the baseline's reads `(sources changed)` instead of a
+  percentage.
 
 ## [0.8.0] - 2026-10-13
 

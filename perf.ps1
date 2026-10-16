@@ -12,7 +12,11 @@ param(
     # Timings are the fastest of this many runs. `1..0` would be two runs, so
     # fewer than one is refused.
     [ValidateRange(1, 2147483647)]
-    [int]$Repeat = 3
+    [int]$Repeat = 3,
+    # A program that runs longer than this, or a language-server operation that
+    # waits longer for its answer, fails the measurement rather than stalling it.
+    [ValidateRange(1, 86400)]
+    [int]$TimeoutSeconds = 300
 )
 
 # Records what later changes to the compiler are compared against
@@ -25,7 +29,9 @@ param(
 # package and to a library package, and completion while a statement is
 # unfinished, each from the notification to the server's answer, and the
 # server's peak working set. Timings are noisy on shared CI runners, so nothing
-# here fails on a slower figure; a wrong output fails.
+# here fails on a slower figure; a wrong output fails. Each record names a hash
+# of the sources it measured, and a figure whose sources differ from the
+# baseline's is not compared with it.
 
 $ErrorActionPreference = 'Stop'
 # The record reads the same on every machine: `12.5`, never `12,5`.
@@ -36,6 +42,14 @@ $Lokec = (Resolve-Path $Lokec).Path
 if (-not $Lsp) { $Lsp = "$PSScriptRoot/loke-lsp.exe" }
 $Lsp = if (Test-Path $Lsp) { (Resolve-Path $Lsp).Path }
 $work = Join-Path ([IO.Path]::GetTempPath()) "loke-perf-$PID"
+$timeoutMs = 1000 * $TimeoutSeconds
+
+# Read before measuring: a bad baseline fails at once, and -Out may name the
+# same file.
+$before = @{}
+if ($Baseline) {
+    foreach ($old in (Get-Content -Raw $Baseline | ConvertFrom-Json)) { $before[$old.program] = $old }
+}
 
 # A process's peak working set is readable after it exits, through the handle
 # .NET keeps open, but Process.PeakWorkingSet64 is not.
@@ -62,8 +76,9 @@ public static class LokePerfMemory {
 '@
 
 # Runs a program to completion: its exit code, stdout, stderr, wall time in
-# milliseconds, and peak working set in bytes.
-function Invoke-Measured([string]$exe, [string[]]$arguments) {
+# milliseconds, and peak working set in bytes. One still running after
+# -TimeoutSeconds is killed.
+function Invoke-Measured([string]$exe, [string[]]$arguments, [string]$what) {
     $info = New-Object Diagnostics.ProcessStartInfo $exe
     $info.Arguments = ($arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
     $info.UseShellExecute = $false
@@ -72,12 +87,21 @@ function Invoke-Measured([string]$exe, [string[]]$arguments) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $process = [Diagnostics.Process]::Start($info)
     $stderr = $process.StandardError.ReadToEndAsync()
-    $stdout = $process.StandardOutput.ReadToEnd()
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    if (-not $process.WaitForExit($timeoutMs)) {
+        # Until it has exited, its executable cannot be removed with the work
+        # directory. A timed wait does not also wait for its output to close.
+        try { $process.Kill() } catch { }
+        $null = $process.WaitForExit(30000)
+        $process.Dispose()
+        throw "$what was still running after $TimeoutSeconds s"
+    }
+    # The timed wait can return before the redirected output is drained.
     $process.WaitForExit()
     $clock.Stop()
     $result = [pscustomobject]@{
         Code   = $process.ExitCode
-        Stdout = $stdout
+        Stdout = $stdout.Result
         Stderr = $stderr.Result
         Ms     = $clock.Elapsed.TotalMilliseconds
         Peak   = [LokePerfMemory]::PeakWorkingSet($process.Handle)
@@ -86,10 +110,16 @@ function Invoke-Measured([string]$exe, [string[]]$arguments) {
     $result
 }
 
-function Get-Fastest([string]$exe, [string[]]$arguments, [string]$what) {
+# The fastest of -Repeat runs, every one of which must succeed and, given
+# `$check`, print what it accepts; `$check` returns an error message or nothing.
+function Get-Fastest([string]$exe, [string[]]$arguments, [string]$what, [scriptblock]$check) {
     $runs = foreach ($i in 1..$Repeat) {
-        $run = Invoke-Measured $exe $arguments
-        if ($run.Code -ne 0) { throw "$what exited with $($run.Code)`n$($run.Stdout)$($run.Stderr)" }
+        $run = Invoke-Measured $exe $arguments $what
+        if ($run.Code -ne 0) { throw "$what (run $i) exited with $($run.Code)`n$($run.Stdout)$($run.Stderr)" }
+        if ($check) {
+            $problem = & $check $run
+            if ($problem) { throw "$what (run $i) $problem" }
+        }
         $run
     }
     $runs | Sort-Object Ms | Select-Object -First 1
@@ -131,9 +161,12 @@ function Send-Lsp($server, [hashtable]$message) {
 }
 
 # Messages the server sends until `$done` accepts one, which is returned. A
-# server silent for a minute has failed.
+# server that has not sent it within -TimeoutSeconds has failed, however much
+# else it sent meanwhile.
 function Wait-Lsp($server, [scriptblock]$done) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     while ($true) {
+        if ($clock.ElapsedMilliseconds -ge $timeoutMs) { throw "loke-lsp did not answer within $TimeoutSeconds s" }
         $head = [Text.Encoding]::ASCII.GetString($server.Buffer, 0, [math]::Min($server.Count, 256))
         $end = $head.IndexOf("`r`n`r`n")
         if ($end -ge 0) {
@@ -153,7 +186,8 @@ function Wait-Lsp($server, [scriptblock]$done) {
             $server.Buffer = $larger
         }
         $read = $server.Out.ReadAsync($server.Buffer, $server.Count, $server.Buffer.Length - $server.Count)
-        if (-not $read.Wait(60000)) { throw 'loke-lsp sent nothing for a minute' }
+        # A read left pending ends when the caller kills the server.
+        if (-not $read.Wait([math]::Max(0, $timeoutMs - $clock.ElapsedMilliseconds))) { throw "loke-lsp did not answer within $TimeoutSeconds s" }
         if ($read.Result -le 0) { throw 'loke-lsp closed its output' }
         $server.Count += $read.Result
     }
@@ -167,14 +201,34 @@ function Assert-LspReply($reply, [string]$what, [scriptblock]$valid) {
     if (-not (& $valid $reply.result)) { throw "loke-lsp answered $what without the expected result" }
 }
 
+# Of an even count, the mean of the middle two.
 function Get-Median([double[]]$values) {
-    [math]::Round(($values | Sort-Object)[[math]::Floor($values.Count / 2)])
+    $sorted = @($values | Sort-Object)
+    $middle = [math]::Floor($sorted.Count / 2)
+    if ($sorted.Count % 2) { [math]::Round($sorted[$middle]) }
+    else { [math]::Round(($sorted[$middle - 1] + $sorted[$middle]) / 2) }
+}
+
+# A short hash of a program's sources: one file, or every file beneath a
+# package directory with its relative path. Line endings do not count, so every
+# checkout agrees.
+function Get-InputHash($source) {
+    $files = if ($source.PSIsContainer) { @(Get-ChildItem -LiteralPath $source.FullName -Recurse -File | Sort-Object FullName) } else { @($source) }
+    $text = foreach ($file in $files) {
+        $relative = $file.FullName.Substring($source.FullName.Length) -replace '\\', '/'
+        "$relative`n" + ([IO.File]::ReadAllText($file.FullName) -replace "`r`n", "`n")
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($text -join "`n")))
+    } finally { $sha.Dispose() }
+    (-join ($digest | ForEach-Object { $_.ToString('x2') })).Substring(0, 16)
 }
 
 # The server editing bench/workspace. Every figure runs from sending the
 # notification to receiving what it causes, so each includes the server's
 # 150 ms pause for further edits; edits and completions are medians of ten.
-function Measure-Lsp {
+function Measure-Lsp([string]$inputHash) {
     $root = (Resolve-Path "$PSScriptRoot/bench/workspace").Path
     $mainUri = 'file:///' + ("$root/main.loke" -replace '\\', '/')
     $lexerUri = 'file:///' + ("$root/lexer/lexer.loke" -replace '\\', '/')
@@ -182,6 +236,9 @@ function Measure-Lsp {
     $lexer = (Get-Content -Raw "$root/lexer/lexer.loke") -replace "`r`n", "`n"
     $brokenMain = $main.Replace('report.print(summary, outcome);', 'report.print(summary, outcome, 1);')
     $brokenLexer = ([regex]'at := from;').Replace($lexer, 'at := from + true;', 1)
+    # The edits below time the intended work only while these anchors exist.
+    if ($brokenMain -eq $main -or $brokenLexer -eq $lexer) { throw 'bench/workspace no longer has the text perf.ps1 breaks' }
+    if ($main.IndexOf("`tsummary :=") -lt 0) { throw 'bench/workspace/main.loke no longer has the line perf.ps1 completes before' }
     $server = Start-Lsp
     try {
         Send-Lsp $server @{ id = 1; method = 'initialize'; params = @{ capabilities = @{} } }
@@ -200,19 +257,24 @@ function Measure-Lsp {
         $reply = Wait-Lsp $server { param($m) $m.id -eq 3 }
         Assert-LspReply $reply 'the document symbols of lexer.loke' $symbols
 
-        # Each edit adds or removes an error, so each is answered by a publication.
+        # Each edit adds or removes an error, so each is answered by a
+        # publication, which must report an error exactly when the edit made one.
         $versions = @{ $mainUri = 1; $lexerUri = 1 }
         $timeEdit = {
-            param($uri, $text)
+            param($uri, $text, [bool]$broken)
             $versions[$uri] += 1
             $version = $versions[$uri]
             $clock = [Diagnostics.Stopwatch]::StartNew()
             Send-Lsp $server @{ method = 'textDocument/didChange'; params = @{ textDocument = @{ uri = $uri; version = $version }; contentChanges = @(@{ text = $text }) } }
-            $null = Wait-Lsp $server { param($m) $m.method -eq 'textDocument/publishDiagnostics' -and $m.params.uri -eq $uri -and $m.params.version -eq $version }
-            $clock.Elapsed.TotalMilliseconds
+            $published = Wait-Lsp $server { param($m) $m.method -eq 'textDocument/publishDiagnostics' -and $m.params.uri -eq $uri -and $m.params.version -eq $version }
+            $elapsed = $clock.Elapsed.TotalMilliseconds
+            $errors = @($published.params.diagnostics | Where-Object { $_.severity -eq 1 })
+            if ($broken -and $errors.Count -eq 0) { throw "loke-lsp reported no error in the broken $uri" }
+            if (-not $broken -and $errors.Count -gt 0) { throw "loke-lsp reported an error in the repaired ${uri}: $($errors[0].message)" }
+            $elapsed
         }
-        $edits = foreach ($i in 1..10) { & $timeEdit $mainUri $(if ($i % 2) { $brokenMain } else { $main }) }
-        $libraryEdits = foreach ($i in 1..10) { & $timeEdit $lexerUri $(if ($i % 2) { $brokenLexer } else { $lexer }) }
+        $edits = foreach ($i in 1..10) { & $timeEdit $mainUri $(if ($i % 2) { $brokenMain } else { $main }) ($i % 2 -eq 1) }
+        $libraryEdits = foreach ($i in 1..10) { & $timeEdit $lexerUri $(if ($i % 2) { $brokenLexer } else { $lexer }) ($i % 2 -eq 1) }
 
         # Typing `report.` or `words.` on a line of its own, then asking.
         $at = $main.IndexOf("`tsummary :=")
@@ -236,6 +298,7 @@ function Measure-Lsp {
         if (-not $server.Process.WaitForExit(30000)) { throw 'loke-lsp did not exit' }
         [pscustomobject][ordered]@{
             program         = 'bench/workspace (loke-lsp)'
+            input           = $inputHash
             open_ms         = [math]::Round($open)
             edit_ms         = Get-Median $edits
             library_edit_ms = Get-Median $libraryEdits
@@ -256,11 +319,13 @@ try {
         $folder = Split-Path -Leaf (Split-Path -Parent $source.FullName)
         $name = "$folder/$($source.Name)"
         Write-Host "Measuring $name"
+        $inputHash = Get-InputHash $source
         $check = Get-Fastest $Lokec @('-emit-ll', $source.FullName, '-o', "$work/out.ll") "lokec -emit-ll $name"
         $exe = "$work/$($source.BaseName).exe"
         $build = Get-Fastest $Lokec @('-opt=speed', $source.FullName, '-o', $exe) "lokec -opt=speed $name"
         $record = [ordered]@{
             program  = $name
+            input    = $inputHash
             check_ms = [math]::Round($check.Ms)
             build_ms = [math]::Round($build.Ms)
             peak_mb  = [math]::Round(($check.Peak, $build.Peak | Measure-Object -Maximum).Maximum / 1MB, 1)
@@ -268,19 +333,22 @@ try {
             run_ms   = $null
         }
         if ($folder -eq 'bench') {
-            $run = Get-Fastest $exe @() $name
             # A package directory's expected output sits beside it.
             $expectedPath = if ($source.PSIsContainer) { "$($source.FullName).expected" } else { $source.FullName -replace '\.loke$', '.expected' }
             $expected = (Get-Content -Raw $expectedPath) -replace "`r`n", "`n"
-            $actual = $run.Stdout -replace "`r`n", "`n"
-            if ($actual -ne $expected) { throw "$name printed`n$actual`nbut bench expects`n$expected" }
+            # Every run's output, not only the fastest's, has to match.
+            $run = Get-Fastest $exe @() $name {
+                param($run)
+                $actual = $run.Stdout -replace "`r`n", "`n"
+                if ($actual -ne $expected) { "printed`n$actual`nbut bench expects`n$expected" }
+            }
             $record.run_ms = [math]::Round($run.Ms)
         }
         [pscustomobject]$record
     }
     if ($Lsp) {
         Write-Host 'Measuring bench/workspace in loke-lsp'
-        $records = @($records) + @(Measure-Lsp)
+        $records = @($records) + @(Measure-Lsp (Get-InputHash (Get-Item "$PSScriptRoot/bench/workspace")))
     } else {
         Write-Warning 'No loke-lsp.exe to measure; build it or pass -Lsp'
     }
@@ -292,19 +360,18 @@ try {
 
 if ($Out) { ConvertTo-Json @($records) | Set-Content -Encoding utf8 $Out }
 
-$before = @{}
-if ($Baseline) {
-    foreach ($old in (Get-Content -Raw $Baseline | ConvertFrom-Json)) { $before[$old.program] = $old }
-}
 # A Markdown table of the records with these columns, each figure followed by
-# its change from the baseline.
+# its change from the baseline. A baseline record of other sources is not
+# compared; one from before records named their sources is.
 function Format-Records([object[]]$rows, [string[]]$columns, [string]$header) {
     $lines = @($header, ('| --- |' + (' ---: |' * $columns.Count)))
     foreach ($record in $rows) {
         $cells = foreach ($column in $columns) {
             $value = $record.$column
-            $old = if ($before.ContainsKey($record.program)) { $before[$record.program].$column }
+            $previous = $before[$record.program]
+            $old = if ($previous) { $previous.$column }
             if ($null -eq $value) { '' }
+            elseif ($old -and $previous.input -and $previous.input -ne $record.input) { "$value (sources changed)" }
             elseif ($old) { '{0} ({1:+0;-0;0}%)' -f $value, (100 * ($value - $old) / $old) }
             else { "$value" }
         }
