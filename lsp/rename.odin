@@ -252,11 +252,13 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 						if !typed {
 							return "", fmt.tprintf("At %s, rename cannot tell what `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
 						}
-						if members, listed := lokec.query_members(rs, operand, source_file, context.temp_allocator); listed {
-							for candidate in members {
-								if candidate.name == new_name {
-									return "", fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, new_name, new_name)
-								}
+						members, listed := lokec.query_members(rs, operand, source_file, context.temp_allocator)
+						if !listed {
+							return "", fmt.tprintf("At %s, rename cannot list the members `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
+						}
+						for candidate in members {
+							if candidate.name == new_name {
+								return "", fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, new_name, new_name)
 							}
 						}
 					}

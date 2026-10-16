@@ -171,6 +171,10 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 // The operand a written selector selects from. design.md "Promoted struct
 // fields": the checker turns `e.x` into `e.position.x`, and each link it adds
 // carries the written name's span, so the written operand is the one below them.
+// Below those, an implicit `p^` through a pointer or box spans its operand,
+// where a written one ends at its `^`; the receiver is the pointer or box, whose
+// own members a selector reaches first (design.md "Methods and implementation
+// blocks").
 @(private = "file")
 index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
 	span := selector.name.span
@@ -180,6 +184,9 @@ index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
 		link, added := operand.(^Expr_Selector)
 		if !added || link.name.span != span { break }
 		operand = link.operand
+	}
+	if deref, found := operand.(^Expr_Postfix); found && deref.op == .Caret {
+		if inner := expr_base(deref.operand); inner != nil && deref.op_span == inner.span { operand = deref.operand }
 	}
 	base := expr_base(operand)
 	if base == nil { return }

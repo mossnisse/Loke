@@ -1212,6 +1212,13 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 		// Through a pointer, and a distinct one.
 		{"promoted-new-pointer", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nmain :: proc() { o := Outer{A{1}, B{2}}; p := &o; _ = p.next; }\n", "old: int", "next", "could select the renamed `old`"},
 		{"promoted-new-distinct", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nP :: distinct ^Outer;\nmain :: proc() { o := Outer{A{1}, B{2}}; p := P(&o); _ = p.next; }\n", "old: int", "next", "could select the renamed `old`"},
+		// A selector in a generic is checked in each instance.
+		{"generic", "package main;\nInner :: struct { old: int }\nread :: proc(value: $T) -> int { return value.old; }\nmain :: proc() { _ = read(Inner{1}); }\n", "old: int", "renamed", "main.loke:2"},
+		{"generic-agree", "package main;\nInner :: struct { old: int }\nread :: proc(value: $T, extra: $U) -> int { return value.old; }\nmain :: proc() { _ = read(Inner{1}, 1); _ = read(Inner{2}, true); }\n", "old: int", "renamed", "main.loke:2"},
+		{"generic-differ", "package main;\nInner :: struct { old: int }\nOther :: struct { old: int }\nread :: proc(value: $T) -> int { return value.old; }\nmain :: proc() { _ = read(Inner{1}); _ = read(Other{2}); }\n", "old: int", "renamed", "rename cannot"},
+		// A pointer's own method is found before its referent's.
+		{"pointer-method", "package main;\nItem :: struct { n: int }\nimpl Item { old :: proc(self) -> int { return self.n; } }\nimpl ^Item { other :: proc(self) -> int { return self.n + 10; } }\nmain :: proc() { item := Item{1}; p := &item; assert(p.old() == 1); _ = p.other(); }\n", "old ::", "other", "would select the existing member `other`"},
+		{"pointer-method-free", "package main;\nItem :: struct { n: int }\nimpl Item { old :: proc(self) -> int { return self.n; } }\nimpl ^Item { other :: proc(self) -> int { return self.n + 10; } }\nmain :: proc() { item := Item{1}; p := &item; assert(p.old() == 1); _ = p.other(); }\n", "old ::", "fresh", "main.loke:2"},
 		// A named argument names the callee's parameter, not a caller's local.
 		{"label", "package main;\nf :: proc(old: int) {}\nmain :: proc() { next := 1; f(old = next); }\n", "old: int", "next", "main.loke:2"},
 		// A local cannot shadow an outer local, even one not used there.

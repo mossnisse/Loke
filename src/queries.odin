@@ -212,19 +212,7 @@ query_at :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, 
 			best = occurrence
 			symbol_conflict, type_conflict = false, false
 		} else if span == best.span {
-			// A structural wrapper may have no binding/type of its own. Merge
-			// known annotations, but never restore a conflicting specialization.
-			best.type_value ||= occurrence.type_value
-			if occurrence.type != INVALID_TYPE && !type_conflict {
-				if best.type == INVALID_TYPE { best.type = occurrence.type }
-				else if occurrence.type != best.type { best.type, type_conflict = INVALID_TYPE, true }
-			}
-			if occurrence.symbol != INVALID_SYMBOL && !symbol_conflict {
-				if best.symbol == INVALID_SYMBOL { best.symbol = occurrence.symbol }
-				else if s.queries.canonical[occurrence.symbol] != s.queries.canonical[best.symbol] {
-					best.symbol, symbol_conflict = INVALID_SYMBOL, true
-				}
-			}
+			merge_occurrence(s, &best, occurrence, &symbol_conflict, &type_conflict)
 		}
 	}
 	if best.span.file == NO_FILE || (best.symbol == INVALID_SYMBOL && best.type == INVALID_TYPE) { return {}, false }
@@ -232,6 +220,24 @@ query_at :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, 
 		Query_Location{s.snapshot, best.span}, Symbol_Handle{s.snapshot, best.symbol}, Type_Handle{s.snapshot, best.type},
 		best.type_value && best.type != INVALID_TYPE,
 	}, true
+}
+
+// A structural wrapper, or an unchecked generic template, may have no binding
+// or type of its own. Merge known annotations, but never restore a conflicting
+// specialization.
+@(private = "file")
+merge_occurrence :: proc(s: ^Compilation_Session, best: ^Query_Occurrence, occurrence: Query_Occurrence, symbol_conflict, type_conflict: ^bool) {
+	best.type_value ||= occurrence.type_value
+	if occurrence.type != INVALID_TYPE && !type_conflict^ {
+		if best.type == INVALID_TYPE { best.type = occurrence.type }
+		else if occurrence.type != best.type { best.type, type_conflict^ = INVALID_TYPE, true }
+	}
+	if occurrence.symbol != INVALID_SYMBOL && !symbol_conflict^ {
+		if best.symbol == INVALID_SYMBOL { best.symbol = occurrence.symbol }
+		else if s.queries.canonical[occurrence.symbol] != s.queries.canonical[best.symbol] {
+			best.symbol, symbol_conflict^ = INVALID_SYMBOL, true
+		}
+	}
 }
 
 // The operand of the selector whose name holds the byte offset, as `query_at`
@@ -248,12 +254,8 @@ query_selector_operand :: proc(s: ^Compilation_Session, snapshot: Compilation_Sn
 		if span.file != file || offset < span.lo || offset >= span.hi { continue }
 		if best.span.file == NO_FILE {
 			best = occurrence
-			continue
-		}
-		best.type_value ||= occurrence.type_value
-		if occurrence.type != best.type && !type_conflict { best.type, type_conflict = INVALID_TYPE, true }
-		if occurrence.symbol != best.symbol && !symbol_conflict && s.queries.canonical[occurrence.symbol] != s.queries.canonical[best.symbol] {
-			best.symbol, symbol_conflict = INVALID_SYMBOL, true
+		} else {
+			merge_occurrence(s, &best, occurrence, &symbol_conflict, &type_conflict)
 		}
 	}
 	if best.span.file == NO_FILE || (best.symbol == INVALID_SYMBOL && best.type == INVALID_TYPE) { return {}, false }

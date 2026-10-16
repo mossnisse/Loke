@@ -955,3 +955,36 @@ main :: proc() {
 	implicit, found := query_implicit_names(&s, snapshot, context.temp_allocator)
 	testing.expect(t, found && slice.contains(implicit, "call") && slice.contains(implicit, "area"), "protocol and interface slot names")
 }
+
+// A selector in a generic records its operand in the unchecked template and in
+// each checked instance; only instances that disagree hide its type. Through an
+// implicit dereference, the operand is the written pointer.
+@(test)
+session_selector_operands_merge_instances :: proc(t: ^testing.T) {
+	root := session_fixture(t, "operands")
+	if root == "" { return }
+	defer remove_tree(root)
+	Case :: struct { name, text, needle, type: string }
+	cases := []Case {
+		{"one", "package main;\nInner :: struct { old: int }\nread :: proc(value: $T) -> int { return value.old; }\nmain :: proc() { _ = read(Inner{1}); }\n", "old; }", "Inner"},
+		{"agree", "package main;\nInner :: struct { old: int }\nread :: proc(value: $T, extra: $U) -> int { return value.old; }\nmain :: proc() { _ = read(Inner{1}, 1); _ = read(Inner{2}, true); }\n", "old; }", "Inner"},
+		{"differ", "package main;\nInner :: struct { old: int }\nOther :: struct { old: int }\nread :: proc(value: $T) -> int { return value.old; }\nmain :: proc() { _ = read(Inner{1}); _ = read(Other{2}); }\n", "old; }", ""},
+		{"pointer", "package main;\nItem :: struct { n: int }\nimpl Item { old :: proc(self) -> int { return self.n; } }\nmain :: proc() { item := Item{1}; p := &item; _ = p.old(); }\n", "old()", "^Item"},
+	}
+	for c in cases {
+		path := join_path({root, fmt.tprintf("%s.loke", c.name)}, context.temp_allocator)
+		if !write_session_source(t, path, c.text) { continue }
+		s: Compilation_Session
+		if !testing.expect(t, init_session(&s, session_test_config())) { continue }
+		defer destroy_session(&s)
+		testing.expectf(t, check_session(&s, path), "%s does not check", c.name)
+		snapshot, captured := session_snapshot(&s)
+		file, found := query_file(&s, snapshot, path)
+		if !testing.expect(t, captured && found) { continue }
+		operand, typed := query_selector_operand(&s, snapshot, file, u32(strings.index(c.text, c.needle)))
+		type, known := query_type(&s, operand.type)
+		got := known ? type.name : ""
+		if type.kind == .Pointer { got = "^Item" }
+		testing.expectf(t, typed && got == c.type, "%s: operand %v %q", c.name, typed, got)
+	}
+}
