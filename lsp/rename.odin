@@ -208,10 +208,17 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 			if source.bundled || !strings.has_suffix(source.path, ".loke") { continue }
 			tokens := lex_text(source.text)
 			defer delete(tokens)
+			open := make([dynamic]lokec.Token_Kind, context.temp_allocator)
 			for token, index in tokens {
+				#partial switch token.kind {
+				case .Lparen, .Lbracket, .Lbrace: append(&open, token.kind)
+				case .Rparen, .Rbracket, .Rbrace: if len(open) > 0 { pop(&open) }
+				}
 				if token.kind != .Ident { continue }
 				word := source.text[token.lo:token.hi]
-				if word != old && (word != new_name || member) { continue }
+				qualified := index > 0 && tokens[index - 1].kind == .Period
+				// A member's new name matters where a selector could reach it.
+				if word != old && (word != new_name || (member && !qualified)) { continue }
 				// A package clause and an import alias name packages, never
 				// a binding the snapshot records.
 				if index > 0 && (tokens[index - 1].kind == .Package || tokens[index - 1].kind == .Import) { continue }
@@ -223,11 +230,14 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 						return "", fmt.tprintf("`%s` at %s has no binding the compiler recorded, as in an inactive `when` branch, a generic that is never instantiated, or an interface slot, so rename cannot tell what it names.", old, where_written)
 					}
 					if !same_binding(rs, at.symbol, target) { continue }
-					qualified := index > 0 && tokens[index - 1].kind == .Period
+					// `f(old = value)` names the callee's parameter, which the
+					// caller's scope cannot capture.
+					label := target.symbol.kind == .Parameter && index > 0 && index + 1 < len(tokens) && tokens[index + 1].kind == .Assign &&
+						(tokens[index - 1].kind == .Lparen || tokens[index - 1].kind == .Comma) && len(open) > 0 && open[len(open) - 1] == .Lparen
 					// Through a package, a selector reads that package's
 					// declarations, not this scope. A public extension is also
 					// one of its package's names.
-					if (!member && !qualified) || (member && !qualified && reaches(rs, root_snapshot, source_file, token.lo, target, package_only = true)) {
+					if (!member && !qualified && !label) || (member && !qualified && reaches(rs, root_snapshot, source_file, token.lo, target, package_only = true)) {
 						if other, visible := visible_named(rs, root_snapshot, source_file, token.lo, new_name); visible {
 							return "", fmt.tprintf("`%s` already names %s where `%s` appears, at %s.", new_name, describe(rs, other), old, where_written)
 						}
@@ -255,6 +265,10 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 					seen[identity] = true
 					path, range, _ := place(s, rs, root_snapshot, at.location, context.temp_allocator)
 					append(&edits, Edit{path_key(path, context.temp_allocator), path, token.lo, range})
+				} else if member {
+					if same && index >= 2 && ends_operand(tokens[index - 2].kind) && promotes_target(rs, root_snapshot, source_file, token.lo, target, new_name) {
+						return "", fmt.tprintf("At %s, `.%s` could select the renamed `%s`, which its operand reaches through a `using` field.", where_written, new_name, old)
+					}
 				} else if resolved && same {
 					if conflict := local_conflict(rs, root_snapshot, source_file, at, handle, target); conflict != "" {
 						return "", fmt.tprintf("`%s` is declared at %s, %s.", new_name, where_written, conflict)
@@ -379,6 +393,41 @@ member_conflict :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Com
 		}
 	}
 	return ""
+}
+
+// Whether the operand of the `.new_name` selector at the offset reaches the
+// renamed field through `using` fields with no field already named `new_name`
+// nearer to it. design.md "Promoted struct fields": the nearest field wins
+// and two at the same depth are ambiguous, so renaming could change what the
+// selector names or make it an error.
+@(private = "file")
+promotes_target :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file, offset: u32, target: Target, new_name: string) -> bool {
+	if target.symbol.kind != .Field { return false }
+	operand, typed := lokec.query_selector_operand(session, snapshot, file, offset)
+	if !typed || operand.type_value { return false }
+	type := operand.type
+	if pointer, found := lokec.query_type(session, type); found && (pointer.kind == .Pointer || pointer.kind == .Box) { type = pointer.element }
+	Depths :: struct { target, other: int }
+	walk :: proc(session: ^lokec.Compilation_Session, type: lokec.Type_Handle, target: Target, new_name: string, depth: int, depths: ^Depths) {
+		info, found := lokec.query_type(session, type)
+		for steps := 0; found && info.kind == .Distinct && steps < 64; steps += 1 { info, found = lokec.query_type(session, info.element) }
+		if !found || info.kind != .Struct || depth > 64 || depth > min(depths.target, depths.other) { return }
+		for field in info.fields {
+			symbol, known := lokec.query_symbol(session, field)
+			if !known { continue }
+			if same_binding(session, field, target) {
+				depths.target = min(depths.target, depth)
+			} else if symbol.name == new_name {
+				depths.other = min(depths.other, depth)
+			}
+		}
+		for field in info.fields {
+			if symbol, known := lokec.query_symbol(session, field); known && symbol.promotes { walk(session, symbol.type, target, new_name, depth + 1, depths) }
+		}
+	}
+	depths := Depths{max(int), max(int)}
+	walk(session, type, target, new_name, 0, &depths)
+	return depths.target < max(int) && depths.target <= depths.other
 }
 
 // "the local `count` declared at line 4", for a refusal.

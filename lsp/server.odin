@@ -60,6 +60,9 @@ Document :: struct {
 	version:  i64,
 	revision: int,
 	root:     ^Root,
+	// Whether the text declares `main`, as of `entry_revision`.
+	declares: bool,
+	entry_revision: int,
 }
 
 // What the client last received for a file.
@@ -336,20 +339,33 @@ did_change :: proc(s: ^Server, params: json.Value) {
 	doc := find_document(s, item)
 	if doc == nil { return }
 	if version, ok := member_int(item, "version"); ok { doc.version = version }
+	// The text being built; owned once a change replaced the document's.
+	current, owned := doc.text, false
 	for change in member_array(params, "contentChanges") {
 		text, has_text := member_string(change, "text")
 		if !has_text { continue }
-		range := member(change, "range")
-		if range == nil {
-			replace_text(doc, strings.clone(text))
-			continue
+		next: string
+		if range := member(change, "range"); range == nil {
+			if text == current { continue }
+			next = strings.clone(text)
+		} else {
+			// Full sync is what the server asks for; a client sending ranges
+			// anyway still gets them applied.
+			start := position_to_offset(current, json_position(member(range, "start")), s.utf8_positions)
+			end := max(start, position_to_offset(current, json_position(member(range, "end")), s.utf8_positions))
+			next = strings.concatenate({current[:start], text, current[end:]})
 		}
-		// Full sync is what the server asks for; a client sending ranges anyway
-		// still gets them applied.
-		start := position_to_offset(doc.text, json_position(member(range, "start")), s.utf8_positions)
-		end := max(start, position_to_offset(doc.text, json_position(member(range, "end")), s.utf8_positions))
-		replace_text(doc, strings.concatenate({doc.text[:start], text, doc.text[end:]}))
+		if owned { delete(current) }
+		current, owned = next, true
 	}
+	// The same text keeps every check and waiting request valid; only the
+	// version its diagnostics are published with changes.
+	if !owned || current == doc.text {
+		if owned { delete(current) }
+		s.publish_due = true
+		return
+	}
+	replace_text(doc, current)
 	s.revision += 1
 	doc.revision = s.revision
 	for _, root in s.roots { lokec.set_session_overlay(&root.session, doc.path, doc.text) }

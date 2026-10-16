@@ -85,15 +85,21 @@ lsp_start :: proc(p: ^Lsp_Process, t: ^testing.T) -> bool {
 	return true
 }
 
-// Waits for the exit status, killing a server that does not stop.
+// Waits for the exit status, killing a server that does not stop. Input stays
+// open while it waits unless `end_input`, so a server that ignores `exit`
+// cannot pass by stopping at the end of its input instead.
 @(private = "file")
-lsp_finish :: proc(p: ^Lsp_Process) -> (exit_code: int, exited: bool) {
-	if p.input != nil { os.close(p.input) }
+lsp_finish :: proc(p: ^Lsp_Process, end_input := false) -> (exit_code: int, exited: bool) {
+	if end_input && p.input != nil {
+		os.close(p.input)
+		p.input = nil
+	}
 	state, err := os.process_wait(p.process, 30 * time.Second)
 	if err != nil || !state.exited {
 		_ = os.process_kill(p.process)
 		_, _ = os.process_wait(p.process)
 	}
+	if p.input != nil { os.close(p.input) }
 	os.close(p.output)
 	delete(p.pending)
 	return state.exit_code, err == nil && state.exited
@@ -106,9 +112,10 @@ lsp_send :: proc(p: ^Lsp_Process, body: string) {
 	testing.expect(p.t, err == nil)
 }
 
-// The next message, or false once `deadline` passes or the output ends.
+// The next message, or false once `timeout` passes, however much incomplete
+// output arrives meanwhile, or the output ends.
 @(private = "file")
-lsp_receive :: proc(p: ^Lsp_Process, deadline: time.Duration = 60 * time.Second) -> (json.Value, bool) {
+lsp_receive :: proc(p: ^Lsp_Process, timeout: time.Duration = 60 * time.Second) -> (json.Value, bool) {
 	start := time.tick_now()
 	for {
 		text := string(p.pending[:])
@@ -122,10 +129,10 @@ lsp_receive :: proc(p: ^Lsp_Process, deadline: time.Duration = 60 * time.Second)
 				return value, testing.expect(p.t, err == nil)
 			}
 		}
+		if time.tick_since(start) > timeout { return nil, false }
 		has_data, err := os.pipe_has_data(p.output)
 		if err != nil { return nil, false }
 		if !has_data {
-			if time.tick_since(start) > deadline { return nil, false }
 			time.sleep(time.Millisecond)
 			continue
 		}
@@ -290,7 +297,7 @@ lsp_input_ending_without_shutdown_is_an_error_exit :: proc(t: ^testing.T) {
 	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
 	_, ok := lsp_receive(&p)
 	testing.expect(t, ok)
-	code, exited := lsp_finish(&p)
+	code, exited := lsp_finish(&p, end_input = true)
 	testing.expect(t, exited && code == 1)
 }
 
@@ -302,9 +309,13 @@ json_member :: proc(value: json.Value, name: string) -> json.Value {
 
 // The reply to request `id`, skipping the notifications sent before it.
 @(private = "file")
-lsp_reply :: proc(p: ^Lsp_Process, id: i64) -> (reply: json.Value, ok: bool) {
+lsp_reply :: proc(p: ^Lsp_Process, id: i64, timeout: time.Duration = 60 * time.Second) -> (reply: json.Value, ok: bool) {
+	// One deadline for the reply, however many other messages come first.
+	start := time.tick_now()
 	for {
-		message := lsp_receive(p) or_return
+		remaining := timeout - time.tick_since(start)
+		if remaining <= 0 { return nil, false }
+		message := lsp_receive(p, remaining) or_return
 		if got, has_id := json_member(message, "id").(json.Integer); has_id && got == id { return message, true }
 	}
 }

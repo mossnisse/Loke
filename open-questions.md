@@ -714,189 +714,21 @@ records the reasoning and the alternatives not taken. These parts are open:
   `Status :: Result(Unit, $E)`, would have avoided this, and is worth
   revisiting if aliases gain parameters for another reason.
 
-## LSP source review (2026-10-16)
+## Lone carriage returns in the language server
 
-Review of `e5adc0f`, with a separate subagent review of every file below.
-These are unresolved tooling findings; they do not change the language rules.
-The implementation boundaries described in
-[Language server](compiler-architecture.md#language-server) are appropriate:
-protocol state, root checking, semantic requests, editing, rename, and CLI tools
-have distinct owners. Keep those boundaries while removing repeated work and
-replacing token-based guesses where they can change a binding's meaning.
+The LSP source review of 2026-10-16 found two line-ending problems in
+[paths.odin](lsp/paths.odin). Positions inside a `\r\n` are now clamped
+before the `\r`. A lone `\r` is still not a line break for the server, though
+the [LSP text-document rules](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/specification-3-14.md#text-documents)
+make it one: in `"abc\rdef"`, the client's `{1, 1}` is the server's line 0, so
+`position_to_offset` returns the end of the text rather than 5.
 
-| File reviewed separately | Result |
-| --- | --- |
-| [rename.odin](lsp/rename.odin) | Two rename correctness findings. |
-| [editing.odin](lsp/editing.odin) | Two presentation/context findings. |
-| [paths.odin](lsp/paths.odin) | Line-ending conversion finding. |
-| [roots.odin](lsp/roots.odin) | Quadratic scanning and lost diagnostic notes. |
-| [server.odin](lsp/server.odin) | Unchanged-text invalidation finding. |
-| [requests.odin](lsp/requests.odin) | Unnecessary outline work. |
-| [server_test.odin](lsp/server_test.odin) | Two assertions that miss relevant regressions. |
-| [lsp_test.odin](tests/lsp_test.odin) | Exit handling and deadline coverage weaknesses. |
-| [main.odin](lsp/main.odin) | Inbox ownership, locking, work ordering, and partial writes are sound. |
-| [jsonrpc.odin](lsp/jsonrpc.odin) | Framing, partial reads, escaping, and ownership are coherent. |
-| [tools.odin](lsp/tools.odin) | Formatting ranges and documentation-session lifetimes are justified. |
-| [protocol_test.odin](lsp/protocol_test.odin) | Test helpers are sound; extend position coverage with the paths fix. |
-
-P1 means a rename can silently change program meaning. P2 covers correctness
-and the root-scanning cost that grows with the workspace. P3 covers smaller
-optimization, cleanup, and test-precision improvements. Behavior reproductions
-below were executed against freshly built binaries unless marked as source
-inspection. The performance findings describe work and complexity visible in
-the implementation; no timing improvement has been measured.
-
-### Rename safety
-
-1. **P2: a member rename does not check existing uses of the new name.**
-   [rename.odin](lsp/rename.odin), line 214, skips new-name tokens for members.
-   Reproduction:
-
-   ```loke
-   package main;
-   A :: struct { old: int }
-   B :: struct { next: int }
-   Outer :: struct { using a: A, using b: B }
-   main :: proc() { o := Outer{A{1}, B{2}}; _ = o.next; }
-   ```
-
-   Renaming `A.old` to `next` succeeds, then the unchanged `o.next` fails with
-   `L0703` because two fields promote that name. Validate new-name selectors
-   in containing types as well as renamed selectors, or check proposed edits
-   in a temporary compilation before returning them.
-
-2. **P2: named-argument labels are checked against the caller's lexical scope.**
-   [rename.odin](lsp/rename.odin), lines 230-232. For
-   `f :: proc(old: int) {}` and
-   `main :: proc() { next := 1; f(old = next); }`, renaming the parameter to
-   `next` is refused because of the caller's local `next`. The valid result is
-   `f(next = next)`. Distinguish argument labels from unqualified value uses;
-   validate labels against the callee's parameter names.
-
-### Completion and signature presentation
-
-1. **P2: completion escapes into malformed and unterminated literals.**
-   [editing.odin](lsp/editing.odin), lines 311-318, recognizes only successful
-   literal tokens. Open a document ending with
-   `main :: proc() { f("abc` and request completion after `ab`: scope names
-   such as `f`, `main`, and built-ins are returned. The lexer emits an `Error`
-   token, which the context guard treats as ordinary code. Recognize literal
-   errors and their open ends; cover strings, raw strings, runes, and invalid
-   escapes in completion and signature-help tests.
-
-2. **P3: signature cleanup changes the displayed default value.**
-   [editing.odin](lsp/editing.odin), lines 151-155. The completion detail for
-   `f :: proc(value: string = "a  b") {}` displays `"a b"` instead.
-   `strings.fields` and subsequent replacements operate inside literal tokens
-   as well as between tokens. Keep the original signature text, or normalize
-   only trivia while preserving literal text.
-
-### Document positions
-
-**P2: line conversion handles only LF and includes CR in the preceding line.**
-[paths.odin](lsp/paths.odin), lines 84-101. Direct calls reproduce both errors:
-
-| Call, with UTF-16 positions | Actual offset | Expected offset |
-| --- | --- | --- |
-| `position_to_offset("abc\r\ndef", {0, 99}, false)` | 4, between CR and LF | 3 |
-| `position_to_offset("abc\rdef", {1, 1}, false)` | 7, EOF | 5 |
-
-This can split CRLF when applying a ranged edit and misplaces requests in
-CR-only documents. The [LSP text-document rules](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/specification-3-14.md#text-documents)
-recognize LF, CRLF, and CR and exclude positions inside line terminators.
-Use consistent line starts and content ends for both conversion directions;
-coordinate this with the LF-only source line tables in
-[source.odin](src/source.odin), lines 430-438, and formatting's line table.
-Add CRLF clamping and CR-only cases to
-[protocol_test.odin](lsp/protocol_test.odin), lines 83-98.
-
-### Root assignment and diagnostics
-
-1. **P2: each root refresh lexes every open document for every document.**
-   [roots.odin](lsp/roots.odin), lines 144-146. Source inspection:
-   `refresh_roots` calls `root_of` once per document, and its inner loop calls
-   `declares_entry(other.text)` before checking directory identity. With N
-   documents this makes N² lexer calls, including unrelated directories, on
-   every edit and again after every completed root check. Compute each
-   document's directory and entry flag once per refresh, then count entries
-   by directory. A flag cached by document revision can also avoid lexing
-   unchanged text. Preserve the existing disk-directory scan cache.
-
-2. **P2: diagnostic deduplication drops distinct related locations.**
-   [roots.odin](lsp/roots.odin), lines 391-396, excludes related notes from
-   diagnostic identity. Reproduction: two open applications both
-   `require shared ../shared`, but map `util` to `../utilA` and `../utilB`
-   respectively. The shared source imports `util "util:"` and calls
-   `util.hidden()`; each util package declares a private `hidden` procedure.
-   Both batch checks report `L0336` in the shared file with a different
-   declaration note. With client `relatedInformation` support, the server
-   publishes only one of those locations. Merge distinct notes for matching
-   diagnostics or include notes in the identity, with stable ordering. Apply
-   the same rule to the earlier deduplication at lines 288-290.
-
-### Protocol state and invalidation
-
-1. **P3: an unchanged full-text update invalidates every compilation.**
-   [server.odin](lsp/server.odin), lines 334-351. Source inspection: replacing
-   text with byte-identical text still allocates the replacement, copies it
-   into every root's overlays, expires snapshots, marks every root dirty, and
-   triggers root scanning/checking. This notification already occurs in
-   `diagnostics_follow_document_versions`. Compare the final document bytes
-   before propagating overlays. Update the client version and publication
-   state independently, preserving the intended request-staleness contract.
-
-### Outline cleanup
-
-1. **P3: outline generation constructs values the client never uses.**
-   [requests.odin](lsp/requests.odin), lines 318-322. Source inspection: two
-   `place` calls canonicalize and clone the same file path only to discard it;
-   `symbol_detail` is also computed for flat `SymbolInformation` replies,
-   whose writer never uses it. Convert the two spans with the already-known
-   source and line table, and compute detail only for hierarchical replies.
-
-### In-process test precision
-
-1. **P2: successful rename tests validate edit counts rather than edits.**
-   [server_test.odin](lsp/server_test.odin), lines 1025-1034. Source inspection:
-   `describe_rename` retains only each URI and its edit count, so wrong ranges
-   and replacement text can satisfy the success assertions. Reuse the
-   existing edit-application helper, verify resulting source, and check
-   semantics after applying edits. Include binding assertions for cases that
-   still compile after capture.
-
-2. **P3: a publication can pass with the other document's final version.**
-   [server_test.odin](lsp/server_test.odin), lines 1267-1269. Source inspection:
-   the rapid-edit test accepts either final version for every URI. With final
-   versions 6 and 3, a stale version-3 application publication is accepted.
-   Match publication URI to that document's expected version.
-
-### Process-level test precision
-
-1. **P2: closing stdin masks a missing response to `exit`.**
-   [lsp_test.odin](tests/lsp_test.odin), lines 90-92. Source inspection:
-   `lsp_finish` closes stdin before waiting, even after normal `shutdown` and
-   `exit`. A server that ignores `exit` can still pass because the EOF branch
-   in [main.odin](lsp/main.odin), lines 71-74, exits successfully after shutdown.
-   Normal lifecycle tests should observe process termination while stdin stays
-   open; close it first only in the explicit EOF test, with cleanup afterward.
-
-2. **P3: receive/reply deadlines can be extended indefinitely by output.**
-   [lsp_test.odin](tests/lsp_test.odin), lines 125-130 and 305-308. Source
-   inspection: `lsp_receive` checks elapsed time only while the pipe is empty,
-   and `lsp_reply` starts a fresh timeout after every unrelated message.
-   Continuous incomplete output or unrelated notifications can therefore
-   prevent test termination. Enforce one absolute deadline across framing
-   reads and the search for a particular reply.
-
-### Verification of this review
-
-- All 39 LSP unit tests passed with unused-variable and shadowing vetting and
-  memory tracking enabled.
-- Rebuilt `lokec.exe` and `loke-lsp.exe` with the same vetting; all five
-  process-level LSP tests passed.
-- Executed focused reproductions for the three rename findings, both
-  signature-label findings, literal completion, displayed literal whitespace,
-  line-ending conversion, dropped related locations, and malformed requests.
-- Findings fixed since are removed here; the fixing commit's message records
-  them with their regression tests. Add permanent regressions with the
-  remaining fixes under [Testing and verification](compiler-architecture.md#testing-and-verification).
+The server counts lines as the compiler does, by its
+[source line table](src/source.odin), which only `\n` ends. That matches the
+language: [grammar.md "Whitespace and comments"](grammar.md#whitespace-and-comments)
+makes a carriage return whitespace, and a line comment runs to the newline, so
+a `\r`-only file is one line whose first `//` comments out everything after
+it. Treating a lone `\r` as a line break in the server alone would disagree
+with every compiler-reported span. Agreeing with the protocol needs either
+compiler line tables, and the formatter's, that also end lines at a lone `\r`,
+or a decision that `\r`-only sources are rejected or normalized on load.

@@ -95,6 +95,16 @@ positions_count_bytes_or_utf16_units :: proc(t: ^testing.T) {
 	testing.expect_value(t, position_to_offset(text, Position{1, 1}, false), 3)
 	testing.expect_value(t, position_to_offset(text, Position{0, 99}, false), 2)
 	testing.expect_value(t, position_to_offset(text, Position{9, 0}, false), len(text))
+
+	// No position falls between the `\r` and `\n` of a line ending.
+	crlf := "abc\r\ndef"
+	crlf_starts := []u32{0, 5}
+	testing.expect_value(t, position_to_offset(crlf, Position{0, 99}, false), 3)
+	testing.expect_value(t, position_to_offset(crlf, Position{0, 99}, true), 3)
+	testing.expect_value(t, position_to_offset(crlf, Position{1, 1}, false), 6)
+	testing.expect_value(t, offset_to_position(crlf, crlf_starts, 3, false), Position{0, 3})
+	testing.expect_value(t, offset_to_position(crlf, crlf_starts, 4, false), Position{0, 3})
+	testing.expect_value(t, offset_to_position(crlf, crlf_starts, 5, false), Position{1, 0})
 }
 
 @(test)

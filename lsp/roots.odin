@@ -78,8 +78,15 @@ refresh_roots :: proc(s: ^Server) {
 	Own :: struct { path, key: string }
 	own := make(map[^Document]Own, context.temp_allocator)
 	anchored := make(map[string]bool, context.temp_allocator)
+	// Open documents declaring `main`, by directory key: each text is lexed
+	// once per revision, not once for every other document.
+	open_entries := make(map[string]int, context.temp_allocator)
 	for _, doc in s.documents {
-		path, key := root_of(s, doc)
+		if doc.entry_revision != doc.revision { doc.declares, doc.entry_revision = declares_entry(doc.text), doc.revision }
+		if doc.declares { open_entries[path_key(lokec.path_dir(doc.path, context.temp_allocator), context.temp_allocator)] += 1 }
+	}
+	for _, doc in s.documents {
+		path, key := root_of(s, doc, open_entries)
 		own[doc] = Own{path, key}
 		anchored[key] = true
 	}
@@ -134,17 +141,12 @@ importing_root :: proc(s: ^Server, doc: ^Document, own_key: string, anchored: ma
 // checks it. A directory where two or more files declare `main` holds separate
 // programs, such as `examples/`, so each of its files is its own root.
 @(private = "file")
-root_of :: proc(s: ^Server, doc: ^Document) -> (path, key: string) {
+root_of :: proc(s: ^Server, doc: ^Document, open_entries: map[string]int) -> (path, key: string) {
 	dir := lokec.canonical_dir(lokec.path_dir(doc.path, context.temp_allocator))
 	dir_key := lokec.dir_key(dir)
-	entries := 0
+	entries := open_entries[dir_key]
 	for file_key, declares in directory_entries(s, dir) {
 		if declares && s.documents[file_key] == nil { entries += 1 }
-	}
-	for _, other in s.documents {
-		if declares_entry(other.text) && path_key(lokec.path_dir(other.path, context.temp_allocator), context.temp_allocator) == dir_key {
-			entries += 1
-		}
 	}
 	if entries >= 2 { return doc.path, doc.key }
 	return dir, dir_key
@@ -285,7 +287,12 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 	seen := make(map[string]bool, context.temp_allocator)
 	for d in diagnostics {
 		span := d.location.span
-		identity := fmt.tprintf("%v|%d:%d:%d|%s|%s|%s", d.severity, span.file, span.lo, span.hi, d.code, d.message, d.label)
+		// Notes are part of a diagnostic: two checks can report one error with
+		// different declarations behind it.
+		b := strings.builder_make(context.temp_allocator)
+		fmt.sbprintf(&b, "%v|%d:%d:%d|%s|%s|%s", d.severity, span.file, span.lo, span.hi, d.code, d.message, d.label)
+		for note in d.notes { fmt.sbprintf(&b, "|%d:%d:%d|%s", note.location.span.file, note.location.span.lo, note.location.span.hi, note.message) }
+		identity := strings.to_string(b)
 		if seen[identity] { continue }
 		seen[identity] = true
 		// Text `lokec` prints beside the source line goes into the message;
@@ -366,9 +373,11 @@ publish :: proc(s: ^Server) {
 			continue
 		}
 		uri := uri_for(s, key, entry.path)
-		slice.stable_sort_by(entry.diagnostics[:], proc(a, b: ^Lsp_Diagnostic) -> bool {
+		// Roots are visited in map order, so ties are broken by content.
+		slice.sort_by(entry.diagnostics[:], proc(a, b: ^Lsp_Diagnostic) -> bool {
 			if a.range.start.line != b.range.start.line { return a.range.start.line < b.range.start.line }
-			return a.range.start.character < b.range.start.character
+			if a.range.start.character != b.range.start.character { return a.range.start.character < b.range.start.character }
+			return diagnostic_identity("", a) < diagnostic_identity("", b)
 		})
 		params := diagnostics_params(s, uri, doc, entry.diagnostics[:])
 		if had && previous.uri == uri && previous.params == params { continue }
@@ -388,10 +397,7 @@ Wanted_File :: struct { path: string, diagnostics: [dynamic]^Lsp_Diagnostic }
 // gets each once.
 @(private = "file")
 want_diagnostic :: proc(wanted: ^map[string]Wanted_File, seen: ^map[string]bool, key, path: string, d: ^Lsp_Diagnostic) {
-	identity := fmt.tprintf(
-		"%s|%d:%d-%d:%d|%v|%s|%s", key, d.range.start.line, d.range.start.character,
-		d.range.end.line, d.range.end.character, d.severity, d.code, d.message,
-	)
+	identity := diagnostic_identity(key, d)
 	if seen[identity] { return }
 	seen[identity] = true
 	entry, found := &wanted[key]
@@ -400,6 +406,20 @@ want_diagnostic :: proc(wanted: ^map[string]Wanted_File, seen: ^map[string]bool,
 		entry = &wanted[key]
 	}
 	append(&entry.diagnostics, d)
+}
+
+// What makes a published diagnostic distinct, its related locations included.
+@(private = "file")
+diagnostic_identity :: proc(key: string, d: ^Lsp_Diagnostic) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(
+		&b, "%s|%d:%d-%d:%d|%v|%s|%s", key, d.range.start.line, d.range.start.character,
+		d.range.end.line, d.range.end.character, d.severity, d.code, d.message,
+	)
+	for related in d.related {
+		fmt.sbprintf(&b, "|%s|%d:%d-%d:%d|%s", path_key(related.path, context.temp_allocator), related.range.start.line, related.range.start.character, related.range.end.line, related.range.end.character, related.message)
+	}
+	return strings.to_string(b)
 }
 
 @(private = "file")

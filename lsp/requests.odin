@@ -308,6 +308,10 @@ Outline_Entry :: struct {
 @(private = "file")
 document_symbols :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, doc: ^Document) -> string {
 	handles, _ := lokec.query_symbols(session, snapshot, file)
+	source, _ := lokec.query_source(session, snapshot, file)
+	span_range :: proc(s: ^Server, source: lokec.Query_Source, span: lokec.Span) -> Range {
+		return {offset_to_position(source.text, source.line_starts, span.lo, s.utf8_positions), offset_to_position(source.text, source.line_starts, max(span.hi, span.lo), s.utf8_positions)}
+	}
 	entries := make([dynamic]Outline_Entry, context.temp_allocator)
 	slot_of := make(map[lokec.Symbol_Id]int, context.temp_allocator)
 	for handle in handles {
@@ -315,12 +319,12 @@ document_symbols :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapsh
 		if !found || symbol.extent.span.file != file || inside_procedure(session, symbol) { continue }
 		kind, listed := outline_kind(session, symbol)
 		if !listed { continue }
-		_, range, _ := place(s, session, snapshot, symbol.extent, context.temp_allocator)
-		_, selection, _ := place(s, session, snapshot, symbol.definition, context.temp_allocator)
 		slot_of[handle.id] = len(entries)
+		// Only the hierarchical form shows a detail.
 		append(&entries, Outline_Entry{
-			symbol = symbol, kind = kind, detail = symbol_detail(session, symbol),
-			range = range, selection = selection, children = make([dynamic]int, context.temp_allocator),
+			symbol = symbol, kind = kind, detail = symbol_detail(session, symbol) if s.hierarchical_symbols else "",
+			range = span_range(s, source, symbol.extent.span), selection = span_range(s, source, symbol.definition.span),
+			children = make([dynamic]int, context.temp_allocator),
 		})
 	}
 	for &entry, index in entries {

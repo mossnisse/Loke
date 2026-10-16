@@ -67,7 +67,10 @@ path_key :: proc(path: string, allocator := context.allocator) -> string {
 
 // `offset` as a position in `text`, whose lines begin at `line_starts`. UTF-16
 // positions count a supplementary-plane character as two units and each byte
-// that is not UTF-8 as one, as the replacement character it decodes to.
+// that is not UTF-8 as one, as the replacement character it decodes to. A
+// newline ends a line, as the compiler counts lines; an offset at the newline
+// of a `\r\n` is the end of its line, before the `\r`, since the protocol has
+// no position between them.
 offset_to_position :: proc(text: string, line_starts: []u32, offset: u32, utf8_units: bool) -> Position {
 	offset := min(int(offset), len(text))
 	line := 0
@@ -76,6 +79,7 @@ offset_to_position :: proc(text: string, line_starts: []u32, offset: u32, utf8_u
 		if int(line_starts[mid]) <= offset { line, lo = mid, mid + 1 } else { hi = mid }
 	}
 	start := len(line_starts) > 0 ? min(int(line_starts[line]), offset) : 0
+	if offset > start && offset < len(text) && text[offset] == '\n' && text[offset - 1] == '\r' { offset -= 1 }
 	return Position{line, utf8_units ? offset - start : utf16_length(text[start:offset])}
 }
 
@@ -90,6 +94,8 @@ position_to_offset :: proc(text: string, position: Position, utf8_units: bool) -
 	}
 	line_end := strings.index_byte(text[offset:], '\n')
 	line := text[offset:] if line_end < 0 else text[offset:offset + line_end]
+	// A `\r\n` ends the line before its `\r`.
+	if line_end >= 0 { line = strings.trim_suffix(line, "\r") }
 	if utf8_units { return offset + clamp(position.character, 0, len(line)) }
 	units := 0
 	for i := 0; i < len(line); {

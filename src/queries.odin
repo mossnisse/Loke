@@ -36,6 +36,8 @@ Query_Symbol :: struct {
 	// block, statement, or procedure holding its name. No span otherwise.
 	scope: Query_Location,
 	public, generic: bool,
+	// A `using` field, whose fields design.md "Promoted struct fields" promotes.
+	promotes: bool,
 }
 Query_Type :: struct {
 	handle: Type_Handle,
@@ -494,7 +496,7 @@ build_snapshot_queries :: proc(s: ^Compilation_Session) {
 			type = Type_Handle{s.snapshot, type}, definition = Query_Location{s.snapshot, symbol.span},
 			extent = Query_Location{s.snapshot, no_span()}, parent = Symbol_Handle{s.snapshot, INVALID_SYMBOL},
 			owner = Type_Handle{s.snapshot, symbol.owner_type}, scope = Query_Location{s.snapshot, no_span()},
-			public = symbol.public, generic = symbol.generic,
+			public = symbol.public, generic = symbol.generic, promotes = symbol.kind == .Field && symbol.is_using,
 		}
 		if id == Symbol_Id(index) && written {
 			append(&q.documents[source.span.file], Symbol_Handle{s.snapshot, id})

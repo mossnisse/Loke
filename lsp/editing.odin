@@ -148,10 +148,7 @@ symbol_detail :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_S
 	#partial switch symbol.kind {
 	case .Proc, .Proc_Group:
 		if signatures, found := lokec.query_signatures(session, symbol.handle); found {
-			text := strings.join(strings.fields(signatures[0].text, context.temp_allocator), " ", context.temp_allocator)
-			text, _ = strings.replace_all(text, "( ", "(", context.temp_allocator)
-			text, _ = strings.replace_all(text, ", )", ")", context.temp_allocator)
-			return text
+			return one_line(signatures[0].text)
 		}
 	case .Var, .Const, .Field, .Parameter, .Enum_Member:
 		if type, found := lokec.query_type(session, symbol.type); found { return type.name }
@@ -159,6 +156,26 @@ symbol_detail :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_S
 		return "package"
 	}
 	return ""
+}
+
+// A signature written over several lines, on one: space and comments between
+// tokens become one space, none after `(` or before `)`, and a trailing comma
+// goes. Literals keep their text.
+@(private = "file")
+one_line :: proc(text: string) -> string {
+	tokens := lex_text(text)
+	defer delete(tokens)
+	b := strings.builder_make(context.temp_allocator)
+	for token, index in tokens {
+		if token.kind == .EOF { break }
+		if token.kind == .Comma && index + 1 < len(tokens) && tokens[index + 1].kind == .Rparen { continue }
+		if index > 0 {
+			before := tokens[index - 1]
+			if before.hi < token.lo && before.kind != .Lparen && token.kind != .Rparen { strings.write_byte(&b, ' ') }
+		}
+		strings.write_string(&b, text[token.lo:token.hi])
+	}
+	return strings.to_string(b)
 }
 
 // The signatures of the call whose argument list holds the cursor: the
@@ -293,6 +310,25 @@ write_parameter_name :: proc(b: ^strings.Builder, name: string) {
 	strings.write_byte(b, '}')
 }
 
+// Whether the token is a string or rune literal, and whether it is one the
+// text never closes.
+@(private = "file")
+literal_token :: proc(text: string, token: lokec.Token) -> (literal, open_ended: bool) {
+	#partial switch token.kind {
+	case .String, .Raw_String, .Rune: return true, false
+	case .Error:
+	case: return false, false
+	}
+	written := text[token.lo:token.hi]
+	if written == "" || (written[0] != '"' && written[0] != '`' && written[0] != '\'') { return false, false }
+	quote := written[0]
+	if len(written) < 2 || written[len(written) - 1] != quote { return true, true }
+	// A backslash escapes the quote after it, except in a raw string.
+	escapes := 0
+	for i := len(written) - 2; i > 0 && written[i] == '\\' && quote != '`'; i -= 1 { escapes += 1 }
+	return true, escapes % 2 == 1
+}
+
 // The compiler's own tokens for a text: literals are whole, and comments are
 // left out, their spans appended to `comments` when it is given.
 lex_text :: proc(text: string, comments: ^[dynamic]lokec.Span = nil) -> []lokec.Token {
@@ -305,18 +341,16 @@ lex_text :: proc(text: string, comments: ^[dynamic]lokec.Span = nil) -> []lokec.
 }
 
 // Whether the offset falls inside a string or rune literal, or a comment as
-// the lexer found it, nesting included. The end of a `//` comment, and of a
-// block comment the text never closes, is still inside it.
+// the lexer found it, nesting included. A literal the lexer rejected, for an
+// invalid escape or a missing close, is still one. The end of a `//` comment,
+// and of a literal or block comment the text never closes, is still inside it.
 @(private = "file")
 inside_comment_or_literal :: proc(text: string, tokens: []lokec.Token, comments: []lokec.Span, offset: u32) -> bool {
 	for token in tokens {
 		if token.lo >= offset || token.kind == .EOF { break }
-		if offset < token.hi {
-			#partial switch token.kind {
-			case .String, .Raw_String, .Rune: return true
-			}
-			return false
-		}
+		literal, open_ended := literal_token(text, token)
+		if offset < token.hi { return literal }
+		if offset == token.hi && open_ended { return true }
 	}
 	for comment in comments {
 		if comment.lo >= offset { break }

@@ -571,7 +571,7 @@ including after destroying and reinitializing a session.
 | `remove_session_overlay(&s, path)` | Restore disk loading or remove an unsaved-only file. An absent overlay returns false without invalidation. |
 | `session_snapshot(&s)` | Capture current views, even after failed initialization/checking. False for zeroed/destroyed sessions or after invalidation until a check runs. |
 | `query_file` / `query_source` | Loaded file ID or path, source text, and line-start byte offsets, including loaded manifests. `bundled` marks a file of the `base:` or `core:` library shipped with the compiler. |
-| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name; a selected `when` branch is not one, since its braces open no scope. |
+| `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member, and `promotes` marks a `using` field. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name; a selected `when` branch is not one, since its braces open no scope. |
 | `query_documentation` | The comments directly above a binding's declaration, as `-doc` reads them; caller-owned. False when there are none. |
 | `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. `type_value` marks a node that denotes its type rather than a value of it. |
 | `query_selector_operand` | The written operand of the selector whose name holds an offset, described as `query_at` describes a node. Parentheses are not part of an operand's span, and the links the checker adds for a promoted field are skipped, so `(outer).x` and a promoted `outer.x` both give `outer`. |
@@ -727,7 +727,10 @@ stop the process.
 
 Each root is one `lokec` input with its own `Compilation_Session` and the same
 fixed configuration. Every open document is an overlay in every session. An
-edit marks every root dirty because any root may import the edited file.
+edit marks every root dirty because any root may import the edited file. A
+change that leaves the text as it was changes only the version its
+diagnostics are published with, so no root checks again and no waiting request
+becomes stale.
 A document's own root is its directory, or the file when two or more sibling
 files declare `main`. `refresh_roots` assigns a document to another root whose
 last check loaded its file, provided that root is some other open document's
@@ -735,7 +738,8 @@ own root, so closing an application returns its imported packages to their
 own roots. If several roots qualify, it picks the outermost: the one whose own
 package no other candidate loads. Otherwise the document gets its own root.
 `declares_entry` runs the compiler's lexer and looks for `main :` outside
-brackets. Assignment runs again after every check, so it does not depend on the
+brackets, once per document revision; each refresh counts open entries by
+directory. Assignment runs again after every check, so it does not depend on the
 order documents were opened.
 Roots that no open document uses are destroyed. `check_root` uses
 `check_session_incremental`, rechecking once in documentation mode when the
@@ -747,7 +751,9 @@ shown on that root's open documents.
 
 Diagnostics are published only after every root has been checked since the
 last edit. A file's list is the deduplicated union across roots, because
-an imported package is checked by each importer. The server records what it sent
+an imported package is checked by each importer. Notes are part of a
+diagnostic's identity: two programs can report one error with different
+declarations behind it, and the client gets both. The server records what it sent
 for each file and sends only changes, including an empty list when a file has no
 diagnostics left. An open document keeps the client's URI spelling and
 receives its version.
@@ -770,7 +776,9 @@ declarations with their fields and enum members as children. Kinds after
 others get `Class` for a struct and `Constant` for an enum member.
 
 Completion and signature help lex the document with the compiler's lexer to
-find the cursor's context, then ask the snapshot. After `operand.`, the
+find the cursor's context, then ask the snapshot. Neither answers inside a
+comment or a literal, including one the lexer rejected, which an unclosed
+literal holds to its end. After `operand.`, the
 operand's last byte goes to `query_at` and then `query_members`; elsewhere
 `query_visible` lists the names in scope, followed by the keywords. Signature
 help takes the innermost bracket open before the cursor, which must be a `(`
@@ -790,14 +798,17 @@ non-bundled source of each such root. Each occurrence of the old name must have
 a recorded binding, so unchecked code such as an inactive `when` branch, or a
 name the index does not record, such as an interface slot, stops the rename.
 At an unqualified use or the declaration, the new name must not already be
-visible. A local declared with the new name where the binding is visible must
+visible; a named argument names the callee's parameter instead, so the
+caller's scope is not consulted there. A local declared with the new name where the binding is visible must
 not share its `scope`, nor shadow it when the binding is a variable or
 parameter. These two rules also cover capture: a binding that would be shadowed
 at some use is visible at the declaration, or declared later where the renamed
 binding is visible. Fields, enum members, and `impl` or `extend` members are
 checked against their type's members and, at each selector, against the
 members of the operand `query_selector_operand` records, promoted fields
-included; a selector whose operand it cannot name stops the rename. A public extension is also
+included; a selector whose operand it cannot name stops the rename. A
+selector already spelled with the new name must not reach the renamed field
+through `using` fields unless a nearer field of that name wins. A public extension is also
 checked as a package name. A method may not be renamed to or from a name in
 `query_implicit_names`, and a parameter to or from `self`.
 

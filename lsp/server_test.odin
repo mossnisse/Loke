@@ -268,15 +268,24 @@ diagnostics_follow_document_versions :: proc(t: ^testing.T) {
 		agrees_with_lokec(t, h.root, "main.loke", broken, codes(p.diagnostics))
 	}
 
-	change(&h, "main.loke", fixed, 2)
+	// The same text checks nothing again; its diagnostics take the new version.
+	change(&h, "main.loke", broken, 2)
+	for _, root in h.s.roots { testing.expect(t, !root.dirty, "an unchanged text dirties no root") }
 	settle(&h)
 	published = publications(take(&h))
 	if testing.expect_value(t, len(published), 1) {
-		testing.expect(t, published[0].version == 2 && len(published[0].diagnostics) == 0)
+		testing.expect(t, published[0].version == 2 && len(published[0].diagnostics) == 1)
+	}
+
+	change(&h, "main.loke", fixed, 3)
+	settle(&h)
+	published = publications(take(&h))
+	if testing.expect_value(t, len(published), 1) {
+		testing.expect(t, published[0].version == 3 && len(published[0].diagnostics) == 0)
 	}
 
 	// Nothing changed for the client, so nothing more is sent.
-	change(&h, "main.loke", fixed, 3)
+	change(&h, "main.loke", fixed, 4)
 	settle(&h)
 	testing.expect_value(t, len(publications(take(&h))), 0)
 	close(&h, "main.loke")
@@ -581,6 +590,38 @@ notes_become_related_information_when_supported :: proc(t: ^testing.T) {
 		}
 		finish(&h)
 	}
+}
+
+// Two programs report one error in a package they share, each with a note at
+// a different declaration; the client gets both notes.
+@(test)
+distinct_notes_are_published_from_every_program :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "distinct-notes", `{"capabilities":{"textDocument":{"publishDiagnostics":{"relatedInformation":true}}}}`) { finish(&h); return }
+	defer finish(&h)
+	shared := "package shared;\nimport util \"util:\";\n@(public) run :: proc() { util.hidden(); }\n"
+	app := "package main;\nimport shared \"shared:\";\nmain :: proc() { shared.run(); }\n"
+	write_file(&h, "shared/shared.loke", shared)
+	for name in ([]string{"A", "B"}) {
+		write_file(&h, fmt.tprintf("util%s/util.loke", name), "package util;\nhidden :: proc() {}\n")
+		write_file(&h, fmt.tprintf("app%s/loke.project", name), fmt.tprintf("require shared ../shared\nrequire util ../util%s\n", name))
+		write_file(&h, fmt.tprintf("app%s/main.loke", name), app)
+		open(&h, fmt.tprintf("app%s/main.loke", name), app)
+	}
+	open(&h, "shared/shared.loke", shared)
+	settle(&h)
+	notes := make([dynamic]string, context.temp_allocator)
+	for p in publications(take(&h)) {
+		if p.uri != uri_of(&h, "shared/shared.loke") { continue }
+		for d in p.diagnostics {
+			for related in member_array(d, "relatedInformation") {
+				uri, _ := member_string(member(related, "location"), "uri")
+				append(&notes, uri)
+			}
+		}
+	}
+	slice.sort(notes[:])
+	testing.expectf(t, len(notes) == 2 && notes[0] == uri_of(&h, "utilA/util.loke") && notes[1] == uri_of(&h, "utilB/util.loke"), "%v", notes)
 }
 
 // The position of `needle` in `text`, `offset` bytes in. The texts are ASCII,
@@ -1088,6 +1129,9 @@ rename_changes_every_use_or_refuses :: proc(t: ^testing.T) {
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "twice(1)", "double"), "app1/main.loke:2 app2/main.loke:2 lib/lib.loke:1")
 	// A parameter with its named argument; a field with its literal key.
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "factor: int", "scale"), "app1/main.loke:4")
+	reply := ask(&h, "textDocument/rename", "app1/main.loke", position_of(t, app, "factor: int"), `,"newName":"scale"`)
+	scaled_app, _ := strings.replace_all(app, "factor", "scale", context.temp_allocator)
+	testing.expect_value(t, apply_edits(app, member_array(member(member(reply, "result"), "changes"), uri_of(&h, "app1/main.loke"))), scaled_app)
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "x, y", "z"), "app1/main.loke:4")
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "value := lib", "value"), "")
 	testing.expect_value(t, rename_to(&h, "app1/main.loke", app, "Point ::", "Spot"), "app1/main.loke:5")
@@ -1112,7 +1156,7 @@ rename_changes_every_use_or_refuses :: proc(t: ^testing.T) {
 		got := rename_to(&h, "app1/main.loke", app, refusal.needle, refusal.name)
 		testing.expectf(t, strings.contains(got, refusal.message), "renaming at %q to %q: %s", refusal.needle, refusal.name, got)
 	}
-	reply := ask(&h, "textDocument/prepareRename", "app1/main.loke", position_of(t, app, "value := lib"))
+	reply = ask(&h, "textDocument/prepareRename", "app1/main.loke", position_of(t, app, "value := lib"))
 	placeholder, _ := member_string(member(reply, "result"), "placeholder")
 	testing.expect(t, placeholder == "value" && start_of(member(reply, "result")) == position_of(t, app, "value := lib"))
 	reply = ask(&h, "textDocument/prepareRename", "app1/main.loke", position_of(t, app, "int) -> Point"))
@@ -1157,6 +1201,11 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 		// Parentheses around the operand do not hide what it selects.
 		{"promoted-paren", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = (outer).old; }\n", "old: int", "next", "would select the existing member `next`"},
 		{"promoted-paren-free", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = ((outer)).old; }\n", "old: int", "renamed", "main.loke:2"},
+		// A use of the new name could reach the renamed field once renamed.
+		{"promoted-new", "package main;\nA :: struct { old: int }\nB :: struct { next: int }\nOuter :: struct { using a: A, using b: B }\nmain :: proc() { o := Outer{A{1}, B{2}}; _ = o.next; }\n", "old: int", "next", "could select the renamed `old`"},
+		{"promoted-new-nearer", "package main;\nA :: struct { old: int }\nOuter :: struct { using a: A, next: int }\nmain :: proc() { o := Outer{A{1}, 2}; _ = o.next; _ = o.a.old; }\n", "old: int", "next", "main.loke:2"},
+		// A named argument names the callee's parameter, not a caller's local.
+		{"label", "package main;\nf :: proc(old: int) {}\nmain :: proc() { next := 1; f(old = next); }\n", "old: int", "next", "main.loke:2"},
 		// A local cannot shadow an outer local, even one not used there.
 		{"shadow", "package main;\nmain :: proc() {\n\told := 1;\n\t{ next := 2; _ = next; }\n\t_ = old;\n}\n", "old := 1", "next", "a local cannot shadow another"},
 		// A selected `when` branch opens no scope.
@@ -1175,11 +1224,47 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 	for c in cases {
 		relative := fmt.tprintf("%s/main.loke", c.name)
 		open(&h, relative, c.text)
-		got := rename_to(&h, relative, c.text, c.needle, c.new_name)
+		reply := ask(&h, "textDocument/rename", relative, position_of(t, c.text, c.needle), fmt.tprintf(`,"newName":%s`, quoted(c.new_name)))
+		got := describe_rename(&h, reply)
 		testing.expectf(t, strings.contains(got, c.expected), "%s: %s", c.name, got)
+		if member(reply, "result") != nil { renamed_uses_bind_to_declaration(&h, relative, c.text, c.needle, reply) }
 		close(&h, relative)
 		settle(&h)
 		take(&h)
+	}
+}
+
+// After a rename's edits are applied, the text checks and every renamed name
+// still names the renamed declaration, so no use was captured.
+@(private = "file")
+renamed_uses_bind_to_declaration :: proc(h: ^Harness, relative, text, needle: string, reply: json.Value, loc := #caller_location) {
+	t := h.t
+	edits := member_array(member(member(reply, "result"), "changes"), uri_of(h, relative))
+	renamed := apply_edits(text, edits)
+	declaration := position_of(t, text, needle)
+	// Where each edit starts in the renamed text, and which is the declaration.
+	starts := make([dynamic]Position, context.temp_allocator)
+	declared := Position{-1, -1}
+	delta := 0
+	for edit in edits {
+		range := member(edit, "range")
+		lo := position_to_offset(text, json_position(member(range, "start")), false)
+		hi := position_to_offset(text, json_position(member(range, "end")), false)
+		new_text, _ := member_string(edit, "newText")
+		at := lo + delta
+		position := Position{strings.count(renamed[:at], "\n"), at - (strings.last_index_byte(renamed[:at], '\n') + 1)}
+		if json_position(member(range, "start")) == declaration { declared = position }
+		append(&starts, position)
+		delta += len(new_text) - (hi - lo)
+	}
+	change(h, relative, renamed, 2)
+	settle(h)
+	for p in publications(take(h)) {
+		testing.expectf(t, len(p.diagnostics) == 0, "%s renamed: %v", relative, p.diagnostics, loc = loc)
+	}
+	testing.expectf(t, declared.line >= 0, "%s: no edit at the declaration", relative, loc = loc)
+	for start in starts {
+		expect_definition(t, ask(h, "textDocument/definition", relative, start), uri_of(h, relative), declared, loc = loc)
 	}
 }
 
@@ -1198,6 +1283,55 @@ completion_follows_scopes_and_comments_from_review :: proc(t: ^testing.T) {
 	testing.expect(t, len(member_array(member(reply, "result"), "items")) == 0, "inside the outer comment")
 	reply = ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, "still here", 3))
 	testing.expect(t, is_null_result(reply))
+}
+
+// A literal the lexer rejects, unterminated or with an invalid escape, still
+// holds the cursor; one that is closed ends where it closes.
+@(test)
+completion_stays_in_rejected_literals :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "completion-literals") { finish(&h); return }
+	defer finish(&h)
+	Case :: struct { name, tail, needle: string, at: int, inside: bool }
+	cases := []Case {
+		{"string", "main :: proc() { f(\"abc", "\"abc", 3, true},
+		{"raw", "main :: proc() { f(`abc", "`abc", 3, true},
+		{"rune", "main :: proc() { r := 'a", "'a", 2, true},
+		{"escape", "main :: proc() { f(\"a\\qb\"); }\n", "\\qb", 2, true},
+		{"after-escape", "main :: proc() { f(\"a\\qb\"); }\n", "); }", 2, false},
+	}
+	for c in cases {
+		relative := fmt.tprintf("%s.loke", c.name)
+		text := fmt.tprintf("package main;\nf :: proc(s: string) {{}}\n%s", c.tail)
+		open(&h, relative, text)
+		reply := ask(&h, "textDocument/completion", relative, position_of(t, text, c.needle, c.at))
+		items := len(member_array(member(reply, "result"), "items"))
+		testing.expectf(t, (items == 0) == c.inside, "%s: %d items", c.name, items)
+		if c.inside {
+			reply = ask(&h, "textDocument/signatureHelp", relative, position_of(t, text, c.needle, c.at))
+			testing.expectf(t, is_null_result(reply), "%s: signature help inside the literal", c.name)
+		}
+		close(&h, relative)
+		settle(&h)
+		take(&h)
+	}
+}
+
+// A completion detail puts the signature on one line without touching its
+// literals.
+@(test)
+completion_detail_keeps_literal_text :: proc(t: ^testing.T) {
+	h: Harness
+	if !start(&h, t, "completion-detail") { finish(&h); return }
+	defer finish(&h)
+	text := "package main;\nf :: proc(value: string = \"a  b\",\n\tcount: int = 1,\n) {}\nmain :: proc() {\n\tf();\n}\n"
+	open(&h, "main.loke", text)
+	reply := ask(&h, "textDocument/completion", "main.loke", position_of(t, text, "f();"))
+	detail := ""
+	for item in member_array(member(reply, "result"), "items") {
+		if label, _ := member_string(item, "label"); label == "f" { detail, _ = member_string(item, "detail") }
+	}
+	testing.expect_value(t, detail, "proc(value: string = \"a  b\", count: int = 1)")
 }
 
 // Unsaved text for `fresh_codes`, relative to the harness root.
@@ -1304,7 +1438,8 @@ rapid_edits_match_a_fresh_check :: proc(t: ^testing.T) {
 	settle(&h)
 	messages := take(&h)
 	for p in publications(messages) {
-		testing.expectf(t, p.versioned && (p.version == i64(versions[0]) || p.version == i64(versions[1])), "published version %d is stale", p.version)
+		expected := versions[0] if p.uri == uri_of(&h, "app/main.loke") else versions[1]
+		testing.expectf(t, p.versioned && p.version == i64(expected), "%s: published version %d, not %d", p.uri, p.version, expected)
 	}
 	record_publications(&shown, messages)
 	final := []Unsaved{
