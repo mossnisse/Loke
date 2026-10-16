@@ -234,13 +234,18 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 					}
 					// design.md "Promoted struct fields": the operand's own
 					// fields, promoted fields, and methods share one lookup.
-					if member && qualified && index >= 2 {
-						if operand, typed := lokec.query_at(rs, root_snapshot, source_file, tokens[index - 2].hi - 1); typed {
-							if members, listed := lokec.query_members(rs, operand, source_file, context.temp_allocator); listed {
-								for candidate in members {
-									if candidate.name == new_name {
-										return "", fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, new_name, new_name)
-									}
+					// The operand is the selector's own, not whatever ends at the
+					// token before the `.`: in `(outer).old` that is a `)`. A
+					// `.Member` with no operand takes its type from context.
+					if member && qualified && index >= 2 && ends_operand(tokens[index - 2].kind) {
+						operand, typed := lokec.query_selector_operand(rs, root_snapshot, source_file, token.lo)
+						if !typed {
+							return "", fmt.tprintf("At %s, rename cannot tell what `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
+						}
+						if members, listed := lokec.query_members(rs, operand, source_file, context.temp_allocator); listed {
+							for candidate in members {
+								if candidate.name == new_name {
+									return "", fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, new_name, new_name)
 								}
 							}
 						}

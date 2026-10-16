@@ -574,6 +574,7 @@ including after destroying and reinitializing a session.
 | `query_symbols` / `query_symbol` | Written bindings and their names, kinds, types, visibility, generic status, and definitions, including locals, parameters, fields, and enum members. Each also has its whole written declaration (`extent`, from its first attribute; the name alone for a binding with no declaration, such as a loop binding) and `parent`, the innermost other written binding whose extent contains its own: a field's record, a member's enum, a parameter's, local's, or loop binding's procedure. A written binding is spelled as an identifier, so generated declarations named after their syntax, such as a capture literal's record, are omitted. `owner` is the type of an `impl` or `extend` member. `scope` is where a local, parameter, or loop binding can be named: the innermost block, statement, switch case, or procedure holding its name; a selected `when` branch is not one, since its braces open no scope. |
 | `query_documentation` | The comments directly above a binding's declaration, as `-doc` reads them; caller-owned. False when there are none. |
 | `query_at` | Narrowest written node at a half-open byte offset; available symbol/type independently, including selected overloads or generic instances. `type_value` marks a node that denotes its type rather than a value of it. |
+| `query_selector_operand` | The written operand of the selector whose name holds an offset, described as `query_at` describes a node. Parentheses are not part of an operand's span, and the links the checker adds for a promoted field are skipped, so `(outer).x` and a promoted `outer.x` both give `outer`. |
 | `query_visible` | Bindings an unqualified name can reach at an offset, innermost first: locals whose `scope` holds the offset and whose name ends before it, then the file's package scope with its imports, then the predeclared names. Shadowed names are omitted. Caller-owned. |
 | `query_implicit_names` | Member names reached by name where no use spells them: those the compiler looks up itself (`call`, iteration, `format`, `hash`, `len`) and the slot names and selected members of every interface the program uses. |
 | `query_members` | What may follow `operand.` for a `query_at` result: a package alias's public declarations; a type's enum members or union variants and members; a value's fields, then the fields its `using` fields promote, and methods, through a pointer or box. Members are those recorded and visible from the file's package, so one contributed on demand appears once a lookup created it. Sorted by name; caller-owned. |
@@ -775,7 +776,9 @@ operand's last byte goes to `query_at` and then `query_members`; elsewhere
 help takes the innermost bracket open before the cursor, which must be a `(`
 after a name, and the procedure or group `query_at` records there; commas at
 that depth, a named argument, and a method call's implicit `self` choose the
-active parameter. Completion kinds after `Reference` are negotiated like symbol
+active parameter. A parameter's label offsets point at its name, never at a
+type spelled the same, and count UTF-16 units under either position encoding,
+as the protocol defines them. Completion kinds after `Reference` are negotiated like symbol
 kinds.
 
 References and rename identify a binding by its written definition, so every
@@ -793,7 +796,8 @@ parameter. These two rules also cover capture: a binding that would be shadowed
 at some use is visible at the declaration, or declared later where the renamed
 binding is visible. Fields, enum members, and `impl` or `extend` members are
 checked against their type's members and, at each selector, against the
-operand's members, promoted fields included. A public extension is also
+members of the operand `query_selector_operand` records, promoted fields
+included; a selector whose operand it cannot name stops the rename. A public extension is also
 checked as a package name. A method may not be renamed to or from a name in
 `query_implicit_names`, and a parameter to or from `self`.
 

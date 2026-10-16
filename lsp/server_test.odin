@@ -212,6 +212,20 @@ lifecycle_requests_follow_the_protocol :: proc(t: ^testing.T) {
 		testing.expect_value(t, error_code(replies[3]), PARSE_ERROR)
 	}
 
+	// A response is ignored; an object that is neither it nor a request is not.
+	handle_messages(s, {
+		`{"jsonrpc":"2.0","id":"loke-lsp-watch","result":null}`,
+		`{"jsonrpc":"2.0","id":77,"method":123}`,
+		`{}`,
+	})
+	replies = take(&h)
+	if testing.expect_value(t, len(replies), 2) {
+		id, _ := member_int(replies[0], "id")
+		_, null_id := member(replies[1], "id").(json.Null)
+		testing.expect(t, error_code(replies[0]) == INVALID_REQUEST && id == 77)
+		testing.expect(t, error_code(replies[1]) == INVALID_REQUEST && null_id)
+	}
+
 	handle_messages(s, {`{"jsonrpc":"2.0","id":5,"method":"shutdown"}`, `{"jsonrpc":"2.0","id":6,"method":"shutdown"}`})
 	replies = take(&h)
 	if testing.expect_value(t, len(replies), 2) {
@@ -971,6 +985,28 @@ signature_help_follows_the_argument_being_written :: proc(t: ^testing.T) {
 	}
 }
 
+// The LSP signature-help contract counts label offsets in UTF-16 units under
+// any position encoding, and a parameter's place is its name, not a type
+// spelled the same way.
+@(test)
+signature_labels_count_utf16_at_parameter_names :: proc(t: ^testing.T) {
+	text := "package main;\nPoint :: struct { x: int }\nf :: proc(a: string = \"é\", b: int = 0) {}\ng :: proc(a: Point, Point: int) {}\nmain :: proc() {\n\tf();\n\tg(Point{1}, 2);\n}\n"
+	h: Harness
+	if !start(&h, t, "signature-labels", `{"capabilities":{"general":{"positionEncodings":["utf-8"]},"textDocument":{"signatureHelp":{"signatureInformation":{"parameterInformation":{"labelOffsetSupport":true}}}}}}`) { finish(&h); return }
+	defer finish(&h)
+	open(&h, "main.loke", text)
+	Case :: struct { needle: string, at, parameter, lo, hi: int }
+	for c in ([]Case{{"f();", 2, 1, 27, 28}, {"g(Point{1}", 2, 1, 20, 25}}) {
+		reply := ask(&h, "textDocument/signatureHelp", "main.loke", position_of(t, text, c.needle, c.at))
+		signatures := member_array(member(reply, "result"), "signatures")
+		if !testing.expectf(t, len(signatures) == 1, "%s: %v", c.needle, reply) { continue }
+		parameters := member_array(signatures[0], "parameters")
+		if !testing.expect(t, len(parameters) > c.parameter) { continue }
+		bounds := member_array(parameters[c.parameter], "label")
+		testing.expectf(t, len(bounds) == 2 && bounds[0].(json.Integer) == i64(c.lo) && bounds[1].(json.Integer) == i64(c.hi), "%s: %v", c.needle, bounds)
+	}
+}
+
 // Two programs that share a library through their manifests.
 @(private = "file")
 shared_library :: proc(h: ^Harness, app, lib: string) {
@@ -1118,6 +1154,9 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 		// A promoted field loses to an outer one of the same name.
 		{"promoted", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = outer.old; }\n", "old: int", "next", "would select the existing member `next`"},
 		{"promoted-free", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = outer.old; }\n", "old: int", "renamed", "main.loke:2"},
+		// Parentheses around the operand do not hide what it selects.
+		{"promoted-paren", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = (outer).old; }\n", "old: int", "next", "would select the existing member `next`"},
+		{"promoted-paren-free", "package main;\nInner :: struct { old: int }\nOuter :: struct { using inner: Inner, next: int }\nmain :: proc() { outer := Outer{Inner{1}, 2}; _ = ((outer)).old; }\n", "old: int", "renamed", "main.loke:2"},
 		// A local cannot shadow an outer local, even one not used there.
 		{"shadow", "package main;\nmain :: proc() {\n\told := 1;\n\t{ next := 2; _ = next; }\n\t_ = old;\n}\n", "old := 1", "next", "a local cannot shadow another"},
 		// A selected `when` branch opens no scope.

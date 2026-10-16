@@ -104,21 +104,23 @@ requested_root :: proc(s: ^Server) -> ^Root {
 // request whose document changed or closed since it arrived.
 answer_requests :: proc(s: ^Server) {
 	if s.layout_dirty { return }
-	for index := 0; index < len(s.pending); {
-		request := s.pending[index]
+	// Requests still waiting move down over answered ones, in arrival order.
+	kept := 0
+	for request in s.pending {
 		doc := s.documents[request.key]
 		switch {
 		case doc == nil || doc.revision != request.revision:
 			send_error(s, request.id, CONTENT_MODIFIED, "the document changed before the request was answered")
 		case doc.root == nil || doc.root.dirty || (reads_every_root(request.kind) && any_root_dirty(s)):
-			index += 1
+			s.pending[kept] = request
+			kept += 1
 			continue
 		case:
 			answer(s, request, doc)
 		}
 		destroy_request(request)
-		ordered_remove(&s.pending, index)
 	}
+	resize(&s.pending, kept)
 }
 
 @(private = "file")

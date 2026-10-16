@@ -232,6 +232,35 @@ query_at :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, 
 	}, true
 }
 
+// The operand of the selector whose name holds the byte offset, as `query_at`
+// would describe the operand itself, located at the name. Written parentheses
+// are not part of the operand's recorded span, so the token before the `.`
+// cannot locate it.
+// Instantiations disagreeing about it yield no symbol/type for that part.
+query_selector_operand :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, file, offset: u32) -> (Query_Position, bool) {
+	if source, found := query_source(s, snapshot, file); !found || int(offset) >= len(source.text) { return {}, false }
+	best := Query_Occurrence{span = no_span()}
+	symbol_conflict, type_conflict := false, false
+	for occurrence in s.queries.operands {
+		span := occurrence.span
+		if span.file != file || offset < span.lo || offset >= span.hi { continue }
+		if best.span.file == NO_FILE {
+			best = occurrence
+			continue
+		}
+		best.type_value ||= occurrence.type_value
+		if occurrence.type != best.type && !type_conflict { best.type, type_conflict = INVALID_TYPE, true }
+		if occurrence.symbol != best.symbol && !symbol_conflict && s.queries.canonical[occurrence.symbol] != s.queries.canonical[best.symbol] {
+			best.symbol, symbol_conflict = INVALID_SYMBOL, true
+		}
+	}
+	if best.span.file == NO_FILE || (best.symbol == INVALID_SYMBOL && best.type == INVALID_TYPE) { return {}, false }
+	return Query_Position{
+		Query_Location{s.snapshot, best.span}, Symbol_Handle{s.snapshot, best.symbol}, Type_Handle{s.snapshot, best.type},
+		best.type_value && best.type != INVALID_TYPE,
+	}, true
+}
+
 // The bindings an unqualified name can reach at a byte offset, innermost
 // first: locals, parameters, and loop bindings written before it in an
 // enclosing block or procedure, then the file's package with its imports, then
@@ -423,6 +452,8 @@ Snapshot_Queries :: struct {
 	packages: []Package_Id,
 	// Syntax that opens a lexical scope, from the index.
 	regions: [dynamic]Span,
+	// Each selector's operand, at the span of the name it selects.
+	operands: [dynamic]Query_Occurrence,
 }
 
 @(private = "file")

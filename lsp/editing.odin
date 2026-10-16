@@ -114,7 +114,6 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 }
 
 // A token that can end the operand of a selector.
-@(private = "file")
 ends_operand :: proc(kind: lokec.Token_Kind) -> bool {
 	#partial switch kind {
 	case .Ident, .Rparen, .Rbracket, .Rbrace, .Caret, .String, .Raw_String: return true
@@ -246,12 +245,22 @@ signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot
 
 // Each parameter as its name's place in the label, found in order among the
 // names inside the label's outer parentheses; a client without offsets gets
-// the name itself.
+// the name itself. grammar.md "Procedures": a parameter's names come before
+// its `:`, and its type and default after it, so a type spelled like a later
+// parameter is never taken for that name. Label offsets count UTF-16 units
+// whatever position encoding was negotiated, as the protocol defines them.
 @(private = "file")
 write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, parameters: []lokec.Query_Parameter) {
+	if !s.label_offsets {
+		for parameter, index in parameters {
+			if index > 0 { strings.write_byte(b, ',') }
+			write_parameter_name(b, parameter.name)
+		}
+		return
+	}
 	tokens := lex_text(label)
 	defer delete(tokens)
-	next, depth := 0, 0
+	next, depth, names := 0, 0, true
 	for parameter, index in parameters {
 		if index > 0 { strings.write_byte(b, ',') }
 		lo, hi := -1, -1
@@ -259,24 +268,29 @@ write_parameter_labels :: proc(s: ^Server, b: ^strings.Builder, label: string, p
 			token := tokens[next]
 			next += 1
 			#partial switch token.kind {
-			case .Lparen, .Lbracket, .Lbrace: depth += 1
+			case .Lparen, .Lbracket, .Lbrace:
+				depth += 1
+				if depth == 1 { names = true }
 			case .Rparen, .Rbracket, .Rbrace: depth -= 1
+			case .Colon: if depth == 1 { names = false }
+			case .Comma: if depth == 1 { names = true }
 			case .Ident:
-				if depth == 1 && label[token.lo:token.hi] == parameter.name { lo, hi = int(token.lo), int(token.hi) }
+				if depth == 1 && names && label[token.lo:token.hi] == parameter.name { lo, hi = int(token.lo), int(token.hi) }
 			}
 		}
-		if s.label_offsets && lo >= 0 {
-			if s.utf8_positions {
-				fmt.sbprintf(b, `{{"label":[%d,%d]}}`, lo, hi)
-			} else {
-				fmt.sbprintf(b, `{{"label":[%d,%d]}}`, utf16_length(label[:lo]), utf16_length(label[:hi]))
-			}
+		if lo >= 0 {
+			fmt.sbprintf(b, `{{"label":[%d,%d]}}`, utf16_length(label[:lo]), utf16_length(label[:hi]))
 		} else {
-			strings.write_string(b, `{"label":`)
-			write_json_string(b, parameter.name)
-			strings.write_byte(b, '}')
+			write_parameter_name(b, parameter.name)
 		}
 	}
+}
+
+@(private = "file")
+write_parameter_name :: proc(b: ^strings.Builder, name: string) {
+	strings.write_string(b, `{"label":`)
+	write_json_string(b, name)
+	strings.write_byte(b, '}')
 }
 
 // The compiler's own tokens for a text: literals are whole, and comments are

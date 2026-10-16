@@ -122,12 +122,21 @@ dispatch :: proc(s: ^Server, message: json.Value, cancelled: map[string]bool) {
 		send_error(s, nil, INVALID_REQUEST, "a message is a JSON object")
 		return
 	}
-	method, has_method := object["method"].(json.String)
+	method_value, has_method_value := object["method"]
+	method, has_method := method_value.(json.String)
 	id, has_id := object["id"]
 	params := object["params"]
+	_, has_result := object["result"]
+	_, has_error := object["error"]
 	switch {
-	case !has_method:
+	case !has_method_value && has_id && (has_result || has_error):
 		// A response to one of our requests; none needs an answer.
+	case !has_method:
+		// Neither a request, a notification, nor a response. JSON-RPC answers
+		// with a null `id` when the message has no usable one.
+		reply_id: json.Value
+		if id_key(id) != "" { reply_id = id }
+		send_error(s, reply_id, INVALID_REQUEST, "a request names its method with a string")
 	case has_id && cancelled[id_key(id)]:
 		send_error(s, id, REQUEST_CANCELLED, "the request was cancelled")
 	case has_id:

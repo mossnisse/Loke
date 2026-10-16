@@ -168,6 +168,28 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 	}
 }
 
+// The operand a written selector selects from. design.md "Promoted struct
+// fields": the checker turns `e.x` into `e.position.x`, and each link it adds
+// carries the written name's span, so the written operand is the one below them.
+@(private = "file")
+index_query_operand :: proc(index: ^Query_Index, selector: ^Expr_Selector) {
+	span := selector.name.span
+	if !valid_query_span(index.c, span) || index.c.sources[span.file].text[span.lo:span.hi] != selector.name.text { return }
+	operand := selector.operand
+	for {
+		link, added := operand.(^Expr_Selector)
+		if !added || link.name.span != span { break }
+		operand = link.operand
+	}
+	base := expr_base(operand)
+	if base == nil { return }
+	type := base.denoted_type != INVALID_TYPE ? base.denoted_type : base.type
+	if base.resolution.kind == .Package { type = INVALID_TYPE }
+	symbol := base.resolution.symbol
+	if ident, named := operand.(^Expr_Ident); named && symbol == INVALID_SYMBOL { symbol = ident.symbol }
+	append(&index.q.operands, Query_Occurrence{span, symbol, type, false, base.denoted_type != INVALID_TYPE})
+}
+
 index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 	if expr == nil { return }
 	base := expr_base(expr)
@@ -184,6 +206,7 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		index_query_name(index, v.span, v.name, symbol, type)
 	case ^Expr_Selector:
 		index_query_name(index, v.name.span, v.name.text, v.resolution.symbol, type)
+		index_query_operand(index, v)
 		index_query_expr(index, v.operand)
 	case ^Expr_Checked_Extract:
 		index_query_expr(index, v.operand)
