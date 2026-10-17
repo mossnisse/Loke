@@ -1,0 +1,24 @@
+package main;
+
+import "core:fmt";
+import "core:log";
+import "core:thread";
+
+// The standard logger writes one line per record (standard-library "`core:log`")
+// from any number of threads: a record is written whole under one lock, so two
+// threads logging at once never split each other's lines.
+//
+// Spawning code that logs is also free of L0707: the standard sink holds no
+// state, so logging through it is not a write to a global the threads share.
+
+worker :: proc() {
+	foreach (_ in 0 ..< 200) { log.warning("RECORD"); }
+}
+
+main :: proc() {
+	first := thread.spawn(worker);
+	second := thread.spawn(worker);
+	first.join();
+	second.join();
+	fmt.println("joined");
+}

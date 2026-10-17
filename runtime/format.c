@@ -11,10 +11,46 @@
  */
 #include "loke_rt.h"
 
+#include <locale.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* The "C" numeric locale, made once and shared by every thread. The process
+ * locale is mutable through `setlocale`, and under a decimal-comma one plain
+ * `printf` and `strtod` spell and read `1,5`: every spelling and reading of a
+ * float here and in `core:strconv` goes through this locale instead.
+ *
+ * Two threads racing to make it both succeed, and the loser frees its copy. A
+ * failure to make it leaves null, which the `_l` functions read as the current
+ * locale: the behavior before this existed, rather than a crash. */
+static _locale_t c_numeric(void) {
+	static _locale_t cached;
+	_locale_t found = __atomic_load_n(&cached, __ATOMIC_ACQUIRE);
+	if (found != 0) {
+		return found;
+	}
+	_locale_t made = _create_locale(LC_NUMERIC, "C");
+	if (made == 0) {
+		return 0;
+	}
+	_locale_t expected = 0;
+	if (!__atomic_compare_exchange_n(&cached, &expected, made, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+		_free_locale(made);
+		return expected;
+	}
+	return made;
+}
+
+/* `core:strconv.parse_f64`'s conversion. The caller has already checked the
+ * spelling, so a correct conversion consumes all of it; one that does not is
+ * reported as NaN, which no accepted spelling produces. */
+double loke_rt_v1_parse_f64(const char *text) {
+	char *end = 0;
+	double value = _strtod_l(text, &end, c_numeric());
+	return *end == 0 ? value : NAN;
+}
 
 void loke_rt_v1_write_std(void *state, const uint8_t *bytes, int64_t count) {
 	FILE *stream = (uintptr_t)state == LOKE_RT_STDERR ? stderr : stdout;
@@ -194,7 +230,7 @@ static int spell_general(char *out, const char *sci) {
 }
 
 static int reads_back(const char *sci, double value, int single) {
-	double back = strtod(sci, 0);
+	double back = _strtod_l(sci, 0, c_numeric());
 	return single ? (float)back == (float)value : back == value;
 }
 
@@ -233,7 +269,7 @@ static void fmt_float(const loke_rt_writer_v1 *w, double value, int single) {
 	char out[32];
 	int widest = single ? 9 : 17;
 	for (int precision = 1;; precision++) {
-		snprintf(sci, sizeof(sci), "%.*e", precision - 1, value);
+		_snprintf_l(sci, sizeof(sci), "%.*e", c_numeric(), precision - 1, value);
 		if (precision == widest || reads_back(sci, value, single)) {
 			break;
 		}
@@ -265,7 +301,7 @@ void loke_rt_v1_fmt_fixed(const loke_rt_writer_v1 *w, double value, int64_t digi
 	}
 	digits = digits < 0 ? 0 : digits > 40 ? 40 : digits;
 	char out[352];
-	int used = snprintf(out, sizeof(out), "%.*f", (int)digits, value);
+	int used = _snprintf_l(out, sizeof(out), "%.*f", c_numeric(), (int)digits, value);
 	if (used > 0) {
 		loke_rt_v1_fmt_bytes(w, (const uint8_t *)out, used);
 	}

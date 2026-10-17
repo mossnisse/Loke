@@ -1,0 +1,32 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:strconv";
+
+// Float text is the "C" locale's whatever the process locale is
+// (standard-library "`core:strconv`"): a program that switches the C library to
+// a decimal-comma locale for its own C code still parses and prints `1.5`.
+// Before, `parse_f64("1.5")` stopped at the point and answered `1.0`, and
+// `fmt` printed `1.,5`.
+//
+// The locale is the C library's, set the way foreign C code would set it. A
+// machine with none of these locales runs the same checks under "C", which
+// still passes, so the output does not say which one was found.
+
+LC_NUMERIC :: i32(4);
+
+foreign loke_runtime {
+	@(link_name="setlocale")
+	set_locale :: proc "c" (category: i32, locale: cstring_view) -> Option(cstring_view) ---;
+}
+
+main :: proc() {
+	_ = set_locale(LC_NUMERIC, "de-DE") or_else set_locale(LC_NUMERIC, "fr-FR") or_else
+		set_locale(LC_NUMERIC, "Swedish_Sweden.1252") or_else "C";
+	fmt.println(strconv.parse_f64("1.5"), strconv.parse_f64("-2.5e-3"), strconv.parse_f64("1_000.25"));
+	fmt.println(1.5, f32(0.1), 2.5e-7, 1.0e300);
+	fmt.println(fmt.fixed(2.25, 3), fmt.fixed(-0.5, 1));
+	value := strconv.parse_f64(fmt.to_string(mem.default_allocator(), 0.1)) or_else 0.0;
+	fmt.println(value == 0.1);
+}

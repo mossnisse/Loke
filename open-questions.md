@@ -235,11 +235,11 @@ profiles contain.
 
 - `parse_f64` rounds through the C library's `strtod`, as `fmt` already does to
   find its shortest spellings. That makes it foreign code, which design.md
-  "Compile-time procedure evaluation" keeps out of constants for good, and it
-  reads the decimal point of the C locale, which a program that calls
-  `setlocale` through a foreign binding can change. A correctly rounded parser
-  in Loke (Eisel-Lemire with a big-decimal fallback) would fix both. Is either
-  worth that much code?
+  "Compile-time procedure evaluation" keeps out of constants for good. Both
+  now run in a fixed "C" numeric locale, so `setlocale` through a foreign
+  binding no longer changes them. A correctly rounded parser in Loke
+  (Eisel-Lemire with a big-decimal fallback) would make the parser usable in
+  constants. Is that worth that much code?
 
 ## Open questions in `core:random`
 
@@ -745,19 +745,19 @@ fixed since are marked **Fixed** below, with the change recorded in
 
 ### Correctness and specification findings
 
-These are P2 findings unless marked P3. Reproductions and proposed directions
-for the open ones are recorded in [Known gaps](known-gaps.md#gaps):
+These are P2 findings unless marked P3. All are fixed; the reproductions are
+the regression tests named in each row:
 
 | ID | Location | Finding |
 | --- | --- | --- |
-| G1 | `core/process/process.loke:203-206` | [A stderr capture failure can hang `output`](known-gaps.md#process-output-does-not-cancel-promptly-after-a-stderr-read-failure): the worker records failure, but the parent waits for stdout EOF before inspecting it. |
+| G1 | `core/process/process.loke:203-206` | **Fixed:** a stderr capture failure could hang `output`: the worker recorded failure, but the parent waited for stdout EOF before inspecting it. The worker now ends the child itself. Regression in `tests/obj/process_output_fault.loke`. |
 | G2 | `core/term/term.loke:363-371` | **Fixed:** raw-mode acquisition could save a stale raw snapshot, leaving the console raw after both owners close. The claim is now taken before the snapshot. |
 | G3 | `core/path/path.loke:174-178` | **Fixed:** joining an extended path could duplicate a separator, turning a valid path into `Invalid_Path`. Regression in `tests/run/lib_path`. |
 | G4 | `core/math/complex.loke:308-314,331-337` | **Fixed:** quaternion inverse overflowed a shared factor, destroying finite components and turning zero components into NaNs. Regression in `tests/run/lib_numeric`. |
 | G5 | `core/math/complex.loke:225-237,266-278` | **Fixed:** complex division lost subnormal contributions, so a quotient of `0.4-0.2i` became `0.5+0i`. Regression in `tests/run/lib_numeric`. |
-| G6 | `core/log/log.loke:70-76` | [Standard log records interleave across threads](known-gaps.md#concurrent-standard-logging-can-split-records-across-lines); five writes per record do not preserve its line. |
+| G6 | `core/log/log.loke:70-76` | **Fixed:** standard log records interleaved across threads; five writes per record did not preserve its line. A lock now spans the record, and logging from a spawned thread no longer warns L0707. Regression in `tests/run/lib_log_threads`. |
 | G7 (P3) | `core/container/small_array.loke:199-219,243-244` | **Fixed:** the normative section denied consuming try-insertion, although the API and the release notes deliberately supply it. Regression in `tests/run/lib_move_only_containers`. |
-| G8 (previously noted) | `core/strconv/strconv.loke:125` | [Floating parsing follows the mutable C locale](known-gaps.md#floating-parsing-follows-the-mutable-c-numeric-locale); a decimal comma locale makes `1.5` succeed as `1.0`. |
+| G8 (previously noted) | `core/strconv/strconv.loke:125` | **Fixed:** floating parsing followed the mutable C locale, so a decimal comma locale made `1.5` succeed as `1.0`; `fmt` printed `1.,5` under the same locale. The runtime now spells and reads floats in a fixed "C" numeric locale. Regression in `tests/run/lib_numeric_locale`. |
 
 ### Confirmed performance findings
 
@@ -928,6 +928,6 @@ Win32 failure paths or exhaustive numeric/distribution correctness.
 
 Repro artifacts are local and ignored under `tests/tmp/numeric_review_20261017/`,
 `tests/tmp/review_foundations/`, `tests/tmp/review_platform/`, and
-`tests/tmp/review_main/`; the durable findings and minimal bug reproductions
-are in this section and [Known gaps](known-gaps.md#gaps). No library source
-was changed and no full compiler gate was needed for the review record.
+`tests/tmp/review_main/`; the durable findings are in this section, and the
+minimal bug reproductions became the regression tests named in the findings
+table. No library source was changed by the review itself.

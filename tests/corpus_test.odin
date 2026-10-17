@@ -1579,8 +1579,10 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 
 // standard-library "`core:process`": `output` that fails to collect stdout
 // returns the error, rather than joining a stderr reader that the child,
-// blocked writing stdout, never lets finish. The program exits 0 when it gets
-// `Out_Of_Memory` from its failing allocator; a hang is killed and fails.
+// blocked writing stdout, never lets finish. One that fails to collect stderr
+// ends a child still holding stdout open, rather than reading stdout to an end
+// that never comes. The program exits 0 when it gets `Out_Of_Memory` from its
+// failing allocator both times, promptly; a hang is killed and fails.
 @(test)
 output_returns_a_failed_collection :: proc(t: ^testing.T) {
 	clang, include_flags, found := host_toolchain()

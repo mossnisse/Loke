@@ -524,6 +524,9 @@ void loke_rt_v1_fmt_u128(
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value);
 void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value);
 void loke_rt_v1_fmt_fixed(const loke_rt_writer_v1 *w, double value, int64_t digits);
+/* `core:strconv`'s float conversion, in the "C" numeric locale whatever the
+ * process locale is. NaN when the conversion stops short of the terminator. */
+double loke_rt_v1_parse_f64(const char *text);
 void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_quoted(const loke_rt_writer_v1 *w, const uint8_t *bytes, int64_t count);

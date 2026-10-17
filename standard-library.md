@@ -428,7 +428,9 @@ back to back for a `format` method or a line whose punctuation is its own.
 `Options.base` is 2 to 36 and any other
 value reads as 10; it and `uppercase` reach integers and whatever a type's
 `format` passes them to. A float prints the shortest spelling that reads back
-as the same value at its own width. design.md "String format printing" gives
+as the same value at its own width. Floats always print with a `.` point,
+whatever numeric locale foreign code has set for the C library.
+design.md "String format printing" gives
 every generated form, including floats and the quoting of strings inside
 aggregates.
 
@@ -740,7 +742,8 @@ correctly rounded `f64`, so every finite `f64` printed by the default
 `core:fmt` format parses back to itself. Precision wrappers such as `fmt.fixed`
 may round the value before printing.
 A finite spelling beyond the largest `f64` is `Overflow`; one below the smallest
-subnormal rounds to zero. `inf` and `nan` are not accepted.
+subnormal rounds to zero. `inf` and `nan` are not accepted. The point is
+always `.`, whatever numeric locale foreign code has set for the C library.
 
 Formatting scalars remains in `core:fmt`; `strconv` should not grow a second
 formatting system.
@@ -777,7 +780,10 @@ A record formats its arguments separated by one space, as `fmt.print` does,
 into `mem.default_allocator()`, and hands the logger that text without a line
 ending. The allocation follows that allocator's failure policy, so a record can
 panic under memory pressure. The standard logger writes `[Level] message` and a
-newline to the error stream. `current` returns the selected logger, or the
+newline to the error stream, holding a lock for the whole record so that records
+from different threads never share a line; other writers to the error stream
+are not serialized against it. A selected provider's own thread safety is the
+provider's responsibility. `current` returns the selected logger, or the
 standard one when none is selected or before it is published.
 
 A provider's factory returns `(log.Logger)(&mut sink)` over a `static` record

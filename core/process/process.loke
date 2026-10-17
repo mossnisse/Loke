@@ -166,7 +166,7 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 	_ = child.stdin.close();
 	collected := shared(thread.Mutex(Collected){value = .ok({})});
 	result: Output = {};
-	reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), collected.clone()});
+	reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), child.handle, collected.clone()});
 	switch (io.read_to_end(inout child.stdout)) {
 	case .ok(bytes): result.stdout = move(bytes);
 	case .err(error):
@@ -193,15 +193,26 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 @(private)
 Collected :: Result([dynamic]u8, io.Error);
 
+// `process` borrows the parent's handle to the child: `output` joins the reader
+// on every path before its `Child` closes that handle.
 @(private)
 Collecting :: struct {
-	pipe: Pipe,
-	into: Shared(thread.Mutex(Collected)),
+	pipe:    Pipe,
+	process: Handle,
+	into:    Shared(thread.Mutex(Collected)),
 }
 
+// A failed read ends the child here rather than leaving it to the parent. The
+// parent is reading stdout to its end and so cannot look before the child
+// closes stdout, which a child blocked writing stderr, or one that simply
+// keeps running, never does.
 @(private)
 collect :: proc(job: move Collecting) {
 	outcome := io.read_to_end(inout job.pipe);
+	switch (outcome) {
+	case .ok:
+	case .err: _ = kill_native(job.process);
+	}
 	guard := job.into.get().lock();
 	guard.get() = move(outcome);
 }

@@ -85,6 +85,8 @@ parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error
 // The result is correctly rounded. The syntax is checked here and the rounding
 // is the C library's `strtod`, the same one `fmt` relies on to find the shortest
 // spelling that reads back, so what `fmt` prints this parses to the same value.
+// Both run in the "C" numeric locale, so a program that sets a decimal-comma
+// locale for its own C code still parses `1.5` as one and a half.
 //
 // Infinities and NaNs are not spellable; a caller that needs them tests for the
 // words itself.
@@ -115,7 +117,10 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 		if (byte != u8('_')) { spelled.append(byte); }
 	}
 	spelled.append(0);
-	value := rt_strtod(unsafe.cstring_view(unsafe.raw_data(spelled)), nil);
+	value := rt_parse_f64(unsafe.cstring_view(unsafe.raw_data(spelled)));
+	// The syntax was checked above, so this is the C library disagreeing with
+	// it. A short conversion is still not a value to return.
+	if (value != value) { return .err(.Invalid_Syntax); }
 	// A finite decimal outside f64's range must not quietly become an infinity:
 	// infinities are not accepted spellings, and `Parse_Error.Overflow` exists
 	// precisely for a value the destination cannot hold.
@@ -127,12 +132,13 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 
 // ---------------------------------------------------------------- private --
 
-// The runtime links the C library, so `strtod` needs no `foreign import`.
-// Private, or the file-wide `@(public)` would export it as `strconv.rt_strtod`.
+// `strtod` in the runtime's "C" numeric locale, which also checks that it read
+// the whole spelling: NaN otherwise. Private, or the file-wide `@(public)` would
+// export it as `strconv.rt_parse_f64`.
 @(private)
 foreign loke_runtime {
-	@(link_name="strtod")
-	rt_strtod :: proc "c" (text: cstring_view, end: rawptr) -> f64 ---;
+	@(link_name="loke_rt_v1_parse_f64")
+	rt_parse_f64 :: proc "c" (text: cstring_view) -> f64 ---;
 }
 
 // The end of the digits starting at `start`: nothing unless the first is a

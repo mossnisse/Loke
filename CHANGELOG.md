@@ -87,6 +87,15 @@ checklist.
 
 ### Fixed
 
+- `process.output` ends the child as soon as reading its stderr fails, instead
+  of first reading stdout to its end, which a child holding stdout open never
+  lets happen.
+- The standard logger holds a lock for each record, so records logged from
+  different threads no longer split each other's lines. Spawning a thread that
+  logs no longer warns `L0707` about the logger's storage.
+- `strconv.parse_f64` and float formatting in `core:fmt` use a fixed "C"
+  numeric locale. After foreign code set a decimal-comma locale,
+  `parse_f64("1.5")` returned `1.0` and `fmt` printed `1.5` as `1.,5`.
 - `path.join` keeps one separator at a boundary that a part already supplies,
   so joining onto an extended-length `\\?\` path, which `clean` leaves
   verbatim, no longer doubles it into an `Invalid_Path`.

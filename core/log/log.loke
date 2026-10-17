@@ -14,6 +14,8 @@ package log;
 
 import "core:fmt";
 import "core:mem";
+import "core:thread";
+import "core:unsafe";
 
 // The compiler contributes:
 //
@@ -53,8 +55,15 @@ current :: proc() -> Logger {
 // The standard logger: one line per record on the process error stream, with
 // the level in front of it. It is the fallback *and* an ordinary provider — a
 // build may select `log.standard_logger` explicitly to say so.
+//
+// The view is made from a read-only address. `Standard` has no fields, so no
+// write through the view reaches its storage, and the one thing its records
+// share, the error stream, is serialized by `standard_lines` instead. A
+// `&mut standard` would count as a write to a global every logging thread
+// shares (design.md "Global write effects"), and warn at each `thread.spawn` of
+// code that logs about a race that cannot happen.
 standard_logger :: proc() -> Logger {
-	return (Logger)(&mut standard);
+	return (Logger)((^mut Standard)(rawptr(&standard)));
 }
 
 @(private)
@@ -63,11 +72,15 @@ Standard :: struct {}
 @(private)
 standard: static Standard = {};
 
+// Held for the whole of one standard record, so records from different threads
+// never interleave within a line. Other writers to the error stream are not
+// serialized against it.
+@(private)
+standard_lines: thread.Mutex(Unit);
+
 impl Standard {
-	// ponytail: five writes per record, so records from two threads can
-	// interleave within a line. Nothing can start a Loke thread yet; when
-	// something can, format the whole line once and write it in one call.
 	write :: proc(self: inout, level: Level, message: string_view) {
+		lines := standard_lines.lock();
 		w := fmt.stderr();
 		fmt.format_to(w, "[");
 		fmt.format_to(w, level);

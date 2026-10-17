@@ -1,15 +1,21 @@
-// standard-library "`core:process`": when `output` fails to collect stdout, it
-// returns that error rather than hanging. The child writes 1 MiB to stdout and
-// so blocks once the parent stops reading; the parent's allocator refuses the
-// 64 KiB block collecting it needs. `corpus_test.odin` builds the allocator from
-// `process_output_fault.c` into the object imported below, and fails this
-// program if it does not exit 0 in time.
+// standard-library "`core:process`": when `output` fails to collect either
+// pipe, it ends the child and returns that error rather than hanging. The
+// parent's allocator refuses the 64 KiB block collecting 1 MiB needs.
+// `corpus_test.odin` builds the allocator from `process_output_fault.c` into
+// the object imported below, and fails this program if it does not exit 0 in
+// time.
+//
+// The `stdout` child blocks writing stdout once the parent stops reading. The
+// `stderr` child writes stderr and then keeps stdout open for far longer than
+// the parent may take: the stderr reader must end it, since the parent reads
+// stdout to its end before it looks at stderr.
 package main;
 
 import "core:io";
 import "core:os";
 import "core:process";
 import "core:term";
+import "core:time";
 
 foreign import fault "../tmp/process-output-fault.obj";
 
@@ -17,23 +23,39 @@ foreign fault {
 	install_fault :: proc "c" () ---;
 }
 
+flood :: proc(stream: term.Output) {
+	target := stream;
+	bytes: [4096]u8 = {};
+	for (i := 0; i < 256; i += 1) {
+		switch (io.write_all(inout target, bytes[:])) {
+		case .ok:
+		case .err: return;
+		}
+	}
+}
+
 main :: proc() {
 	if (os.args.len() > 1) {
-		stream := term.stdout();
-		bytes: [4096]u8 = {};
-		for (i := 0; i < 256; i += 1) {
-			switch (io.write_all(inout stream, bytes[:])) {
-			case .ok:
-			case .err: return;
-			}
+		if (os.args[1] == "stdout") {
+			flood(term.stdout());
+		} else {
+			flood(term.stderr());
+			time.sleep(30*time.SECOND);
 		}
 		return;
 	}
 	install_fault();
 	exe := os.executable_path() or_else "";
-	switch (process.output(process.Command{program = exe, arguments = []string_view{"child"}, stdin = .Null})) {
+	switch (process.output(process.Command{program = exe, arguments = []string_view{"stdout"}, stdin = .Null})) {
 	case .ok: os.exit(1);
 	case .err(out):
 		if (io.code_of(out) != .Out_Of_Memory) { os.exit(2); }
 	}
+	started := time.tick_now();
+	switch (process.output(process.Command{program = exe, arguments = []string_view{"stderr"}, stdin = .Null})) {
+	case .ok: os.exit(3);
+	case .err(out):
+		if (io.code_of(out) != .Out_Of_Memory) { os.exit(4); }
+	}
+	if (started.elapsed() > 10*time.SECOND) { os.exit(5); }
 }
