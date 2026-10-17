@@ -297,9 +297,7 @@ read_line :: proc(
 ) -> Result(string, Error) where Reader(R) {
 	collected := make([dynamic]u8, 0, 0, allocator);
 	one: [1]u8 = {};
-	seen := 0;
-	ended := false;
-	for (; !ended; ) {
+	for (;;) {
 		count := 0;
 		switch (reader.read(&mut one[:])) {
 		case .ok(outcome): count = outcome;
@@ -307,33 +305,31 @@ read_line :: proc(
 			if (!is(outcome, .End_Of_Input)) {
 				return .err(outcome);
 			}
-			// The end leaves `count` at zero, which the tail below reads as either
-			// an unterminated last line or the end of the stream.
+			// The end leaves `count` at zero, read just below.
 		}
-		if (count == 1) {
-			seen += 1;
-			if (one[0] == u8('\n')) {
-				ended = true;
-				if (!options.keep_ending) {
-					// The `\r` of a `\r\n` ending goes with it.
-					kept := collected.len() - 1;
-					if (kept >= 0 && collected[kept] == u8('\r')) {
-						collected.resize(kept);
-					}
-					break;
-				}
+		if (count == 0) {
+			// Every byte before a newline is collected, so nothing collected means
+			// nothing read: the end of the stream rather than an empty last line.
+			if (collected.len() == 0) {
+				return .err(make_error(.End_Of_Input, .Read_Line));
 			}
-			switch (collected.try_append(one[0])) {
-			case .ok:
-			case .err:
-				return .err(from_allocator_error(.Read_Line));
+			break;
+		}
+		newline := one[0] == u8('\n');
+		if (newline && !options.keep_ending) {
+			// The `\r` of a `\r\n` ending goes with it.
+			kept := collected.len() - 1;
+			if (kept >= 0 && collected[kept] == u8('\r')) {
+				collected.resize(kept);
 			}
-			continue;
+			break;
 		}
-		if (seen == 0) {
-			return .err(make_error(.End_Of_Input, .Read_Line));
+		switch (collected.try_append(one[0])) {
+		case .ok:
+		case .err:
+			return .err(from_allocator_error(.Read_Line));
 		}
-		ended = true;
+		if (newline) { break; }
 	}
 	// The byte-to-text boundary: a line is only a `string` if it is valid UTF-8.
 	switch (string_view.from_utf8(collected[:])) {

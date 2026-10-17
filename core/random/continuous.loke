@@ -105,18 +105,13 @@ standard_gamma :: proc(source: inout $G, shape: f64) -> f64 where Source(G) {
 	for (;;) {
 		z := standard_normal(inout source);
 		v := 1.0 + c*z;
-		for (; v <= 0.0; ) {
-			z = standard_normal(inout source);
-			v = 1.0 + c*z;
-		}
+		if (v <= 0.0) { continue; }
 		v = v*v*v;
 		u := unit(inout source);
-		if (u < 1.0 - 0.0331*(z*z)*(z*z)) {
-			value = d*v;
-			break;
-		}
-		// `log(0)` is negative infinity, which accepts.
-		if (math.log(u) < 0.5*z*z + d*(1.0 - v + math.log(v))) {
+		// The squeeze first, so the logarithms run only when it rejects. `log(0)`
+		// is negative infinity, which accepts.
+		squeezed := u < 1.0 - 0.0331*(z*z)*(z*z);
+		if (squeezed || math.log(u) < 0.5*z*z + d*(1.0 - v + math.log(v))) {
 			value = d*v;
 			break;
 		}

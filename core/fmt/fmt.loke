@@ -138,12 +138,7 @@ format_to_with :: proc(w: Writer, options: Options, args: ..any_view) {
 // world's IR going from 397 lines to 4923.
 @(public)
 to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
-	sink := make([dynamic]u8, 0, 64, allocator);
-	// `move`, because a named local in a composite literal is copy initialization
-	// and not a transfer. Without it the collector clones the buffer from the
-	// *selected* allocator and formats there, so `allocator` reached only the
-	// returned string and every call allocated twice.
-	collector := Collector{move(sink)};
+	collector := Collector{make([dynamic]u8, 0, 64, allocator)};
 	emit((Writer)(&mut collector), DEFAULT_OPTIONS, ..args);
 	// Every formatter writes UTF-8; a `format` overload that does not is the
 	// one way here, and a wrong one.

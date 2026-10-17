@@ -109,8 +109,8 @@ impl String_Builder {
 	// not have to allocate a `string` to do it: `path.join` hands the view
 	// straight to `path.clean`.
 	view :: proc(self: ^) -> string_view {
-		// The same guard `try_copy_string` states: the public surface never admits
-		// a partial rune, so this is unreachable rather than a policy.
+		// Unreachable through the public surface, which never admits a partial
+		// rune. The diverging fallback is a guard, not a policy.
 		return string_view.from_utf8(self.data[:]) or_else panic("String_Builder holds invalid UTF-8");
 	}
 
@@ -126,10 +126,7 @@ impl String_Builder {
 	try_copy_string :: proc(
 		self, allocator: Allocator = mem.default_allocator(),
 	) -> Result(string, Allocator_Error) {
-		// Unreachable through the public surface, which never admits a partial
-		// rune. The diverging fallback is a guard, not a policy.
-		view := string_view.from_utf8(self.data[:]) or_else panic("String_Builder holds invalid UTF-8");
-		return allocate_string(view, allocator);
+		return allocate_string(self.view(), allocator);
 	}
 }
 

@@ -75,15 +75,9 @@ decode :: proc(
 			if (at + 1 >= units.len()) { return .err(.Invalid_Data); }
 			low := int(units[at + 1]);
 			if (low < 0xDC00 || low > 0xDFFF) { return .err(.Invalid_Data); }
-			combined := 0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00);
-			switch (builder.try_append(rune(combined))) {
-			case .ok:
-			case .err: return .err(.Out_Of_Memory);
-			}
+			value = 0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00);
 			at += 1;
-			continue;
-		}
-		if (value >= 0xDC00 && value <= 0xDFFF) {
+		} else if (value >= 0xDC00 && value <= 0xDFFF) {
 			return .err(.Invalid_Data);
 		}
 		switch (builder.try_append(rune(value))) {

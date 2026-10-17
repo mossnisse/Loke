@@ -805,7 +805,8 @@ O1 through O4 are **fixed**; O1 has a copy-count regression in
 ### Simplification and structure
 
 The complexity pass used the `ponytail-review` skill. These are optional P3
-refactorings with concrete replacements; no speed claim is implied:
+refactorings with concrete replacements; no speed claim is implied. All six
+are **done**, with no output change in the affected tests:
 
 - `core/fmt/fmt.loke:L141-146: shrink:` construct
   `Collector{make([dynamic]u8, 0, 64, allocator)}` directly. Remove the
@@ -859,7 +860,7 @@ contended initialization is a real workload; no contention benchmark was run,
 so this is a measurement candidate rather than a measured optimization win.
 
 Complexity estimate, excluding correctness fixes and documentation edits:
-**net: -30 lines possible.**
+**net: -30 lines possible.** The six refactorings above came to -28.
 
 ### Assessment of every source file
 

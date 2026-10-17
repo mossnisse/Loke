@@ -73,11 +73,8 @@ impl File {
 	// A best-effort close. It cannot report a failure — `close` is what a caller
 	// uses to observe one.
 	release :: hook(drop) proc(self: inout File) {
-		if (self.handle != NO_HANDLE) {
-			// The discard is the point: a drop has nowhere to report to.
-			_ = close_handle(self.handle);
-			self.handle = NO_HANDLE;
-		}
+		// The discard is the point: a drop has nowhere to report to.
+		_ = self.close();
 	}
 
 	// Idempotent: the value is left inert even when the close itself failed.
@@ -637,11 +634,9 @@ Directory_Reader :: move_only struct {
 }
 
 impl Directory_Reader {
+	// A best-effort close, as `File`'s is.
 	release :: hook(drop) proc(self: inout Directory_Reader) {
-		if (self.handle != NO_HANDLE && self.handle != INVALID_HANDLE) {
-			rt_find_close(self.handle);
-			self.handle = NO_HANDLE;
-		}
+		_ = self.close();
 	}
 
 	close :: proc(self: inout Directory_Reader) -> Status(io.Error) {
