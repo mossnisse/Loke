@@ -168,27 +168,45 @@ join :: proc(
 	// them: `join({"C:", "x"})` is `C:x`. A UNC volume is rooted by construction
 	// and does take one.
 	//
-	// A boundary keeps exactly one separator, whichever side supplied it. `clean`
-	// would collapse a doubled one in an ordinary path, but it returns an
+	// A boundary gets exactly one separator, however many either side supplied.
+	// `clean` would collapse a run in an ordinary path, but it returns an
 	// extended `\\?\` path verbatim, and Windows rejects the doubled separator
 	// there.
+	//
+	// So each part's trailing run is `held` rather than appended: a later part
+	// makes it a boundary and replaces it, and otherwise it ends the path as
+	// written. Holding it also means nothing reads the builder back, which would
+	// validate its whole UTF-8 prefix at every part. A first part that is only
+	// separators is a root, and keeps its spelling in front of the next part.
 	after_drive := false;
+	started := false;
+	held: string_view = "";
 	foreach (part in parts) {
 		if (part.len() == 0) { continue; }
-		first := builder.len() == 0;
 		text := part;
-		if (!first && !after_drive) {
-			if (is_separator(builder.view().bytes()[builder.len() - 1])) {
-				start := 0;
-				for (; start < text.len() && is_separator(text.bytes()[start]); start += 1) {}
-				text = text[start:];
-			} else if (!is_separator(text.bytes()[0])) {
+		if (started && !after_drive) {
+			start := 0;
+			for (; start < text.len() && is_separator(text.bytes()[start]); start += 1) {}
+			text = text[start:];
+			// Only separators: no component, so no boundary of its own.
+			if (text.len() == 0) {
+				if (held.len() == 0) { held = part; }
+				continue;
+			}
+			if (builder.len() == 0) {
+				builder.append(held);
+			} else {
 				builder.append(SEPARATOR);
 			}
 		}
-		builder.append(text);
-		after_drive = first && part.len() == 2 && volume_length(part) == 2;
+		end := text.len();
+		for (; end > 0 && is_separator(text.bytes()[end - 1]); end -= 1) {}
+		builder.append(text[0:end]);
+		held = text[end:];
+		after_drive = !started && part.len() == 2 && volume_length(part) == 2;
+		started = true;
 	}
+	builder.append(held);
 	return clean(builder.view(), allocator);
 }
 

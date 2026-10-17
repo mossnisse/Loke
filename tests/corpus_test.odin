@@ -36,6 +36,8 @@
 //                                  variable whose value is the empty string
 //   tests/obj/process_output_      a program linked with a C allocator that
 //     fault.{loke,c}               fails, run under a time limit
+//   tests/obj/numeric_locale_      a C host over its own copy of format.c
+//     fault.c                      whose "C" locale cannot be created
 //
 // Any case may sit beside a `.flags` file of extra compiler options, one per
 // line, which is how `-define` and `-collection` are exercised.
@@ -1620,6 +1622,36 @@ output_returns_a_failed_collection :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, wait_err == nil, "`output` hung after its stdout collection failed")
 	testing.expectf(t, wait_err != nil || run_state.exit_code == 0, "`output` returned the wrong outcome (exit %d)", run_state.exit_code)
+}
+
+// standard-library "`core:fmt`" and "`core:strconv`": when the runtime cannot
+// create its "C" numeric locale, reading a float panics instead of using the
+// process locale. `numeric_locale_fault.c` builds its own copy of
+// `runtime/format.c` with that creation failing, and exits 0 from the panic.
+@(test)
+numeric_locale_failure_panics :: proc(t: ^testing.T) {
+	clang, include_flags, found := host_toolchain()
+	if !found {
+		skipped_capability(t, "no clang or MSVC toolset, so the locale fault host is never built")
+		return
+	}
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/numeric-locale-fault.exe", TMP)
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, clang, "tests/obj/numeric_locale_fault.c", "-I", "runtime", "-o", exe, "-rtlib=compiler-rt")
+	append(&command, ..include_flags)
+	cc_state, _, cc_stderr, cc_err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+	if !testing.expectf(t, cc_err == nil && cc_state.exit_code == 0, "cannot build the locale fault host:\n%s", string(cc_stderr)) {
+		return
+	}
+	run_state, run_stdout, _, run_err := exec(os.Process_Desc{command = []string{launch_path(exe)}}, context.allocator)
+	if !testing.expectf(t, run_err == nil, "cannot run %s", exe) {
+		return
+	}
+	testing.expectf(
+		t, run_state.exit_code == 0, "a failed numeric locale did not panic (exit %d):\n%s",
+		run_state.exit_code, string(run_stdout),
+	)
 }
 
 // design.md "Build modes" and "Build-selected providers": an

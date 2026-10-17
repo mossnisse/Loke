@@ -73,6 +73,16 @@ main :: proc() {
 	fmt.println(path.join([]string_view{"\\\\?\\C:\\work", "\\file"}));
 	fmt.println(path.join([]string_view{"\\\\?\\C:\\work\\", "\\\\file"}));
 	fmt.println(path.join([]string_view{"\\\\?\\C:\\work", "file"}));
+	// A run on either side, or a part that is only separators, is one boundary.
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\work", "\\\\file"}));
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\work\\\\", "file"}));
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\work", "\\\\", "file"}));
+	// Separators that end the last part are not a boundary and stay as written;
+	// a root first part keeps its spelling.
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\work", "dir\\"}));
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\", "file"}));
+	fmt.println(path.join([]string_view{"\\", "x"}), path.join([]string_view{"C:\\", "x"}));
+	fmt.println(path.join([]string_view{"C:", "\\x"}), path.join([]string_view{"a\\", "\\\\b\\"}));
 
 	// A run of separators before the last element leaves none behind, except the
 	// one that is a root.

@@ -22,9 +22,10 @@
  * `printf` and `strtod` spell and read `1,5`: every spelling and reading of a
  * float here and in `core:strconv` goes through this locale instead.
  *
- * Two threads racing to make it both succeed, and the loser frees its copy. A
- * failure to make it leaves null, which the `_l` functions read as the current
- * locale: the behavior before this existed, rather than a crash. */
+ * Two threads racing to make it both succeed, and the loser frees its copy.
+ * Failing to make it panics. The `_l` functions read a null locale as the
+ * current one, so carrying on would quietly bring back the comma it exists to
+ * rule out; a later call tries again. */
 static _locale_t c_numeric(void) {
 	static _locale_t cached;
 	_locale_t found = __atomic_load_n(&cached, __ATOMIC_ACQUIRE);
@@ -33,7 +34,7 @@ static _locale_t c_numeric(void) {
 	}
 	_locale_t made = _create_locale(LC_NUMERIC, "C");
 	if (made == 0) {
-		return 0;
+		loke_rt_v1_panic("cannot create the \"C\" numeric locale for float text");
 	}
 	_locale_t expected = 0;
 	if (!__atomic_compare_exchange_n(&cached, &expected, made, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
@@ -269,7 +270,7 @@ static void fmt_float(const loke_rt_writer_v1 *w, double value, int single) {
 	char out[32];
 	int widest = single ? 9 : 17;
 	for (int precision = 1;; precision++) {
-		_snprintf_l(sci, sizeof(sci), "%.*e", c_numeric(), precision - 1, value);
+		_snprintf_s_l(sci, sizeof(sci), _TRUNCATE, "%.*e", c_numeric(), precision - 1, value);
 		if (precision == widest || reads_back(sci, value, single)) {
 			break;
 		}
@@ -301,7 +302,7 @@ void loke_rt_v1_fmt_fixed(const loke_rt_writer_v1 *w, double value, int64_t digi
 	}
 	digits = digits < 0 ? 0 : digits > 40 ? 40 : digits;
 	char out[352];
-	int used = _snprintf_l(out, sizeof(out), "%.*f", c_numeric(), (int)digits, value);
+	int used = _snprintf_s_l(out, sizeof(out), _TRUNCATE, "%.*f", c_numeric(), (int)digits, value);
 	if (used > 0) {
 		loke_rt_v1_fmt_bytes(w, (const uint8_t *)out, used);
 	}

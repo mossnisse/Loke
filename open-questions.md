@@ -1246,18 +1246,20 @@ fixed since are marked **Fixed** below, with the change recorded in
 ### Correctness and specification findings
 
 These are P2 findings unless marked P3. All are fixed; the reproductions are
-the regression tests named in each row:
+the regression tests named in each row. The
+[follow-up commit review](#core-fix-commit-review-2026-10-17) reopened two
+cases and found a performance regression, all three fixed since.
 
 | ID | Location | Finding |
 | --- | --- | --- |
 | G1 | `core/process/process.loke:203-206` | **Fixed:** a stderr capture failure could hang `output`: the worker recorded failure, but the parent waited for stdout EOF before inspecting it. The worker now ends the child itself. Regression in `tests/obj/process_output_fault.loke`. |
 | G2 | `core/term/term.loke:363-371` | **Fixed:** raw-mode acquisition could save a stale raw snapshot, leaving the console raw after both owners close. The claim is now taken before the snapshot. |
-| G3 | `core/path/path.loke:174-178` | **Fixed:** joining an extended path could duplicate a separator, turning a valid path into `Invalid_Path`. Regression in `tests/run/lib_path`. |
+| G3 | `core/path/path.loke:174-178` | **Fixed:** joining an extended path could duplicate a separator, turning a valid path into `Invalid_Path`. Repeated boundary runs were fixed after the [fix commit review](#core-fix-commit-review-2026-10-17). Regression in `tests/run/lib_path`. |
 | G4 | `core/math/complex.loke:308-314,331-337` | **Fixed:** quaternion inverse overflowed a shared factor, destroying finite components and turning zero components into NaNs. Regression in `tests/run/lib_numeric`. |
 | G5 | `core/math/complex.loke:225-237,266-278` | **Fixed:** complex division lost subnormal contributions, so a quotient of `0.4-0.2i` became `0.5+0i`. Regression in `tests/run/lib_numeric`. |
 | G6 | `core/log/log.loke:70-76` | **Fixed:** standard log records interleaved across threads; five writes per record did not preserve its line. A lock now spans the record, and logging from a spawned thread no longer warns L0707. Regression in `tests/run/lib_log_threads`. |
 | G7 (P3) | `core/container/small_array.loke:199-219,243-244` | **Fixed:** the normative section denied consuming try-insertion, although the API and the release notes deliberately supply it. Regression in `tests/run/lib_move_only_containers`. |
-| G8 (previously noted) | `core/strconv/strconv.loke:125` | **Fixed:** floating parsing followed the mutable C locale, so a decimal comma locale made `1.5` succeed as `1.0`; `fmt` printed `1.,5` under the same locale. The runtime now spells and reads floats in a fixed "C" numeric locale. Regression in `tests/run/lib_numeric_locale`. |
+| G8 (previously noted) | `core/strconv/strconv.loke:125` | **Fixed:** floating parsing followed the mutable C locale, so a decimal comma locale made `1.5` succeed as `1.0`; `fmt` printed `1.,5` under the same locale. The runtime now uses a fixed "C" numeric locale, and panics if it cannot create one (after the [fix commit review](#core-fix-commit-review-2026-10-17)). Regressions in `tests/run/lib_numeric_locale` and `tests/obj/numeric_locale_fault.c`. |
 
 ### Confirmed performance findings
 
@@ -1432,3 +1434,61 @@ Repro artifacts are local and ignored under `tests/tmp/numeric_review_20261017/`
 `tests/tmp/review_main/`; the durable findings are in this section, and the
 minimal bug reproductions became the regression tests named in the findings
 table. No library source was changed by the review itself.
+
+## Core fix commit review (2026-10-17)
+
+Reviewed `59bb7cf` (numerics, path join, raw mode, performance), `40bdfaf`
+(output cancellation, log lines, C locale), and `32fdedd` (simplifications).
+Three confirmed P2 findings, all **fixed** since:
+
+- `59bb7cf`, `core/path/path.loke:181-189`: the boundary fix still preserved
+  repeated separators supplied entirely by either side, in three minimal
+  cases now in `tests/run/lib_path`. Existing regressions cover one leading
+  separator, and repeated leading separators only when the prefix already
+  has a trailing separator.
+- `59bb7cf`, `core/path/path.loke:181`: calling `builder.view()` to inspect
+  its last byte validates the entire accumulated UTF-8 prefix at every
+  boundary. Extended-path joining becomes quadratic instead of linear in
+  total input bytes. At `-opt=speed`, one extended prefix followed by
+  5,000/10,000/20,000 four-byte components took about 30.7/125.9/540.3 ms;
+  the previous boundary logic took about 0.154/0.313/0.796 ms and produced
+  identical output. The extended prefix makes `clean` return verbatim, so
+  these timings isolate the new prefix scanning. **Fixed** with the first
+  finding: `join` holds each part's trailing separator run instead of reading
+  the builder back, and took about 0.24/0.55/0.93 ms afterwards.
+- `40bdfaf`, `runtime/format.c:34-36`: failed creation of the fixed numeric
+  locale falls back to the mutable process locale. A fault-injected C host
+  reproduced parse rejection and decimal-comma/malformed formatting. The
+  runtime now panics instead; `tests/obj/numeric_locale_fault.c` is that host
+  as a regression.
+
+No findings in `32fdedd`. All six simplifications preserve the examined
+ownership, allocator, error, Unicode, and random-draw behavior. A differential
+`io.read_line` test against its previous loop passed 31,248 cases, comparing
+results, consumed bytes, and read-call counts. Cases covered byte strings of
+length 0-5 containing ASCII, CR, LF, NUL, and invalid UTF-8, both ending
+options, EOF/other read errors, and default/starved allocators.
+
+The numeric fixes address the original subnormal complex and quaternion
+failures at both widths. Container constant tables, pointer receivers, and
+slice winner indices are consistent with the intended optimizations.
+Process-handle lifetime through reader joining, stderr cancellation, complete
+standard-record locking, foreign numeric signatures, and atomic locale cache
+publication/disposal showed no additional issue in this review. As a small
+test improvement, the quaternion inverse regression should explicitly check
+that its expected finite component is finite: the negative upper-bound
+comparison also accepted negative infinity. It now checks `is_finite` too.
+
+Validation: the quick gate passed 134 compiler and 43 LSP unit tests. The
+integration run completed its other 54 tests (including the intentional
+quick-gate mutation-fuzzer skip), but `a_debugger_shows_values` failed with
+`Signal caught: Unknown`. An isolated rerun reproduced that failure in about
+14 ms before building the debugger fixture. That test is unchanged by these
+commits; the only debugger command found was the WindowsApps `cdbX64` alias,
+and the SDK debugger was absent. This points to local tool discovery, but
+the quick gate did not pass in full. The targeted `lib_numeric` and `lib_path`
+programs separately compiled, ran, and matched expected output.
+
+Artifacts remain ignored under `tests/tmp/review_commits_numeric/`,
+`tests/tmp/review_commits_platform/`, and `tests/tmp/review_commits_cleanup/`.
+Only review records were changed; no implementation fix was applied.

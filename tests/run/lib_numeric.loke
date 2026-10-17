@@ -158,9 +158,11 @@ floating :: proc() {
 	// but the others are finite or zero and must not be lost with it.
 	small_q := Q{real = 1.0e-310, i = 1.0e-312, j = 0.0, k = 0.0}.inverse();
 	small_qf := QF{real = f32(1.0e-39), i = f32(1.0e-41), j = f32(0.0), k = f32(0.0)}.inverse();
-	fmt.println(math.is_infinite(small_q.real), small_q.i < -9.99e307,
+	fmt.println(math.is_infinite(small_q.real),
+	            math.is_finite(small_q.i) && small_q.i < -9.99e307,
 	            small_q.j == 0.0, small_q.k == 0.0);
-	fmt.println(math.is_infinite_f32(small_qf.real), small_qf.i < f32(-9.99e36),
+	fmt.println(math.is_infinite_f32(small_qf.real),
+	            math.is_finite_f32(small_qf.i) && small_qf.i < f32(-9.99e36),
 	            small_qf.j == f32(0.0), small_qf.k == f32(0.0));
 
 	// A zero quaternion divides zero by zero in every component.

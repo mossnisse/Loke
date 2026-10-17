@@ -46,6 +46,13 @@ false
 \\?\C:\work\file
 \\?\C:\work\file
 \\?\C:\work\file
+\\?\C:\work\file
+\\?\C:\work\file
+\\?\C:\work\file
+\\?\C:\work\dir\
+\\?\C:\file
+\x C:\x
+C:\x a\b
 a
 C:a
 C:\

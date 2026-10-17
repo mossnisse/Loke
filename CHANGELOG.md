@@ -95,10 +95,11 @@ checklist.
   logs no longer warns `L0707` about the logger's storage.
 - `strconv.parse_f64` and float formatting in `core:fmt` use a fixed "C"
   numeric locale. After foreign code set a decimal-comma locale,
-  `parse_f64("1.5")` returned `1.0` and `fmt` printed `1.5` as `1.,5`.
-- `path.join` keeps one separator at a boundary that a part already supplies,
-  so joining onto an extended-length `\\?\` path, which `clean` leaves
-  verbatim, no longer doubles it into an `Invalid_Path`.
+  `parse_f64("1.5")` returned `1.0` and `fmt` printed `1.5` as `1.,5`. If the
+  C library cannot create that locale, printing or parsing a float panics.
+- `path.join` puts exactly one separator at each boundary, however many
+  either part supplies, so joining onto an extended-length `\\?\` path, which
+  `clean` leaves verbatim, no longer doubles it into an `Invalid_Path`.
 - Complex division scales subnormal operands up first, so a quotient such as
   `s/(2s + s i)` is `0.4-0.2i` instead of `0.5+0.0i`. `Quaternion.inverse` of
   a quaternion with a subnormal largest component keeps its finite and zero

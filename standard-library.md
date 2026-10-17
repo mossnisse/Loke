@@ -429,7 +429,8 @@ back to back for a `format` method or a line whose punctuation is its own.
 value reads as 10; it and `uppercase` reach integers and whatever a type's
 `format` passes them to. A float prints the shortest spelling that reads back
 as the same value at its own width. Floats always print with a `.` point,
-whatever numeric locale foreign code has set for the C library.
+whatever numeric locale foreign code has set for the C library; if the C
+library cannot create its "C" numeric locale for this, printing a float panics.
 design.md "String format printing" gives
 every generated form, including floats and the quoting of strings inside
 aggregates.
@@ -743,7 +744,8 @@ correctly rounded `f64`, so every finite `f64` printed by the default
 may round the value before printing.
 A finite spelling beyond the largest `f64` is `Overflow`; one below the smallest
 subnormal rounds to zero. `inf` and `nan` are not accepted. The point is
-always `.`, whatever numeric locale foreign code has set for the C library.
+always `.`, whatever numeric locale foreign code has set for the C library. As
+with formatting, failing to create the "C" numeric locale for it panics.
 
 Formatting scalars remains in `core:fmt`; `strconv` should not grow a second
 formatting system.
@@ -959,9 +961,11 @@ and `fs.create_directories` begins below the share.
 
 `join` and `clean` use the selected allocator for both scratch and result
 storage; budget a few times the result size when using a bounded arena.
-`join` takes a slice, as in `path.join([]string_view{a, b})`. It puts one
-separator at each boundary between nonempty parts, whichever side supplies it,
-and none after a bare drive volume such as `C:`.
+`join` takes a slice, as in `path.join([]string_view{a, b})`. It puts exactly
+one separator at each boundary between nonempty parts, however many either side
+supplies, and none after a bare drive volume such as `C:`. A part of separators
+alone adds no boundary of its own, and separators that end the last part are
+kept as written.
 
 The result follows target-platform path rules. `clean` removes redundant
 separators and lexical `.`/`..` elements but does not resolve symlinks or access
