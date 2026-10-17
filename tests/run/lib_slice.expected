@@ -22,6 +22,8 @@ true false
 .none
 .some(0) .some(7)
 .none .none
+1 1
+4 1
 true false
 false false true
 0.0 0.0

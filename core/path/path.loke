@@ -167,12 +167,26 @@ join :: proc(
 	// separator after a bare drive volume would not join the parts, it would move
 	// them: `join({"C:", "x"})` is `C:x`. A UNC volume is rooted by construction
 	// and does take one.
+	//
+	// A boundary keeps exactly one separator, whichever side supplied it. `clean`
+	// would collapse a doubled one in an ordinary path, but it returns an
+	// extended `\\?\` path verbatim, and Windows rejects the doubled separator
+	// there.
 	after_drive := false;
 	foreach (part in parts) {
 		if (part.len() == 0) { continue; }
 		first := builder.len() == 0;
-		if (!first && !after_drive) { builder.append(SEPARATOR); }
-		builder.append(part);
+		text := part;
+		if (!first && !after_drive) {
+			if (is_separator(builder.view().bytes()[builder.len() - 1])) {
+				start := 0;
+				for (; start < text.len() && is_separator(text.bytes()[start]); start += 1) {}
+				text = text[start:];
+			} else if (!is_separator(text.bytes()[0])) {
+				builder.append(SEPARATOR);
+			}
+		}
+		builder.append(text);
 		after_drive = first && part.len() == 2 && volume_length(part) == 2;
 	}
 	return clean(builder.view(), allocator);

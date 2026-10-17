@@ -42,6 +42,10 @@ C:
 C:x
 false
 \\server\share\x
+\\?\C:\work\file
+\\?\C:\work\file
+\\?\C:\work\file
+\\?\C:\work\file
 a
 C:a
 C:\

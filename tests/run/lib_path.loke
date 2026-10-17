@@ -67,6 +67,12 @@ main :: proc() {
 	fmt.println(path.join([]string_view{"C:", "x"}));
 	fmt.println(path.is_absolute(path.join([]string_view{"C:", "x"})));
 	fmt.println(path.join([]string_view{"\\\\server\\share", "x"}));
+	// `clean` returns an extended path verbatim, so `join` itself keeps one
+	// separator at a boundary, whichever side supplies it.
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\work\\", "file"}));
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\work", "\\file"}));
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\work\\", "\\\\file"}));
+	fmt.println(path.join([]string_view{"\\\\?\\C:\\work", "file"}));
 
 	// A run of separators before the last element leaves none behind, except the
 	// one that is a root.

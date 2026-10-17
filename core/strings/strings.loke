@@ -307,8 +307,12 @@ repeat :: proc(
 	// front as an allocation rather than as an overflowing multiplication.
 	too_long := text.len() > 0 && times > LARGEST_LENGTH / text.len();
 	builder.reserve(LARGEST_LENGTH if too_long else text.len() * times);
-	for (i := 0; i < times; i += 1) {
-		builder.append(text);
+	// Empty text appends nothing however many times, so a huge count must not
+	// cost a loop.
+	if (text.len() > 0) {
+		for (i := 0; i < times; i += 1) {
+			builder.append(text);
+		}
 	}
 	return builder.finish();
 }

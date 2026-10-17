@@ -79,9 +79,27 @@ checklist.
 - An expression built on a parenthesized one counts that operand's depth
   against the nesting limit, so `((x.a.a ... ).a.a ... )` deeper than it is
   `L0222` instead of a stack overflow while checking.
+- `slice.min` and `slice.max` copy only the element they return, instead of
+  every improving candidate. `Bit_Set` and `Enum_Array` iteration no longer
+  rebuilds the member table at every step, `Small_Array` queries no longer
+  copy the whole array, and `strings.repeat` of empty text returns at once
+  for any count.
 
 ### Fixed
 
+- `path.join` keeps one separator at a boundary that a part already supplies,
+  so joining onto an extended-length `\\?\` path, which `clean` leaves
+  verbatim, no longer doubles it into an `Invalid_Path`.
+- Complex division scales subnormal operands up first, so a quotient such as
+  `s/(2s + s i)` is `0.4-0.2i` instead of `0.5+0.0i`. `Quaternion.inverse` of
+  a quaternion with a subnormal largest component keeps its finite and zero
+  components instead of turning them into infinities and NaNs.
+- `term.begin_raw` saves the console mode after claiming raw mode rather than
+  before, so a scope closing concurrently cannot leave the console raw after
+  both scopes close.
+- design.md "Fixed-capacity arrays" describes `Small_Array`'s consuming
+  `try_append` and `try_insert`, which drop the element on a capacity
+  failure, instead of saying there are none.
 - The operators a `delegate` generates are found from other packages, as
   hand-written ones are (design.md "Delegating operators"): `a + b` on an
   imported `distinct` type with `delegate(+)` was `L0318`. A `delegate` in an

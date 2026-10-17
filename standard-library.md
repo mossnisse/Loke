@@ -953,7 +953,9 @@ and `fs.create_directories` begins below the share.
 
 `join` and `clean` use the selected allocator for both scratch and result
 storage; budget a few times the result size when using a bounded arena.
-`join` takes a slice, as in `path.join([]string_view{a, b})`.
+`join` takes a slice, as in `path.join([]string_view{a, b})`. It puts one
+separator at each boundary between nonempty parts, whichever side supplies it,
+and none after a bare drive volume such as `C:`.
 
 The result follows target-platform path rules. `clean` removes redundant
 separators and lexical `.`/`..` elements but does not resolve symlinks or access

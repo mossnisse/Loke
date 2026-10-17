@@ -1133,7 +1133,7 @@ An invalid insertion index panics in both ordinary and `try_` forms. `pop()` ret
 A [move-only](#lifecycle-hooks-and-resource-types) element type is held too:
 
 - The members that copy an element — `get`, the copying members of `append` and `insert`, and their `try_` forms — are bound on [`is_copyable(T)`](#built-in-procedures), so they are [excluded](#where-clauses) from such an instance.
-- `append` and `insert` are [procedure groups](#explicit-procedure-overloading) whose other member consumes, so `values.append(move(token))` or a temporary reaches it, as on a dynamic array. The consuming members have no `try_` form; a caller who must not panic checks `space()` or `is_full()` first.
+- `append`, `insert`, `try_append`, and `try_insert` are [procedure groups](#explicit-procedure-overloading) whose other member consumes, so `values.append(move(token))` or a temporary reaches it, as on a dynamic array. A consuming `try_` form that fails leaves the array unchanged and drops the element it took, as [container insertion](#container-insertion) describes; a caller who must keep the element checks `space()` or `is_full()` first.
 - `get_mut`, `view`, `slice`, `iter_mut`, `pop`, `remove`, `clear`, and [`foreach`](#borrowing-iteration) copy nothing and are unaffected.
 
 ```odin

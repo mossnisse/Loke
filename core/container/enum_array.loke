@@ -108,7 +108,7 @@ impl Enum_Array_Iterator($E, $T) {
 	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return self; }
 
 	next :: proc(self: inout) -> Option((key: E, value: ^T)) {
-		members := E.values();
+		members :: E.values();
 		if (self.at >= members.len()) { return .none; }
 		index := self.at;
 		self.at += 1;
@@ -126,7 +126,7 @@ Enum_Array_Mut_Iterator :: struct($E: type, $T: type) {
 impl Enum_Array_Mut_Iterator($E, $T) {
 
 	next :: proc(self: inout) -> Option((key: E, value: ^mut T)) {
-		members := E.values();
+		members :: E.values();
 		if (self.at >= members.len()) { return .none; }
 		index := self.at;
 		self.at += 1;

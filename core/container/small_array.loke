@@ -62,17 +62,20 @@ impl Small_Array($T, $N) {
 
 	Element  :: T;
 
-	len :: proc(self) -> int { return self.count; }
-	cap :: proc(self) -> int { return N; }
-	is_empty :: proc(self) -> bool { return self.count == 0; }
-	is_full :: proc(self) -> bool { return self.count == N; }
-	space :: proc(self) -> int { return N - self.count; }
+	// The queries borrow: a plain `self` of trivial elements is passed by value
+	// (design.md "Parameter semantics and ABI lowering"), which here would copy
+	// all `N` slots to read one count.
+	len :: proc(self: ^) -> int { return self.count; }
+	cap :: proc(self: ^) -> int { return N; }
+	is_empty :: proc(self: ^) -> bool { return self.count == 0; }
+	is_full :: proc(self: ^) -> bool { return self.count == N; }
+	space :: proc(self: ^) -> int { return N - self.count; }
 
 	// Reading an element out by value is a copy, so this is not part of a
 	// move-only instantiation (design.md "where clauses"), and the copy is a
 	// written `clone` because it may allocate. `get_mut`, `view` and `slice`
 	// reach the element without one, and `remove` hands it over entirely.
-	get :: operator([]) proc(self, index: int) -> T where is_copyable(T) {
+	get :: operator([]) proc(self: ^, index: int) -> T where is_copyable(T) {
 		self.check_index(index);
 		return self.items[index].clone();
 	}
@@ -302,7 +305,7 @@ impl Small_Array($T, $N) {
 	// ---------------------------------------------------------------- guts --
 
 	@(private)
-	check_index :: proc(self, index: int) {
+	check_index :: proc(self: ^, index: int) {
 		if (index < 0 || index >= self.count) {
 			panic("Small_Array index is out of range");
 		}
@@ -320,7 +323,7 @@ impl Small_Array($T, $N) {
 	}
 
 	@(private)
-	check_span :: proc(self, low: int, high: int) {
+	check_span :: proc(self: ^, low: int, high: int) {
 		if (low < 0 || high < low || high > self.count) {
 			panic("Small_Array slice is out of range");
 		}

@@ -12,6 +12,14 @@ Token :: move_only struct { @(public) id: int }
 
 Plain :: struct { id: int }
 
+// Says when it is dropped, so a failed consuming insertion shows it took the
+// element (design.md "Container insertion").
+Counted :: move_only struct { id: int }
+
+impl Counted {
+	release :: hook(drop) proc(self: inout Counted) { fmt.println("drop", self.id); }
+}
+
 Slot :: enum{First, Second};
 
 // The bound the containers ask, on its own. It follows structure: a record with
@@ -72,6 +80,15 @@ main :: proc() {
 	built_in: [dynamic]Token = {};
 	built_in.append(Token{5});
 	fmt.println(a[0].id, built_in[0].id);
+
+	// The consuming `try_` forms: success stores the element, and a capacity
+	// failure leaves the array unchanged and drops the element it took.
+	full: container.Small_Array(Counted, 1) = {};
+	fmt.println(full.try_append(Counted{1}));
+	fmt.println(full.try_insert(0, Counted{2}));
+	spare := Counted{3};
+	fmt.println(full.try_append(move(spare)));
+	fmt.println(full.len(), full[0].id);
 
 	// ---------------------------------------------------------- Enum_Array --
 

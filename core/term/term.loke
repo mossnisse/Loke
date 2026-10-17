@@ -360,10 +360,6 @@ restore_handler :: proc "stdcall" (event: u32) -> i32 {
 begin_raw :: proc(
 	input: Input = stdin(), options: Raw_Options = {},
 ) -> Result(Raw_Mode, io.Error) {
-	previous: u32 = 0;
-	if (rt_get_console_mode(input.handle, &mut previous) == 0) {
-		return .err(io.make_error(.Not_A_Terminal, .Terminal_Mode));
-	}
 	// One process-global restore record can safely describe one live scope. A
 	// second would overwrite the original cooked mode and could leave the console
 	// raw when either value closes or the control handler runs -- so the claim is
@@ -371,6 +367,14 @@ begin_raw :: proc(
 	_, claimed := handler_handle.compare_exchange(0, input.handle);
 	if (!claimed) {
 		return .err(io.make_error(.Already_Exists, .Terminal_Mode));
+	}
+	// The snapshot comes after the claim. Read before it, the mode could be a
+	// live scope's raw mode that the scope restores and releases in between;
+	// this scope would then save raw as its original and put it back on close.
+	previous: u32 = 0;
+	if (rt_get_console_mode(input.handle, &mut previous) == 0) {
+		handler_handle.store(0);
+		return .err(io.make_error(.Not_A_Terminal, .Terminal_Mode));
 	}
 	// The console is still cooked here, so a control event arriving before the
 	// store below restores whatever a previous scope saved for it: stale, and

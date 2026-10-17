@@ -210,6 +210,12 @@ impl Complex(f64) {
 		// components; when only the numerator is there, halve it and double the
 		// final result. Keeping a tiny denominator unscaled avoids erasing it while
 		// still keeping every intermediate addition finite.
+		//
+		// At the bottom of the range the hazard is the reverse: the products with
+		// `ratio` underflow and drop whole components of an ordinary quotient,
+		// `s/(2s + s i)` answering `0.5` for `0.4-0.2i`. A small numerator or
+		// denominator is scaled up by an exact power of two, independently, and
+		// the quotient compensated once at the end.
 		a, b := left.real, left.imaginary;
 		c, d := right.real, right.imaginary;
 		result_scale := 1.0;
@@ -221,6 +227,15 @@ impl Complex(f64) {
 		} else if (numerator_largest > F64_MAX/2.0) {
 			a, b = a*0.5, b*0.5;
 			result_scale = 2.0;
+		} else {
+			if (denominator_largest < F64_SCALE_DOWN) {
+				c, d = c*F64_SCALE_UP, d*F64_SCALE_UP;
+				result_scale *= F64_SCALE_UP;
+			}
+			if (numerator_largest < F64_SCALE_DOWN) {
+				a, b = a*F64_SCALE_UP, b*F64_SCALE_UP;
+				result_scale *= F64_SCALE_DOWN;
+			}
 		}
 		if (abs(d) <= abs(c)) {
 			ratio := d/c;
@@ -262,6 +277,15 @@ impl Complex(f32) {
 		} else if (numerator_largest > F32_MAX/f32(2.0)) {
 			a, b = a*f32(0.5), b*f32(0.5);
 			result_scale = f32(2.0);
+		} else {
+			if (denominator_largest < F32_SCALE_DOWN) {
+				c, d = c*F32_SCALE_UP, d*F32_SCALE_UP;
+				result_scale *= F32_SCALE_UP;
+			}
+			if (numerator_largest < F32_SCALE_DOWN) {
+				a, b = a*F32_SCALE_UP, b*F32_SCALE_UP;
+				result_scale *= F32_SCALE_DOWN;
+			}
 		}
 		if (abs_f32(d) <= abs_f32(c)) {
 			ratio := d/c;
@@ -295,6 +319,9 @@ impl Quaternion(f64) {
 	// `conjugate/norm_squared`, staged so no avoidable overflow happens on the
 	// way: every component is divided by the largest magnitude first, which puts
 	// the normalized sum of squares in `[1, 4]` whatever the input scale was.
+	// Each component then divides by the sum and the scale separately. A shared
+	// `1/(scale*sum)` factor would overflow for a subnormal scale and take every
+	// finite component, and every zero one, with it.
 	// A zero quaternion divides zero by zero and yields NaN components, which is
 	// the scalar floating rule rather than a special case.
 	inverse :: proc(self) -> Quaternion(f64) {
@@ -305,13 +332,7 @@ impl Quaternion(f64) {
 		j := self.j/scale;
 		k := self.k/scale;
 		sum := real*real + i*i + j*j + k*k;
-		factor: f64;
-		if (scale > 1.0) {
-			factor = (1.0/scale)/sum;
-		} else {
-			factor = 1.0/(scale*sum);
-		}
-		return {real*factor, -(i*factor), -(j*factor), -(k*factor)};
+		return {(real/sum)/scale, -((i/sum)/scale), -((j/sum)/scale), -((k/sum)/scale)};
 	}
 }
 
@@ -328,12 +349,6 @@ impl Quaternion(f32) {
 		j := self.j/scale;
 		k := self.k/scale;
 		sum := real*real + i*i + j*j + k*k;
-		factor: f32;
-		if (scale > f32(1.0)) {
-			factor = (f32(1.0)/scale)/sum;
-		} else {
-			factor = f32(1.0)/(scale*sum);
-		}
-		return {real*factor, -(i*factor), -(j*factor), -(k*factor)};
+		return {(real/sum)/scale, -((i/sum)/scale), -((j/sum)/scale), -((k/sum)/scale)};
 	}
 }

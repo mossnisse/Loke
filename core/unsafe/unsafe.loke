@@ -1,10 +1,11 @@
 // The explicit trust boundary (design.md "What is not checked").
 //
-// Eight members, all compiler built-ins, each one a promise the compiler cannot
+// Every member is a compiler built-in, each one a promise the compiler cannot
 // check: `raw_data`, `string_view` and `cstring_view` discard or manufacture
-// provenance, `transmute` reinterprets bits, `forget` suppresses cleanup, `free`
-// releases storage nothing traced, and `write` and `take` move a value into and
-// out of uninitialized capacity (design.md "Uninitialized capacity"). This file
+// provenance, `transmute` reinterprets bits, `forget` suppresses cleanup, `new`
+// and `try_new` allocate storage nothing owns, `free` releases storage nothing
+// traced, and `write` and `take` move a value into and out of uninitialized
+// capacity (design.md "Uninitialized capacity"). This file
 // is the whole package -- the visible import is the review mechanism, and it is
 // also what permits the unchecked pointer conversions and C-pointer indexing
 // and slicing in the importing file (design.md "The `unsafe` package").
@@ -25,9 +26,10 @@
 // the one that created it, that nothing still refers to it, and that this
 // happens once are all the caller's.
 //
-// The operand is still a checked `^mut T`, because the release is *sized*: a
-// pointer that travelled as a `rawptr` is cast back to the pointee type at the
-// call, and that cast is what supplies the size and alignment to release. A
+// The operand is still a typed `[^]T` or `^mut T`, because the release is
+// *sized*: a pointer that travelled as a `rawptr` is cast back to the pointee
+// type at the call, and that cast is what supplies the size and alignment to
+// release. A
 // handle over an opaque control block, `Shared(T)` among them, has no other way
 // to release it.
 //

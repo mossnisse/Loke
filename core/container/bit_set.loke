@@ -166,7 +166,7 @@ impl Bit_Set_Iterator($E) {
 	iter :: proc(self) -> Bit_Set_Iterator(E) { return self; }
 
 	next :: proc(self: inout) -> Option(E) {
-		members := E.values();
+		members :: E.values();
 		for (self.at < members.len()) {
 			at := self.at;
 			self.at += 1;

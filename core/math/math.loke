@@ -67,6 +67,15 @@ F64_NAN           :: unsafe.transmute(f64, u64(0x7ff8000000000000));
 @(private) F64_MAGNITUDE :: u64(0x7fffffffffffffff);
 @(private) F64_EXPONENT :: u64(0x7ff0000000000000);
 
+// Exact powers of two for scaling small complex division operands: `2^512` and
+// `2^-512` for `f64`, `2^64` and `2^-64` for `f32`. Scaled by them, even the
+// smallest subnormal lands in the normal range, and compensating costs one
+// power-of-two multiply.
+@(private) F64_SCALE_UP   :: unsafe.transmute(f64, u64(0x5ff0000000000000));
+@(private) F64_SCALE_DOWN :: unsafe.transmute(f64, u64(0x1ff0000000000000));
+@(private) F32_SCALE_UP   :: unsafe.transmute(f32, u32(0x5f800000));
+@(private) F32_SCALE_DOWN :: unsafe.transmute(f32, u32(0x1f800000));
+
 // --------------------------------------------- classification and sign --
 
 // Whether `x` is a NaN: the maximum exponent with a non-zero significand. True

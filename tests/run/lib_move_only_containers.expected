@@ -15,6 +15,12 @@ false true false
 0
 0 true
 5 5
+.ok
+drop 2
+.err(2 elements exceed capacity 1)
+drop 3
+.err(2 elements exceed capacity 1)
+1 1
 2 2
 7 0
 7 3
@@ -23,3 +29,4 @@ false true false
 {First = 5, Second = 5}
 First 5
 Second 5
+drop 1

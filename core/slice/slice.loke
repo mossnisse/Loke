@@ -2,8 +2,10 @@
 // design.md "Slice queries and copies".
 //
 // The public surface is ordinary Loke over `[]T` and `[]mut T`. The one private
-// sorting bridge reaches the runtime's raw relocation machinery. Nothing here
-// allocates except `clone`/`try_clone`, which say so by returning an owner.
+// sorting bridge reaches the runtime's raw relocation machinery. Only
+// `clone`/`try_clone` allocate storage of their own, and say so by returning an
+// owner. Copying an element can allocate through its copy hook, so `fill`, and
+// the one result copy `min` and `max` return, may allocate as well.
 //
 // The mutating procedures take `[]mut T`, so passing a read-only `[]T` is the
 // compile-time error design.md promises rather than a silent no-op.
@@ -161,22 +163,26 @@ equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
 // zero value would be a wrong answer rather than a missing one. The candidate
 // changes only for an element `<` it, so ties keep the earliest and a NaN wins
 // only from index 0; `max` is the same with `<` reversed.
+//
+// The search keeps the winner's index rather than a copy of it, so the only
+// element copy is the one the result needs: a candidate whose copy hook
+// allocates is not cloned at every improvement.
 min :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 	if (values.len() == 0) { return .none; }
-	best := values[0];
+	best := 0;
 	foreach (i in 1 ..< values.len()) {
-		if (values[i] < best) { best = values[i]; }
+		if (values[i] < values[best]) { best = i; }
 	}
-	return .some(best);
+	return .some(values[best]);
 }
 
 max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 	if (values.len() == 0) { return .none; }
-	best := values[0];
+	best := 0;
 	foreach (i in 1 ..< values.len()) {
-		if (best < values[i]) { best = values[i]; }
+		if (values[best] < values[i]) { best = i; }
 	}
-	return .some(best);
+	return .some(values[best]);
 }
 
 // --------------------------------------------------------------- ownership --

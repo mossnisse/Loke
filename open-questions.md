@@ -732,3 +732,202 @@ it. Treating a lone `\r` as a line break in the server alone would disagree
 with every compiler-reported span. Agreeing with the protocol needs either
 compiler line tables, and the formatter's, that also end lines at a lone `\r`,
 or a decision that `\r`-only sources are rejected or normalized on load.
+
+## Core source review (2026-10-17)
+
+All 38 source files in `core/` were reviewed individually. Three subagents
+covered numerics/random, platform/I/O, and foundational containers/intrinsics;
+the coordinating review covered formatting, logging, text, parsing, and time.
+The scope included correctness, ownership, error paths, performance, structure,
+and simplification. The review itself changed no library behavior; findings
+fixed since are marked **Fixed** below, with the change recorded in
+[the changelog](CHANGELOG.md#unreleased).
+
+### Correctness and specification findings
+
+These are P2 findings unless marked P3. Reproductions and proposed directions
+for the open ones are recorded in [Known gaps](known-gaps.md#gaps):
+
+| ID | Location | Finding |
+| --- | --- | --- |
+| G1 | `core/process/process.loke:203-206` | [A stderr capture failure can hang `output`](known-gaps.md#process-output-does-not-cancel-promptly-after-a-stderr-read-failure): the worker records failure, but the parent waits for stdout EOF before inspecting it. |
+| G2 | `core/term/term.loke:363-371` | **Fixed:** raw-mode acquisition could save a stale raw snapshot, leaving the console raw after both owners close. The claim is now taken before the snapshot. |
+| G3 | `core/path/path.loke:174-178` | **Fixed:** joining an extended path could duplicate a separator, turning a valid path into `Invalid_Path`. Regression in `tests/run/lib_path`. |
+| G4 | `core/math/complex.loke:308-314,331-337` | **Fixed:** quaternion inverse overflowed a shared factor, destroying finite components and turning zero components into NaNs. Regression in `tests/run/lib_numeric`. |
+| G5 | `core/math/complex.loke:225-237,266-278` | **Fixed:** complex division lost subnormal contributions, so a quotient of `0.4-0.2i` became `0.5+0i`. Regression in `tests/run/lib_numeric`. |
+| G6 | `core/log/log.loke:70-76` | [Standard log records interleave across threads](known-gaps.md#concurrent-standard-logging-can-split-records-across-lines); five writes per record do not preserve its line. |
+| G7 (P3) | `core/container/small_array.loke:199-219,243-244` | **Fixed:** the normative section denied consuming try-insertion, although the API and the release notes deliberately supply it. Regression in `tests/run/lib_move_only_containers`. |
+| G8 (previously noted) | `core/strconv/strconv.loke:125` | [Floating parsing follows the mutable C locale](known-gaps.md#floating-parsing-follows-the-mutable-c-numeric-locale); a decimal comma locale makes `1.5` succeed as `1.0`. |
+
+### Confirmed performance findings
+
+O1 through O4 are **fixed**; O1 has a copy-count regression in
+`tests/run/lib_slice`.
+
+- **O1, P2: retain the winning index in slice extrema.**
+  `core/slice/slice.loke:164-179` clones the initial element, every improved
+  candidate, and the final union payload. An `Ordered` record with a counted
+  copy hook gives five clones for `min` on four descending elements and two
+  for `max`. Keeping an index and returning
+  `.some(values[best].clone())` produced the same minimum with one clone.
+  This removes potentially allocating copies and related L0507 warnings,
+  with essentially no line-count change. Keep the strict comparison to
+  preserve first-winner ties and current NaN behavior.
+- **O2, P2: make iterator enum tables constants.**
+  `core/container/bit_set.loke:169` and
+  `core/container/enum_array.loke:111,129` use `members := E.values()` in
+  every `next`. Default-build LLVM initializes the entire enum array on the
+  stack on each call, making full iteration copy O(n²) enum values. An
+  isolated `members :: E.values()` version returned identical results and
+  emitted a private constant table with an indexed load instead. Zero net
+  lines; the evidence concerns the default build, since optimization may
+  eliminate some copies.
+- **O3, P2: borrow large inline receivers explicitly.**
+  `core/container/small_array.loke:65-69,305-323` uses plain `self` for
+  queries and validation helpers. With trivial elements the ABI copies the
+  aggregate: emitted LLVM copies all 1,048 bytes of `Small_Array(int,130)`
+  for a bounds or fullness check. The construction loop at
+  `core/container/enum_array.loke:38` tests `is_full` 131 times for 130
+  members, repeatedly copying its entire buffer. Use `self: ^` for
+  `len`, `cap`, `is_empty`, `is_full`, `space`, `check_index`, and
+  `check_span`; review `get` the same way. Zero net lines. This follows
+  [the specified parameter ABI](design.md#parameter-semantics-and-abi-lowering),
+  rather than indicating a compiler correctness bug.
+- **O4, P2: return immediately when repeating empty text.**
+  `core/strings/strings.loke:310-312` performs `times` append calls even
+  when the result must be empty. In an optimized build, repeating empty
+  text once took about 700 ns; ten million repetitions took about 42 ms.
+  A very large valid count makes an empty result arbitrarily expensive.
+  After checking that the count is nonnegative, skip the loop for empty
+  text or zero repetitions. Preserve allocator and empty-string semantics.
+  These are illustrative local timings, not a benchmark across platforms.
+
+### Simplification and structure
+
+The complexity pass used the `ponytail-review` skill. These are optional P3
+refactorings with concrete replacements; no speed claim is implied:
+
+- `core/fmt/fmt.loke:L141-146: shrink:` construct
+  `Collector{make([dynamic]u8, 0, 64, allocator)}` directly. Remove the
+  intermediate `sink` and its transfer explanation; the constructor receives
+  a temporary under the existing move rules. About five lines fewer.
+- `core/strings/builder.loke:L126-133: shrink:` implement
+  `try_copy_string` with `return allocate_string(self.view(), allocator);`.
+  Keep the UTF-8 invariant check and its explanation in `view` alone.
+  About four lines fewer; this does not remove validation or introduce an
+  unsafe conversion.
+- `core/random/continuous.loke:L105-123: shrink:` replace the inner
+  normal-resampling loop with `if (v <= 0) { continue; }`, then join the
+  two acceptance predicates with short-circuit `||` and use one accepted-value
+  assignment. Preserve random draw order and the logarithm fast-path guard.
+  About seven lines fewer.
+- `core/encoding/utf16/utf16.loke:L78-92: shrink:` assign a decoded
+  surrogate pair's scalar back to `value`, advance `at`, and share the
+  existing rune append/error handling with the BMP path. About five lines
+  fewer, preserving malformed-surrogate rejection and allocation errors.
+- `core/fs/fs.loke:L75-80,L640-645: shrink:` make both resource drop
+  hooks discard `self.close()` instead of repeating the close/state
+  transition. About six to nine lines fewer; retain the fallible public
+  close operation and best-effort drop behavior.
+- `core/io/io.loke:L300-336: shrink:` use explicit breaks for newline
+  and EOF, removing `ended`, and use the collected length at EOF instead
+  of `seen`. Keep empty lines distinct from EOF, including `keep_ending`.
+  About three to four lines fewer and two fewer mutable state variables.
+
+Two documentation cleanups are also actionable, and both are **fixed**:
+
+- `core/unsafe/unsafe.loke:3-7,28-30` describes eight members, omits
+  `new`/`try_new`, and restricts `free` to `^mut T`. The compiler contributes
+  ten operations, and accepts `[^]T` for `free` too. Replace the fixed count
+  with the operation list and document both pointer forms; compare
+  [the unsafe boundary](design.md#the-unsafe-package).
+- `core/slice/slice.loke:5-6` claims only `clone` and `try_clone` allocate.
+  Element copying in `fill`, `min`, or `max` can allocate through copy hooks.
+  Describe allocation through element operations, including the one necessary
+  result clone after O1.
+
+The file split is generally cohesive. One optional relocation would put
+`log_gamma` and its coefficients from `continuous.loke` beside their caller
+in `discrete.loke`; this changes no API and saves no lines. `fmt.Format_View`
+is referenced by the compiler and must not be treated as an unused alias.
+The literal ziggurat tables and separate floating-width foreign wrappers
+serve concrete contracts and were not flagged as unnecessary abstraction.
+
+`core/sync/sync.loke:195` busy-spins without yielding while another thread
+runs a `Once` action. Blocking address waits are a candidate if slow,
+contended initialization is a real workload; no contention benchmark was run,
+so this is a measurement candidate rather than a measured optimization win.
+
+Complexity estimate, excluding correctness fixes and documentation edits:
+**net: -30 lines possible.**
+
+### Assessment of every source file
+
+“No additional finding” means the named areas were reviewed without a
+confirmed actionable issue, not a proof that all inputs are correct.
+
+| Source file | Separate assessment |
+| --- | --- |
+| [container/bit_set.loke](core/container/bit_set.loke) | O2. Checked sparse/empty enums, multiword boundaries, complements, counts, iteration, and tail masking; additional 130-member assertions passed. |
+| [container/enum_array.loke](core/container/enum_array.loke) | O2 and O3's construction-loop cost. Checked empty and sparse enums, construction, indexing, and borrowed/mutable iteration. |
+| [container/small_array.loke](core/container/small_array.loke) | G7 and O3. Checked live-prefix invariants, copied/moved insertion, capacity failures, removal, unwind ordering, slices, and iterators. |
+| [cstrings/cstrings.loke](core/cstrings/cstrings.loke) | No additional finding. Checked zero value, terminator, interior-zero validation, allocator ownership, copying, and view lifetime; `view` does not rescan the entire buffer. |
+| [encoding/utf16/utf16.loke](core/encoding/utf16/utf16.loke) | Shared append cleanup. Checked surrogate arithmetic/rejection, interior-zero policy, exact-range decode, capacity bounds, and allocation errors. |
+| [endian/endian.loke](core/endian/endian.loke) | No additional finding. Checked signed shifts under Loke semantics, byte order, 8-128-bit widths, conversions, and formatting. |
+| [fmt/fmt.loke](core/fmt/fmt.loke) | Collector construction cleanup. Checked sink forwarding, spacing, allocator transfer, fixed formatting, padding, rune counting, and options. Formatting twice for padding is explicitly documented. |
+| [fs/fs.loke](core/fs/fs.loke) | Drop-hook cleanup. Checked handles, idempotent close/errors, access modes, bounded reads, timestamp saturation, directory enumeration, and wide-path conversion. |
+| [io/io.loke](core/io/io.loke) | `read_line` state cleanup. Checked partial transfers, EOF, line endings, UTF-8 boundaries, allocation errors, limits, and formatting's error latch for conforming streams. |
+| [log/log.loke](core/log/log.loke) | G6. Checked selected/fallback providers, static/runtime filtering, `Off`, variadic forwarding, and formatting allocations. The no-threads comment is stale. |
+| [math/complex.loke](core/math/complex.loke) | G4 and G5. Checked both float widths, generic numeric operations, Hamilton multiplication, magnitude, signs, formatting, and inverse/division scaling. |
+| [math/math.loke](core/math/math.loke) | No additional finding. Checked classification bit operations, checked/wrapping arithmetic, conversions, CRT bindings, and float-width separation. |
+| [mem/mem.loke](core/mem/mem.loke) | No additional finding. Checked compiler-owned declarations against implementation, region/failure-policy documentation, and the runtime's 128-byte minimum buffer layout. |
+| [os/os.loke](core/os/os.loke) | No additional finding. Checked argument bounds/lifetimes, owned conversion, and exit semantics. |
+| [os/process.loke](core/os/process.loke) | No additional finding. Checked environment validation, missing/empty values, resize retries, current-directory retries, and executable-path buffer growth. |
+| [path/path.loke](core/path/path.loke) | G3. Checked bare-drive behavior, roots, ordinary/extended UNC, base/directory, extension/stem, and lexical cleaning. |
+| [process/process.loke](core/process/process.loke) | G1. Checked pipe ownership/direction, quoting, environment blocks, inherited handle lists, PATH search, exit/wait/kill, and concurrent capture errors. |
+| [random/continuous.loke](core/random/continuous.loke) | Gamma-loop cleanup and optional helper relocation. Checked parameter validation, endpoint handling, and documented draw mappings. |
+| [random/discrete.loke](core/random/discrete.loke) | No additional finding. Checked inversion, PTRS, BTPE, saddle-point probability calculations, endpoint probabilities, and conversion guards. |
+| [random/pcg.loke](core/random/pcg.loke) | No additional finding. Checked seed/stream initialization, output transformation, and logarithmic advance. |
+| [random/random.loke](core/random/random.loke) | No additional finding. Checked range mapping, rejection thresholds, floating draws, endpoints, fill, shuffle, and permutation. |
+| [random/sampling.loke](core/random/sampling.loke) | No additional finding. Checked alias-table bounds, worklists, weights, draw mapping, and allocation cleanup. |
+| [random/secure.loke](core/random/secure.loke) | No additional finding. Checked native binding, chunk bounds, little-endian decoding, and zero-state retry. |
+| [random/xoshiro.loke](core/random/xoshiro.loke) | No additional finding. Checked reference transitions, seed expansion, state validation, and jump constants/iteration. |
+| [random/ziggurat.loke](core/random/ziggurat.loke) | No additional finding. Reviewed fast/wedge/tail sampling and all tables; independent table recomputation test passed. |
+| [simd/simd.loke](core/simd/simd.loke) | No additional finding. Checked intrinsic forwarding, conversions, reduction identifiers, overflow, masks, and floating/NaN contracts. |
+| [slice/slice.loke](core/slice/slice.loke) | O1 and allocation-comment cleanup. Checked bounds, reversal, searches, sorting bridges, NaNs/ties, and fallible clone cleanup. |
+| [strconv/strconv.loke](core/strconv/strconv.loke) | G8 revalidated. Checked signs, radix/prefix selection, underscore grammar, minimum signed value, overflow guards, float syntax, and full-input parsing. |
+| [strings/builder.loke](core/strings/builder.loke) | Shared validation cleanup. Checked zero-value allocator binding, capacity overflow, rune validity, fallible transaction behavior, finish/reset, and borrowed views. |
+| [strings/iterate.loke](core/strings/iterate.loke) | No additional finding. Checked empty/trailing split parts, empty separator, Unicode fields, LF/CRLF, final unterminated lines, and borrowing. |
+| [strings/strings.loke](core/strings/strings.loke) | O4. Checked UTF-8 boundary-safe search/slicing, empty needles, whitespace, trimming, transforms, allocator forwarding, and repeat overflow. Naive search is documented; no replacement algorithm justified by a benchmark in this review. |
+| [sync/sync.loke](core/sync/sync.loke) | No confirmed correctness finding. Checked atomic/order forwarding and Once completion/poison publication; contended busy-wait remains a measurement candidate. |
+| [term/term.loke](core/term/term.loke) | G2. Checked line conversion, surrogate recovery, modifiers, repeated keys, raw-mode failure paths, and handler/restoration ownership. |
+| [thread/thread.loke](core/thread/thread.loke) | No additional finding. Checked moved argument storage, spawn-failure cleanup, runtime attach/detach, join/drop, mutex payload, and guard lifetime. |
+| [time/calendar.loke](core/time/calendar.loke) | No additional finding. Checked civil/day conversions, year zero and calendar bounds, ISO weeks, clamped month/year arithmetic, offsets, and date-time carry. |
+| [time/text.loke](core/time/text.loke) | No additional finding. Checked fixed buffer bounds, precision/truncation, basic/extended consistency, leap-second checks, duration ordering, full fractions, and range failures. |
+| [time/time.loke](core/time/time.loke) | No additional finding. Checked signed duration rounding/truncation, float boundaries, minimum-duration subtraction, pre-epoch floor division, offset extremes, and clock/sleep arithmetic. |
+| [unsafe/unsafe.loke](core/unsafe/unsafe.loke) | Operation-list and `free` pointer-form documentation cleanup. Checked actual compiler-contributed surface and trust-boundary descriptions. |
+
+### Validation and limits
+
+Twenty-two existing integration programs compiled, ran, and matched their
+expected output: `lib_math`, `lib_math_bits`, `integer_wrap`, `lib_numeric`,
+`lib_random`, `lib_random_pcg`, `lib_random_distributions`,
+`lib_random_ziggurat`, `lib_enum_containers`, `lib_move_only_containers`,
+`lib_small_array`, `lib_endian`, `lib_simd`, `lib_slice`, `lib_text`,
+`lib_time`, `lib_strings`, `lib_strings_boundaries`, `lib_strconv`,
+`fmt_width_precision`, `lib_log`, and `lib_log_off`. Relevant log-level flags
+and expected stderr were included.
+
+Additional checks reproduced the numeric bugs at two optimization levels,
+counted copy hooks, compared enum-table and receiver LLVM, exercised wide and
+empty enums, reproduced the extended-path failure, and injected a stderr
+capture allocation failure. Raw-mode interleaving used deterministic mocked
+native console calls against generated library LLVM. The locale and threaded
+logging cases ran as real Loke programs. These checks do not establish all
+Win32 failure paths or exhaustive numeric/distribution correctness.
+
+Repro artifacts are local and ignored under `tests/tmp/numeric_review_20261017/`,
+`tests/tmp/review_foundations/`, `tests/tmp/review_platform/`, and
+`tests/tmp/review_main/`; the durable findings and minimal bug reproductions
+are in this section and [Known gaps](known-gaps.md#gaps). No library source
+was changed and no full compiler gate was needed for the review record.
