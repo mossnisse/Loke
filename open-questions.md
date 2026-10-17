@@ -41,6 +41,10 @@ And the policy-following half is load-bearing rather than convenient. Copy assig
 
 The allocation built-ins are a third instance, and they keep the pair: `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The allocation built-ins follow the `try_` convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
 
+The [anonymous unions and failure policies exploration](#anonymous-unions-and-failure-policies-2026-10-17)
+compares keeping these pairs with one fallible operation and reusable adapters,
+alongside changes to result construction and error composition.
+
 ## Pure procedures
 
 Should there be a form of procedure, distinct from `proc`, that is guaranteed by the compiler to be free of side effects?
@@ -713,6 +717,502 @@ records the reasoning and the alternatives not taken. These parts are open:
   over fallible results may need both forms. A parametric type alias,
   `Status :: Result(Unit, $E)`, would have avoided this, and is worth
   revisiting if aliases gain parameters for another reason.
+
+## Anonymous unions and failure policies (2026-10-17)
+
+Design exploration, not an adopted change. All new spellings below are sketches,
+not accepted Loke programs. The current rules remain [Typed
+fallibility](design.md#typed-fallibility), [Unions](design.md#unions), and
+[Allocation failure](design.md#allocation-failure).
+
+**Recommendation, refined by the replacement follow-up:** evaluate labeled
+anonymous unions as a replacement for `Result`, `Option`, and `Status`, not
+just as an additional type form. `(amount: int | message: string)` preserves
+variant meaning and nested result boundaries. The structural type must carry
+the failure, zero-value, and acknowledgment properties currently supplied by
+those declarations. Contextual success construction remains a useful companion.
+Type-based sums and retaining the three wrappers, explored below, are alternative
+designs. Separately prototype one fallible container operation plus reusable
+failure-policy adapters.
+
+### Separate the decisions
+
+There are four independent questions: what values a result can contain, which
+alternatives count as failure, whether a caller must acknowledge a result, and
+what happens when the caller chooses not to recover. A shorter type spelling
+does not settle the other three.
+
+Today a two-variant union with `@(failure=...)` supplies the failure protocol;
+`@(require_results)` supplies acknowledgment. `Result` and `Status` have both,
+while `Option` participates in the failure protocol without requiring use of
+every returned option. Error payloads are ordinary data: an `io.Error` stored
+in a diagnostic record is not itself an active failure.
+
+| Combination | Benefit | Cost or limit |
+| --- | --- | --- |
+| Keep result types; allow plain success returns | Removes repeated `.ok(value)` with a narrow change | Does not combine error domains or remove procedure pairs |
+| Anonymous `(A | B)` inside `Result(T, E)` | Combines distinct error types without a named wrapper for every helper | Adds structural sums, injection, widening, and type-based matching |
+| Flat `(T | Error(E))`, with marked alternatives filtered by the operators | One general union spelling for several successes and failures | Flattening loses result boundaries; classification and generic matching become more complex |
+| Labeled structural sums such as `(ok: T | err: E)` | Anonymous counterpart to today's named variants; preserves equal payload types | Still needs a failure designation and construction rules |
+| Dedicated `T throws E` or error-union syntax | Clearly separates success and failure without a verbose generic spelling | Another spelling for a result boundary; inferred effects would be a much larger change |
+
+The final row need only describe an ordinary returned value. It does not need
+exceptions, automatic propagation, or an inferred list of every error a body
+can produce. Explicit public signatures remain easier to keep stable.
+
+### Labeled anonymous unions fit the existing variant model
+
+The follow-up proposal is `(amount: int | message: string)`: the enclosing
+type is anonymous, while its alternatives retain names. It is the direct
+counterpart of a labeled anonymous record:
+
+```text
+(amount: int, message: string) // both fields are present
+(amount: int | message: string) // exactly one variant is active
+```
+
+Construction and inspection can reuse the current union forms:
+
+```text
+answer: (amount: int | message: string) = .amount(42);
+
+switch (answer) {
+case .amount(n): use_amount(n);
+case .message(text): show_message(text);
+}
+```
+
+These are variants, not simultaneously accessible record fields: `answer.amount`
+does not become an unconditional field access. Exhaustiveness, `.as(.amount)`,
+and borrowing or consuming a case payload can follow [Unions](design.md#unions).
+An alias such as `Answer :: (amount: int | message: string)` would name the
+structural type without creating a new nominal identity; `Answer.amount` can
+then name its constructor. A nominal `Answer :: union { ... }` remains a
+different type, as a struct differs from an anonymous record.
+
+Labels solve the repeated-payload problem: `(read: io.Error | write: io.Error)`
+retains the operation that failed, and `(left: int | right: int)` has two
+distinct alternatives. Duplicate labels should be rejected. For a first
+version, use the ordered sequence of labels and payload types as structural
+identity, matching [Anonymous records](design.md#anonymous-records) and the
+current union's declaration indices. Making order irrelevant is possible,
+but requires canonical tags and reflection rules; it is a separate decision.
+
+Preserve each variant's payload as a whole, including when it is another union:
+
+```text
+(ok: (ok: int | err: Parse_Error) | err: io.Error)
+```
+
+`.ok(.err(parse_error))` is then an outer success containing an inner failure.
+The nesting objection to flat type sets does not apply: the outer `.ok` label
+provides the boundary. Likewise a generic `.ok` can carry an error value as
+ordinary data if failure is designated by variant rather than payload type.
+The required boundary need not be a nominal type named `Result`.
+
+Keep the grammar small initially: at least two alternatives, each with a
+label; `|` separates alternatives and `,` separates record fields. A record
+payload is nested explicitly, as `(found: (index: int, value: T) | missing:)`.
+`missing:` can reuse today's payloadless-variant spelling without making a
+bare identifier ambiguous with a type. A single `(name: T)` remains a record.
+An empty payload creates no automatic zero value or failure designation.
+
+Names alone do not identify failure. `message` might be a successful message,
+and an `err` alternative can be ordinary data. The anonymous form needs a way
+to carry explicit failure metadata before `or_return` or `or_else` can use it.
+The placement of that metadata is still open; preserve today's two-alternative
+protocol first. A suitable fallible structural shape could eventually underlie
+`Result` through a generic alias, but Loke has no parameterized aliases today.
+Failure metadata must participate in structural type compatibility, so the
+same names and payloads cannot silently change which alternative propagates.
+
+Do not implicitly select an arbitrary variant from a raw payload's type.
+Adding a second `int` alternative would otherwise break or reinterpret distant
+construction sites. Use `.amount(42)` for an ordinary sum. The separate proposal
+to allow `return 42;` when the declared result has one designated success
+payload still works: its role, not unique payload typing, selects the variant.
+Using `Error(E)` payloads as the sole marker would reintroduce ambiguity when a
+generic success payload is itself `Error(X)`; explicit variant roles avoid it.
+
+The tradeoff with unlabeled sums is precise. A labeled anonymous error union
+removes the need for a dedicated declaration, but propagation still names its
+wrapper, for example `or_return .read` or `or_return .write`. Automatic
+type-based composition was a benefit of the separate `(A | B)` design.
+General subset conversions between labeled unions can wait; if added, they
+must match labels and payloads without dropping a possible alternative.
+
+Prefer this labeled form as the first anonymous-union feature. It adds inline
+structural types while retaining existing construction, matching, semantic
+labels, and nesting. It does not require new type-based matching or resolving
+an unordered set of generic alternatives, and it does not itself settle
+error acknowledgment or the `try_`/policy-following operation pairs.
+
+### Replacing Result, Option, and Status with structural shapes
+
+The clarified goal is to replace all three named generic types. This is
+coherent with labeled anonymous unions: their explicit variants preserve the
+boundaries that flat, unlabeled unions lose. No nominal `Result` is required
+for nesting. The current three types are already ordinary library unions
+recognized by a common protocol, so the proposal makes their underlying
+shapes directly expressible.
+
+The following table shows the shapes; the last column lists properties that
+must be expressed in the type as well. The labels alone confer none of them.
+
+| Current type | Structural shape | Required properties |
+| --- | --- | --- |
+| `Result(T, E)` | `(ok: T | err: E)` | `err` is failure; require acknowledgment |
+| `Option(T)` | `(none: | some: T)` | `none` is failure and zero; acknowledgment remains optional |
+| `Status(E)` | `(ok: | err: E)` | `err` is failure; require acknowledgment; success is payloadless |
+
+One common rule for two alternatives covers all three. `or_else` selects the
+other alternative or evaluates its fallback. `or_return` propagates the
+designated failure into the enclosing result's designated failure, regardless
+of their labels, under today's payload-compatibility and explicit mapping
+rules. Absence has no error payload to propagate into a payload-bearing error;
+the existing failure operand must supply one. A payloadless success yields
+`Unit` to these operators, as today.
+
+Reuse explicit variant metadata rather than deciding failure from names or
+from a generic payload's instantiated type. For example, this is a possible
+new spelling, not an existing attribute placement:
+
+```text
+parse :: proc(text: string_view)
+    -> (amount: int | @(failure) message: string) {
+    if (bad_input(text)) { return .message("invalid amount"); }
+    return 42;
+}
+```
+
+`@(failure)` on a variant would express the role currently written as
+`@(failure=message)` on a named union. Exactly one non-failure alternative
+selects the implicit success construction. `.amount(42)` remains available;
+an ordinary union with no failure designation still requires a named
+constructor. The final spelling is open, including where zero and
+require-results metadata attach to an inline type. All these properties must
+survive aliases, procedure values, aggregates, and generic instantiation;
+they must not be silently changed by assigning between structural types.
+
+The earlier `Error(E)` wrapper is not needed if the variant has an explicit
+failure role. In particular, an `ok` variant with payload type `Error(X)` can
+then remain success. Requiring acknowledgment is separate from recognizing
+failure: an absence may be safely discarded, while a payloadless error may
+still need acknowledgment. Do not infer that policy merely from whether the
+failure carries data. Explicit discard remains available.
+
+Preserve the useful behavior behind the names:
+
+- An optional shape retains a designated absent zero value and the existing
+  [non-null payload representation](design.md#representation), including foreign
+  pointer ABI uses. A payloadless alternative alone does not imply either
+  an absent default or failure.
+- A status-shaped procedure may reach the end of its body and return its
+  unique payloadless success. This must not grant implicit success to every
+  union containing an empty alternative.
+- `errdefer` and a fallible `main` use the declared outer failure role.
+  Returning an inner failure as outer success must not trigger either's
+  failure behavior.
+- A fallible stream can keep an optional shape inside its success variant:
+  `(value: (none: | some: T) | err: E)`, with role metadata at each level.
+  One `or_return` handles the outer error and leaves end-of-input for the caller.
+
+Removing the nominal generic names also changes generic library code.
+`map_error`, `ok_or`, and helpers such as `must` need structural matching or a
+compile-time fallibility protocol that exposes the success and failure roles.
+Matching only literal labels `ok` and `err` would fail for the `amount` and
+`message` example. Transformations must state whether they preserve labels or
+produce a documented canonical shape. A no-payload success must also be
+representable in generic code without pretending it is the same as a `Unit`
+payload. This is real design work, not solved just by changing the parser.
+
+Domain aliases may abbreviate long structural types without retaining the
+three generic names. Parameterized compatibility aliases could aid migration
+if alias support is deliberately added, but they are not the objective or
+a requirement of this replacement. The gain is one general type model with
+descriptive inline variants; the cost is more verbose repeated signatures and
+the need for generic operations over their roles.
+
+This replaces the representation and naming of fallible results. Mandatory
+acknowledgment and the `try_`/policy-following operation pairs remain independent
+policy decisions; dropping the three names must not silently settle them.
+
+### Anonymous sums have a useful job outside errors
+
+`(int | string)` can describe a value that is either an integer or text,
+just as `(int, string)` describes a value containing both. It still needs a
+runtime discriminant. This is not a C union, `any_view`, or dynamic typing.
+[Odin's unions](https://odin-lang.org/docs/overview/#unions) provide a precedent
+for selecting an alternative by payload type and injecting values into it;
+that does not establish structural identity or normalization rules for Loke.
+
+A useful candidate rule is an unordered set of exact type identities:
+`(A | B)` and `(B | A)` are the same type, nested anonymous sums flatten,
+and duplicate alternatives collapse. A singleton reduces to its member.
+Aliases do not distinguish alternatives; nominal types do. No implicit `nil`
+or zero alternative is added. This deliberately differs from records, where
+position identifies fields and `(int, int)` contains two independent values.
+
+Consequently `(string | string)` cannot distinguish a username from a password,
+nor `(io.Error | io.Error)` a failed read from a failed log write. Keep named
+unions or nominal wrappers wherever that distinction matters. For example,
+today's `App_Error` can have both `io: io.Error` and `log_write: io.Error`;
+replacing it with a set of payload types would lose information.
+
+For an initial design, inject typed values by exact alternative identity,
+and widen `(A | B)` to `(A | B | C)` by preserving the active alternative.
+Do not search for arbitrary conversion chains. A literal admitted by several
+alternatives, such as `1` for `(i32 | i64)`, needs an explicit choice. Aliases
+and implicit numeric conversions must not silently select a different tag.
+Adding an alternative must not reinterpret an already typed value.
+
+Matching needs a type-based case with a branch-local binding, borrowing or
+consuming as today's [Switch ownership](design.md#switch-ownership) does.
+The precise syntax remains open; exhaustive checking is still required. A
+type-based match must also distinguish a generic type pattern from a value
+pattern without making ordinary `|` expressions ambiguous. Generic inference
+cannot guess a unique `$A, $B` decomposition of an unordered set; it needs
+constraints or explicit arguments where several decompositions fit.
+
+Semantic widening can require remapping the runtime tag and moving a payload
+into larger storage. Do not promise a bitcast or a stable tag number. Layout,
+reflection, hashing, formatting, compile-time evaluation, and borrow provenance
+must all agree with canonical type identity. No allocation is inherently
+needed to represent a closed union, but no performance improvement has been
+measured here.
+
+### What an Error wrapper would mean
+
+Use `Error(E)` for the proposed wrapper type and `error(value)` for its value
+constructor, following the existing `Box(T)`/`box(value)` distinction. Both
+are placeholders; `Failure(E)`/`failure(value)` would avoid competing with
+packages' existing `Error` names. The marker must be a specific declared type
+or an explicit protocol, never a convention based on an identifier's spelling.
+
+For example, a procedure returning `(int | Error(Parse_Error))` could return
+`42` on success or `error(Parse_Error.Bad_Digit)` on failure. A
+`(string | Error(string))` remains unambiguous: a bare string is success and
+a wrapped string is failure. Inferring failure from a bare payload is unsafe
+when success and failure have the same type.
+
+The proposed operators would partition only the union's immediate alternatives:
+
+| Operand type | Success type after handling | Failures handled |
+| --- | --- | --- |
+| `(int | Error(E))` | `int` | `E` |
+| `(int | string | Error(E))` | `(int | string)` | `E` |
+| `(int | Error(E1) | Error(E2))` | `int` | `E1` or `E2` |
+| `(Unit | Error(E))` | `Unit` | `E` |
+| `(Option(int) | Error(E))` | `Option(int)` | `E`, leaving `.none` as data |
+
+`Error(E)` alone contains only failure; it cannot also mean successful
+completion with no value. That needs a success alternative, such as `Unit`,
+or today's `Status(E)`. Implicit success at the end of a `Unit`-bearing body
+would also be a new rule: today it is reserved for a payloadless success.
+
+`or_return` would return the active marked alternative on failure and leave
+the success value on success. `or_else` would supply a value of the remaining
+success type or leave control flow, as today. Every possible failure must
+fit the enclosing result or be explicitly mapped; accepting only some of
+them would silently narrow the contract. An operand containing no marked
+alternatives should be rejected, not make `or_return` a silent no-op.
+
+Recognizing several marked alternatives does not require making
+`Error(A | B)` identical to `(Error(A) | Error(B))`. Distributing through the
+wrapper would be another conversion rule, including ownership and generic
+inference consequences. Grouping errors under one `Error(A | B)` is simpler
+for signatures; multiple wrappers need an explicit normalization decision.
+
+Only the active outer alternative denotes failure. A record containing an
+`Error(E)`, a collection of errors, or the success payload of an explicitly
+tagged result must remain ordinary data. `errdefer` and a fallible `main` must
+use the same classification as the operators. This would extend today's
+exactly-two-variants protocol, not merely abbreviate its declaration.
+
+Replacing the existing protocol outright would also break `Option` handling:
+`.none` has no `Error` wrapper. Keep its existing absence protocol or design
+an explicit replacement; absence and a reported error should remain distinct.
+For a fallible stream, `Result(Option(T), E)` currently represents those three
+states without treating end-of-input as failure.
+
+### Flattening is the obstacle to replacing Result
+
+Consider `Result(Result(int, Parse_Error), io.Error)`. Its outer operation can
+succeed while returning an inner parse failure; one `or_return` removes only
+the outer failure boundary. A mechanical alias
+`Result(T, E) = (T | Error(E))`, with sums flattened, instead becomes:
+
+```text
+int | Error(Parse_Error) | Error(io.Error)
+```
+
+Now one operator handles both failures. If both errors have the same type,
+duplicate elimination also loses which layer failed. Keeping the nesting in
+`(T | Error(E))` requires an opaque group or explicit success wrapper, restoring
+the boundary that `Result` already supplies. Parentheses cannot both be ordinary
+grouping and secretly preserve a result layer.
+
+There is a second problem: substituting `Error(X)` as a generic success type
+would reclassify that success as failure in a flat union. A container, parser,
+or task executor must be able to return a failure value as successful data.
+Named variants or an explicit `Success(T)` wrapper solve it, but then the
+marker design has recreated the roles of `.ok` and `.err`.
+
+Flat marked unions are still reasonable for deliberately flat concrete APIs.
+They should earn their additional protocol through uses that the hybrid below
+cannot express conveniently, rather than being adopted as a universal alias.
+
+### The strongest combination retains a result boundary
+
+Allow anonymous sums as ordinary payload types, and add success construction
+in `return`. An illustrative helper could then be written as follows; `read`
+and `parse` stand for APIs returning `Result(string, io.Error)` and
+`Result(Config, Parse_Error)` respectively:
+
+```text
+Load_Error :: (io.Error | Parse_Error);
+
+load :: proc(path: string_view) -> Result(Config, Load_Error) {
+    text := read(path) or_return;
+    config := parse(text) or_return;
+    return config;
+}
+```
+
+The outer result still says whether the operation succeeded. Anonymous sums
+remove an `App_Error` declaration and per-site wrapping when only the original
+error type matters. If the application needs contextual cases such as
+`.log_write`, retain a named error union and `or_return .log_write`.
+
+This differs from guessing a variant in an existing named union, rejected in
+[The failure operand of `or_return`](comments.md#the-failure-operand-of-or_return).
+A structural sum gives each exact type one alternative by definition. A named
+union may give the same payload several distinct meanings. Adding structural
+injection must not change the latter's construction rules.
+
+Success construction can be a narrow return rule: first honor existing result
+construction and whole-result assignability; otherwise permit an expression
+assignable to the single success payload of the declared fallible result.
+`return n;` in `Result(int, int)` then means success; failure stays
+`return .err(n);`. Contextual `.ok(...)` and `.err(...)` remain explicit escape
+hatches, including nested results. A bare error payload never chooses `.err`.
+
+Apply the rule by the existing marked-union shape, not by the name `Result`.
+Initially keep it at `return` sites; general implicit wrapping at assignments,
+arguments, and overload resolution would be a larger change. Returning a whole
+compatible result must not wrap it again. Existing copy, move, and return-escape
+checks still apply: wrapping must not silently move a place or extend a borrow.
+Payloadless `Status` success already needs no final statement.
+
+[Zig's error unions](https://ziglang.org/documentation/0.15.1/#Error-Union-Type)
+and [coercions](https://ziglang.org/documentation/0.15.1/#Type-Coercion-Error-Unions)
+show the ergonomic value of direct success returns and propagation. Loke can
+take that convenience while retaining arbitrary, structured error payloads
+and explicit outer result boundaries. It need not adopt inferred error effects.
+
+### Require acknowledgment, not proof of recovery
+
+A visible return type alone does not catch `save(config);` silently dropping
+a disk error. Keep a compile-time diagnostic for an ignored failure-bearing
+call, with explicit discard available. The caller can inspect it, propagate
+it, return/store/pass it as data, choose a fallback, panic, or write `_ = ...`.
+Whether recovery is meaningful depends on the caller, not solely on whether
+the error type is allocation-related, a parse error, or an I/O error.
+
+This is deliberately weaker than proving every possible failure was handled.
+Today's [require-results rule](design.md#require_results) accepts any read of
+the binding, even on only one path. Passing it to a logger counts; it does not
+prove recovery. A stricter obligation that follows results through every store,
+callback, and branch is a separate dataflow or linearity design, not a property
+automatically supplied by `Error(E)`. Rust's
+[must-use attribute](https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-must_use-attribute)
+is another acknowledgment mechanism, not proof of recovery.
+
+For a marker-based alternative, calls returning a union with `Error` arms
+should inherit the acknowledgment requirement, including through aliases and
+aggregates. Do not require every ordinary union or `Option` result merely
+because it has multiple alternatives. Whether an ignored predicate deserves
+a diagnostic is independent of whether an operation can fail.
+
+### One operation can expose several caller policies
+
+Changing the result representation alone does not remove the
+[`op`/`try_op` pair](#the-optry_op-pair). A concrete alternative is one fallible
+public operation and reusable adapters. In this sketch `append` has the
+current `try_append` contract, and `must` is a proposed library helper:
+
+```text
+values.append(item) or_return;    // propagate
+must(values.append(item));        // panic, reporting the returned error
+_ = values.append(item);          // deliberately accept a failed insertion
+```
+
+The return type stays the same in every context. Do not make a bare statement
+panic while a value context returns an error, or silently propagate because
+the enclosing procedure happens to be fallible. Those rules make refactoring
+change failure policy and confuse calls through procedure values.
+
+A consuming `must` helper for `Result` and `Status` can implement the choice
+without a new operator. It should transfer move-only successes, report the
+actual error and caller location, and obey panic cleanup rules. Today's
+`or_else panic("message")` already expresses an unconditional panic fallback,
+but drops a temporary's error before evaluating it, so cannot automatically
+include that error. Error-binding fallback syntax is another possible extension,
+not a prerequisite for a library helper.
+
+Allocator policy needs separate treatment. `append` today follows its
+allocator's `.Panic` or `.Trap` policy; `try_append` reports the failure.
+Replacing the former with a generic panic helper would change `.Trap` behavior.
+A policy-preserving adapter needs the allocator as well as the error: an
+`Allocator_Error` currently retains the requested size, not the allocator's
+identity and policy. Extending the error to carry that information is another
+design choice, not free syntax sugar.
+
+Nor does one explicit fallible API make a procedure free of panics. Implicit
+copies, concatenation, bounds checks, and other language operations retain
+their contracts. Generated `clone`/`try_clone` also serve copying and
+`Cloneable`; removing names does not remove those jobs. Preserve transaction
+and ownership guarantees when changing a pair: a failure leaves the container
+unchanged, but an explicitly moved insertion argument remains consumed.
+
+This tradeoff is worthwhile to prototype on `String_Builder`: fewer public
+methods and one implementation of each operation, against a policy choice at
+every ordinary append. Compare complete real callers before migrating arrays,
+maps, allocation built-ins, and lifecycle operations. Keeping convenience forms
+is defensible if the caller burden outweighs the API reduction. Automatic
+generation could remove duplicated wrappers, but leaves the doubled API.
+
+### What the diverging arrow means
+
+[`-> !`](design.md#diverging-procedures) means the procedure never returns
+normally to its caller. `panic`, process exit, and an endless loop are examples.
+It does not mean that the procedure returns an error, may panic, or returns
+success with no payload. That is why `value or_else panic("missing")` needs
+no fallback value: the failure path cannot continue.
+
+Loke currently attaches this fact to the declaration, not to a first-class
+procedure-value type. For readability, `@(noreturn)` would fit those semantics
+more literally than punctuation. `-> never` is also readable, but should become
+a real uninhabited result type only if the language deliberately adds that
+model, including procedure types and conversions. Neither is necessary for
+anonymous unions or error handling; keep any spelling decision separate.
+
+### What would establish that the change is an improvement
+
+Prototype success returns independently, then anonymous sums used for error
+payloads, before combining them with a library API migration. Acceptance cases
+must include equal success/error payload types, overlapping numeric literals,
+duplicate aliases, generic alternatives becoming identical, subset propagation,
+nested results, error values returned as success, fallible streams, move-only
+successes and errors, borrowed errors, and exactly-once cleanup on fallback.
+Also check `errdefer`, fallible `main`, explicit discard, and allocator `.Trap`.
+
+Use the same parser helper, file-loading helper, and builder-heavy caller for
+each design. Count declarations and call-site ceremony, inspect diagnostics,
+and verify that error context survives. This exploration establishes semantic
+tradeoffs, not compiler acceptance of the proposed syntax or measured speed.
+Adoption requires coordinated specification, grammar, compiler, library, tests,
+tooling, rationale, and upgrade notes.
 
 ## Lone carriage returns in the language server
 
