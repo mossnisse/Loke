@@ -725,15 +725,13 @@ not accepted Loke programs. The current rules remain [Typed
 fallibility](design.md#typed-fallibility), [Unions](design.md#unions), and
 [Allocation failure](design.md#allocation-failure).
 
-**Recommendation, refined by the replacement follow-up:** evaluate labeled
-anonymous unions as a replacement for `Result`, `Option`, and `Status`, not
-just as an additional type form. `(amount: int | message: string)` preserves
-variant meaning and nested result boundaries. The structural type must carry
-the failure, zero-value, and acknowledgment properties currently supplied by
-those declarations. Contextual success construction remains a useful companion.
-Type-based sums and retaining the three wrappers, explored below, are alternative
-designs. Separately prototype one fallible container operation plus reusable
-failure-policy adapters.
+**Recommendation, superseded by [A concrete proposal](#a-concrete-proposal-2026-10-18):**
+keep `Result`, `Option`, and `Status` as the fallible boundaries; add success
+returns, labeled anonymous unions as plain data, and widening between them by
+label. The earlier recommendation, to evaluate labeled anonymous unions as a
+replacement for the three wrappers, is assessed and declined there. Separately
+prototype one fallible container operation plus reusable failure-policy
+adapters.
 
 ### Separate the decisions
 
@@ -1086,10 +1084,11 @@ with separate slots over those same alternatives. The switch was written
 explicitly in both versions. This verifies the building blocks, not the
 proposed anonymous-union syntax or `show(..answer)` expansion.
 
-**Recommendation:** prototype explicit union argument expansion for reusable
-procedure groups and compare it with named callback dispatch. Let `dyn` be
-an optional way to supply the visitor's behavior. Preserve exhaustive checks
-and the union's labels in either form; retain `switch` for inline control flow.
+**Recommendation, superseded by [Part 5](#part-5-per-variant-expansion-instead-of-dispatch):**
+the earlier recommendation was to prototype explicit union argument expansion
+for reusable procedure groups and compare it with named callback dispatch.
+Part 5 declines both for now and proposes a per-variant switch case and
+`variants_of(T)` instead.
 
 ### Anonymous sums have a useful job outside errors
 
@@ -1367,6 +1366,362 @@ and verify that error context survives. This exploration establishes semantic
 tradeoffs, not compiler acceptance of the proposed syntax or measured speed.
 Adoption requires coordinated specification, grammar, compiler, library, tests,
 tooling, rationale, and upgrade notes.
+
+### A concrete proposal (2026-10-18)
+
+Three changes, each specified and built on its own and useful without the
+others, cover what the exploration above found valuable for results. Two more
+are separate features: one shortens signatures, and one replaces the explored
+dispatch forms. Together they keep `Result`, `Option`, and `Status` as the
+only fallible boundaries and make anonymous unions plain data.
+
+1. **Success returns.** `return value;` builds the success variant.
+2. **Labeled anonymous unions.** `(io: io.Error | parse: Parse_Error)` is an
+   ordinary union with no declaration and no attributes.
+3. **Widening by label.** An anonymous union converts to a larger one that
+   contains each of its alternatives, which lets a bare `or_return` propagate
+   a helper's smaller error set.
+4. **Later, separately: parametric aliases**, the only change here that
+   shortens a common signature.
+5. **Independently: per-variant expansion.** A switch case written
+   `case $variant(payload):` is checked once per remaining variant, and
+   `variants_of(T)` reflects a union's variants. These replace the dispatch
+   forms explored above.
+
+None of them changes the meaning of a program that compiles today.
+
+#### Assessment of the exploration
+
+| Part | Verdict |
+| --- | --- |
+| [Separate the decisions](#separate-the-decisions) | Keep. The parts below each settle one of the four questions and leave the others alone. |
+| [Labeled anonymous unions](#labeled-anonymous-unions-fit-the-existing-variant-model) | Adopt as data: part 2. |
+| [Replacing the three wrappers](#replacing-result-option-and-status-with-structural-shapes) | Decline; see below. |
+| [Dispatch to groups and visitors](#dispatching-to-procedure-groups-and-visitors-2026-10-18) | Decline `show(..answer)` and `visit(...)` for now; keep the dyn visitor as an idiom. Serve the goal with part 5. |
+| [Unordered type-based sums](#anonymous-sums-have-a-useful-job-outside-errors) | Defer. Labels plus widening give the composition without set normalization, type-based matching, or literal ambiguity, and they keep `read` and `log_write` apart. |
+| [`Error(E)` markers and flat unions](#what-an-error-wrapper-would-mean) | Decline, for the reasons the exploration itself gives under [Flattening is the obstacle](#flattening-is-the-obstacle-to-replacing-result). |
+| [A retained result boundary](#the-strongest-combination-retains-a-result-boundary) | Adopt, with labeled alternatives in place of unlabeled ones: parts 1 to 3. |
+| [Acknowledgment](#require-acknowledgment-not-proof-of-recovery) | Keep today's rule unchanged. An anonymous union is data and requires nothing. |
+| [One operation, several policies](#one-operation-can-expose-several-caller-policies) | Independent. Prototype on `String_Builder` as recommended. |
+| [The diverging arrow](#what-the-diverging-arrow-means) | Independent; no change. |
+
+**Why not replace the wrappers.** The labels would be per API, so every
+generic helper (`map_error`, `ok_or`, a `must`, any code generic over a result)
+would need a role protocol to find the success and the failure, which nominal
+generics give today for nothing. The failure, zero, and acknowledgment
+properties would become part of a structural type's identity, so
+`(ok: T | err: E)` and its fallible twin would be different types that differ
+only by an attribute: a concept Loke has nowhere else. Callers would lose the
+uniform `.ok`/`.err` they match on. And the signatures would grow:
+`Result(File, io.Error)` would become `(ok: File | @(failure) err: io.Error)`.
+A named union with `@(failure=)` already serves an API that wants its own
+labels.
+
+#### Part 1: success returns
+
+In a procedure whose result is a [fallible union](design.md#typed-fallibility):
+
+- `return expression;` keeps its current meaning when `expression` is a
+  contextual construction of the result (`.ok(x)`, `.err(e)`, `.some(x)`,
+  `.none`) or has a type assignable to the result.
+- Otherwise, when the success variant carries a payload, `expression` is
+  checked against that payload and the return builds the success variant,
+  exactly as `return .ok(expression);` or `return .some(expression);` would,
+  with the same copy, move, and return-escape rules.
+- An implicit selector still resolves against the result's variants, so
+  `return .Bad_Digit;` in `Result(int, Parse_Error)` is an error that suggests
+  `.err(.Bad_Digit)`. Nothing selects the failure variant implicitly, and an
+  error value never becomes a failure because of its type.
+- When the success carries nothing, as `Status`'s does, `return;` returns it,
+  as reaching the end of the body already does. `Result(Unit, E)` is not
+  covered, for the reason [`Status(E)`](comments.md#statuse) gives.
+
+The checker decides by the expression's form, before giving it an expected
+type: a variant construction or implicit selector targets the result; an
+expression with its own type targets the result when assignable to it and the
+payload otherwise; a composite literal or unfixed constant targets the payload,
+since no union is built from one. Lower the wrapped return to the variant
+construction it stands for in
+[check.odin](src/check.odin) `check_return`, so control flow, borrow checking,
+compile-time evaluation, and emission see only code they handle today.
+
+`core`, `base`, `examples`, and `bench` have 117 `return .ok(` and 57
+`return .some(` sites. A typical one, from [text.loke](core/time/text.loke):
+
+```text
+return .ok(Date.from_components(year, month, day) or_return .Invalid_Value);
+return Date.from_components(year, month, day) or_return .Invalid_Value;   // proposed
+```
+
+#### Part 2: labeled anonymous unions
+
+`(label: Type | label: Type | label:)` is the anonymous counterpart of a named
+union, as `(label: Type, label: Type)` is of a struct:
+
+- It has at least two alternatives, each `label: Type` or payloadless `label:`,
+  with distinct labels. The colon is required, so `(a | b)` remains an
+  expression and `(x: T)` remains a one-field record. A name list such as
+  `(a, b: int | c:)` is not accepted.
+- Its identity is structural: the ordered sequence of labels and payload types,
+  as for [anonymous records](design.md#anonymous-records). The order is the
+  tag order. An alias names the shape and creates no new identity.
+- Every rule of [Unions](design.md#unions) applies unchanged: contextual
+  `.label(payload)` construction, an alias's `Alias.label` constructor, switch
+  ownership and exhaustiveness, `.as(.label)`, copy, move, drop, equality,
+  formatting, and the [representation](design.md#representation), so
+  `(node: ^Node | end:)` is one address. Reflection reports it as a union with
+  the empty name.
+- It carries no attributes. It has no zero value, is not a fallible expression,
+  and does not require its results. `or_return` and `or_else` reject it with a
+  diagnostic naming `Result`, `Option`, or a named union with `@(failure=)`.
+  It takes no methods and cannot be recursive, since it has no name.
+- A `$` binding inside it, as in `(some: $T | none:)`, binds by label and order.
+
+The [failure operand](design.md#the-failure-operand) already resolves `.label`
+against `F`, the enclosing result's failure payload, so it needs no change to
+wrap into an anonymous `F`:
+
+```text
+read_config :: proc(path: string_view) -> Result(Config, (io: io.Error | parse: Parse_Error)) {
+    text := fs.read_text(path) or_return .io;
+    return parse(text) or_return .parse;
+}
+```
+
+Implementation mirrors anonymous records: a `Type_Anon_Union` node from
+`parse_anon_record_type` in [parser.odin](src/parser.odin) when `|` follows the
+first labeled alternative, interning beside `anon_record_type` in
+[semantic.odin](src/semantic.odin) with the union kind, and the existing union
+paths from there.
+
+#### Part 3: widening by label
+
+Add to [Implicit type conversions](design.md#implicit-type-conversions): an
+anonymous union value converts to an anonymous union type that has, for each
+of its alternatives, an alternative with the same label and the same payload
+type, or the same payloadless label. Order may differ; the conversion remaps
+the tag and moves the payload into the larger storage. It is a value
+conversion, as dropping record labels is: it does not reach through
+`[dynamic]`, `Option`, or a procedure type, a place operand copies and must be
+copyable, and a temporary transfers. Named unions neither widen nor are
+widened. Narrowing is a `switch`.
+
+A bare `or_return` requires only that the failure payload be assignable, so
+widening makes a smaller error set propagate with no operand, and `map_error`
+and ordinary returns accept it too:
+
+```text
+start :: proc() -> Result(App, (io: io.Error | parse: Parse_Error | net: Net_Error)) {
+    config := read_config("app.cfg") or_return;          // widened by label
+    socket := net.connect(config.host) or_return .net;
+    return App{config, socket};
+}
+```
+
+This is not the variant inference that
+[The failure operand of `or_return`](comments.md#the-failure-operand-of-or_return)
+rejected. The label and the payload type are written on both sides, so adding
+an alternative to the destination changes no existing conversion, and adding
+one to the source, renaming a label, or changing a payload type is a
+diagnostic, naming the missing alternative, at each site whose destination
+lacks it.
+
+The caller chooses between flattening and context. Repeating the callee's
+labels in its own set flattens them, as above. A wrapping label keeps the
+layer, `(config: (io: io.Error | parse: Parse_Error) | net: Net_Error)` with
+`or_return .config`, and two labels keep equal payload types apart,
+`(read: io.Error | log_write: io.Error)`.
+
+#### Part 5: per-variant expansion instead of dispatch
+
+[Dispatching to procedure groups and visitors](#dispatching-to-procedure-groups-and-visitors-2026-10-18)
+proposed `show(..answer)` and `visit(answer, amount=..., message=...)`. Both
+remove a switch whose every case hands its payload to a different handler.
+That switch is rare. In `core`, `base`, `examples`, `bench`, `tests`, and
+`tutorials`, a scan of the 364 union switches with a payload binding found
+4 whose cases all forward the payload to one callee, all in tests, and
+none that forwards each variant to a different handler. Almost every union
+switch is over a `Result` or `Option` and does local work in its cases. The
+corpus has one data union with more than two variants,
+[`Token`](examples/tokens.loke), so this is weak evidence about application
+code such as an interpreter's tree walk. It is still no evidence of demand.
+
+Against that small saving, group expansion has costs:
+
+- It makes the parameter names of unrelated procedures part of a union's
+  contract. Renaming a label means renaming a parameter in every handler of
+  every group that dispatches it. A named argument couples one call to one
+  signature; this couples a data type to a family of signatures.
+- `..` gains a second meaning, chosen by the operand's type.
+- It needs a common-result rule across overloads, and control flow cannot
+  leave a handler: `return`, `break`, and `or_return` in a handler cannot
+  reach the caller, as they can from a case.
+- The explicit switch it replaces costs one line per variant,
+  `case .amount(n): show(amount=n);`, and says which handler runs.
+
+`visit(...)` has the costs the exploration already lists: named parameters
+derived from the variants, which needs compiler support; capture literals that
+all evaluate, so two `&mut` captures of one place conflict even though one
+body runs; and no way to leave the caller from a handler. A dyn visitor needs
+no language change and remains an idiom over an explicit switch.
+
+The demand that does recur is the other one the exploration noted: one
+operation with the same meaning for every alternative, such as `area()`,
+`span()`, or reporting an error. Zig serves it with
+[`inline else`](https://ziglang.org/documentation/0.15.1/#Inline-Switch-Prongs),
+a switch prong expanded once per remaining tag. Loke already has the
+machinery in [static `foreach` expansion](design.md#static-foreach-expansion),
+so the proposal stays inside `switch`:
+
+```text
+area :: proc(shape: ^Shape) -> f64 {
+    switch (shape^) {
+    case $variant(s): return s.area();     // checked once per variant
+    }
+}
+
+report :: proc(error: (io: io.Error | parse: Parse_Error | net: Net_Error)) {
+    switch (error) {
+    case $variant(e): fmt.println("failed:", variant.name, e);
+    }
+}
+
+switch (event) {
+case .quit: return;
+case $variant(payload): handle(payload);   // every other variant, by payload type
+}
+```
+
+The rules:
+
+- Only in a switch over a union, named or anonymous. The case covers every
+  variant no earlier case names, so it is the last case, there is at most one,
+  and `default:` cannot follow it.
+- Its body is parsed once and checked once per covered variant after
+  substitution, as a static `foreach` body is. A diagnostic names the variant.
+  Adding a variant checks the body against the new payload, which keeps the
+  protection that `default:` gives up: a new payload without `area()` is a
+  compile error, not a silently absorbed case.
+- `variant` is a compile-time `meta.Variant` descriptor with `name`, `type`,
+  and `index`, under the rules of [compile-time reflection](design.md#compile-time-reflection):
+  immutable and never materialized at runtime. `type` is the payload type, or
+  `Unit` for a payloadless variant.
+- `payload` follows [Switch ownership](design.md#switch-ownership): it borrows
+  from a place, owns from a temporary, and `&mut payload` is a writable place.
+  A payloadless variant binds `Unit{}`, as `.as(.name)` yields `Unit`. Field
+  bindings are not accepted, since the payloads differ in shape.
+- It is an ordinary case for control flow, `defer`, `errdefer`, and
+  `or_return`.
+- The body is instantiated once per variant; the backend may merge identical
+  copies.
+
+`variants_of(T)` returns the union's `meta.Variant` descriptors in declaration
+order, beside `fields_of(T)` and `enum_values_of(T)`. Runtime reflection
+already reports `Member_Kind.Union_Variant`; this adds the compile-time
+counterpart. With it, generic code can iterate a union's shape with
+`foreach ($v in variants_of(T))`, and a library bridge from any union to a
+visitor becomes ordinary generic code: an expanded case calling one generic
+method, `visitor.visit(variant, payload)`, which overloads on the payload type
+or tests `variant.name` with `when`. Visitor slots named after the labels stay
+out of reach, because static expansion does not synthesize identifiers.
+Constructing a variant from a descriptor is left open.
+
+Part 5 works with parts 2 and 3 but needs neither. With them, one `report`
+procedure is generic over any anonymous error set, however it was widened:
+
+```text
+report :: proc(error: $E) {   // a constraint meaning "E is a union" is open
+    switch (error) {
+    case $variant(e): fmt.println("failed:", variant.name, e);
+    }
+}
+```
+
+Revisit group expansion if a real program, such as a self-hosted compiler's
+tree walks, shows many switches whose cases each forward to a different
+handler. Until then the explicit switch serves label dispatch, and part 5
+serves the per-variant operation.
+
+#### What gets shorter
+
+Anonymous unions make a signature longer and remove a declaration; they do not
+shorten a signature. Today's `Result(Config, Config_Error)` with
+`Config_Error :: union { io: io.Error, parse: Parse_Error }` becomes the
+signature of `read_config` above. The program gets shorter where the helpers
+are: no wrapper declaration per helper, no `or_return .name` at each level
+after the first wrap, and a precise error set per helper instead of one
+application-wide union that every helper over-reports. `core` itself gains
+little from parts 2 and 3: each package reports one error type, and no `core`
+error type wraps another's. Part 1 shortens bodies in `core` immediately.
+
+Signatures are shortened by aliases, which suit structural types because they
+add no identity:
+
+- A plain alias works today: a local probe accepted `Io_Status :: Status(Io_Error);`
+  and a procedure returning `Io_Status` that reached the end of its body.
+- `Config_Error :: (io: io.Error | parse: Parse_Error);` names the shape, and the
+  named shape still widens and still matches another package's identical shape.
+  It also avoids the double parentheses of
+  `Status((io: io.Error | parse: Parse_Error))`.
+- `Result(T, io.Error)` needs a parametric alias, which is part 4, so that `io`
+  can name `Result($T, Error)` once, as Rust's `io::Result` does. That is a
+  separate generics feature with its own design; it does not merge `Status`
+  into `Result`, whose end-of-body rule differs.
+
+Dedicated syntax such as `T ! E` or `?T` is not proposed. It saves a few
+characters per signature, adds a second spelling for each wrapper, and `!`
+already means divergence in `-> !`.
+
+#### How the parts combine
+
+- Success returns and the failure operand together leave a body with no
+  `.ok(...)`: failure is always written, and success never is.
+- A labeled anonymous error set uses the existing failure operand unchanged.
+- Widening uses the existing assignability rule of a bare `or_return`, so no
+  propagation rule changes.
+- Nested results keep their boundaries, because the fallible layer is still a
+  `Result`: `Result(Result(int, Parse_Error), io.Error)` means what it does
+  today.
+- `errdefer`, a fallible `main`, `@(require_results)`, and `map_error` read the
+  same `Result` and `Status` as today.
+
+#### Implementation order and acceptance
+
+Build and release each part separately, specification, grammar, compiler,
+tests, and `CHANGELOG.md` together. Migrating `core` returns to part 1 is a
+separate commit. Then rewrite [config_parser.loke](examples/config_parser.loke)
+and one multi-error helper chain both ways, counting declarations and
+propagation sites, before documenting the idiom in a tutorial.
+
+Acceptance cases:
+
+- **Part 1.** In `Result(int, int)`, `return n;` succeeds and `return .err(n);`
+  fails. In `Option(Option(int))`, an `Option(int)` value wraps once. A whole
+  compatible result is not wrapped again. `return .Bad_Digit;` is diagnosed. A
+  body generic over `Result($T, $E)` that returns an `E` is rejected, and is
+  not wrapped as success in an instance where `E` happens to be assignable to
+  `T`. Also: move-only and borrowed success payloads, `errdefer` not running on
+  a wrapped return, a fallible `main`, `return;` in `Status`, and `return;`
+  rejected in `Result(Unit, E)`.
+- **Part 2.** `(left: int | right: int)` has two alternatives. Duplicate labels,
+  one alternative, and `(a | b)` as a type are rejected. A different order is a
+  different type. `(node: ^Node | end:)` has the pointer's size. A file-scope
+  variable of one is rejected, since it has no zero. `or_return` on one is
+  rejected. A failure operand constructs into an anonymous `F`. Formatting,
+  reflection, hover, and `-fmt` agree.
+- **Part 3.** Widening succeeds across orders. A missing label, the same label
+  with another payload type, a move-only place, and conversion through
+  `[dynamic]` are rejected. An overload taking the exact type wins over one that
+  needs widening. Widening is the same in compile-time evaluation, and a
+  borrowed payload keeps its provenance.
+- **Part 5.** An expanded case after explicit cases covers only the rest. A
+  case after it, a second one, and one over an enum or `any_view` subject are
+  rejected. Adding a variant whose payload lacks what the body uses is
+  diagnosed, naming the variant. A payloadless variant binds `Unit`. `return`
+  and `or_return` leave the procedure from an expansion. Over a temporary,
+  each expansion owns and drops its payload once; `&mut payload` requires a
+  writable subject. `variants_of(T)` keeps declaration order, rejects a
+  non-union, and its descriptors cannot reach runtime storage.
 
 ## Lone carriage returns in the language server
 
