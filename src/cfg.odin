@@ -1803,8 +1803,11 @@ add_foreach_ref_cleanups :: proc(graph: ^Flow_Graph, bindings: []Foreach_Binding
 	}
 }
 
+// A union argument expansion's switch is walked here too: each case's `arm` is
+// its value, and the loans the call carries are every arm's (design.md "Union
+// argument expansion").
 @(private = "file")
-walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
+walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int) {
 	enter_flow_header_scope(graph, s.init)
 	defer leave_flow_scope(graph)
 	// A switch over a temporary consumes it into the case binding; one over a
@@ -1874,10 +1877,14 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 			}
 		}
 		walk_flow_stmts(graph, c.stmts)
+		if c.arm != nil {
+			carried = prov_join(graph, carried, walk_flow_expr(graph, c.arm))
+		}
 		leave_flow_scope(graph)
 		link(graph, graph.current, merge)
 	}
 	graph.current = merge
+	return
 }
 
 // One name a case binds: the payload, or with `slot` one of its fields.
@@ -1967,6 +1974,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		walk_flow_expr(graph, v.value)
 
 	case ^Expr_Call:
+		if v.dispatch != nil {
+			return walk_flow_switch(graph, v.dispatch)
+		}
 		loans := walk_flow_call(graph, v)
 		// design.md "Diverging procedures": once its operands are evaluated, a
 		// diverging call ends the path, so nothing after it is reached. A panic's

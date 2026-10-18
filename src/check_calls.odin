@@ -12,6 +12,9 @@ call_slot_at :: proc(v: ^Expr_Call, step: int) -> int {
 
 @(private)
 check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
+	if check_union_argument_expansion(k, v, expected) {
+		return
+	}
 	defer materialize_call_receiver(k, v)
 	defer report_argument_copies(k, v)
 	v.value_category = .Value
@@ -275,6 +278,17 @@ report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 // Whether a call's result must be handled, and the declaration or group that
 // says so; an empty name means the result type requires it.
 required_result_of_call :: proc(k: ^Checker, call: ^Expr_Call) -> (name: string, required: bool) {
+	// design.md "Union argument expansion": the value is one of its calls'.
+	if call.dispatch != nil {
+		for entry in call.dispatch.cases {
+			if arm, is_call := entry.arm.(^Expr_Call); is_call {
+				if name, required = required_result_of_call(k, arm); required {
+					return
+				}
+			}
+		}
+		return "", false
+	}
 	if selected := symbol_of(k.c, call.resolution.chosen_overload); selected != nil && selected.require_results {
 		return identifier_text(k.c, selected.name), true
 	}

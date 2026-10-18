@@ -185,7 +185,7 @@ Every other predeclared name may be shadowed by a declaration like any other nam
 
 - types: `bool`, `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `uint`, `u8`, `u16`, `u32`, `u64`, `u128`, `uintptr`, `byte`, `f16`, `f32`, `f64`, `rune`, `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `any_view`, `Allocator`, and `Allocator_Error`;
 - generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `Box`, `Shared`, and `Weak`;
-- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `make`, `free_all`, `drop`, `exchange`, `box`, `try_box`, `shared`, and `try_shared`;
+- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `variants_of`, `make`, `free_all`, `drop`, `exchange`, `box`, `try_box`, `shared`, and `try_shared`;
 - [build constants](#build-constants): `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`, `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_LOG_LEVEL`, `LOKE_VENDOR`, and `LOKE_VERSION`.
 
 `type` and `move` are keywords, not predeclared names.
@@ -1677,7 +1677,7 @@ eval :: proc(e: ^Expr) -> int {
 }
 ```
 
-A case that lists several variants, and a default case, bind nothing: their variants carry different payloads. Such a case reads the subject itself, which keeps the union type. A temporary subject has no name to read, so a switch that needs the whole value there switches over a local holding it:
+A case that lists several variants, and a default case, bind nothing: their variants carry different payloads. An [expanded case](#per-variant-switch-cases), `$variant(payload)`, binds each remaining variant's payload in a copy of its own. Such a case reads the subject itself, which keeps the union type. A temporary subject has no name to read, so a switch that needs the whole value there switches over a local holding it:
 
 ```odin
 switch (v) {
@@ -1724,6 +1724,73 @@ push_back :: proc(head: ^mut Option(Box(Node)), value: int) {
 	}
 }
 ```
+
+#### Per-variant switch cases
+
+A case written `$variant(payload)` covers every variant no earlier case names, one at a time. The switch behaves as if it listed `case .name(payload):` for each of those variants, in declaration order, each with its own copy of the case's body:
+
+```odin
+Circle :: struct { radius: f64 }
+Square :: struct { side: f64 }
+impl Circle { area :: proc(self) -> f64 { return 3.14159 * self.radius * self.radius; } }
+impl Square { area :: proc(self) -> f64 { return self.side * self.side; } }
+
+Shape :: union { circle: Circle, square: Square, empty }
+
+area :: proc(shape: ^Shape) -> f64 {
+	switch (shape^) {
+	case .empty:      return 0;
+	case $variant(s): return s.area();   // checked for `.circle`, then for `.square`
+	}
+}
+```
+
+- It is written only in a switch over a union, named or anonymous, and is that switch's last case: there is at most one, `default:` cannot follow it, and it names nothing else.
+- The body is parsed once and checked once per variant it covers, as a [static `foreach`](#static-foreach-expansion) body is. A diagnostic in a copy names its variant. A variant added later is checked against the body too, so a payload that lacks what the body uses is a compile error rather than a case `default:` would absorb.
+- `variant` is a constant [`meta.Variant`](#compile-time-reflection) describing that variant, so `when` can test `variant.name` or `variant.type`. Like every reflection value it exists only during compilation. Written `$_`, it binds nothing.
+- `payload` binds as `.name(payload)` would, under [Switch ownership](#switch-ownership): it borrows from a place, owns from a temporary, and `&mut payload` is a writable place. For a payloadless variant it is the constant `Unit{}`, the value `.as(.name)` holds for one. `$variant` alone binds no payload. Field bindings are rejected, since the payloads differ in shape.
+- Otherwise each copy is an ordinary case: `return`, `break`, `continue`, `defer`, `errdefer`, and `or_return` mean in it what they mean in any case. When no variant remains, the case expands to nothing and its body is not checked.
+
+In a generic procedure the subject's type decides the copies, so one procedure reports any union however its alternatives were [widened](#widening-by-label):
+
+```odin
+report :: proc(error: $E) {
+	switch (error) {
+	case $variant(e): fmt.println("failed:", variant.name, e);
+	}
+}
+```
+
+#### Union argument expansion
+
+`f(..u)`, where `u` is a union, calls `f` with the active variant's payload as the argument named by that variant's label. It means the switch
+
+```odin
+switch (u) {
+case $variant(payload): f(<the label of variant> = payload);
+}
+```
+
+so ordinary [overload resolution](#operator-lookup-and-overload-resolution) picks, for each label, the member of a [procedure group](#explicit-procedure-overloading) whose parameter has that name:
+
+```odin
+Event :: union { key: rune, click: (x: int, y: int), quit }
+
+handle :: proc { on_key, on_click, on_quit }
+on_key   :: proc(key: rune) -> bool { ... }
+on_click :: proc(click: (x: int, y: int)) -> bool { ... }
+on_quit  :: proc(quit: Unit) -> bool { return false; }
+
+running := handle(..event);
+```
+
+- The union is the call's only written argument. The callee is any callee a call may name, a method with its receiver included.
+- Every variant is checked at compile time. A variant no member accepts, or two accept equally, is a diagnostic naming that variant. A label names a parameter only here: nothing else names an argument from a variant.
+- The operand follows [Switch ownership](#switch-ownership). A place lends its payload, so a `move` parameter rejects it. A temporary or `move(u)` gives the payload up, and the selected call takes it by `move` where its member does. A payloadless variant passes `Unit{}`, so its member takes `name: Unit`.
+- The call's value is the selected call's. Every expansion has the same result type, or none has a result; a call that [never returns](#diverging-procedures) stands in for either. A member with an [`inout` result](#inout-results) is rejected, since the expansion yields a value, and a member that [requires its result](#require_results) makes the expansion's required.
+- The operand is evaluated first, then the selected call, receiver included. Over a temporary the payload drops when that call returns.
+
+`..` over a slice or array still spreads into a [variadic parameter](#variadic-parameters); the operand's type decides, and a union is never a sequence. `f(u)` without `..` passes the union whole.
 
 #### Zero values and `@(zero=)`
 
@@ -2048,11 +2115,11 @@ Type_Info :: struct {
 
 ### Compile-time reflection
 
-`base:meta` exports two immutable compile-time reflection descriptors: `meta.Field` and `meta.Enum_Value`.
+`base:meta` exports three immutable compile-time reflection descriptors: `meta.Field`, `meta.Enum_Value`, and `meta.Variant`.
 
-`fields_of(T)` and `enum_values_of(T)` return compile-time fixed arrays of the corresponding descriptor type. Descriptors are opaque and cannot be forged. A descriptor describes only the type it was reflected from: `get` and `pointer` reject any other subject, even one with the same field, and descriptors from two types never compare equal. A `meta.Field` has `name`, `type`, and `index`: the name is a constant `string_view`, `type` is a compile-time `type` value, and `index` is the field's physical declaration index. A `meta.Enum_Value` has `name`, `value`, and `index`: `value` has the enum's backing integer type, so every member's value is exact, and `index` is the member's declaration index.
+`fields_of(T)`, `enum_values_of(T)`, and `variants_of(T)` return compile-time fixed arrays of the corresponding descriptor type, for a struct, an enum, and a union, named or anonymous. Descriptors are opaque and cannot be forged. A descriptor describes only the type it was reflected from: `get` and `pointer` reject any other subject, even one with the same field, and descriptors from two types never compare equal. A `meta.Field` has `name`, `type`, and `index`: the name is a constant `string_view`, `type` is a compile-time `type` value, and `index` is the field's physical declaration index. A `meta.Enum_Value` has `name`, `value`, and `index`: `value` has the enum's backing integer type, so every member's value is exact, and `index` is the member's declaration index. A `meta.Variant` has `name`, `type`, and `index`: the name is the variant's label, `type` is its payload type, or `Unit` for a payloadless variant, and `index` is its declaration index, which is also its tag. An [expanded switch case](#per-variant-switch-cases) binds one.
 
-Both preserve source declaration order, after conditional `when` selection. Reflection observes only declarations visible from its lookup package. Thus `fields_of(T)` contains every selected field when the lookup package declares `T`, but only public fields when reflecting from another package. In a generic body the reflection lookup package is the generic declaration's definition package, so an instantiation has the same reflected shape in every caller.
+All three preserve source declaration order, after conditional `when` selection. Reflection observes only declarations visible from its lookup package. Thus `fields_of(T)` contains every selected field when the lookup package declares `T`, but only public fields when reflecting from another package. Enum members and union variants have no visibility of their own, so every one is listed. In a generic body the reflection lookup package is the generic declaration's definition package, so an instantiation has the same reflected shape in every caller.
 
 A `meta.Field` bound by static expansion provides compiler-defined operations whose result follows that particular field's type:
 
@@ -3782,7 +3849,7 @@ for ((x in y)) {}   // condition-only loop: repeats while `x` is in `y`
 
 Except for the explicitly lazy operators `&&`, `||`, `or_else`, and the conditional expressions, expression evaluation is deterministic:
 
-- A call evaluates its receiver, if any, and then its supplied arguments from left to right. It binds those supplied values to parameters, then evaluates omitted default arguments once in parameter order. A default may read only the receiver and parameters declared to its left, so each such binding is already initialized. Each default otherwise uses the lexical scope of its procedure declaration.
+- A call evaluates its receiver, if any, and then its supplied arguments from left to right. It binds those supplied values to parameters, then evaluates omitted default arguments once in parameter order. A default may read only the receiver and parameters declared to its left, so each such binding is already initialized. Each default otherwise uses the lexical scope of its procedure declaration. A [union argument expansion](#union-argument-expansion) evaluates its operand before the call it selects, receiver included, as the switch it means evaluates its subject first.
 - A binary expression evaluates its left operand and then its right operand. An operator overload receives those already evaluated values and does not change their order.
 - Array, struct, union, map, and container literal elements are evaluated in source order. A named struct literal still uses source order rather than field declaration order.
 - A simple or multiple assignment evaluates all right-hand expressions from left to right before evaluating destination place expressions from left to right. Writes then occur from left to right, but only after every value and destination has been prepared. If a required clone fails, no destination is written. This makes swaps well-defined and prevents a failed later clone from partially updating an earlier destination; side effects already performed while evaluating an earlier right-hand expression, including an explicit `move`, are not rolled back.
@@ -4605,6 +4672,8 @@ odds := []int{1, 3, 5};
 fmt.println(sum(..odds));        // 9, passing a slice as varargs
 ```
 
+`..` before a union is a [union argument expansion](#union-argument-expansion) instead, which passes the active variant's payload to the parameter its label names.
+
 #### One result
 
 A procedure returns at most one value. `Results` is one `Result_Type`, never a list, and the result is anonymous — there is no name to fill in and no result local to assign. A procedure with a result must `return expression;` on every path that leaves it; a bare `return;` there is an error, except where the result's success carries nothing.
@@ -4741,7 +4810,7 @@ int_to_string  :: proc(i: int)  -> string {...};
 to_string :: proc{bool_to_string, int_to_string}
 ```
 
-Each member retains its ordinary name and may be called directly. A call through the group uses the [overload-resolution rules](#operator-lookup-and-overload-resolution). An unresolved tie is a compile-time error.
+Each member retains its ordinary name and may be called directly. A call through the group uses the [overload-resolution rules](#operator-lookup-and-overload-resolution). An unresolved tie is a compile-time error. A [union argument expansion](#union-argument-expansion), `group(..value)`, selects a member per variant by the parameter its label names.
 
 ```odin
 to_text :: proc{
@@ -5662,7 +5731,7 @@ The predeclared operations used by this document are:
 | `type_of(expr)` | The compile-time [`type`](#type-and-typeid) of an expression |
 | `typeid_of(T)` | The runtime [`typeid`](#type-and-typeid) constant for a compile-time type |
 | `type_info_of(id)` | read-only `^runtime.Type_Info` for a `typeid`; the table is shared static storage |
-| `fields_of(T)`, `enum_values_of(T)` | Typed [compile-time reflection](#compile-time-reflection) descriptor arrays |
+| `fields_of(T)`, `enum_values_of(T)`, `variants_of(T)` | Typed [compile-time reflection](#compile-time-reflection) descriptor arrays |
 | `assert(condition, message := "", ..args)` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string, and `args` are `any_view`s printed after it |
 | `panic(message, ..args)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string, and `args` are `any_view`s printed after it. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
 | `make`, `free_all`, `drop` | [Allocation and release](#allocators) |

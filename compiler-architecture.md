@@ -315,7 +315,7 @@ Paths below are relative to `src/`.
 | `ast_clone.odin`, `generic.odin` | Clean syntax cloning, generic inference, specialization, monomorphization, and instance caches. |
 | `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, and slot lookup contexts. |
 | `eval.odin` | Bounded typed-AST interpreter for compile-time execution. |
-| `expand.odin`, `reflect.odin` | Static `foreach`, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
+| `expand.odin`, `reflect.odin` | Static `foreach`, expanded switch cases and union argument expansion, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
 | `materialize.odin` | Read-only storage for address-requiring constants. |
 | `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations and contributing compiler-owned standard members without duplicating type identity. |
 

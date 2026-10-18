@@ -167,6 +167,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// types: naming them does not make them storable.
 		contribute_type(c, pkg, "Field", meta_field_type(c))
 		contribute_type(c, pkg, "Enum_Value", meta_enum_value_type(c))
+		contribute_type(c, pkg, "Variant", meta_variant_type(c))
 	}
 }
 

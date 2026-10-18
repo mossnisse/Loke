@@ -539,6 +539,9 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		)
 		return Flow_Info{}
 	}
+	if !expand_variant_cases(k, s, subject) {
+		return Flow_Info{}
+	}
 	erased := subject == TYPE_ANY_VIEW
 	borrows := erased || expression_is_borrowed_place(s.subject)
 	// design.md "@(packed)": over a place reached through a packed struct, a
@@ -615,7 +618,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		} else if len(entry.variant_indices) == 1 {
 			payload := union_variant_payload(k.c, subject, entry.variant_indices[0])
 			binding_type = payload == TYPE_VOID ? k.c.unit_type : payload
-			if (entry.binding.text != "" || len(entry.fields) > 0) && payload == TYPE_VOID {
+			if (entry.binding.text != "" || len(entry.fields) > 0) && payload == TYPE_VOID && entry.descriptor.aggregate == nil {
 				span := entry.binding.span if entry.binding.text != "" else entry.fields[0].name.span
 				errorf(
 					k.c, span, "L0426",
@@ -637,6 +640,9 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		}
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
+		if entry.descriptor.aggregate != nil && len(entry.variant_indices) == 1 {
+			bind_expanded_case(k, &entry, union_variant_payload(k.c, subject, entry.variant_indices[0]))
+		}
 		if len(entry.fields) == 0 {
 			entry.binding_symbol = bind_case_name(k, case_scope, entry.binding, binding_type, entry.binding_ref, borrows)
 			mark_packed_binding(k, entry.binding_symbol, entry.binding, entry.binding_ref, packed_subject)
@@ -653,7 +659,12 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 		if !resolved {
 			entry.fields = nil
 		}
+		before := len(k.c.diagnostics)
 		case_flow := check_stmts(k, entry.stmts)
+		if entry.arm != nil {
+			check_expr(k, entry.arm, s.arm_expected)
+		}
+		note_expanded_case(k, entry, before)
 		k.scope = case_scope
 
 		flow.returns ||= case_flow.returns
@@ -773,6 +784,10 @@ resolve_case_fields :: proc(k: ^Checker, entry: ^Switch_Case, payload: Type_Id, 
 
 @(private = "file")
 case_variant_index :: proc(k: ^Checker, subject: Type_Id, value: Expr) -> int {
+	// A case the parser rejected has reported itself.
+	if _, rejected := value.(^Expr_Error); rejected {
+		return -1
+	}
 	sel, is_selector := value.(^Expr_Selector)
 	if !is_selector || sel.operand != nil {
 		errorf(k.c, expr_span(value), "L0426", "a union case names a variant: `case .name:`")

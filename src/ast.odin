@@ -273,6 +273,10 @@ Expr_Call :: struct {
 	variadic_elements: []Expr,
 	variadic_spreads:  []Expr,
 	variadic_order:    []bool,
+	// `show(..answer)` over a union: the switch it stands for, whose cases carry
+	// each variant's call as their `arm` (design.md "Union argument expansion").
+	// Every later pass reads this instead of the callee and arguments.
+	dispatch: ^Stmt_Switch,
 }
 
 // The suffixes `^` and `or_return`.
@@ -971,6 +975,14 @@ Switch_Case :: struct {
 	binding_type:   Type_Id,
 	// A union switch's cases as variant indices.
 	variant_indices: []int,
+	// One copy of an expanded case, `case $variant(payload):`, which the checker
+	// makes for each variant no earlier case names: the name `$variant` binds,
+	// and the `meta.Variant` it binds to (design.md "Per-variant switch cases").
+	expanded:   Name,
+	descriptor: Const_Value,
+	// A union argument expansion's call for this variant, whose value is the
+	// whole call's (design.md "Union argument expansion"); nil in a statement.
+	arm: Expr,
 }
 
 // One field binding of a case (design.md "Inspecting a union").
@@ -992,6 +1004,13 @@ Stmt_Switch :: struct {
 	cases:      []Switch_Case,
 	// Every path enters a case: all variants covered, or a default.
 	exhaustive: bool,
+	// The cases as written, kept when an expanded case replaced `cases` with
+	// its copies, so a clone expands afresh (design.md "Per-variant switch
+	// cases").
+	written:    []Switch_Case,
+	// A union argument expansion's switch: the type its value is expected to
+	// have, which each arm is checked against.
+	arm_expected: Type_Id,
 }
 
 // `defer` or `errdefer` (design.md "defer statement").

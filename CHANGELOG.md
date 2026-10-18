@@ -49,6 +49,20 @@ checklist.
   its destination is, a last use or a temporary transfers, and the
   diagnostic for a union that does not widen names the alternative it lacks.
   See design.md [Widening by label](design.md#widening-by-label).
+- Expanded switch cases: `case $variant(payload):`, the last case of a switch
+  over a union, stands for one case per variant no earlier case names. Its body
+  is checked once per variant, so a payload lacking what the body uses is a
+  diagnostic naming that variant, and `variant` is a compile-time
+  `meta.Variant` with the label, the payload type, and the index. A payloadless
+  variant binds `Unit{}`. `variants_of(T)` returns a union's descriptors in
+  declaration order. See design.md
+  [Per-variant switch cases](design.md#per-variant-switch-cases).
+- Union argument expansion: `handle(..event)` over a union calls `handle` with
+  the active payload as the argument named by its label, so a procedure group
+  dispatches by label, `(left: int | right: int)` included. Every variant is
+  checked, a place lends its payload and a temporary or `move` gives it up,
+  and the call's value is the selected call's. See design.md
+  [Union argument expansion](design.md#union-argument-expansion).
 - `examples/orders.loke` checks orders against a stock list with anonymous
   unions: an error set per helper, widened by label into the caller's, and a
   labeled layer kept with `or_return .order`.

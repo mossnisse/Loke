@@ -1,0 +1,37 @@
+12
+9
+0
+failed: square 1 Square{side = 5}
+failed: parse 1 bad
+7 5 -1
+.some(12) .none
+not a number: text
+.ok(4) .err(.negative(-1)) .err(.empty)
+.ok(5) .err(.negative(-2))
+body left
+defer left
+errdefer right
+defer right
+body stop
+defer stop
+.ok .err(No) .ok
+owned res Res{id = 1}
+drop 1
+owned other
+drop 20
+owned none Unit{}
+borrowed res
+still held .res(Res{id = 3})
+drop 3
+ownership done
+[.circle(Circle{radius = 3}), .square(Square{side = 6}), .empty]
+16
+variant empty
+circle 0 false
+square 1 false
+empty 2 true
+0 ok
+1 gone
+static 0 n 0
+static 1 n 1
+circle right 9

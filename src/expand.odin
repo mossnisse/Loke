@@ -1,9 +1,12 @@
 // design.md "Static `foreach` expansion": the iterable folds to constants and
 // one clone of the body is checked per element, so each copy may have its own
-// static types.
+// static types. An expanded switch case and a union argument expansion clone
+// per variant the same way: design.md "Per-variant switch cases" and
+// design.md "Union argument expansion".
 package lokec
 
 import "core:fmt"
+import "core:slice"
 
 check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if len(s.bindings) == 0 {
@@ -392,4 +395,297 @@ static_slice_endpoint :: proc(k: ^Checker, endpoint: Expr, missing: i64) -> (i64
 		errorf(k.c, expr_span(endpoint), "L0454", "a static `foreach` slice endpoint does not fit in `int`")
 	}
 	return n, fits
+}
+
+// ------------------------------------------------------- expanded cases --
+
+// design.md "Per-variant switch cases": `case $variant(payload):` stands for one
+// case per variant no earlier case names, in declaration order. Each copy is an
+// ordinary case `.name(payload)` whose body is a fresh clone of the written one,
+// checked on its own as a static `foreach` body is, so nothing after the
+// checker sees an expanded case. False after a diagnostic.
+expand_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> bool {
+	position := -1
+	for entry, index in s.cases {
+		for value in entry.values {
+			if _, _, is_expanded := expanded_case_pattern(value); !is_expanded {
+				continue
+			}
+			if position >= 0 {
+				errorf(k.c, expr_span(value), "L0367", "a switch has at most one expanded case")
+				return false
+			}
+			if len(entry.values) != 1 {
+				errorf(
+					k.c, expr_span(value), "L0367",
+					"an expanded case covers every remaining variant, so it names nothing else",
+				)
+				return false
+			}
+			position = index
+		}
+	}
+	if position < 0 {
+		return true
+	}
+	written := s.cases[position]
+	if subject == TYPE_ANY_VIEW || !type_is_union(k.c, subject) {
+		errorf(
+			k.c, expr_span(written.values[0]), "L0426",
+			"an expanded case needs a union subject, and this switch is over `%s`", type_name(k.c, subject),
+		)
+		return false
+	}
+	if position != len(s.cases) - 1 {
+		next := s.cases[position + 1]
+		errorf(
+			k.c, next.span, "L0367", "%s",
+			len(next.values) == 0 ? "`default:` cannot follow an expanded case, which already covers every remaining variant" : "an expanded case covers every remaining variant, so it is the last case",
+		)
+		return false
+	}
+	descriptor, payload, ok := expanded_case_bindings(k, written.values[0])
+	if !ok {
+		return false
+	}
+
+	covered := make([dynamic]int, 0, len(s.cases), context.temp_allocator)
+	for entry in s.cases[:position] {
+		for value in entry.values {
+			if sel, is_selector := value.(^Expr_Selector); is_selector && sel.operand == nil {
+				append(&covered, union_variant_index(k.c, subject, intern_identifier(k.c, sel.name.text)))
+			}
+		}
+	}
+	s.written = s.cases
+	cases := make([dynamic]Switch_Case, 0, len(s.cases) + variant_count(k.c, subject), k.c.semantic_allocator)
+	append(&cases, ..s.cases[:position])
+	span := expr_span(written.values[0])
+	for index in 0 ..< variant_count(k.c, subject) {
+		if slice.contains(covered[:], index) {
+			continue
+		}
+		label := new(Expr_Selector, k.c.semantic_allocator)
+		label.span = span
+		label.name = Name{text = union_variant_name(k.c, subject, index), span = span}
+		values := make([]Expr, 1, k.c.semantic_allocator)
+		values[0] = label
+		body := Block{stmts = written.stmts}
+		append(&cases, Switch_Case {
+			span        = written.span,
+			values      = values,
+			stmts       = clone_block(k.c, &body).stmts,
+			binding     = payload.name,
+			binding_ref = payload.is_ref,
+			expanded    = descriptor,
+			descriptor  = variant_descriptor(k.c, subject, index),
+		})
+	}
+	s.cases = cases[:]
+	return true
+}
+
+// `$variant` or `$variant(payload)`, as the parser reads either: a `$` name,
+// alone or called.
+@(private = "file")
+expanded_case_pattern :: proc(value: Expr) -> (^Type_Poly, []Argument, bool) {
+	if poly, is_poly := value.(^Type_Poly); is_poly {
+		return poly, nil, true
+	}
+	if call, is_call := value.(^Expr_Call); is_call {
+		if poly, is_poly := call.callee.(^Type_Poly); is_poly {
+			return poly, call.args, true
+		}
+	}
+	return nil, nil, false
+}
+
+// The descriptor's name and the payload binding of an expanded case. The names
+// are checked here once rather than in every copy.
+@(private = "file")
+expanded_case_bindings :: proc(k: ^Checker, value: Expr) -> (descriptor: Name, payload: Case_Field, ok: bool) {
+	poly, args, _ := expanded_case_pattern(value)
+	descriptor = poly.name
+	if descriptor.text != "_" && reject_reserved_name(k, name_identifier(k.c, descriptor), descriptor.span) {
+		return
+	}
+	if len(args) > 1 {
+		errorf(
+			k.c, args[1].span, "L0426",
+			"an expanded case binds the whole payload, `$%s(payload)`: the payloads differ in shape, so it cannot bind their fields",
+			descriptor.text,
+		)
+		return
+	}
+	if len(args) == 1 {
+		written := args[0].value
+		if unary, is_unary := written.(^Expr_Unary); is_unary && unary.op == .Amp && unary.mutable {
+			written, payload.is_ref = unary.operand, true
+		}
+		ident, is_ident := written.(^Expr_Ident)
+		if !is_ident || args[0].name.text != "" || args[0].mode != .Value {
+			errorf(k.c, args[0].span, "L0426", "an expanded case binds its payload to a name, or to `&mut name`")
+			return
+		}
+		payload.name = Name{text = ident.name, span = ident.span, id = ident.name_id}
+	}
+	ok = true
+	return
+}
+
+// The `$variant` descriptor of an expanded case's copy, bound in its case
+// scope, and for a payloadless variant the `Unit{}` its payload binding names
+// (design.md "Per-variant switch cases").
+bind_expanded_case :: proc(k: ^Checker, entry: ^Switch_Case, payload: Type_Id) {
+	bind_static(k, Foreach_Binding{name = entry.expanded}, entry.descriptor, meta_variant_type(k.c))
+	if payload != TYPE_VOID || entry.binding.text == "" {
+		return
+	}
+	unit := new(Const_Aggregate, k.c.semantic_allocator)
+	unit.type = k.c.unit_type
+	bind_static(k, Foreach_Binding{name = entry.binding}, Const_Value{kind = .Aggregate, type_value = k.c.unit_type, aggregate = unit}, k.c.unit_type)
+	entry.binding = {}
+	entry.binding_ref = false
+}
+
+// Reported after a copy's body, so a diagnostic says which variant it was
+// checked for, as one in a static expansion names its element.
+note_expanded_case :: proc(k: ^Checker, entry: Switch_Case, before: int) {
+	if entry.descriptor.aggregate != nil && len(k.c.diagnostics) > before {
+		add_notef(
+			k.c, entry.values[0].(^Expr_Selector).span, "%s `.%s`",
+			entry.arm != nil ? "in the union argument expansion for" : "in the expanded case for",
+			entry.descriptor.aggregate.elements[META_VARIANT_NAME].text,
+		)
+	}
+}
+
+// ---------------------------------------------- union argument expansion --
+
+// The payload binding of a union argument expansion's cases; `$` keeps it out
+// of reach of written code.
+@(private = "file")
+DISPATCH_PAYLOAD :: "dispatch$payload"
+
+// design.md "Union argument expansion": `show(..answer)` over a union is
+//
+//     switch (answer) { case $variant(payload): show(<label> = payload); }
+//
+// kept on the call as `dispatch`, one case per variant whose `arm` is that
+// variant's call. The call's value is the arms' common result. False when the
+// call spreads no union, which leaves `..` to the variadic path.
+check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) -> bool {
+	spread := -1
+	for arg, index in v.args {
+		if arg.mode == .Spread {
+			spread = index
+			break
+		}
+	}
+	if spread < 0 {
+		return false
+	}
+	// The operand's type decides, and a union is never a sequence. A clone is
+	// probed, so a variadic spread is checked once, where it is bound.
+	operand := v.args[spread].value
+	probe := begin_probe(k.c)
+	probed := check_single_expr(k, clone_expr(k.c, operand))
+	end_probe(k.c, probe)
+	if probed == INVALID_TYPE || !type_is_union(k.c, probed) {
+		return false
+	}
+	v.value_category = .Value
+	v.type = INVALID_TYPE
+	if len(v.args) != 1 {
+		errorf(k.c, v.args[spread].span, "L0371", "a union argument expansion is the call's only argument")
+		return true
+	}
+	if v.args[0].name.text != "" {
+		errorf(k.c, v.args[0].name.span, "L0371", "a union argument expansion names no parameter; each variant's label does")
+		return true
+	}
+	subject := check_single_expr(k, operand)
+	if subject == INVALID_TYPE {
+		return true
+	}
+
+	// design.md "Switch ownership": a place lends its payload, and a temporary
+	// or `move(answer)` gives it up, so its call takes it by `move`.
+	consumes := !expression_is_borrowed_place(operand)
+	s := new(Stmt_Switch, k.c.semantic_allocator)
+	s.span = v.span
+	s.kind = .Pattern
+	s.subject = operand
+	s.arm_expected = expected
+	s.cases = make([]Switch_Case, variant_count(k.c, subject), k.c.semantic_allocator)
+	span := v.args[0].span
+	for &entry, index in s.cases {
+		label := union_variant_name(k.c, subject, index)
+		selector := new(Expr_Selector, k.c.semantic_allocator)
+		selector.span = span
+		selector.name = Name{text = label, span = span}
+		entry.span = v.span
+		entry.values = make([]Expr, 1, k.c.semantic_allocator)
+		entry.values[0] = selector
+		entry.binding = Name{text = DISPATCH_PAYLOAD, span = span, id = intern_identifier(k.c, DISPATCH_PAYLOAD)}
+		entry.descriptor = variant_descriptor(k.c, subject, index)
+
+		payload := new(Expr_Ident, k.c.semantic_allocator)
+		payload.span = span
+		payload.name = DISPATCH_PAYLOAD
+		payload.name_id = entry.binding.id
+		arm := new(Expr_Call, k.c.semantic_allocator)
+		arm.span = v.span
+		arm.callee = clone_expr(k.c, v.callee)
+		arm.args = make([]Argument, 1, k.c.semantic_allocator)
+		// A payloadless variant passes the `Unit{}` constant, which has no owner.
+		argument: Expr = payload
+		if consumes && union_variant_payload(k.c, subject, index) != TYPE_VOID {
+			moved := new(Expr_Move, k.c.semantic_allocator)
+			moved.span = span
+			moved.value = payload
+			argument = moved
+		}
+		arm.args[0] = Argument{span = span, name = Name{text = label, span = span}, value = argument}
+		entry.arm = arm
+	}
+	v.dispatch = s
+	check_variant_cases(k, s, subject)
+
+	// Every expansion has the same result, or none has one; a call that never
+	// returns stands in for either.
+	result := TYPE_VOID
+	decided := -1
+	for entry, index in s.cases {
+		arm := expr_base(entry.arm)
+		if arm.type == INVALID_TYPE {
+			return true
+		}
+		if arm.value_category == .Place {
+			errorf(
+				k.c, v.span, "L0371",
+				"a union argument expansion yields a value, and its call for `.%s` returns a place",
+				union_variant_name(k.c, subject, index),
+			)
+			return true
+		}
+		if arm.type == TYPE_VOID && call_diverges(k.c, entry.arm) {
+			continue
+		}
+		if decided < 0 {
+			result, decided = arm.type, index
+			continue
+		}
+		if arm.type != result {
+			errorf(
+				k.c, v.span, "L0354",
+				"a union argument expansion has one result type, but its call for `.%s` returns `%s` and for `.%s` returns `%s`",
+				union_variant_name(k.c, subject, decided), result == TYPE_VOID ? "nothing" : type_name(k.c, result),
+				union_variant_name(k.c, subject, index), arm.type == TYPE_VOID ? "nothing" : type_name(k.c, arm.type),
+			)
+			return true
+		}
+	}
+	v.type = result
+	return true
 }

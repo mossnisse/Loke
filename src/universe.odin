@@ -90,6 +90,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"typeid_of", .Typeid_Of},
 		{"fields_of", .Fields_Of},
 		{"enum_values_of", .Enum_Values_Of},
+		{"variants_of", .Variants_Of},
 		{"type_info_of", .Type_Info_Of},
 		{"free_all", .Free_All},
 		{"box", .Box_New},

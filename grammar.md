@@ -572,9 +572,12 @@ Case_Value   = Expression | Type
 // is deliberately shallow: one variant or type, then identifier bindings, no
 // nesting. Two or more bind a union payload's record fields (design.md
 // "Inspecting a union"); `&mut` binds a payload or field as a writable place
-// (design.md "Switch ownership").
+// (design.md "Switch ownership"). `$` begins an expanded case, one copy per
+// remaining variant, with at most one payload binding (design.md "Per-variant
+// switch cases").
 Branch_Pattern = "." Identifier "(" Binding_Leaf ("," Binding_Leaf)* ")"
                | Type "(" Identifier ")"
+               | "$" Identifier ("(" Binding_Leaf ")")?
 Binding_Leaf   = ("&" "mut")? Identifier
 ```
 
@@ -676,7 +679,7 @@ Element_Key  = Expression                              // field name, index, or 
 Argument_List = Argument ("," Argument)* ","?
 Argument      = Identifier "=" Named_Argument_Value    // named argument
               | "inout" Expression                     // mutable-borrow argument
-              | ".." Expression                        // variadic spread
+              | ".." Expression                        // variadic spread, or a union's expansion
               | Argument_Value
 Named_Argument_Value = "inout" Expression | Argument_Value
 Argument_Value= Expression | Type                       // runtime value or compile-time type
@@ -756,7 +759,9 @@ The productions above use the following deterministic parsing rules:
   shape `.name(binding, ...)` as a branch-local pattern, and when it is an
   `any_view`, one of the shape `Type(binding)` whose whole is not itself a
   type, so `Option(int)` stays a type case; calls of any other shape, and
-  every case of any other switch, remain expressions. A switch header binds
+  every case of any other switch, remain expressions. A case that begins with
+  `$` parses as an expanded case, so in `case $variant:` the `:` ends the case
+  label rather than annotating the `$` name. A switch header binds
   nothing, so `switch (x in set)` switches on the membership test.
 - An `Init_Statement` is a `Variable_Decl` when the comma-separated list of names
   that opens it is followed by `:`, and a `Simple_Statement` otherwise. This is

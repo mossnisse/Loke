@@ -7,6 +7,9 @@ import "core:fmt"
 
 @(private)
 emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+	if v.dispatch != nil {
+		return emit_type_switch(e, v.dispatch, as_type)
+	}
 	if call_diverges(e.c, v) {
 		return emit_diverging_call(e, v, as_type)
 	}
@@ -140,7 +143,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return "0"
 		case .None, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable,
 		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
+		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Variants_Of:
 			backend_fail(e, "an unfrozen compile-time built-in reached emission")
 			return "0"
 		}

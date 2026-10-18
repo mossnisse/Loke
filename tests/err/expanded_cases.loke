@@ -1,0 +1,53 @@
+// design.md "Per-variant switch cases": an expanded case is the last case of a
+// switch over a union, at most one, naming nothing else and binding the whole
+// payload; each copy is checked, and a diagnostic names its variant.
+package main;
+import "core:fmt";
+
+Circle :: struct { radius: int }
+Square :: struct { side: int }
+impl Circle { area :: proc(self) -> int { return self.radius; } }
+Shape :: union { circle: Circle, square: Square }
+Colour :: enum { Red, Green }
+
+area :: proc(shape: Shape) -> int {
+	switch (shape) {
+	case $variant(s): return s.area();
+	}
+}
+
+placement :: proc(shape: Shape, colour: Colour, view: any_view) {
+	switch (shape) {
+	case $v(p): fmt.println(p);
+	case .circle:
+	}
+	switch (shape) {
+	case $v(p): fmt.println(p);
+	default:
+	}
+	switch (shape) {
+	case .circle, $v(p): fmt.println(p);
+	}
+	switch (shape) {
+	case $v(a, b): fmt.println(a);
+	}
+	switch (shape) {
+	case $v(.circle): fmt.println(v);
+	}
+	switch (colour) {
+	case $v: fmt.println(v.name);
+	}
+	switch (view) {
+	case $v: fmt.println(v.name);
+	}
+}
+
+reflection :: proc() {
+	fmt.println(variants_of(Colour));
+	descriptor := variants_of(Shape)[0];
+	switch (Shape.circle({1})) {
+	case $v(_): fmt.println(v);
+	}
+}
+
+main :: proc() {}

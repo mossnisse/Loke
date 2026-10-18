@@ -160,7 +160,11 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 		index_query_expr(index, v.subject)
 		for entry in v.cases {
 			index_query_region(index, entry.span)
-			for value in entry.values { index_query_expr(index, value) }
+			// An expanded case's copies name their variants with selectors the
+			// source never wrote (design.md "Per-variant switch cases").
+			if entry.descriptor.aggregate == nil {
+				for value in entry.values { index_query_expr(index, value) }
+			}
 			for inner in entry.stmts { index_query_stmt(index, inner) }
 		}
 	case ^Stmt_Defer: index_query_stmt(index, v.stmt)
@@ -226,6 +230,15 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 		index_query_expr(index, v.lo)
 		index_query_expr(index, v.hi)
 	case ^Expr_Call:
+		// design.md "Union argument expansion": each variant's call resolved the
+		// written callee; their arguments are the expansion's own.
+		if v.dispatch != nil {
+			index_query_expr(index, v.dispatch.subject)
+			for entry in v.dispatch.cases {
+				if arm, is_call := entry.arm.(^Expr_Call); is_call { index_query_expr(index, arm.callee) }
+			}
+			return
+		}
 		index_query_expr(index, v.callee)
 		// A named argument names a parameter of the procedure the call chose.
 		callee := symbol_of(index.c, expr_base(v.callee).resolution.symbol)

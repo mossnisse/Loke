@@ -1,6 +1,6 @@
 // Compile-time reflection, `type_of`/`typeid_of`, and the `typeid` freeze pass.
 //
-// `meta.Field` and `meta.Enum_Value` are compiler-owned nominal struct types
+// `meta.Field`, `meta.Enum_Value`, and `meta.Variant` are compiler-owned nominal struct types
 // whose values are ordinary `Const_Aggregate`s, reusing the existing constant
 // representation instead of inventing a third one. A descriptor is kept out of
 // runtime storage by the `descriptor` marker on its type.
@@ -52,6 +52,24 @@ META_ENUM_NAME :: 0
 META_ENUM_VALUE :: 1
 META_ENUM_INDEX :: 2
 META_ENUM_OWNER :: 3
+
+meta_variant_type :: proc(c: ^Compiler) -> Type_Id {
+	if c.meta_variant_type != INVALID_TYPE {
+		return c.meta_variant_type
+	}
+	c.meta_variant_type = new_descriptor_type(c, "meta.Variant", []Descriptor_Field {
+		{"name", TYPE_STRING_VIEW, false},
+		{"type", TYPE_TYPE, false},
+		{"index", TYPE_INT, false},
+		{"owner", TYPE_TYPE, true},
+	})
+	return c.meta_variant_type
+}
+
+META_VARIANT_NAME :: 0
+META_VARIANT_TYPE :: 1
+META_VARIANT_INDEX :: 2
+META_VARIANT_OWNER :: 3
 
 // A descriptor names the type it was reflected from, so it describes that type
 // alone and compares equal only to itself. `hidden` keeps that member out of
@@ -107,7 +125,7 @@ type_is_compile_time_only :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // `foreach` peels it instead.
 type_is_reflection_value :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	under := type_underlying(c, id)
-	if under == TYPE_TYPE || (under != INVALID_TYPE && (under == c.meta_field_type || under == c.meta_enum_value_type)) {
+	if under == TYPE_TYPE || (under != INVALID_TYPE && (under == c.meta_field_type || under == c.meta_enum_value_type || under == c.meta_variant_type)) {
 		return true
 	}
 	if info := type_of(c, under); info != nil && info.kind == .Array {
@@ -232,6 +250,35 @@ enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id,
 		append(&elements, aggregate_const(k.c, descriptor, values))
 	}
 	return descriptor_array(k.c, descriptor, elements[:])
+}
+
+// Variants carry no visibility of their own either, for the same reasons as
+// enum members. A payloadless variant's `type` is `Unit`, the type `.as(.name)`
+// yields for it (design.md "Compile-time reflection").
+@(private = "file")
+variants_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Const_Value, bool) {
+	info := underlying_info(k.c, subject)
+	if info == nil || info.kind != .Union {
+		return INVALID_TYPE, Const_Value{}, false
+	}
+	descriptor := meta_variant_type(k.c)
+	elements := make([]Const_Value, len(info.variants), k.c.semantic_allocator)
+	for _, index in info.variants {
+		elements[index] = variant_descriptor(k.c, subject, index)
+	}
+	return descriptor_array(k.c, descriptor, elements)
+}
+
+// The `meta.Variant` describing variant `index` of `subject`, which an
+// expanded switch case binds (design.md "Per-variant switch cases").
+variant_descriptor :: proc(c: ^Compiler, subject: Type_Id, index: int) -> Const_Value {
+	payload := union_variant_payload(c, subject, index)
+	values := make([]Const_Value, 4, c.semantic_allocator)
+	values[META_VARIANT_NAME] = string_view_const(union_variant_name(c, subject, index))
+	values[META_VARIANT_TYPE] = type_const(payload == TYPE_VOID ? c.unit_type : payload)
+	values[META_VARIANT_INDEX] = int_const(c, i64(index))
+	values[META_VARIANT_OWNER] = type_const(subject)
+	return aggregate_const(c, meta_variant_type(c), values)
 }
 
 @(private = "file")
@@ -627,7 +674,7 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		return
 	}
 
-	// The remaining three take a type. `typeid_of(type_of(x))` therefore works
+	// The remaining four take a type. `typeid_of(type_of(x))` therefore works
 	// without a second spelling.
 	subject := resolve_type_syntax(k, operand)
 	if subject == INVALID_TYPE {
@@ -680,6 +727,17 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		type, value, ok := enum_values_descriptor_array(k, subject)
 		if !ok {
 			errorf(k.c, expr_span(operand), "L0451", "`enum_values_of` needs an enum type, found `%s`", type_name(k.c, subject))
+			v.type = INVALID_TYPE
+			return
+		}
+		v.type = type
+		v.is_const = true
+		v.const_value = value
+
+	case .Variants_Of:
+		type, value, ok := variants_descriptor_array(k, subject)
+		if !ok {
+			errorf(k.c, expr_span(operand), "L0451", "`variants_of` needs a union type, found `%s`", type_name(k.c, subject))
 			v.type = INVALID_TYPE
 			return
 		}

@@ -39,6 +39,18 @@
           (case (call (selector _ "circle") (ident "r")) (call (selector _ "square") (unary Amp mut (ident "s")))
           )
         )
+        (switch value
+          (subject (ident "shape"))
+          (case (selector _ "empty")
+          )
+          (case (call (poly "variant") (unary Amp mut (ident "s")))
+          )
+        )
+        (switch value
+          (subject (ident "shape"))
+          (case (poly "variant")
+          )
+        )
       )
     )
   )

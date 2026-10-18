@@ -1,0 +1,10 @@
+// design.md "Per-variant switch cases": an expanded case covers every variant,
+// so it is not the one case an `if` or `for` header names.
+package main;
+
+main :: proc() {
+	if (case $variant(payload) = value) { }
+	for (case $variant = next()) { }
+}
+
+sentinel :: proc() { }

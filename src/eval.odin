@@ -734,6 +734,9 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 		return eval_expr(ev, cond.boolean ? v.then : v.otherwise)
 
 	case ^Expr_Call:
+		if v.dispatch != nil {
+			return eval_dispatch(ev, v.dispatch)
+		}
 		return eval_call(ev, v)
 
 	case ^Expr_Composite:
@@ -3760,6 +3763,44 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 		}
 	}
 	return eval_stmts(ev, entry.stmts, true)
+}
+
+// design.md "Union argument expansion": the arm for the subject's variant, with
+// the payload bound as a case over a copy binds it.
+@(private = "file")
+eval_dispatch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> (Eval_Value, bool) {
+	subject, ok := eval_expr(ev, s.subject)
+	if !ok {
+		return Eval_Value{}, false
+	}
+	for entry in s.cases {
+		if len(entry.variant_indices) != 1 || entry.variant_indices[0] != subject.variant {
+			continue
+		}
+		if entry.binding_symbol == INVALID_SYMBOL {
+			return eval_expr(ev, entry.arm)
+		}
+		// A constant initialiser has no frame, so the payload gets one of its own.
+		frame := current_frame(ev)
+		own_frame := frame == nil
+		if own_frame {
+			frame = new(Eval_Frame, ev.alloc)
+			if frame == nil { return Eval_Value{}, false }
+			frame.site = s.span
+			frame.locals = make(map[Symbol_Id]^Eval_Value, 1, ev.alloc)
+			frame.defers = make([dynamic]^Stmt_Defer, 0, 0, ev.alloc)
+			if !eval_memory_ok(ev) { return Eval_Value{}, false }
+			append(&ev.frames, frame)
+		}
+		defer if own_frame { pop(&ev.frames) }
+		bound, copied := copy_value(ev, eval_union_payload(subject, entry.binding_type))
+		if !copied || !bind_local(ev, frame, entry.binding_symbol, bound) {
+			return Eval_Value{}, false
+		}
+		return eval_expr(ev, entry.arm)
+	}
+	eval_fail(ev, s.span, "L0341", "this union value has no variant to dispatch")
+	return Eval_Value{}, false
 }
 
 // Whether a switch subject is a place rooted in this frame's storage, which a

@@ -152,6 +152,7 @@ Compiler :: struct {
 	// numeric only after `freeze_typeids`.
 	meta_field_type:      Type_Id,
 	meta_enum_value_type: Type_Id,
+	meta_variant_type:    Type_Id,
 	// The two local region providers (`src/region.odin`), created on first use.
 	arena_type:           Type_Id,
 	scratch_type:         Type_Id,

@@ -1,0 +1,25 @@
+L0392
+@45:2
+`partial_whole` does not apply: it has no parameter named `right`
+in the union argument expansion for `.right`
+in the union argument expansion for `.stop`
+L0391
+@46:2
+`tied` is ambiguous here
+in the union argument expansion for `.left`
+L0354
+@47:14
+its call for `.left` returns `int` and for `.right` returns `string_view`
+L0371
+@48:20
+a union argument expansion is the call's only argument
+L0392
+@50:2
+`take_owned` does not apply: it takes argument 1 by `move`
+in the union argument expansion for `.owned`
+L0371
+@51:2
+its call for `.left` returns a place
+L0612
+@53:2
+the result of `kept_left` must be used

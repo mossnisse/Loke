@@ -1,0 +1,19 @@
+left 2
+right 5
+stop Unit{}
+position 3
+Handler{keys = 2, clicks = 3}
+a key a click quit
+.ok(-40) .err(Negative) .ok(0)
+6 5
+kept 1
+drop 1
+temporary, consumed: 1
+drop 2
+temporary, lent: 2
+place, lent: 3 3
+kept 3
+drop 3
+moved, consumed: 3
+payloadless, consumed: 4
+ownership done

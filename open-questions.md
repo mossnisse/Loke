@@ -707,9 +707,11 @@ These parts are open:
 ## Anonymous unions and their follow-ups (2026-10-18)
 
 A design exploration of 2026-10-17 and the proposal that followed it led to
-three adopted changes: [Success returns](design.md#success-returns),
-[Anonymous unions](design.md#anonymous-unions), and
-[Widening by label](design.md#widening-by-label). comments.md records why,
+five adopted changes: [Success returns](design.md#success-returns),
+[Anonymous unions](design.md#anonymous-unions),
+[Widening by label](design.md#widening-by-label),
+[Per-variant switch cases](design.md#per-variant-switch-cases), and
+[Union argument expansion](design.md#union-argument-expansion). comments.md records why,
 including why `Result`, `Option`, and `Status` remain the fallible boundaries
 ([Anonymous unions](comments.md#anonymous-unions)). What the proposal left
 open follows.
@@ -783,7 +785,8 @@ Open points:
   generic would need [`$` bindings inside structural types](#bindings-and-methods-on-structural-types)
   first.
 - **Syntax.** `..` in a type is new. It is the variadic spread's punctuation,
-  which [union argument expansion](#union-argument-expansion) would also reuse.
+  which [union argument expansion](design.md#union-argument-expansion) also
+  uses.
 
 The cost is visibility. The caller's full set no longer shows in its signature,
 only in hover and documentation, and a helper that adds an alternative grows
@@ -794,174 +797,32 @@ before deciding.
 
 ### Per-variant expansion
 
-Two needs recur in general-purpose programs such as interpreters and compilers
-walking a tree, event loops, protocol and actor message handlers, and state
-machines:
+[Per-variant switch cases](design.md#per-variant-switch-cases),
+[`variants_of`](design.md#compile-time-reflection), and
+[union argument expansion](design.md#union-argument-expansion) are
+implemented; comments.md records why. What is still open:
 
-- **One operation for every alternative**, such as `area()`, `span()`, or
-  reporting an error, where every payload supports the same call.
-- **A different handler for each label**, where the handlers are procedures
-  in their own right and the same handler set is dispatched from several
-  places. Labels matter here: `(left: int | right: int)` has two handlers
-  although its payloads have one type.
-
-The existing standard library and tests are not a sample of either. They hold
-almost no data unions, so their switches say nothing about how often these
-needs arise. Judge both on design merits and on representative programs
-written for the purpose; see
-[Evaluating on representative programs](#evaluating-on-representative-programs).
-
-An expanded switch case serves the first need and is the foundation. Union
-argument expansion serves the second and is defined as sugar over the
-expanded case, so it adds a spelling, not a mechanism.
-
-#### Per-variant switch cases
-
-Zig serves the first need with
-[`inline else`](https://ziglang.org/documentation/0.15.1/#Inline-Switch-Prongs),
-a switch prong expanded once per remaining tag. Loke already has the
-machinery in [static `foreach` expansion](design.md#static-foreach-expansion),
-so the proposal stays inside `switch`:
-
-```text
-area :: proc(shape: ^Shape) -> f64 {
-    switch (shape^) {
-    case $variant(s): return s.area();     // checked once per variant
-    }
-}
-
-report :: proc(error: (io: io.Error | parse: Parse_Error | net: Net_Error)) {
-    switch (error) {
-    case $variant(e): fmt.println("failed:", variant.name, e);
-    }
-}
-
-switch (event) {
-case .quit: return;
-case $variant(payload): handle(payload);   // every other variant, by payload type
-}
-```
-
-The rules:
-
-- Only in a switch over a union, named or anonymous. The case covers every
-  variant no earlier case names, so it is the last case, there is at most one,
-  and `default:` cannot follow it.
-- Its body is parsed once and checked once per covered variant after
-  substitution, as a static `foreach` body is. A diagnostic names the variant.
-  Adding a variant checks the body against the new payload, which keeps the
-  protection that `default:` gives up: a new payload without `area()` is a
-  compile error, not a silently absorbed case.
-- `variant` is a compile-time `meta.Variant` descriptor with `name`, `type`,
-  and `index`, under the rules of [compile-time reflection](design.md#compile-time-reflection):
-  immutable and never materialized at runtime. `type` is the payload type, or
-  `Unit` for a payloadless variant.
-- `payload` follows [Switch ownership](design.md#switch-ownership): it borrows
-  from a place, owns from a temporary, and `&mut payload` is a writable place.
-  A payloadless variant binds `Unit{}`, as `.as(.name)` yields `Unit`. Field
-  bindings are not accepted, since the payloads differ in shape.
-- It is an ordinary case for control flow, `defer`, `errdefer`, and
-  `or_return`.
-- The body is instantiated once per variant; the backend may merge identical
-  copies.
-
-`variants_of(T)` returns the union's `meta.Variant` descriptors in declaration
-order, beside `fields_of(T)` and `enum_values_of(T)`. Runtime reflection
-already reports `Member_Kind.Union_Variant`; this adds the compile-time
-counterpart. With it, generic code can iterate a union's shape with
-`foreach ($v in variants_of(T))`, and a library bridge from any union to a
-visitor becomes ordinary generic code: an expanded case calling one generic
-method, `visitor.visit(variant, payload)`, which overloads on the payload type
-or tests `variant.name` with `when`. Visitor slots named after the labels stay
-out of reach, because static expansion does not synthesize identifiers.
-Constructing a variant from a descriptor is left open.
-
-It works with anonymous unions and widening but needs neither. With them, one `report`
-procedure is generic over any anonymous error set, however it was widened:
-
-```text
-report :: proc(error: $E) {   // a constraint meaning "E is a union" is open
-    switch (error) {
-    case $variant(e): fmt.println("failed:", variant.name, e);
-    }
-}
-```
-
-#### Union argument expansion
-
-`show(..answer)` dispatches a union to a procedure group. It is defined as an
-expanded case that calls the callee once, with the variant's label as the
-argument name:
-
-```text
-show(..answer);
-
-// means
-switch (answer) {
-case $variant(payload): show(<the label of variant> = payload);
-}
-```
-
-Ordinary overload resolution then picks the member for each label. A label
-becomes an argument name only inside this expansion; there is no user-visible
-form that names an argument from a descriptor. Most of the rules such a
-call needs follow from the definition instead of being added: each
-variant is checked at compile time, and a variant with no handler is a
-diagnostic naming it; the operand follows switch ownership, so a place lends
-its payload and a temporary or `move(answer)` gives it up; a payloadless
-variant passes `Unit{}` to a `proc(none: Unit)` member; and one expanded union
-is the sole argument initially. The one rule the expanded case does not supply is for the
-call's value, since a switch is a statement: every expansion must have the
-same result type, or none has a result, with the existing divergence rules.
-
-On the merits:
-
-- **Labels become handler parameter names.** This is the coupling a visitor's
-  method names have with the cases it visits, and here it is checked: renaming
-  a label or a parameter is a compile error at the expansion, never a silent
-  change. One hazard remains: a new label that matches a parameter of another
-  member, with a payload type that member accepts, dispatches to it. The
-  explicit `..` keeps such groups deliberate.
-- **Handlers are procedures.** `return` and `or_return` in one leave the
-  handler, not the caller. Use a switch or an expanded case where the caller's control flow
-  is needed. The call's own result still propagates: `show(..answer) or_return`.
-- **The spelling.** `..` already spreads a sequence into variadic arguments.
-  A union is never a sequence, so the operand's type decides without
-  ambiguity, and spreading a value's active alternative into the arguments is
-  close to spreading its elements. A method spelling such as
-  `answer.dispatch(show)` would need procedure groups as values, which the
-  checker rejects today with `L0396`.
-- **The benefit.** A handler set is declared once and dispatched in one
-  expression from every site, exhaustively and by label.
-
-Build the expanded case first. Prototype union argument expansion on it and
-compare both with explicit switches in the
-[representative programs](#evaluating-on-representative-programs).
-
-`visit(answer, amount=..., message=...)` is declined, on its own costs:
-deriving named parameters from the variants needs compiler support beyond
-this expansion; every callback and its captures are evaluated though one body runs, so two
-`&mut` captures of one place conflict; and a capture literal per variant is
-longer than a case. A dyn visitor remains an idiom over an explicit switch or an
-expanded case, and `variants_of(T)` makes a generic bridge to one possible.
-
-#### Acceptance cases
-
-- **Expanded cases.** An expanded case after explicit cases covers only the
-  rest. A case after it, a second one, and one over an enum or `any_view` subject are
-  rejected. Adding a variant whose payload lacks what the body uses is
-  diagnosed, naming the variant. A payloadless variant binds `Unit`. `return`
-  and `or_return` leave the procedure from an expansion. Over a temporary,
-  each expansion owns and drops its payload once; `&mut payload` requires a
-  writable subject. `variants_of(T)` keeps declaration order, rejects a
-  non-union, and its descriptors cannot reach runtime storage.
-- **Union argument expansion.** `(left: int | right: int)` reaches
-  `proc(left: int)` and `proc(right: int)` separately. A missing handler, an ambiguous one, and
-  expansions with different result types are diagnosed, naming the variant. A
-  payloadless variant reaches `proc(name: Unit)`. A place operand is lent, and a
-  temporary or `move` operand reaches a consuming member. A whole-union member
-  of the group is not chosen by `..`, and `show(answer)` without `..` never
-  distributes.
+- **A union constraint.** `report :: proc(error: $E)` with an expanded case
+  instantiates for any `E` and is rejected inside the instance when `E` is not
+  a union. A constraint meaning "`E` is a union" would report it at the call.
+- **Constructing from a descriptor.** A `meta.Variant` describes a variant but
+  cannot build one, so generic code cannot yet map one union onto another by
+  label.
+- **Visitors.** A bridge from any union to a visitor is ordinary generic code,
+  an expanded case calling `visitor.visit(variant, payload)`, which overloads on
+  the payload type or tests `variant.name` with `when`. Visitor slots named
+  after the labels stay out of reach, because static expansion does not
+  synthesize identifiers. Whether the library should ship such a bridge waits
+  for the representative programs.
+- **More arguments.** The expanded union is a call's only written argument.
+  Passing context beside it, as in `handle(context, ..event)`, needs a rule for
+  how a label competes with positional arguments for a parameter.
+- **A lent payload meeting `move`.** Over a place, a member that takes its
+  payload by `move` fails overload resolution with the generic note that the
+  argument "is written `move(...)`". A note naming `..move(operand)` would say
+  what to write.
+- **Code size.** Each expansion is compiled once per variant, and the backend
+  does not merge identical copies yet.
 
 ### Unordered type-based sums
 
@@ -980,8 +841,7 @@ exhaustive; and constraints for generic inference, which cannot guess a unique
 
 The code in this repository is mostly the standard library and its tests, so it
 cannot show how often a general-purpose program needs these forms. Evaluate each
-on programs written for the purpose, in the current language and with the
-proposal:
+on programs written for the purpose, with and without each form:
 
 - an application that loads, parses, and serves, with helpers over several
   error domains, for success returns, anonymous unions, and widening;

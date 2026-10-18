@@ -1,0 +1,116 @@
+package main;
+import "core:fmt";
+
+// design.md "Union argument expansion": `f(..u)` calls `f` with the active
+// payload as the argument its label names, so a procedure group dispatches by
+// label, and the call's value is the selected call's.
+
+// Two labels with one payload type reach two members.
+Step :: (left: int | right: int | stop:);
+
+move_by :: proc { move_left, move_right, move_stop }
+move_left :: proc(left: int) -> int { return -left; }
+move_right :: proc(right: int) -> int { return right; }
+move_stop :: proc(stop: Unit) -> int { return 0; }
+
+trace :: proc { trace_left, trace_right, trace_stop }
+trace_left :: proc(left: int) { fmt.println("left", left); }
+trace_right :: proc(right: int) { fmt.println("right", right); }
+trace_stop :: proc(stop: Unit) { fmt.println("stop", stop); }
+
+// A method group, with its receiver, is dispatched the same way.
+Event :: union { key: rune, click: (x: int, y: int), quit }
+
+Handler :: struct { keys: int, clicks: int }
+impl Handler {
+	on_key :: proc(self: inout, key: rune) -> bool { self.keys += 1; return true; }
+	on_click :: proc(self: inout, click: (x: int, y: int)) -> bool { self.clicks += click.x + click.y; return true; }
+	on_quit :: proc(self: inout, quit: Unit) -> bool { return false; }
+	on :: proc{on_key, on_click, on_quit};
+}
+
+// A generic member takes what no other member names.
+describe :: proc { describe_key, describe_rest }
+describe_key :: proc(key: rune) -> string_view { return "a key"; }
+describe_rest :: proc(click: $T) -> string_view { return "a click"; }
+describe_quit :: proc(quit: Unit) -> string_view { return "quit"; }
+describe_all :: proc { describe_key, describe_rest, describe_quit }
+
+// The expansion inside a generic body.
+label :: proc(event: $E) -> string_view { return describe_all(..event); }
+
+// The value propagates as any call's does.
+Bad :: enum { Negative }
+validate :: proc { validate_left, validate_right, validate_stop }
+validate_left :: proc(left: int) -> Status(Bad) { if (left < 0) { return .err(.Negative); } }
+validate_right :: proc(right: int) -> Status(Bad) { if (right < 0) { return .err(.Negative); } }
+validate_stop :: proc(stop: Unit) -> Status(Bad) {}
+
+apply :: proc(step: Step) -> Result(int, Bad) {
+	validate(..step) or_return;
+	return move_by(..step) * 10;
+}
+
+// A call that never returns stands in for the result.
+must :: proc { must_left, must_right, must_stop }
+must_left :: proc(left: int) -> int { return left; }
+must_right :: proc(right: int) -> int { return right; }
+must_stop :: proc(stop: Unit) -> ! { panic("stopped"); }
+
+// Compile-time evaluation selects the same call.
+TOTAL :: move_by(..Step.left(3)) + move_by(..Step.right(8));
+
+// A place lends its payload; a temporary or `move` gives it up, and a
+// consuming member takes it. A copy adds 100 and a drop prints.
+Res :: struct { id: int }
+impl Res {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		return .ok(Res{self.id + 100});
+	}
+	release :: hook(drop) proc(self: inout Res) { if (self.id != 0) { fmt.println("drop", self.id); } }
+}
+Msg :: (res: Res | n: int);
+
+keep :: proc { keep_res, keep_n }
+keep_res :: proc(res: move Res) -> int { fmt.println("kept", res.id); return res.id; }
+keep_n :: proc(n: int) -> int { return n; }
+
+look :: proc { look_res, look_n }
+look_res :: proc(res: Res) -> int { return res.id; }
+look_n :: proc(n: int) -> int { return n; }
+
+make_msg :: proc(id: int) -> Msg { return .res(Res{id}); }
+
+ownership :: proc() {
+	{
+		fmt.println("temporary, consumed:", keep(..make_msg(1)));
+		fmt.println("temporary, lent:", look(..make_msg(2)));
+		held := make_msg(3);
+		fmt.println("place, lent:", look(..held), look(..held));
+		fmt.println("moved, consumed:", keep(..move(held)));
+		fmt.println("payloadless, consumed:", keep(..Msg.n(4)));
+	}
+	fmt.println("ownership done");
+}
+
+main :: proc() {
+	steps := [3]Step{.left(2), .right(5), .stop};
+	position := 0;
+	foreach (step in steps) {
+		trace(..step);
+		position += move_by(..step);
+	}
+	fmt.println("position", position);
+
+	handler := Handler{0, 0};
+	events := [4]Event{.key('a'), .click({1, 2}), .key('b'), .quit};
+	foreach (event in events) {
+		if (!handler.on(..event)) { break; }
+	}
+	fmt.println(handler);
+
+	fmt.println(describe_all(..Event.key('z')), label(Event.click({0, 0})), label(Event.quit));
+	fmt.println(apply(.left(4)), apply(.right(-1)), apply(.stop));
+	fmt.println(must(..Step.right(6)), TOTAL);
+	ownership();
+}

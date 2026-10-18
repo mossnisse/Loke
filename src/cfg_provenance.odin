@@ -332,6 +332,13 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 		}
 		return out
 	case ^Expr_Call:
+		if v.dispatch != nil {
+			out := prov_empty_region(graph)
+			for entry in v.dispatch.cases {
+				region_merge(&out, prov_result_region_at(graph, entry.arm, path))
+			}
+			return out
+		}
 		if result, found := graph.call_results[v]; found && len(result.region_content) > 0 {
 			out := prov_empty_region(graph)
 			matched := false
@@ -1990,6 +1997,14 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		}
 		return out
 	case ^Expr_Call:
+		// design.md "Union argument expansion": the value is one arm's.
+		if v.dispatch != nil {
+			out := prov_empty_region(graph)
+			for entry in v.dispatch.cases {
+				region_merge(&out, prov_region_of(graph, entry.arm))
+			}
+			return out
+		}
 		if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
 			set := prov_empty_region(graph)
 			set.default = true
@@ -3714,7 +3729,7 @@ prov_synthetic_call :: proc(
 prov_call_node :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
 	#partial switch v in e {
 	case ^Expr_Call:
-		return v
+		return v.dispatch == nil ? v : nil
 	case ^Expr_Index, ^Expr_Slice, ^Expr_Binary, ^Expr_Unary:
 		if expr_base(e).resolution.kind == .User_Operator {
 			return prov_operator_call(graph, e)

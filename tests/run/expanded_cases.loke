@@ -1,0 +1,194 @@
+package main;
+import "core:fmt";
+
+// design.md "Per-variant switch cases": `case $variant(payload):` stands for one
+// case per remaining variant, each checked and run with that variant's payload
+// type and its `meta.Variant`.
+
+Circle :: struct { radius: int }
+Square :: struct { side: int }
+impl Circle { area :: proc(self) -> int { return 3 * self.radius * self.radius; } }
+impl Square { area :: proc(self) -> int { return self.side * self.side; } }
+
+Shape :: union { circle: Circle, square: Square, empty }
+
+// Explicit cases come first; the expansion covers only the rest.
+area :: proc(shape: ^Shape) -> int {
+	switch (shape^) {
+	case .empty: return 0;
+	case $variant(s): return s.area();
+	}
+}
+
+// Generic over any union, named or anonymous, however it was widened.
+report :: proc(error: $E) {
+	switch (error) {
+	case $variant(e): fmt.println("failed:", variant.name, variant.index, e);
+	}
+}
+
+// `when` tests the descriptor, so one body serves differently shaped payloads.
+weight :: proc(value: (count: int | name: string_view | none:)) -> int {
+	switch (value) {
+	case $v(p):
+		when (v.type == int) { return p; }
+		else when (v.type == string_view) { return p.len(); }
+		else {
+			static_assert(type_of(p) == Unit);
+			return -1;
+		}
+	}
+}
+
+// `return`, `or_return`, `break`, and `continue` mean what they do in any case.
+first_positive :: proc(values: []Shape) -> Option(int) {
+	foreach (value in values) {
+		switch (value) {
+		case .empty: continue;
+		case $v(s):
+			if (s.area() > 10) { return .some(s.area()); }
+			if (s.area() == 0) { break; }
+		}
+	}
+	return .none;
+}
+
+Parse_Error :: (empty: | negative: int);
+
+checked :: proc(value: (number: int | text: string_view)) -> Result(int, Parse_Error) {
+	switch (value) {
+	case .number(n):
+		if (n < 0) { return .err(.negative(n)); }
+		return n;
+	case $v(_):
+		fmt.println("not a number:", v.name);
+		return .err(.empty);
+	}
+}
+
+use_checked :: proc(value: (number: int | text: string_view)) -> Result(int, Parse_Error) {
+	switch (value) {
+	case $v(p):
+		n := checked(value) or_return;
+		return n + 1;
+	}
+}
+
+// Each copy registers its own `defer` and `errdefer`.
+Refused :: enum { No }
+cleanup :: proc(step: (left: int | right: int | stop:)) -> Status(Refused) {
+	switch (step) {
+	case $v(p):
+		defer fmt.println("defer", v.name);
+		errdefer fmt.println("errdefer", v.name);
+		when (v.type == int) { if (p < 0) { return .err(.No); } }
+		fmt.println("body", v.name);
+	}
+}
+
+// A copy adds 100 and a drop prints, so a payload is neither copied nor
+// dropped twice by its expansion.
+Res :: struct { id: int }
+impl Res {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		return .ok(Res{self.id + 100});
+	}
+	release :: hook(drop) proc(self: inout Res) { if (self.id != 0) { fmt.println("drop", self.id); } }
+}
+Held :: (res: Res | other: Res | none:);
+
+make_held :: proc(id: int) -> Held {
+	if (id == 0) { return .none; }
+	if (id < 10) { return .res(Res{id}); }
+	return .other(Res{id});
+}
+
+ownership :: proc() {
+	{
+		switch (make_held(1)) {
+		case $v(owned): fmt.println("owned", v.name, owned);
+		}
+		switch (make_held(20)) {
+		case $v(owned): fmt.println("owned", v.name);
+		}
+		switch (make_held(0)) {
+		case $v(owned): fmt.println("owned", v.name, owned);
+		}
+		held := make_held(3);
+		switch (held) {
+		case $v(borrowed): fmt.println("borrowed", v.name);
+		}
+		fmt.println("still held", held);
+	}
+	fmt.println("ownership done");
+}
+
+// `&mut payload` writes the subject's own storage.
+bump :: proc(shape: ^mut Shape) {
+	switch (shape^) {
+	case .circle(&mut c): c.radius += 1;
+	case $v(&mut other):
+		when (v.type == Square) { other.side *= 2; }
+	}
+}
+
+// Compile-time evaluation runs the selected copy.
+AREA :: area_of(.square({4}));
+area_of :: proc(shape: Shape) -> int {
+	switch (shape) {
+	case $v(s):
+		when (v.type == Unit) { return 0; }
+		else { return s.area(); }
+	}
+}
+
+main :: proc() {
+	shapes := [3]Shape{.circle({2}), .square({3}), .empty};
+	foreach (&mut shape in shapes) {
+		fmt.println(area(&shape));
+	}
+	report(Shape.square({5}));
+	report((io: int | parse: string_view).parse("bad"));
+	fmt.println(weight(.count(7)), weight(.name("seven")), weight(.none));
+	fmt.println(first_positive(shapes[:]), first_positive(shapes[2:]));
+	fmt.println(checked(.number(4)), checked(.number(-1)), checked(.text("x")));
+	fmt.println(use_checked(.number(4)), use_checked(.number(-2)));
+	fmt.println(cleanup(.left(1)), cleanup(.right(-1)), cleanup(.stop));
+	ownership();
+	bump(&mut shapes[0]);
+	bump(&mut shapes[1]);
+	bump(&mut shapes[2]);
+	fmt.println(shapes);
+	fmt.println(AREA);
+
+	// `$variant` alone binds no payload.
+	switch (shapes[2]) {
+	case $v: fmt.println("variant", v.name);
+	}
+
+	// `variants_of` lists every variant in declaration order.
+	foreach ($v in variants_of(Shape)) {
+		fmt.println(v.name, v.index, v.type == Unit);
+	}
+	foreach ($v, $i in variants_of((ok: int | gone:)).indexed()) {
+		fmt.println(i, v.name);
+	}
+
+	// In a static expansion each element's copy expands on its own.
+	foreach ($i in 0 ..< 2) {
+		value: (n: int | none:) = .n(i);
+		switch (value) {
+		case $v(p): fmt.println("static", i, v.name, p);
+		}
+	}
+
+	// A nested expansion binds its own descriptor.
+	outer: Shape = .circle({1});
+	inner: (left: int | right: int) = .right(9);
+	switch (outer) {
+	case $o(_):
+		switch (inner) {
+		case $i(p): fmt.println(o.name, i.name, p);
+		}
+	}
+}

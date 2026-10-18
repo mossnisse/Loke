@@ -1438,9 +1438,16 @@ parse_if :: proc(p: ^Parser) -> Stmt {
 @(private = "file")
 parse_case_header :: proc(p: ^Parser) -> (pattern: Expr, subject: Expr, ok: bool) {
 	advance(p) // `case`
+	// design.md "Per-variant switch cases": an expanded case covers every
+	// variant, so it means nothing as the one case of a header.
+	expanded := at(p, .Dollar)
 	p.type_value = true
 	pattern = parse_expr(p)
 	p.type_value = false
+	if expanded && !expr_has_error(pattern) {
+		errorf(p.c, expr_span(pattern), "L0245", "an expanded case covers every variant, so it is written in a `switch`, not a `case` header")
+		pattern = error_expr(p, expr_span(pattern))
+	}
 	_, assigned := expect(p, .Assign, "L0245", "`=` and the value the pattern matches")
 	subject = parse_expr(p)
 	ok = assigned && !expr_has_error(pattern) && !expr_has_error(subject)
@@ -1830,6 +1837,17 @@ parse_switch_case :: proc(p: ^Parser) -> Switch_Case {
 		bad_label = true
 	} else if start.kind == .Case && !at(p, .Colon) {
 		for {
+			// `case $variant:` is an expanded case with no payload binding, and
+			// its `:` ends the case rather than annotating the `$` name
+			// (design.md "Per-variant switch cases").
+			if at(p, .Dollar) && peek_token(p, 1).kind == .Ident && peek_token(p, 2).kind == .Colon {
+				lo := advance(p).lo
+				poly := new_expr(p, Type_Poly, lo)
+				poly.name = name_of(p, advance(p))
+				poly.span.hi = p.last.hi
+				append(&values, poly)
+				break
+			}
 			// A case may name a type, for an `any_view` subject; the subject's
 			// type decides what a case names (design.md "switch statement").
 			p.type_value = true

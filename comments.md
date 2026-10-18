@@ -608,6 +608,72 @@ is, so it is widened without a copy. The conversion does not reach through conta
 `[dynamic]` of the wider union has a different element size; that rebuilds the
 container, which is a loop the program writes.
 
+### Per-variant switch cases
+
+Interpreters walking a tree, protocol handlers, and error reporters often do
+the same thing for every alternative: call `area()`, print the payload, or
+report the label. Without help that is one case per variant whose bodies differ
+only in the payload type, or a `default:` that cannot touch the payload and
+silently absorbs a variant added later. [An expanded
+case](design.md#per-variant-switch-cases) writes the body once and keeps the
+check: each copy is checked against its own payload, so a new variant whose
+payload lacks what the body uses is a diagnostic naming it.
+
+It stays inside `switch` rather than adding a construct. A case already binds
+a payload under switch ownership, and a static `foreach` already checks one
+body per element; the expanded case is those two rules together, so it
+inherits their ownership, diagnostics, and control flow instead of defining
+its own. Zig's `inline else` does the same for its switch prongs; here the `$`
+marks a compile-time binding as it does in a static `foreach` header.
+
+It comes last and covers the rest, because a case that matched some variants
+before the explicit ones would make the explicit cases' coverage depend on
+order. Field bindings are rejected because the payloads differ in shape. A
+payloadless variant binds `Unit{}` so that one body can name `payload` for
+every variant, the value `.as(.name)` already gives such a variant.
+
+`variant` is a compile-time descriptor rather than a name the body can use as a
+label, since static expansion never synthesizes identifiers. `when` over
+`variant.name` or `variant.type` covers the cases that differ. `variants_of(T)`
+is the same descriptor as an array, for generic code that walks a union's
+shape the way `fields_of` walks a record's.
+
+### Union argument expansion
+
+A handler set dispatched from several places, such as an event loop's
+handlers or a message protocol's, otherwise repeats the same switch at every
+site. [`handle(..event)`](design.md#union-argument-expansion) dispatches it in
+one expression, exhaustively and by label, to an ordinary procedure group.
+
+It is defined as an expanded case calling the callee with the label as the
+argument name, so it adds a spelling, not a mechanism. Ownership, exhaustive
+checking, a payloadless variant's `Unit{}`, and the diagnostic naming a
+variant without a handler all follow from that definition. The one rule the
+switch does not supply is the call's value: every expansion has one result
+type, since a call has one type.
+
+Labels become parameter names. That is the coupling a visitor's method names
+have with the cases it visits, but checked: renaming a label or a parameter is
+a compile error at the expansion. It is also why `(left: int | right: int)`
+reaches two members although both payloads are `int`; dispatch by payload type
+could not tell them apart. One hazard remains: a new label that matches a
+parameter of another member, with a payload type that member accepts,
+dispatches to it. The explicit `..` keeps such a group deliberate.
+
+The union is the only written argument, so a label never competes with a
+positional argument for a parameter. Handlers are procedures, so `return` and
+`or_return` in one leave the handler, not the caller; a switch or an expanded
+case is the form for the caller's control flow. A member returning a place is
+rejected, because each expansion would name a different place.
+
+`..` was chosen over a method such as `answer.dispatch(show)`, which would need
+procedure groups as values. A union is never a sequence, so the operand's type
+decides between spreading and expanding. A visitor written as
+`visit(answer, left = ..., right = ...)` was declined: deriving its parameters
+needs compiler support beyond this expansion, every callback and its captures
+are evaluated though one body runs, so two `&mut` captures of one place
+conflict, and a capture literal per variant is longer than a case.
+
 ### Distinct types
 
 A `distinct` type inherits comparisons but no other operators by default.
@@ -712,8 +778,8 @@ attach similar syntax to a different trigger and complicate initialization.
 
 ### Reflection beyond fields and enum values
 
-`fields_of` and `enum_values_of` cover data shape used by serialization and
-bindings. Reflecting procedures, parameters, requirements, and attributes would
+`fields_of`, `enum_values_of`, and `variants_of` cover data shape used by
+serialization, bindings, and expanded switch cases. Reflecting procedures, parameters, requirements, and attributes would
 need more descriptors and lookup rules without a demonstrated consumer.
 Additional reflection can be introduced when an actual tool needs it.
 

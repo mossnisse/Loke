@@ -652,8 +652,10 @@ or_match :: proc(e: ^Emitter, matched, test: string) -> string {
 
 // A type switch dispatches on a union's tag or an `any_view`'s `typeid`. A case
 // binds at the variant's type, or at the subject's type for several or default.
-@(private = "file")
-emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
+// A union argument expansion's switch also yields the value of the arm that ran,
+// at `result` (design.md "Union argument expansion").
+@(private)
+emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> string {
 	push_scope(e, nil)
 	if s.init != nil {
 		emit_stmt(e, s.init, lends = true)
@@ -681,6 +683,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		// A produced subject is the switch's to drop; a named place is borrowed.
 		consumes = !expression_is_borrowed_place(s.subject)
 	}
+	joined := result != TYPE_VOID && result != INVALID_TYPE ? temporary_slot(e, result) : ""
 	done := new_label(e, "typeswitch.done")
 	bodies, tests, order, fallback := switch_labels(e, s, "typecase", done)
 	defer delete(order)
@@ -725,6 +728,12 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 			}
 		}
 		emit_statements(e, entry.stmts)
+		if entry.arm != nil {
+			yielded := emit_expr(e, entry.arm)
+			if joined != "" && !e.terminated {
+				store(e, result, yielded, joined)
+			}
+		}
 		pop_scope(e)
 		branch(e, done)
 	}
@@ -732,6 +741,10 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	place_label(e, done)
 	debug_mark_end(e, s.span)
 	pop_scope(e)
+	if joined == "" || is_large_value(e, result) {
+		return joined
+	}
+	return load_place(e, result, joined)
 }
 
 @(private = "file")

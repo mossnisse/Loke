@@ -1,0 +1,55 @@
+// design.md "Union argument expansion": each variant's call is checked, and a
+// diagnostic names the variant. The union is the only argument, a place lends
+// its payload, every call has one result type, the value is not a place, and a
+// member that requires its result requires the expansion's.
+package main;
+import "core:fmt";
+
+Step :: (left: int | right: int | stop:);
+
+partial :: proc { partial_left, partial_whole }
+partial_left :: proc(left: int) {}
+partial_whole :: proc(step: Step) {}
+
+tied :: proc { tied_a, tied_b, tied_right, tied_stop }
+tied_a :: proc(left: int, x := 0) {}
+tied_b :: proc(left: int, y := 1) {}
+tied_right :: proc(right: int) {}
+tied_stop :: proc(stop: Unit) {}
+
+mixed :: proc { mixed_left, mixed_right, mixed_stop }
+mixed_left :: proc(left: int) -> int { return left; }
+mixed_right :: proc(right: int) -> string_view { return "right"; }
+mixed_stop :: proc(stop: Unit) -> int { return 0; }
+
+Owned :: move_only struct { id: int }
+Held :: (owned: Owned | none:);
+take :: proc { take_owned, take_none }
+take_owned :: proc(owned: move Owned) {}
+take_none :: proc(none: Unit) {}
+
+Cell :: struct { value: int }
+slot :: proc { slot_left, slot_right, slot_stop }
+slot_left :: proc(left: int) -> inout int { return inout CELL.value; }
+slot_right :: proc(right: int) -> inout int { return inout CELL.value; }
+slot_stop :: proc(stop: Unit) -> inout int { return inout CELL.value; }
+CELL: Cell;
+
+kept :: proc { kept_left, kept_right, kept_stop }
+@(require_results) kept_left :: proc(left: int) -> int { return left; }
+kept_right :: proc(right: int) -> int { return right; }
+kept_stop :: proc(stop: Unit) -> int { return 0; }
+
+main :: proc() {
+	step: Step = .left(1);
+	partial(..step);
+	tied(..step);
+	fmt.println(mixed(..step));
+	fmt.println(mixed(..step, 2));
+	held: Held = .none;
+	take(..held);
+	slot(..step);
+	partial(step);
+	kept(..step);
+	_ = kept(..step);
+}

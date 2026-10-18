@@ -25,7 +25,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_layout_builtin(k, v, ident, sym.builtin)
 	case .Is_Copyable:
 		check_is_copyable_builtin(k, v, ident)
-	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
+	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Variants_Of:
 		check_reflection_builtin(k, v, ident, sym.builtin)
 	case .Make, .Try_Make:
 		check_make_builtin(k, v, sym.builtin == .Try_Make)

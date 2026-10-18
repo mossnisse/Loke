@@ -395,6 +395,7 @@ Builtin_Kind :: enum {
 	Typeid_Of,
 	Fields_Of,
 	Enum_Values_Of,
+	Variants_Of,
 	// design.md "Allocators" and "Allocation failure": the plain forms follow
 	// the allocator's failure policy and the `try_` forms return the error;
 	// `allocation_builtin` pairs them. `free_all` lowers to the provider's reset

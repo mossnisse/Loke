@@ -610,8 +610,9 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		n.kind = v.kind
 		n.init = clone_stmt(c, v.init)
 		n.subject = clone_expr(c, v.subject)
-		n.cases = clone_slice(c, v.cases)
-		for entry, index in v.cases {
+		written := v.written != nil ? v.written : v.cases
+		n.cases = clone_slice(c, written)
+		for entry, index in written {
 			n.cases[index] = Switch_Case {
 				span    = entry.span,
 				values  = clone_exprs(c, entry.values),

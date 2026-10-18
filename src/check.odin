@@ -3908,6 +3908,10 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		return Flow_Info{}
 	}
 
+	// design.md "Per-variant switch cases": reported for any other subject.
+	if !expand_variant_cases(k, s, subject) {
+		return Flow_Info{}
+	}
 	seen := make([dynamic]Const_Value, 0, 8, context.temp_allocator)
 	covered := make(map[u32]bool, 0, context.temp_allocator)
 	has_default := false

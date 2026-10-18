@@ -1,0 +1,34 @@
+L0363
+@15:27
+`Square` has no field or member `area`
+in the expanded case for `.square`
+L0367
+@22:2
+so it is the last case
+L0367
+@26:2
+`default:` cannot follow an expanded case
+L0367
+@29:16
+so it names nothing else
+L0426
+@32:13
+cannot bind their fields
+L0426
+@35:10
+binds its payload to a name, or to `&mut name`
+L0426
+@38:7
+needs a union subject, and this switch is over `Colour`
+L0426
+@41:7
+this switch is over `any_view`
+L0451
+@46:26
+`variants_of` needs a union type, found `Colour`
+L0453
+@47:2
+`meta.Variant` exists only during compilation
+L0453
+@49:26
+in the expanded case for `.circle`
