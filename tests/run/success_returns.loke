@@ -89,6 +89,16 @@ work :: proc(fail: bool) -> Result(int, Parse_Error) {
 	return 42;
 }
 
+// A concrete result keeps the shorthand in a generic body, an inline
+// definition in it included, as in an ordinary one.
+concrete_generic :: proc(ignored: $T) -> Result([size_of(enum { A, B })]u8, int) {
+	return {};
+}
+
+concrete :: proc() -> Result([size_of(enum { A, B })]u8, int) {
+	return {};
+}
+
 double :: proc(n: int) -> Option(int) {
 	return n * 2;
 }
@@ -115,5 +125,6 @@ main :: proc() -> Status(Parse_Error) {
 	_ = work(true);
 	fmt.println(steps);
 	fmt.println(DOUBLED);
+	fmt.println(concrete_generic(1) == concrete());
 	return;
 }

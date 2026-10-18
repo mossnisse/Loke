@@ -1870,6 +1870,50 @@ full gate. Its leftover compiler process was stopped. Reproduction artifacts
 are ignored under `tests/tmp/review-*.loke`. Heading citations and local links
 were checked after recording these findings.
 
+## Success return and anonymous union fix commit review (2026-10-18)
+
+Reviewed `d33722b`, **Fix success return and anonymous union review findings**.
+The original array-length reproduction is rejected, the trailing `|` is an
+intentional specification change with run and syntax coverage, and the shared
+payload resolver and selector initialization preserve the existing contracts.
+
+Two new P2 regressions in the shared name walk, both **fixed** since:
+
+- Generic bindings written with `$` were ignored, so `Result($T, $E)` turned an
+  error value into a success where the former walk rejected it.
+- Inline type definitions counted as generic dependencies, so a concrete result
+  using `size_of(enum { A, B })` lost the success-return shorthand inside an
+  unrelated generic procedure.
+
+**Fix**: `type_syntax_any_name` in [ast.odin](src/ast.odin) now hands every
+identifier, `$` name, and inline definition to its caller's callback instead
+of deciding for it. Erasure keeps its policies: a `$` name is no match and a
+declared body is one, conservatively. Success returns treat a `$` name as a
+generic argument and walk an inline definition's written types and values, so
+only a definition that names a binding, such as `union { a: T, b: u8 }` in a
+`size_of`, makes the result generic. `tests/err/success_returns` covers both
+rejections, and `tests/run/success_returns` returns `{}` from the same concrete
+inline-enum result in a generic and an ordinary procedure.
+
+Both were reproduced using fresh compiler builds from this commit and its
+parent, `f5ee2ff`. The first changed from rejection to a successful `.ok(2)`;
+the second changed from a successful build to L0424. Sharing traversal is
+appropriate, but erasure's policies for `$` nodes and unknown declaration
+bodies are not the success-return policies. Keep those decisions with their
+callers. No additional complexity-only finding was confirmed; the two applied
+payload/selector simplifications reduce duplication without a new layer.
+
+The review itself applied no implementation fixes. Reproductions and the
+archived parent sources remain ignored under `tests/tmp/review-fix-*`. Validation used freshly
+built compiler and LSP binaries: 134 compiler unit tests and 43 LSP unit tests
+passed, along with eight integration suites covering executable programs,
+packages, diagnostics, package diagnostics, syntax recovery, and three LSP
+behavior checks. The updated anonymous-union run program passed directly, and
+the original array-length reproduction now reports the generic-result error.
+Heading citations and local documentation links were checked after recording
+these findings. The full integration suite was not rerun; the earlier review's
+debugger-test crash remains outside this verification.
+
 ## Lone carriage returns in the language server
 
 The LSP source review of 2026-10-16 found two line-ending problems in

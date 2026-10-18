@@ -49,6 +49,16 @@ generic_length :: proc($N: int, error: [2]int) -> Result([N + 1]int, [2]int) {
 	return error;
 }
 
+// A `$` name in the result is a generic argument too.
+generic_dollar :: proc(value: $T, error: $E) -> Result($T, $E) {
+	return error;
+}
+
+// An inline definition depends on `T` through what is written inside it.
+generic_inline :: proc(value: $T, error: [2]int) -> Result([size_of(union { a: T, b: u8 })]u8, [2]int) {
+	return error;
+}
+
 borrowed :: proc(c: Connection) -> Option(Connection) {
 	return c;
 }
@@ -62,4 +72,6 @@ main :: proc() {
 	_ = generic_error(1, 2);
 	_ = generic_value(1, "x");
 	_ = generic_length(1, [2]int{});
+	_ = generic_dollar(1, 2);
+	_ = generic_inline(1, [2]int{});
 }

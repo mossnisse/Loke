@@ -28,9 +28,15 @@ cannot return `Status(Parse_Error)` with `Parse_Error`
 L0310
 @49:9
 cannot return `Result([2]int, [2]int)` with `[2]int`
+L0310
+@54:9
+cannot return `Result(int, int)` with `int`
+L0310
+@59:9
+cannot return `Result([16]u8, [2]int)` with `[2]int`
 L0502
-@53:9
+@63:9
 `Connection` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
 L0526
-@58:9
+@68:9
 this string view cannot be returned: `s` ends when this procedure returns

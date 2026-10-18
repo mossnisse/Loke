@@ -659,8 +659,14 @@ dyn_slot_is_compatible :: proc(k: ^Checker, requirement: Requirement, subject: I
 @(private = "file")
 type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 	name := name
-	return type_syntax_any_name(e, &name, proc(data: rawptr, ident: ^Expr_Ident) -> bool {
-		return ident.name_id == (^Identifier_Id)(data)^
+	return type_syntax_any_name(e, &name, proc(data: rawptr, node: Expr) -> bool {
+		#partial switch v in node {
+		case ^Expr_Ident:
+			return v.name_id == (^Identifier_Id)(data)^
+		case ^Type_Poly:
+			return false
+		}
+		return true // a declared body, conservatively
 	})
 }
 

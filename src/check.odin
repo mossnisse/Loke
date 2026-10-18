@@ -2691,8 +2691,9 @@ success_selector :: proc(k: ^Checker, result: Type_Id, index: int, at: Span) -> 
 }
 
 // Whether type syntax names a generic argument bound in `scope`, as
-// `Result(T, Error)` or `[N + 1]int` does in an instance generic over `T` or
-// `N`. Outside an instance nothing is bound, so nothing is walked.
+// `Result(T, Error)`, `Result($T, Error)`, or `[N + 1]int` does in an instance
+// generic over `T` or `N`. Outside an instance nothing is bound, so nothing is
+// walked.
 @(private = "file")
 type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
 	in_instance := false
@@ -2702,16 +2703,57 @@ type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
 	if !in_instance {
 		return false
 	}
-	Lookup :: struct {
-		k:     ^Checker,
-		scope: ^Scope,
+	lookup := Generic_Lookup{k = k, scope = scope}
+	return type_syntax_any_name(e, &lookup, names_generic_binding)
+}
+
+@(private = "file")
+Generic_Lookup :: struct {
+	k:     ^Checker,
+	scope: ^Scope,
+}
+
+// A `$` name is a generic argument. An inline definition depends on one only
+// through the types and values written inside it, such as `struct { x: T }` in
+// `size_of`, so those are walked rather than assumed (design.md "Success
+// returns").
+@(private = "file")
+names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
+	lookup := (^Generic_Lookup)(data)
+	any_of :: proc(e: Expr, data: rawptr) -> bool {
+		return type_syntax_any_name(e, data, names_generic_binding)
 	}
-	lookup := Lookup{k = k, scope = scope}
-	return type_syntax_any_name(e, &lookup, proc(data: rawptr, ident: ^Expr_Ident) -> bool {
-		lookup := (^Lookup)(data)
-		symbol := symbol_of(lookup.k.c, lookup_symbol(lookup.scope, identifier_of(lookup.k.c, ident)))
+	#partial switch v in node {
+	case ^Expr_Ident:
+		symbol := symbol_of(lookup.k.c, lookup_symbol(lookup.scope, identifier_of(lookup.k.c, v)))
 		return symbol != nil && symbol.generic_binding
-	})
+	case ^Type_Poly:
+		return true
+	case ^Type_Record:
+		for field in v.fields {
+			if any_of(field.type, data) {
+				return true
+			}
+		}
+		for variant in v.variants {
+			if any_of(variant.type, data) {
+				return true
+			}
+		}
+	case ^Type_Enum:
+		if any_of(v.backing, data) {
+			return true
+		}
+		for field in v.fields {
+			if any_of(field.value, data) {
+				return true
+			}
+		}
+	case ^Expr_Proc:
+		return any_of(v.signature, data)
+	}
+	// An interface describes requirements, not a layout.
+	return false
 }
 
 install_symbols :: proc(scope: ^Scope, c: ^Compiler, symbols: []Symbol_Id) {

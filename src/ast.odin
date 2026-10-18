@@ -1311,21 +1311,22 @@ destroy_ast :: proc(f: ^File) {
 	virtual.arena_destroy(&f.arena)
 }
 
-// What `type_syntax_any_name` asks of each identifier, with the caller's data.
-Name_Match :: proc(data: rawptr, ident: ^Expr_Ident) -> bool
+// What `type_syntax_any_name` asks of each node it does not walk itself, with
+// the caller's data: an `Expr_Ident`, a `$` name (`Type_Poly`), or an inline
+// definition (`Expr_Proc`, `Type_Record`, `Type_Enum`, `Type_Interface`). Each
+// caller decides what a `$` name and a declared body mean for its question.
+Name_Match :: proc(data: rawptr, node: Expr) -> bool
 
-// Whether type syntax holds an identifier `matches` accepts, through the
-// expressions a type may contain, such as an array length. Syntax that
-// declares its own body, an inline record or procedure, counts as a match,
-// conservatively.
+// Whether type syntax holds a node `matches` accepts, through the expressions a
+// type may contain, such as an array length.
 type_syntax_any_name :: proc(e: Expr, data: rawptr, matches: Name_Match) -> bool {
 	if e == nil {
 		return false
 	}
 	switch v in e {
-	case ^Expr_Ident:
-		return matches(data, v)
-	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly, ^Expr_Proc_Group, ^Expr_Propagated_Error:
+	case ^Expr_Ident, ^Type_Poly, ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
+		return matches(data, e)
+	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Expr_Proc_Group, ^Expr_Propagated_Error:
 		return false
 	case ^Type_Pointer:
 		return type_syntax_any_name(v.elem, data, matches)
@@ -1418,8 +1419,6 @@ type_syntax_any_name :: proc(e: Expr, data: rawptr, matches: Name_Match) -> bool
 			}
 		}
 		return false
-	case ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
-		return true // conservatively
 	}
 	return false
 }
