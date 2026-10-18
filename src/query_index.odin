@@ -316,6 +316,8 @@ index_query_expr :: proc(index: ^Query_Index, expr: Expr) {
 			for symbol in field.symbols { index_query_binding(index, symbol, field.span, field.attributes) }
 			index_query_expr(index, field.type)
 		}
+	case ^Type_Anon_Union:
+		for variant in v.variants { index_query_expr(index, variant.type) }
 	case ^Type_Enum:
 		index_query_expr(index, v.backing)
 		for field in v.fields {

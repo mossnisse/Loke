@@ -1,0 +1,66 @@
+// design.md "Anonymous unions": `(label: Type | label:)` is an ordinary union
+// with structural identity. It is built contextually or through an alias,
+// switched over, compared, printed, stored, and copied as a named union is;
+// `(node: ^Node | end:)` is one address; and the failure operand wraps into
+// one used as a `Result`'s error.
+package main;
+import "core:fmt";
+
+Io_Error :: enum { Gone }
+Parse_Error :: enum { Bad_Digit }
+Node :: struct { value: int }
+
+Either :: (left: int | right: string);
+Link :: (node: ^Node | end:);
+
+pick :: proc(flag: bool) -> (left: int | right: string) {
+	if (flag) { return .left(1); }
+	return .right("two".copy());
+}
+
+show :: proc(e: Either) {
+	switch (e) {
+	case .left(n): fmt.println("left", n);
+	case .right(s): fmt.println("right", s);
+	}
+}
+
+read :: proc(fail: bool) -> Result(int, Io_Error) {
+	if (fail) { return .err(.Gone); }
+	return 7;
+}
+
+parse :: proc(n: int) -> Result(int, Parse_Error) {
+	if (n > 100) { return .err(.Bad_Digit); }
+	return n * 10;
+}
+
+load :: proc(fail: bool, big: bool) -> Result(int, (io: Io_Error | parse: Parse_Error)) {
+	n := read(fail) or_return .io;
+	return parse(n * 100 if big else n) or_return .parse;
+}
+
+LEFT :: Either.left(3);
+
+main :: proc() {
+	show(pick(true));
+	show(pick(false));
+	make_left := Either.left;
+	written: (left: int | right: string) = make_left(5);
+	show(written);
+	fmt.println(written == Either.left(5), written == LEFT);
+	fmt.println(load(false, false), load(true, false), load(false, true));
+	fmt.println(size_of(Link) == size_of(^Node));
+	node := Node{value = 9};
+	link: Link = .node(&node);
+	if (case .node(p) = link) { fmt.println(p.value); }
+	items: [dynamic]Either = {};
+	items.append(LEFT);
+	items.append(.right("r".copy()));
+	copied := items.clone();
+	fmt.println(items, copied);
+	fmt.println(written.as(.left), written.as(.right));
+	states: map[string](on: | off:) = {};
+	states["a"] = .on;
+	fmt.println(states["a"]);
+}

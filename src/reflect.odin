@@ -515,6 +515,19 @@ typeid_sort_key_walk :: proc(
 		}
 		return strings.to_string(b)
 	}
+	// The ordered labels plus each payload's own key, the vector
+	// `anon_union_type` interns on.
+	if info.anonymous_union {
+		b := strings.builder_make(c.semantic_allocator)
+		strings.write_string(&b, "anon-union")
+		for payload, index in info.variants {
+			fmt.sbprintf(&b, ":v%s", identifier_text(c, info.variant_names[index]))
+			if payload != TYPE_VOID {
+				fmt.sbprintf(&b, "{%s}", typeid_sort_key_walk(c, payload, memo, visiting))
+			}
+		}
+		return strings.to_string(b)
+	}
 	// A `dyn` type carries no symbol of its own; the erased interface and its
 	// arguments are the identity.
 	if info.dyn_interface != INVALID_SYMBOL {

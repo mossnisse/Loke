@@ -1246,7 +1246,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	case ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
-	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
+	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Anon_Union, ^Type_Enum, ^Type_Interface:
 	}
 	backend_fail(e, "an unresolved expression reached emission")
 	return "0"

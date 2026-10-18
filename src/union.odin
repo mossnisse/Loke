@@ -63,6 +63,51 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 	resolve_union_failure(k, info, value)
 }
 
+// design.md "Anonymous unions": `(name: Type | name:)` follows a named union's
+// variant rules, then interns by its ordered alternatives.
+resolve_anon_union :: proc(k: ^Checker, value: ^Type_Anon_Union) -> Type_Id {
+	specs := make([dynamic]Anon_Union_Variant, 0, len(value.variants), context.temp_allocator)
+	bad := false
+	for variant in value.variants {
+		name := intern_identifier(k.c, variant.name.text)
+		for earlier in specs {
+			if earlier.name == name {
+				errorf(k.c, variant.span, "L0422", "`%s` is already an alternative of this union", variant.name.text)
+				bad = true
+			}
+		}
+		payload := TYPE_VOID
+		if variant.type == nil {
+			symbol := symbol_of(k.c, lookup_symbol(k.scope, name))
+			if symbol != nil && symbol.kind == .Type {
+				errorf(
+					k.c, variant.span, "L0422",
+					"`%s` is a type, so it cannot label a payloadless alternative; one carrying it is written `name: %s`",
+					variant.name.text, variant.name.text,
+				)
+				bad = true
+			}
+		} else {
+			payload = resolve_type_syntax(k, variant.type)
+			if payload == INVALID_TYPE {
+				report_unresolved_type(k, variant.type)
+				bad = true
+				continue
+			}
+			if payload == TYPE_VOID || payload == TYPE_UNTYPED_NIL {
+				errorf(k.c, expr_span(variant.type), "L0422", "`%s` cannot be a union alternative's payload", type_name(k.c, payload))
+				bad = true
+				continue
+			}
+		}
+		append(&specs, Anon_Union_Variant{name = name, payload = payload})
+	}
+	if bad {
+		return INVALID_TYPE
+	}
+	return anon_union_type(k.c, specs[:])
+}
+
 // design.md "Zero values": `@(zero=name)` designates the semantic zero. Only
 // the *first* variant may be named, so tag 0 plus a zero payload stays the
 // all-zero representation every container, global, and allocation depends on.

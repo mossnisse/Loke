@@ -704,6 +704,17 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		}
 		fmt.sbprint(b, ")")
 
+	case ^Type_Anon_Union:
+		fmt.sbprint(b, "(anonymous-union")
+		for variant in node.variants {
+			fmt.sbprintf(b, " (variant %q", variant.name.text)
+			if variant.type != nil {
+				dump_child(b, variant.type, depth)
+			}
+			fmt.sbprint(b, ")")
+		}
+		fmt.sbprint(b, ")")
+
 	case ^Type_Enum:
 		fmt.sbprint(b, "(enum")
 		if node.backing != nil {

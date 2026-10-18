@@ -505,6 +505,11 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n.fields = clone_fields(c, v.fields)
 		return n
 
+	case ^Type_Anon_Union:
+		n := new_clone(c, Type_Anon_Union, &v.base)
+		n.variants = clone_variants(c, v.variants)
+		return n
+
 	case ^Type_Enum:
 		n := new_clone(c, Type_Enum, &v.base)
 		n.backing = clone_expr(c, v.backing)

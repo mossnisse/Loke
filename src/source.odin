@@ -351,6 +351,9 @@ Compiler :: struct {
 	// The hash only picks a bucket; identity is settled by comparing every
 	// `(name, type)` pair, so a collision costs a walk and never a wrong reuse.
 	anon_record_types:    map[u64][]Type_Id,
+	// Anonymous union types, bucketed the same way by their ordered
+	// `(label, payload)` vector.
+	anon_union_types:     map[u64][]Type_Id,
 	// Procedure types, bucketed the same way by parameters, modes, and result.
 	proc_types:           map[u64][]Type_Id,
 	symbols:              [dynamic]^Symbol,

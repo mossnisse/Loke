@@ -1470,6 +1470,22 @@ return Date.from_components(year, month, day) or_return .Invalid_Value;   // pro
 
 #### Part 2: labeled anonymous unions
 
+**Status: adopted** as [Anonymous unions](design.md#anonymous-unions), with
+three differences from the text below:
+
+- A `$` binding inside one is rejected, as it is inside an anonymous record,
+  rather than binding by label and order. Binding inside either is one
+  later change.
+- Methods follow anonymous records rather than being forbidden: neither is
+  rejected by `impl` on an alias today, and the spec says nothing about either.
+  Whether an alias of a structural type may take methods, which would then
+  apply to every spelling of that type in the package, is open for both.
+- `distinct` over one is rejected, as over an anonymous record, since a
+  nominal union is declared.
+
+In place of the reflection bullet, a type name prints the alternatives,
+`(found: int | missing:)`, as an anonymous record's does.
+
 `(label: Type | label: Type | label:)` is the anonymous counterpart of a named
 union, as `(label: Type, label: Type)` is of a struct:
 

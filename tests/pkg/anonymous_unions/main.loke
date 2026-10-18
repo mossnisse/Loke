@@ -1,0 +1,22 @@
+// design.md "Anonymous unions": an anonymous union is one type wherever it is
+// written, in any package, and two that differ only in a payload type from
+// different packages are two types with distinct backend names.
+package main;
+import "core:fmt";
+import "./lib";
+
+Error :: enum { Local }
+
+local_fail :: proc() -> (failed: Error | fine:) {
+	return .failed(.Local);
+}
+
+main :: proc() {
+	mine: (found: int | missing:) = lib.find(4);
+	fmt.println(mine, lib.find(0));
+	theirs := lib.fail();
+	ours := local_fail();
+	fmt.println(theirs, ours);
+	same: (failed: lib.Error | fine:) = theirs;
+	fmt.println(same == theirs);
+}

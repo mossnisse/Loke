@@ -1468,7 +1468,7 @@ return .ok({key = k, value = v});
 q, r := divmod(17, 5);
 ```
 
-A parenthesized group is a record type when its first field is **labeled** or when it holds a comma at its own depth. The only such comma an expression holds separates the [`where` conditions](#where-clauses) of a definition such as `struct($T: type) where A, B { ... }`, and it does not count: the definition's `{` ends the list. `(T)` in expression position stays grouping and is not a type, `(a, b)` is a record type of two types rather than a value, and `Foo(x: int)` is not a generic application.
+A parenthesized group is a record type when its first field is **labeled** or when it holds a comma at its own depth. The only such comma an expression holds separates the [`where` conditions](#where-clauses) of a definition such as `struct($T: type) where A, B { ... }`, and it does not count: the definition's `{` ends the list. `(T)` in expression position stays grouping and is not a type, `(a, b)` is a record type of two types rather than a value, and `Foo(x: int)` is not a generic application. A labeled group whose alternatives are separated by `|` is an [anonymous union](#anonymous-unions) instead.
 
 #### Destructuring
 
@@ -1755,6 +1755,28 @@ See [Types with no zero value](#types-with-no-zero-value) for how the property p
 A union's storage is its payload region, then the tag, then whatever padding the alignment asks for. The tag is the narrowest unsigned integer that indexes `0 ..< variant_count`: 256 variants still fit in one byte and 257 need two. The first declared variant has tag 0, and there is no nil tag. A union with no variants keeps one byte. A tag wider than every payload raises the union's alignment, as any other member would.
 
 One exception stores no tag. A union of exactly two variants, one without a payload and the other with a [non-null](#types-with-no-zero-value) payload, is the payload alone: that payload's first word is a non-null address, so the null first word is the payloadless variant. `Option(^T)` is one address, as is `Option` of a procedure value, `cstring_view`, `Box(T)`, or `Shared(T)`; `Option(dyn I)` and `Option(any_view)` are their two words. Nothing else changes: the variants keep their declaration order, and the all-zero value is still the payloadless one.
+
+#### Anonymous unions
+
+A parenthesized list of labeled alternatives separated by `|` is a union with no declaration site, the counterpart of an [anonymous record](#anonymous-records):
+
+```odin
+Either :: (left: int | right: int);   // an alias, not a new nominal type
+find :: proc(key: string_view) -> (found: int | missing:) { ... }
+
+read_config :: proc(path: string_view) -> Result(Config, (io: io.Error | parse: Parse_Error)) {
+	text := fs.read_text(path) or_return .io;
+	return parse(text) or_return .parse;
+}
+```
+
+Each alternative is `label: Type`, or `label:` for one that carries nothing. The colon is required, so `(a | b)` stays a parenthesized expression, and each alternative has one label, so `(a, b: int | c:)` is an error. There are at least two alternatives, and their labels are distinct.
+
+Its identity is **structural**: the ordered sequence of its labels and payload types, which is also its tag order. The same alternatives in the same order are one type wherever they are written, in any package; the same alternatives in another order are a different type, and nothing converts between the two.
+
+Otherwise it is an ordinary union. It is built with the contextual `.label(payload)` or through an alias, `Either.left(1)`, and `Either.left` is its [constructor](#constructing-a-variant). [Inspecting](#inspecting-a-union) it, [switch ownership](#switch-ownership), copy, move, drop, equality, formatting, and the [representation](#representation) are a named union's, so `(node: ^Node | end:)` is one address.
+
+It carries no attributes. It therefore has [no zero value](#types-with-no-zero-value), is not a [fallible expression](#typed-fallibility), so `or_else` and `or_return` reject it, and does not [require its results](#require_results). A union that needs one of those is declared, and `distinct` does not make an anonymous one nominal. An alternative's type is not a `$` binding.
 
 ### Enumerations
 

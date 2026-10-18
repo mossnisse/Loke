@@ -54,6 +54,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Type_Proc, "convention params result", ""},
 		{Type_Record, "kind move_only generic_params attributes where_clauses fields variants", ""},
 		{Type_Anon_Record, "fields", ""},
+		{Type_Anon_Union, "variants", ""},
 		{Type_Enum, "backing fields", ""},
 		{Type_Interface, "generic_params where_clauses requirements", ""},
 

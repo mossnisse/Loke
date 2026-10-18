@@ -34,6 +34,12 @@ checklist.
   is never wrapped, and a body whose result names a generic argument with a
   failure payload, such as `Result(T, E)`, still writes `.ok(value)`. See
   design.md [Success returns](design.md#success-returns).
+- Anonymous unions: `(found: int | missing:)` is a union with no declaration,
+  identified by its ordered labels and payload types as an anonymous record is
+  by its fields. It is built, switched over, compared, and printed as a named
+  union is, and serves as a `Result`'s error type, which `or_return .label`
+  wraps into. It carries no attributes, so it has no zero value and is never
+  fallible. See design.md [Anonymous unions](design.md#anonymous-unions).
 - `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.
   It publishes the diagnostics `lokec` reports for open documents, including
   unsaved edits and the packages they import. It also answers hover,

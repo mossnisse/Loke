@@ -205,6 +205,9 @@ Type_Info :: struct {
 	// `(key: string_view, value: int)`: a structural record whose identity is the
 	// ordered `(field name, field type)` vector, not the `name` it displays as.
 	anonymous_record: bool,
+	// `(left: int | right:)`: a structural union whose identity is the ordered
+	// `(label, payload)` vector (design.md "Anonymous unions").
+	anonymous_union: bool,
 	// A labelled anonymous record's unlabelled counterpart, its field types by
 	// position: a value converts to it implicitly, and the two share one backend
 	// type (design.md "Implicit type conversions").
@@ -803,6 +806,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.types = make([dynamic]^Type_Info, 0, 64, c.semantic_allocator)
 	c.type_by_shape = make(map[Type_Key]Type_Id, c.semantic_allocator)
 	c.anon_record_types = make(map[u64][]Type_Id, c.semantic_allocator)
+	c.anon_union_types = make(map[u64][]Type_Id, c.semantic_allocator)
 	c.proc_types = make(map[u64][]Type_Id, c.semantic_allocator)
 	c.symbols = make([dynamic]^Symbol, 0, 128, c.semantic_allocator)
 	c.packages = make([dynamic]Package, 0, 8, c.semantic_allocator)
@@ -1385,6 +1389,76 @@ anon_record_label :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string {
 		fmt.sbprintf(&b, ".%s.%s", identifier_text(c, field.name), typeid_sort_key(c, field.type))
 	}
 	return strings.to_string(b)
+}
+
+// design.md "Anonymous unions": `(left: int | right:)` is identified, as an
+// anonymous record is, by its ordered `(label, payload)` vector. A payloadless
+// alternative's payload is `TYPE_VOID`, as a named union's is.
+Anon_Union_Variant :: struct {
+	name:    Identifier_Id,
+	payload: Type_Id,
+}
+
+// Interns one anonymous union. It carries no attributes, so it has no zero and
+// no failure variant, and it is never move-only on its own account.
+anon_union_type :: proc(c: ^Compiler, variants: []Anon_Union_Variant) -> Type_Id {
+	init_semantic_stores(c)
+	hash := u64(0x84222325cbf29ce4)
+	for variant in variants {
+		hash = (hash ~ u64(variant.name)) * HASH_MULTIPLIER
+		hash = (hash ~ u64(variant.payload)) * HASH_MULTIPLIER
+	}
+	bucket := c.anon_union_types[hash]
+	for candidate in bucket {
+		info := type_of(c, candidate)
+		if info == nil || len(info.variants) != len(variants) {
+			continue
+		}
+		same := true
+		for variant, index in variants {
+			if info.variant_names[index] != variant.name || info.variants[index] != variant.payload {
+				same = false
+				break
+			}
+		}
+		if same {
+			return candidate
+		}
+	}
+
+	names := make([]Identifier_Id, len(variants), c.semantic_allocator)
+	payloads := make([]Type_Id, len(variants), c.semantic_allocator)
+	display := strings.builder_make(c.semantic_allocator)
+	label := strings.builder_make(c.semantic_allocator)
+	strings.write_string(&display, "(")
+	strings.write_string(&label, "anon_union")
+	for variant, index in variants {
+		names[index] = variant.name
+		payloads[index] = variant.payload
+		if index > 0 {
+			strings.write_string(&display, " | ")
+		}
+		fmt.sbprintf(&display, "%s:", identifier_text(c, variant.name))
+		if variant.payload != TYPE_VOID {
+			fmt.sbprintf(&display, " %s", type_name(c, variant.payload))
+		}
+		// The structural sort key, not the display name, as for records.
+		payload_key := variant.payload == TYPE_VOID ? "void" : typeid_sort_key(c, variant.payload)
+		fmt.sbprintf(&label, ".%s.%s", identifier_text(c, variant.name), payload_key)
+	}
+	strings.write_string(&display, ")")
+	id := new_type(c, Type_Info{kind = .Union, anonymous_union = true})
+	if info := type_of(c, id); info != nil {
+		info.variants = payloads
+		info.variant_names = names
+		info.name = intern_identifier(c, strings.to_string(display))
+		info.backend_label = strings.to_string(label)
+	}
+	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
+	copy(grown, bucket)
+	grown[len(bucket)] = id
+	c.anon_union_types[hash] = grown
+	return id
 }
 
 // An interned type by shape, without creating one. The backend uses this where

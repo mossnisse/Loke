@@ -74,6 +74,17 @@ fallible_of :: proc(k: ^Checker, type: Type_Id) -> (Fallible, bool) {
 	}, true
 }
 
+// design.md "Anonymous unions": one carries no attributes, so no alternative
+// is its failure.
+note_anonymous_union_is_data :: proc(k: ^Checker, type: Type_Id, span: Span) {
+	if info := type_of(k.c, type_underlying(k.c, type)); info != nil && info.anonymous_union {
+		add_notef(
+			k.c, span,
+			"an anonymous union is plain data; a failure is a `Result`, an `Option`, or a named union with `@(failure=name)`",
+		)
+	}
+}
+
 note_optional_replacement :: proc(k: ^Checker, e: Expr) {
 	#partial switch v in e {
 	case ^Expr_Checked_Extract:
@@ -103,6 +114,7 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else) {
 			type_name(k.c, expr_base(v.value).type),
 		)
 		note_optional_replacement(k, v.value)
+		note_anonymous_union_is_data(k, expr_base(v.value).type, expr_span(v.value))
 		v.type = INVALID_TYPE
 		return
 	}
@@ -183,6 +195,7 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 			"`or_return` needs a union with a designated failure variant, found `%s`",
 			type_name(k.c, base.type),
 		)
+		note_anonymous_union_is_data(k, base.type, v.op_span)
 		v.type = INVALID_TYPE
 		return
 	}

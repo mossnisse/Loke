@@ -825,10 +825,19 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 // `distinct` does not give an anonymous record a second way to become one.
 @(private = "file")
 reject_distinct_record :: proc(k: ^Checker, underlying: Type_Id, span: Span) {
-	if info := type_of(k.c, underlying); info != nil && info.anonymous_record {
+	info := type_of(k.c, underlying)
+	switch {
+	case info == nil:
+	case info.anonymous_record:
 		errorf(
 			k.c, span, "L0717",
 			"`distinct` does not make an anonymous record nominal; declare a `struct` for that",
+		)
+	case info.anonymous_union:
+		// design.md "Anonymous unions": likewise, a nominal union is declared.
+		errorf(
+			k.c, span, "L0717",
+			"`distinct` does not make an anonymous union nominal; declare a `union` for that",
 		)
 	}
 }
@@ -1876,6 +1885,13 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		value.resolution.kind = .Type
 		return value.denoted_type
 
+	case ^Type_Anon_Union:
+		if value.denoted_type == INVALID_TYPE {
+			value.denoted_type = resolve_anon_union(k, value)
+		}
+		value.resolution.kind = .Type
+		return value.denoted_type
+
 	case ^Type_Enum:
 		if value.denoted_type == INVALID_TYPE {
 			value.denoted_type = new_type(k.c, Type_Info{kind = .Enum})
@@ -2715,6 +2731,12 @@ type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
 	case ^Type_Anon_Record:
 		for field in v.fields {
 			if type_syntax_names_generic(k, scope, field.type) {
+				return true
+			}
+		}
+	case ^Type_Anon_Union:
+		for variant in v.variants {
+			if type_syntax_names_generic(k, scope, variant.type) {
 				return true
 			}
 		}

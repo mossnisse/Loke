@@ -1,0 +1,12 @@
+package lib;
+
+@(public) Error :: enum { Remote }
+
+@(public) find :: proc(key: int) -> (found: int | missing:) {
+	if (key > 0) { return .found(key * 2); }
+	return .missing;
+}
+
+@(public) fail :: proc() -> (failed: Error | fine:) {
+	return .failed(.Remote);
+}

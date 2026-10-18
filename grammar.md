@@ -273,11 +273,15 @@ Type = "^" "mut"? Type                                   // pointer
      | Interface_Definition                              // inline, as a reflection argument
      | "$" Identifier                                    // specialization binding
      | Record_Type                                       // anonymous structural record
+     | Anon_Union_Type                                   // anonymous structural union
      | Type_Name Type_Arguments?
 
 Record_Type    = "(" Record_Field ("," Record_Field)* ","? ")"
 Record_Field   = Identifier_List ":" Type                // labelled
                | Type                                    // unlabelled
+
+Anon_Union_Type = "(" Alternative ("|" Alternative)+ ")"
+Alternative     = Identifier ":" Type?                   // `name:` carries nothing
 
 Type_Name      = Identifier ("." Identifier)*            // qualified or associated
 Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ","? ")"
@@ -721,6 +725,12 @@ rather than generic arguments. A
 `Record_Type` is never a `Composite_Type`: a record value comes from a
 contextually typed literal or from an alias used as a literal prefix, never
 `(field: T){...}`.
+
+A labelled group is an `Anon_Union_Type` instead when it holds a `|` at its own
+bracket depth. Each `Alternative` has exactly one label and its colon, so
+`(a | b)` stays a parenthesised expression, `(a, b: int | c:)` is an error, and
+a group with one alternative, `(a: int |)`, is an error. An alternative's type
+is not a `$` binding.
 
 Variant construction has no syntax of its own: `.name(payload)` is the
 implicit-selector primary followed by the call suffix, and `U.name(payload)` is

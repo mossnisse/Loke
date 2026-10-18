@@ -1,0 +1,10 @@
+left 1
+right two
+left 5
+true false
+.ok(70) .err(.io(Gone)) .err(.parse(Bad_Digit))
+true
+9
+[.left(3), .right("r")] [.left(3), .right("r")]
+.some(5) .none
+.on

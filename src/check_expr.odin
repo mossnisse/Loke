@@ -107,7 +107,7 @@ check_expr :: proc(
 	case ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
-	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
+	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Anon_Union, ^Type_Enum, ^Type_Interface:
 		// A type in expression position, such as a conversion callee.
 		reported := k.c.error_count
 		denoted := resolve_type_syntax(k, e)

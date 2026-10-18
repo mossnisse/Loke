@@ -537,6 +537,33 @@ contradict its type, and calling the type's operators would make record order
 run user code; that can come later if programs need it. See
 [Comparison operators](design.md#comparison-operators).
 
+### Anonymous unions
+
+A procedure whose result has several outcomes needed a declared union even when
+no other code named it, and a set of errors from different packages needed one
+for each combination. [Anonymous unions](design.md#anonymous-unions) are to
+named unions what anonymous records are to structs: parentheses describe one,
+`union` declares one.
+
+The alternatives keep their labels. An unordered set of payload types, `(A |
+B)`, would need type-based matching and set normalization, and could not keep
+two alternatives with one payload type apart, which `(read: io.Error |
+log_write: io.Error)` does. The colon is required so that `(a | b)` stays an
+expression.
+
+Identity is ordered for the reason a record's is: the order is the tag order,
+and making two orders one type would need a canonical order that the source no
+longer shows. Converting between orders and between sets of labels is a
+separate question, see
+[Part 3](open-questions.md#part-3-widening-by-label).
+
+An anonymous union carries no attributes, so it is never fallible. A failure
+policy is the job of `Result`, `Option`, and a named union with `@(failure=)`;
+an attribute on a structural type would become part of its identity, and two
+otherwise equal types would differ only by it. An anonymous union is therefore
+used as data, or as the error payload of a `Result`, where the
+[failure operand](#the-failure-operand-of-or_return) already wraps into it.
+
 ### Distinct types
 
 A `distinct` type inherits comparisons but no other operators by default.

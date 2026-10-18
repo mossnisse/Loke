@@ -459,6 +459,12 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 				return missing
 			}
 		}
+	case ^Type_Anon_Union:
+		for variant in v.variants {
+			if missing := first_unresolved_name(k, variant.type); missing != "" {
+				return missing
+			}
+		}
 	// Nothing a condition waits on: no name, or a body checked on its own.
 	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly, ^Expr_Proc, ^Expr_Proc_Group,
 	     ^Expr_Operator, ^Type_Record, ^Type_Enum, ^Type_Interface:

@@ -1,0 +1,10 @@
+// An anonymous union has two or more alternatives, each one label and its
+// colon; an alternative's type is not a `$` binding.
+package main;
+
+One :: (a: int |);
+List :: (a, b: int | c:);
+Poly :: proc(x: (some: $T | none:)) {}
+value: (int | string);
+
+sentinel :: proc() { }

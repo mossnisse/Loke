@@ -2732,6 +2732,9 @@ parse_anon_record_type :: proc(p: ^Parser) -> Expr {
 	open := advance(p) // `(`
 	lo := open.lo
 	labelled := scans_name_list_colon(p, 0)
+	if labelled && scans_anon_union(p) {
+		return parse_anon_union_type(p, open)
+	}
 	fields := make([dynamic]Field, 0, 0, p.allocator)
 	bad := false
 	for !at(p, .Rparen) && !at(p, .EOF) {
@@ -2741,6 +2744,18 @@ parse_anon_record_type :: proc(p: ^Parser) -> Expr {
 		if !allow(p, .Comma) {
 			break
 		}
+	}
+	if at(p, .Pipe) && !labelled {
+		// design.md "Anonymous unions": `(int | string)` is a union written
+		// without its labels.
+		parse_error(
+			p, span_of(p, current(p)), "L0254", "found `|`",
+			"each alternative of an anonymous union is labelled: `(a: int | b: string)`",
+		)
+		for !at(p, .Rparen) && !at(p, .EOF) {
+			advance(p)
+		}
+		bad = true
 	}
 	_, closed := expect(p, .Rparen, "L0254", "`)` to close the record type")
 	n := new_expr(p, Type_Anon_Record, lo)
@@ -2759,6 +2774,97 @@ parse_anon_record_type :: proc(p: ^Parser) -> Expr {
 		n.has_error = true
 	}
 	// Every error above is reported, so whatever needs this type stays silent.
+	if n.has_error {
+		return error_expr(p, n.span)
+	}
+	return n
+}
+
+// grammar.md "Types": a `|` at the group's own depth makes a labelled group an
+// anonymous union rather than a record.
+@(private = "file")
+scans_anon_union :: proc(p: ^Parser) -> bool {
+	depth := 0
+	for offset := 0; ; offset += 1 {
+		#partial switch peek_token(p, offset).kind {
+		case .Lparen, .Lbracket, .Lbrace:
+			depth += 1
+		case .Rparen, .Rbracket, .Rbrace:
+			if depth == 0 {
+				return false
+			}
+			depth -= 1
+		case .Pipe:
+			if depth == 0 {
+				return true
+			}
+		case .EOF:
+			return false
+		}
+	}
+}
+
+// `(name: Type | name:)`, entered after the `(`. Each alternative is one label,
+// so a name list, which a record field allows, is rejected here (design.md
+// "Anonymous unions").
+@(private = "file")
+parse_anon_union_type :: proc(p: ^Parser, open: Token) -> Expr {
+	variants := make([dynamic]Variant, 0, 2, p.allocator)
+	bad := false
+	for !at(p, .Rparen) && !at(p, .EOF) {
+		start := current(p)
+		variant: Variant
+		name, named := expect(p, .Ident, "L0254", "an alternative's label")
+		if !named {
+			bad = true
+			for !at(p, .Pipe) && !at(p, .Rparen) && !at(p, .EOF) {
+				advance(p)
+			}
+		} else {
+			variant.name = name_of(p, name)
+			if at(p, .Comma) {
+				parse_error(
+					p, span_of(p, current(p)), "L0254", "found `,`",
+					"an anonymous union alternative has one label; write `a: T | b: T`",
+				)
+				bad = true
+				for !at(p, .Colon) && !at(p, .Pipe) && !at(p, .Rparen) && !at(p, .EOF) {
+					advance(p)
+				}
+			}
+			if _, colon := expect(p, .Colon, "L0254", "`:` after the alternative's label"); !colon {
+				bad = true
+			} else if !at(p, .Pipe) && !at(p, .Rparen) {
+				if current(p).kind == .Dollar {
+					parse_error(
+						p, span_of(p, current(p)), "L0254", fmt_found(p, current(p)),
+						"an anonymous union alternative cannot be a `$` template name; declare a `union` for that",
+					)
+					advance(p)
+					bad = true
+				}
+				variant.type = parse_type(p)
+				bad = bad || expr_has_error(variant.type)
+			}
+		}
+		variant.span = span_to_here(p, start)
+		append(&variants, variant)
+		if !allow(p, .Pipe) {
+			break
+		}
+	}
+	_, closed := expect(p, .Rparen, "L0254", "`)` to close the union type")
+	n := new_expr(p, Type_Anon_Union, open.lo)
+	n.variants = variants[:]
+	n.span = span_to_here(p, open)
+	n.has_error = bad || !closed
+	if !n.has_error && len(variants) < 2 {
+		parse_error(
+			p, n.span, "L0254", "found one alternative",
+			"an anonymous union has at least two alternatives; one value is written as its type alone",
+		)
+		n.has_error = true
+	}
 	if n.has_error {
 		return error_expr(p, n.span)
 	}

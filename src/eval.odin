@@ -772,7 +772,7 @@ eval_value_unviewed :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, suc
 	     ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
-	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
+	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Anon_Union, ^Type_Enum, ^Type_Interface:
 	}
 	eval_fail(ev, expr_span(e), "L0341", "this expression has no compile-time meaning")
 	return Eval_Value{}, false

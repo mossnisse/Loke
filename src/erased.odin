@@ -750,6 +750,13 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 			}
 		}
 		return false
+	case ^Type_Anon_Union:
+		for variant in v.variants {
+			if type_syntax_names(variant.type, name) {
+				return true
+			}
+		}
+		return false
 	case ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
 		return true // conservatively
 	}

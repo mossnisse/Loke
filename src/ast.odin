@@ -75,6 +75,7 @@ Expr :: union {
 	^Type_Proc,
 	^Type_Record,
 	^Type_Anon_Record,
+	^Type_Anon_Union,
 	^Type_Enum,
 	^Type_Interface,
 }
@@ -669,6 +670,13 @@ Type_Anon_Record :: struct {
 	fields:     []Field,
 }
 
+// `(name: Type | name:)`: the anonymous structural union, whose alternatives
+// are written as a named union's variants are (design.md "Anonymous unions").
+Type_Anon_Union :: struct {
+	using base: Expr_Base,
+	variants:   []Variant,
+}
+
 Type_Enum :: struct {
 	using base: Expr_Base,
 	backing:    Expr, // nil when the backing type is omitted
@@ -750,6 +758,8 @@ expr_base :: proc(e: Expr) -> ^Expr_Base {
 	case ^Type_Record:
 		return &v.base
 	case ^Type_Anon_Record:
+		return &v.base
+	case ^Type_Anon_Union:
 		return &v.base
 	case ^Type_Enum:
 		return &v.base
