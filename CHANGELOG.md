@@ -26,6 +26,14 @@ checklist.
 
 ### Added
 
+- Success returns: in a procedure returning a fallible union, `return value;`
+  builds the success variant when `value` is not the whole result, so
+  `return n;` means `return .ok(n);` in a `Result(int, E)` and
+  `return .some(n);` in an `Option(int)`. `return;` returns a success that
+  carries nothing, as in `Status(E)`. Failures stay written as `.err(e)`, `nil`
+  is never wrapped, and a body whose result names a generic argument with a
+  failure payload, such as `Result(T, E)`, still writes `.ok(value)`. See
+  design.md [Success returns](design.md#success-returns).
 - `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.
   It publishes the diagnostics `lokec` reports for open documents, including
   unsaved edits and the packages they import. It also answers hover,

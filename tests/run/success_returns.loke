@@ -1,0 +1,119 @@
+// design.md "Success returns": in a fallible result with a success payload,
+// `return value;` builds the success variant unless the value is the whole
+// result; `return;` returns a success that carries nothing. A wrapped return
+// moves an owned local, is a success for `errdefer`, folds at compile time,
+// and applies in an `or_else` fallback.
+package main;
+import "core:fmt";
+
+Parse_Error :: enum { Bad_Digit, Empty }
+
+digit :: proc(c: rune) -> Result(int, Parse_Error) {
+	if (c < '0' || c > '9') { return .err(.Bad_Digit); }
+	return int(c - '0');
+}
+
+// Both payloads are `int`: the plain value is the success.
+same :: proc(n: int, fail: bool) -> Result(int, int) {
+	if (fail) { return .err(n); }
+	return n;
+}
+
+// An `Option(int)` value is wrapped once; a whole result is not wrapped again.
+nested :: proc(inner: Option(int)) -> Option(Option(int)) {
+	return inner;
+}
+
+whole :: proc(c: rune) -> Result(int, Parse_Error) {
+	return digit(c);
+}
+
+twice :: proc(c: rune) -> Result(int, Parse_Error) {
+	return digit(c) or_return * 2;
+}
+
+Point :: struct { x, y: int }
+
+point :: proc() -> Option(Point) {
+	return {1, 2};
+}
+
+constant :: proc() -> Option(f64) {
+	return 1.5;
+}
+
+pick :: proc(flag: bool) -> Option(int) {
+	return .some(1) if flag else .none;
+}
+
+check :: proc(fail: bool) -> Status(Parse_Error) {
+	if (fail) { return .err(.Empty); }
+	return;
+	fmt.println("not reached");
+}
+
+// A failure with no payload: the generic body keeps the shorthand.
+first :: proc(items: []$T) -> Option(T) {
+	foreach (item in items) { return item; }
+	return .none;
+}
+
+lookup :: proc(m: map[string]int, key: string_view) -> Result(int, Parse_Error) {
+	value := m.lookup_value(key) or_else return 0;
+	return value + 1;
+}
+
+Connection :: move_only struct { id: int }
+
+open :: proc(id: int) -> Result(Connection, Parse_Error) {
+	c := Connection{id = id};
+	return c;
+}
+
+adopt :: proc(c: move Connection) -> Option(Connection) {
+	return c;
+}
+
+text :: proc(name: string_view) -> Result(string, Parse_Error) {
+	if (name.len() == 0) { return .err(.Empty); }
+	s := name.copy();
+	return s;
+}
+
+steps := 0;
+
+work :: proc(fail: bool) -> Result(int, Parse_Error) {
+	steps += 1;
+	errdefer steps += 100;
+	if (fail) { return .err(.Empty); }
+	return 42;
+}
+
+double :: proc(n: int) -> Option(int) {
+	return n * 2;
+}
+DOUBLED :: double(21);
+
+main :: proc() -> Status(Parse_Error) {
+	fmt.println(digit('7'), digit('x'));
+	fmt.println(same(3, false), same(4, true));
+	fmt.println(nested(.some(5)), nested(.none));
+	fmt.println(whole('2'), twice('3'));
+	fmt.println(point(), constant());
+	fmt.println(pick(true), pick(false));
+	fmt.println(check(false), check(true));
+	numbers := [3]int{4, 5, 6};
+	fmt.println(first(numbers[:]), first(numbers[:0]));
+	m: map[string]int = {};
+	m["a"] = 9;
+	fmt.println(lookup(m, "a"), lookup(m, "b"));
+	c := open(7) or_return;
+	adopted := adopt(Connection{id = 8}) or_return .Empty;
+	fmt.println(c.id, adopted.id);
+	fmt.println(text("abc"), text(""));
+	_ = work(false);
+	_ = work(true);
+	fmt.println(steps);
+	fmt.println(DOUBLED);
+	return;
+}

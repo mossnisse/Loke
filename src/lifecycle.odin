@@ -352,6 +352,21 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 	report_copy_cost(k, .Return, expr_span(value.expr), value.expr, expr_base(value.expr).type)
 }
 
+// design.md "Success returns": a wrapped `return x;` takes `x` as the plain
+// statement does, so an owned local transfers into the success variant, as
+// `move(x)` would, instead of being copied as a written `.ok(x)` copies it.
+transfer_returned_local :: proc(k: ^Checker, e: Expr) -> Expr {
+	ident, is_ident := e.(^Expr_Ident)
+	if !is_ident || !type_is_managed(k.c, ident.type) || !symbol_is_owned_here(symbol_of(k.c, ident.symbol)) {
+		return e
+	}
+	moved := new(Expr_Move, k.c.semantic_allocator)
+	moved.span, moved.type, moved.value_category = ident.span, ident.type, .Value
+	moved.value = ident
+	moved.implicit = true
+	return moved
+}
+
 // The variable a place expression is rooted in, or INVALID_SYMBOL for a
 // temporary. Field and element selection do not change the root.
 place_root_symbol :: proc(e: Expr) -> Symbol_Id {

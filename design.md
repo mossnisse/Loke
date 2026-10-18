@@ -4554,9 +4554,9 @@ fmt.println(sum(..odds));        // 9, passing a slice as varargs
 
 #### One result
 
-A procedure returns at most one value. `Results` is one `Result_Type`, never a list, and the result is anonymous — there is no name to fill in and no result local to assign. A procedure with a result must `return expression;` on every path that leaves it; a bare `return;` there is an error.
+A procedure returns at most one value. `Results` is one `Result_Type`, never a list, and the result is anonymous — there is no name to fill in and no result local to assign. A procedure with a result must `return expression;` on every path that leaves it; a bare `return;` there is an error, except where the result's success carries nothing.
 
-One result type may reach the end of its body: a [fallible union](#typed-fallibility) whose success variant carries no payload, such as `Status(E)`. Reaching the end returns that success variant, as if the body ended in `return .ok;`. Every failure in such a procedure is written explicitly, so the end has one meaning, as it does in a procedure with no result. The rule covers a `main` returning one and a user union of that shape, but not `Result(Unit, E)`, whose success carries a payload, so a generic `Result($T, E)` body does not change meaning with its instance.
+One result type may reach the end of its body: a [fallible union](#typed-fallibility) whose success variant carries no payload, such as `Status(E)`. Reaching the end returns that success variant, as if the body ended in `return .ok;`, and a bare `return;` returns it anywhere in the body ([Success returns](#success-returns)). Every failure in such a procedure is written explicitly, so the end has one meaning, as it does in a procedure with no result. The rule covers a `main` returning one and a user union of that shape, but not `Result(Unit, E)`, whose success carries a payload, so a generic `Result($T, E)` body does not change meaning with its instance.
 
 To hand back several values, return one [anonymous record](#anonymous-records) and [destructure](#destructuring) it at the call site. Its fields need no names when the caller destructures it:
 
@@ -5650,7 +5650,7 @@ Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 Status :: union($E: type) @(failure=err) { ok, err: E }
 ```
 
-`Option` designates `none` as both its zero and its failure, so an `Option` has an all-zero "absent" value and participates in the failure protocol. `Result` designates `err` as its failure and requires its results to be handled; it has no zero, because neither arm is one. `Status` is the same with a success that carries nothing, so a procedure that only fails needs no empty type in its signature and may end without `return .ok;` ([One result](#one-result)):
+`Option` designates `none` as both its zero and its failure, so an `Option` has an all-zero "absent" value and participates in the failure protocol. `Result` designates `err` as its failure and requires its results to be handled; it has no zero, because neither arm is one. `Status` is the same with a success that carries nothing, so a procedure that only fails needs no empty type in its signature and may end, or `return;`, without `return .ok;` ([One result](#one-result), [Success returns](#success-returns)):
 
 ```odin
 save :: proc(config: Config) -> Status(io.Error) {
@@ -5670,6 +5670,31 @@ Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
 There is no truthiness rule and no nil status: `nil` is not a failure, a trailing `bool` is not a status, and a procedure returning `(value: int, node: ^Node)` returns one ordinary record.
 
 A producer's result count is its own, and a destination never changes it. Where two behaviors are wanted they are two operations: `m[key]` panics for a missing key and `m.lookup_value(key)` returns `Option(V)`; `view.(T)` panics on a mismatch and `view.as(T)` returns `Option(T)`.
+
+#### Success returns
+
+In a procedure whose result is a fallible union with a success payload, `return value;` builds the success variant when `value` is not the whole result: `return n;` means `return .ok(n);` in a `Result(int, E)` and `return .some(n);` in an `Option(int)`.
+
+```odin
+digit :: proc(c: rune) -> Result(int, Parse_Error) {
+	if (c < '0' || c > '9') { return .err(.Bad_Digit); }
+	return int(c - '0');
+}
+```
+
+The returned expression's form decides what it builds, before it has a type:
+
+- A variant construction or implicit selector, such as `.ok(x)`, `.err(e)`, or `.none`, builds the result, as does a conditional expression with such an arm. The selector resolves against the result's variants, so `return .Bad_Digit;` in a `Result(int, Parse_Error)` is an error, which suggests `.err(.Bad_Digit)`.
+- A composite literal or an unfixed constant builds the success payload, since no union is built from one.
+- Any other expression builds the result when its type is assignable to the result, and the success payload otherwise. A whole result is never wrapped again: in an `Option(Option(int))`, an `Option(int)` value becomes `.some(value)` once, and an `Option(Option(int))` value is returned as it is.
+
+Nothing selects the failure variant implicitly. A value the success payload does not accept is an error even when the failure payload would accept it, and in a `Result(int, int)`, `return n;` succeeds while `return .err(n);` fails. `nil` is never wrapped: `return nil;` in an `Option(^Node)` would read as absence, so it is an error that asks for `.some(nil)` or `.none`.
+
+A wrapped return takes its value as `return value;` does. An owned local or `move` parameter transfers into the success variant, and a borrowed place is copied, so a borrowed move-only value cannot be returned ([Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering)). The [return-escape](#procedure-result-contracts) rules and [`errdefer`](#defer-statement) see the construction the return stands for, so a wrapped return is a success return. The rule applies wherever `return` is written, an [`or_else` fallback](#or_else-expression) included.
+
+When the success carries nothing, as `Status(E)`'s does, `return;` returns it, as reaching the end of the body does ([One result](#one-result)). `Result(Unit, E)` is not covered: its success carries a `Unit`, and it returns with `return .ok;`.
+
+A value is never wrapped in a body whose written result names a generic argument and whose failure carries a payload; such a body writes `.ok(value)`. There the two payloads can be one type in some instance, as `Result(T, E)`'s are when both are `int`, and a value meant as the error would become the success in that instance alone. A failure with no payload leaves no such pair, so in a body generic over `Option(T)`, `return item;` builds `.some(item)`.
 
 #### Operator ownership
 

@@ -1,0 +1,33 @@
+L0425
+@12:9
+`Result(int, Parse_Error)` has no variant `Bad_Digit`
+L0425
+@16:9
+`Result(Color, Parse_Error)` has no variant `Red`
+L0310
+@20:9
+cannot return `Parse_Error` from a procedure that returns `Result(int, Parse_Error)`: it is neither the result nor its `.ok` payload `int`
+L0310
+@24:9
+cannot return `string_view` from a procedure that returns `Result(int, Parse_Error)`: it is neither the result nor its `.ok` payload `int`
+L0310
+@28:9
+`nil` does not build `.some` implicitly: write `.some(nil)` for a success, or `.none` for the failure
+L0310
+@32:9
+cannot return `Result(int, int)` with `int`
+L0310
+@36:9
+cannot return `Result(int, string)` with `int`
+L0326
+@40:2
+this procedure returns `Result(Unit, Parse_Error)`, so `return` needs a value; a result is anonymous and has no local to fill
+L0310
+@44:9
+cannot return `Status(Parse_Error)` with `Parse_Error`
+L0502
+@48:9
+`Connection` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
+L0526
+@53:9
+this string view cannot be returned: `s` ends when this procedure returns

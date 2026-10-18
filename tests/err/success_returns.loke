@@ -1,0 +1,59 @@
+// design.md "Success returns": only the success is built implicitly. An
+// implicit selector names a variant of the result, `nil` is never wrapped, a
+// result naming a generic argument with a failure payload is never wrapped in
+// any instance, and `return;` needs a success that carries nothing.
+package main;
+
+Parse_Error :: enum { Bad_Digit, Empty }
+Color :: enum { Red, Green }
+Connection :: move_only struct { id: int }
+
+selector :: proc() -> Result(int, Parse_Error) {
+	return .Bad_Digit;
+}
+
+payload_member :: proc() -> Result(Color, Parse_Error) {
+	return .Red;
+}
+
+error_value :: proc(e: Parse_Error) -> Result(int, Parse_Error) {
+	return e;
+}
+
+neither :: proc(s: string_view) -> Result(int, Parse_Error) {
+	return s;
+}
+
+absent :: proc() -> Option(^int) {
+	return nil;
+}
+
+generic_error :: proc(value: $T, error: $E) -> Result(T, E) {
+	return error;
+}
+
+generic_value :: proc(value: $T, error: $E) -> Result(T, E) {
+	return value;
+}
+
+unit :: proc() -> Result(Unit, Parse_Error) {
+	return;
+}
+
+status_value :: proc(e: Parse_Error) -> Status(Parse_Error) {
+	return e;
+}
+
+borrowed :: proc(c: Connection) -> Option(Connection) {
+	return c;
+}
+
+escape :: proc() -> Option(string_view) {
+	s := "local".copy();
+	return s;
+}
+
+main :: proc() {
+	_ = generic_error(1, 2);
+	_ = generic_value(1, "x");
+}

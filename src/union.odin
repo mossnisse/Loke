@@ -339,18 +339,28 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	if !check_value_expr(k, arg.value, payload, "supply") {
 		return
 	}
+	finish_union_construct(k, v, subject, index, arg.value)
+}
+
+// Records a construction whose payload is already checked and materialised:
+// `.name(payload)` once its argument is, and the construction a success return
+// stands for (design.md "Success returns").
+finish_union_construct :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id, index: int, value: Expr) {
+	payload := union_variant_payload(k.c, subject, index)
+	v.value_category = .Value
+	v.resolution = Resolution{kind = .Builtin_Operator}
 	v.type = subject
 	v.bound = make([]Expr, 1, k.c.semantic_allocator)
-	v.bound[0] = arg.value
-	classify_copy_cost(k, arg.value, payload, .Variant)
+	v.bound[0] = value
+	classify_copy_cost(k, value, payload, .Variant)
 	v.operation = Call_Union_Construct{
 		index = index,
-		clone = classify_copy(k, arg.value, payload, .Variant),
+		clone = classify_copy(k, value, payload, .Variant),
 	}
 
 	// design.md "Zero values": explicit constant variant construction is
 	// permitted at static duration when its payload is constant.
-	if inner := expr_base(arg.value); inner != nil && inner.is_const &&
+	if inner := expr_base(value); inner != nil && inner.is_const &&
 	   variant_payload_is_constant(k.c, payload, inner.const_value) {
 		v.is_const = true
 		v.const_value = union_const(k.c, subject, index, inner.const_value)

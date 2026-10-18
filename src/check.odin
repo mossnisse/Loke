@@ -49,6 +49,9 @@ Body_Context :: struct {
 	result_type:       Type_Id,
 	// Whether the result was declared `inout`, so `return` must hand out a place.
 	result_inout:      bool,
+	// Whether the written result names a generic argument of this instance
+	// (design.md "Success returns").
+	result_generic:    bool,
 	// Lexical loop targets for `break` and `continue`, and defer restrictions.
 	loop_depth:        int,
 	// Runtime loops around a static expansion, which resets `loop_depth`; its
@@ -2599,6 +2602,9 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
 	k.scope.owner_proc = literal
 	k.body = {proc_literal = literal, result_type = symbol.result, result_inout = symbol.result_inout}
+	if result := literal.signature.result; result != nil {
+		k.body.result_generic = type_syntax_names_generic(k, outer_scope, result.type)
+	}
 
 	errors_before := k.c.error_count
 	held := len(k.c.held_copy_reports)
@@ -2644,21 +2650,83 @@ implicit_success :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol) -> b
 	end := literal.body.span
 	end.lo = max(end.hi, 1) - 1
 	end.hi = end.lo
-	name := union_variant_name(k.c, symbol.result, shape.success)
-	success := new(Expr_Selector, k.c.semantic_allocator)
-	success.span = end
-	success.name = Name{text = name, span = end, id = intern_identifier(k.c, name)}
 	exit := new(Stmt_Return, k.c.semantic_allocator)
 	exit.span = end
 	exit.value = new(Return_Value, k.c.semantic_allocator)
 	exit.value.span = end
-	exit.value.expr = success
+	exit.value.expr = success_selector(k, symbol.result, shape.success, end)
 	stmts := make([]Stmt, len(literal.body.stmts) + 1, k.c.semantic_allocator)
 	copy(stmts, literal.body.stmts)
 	stmts[len(stmts) - 1] = exit
 	literal.body.stmts = stmts
 	check_stmt(k, exit)
 	return true
+}
+
+// The unchecked `.name` of `result`'s variant `index`, as a compiler-written
+// statement spells it. An empty `at` keeps it out of every query.
+@(private = "file")
+success_selector :: proc(k: ^Checker, result: Type_Id, index: int, at: Span) -> ^Expr_Selector {
+	name := union_variant_name(k.c, result, index)
+	selector := new(Expr_Selector, k.c.semantic_allocator)
+	selector.span = at
+	selector.name = Name{text = name, span = at, id = intern_identifier(k.c, name)}
+	return selector
+}
+
+// Whether type syntax names a generic argument bound in `scope`, as
+// `Result(T, Error)` does in an instance of a procedure generic over `T`.
+@(private = "file")
+type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
+	if e == nil {
+		return false
+	}
+	#partial switch v in e {
+	case ^Expr_Ident:
+		symbol := symbol_of(k.c, lookup_symbol(scope, identifier_of(k.c, v)))
+		return symbol != nil && symbol.generic_binding
+	case ^Type_Poly:
+		return true
+	case ^Expr_Selector:
+		return type_syntax_names_generic(k, scope, v.operand)
+	case ^Expr_Call:
+		for arg in v.args {
+			if type_syntax_names_generic(k, scope, arg.value) {
+				return true
+			}
+		}
+		return type_syntax_names_generic(k, scope, v.callee)
+	case ^Type_Pointer:
+		return type_syntax_names_generic(k, scope, v.elem)
+	case ^Type_C_Pointer:
+		return type_syntax_names_generic(k, scope, v.elem)
+	case ^Type_Slice:
+		return type_syntax_names_generic(k, scope, v.elem)
+	case ^Type_Dynamic_Array:
+		return type_syntax_names_generic(k, scope, v.elem)
+	case ^Type_Distinct:
+		return type_syntax_names_generic(k, scope, v.elem)
+	case ^Type_Dyn:
+		return type_syntax_names_generic(k, scope, v.interface_expr)
+	case ^Type_Array:
+		return type_syntax_names_generic(k, scope, v.length) || type_syntax_names_generic(k, scope, v.elem)
+	case ^Type_Map:
+		return type_syntax_names_generic(k, scope, v.key) || type_syntax_names_generic(k, scope, v.value)
+	case ^Type_Anon_Record:
+		for field in v.fields {
+			if type_syntax_names_generic(k, scope, field.type) {
+				return true
+			}
+		}
+	case ^Type_Proc:
+		for parameter in v.params {
+			if type_syntax_names_generic(k, scope, parameter.type) {
+				return true
+			}
+		}
+		return v.result != nil && type_syntax_names_generic(k, scope, v.result.type)
+	}
+	return false
 }
 
 install_symbols :: proc(scope: ^Scope, c: ^Compiler, symbols: []Symbol_Id) {
@@ -4014,6 +4082,17 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		errorf(k.c, s.span, "L0710", "this procedure is declared `-> !`, so it cannot `return`")
 		return terminated
 	}
+	if s.value == nil && k.result_type != INVALID_TYPE && !k.result_inout {
+		// design.md "Success returns": `return;` returns a success that carries
+		// nothing, as reaching the end of the body does.
+		if shape, fallible := fallible_of(k, k.result_type); fallible && shape.info.variants[shape.success] == TYPE_VOID {
+			at := s.span
+			at.lo = at.hi
+			s.value = new(Return_Value, k.c.semantic_allocator)
+			s.value.span = at
+			s.value.expr = success_selector(k, k.result_type, shape.success, at)
+		}
+	}
 	if s.value == nil {
 		if k.result_type != INVALID_TYPE {
 			errorf(
@@ -4021,6 +4100,12 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 				"this procedure returns `%s`, so `return` needs a value; a result is anonymous and has no local to fill",
 				type_name(k.c, k.result_type),
 			)
+			if shape, fallible := fallible_of(k, k.result_type); fallible && !k.result_inout {
+				add_notef(
+					k.c, s.span, "only a success that carries nothing, as `Status(E)`'s does, returns with `return;`; write `return .%s(value);`",
+					union_variant_name(k.c, k.result_type, shape.success),
+				)
+			}
 		}
 		return terminated
 	}
@@ -4050,7 +4135,7 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		return terminated
 	}
 	if !k.result_inout {
-		if check_value_expr(k, value.expr, k.result_type, "return") {
+		if check_returned_value(k, value) {
 			classify_return_value(k, value, k.result_type)
 		}
 		return terminated
@@ -4077,6 +4162,180 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		classify_return_value(k, value, k.result_type)
 	}
 	return terminated
+}
+
+// What a returned expression's form says it builds (design.md "Success
+// returns"), decided before it has a type.
+@(private = "file")
+Return_Target :: enum u8 {
+	// A variant construction or implicit selector: the whole result.
+	Result,
+	// A composite literal or an unfixed constant, from which no union is built.
+	Payload,
+	// An expression with a type of its own: the result when it is assignable.
+	Either,
+}
+
+@(private = "file")
+return_target :: proc(e: Expr) -> Return_Target {
+	#partial switch v in e {
+	case ^Expr_Selector:
+		if v.operand == nil {
+			return .Result
+		}
+	case ^Expr_Call:
+		if is_implicit_selector(v.callee) {
+			return .Result
+		}
+	case ^Expr_Cond:
+		if return_target(v.then) == .Result || return_target(v.otherwise) == .Result {
+			return .Result
+		}
+	case ^Expr_Composite, ^Expr_Literal:
+		return .Payload
+	}
+	return .Either
+}
+
+// Checks a returned value against the result. In a procedure whose result is
+// a fallible union with a success payload, a value that is not the whole
+// result is checked against the payload, and the statement becomes the
+// `.ok(value)` it stands for, so every later phase sees the construction it
+// handles today (design.md "Success returns").
+@(private = "file")
+check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
+	result := k.result_type
+	e := value.expr
+	target := return_target(e)
+	shape, fallible := fallible_of(k, result)
+	payload := fallible ? shape.info.variants[shape.success] : TYPE_VOID
+	failure := fallible ? shape.info.variants[shape.failure] : TYPE_VOID
+	// In a generic body the two payloads may be one type in some instance, so a
+	// value meant as the error would become the success there.
+	wraps := payload != TYPE_VOID && !(k.result_generic && failure != TYPE_VOID)
+	if !wraps || target == .Result {
+		errors := k.c.error_count
+		if check_value_expr(k, e, result, "return") {
+			return true
+		}
+		if fallible && k.c.error_count > errors {
+			note_success_return(k, e, shape, target, wraps)
+		}
+		return false
+	}
+
+	type := check_single_expr(k, e, payload)
+	if type == INVALID_TYPE {
+		return false
+	}
+	untyped := type_is_untyped(k.c, type)
+	// A call that never returns stands in for any value, the result included.
+	if call_diverges(k.c, e) {
+		expr_base(e).type = result
+	}
+	if call_diverges(k.c, e) || (target == .Either && !untyped && assignable(k.c, type, result)) {
+		return materialize_value_expr(k, e, result, "return")
+	}
+	success := union_variant_name(k.c, result, shape.success)
+	if type == TYPE_UNTYPED_NIL {
+		// design.md "Success returns": `nil` is never an implicit success, so
+		// `return nil;` cannot be read as absence and silently be `.some(nil)`.
+		errorf(
+			k.c, expr_span(e), "L0310",
+			"`nil` does not build `.%s` implicitly: write `.%s(nil)` for a success, or `.%s` for the failure",
+			success, success, union_variant_name(k.c, result, shape.failure),
+		)
+		return false
+	}
+	if !untyped && !assignable(k.c, type, payload) {
+		errorf(
+			k.c, expr_span(e), "L0310",
+			"cannot return `%s` from a procedure that returns `%s`: it is neither the result nor its `.%s` payload `%s`",
+			type_name(k.c, type), type_name(k.c, result), success, type_name(k.c, payload),
+		)
+		note_success_return(k, e, shape, target, wraps)
+		return false
+	}
+	if !materialize_value_expr(k, e, payload, "return") {
+		return false
+	}
+	e = transfer_returned_local(k, e)
+	if base := expr_base(e); base.value_category == .Place && type_clone_disabled(k.c, payload) {
+		errorf(
+			k.c, expr_span(e), "L0502",
+			"`%s` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
+			type_name(k.c, payload),
+		)
+		return false
+	}
+	at := expr_span(e)
+	at.hi = at.lo
+	call := new(Expr_Call, k.c.semantic_allocator)
+	call.span = at
+	call.callee = success_selector(k, result, shape.success, at)
+	call.args = make([]Argument, 1, k.c.semantic_allocator)
+	call.args[0] = Argument{span = expr_span(e), value = e}
+	selector := call.callee.(^Expr_Selector)
+	selector.value_category = .Value
+	selector.type = result
+	selector.variant_union = result
+	selector.variant_index = shape.success
+	selector.resolution = Resolution{kind = .Union_Variant}
+	finish_union_construct(k, call, result, shape.success, e)
+	value.expr = call
+	return true
+}
+
+// After a returned value fit nothing: name the variant that would take it.
+@(private = "file")
+note_success_return :: proc(k: ^Checker, e: Expr, shape: Fallible, target: Return_Target, wraps: bool) {
+	result := k.result_type
+	success := union_variant_name(k.c, result, shape.success)
+	failure := union_variant_name(k.c, result, shape.failure)
+	payload := shape.info.variants[shape.success]
+	failure_payload := shape.info.variants[shape.failure]
+	if selector, is_selector := e.(^Expr_Selector); is_selector && selector.operand == nil {
+		// `return .Bad_Digit;` names a member of a payload, not a variant.
+		id := intern_identifier(k.c, selector.name.text)
+		switch {
+		case type_has_member(k.c, failure_payload, id):
+			add_notef(k.c, selector.span, "`.%s` belongs to the `.%s` payload: write `.%s(.%s)`", selector.name.text, failure, failure, selector.name.text)
+		case type_has_member(k.c, payload, id):
+			add_notef(k.c, selector.span, "`.%s` belongs to the `.%s` payload: write `.%s(.%s)`", selector.name.text, success, success, selector.name.text)
+		}
+		return
+	}
+	if target == .Result {
+		return
+	}
+	type := expr_base(e).type
+	switch {
+	case type == INVALID_TYPE:
+	case !wraps && payload != TYPE_VOID:
+		add_notef(
+			k.c, expr_span(e), "this result names a generic argument, so a returned value is never wrapped: write `.%s(value)` or `.%s(value)`",
+			success, failure,
+		)
+	case failure_payload != TYPE_VOID && assignable(k.c, type, failure_payload):
+		if payload == TYPE_VOID {
+			add_notef(k.c, expr_span(e), "`.%s` carries nothing here; write `.%s(value)` to fail", success, failure)
+		} else {
+			add_notef(k.c, expr_span(e), "a returned value builds only `.%s`; write `.%s(value)` to fail", success, failure)
+		}
+	}
+}
+
+// Whether `type` is an enum with member `name` or a union with variant `name`.
+@(private = "file")
+type_has_member :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> bool {
+	if type == TYPE_VOID || type == INVALID_TYPE {
+		return false
+	}
+	underlying := type_underlying(c, type)
+	if type_is_enum(c, underlying) {
+		return enum_member(c, underlying, name) != INVALID_SYMBOL
+	}
+	return type_is_union(c, underlying) && union_variant_index(c, type, name) >= 0
 }
 
 // design.md "or_else expression": `break`, `continue`, and `return value` in the

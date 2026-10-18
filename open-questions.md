@@ -1419,6 +1419,21 @@ labels.
 
 #### Part 1: success returns
 
+**Status: adopted** as [Success returns](design.md#success-returns). The rule
+differs from the text below in three places, each recorded in
+[comments.md](comments.md#success-returns):
+
+- `nil` is never wrapped, although it is an unfixed constant, so `return nil;`
+  in an `Option(^T)` is an error instead of `.some(nil)`.
+- A wrapped return takes its value as the plain statement does: an owned local
+  transfers, where a written `.ok(x)` copies the place.
+- A body whose written result names a generic argument and whose failure
+  carries a payload, such as `Result(T, E)`, never wraps, which is how a body
+  returning an `E` stays rejected in every instance. `Option(T)` keeps the
+  shorthand in generic bodies.
+
+Migrating `core` returns remains a separate commit.
+
 In a procedure whose result is a [fallible union](design.md#typed-fallibility):
 
 - `return expression;` keeps its current meaning when `expression` is a

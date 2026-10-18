@@ -553,6 +553,9 @@ Symbol :: struct {
 	// a declaration may not take one of those names. Every other predeclared name
 	// stays shadowable.
 	reserved:    bool,
+	// A generic argument bound in an instance's scope, so a signature can tell
+	// which of its types change with the instance (design.md "Success returns").
+	generic_binding: bool,
 	type:        Type_Id,
 	const_value: Const_Value,
 	params:      []Type_Id,

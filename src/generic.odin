@@ -859,6 +859,7 @@ bind_generic_name :: proc(k: ^Checker, scope: ^Scope, binding: Generic_Binding) 
 		name = binding.name,
 		span = binding.span,
 		pkg  = k.pkg,
+		generic_binding = true,
 	}
 	if binding.arg.is_type {
 		sym.kind = .Type

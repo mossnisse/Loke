@@ -427,6 +427,41 @@ has one meaning, as in a procedure with no result. `Result(Unit, E)` is not
 covered, so a generic `Result($T, E)` body cannot change meaning with its
 instance.
 
+### Success returns
+
+`return .ok(x);` and `return .some(x);` named the one variant a success could
+be, so [Success returns](design.md#success-returns) let `return x;` build it.
+The form of the expression decides before its type does, so a constant or a
+literal is never compared with the result, and a variant construction keeps its
+meaning. A value that is already the whole result is returned unchanged; the
+alternative, always wrapping, would make `return other_result;` a type error.
+
+Only the success is implicit. A failure built from a value's type would choose
+a variant by type, which [the failure operand](#the-failure-operand-of-or_return)
+rejected for `or_return`, and it would make `Result(int, int)` ambiguous.
+Swift and Zig also make the success path the plain one. Zig coerces an error
+value by its type as well, which works there because error sets are a kind of
+type of their own; a Loke failure payload is an ordinary type that a success
+payload may share.
+
+`nil` is excluded because several languages spell an optional pointer's absence
+with it (Zig's `?*T`, Swift, Kotlin), while in Loke `nil` is a pointer value, not
+a failure. Wrapping it would silently turn `return nil;` from absence into
+`.some(nil)`.
+
+A wrapped return takes its value as the plain statement does, so an owned
+local transfers. A written `.ok(x)` copies a place, as any construction does;
+making a return copy where the same statement without a wrapper would move
+would be a difference nobody could see in the source.
+
+Generic bodies are monomorphized, so the choice between success and error
+could otherwise depend on the instance: in a body over `Result(T, E)`,
+`return error;` is an error for most instances and a success where `T` and `E`
+are the same type. Excluding results that name a generic argument keeps the
+meaning of the body the same in every instance. A result whose failure carries
+nothing, such as `Option(T)`, has only one payload to build, so it keeps the
+shorthand.
+
 ### `errdefer`
 
 `defer if (failed)` left the flag to the programmer, who had to set it on every
