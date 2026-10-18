@@ -9,5 +9,14 @@ drop 101
 .err(4611686018427387904) 0
 .res(Res{id = 1}) .res(Res{id = 3})
 2 .items([1])
+.ok 4
+drop 4
+drop 101
+.err(4611686018427387904) 4
+drop 101
+drop 2
+drop 101
+.err(8192) 0
+done
 drop 3
 drop 1

@@ -2125,6 +2125,65 @@ links and anchors, and `git diff --check` were checked. The full integration
 gate was not rerun. Probes and the parent source remain ignored under
 `tests/tmp/review-wcopy-*`.
 
+## Widened insertion and variadic source-copy fix review (2026-10-18)
+
+Reviewed `f543e76`, **Copy widened insertion and variadic elements at the
+source type**, against `b9b737e` and the
+[widening](design.md#widening-by-label) and
+[container insertion](design.md#container-insertion) rules. The previous
+non-variadic insertion reproduction now copies once, and the ordinary
+variadic reproduction compiles. The new regression test's output matches,
+including refused source copies in dynamic-array and map `try_insert`.
+
+One **P2** finding, **resolved** since: widened sources appended into a
+move-only element type were copied while building the non-lending pack, with
+the default allocator and ordinary failure policy. A refused copy panicked
+before `try_append` could return its error. With a bound 1 KiB arena, an 8 KiB
+payload copy instead succeeded through the heap and the append returned
+`.ok 1`; the equivalent `try_insert` correctly returned `.err(8192) 0`. These
+were two effects of one missing container-aware copy path, not separate
+findings.
+
+**Fixed** as the paragraph below suggests, with the same allocator and failure
+rules as single-element insertion and no new ownership flag. When a container
+consumes the pack, `emit_bound_call` in
+[emit_llvm_calls.odin](src/emit_llvm_calls.odin) passes the container's
+provider to `emit_variadic_pack`, and says whether the member is a `try_`
+form. There, `emit_refusable_pack_copy` makes a `try_append`'s source-typed
+copy recoverable. A refused copy leaves an unowned zero in the pack and
+records the error; the other operands are still evaluated in order. The call
+then shares the insertion refusal join: it drops whatever the pack owns,
+copies and taken temporaries alike, and returns `.err` without calling.
+tests/run/union_widening_insertion covers `append` and `try_append` with mixed
+packs, a refusal after a copied prefix and a taken temporary, and the bound
+arena reproduction.
+
+The structure pass used the previously applied `ponytail-review` skill.
+The simplified `emit_copied_expr` removes the duplicated clone branch as
+suggested. `Insertion_Copy` has a concrete purpose: it carries a source-typed
+copy and its refusal to the call's control-flow join, so remapping occurs
+only after success. The helper is local and its fields are used. No further
+independent deletion or speculative abstraction was identified. The next
+change should make append pack copying observe the same allocator and
+failure rules as single-element insertion, rather than add another
+widening-specific ownership flag.
+
+Additional probes confirmed that the zero allocator passed from an unbound
+container is permitted by [Allocators](design.md#allocators), and that the
+map's existing-entry path evaluates and takes its argument under
+[Map container operations](design.md#map-container-operations); neither was
+reported as a separate finding.
+
+No implementation fixes were applied. Fresh compiler and LSP builds passed
+135 compiler unit tests and 43 LSP unit tests. Eleven integration suites
+passed: executable programs, panic/unwind programs, packages, diagnostics,
+package diagnostics, syntax recovery, generated IR, layout, and three LSP
+behavior checks. The added insertion regression also matched directly.
+Heading citations, local documentation links and anchors, and
+`git diff --check` were checked. The full integration gate was not rerun.
+Reproductions and the parent source remain ignored under
+`tests/tmp/review-winsert-*`.
+
 ## Lone carriage returns in the language server
 
 The LSP source review of 2026-10-16 found two line-ending problems in

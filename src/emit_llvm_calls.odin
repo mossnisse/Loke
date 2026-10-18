@@ -781,6 +781,10 @@ emit_direct_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 Variadic_Pack :: struct {
 	value:   string,
 	cleanup: Deferred,
+	// Set when a `try_` form's copy may be refused: an `i1` slot holding
+	// whether one was, and the `Allocator_Error` slot holding why.
+	refused: string,
+	error:   string,
 }
 
 @(private = "file")
@@ -799,7 +803,12 @@ checked_variadic_total :: proc(e: ^Emitter, total, added: string) -> string {
 @(private = "file")
 // A lending pack holds a borrowed place or a spread's elements without cloning
 // them, and its flags mark only the elements it owns; the callee clones the rest.
-emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend := false) -> Variadic_Pack {
+// A pack a container consumes copies through that container's `provider`, and
+// for a `try_` form (`fallible`) a refused copy leaves its element unowned and
+// is reported in the pack instead of applying the allocator's policy.
+emit_variadic_pack :: proc(
+	e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend := false, provider := "", fallible := false,
+) -> Variadic_Pack {
 	if v.variadic_forwards {
 		return Variadic_Pack{value = emit_expr(e, v.bound[v.variadic_slot])}
 	}
@@ -832,6 +841,10 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 	// Spread lengths are collected while evaluating operands in written order.
 	elements := make([]string, static_count)
 	lent := make([]bool, static_count)
+	// Whether the pack owns each element: a constant, or a refusable copy's
+	// outcome.
+	owns := make([]string, static_count)
+	refused, refusal_error := "", ""
 	spreads := make([]string, len(v.variadic_spreads))
 	spread_data := make([]string, len(v.variadic_spreads))
 	spread_len := make([]string, len(v.variadic_spreads))
@@ -852,7 +865,18 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 		expr := v.variadic_elements[next_element]
 		// Temporaries transfer into staging; borrowed owners are cloned, or lent.
 		lent[next_element] = managed && lend && expression_is_borrowed_place(expr)
-		value := emit_copied_expr(e, expr, element, managed && !lend && expression_is_borrowed_place(expr))
+		owns[next_element] = lent[next_element] ? "false" : "true"
+		copies := managed && !lend && expression_is_borrowed_place(expr)
+		value := ""
+		if from := copied_type(expr, element); copies && fallible && from != element && emit_lifecycle(e, from).clone_fallible {
+			if refused == "" {
+				refused, refusal_error = alloca(e, "i1"), alloca(e, llvm_type(e, TYPE_ALLOCATOR_ERROR))
+				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", refused)
+			}
+			value, owns[next_element] = emit_refusable_pack_copy(e, expr, from, element, provider, refused, refusal_error)
+		} else {
+			value = emit_copied_expr(e, expr, element, copies, provider)
+		}
 		elements[next_element] = value
 		if managed {
 			slot, flag := temp(e), temp(e)
@@ -862,7 +886,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 			)
 			store(e, element, value, slot)
 			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %d", flag, staging_flags, next_element)
-			fmt.sbprintfln(&e.b, "  store i1 %v, ptr %s", !lent[next_element], flag)
+			fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", owns[next_element], flag)
 		}
 		next_element += 1
 	}
@@ -961,7 +985,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 			store(e, element, loaded, destination)
 			final_flag, staging_flag := temp(e), temp(e)
 			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", final_flag, final_flags, position)
-			fmt.sbprintfln(&e.b, "  store i1 %v, ptr %s", !lent[next_element], final_flag)
+			fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", owns[next_element], final_flag)
 			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %d", staging_flag, staging_flags, next_element)
 			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", staging_flag)
 			next_position := temp(e)
@@ -997,7 +1021,39 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 		unwind_clear(e, staging_cleanup.slot)
 		release_held(e, staging_cleanup)
 	}
-	return Variadic_Pack{value = emit_slice_value(e, pack_type, buffer, total), cleanup = cleanup}
+	return Variadic_Pack{
+		value = emit_slice_value(e, pack_type, buffer, total), cleanup = cleanup,
+		refused = refused, error = refusal_error,
+	}
+}
+
+// design.md "Widening by label" and "Container insertion": a `try_append` copies
+// a widened place at its own type, and a refused copy leaves an unowned zero in
+// the pack and records the error, so the call can drop the pack and return it.
+// Returns the element and whether the pack owns it.
+@(private = "file")
+emit_refusable_pack_copy :: proc(
+	e: ^Emitter, expr: Expr, from, element: Type_Id, provider, refused, error_slot: string,
+) -> (value: string, owned: string) {
+	source := emit_expr_at(e, expr, from)
+	cloned, failed, error := emit_clone_call(e, emit_lifecycle(e, from).try_clone, from, source, provider)
+	slot := temporary_slot(e, element)
+	refused_label, copied_label := new_label(e, "vararg.refused"), new_label(e, "vararg.copied")
+	done := new_label(e, "vararg.done")
+	branch_if(e, failed, refused_label, copied_label)
+	place_label(e, refused_label)
+	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", refused)
+	store(e, TYPE_ALLOCATOR_ERROR, error, error_slot)
+	store(e, element, "zeroinitializer", slot)
+	branch(e, done)
+	place_label(e, copied_label)
+	store(e, element, emit_union_widen(e, cloned, from, element), slot)
+	branch(e, done)
+	place_label(e, done)
+	e.terminated = false
+	owned = temp(e)
+	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", owned, failed)
+	return load_temporary(e, element, slot), owned
 }
 
 // Materializes the Windows x64 call-side ABI.
@@ -1111,6 +1167,7 @@ emit_bound_call :: proc(
 	defer delete(handoff_cleanups)
 	result_borrows := callee_type.result != INVALID_TYPE && type_carries_borrow(e.c, callee_type.result).any
 	inserted: Insertion_Copy
+	refused_pack: Variadic_Pack
 	for step in 0 ..< len(bound) {
 		index := call_node != nil ? call_slot_at(call_node, step) : step
 		argument := bound[index]
@@ -1128,7 +1185,18 @@ emit_bound_call :: proc(
 			// A consuming `append` clones what the pack lends, so a failed clone is its
 			// to report.
 			lends := consuming_body && symbol.container_op == .Append
-			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index], lend = lends)
+			// A pack the container consumes copies through its provider.
+			provider, fallible := "", false
+			if consumed == pack && symbol.container_op == .Append && operands[0] != "" {
+				provider = load(e, "ptr", gep_field(e, CONTAINER_TYPE, operands[0], CONTAINER_ALLOC))
+				fallible = container_member_is_try(e.c, symbol)
+			}
+			packed := emit_variadic_pack(
+				e, call_node, callee_type.parameters[index], lend = lends, provider = provider, fallible = fallible,
+			)
+			if packed.refused != "" {
+				refused_pack = packed
+			}
 			if lends {
 				// Nothing owned crosses into a `try_` form: it copies every element.
 				owned_flags = consumed == pack && packed.cleanup.array_cleanup ? packed.cleanup.array_flags : "null"
@@ -1199,15 +1267,23 @@ emit_bound_call :: proc(
 	sret := returns_sret(e, callee_type.result, callee_type.result_inout)
 	call := sret ? temporary_slot(e, callee_type.result) : ""
 	// A `try_` form whose copy was refused returns that failure, and the call
-	// is not made.
+	// is not made; a refused pack first drops what it owns.
 	joined, joined_slot := "", ""
-	if inserted.failed != "" {
+	failed, error := inserted.failed, inserted.error
+	if refused_pack.refused != "" {
+		failed = load(e, "i1", refused_pack.refused)
+		error = load(e, llvm_type(e, TYPE_ALLOCATOR_ERROR), refused_pack.error)
+	}
+	if failed != "" {
 		refused, attempted := new_label(e, "insert.refused"), new_label(e, "insert.copied")
 		joined = new_label(e, "insert.joined")
 		joined_slot = sret ? call : temporary_slot(e, callee_type.result)
-		branch_if(e, inserted.failed, refused, attempted)
+		branch_if(e, failed, refused, attempted)
 		place_label(e, refused)
-		store(e, callee_type.result, emit_alloc_result(e, callee_type.result, "true", error = inserted.error), joined_slot)
+		if cleanup := refused_pack.cleanup; cleanup.array_cleanup {
+			emit_drop_flagged_array(e, cleanup.type, cleanup.array_buffer, cleanup.array_flags, cleanup.array_count)
+		}
+		store(e, callee_type.result, emit_alloc_result(e, callee_type.result, "true", error = error), joined_slot)
 		branch(e, joined)
 		place_label(e, attempted)
 	}

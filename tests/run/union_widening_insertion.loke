@@ -3,9 +3,12 @@
 // its own type, and the copy is handed over, so the source and the element each
 // drop once. A `try_` form whose copy is refused returns the failure, leaves the
 // container unchanged, and leaves the source as it was. A variadic pack copies
-// a widened place the same way. A copy adds 100 to the id.
+// a widened place the same way; an `append` pack copies through the container's
+// allocator, and a refused `try_append` copy drops the rest of the pack. A copy
+// adds 100 to the id.
 package main;
 import "core:fmt";
+import "core:mem";
 
 // A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
 Huge :: struct { pad: [576460752303423488]u8 }
@@ -37,6 +40,24 @@ count :: proc(values: ..Listed_Wide) -> int {
 	return values.len();
 }
 
+// A copy that needs more than the container's arena has is refused.
+Owned :: struct { values: [dynamic]int }
+impl Owned {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
+		return .ok(Owned{self.values.try_clone(allocator) or_return});
+	}
+}
+Small_Owned :: (owned: Owned | none:);
+Wide_Owned :: (none: | owned: Owned | token: Token);
+
+arena_append :: proc() {
+	buffer: [1024]u8 = {};
+	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	source: Small_Owned = .owned(Owned{make([dynamic]int, 1024)});
+	items := make([dynamic]Wide_Owned, 0, 0, arena.allocator());
+	fmt.println(items.try_append(source), items.len());
+}
+
 main :: proc() {
 	source: Small = .res(Res{1});
 	{
@@ -61,4 +82,13 @@ main :: proc() {
 
 	listed: Listed = .items([dynamic]int{1});
 	fmt.println(count(listed, .n(2)), listed);
+
+	{
+		items: [dynamic]Wide = {};
+		items.append(source, .res(Res{2}));
+		fmt.println(items.try_append(source, .none), items.len());
+		fmt.println(items.try_append(source, .res(Res{4}), refused), items.len());
+	}
+	arena_append();
+	fmt.println("done");
 }
