@@ -1310,3 +1310,116 @@ File :: struct {
 destroy_ast :: proc(f: ^File) {
 	virtual.arena_destroy(&f.arena)
 }
+
+// What `type_syntax_any_name` asks of each identifier, with the caller's data.
+Name_Match :: proc(data: rawptr, ident: ^Expr_Ident) -> bool
+
+// Whether type syntax holds an identifier `matches` accepts, through the
+// expressions a type may contain, such as an array length. Syntax that
+// declares its own body, an inline record or procedure, counts as a match,
+// conservatively.
+type_syntax_any_name :: proc(e: Expr, data: rawptr, matches: Name_Match) -> bool {
+	if e == nil {
+		return false
+	}
+	switch v in e {
+	case ^Expr_Ident:
+		return matches(data, v)
+	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Type_Poly, ^Expr_Proc_Group, ^Expr_Propagated_Error:
+		return false
+	case ^Type_Pointer:
+		return type_syntax_any_name(v.elem, data, matches)
+	case ^Type_C_Pointer:
+		return type_syntax_any_name(v.elem, data, matches)
+	case ^Type_Slice:
+		return type_syntax_any_name(v.elem, data, matches)
+	case ^Type_Dynamic_Array:
+		return type_syntax_any_name(v.elem, data, matches)
+	case ^Type_Distinct:
+		return type_syntax_any_name(v.elem, data, matches)
+	case ^Type_Dyn:
+		return type_syntax_any_name(v.interface_expr, data, matches)
+	case ^Type_Array:
+		return type_syntax_any_name(v.length, data, matches) || type_syntax_any_name(v.elem, data, matches)
+	case ^Type_Map:
+		return type_syntax_any_name(v.key, data, matches) || type_syntax_any_name(v.value, data, matches)
+	case ^Expr_Selector:
+		return type_syntax_any_name(v.operand, data, matches)
+	case ^Expr_Checked_Extract:
+		return type_syntax_any_name(v.operand, data, matches) || type_syntax_any_name(v.target, data, matches)
+	case ^Expr_Index:
+		if type_syntax_any_name(v.operand, data, matches) {
+			return true
+		}
+		for index in v.indices {
+			if type_syntax_any_name(index, data, matches) {
+				return true
+			}
+		}
+		return false
+	case ^Expr_Slice:
+		return type_syntax_any_name(v.operand, data, matches) ||
+		       type_syntax_any_name(v.lo, data, matches) ||
+		       type_syntax_any_name(v.hi, data, matches)
+	case ^Expr_Call:
+		for arg in v.args {
+			if type_syntax_any_name(arg.value, data, matches) {
+				return true
+			}
+		}
+		return type_syntax_any_name(v.callee, data, matches)
+	case ^Expr_Postfix:
+		return type_syntax_any_name(v.operand, data, matches) || type_syntax_any_name(v.failure, data, matches)
+	case ^Expr_Unary:
+		return type_syntax_any_name(v.operand, data, matches)
+	case ^Expr_Binary:
+		return type_syntax_any_name(v.lhs, data, matches) || type_syntax_any_name(v.rhs, data, matches)
+	case ^Expr_Range:
+		return type_syntax_any_name(v.lo, data, matches) || type_syntax_any_name(v.hi, data, matches)
+	case ^Expr_Or_Else:
+		return type_syntax_any_name(v.value, data, matches) || type_syntax_any_name(v.fallback, data, matches) ||
+		       type_syntax_any_name(or_else_exit_value(v), data, matches)
+	case ^Expr_Cond:
+		return type_syntax_any_name(v.then, data, matches) ||
+		       type_syntax_any_name(v.cond, data, matches) ||
+		       type_syntax_any_name(v.otherwise, data, matches)
+	case ^Expr_Move:
+		return type_syntax_any_name(v.value, data, matches)
+	case ^Expr_Composite:
+		if type_syntax_any_name(v.type_expr, data, matches) || type_syntax_any_name(v.via, data, matches) {
+			return true
+		}
+		for element in v.elements {
+			if type_syntax_any_name(element.key, data, matches) || type_syntax_any_name(element.value, data, matches) {
+				return true
+			}
+		}
+		return false
+	case ^Expr_Operator:
+		return type_syntax_any_name(v.value, data, matches)
+	case ^Type_Proc:
+		for parameter in v.params {
+			if type_syntax_any_name(parameter.type, data, matches) || type_syntax_any_name(parameter.default, data, matches) {
+				return true
+			}
+		}
+		return v.result != nil && type_syntax_any_name(v.result.type, data, matches)
+	case ^Type_Anon_Record:
+		for field in v.fields {
+			if type_syntax_any_name(field.type, data, matches) {
+				return true
+			}
+		}
+		return false
+	case ^Type_Anon_Union:
+		for variant in v.variants {
+			if type_syntax_any_name(variant.type, data, matches) {
+				return true
+			}
+		}
+		return false
+	case ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
+		return true // conservatively
+	}
+	return false
+}

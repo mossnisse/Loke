@@ -44,6 +44,11 @@ status_value :: proc(e: Parse_Error) -> Status(Parse_Error) {
 	return e;
 }
 
+// The binding is inside the array length, an expression.
+generic_length :: proc($N: int, error: [2]int) -> Result([N + 1]int, [2]int) {
+	return error;
+}
+
 borrowed :: proc(c: Connection) -> Option(Connection) {
 	return c;
 }
@@ -56,4 +61,5 @@ escape :: proc() -> Option(string_view) {
 main :: proc() {
 	_ = generic_error(1, 2);
 	_ = generic_value(1, "x");
+	_ = generic_length(1, [2]int{});
 }

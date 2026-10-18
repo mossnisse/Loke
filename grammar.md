@@ -280,7 +280,7 @@ Record_Type    = "(" Record_Field ("," Record_Field)* ","? ")"
 Record_Field   = Identifier_List ":" Type                // labelled
                | Type                                    // unlabelled
 
-Anon_Union_Type = "(" Alternative ("|" Alternative)+ ")"
+Anon_Union_Type = "(" Alternative ("|" Alternative)+ "|"? ")"
 Alternative     = Identifier ":" Type?                   // `name:` carries nothing
 
 Type_Name      = Identifier ("." Identifier)*            // qualified or associated
@@ -729,8 +729,10 @@ contextually typed literal or from an alias used as a literal prefix, never
 A labelled group is an `Anon_Union_Type` instead when it holds a `|` at its own
 bracket depth. Each `Alternative` has exactly one label and its colon, so
 `(a | b)` stays a parenthesised expression, `(a, b: int | c:)` is an error, and
-a group with one alternative, `(a: int |)`, is an error. An alternative's type
-is not a `$` binding.
+a group with one alternative, `(a: int |)`, is an error. A trailing `|` is
+accepted, as a trailing `,` is in a `Record_Type`, so a union written one
+alternative per line ends each with `|`; `(a: int | | b:)` is an error. An
+alternative's type is not a `$` binding.
 
 Variant construction has no syntax of its own: `.name(payload)` is the
 implicit-selector primary followed by the call suffix, and `U.name(payload)` is

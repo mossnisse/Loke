@@ -1818,6 +1818,58 @@ Acceptance cases:
   of the group is not chosen by `..`, and `show(answer)` without `..` never
   distributes.
 
+## Success returns and anonymous unions commit review (2026-10-18)
+
+Reviewed `5cfc8b0` (success returns) and `f5ee2ff` (anonymous unions) for
+correctness and structure. Two confirmed findings, both **resolved** since:
+
+- P2, `5cfc8b0`: the walk that decides whether a result names a generic
+  argument skipped expressions, so `Result([N + 1]int, [2]int)` wrapped
+  `return error;` as success when `N` was 1 and rejected it otherwise.
+  **Fixed**: the walk is now `type_syntax_any_name` in [ast.odin](src/ast.odin),
+  shared with the erasure check, and runs only inside an instance, so its
+  conservative answer for inline records cannot affect ordinary code.
+  `tests/err/success_returns` covers the case.
+- P3, `f5ee2ff`: `parse_anon_union_type` accepted a trailing `|`, which the
+  grammar did not allow. **Resolved by accepting it**: a trailing `|` is now in
+  [the grammar](grammar.md#types) and [the spec](design.md#anonymous-unions),
+  like a trailing comma in a record, so a union written one alternative per line
+  ends each line alike. An empty alternative between two `|` is still an
+  error; `tests/syntax_err/anonymous-union-alternatives` covers both.
+
+The phase boundaries are sound: lowering success returns to ordinary union
+constructions lets ownership, provenance, evaluation, and emission share their
+existing handling. Interning anonymous unions as the existing union kind keeps
+the new feature's implementation concentrated in parsing, type resolution, and
+identity. The collision buckets compare complete shapes, and the added
+cross-package test covers payload types that share a display name.
+
+Two optional P3 simplifications from the `ponytail-review` pass, both
+**applied** since:
+
+- [union.odin](src/union.odin):L79: shrink: remove the duplicated payload-validation branch in `resolve_anon_union`; share a `(Type_Id, bool)` payload resolver with `resolve_union_variants`, keeping duplicate-label collection and named-union attributes with their callers. The repeated checks for payloadless type names, type resolution, and invalid payload kinds can lose about 20 net lines.
+- [check.odin](src/check.odin):L4301: shrink: replace the five manual selector-field assignments with `check_union_variant_selector(k, selector, result, true)` before `finish_union_construct`. That helper already sets these fields for a payload variant; the wrapping branch guarantees a nonempty payload. Four net lines fewer, with one owner for the selector annotation contract.
+
+**net: -24 lines possible.** This estimate excludes the correctness fixes.
+The partly duplicated generic-name traversal also caused the first gap; sharing
+its expression coverage is part of that fix, rather than a separate cosmetic
+finding. Both were applied as described: `resolve_variant_payload` serves both
+union forms with the named union's wording, and the success-return wrapper
+calls `check_union_variant_selector`.
+
+Validation used freshly built `review-lokec.exe` and `review-loke-lsp.exe`:
+134 compiler unit tests and 43 LSP unit tests passed, as did the 10 integration
+suites for executable programs, packages, diagnostics, package diagnostics,
+syntax recovery, generated IR, layout, and three LSP behavior checks. The
+existing success-return and anonymous-union run programs also passed directly.
+Focused probes confirmed both gaps and exercised nested union payloads,
+generic anonymous-union construction, dynamic-array transfers, and borrowed
+view returns. A broader integration attempt crashed in Odin's test runner at
+`tests.a_debugger_shows_values` with exception `0xC000001D`; it is not a passing
+full gate. Its leftover compiler process was stopped. Reproduction artifacts
+are ignored under `tests/tmp/review-*.loke`. Heading citations and local links
+were checked after recording these findings.
+
 ## Lone carriage returns in the language server
 
 The LSP source review of 2026-10-16 found two line-ending problems in

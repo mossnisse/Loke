@@ -2,7 +2,8 @@
 // with structural identity. It is built contextually or through an alias,
 // switched over, compared, printed, stored, and copied as a named union is;
 // `(node: ^Node | end:)` is one address; and the failure operand wraps into
-// one used as a `Result`'s error.
+// one used as a `Result`'s error. A trailing `|` is accepted, as a trailing
+// comma is in a record.
 package main;
 import "core:fmt";
 
@@ -12,6 +13,12 @@ Node :: struct { value: int }
 
 Either :: (left: int | right: string);
 Link :: (node: ^Node | end:);
+
+Event :: (
+	key: rune |
+	resize: (width: int, height: int) |
+	quit: |
+);
 
 pick :: proc(flag: bool) -> (left: int | right: string) {
 	if (flag) { return .left(1); }
@@ -63,4 +70,6 @@ main :: proc() {
 	states: map[string](on: | off:) = {};
 	states["a"] = .on;
 	fmt.println(states["a"]);
+	events := [3]Event{.key('x'), .resize({80, 24}), .quit};
+	fmt.println(events);
 }

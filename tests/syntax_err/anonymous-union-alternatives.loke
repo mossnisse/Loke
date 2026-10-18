@@ -1,10 +1,13 @@
 // An anonymous union has two or more alternatives, each one label and its
-// colon; an alternative's type is not a `$` binding.
+// colon; an alternative's type is not a `$` binding. A trailing `|` is
+// accepted, but not one with nothing between it and the previous `|`.
 package main;
 
 One :: (a: int |);
 List :: (a, b: int | c:);
 Poly :: proc(x: (some: $T | none:)) {}
 value: (int | string);
+Empty :: (a: int | | b:);
+Trailing :: (a: int | b: |);
 
 sentinel :: proc() { }

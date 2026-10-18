@@ -25,9 +25,12 @@ this procedure returns `Result(Unit, Parse_Error)`, so `return` needs a value; a
 L0310
 @44:9
 cannot return `Status(Parse_Error)` with `Parse_Error`
+L0310
+@49:9
+cannot return `Result([2]int, [2]int)` with `[2]int`
 L0502
-@48:9
+@53:9
 `Connection` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
 L0526
-@53:9
+@58:9
 this string view cannot be returned: `s` ends when this procedure returns

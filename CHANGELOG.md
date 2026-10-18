@@ -39,7 +39,8 @@ checklist.
   by its fields. It is built, switched over, compared, and printed as a named
   union is, and serves as a `Result`'s error type, which `or_return .label`
   wraps into. It carries no attributes, so it has no zero value and is never
-  fallible. See design.md [Anonymous unions](design.md#anonymous-unions).
+  fallible. A trailing `|` is accepted. See design.md
+  [Anonymous unions](design.md#anonymous-unions).
 - `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.
   It publishes the diagnostics `lokec` reports for open documents, including
   unsaved edits and the packages they import. It also answers hover,

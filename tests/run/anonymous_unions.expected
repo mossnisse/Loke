@@ -8,3 +8,4 @@ true
 [.left(3), .right("r")] [.left(3), .right("r")]
 .some(5) .none
 .on
+[.key('x'), .resize((width = 80, height = 24)), .quit]

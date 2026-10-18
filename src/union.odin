@@ -20,34 +20,9 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 			)
 			continue
 		}
-		// `void` reaches `variants` only here, so it is the test for "payloadless"
-		// everywhere downstream.
-		payload := TYPE_VOID
-		if variant.type == nil {
-			// design.md "Unions": Odin's `union { int, string }` lists payload
-			// types, which here would quietly be payloadless variants.
-			symbol := symbol_of(k.c, lookup_symbol(k.scope, name))
-			if symbol != nil && symbol.kind == .Type {
-				errorf(
-					k.c, variant.span, "L0422",
-					"`%s` is a type, so it cannot name a payloadless variant; a variant carrying it is written `name: %s`",
-					variant.name.text, variant.name.text,
-				)
-				continue
-			}
-		} else {
-			payload = resolve_type_syntax(k, variant.type)
-			if payload == INVALID_TYPE {
-				errorf(k.c, expr_span(variant.type), "L0422", "this union variant payload is not a type")
-				continue
-			}
-			if payload == TYPE_VOID || payload == TYPE_UNTYPED_NIL {
-				errorf(
-					k.c, expr_span(variant.type), "L0422",
-					"`%s` cannot be a union variant payload", type_name(k.c, payload),
-				)
-				continue
-			}
+		payload, ok := resolve_variant_payload(k, variant, name)
+		if !ok {
+			continue
 		}
 		append(&payloads, payload)
 		append(&names, name)
@@ -76,29 +51,10 @@ resolve_anon_union :: proc(k: ^Checker, value: ^Type_Anon_Union) -> Type_Id {
 				bad = true
 			}
 		}
-		payload := TYPE_VOID
-		if variant.type == nil {
-			symbol := symbol_of(k.c, lookup_symbol(k.scope, name))
-			if symbol != nil && symbol.kind == .Type {
-				errorf(
-					k.c, variant.span, "L0422",
-					"`%s` is a type, so it cannot label a payloadless alternative; one carrying it is written `name: %s`",
-					variant.name.text, variant.name.text,
-				)
-				bad = true
-			}
-		} else {
-			payload = resolve_type_syntax(k, variant.type)
-			if payload == INVALID_TYPE {
-				report_unresolved_type(k, variant.type)
-				bad = true
-				continue
-			}
-			if payload == TYPE_VOID || payload == TYPE_UNTYPED_NIL {
-				errorf(k.c, expr_span(variant.type), "L0422", "`%s` cannot be a union alternative's payload", type_name(k.c, payload))
-				bad = true
-				continue
-			}
+		payload, ok := resolve_variant_payload(k, variant, name)
+		if !ok {
+			bad = true
+			continue
 		}
 		append(&specs, Anon_Union_Variant{name = name, payload = payload})
 	}
@@ -106,6 +62,36 @@ resolve_anon_union :: proc(k: ^Checker, value: ^Type_Anon_Union) -> Type_Id {
 		return INVALID_TYPE
 	}
 	return anon_union_type(k.c, specs[:])
+}
+
+// One variant's payload: `TYPE_VOID` when it carries nothing, which is the test
+// for "payloadless" everywhere downstream. False once the reason is reported.
+@(private = "file")
+resolve_variant_payload :: proc(k: ^Checker, variant: Variant, name: Identifier_Id) -> (Type_Id, bool) {
+	if variant.type == nil {
+		// design.md "Unions": Odin's `union { int, string }` lists payload types,
+		// which here would quietly be payloadless variants.
+		symbol := symbol_of(k.c, lookup_symbol(k.scope, name))
+		if symbol != nil && symbol.kind == .Type {
+			errorf(
+				k.c, variant.span, "L0422",
+				"`%s` is a type, so it cannot name a payloadless variant; a variant carrying it is written `name: %s`",
+				variant.name.text, variant.name.text,
+			)
+			return INVALID_TYPE, false
+		}
+		return TYPE_VOID, true
+	}
+	payload := resolve_type_syntax(k, variant.type)
+	if payload == INVALID_TYPE {
+		errorf(k.c, expr_span(variant.type), "L0422", "this union variant payload is not a type")
+		return INVALID_TYPE, false
+	}
+	if payload == TYPE_VOID || payload == TYPE_UNTYPED_NIL {
+		errorf(k.c, expr_span(variant.type), "L0422", "`%s` cannot be a union variant payload", type_name(k.c, payload))
+		return INVALID_TYPE, false
+	}
+	return payload, true
 }
 
 // design.md "Zero values": `@(zero=name)` designates the semantic zero. Only

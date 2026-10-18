@@ -2805,7 +2805,8 @@ scans_anon_union :: proc(p: ^Parser) -> bool {
 }
 
 // `(name: Type | name:)`, entered after the `(`. Each alternative is one label,
-// so a name list, which a record field allows, is rejected here (design.md
+// so a name list, which a record field allows, is rejected here. A `|` before
+// the `)` is a trailing separator, as a trailing comma is in a record (design.md
 // "Anonymous unions").
 @(private = "file")
 parse_anon_union_type :: proc(p: ^Parser, open: Token) -> Expr {

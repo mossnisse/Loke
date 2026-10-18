@@ -1770,7 +1770,15 @@ read_config :: proc(path: string_view) -> Result(Config, (io: io.Error | parse: 
 }
 ```
 
-Each alternative is `label: Type`, or `label:` for one that carries nothing. The colon is required, so `(a | b)` stays a parenthesized expression, and each alternative has one label, so `(a, b: int | c:)` is an error. There are at least two alternatives, and their labels are distinct.
+Each alternative is `label: Type`, or `label:` for one that carries nothing. The colon is required, so `(a | b)` stays a parenthesized expression, and each alternative has one label, so `(a, b: int | c:)` is an error. There are at least two alternatives, and their labels are distinct. A trailing `|` is accepted, as a trailing comma is in a record, so a union written one alternative per line can end every line alike:
+
+```odin
+Event :: (
+	key: rune |
+	resize: (width: int, height: int) |
+	quit: |
+);
+```
 
 Its identity is **structural**: the ordered sequence of its labels and payload types, which is also its tag order. The same alternatives in the same order are one type wherever they are written, in any package; the same alternatives in another order are a different type, and nothing converts between the two.
 

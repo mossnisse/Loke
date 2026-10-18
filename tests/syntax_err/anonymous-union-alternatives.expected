@@ -1,12 +1,15 @@
 L0254
-@5:8
+@6:8
 an anonymous union has at least two alternatives; one value is written as its type alone
 L0254
-@6:11
+@7:11
 an anonymous union alternative has one label; write `a: T | b: T`
 L0254
-@7:24
+@8:24
 an anonymous union alternative cannot be a `$` template name; declare a `union` for that
 L0254
-@8:13
+@9:13
 each alternative of an anonymous union is labelled: `(a: int | b: string)`
+L0254
+@10:20
+expected an alternative's label

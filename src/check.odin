@@ -2691,64 +2691,27 @@ success_selector :: proc(k: ^Checker, result: Type_Id, index: int, at: Span) -> 
 }
 
 // Whether type syntax names a generic argument bound in `scope`, as
-// `Result(T, Error)` does in an instance of a procedure generic over `T`.
+// `Result(T, Error)` or `[N + 1]int` does in an instance generic over `T` or
+// `N`. Outside an instance nothing is bound, so nothing is walked.
 @(private = "file")
 type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
-	if e == nil {
+	in_instance := false
+	for enclosing := scope; enclosing != nil && !in_instance; enclosing = enclosing.parent {
+		in_instance = enclosing.instance != nil
+	}
+	if !in_instance {
 		return false
 	}
-	#partial switch v in e {
-	case ^Expr_Ident:
-		symbol := symbol_of(k.c, lookup_symbol(scope, identifier_of(k.c, v)))
-		return symbol != nil && symbol.generic_binding
-	case ^Type_Poly:
-		return true
-	case ^Expr_Selector:
-		return type_syntax_names_generic(k, scope, v.operand)
-	case ^Expr_Call:
-		for arg in v.args {
-			if type_syntax_names_generic(k, scope, arg.value) {
-				return true
-			}
-		}
-		return type_syntax_names_generic(k, scope, v.callee)
-	case ^Type_Pointer:
-		return type_syntax_names_generic(k, scope, v.elem)
-	case ^Type_C_Pointer:
-		return type_syntax_names_generic(k, scope, v.elem)
-	case ^Type_Slice:
-		return type_syntax_names_generic(k, scope, v.elem)
-	case ^Type_Dynamic_Array:
-		return type_syntax_names_generic(k, scope, v.elem)
-	case ^Type_Distinct:
-		return type_syntax_names_generic(k, scope, v.elem)
-	case ^Type_Dyn:
-		return type_syntax_names_generic(k, scope, v.interface_expr)
-	case ^Type_Array:
-		return type_syntax_names_generic(k, scope, v.length) || type_syntax_names_generic(k, scope, v.elem)
-	case ^Type_Map:
-		return type_syntax_names_generic(k, scope, v.key) || type_syntax_names_generic(k, scope, v.value)
-	case ^Type_Anon_Record:
-		for field in v.fields {
-			if type_syntax_names_generic(k, scope, field.type) {
-				return true
-			}
-		}
-	case ^Type_Anon_Union:
-		for variant in v.variants {
-			if type_syntax_names_generic(k, scope, variant.type) {
-				return true
-			}
-		}
-	case ^Type_Proc:
-		for parameter in v.params {
-			if type_syntax_names_generic(k, scope, parameter.type) {
-				return true
-			}
-		}
-		return v.result != nil && type_syntax_names_generic(k, scope, v.result.type)
+	Lookup :: struct {
+		k:     ^Checker,
+		scope: ^Scope,
 	}
-	return false
+	lookup := Lookup{k = k, scope = scope}
+	return type_syntax_any_name(e, &lookup, proc(data: rawptr, ident: ^Expr_Ident) -> bool {
+		lookup := (^Lookup)(data)
+		symbol := symbol_of(lookup.k.c, lookup_symbol(lookup.scope, identifier_of(lookup.k.c, ident)))
+		return symbol != nil && symbol.generic_binding
+	})
 }
 
 install_symbols :: proc(scope: ^Scope, c: ^Compiler, symbols: []Symbol_Id) {
@@ -4297,12 +4260,7 @@ check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
 	call.callee = success_selector(k, result, shape.success, at)
 	call.args = make([]Argument, 1, k.c.semantic_allocator)
 	call.args[0] = Argument{span = expr_span(e), value = e}
-	selector := call.callee.(^Expr_Selector)
-	selector.value_category = .Value
-	selector.type = result
-	selector.variant_union = result
-	selector.variant_index = shape.success
-	selector.resolution = Resolution{kind = .Union_Variant}
+	check_union_variant_selector(k, call.callee.(^Expr_Selector), result, callee = true)
 	finish_union_construct(k, call, result, shape.success, e)
 	value.expr = call
 	return true
