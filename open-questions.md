@@ -1914,6 +1914,47 @@ Heading citations and local documentation links were checked after recording
 these findings. The full integration suite was not rerun; the earlier review's
 debugger-test crash remains outside this verification.
 
+## Syntax walk caller policy commit review (2026-10-18)
+
+Reviewed `1d54a1f`, **Keep generic-name policies with each syntax walk caller**.
+Both preceding regressions are fixed: a result spelled `Result($T, $E)` is
+rejected when it needs an explicit variant, and a concrete inline-enum result
+keeps the success-return shorthand in a generic procedure. The shared walk's
+erasure callback preserves its previous answers for identifiers, `$` names,
+and declared bodies.
+
+One new P2 regression, **fixed** since: the inline-record branch walked
+payload types but omitted attribute values, so a binding in `@(align=N)`
+bypassed the restriction and could silently wrap an error value as success.
+A fresh build of the parent rejected this program; a fresh build of the reviewed
+commit accepts it and passes an assertion that the result is `.ok`. Changing
+the alignment argument from 8 to 4 rejects the same return in the reviewed
+commit. `@(align=align_of(T))` was also confirmed to bypass the restriction.
+
+Keeping the two callers' decisions separate is a sound structure, and the
+shared traversal remains useful for expression forms. No additional
+complexity-only finding was confirmed; completing the inline definition's
+attribute coverage is a correctness fix. The review itself applied no
+implementation fixes.
+
+**Fix**: the `Type_Record` case of `names_generic_binding` in
+[check.odin](src/check.odin) now walks everything written in the definition:
+its attribute values, each field's attributes, its generic parameter types,
+and its `where` clauses, besides field and variant types.
+`tests/err/success_returns` rejects `@(align=N)` and `@(align=align_of(T))` in
+instances where both payloads are `[16]u8`.
+
+Focused reproduction sources and the archived parent sources remain ignored
+under `tests/tmp/review-policy-*`.
+
+Validation used fresh compiler and LSP builds: 134 compiler unit tests and
+43 LSP unit tests passed, along with eight integration suites covering
+executable programs, packages, diagnostics, package diagnostics, syntax
+recovery, and three LSP behavior checks. The updated success-return run test
+and both previous review reproductions behaved as intended. All 1,837 heading
+citations and 158 local documentation links and anchors resolved, and
+`git diff --check` passed. The full integration gate was not rerun.
+
 ## Lone carriage returns in the language server
 
 The LSP source review of 2026-10-16 found two line-ending problems in

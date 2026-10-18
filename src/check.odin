@@ -2730,8 +2730,31 @@ names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 	case ^Type_Poly:
 		return true
 	case ^Type_Record:
+		// Everything written in it: `@(align=N)` changes the layout as a field
+		// type does.
+		attributes_name :: proc(attributes: []Attribute, data: rawptr) -> bool {
+			for attribute in attributes {
+				if type_syntax_any_name(attribute.value, data, names_generic_binding) {
+					return true
+				}
+			}
+			return false
+		}
+		if attributes_name(v.attributes, data) {
+			return true
+		}
+		for parameter in v.generic_params {
+			if any_of(parameter.type, data) {
+				return true
+			}
+		}
+		for clause in v.where_clauses {
+			if any_of(clause, data) {
+				return true
+			}
+		}
 		for field in v.fields {
-			if any_of(field.type, data) {
+			if attributes_name(field.attributes, data) || any_of(field.type, data) {
 				return true
 			}
 		}

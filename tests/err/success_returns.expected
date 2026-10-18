@@ -34,9 +34,15 @@ cannot return `Result(int, int)` with `int`
 L0310
 @59:9
 cannot return `Result([16]u8, [2]int)` with `[2]int`
+L0310
+@65:9
+cannot return `Result([16]u8, [16]u8)` with `[16]u8`
+L0310
+@69:9
+cannot return `Result([16]u8, [16]u8)` with `[16]u8`
 L0502
-@63:9
+@73:9
 `Connection` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
 L0526
-@68:9
+@78:9
 this string view cannot be returned: `s` ends when this procedure returns

@@ -59,6 +59,16 @@ generic_inline :: proc(value: $T, error: [2]int) -> Result([size_of(union { a: T
 	return error;
 }
 
+// So does a binding only in an inline definition's attribute. The instances
+// below make both payloads `[16]u8`.
+generic_attribute :: proc($N: int, error: [16]u8) -> Result([size_of(union @(align=N) { a: u8, b: u8 })]u8, [16]u8) {
+	return error;
+}
+
+generic_attribute_type :: proc(value: $T, error: [16]u8) -> Result([size_of(union @(align=align_of(T)) { a: u8, b: u8 })]u8, [16]u8) {
+	return error;
+}
+
 borrowed :: proc(c: Connection) -> Option(Connection) {
 	return c;
 }
@@ -74,4 +84,6 @@ main :: proc() {
 	_ = generic_length(1, [2]int{});
 	_ = generic_dollar(1, 2);
 	_ = generic_inline(1, [2]int{});
+	_ = generic_attribute(8, [16]u8{});
+	_ = generic_attribute_type(1, [16]u8{});
 }
