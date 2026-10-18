@@ -1527,6 +1527,17 @@ paths from there.
 
 #### Part 3: widening by label
 
+**Status: adopted** as [Widening by label](design.md#widening-by-label), with
+two additions to the text below, each recorded in
+[comments.md](comments.md#widening-by-label):
+
+- A comparison widens too, since [Comparison operators](design.md#comparison-operators)
+  already require only that one operand be assignable to the other:
+  `small == big` compares under the larger union.
+- A place is copied at its own type and the copy widened, so a copyable source
+  widens into a destination with a move-only alternative it lacks. A borrowed
+  argument to a value parameter is lent, not copied.
+
 Add to [Implicit type conversions](design.md#implicit-type-conversions): an
 anonymous union value converts to an anonymous union type that has, for each
 of its alternatives, an alternative with the same label and the same payload

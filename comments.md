@@ -553,9 +553,8 @@ expression.
 
 Identity is ordered for the reason a record's is: the order is the tag order,
 and making two orders one type would need a canonical order that the source no
-longer shows. Converting between orders and between sets of labels is a
-separate question, see
-[Part 3](open-questions.md#part-3-widening-by-label).
+longer shows. Converting between orders and between sets of labels is
+[widening](#widening-by-label).
 
 An anonymous union carries no attributes, so it is never fallible. A failure
 policy is the job of `Result`, `Option`, and a named union with `@(failure=)`;
@@ -563,6 +562,40 @@ an attribute on a structural type would become part of its identity, and two
 otherwise equal types would differ only by it. An anonymous union is therefore
 used as data, or as the error payload of a `Result`, where the
 [failure operand](#the-failure-operand-of-or_return) already wraps into it.
+
+### Widening by label
+
+Without a conversion, every helper over a smaller error set needed its own
+`or_return .name` at each caller, or one application-wide union that every
+helper over-reported. [Widening by label](design.md#widening-by-label) lets a
+bare `or_return` propagate a helper's set into any set that contains it, so a
+helper reports exactly what it can fail with.
+
+It is not the variant inference that
+[the failure operand](#the-failure-operand-of-or_return) rejected. The label and
+the payload type are written on both sides, so adding an alternative to the
+destination changes no existing conversion, and adding one to the source,
+renaming a label, or changing a payload type is a diagnostic at each site whose
+destination lacks it, naming the alternative.
+
+The rule matches exact payload types, not assignable ones. A payload that
+converted on the way, such as a `string` into a `string_view` alternative,
+would need a conversion per alternative and a borrow the source never had, and
+would make a nested anonymous union widen through its parent, which the record
+rule does not do either. Named unions stay out because their variant names
+belong to their declaration: two packages' `io:` variants need not mean the
+same thing, while an anonymous union's labels are its whole identity.
+
+A comparison widens as well: the comparison rule already asks only that one
+operand be assignable to the other, and two values with the same label compare
+as the same alternative.
+
+A place is copied at its own type rather than at the destination's, so a
+source that is copyable widens into a destination with a move-only alternative
+it does not have. An argument to a value parameter is lent, as any argument
+is, so it is widened without a copy. The conversion does not reach through containers, since a
+`[dynamic]` of the wider union has a different element size; that rebuilds the
+container, which is a loop the program writes.
 
 ### Distinct types
 

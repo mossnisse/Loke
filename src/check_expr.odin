@@ -241,6 +241,7 @@ materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: stri
 			type_name(k.c, final),
 		)
 		note_overload_selection(k, e, target)
+		note_union_widening(k, expr_span(e), final, target)
 		note_mutable_slicing(k, e, final, target)
 		note_named_callable(k, e, final, target)
 		return false
@@ -2514,6 +2515,13 @@ join_operand_types :: proc(k: ^Checker, lt, rt: Type_Id) -> (Type_Id, bool) {
 			return lt, true
 		}
 	}
+	// design.md "Widening by label": the smaller union widens to the larger.
+	if union_widens_to(k.c, lt, rt) {
+		return rt, true
+	}
+	if union_widens_to(k.c, rt, lt) {
+		return lt, true
+	}
 	return INVALID_TYPE, false
 }
 
@@ -3417,6 +3425,18 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		base.type = target
 		return true
 	}
+	// design.md "Widening by label": the tag is remapped and the payload moved
+	// into the larger storage, so the backend and the evaluator need the source.
+	// A constant is remapped here.
+	if union_widens_to(k.c, base.type, target) {
+		if base.is_const && base.const_value.kind == .Aggregate {
+			base.const_value = widen_const(k.c, base.const_value, base.type, target)
+		} else if base.widened_from == INVALID_TYPE {
+			base.widened_from = base.type
+		}
+		base.type = target
+		return true
+	}
 	// The concrete type is kept so the backend knows what to take the address
 	// of and which `typeid` to pair with it (design.md "any_view type").
 	if target == TYPE_ANY_VIEW && base.type != TYPE_ANY_VIEW {
@@ -3752,6 +3772,9 @@ retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, expl
 		return value, true
 	}
 	relabelled := record_drops_labels_to(c, source, target)
+	if union_widens_to(c, source, target) {
+		return widen_const(c, value, source, target, storage), true
+	}
 	if !relabelled && (!explicit || type_underlying(c, source) != type_underlying(c, target)) {
 		return value, false
 	}
@@ -3805,7 +3828,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		element := type_of(c, type_underlying(c, to)).element
 		return from == element || assignable(c, from, element)
 	}
-	if carrier_weakens_to(c, from, to) || record_drops_labels_to(c, from, to) {
+	if carrier_weakens_to(c, from, to) || record_drops_labels_to(c, from, to) || union_widens_to(c, from, to) {
 		return true
 	}
 	// design.md "Escape levels".

@@ -684,7 +684,7 @@ check_bound_argument_mode :: proc(k: ^Checker, value: Expr, target: Type_Id, mod
 	// caller's variable itself, so no conversion may stand between them.
 	if base != nil && (base.type != target || expression_converts_storage(value)) {
 		found := base.type
-		for from in ([]Type_Id{base.view_from, base.erased_from, base.splat_from}) {
+		for from in ([]Type_Id{base.view_from, base.erased_from, base.splat_from, base.widened_from}) {
 			if from != INVALID_TYPE {
 				found = from
 			}

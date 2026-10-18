@@ -399,6 +399,7 @@ The following list defines the implicit conversions. There are no user-defined o
 - Unfixed rune constants -> rune types, and built-in integer types when in range; never implicitly to floating-point types
 - `string` -> `string_view`; a non-owning borrow subject to [Borrows and lifetimes](#borrows-and-lifetimes)
 - A labeled anonymous record -> the unlabeled record of its field types, in order; the value is unchanged and only the names are dropped; see [Anonymous records](#anonymous-records)
+- An anonymous union -> an anonymous union that has each of its alternatives, with the same label and payload type, in any order; the active alternative and its payload are kept; see [Widening by label](#widening-by-label)
 - `[dynamic]T` -> `[]T`, a read-only view of the live elements under the same borrow rules; see [Dynamic arrays](#dynamic-arrays)
 - `[N]T` -> `[]T`, a read-only view of all `N` elements under the same borrow rules; see [Fixed arrays](#fixed-arrays)
 - `Box(T)` -> `^T`, a read-only borrow of the payload under the same borrow rules; see [Owned values](#owned-values)
@@ -1780,11 +1781,33 @@ Event :: (
 );
 ```
 
-Its identity is **structural**: the ordered sequence of its labels and payload types, which is also its tag order. The same alternatives in the same order are one type wherever they are written, in any package; the same alternatives in another order are a different type, and nothing converts between the two.
+Its identity is **structural**: the ordered sequence of its labels and payload types, which is also its tag order. The same alternatives in the same order are one type wherever they are written, in any package; the same alternatives in another order are a different type, which a value [widens](#widening-by-label) to.
 
 Otherwise it is an ordinary union. It is built with the contextual `.label(payload)` or through an alias, `Either.left(1)`, and `Either.left` is its [constructor](#constructing-a-variant). [Inspecting](#inspecting-a-union) it, [switch ownership](#switch-ownership), copy, move, drop, equality, formatting, and the [representation](#representation) are a named union's, so `(node: ^Node | end:)` is one address.
 
 It carries no attributes. It therefore has [no zero value](#types-with-no-zero-value), is not a [fallible expression](#typed-fallibility), so `or_else` and `or_return` reject it, and does not [require its results](#require_results). A union that needs one of those is declared, and `distinct` does not make an anonymous one nominal. An alternative's type is not a `$` binding.
+
+##### Widening by label
+
+An anonymous union value converts implicitly to an anonymous union type that has, for each of its alternatives, an alternative with the same label and the same payload type, or the same payloadless label. The destination may have more alternatives, in any order. The value keeps its active alternative and that alternative's payload, under the destination's tag for the label:
+
+```odin
+Config_Error :: (io: io.Error | parse: Parse_Error);
+
+start :: proc() -> Result(App, (io: io.Error | parse: Parse_Error | net: Net_Error)) {
+	config := read_config("app.cfg") or_return;          // Config_Error widens
+	socket := net.connect(config.host) or_return .net;
+	return App{config, socket};
+}
+```
+
+Widening applies wherever an implicit conversion does: a declaration, an assignment, an argument, a return, an element, a comparison, and the failure payload of a bare [`or_return`](#or_return-operator), which requires only that the payload be assignable to the enclosing result's. It is a value conversion, as dropping a record's labels is, so it does not reach through a container, an `Option`, or a procedure type: `[dynamic]Config_Error` is not a `[dynamic]` of the wider union. A place operand is copied at its own type, which must be copyable, and the copy is widened, so the place keeps its value; a temporary or a `move` operand transfers. A payload that borrows keeps its borrow. A constant and [compile-time procedure evaluation](#compile-time-procedure-evaluation) widen alike.
+
+The representation is not shared: the tag is remapped and the payload moved into the destination's storage, so no layout or tag number is promised between the two types. An overload taking the source type exactly is preferred to one that needs the widening.
+
+The conversion is decided by the written labels and payload types alone. A payload type that only converts to the destination's does not widen, and neither does an alternative the destination lacks; the diagnostic names that alternative. A [named union](#unions) neither widens nor is widened. The reverse direction is a [`switch`](#inspecting-a-union).
+
+A caller keeps a callee's error set as one layer with a wrapping label, `(config: Config_Error | net: Net_Error)` with `or_return .config`, and keeps equal payload types apart with distinct labels, `(read: io.Error | log_write: io.Error)`.
 
 ### Enumerations
 

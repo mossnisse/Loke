@@ -337,6 +337,12 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 			return
 		}
 	}
+	// design.md "Widening by label": a borrowed place is copied at its own type,
+	// then remapped.
+	if base != nil && base.widened_from != INVALID_TYPE {
+		base.widen_clones = classify_place_copy(k, value.expr, base.widened_from, .Return)
+		return
+	}
 	if type_clone_disabled(k.c, result) {
 		errorf(
 			k.c,
@@ -487,10 +493,11 @@ mark_borrowed_temporary :: proc(value: Expr, into: ^map[^Expr_Base]bool) {
 
 // -------------------------------------------------------------- copy sites --
 
-// Places copy; values and explicit moves transfer.
+// Places copy; values and explicit moves transfer. A place that a widening
+// copies is an owned value from then on.
 expression_is_borrowed_place :: proc(e: Expr) -> bool {
 	base := expr_base(e)
-	return base != nil && base.value_category == .Place
+	return base != nil && base.value_category == .Place && !base.widen_clones
 }
 
 // Value category covers indirect places that have no lexical root.
@@ -500,7 +507,22 @@ expression_is_owned_argument :: proc(e: Expr) -> bool {
 }
 
 classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
-	if value == nil || !type_is_managed(k.c, type) || !expression_is_borrowed_place(value) {
+	if value == nil || !expression_is_borrowed_place(value) {
+		return false
+	}
+	// design.md "Widening by label": the place is copied at its own type, which
+	// may be copyable where the wider union is not, and the copy is remapped.
+	// The site itself then has an owned value and copies nothing.
+	if base := expr_base(value); base.widened_from != INVALID_TYPE {
+		base.widen_clones = classify_place_copy(k, value, base.widened_from, site) || base.widen_clones
+		return false
+	}
+	return classify_place_copy(k, value, type, site)
+}
+
+@(private = "file")
+classify_place_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
+	if !type_is_managed(k.c, type) {
 		return false
 	}
 	if type_clone_disabled(k.c, type) {
@@ -525,7 +547,7 @@ classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_S
 	}
 	// A conversion builds a different value rather than copying its operand.
 	base := expr_base(value)
-	if base == nil || base.type != type || base.erased_from != INVALID_TYPE {
+	if base == nil || base.type != type || base.erased_from != INVALID_TYPE || base.widened_from != INVALID_TYPE {
 		return
 	}
 	report_copy_cost(k, site, expr_span(value), value, type)

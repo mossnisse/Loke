@@ -1,17 +1,12 @@
-// design.md "Anonymous unions": labels are distinct, an alternative order is a
-// type of its own, and with no attributes there is no zero value and no
-// failure, so `or_return` and `or_else` reject one; `distinct` does not make
-// one nominal.
+// design.md "Anonymous unions": labels are distinct, and with no attributes
+// there is no zero value and no failure, so `or_return` and `or_else` reject
+// one; `distinct` does not make one nominal.
 package main;
 
 Dup :: (a: int | a: string);
 Order :: (left: int | right: string);
 
 g: (a: int | b:);
-
-flip :: proc(x: (right: string | left: int)) -> Order {
-	return x;
-}
 
 maybe :: proc() -> (value: int | missing:) {
 	return .missing;

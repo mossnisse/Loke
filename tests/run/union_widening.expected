@@ -1,0 +1,27 @@
+.ok(72) .err(.io(Gone))
+.err(.parse(Bad_Digit)) .err(.net(Refused))
+.err(.config(.io(Gone)))
+word hello
+word hello
+word made
+number 4
+word hello
+blank
+.word("hello")
+[.word("hello"), .number(9)]
+[.word("hello"), .word("made")]
+text wide
+.blank 1
+true false
+true
+2 .err(.parse(Bad_Digit))
+5 6 7
+8 -1
+101 1
+drop 2
+2
+101 1
+drop 1
+drop 101
+drop 101
+done

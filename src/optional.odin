@@ -282,6 +282,9 @@ check_or_return_failure :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) 
 				selector.name.text, type_name(k.c, payload),
 				from == TYPE_VOID ? "nothing" : fmt.tprintf("`%s`", type_name(k.c, from)),
 			)
+			if from != TYPE_VOID {
+				note_union_widening(k, span, from, payload)
+			}
 			return false
 		}
 		maps = true
@@ -406,6 +409,9 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 			from == TYPE_VOID ? "()" : type_name(k.c, from),
 			into == TYPE_VOID ? "()" : type_name(k.c, into),
 		)
+		if from != TYPE_VOID && into != TYPE_VOID {
+			note_union_widening(k, v.op_span, from, into)
+		}
 		return false
 	}
 	return true

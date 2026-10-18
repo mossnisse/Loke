@@ -440,6 +440,39 @@ emit_union_value :: proc(e: ^Emitter, union_type: Type_Id, index: int, value: st
 	return load_temporary(e, union_type, slot)
 }
 
+// design.md "Widening by label": each alternative keeps its payload under the
+// wider union's tag for its label. The layouts differ, so the payload is moved
+// into the wider storage, one arm per alternative.
+@(private)
+emit_union_widen :: proc(e: ^Emitter, value: string, from, to: Type_Id) -> string {
+	source := type_of(e.c, from)
+	llvm := llvm_type(e, to)
+	slot := temporary_slot(e, to)
+	store(e, to, "zeroinitializer", slot)
+	spilled := emit_union_spill(e, from, value)
+	tag := emit_union_tag(e, from, value)
+	width := union_layout(e.c, from).tag_bytes * 8
+	done := new_label(e, "widen.done")
+	for payload, index in source.variants {
+		matched := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, width, tag, index)
+		hit, next := new_label(e, "widen.hit"), new_label(e, "widen.next")
+		branch_if(e, matched, hit, next)
+		place_label(e, hit)
+		if payload != TYPE_VOID {
+			store(e, payload, emit_union_payload(e, from, payload, spilled), gep_field(e, llvm, slot, 0))
+		}
+		emit_union_store_tag(e, to, slot, widened_variant(e.c, from, to, index))
+		branch(e, done)
+		place_label(e, next)
+	}
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
+	place_label(e, done)
+	e.terminated = false
+	return load_temporary(e, to, slot)
+}
+
 // A two-variant union built from a runtime condition: each payload is written
 // only on the branch where it is the active one, so an absent `Option` and a
 // failed `Result` never publish uninitialized bytes.

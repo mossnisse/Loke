@@ -852,7 +852,7 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 		}
 		// A returned local transferred out, so cleanup must not drop it.
 		if !value.clone_on_return {
-			if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
+			if ident, is_ident := value.expr.(^Expr_Ident); is_ident && !ident.widen_clones {
 				if sym := symbol_of(e.c, ident.symbol); sym != nil && emit_lifecycle(e, sym.type).managed {
 					kill_place(e, ident.symbol)
 				}

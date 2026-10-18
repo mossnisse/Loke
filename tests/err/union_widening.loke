@@ -1,0 +1,68 @@
+// design.md "Widening by label": every alternative must be in the destination
+// with its label and payload type. A move-only place is not copied into a wider
+// union, the conversion does not reach through a container or an `Option`, and
+// a named union neither widens nor is widened.
+package main;
+
+Io_Error :: enum { Gone }
+Parse_Error :: enum { Bad_Digit }
+
+Small :: (io: Io_Error | parse: Parse_Error);
+Missing :: (io: Io_Error | net: int);
+Retyped :: (io: int | parse: Parse_Error | net: int);
+Named :: union { io: Io_Error, parse: Parse_Error }
+
+Connection :: move_only struct { id: int }
+Owned :: (conn: Connection | none:);
+Wider :: (conn: Connection | none: | other: int);
+
+missing :: proc(s: Small) -> Missing {
+	return s;
+}
+
+retyped :: proc(s: Small) -> Retyped {
+	return s;
+}
+
+named :: proc(s: Small) -> Named {
+	return s;
+}
+
+from_named :: proc(n: Named) -> (io: Io_Error | parse: Parse_Error | net: int) {
+	return n;
+}
+
+move_only_place :: proc(o: Owned) -> Wider {
+	w: Wider = o;
+	return w;
+}
+
+through_dynamic :: proc(items: [dynamic]Small) -> [dynamic](io: Io_Error | parse: Parse_Error | net: int) {
+	return items;
+}
+
+through_option :: proc(o: Option(Small)) -> Option((io: Io_Error | parse: Parse_Error | net: int)) {
+	return o;
+}
+
+read :: proc() -> Result(int, Small) {
+	return 1;
+}
+
+propagate :: proc() -> Result(int, Missing) {
+	n := read() or_return;
+	return n;
+}
+
+// The widened value keeps the borrow its payload carries.
+escape :: proc() -> (view: string_view | none: | other: int) {
+	text := "abc".copy();
+	v: (view: string_view | none:) = .view(text);
+	return v;
+}
+
+compare :: proc(s: Small, m: Missing) -> bool {
+	return s == m;
+}
+
+main :: proc() {}

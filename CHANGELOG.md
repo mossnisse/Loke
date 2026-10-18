@@ -41,6 +41,13 @@ checklist.
   wraps into. It carries no attributes, so it has no zero value and is never
   fallible. A trailing `|` is accepted. See design.md
   [Anonymous unions](design.md#anonymous-unions).
+- Widening by label: an anonymous union converts implicitly to one that has
+  each of its alternatives, with the same label and payload type, in any order.
+  A bare `or_return` therefore propagates a helper's smaller error set into a
+  larger one, and declarations, assignments, arguments, returns, and
+  comparisons accept it too. A place is copied, a temporary transfers, and the
+  diagnostic for a union that does not widen names the alternative it lacks.
+  See design.md [Widening by label](design.md#widening-by-label).
 - `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.
   It publishes the diagnostics `lokec` reports for open documents, including
   unsaved edits and the packages they import. It also answers hover,

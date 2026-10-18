@@ -1087,6 +1087,15 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 @(private)
 emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
+	// design.md "Widening by label": the smaller union, copied first when the
+	// widening copies a place, then remapped into the wider one.
+	if from := base.widened_from; from != INVALID_TYPE && union_widens_to(e.c, from, as_type) {
+		value := emit_expr_at(e, expr, from)
+		if base.widen_clones {
+			value = emit_clone_value(e, from, value)
+		}
+		return emit_union_widen(e, value, from, as_type)
+	}
 	// design.md "Borrowed callable views": a procedure or capture value becoming
 	// a `dyn proc` view.
 	if from := base.erased_from; from != INVALID_TYPE && type_is_dyn(e.c, as_type) &&

@@ -1,21 +1,18 @@
 L0422
-@7:18
+@6:18
 `a` is already an alternative of this union
 L0424
-@10:1
+@9:1
 `(a: int | b:)` has no zero value, so it cannot be produced by a declaration with static duration
-L0310
-@13:9
-cannot return `(left: int | right: string)` with `(right: string | left: int)`
 L0429
-@21:15
+@16:15
 `or_return` needs a union with a designated failure variant, found `(value: int | missing:)`
 L0428
-@22:7
+@17:7
 `or_else` needs a union with a designated failure variant on its left, found `(value: int | missing:)`
 L0717
-@26:12
+@21:12
 `distinct` does not make an anonymous union nominal; declare a `union` for that
 L0427
-@29:2
+@24:2
 this switch over `(left: int | right: string)` does not cover .right

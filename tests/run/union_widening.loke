@@ -1,0 +1,230 @@
+// design.md "Widening by label": an anonymous union converts to a larger one
+// with each of its alternatives, in any order, at every destination: a
+// declaration, an assignment, an argument, a return, a literal element, and a
+// bare `or_return`, whose smaller error set propagates with no operand. A place
+// is copied and keeps its value; a temporary transfers; a wrapping label keeps
+// the layer. Constants and compile-time evaluation remap the tag too.
+package main;
+import "core:fmt";
+
+Io_Error :: enum { Gone }
+Parse_Error :: enum { Bad_Digit }
+Net_Error :: enum { Refused }
+
+Config_Error :: (io: Io_Error | parse: Parse_Error);
+App_Error :: (io: Io_Error | parse: Parse_Error | net: Net_Error);
+
+read :: proc(fail: bool) -> Result(int, Io_Error) {
+	if (fail) { return .err(.Gone); }
+	return 7;
+}
+
+parse :: proc(n: int) -> Result(int, Parse_Error) {
+	if (n > 100) { return .err(.Bad_Digit); }
+	return n * 10;
+}
+
+read_config :: proc(fail: bool, big: bool) -> Result(int, Config_Error) {
+	n := read(fail) or_return .io;
+	return parse(n * 100 if big else n) or_return .parse;
+}
+
+connect :: proc(port: int) -> Result(int, Net_Error) {
+	if (port == 0) { return .err(.Refused); }
+	return port;
+}
+
+// The callee's labels repeated in the caller's set flatten them.
+start :: proc(fail: bool, big: bool, port: int) -> Result(int, App_Error) {
+	config := read_config(fail, big) or_return;
+	socket := connect(port) or_return .net;
+	return config + socket;
+}
+
+// A wrapping label keeps the layer.
+start_layered :: proc(fail: bool) -> Result(int, (config: Config_Error | net: Net_Error)) {
+	return read_config(fail, false) or_return .config;
+}
+
+Text :: (word: string | blank:);
+Wide :: (blank: | number: int | word: string);
+
+show :: proc(w: Wide) {
+	switch (w) {
+	case .blank: fmt.println("blank");
+	case .number(n): fmt.println("number", n);
+	case .word(s): fmt.println("word", s);
+	}
+}
+
+// An exact match is chosen over one that needs widening.
+pick_text :: proc(t: Text) -> string { return "text"; }
+pick_wide :: proc(w: Wide) -> string { return "wide"; }
+pick :: proc{pick_wide, pick_text}
+
+widen :: proc(t: Text) -> Wide {
+	return t;
+}
+
+made :: proc() -> Text {
+	return .word("made".copy());
+}
+
+CONSTANT : Text : .blank;
+WIDE_CONSTANT : Wide : CONSTANT;
+
+folded :: proc() -> int {
+	t: Text = .blank;
+	w: Wide = t;
+	switch (w) {
+	case .blank: return 1;
+	case .number(n): return n;
+	case .word(_): return 3;
+	}
+}
+
+FOLDED :: folded();
+
+failing :: proc() -> Result(int, Config_Error) {
+	return .err(.parse(.Bad_Digit));
+}
+
+lifted :: proc() -> Result(int, App_Error) {
+	n := failing() or_return;
+	return n;
+}
+
+lifted_label :: proc() -> int {
+	switch (lifted()) {
+	case .ok(n): return n;
+	case .err(e):
+		switch (e) {
+		case .io: return 1;
+		case .parse: return 2;
+		case .net: return 3;
+		}
+	}
+}
+
+LIFTED :: lifted_label();
+
+// A move-only payload transfers from an owned local, a `move`, or a temporary.
+Connection :: move_only struct { id: int }
+Owned :: (conn: Connection | none:);
+Wider :: (none: | other: int | conn: Connection);
+
+returned :: proc() -> Wider {
+	o: Owned = .conn(Connection{id = 5});
+	return o;
+}
+
+moved :: proc() -> Wider {
+	o: Owned = .conn(Connection{id = 6});
+	w: Wider = move(o);
+	return w;
+}
+
+temporary :: proc() -> Owned {
+	return .conn(Connection{id = 7});
+}
+
+id_of :: proc(w: Wider) -> int {
+	switch (w) {
+	case .none: return 0;
+	case .other(n): return n;
+	case .conn(c): return c.id;
+	}
+}
+
+// A one-address source widens into a tagged union.
+Node :: struct { value: int }
+Link :: (node: ^Node | end:);
+Step :: (skip: int | end: | node: ^Node);
+
+// A place is copied once at its own type, a borrowed argument is not copied,
+// and every value is dropped once, under its wider tag. A copy adds 100.
+Res :: struct { id: int }
+impl Res {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		return .ok(Res{self.id + 100});
+	}
+	release :: hook(drop) proc(self: inout Res) { if (self.id != 0) { fmt.println("drop", self.id); } }
+}
+Few :: (res: Res | none:);
+Many :: (none: | res: Res | count: int);
+
+take :: proc(m: Many) -> int {
+	switch (m) {
+	case .res(r): return r.id;
+	case .none: return 0;
+	case .count(n): return n;
+	}
+}
+
+make_few :: proc(id: int) -> Few {
+	return .res(Res{id});
+}
+
+pass_back :: proc(f: Few) -> Many {
+	return f;
+}
+
+lifecycle :: proc() {
+	{
+		few: Few = .res(Res{1});
+		many: Many = few;
+		fmt.println(take(many), take(few));
+		fmt.println(take(make_few(2)));
+		back := pass_back(few);
+		moved: Many = move(few);
+		fmt.println(take(back), take(moved));
+	}
+	fmt.println("done");
+}
+
+follow :: proc(s: Step) -> int {
+	switch (s) {
+	case .skip(n): return n;
+	case .end: return -1;
+	case .node(p): return p.value;
+	}
+}
+
+main :: proc() {
+	fmt.println(start(false, false, 2), start(true, false, 2));
+	fmt.println(start(false, true, 2), start(false, false, 0));
+	fmt.println(start_layered(true));
+
+	text: Text = .word("hello".copy());
+	wide: Wide = text;          // a place is copied
+	show(wide);
+	show(text);                 // an argument
+	show(made());               // a temporary transfers
+	wide = .number(4);
+	show(wide);
+	wide = text;                // an assignment
+	show(wide);
+	show(widen(.blank));        // a return
+	fmt.println(text);
+
+	items := [2]Wide{text, .number(9)};
+	fmt.println(items);
+	list: [dynamic]Wide = {};
+	list.append(text);
+	list.append(made());
+	fmt.println(list);
+
+	fmt.println(pick(text), pick(Wide.number(1)));
+	fmt.println(WIDE_CONSTANT, FOLDED);
+	fmt.println(wide == text, Wide.number(1) == text);
+	fmt.println(size_of(Wide) >= size_of(Text));
+	fmt.println(LIFTED, lifted());
+
+	fmt.println(id_of(returned()), id_of(moved()), id_of(temporary()));
+
+	node := Node{value = 8};
+	link: Link = .node(&node);
+	end: Link = .end;
+	fmt.println(follow(link), follow(end));
+	lifecycle();
+}

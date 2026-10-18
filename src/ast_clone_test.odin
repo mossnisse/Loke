@@ -18,7 +18,7 @@ Clone_Split :: struct {
 ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 	split := []Clone_Split {
 		// A node's `base` is classified once, here.
-		{Expr_Base, "span has_error", "type denoted_type const_value is_const resolution value_category addressable assignable immutable erased_from view_from splat_from"},
+		{Expr_Base, "span has_error", "type denoted_type const_value is_const resolution value_category addressable assignable immutable erased_from view_from splat_from widened_from widen_clones"},
 		{Node_Base, "span has_error attributes", ""},
 
 		{Expr_Error, "", ""},

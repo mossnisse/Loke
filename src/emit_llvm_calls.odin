@@ -540,6 +540,11 @@ emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id,
 		}
 		return emit_any_view_value(e, slot, concrete)
 	}
+	// design.md "Widening by label": a smaller error set propagates into a
+	// larger one.
+	if union_widens_to(e.c, from, into) {
+		return emit_union_widen(e, value, from, into)
+	}
 	// Carrier weakening, procedure escape weakening, checked/C-pointer
 	// interchange, and pointer-to-rawptr all share one backend representation.
 	return value

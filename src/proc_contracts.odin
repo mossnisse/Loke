@@ -7,7 +7,8 @@ Proc_Contract_Check :: struct { from, to: Type_Id, span: Span }
 
 expression_converts_storage :: proc(value: Expr) -> bool {
 	base := expr_base(value)
-	return base != nil && (base.view_from != INVALID_TYPE || base.erased_from != INVALID_TYPE || base.splat_from != INVALID_TYPE)
+	return base != nil && (base.view_from != INVALID_TYPE || base.erased_from != INVALID_TYPE || base.splat_from != INVALID_TYPE ||
+	       base.widened_from != INVALID_TYPE)
 }
 
 check_borrow_argument :: proc(k: ^Checker, value: Expr) -> bool {

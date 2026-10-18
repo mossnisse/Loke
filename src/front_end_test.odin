@@ -1677,6 +1677,34 @@ an_unresolved_contributed_type_binds_nothing :: proc(t: ^testing.T) {
 	testing.expect(t, atomics, "the atomic intrinsics were skipped with it")
 }
 
+// design.md "Widening by label": a union that does not widen names the
+// alternative it lacks, a payload type that differs, or that only anonymous
+// unions widen.
+@(test)
+a_failed_widening_names_the_alternative :: proc(t: ^testing.T) {
+	p: Checked
+	check_source(&p, `package main;
+Named :: union { a: int, b: string }
+missing :: proc(s: (a: int | b: string)) -> (a: int | c:) { return s; }
+retyped :: proc(s: (a: int | b: string)) -> (a: int | b: int) { return s; }
+named :: proc(s: (a: int | b: string)) -> Named { return s; }
+main :: proc() {}
+`)
+	defer destroy_checked(&p)
+	if !testing.expect_value(t, len(p.c.diagnostics), 3) { report(&p.c); return }
+	wanted := [3]string{
+		"`(a: int | c:)` has no alternative `b`",
+		"`b` here carries `string`, but in `(a: int | b: int)` it carries `int`",
+		"only an anonymous union widens, and only into another anonymous union",
+	}
+	for diagnostic, index in p.c.diagnostics {
+		testing.expect_value(t, diagnostic.code, "L0310")
+		if testing.expect_value(t, len(diagnostic.notes), 1) {
+			testing.expect_value(t, diagnostic.notes[0].message, wanted[index])
+		}
+	}
+}
+
 // A speculative check reports, rolls back, and must leave the compilation
 // exactly as it found it — including `error_count`, which decides the exit code.
 @(test)

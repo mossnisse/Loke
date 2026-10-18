@@ -5,6 +5,8 @@
 // `Result(int, int)` a legal type.
 package lokec
 
+import "core:fmt"
+import "core:mem"
 import "core:slice"
 
 // design.md "Unions": a discriminated union of named variants.
@@ -62,6 +64,92 @@ resolve_anon_union :: proc(k: ^Checker, value: ^Type_Anon_Union) -> Type_Id {
 		return INVALID_TYPE
 	}
 	return anon_union_type(k.c, specs[:])
+}
+
+// design.md "Widening by label": an anonymous union converts to another that
+// has each of its alternatives, the same label with the same payload type, in
+// any order. Named unions neither widen nor are widened.
+union_widens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	if from == to {
+		return false
+	}
+	source, dest := type_of(c, from), type_of(c, to)
+	if source == nil || dest == nil || !source.anonymous_union || !dest.anonymous_union {
+		return false
+	}
+	return alternatives_contained(c, from, to)
+}
+
+@(private = "file")
+alternatives_contained :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	for _, index in type_of(c, from).variants {
+		if widened_variant(c, from, to, index) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// The alternative of `to` that alternative `index` of `from` becomes: the one
+// with its label, when it carries the same payload type; -1 otherwise.
+widened_variant :: proc(c: ^Compiler, from, to: Type_Id, index: int) -> int {
+	source, dest := type_of(c, from), type_of(c, to)
+	if source == nil || dest == nil || index < 0 || index >= len(source.variants) {
+		return -1
+	}
+	at, found := slice.linear_search(dest.variant_names, source.variant_names[index])
+	if !found || dest.variants[at] != source.variants[index] {
+		return -1
+	}
+	return at
+}
+
+// A union constant of `from` as the `to` it widens into: the same payload under
+// the remapped tag.
+widen_const :: proc(c: ^Compiler, value: Const_Value, from, to: Type_Id, allocator: mem.Allocator = {}) -> Const_Value {
+	if value.kind != .Aggregate || value.aggregate == nil {
+		return value
+	}
+	widened := new_clone(value.aggregate^, value_allocator(c, allocator))
+	widened.type = to
+	widened.variant = widened_variant(c, from, to, value.aggregate.variant)
+	return Const_Value{kind = .Aggregate, aggregate = widened}
+}
+
+// Says which alternative keeps `from` from widening to `to`, when both are
+// anonymous unions: the diagnostic names it at each site.
+note_union_widening :: proc(k: ^Checker, span: Span, from, to: Type_Id) {
+	source, dest := type_of(k.c, from), type_of(k.c, to)
+	if source == nil || dest == nil || source.kind != .Union || dest.kind != .Union || from == to {
+		return
+	}
+	if !source.anonymous_union || !dest.anonymous_union {
+		if alternatives_contained(k.c, from, to) {
+			add_notef(k.c, span, "only an anonymous union widens, and only into another anonymous union")
+		}
+		return
+	}
+	for name, index in source.variant_names {
+		if widened_variant(k.c, from, to, index) >= 0 {
+			continue
+		}
+		label := identifier_text(k.c, name)
+		at, found := slice.linear_search(dest.variant_names, name)
+		if !found {
+			add_notef(k.c, span, "`%s` has no alternative `%s`", type_name(k.c, to), label)
+		} else {
+			add_notef(
+				k.c, span, "`%s` here carries %s, but in `%s` it carries %s",
+				label, payload_text(k.c, source.variants[index]), type_name(k.c, to), payload_text(k.c, dest.variants[at]),
+			)
+		}
+		return
+	}
+}
+
+@(private = "file")
+payload_text :: proc(c: ^Compiler, payload: Type_Id) -> string {
+	return payload == TYPE_VOID ? "nothing" : fmt.tprintf("`%s`", type_name(c, payload))
 }
 
 // One variant's payload: `TYPE_VOID` when it carries nothing, which is the test

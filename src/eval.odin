@@ -609,7 +609,20 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 		}
 		return Eval_Value{kind = .Nil, type = base.type, target = &holder.elements[0]}, true
 	}
+	// design.md "Widening by label": the same payload under the wider tag.
+	if base := expr_base(e); base != nil && base.widened_from != INVALID_TYPE {
+		value := eval_value_unviewed(ev, e) or_return
+		return widen_eval_value(ev.k.c, value, base.widened_from, base.type), true
+	}
 	return eval_value_unviewed(ev, e)
+}
+
+@(private = "file")
+widen_eval_value :: proc(c: ^Compiler, value: Eval_Value, from, to: Type_Id) -> Eval_Value {
+	widened := value
+	widened.type = to
+	widened.variant = widened_variant(c, from, to, value.variant)
+	return widened
 }
 
 // `eval_expr` before an implicit loan recorded on the node itself.
@@ -2162,6 +2175,9 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 		payload, ok = copy_value(ev, payload)
 		if !ok {
 			return Eval_Value{}, false
+		}
+		if from := shape.info.variants[shape.failure]; union_widens_to(ev.k.c, from, into) {
+			payload = widen_eval_value(ev.k.c, payload, from, into)
 		}
 		payload.type = into
 	} else {
