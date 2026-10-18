@@ -937,6 +937,160 @@ This replaces the representation and naming of fallible results. Mandatory
 acknowledgment and the `try_`/policy-following operation pairs remain independent
 policy decisions; dropping the three names must not silently settle them.
 
+### Dispatching to procedure groups and visitors (2026-10-18)
+
+Labeled anonymous unions can support compact deconstruction through existing
+callable operations. Prefer an explicit dispatch at the call site, preserving
+the active variant's name. Type-only overload selection would lose the
+distinction between `(left: int | right: int)`.
+
+An interesting spelling to prototype is union argument expansion:
+
+```text
+show_amount :: proc(amount: int) { fmt.println(amount); }
+show_message :: proc(message: string) { fmt.println(message); }
+show :: proc{show_amount, show_message};
+
+answer: (amount: int | message: string) = .amount(42);
+show(..answer);
+```
+
+The last call is proposed behavior. It would evaluate `answer` once, select
+its tag, and make one of these calls through ordinary overload resolution:
+
+```text
+switch (answer) {
+case .amount(n): show(amount=n);
+case .message(s): show(message=s);
+}
+```
+
+The label becomes a [named argument](design.md#named-arguments). Existing
+overload resolution rejects a member with no parameter of that name, so
+handlers declared `proc(left: int)` and `proc(right: int)` remain distinct
+even with identical payload types. Their procedure names need not match the
+variants. The parameter labels are part of the dispatch contract, just as they
+are part of an explicitly named call's contract.
+
+This uses a [procedure group](design.md#explicit-procedure-overloading) as
+the callee. It avoids needing to pass the group as a value: today's checker
+rejects that with `L0396`. The otherwise attractive `visit(answer, show)`
+would need special handling of the group operand or a separate change making
+groups usable as compile-time arguments. Neither follows automatically from
+adding anonymous unions.
+
+The grammar already accepts `..expression` as a call argument, but its
+current meaning is [variadic spreading](design.md#variadic-parameters).
+Spreading a union into a named argument is a new semantic rule, not supported
+today. Its readability needs comparison with an explicit `visit` spelling;
+sharing punctuation saves syntax but puts two forms of argument expansion
+behind it. Record expansion, if later considered, would supply every field,
+while union expansion supplies only the active alternative. Record expansion
+is not a prerequisite and is not existing behavior either.
+
+Keep the first design bounded:
+
+- Accept one union expansion as the sole argument initially. Multiple union
+  arguments would require checking combinations of alternatives; forwarding
+  other arguments also needs precise evaluation and name-collision rules.
+- Check every variant at compile time. Each expanded named call must have
+  a unique best overload under the existing rules, even if a particular
+  runtime execution never reaches that variant. Adding a variant can then
+  diagnose a missing handler.
+- Resolve each handler from the argument first. Require a common result type,
+  or that all handlers return nothing, applying existing divergence rules to
+  handlers that never return. Do not select overloads from the destination
+  type or automatically invent an anonymous union of their return types.
+- Preserve the payload as one argument. A nested union remains nested, and
+  a record payload is passed whole rather than recursively expanding its
+  fields. Ordinary destructuring inside the handler remains available.
+- A place operand lends its selected payload for the call. A temporary or
+  `..move(answer)` owns it and can reach a consuming overload, with ordinary
+  cleanup if the handler borrows instead. Preserve return-escape checking
+  and exactly-once destruction; do not implicitly copy or consume the whole
+  union merely to perform the dispatch. Mutable payload access can initially
+  stay with `switch` until an explicit expansion mode is designed.
+- For a payloadless variant, a group needs a label-bearing argument to
+  distinguish it from other empty variants. One candidate is
+  `show(none=Unit{})`, handled by `proc(none: Unit)`. This supplies a zero-sized
+  argument for dispatch without adding a payload to the union itself.
+
+Do not make ordinary `show(answer)` distribute automatically over the union.
+A whole-union overload or an unconstrained generic may already accept it;
+adding such a member must not silently replace a dispatch over variants.
+An explicit expansion keeps the operation visible and permits the existing
+overload rules to be applied independently within each alternative.
+
+A second candidate favors callbacks with arbitrary parameter names:
+
+```text
+visit(answer, amount=print_number, message=print_text);
+```
+
+The labels select the handlers, and each selected handler receives its payload
+positionally. A payloadless variant naturally calls a zero-argument handler.
+This could accept ordinary procedures or capture literals without grouping
+them, but a universal `visit` with variant-derived named parameters also needs
+compiler support or richer metaprogramming. It is not an ordinary generic
+library procedure available today. Treat it as an alternative surface form,
+not an additional feature required by group expansion.
+
+Callback construction follows normal evaluation order: all arguments and
+their captures are evaluated before a call. Two handlers capturing the same
+place with `&mut` can therefore conflict even though only one body will run.
+A visitor object can keep shared state once. `return` or `or_return` in a
+callback exits that callback, and cannot return from the surrounding caller;
+likewise a callback cannot break the caller's loop. Keep the ordinary `switch`
+for local control flow, mutation, and branch-specific cleanup. Short callback
+syntax would be a separate proposal.
+
+For a visitor object, method names provide the same label correspondence:
+the `.amount` branch calls `visitor.amount(payload)`, and `.message` calls
+`visitor.message(payload)`. A generic visitor gives statically selected calls.
+A runtime-selected visitor can use a [dynamic
+interface](design.md#borrowed-dynamic-interface-values):
+
+```text
+Answer_Visitor :: interface($Self: type) {
+    slot amount: proc(self, value: int);
+    slot message: proc(self, value: string);
+}
+```
+
+A procedure taking `dyn Answer_Visitor` can already dispatch a named union
+with an explicit switch and call the selected slot. A generalized generated
+visitor bridge would remove that switch at each new union shape, but `dyn`
+does not generate it by itself. Today's [compile-time
+reflection](design.md#compile-time-reflection) does not supply the typed union
+variant extraction needed for an arbitrary library implementation.
+
+The runtime tag chooses a variant; the visitor's witness chooses that slot's
+implementation. These are separate decisions. A dynamic visitor can be useful
+when behavior is supplied at runtime or reused behind a stable interface, at
+the cost of an interface declaration, borrowing, and potentially indirect
+calls. A `dyn proc` has one signature and cannot stand for an unresolved group
+of differently typed handlers. Erasing a visitor does not erase the union's
+typed payload arguments: a slot may consume an explicitly transferred payload
+even though a consuming receiver is excluded from dyn-compatible interfaces.
+
+Alternatively, forwarding a common interface from every union payload serves
+calls such as `draw()` that have the same meaning for all alternatives. It
+does not expose the variant labels, and two variants carrying the same concrete
+type need adapters to produce different behavior. Such forwarding is another
+proposal, not existing union-to-dyn conversion behavior.
+
+Evidence: a local compiler probe using an existing nominal union verified
+dispatch through named arguments to group members with identical `int`
+parameters, an empty variant dispatched through `Unit`, and a `dyn` visitor
+with separate slots over those same alternatives. The switch was written
+explicitly in both versions. This verifies the building blocks, not the
+proposed anonymous-union syntax or `show(..answer)` expansion.
+
+**Recommendation:** prototype explicit union argument expansion for reusable
+procedure groups and compare it with named callback dispatch. Let `dyn` be
+an optional way to supply the visitor's behavior. Preserve exhaustive checks
+and the union's labels in either form; retain `switch` for inline control flow.
+
 ### Anonymous sums have a useful job outside errors
 
 `(int | string)` can describe a value that is either an integer or text,
