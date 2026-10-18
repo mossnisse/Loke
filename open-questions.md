@@ -750,6 +750,48 @@ generics feature with its own design. It would not merge `Status` into
 `Result`, whose end-of-body rule differs, but it would have let `Status` be an
 alias; see [Error handling](#error-handling-2026-10-13).
 
+### Combining error sets
+
+A caller that flattens its helpers' errors restates each of their labels and
+payload types. In [examples/orders.loke](examples/orders.loke), `Order_Error`
+repeats `parse_order`'s three alternatives and `quote`'s two. Changing a payload
+in a helper is a diagnostic at the caller's `or_return`, naming the
+alternative, but the fix is a second edit by hand. A spread inside an anonymous
+union could splice in another set's alternatives instead:
+
+```text
+Line_Error :: (blank: | no_quantity: | quantity: strconv.Parse_Error);
+Stock_Error :: (unknown: | short: (wanted: int, have: int));
+
+Order_Error :: (..Line_Error | ..Stock_Error | limit: Limit_Error);
+```
+
+The result would be an ordinary anonymous union, spelled out in place, so both
+parts widen into it by the existing rule and nothing about widening changes.
+Open points:
+
+- **What a spread names.** Only an anonymous union, since a named union's
+  variants belong to its declaration, as with widening. Whether a procedure's
+  error set can be named without an alias, by something like `error_of(proc)`,
+  is a further question.
+- **Repeated labels.** Two parts that share a label with the same payload type
+  could merge into one alternative, as flattening by hand does. The same label
+  with different payload types must be an error.
+- **Order.** Spliced alternatives would take their place in the written order,
+  which is also the tag order.
+- **Generic sets.** `(..$E | limit: Limit_Error)` over a set bound by a
+  generic would need [`$` bindings inside structural types](#bindings-and-methods-on-structural-types)
+  first.
+- **Syntax.** `..` in a type is new. It is the variadic spread's punctuation,
+  which [union argument expansion](#union-argument-expansion) would also reuse.
+
+The cost is visibility. The caller's full set no longer shows in its signature,
+only in hover and documentation, and a helper that adds an alternative grows
+every set that spreads it. Each caller's `switch` then fails to compile until
+it handles the new label, which is the intended signal. Compare it with
+restating the labels in the [representative programs](#evaluating-on-representative-programs)
+before deciding.
+
 ### Per-variant expansion
 
 Two needs recur in general-purpose programs such as interpreters and compilers
