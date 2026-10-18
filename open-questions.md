@@ -1084,11 +1084,11 @@ with separate slots over those same alternatives. The switch was written
 explicitly in both versions. This verifies the building blocks, not the
 proposed anonymous-union syntax or `show(..answer)` expansion.
 
-**Recommendation, superseded by [Part 5](#part-5-per-variant-expansion-instead-of-dispatch):**
+**Recommendation, superseded by [Part 5](#part-5-per-variant-expansion-and-union-argument-expansion):**
 the earlier recommendation was to prototype explicit union argument expansion
 for reusable procedure groups and compare it with named callback dispatch.
-Part 5 declines both for now and proposes a per-variant switch case and
-`variants_of(T)` instead.
+Part 5 keeps union argument expansion, defined over a per-variant switch case
+with `variants_of(T)`, and declines named callback dispatch.
 
 ### Anonymous sums have a useful job outside errors
 
@@ -1385,8 +1385,8 @@ only fallible boundaries and make anonymous unions plain data.
    shortens a common signature.
 5. **Independently: per-variant expansion.** A switch case written
    `case $variant(payload):` is checked once per remaining variant, and
-   `variants_of(T)` reflects a union's variants. These replace the dispatch
-   forms explored above.
+   `variants_of(T)` reflects a union's variants. The explored
+   `show(..answer)` becomes sugar defined by that expansion.
 
 None of them changes the meaning of a program that compiles today.
 
@@ -1397,7 +1397,7 @@ None of them changes the meaning of a program that compiles today.
 | [Separate the decisions](#separate-the-decisions) | Keep. The parts below each settle one of the four questions and leave the others alone. |
 | [Labeled anonymous unions](#labeled-anonymous-unions-fit-the-existing-variant-model) | Adopt as data: part 2. |
 | [Replacing the three wrappers](#replacing-result-option-and-status-with-structural-shapes) | Decline; see below. |
-| [Dispatch to groups and visitors](#dispatching-to-procedure-groups-and-visitors-2026-10-18) | Decline `show(..answer)` and `visit(...)` for now; keep the dyn visitor as an idiom. Serve the goal with part 5. |
+| [Dispatch to groups and visitors](#dispatching-to-procedure-groups-and-visitors-2026-10-18) | Keep `show(..answer)`, defined over a per-variant expansion: part 5. Decline `visit(...)`; keep the dyn visitor as an idiom. |
 | [Unordered type-based sums](#anonymous-sums-have-a-useful-job-outside-errors) | Defer. Labels plus widening give the composition without set normalization, type-based matching, or literal ambiguity, and they keep `read` and `log_write` apart. |
 | [`Error(E)` markers and flat unions](#what-an-error-wrapper-would-mean) | Decline, for the reasons the exploration itself gives under [Flattening is the obstacle](#flattening-is-the-obstacle-to-replacing-result). |
 | [A retained result boundary](#the-strongest-combination-retains-a-result-boundary) | Adopt, with labeled alternatives in place of unlabeled ones: parts 1 to 3. |
@@ -1532,42 +1532,32 @@ layer, `(config: (io: io.Error | parse: Parse_Error) | net: Net_Error)` with
 `or_return .config`, and two labels keep equal payload types apart,
 `(read: io.Error | log_write: io.Error)`.
 
-#### Part 5: per-variant expansion instead of dispatch
+#### Part 5: per-variant expansion and union argument expansion
 
 [Dispatching to procedure groups and visitors](#dispatching-to-procedure-groups-and-visitors-2026-10-18)
-proposed `show(..answer)` and `visit(answer, amount=..., message=...)`. Both
-remove a switch whose every case hands its payload to a different handler.
-That switch is rare. In `core`, `base`, `examples`, `bench`, `tests`, and
-`tutorials`, a scan of the 364 union switches with a payload binding found
-4 whose cases all forward the payload to one callee, all in tests, and
-none that forwards each variant to a different handler. Almost every union
-switch is over a `Result` or `Option` and does local work in its cases. The
-corpus has one data union with more than two variants,
-[`Token`](examples/tokens.loke), so this is weak evidence about application
-code such as an interpreter's tree walk. It is still no evidence of demand.
+serves two needs that recur in general-purpose programs: interpreters and
+compilers walking a tree, event loops, protocol and actor message handlers,
+and state machines.
 
-Against that small saving, group expansion has costs:
+- **One operation for every alternative**, such as `area()`, `span()`, or
+  reporting an error, where every payload supports the same call.
+- **A different handler for each label**, where the handlers are procedures
+  in their own right and the same handler set is dispatched from several
+  places. Labels matter here: `(left: int | right: int)` has two handlers
+  although its payloads have one type.
 
-- It makes the parameter names of unrelated procedures part of a union's
-  contract. Renaming a label means renaming a parameter in every handler of
-  every group that dispatches it. A named argument couples one call to one
-  signature; this couples a data type to a family of signatures.
-- `..` gains a second meaning, chosen by the operand's type.
-- It needs a common-result rule across overloads, and control flow cannot
-  leave a handler: `return`, `break`, and `or_return` in a handler cannot
-  reach the caller, as they can from a case.
-- The explicit switch it replaces costs one line per variant,
-  `case .amount(n): show(amount=n);`, and says which handler runs.
+The existing standard library and tests are not a sample of either. They hold
+almost no data unions, so their switches say nothing about how often these
+needs arise. Judge both on design merits and on representative programs
+written for the purpose; see
+[Implementation order and acceptance](#implementation-order-and-acceptance).
 
-`visit(...)` has the costs the exploration already lists: named parameters
-derived from the variants, which needs compiler support; capture literals that
-all evaluate, so two `&mut` captures of one place conflict even though one
-body runs; and no way to leave the caller from a handler. A dyn visitor needs
-no language change and remains an idiom over an explicit switch.
+Part 5a serves the first need and is the foundation. Part 5b serves the second
+and is defined as sugar over 5a, so it adds a spelling, not a mechanism.
 
-The demand that does recur is the other one the exploration noted: one
-operation with the same meaning for every alternative, such as `area()`,
-`span()`, or reporting an error. Zig serves it with
+##### Part 5a: per-variant expansion
+
+Zig serves the first need with
 [`inline else`](https://ziglang.org/documentation/0.15.1/#Inline-Switch-Prongs),
 a switch prong expanded once per remaining tag. Loke already has the
 machinery in [static `foreach` expansion](design.md#static-foreach-expansion),
@@ -1637,10 +1627,61 @@ report :: proc(error: $E) {   // a constraint meaning "E is a union" is open
 }
 ```
 
-Revisit group expansion if a real program, such as a self-hosted compiler's
-tree walks, shows many switches whose cases each forward to a different
-handler. Until then the explicit switch serves label dispatch, and part 5
-serves the per-variant operation.
+##### Part 5b: union argument expansion
+
+The exploration's `show(..answer)` is defined as a 5a expansion whose case
+calls the callee once, with the variant's label as the argument name:
+
+```text
+show(..answer);
+
+// means
+switch (answer) {
+case $variant(payload): show(<the label of variant> = payload);
+}
+```
+
+Ordinary overload resolution then picks the member for each label. A label
+becomes an argument name only inside this expansion; there is no user-visible
+form that names an argument from a descriptor. Most of the rules the
+exploration listed follow from the definition instead of being added: each
+variant is checked at compile time, and a variant with no handler is a
+diagnostic naming it; the operand follows switch ownership, so a place lends
+its payload and a temporary or `move(answer)` gives it up; a payloadless
+variant passes `Unit{}` to a `proc(none: Unit)` member; and one expanded union
+is the sole argument initially. The one rule 5a does not supply is for the
+call's value, since a switch is a statement: every expansion must have the
+same result type, or none has a result, with the existing divergence rules.
+
+On the merits:
+
+- **Labels become handler parameter names.** This is the coupling a visitor's
+  method names have with the cases it visits, and here it is checked: renaming
+  a label or a parameter is a compile error at the expansion, never a silent
+  change. One hazard remains: a new label that matches a parameter of another
+  member, with a payload type that member accepts, dispatches to it. The
+  explicit `..` keeps such groups deliberate.
+- **Handlers are procedures.** `return` and `or_return` in one leave the
+  handler, not the caller. Use a switch or 5a where the caller's control flow
+  is needed. The call's own result still propagates: `show(..answer) or_return`.
+- **The spelling.** `..` already spreads a sequence into variadic arguments.
+  A union is never a sequence, so the operand's type decides without
+  ambiguity, and spreading a value's active alternative into the arguments is
+  close to spreading its elements. A method spelling such as
+  `answer.dispatch(show)` would need procedure groups as values, which the
+  checker rejects today with `L0396`.
+- **The benefit.** A handler set is declared once and dispatched in one
+  expression from every site, exhaustively and by label.
+
+Build 5a first. Prototype 5b on it and compare both with explicit switches in
+the representative programs below.
+
+`visit(answer, amount=..., message=...)` stays declined, on its own costs:
+deriving named parameters from the variants needs compiler support beyond 5b;
+every callback and its captures are evaluated though one body runs, so two
+`&mut` captures of one place conflict; and a capture literal per variant is
+longer than a case. A dyn visitor remains an idiom over an explicit switch or a
+5a expansion, and `variants_of(T)` makes a generic bridge to one possible.
 
 #### What gets shorter
 
@@ -1650,9 +1691,10 @@ shorten a signature. Today's `Result(Config, Config_Error)` with
 signature of `read_config` above. The program gets shorter where the helpers
 are: no wrapper declaration per helper, no `or_return .name` at each level
 after the first wrap, and a precise error set per helper instead of one
-application-wide union that every helper over-reports. `core` itself gains
-little from parts 2 and 3: each package reports one error type, and no `core`
-error type wraps another's. Part 1 shortens bodies in `core` immediately.
+application-wide union that every helper over-reports. That is the shape of
+application code that combines error domains, not of the standard library: a
+`core` package reports one error type, so parts 2 and 3 need no `core`
+migration. Part 1 shortens bodies everywhere, `core` included.
 
 Signatures are shortened by aliases, which suit structural types because they
 add no identity:
@@ -1689,9 +1731,24 @@ already means divergence in `-> !`.
 
 Build and release each part separately, specification, grammar, compiler,
 tests, and `CHANGELOG.md` together. Migrating `core` returns to part 1 is a
-separate commit. Then rewrite [config_parser.loke](examples/config_parser.loke)
-and one multi-error helper chain both ways, counting declarations and
-propagation sites, before documenting the idiom in a tutorial.
+separate commit.
+
+The code in this repository is mostly the standard library and its tests, so
+it cannot show how often a general-purpose program needs these forms. Evaluate
+each part on representative programs written for the purpose, each in the
+current language and with the proposal:
+
+- an application that loads, parses, and serves, with helpers over several
+  error domains, for parts 1 to 3;
+- an expression interpreter with several tree walks (evaluation, printing, type
+  checking) over one node union, for part 5;
+- an event loop or message handler with one handler set dispatched from
+  several sites, for part 5b.
+
+Count declarations, propagation and dispatch sites, and lines; check that
+error context survives; and compare the diagnostics after adding, renaming,
+and removing a variant or a label. Document an idiom in a tutorial only after
+it has been compared this way.
 
 Acceptance cases:
 
@@ -1722,6 +1779,13 @@ Acceptance cases:
   each expansion owns and drops its payload once; `&mut payload` requires a
   writable subject. `variants_of(T)` keeps declaration order, rejects a
   non-union, and its descriptors cannot reach runtime storage.
+- **Part 5b.** `(left: int | right: int)` reaches `proc(left: int)` and
+  `proc(right: int)` separately. A missing handler, an ambiguous one, and
+  expansions with different result types are diagnosed, naming the variant. A
+  payloadless variant reaches `proc(name: Unit)`. A place operand is lent, and a
+  temporary or `move` operand reaches a consuming member. A whole-union member
+  of the group is not chosen by `..`, and `show(answer)` without `..` never
+  distributes.
 
 ## Lone carriage returns in the language server
 
