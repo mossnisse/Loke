@@ -41,9 +41,31 @@ And the policy-following half is load-bearing rather than convenient. Copy assig
 
 The allocation built-ins are a third instance, and they keep the pair: `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new` (see [The allocation built-ins follow the `try_` convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
 
-The [anonymous unions and failure policies exploration](#anonymous-unions-and-failure-policies-2026-10-17)
-compares keeping these pairs with one fallible operation and reusable adapters,
-alongside changes to result construction and error composition.
+One alternative is a single fallible operation per container, with the policy
+chosen at the call site. In this sketch `append` has today's `try_append`
+contract, and `must` is a proposed library helper:
+
+```text
+values.append(item) or_return;    // propagate
+must(values.append(item));        // panic, reporting the returned error
+_ = values.append(item);          // deliberately accept a failed insertion
+```
+
+The result type stays the same in every context. A bare statement must not
+panic where a value context returns the error, and an enclosing fallible
+procedure must not make it propagate, or refactoring and calls through procedure
+values would change failure policy. A consuming `must` would transfer a
+move-only success, report the error and the caller's location, and follow panic
+cleanup; `or_else panic(...)` cannot include the error, since it drops it first.
+
+Allocator policy is the hard part. `append` follows its allocator's `.Panic`
+or `.Trap` policy, so a generic panic helper would change `.Trap` behavior,
+and `Allocator_Error` records the requested size but not the allocator's
+identity or policy. A failed insertion must still leave the container unchanged
+and an explicitly moved argument consumed. Prototype this on `String_Builder`
+and compare complete callers before touching arrays, maps, or the allocation
+built-ins; keeping the convenience forms is defensible if the caller burden
+outweighs the smaller API.
 
 ## Pure procedures
 
@@ -154,6 +176,10 @@ composable asynchronous result, and language help for reactivity, such as a
 procedure rerun when a variable it reads changes. Each needs a use of its own;
 [Thread transfer needs a visible contract](#thread-transfer-needs-a-visible-contract)
 already rules them out as the answer to borrowing across a join.
+
+`Once` in `core:sync` spins without yielding while another thread runs its
+action. A blocking address wait would suit slow, contended initialization if
+that turns out to be a real workload; no contention benchmark has been run.
 
 ## Thread-affine strings
 
@@ -594,50 +620,13 @@ A second set of proposals, not an amendment to the specification. The review
 read design.md and grammar.md in full, checked each idea against comments.md
 and the questions above, and confirmed every behavior it cites with the
 shipped compiler at `1ba3c84`. Backward compatibility is not a constraint; a
-proposal that reverses a recorded decision says so. The compiler/spec
-divergence it found, rune constants converting to floating-point types, has
-since been fixed.
+proposal that reverses a recorded decision says so. The proposals adopted since
+are defined in design.md, with their reasoning in comments.md; three remain.
 
-The core holds together: one capability axis spelled `mut`, non-null
-references with `Option` niches, fallibility by union shape, exhaustive
-switches, checked arithmetic and conversions, definition-site lookup, and
-hermetic compile-time evaluation. Most proposals were about where everyday code
-meets that core: printing, map keys, early exits, error plumbing, and
-temporaries. The structural concern is that more checking depends on inferred,
+The structural concern is that more checking depends on inferred,
 whole-program facts than a library's signatures show; see
 [No public mutable globals](#no-public-mutable-globals) and
 [Public borrow contracts should stand on their own](#public-borrow-contracts-should-stand-on-their-own).
-
-### Adopted
-
-These proposals, the ones ranked "Next" and the smaller items since, were
-adopted. design.md defines each under the headings named, and comments.md
-records the reasoning:
-
-- `in` tests ranges, which bind tighter than comparison ("Ranges",
-  "Operator precedence").
-- `or_else` may `break`, `continue`, or `return` ("or_else expression").
-- A `package main` prints its fields and cannot be imported ("Exported
-  names").
-- A checked pointer prints as its referent ("String format printing").
-- A record that keeps its generated `==` gets a generated `hash` ("Maps").
-- `main` may return a fallible union ("Program entry and exit").
-- An anonymous record whose fields are ordered orders lexicographically
-  ("Comparison operators").
-- References and owning handles are together the non-null types, which the
-  `Option` niche covers ("Types with no zero value", "Representation").
-- The handle types are `Box(T)`, `Shared(T)`, and `Weak(T)`; `box` and
-  `shared` are only constructors ("Owned values", "Shared ownership").
-- A temporary that a local's declaration or whole assignment borrows lives
-  until its block ends ("Temporaries and procedure boundaries").
-- A case binds a record payload's fields, `case .add(left, right):`, borrowed
-  over a place and transferred over a temporary ("Inspecting a union", "Switch
-  ownership").
-- The [error handling proposal](#error-handling-2026-10-13), which replaced
-  declared error wrapping and settled the failure-only `defer`: a failure
-  operand after `or_return`, `Status(E)`, a body that ends in its payloadless
-  success, and `errdefer` ("The failure operand", "Typed fallibility", "One
-  result", "defer statement").
 
 ### Recommended order
 
@@ -694,13 +683,10 @@ no new syntax.
 
 ## Error handling (2026-10-13)
 
-The error handling proposal of this date is adopted: `or_return` takes a
-failure operand that replaces or maps the error, `Status(E)` serves procedures
-that only fail and has replaced `Result(Unit, E)` across `core` and the `try_`
-operations, such a body may end without `return .ok;`, and `errdefer` runs on a
-failure exit and during unwinding. design.md defines them under "The failure
-operand", "Typed fallibility", "One result", and "defer statement"; comments.md
-records the reasoning and the alternatives not taken. These parts are open:
+The error handling proposal of this date is adopted. design.md defines it under
+"The failure operand", "Typed fallibility", "One result", and "defer
+statement"; comments.md records the reasoning and the alternatives not taken.
+These parts are open:
 
 - **A replacement that discards information.** `f() or_return .Bad` drops the
   error `f` returned. That is explicit at the site, as the switch it replaces
@@ -715,871 +701,60 @@ records the reasoning and the alternatives not taken. These parts are open:
 - **Generic code over both result shapes.** A procedure generic over
   `Result($T, $E)` does not accept a `Status(E)`, so a library that is generic
   over fallible results may need both forms. A parametric type alias,
-  `Status :: Result(Unit, $E)`, would have avoided this, and is worth
-  revisiting if aliases gain parameters for another reason.
-
-## Anonymous unions and failure policies (2026-10-17)
-
-Design exploration, not an adopted change. All new spellings below are sketches,
-not accepted Loke programs. The current rules remain [Typed
-fallibility](design.md#typed-fallibility), [Unions](design.md#unions), and
-[Allocation failure](design.md#allocation-failure).
-
-**Recommendation, superseded by [A concrete proposal](#a-concrete-proposal-2026-10-18):**
-keep `Result`, `Option`, and `Status` as the fallible boundaries; add success
-returns, labeled anonymous unions as plain data, and widening between them by
-label. The earlier recommendation, to evaluate labeled anonymous unions as a
-replacement for the three wrappers, is assessed and declined there. Separately
-prototype one fallible container operation plus reusable failure-policy
-adapters.
-
-### Separate the decisions
-
-There are four independent questions: what values a result can contain, which
-alternatives count as failure, whether a caller must acknowledge a result, and
-what happens when the caller chooses not to recover. A shorter type spelling
-does not settle the other three.
-
-Today a two-variant union with `@(failure=...)` supplies the failure protocol;
-`@(require_results)` supplies acknowledgment. `Result` and `Status` have both,
-while `Option` participates in the failure protocol without requiring use of
-every returned option. Error payloads are ordinary data: an `io.Error` stored
-in a diagnostic record is not itself an active failure.
-
-| Combination | Benefit | Cost or limit |
-| --- | --- | --- |
-| Keep result types; allow plain success returns | Removes repeated `.ok(value)` with a narrow change | Does not combine error domains or remove procedure pairs |
-| Anonymous `(A | B)` inside `Result(T, E)` | Combines distinct error types without a named wrapper for every helper | Adds structural sums, injection, widening, and type-based matching |
-| Flat `(T | Error(E))`, with marked alternatives filtered by the operators | One general union spelling for several successes and failures | Flattening loses result boundaries; classification and generic matching become more complex |
-| Labeled structural sums such as `(ok: T | err: E)` | Anonymous counterpart to today's named variants; preserves equal payload types | Still needs a failure designation and construction rules |
-| Dedicated `T throws E` or error-union syntax | Clearly separates success and failure without a verbose generic spelling | Another spelling for a result boundary; inferred effects would be a much larger change |
-
-The final row need only describe an ordinary returned value. It does not need
-exceptions, automatic propagation, or an inferred list of every error a body
-can produce. Explicit public signatures remain easier to keep stable.
-
-### Labeled anonymous unions fit the existing variant model
-
-The follow-up proposal is `(amount: int | message: string)`: the enclosing
-type is anonymous, while its alternatives retain names. It is the direct
-counterpart of a labeled anonymous record:
-
-```text
-(amount: int, message: string) // both fields are present
-(amount: int | message: string) // exactly one variant is active
-```
-
-Construction and inspection can reuse the current union forms:
-
-```text
-answer: (amount: int | message: string) = .amount(42);
-
-switch (answer) {
-case .amount(n): use_amount(n);
-case .message(text): show_message(text);
-}
-```
-
-These are variants, not simultaneously accessible record fields: `answer.amount`
-does not become an unconditional field access. Exhaustiveness, `.as(.amount)`,
-and borrowing or consuming a case payload can follow [Unions](design.md#unions).
-An alias such as `Answer :: (amount: int | message: string)` would name the
-structural type without creating a new nominal identity; `Answer.amount` can
-then name its constructor. A nominal `Answer :: union { ... }` remains a
-different type, as a struct differs from an anonymous record.
-
-Labels solve the repeated-payload problem: `(read: io.Error | write: io.Error)`
-retains the operation that failed, and `(left: int | right: int)` has two
-distinct alternatives. Duplicate labels should be rejected. For a first
-version, use the ordered sequence of labels and payload types as structural
-identity, matching [Anonymous records](design.md#anonymous-records) and the
-current union's declaration indices. Making order irrelevant is possible,
-but requires canonical tags and reflection rules; it is a separate decision.
-
-Preserve each variant's payload as a whole, including when it is another union:
-
-```text
-(ok: (ok: int | err: Parse_Error) | err: io.Error)
-```
-
-`.ok(.err(parse_error))` is then an outer success containing an inner failure.
-The nesting objection to flat type sets does not apply: the outer `.ok` label
-provides the boundary. Likewise a generic `.ok` can carry an error value as
-ordinary data if failure is designated by variant rather than payload type.
-The required boundary need not be a nominal type named `Result`.
-
-Keep the grammar small initially: at least two alternatives, each with a
-label; `|` separates alternatives and `,` separates record fields. A record
-payload is nested explicitly, as `(found: (index: int, value: T) | missing:)`.
-`missing:` can reuse today's payloadless-variant spelling without making a
-bare identifier ambiguous with a type. A single `(name: T)` remains a record.
-An empty payload creates no automatic zero value or failure designation.
-
-Names alone do not identify failure. `message` might be a successful message,
-and an `err` alternative can be ordinary data. The anonymous form needs a way
-to carry explicit failure metadata before `or_return` or `or_else` can use it.
-The placement of that metadata is still open; preserve today's two-alternative
-protocol first. A suitable fallible structural shape could eventually underlie
-`Result` through a generic alias, but Loke has no parameterized aliases today.
-Failure metadata must participate in structural type compatibility, so the
-same names and payloads cannot silently change which alternative propagates.
-
-Do not implicitly select an arbitrary variant from a raw payload's type.
-Adding a second `int` alternative would otherwise break or reinterpret distant
-construction sites. Use `.amount(42)` for an ordinary sum. The separate proposal
-to allow `return 42;` when the declared result has one designated success
-payload still works: its role, not unique payload typing, selects the variant.
-Using `Error(E)` payloads as the sole marker would reintroduce ambiguity when a
-generic success payload is itself `Error(X)`; explicit variant roles avoid it.
-
-The tradeoff with unlabeled sums is precise. A labeled anonymous error union
-removes the need for a dedicated declaration, but propagation still names its
-wrapper, for example `or_return .read` or `or_return .write`. Automatic
-type-based composition was a benefit of the separate `(A | B)` design.
-General subset conversions between labeled unions can wait; if added, they
-must match labels and payloads without dropping a possible alternative.
-
-Prefer this labeled form as the first anonymous-union feature. It adds inline
-structural types while retaining existing construction, matching, semantic
-labels, and nesting. It does not require new type-based matching or resolving
-an unordered set of generic alternatives, and it does not itself settle
-error acknowledgment or the `try_`/policy-following operation pairs.
-
-### Replacing Result, Option, and Status with structural shapes
-
-The clarified goal is to replace all three named generic types. This is
-coherent with labeled anonymous unions: their explicit variants preserve the
-boundaries that flat, unlabeled unions lose. No nominal `Result` is required
-for nesting. The current three types are already ordinary library unions
-recognized by a common protocol, so the proposal makes their underlying
-shapes directly expressible.
-
-The following table shows the shapes; the last column lists properties that
-must be expressed in the type as well. The labels alone confer none of them.
-
-| Current type | Structural shape | Required properties |
-| --- | --- | --- |
-| `Result(T, E)` | `(ok: T | err: E)` | `err` is failure; require acknowledgment |
-| `Option(T)` | `(none: | some: T)` | `none` is failure and zero; acknowledgment remains optional |
-| `Status(E)` | `(ok: | err: E)` | `err` is failure; require acknowledgment; success is payloadless |
-
-One common rule for two alternatives covers all three. `or_else` selects the
-other alternative or evaluates its fallback. `or_return` propagates the
-designated failure into the enclosing result's designated failure, regardless
-of their labels, under today's payload-compatibility and explicit mapping
-rules. Absence has no error payload to propagate into a payload-bearing error;
-the existing failure operand must supply one. A payloadless success yields
-`Unit` to these operators, as today.
-
-Reuse explicit variant metadata rather than deciding failure from names or
-from a generic payload's instantiated type. For example, this is a possible
-new spelling, not an existing attribute placement:
-
-```text
-parse :: proc(text: string_view)
-    -> (amount: int | @(failure) message: string) {
-    if (bad_input(text)) { return .message("invalid amount"); }
-    return 42;
-}
-```
-
-`@(failure)` on a variant would express the role currently written as
-`@(failure=message)` on a named union. Exactly one non-failure alternative
-selects the implicit success construction. `.amount(42)` remains available;
-an ordinary union with no failure designation still requires a named
-constructor. The final spelling is open, including where zero and
-require-results metadata attach to an inline type. All these properties must
-survive aliases, procedure values, aggregates, and generic instantiation;
-they must not be silently changed by assigning between structural types.
-
-The earlier `Error(E)` wrapper is not needed if the variant has an explicit
-failure role. In particular, an `ok` variant with payload type `Error(X)` can
-then remain success. Requiring acknowledgment is separate from recognizing
-failure: an absence may be safely discarded, while a payloadless error may
-still need acknowledgment. Do not infer that policy merely from whether the
-failure carries data. Explicit discard remains available.
-
-Preserve the useful behavior behind the names:
-
-- An optional shape retains a designated absent zero value and the existing
-  [non-null payload representation](design.md#representation), including foreign
-  pointer ABI uses. A payloadless alternative alone does not imply either
-  an absent default or failure.
-- A status-shaped procedure may reach the end of its body and return its
-  unique payloadless success. This must not grant implicit success to every
-  union containing an empty alternative.
-- `errdefer` and a fallible `main` use the declared outer failure role.
-  Returning an inner failure as outer success must not trigger either's
-  failure behavior.
-- A fallible stream can keep an optional shape inside its success variant:
-  `(value: (none: | some: T) | err: E)`, with role metadata at each level.
-  One `or_return` handles the outer error and leaves end-of-input for the caller.
-
-Removing the nominal generic names also changes generic library code.
-`map_error`, `ok_or`, and helpers such as `must` need structural matching or a
-compile-time fallibility protocol that exposes the success and failure roles.
-Matching only literal labels `ok` and `err` would fail for the `amount` and
-`message` example. Transformations must state whether they preserve labels or
-produce a documented canonical shape. A no-payload success must also be
-representable in generic code without pretending it is the same as a `Unit`
-payload. This is real design work, not solved just by changing the parser.
-
-Domain aliases may abbreviate long structural types without retaining the
-three generic names. Parameterized compatibility aliases could aid migration
-if alias support is deliberately added, but they are not the objective or
-a requirement of this replacement. The gain is one general type model with
-descriptive inline variants; the cost is more verbose repeated signatures and
-the need for generic operations over their roles.
-
-This replaces the representation and naming of fallible results. Mandatory
-acknowledgment and the `try_`/policy-following operation pairs remain independent
-policy decisions; dropping the three names must not silently settle them.
-
-### Dispatching to procedure groups and visitors (2026-10-18)
-
-Labeled anonymous unions can support compact deconstruction through existing
-callable operations. Prefer an explicit dispatch at the call site, preserving
-the active variant's name. Type-only overload selection would lose the
-distinction between `(left: int | right: int)`.
-
-An interesting spelling to prototype is union argument expansion:
-
-```text
-show_amount :: proc(amount: int) { fmt.println(amount); }
-show_message :: proc(message: string) { fmt.println(message); }
-show :: proc{show_amount, show_message};
-
-answer: (amount: int | message: string) = .amount(42);
-show(..answer);
-```
-
-The last call is proposed behavior. It would evaluate `answer` once, select
-its tag, and make one of these calls through ordinary overload resolution:
-
-```text
-switch (answer) {
-case .amount(n): show(amount=n);
-case .message(s): show(message=s);
-}
-```
-
-The label becomes a [named argument](design.md#named-arguments). Existing
-overload resolution rejects a member with no parameter of that name, so
-handlers declared `proc(left: int)` and `proc(right: int)` remain distinct
-even with identical payload types. Their procedure names need not match the
-variants. The parameter labels are part of the dispatch contract, just as they
-are part of an explicitly named call's contract.
-
-This uses a [procedure group](design.md#explicit-procedure-overloading) as
-the callee. It avoids needing to pass the group as a value: today's checker
-rejects that with `L0396`. The otherwise attractive `visit(answer, show)`
-would need special handling of the group operand or a separate change making
-groups usable as compile-time arguments. Neither follows automatically from
-adding anonymous unions.
-
-The grammar already accepts `..expression` as a call argument, but its
-current meaning is [variadic spreading](design.md#variadic-parameters).
-Spreading a union into a named argument is a new semantic rule, not supported
-today. Its readability needs comparison with an explicit `visit` spelling;
-sharing punctuation saves syntax but puts two forms of argument expansion
-behind it. Record expansion, if later considered, would supply every field,
-while union expansion supplies only the active alternative. Record expansion
-is not a prerequisite and is not existing behavior either.
-
-Keep the first design bounded:
-
-- Accept one union expansion as the sole argument initially. Multiple union
-  arguments would require checking combinations of alternatives; forwarding
-  other arguments also needs precise evaluation and name-collision rules.
-- Check every variant at compile time. Each expanded named call must have
-  a unique best overload under the existing rules, even if a particular
-  runtime execution never reaches that variant. Adding a variant can then
-  diagnose a missing handler.
-- Resolve each handler from the argument first. Require a common result type,
-  or that all handlers return nothing, applying existing divergence rules to
-  handlers that never return. Do not select overloads from the destination
-  type or automatically invent an anonymous union of their return types.
-- Preserve the payload as one argument. A nested union remains nested, and
-  a record payload is passed whole rather than recursively expanding its
-  fields. Ordinary destructuring inside the handler remains available.
-- A place operand lends its selected payload for the call. A temporary or
-  `..move(answer)` owns it and can reach a consuming overload, with ordinary
-  cleanup if the handler borrows instead. Preserve return-escape checking
-  and exactly-once destruction; do not implicitly copy or consume the whole
-  union merely to perform the dispatch. Mutable payload access can initially
-  stay with `switch` until an explicit expansion mode is designed.
-- For a payloadless variant, a group needs a label-bearing argument to
-  distinguish it from other empty variants. One candidate is
-  `show(none=Unit{})`, handled by `proc(none: Unit)`. This supplies a zero-sized
-  argument for dispatch without adding a payload to the union itself.
-
-Do not make ordinary `show(answer)` distribute automatically over the union.
-A whole-union overload or an unconstrained generic may already accept it;
-adding such a member must not silently replace a dispatch over variants.
-An explicit expansion keeps the operation visible and permits the existing
-overload rules to be applied independently within each alternative.
-
-A second candidate favors callbacks with arbitrary parameter names:
-
-```text
-visit(answer, amount=print_number, message=print_text);
-```
-
-The labels select the handlers, and each selected handler receives its payload
-positionally. A payloadless variant naturally calls a zero-argument handler.
-This could accept ordinary procedures or capture literals without grouping
-them, but a universal `visit` with variant-derived named parameters also needs
-compiler support or richer metaprogramming. It is not an ordinary generic
-library procedure available today. Treat it as an alternative surface form,
-not an additional feature required by group expansion.
-
-Callback construction follows normal evaluation order: all arguments and
-their captures are evaluated before a call. Two handlers capturing the same
-place with `&mut` can therefore conflict even though only one body will run.
-A visitor object can keep shared state once. `return` or `or_return` in a
-callback exits that callback, and cannot return from the surrounding caller;
-likewise a callback cannot break the caller's loop. Keep the ordinary `switch`
-for local control flow, mutation, and branch-specific cleanup. Short callback
-syntax would be a separate proposal.
-
-For a visitor object, method names provide the same label correspondence:
-the `.amount` branch calls `visitor.amount(payload)`, and `.message` calls
-`visitor.message(payload)`. A generic visitor gives statically selected calls.
-A runtime-selected visitor can use a [dynamic
-interface](design.md#borrowed-dynamic-interface-values):
-
-```text
-Answer_Visitor :: interface($Self: type) {
-    slot amount: proc(self, value: int);
-    slot message: proc(self, value: string);
-}
-```
-
-A procedure taking `dyn Answer_Visitor` can already dispatch a named union
-with an explicit switch and call the selected slot. A generalized generated
-visitor bridge would remove that switch at each new union shape, but `dyn`
-does not generate it by itself. Today's [compile-time
-reflection](design.md#compile-time-reflection) does not supply the typed union
-variant extraction needed for an arbitrary library implementation.
-
-The runtime tag chooses a variant; the visitor's witness chooses that slot's
-implementation. These are separate decisions. A dynamic visitor can be useful
-when behavior is supplied at runtime or reused behind a stable interface, at
-the cost of an interface declaration, borrowing, and potentially indirect
-calls. A `dyn proc` has one signature and cannot stand for an unresolved group
-of differently typed handlers. Erasing a visitor does not erase the union's
-typed payload arguments: a slot may consume an explicitly transferred payload
-even though a consuming receiver is excluded from dyn-compatible interfaces.
-
-Alternatively, forwarding a common interface from every union payload serves
-calls such as `draw()` that have the same meaning for all alternatives. It
-does not expose the variant labels, and two variants carrying the same concrete
-type need adapters to produce different behavior. Such forwarding is another
-proposal, not existing union-to-dyn conversion behavior.
-
-Evidence: a local compiler probe using an existing nominal union verified
-dispatch through named arguments to group members with identical `int`
-parameters, an empty variant dispatched through `Unit`, and a `dyn` visitor
-with separate slots over those same alternatives. The switch was written
-explicitly in both versions. This verifies the building blocks, not the
-proposed anonymous-union syntax or `show(..answer)` expansion.
-
-**Recommendation, superseded by [Part 5](#part-5-per-variant-expansion-and-union-argument-expansion):**
-the earlier recommendation was to prototype explicit union argument expansion
-for reusable procedure groups and compare it with named callback dispatch.
-Part 5 keeps union argument expansion, defined over a per-variant switch case
-with `variants_of(T)`, and declines named callback dispatch.
-
-### Anonymous sums have a useful job outside errors
-
-`(int | string)` can describe a value that is either an integer or text,
-just as `(int, string)` describes a value containing both. It still needs a
-runtime discriminant. This is not a C union, `any_view`, or dynamic typing.
-[Odin's unions](https://odin-lang.org/docs/overview/#unions) provide a precedent
-for selecting an alternative by payload type and injecting values into it;
-that does not establish structural identity or normalization rules for Loke.
-
-A useful candidate rule is an unordered set of exact type identities:
-`(A | B)` and `(B | A)` are the same type, nested anonymous sums flatten,
-and duplicate alternatives collapse. A singleton reduces to its member.
-Aliases do not distinguish alternatives; nominal types do. No implicit `nil`
-or zero alternative is added. This deliberately differs from records, where
-position identifies fields and `(int, int)` contains two independent values.
-
-Consequently `(string | string)` cannot distinguish a username from a password,
-nor `(io.Error | io.Error)` a failed read from a failed log write. Keep named
-unions or nominal wrappers wherever that distinction matters. For example,
-today's `App_Error` can have both `io: io.Error` and `log_write: io.Error`;
-replacing it with a set of payload types would lose information.
-
-For an initial design, inject typed values by exact alternative identity,
-and widen `(A | B)` to `(A | B | C)` by preserving the active alternative.
-Do not search for arbitrary conversion chains. A literal admitted by several
-alternatives, such as `1` for `(i32 | i64)`, needs an explicit choice. Aliases
-and implicit numeric conversions must not silently select a different tag.
-Adding an alternative must not reinterpret an already typed value.
-
-Matching needs a type-based case with a branch-local binding, borrowing or
-consuming as today's [Switch ownership](design.md#switch-ownership) does.
-The precise syntax remains open; exhaustive checking is still required. A
-type-based match must also distinguish a generic type pattern from a value
-pattern without making ordinary `|` expressions ambiguous. Generic inference
-cannot guess a unique `$A, $B` decomposition of an unordered set; it needs
-constraints or explicit arguments where several decompositions fit.
-
-Semantic widening can require remapping the runtime tag and moving a payload
-into larger storage. Do not promise a bitcast or a stable tag number. Layout,
-reflection, hashing, formatting, compile-time evaluation, and borrow provenance
-must all agree with canonical type identity. No allocation is inherently
-needed to represent a closed union, but no performance improvement has been
-measured here.
-
-### What an Error wrapper would mean
-
-Use `Error(E)` for the proposed wrapper type and `error(value)` for its value
-constructor, following the existing `Box(T)`/`box(value)` distinction. Both
-are placeholders; `Failure(E)`/`failure(value)` would avoid competing with
-packages' existing `Error` names. The marker must be a specific declared type
-or an explicit protocol, never a convention based on an identifier's spelling.
-
-For example, a procedure returning `(int | Error(Parse_Error))` could return
-`42` on success or `error(Parse_Error.Bad_Digit)` on failure. A
-`(string | Error(string))` remains unambiguous: a bare string is success and
-a wrapped string is failure. Inferring failure from a bare payload is unsafe
-when success and failure have the same type.
-
-The proposed operators would partition only the union's immediate alternatives:
-
-| Operand type | Success type after handling | Failures handled |
-| --- | --- | --- |
-| `(int | Error(E))` | `int` | `E` |
-| `(int | string | Error(E))` | `(int | string)` | `E` |
-| `(int | Error(E1) | Error(E2))` | `int` | `E1` or `E2` |
-| `(Unit | Error(E))` | `Unit` | `E` |
-| `(Option(int) | Error(E))` | `Option(int)` | `E`, leaving `.none` as data |
-
-`Error(E)` alone contains only failure; it cannot also mean successful
-completion with no value. That needs a success alternative, such as `Unit`,
-or today's `Status(E)`. Implicit success at the end of a `Unit`-bearing body
-would also be a new rule: today it is reserved for a payloadless success.
-
-`or_return` would return the active marked alternative on failure and leave
-the success value on success. `or_else` would supply a value of the remaining
-success type or leave control flow, as today. Every possible failure must
-fit the enclosing result or be explicitly mapped; accepting only some of
-them would silently narrow the contract. An operand containing no marked
-alternatives should be rejected, not make `or_return` a silent no-op.
-
-Recognizing several marked alternatives does not require making
-`Error(A | B)` identical to `(Error(A) | Error(B))`. Distributing through the
-wrapper would be another conversion rule, including ownership and generic
-inference consequences. Grouping errors under one `Error(A | B)` is simpler
-for signatures; multiple wrappers need an explicit normalization decision.
-
-Only the active outer alternative denotes failure. A record containing an
-`Error(E)`, a collection of errors, or the success payload of an explicitly
-tagged result must remain ordinary data. `errdefer` and a fallible `main` must
-use the same classification as the operators. This would extend today's
-exactly-two-variants protocol, not merely abbreviate its declaration.
-
-Replacing the existing protocol outright would also break `Option` handling:
-`.none` has no `Error` wrapper. Keep its existing absence protocol or design
-an explicit replacement; absence and a reported error should remain distinct.
-For a fallible stream, `Result(Option(T), E)` currently represents those three
-states without treating end-of-input as failure.
-
-### Flattening is the obstacle to replacing Result
-
-Consider `Result(Result(int, Parse_Error), io.Error)`. Its outer operation can
-succeed while returning an inner parse failure; one `or_return` removes only
-the outer failure boundary. A mechanical alias
-`Result(T, E) = (T | Error(E))`, with sums flattened, instead becomes:
-
-```text
-int | Error(Parse_Error) | Error(io.Error)
-```
-
-Now one operator handles both failures. If both errors have the same type,
-duplicate elimination also loses which layer failed. Keeping the nesting in
-`(T | Error(E))` requires an opaque group or explicit success wrapper, restoring
-the boundary that `Result` already supplies. Parentheses cannot both be ordinary
-grouping and secretly preserve a result layer.
-
-There is a second problem: substituting `Error(X)` as a generic success type
-would reclassify that success as failure in a flat union. A container, parser,
-or task executor must be able to return a failure value as successful data.
-Named variants or an explicit `Success(T)` wrapper solve it, but then the
-marker design has recreated the roles of `.ok` and `.err`.
-
-Flat marked unions are still reasonable for deliberately flat concrete APIs.
-They should earn their additional protocol through uses that the hybrid below
-cannot express conveniently, rather than being adopted as a universal alias.
-
-### The strongest combination retains a result boundary
-
-Allow anonymous sums as ordinary payload types, and add success construction
-in `return`. An illustrative helper could then be written as follows; `read`
-and `parse` stand for APIs returning `Result(string, io.Error)` and
-`Result(Config, Parse_Error)` respectively:
-
-```text
-Load_Error :: (io.Error | Parse_Error);
-
-load :: proc(path: string_view) -> Result(Config, Load_Error) {
-    text := read(path) or_return;
-    config := parse(text) or_return;
-    return config;
-}
-```
-
-The outer result still says whether the operation succeeded. Anonymous sums
-remove an `App_Error` declaration and per-site wrapping when only the original
-error type matters. If the application needs contextual cases such as
-`.log_write`, retain a named error union and `or_return .log_write`.
-
-This differs from guessing a variant in an existing named union, rejected in
-[The failure operand of `or_return`](comments.md#the-failure-operand-of-or_return).
-A structural sum gives each exact type one alternative by definition. A named
-union may give the same payload several distinct meanings. Adding structural
-injection must not change the latter's construction rules.
-
-Success construction can be a narrow return rule: first honor existing result
-construction and whole-result assignability; otherwise permit an expression
-assignable to the single success payload of the declared fallible result.
-`return n;` in `Result(int, int)` then means success; failure stays
-`return .err(n);`. Contextual `.ok(...)` and `.err(...)` remain explicit escape
-hatches, including nested results. A bare error payload never chooses `.err`.
-
-Apply the rule by the existing marked-union shape, not by the name `Result`.
-Initially keep it at `return` sites; general implicit wrapping at assignments,
-arguments, and overload resolution would be a larger change. Returning a whole
-compatible result must not wrap it again. Existing copy, move, and return-escape
-checks still apply: wrapping must not silently move a place or extend a borrow.
-Payloadless `Status` success already needs no final statement.
-
-[Zig's error unions](https://ziglang.org/documentation/0.15.1/#Error-Union-Type)
-and [coercions](https://ziglang.org/documentation/0.15.1/#Type-Coercion-Error-Unions)
-show the ergonomic value of direct success returns and propagation. Loke can
-take that convenience while retaining arbitrary, structured error payloads
-and explicit outer result boundaries. It need not adopt inferred error effects.
-
-### Require acknowledgment, not proof of recovery
-
-A visible return type alone does not catch `save(config);` silently dropping
-a disk error. Keep a compile-time diagnostic for an ignored failure-bearing
-call, with explicit discard available. The caller can inspect it, propagate
-it, return/store/pass it as data, choose a fallback, panic, or write `_ = ...`.
-Whether recovery is meaningful depends on the caller, not solely on whether
-the error type is allocation-related, a parse error, or an I/O error.
-
-This is deliberately weaker than proving every possible failure was handled.
-Today's [require-results rule](design.md#require_results) accepts any read of
-the binding, even on only one path. Passing it to a logger counts; it does not
-prove recovery. A stricter obligation that follows results through every store,
-callback, and branch is a separate dataflow or linearity design, not a property
-automatically supplied by `Error(E)`. Rust's
-[must-use attribute](https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-must_use-attribute)
-is another acknowledgment mechanism, not proof of recovery.
-
-For a marker-based alternative, calls returning a union with `Error` arms
-should inherit the acknowledgment requirement, including through aliases and
-aggregates. Do not require every ordinary union or `Option` result merely
-because it has multiple alternatives. Whether an ignored predicate deserves
-a diagnostic is independent of whether an operation can fail.
-
-### One operation can expose several caller policies
-
-Changing the result representation alone does not remove the
-[`op`/`try_op` pair](#the-optry_op-pair). A concrete alternative is one fallible
-public operation and reusable adapters. In this sketch `append` has the
-current `try_append` contract, and `must` is a proposed library helper:
-
-```text
-values.append(item) or_return;    // propagate
-must(values.append(item));        // panic, reporting the returned error
-_ = values.append(item);          // deliberately accept a failed insertion
-```
-
-The return type stays the same in every context. Do not make a bare statement
-panic while a value context returns an error, or silently propagate because
-the enclosing procedure happens to be fallible. Those rules make refactoring
-change failure policy and confuse calls through procedure values.
-
-A consuming `must` helper for `Result` and `Status` can implement the choice
-without a new operator. It should transfer move-only successes, report the
-actual error and caller location, and obey panic cleanup rules. Today's
-`or_else panic("message")` already expresses an unconditional panic fallback,
-but drops a temporary's error before evaluating it, so cannot automatically
-include that error. Error-binding fallback syntax is another possible extension,
-not a prerequisite for a library helper.
-
-Allocator policy needs separate treatment. `append` today follows its
-allocator's `.Panic` or `.Trap` policy; `try_append` reports the failure.
-Replacing the former with a generic panic helper would change `.Trap` behavior.
-A policy-preserving adapter needs the allocator as well as the error: an
-`Allocator_Error` currently retains the requested size, not the allocator's
-identity and policy. Extending the error to carry that information is another
-design choice, not free syntax sugar.
-
-Nor does one explicit fallible API make a procedure free of panics. Implicit
-copies, concatenation, bounds checks, and other language operations retain
-their contracts. Generated `clone`/`try_clone` also serve copying and
-`Cloneable`; removing names does not remove those jobs. Preserve transaction
-and ownership guarantees when changing a pair: a failure leaves the container
-unchanged, but an explicitly moved insertion argument remains consumed.
-
-This tradeoff is worthwhile to prototype on `String_Builder`: fewer public
-methods and one implementation of each operation, against a policy choice at
-every ordinary append. Compare complete real callers before migrating arrays,
-maps, allocation built-ins, and lifecycle operations. Keeping convenience forms
-is defensible if the caller burden outweighs the API reduction. Automatic
-generation could remove duplicated wrappers, but leaves the doubled API.
-
-### What the diverging arrow means
-
-[`-> !`](design.md#diverging-procedures) means the procedure never returns
-normally to its caller. `panic`, process exit, and an endless loop are examples.
-It does not mean that the procedure returns an error, may panic, or returns
-success with no payload. That is why `value or_else panic("missing")` needs
-no fallback value: the failure path cannot continue.
-
-Loke currently attaches this fact to the declaration, not to a first-class
-procedure-value type. For readability, `@(noreturn)` would fit those semantics
-more literally than punctuation. `-> never` is also readable, but should become
-a real uninhabited result type only if the language deliberately adds that
-model, including procedure types and conversions. Neither is necessary for
-anonymous unions or error handling; keep any spelling decision separate.
-
-### What would establish that the change is an improvement
-
-Prototype success returns independently, then anonymous sums used for error
-payloads, before combining them with a library API migration. Acceptance cases
-must include equal success/error payload types, overlapping numeric literals,
-duplicate aliases, generic alternatives becoming identical, subset propagation,
-nested results, error values returned as success, fallible streams, move-only
-successes and errors, borrowed errors, and exactly-once cleanup on fallback.
-Also check `errdefer`, fallible `main`, explicit discard, and allocator `.Trap`.
-
-Use the same parser helper, file-loading helper, and builder-heavy caller for
-each design. Count declarations and call-site ceremony, inspect diagnostics,
-and verify that error context survives. This exploration establishes semantic
-tradeoffs, not compiler acceptance of the proposed syntax or measured speed.
-Adoption requires coordinated specification, grammar, compiler, library, tests,
-tooling, rationale, and upgrade notes.
-
-### A concrete proposal (2026-10-18)
-
-Three changes, each specified and built on its own and useful without the
-others, cover what the exploration above found valuable for results. Two more
-are separate features: one shortens signatures, and one replaces the explored
-dispatch forms. Together they keep `Result`, `Option`, and `Status` as the
-only fallible boundaries and make anonymous unions plain data.
-
-1. **Success returns.** `return value;` builds the success variant.
-2. **Labeled anonymous unions.** `(io: io.Error | parse: Parse_Error)` is an
-   ordinary union with no declaration and no attributes.
-3. **Widening by label.** An anonymous union converts to a larger one that
-   contains each of its alternatives, which lets a bare `or_return` propagate
-   a helper's smaller error set.
-4. **Later, separately: parametric aliases**, the only change here that
-   shortens a common signature.
-5. **Independently: per-variant expansion.** A switch case written
-   `case $variant(payload):` is checked once per remaining variant, and
-   `variants_of(T)` reflects a union's variants. The explored
-   `show(..answer)` becomes sugar defined by that expansion.
-
-None of them changes the meaning of a program that compiles today.
-
-#### Assessment of the exploration
-
-| Part | Verdict |
-| --- | --- |
-| [Separate the decisions](#separate-the-decisions) | Keep. The parts below each settle one of the four questions and leave the others alone. |
-| [Labeled anonymous unions](#labeled-anonymous-unions-fit-the-existing-variant-model) | Adopt as data: part 2. |
-| [Replacing the three wrappers](#replacing-result-option-and-status-with-structural-shapes) | Decline; see below. |
-| [Dispatch to groups and visitors](#dispatching-to-procedure-groups-and-visitors-2026-10-18) | Keep `show(..answer)`, defined over a per-variant expansion: part 5. Decline `visit(...)`; keep the dyn visitor as an idiom. |
-| [Unordered type-based sums](#anonymous-sums-have-a-useful-job-outside-errors) | Defer. Labels plus widening give the composition without set normalization, type-based matching, or literal ambiguity, and they keep `read` and `log_write` apart. |
-| [`Error(E)` markers and flat unions](#what-an-error-wrapper-would-mean) | Decline, for the reasons the exploration itself gives under [Flattening is the obstacle](#flattening-is-the-obstacle-to-replacing-result). |
-| [A retained result boundary](#the-strongest-combination-retains-a-result-boundary) | Adopt, with labeled alternatives in place of unlabeled ones: parts 1 to 3. |
-| [Acknowledgment](#require-acknowledgment-not-proof-of-recovery) | Keep today's rule unchanged. An anonymous union is data and requires nothing. |
-| [One operation, several policies](#one-operation-can-expose-several-caller-policies) | Independent. Prototype on `String_Builder` as recommended. |
-| [The diverging arrow](#what-the-diverging-arrow-means) | Independent; no change. |
-
-**Why not replace the wrappers.** The labels would be per API, so every
-generic helper (`map_error`, `ok_or`, a `must`, any code generic over a result)
-would need a role protocol to find the success and the failure, which nominal
-generics give today for nothing. The failure, zero, and acknowledgment
-properties would become part of a structural type's identity, so
-`(ok: T | err: E)` and its fallible twin would be different types that differ
-only by an attribute: a concept Loke has nowhere else. Callers would lose the
-uniform `.ok`/`.err` they match on. And the signatures would grow:
-`Result(File, io.Error)` would become `(ok: File | @(failure) err: io.Error)`.
-A named union with `@(failure=)` already serves an API that wants its own
-labels.
-
-#### Part 1: success returns
-
-**Status: adopted** as [Success returns](design.md#success-returns). The rule
-differs from the text below in three places, each recorded in
-[comments.md](comments.md#success-returns):
-
-- `nil` is never wrapped, although it is an unfixed constant, so `return nil;`
-  in an `Option(^T)` is an error instead of `.some(nil)`.
-- A wrapped return takes its value as the plain statement does: an owned local
-  transfers, where a written `.ok(x)` copies the place.
-- A body whose written result names a generic argument and whose failure
-  carries a payload, such as `Result(T, E)`, never wraps, which is how a body
-  returning an `E` stays rejected in every instance. `Option(T)` keeps the
-  shorthand in generic bodies.
-
-Migrating `core` returns remains a separate commit.
-
-In a procedure whose result is a [fallible union](design.md#typed-fallibility):
-
-- `return expression;` keeps its current meaning when `expression` is a
-  contextual construction of the result (`.ok(x)`, `.err(e)`, `.some(x)`,
-  `.none`) or has a type assignable to the result.
-- Otherwise, when the success variant carries a payload, `expression` is
-  checked against that payload and the return builds the success variant,
-  exactly as `return .ok(expression);` or `return .some(expression);` would,
-  with the same copy, move, and return-escape rules.
-- An implicit selector still resolves against the result's variants, so
-  `return .Bad_Digit;` in `Result(int, Parse_Error)` is an error that suggests
-  `.err(.Bad_Digit)`. Nothing selects the failure variant implicitly, and an
-  error value never becomes a failure because of its type.
-- When the success carries nothing, as `Status`'s does, `return;` returns it,
-  as reaching the end of the body already does. `Result(Unit, E)` is not
-  covered, for the reason [`Status(E)`](comments.md#statuse) gives.
-
-The checker decides by the expression's form, before giving it an expected
-type: a variant construction or implicit selector targets the result; an
-expression with its own type targets the result when assignable to it and the
-payload otherwise; a composite literal or unfixed constant targets the payload,
-since no union is built from one. Lower the wrapped return to the variant
-construction it stands for in
-[check.odin](src/check.odin) `check_return`, so control flow, borrow checking,
-compile-time evaluation, and emission see only code they handle today.
-
-`core`, `base`, `examples`, and `bench` have 117 `return .ok(` and 57
-`return .some(` sites. A typical one, from [text.loke](core/time/text.loke):
+  `Status :: Result(Unit, $E)`, would have avoided this; see
+  [Parametric aliases](#parametric-aliases).
+
+## Anonymous unions and their follow-ups (2026-10-18)
+
+A design exploration of 2026-10-17 and the proposal that followed it led to
+three adopted changes: [Success returns](design.md#success-returns),
+[Anonymous unions](design.md#anonymous-unions), and
+[Widening by label](design.md#widening-by-label). comments.md records why,
+including why `Result`, `Option`, and `Status` remain the fallible boundaries
+([Anonymous unions](comments.md#anonymous-unions)). What the proposal left
+open follows.
+
+### Migrating `core` to success returns
+
+`core` still writes 147 `return .ok(...)` and `return .some(...)` across 23
+files. Most can become `return value;`; a body whose result names a generic
+argument and whose failure carries a payload keeps its `.ok`. An example from
+[text.loke](core/time/text.loke):
 
 ```text
 return .ok(Date.from_components(year, month, day) or_return .Invalid_Value);
-return Date.from_components(year, month, day) or_return .Invalid_Value;   // proposed
+return Date.from_components(year, month, day) or_return .Invalid_Value;
 ```
 
-#### Part 2: labeled anonymous unions
+This is planned as its own mechanical commit, separate from the feature.
 
-**Status: adopted** as [Anonymous unions](design.md#anonymous-unions), with
-three differences from the text below:
+### Bindings and methods on structural types
 
-- A `$` binding inside one is rejected, as it is inside an anonymous record,
-  rather than binding by label and order. Binding inside either is one
-  later change.
-- Methods follow anonymous records rather than being forbidden: neither is
-  rejected by `impl` on an alias today, and the spec says nothing about either.
-  Whether an alias of a structural type may take methods, which would then
-  apply to every spelling of that type in the package, is open for both.
-- `distinct` over one is rejected, as over an anonymous record, since a
-  nominal union is declared.
+- **A `$` binding inside a structural type.** `(some: $T | none:)` and a `$`
+  inside an anonymous record are rejected today. Binding by label and order in
+  both is one later change.
+- **Methods on an alias of a structural type.** `impl` on an alias of an
+  anonymous record or union is not rejected, and the spec says nothing about
+  either. A method there would apply to every spelling of that shape in the
+  package. The answer should be the same for both kinds.
 
-In place of the reflection bullet, a type name prints the alternatives,
-`(found: int | missing:)`, as an anonymous record's does.
+### Parametric aliases
 
-`(label: Type | label: Type | label:)` is the anonymous counterpart of a named
-union, as `(label: Type, label: Type)` is of a struct:
+Anonymous unions remove declarations but make signatures longer. A plain alias
+already shortens a signature, as `Io_Status :: Status(Io_Error);` and
+`Config_Error :: (io: io.Error | parse: Parse_Error);` do, and a named shape
+still widens and still matches another package's identical shape. What a plain alias
+cannot do is fix one argument of a generic: `Result(T, io.Error)` needs `io` to
+name `Result($T, Error)` once, as Rust's `io::Result` does. That is a separate
+generics feature with its own design. It would not merge `Status` into
+`Result`, whose end-of-body rule differs, but it would have let `Status` be an
+alias; see [Error handling](#error-handling-2026-10-13).
 
-- It has at least two alternatives, each `label: Type` or payloadless `label:`,
-  with distinct labels. The colon is required, so `(a | b)` remains an
-  expression and `(x: T)` remains a one-field record. A name list such as
-  `(a, b: int | c:)` is not accepted.
-- Its identity is structural: the ordered sequence of labels and payload types,
-  as for [anonymous records](design.md#anonymous-records). The order is the
-  tag order. An alias names the shape and creates no new identity.
-- Every rule of [Unions](design.md#unions) applies unchanged: contextual
-  `.label(payload)` construction, an alias's `Alias.label` constructor, switch
-  ownership and exhaustiveness, `.as(.label)`, copy, move, drop, equality,
-  formatting, and the [representation](design.md#representation), so
-  `(node: ^Node | end:)` is one address. Reflection reports it as a union with
-  the empty name.
-- It carries no attributes. It has no zero value, is not a fallible expression,
-  and does not require its results. `or_return` and `or_else` reject it with a
-  diagnostic naming `Result`, `Option`, or a named union with `@(failure=)`.
-  It takes no methods and cannot be recursive, since it has no name.
-- A `$` binding inside it, as in `(some: $T | none:)`, binds by label and order.
+### Per-variant expansion
 
-The [failure operand](design.md#the-failure-operand) already resolves `.label`
-against `F`, the enclosing result's failure payload, so it needs no change to
-wrap into an anonymous `F`:
-
-```text
-read_config :: proc(path: string_view) -> Result(Config, (io: io.Error | parse: Parse_Error)) {
-    text := fs.read_text(path) or_return .io;
-    return parse(text) or_return .parse;
-}
-```
-
-Implementation mirrors anonymous records: a `Type_Anon_Union` node from
-`parse_anon_record_type` in [parser.odin](src/parser.odin) when `|` follows the
-first labeled alternative, interning beside `anon_record_type` in
-[semantic.odin](src/semantic.odin) with the union kind, and the existing union
-paths from there.
-
-#### Part 3: widening by label
-
-**Status: adopted** as [Widening by label](design.md#widening-by-label), with
-two additions to the text below, each recorded in
-[comments.md](comments.md#widening-by-label):
-
-- A comparison widens too, since [Comparison operators](design.md#comparison-operators)
-  already require only that one operand be assignable to the other:
-  `small == big` compares under the larger union.
-- A place is copied at its own type and the copy widened, so a copyable source
-  widens into a destination with a move-only alternative it lacks. A borrowed
-  argument to a value parameter is lent, not copied.
-
-Add to [Implicit type conversions](design.md#implicit-type-conversions): an
-anonymous union value converts to an anonymous union type that has, for each
-of its alternatives, an alternative with the same label and the same payload
-type, or the same payloadless label. Order may differ; the conversion remaps
-the tag and moves the payload into the larger storage. It is a value
-conversion, as dropping record labels is: it does not reach through
-`[dynamic]`, `Option`, or a procedure type, a place operand copies and must be
-copyable, and a temporary transfers. Named unions neither widen nor are
-widened. Narrowing is a `switch`.
-
-A bare `or_return` requires only that the failure payload be assignable, so
-widening makes a smaller error set propagate with no operand, and `map_error`
-and ordinary returns accept it too:
-
-```text
-start :: proc() -> Result(App, (io: io.Error | parse: Parse_Error | net: Net_Error)) {
-    config := read_config("app.cfg") or_return;          // widened by label
-    socket := net.connect(config.host) or_return .net;
-    return App{config, socket};
-}
-```
-
-This is not the variant inference that
-[The failure operand of `or_return`](comments.md#the-failure-operand-of-or_return)
-rejected. The label and the payload type are written on both sides, so adding
-an alternative to the destination changes no existing conversion, and adding
-one to the source, renaming a label, or changing a payload type is a
-diagnostic, naming the missing alternative, at each site whose destination
-lacks it.
-
-The caller chooses between flattening and context. Repeating the callee's
-labels in its own set flattens them, as above. A wrapping label keeps the
-layer, `(config: (io: io.Error | parse: Parse_Error) | net: Net_Error)` with
-`or_return .config`, and two labels keep equal payload types apart,
-`(read: io.Error | log_write: io.Error)`.
-
-#### Part 5: per-variant expansion and union argument expansion
-
-[Dispatching to procedure groups and visitors](#dispatching-to-procedure-groups-and-visitors-2026-10-18)
-serves two needs that recur in general-purpose programs: interpreters and
-compilers walking a tree, event loops, protocol and actor message handlers,
-and state machines.
+Two needs recur in general-purpose programs such as interpreters and compilers
+walking a tree, event loops, protocol and actor message handlers, and state
+machines:
 
 - **One operation for every alternative**, such as `area()`, `span()`, or
   reporting an error, where every payload supports the same call.
@@ -1592,12 +767,13 @@ The existing standard library and tests are not a sample of either. They hold
 almost no data unions, so their switches say nothing about how often these
 needs arise. Judge both on design merits and on representative programs
 written for the purpose; see
-[Implementation order and acceptance](#implementation-order-and-acceptance).
+[Evaluating on representative programs](#evaluating-on-representative-programs).
 
-Part 5a serves the first need and is the foundation. Part 5b serves the second
-and is defined as sugar over 5a, so it adds a spelling, not a mechanism.
+An expanded switch case serves the first need and is the foundation. Union
+argument expansion serves the second and is defined as sugar over the
+expanded case, so it adds a spelling, not a mechanism.
 
-##### Part 5a: per-variant expansion
+#### Per-variant switch cases
 
 Zig serves the first need with
 [`inline else`](https://ziglang.org/documentation/0.15.1/#Inline-Switch-Prongs),
@@ -1658,7 +834,7 @@ or tests `variant.name` with `when`. Visitor slots named after the labels stay
 out of reach, because static expansion does not synthesize identifiers.
 Constructing a variant from a descriptor is left open.
 
-Part 5 works with parts 2 and 3 but needs neither. With them, one `report`
+It works with anonymous unions and widening but needs neither. With them, one `report`
 procedure is generic over any anonymous error set, however it was widened:
 
 ```text
@@ -1669,10 +845,11 @@ report :: proc(error: $E) {   // a constraint meaning "E is a union" is open
 }
 ```
 
-##### Part 5b: union argument expansion
+#### Union argument expansion
 
-The exploration's `show(..answer)` is defined as a 5a expansion whose case
-calls the callee once, with the variant's label as the argument name:
+`show(..answer)` dispatches a union to a procedure group. It is defined as an
+expanded case that calls the callee once, with the variant's label as the
+argument name:
 
 ```text
 show(..answer);
@@ -1685,13 +862,13 @@ case $variant(payload): show(<the label of variant> = payload);
 
 Ordinary overload resolution then picks the member for each label. A label
 becomes an argument name only inside this expansion; there is no user-visible
-form that names an argument from a descriptor. Most of the rules the
-exploration listed follow from the definition instead of being added: each
+form that names an argument from a descriptor. Most of the rules such a
+call needs follow from the definition instead of being added: each
 variant is checked at compile time, and a variant with no handler is a
 diagnostic naming it; the operand follows switch ownership, so a place lends
 its payload and a temporary or `move(answer)` gives it up; a payloadless
 variant passes `Unit{}` to a `proc(none: Unit)` member; and one expanded union
-is the sole argument initially. The one rule 5a does not supply is for the
+is the sole argument initially. The one rule the expanded case does not supply is for the
 call's value, since a switch is a statement: every expansion must have the
 same result type, or none has a result, with the existing divergence rules.
 
@@ -1704,7 +881,7 @@ On the merits:
   member, with a payload type that member accepts, dispatches to it. The
   explicit `..` keeps such groups deliberate.
 - **Handlers are procedures.** `return` and `or_return` in one leave the
-  handler, not the caller. Use a switch or 5a where the caller's control flow
+  handler, not the caller. Use a switch or an expanded case where the caller's control flow
   is needed. The call's own result still propagates: `show(..answer) or_return`.
 - **The spelling.** `..` already spreads a sequence into variadic arguments.
   A union is never a sequence, so the operand's type decides without
@@ -1715,474 +892,76 @@ On the merits:
 - **The benefit.** A handler set is declared once and dispatched in one
   expression from every site, exhaustively and by label.
 
-Build 5a first. Prototype 5b on it and compare both with explicit switches in
-the representative programs below.
+Build the expanded case first. Prototype union argument expansion on it and
+compare both with explicit switches in the
+[representative programs](#evaluating-on-representative-programs).
 
-`visit(answer, amount=..., message=...)` stays declined, on its own costs:
-deriving named parameters from the variants needs compiler support beyond 5b;
-every callback and its captures are evaluated though one body runs, so two
+`visit(answer, amount=..., message=...)` is declined, on its own costs:
+deriving named parameters from the variants needs compiler support beyond
+this expansion; every callback and its captures are evaluated though one body runs, so two
 `&mut` captures of one place conflict; and a capture literal per variant is
-longer than a case. A dyn visitor remains an idiom over an explicit switch or a
-5a expansion, and `variants_of(T)` makes a generic bridge to one possible.
+longer than a case. A dyn visitor remains an idiom over an explicit switch or an
+expanded case, and `variants_of(T)` makes a generic bridge to one possible.
 
-#### What gets shorter
+#### Acceptance cases
 
-Anonymous unions make a signature longer and remove a declaration; they do not
-shorten a signature. Today's `Result(Config, Config_Error)` with
-`Config_Error :: union { io: io.Error, parse: Parse_Error }` becomes the
-signature of `read_config` above. The program gets shorter where the helpers
-are: no wrapper declaration per helper, no `or_return .name` at each level
-after the first wrap, and a precise error set per helper instead of one
-application-wide union that every helper over-reports. That is the shape of
-application code that combines error domains, not of the standard library: a
-`core` package reports one error type, so parts 2 and 3 need no `core`
-migration. Part 1 shortens bodies everywhere, `core` included.
-
-Signatures are shortened by aliases, which suit structural types because they
-add no identity:
-
-- A plain alias works today: a local probe accepted `Io_Status :: Status(Io_Error);`
-  and a procedure returning `Io_Status` that reached the end of its body.
-- `Config_Error :: (io: io.Error | parse: Parse_Error);` names the shape, and the
-  named shape still widens and still matches another package's identical shape.
-  It also avoids the double parentheses of
-  `Status((io: io.Error | parse: Parse_Error))`.
-- `Result(T, io.Error)` needs a parametric alias, which is part 4, so that `io`
-  can name `Result($T, Error)` once, as Rust's `io::Result` does. That is a
-  separate generics feature with its own design; it does not merge `Status`
-  into `Result`, whose end-of-body rule differs.
-
-Dedicated syntax such as `T ! E` or `?T` is not proposed. It saves a few
-characters per signature, adds a second spelling for each wrapper, and `!`
-already means divergence in `-> !`.
-
-#### How the parts combine
-
-- Success returns and the failure operand together leave a body with no
-  `.ok(...)`: failure is always written, and success never is.
-- A labeled anonymous error set uses the existing failure operand unchanged.
-- Widening uses the existing assignability rule of a bare `or_return`, so no
-  propagation rule changes.
-- Nested results keep their boundaries, because the fallible layer is still a
-  `Result`: `Result(Result(int, Parse_Error), io.Error)` means what it does
-  today.
-- `errdefer`, a fallible `main`, `@(require_results)`, and `map_error` read the
-  same `Result` and `Status` as today.
-
-#### Implementation order and acceptance
-
-Build and release each part separately, specification, grammar, compiler,
-tests, and `CHANGELOG.md` together. Migrating `core` returns to part 1 is a
-separate commit.
-
-The code in this repository is mostly the standard library and its tests, so
-it cannot show how often a general-purpose program needs these forms. Evaluate
-each part on representative programs written for the purpose, each in the
-current language and with the proposal:
-
-- an application that loads, parses, and serves, with helpers over several
-  error domains, for parts 1 to 3;
-- an expression interpreter with several tree walks (evaluation, printing, type
-  checking) over one node union, for part 5;
-- an event loop or message handler with one handler set dispatched from
-  several sites, for part 5b.
-
-Count declarations, propagation and dispatch sites, and lines; check that
-error context survives; and compare the diagnostics after adding, renaming,
-and removing a variant or a label. Document an idiom in a tutorial only after
-it has been compared this way.
-
-Acceptance cases:
-
-- **Part 1.** In `Result(int, int)`, `return n;` succeeds and `return .err(n);`
-  fails. In `Option(Option(int))`, an `Option(int)` value wraps once. A whole
-  compatible result is not wrapped again. `return .Bad_Digit;` is diagnosed. A
-  body generic over `Result($T, $E)` that returns an `E` is rejected, and is
-  not wrapped as success in an instance where `E` happens to be assignable to
-  `T`. Also: move-only and borrowed success payloads, `errdefer` not running on
-  a wrapped return, a fallible `main`, `return;` in `Status`, and `return;`
-  rejected in `Result(Unit, E)`.
-- **Part 2.** `(left: int | right: int)` has two alternatives. Duplicate labels,
-  one alternative, and `(a | b)` as a type are rejected. A different order is a
-  different type. `(node: ^Node | end:)` has the pointer's size. A file-scope
-  variable of one is rejected, since it has no zero. `or_return` on one is
-  rejected. A failure operand constructs into an anonymous `F`. Formatting,
-  reflection, hover, and `-fmt` agree.
-- **Part 3.** Widening succeeds across orders. A missing label, the same label
-  with another payload type, a move-only place, and conversion through
-  `[dynamic]` are rejected. An overload taking the exact type wins over one that
-  needs widening. Widening is the same in compile-time evaluation, and a
-  borrowed payload keeps its provenance.
-- **Part 5.** An expanded case after explicit cases covers only the rest. A
-  case after it, a second one, and one over an enum or `any_view` subject are
+- **Expanded cases.** An expanded case after explicit cases covers only the
+  rest. A case after it, a second one, and one over an enum or `any_view` subject are
   rejected. Adding a variant whose payload lacks what the body uses is
   diagnosed, naming the variant. A payloadless variant binds `Unit`. `return`
   and `or_return` leave the procedure from an expansion. Over a temporary,
   each expansion owns and drops its payload once; `&mut payload` requires a
   writable subject. `variants_of(T)` keeps declaration order, rejects a
   non-union, and its descriptors cannot reach runtime storage.
-- **Part 5b.** `(left: int | right: int)` reaches `proc(left: int)` and
-  `proc(right: int)` separately. A missing handler, an ambiguous one, and
+- **Union argument expansion.** `(left: int | right: int)` reaches
+  `proc(left: int)` and `proc(right: int)` separately. A missing handler, an ambiguous one, and
   expansions with different result types are diagnosed, naming the variant. A
   payloadless variant reaches `proc(name: Unit)`. A place operand is lent, and a
   temporary or `move` operand reaches a consuming member. A whole-union member
   of the group is not chosen by `..`, and `show(answer)` without `..` never
   distributes.
 
-## Success returns and anonymous unions commit review (2026-10-18)
+### Unordered type-based sums
 
-Reviewed `5cfc8b0` (success returns) and `f5ee2ff` (anonymous unions) for
-correctness and structure. Two confirmed findings, both **resolved** since:
+`(int | string)`, with alternatives chosen by payload type as
+[Odin's unions](https://odin-lang.org/docs/overview/#unions) are, is deferred
+rather than declined. Labels with widening already compose error sets and keep
+equal payload types apart, which a set of types cannot. A type-based form would
+need its own rules: identity as an unordered set, with nested sums flattened
+and duplicates collapsed; injection by exact type identity, with an explicit
+choice for a literal several alternatives admit, such as `1` for
+`(i32 | i64)`; a type-based case with a branch-local binding that stays
+exhaustive; and constraints for generic inference, which cannot guess a unique
+`$A, $B` decomposition of a set. Revisit if programs need selection by type.
 
-- P2, `5cfc8b0`: the walk that decides whether a result names a generic
-  argument skipped expressions, so `Result([N + 1]int, [2]int)` wrapped
-  `return error;` as success when `N` was 1 and rejected it otherwise.
-  **Fixed**: the walk is now `type_syntax_any_name` in [ast.odin](src/ast.odin),
-  shared with the erasure check, and runs only inside an instance, so its
-  conservative answer for inline records cannot affect ordinary code.
-  `tests/err/success_returns` covers the case.
-- P3, `f5ee2ff`: `parse_anon_union_type` accepted a trailing `|`, which the
-  grammar did not allow. **Resolved by accepting it**: a trailing `|` is now in
-  [the grammar](grammar.md#types) and [the spec](design.md#anonymous-unions),
-  like a trailing comma in a record, so a union written one alternative per line
-  ends each line alike. An empty alternative between two `|` is still an
-  error; `tests/syntax_err/anonymous-union-alternatives` covers both.
+### Evaluating on representative programs
 
-The phase boundaries are sound: lowering success returns to ordinary union
-constructions lets ownership, provenance, evaluation, and emission share their
-existing handling. Interning anonymous unions as the existing union kind keeps
-the new feature's implementation concentrated in parsing, type resolution, and
-identity. The collision buckets compare complete shapes, and the added
-cross-package test covers payload types that share a display name.
+The code in this repository is mostly the standard library and its tests, so it
+cannot show how often a general-purpose program needs these forms. Evaluate each
+on programs written for the purpose, in the current language and with the
+proposal:
 
-Two optional P3 simplifications from the `ponytail-review` pass, both
-**applied** since:
+- an application that loads, parses, and serves, with helpers over several
+  error domains, for success returns, anonymous unions, and widening;
+- an expression interpreter with several tree walks (evaluation, printing, type
+  checking) over one node union, for expanded cases;
+- an event loop or message handler with one handler set dispatched from
+  several sites, for union argument expansion.
 
-- [union.odin](src/union.odin):L79: shrink: remove the duplicated payload-validation branch in `resolve_anon_union`; share a `(Type_Id, bool)` payload resolver with `resolve_union_variants`, keeping duplicate-label collection and named-union attributes with their callers. The repeated checks for payloadless type names, type resolution, and invalid payload kinds can lose about 20 net lines.
-- [check.odin](src/check.odin):L4301: shrink: replace the five manual selector-field assignments with `check_union_variant_selector(k, selector, result, true)` before `finish_union_construct`. That helper already sets these fields for a payload variant; the wrapping branch guarantees a nonempty payload. Four net lines fewer, with one owner for the selector annotation contract.
+Count declarations, propagation and dispatch sites, and lines; check that
+error context survives; and compare the diagnostics after adding, renaming,
+and removing a variant or a label. Document an idiom in a tutorial only after
+it has been compared this way.
 
-**net: -24 lines possible.** This estimate excludes the correctness fixes.
-The partly duplicated generic-name traversal also caused the first gap; sharing
-its expression coverage is part of that fix, rather than a separate cosmetic
-finding. Both were applied as described: `resolve_variant_payload` serves both
-union forms with the named union's wording, and the success-return wrapper
-calls `check_union_variant_selector`.
+## The diverging arrow's spelling
 
-Validation used freshly built `review-lokec.exe` and `review-loke-lsp.exe`:
-134 compiler unit tests and 43 LSP unit tests passed, as did the 10 integration
-suites for executable programs, packages, diagnostics, package diagnostics,
-syntax recovery, generated IR, layout, and three LSP behavior checks. The
-existing success-return and anonymous-union run programs also passed directly.
-Focused probes confirmed both gaps and exercised nested union payloads,
-generic anonymous-union construction, dynamic-array transfers, and borrowed
-view returns. A broader integration attempt crashed in Odin's test runner at
-`tests.a_debugger_shows_values` with exception `0xC000001D`; it is not a passing
-full gate. Its leftover compiler process was stopped. Reproduction artifacts
-are ignored under `tests/tmp/review-*.loke`. Heading citations and local links
-were checked after recording these findings.
-
-## Success return and anonymous union fix commit review (2026-10-18)
-
-Reviewed `d33722b`, **Fix success return and anonymous union review findings**.
-The original array-length reproduction is rejected, the trailing `|` is an
-intentional specification change with run and syntax coverage, and the shared
-payload resolver and selector initialization preserve the existing contracts.
-
-Two new P2 regressions in the shared name walk, both **fixed** since:
-
-- Generic bindings written with `$` were ignored, so `Result($T, $E)` turned an
-  error value into a success where the former walk rejected it.
-- Inline type definitions counted as generic dependencies, so a concrete result
-  using `size_of(enum { A, B })` lost the success-return shorthand inside an
-  unrelated generic procedure.
-
-**Fix**: `type_syntax_any_name` in [ast.odin](src/ast.odin) now hands every
-identifier, `$` name, and inline definition to its caller's callback instead
-of deciding for it. Erasure keeps its policies: a `$` name is no match and a
-declared body is one, conservatively. Success returns treat a `$` name as a
-generic argument and walk an inline definition's written types and values, so
-only a definition that names a binding, such as `union { a: T, b: u8 }` in a
-`size_of`, makes the result generic. `tests/err/success_returns` covers both
-rejections, and `tests/run/success_returns` returns `{}` from the same concrete
-inline-enum result in a generic and an ordinary procedure.
-
-Both were reproduced using fresh compiler builds from this commit and its
-parent, `f5ee2ff`. The first changed from rejection to a successful `.ok(2)`;
-the second changed from a successful build to L0424. Sharing traversal is
-appropriate, but erasure's policies for `$` nodes and unknown declaration
-bodies are not the success-return policies. Keep those decisions with their
-callers. No additional complexity-only finding was confirmed; the two applied
-payload/selector simplifications reduce duplication without a new layer.
-
-The review itself applied no implementation fixes. Reproductions and the
-archived parent sources remain ignored under `tests/tmp/review-fix-*`. Validation used freshly
-built compiler and LSP binaries: 134 compiler unit tests and 43 LSP unit tests
-passed, along with eight integration suites covering executable programs,
-packages, diagnostics, package diagnostics, syntax recovery, and three LSP
-behavior checks. The updated anonymous-union run program passed directly, and
-the original array-length reproduction now reports the generic-result error.
-Heading citations and local documentation links were checked after recording
-these findings. The full integration suite was not rerun; the earlier review's
-debugger-test crash remains outside this verification.
-
-## Syntax walk caller policy commit review (2026-10-18)
-
-Reviewed `1d54a1f`, **Keep generic-name policies with each syntax walk caller**.
-Both preceding regressions are fixed: a result spelled `Result($T, $E)` is
-rejected when it needs an explicit variant, and a concrete inline-enum result
-keeps the success-return shorthand in a generic procedure. The shared walk's
-erasure callback preserves its previous answers for identifiers, `$` names,
-and declared bodies.
-
-One new P2 regression, **fixed** since: the inline-record branch walked
-payload types but omitted attribute values, so a binding in `@(align=N)`
-bypassed the restriction and could silently wrap an error value as success.
-A fresh build of the parent rejected this program; a fresh build of the reviewed
-commit accepts it and passes an assertion that the result is `.ok`. Changing
-the alignment argument from 8 to 4 rejects the same return in the reviewed
-commit. `@(align=align_of(T))` was also confirmed to bypass the restriction.
-
-Keeping the two callers' decisions separate is a sound structure, and the
-shared traversal remains useful for expression forms. No additional
-complexity-only finding was confirmed; completing the inline definition's
-attribute coverage is a correctness fix. The review itself applied no
-implementation fixes.
-
-**Fix**: the `Type_Record` case of `names_generic_binding` in
-[check.odin](src/check.odin) now walks everything written in the definition:
-its attribute values, each field's attributes, its generic parameter types,
-and its `where` clauses, besides field and variant types.
-`tests/err/success_returns` rejects `@(align=N)` and `@(align=align_of(T))` in
-instances where both payloads are `[16]u8`.
-
-Focused reproduction sources and the archived parent sources remain ignored
-under `tests/tmp/review-policy-*`.
-
-Validation used fresh compiler and LSP builds: 134 compiler unit tests and
-43 LSP unit tests passed, along with eight integration suites covering
-executable programs, packages, diagnostics, package diagnostics, syntax
-recovery, and three LSP behavior checks. The updated success-return run test
-and both previous review reproductions behaved as intended. All 1,837 heading
-citations and 158 local documentation links and anchors resolved, and
-`git diff --check` passed. The full integration gate was not rerun.
-
-## Inline record attribute commit review (2026-10-18)
-
-Reviewed `52d748e`, **Walk inline record attributes for generic success results**.
-The original alignment-only reproduction now rejects the return through the
-generic-result restriction, and the new regressions cover both `@(align=N)`
-and `@(align=align_of(T))` where the success and error payload types coincide.
-A concrete numeric alignment retains success-return shorthand.
-
-One new P2 regression, **fixed** since: `attributes_name` interpreted the
-identifiers in `@(zero=N)` and `@(failure=N)` as references to an outer generic
-binding, although they name variants of the inline union. A concrete result
-then lost the shorthand merely because an unused generic parameter had the
-same name. Fresh builds confirmed that the parent accepts both cases, the reviewed commit
-rejects them, and renaming the unused parameter restores the build.
-
-The traversal is straightforward, but it can be narrower: `align` is the
-expression-valued attribute allowed on a record definition; `zero`, `failure`,
-and a field's `initialized` attribute contain member names. Using the existing
-`find_attribute` for `align` and walking its value would remove the blanket
-attribute helper and its field-attribute call, saving about eight lines while
-fixing the lookup policy. This is the same correctness finding, not an
-additional independent refactoring request. The generic parameter and `where`
-clause walks need no further abstraction. The review itself applied no
-implementation fixes.
-
-**Fix**, as suggested: the `Type_Record` case of `names_generic_binding` in
-[check.odin](src/check.odin) walks only the `align` value, found with
-`find_attribute`, and no field attributes, so `attributes_name` is gone.
-`tests/run/success_returns` returns `{}` from results whose inline unions use
-`@(zero=N)` and `@(failure=N)` in procedures generic over an unrelated `$N`,
-and the alignment rejections in `tests/err/success_returns` still hold.
-
-Validation used freshly built compiler and LSP binaries: 134 compiler unit
-tests and 43 LSP unit tests passed, along with eight integration suites covering
-executable programs, packages, diagnostics, package diagnostics, syntax
-recovery, and three LSP behavior checks. All 1,837 heading citations and 160
-local documentation links and anchors resolved, and `git diff --check` passed.
-The focused probes and parent sources remain ignored under
-`tests/tmp/review-attrs-*`. The full integration gate was not rerun.
-
-## Anonymous union widening commit review (2026-10-18)
-
-Reviewed `865f3ea`, **Add widening by label for anonymous unions**, against
-[Widening by label](design.md#widening-by-label), the existing conversion and
-ownership rules, and its added tests. Three confirmed findings, all
-**resolved** since:
-
-- **P1:** explicit runtime casts omitted the conversion. Small cases reached invalid LLVM; large cases compiled a copy longer than the source allocation. The latter was verified in IR without executing the invalid read. **Fixed**: `emit_value_conversion` in [emit_llvm_calls.odin](src/emit_llvm_calls.odin) and `eval_conversion` in [eval.odin](src/eval.odin) remap the tag through the shared widening, before the storage-type comparison that let two same-layout unions pass unchanged.
-- **P2:** widening clones ignored destination allocator policies, including skipping evaluation of a written `via` expression.
-- **P2:** widening copies skipped last-use transfer, invoking a copy hook and dropping two owners where the specification requires a transfer and one drop. The same copy-site split lost the held copy-cost warning for copies that remain necessary.
-
-**Fixed** together, as suggested below: `widen_clones` is gone, and a widening
-copy is the site's ordinary copy again. `classify_copy` in
-[lifecycle.odin](src/lifecycle.odin) sets the site's own clone flag, judged at
-the source type through `copied_type`. The last-use pass and the held copy-cost
-report then see it as they see any copy. The emitter's expression copy sites
-call `emit_copied_expr` in [emit_llvm_expr.odin](src/emit_llvm_expr.odin),
-which clones a widened value at its own type, through the destination's
-allocator evaluated after the value, and then remaps it. Non-variadic container
-insertion was missed; see the
-[next review](#widening-copy-and-explicit-cast-fix-review-2026-10-18). The regression tests are in
-tests/run/union_widening (runtime and compile-time casts across reordered and
-larger storage, `via` on a declaration and an assignment, and last-use
-transfer in both) and tests/err/union_widening (the warning on a copy that
-remains, and none on a last use).
-
-The shape predicate and label-to-tag remapping are concentrated and readable.
-Exact payload matching keeps the conversion bounded, and the existing run
-tests exercise source niches, ordinary borrowed arguments, constant evaluation,
-failure propagation, and explicit ownership transfer. Additional probes checked
-larger destination storage, widened map reads, and rejection of an escaping
-borrow whose label changes position; these exposed no separate finding.
-
-The main structural concern is that `widen_clones` duplicates part of the
-existing copy-site state while moving clone emission into the general
-expression emitter. The allocator and last-use findings are concrete effects
-of that split. Keep source-type copying integrated with the declaration and
-assignment copy machinery, and remap the resulting owned value afterward.
-Explicit and implicit conversions should share the remapping implementation.
-These are correctness-driven changes, not separate speculative abstractions
-or deletion requests; no independent complexity-only finding was confirmed.
-
-No implementation fixes were applied. Fresh compiler and LSP builds passed
-135 compiler unit tests and 43 LSP unit tests. Ten affected integration suites
-passed: executable programs, packages, diagnostics, package diagnostics, syntax
-recovery, generated IR, layout, and three LSP behavior checks. The new widening
-run test also passed directly. Heading citations and local documentation links
-and anchors resolved, and `git diff --check` passed. The full integration gate
-was not rerun. Reproduction sources, outputs, and the inspected large-cast IR
-remain ignored under `tests/tmp/review-widen-*`.
-
-## Widening copy and explicit cast fix review (2026-10-18)
-
-Reviewed `b9b737e`, **Make widening copies ordinary site copies and widen
-explicit casts**, against its parent `865f3ea`, the
-[widening rules](design.md#widening-by-label), and ordinary copy ownership.
-The three earlier reproductions now pass: explicit casts remap reordered tags
-and larger storage, destination `via` expressions run for widening copies,
-and last-use declarations transfer rather than copy.
-
-Two additional regressions, reproduced against both revisions, both
-**resolved** since:
-
-- **P1:** a non-variadic container insertion into a wider union with an extra
-  move-only alternative skipped the source copy. The source remained live while
-  the container owned the same payload. A traced copy/drop hook confirmed no
-  copy and two drops; the parent copies once. Both dynamic-array `insert` and
-  map `try_insert` reproduced it. **Fixed**: `emit_bound_call` in
-  [emit_llvm_calls.odin](src/emit_llvm_calls.odin) copies a borrowed widened
-  element that a move-only element type consumes, through
-  `emit_insertion_copy`. The copy is made at the smaller type with the
-  container's own provider, and remapped once it is known to have succeeded.
-  A `try_` form whose copy is refused returns that `.err` without calling the
-  insertion, as a copyable element's lending body would, so the container and
-  the source are unchanged.
-- **P2:** an ordinary variadic call could fail with L0405 because the emitter
-  cloned the smaller union while the checker had prepared only the wider
-  union's clone. The parent compiles and runs the same input. **Fixed**:
-  `bind_variadic_arguments` in [check_calls.odin](src/check_calls.odin)
-  classifies each widened place through `classify_copy`, which enrolls the
-  source lifecycle. A move-only element type no longer rejects a widened
-  place, and a copyable one still enrolls the element clone that a lending
-  `append` body uses.
-
-The optional simplification was taken: `emit_copied_expr` decides the source
-type once with `copied_type` and keeps one managed-clone branch. The regression
-test is tests/run/union_widening_insertion. It covers `insert`, `try_insert` on
-a dynamic array and a map, a variadic pack into a move-only element, refused
-`try_` copies for both containers, and the reviewed `[dynamic]int` variadic
-case.
-
-The structure is improved: removing `widen_clones` gives declaration and
-assignment copies one source of truth, and the emitter's helper keeps
-allocator evaluation after the value. The remaining findings are incomplete
-integration with call lowering and lifecycle enrollment, not reasons to add
-another widening-specific ownership flag. The earlier resolution note's
-claim that every emitter copy site uses `emit_copied_expr` is too broad;
-non-variadic container arguments still use `emit_expr`.
-
-The simplification pass used the `ponytail-review` skill. One optional cut:
-`src/emit_llvm_expr.odin:L1097: shrink:` reuse `copied_type(expr, type)`, emit
-at that source type, keep one managed-clone branch, and conditionally remap
-the result. This replaces the duplicate source-type decision and the separate
-non-widened clone branch, retaining the managed check for a trivial source
-widened into a managed destination. Net: four lines possible to remove. No
-speculative abstraction, unnecessary dependency, or other independent
-complexity finding was confirmed.
-
-No implementation fixes were applied. Fresh compiler and LSP builds passed
-135 compiler unit tests and 43 LSP unit tests. Eleven integration suites
-passed: programs, packages, diagnostics, package diagnostics, syntax recovery,
-generated IR, layout, three LSP checks, and the runtime panic/unwind corpus.
-The widening regression's output matched directly, and a focused explicit
-cast with 8 KiB source and 16 KiB destination payloads preserved the first and
-last elements under the correct tag. Heading citations, local documentation
-links and anchors, and `git diff --check` were checked. The full integration
-gate was not rerun. Probes and the parent source remain ignored under
-`tests/tmp/review-wcopy-*`.
-
-## Widened insertion and variadic source-copy fix review (2026-10-18)
-
-Reviewed `f543e76`, **Copy widened insertion and variadic elements at the
-source type**, against `b9b737e` and the
-[widening](design.md#widening-by-label) and
-[container insertion](design.md#container-insertion) rules. The previous
-non-variadic insertion reproduction now copies once, and the ordinary
-variadic reproduction compiles. The new regression test's output matches,
-including refused source copies in dynamic-array and map `try_insert`.
-
-One **P2** finding, **resolved** since: widened sources appended into a
-move-only element type were copied while building the non-lending pack, with
-the default allocator and ordinary failure policy. A refused copy panicked
-before `try_append` could return its error. With a bound 1 KiB arena, an 8 KiB
-payload copy instead succeeded through the heap and the append returned
-`.ok 1`; the equivalent `try_insert` correctly returned `.err(8192) 0`. These
-were two effects of one missing container-aware copy path, not separate
-findings.
-
-**Fixed** as the paragraph below suggests, with the same allocator and failure
-rules as single-element insertion and no new ownership flag. When a container
-consumes the pack, `emit_bound_call` in
-[emit_llvm_calls.odin](src/emit_llvm_calls.odin) passes the container's
-provider to `emit_variadic_pack`, and says whether the member is a `try_`
-form. There, `emit_refusable_pack_copy` makes a `try_append`'s source-typed
-copy recoverable. A refused copy leaves an unowned zero in the pack and
-records the error; the other operands are still evaluated in order. The call
-then shares the insertion refusal join: it drops whatever the pack owns,
-copies and taken temporaries alike, and returns `.err` without calling.
-tests/run/union_widening_insertion covers `append` and `try_append` with mixed
-packs, a refusal after a copied prefix and a taken temporary, and the bound
-arena reproduction.
-
-The structure pass used the previously applied `ponytail-review` skill.
-The simplified `emit_copied_expr` removes the duplicated clone branch as
-suggested. `Insertion_Copy` has a concrete purpose: it carries a source-typed
-copy and its refusal to the call's control-flow join, so remapping occurs
-only after success. The helper is local and its fields are used. No further
-independent deletion or speculative abstraction was identified. The next
-change should make append pack copying observe the same allocator and
-failure rules as single-element insertion, rather than add another
-widening-specific ownership flag.
-
-Additional probes confirmed that the zero allocator passed from an unbound
-container is permitted by [Allocators](design.md#allocators), and that the
-map's existing-entry path evaluates and takes its argument under
-[Map container operations](design.md#map-container-operations); neither was
-reported as a separate finding.
-
-No implementation fixes were applied. Fresh compiler and LSP builds passed
-135 compiler unit tests and 43 LSP unit tests. Eleven integration suites
-passed: executable programs, panic/unwind programs, packages, diagnostics,
-package diagnostics, syntax recovery, generated IR, layout, and three LSP
-behavior checks. The added insertion regression also matched directly.
-Heading citations, local documentation links and anchors, and
-`git diff --check` were checked. The full integration gate was not rerun.
-Reproductions and the parent source remain ignored under
-`tests/tmp/review-winsert-*`.
+[`-> !`](design.md#diverging-procedures) means the procedure never returns
+normally: `panic`, process exit, and an endless loop. It does not mean that it
+returns an error, may panic, or succeeds with no payload. The fact belongs to
+the declaration, not to a procedure-value type. `@(noreturn)` would state that
+more literally than punctuation. `-> never` also reads well, but should be
+spelled only if the language adds a real uninhabited type, with its rules for
+procedure types and conversions.
 
 ## Lone carriage returns in the language server
 
@@ -2202,263 +981,3 @@ it. Treating a lone `\r` as a line break in the server alone would disagree
 with every compiler-reported span. Agreeing with the protocol needs either
 compiler line tables, and the formatter's, that also end lines at a lone `\r`,
 or a decision that `\r`-only sources are rejected or normalized on load.
-
-## Core source review (2026-10-17)
-
-All 38 source files in `core/` were reviewed individually. Three subagents
-covered numerics/random, platform/I/O, and foundational containers/intrinsics;
-the coordinating review covered formatting, logging, text, parsing, and time.
-The scope included correctness, ownership, error paths, performance, structure,
-and simplification. The review itself changed no library behavior; findings
-fixed since are marked **Fixed** below, with the change recorded in
-[the changelog](CHANGELOG.md#unreleased).
-
-### Correctness and specification findings
-
-These are P2 findings unless marked P3. All are fixed; the reproductions are
-the regression tests named in each row. The
-[follow-up commit review](#core-fix-commit-review-2026-10-17) reopened two
-cases and found a performance regression, all three fixed since.
-
-| ID | Location | Finding |
-| --- | --- | --- |
-| G1 | `core/process/process.loke:203-206` | **Fixed:** a stderr capture failure could hang `output`: the worker recorded failure, but the parent waited for stdout EOF before inspecting it. The worker now ends the child itself. Regression in `tests/obj/process_output_fault.loke`. |
-| G2 | `core/term/term.loke:363-371` | **Fixed:** raw-mode acquisition could save a stale raw snapshot, leaving the console raw after both owners close. The claim is now taken before the snapshot. |
-| G3 | `core/path/path.loke:174-178` | **Fixed:** joining an extended path could duplicate a separator, turning a valid path into `Invalid_Path`. Repeated boundary runs were fixed after the [fix commit review](#core-fix-commit-review-2026-10-17). Regression in `tests/run/lib_path`. |
-| G4 | `core/math/complex.loke:308-314,331-337` | **Fixed:** quaternion inverse overflowed a shared factor, destroying finite components and turning zero components into NaNs. Regression in `tests/run/lib_numeric`. |
-| G5 | `core/math/complex.loke:225-237,266-278` | **Fixed:** complex division lost subnormal contributions, so a quotient of `0.4-0.2i` became `0.5+0i`. Regression in `tests/run/lib_numeric`. |
-| G6 | `core/log/log.loke:70-76` | **Fixed:** standard log records interleaved across threads; five writes per record did not preserve its line. A lock now spans the record, and logging from a spawned thread no longer warns L0707. Regression in `tests/run/lib_log_threads`. |
-| G7 (P3) | `core/container/small_array.loke:199-219,243-244` | **Fixed:** the normative section denied consuming try-insertion, although the API and the release notes deliberately supply it. Regression in `tests/run/lib_move_only_containers`. |
-| G8 (previously noted) | `core/strconv/strconv.loke:125` | **Fixed:** floating parsing followed the mutable C locale, so a decimal comma locale made `1.5` succeed as `1.0`; `fmt` printed `1.,5` under the same locale. The runtime now uses a fixed "C" numeric locale, and panics if it cannot create one (after the [fix commit review](#core-fix-commit-review-2026-10-17)). Regressions in `tests/run/lib_numeric_locale` and `tests/obj/numeric_locale_fault.c`. |
-
-### Confirmed performance findings
-
-O1 through O4 are **fixed**; O1 has a copy-count regression in
-`tests/run/lib_slice`.
-
-- **O1, P2: retain the winning index in slice extrema.**
-  `core/slice/slice.loke:164-179` clones the initial element, every improved
-  candidate, and the final union payload. An `Ordered` record with a counted
-  copy hook gives five clones for `min` on four descending elements and two
-  for `max`. Keeping an index and returning
-  `.some(values[best].clone())` produced the same minimum with one clone.
-  This removes potentially allocating copies and related L0507 warnings,
-  with essentially no line-count change. Keep the strict comparison to
-  preserve first-winner ties and current NaN behavior.
-- **O2, P2: make iterator enum tables constants.**
-  `core/container/bit_set.loke:169` and
-  `core/container/enum_array.loke:111,129` use `members := E.values()` in
-  every `next`. Default-build LLVM initializes the entire enum array on the
-  stack on each call, making full iteration copy O(n²) enum values. An
-  isolated `members :: E.values()` version returned identical results and
-  emitted a private constant table with an indexed load instead. Zero net
-  lines; the evidence concerns the default build, since optimization may
-  eliminate some copies.
-- **O3, P2: borrow large inline receivers explicitly.**
-  `core/container/small_array.loke:65-69,305-323` uses plain `self` for
-  queries and validation helpers. With trivial elements the ABI copies the
-  aggregate: emitted LLVM copies all 1,048 bytes of `Small_Array(int,130)`
-  for a bounds or fullness check. The construction loop at
-  `core/container/enum_array.loke:38` tests `is_full` 131 times for 130
-  members, repeatedly copying its entire buffer. Use `self: ^` for
-  `len`, `cap`, `is_empty`, `is_full`, `space`, `check_index`, and
-  `check_span`; review `get` the same way. Zero net lines. This follows
-  [the specified parameter ABI](design.md#parameter-semantics-and-abi-lowering),
-  rather than indicating a compiler correctness bug.
-- **O4, P2: return immediately when repeating empty text.**
-  `core/strings/strings.loke:310-312` performs `times` append calls even
-  when the result must be empty. In an optimized build, repeating empty
-  text once took about 700 ns; ten million repetitions took about 42 ms.
-  A very large valid count makes an empty result arbitrarily expensive.
-  After checking that the count is nonnegative, skip the loop for empty
-  text or zero repetitions. Preserve allocator and empty-string semantics.
-  These are illustrative local timings, not a benchmark across platforms.
-
-### Simplification and structure
-
-The complexity pass used the `ponytail-review` skill. These are optional P3
-refactorings with concrete replacements; no speed claim is implied. All six
-are **done**, with no output change in the affected tests:
-
-- `core/fmt/fmt.loke:L141-146: shrink:` construct
-  `Collector{make([dynamic]u8, 0, 64, allocator)}` directly. Remove the
-  intermediate `sink` and its transfer explanation; the constructor receives
-  a temporary under the existing move rules. About five lines fewer.
-- `core/strings/builder.loke:L126-133: shrink:` implement
-  `try_copy_string` with `return allocate_string(self.view(), allocator);`.
-  Keep the UTF-8 invariant check and its explanation in `view` alone.
-  About four lines fewer; this does not remove validation or introduce an
-  unsafe conversion.
-- `core/random/continuous.loke:L105-123: shrink:` replace the inner
-  normal-resampling loop with `if (v <= 0) { continue; }`, then join the
-  two acceptance predicates with short-circuit `||` and use one accepted-value
-  assignment. Preserve random draw order and the logarithm fast-path guard.
-  About seven lines fewer.
-- `core/encoding/utf16/utf16.loke:L78-92: shrink:` assign a decoded
-  surrogate pair's scalar back to `value`, advance `at`, and share the
-  existing rune append/error handling with the BMP path. About five lines
-  fewer, preserving malformed-surrogate rejection and allocation errors.
-- `core/fs/fs.loke:L75-80,L640-645: shrink:` make both resource drop
-  hooks discard `self.close()` instead of repeating the close/state
-  transition. About six to nine lines fewer; retain the fallible public
-  close operation and best-effort drop behavior.
-- `core/io/io.loke:L300-336: shrink:` use explicit breaks for newline
-  and EOF, removing `ended`, and use the collected length at EOF instead
-  of `seen`. Keep empty lines distinct from EOF, including `keep_ending`.
-  About three to four lines fewer and two fewer mutable state variables.
-
-Two documentation cleanups are also actionable, and both are **fixed**:
-
-- `core/unsafe/unsafe.loke:3-7,28-30` describes eight members, omits
-  `new`/`try_new`, and restricts `free` to `^mut T`. The compiler contributes
-  ten operations, and accepts `[^]T` for `free` too. Replace the fixed count
-  with the operation list and document both pointer forms; compare
-  [the unsafe boundary](design.md#the-unsafe-package).
-- `core/slice/slice.loke:5-6` claims only `clone` and `try_clone` allocate.
-  Element copying in `fill`, `min`, or `max` can allocate through copy hooks.
-  Describe allocation through element operations, including the one necessary
-  result clone after O1.
-
-The file split is generally cohesive. One optional relocation would put
-`log_gamma` and its coefficients from `continuous.loke` beside their caller
-in `discrete.loke`; this changes no API and saves no lines. `fmt.Format_View`
-is referenced by the compiler and must not be treated as an unused alias.
-The literal ziggurat tables and separate floating-width foreign wrappers
-serve concrete contracts and were not flagged as unnecessary abstraction.
-
-`core/sync/sync.loke:195` busy-spins without yielding while another thread
-runs a `Once` action. Blocking address waits are a candidate if slow,
-contended initialization is a real workload; no contention benchmark was run,
-so this is a measurement candidate rather than a measured optimization win.
-
-Complexity estimate, excluding correctness fixes and documentation edits:
-**net: -30 lines possible.** The six refactorings above came to -28.
-
-### Assessment of every source file
-
-“No additional finding” means the named areas were reviewed without a
-confirmed actionable issue, not a proof that all inputs are correct.
-
-| Source file | Separate assessment |
-| --- | --- |
-| [container/bit_set.loke](core/container/bit_set.loke) | O2. Checked sparse/empty enums, multiword boundaries, complements, counts, iteration, and tail masking; additional 130-member assertions passed. |
-| [container/enum_array.loke](core/container/enum_array.loke) | O2 and O3's construction-loop cost. Checked empty and sparse enums, construction, indexing, and borrowed/mutable iteration. |
-| [container/small_array.loke](core/container/small_array.loke) | G7 and O3. Checked live-prefix invariants, copied/moved insertion, capacity failures, removal, unwind ordering, slices, and iterators. |
-| [cstrings/cstrings.loke](core/cstrings/cstrings.loke) | No additional finding. Checked zero value, terminator, interior-zero validation, allocator ownership, copying, and view lifetime; `view` does not rescan the entire buffer. |
-| [encoding/utf16/utf16.loke](core/encoding/utf16/utf16.loke) | Shared append cleanup. Checked surrogate arithmetic/rejection, interior-zero policy, exact-range decode, capacity bounds, and allocation errors. |
-| [endian/endian.loke](core/endian/endian.loke) | No additional finding. Checked signed shifts under Loke semantics, byte order, 8-128-bit widths, conversions, and formatting. |
-| [fmt/fmt.loke](core/fmt/fmt.loke) | Collector construction cleanup. Checked sink forwarding, spacing, allocator transfer, fixed formatting, padding, rune counting, and options. Formatting twice for padding is explicitly documented. |
-| [fs/fs.loke](core/fs/fs.loke) | Drop-hook cleanup. Checked handles, idempotent close/errors, access modes, bounded reads, timestamp saturation, directory enumeration, and wide-path conversion. |
-| [io/io.loke](core/io/io.loke) | `read_line` state cleanup. Checked partial transfers, EOF, line endings, UTF-8 boundaries, allocation errors, limits, and formatting's error latch for conforming streams. |
-| [log/log.loke](core/log/log.loke) | G6. Checked selected/fallback providers, static/runtime filtering, `Off`, variadic forwarding, and formatting allocations. The no-threads comment is stale. |
-| [math/complex.loke](core/math/complex.loke) | G4 and G5. Checked both float widths, generic numeric operations, Hamilton multiplication, magnitude, signs, formatting, and inverse/division scaling. |
-| [math/math.loke](core/math/math.loke) | No additional finding. Checked classification bit operations, checked/wrapping arithmetic, conversions, CRT bindings, and float-width separation. |
-| [mem/mem.loke](core/mem/mem.loke) | No additional finding. Checked compiler-owned declarations against implementation, region/failure-policy documentation, and the runtime's 128-byte minimum buffer layout. |
-| [os/os.loke](core/os/os.loke) | No additional finding. Checked argument bounds/lifetimes, owned conversion, and exit semantics. |
-| [os/process.loke](core/os/process.loke) | No additional finding. Checked environment validation, missing/empty values, resize retries, current-directory retries, and executable-path buffer growth. |
-| [path/path.loke](core/path/path.loke) | G3. Checked bare-drive behavior, roots, ordinary/extended UNC, base/directory, extension/stem, and lexical cleaning. |
-| [process/process.loke](core/process/process.loke) | G1. Checked pipe ownership/direction, quoting, environment blocks, inherited handle lists, PATH search, exit/wait/kill, and concurrent capture errors. |
-| [random/continuous.loke](core/random/continuous.loke) | Gamma-loop cleanup and optional helper relocation. Checked parameter validation, endpoint handling, and documented draw mappings. |
-| [random/discrete.loke](core/random/discrete.loke) | No additional finding. Checked inversion, PTRS, BTPE, saddle-point probability calculations, endpoint probabilities, and conversion guards. |
-| [random/pcg.loke](core/random/pcg.loke) | No additional finding. Checked seed/stream initialization, output transformation, and logarithmic advance. |
-| [random/random.loke](core/random/random.loke) | No additional finding. Checked range mapping, rejection thresholds, floating draws, endpoints, fill, shuffle, and permutation. |
-| [random/sampling.loke](core/random/sampling.loke) | No additional finding. Checked alias-table bounds, worklists, weights, draw mapping, and allocation cleanup. |
-| [random/secure.loke](core/random/secure.loke) | No additional finding. Checked native binding, chunk bounds, little-endian decoding, and zero-state retry. |
-| [random/xoshiro.loke](core/random/xoshiro.loke) | No additional finding. Checked reference transitions, seed expansion, state validation, and jump constants/iteration. |
-| [random/ziggurat.loke](core/random/ziggurat.loke) | No additional finding. Reviewed fast/wedge/tail sampling and all tables; independent table recomputation test passed. |
-| [simd/simd.loke](core/simd/simd.loke) | No additional finding. Checked intrinsic forwarding, conversions, reduction identifiers, overflow, masks, and floating/NaN contracts. |
-| [slice/slice.loke](core/slice/slice.loke) | O1 and allocation-comment cleanup. Checked bounds, reversal, searches, sorting bridges, NaNs/ties, and fallible clone cleanup. |
-| [strconv/strconv.loke](core/strconv/strconv.loke) | G8 revalidated. Checked signs, radix/prefix selection, underscore grammar, minimum signed value, overflow guards, float syntax, and full-input parsing. |
-| [strings/builder.loke](core/strings/builder.loke) | Shared validation cleanup. Checked zero-value allocator binding, capacity overflow, rune validity, fallible transaction behavior, finish/reset, and borrowed views. |
-| [strings/iterate.loke](core/strings/iterate.loke) | No additional finding. Checked empty/trailing split parts, empty separator, Unicode fields, LF/CRLF, final unterminated lines, and borrowing. |
-| [strings/strings.loke](core/strings/strings.loke) | O4. Checked UTF-8 boundary-safe search/slicing, empty needles, whitespace, trimming, transforms, allocator forwarding, and repeat overflow. Naive search is documented; no replacement algorithm justified by a benchmark in this review. |
-| [sync/sync.loke](core/sync/sync.loke) | No confirmed correctness finding. Checked atomic/order forwarding and Once completion/poison publication; contended busy-wait remains a measurement candidate. |
-| [term/term.loke](core/term/term.loke) | G2. Checked line conversion, surrogate recovery, modifiers, repeated keys, raw-mode failure paths, and handler/restoration ownership. |
-| [thread/thread.loke](core/thread/thread.loke) | No additional finding. Checked moved argument storage, spawn-failure cleanup, runtime attach/detach, join/drop, mutex payload, and guard lifetime. |
-| [time/calendar.loke](core/time/calendar.loke) | No additional finding. Checked civil/day conversions, year zero and calendar bounds, ISO weeks, clamped month/year arithmetic, offsets, and date-time carry. |
-| [time/text.loke](core/time/text.loke) | No additional finding. Checked fixed buffer bounds, precision/truncation, basic/extended consistency, leap-second checks, duration ordering, full fractions, and range failures. |
-| [time/time.loke](core/time/time.loke) | No additional finding. Checked signed duration rounding/truncation, float boundaries, minimum-duration subtraction, pre-epoch floor division, offset extremes, and clock/sleep arithmetic. |
-| [unsafe/unsafe.loke](core/unsafe/unsafe.loke) | Operation-list and `free` pointer-form documentation cleanup. Checked actual compiler-contributed surface and trust-boundary descriptions. |
-
-### Validation and limits
-
-Twenty-two existing integration programs compiled, ran, and matched their
-expected output: `lib_math`, `lib_math_bits`, `integer_wrap`, `lib_numeric`,
-`lib_random`, `lib_random_pcg`, `lib_random_distributions`,
-`lib_random_ziggurat`, `lib_enum_containers`, `lib_move_only_containers`,
-`lib_small_array`, `lib_endian`, `lib_simd`, `lib_slice`, `lib_text`,
-`lib_time`, `lib_strings`, `lib_strings_boundaries`, `lib_strconv`,
-`fmt_width_precision`, `lib_log`, and `lib_log_off`. Relevant log-level flags
-and expected stderr were included.
-
-Additional checks reproduced the numeric bugs at two optimization levels,
-counted copy hooks, compared enum-table and receiver LLVM, exercised wide and
-empty enums, reproduced the extended-path failure, and injected a stderr
-capture allocation failure. Raw-mode interleaving used deterministic mocked
-native console calls against generated library LLVM. The locale and threaded
-logging cases ran as real Loke programs. These checks do not establish all
-Win32 failure paths or exhaustive numeric/distribution correctness.
-
-Repro artifacts are local and ignored under `tests/tmp/numeric_review_20261017/`,
-`tests/tmp/review_foundations/`, `tests/tmp/review_platform/`, and
-`tests/tmp/review_main/`; the durable findings are in this section, and the
-minimal bug reproductions became the regression tests named in the findings
-table. No library source was changed by the review itself.
-
-## Core fix commit review (2026-10-17)
-
-Reviewed `59bb7cf` (numerics, path join, raw mode, performance), `40bdfaf`
-(output cancellation, log lines, C locale), and `32fdedd` (simplifications).
-Three confirmed P2 findings, all **fixed** since:
-
-- `59bb7cf`, `core/path/path.loke:181-189`: the boundary fix still preserved
-  repeated separators supplied entirely by either side, in three minimal
-  cases now in `tests/run/lib_path`. Existing regressions cover one leading
-  separator, and repeated leading separators only when the prefix already
-  has a trailing separator.
-- `59bb7cf`, `core/path/path.loke:181`: calling `builder.view()` to inspect
-  its last byte validates the entire accumulated UTF-8 prefix at every
-  boundary. Extended-path joining becomes quadratic instead of linear in
-  total input bytes. At `-opt=speed`, one extended prefix followed by
-  5,000/10,000/20,000 four-byte components took about 30.7/125.9/540.3 ms;
-  the previous boundary logic took about 0.154/0.313/0.796 ms and produced
-  identical output. The extended prefix makes `clean` return verbatim, so
-  these timings isolate the new prefix scanning. **Fixed** with the first
-  finding: `join` holds each part's trailing separator run instead of reading
-  the builder back, and took about 0.24/0.55/0.93 ms afterwards.
-- `40bdfaf`, `runtime/format.c:34-36`: failed creation of the fixed numeric
-  locale falls back to the mutable process locale. A fault-injected C host
-  reproduced parse rejection and decimal-comma/malformed formatting. The
-  runtime now panics instead; `tests/obj/numeric_locale_fault.c` is that host
-  as a regression.
-
-No findings in `32fdedd`. All six simplifications preserve the examined
-ownership, allocator, error, Unicode, and random-draw behavior. A differential
-`io.read_line` test against its previous loop passed 31,248 cases, comparing
-results, consumed bytes, and read-call counts. Cases covered byte strings of
-length 0-5 containing ASCII, CR, LF, NUL, and invalid UTF-8, both ending
-options, EOF/other read errors, and default/starved allocators.
-
-The numeric fixes address the original subnormal complex and quaternion
-failures at both widths. Container constant tables, pointer receivers, and
-slice winner indices are consistent with the intended optimizations.
-Process-handle lifetime through reader joining, stderr cancellation, complete
-standard-record locking, foreign numeric signatures, and atomic locale cache
-publication/disposal showed no additional issue in this review. As a small
-test improvement, the quaternion inverse regression should explicitly check
-that its expected finite component is finite: the negative upper-bound
-comparison also accepted negative infinity. It now checks `is_finite` too.
-
-Validation: the quick gate passed 134 compiler and 43 LSP unit tests. The
-integration run completed its other 54 tests (including the intentional
-quick-gate mutation-fuzzer skip), but `a_debugger_shows_values` failed with
-`Signal caught: Unknown`. An isolated rerun reproduced that failure in about
-14 ms before building the debugger fixture. That test is unchanged by these
-commits; the only debugger command found was the WindowsApps `cdbX64` alias,
-and the SDK debugger was absent. This points to local tool discovery, but
-the quick gate did not pass in full. The targeted `lib_numeric` and `lib_path`
-programs separately compiled, ran, and matched expected output.
-
-Artifacts remain ignored under `tests/tmp/review_commits_numeric/`,
-`tests/tmp/review_commits_platform/`, and `tests/tmp/review_commits_cleanup/`.
-Only review records were changed; no implementation fix was applied.

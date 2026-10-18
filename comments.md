@@ -563,6 +563,17 @@ otherwise equal types would differ only by it. An anonymous union is therefore
 used as data, or as the error payload of a `Result`, where the
 [failure operand](#the-failure-operand-of-or_return) already wraps into it.
 
+Nor do anonymous unions replace `Result`, `Option`, and `Status`. The labels
+would differ per API, so `map_error`, `ok_or`, and any code generic over a
+result would need a protocol to find the success and the failure, which the
+nominal generics give for nothing. The failure, zero, and acknowledgment
+properties would join the structural identity, callers would lose the uniform
+`.ok` and `.err`, and `Result(File, io.Error)` would grow into an attributed
+inline union. A flat union with marked failures, `(T | Error(E))`, is worse:
+flattening merges a nested result into one layer, so one `or_return` would
+take both an outer and an inner failure, and an `Error(X)` returned as a
+generic success would read as a failure.
+
 ### Widening by label
 
 Without a conversion, every helper over a smaller error set needed its own
