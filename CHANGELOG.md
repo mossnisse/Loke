@@ -44,8 +44,9 @@ checklist.
 - Widening by label: an anonymous union converts implicitly to one that has
   each of its alternatives, with the same label and payload type, in any order.
   A bare `or_return` therefore propagates a helper's smaller error set into a
-  larger one, and declarations, assignments, arguments, returns, and
-  comparisons accept it too. A place is copied, a temporary transfers, and the
+  larger one, and declarations, assignments, arguments, returns, comparisons,
+  and explicit conversions accept it too. A place is copied as any copy into
+  its destination is, a last use or a temporary transfers, and the
   diagnostic for a union that does not widen names the alternative it lacks.
   See design.md [Widening by label](design.md#widening-by-label).
 - `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.

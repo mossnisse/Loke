@@ -2,10 +2,13 @@
 // with each of its alternatives, in any order, at every destination: a
 // declaration, an assignment, an argument, a return, a literal element, and a
 // bare `or_return`, whose smaller error set propagates with no operand. A place
-// is copied and keeps its value; a temporary transfers; a wrapping label keeps
-// the layer. Constants and compile-time evaluation remap the tag too.
+// is copied and keeps its value, through the destination's allocator, unless it
+// is a local's last use, which transfers; a temporary transfers; a wrapping
+// label keeps the layer. An explicit conversion widens as an implicit one does.
+// Constants and compile-time evaluation remap the tag too.
 package main;
 import "core:fmt";
+import "core:mem";
 
 Io_Error :: enum { Gone }
 Parse_Error :: enum { Bad_Digit }
@@ -182,6 +185,68 @@ lifecycle :: proc() {
 	fmt.println("done");
 }
 
+// A local's last use transfers instead of copying, so no copy adds 100.
+last_use :: proc() {
+	{
+		a: Few = .res(Res{1});
+		b: Many = a;
+		fmt.println(take(b));
+	}
+	{
+		c: Few = .res(Res{2});
+		d: Many = .none;
+		d = c;
+		fmt.println(take(d));
+	}
+	fmt.println("transferred");
+}
+
+// A copy into a destination with a `via` clones through it, after the value.
+policy :: proc() -> Allocator {
+	fmt.println("via");
+	return mem.default_allocator();
+}
+Items :: (items: [dynamic]int | none:);
+Wider_Items :: (none: | items: [dynamic]int | n: int);
+
+policies :: proc() {
+	a: Items = .items([dynamic]int{1});
+	b: Wider_Items via policy() = a;
+	b = a;
+	fmt.println(a, b);
+}
+
+// An explicit conversion remaps the tag, also where both unions share one
+// storage type, and moves a payload into larger storage.
+Pair :: (n: int | none:);
+Swapped :: (none: | n: int);
+Block :: (a: [32]int | none:);
+Bigger :: (none: | a: [32]int | more: [64]int);
+
+casts :: proc() {
+	pair: Pair = .n(42);
+	fmt.println(Swapped(pair), Swapped(Pair.none));
+	values: [32]int = {};
+	values[0], values[31] = 1, 7;
+	block: Block = .a(values);
+	switch (Bigger(block)) {
+	case .a(xs): fmt.println(xs[0], xs[31]);
+	case .none: fmt.println("none");
+	case .more(_): fmt.println("more");
+	}
+}
+
+cast_label :: proc() -> int {
+	pair: Pair = .n(3);
+	switch (Swapped(pair)) {
+	case .none: return 0;
+	case .n(n): return n;
+	}
+}
+
+CAST :: cast_label();
+CAST_CONSTANT :: Swapped(Pair.n(5));
+
 follow :: proc(s: Step) -> int {
 	switch (s) {
 	case .skip(n): return n;
@@ -227,4 +292,8 @@ main :: proc() {
 	end: Link = .end;
 	fmt.println(follow(link), follow(end));
 	lifecycle();
+	last_use();
+	policies();
+	casts();
+	fmt.println(CAST, CAST_CONSTANT);
 }

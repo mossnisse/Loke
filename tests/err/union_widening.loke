@@ -1,7 +1,8 @@
 // design.md "Widening by label": every alternative must be in the destination
 // with its label and payload type. A move-only place is not copied into a wider
 // union, the conversion does not reach through a container or an `Option`, and
-// a named union neither widens nor is widened.
+// a named union neither widens nor is widened. A widening copy that must stay
+// a copy reports its cost as any copy does; a last use transfers and does not.
 package main;
 
 Io_Error :: enum { Gone }
@@ -63,6 +64,18 @@ escape :: proc() -> (view: string_view | none: | other: int) {
 
 compare :: proc(s: Small, m: Missing) -> bool {
 	return s == m;
+}
+
+Listed :: (items: [dynamic]int | none:);
+More :: (none: | items: [dynamic]int | n: int);
+
+copy_cost :: proc() -> int {
+	kept: Listed = .items([dynamic]int{1});
+	copied: More = kept;
+	moved: More = kept;
+	_ = copied;
+	_ = moved;
+	return 0;
 }
 
 main :: proc() {}

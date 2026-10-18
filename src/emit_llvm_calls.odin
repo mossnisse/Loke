@@ -107,10 +107,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Unsafe_Write:
 			written := expr_base(v.bound[0]).type
 			address := emit_address(e, v.bound[0])
-			value := emit_expr(e, v.bound[1])
-			if emit_lifecycle(e, written).managed && expression_is_borrowed_place(v.bound[1]) {
-				value = emit_clone_value(e, written, value)
-			}
+			copies := emit_lifecycle(e, copied_type(v.bound[1], written)).managed && expression_is_borrowed_place(v.bound[1])
+			value := emit_copied_expr(e, v.bound[1], written, copies)
 			store(e, written, value, address)
 			return "0"
 		case .Unsafe_Forget:
@@ -624,10 +622,7 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 		return out
 	}
 	begin_conditional(e)
-	fallback := emit_expr(e, v.fallback)
-	if v.fallback_clone {
-		fallback = emit_clone_value(e, payload_type, fallback)
-	}
+	fallback := emit_copied_expr(e, v.fallback, payload_type, v.fallback_clone)
 	end_conditional(e)
 	if joined_slot != "" {
 		store(e, payload_type, fallback, joined_slot)
@@ -855,12 +850,9 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id, lend 
 			continue
 		}
 		expr := v.variadic_elements[next_element]
-		value := emit_expr(e, expr)
 		// Temporaries transfer into staging; borrowed owners are cloned, or lent.
 		lent[next_element] = managed && lend && expression_is_borrowed_place(expr)
-		if managed && !lend && expression_is_borrowed_place(expr) {
-			value = emit_clone_value(e, element, value)
-		}
+		value := emit_copied_expr(e, expr, element, managed && !lend && expression_is_borrowed_place(expr))
 		elements[next_element] = value
 		if managed {
 			slot, flag := temp(e), temp(e)
@@ -1278,6 +1270,11 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 // that an integer keeps its value; `math.wrap` keeps the low bits instead.
 @(private = "file")
 emit_value_conversion :: proc(e: ^Emitter, value: string, source, target: Type_Id, checked: bool) -> string {
+	// design.md "Widening by label": the tag is remapped even where two unions
+	// share one storage type.
+	if union_widens_to(e.c, source, target) {
+		return emit_union_widen(e, value, source, target)
+	}
 	from := type_underlying(e.c, source)
 	to := type_underlying(e.c, target)
 	if checked {
@@ -1443,10 +1440,7 @@ emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 		backend_fail(e, "a union call has no construction operand")
 		return "0"
 	}
-	payload := emit_expr(e, v.bound[0])
-	if operation.clone {
-		payload = emit_clone_value(e, expr_base(v.bound[0]).type, payload)
-	}
+	payload := emit_copied_expr(e, v.bound[0], expr_base(v.bound[0]).type, operation.clone)
 	return emit_union_value(e, as_type, operation.index, payload)
 }
 

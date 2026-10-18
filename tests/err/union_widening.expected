@@ -1,30 +1,37 @@
 L0310
-@20:9
+@21:9
 cannot return `(io: Io_Error | net: int)` with `(io: Io_Error | parse: Parse_Error)`
+`(io: Io_Error | net: int)` has no alternative `parse`
 L0310
-@24:9
+@25:9
 cannot return `(io: int | parse: Parse_Error | net: int)` with `(io: Io_Error | parse: Parse_Error)`
+`io` here carries `Io_Error`, but in `(io: int | parse: Parse_Error | net: int)` it carries `int`
 L0310
-@28:9
+@29:9
 cannot return `Named` with `(io: Io_Error | parse: Parse_Error)`
 L0310
-@32:9
+@33:9
 cannot return `(io: Io_Error | parse: Parse_Error | net: int)` with `Named`
 L0503
-@36:13
+@37:13
 `(conn: Connection | none:)` is move-only, so this binding cannot copy it; write `move(...)` to transfer ownership instead
 L0310
-@41:9
+@42:9
 cannot return `[dynamic](io: Io_Error | parse: Parse_Error | net: int)` with `[dynamic](io: Io_Error | parse: Parse_Error)`
 L0310
-@45:9
+@46:9
 cannot return `Option((io: Io_Error | parse: Parse_Error))` from a procedure that returns `Option((io: Io_Error | parse: Parse_Error | net: int))`: it is neither the result nor its `.some` payload `(io: Io_Error | parse: Parse_Error | net: int)`
 L0429
-@53:14
+@54:14
 the failure payload `(io: Io_Error | parse: Parse_Error)` cannot be returned as `(io: Io_Error | net: int)`
+`(io: Io_Error | net: int)` has no alternative `parse`
 L0526
-@61:9
+@62:9
 this string view cannot be returned: `text` ends when this procedure returns
 L0354
-@65:11
+@66:11
 mismatched operand types `(io: Io_Error | parse: Parse_Error)` and `(io: Io_Error | net: int)`
+warning[L0507]: this binding clones `kept`, which may allocate
+@74:17
+only an anonymous union widens, and only into another anonymous union
+!union_widening.loke:75:16

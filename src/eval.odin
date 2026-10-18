@@ -2682,6 +2682,9 @@ eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		retyped.type = v.type
 		return retyped, true
 	}
+	if from := expr_base(v.bound[0]).type; union_widens_to(c, from, v.type) {
+		return widen_eval_value(c, source, from, v.type), true
+	}
 	if source.target != nil || source.proc_value != INVALID_SYMBOL {
 		if type_is_pointer(c, v.type) {
 			retyped := source

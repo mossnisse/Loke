@@ -2006,6 +2006,55 @@ local documentation links and anchors resolved, and `git diff --check` passed.
 The focused probes and parent sources remain ignored under
 `tests/tmp/review-attrs-*`. The full integration gate was not rerun.
 
+## Anonymous union widening commit review (2026-10-18)
+
+Reviewed `865f3ea`, **Add widening by label for anonymous unions**, against
+[Widening by label](design.md#widening-by-label), the existing conversion and
+ownership rules, and its added tests. Three confirmed findings, all
+**resolved** since:
+
+- **P1:** explicit runtime casts omitted the conversion. Small cases reached invalid LLVM; large cases compiled a copy longer than the source allocation. The latter was verified in IR without executing the invalid read. **Fixed**: `emit_value_conversion` in [emit_llvm_calls.odin](src/emit_llvm_calls.odin) and `eval_conversion` in [eval.odin](src/eval.odin) remap the tag through the shared widening, before the storage-type comparison that let two same-layout unions pass unchanged.
+- **P2:** widening clones ignored destination allocator policies, including skipping evaluation of a written `via` expression.
+- **P2:** widening copies skipped last-use transfer, invoking a copy hook and dropping two owners where the specification requires a transfer and one drop. The same copy-site split lost the held copy-cost warning for copies that remain necessary.
+
+**Fixed** together, as suggested below: `widen_clones` is gone, and a widening
+copy is the site's ordinary copy again. `classify_copy` in
+[lifecycle.odin](src/lifecycle.odin) sets the site's own clone flag, judged at
+the source type through `copied_type`. The last-use pass and the held copy-cost
+report then see it as they see any copy. Every emitter copy site calls
+`emit_copied_expr` in [emit_llvm_expr.odin](src/emit_llvm_expr.odin), which
+clones a widened value at its own type, through the destination's allocator
+evaluated after the value, and then remaps it. The regression tests are in
+tests/run/union_widening (runtime and compile-time casts across reordered and
+larger storage, `via` on a declaration and an assignment, and last-use
+transfer in both) and tests/err/union_widening (the warning on a copy that
+remains, and none on a last use).
+
+The shape predicate and label-to-tag remapping are concentrated and readable.
+Exact payload matching keeps the conversion bounded, and the existing run
+tests exercise source niches, ordinary borrowed arguments, constant evaluation,
+failure propagation, and explicit ownership transfer. Additional probes checked
+larger destination storage, widened map reads, and rejection of an escaping
+borrow whose label changes position; these exposed no separate finding.
+
+The main structural concern is that `widen_clones` duplicates part of the
+existing copy-site state while moving clone emission into the general
+expression emitter. The allocator and last-use findings are concrete effects
+of that split. Keep source-type copying integrated with the declaration and
+assignment copy machinery, and remap the resulting owned value afterward.
+Explicit and implicit conversions should share the remapping implementation.
+These are correctness-driven changes, not separate speculative abstractions
+or deletion requests; no independent complexity-only finding was confirmed.
+
+No implementation fixes were applied. Fresh compiler and LSP builds passed
+135 compiler unit tests and 43 LSP unit tests. Ten affected integration suites
+passed: executable programs, packages, diagnostics, package diagnostics, syntax
+recovery, generated IR, layout, and three LSP behavior checks. The new widening
+run test also passed directly. Heading citations and local documentation links
+and anchors resolved, and `git diff --check` passed. The full integration gate
+was not rerun. Reproduction sources, outputs, and the inspected large-cast IR
+remain ignored under `tests/tmp/review-widen-*`.
+
 ## Lone carriage returns in the language server
 
 The LSP source review of 2026-10-16 found two line-ending problems in

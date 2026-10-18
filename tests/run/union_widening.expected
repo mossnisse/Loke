@@ -25,3 +25,14 @@ drop 1
 drop 101
 drop 101
 done
+1
+drop 1
+2
+drop 2
+transferred
+via
+via
+.items([1]) .items([1])
+.n(42) .none
+1 7
+3 .n(5)

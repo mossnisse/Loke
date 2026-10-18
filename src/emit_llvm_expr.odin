@@ -1082,19 +1082,42 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	return emit_expr_at(e, expr, expr_base(expr).type)
 }
 
+// `expr` at `type`, cloned when its copy site `clones`: through `allocator`,
+// or through the allocator of the variable `destination` initializes, which is
+// evaluated after the value. A widened union is cloned at its own type and the
+// copy remapped (design.md "Widening by label"), since the wider union may
+// have a move-only alternative that the smaller one lacks.
+@(private)
+emit_copied_expr :: proc(
+	e: ^Emitter, expr: Expr, type: Type_Id, clones: bool, allocator := "", destination := INVALID_SYMBOL,
+) -> string {
+	if !clones {
+		return emit_expr(e, expr)
+	}
+	from := expr_base(expr).widened_from
+	widened := from != INVALID_TYPE && union_widens_to(e.c, from, type)
+	value := widened ? emit_expr_at(e, expr, from) : emit_expr(e, expr)
+	provider := allocator
+	if destination != INVALID_SYMBOL {
+		provider = emit_destination_allocator(e, destination)
+	}
+	if !widened {
+		return emit_clone_value(e, type, value, provider)
+	}
+	if emit_lifecycle(e, from).managed {
+		value = emit_clone_value(e, from, value, provider)
+	}
+	return emit_union_widen(e, value, from, type)
+}
+
 // Emits `expr` at `as_type`: its checked type, or the source type an implicit
 // conversion recorded on this node. Children keep their own checked types.
 @(private)
 emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
-	// design.md "Widening by label": the smaller union, copied first when the
-	// widening copies a place, then remapped into the wider one.
+	// design.md "Widening by label": the smaller union remapped into the wider.
 	if from := base.widened_from; from != INVALID_TYPE && union_widens_to(e.c, from, as_type) {
-		value := emit_expr_at(e, expr, from)
-		if base.widen_clones {
-			value = emit_clone_value(e, from, value)
-		}
-		return emit_union_widen(e, value, from, as_type)
+		return emit_union_widen(e, emit_expr_at(e, expr, from), from, as_type)
 	}
 	// design.md "Borrowed callable views": a procedure or capture value becoming
 	// a `dyn proc` view.
@@ -1278,10 +1301,7 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 			"  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %d",
 			slot, llvm_type(e, backing), root, index,
 		)
-		value := emit_expr(e, element.value)
-		if index < len(v.element_clones) && v.element_clones[index] {
-			value = emit_clone_value(e, info.element, value)
-		}
+		value := emit_copied_expr(e, element.value, info.element, index < len(v.element_clones) && v.element_clones[index])
 		store(e, info.element, value, slot)
 		guards[index] = guard_built_element(e, info.element, slot)
 	}
@@ -1328,10 +1348,7 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 			slot = v.field_indices[index]
 			element_type = symbol_of(e.c, info.fields[slot]).type
 		}
-		value := emit_expr(e, element.value)
-		if index < len(v.element_clones) && v.element_clones[index] {
-			value = emit_clone_value(e, element_type, value)
-		}
+		value := emit_copied_expr(e, element.value, element_type, index < len(v.element_clones) && v.element_clones[index])
 		// A designated index range stores one evaluation in every slot; each
 		// slot after the first owns a copy.
 		end := slot + 1
@@ -2062,10 +2079,7 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 
 	place_label(e, then_label)
 	begin_conditional(e)
-	then_value := emit_expr(e, v.then)
-	if v.then_clone {
-		then_value = emit_clone_value(e, as_type, then_value)
-	}
+	then_value := emit_copied_expr(e, v.then, as_type, v.then_clone)
 	end_conditional(e)
 	if joined != "" {
 		store(e, as_type, then_value, joined)
@@ -2077,10 +2091,7 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 
 	place_label(e, else_label)
 	begin_conditional(e)
-	else_value := emit_expr(e, v.otherwise)
-	if v.else_clone {
-		else_value = emit_clone_value(e, as_type, else_value)
-	}
+	else_value := emit_copied_expr(e, v.otherwise, as_type, v.else_clone)
 	end_conditional(e)
 	if joined != "" {
 		store(e, as_type, else_value, joined)

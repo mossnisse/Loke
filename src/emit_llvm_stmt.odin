@@ -150,10 +150,7 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 			// Nothing runs between reading the place and writing the new local.
 			copy_bytes(e, slot, emit_address(e, d.values[i]), type_size(e.c, sym.type))
 		} else {
-			value := emit_expr(e, d.values[i])
-			if clones {
-				value = emit_clone_value(e, sym.type, value, emit_destination_allocator(e, symbol_id))
-			}
+			value := emit_copied_expr(e, d.values[i], sym.type, clones, destination = symbol_id)
 			store(e, sym.type, value, slot)
 		}
 		// An empty literal has no allocator of its own, so a written `via` binds.
@@ -335,13 +332,10 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	guards := make([]Deferred, len(s.rhs))
 	for value, index in s.rhs {
 		guards[index] = Deferred{slot = -1}
-		values[index] = emit_expr(e, value)
-		if index < len(s.rhs_clones) && s.rhs_clones[index] {
-			values[index] = emit_clone_value(
-				e, expr_base(s.lhs[index]).type, values[index],
-				emit_destination_allocator(e, place_root_symbol(s.lhs[index])),
-			)
-		}
+		clones := index < len(s.rhs_clones) && s.rhs_clones[index]
+		values[index] = emit_copied_expr(
+			e, value, expr_base(s.lhs[index]).type, clones, destination = place_root_symbol(s.lhs[index]),
+		)
 		if index < len(s.lhs) && (inserting_map_index(s.lhs[index]) != nil || (len(s.lhs) > 1 && !is_discard(s.lhs[index]))) {
 			guards[index] = hold_temporary_value(e, expr_base(s.lhs[index]).type, values[index])
 		}
@@ -841,10 +835,7 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 	if s != nil && s.value != nil && e.result_slot != "" {
 		value := s.value
 		// An `inout` result hands back the place itself, not a copy of it.
-		operand := e.result_inout ? emit_address(e, value.expr) : emit_expr(e, value.expr)
-		if value.clone_on_return {
-			operand = emit_clone_value(e, e.result_type, operand)
-		}
+		operand := e.result_inout ? emit_address(e, value.expr) : emit_copied_expr(e, value.expr, e.result_type, value.clone_on_return)
 		if e.result_inout {
 			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", operand, e.result_slot)
 		} else {
@@ -852,7 +843,7 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 		}
 		// A returned local transferred out, so cleanup must not drop it.
 		if !value.clone_on_return {
-			if ident, is_ident := value.expr.(^Expr_Ident); is_ident && !ident.widen_clones {
+			if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
 				if sym := symbol_of(e.c, ident.symbol); sym != nil && emit_lifecycle(e, sym.type).managed {
 					kill_place(e, ident.symbol)
 				}

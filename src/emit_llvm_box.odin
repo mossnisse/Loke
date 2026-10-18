@@ -20,9 +20,13 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if !header {
 		size, align = type_size(e.c, payload), type_align(e.c, payload)
 	}
-	operations := emit_lifecycle(e, payload)
-	value := emit_expr(e, v.bound[0])
+	// design.md "Widening by label": a widened place is copied at its own type,
+	// and the copy remapped into the payload.
+	copied := copied_type(v.bound[0], payload)
+	widened := copied != payload
+	operations := emit_lifecycle(e, copied)
 	copies := operations.managed && expression_is_borrowed_place(v.bound[0])
+	value := copies && widened ? emit_expr_at(e, v.bound[0], copied) : emit_expr(e, v.bound[0])
 	guard := Deferred{slot = -1}
 	if !copies {
 		guard = hold_temporary_value(e, payload, value)
@@ -36,7 +40,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		// The copy allocates from the box's own allocator, as a copy into any
 		// destination does.
 		if checked.fallible && operations.clone_fallible {
-			cloned, broke, error := emit_clone_call(e, operations.try_clone, payload, value, allocator)
+			cloned, broke, error := emit_clone_call(e, operations.try_clone, copied, value, allocator)
 			refused_label, cloned_label := new_label(e, "box.refused"), new_label(e, "box.cloned")
 			branch_if(e, broke, refused_label, cloned_label)
 			place_label(e, refused_label)
@@ -45,7 +49,10 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			place_label(e, cloned_label)
 			value = cloned
 		} else {
-			value = emit_clone_value(e, payload, value, allocator)
+			value = emit_clone_value(e, copied, value, allocator)
+		}
+		if widened {
+			value = emit_union_widen(e, value, copied, payload)
 		}
 		guard = hold_temporary_value(e, payload, value)
 	}

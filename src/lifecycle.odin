@@ -337,25 +337,24 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 			return
 		}
 	}
-	// design.md "Widening by label": a borrowed place is copied at its own type,
-	// then remapped.
-	if base != nil && base.widened_from != INVALID_TYPE {
-		base.widen_clones = classify_place_copy(k, value.expr, base.widened_from, .Return)
+	// design.md "Widening by label": a widened place is copied at its own type.
+	copied := copied_type(value.expr, result)
+	if !type_is_managed(k.c, copied) {
 		return
 	}
-	if type_clone_disabled(k.c, result) {
+	if type_clone_disabled(k.c, copied) {
 		errorf(
 			k.c,
 			expr_span(value.expr),
 			"L0502",
 			"`%s` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
-			type_name(k.c, result),
+			type_name(k.c, copied),
 		)
 		return
 	}
 	value.clone_on_return = true
-	contribute_lifecycle_members(k, result)
-	report_copy_cost(k, .Return, expr_span(value.expr), value.expr, expr_base(value.expr).type)
+	contribute_lifecycle_members(k, copied)
+	report_copy_cost(k, .Return, expr_span(value.expr), value.expr, copied_type(value.expr, expr_base(value.expr).type))
 }
 
 // design.md "Success returns": a wrapped `return x;` takes `x` as the plain
@@ -493,11 +492,19 @@ mark_borrowed_temporary :: proc(value: Expr, into: ^map[^Expr_Base]bool) {
 
 // -------------------------------------------------------------- copy sites --
 
-// Places copy; values and explicit moves transfer. A place that a widening
-// copies is an owned value from then on.
+// Places copy; values and explicit moves transfer.
 expression_is_borrowed_place :: proc(e: Expr) -> bool {
 	base := expr_base(e)
-	return base != nil && base.value_category == .Place && !base.widen_clones
+	return base != nil && base.value_category == .Place
+}
+
+// The type a copy of `value` clones at: its own, which for a widened union is
+// the smaller one (design.md "Widening by label"), or the destination's.
+copied_type :: proc(value: Expr, destination: Type_Id) -> Type_Id {
+	if base := expr_base(value); base != nil && base.widened_from != INVALID_TYPE {
+		return base.widened_from
+	}
+	return destination
 }
 
 // Value category covers indirect places that have no lexical root.
@@ -506,22 +513,13 @@ expression_is_owned_argument :: proc(e: Expr) -> bool {
 	return base != nil && base.value_category == .Value
 }
 
-classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
+classify_copy :: proc(k: ^Checker, value: Expr, destination: Type_Id, site: Copy_Site) -> bool {
 	if value == nil || !expression_is_borrowed_place(value) {
 		return false
 	}
-	// design.md "Widening by label": the place is copied at its own type, which
-	// may be copyable where the wider union is not, and the copy is remapped.
-	// The site itself then has an owned value and copies nothing.
-	if base := expr_base(value); base.widened_from != INVALID_TYPE {
-		base.widen_clones = classify_place_copy(k, value, base.widened_from, site) || base.widen_clones
-		return false
-	}
-	return classify_place_copy(k, value, type, site)
-}
-
-@(private = "file")
-classify_place_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
+	// design.md "Widening by label": a widened place is copied at its own type,
+	// which may be copyable where the wider union is not, and the copy remapped.
+	type := copied_type(value, destination)
 	if !type_is_managed(k.c, type) {
 		return false
 	}
@@ -545,12 +543,13 @@ classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_S
 	if value == nil || !expression_is_borrowed_place(value) {
 		return
 	}
-	// A conversion builds a different value rather than copying its operand.
+	// A conversion builds a different value rather than copying its operand;
+	// a widened union is copied before it is remapped.
 	base := expr_base(value)
-	if base == nil || base.type != type || base.erased_from != INVALID_TYPE || base.widened_from != INVALID_TYPE {
+	if base == nil || base.type != type || base.erased_from != INVALID_TYPE {
 		return
 	}
-	report_copy_cost(k, site, expr_span(value), value, type)
+	report_copy_cost(k, site, expr_span(value), value, copied_type(value, type))
 }
 
 // Aggregate elements follow ordinary copy/transfer rules.
@@ -580,7 +579,7 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl) {
 			continue
 		}
 		if value != nil && expression_is_borrowed_place(value) {
-			report_copy_cost(k, .Binding, expr_span(value), value, sym.type, Held_Copy_Report{decl = d, index = index})
+			report_copy_cost(k, .Binding, expr_span(value), value, copied_type(value, sym.type), Held_Copy_Report{decl = d, index = index})
 		}
 		if !classify_copy(k, value, sym.type, .Binding) {
 			continue
@@ -623,7 +622,7 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			continue
 		}
 		if expression_is_borrowed_place(value) {
-			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, Held_Copy_Report{assign = s, index = index})
+			report_copy_cost(k, .Assignment, expr_span(value), value, copied_type(value, base.type), Held_Copy_Report{assign = s, index = index})
 		}
 		if !classify_copy(k, value, base.type, .Assignment) {
 			continue

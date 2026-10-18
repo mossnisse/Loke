@@ -25,11 +25,9 @@ Expr_Base :: struct {
 	view_from:   Type_Id,
 	// A scalar widened to a SIMD vector: the lane type to splat from.
 	splat_from:  Type_Id,
-	// An anonymous union widened by label: the smaller union to remap from.
+	// An anonymous union widened by label: the smaller union to remap from. A
+	// copy site clones at this type before remapping.
 	widened_from: Type_Id,
-	// The widening copies its place operand, at `widened_from`, before
-	// remapping it; the destination then owns the copy.
-	widen_clones: bool,
 	// This node or any child is an error node.
 	has_error:   bool,
 }

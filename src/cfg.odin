@@ -1310,7 +1310,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false, lends :=
 			// still sees it (design.md "defer statement").
 			killed := false
 			if ident, is_ident := value.expr.(^Expr_Ident); is_ident && !value.clone_on_return &&
-			   !ident.widen_clones && type_is_managed(graph.k.c, ident.widened_from != INVALID_TYPE ? ident.widened_from : ident.type) {
+			   type_is_managed(graph.k.c, copied_type(ident, ident.type)) {
 				if slot, tracked := graph.by_symbol[ident.symbol]; tracked {
 					emit(graph, Flow_Event{kind = .Kill, slot = slot, span = ident.span, name = ident.name})
 					killed = true
@@ -2505,7 +2505,7 @@ settle_last_uses :: proc(graph: ^Flow_Graph) {
 			continue
 		}
 		ident := site^.(^Expr_Ident)
-		if !clone_may_allocate(graph.k.c, ident.type) {
+		if !clone_may_allocate(graph.k.c, copied_type(ident, ident.type)) {
 			continue
 		}
 		event.kind = .Kill

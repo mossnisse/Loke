@@ -499,8 +499,16 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 	relocating := container_ops_global(e, as_type, relocating = true)
 	slot := alloca(e, llvm_type(e, element))
 	for written, index in v.elements {
-		store(e, element, emit_expr(e, written.value), slot)
 		borrowed := index < len(v.element_clones) && v.element_clones[index]
+		// design.md "Widening by label": a widened element is copied at its own
+		// type through the array's provider, and the copy relocates.
+		if borrowed && expr_base(written.value).widened_from != INVALID_TYPE {
+			provider := load(e, "ptr", gep_field(e, CONTAINER_TYPE, address, CONTAINER_ALLOC))
+			store(e, element, emit_copied_expr(e, written.value, element, true, provider), slot)
+			borrowed = false
+		} else {
+			store(e, element, emit_expr(e, written.value), slot)
+		}
 		status := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %s, ptr %s, ptr %s, i64 1)",
@@ -536,10 +544,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 	for written, index in v.elements {
 		// The map clones the key, so the probe only borrows it.
 		key_slot, key_cleanup := emit_map_key_slot(e, written.key, as_type)
-		value := emit_expr(e, written.value)
-		if index < len(v.element_clones) && v.element_clones[index] {
-			value = emit_clone_value(e, element, value, provider)
-		}
+		value := emit_copied_expr(e, written.value, element, index < len(v.element_clones) && v.element_clones[index], provider)
 		// design.md "What the unwind runs, and what it does not": the value is
 		// owned here until the map holds it, across the key's hash and clone and
 		// the drop of an entry it replaces.
