@@ -1,0 +1,13 @@
+package main;
+import "core:fmt";
+
+// design.md "Diverging procedures": a spread operand that never returns stands
+// in for the pack's slice type, though the operand is checked before the
+// variadic parameter is known.
+stop :: proc() -> ! { panic("stopped"); }
+sum :: proc(values: ..int) -> int { return values.len(); }
+
+main :: proc() {
+	fmt.println("before");
+	fmt.println(sum(..stop()));
+}

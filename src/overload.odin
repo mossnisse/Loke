@@ -122,7 +122,7 @@ collect_call_arguments :: proc(
 			info.name = intern_identifier(k.c, arg.name.text)
 		}
 		if arg.checked {
-			info.type = expr_base(arg.value).type
+			info.type = settle_single_value(k, arg.value, expr_base(arg.value).type, INVALID_TYPE)
 		} else {
 			expected := INVALID_TYPE
 			if argument_needs_context(arg.value) {

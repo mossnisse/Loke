@@ -161,7 +161,12 @@ check_single_expr :: proc(
 	expected: Type_Id = INVALID_TYPE,
 	position := Expr_Position.Value,
 ) -> Type_Id {
-	type := check_expr(k, e, expected, position)
+	return settle_single_value(k, e, check_expr(k, e, expected, position), expected)
+}
+
+// The rest of check_single_expr, for an expression already checked as `type`
+// whose expected type is known only now.
+settle_single_value :: proc(k: ^Checker, e: Expr, type: Type_Id, expected: Type_Id) -> Type_Id {
 	base := expr_base(e)
 	// design.md "Diverging procedures": a call that never returns stands in
 	// for a value of whatever type is expected.

@@ -589,13 +589,14 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 	// needs a destination type has none here, so it is left to the variadic
 	// path. Any other operand is checked once, here: a variadic spread reuses
 	// its type rather than checking it again, since a recheck of nested spreads
-	// would double per level.
+	// would double per level. A call that never returns waits for the pack's
+	// type to stand in for.
 	operand := v.args[spread].value
 	if argument_needs_context(operand) {
 		return false
 	}
-	subject := check_single_expr(k, operand)
-	if subject == INVALID_TYPE || !type_is_union(k.c, subject) {
+	subject := check_expr(k, operand)
+	if subject == INVALID_TYPE || subject == TYPE_VOID || !type_is_union(k.c, subject) {
 		v.args[spread].checked = true
 		return false
 	}

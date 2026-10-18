@@ -1307,7 +1307,15 @@ pass_argument :: proc(
 
 @(private = "file")
 check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechecked := false) -> (Expr, bool) {
-	type := prechecked || arg.checked ? expr_base(arg.value).type : check_single_expr(k, arg.value, pack)
+	type: Type_Id
+	switch {
+	case prechecked:
+		type = expr_base(arg.value).type
+	case arg.checked:
+		type = settle_single_value(k, arg.value, expr_base(arg.value).type, pack)
+	case:
+		type = check_single_expr(k, arg.value, pack)
+	}
 	if type == INVALID_TYPE {
 		return arg.value, false
 	}
