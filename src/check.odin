@@ -3081,6 +3081,16 @@ call_diverges :: proc(c: ^Compiler, e: Expr) -> bool {
 	if !is_call {
 		return false
 	}
+	// design.md "Union argument expansion": an expansion is the switch it
+	// stands for, which never returns when no selected call does.
+	if call.dispatch != nil {
+		for entry in call.dispatch.cases {
+			if !call_diverges(c, entry.arm) {
+				return false
+			}
+		}
+		return len(call.dispatch.cases) > 0
+	}
 	symbol := symbol_of(c, call.resolution.symbol)
 	if symbol == nil {
 		return false

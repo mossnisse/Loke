@@ -1,0 +1,24 @@
+package main;
+import "core:fmt";
+
+// design.md "Union argument expansion": when no selected call returns, the
+// expansion never returns either, as its switch would not, so it can end a
+// procedure with a result and stand in for a value.
+Way :: (left: int | right: int);
+stop :: proc { stop_left, stop_right }
+stop_left :: proc(left: int) -> ! { panic("stopped left"); }
+stop_right :: proc(right: int) -> ! { panic("stopped right"); }
+
+ends :: proc(way: Way) -> int { stop(..way); }
+yields :: proc(way: Way) -> int { n: int = stop(..way); return n + 1; }
+returns :: proc(way: Way) -> int { return stop(..way); }
+
+main :: proc() {
+	fmt.println("before");
+	quiet := false;
+	if (quiet) {
+		fmt.println(yields(.left(1)), returns(.left(2)));
+	}
+	fmt.println(ends(.right(3)));
+	fmt.println("after");
+}

@@ -6,6 +6,7 @@ Handler{keys = 2, clicks = 3}
 a key a click quit
 .ok(-40) .err(Negative) .ok(0)
 6 5
+true true 7
 kept 1
 drop 1
 temporary, consumed: 1

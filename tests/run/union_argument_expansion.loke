@@ -81,6 +81,29 @@ look_n :: proc(n: int) -> int { return n; }
 
 make_msg :: proc(id: int) -> Msg { return .res(Res{id}); }
 
+// A place lends its payload in compile-time evaluation too: a boxed payload is
+// the subject's own allocation, not a copy of it.
+Node :: struct { n: int }
+Held :: union { item: Box(Node) }
+Reader :: struct { source: ^Held }
+impl Reader {
+	read :: proc(self, item: ^Node) -> bool {
+		switch (self.source^) {
+		case .item(original): return &original^ == item;
+		}
+	}
+}
+same_box :: proc() -> bool {
+	held: Held = .item(box(Node{1}));
+	reader := Reader{&held};
+	return reader.read(..held);
+}
+SAME_BOX :: same_box();
+
+// Spreads nest without rechecking: each operand is checked once.
+pick :: proc(values: ..int) -> [1]int { return [1]int{values[0]}; }
+NESTED :: pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..pick(..[1]int{7}))))))))))))))))))))))));
+
 ownership :: proc() {
 	{
 		fmt.println("temporary, consumed:", keep(..make_msg(1)));
@@ -112,5 +135,6 @@ main :: proc() {
 	fmt.println(describe_all(..Event.key('z')), label(Event.click({0, 0})), label(Event.quit));
 	fmt.println(apply(.left(4)), apply(.right(-1)), apply(.stop));
 	fmt.println(must(..Step.right(6)), TOTAL);
+	fmt.println(same_box(), SAME_BOX, NESTED[0]);
 	ownership();
 }

@@ -585,13 +585,18 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 	if spread < 0 {
 		return false
 	}
-	// The operand's type decides, and a union is never a sequence. A clone is
-	// probed, so a variadic spread is checked once, where it is bound.
+	// The operand's type decides, and a union is never a sequence. One that
+	// needs a destination type has none here, so it is left to the variadic
+	// path. Any other operand is checked once, here: a variadic spread reuses
+	// its type rather than checking it again, since a recheck of nested spreads
+	// would double per level.
 	operand := v.args[spread].value
-	probe := begin_probe(k.c)
-	probed := check_single_expr(k, clone_expr(k.c, operand))
-	end_probe(k.c, probe)
-	if probed == INVALID_TYPE || !type_is_union(k.c, probed) {
+	if argument_needs_context(operand) {
+		return false
+	}
+	subject := check_single_expr(k, operand)
+	if subject == INVALID_TYPE || !type_is_union(k.c, subject) {
+		v.args[spread].checked = true
 		return false
 	}
 	v.value_category = .Value
@@ -602,10 +607,6 @@ check_union_argument_expansion :: proc(k: ^Checker, v: ^Expr_Call, expected: Typ
 	}
 	if v.args[0].name.text != "" {
 		errorf(k.c, v.args[0].name.span, "L0371", "a union argument expansion names no parameter; each variant's label does")
-		return true
-	}
-	subject := check_single_expr(k, operand)
-	if subject == INVALID_TYPE {
 		return true
 	}
 

@@ -85,7 +85,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 
 		// The parts cloned by their own helpers.
 		{Attribute, "span path value", ""},
-		{Argument, "span name mode value", ""},
+		{Argument, "span name mode value", "checked"},
 		{Element, "span key value", ""},
 		{Parameter, "span attributes names mode type default", "symbols"},
 		{Result, "span is_inout type diverges", ""},

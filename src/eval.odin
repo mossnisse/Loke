@@ -3753,25 +3753,45 @@ eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value
 			eval_fail(ev, s.span, "L0341", "a case binding needs a compile-time frame")
 			return .Fail
 		}
-		if place != nil && len(place.elements) > 0 {
-			frame.locals[entry.binding_symbol] = &place.elements[0]
-			return eval_stmts(ev, entry.stmts, true)
-		}
-		bound, copied := copy_value(ev, eval_union_payload(subject, entry.binding_type))
-		if !copied || !bind_local(ev, frame, entry.binding_symbol, bound) {
+		if !eval_bind_case_payload(ev, frame, entry, subject, place) {
 			return .Fail
 		}
 	}
 	return eval_stmts(ev, entry.stmts, true)
 }
 
+// design.md "Switch ownership": a binding over a place names the payload in the
+// subject's storage, and any other binding owns a copy.
+@(private = "file")
+eval_bind_case_payload :: proc(
+	ev: ^Evaluator, frame: ^Eval_Frame, entry: Switch_Case, subject: Eval_Value, place: ^Eval_Value,
+) -> bool {
+	if place != nil && len(place.elements) > 0 {
+		frame.locals[entry.binding_symbol] = &place.elements[0]
+		return true
+	}
+	bound, copied := copy_value(ev, eval_union_payload(subject, entry.binding_type))
+	return copied && bind_local(ev, frame, entry.binding_symbol, bound)
+}
+
 // design.md "Union argument expansion": the arm for the subject's variant, with
-// the payload bound as a case over a copy binds it.
+// the payload bound as the switch it stands for binds it.
 @(private = "file")
 eval_dispatch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> (Eval_Value, bool) {
-	subject, ok := eval_expr(ev, s.subject)
-	if !ok {
-		return Eval_Value{}, false
+	subject: Eval_Value
+	place: ^Eval_Value
+	if eval_frame_place(ev, s.subject) {
+		found, ok := eval_place(ev, s.subject)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		subject, place = found^, found
+	} else {
+		value, ok := eval_expr(ev, s.subject)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		subject = value
 	}
 	for entry in s.cases {
 		if len(entry.variant_indices) != 1 || entry.variant_indices[0] != subject.variant {
@@ -3793,8 +3813,7 @@ eval_dispatch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> (Eval_Value, bool) {
 			append(&ev.frames, frame)
 		}
 		defer if own_frame { pop(&ev.frames) }
-		bound, copied := copy_value(ev, eval_union_payload(subject, entry.binding_type))
-		if !copied || !bind_local(ev, frame, entry.binding_symbol, bound) {
+		if !eval_bind_case_payload(ev, frame, entry, subject, place) {
 			return Eval_Value{}, false
 		}
 		return eval_expr(ev, entry.arm)

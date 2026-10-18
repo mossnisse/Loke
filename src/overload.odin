@@ -121,17 +121,21 @@ collect_call_arguments :: proc(
 		if arg.name.text != "" {
 			info.name = intern_identifier(k.c, arg.name.text)
 		}
-		expected := INVALID_TYPE
-		if argument_needs_context(arg.value) {
-			context_candidates := candidates
-			if live_group != INVALID_SYMBOL {
-				if group := symbol_of(k.c, live_group); group != nil && group.kind == .Proc_Group {
-					context_candidates = group.members
+		if arg.checked {
+			info.type = expr_base(arg.value).type
+		} else {
+			expected := INVALID_TYPE
+			if argument_needs_context(arg.value) {
+				context_candidates := candidates
+				if live_group != INVALID_SYMBOL {
+					if group := symbol_of(k.c, live_group); group != nil && group.kind == .Proc_Group {
+						context_candidates = group.members
+					}
 				}
+				expected = common_argument_type(k, context_candidates, info.name, index + offset)
 			}
-			expected = common_argument_type(k, context_candidates, info.name, index + offset)
+			info.type = check_single_expr(k, arg.value, expected, arg.mode == .Inout ? .Place : .Value)
 		}
-		info.type = check_single_expr(k, arg.value, expected, arg.mode == .Inout ? .Place : .Value)
 		if info.type == INVALID_TYPE {
 			ok = false
 		} else if base := expr_base(arg.value); base != nil {

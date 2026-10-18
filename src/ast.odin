@@ -163,6 +163,9 @@ Argument :: struct {
 	name:  Name,
 	mode:  Argument_Mode,
 	value: Expr,
+	// A spread whose operand the union argument expansion check already
+	// checked and found no union; binding reuses its type.
+	checked: bool,
 }
 
 // The compiler-defined operations of a `meta.Field` descriptor.
