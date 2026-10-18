@@ -49,6 +49,9 @@ checklist.
   its destination is, a last use or a temporary transfers, and the
   diagnostic for a union that does not widen names the alternative it lacks.
   See design.md [Widening by label](design.md#widening-by-label).
+- `examples/orders.loke` checks orders against a stock list with anonymous
+  unions: an error set per helper, widened by label into the caller's, and a
+  labeled layer kept with `or_return .order`.
 - `loke-lsp.exe`, a Language Server Protocol server shipped beside `lokec.exe`.
   It publishes the diagnostics `lokec` reports for open documents, including
   unsaved edits and the packages they import. It also answers hover,

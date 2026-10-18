@@ -1,0 +1,146 @@
+package main;
+import "core:fmt";
+import "core:strconv";
+import "core:strings";
+
+// Anonymous unions: a union written where it is used, with no declaration.
+//
+// `(in_stock: int | backordered: int | missing:)` is to a `union` what
+// `(x: int, y: int)` is to a `struct`: parentheses describe it, and its labels
+// and payload types, in order, are its whole identity, so the same shape
+// written twice is one type. Otherwise it is an ordinary union: `.label(...)`
+// builds one, a `switch` takes it apart and must cover every label, and it
+// prints, compares, copies, and drops as a declared union does.
+//
+// The program checks a batch of orders against a stock list. Each helper
+// reports exactly the errors it can produce, as an anonymous union inside its
+// `Result`. A caller whose set has the same labels takes a helper's smaller set
+// as it is ("widening by label"), so a bare `or_return` propagates it with no
+// wrapper type and no mapping.
+
+Item :: struct { name: string_view, price: int, on_hand: int, on_order: int }
+
+Order :: struct { item: string_view, quantity: int }
+
+ORDER_LIMIT :: 20;
+
+// Plain data rather than an error. The labels keep `in_stock` and
+// `backordered` apart although both carry an `int`. An alias names the shape
+// and adds no identity: `find` below spells it out, and returns this type.
+Availability :: (in_stock: int | backordered: int | missing:);
+
+find :: proc(stock: []Item, name: string_view) -> (in_stock: int | backordered: int | missing:) {
+	foreach (item in stock) {
+		if (item.name != name) { continue; }
+		if (item.on_hand > 0) { return .in_stock(item.on_hand); }
+		return .backordered(item.on_order);
+	}
+	return .missing;
+}
+
+// The error set is written in the signature. `strconv.parse_int` has its own
+// error type, which `quantity` carries whole; the other two failures carry
+// nothing.
+parse_order :: proc(line: string_view) -> Result(Order, (blank: | no_quantity: | quantity: strconv.Parse_Error)) {
+	text := strings.trim_space(line);
+	if (text.len() == 0) { return .err(.blank); }
+	// The failure operand names the alternative a failure becomes: `.no_quantity`
+	// replaces an absent cut, and `.quantity` wraps the parser's error.
+	parts := strings.cut(text, " ") or_return .no_quantity;
+	quantity := strconv.parse_int(strings.trim_space(parts.after)) or_return .quantity;
+	// A success return: the value builds `.ok` without spelling it.
+	return Order{parts.before, quantity};
+}
+
+// A record payload: `short` reports both numbers.
+quote :: proc(stock: []Item, order: Order) -> Result(int, (unknown: | short: (wanted: int, have: int))) {
+	foreach (item in stock) {
+		if (item.name != order.item) { continue; }
+		if (item.on_hand < order.quantity) { return .err(.short({order.quantity, item.on_hand})); }
+		return item.price * order.quantity;
+	}
+	return .err(.unknown);
+}
+
+// A declared error type still has its place, and an anonymous set holds it
+// under a label like any other payload.
+Limit_Error :: enum { Over_Limit }
+
+approve :: proc(cost: int) -> Status(Limit_Error) {
+	if (cost > ORDER_LIMIT) { return .err(.Over_Limit); }
+}
+
+// One order's whole error set, one alternative per line. It repeats the
+// labels and payload types of `parse_order`'s and `quote`'s sets, in any
+// order, so both widen into it.
+Order_Error :: (
+	blank: |
+	no_quantity: |
+	quantity: strconv.Parse_Error |
+	unknown: |
+	short: (wanted: int, have: int) |
+	limit: Limit_Error |
+);
+
+place :: proc(line: string_view, stock: []Item) -> Result(int, Order_Error) {
+	order := parse_order(line) or_return;   // widened by label
+	cost := quote(stock, order) or_return;  // widened by label
+	approve(cost) or_return .limit;         // a named error, wrapped under its label
+	return cost;
+}
+
+// Renaming or removing a label in a helper's set is a compile error here,
+// naming the label, as it is at every `or_return` that widens it.
+report :: proc(number: int, error: Order_Error) {
+	switch (error) {
+	case .blank: fmt.println("order", number, "skipped: blank line");
+	case .no_quantity: fmt.println("order", number, "rejected: no quantity");
+	case .quantity(why): fmt.println("order", number, "rejected: quantity is", why);
+	case .unknown: fmt.println("order", number, "rejected: no such item");
+	case .short(wanted, have): fmt.println("order", number, "rejected: wanted", wanted, "but", have, "on hand");
+	case .limit(why): fmt.println("order", number, "rejected:", why, "of", ORDER_LIMIT);
+	}
+}
+
+// To keep a callee's set as one layer instead of flattening it, wrap it under
+// a label of its own. `order` holds every order error, beside the batch's own.
+total_or_first_error :: proc(lines: []string_view, stock: []Item) -> Result(int, (order: Order_Error | empty:)) {
+	if (lines.len() == 0) { return .err(.empty); }
+	total := 0;
+	foreach (line in lines) { total += place(line, stock) or_return .order; }
+	return total;
+}
+
+main :: proc() {
+	stock := [3]Item{
+		{"apple", 3, 10, 0},
+		{"pear", 4, 0, 25},
+		{"plum", 2, 6, 0},
+	};
+
+	foreach (name in [3]string_view{"apple", "pear", "fig"}) {
+		availability: Availability = find(stock[:], name);
+		switch (availability) {
+		case .in_stock(count): fmt.println(name, "in stock:", count);
+		case .backordered(count): fmt.println(name, "backordered,", count, "coming");
+		case .missing: fmt.println(name, "not stocked");
+		}
+	}
+
+	orders := [9]string_view{"apple 4", "pear 1", "plum x", "plum", "", "fig 2", "apple 20", "apple 8", "plum 6"};
+	total := 0;
+	foreach (line, i in orders[:].indexed()) {
+		switch (place(line, stock[:])) {
+		case .ok(cost):
+			fmt.println("order", i + 1, "accepted:", line, "for", cost);
+			total += cost;
+		case .err(error): report(i + 1, error);
+		}
+	}
+	fmt.println("accepted total", total);
+
+	// An anonymous union prints its labels, nested layers included.
+	fmt.println(total_or_first_error(orders[:1], stock[:]));
+	fmt.println(total_or_first_error(orders[:2], stock[:]));
+	fmt.println(total_or_first_error(orders[:0], stock[:]));
+}

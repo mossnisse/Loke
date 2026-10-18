@@ -18,6 +18,7 @@ different part of the language:
 - `shapes.loke` — interfaces dispatched two ways: specialized generics and erased `dyn`.
 - `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, lifecycle hooks, and `indexed()`.
 - `tokens.loke` — declaring a union, variant switches, and `case` lists that match ranges.
+- `orders.loke` — anonymous unions: a union written in a signature with no declaration, labels that keep equal payload types apart, an error set per helper that a bare `or_return` widens by label into the caller's, a wrapping label that keeps a layer, and success returns.
 - `corpus_runner.loke` — a test harness: child processes, captured output, directory listing, sorting, and a pool of threads sharing a `Mutex`. It compiles and runs each case in a corpus directory, a file or a package directory, as the compiler's own run, trap, and package suites do, or checks each case's errors (`-diagnostics`, `-syntax`) or generated IR (`-ir`, assembled with the clang `lokec -print-toolchain` finds), as the diagnostic, syntax-error, and IR suites do.
 - `lexer.loke` — the compiler's lexer in Loke: byte scanning, enums, a constant table, `inout` parameters, and a recursive directory walk. It agrees with `lokec -dump-tokens` on every token's kind and span.
 - `dice.loke` — `core:random`: dice, a shuffled deck, a Monte Carlo estimate of pi, a loaded die from a weighted table, and a lottery draw without replacement, replayable from the seed it prints.
@@ -46,7 +47,7 @@ automatically, so no collection flags are needed.
 
 ## How these are checked
 
-`odin test tests` compiles all seventeen from these sources — not from copies — and
+`odin test tests` compiles all eighteen from these sources — not from copies — and
 compares the output of the ones that produce a fixed result. `greeting` is run
 twice in a scratch directory with supplied input, so the second run has to find
 what the first wrote; `streaming` is run against a real file, a missing one, and

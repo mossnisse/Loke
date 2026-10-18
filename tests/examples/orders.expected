@@ -1,0 +1,16 @@
+apple in stock: 10
+pear backordered, 25 coming
+fig not stocked
+order 1 accepted: apple 4 for 12
+order 2 rejected: wanted 1 but 0 on hand
+order 3 rejected: quantity is Invalid_Syntax
+order 4 rejected: no quantity
+order 5 skipped: blank line
+order 6 rejected: no such item
+order 7 rejected: wanted 20 but 10 on hand
+order 8 rejected: Over_Limit of 20
+order 9 accepted: plum 6 for 12
+accepted total 24
+.ok(12)
+.err(.order(.short((wanted = 1, have = 0))))
+.err(.empty)

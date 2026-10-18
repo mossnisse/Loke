@@ -2206,6 +2206,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		{"hello",          .Output},
 		{"keys",           .Interactive},
 		{"lexer",          .Driven},
+		{"orders",         .Output},
 		{"shapes",         .Output},
 		{"streaming",      .Driven},
 		{"timestamps",     .Driven},
