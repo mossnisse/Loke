@@ -1224,7 +1224,15 @@ bind_variadic_arguments :: proc(
 		append(&order, false)
 		// Managed or not: a pack copies what it is given.
 		classify_copy_cost(k, value, element, .Variadic)
-		needs_element_clone ||= expression_is_borrowed_place(value)
+		if expression_is_borrowed_place(value) && copied_type(value, element) != element {
+			// design.md "Widening by label": the pack copies a widened place at its
+			// own type, which may be copyable where the element is not; a lending
+			// `append` body still copies at the element type.
+			classify_copy(k, value, element, .Variadic)
+			needs_element_clone ||= !type_clone_disabled(k.c, element)
+		} else {
+			needs_element_clone ||= expression_is_borrowed_place(value)
+		}
 		ok = ok && passed
 	}
 	if type_is_managed(k.c, element) && needs_element_clone && !lifecycle_of(k.c, element).intrinsic {

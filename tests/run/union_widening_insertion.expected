@@ -1,0 +1,13 @@
+.ok 2
+drop 101
+drop 101
+.ok 1
+drop 101
+pack 2
+drop 101
+.err(4611686018427387904) 0
+.err(4611686018427387904) 0
+.res(Res{id = 1}) .res(Res{id = 3})
+2 .items([1])
+drop 3
+drop 1

@@ -1094,20 +1094,16 @@ emit_copied_expr :: proc(
 	if !clones {
 		return emit_expr(e, expr)
 	}
-	from := expr_base(expr).widened_from
-	widened := from != INVALID_TYPE && union_widens_to(e.c, from, type)
-	value := widened ? emit_expr_at(e, expr, from) : emit_expr(e, expr)
+	from := copied_type(expr, type)
+	value := from == type ? emit_expr(e, expr) : emit_expr_at(e, expr, from)
 	provider := allocator
 	if destination != INVALID_SYMBOL {
 		provider = emit_destination_allocator(e, destination)
 	}
-	if !widened {
-		return emit_clone_value(e, type, value, provider)
-	}
 	if emit_lifecycle(e, from).managed {
 		value = emit_clone_value(e, from, value, provider)
 	}
-	return emit_union_widen(e, value, from, type)
+	return from == type ? value : emit_union_widen(e, value, from, type)
 }
 
 // Emits `expr` at `as_type`: its checked type, or the source type an implicit

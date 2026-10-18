@@ -2021,10 +2021,12 @@ ownership rules, and its added tests. Three confirmed findings, all
 copy is the site's ordinary copy again. `classify_copy` in
 [lifecycle.odin](src/lifecycle.odin) sets the site's own clone flag, judged at
 the source type through `copied_type`. The last-use pass and the held copy-cost
-report then see it as they see any copy. Every emitter copy site calls
-`emit_copied_expr` in [emit_llvm_expr.odin](src/emit_llvm_expr.odin), which
-clones a widened value at its own type, through the destination's allocator
-evaluated after the value, and then remaps it. The regression tests are in
+report then see it as they see any copy. The emitter's expression copy sites
+call `emit_copied_expr` in [emit_llvm_expr.odin](src/emit_llvm_expr.odin),
+which clones a widened value at its own type, through the destination's
+allocator evaluated after the value, and then remaps it. Non-variadic container
+insertion was missed; see the
+[next review](#widening-copy-and-explicit-cast-fix-review-2026-10-18). The regression tests are in
 tests/run/union_widening (runtime and compile-time casts across reordered and
 larger storage, `via` on a declaration and an assignment, and last-use
 transfer in both) and tests/err/union_widening (the warning on a copy that
@@ -2054,6 +2056,74 @@ run test also passed directly. Heading citations and local documentation links
 and anchors resolved, and `git diff --check` passed. The full integration gate
 was not rerun. Reproduction sources, outputs, and the inspected large-cast IR
 remain ignored under `tests/tmp/review-widen-*`.
+
+## Widening copy and explicit cast fix review (2026-10-18)
+
+Reviewed `b9b737e`, **Make widening copies ordinary site copies and widen
+explicit casts**, against its parent `865f3ea`, the
+[widening rules](design.md#widening-by-label), and ordinary copy ownership.
+The three earlier reproductions now pass: explicit casts remap reordered tags
+and larger storage, destination `via` expressions run for widening copies,
+and last-use declarations transfer rather than copy.
+
+Two additional regressions, reproduced against both revisions, both
+**resolved** since:
+
+- **P1:** a non-variadic container insertion into a wider union with an extra
+  move-only alternative skipped the source copy. The source remained live while
+  the container owned the same payload. A traced copy/drop hook confirmed no
+  copy and two drops; the parent copies once. Both dynamic-array `insert` and
+  map `try_insert` reproduced it. **Fixed**: `emit_bound_call` in
+  [emit_llvm_calls.odin](src/emit_llvm_calls.odin) copies a borrowed widened
+  element that a move-only element type consumes, through
+  `emit_insertion_copy`. The copy is made at the smaller type with the
+  container's own provider, and remapped once it is known to have succeeded.
+  A `try_` form whose copy is refused returns that `.err` without calling the
+  insertion, as a copyable element's lending body would, so the container and
+  the source are unchanged.
+- **P2:** an ordinary variadic call could fail with L0405 because the emitter
+  cloned the smaller union while the checker had prepared only the wider
+  union's clone. The parent compiles and runs the same input. **Fixed**:
+  `bind_variadic_arguments` in [check_calls.odin](src/check_calls.odin)
+  classifies each widened place through `classify_copy`, which enrolls the
+  source lifecycle. A move-only element type no longer rejects a widened
+  place, and a copyable one still enrolls the element clone that a lending
+  `append` body uses.
+
+The optional simplification was taken: `emit_copied_expr` decides the source
+type once with `copied_type` and keeps one managed-clone branch. The regression
+test is tests/run/union_widening_insertion. It covers `insert`, `try_insert` on
+a dynamic array and a map, a variadic pack into a move-only element, refused
+`try_` copies for both containers, and the reviewed `[dynamic]int` variadic
+case.
+
+The structure is improved: removing `widen_clones` gives declaration and
+assignment copies one source of truth, and the emitter's helper keeps
+allocator evaluation after the value. The remaining findings are incomplete
+integration with call lowering and lifecycle enrollment, not reasons to add
+another widening-specific ownership flag. The earlier resolution note's
+claim that every emitter copy site uses `emit_copied_expr` is too broad;
+non-variadic container arguments still use `emit_expr`.
+
+The simplification pass used the `ponytail-review` skill. One optional cut:
+`src/emit_llvm_expr.odin:L1097: shrink:` reuse `copied_type(expr, type)`, emit
+at that source type, keep one managed-clone branch, and conditionally remap
+the result. This replaces the duplicate source-type decision and the separate
+non-widened clone branch, retaining the managed check for a trivial source
+widened into a managed destination. Net: four lines possible to remove. No
+speculative abstraction, unnecessary dependency, or other independent
+complexity finding was confirmed.
+
+No implementation fixes were applied. Fresh compiler and LSP builds passed
+135 compiler unit tests and 43 LSP unit tests. Eleven integration suites
+passed: programs, packages, diagnostics, package diagnostics, syntax recovery,
+generated IR, layout, three LSP checks, and the runtime panic/unwind corpus.
+The widening regression's output matched directly, and a focused explicit
+cast with 8 KiB source and 16 KiB destination payloads preserved the first and
+last elements under the correct tag. Heading citations, local documentation
+links and anchors, and `git diff --check` were checked. The full integration
+gate was not rerun. Probes and the parent source remain ignored under
+`tests/tmp/review-wcopy-*`.
 
 ## Lone carriage returns in the language server
 

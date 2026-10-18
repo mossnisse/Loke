@@ -1,0 +1,64 @@
+// design.md "Widening by label" and "Container insertion": a borrowed smaller
+// union inserted into a container whose wider element is move-only is copied at
+// its own type, and the copy is handed over, so the source and the element each
+// drop once. A `try_` form whose copy is refused returns the failure, leaves the
+// container unchanged, and leaves the source as it was. A variadic pack copies
+// a widened place the same way. A copy adds 100 to the id.
+package main;
+import "core:fmt";
+
+// A `[dynamic]T` reserves room for at least eight, so this asks for 2^62 bytes.
+Huge :: struct { pad: [576460752303423488]u8 }
+
+Res :: struct { id: int }
+impl Res {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		if (self.id == 3) {
+			_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
+		}
+		return .ok(Res{self.id + 100});
+	}
+	release :: hook(drop) proc(self: inout Res) {
+		if (self.id != 0) { fmt.println("drop", self.id); }
+	}
+}
+Token :: move_only struct { id: int }
+Small :: (res: Res | none:);
+Wide :: (none: | res: Res | token: Token);
+
+consume :: proc(values: ..Wide) {
+	fmt.println("pack", values.len());
+}
+
+Listed :: (items: [dynamic]int | none:);
+Listed_Wide :: (none: | items: [dynamic]int | n: int);
+
+count :: proc(values: ..Listed_Wide) -> int {
+	return values.len();
+}
+
+main :: proc() {
+	source: Small = .res(Res{1});
+	{
+		items: [dynamic]Wide = {};
+		items.insert(0, source);
+		fmt.println(items.try_insert(1, source), items.len());
+	}
+	{
+		m: map[int]Wide = {};
+		fmt.println(m.try_insert(0, source), m.len());
+	}
+	consume(source, .none);
+
+	refused: Small = .res(Res{3});
+	{
+		items: [dynamic]Wide = {};
+		fmt.println(items.try_insert(0, refused), items.len());
+		m: map[int]Wide = {};
+		fmt.println(m.try_insert(0, refused), m.len());
+	}
+	fmt.println(source, refused);
+
+	listed: Listed = .items([dynamic]int{1});
+	fmt.println(count(listed, .n(2)), listed);
+}

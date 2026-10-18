@@ -1110,6 +1110,7 @@ emit_bound_call :: proc(
 	handoff_cleanups := make([dynamic]Deferred)
 	defer delete(handoff_cleanups)
 	result_borrows := callee_type.result != INVALID_TYPE && type_carries_borrow(e.c, callee_type.result).any
+	inserted: Insertion_Copy
 	for step in 0 ..< len(bound) {
 		index := call_node != nil ? call_slot_at(call_node, step) : step
 		argument := bound[index]
@@ -1143,6 +1144,9 @@ emit_bound_call :: proc(
 				// A directly borrowed composite belongs to the complete expression.
 				hold_addressed_temporary(e, argument, callee_type.parameters[index], operands[index])
 			}
+		} else if index == consumed && expression_is_borrowed_place(argument) && index < len(callee_type.parameters) {
+			inserted = emit_insertion_copy(e, argument, callee_type.parameters[index], operands[0], container_member_is_try(e.c, symbol))
+			operands[index] = inserted.value
 		} else {
 			operands[index] = emit_expr(e, argument)
 		}
@@ -1192,6 +1196,24 @@ emit_bound_call :: proc(
 	}
 
 	result_type := llvm_result_type(e, callee_type.result, callee_type.result_inout)
+	sret := returns_sret(e, callee_type.result, callee_type.result_inout)
+	call := sret ? temporary_slot(e, callee_type.result) : ""
+	// A `try_` form whose copy was refused returns that failure, and the call
+	// is not made.
+	joined, joined_slot := "", ""
+	if inserted.failed != "" {
+		refused, attempted := new_label(e, "insert.refused"), new_label(e, "insert.copied")
+		joined = new_label(e, "insert.joined")
+		joined_slot = sret ? call : temporary_slot(e, callee_type.result)
+		branch_if(e, inserted.failed, refused, attempted)
+		place_label(e, refused)
+		store(e, callee_type.result, emit_alloc_result(e, callee_type.result, "true", error = inserted.error), joined_slot)
+		branch(e, joined)
+		place_label(e, attempted)
+	}
+	if inserted.from != INVALID_TYPE {
+		operands[consumed] = emit_union_widen(e, operands[consumed], inserted.from, callee_type.parameters[consumed])
+	}
 	// A large argument is passed as the address of a copy only the callee reads.
 	for &operand, index in operands {
 		if index < len(callee_type.parameters) && is_large_value(e, callee_type.parameters[index]) &&
@@ -1201,10 +1223,7 @@ emit_bound_call :: proc(
 			operand = spill
 		}
 	}
-	call := ""
-	sret := returns_sret(e, callee_type.result, callee_type.result_inout)
 	if sret {
-		call = temporary_slot(e, callee_type.result)
 		fmt.sbprintf(&e.b, "  call void %s(ptr %s%s", callee, call, len(operands) > 0 ? ", " : "")
 	} else if callee_type.result != INVALID_TYPE {
 		call = temp(e)
@@ -1227,6 +1246,15 @@ emit_bound_call :: proc(
 		fmt.sbprintf(&e.b, ", ptr %s", owned_flags)
 	}
 	fmt.sbprintln(&e.b, ")")
+	if joined != "" {
+		if !sret {
+			store(e, callee_type.result, call, joined_slot)
+		}
+		branch(e, joined)
+		place_label(e, joined)
+		e.terminated = false
+		call = sret ? call : load_temporary(e, callee_type.result, joined_slot)
+	}
 	results: []string
 	if callee_type.result != INVALID_TYPE {
 		results = make([]string, 1)
@@ -1252,6 +1280,35 @@ emit_bound_call :: proc(
 	}
 	if guard.place != "" { finish_temporary_drop(e, guard) }
 	return results
+}
+
+// design.md "Widening by label" and "Container insertion": a borrowed smaller
+// union inserted as a move-only element is copied at its own type through the
+// container's provider, and the copy is handed over; the caller remaps it once
+// the copy is known to have succeeded. A `try_` form reports a refused copy as
+// its own failure, so the borrowed place is left as it was.
+@(private = "file")
+Insertion_Copy :: struct {
+	value:  string,
+	from:   Type_Id, // the smaller union `value` still has, or INVALID_TYPE
+	failed: string,  // set when a `try_` copy may be refused
+	error:  string,
+}
+
+@(private = "file")
+emit_insertion_copy :: proc(e: ^Emitter, argument: Expr, element: Type_Id, container: string, fallible: bool) -> Insertion_Copy {
+	from := copied_type(argument, element)
+	value := emit_expr_at(e, argument, from)
+	operations := emit_lifecycle(e, from)
+	if from == element || !operations.managed {
+		return Insertion_Copy{value = from == element ? value : emit_union_widen(e, value, from, element)}
+	}
+	provider := load(e, "ptr", gep_field(e, CONTAINER_TYPE, container, CONTAINER_ALLOC))
+	if fallible && operations.clone_fallible {
+		cloned, failed, error := emit_clone_call(e, operations.try_clone, from, value, provider)
+		return Insertion_Copy{value = cloned, from = from, failed = failed, error = error}
+	}
+	return Insertion_Copy{value = emit_clone_value(e, from, value, provider), from = from}
 }
 
 @(private = "file")
