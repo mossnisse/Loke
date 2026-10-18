@@ -1955,6 +1955,46 @@ and both previous review reproductions behaved as intended. All 1,837 heading
 citations and 158 local documentation links and anchors resolved, and
 `git diff --check` passed. The full integration gate was not rerun.
 
+## Inline record attribute commit review (2026-10-18)
+
+Reviewed `52d748e`, **Walk inline record attributes for generic success results**.
+The original alignment-only reproduction now rejects the return through the
+generic-result restriction, and the new regressions cover both `@(align=N)`
+and `@(align=align_of(T))` where the success and error payload types coincide.
+A concrete numeric alignment retains success-return shorthand.
+
+One new P2 regression, **fixed** since: `attributes_name` interpreted the
+identifiers in `@(zero=N)` and `@(failure=N)` as references to an outer generic
+binding, although they name variants of the inline union. A concrete result
+then lost the shorthand merely because an unused generic parameter had the
+same name. Fresh builds confirmed that the parent accepts both cases, the reviewed commit
+rejects them, and renaming the unused parameter restores the build.
+
+The traversal is straightforward, but it can be narrower: `align` is the
+expression-valued attribute allowed on a record definition; `zero`, `failure`,
+and a field's `initialized` attribute contain member names. Using the existing
+`find_attribute` for `align` and walking its value would remove the blanket
+attribute helper and its field-attribute call, saving about eight lines while
+fixing the lookup policy. This is the same correctness finding, not an
+additional independent refactoring request. The generic parameter and `where`
+clause walks need no further abstraction. The review itself applied no
+implementation fixes.
+
+**Fix**, as suggested: the `Type_Record` case of `names_generic_binding` in
+[check.odin](src/check.odin) walks only the `align` value, found with
+`find_attribute`, and no field attributes, so `attributes_name` is gone.
+`tests/run/success_returns` returns `{}` from results whose inline unions use
+`@(zero=N)` and `@(failure=N)` in procedures generic over an unrelated `$N`,
+and the alignment rejections in `tests/err/success_returns` still hold.
+
+Validation used freshly built compiler and LSP binaries: 134 compiler unit
+tests and 43 LSP unit tests passed, along with eight integration suites covering
+executable programs, packages, diagnostics, package diagnostics, syntax
+recovery, and three LSP behavior checks. All 1,837 heading citations and 160
+local documentation links and anchors resolved, and `git diff --check` passed.
+The focused probes and parent sources remain ignored under
+`tests/tmp/review-attrs-*`. The full integration gate was not rerun.
+
 ## Lone carriage returns in the language server
 
 The LSP source review of 2026-10-16 found two line-ending problems in

@@ -99,6 +99,16 @@ concrete :: proc() -> Result([size_of(enum { A, B })]u8, int) {
 	return {};
 }
 
+// `@(zero=N)` and `@(failure=N)` name the inline union's variant `N`, not the
+// unrelated generic argument, so these results are concrete too.
+zero_named :: proc($N: int) -> Result([size_of(union @(zero=N) { N, some: u8 })]u8, int) {
+	return {};
+}
+
+failure_named :: proc($N: int) -> Result([size_of(union @(failure=N) { ok: u8, N: u8 })]u8, int) {
+	return {};
+}
+
 double :: proc(n: int) -> Option(int) {
 	return n * 2;
 }
@@ -126,5 +136,6 @@ main :: proc() -> Status(Parse_Error) {
 	fmt.println(steps);
 	fmt.println(DOUBLED);
 	fmt.println(concrete_generic(1) == concrete());
+	fmt.println(zero_named(8), failure_named(8));
 	return;
 }

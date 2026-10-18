@@ -2730,17 +2730,11 @@ names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 	case ^Type_Poly:
 		return true
 	case ^Type_Record:
-		// Everything written in it: `@(align=N)` changes the layout as a field
-		// type does.
-		attributes_name :: proc(attributes: []Attribute, data: rawptr) -> bool {
-			for attribute in attributes {
-				if type_syntax_any_name(attribute.value, data, names_generic_binding) {
-					return true
-				}
-			}
-			return false
-		}
-		if attributes_name(v.attributes, data) {
+		// `@(align=N)` changes the layout as a field type does. It is the one
+		// expression-valued record attribute: `zero` and `failure` name a
+		// variant, and a field's attributes name a sibling field or nothing, so
+		// none of those is looked up in scope.
+		if align, written := find_attribute(v.attributes, "align"); written && any_of(align.value, data) {
 			return true
 		}
 		for parameter in v.generic_params {
@@ -2754,7 +2748,7 @@ names_generic_binding :: proc(data: rawptr, node: Expr) -> bool {
 			}
 		}
 		for field in v.fields {
-			if attributes_name(field.attributes, data) || any_of(field.type, data) {
+			if any_of(field.type, data) {
 				return true
 			}
 		}
