@@ -462,8 +462,12 @@ honor it; `test-all.ps1` manages it itself.
 
 Unit tests track allocations. Build with `-define:LOKE_TRACK_MEMORY=true` to
 report whole-compilation leaks and bad frees. `-vet-packages` confines test vetting
-to the repository package. If Windows PowerShell treats native stderr as
-`NativeCommandError`, use PowerShell 7 (`pwsh`, as CI does) and check exit codes.
+to the repository package. `test-all.ps1` judges each tool by its exit code
+alone, so it also runs under Windows PowerShell 5.1 with its output redirected
+(`*>`, `2>&1`, `Tee-Object`); there the first stderr line of a tool is shown as a
+`NativeCommandError` block, which is noise, not a failure. Running a suite
+directly in 5.1 with `2>&1` and `$ErrorActionPreference = 'Stop'` stops at that
+line; use PowerShell 7 (`pwsh`, as CI does) or check `$LASTEXITCODE` instead.
 
 Test code deletes directories with `remove_tree` (`lokec.remove_tree` from the
 language server's tests, and its copy in `tests/corpus_test.odin`), never

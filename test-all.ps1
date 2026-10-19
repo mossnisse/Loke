@@ -12,6 +12,18 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Windows PowerShell 5.1 turns each line a native command writes to stderr into
+# an error record once this script's output is redirected (`*>`, `2>&1`, or a
+# pipe into `Tee-Object`), and 'Stop' would end the run at odin's first
+# `[INFO]` line. A tool's exit code alone decides whether it failed. PowerShell
+# 7, which CI uses, passes stderr through untouched.
+function Invoke-Native([string]$Failure, [scriptblock]$Command) {
+    $ErrorActionPreference = 'Continue'
+    & $Command
+    if ($LASTEXITCODE -ne 0) { throw "$Failure ($LASTEXITCODE)" }
+}
+
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $savedFlags = [Environment]::GetEnvironmentVariable('LOKE_TEST_FLAGS', 'Process')
 $savedRequireTools = [Environment]::GetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', 'Process')
@@ -78,28 +90,25 @@ try {
     # Memory tracking stays on here: the unit tests are where a leak in the
     # compiler shows up, and it costs a fraction of a second. Vet covers the test
     # code too; `-vet-packages` keeps it out of Odin's own `core:testing`.
-    & odin test src -vet-unused -vet-shadowing -vet-packages:lokec
-    if ($LASTEXITCODE -ne 0) { throw "compiler unit tests failed ($LASTEXITCODE)" }
+    Invoke-Native 'compiler unit tests failed' { odin test src -vet-unused -vet-shadowing -vet-packages:lokec }
 
     # An unused local or a shadowed name is how a rename or a deleted branch goes
     # quiet instead of failing, so the shipped binary is built under both vets.
-    & odin build src -out:lokec.exe -vet-unused -vet-shadowing
-    if ($LASTEXITCODE -ne 0) { throw "compiler build failed ($LASTEXITCODE)" }
+    Invoke-Native 'compiler build failed' { odin build src -out:lokec.exe -vet-unused -vet-shadowing }
 
     # The language server compiles in the whole compiler, so it is rebuilt with
     # it; the integration harness talks to the binary over real pipes.
-    & odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp
-    if ($LASTEXITCODE -ne 0) { throw "language server unit tests failed ($LASTEXITCODE)" }
-    & odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing
-    if ($LASTEXITCODE -ne 0) { throw "language server build failed ($LASTEXITCODE)" }
+    Invoke-Native 'language server unit tests failed' { odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp }
+    Invoke-Native 'language server build failed' { odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing }
 
     # This is also the example gate: every program under examples/ is
     # compiled from its real source here, and the ones with fixed output are
     # compared against it. They are the only corpus that doubles as documentation.
     [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', $null, 'Process')
-    & odin test tests -define:ODIN_TEST_TRACK_MEMORY=false `
-        -vet-unused -vet-shadowing -vet-packages:tests
-    if ($LASTEXITCODE -ne 0) { throw "baseline integration tests failed ($LASTEXITCODE)" }
+    Invoke-Native 'baseline integration tests failed' {
+        odin test tests -define:ODIN_TEST_TRACK_MEMORY=false `
+            -vet-unused -vet-shadowing -vet-packages:tests
+    }
 
     # Every test that compiles with LOKE_TEST_FLAGS reruns at each level: the
     # run/trap corpus, multi-package programs, the examples, and the tutorials.
@@ -113,11 +122,10 @@ try {
         foreach ($mode in @('minimal', 'size', 'speed', 'aggressive')) {
             Write-Host "Checking the optimization corpus at -opt=$mode"
             [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', "-opt=$mode", 'Process')
-            & odin test tests `
-                -define:ODIN_TEST_TRACK_MEMORY=false `
-                -define:ODIN_TEST_NAMES=$matrix
-            if ($LASTEXITCODE -ne 0) {
-                throw "optimization corpus failed at -opt=$mode ($LASTEXITCODE)"
+            Invoke-Native "optimization corpus failed at -opt=$mode" {
+                odin test tests `
+                    -define:ODIN_TEST_TRACK_MEMORY=false `
+                    -define:ODIN_TEST_NAMES=$matrix
             }
         }
     }
