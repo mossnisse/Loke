@@ -690,10 +690,6 @@ These parts are open:
 - **Binding the error in `errdefer`.** Zig's `errdefer |err|` names the error
   being returned. An `errdefer` reads locals today; binding needs a syntax and
   a rule for an error that has moved into the result.
-- **Whether `ok_or` keeps a job.** A failure operand covers every propagation
-  `ok_or` served and evaluates its error only on failure; `ok_or` remains for
-  an `Option` that is stored or passed on. `map_error` keeps the same job for
-  a `Result` or `Status`.
 - **Generic code over both result shapes.** A procedure generic over
   `Result($T, $E)` does not accept a `Status(E)`, so a library that is generic
   over fallible results may need both forms. A parametric type alias,

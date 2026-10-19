@@ -409,6 +409,16 @@ cost is that a member of a bare `or_return`'s payload needs parentheses,
 `(f() or_return).len()`; nothing in the repository wrote the unparenthesised
 form, and the diagnostic suggests the parentheses.
 
+`Option.ok_or` stays after the failure operand took over propagation. A
+failure operand adapts an absence only where it returns. An `Option` that
+becomes a `Result` value has no such site: it is stored, passed to a
+procedure that takes a `Result`, or switched on. Without `ok_or` each of those
+is a switch of its own, and `map_error` keeps the same job for a `Result`. Its
+cost is the eager argument, which is built on every call, so it suits a cheap
+error such as an enum value. An expensive error belongs after `or_return` or in
+a switch. A lazy `ok_or_else` taking a callable was not added, since a switch
+already writes that case plainly.
+
 ### `Status(E)`
 
 A procedure that only fails returned `Result(Unit, E)`, so the empty type
