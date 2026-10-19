@@ -24,11 +24,14 @@ checklist.
   if (modified.unix_nanoseconds() > cutoff_nanoseconds) { ... }
   ```
 
-- An extension `==`, `!=`, `<`, `<=`, `>`, or `>=` on an anonymous record no
-  longer replaces the record's built-in comparison: a structural type counts as
-  built-in for operator shadowing, as `[2]int` does. Such an operator is now
-  never chosen, with no diagnostic. Upgrade by declaring a struct for a record
-  that needs its own comparison, or by calling the procedure by name:
+- An extension comparison on an anonymous record no longer replaces a built-in
+  one: a structural type counts as built-in for operator shadowing, as `[2]int`
+  does. An extension `==` or `!=` on a record whose fields are all comparable,
+  and an extension `<`, `<=`, `>`, or `>=` on one whose fields are all ordered,
+  is now never chosen, with no diagnostic. One the language does not define,
+  such as `<` on a record with a union field or `==` on one with a slice field,
+  is still chosen. Upgrade by declaring a struct for a record that needs its
+  own comparison, or by calling the procedure by name:
 
   ```odin
   // before: picked the extension
@@ -123,6 +126,10 @@ checklist.
   hook on an anonymous record now says that no package declares it and suggests
   a struct. See design.md
   [Methods and implementation blocks](design.md#methods-and-implementation-blocks).
+  Anonymous unions, new in this release, follow the comparison rule of the
+  upgrade note under **Breaking changes**: an extension `==` or `!=` on one
+  whose payloads are all comparable is never chosen, and its built-in equality
+  compares by label and payload.
 - Removed completed review reports and their documentation references.
 - A statement the parser cannot finish, such as `value.` or `call(first, `,
   is still checked so editors can see its names and types; its syntax error
