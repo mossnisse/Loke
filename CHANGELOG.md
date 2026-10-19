@@ -169,6 +169,10 @@ checklist.
 
 ### Fixed
 
+- `is_copyable(expression)` no longer moves out of its operand.
+  `is_copyable(move(value))` emitted no move but left `value` dead, so its
+  drop never ran and a later use was `L0500`. Its operand is now unevaluated,
+  as `size_of`'s is.
 - `process.output` ends the child as soon as reading its stderr fails, instead
   of first reading stdout to its end, which a child holding stdout open never
   lets happen.

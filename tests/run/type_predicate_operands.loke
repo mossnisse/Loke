@@ -1,0 +1,33 @@
+package main;
+import "core:fmt";
+import "base:meta";
+
+// design.md "Variable declarations": the expression forms of `is_copyable`
+// and `is_union` are unevaluated operands, so `move(value)` in one moves
+// nothing and the local still drops. design.md "Built-in procedures":
+// `is_union` asks only a type's kind, so a reflection descriptor is no union.
+
+Token :: move_only struct { id: int }
+impl Token {
+	release :: hook(drop) proc(self: inout Token) { fmt.println("drop", self.id); }
+}
+U :: union { token: Token, empty }
+
+kind :: proc($T: type) -> bool { return is_union(T); }
+
+main :: proc() {
+	value: U = .token(Token{7});
+	fmt.println(is_union(move(value)));
+	fmt.println(is_copyable(move(value)), is_copyable(value));
+	switch (value) {
+	case .token(t): fmt.println("still", t.id);
+	case .empty:
+	}
+
+	static_assert(!is_union(meta.Field));
+	static_assert(!is_union(meta.Enum_Value));
+	static_assert(!is_union(meta.Variant));
+	static_assert(!kind(meta.Field) && !kind(meta.Enum_Value) && !kind(meta.Variant));
+	static_assert(!is_union(type));
+	static_assert(kind(U));
+}

@@ -3384,7 +3384,7 @@ A lexical local variable without an initializer starts **dead and uninitialized*
 
 An ordinary expression may read, borrow, take the address of, move, or drop a local variable only where the compiler can prove that the local is live on every path to that expression. Otherwise the use is a compile-time error; ordinary Loke code never evaluates an uninitialized value. A dead local may be named only as the destination of a full assignment. Field and element assignments do not partially initialize a dead aggregate. `move` and `drop` make a live local dead again. Liveness is independent of the stored bytes: an inert zero representation does not make a dead variable readable. `x: T = ---;` declares a dead local whose uses the compiler does not check; see [`---`](#built-in-values).
 
-Liveness is not required in an **unevaluated operand**. `type_of(expression)`, the expression forms of `size_of` and `align_of`, and the entity operand of `source_location` inspect only a declaration or static type. Their operands must resolve and type-check, but they do not read storage, create a borrow, or require the named local to be live.
+Liveness is not required in an **unevaluated operand**. `type_of(expression)`, the expression forms of `size_of`, `align_of`, `is_copyable`, and `is_union`, and the entity operand of `source_location` inspect only a declaration or static type. Their operands must resolve and type-check, but they do not read storage, create a borrow, or require the named local to be live.
 
 Parameters start live. File-scope, `static`, and `thread_local` variables use the constant-initialization rule under [Storage modifiers](#storage-modifiers) and therefore still receive their zero value when they omit an initializer.
 
@@ -5752,7 +5752,7 @@ The predeclared operations used by this document are:
 | `size_of(T)`, `align_of(T)` | Size and alignment in bytes; compile-time constants. Accept a type or an expression |
 | `offset_of(T, field)` | Byte offset of a field; a compile-time constant |
 | `is_copyable(T)` | Whether a copy of `T` exists at all; a compile-time `bool`, false for a [move-only](#lifecycle-hooks-and-resource-types) type |
-| `is_union(T)` | Whether `T` is a union, named or anonymous; a compile-time `bool`, true exactly for a subject that [per-variant switch cases](#per-variant-switch-cases) and [union argument expansion](#union-argument-expansion) accept |
+| `is_union(T)` | Whether `T` is a union, named or anonymous; a compile-time `bool`. It asks only the kind, so a type with no runtime storage, such as a [reflection descriptor](#compile-time-reflection), is simply not one. True exactly for a subject that [per-variant switch cases](#per-variant-switch-cases) and [union argument expansion](#union-argument-expansion) accept |
 | `type_of(expr)` | The compile-time [`type`](#type-and-typeid) of an expression |
 | `typeid_of(T)` | The runtime [`typeid`](#type-and-typeid) constant for a compile-time type |
 | `type_info_of(id)` | read-only `^runtime.Type_Info` for a `typeid`; the table is shared static storage |

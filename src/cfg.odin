@@ -2329,7 +2329,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	}
 	#partial switch builtin {
 	// Unevaluated operands read nothing (design.md "Variable declarations").
-	case .Size_Of, .Align_Of, .Offset_Of, .Type_Of, .Source_Location:
+	case .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Is_Union, .Type_Of, .Source_Location:
 		return nil
 	}
 	provider_container_moves(graph, v)

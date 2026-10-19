@@ -647,7 +647,7 @@ report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 	if sym := symbol_of(k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
-		case .Size_Of, .Align_Of, .Offset_Of, .Type_Of, .Source_Location, .Exchange, .Unsafe_Take, .Unsafe_Write, .Drop:
+		case .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Is_Union, .Type_Of, .Source_Location, .Exchange, .Unsafe_Take, .Unsafe_Write, .Drop:
 			return
 		}
 	}

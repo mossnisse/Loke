@@ -423,7 +423,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 
 // design.md "Built-in procedures": `is_copyable(T)` is false exactly when `T` is
 // move-only, the same question the move-only diagnostics ask. `is_union(T)` asks
-// what per-variant expansion asks of its subject.
+// what per-variant expansion asks of its subject. Neither evaluates its operand.
 @(private = "file")
 check_type_predicate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, builtin: Builtin_Kind) {
 	v.type = INVALID_TYPE
@@ -435,7 +435,12 @@ check_type_predicate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Id
 		return
 	}
 	operand := operand_type(k, v.args[0].value, ident.name, true)
-	if operand == INVALID_TYPE || !gate_type(k, operand, expr_span(v.args[0].value)) {
+	if operand == INVALID_TYPE {
+		return
+	}
+	// A kind needs no runtime storage, so a reflection descriptor or an
+	// interface is simply not a union. Copying asks about runtime values.
+	if builtin == .Is_Copyable && !gate_type(k, operand, expr_span(v.args[0].value)) {
 		return
 	}
 	v.type = TYPE_BOOL
