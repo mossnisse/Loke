@@ -130,6 +130,9 @@ checklist.
   upgrade note under **Breaking changes**: an extension `==` or `!=` on one
   whose payloads are all comparable is never chosen, and its built-in equality
   compares by label and payload.
+- A union argument expansion over a place whose selected member takes its
+  payload by `move` now says the call is written `..move(...)`, rather than
+  numbering an argument the call does not write.
 - Removed completed review reports and their documentation references.
 - A statement the parser cannot finish, such as `value.` or `call(first, `,
   is still checked so editors can see its names and types; its syntax error

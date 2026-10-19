@@ -404,6 +404,12 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 					}
 					return cand
 				}
+				// design.md "Union argument expansion": a place lends its
+				// payload, and moving the operand is what gives it up.
+				if payload, ok := arg.expr.(^Expr_Ident); ok && mode == .Move && payload.name == DISPATCH_PAYLOAD {
+					cand.reason = "it takes the payload by `move`, and a place lends it; this is written `..move(...)`"
+					return cand
+				}
 				if mode == .Move {
 					cand.reason = fmt.aprintf(
 						"it takes argument %d by `move`, which is written `move(...)`",

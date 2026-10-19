@@ -798,10 +798,6 @@ implemented; comments.md records why. What is still open:
 - **More arguments.** The expanded union is a call's only written argument.
   Passing context beside it, as in `handle(context, ..event)`, needs a rule for
   how a label competes with positional arguments for a parameter.
-- **A lent payload meeting `move`.** Over a place, a member that takes its
-  payload by `move` fails overload resolution with the generic note that the
-  argument "is written `move(...)`". A note naming `..move(operand)` would say
-  what to write.
 - **Code size.** Each expansion is compiled once per variant, and the backend
   does not merge identical copies yet.
 

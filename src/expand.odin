@@ -563,8 +563,7 @@ note_expanded_case :: proc(k: ^Checker, entry: Switch_Case, before: int) {
 // ---------------------------------------------- union argument expansion --
 
 // The payload binding of a union argument expansion's cases; `$` keeps it out
-// of reach of written code.
-@(private = "file")
+// of reach of written code. Overload notes recognize it.
 DISPATCH_PAYLOAD :: "dispatch$payload"
 
 // design.md "Union argument expansion": `show(..answer)` over a union is
