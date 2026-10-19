@@ -244,10 +244,6 @@ token optimization, can the syntax be made to be token efficient?
 LLM readability and writability, how does that differ from humans? LLM's are trained on human data but works differently.
 Encapsulation and abstractions must still be important so they can work on an part of the code.
 
-## garbage collection
-
-add an garbage collected allocator as an alternative?
-
 ## Symbolic links before `core:fs` supports them
 
 standard-library.md "`core:fs`" says symbolic links are unsupported and that
