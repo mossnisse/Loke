@@ -403,7 +403,7 @@ Padded :: struct($T: type) { /* private */ }
 fixed(value: f64, digits: int) -> Fixed
 pad_left(value: $T, width: int) -> Padded(T)
 pad_right(value: $T, width: int) -> Padded(T)
-zero_pad(value: $T, width: int) -> Padded(T) where interfaces.Integral(T)
+zero_pad(value: $T, width: int) -> Padded(T) where interfaces.Integral(T), T != rune
 ```
 
 A `Writer` borrows its sink: any record with a `write(self: inout, bytes:
@@ -447,11 +447,13 @@ runes, so a column lines up on the right, and `pad_right` puts the spaces
 after it; a longer value prints whole. Width counts runes, not display
 columns. `zero_pad(value, width)` fills an integer with zeros between its sign
 and its digits instead: `zero_pad(7, 3)` is `007`, `zero_pad(-7, 3)` is `-07`,
-and the sign counts toward `width`. Padding formats the value twice, once to
+and the sign counts toward `width`. A leading `+` from a type's own `format`
+is a sign too. A `rune` is rejected, since it prints as its character; pad
+`int(r)` for its code point. Padding formats the value twice, once to
 measure it. Each wrapper holds its value as a returned `value` parameter does
 (design.md "Parameter semantics and ABI lowering"), so pad a view of a
-container rather than the container. They nest, as in `pad_left(fixed(x, 1), 8)`, and the call's
-`Options` reach the wrapped value.
+container rather than the container. They nest, as in
+`pad_left(fixed(x, 1), 8)`, and the call's `Options` reach the wrapped value.
 
 ## `core:strings`
 

@@ -1,3 +1,5 @@
+// Public, so `core:fmt` sees the operators `Signed` delegates.
+@(public)
 package main;
 // standard-library.md "`core:fmt`": `fixed`, `pad_left`, `pad_right`, and
 // `zero_pad`.
@@ -5,6 +7,18 @@ import "core:fmt";
 import "core:time";
 
 Shout :: struct { @(public) text: string }
+
+// An integer type whose own `format` writes `+` for a positive value.
+Signed :: distinct int;
+impl Signed {
+	delegate(+, -, *, /, %, |, ~, &, &~);
+	shift_left :: operator(<<) proc(a: Signed, shift: uint) -> Signed { return Signed(int(a) << shift); }
+	shift_right :: operator(>>) proc(a: Signed, shift: uint) -> Signed { return Signed(int(a) >> shift); }
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		if (int(self) >= 0) { fmt.concat_to(writer, "+"); }
+		fmt.format_to_with(writer, options, int(self));
+	}
+}
 
 impl Shout {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
@@ -35,6 +49,8 @@ main :: proc() {
 
 	// Zeros go after the sign, which counts toward the width.
 	fmt.println(fmt.zero_pad(7, 3), fmt.zero_pad(-7, 3), fmt.zero_pad(12345, 3), fmt.zero_pad(-12, 3), fmt.zero_pad(0, 0));
+	// A type's own `+` is a sign as well.
+	fmt.println(fmt.zero_pad(Signed(7), 4), fmt.zero_pad(Signed(-7), 4), fmt.zero_pad(Signed(12345), 3));
 	fmt.println(fmt.zero_pad(u8(9), 2), fmt.zero_pad(i64(-9223372036854775807 - 1), 21));
 	fmt.format_to_with(fmt.stdout(), fmt.Options{base = 16, uppercase = false}, fmt.zero_pad(255, 4), fmt.zero_pad(-255, 5));
 	fmt.println();

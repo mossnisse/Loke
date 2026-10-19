@@ -1,8 +1,15 @@
 L0444
-@7:14
+@8:14
 `string` does not satisfy `Integral(string)`
 while instantiating `zero_pad(string)`
 L0444
-@8:14
+@9:14
 `f64` does not satisfy `Integral(f64)`
 `%` does not apply to `f64` and `f64`
+L0434
+@10:14
+`zero_pad(rune)` does not satisfy the bound `T != rune`
+L0434
+@11:14
+`zero_pad(rune)` does not satisfy the bound `T != rune`
+!zero_pad(int)

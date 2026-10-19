@@ -207,9 +207,11 @@ pad_right :: proc(value: $T, width: int) -> Padded(T) {
 }
 
 // An integer padded with zeros after its sign, so `zero_pad(7, 3)` prints `007`
-// and `zero_pad(-7, 3)` prints `-07`. The sign counts toward `width`.
+// and `zero_pad(-7, 3)` prints `-07`. The sign counts toward `width`, and a
+// leading `+` from a type's own `format` is a sign too. A `rune` is `Integral`
+// but prints as its character, so it is rejected; `int(r)` pads its code point.
 @(public)
-zero_pad :: proc(value: $T, width: int) -> Padded(T) where interfaces.Integral(T) {
+zero_pad :: proc(value: $T, width: int) -> Padded(T) where interfaces.Integral(T), T != rune {
 	return Padded(T){value, width, .Zero};
 }
 
@@ -230,8 +232,8 @@ impl Padded($T) {
 		if (self.fill == .Right) {
 			format_any(self.value, writer, options);
 		}
-		if (self.fill == .Zero && counter.signed) {
-			write_bytes(writer, "-");
+		if (self.fill == .Zero) {
+			write_bytes(writer, counter.sign);
 		}
 		pad: string_view = " ";
 		if (self.fill == .Zero) { pad = "0"; }
@@ -241,21 +243,22 @@ impl Padded($T) {
 		if (self.fill == .Left) {
 			format_any(self.value, writer, options);
 		} else if (self.fill == .Zero) {
-			unsigned := Unsigned{writer, counter.signed};
+			unsigned := Unsigned{writer, counter.sign != ""};
 			format_any(self.value, (Writer)(&mut unsigned), options);
 		}
 	}
 }
 
 @(private)
-Rune_Counter :: struct { runes: int, signed: bool }
+Rune_Counter :: struct { runes: int, sign: string_view }
 
 impl Rune_Counter {
-	// Every byte but a UTF-8 continuation byte starts a rune. A leading `-` is
-	// also the sign `zero_pad` writes ahead of its zeros.
+	// Every byte but a UTF-8 continuation byte starts a rune. A leading `-` or
+	// `+` is also the sign `zero_pad` writes ahead of its zeros.
 	write :: proc(self: inout, bytes: []u8) {
 		foreach (b in bytes) {
-			if (self.runes == 0 && b == '-') { self.signed = true; }
+			if (self.runes == 0 && b == '-') { self.sign = "-"; }
+			if (self.runes == 0 && b == '+') { self.sign = "+"; }
 			if ((b & 0xC0) != 0x80) { self.runes += 1; }
 		}
 	}
