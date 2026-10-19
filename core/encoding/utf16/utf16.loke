@@ -80,15 +80,9 @@ decode :: proc(
 		} else if (value >= 0xDC00 && value <= 0xDFFF) {
 			return .err(.Invalid_Data);
 		}
-		switch (builder.try_append(rune(value))) {
-		case .ok:
-		case .err: return .err(.Out_Of_Memory);
-		}
+		builder.try_append(rune(value)) or_return .Out_Of_Memory;
 	}
-	switch (builder.try_finish()) {
-	case .ok(finished):  return finished;
-	case .err: return .err(.Out_Of_Memory);
-	}
+	return builder.try_finish() or_return .Out_Of_Memory;
 }
 
 // The units up to the first zero, which is what a wide API returning a

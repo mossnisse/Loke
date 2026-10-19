@@ -180,17 +180,8 @@ read_text :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result(string, io.Error) {
 	bytes := read_bytes(path, allocator, limit) or_return;
-	switch (string_view.from_utf8(bytes[:])) {
-	case .some(view):
-		switch (strings.try_copy(view, allocator)) {
-		case .ok(text):
-			return text;
-		case .err:
-			return .err(io.from_allocator_error(.Read));
-		}
-	case .none:
-		return .err(io.make_error(.Invalid_Data, .Read));
-	}
+	view := string_view.from_utf8(bytes[:]) or_return io.make_error(.Invalid_Data, .Read);
+	return strings.try_copy(view, allocator) or_return io.from_allocator_error(.Read);
 }
 
 // Truncates an existing file only after the target has been opened. This is not

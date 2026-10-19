@@ -217,11 +217,8 @@ rune_size :: proc(value: rune) -> int {
 Cut :: struct { before: string_view, after: string_view }
 
 cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
-	switch (index(text, separator)) {
-	case .some(at): return Cut{text[0:at], text[at + separator.len():]};
-	case .none: return .none;
-	}
-	return .none;
+	at := index(text, separator) or_return;
+	return Cut{text[0:at], text[at + separator.len():]};
 }
 
 // ------------------------------------------------------------ boundaries --
