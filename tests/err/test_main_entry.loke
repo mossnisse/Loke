@@ -1,0 +1,6 @@
+// design.md "Test procedures": a test named `main` is not an executable's
+// entry; tests/test/test_named_main.loke runs the same declaration as a test.
+package main;
+
+@(test)
+main :: proc() { assert(true); }

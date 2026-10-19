@@ -5684,9 +5684,9 @@ parses_seven :: proc() -> Status(Parse_Error) {
 }
 ```
 
-A test procedure is declared at file scope, not in an `impl` block or a foreign block. It takes no parameters and returns nothing or a [fallible union](#typed-fallibility) whose success variant carries nothing or carries `Unit`, as [`main`](#program-entry-and-exit) may. It is not generic, has the `loke` calling convention, and is not `@(export)`. No code names it: a call or any other use of its name, in its package or in an importer, is a compile-time error, so only a test build calls it.
+A test procedure is declared at file scope, not in an `impl` block or a foreign block. It takes no parameters and returns nothing or a [fallible union](#typed-fallibility) whose success variant carries nothing or carries `Unit`, as [`main`](#program-entry-and-exit) may. It is not generic, has the `loke` calling convention, and is not `@(export)`. No code names it: a call or any other use of its name, in its package or in an importer, is a compile-time error, so only a test build calls it. That includes a procedure group member and a query such as `source_location(name)`, and a test named `main` is not an executable's entry.
 
-A test procedure is checked in every build, like any other declaration, so what it names must exist in every build. Only a [test build](#build-modes) emits its body, and only for tests of the root package: a package's test build does not run the tests of the packages it imports.
+A test procedure is checked in every build, like any other declaration, so what it names must exist in every build. Only a [test build](#build-modes) emits its body, with the [static-duration](#storage-modifiers) locals and local procedures written in it, and only for tests of the root package: a package's test build does not run the tests of the packages it imports.
 
 A test build accepts any root package. Its executable entry runs tests in place of `main`, which, if the package has one, is an ordinary procedure. The executable takes at most one argument, the name of a test:
 

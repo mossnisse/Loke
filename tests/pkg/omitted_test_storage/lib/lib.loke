@@ -1,0 +1,18 @@
+@(public) package lib;
+
+import "core:fmt";
+
+Resource :: struct { id: int }
+impl Resource {
+	release :: hook(drop) proc(self: inout Resource) {
+		fmt.println("cleanup ran", self.id);
+	}
+}
+
+answer :: proc() -> int { return 42; }
+
+@(test)
+imported_owns_tls :: proc() {
+	held: thread_local Resource = {9};
+	_ = held.id;
+}

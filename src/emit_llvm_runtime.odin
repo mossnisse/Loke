@@ -228,7 +228,7 @@ emit_text_declarations :: proc(e: ^Emitter) {
 emit_static_locals :: proc(e: ^Emitter) {
 	for symbol_id, index in e.c.static_locals {
 		sym := symbol_of(e.c, symbol_id)
-		if sym == nil || sym.kind != .Var {
+		if sym == nil || sym.kind != .Var || inside_omitted_test(e.omitted_tests, sym.span) {
 			continue
 		}
 		name := fmt.aprintf("@loke.s.%d.%s", index, llvm_safe(identifier_text(e.c, sym.name)))
@@ -305,7 +305,9 @@ thread_local_owners :: proc(e: ^Emitter) -> []Thread_Local_Owner {
 		append(owners, Thread_Local_Owner{symbol_id, pkg.key, file, sym.span.lo})
 	}
 	for symbol_id in e.c.static_locals {
-		add(e, &owners, symbol_id)
+		if sym := symbol_of(e.c, symbol_id); sym != nil && !inside_omitted_test(e.omitted_tests, sym.span) {
+			add(e, &owners, symbol_id)
+		}
 	}
 	for index in 1 ..< len(e.c.packages) {
 		for file in package_of(e.c, Package_Id(index)).files {

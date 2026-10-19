@@ -108,3 +108,33 @@ collect_tests :: proc(c: ^Compiler, root: Package_Id) {
 test_procedure_emitted :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
 	return symbol == nil || !symbol.is_test || (c.build_mode == .Test && symbol.pkg == c.root_package)
 }
+
+// design.md "Test procedures": the tests this build leaves out. Storage and
+// local procedures written inside one go with its body, so an omitted test's
+// `thread_local` adds no teardown to the program.
+omitted_test_spans :: proc(c: ^Compiler) -> []Span {
+	spans := make([dynamic]Span)
+	for pkg in c.packages {
+		for file in pkg.files {
+			for item in file.active_items {
+				d, is_decl := item.(^Decl)
+				if !is_decl || len(d.symbols) != 1 {
+					continue
+				}
+				if symbol := symbol_of(c, d.symbols[0]); symbol != nil && !test_procedure_emitted(c, symbol) {
+					append(&spans, d.span)
+				}
+			}
+		}
+	}
+	return spans[:]
+}
+
+inside_omitted_test :: proc(omitted: []Span, at: Span) -> bool {
+	for test in omitted {
+		if test.file == at.file && test.lo <= at.lo && at.hi <= test.hi {
+			return true
+		}
+	}
+	return false
+}

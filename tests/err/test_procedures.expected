@@ -33,3 +33,5 @@ L0607
 `@(test)` cannot appear on a local declaration
 L0616
 @51:17
+L0616
+@55:22

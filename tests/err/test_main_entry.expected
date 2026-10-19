@@ -1,0 +1,3 @@
+L0303
+@6:1
+`main` is a test procedure, so only a test build calls it

@@ -49,3 +49,8 @@ other :: proc(n: int) {}
 
 // A group would make the test callable too.
 grouped :: proc{helper, other};
+
+// A declaration query names the test as much as a call does.
+locates :: proc() {
+	_ = source_location(helper);
+}

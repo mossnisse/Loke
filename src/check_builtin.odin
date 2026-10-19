@@ -1074,7 +1074,11 @@ check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Bui
 		v.type = INVALID_TYPE
 		return
 	case:
-		declared, found := entity_declaration_span(k, v.args[0].value)
+		declared, found, refused := entity_declaration_span(k, v.args[0].value)
+		if refused {
+			v.type = INVALID_TYPE
+			return
+		}
 		if !found {
 			errorf(k.c, expr_span(v.args[0].value), "L0573", "`source_location` takes a declared name")
 			v.type = INVALID_TYPE
@@ -1123,16 +1127,20 @@ enclosing_procedure_name :: proc(k: ^Checker) -> string {
 }
 
 @(private = "file")
-entity_declaration_span :: proc(k: ^Checker, e: Expr) -> (Span, bool) {
+entity_declaration_span :: proc(k: ^Checker, e: Expr) -> (span: Span, found: bool, refused: bool) {
 	ident, is_ident := e.(^Expr_Ident)
 	if !is_ident {
-		return no_span(), false
+		return no_span(), false, false
 	}
 	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
 	if sym == nil {
-		return no_span(), false
+		return no_span(), false, false
 	}
-	return sym.span, true
+	// design.md "Test procedures": naming a test is an error here too.
+	if reject_test_procedure_use(k, sym, ident.name, ident.span) {
+		return no_span(), true, true
+	}
+	return sym.span, true, false
 }
 
 // An omitted argument whose default is `caller_location()`, folded for *this*

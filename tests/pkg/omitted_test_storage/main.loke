@@ -1,0 +1,25 @@
+// design.md "Test procedures": an ordinary build omits a test's body, and with
+// it the `thread_local` and `static` storage and the local procedures written
+// inside it, in the root package and in an imported one. No test's cleanup
+// runs when the program's thread ends.
+package main;
+
+import "core:fmt";
+import "lib";
+
+@(test)
+owns_tls :: proc() {
+	held: thread_local lib.Resource = {id = 7};
+	inner := proc() {
+		counted: static lib.Resource = {id = 8};
+		_ = counted.id;
+	};
+	inner();
+	_ = held.id;
+}
+
+main :: proc() {
+	kept: thread_local lib.Resource = {id = 1};
+	_ = kept.id;
+	fmt.println("main", lib.answer());
+}

@@ -1,0 +1,6 @@
+// design.md "Test procedures": a test build runs a test named `main`, which
+// an ordinary build rejects (tests/err/test_main_entry.loke).
+package main;
+
+@(test)
+main :: proc() { assert(true); }

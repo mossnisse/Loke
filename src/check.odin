@@ -342,6 +342,9 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	} else if symbol := symbol_of(c, entry); symbol == nil || symbol.kind != .Proc {
 		span := symbol == nil ? no_span() : symbol.span
 		errorf(c, span, "L0303", "`main` must be a procedure: `%s`", "main :: proc() { ... }")
+	} else if symbol.is_test {
+		// design.md "Test procedures": only a test build calls one.
+		errorf(c, symbol.span, "L0303", "`main` is a test procedure, so only a test build calls it; an executable needs an ordinary `main`")
 	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 ||
 	   (info.result != INVALID_TYPE && info.result != TYPE_I32 && !entry_result_is_fallible(c, info.result)) {
 		errorf(
