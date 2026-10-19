@@ -1,0 +1,16 @@
+package shapes;
+
+// design.md "Methods and implementation blocks": this extension of a
+// structural shape is visible for method lookup only inside this package.
+Pair :: (left: int | right: int);
+
+impl Pair {
+	@(public)
+	describe :: proc(self) -> int { return 1; }
+}
+
+@(public)
+make :: proc() -> (left: int | right: int) { return .left(2); }
+
+@(public)
+use_here :: proc(p: (left: int | right: int)) -> int { return p.describe(); }

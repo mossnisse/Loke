@@ -24,6 +24,20 @@ checklist.
   if (modified.unix_nanoseconds() > cutoff_nanoseconds) { ... }
   ```
 
+- An extension `==`, `!=`, `<`, `<=`, `>`, or `>=` on an anonymous record no
+  longer replaces the record's built-in comparison: a structural type counts as
+  built-in for operator shadowing, as `[2]int` does. Such an operator is now
+  never chosen, with no diagnostic. Upgrade by declaring a struct for a record
+  that needs its own comparison, or by calling the procedure by name:
+
+  ```odin
+  // before: picked the extension
+  impl Span { same :: operator(==) proc(a, b: Span) -> bool { ... } }
+  if (a == b) { ... }
+  // after
+  if (Span.same(a, b)) { ... }
+  ```
+
 ### Added
 
 - Success returns: in a procedure returning a fallible union, `return value;`
@@ -103,6 +117,12 @@ checklist.
 
 ### Changed
 
+- An `impl` on an anonymous record or union, naming the shape or an alias of
+  it, is specified as an extension: it reaches every spelling of the shape in
+  its package and no other package's method lookup, and cannot add a hook. A
+  hook on an anonymous record now says that no package declares it and suggests
+  a struct. See design.md
+  [Methods and implementation blocks](design.md#methods-and-implementation-blocks).
 - Removed completed review reports and their documentation references.
 - A statement the parser cannot finish, such as `value.` or `call(first, `,
   is still checked so editors can see its names and types; its syntax error

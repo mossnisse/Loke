@@ -1,0 +1,63 @@
+// design.md "Methods and implementation blocks": no package declares an
+// anonymous record or union, so an `impl` on one is an extension that reaches
+// every spelling of the shape in this package, whether the block names an alias
+// or the shape itself. design.md "Operator lookup and overload resolution": a
+// structural type is built-in for shadowing, so an extension `==` or `<` does
+// not change how it compares, while an operator the language does not define
+// on it is found normally.
+package main;
+import "core:fmt";
+
+Pair :: (left: int | right: int);
+Span :: (low: int, high: int);
+
+impl Pair {
+	payload :: proc(self) -> int {
+		switch (self) {
+		case .left(n):  return n;
+		case .right(n): return -n;
+		}
+	}
+	// Never chosen: the built-in comparison wins.
+	same :: operator(==) proc(a, b: Pair) -> bool { return true; }
+}
+
+impl Span {
+	width :: proc(self) -> int { return self.high - self.low; }
+	// Never chosen: the built-in lexicographic order wins.
+	before :: operator(<) proc(a, b: Span) -> bool { return false; }
+	// No built-in `+` on a record, so this one is found.
+	join :: operator(+) proc(a, b: Span) -> Span { return {a.low, b.high}; }
+}
+
+// The block names the shape directly.
+impl (on: bool | off:) {
+	lit :: proc(self) -> bool { return self.as(.on) or_else false; }
+}
+
+// A union field leaves the record unordered, so its `<` is an ordinary overload.
+Tagged :: (rank: int, side: Pair);
+impl Tagged {
+	before :: operator(<) proc(a, b: Tagged) -> bool { return a.rank < b.rank; }
+}
+
+main :: proc() {
+	// Spelled without the alias, the values still reach the alias's members.
+	p: (left: int | right: int) = .left(3);
+	q: (left: int | right: int) = .right(3);
+	fmt.println(p.payload(), q.payload(), Pair.payload(p));
+	s: (low: int, high: int) = {2, 5};
+	t: Span = {4, 9};
+	fmt.println(s.width(), (s + t).width());
+	switch_on: (on: bool | off:) = .on(true);
+	switch_off: (on: bool | off:) = .off;
+	fmt.println(switch_on.lit(), switch_off.lit());
+
+	// Top level and as a part compare alike.
+	fmt.println(p == q, p == p, [1]Pair{p} == [1]Pair{q});
+	fmt.println(s < t, t < s);
+
+	a: Tagged = {1, p};
+	b: Tagged = {2, q};
+	fmt.println(a < b, b < a);
+}

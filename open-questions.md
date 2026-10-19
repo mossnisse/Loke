@@ -730,15 +730,10 @@ return Date.from_components(year, month, day) or_return .Invalid_Value;
 
 This is planned as its own mechanical commit, separate from the feature.
 
-### Bindings and methods on structural types
+### Bindings inside structural types
 
-- **A `$` binding inside a structural type.** `(some: $T | none:)` and a `$`
-  inside an anonymous record are rejected today. Binding by label and order in
-  both is one later change.
-- **Methods on an alias of a structural type.** `impl` on an alias of an
-  anonymous record or union is not rejected, and the spec says nothing about
-  either. A method there would apply to every spelling of that shape in the
-  package. The answer should be the same for both kinds.
+`(some: $T | none:)` and a `$` inside an anonymous record are rejected today.
+Binding by label and order in both is one later change.
 
 ### Parametric aliases
 
@@ -782,7 +777,7 @@ Open points:
 - **Order.** Spliced alternatives would take their place in the written order,
   which is also the tag order.
 - **Generic sets.** `(..$E | limit: Limit_Error)` over a set bound by a
-  generic would need [`$` bindings inside structural types](#bindings-and-methods-on-structural-types)
+  generic would need [`$` bindings inside structural types](#bindings-inside-structural-types)
   first.
 - **Syntax.** `..` in a type is new. It is the variadic spread's punctuation,
   which [union argument expansion](design.md#union-argument-expansion) also

@@ -537,6 +537,24 @@ contradict its type, and calling the type's operators would make record order
 run user code; that can come later if programs need it. See
 [Comparison operators](design.md#comparison-operators).
 
+### Methods on structural types
+
+An anonymous record or union belongs to no package, so an `impl` on one is an
+[extension](design.md#methods-and-implementation-blocks), as one on `int` is.
+Rejecting it would make a structural type the one type that cannot be
+extended, though extending it grants nothing that "Structs declare, parentheses
+describe" protects: an extension adds no hook, sees no private field, and stays
+in its own package. Inside that package it reaches every spelling of the shape,
+which is what an extension of `[2]int` does too.
+
+For the same reason a structural type counts as built-in for
+[operator lookup](design.md#operator-lookup-and-overload-resolution): an
+extension `==` or `<` cannot change how it compares. Its equality and order
+come from its parts, as an array's do, and part comparison already ignores
+extensions. Letting a top-level extension win would make `a == b` and
+`[1]T{a} == [1]T{b}` disagree, and make one shape compare differently in each
+package that extends it.
+
 ### Anonymous unions
 
 A procedure whose result has several outcomes needed a declared union even when

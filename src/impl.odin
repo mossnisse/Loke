@@ -47,7 +47,8 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	item.declared = true
 	item.subject = subject
 
-	// Built-in and foreign subjects have no owning package, so they are extended.
+	// Built-in, foreign, and structural subjects have no owning package, so they
+	// are extended (design.md "Methods and implementation blocks").
 	info := type_of(k.c, subject)
 	owner := info == nil ? nil : symbol_of(k.c, info.symbol)
 	own_package := owner != nil && owner.pkg == k.pkg

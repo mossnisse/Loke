@@ -653,6 +653,19 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 		}
 	}
 	if item.kind == .Extend {
+		// No package declares a structural record, so only a declared one can
+		// carry a hook (design.md "Methods and implementation blocks").
+		if info := type_of(k.c, subject); info != nil && info.anonymous_record {
+			errorf(
+				k.c,
+				sym.span,
+				"L0486",
+				"an anonymous record has no declaring package, so `hook(%s)` cannot be added to `%s`; declare a struct to give it one",
+				hook_name(sym.hook),
+				type_name(k.c, subject),
+			)
+			return
+		}
 		errorf(
 			k.c,
 			sym.span,

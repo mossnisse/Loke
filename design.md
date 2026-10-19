@@ -1458,7 +1458,7 @@ A labeled record has at least one field and an unlabeled one at least two. One v
 
 Its identity is **structural**: the ordered sequence of its fields' names and types. Two records with the same fields in the same order are the same type wherever they are written; the same fields in a different order are different types. A field name is part of the type, so `(a: int, b: int)` and `(x: int, y: int)` are unrelated. An unlabeled field's position is its name: `(int, int)` is one type wherever it is written, and it is a different type from every labeled record, `(a: int, b: int)` included. A labeled record [converts implicitly](#implicit-type-conversions) to the unlabeled record of its field types, dropping the names, so `pair: (int, int) = bounds();` and passing `bounds()` to a `(int, int)` parameter both work. Nothing converts the other way or between two sets of names, and the conversion is of values: a procedure type that returns `(low: int, high: int)` is not one that returns `(int, int)`.
 
-Every field is public. A labeled field is selected by name; an unlabeled field has no name to select, so an unlabeled record is taken apart only by [destructuring](#destructuring) and built only by positional literal elements. Copy, move, drop, equality, formatting, and reflection follow the ordinary structural rules. A record whose fields are all ordered is itself [ordered](#comparison-operators), field by field in declaration order, so a `[dynamic](priority: int, id: int)` sorts without a comparator. An unlabeled record prints as `(1, true)`, and reflection reports each of its fields with the empty name `""`.
+Every field is public. A labeled field is selected by name; an unlabeled field has no name to select, so an unlabeled record is taken apart only by [destructuring](#destructuring) and built only by positional literal elements. Copy, move, drop, equality, formatting, and reflection follow the ordinary structural rules. A record whose fields are all ordered is itself [ordered](#comparison-operators), field by field in declaration order, so a `[dynamic](priority: int, id: int)` sorts without a comparator. An unlabeled record prints as `(1, true)`, and reflection reports each of its fields with the empty name `""`. No package declares a record, so methods on one are [extensions](#methods-and-implementation-blocks).
 
 A record is constructed by a contextually typed composite literal or through a type alias:
 
@@ -1852,7 +1852,7 @@ Its identity is **structural**: the ordered sequence of its labels and payload t
 
 Otherwise it is an ordinary union. It is built with the contextual `.label(payload)` or through an alias, `Either.left(1)`, and `Either.left` is its [constructor](#constructing-a-variant). [Inspecting](#inspecting-a-union) it, [switch ownership](#switch-ownership), copy, move, drop, equality, formatting, and the [representation](#representation) are a named union's, so `(node: ^Node | end:)` is one address.
 
-It carries no attributes. It therefore has [no zero value](#types-with-no-zero-value), is not a [fallible expression](#typed-fallibility), so `or_else` and `or_return` reject it, and does not [require its results](#require_results). A union that needs one of those is declared, and `distinct` does not make an anonymous one nominal. An alternative's type is not a `$` binding.
+It carries no attributes. It therefore has [no zero value](#types-with-no-zero-value), is not a [fallible expression](#typed-fallibility), so `or_else` and `or_return` reject it, and does not [require its results](#require_results). A union that needs one of those is declared, and `distinct` does not make an anonymous one nominal. An alternative's type is not a `$` binding. As for an anonymous record, methods on one are [extensions](#methods-and-implementation-blocks).
 
 ##### Widening by label
 
@@ -2249,7 +2249,7 @@ impl vendor.Vector2 {
 }
 ```
 
-An `impl` in the subject type's package defines **inherent** members. An `impl` elsewhere defines an **extension** visible only in its own package. Built-in and foreign types can therefore only be extended.
+An `impl` in the subject type's package defines **inherent** members. An `impl` elsewhere defines an **extension** visible only in its own package. Built-in and foreign types can therefore only be extended. So can an [anonymous record](#anonymous-records) or [anonymous union](#anonymous-unions), which no package declares: an `impl` on one, whether it names the shape or an alias of it, is an extension, and inside its package it reaches every spelling of that shape. Like any extension it cannot add a [hook](#hooks), and it does not change how the shape [compares](#operator-lookup-and-overload-resolution).
 
 A procedure returning an owning `string` selects its allocator through an ordinary parameter; see [Allocators](#allocators).
 
@@ -2459,6 +2459,8 @@ Assignment (`=`), declaration (`:=`), member access (`.`), address-of, dereferen
 Operator lookup considers built-in operations, inherent implementations, and extension implementations in the current package. Operators may be defined for any operand types, including built-in types and types from other packages; imported extension packages stay reachable through their qualified names but do not alter operator lookup. Lexical scope is considered before type ranking, so a local operator set can shadow an outer one.
 
 **Built-in operations cannot be shadowed.** When every operand is a built-in type and the language defines that operator on those operands, the built-in operation always wins: `a + b` on two `int`s is integer addition everywhere. Where no built-in operation exists (`string + []u8`), there is nothing to shadow and an ordinary overload is found normally.
+
+An [anonymous record](#anonymous-records) or [anonymous union](#anonymous-unions) is a built-in type for this rule, since no package declares it: an extension `==` or `<` does not change how the shape compares, at the top level or as a part. An operator the language does not define on it, such as `+` on a record, or `<` on a record with an unordered field, is found as an ordinary overload.
 
 A `distinct` type is not a built-in type for this rule, even when its underlying type is: `Meters :: distinct f64` is a user type with ordinary operator overloads. (Its conversion to and from `f64` is still a built-in conversion, so it takes precedence under [Resolving `T(...)`](#resolving-t).)
 

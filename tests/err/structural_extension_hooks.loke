@@ -1,0 +1,22 @@
+// design.md "Methods and implementation blocks": an `impl` on an anonymous
+// record is an extension, so it cannot add a semantic hook; a union carries no
+// lifecycle hook at all.
+package main;
+
+Span :: (low: int, high: int);
+
+impl Span {
+	copy :: hook(copy) proc(self) -> Span { return {self.low, self.high}; }
+}
+
+impl (name: string, size: int) {
+	drop :: hook(drop) proc(self: inout) {}
+}
+
+Pair :: (left: int | right: int);
+
+impl Pair {
+	drop :: hook(drop) proc(self: inout) {}
+}
+
+main :: proc() {}

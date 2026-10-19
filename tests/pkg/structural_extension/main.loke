@@ -1,0 +1,13 @@
+package main; import "core:fmt";
+
+import "./shapes";
+
+// The same shape extended here: each package sees its own member.
+impl (left: int | right: int) {
+	describe :: proc(self) -> int { return 2; }
+}
+
+main :: proc() {
+	x := shapes.make();
+	fmt.println(x.describe(), shapes.use_here(x), shapes.describe(x));
+}

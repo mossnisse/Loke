@@ -1,0 +1,9 @@
+L0486
+@9:2
+an anonymous record has no declaring package, so `hook(copy)` cannot be added to `(low: int, high: int)`; declare a struct to give it one
+L0486
+@13:2
+an anonymous record has no declaring package, so `hook(drop)` cannot be added to `(name: string, size: int)`; declare a struct to give it one
+L0488
+@19:2
+`hook(drop)` is a record lifecycle role; `(left: int | right: int)` is not a record type

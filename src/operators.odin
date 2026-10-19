@@ -277,10 +277,15 @@ append_unique :: proc(out: ^[dynamic]Symbol_Id, id: Symbol_Id) {
 
 // -------------------------------------------------- the built-in priority --
 
-// A distinct type never participates in unshadowable built-in operations.
+// A distinct type never participates in unshadowable built-in operations. An
+// anonymous record or union belongs to no package, so it is a built-in type
+// for this rule (design.md "Operator lookup and overload resolution").
 operand_is_builtin :: proc(k: ^Checker, type: Type_Id) -> bool {
 	#partial switch type_kind(k.c, type) {
-	case .Distinct, .Struct, .Union, .Interface, .Dyn, .Invalid:
+	case .Struct, .Union:
+		info := type_of(k.c, type)
+		return info != nil && (info.anonymous_record || info.anonymous_union)
+	case .Distinct, .Interface, .Dyn, .Invalid:
 		return false
 	}
 	return true
