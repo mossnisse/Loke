@@ -11,6 +11,8 @@
 @(public)
 package fmt;
 
+import "base:interfaces";
+
 // One byte sink. Any record with this `write` is one, so the same view serves a
 // stream, a buffer, and a counting sink; `(fmt.Writer)(&mut sink)` makes it.
 @(public)
@@ -195,17 +197,29 @@ impl Fixed {
 // A longer value prints whole. `width` counts runes, not display columns.
 @(public)
 pad_left :: proc(value: $T, width: int) -> Padded(T) {
-	return Padded(T){value, width, true};
+	return Padded(T){value, width, .Left};
 }
 
 // The same, padded on the right, for a column that lines up on the left.
 @(public)
 pad_right :: proc(value: $T, width: int) -> Padded(T) {
-	return Padded(T){value, width, false};
+	return Padded(T){value, width, .Right};
+}
+
+// An integer padded with zeros after its sign, so `zero_pad(7, 3)` prints `007`
+// and `zero_pad(-7, 3)` prints `-07`. The sign counts toward `width`.
+@(public)
+zero_pad :: proc(value: $T, width: int) -> Padded(T) where interfaces.Integral(T) {
+	return Padded(T){value, width, .Zero};
 }
 
 @(public)
-Padded :: struct($T: type) { value: T, width: int, left: bool }
+Padded :: struct($T: type) { value: T, width: int, fill: Fill }
+
+// Where `Padded` puts its fill: spaces before the value or after it, or zeros
+// between the sign and the digits.
+@(private)
+Fill :: enum { Left, Right, Zero }
 
 impl Padded($T) {
 	format :: proc(self, writer: Writer, options: Options) {
@@ -213,27 +227,56 @@ impl Padded($T) {
 		// buffered; a `format` with side effects runs them twice.
 		counter := Rune_Counter{};
 		format_any(self.value, (Writer)(&mut counter), options);
-		if (!self.left) {
+		if (self.fill == .Right) {
 			format_any(self.value, writer, options);
 		}
+		if (self.fill == .Zero && counter.signed) {
+			write_bytes(writer, "-");
+		}
+		pad: string_view = " ";
+		if (self.fill == .Zero) { pad = "0"; }
 		for (i := counter.runes; i < self.width; i += 1) {
-			write_bytes(writer, " ");
+			write_bytes(writer, pad);
 		}
-		if (self.left) {
+		if (self.fill == .Left) {
 			format_any(self.value, writer, options);
+		} else if (self.fill == .Zero) {
+			unsigned := Unsigned{writer, counter.signed};
+			format_any(self.value, (Writer)(&mut unsigned), options);
 		}
 	}
 }
 
 @(private)
-Rune_Counter :: struct { runes: int }
+Rune_Counter :: struct { runes: int, signed: bool }
 
 impl Rune_Counter {
-	// Every byte but a UTF-8 continuation byte starts a rune.
+	// Every byte but a UTF-8 continuation byte starts a rune. A leading `-` is
+	// also the sign `zero_pad` writes ahead of its zeros.
 	write :: proc(self: inout, bytes: []u8) {
 		foreach (b in bytes) {
+			if (self.runes == 0 && b == '-') { self.signed = true; }
 			if ((b & 0xC0) != 0x80) { self.runes += 1; }
 		}
+	}
+}
+
+// Forwards to `target`, dropping the sign `zero_pad` already wrote.
+@(private)
+Unsigned :: struct { target: Writer, skip: bool }
+
+impl Unsigned {
+	// A loop rather than `bytes.len()`, which would emit the slice's built-in
+	// members into every program that imports this package.
+	write :: proc(self: inout, bytes: []u8) {
+		if (self.skip) {
+			foreach (_ in bytes) {
+				self.skip = false;
+				self.target.write(bytes[1:]);
+				return;
+			}
+		}
+		self.target.write(bytes);
 	}
 }
 

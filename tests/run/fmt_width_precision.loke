@@ -1,6 +1,8 @@
 package main;
-// standard-library.md "`core:fmt`": `fixed`, `pad_left`, and `pad_right`.
+// standard-library.md "`core:fmt`": `fixed`, `pad_left`, `pad_right`, and
+// `zero_pad`.
 import "core:fmt";
+import "core:time";
 
 Shout :: struct { @(public) text: string }
 
@@ -29,5 +31,16 @@ main :: proc() {
 	fmt.println([]fmt.Padded(int){fmt.pad_left(1, 3), fmt.pad_left(22, 3)});
 	// The options reach the padded value.
 	fmt.format_to_with(fmt.stdout(), fmt.Options{base = 16, uppercase = true}, fmt.pad_left(255, 4));
+	fmt.println();
+
+	// Zeros go after the sign, which counts toward the width.
+	fmt.println(fmt.zero_pad(7, 3), fmt.zero_pad(-7, 3), fmt.zero_pad(12345, 3), fmt.zero_pad(-12, 3), fmt.zero_pad(0, 0));
+	fmt.println(fmt.zero_pad(u8(9), 2), fmt.zero_pad(i64(-9223372036854775807 - 1), 21));
+	fmt.format_to_with(fmt.stdout(), fmt.Options{base = 16, uppercase = false}, fmt.zero_pad(255, 4), fmt.zero_pad(-255, 5));
+	fmt.println();
+	fmt.println("|", fmt.pad_left(fmt.zero_pad(-3, 3), 6), "|", []fmt.Padded(int){fmt.zero_pad(1, 3), fmt.pad_left(22, 3)});
+	// A custom form from the calendar's accessors.
+	date := time.Date.from_components(2026, .October, 5) or_else panic("valid date");
+	fmt.concat_to(fmt.stdout(), fmt.zero_pad(date.day(), 2), ".", fmt.zero_pad(int(date.month()), 2), ".", date.year());
 	fmt.println();
 }

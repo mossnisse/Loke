@@ -1,0 +1,8 @@
+L0444
+@7:14
+`string` does not satisfy `Integral(string)`
+while instantiating `zero_pad(string)`
+L0444
+@8:14
+`f64` does not satisfy `Integral(f64)`
+`%` does not apply to `f64` and `f64`

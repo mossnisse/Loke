@@ -87,6 +87,11 @@ checklist.
   pattern takes an argument whose alternatives it has, in any order, and binds
   each payload by its label. See design.md
   [Specialization](design.md#specialization).
+- `fmt.zero_pad(value, width)` pads an integer with zeros after its sign, so
+  `zero_pad(7, 3)` prints `007` and `zero_pad(-7, 3)` prints `-07`. It returns
+  a `Padded(T)` like `pad_left`, honours the call's base, and builds forms such
+  as `15.10.2026` from `core:time`'s accessors. See standard-library.md
+  [`core:fmt`](standard-library.md#corefmt).
 - `is_union(T)`: a compile-time `bool` built-in that is true for a union,
   named or anonymous. A generic procedure with an expanded case or a union
   argument expansion can bound `where is_union(E)`, so a non-union argument is

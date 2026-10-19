@@ -403,6 +403,7 @@ Padded :: struct($T: type) { /* private */ }
 fixed(value: f64, digits: int) -> Fixed
 pad_left(value: $T, width: int) -> Padded(T)
 pad_right(value: $T, width: int) -> Padded(T)
+zero_pad(value: $T, width: int) -> Padded(T) where interfaces.Integral(T)
 ```
 
 A `Writer` borrows its sink: any record with a `write(self: inout, bytes:
@@ -444,10 +445,12 @@ is `2`. NaN and the infinities print as a plain float does.
 `pad_left(value, width)` prints the value after enough spaces to fill `width`
 runes, so a column lines up on the right, and `pad_right` puts the spaces
 after it; a longer value prints whole. Width counts runes, not display
-columns. Padding formats the value twice, once to measure it. Either wrapper
-holds its value as a returned `value` parameter does (design.md "Parameter
-semantics and ABI lowering"), so pad a view of a container rather than the
-container. They nest, as in `pad_left(fixed(x, 1), 8)`, and the call's
+columns. `zero_pad(value, width)` fills an integer with zeros between its sign
+and its digits instead: `zero_pad(7, 3)` is `007`, `zero_pad(-7, 3)` is `-07`,
+and the sign counts toward `width`. Padding formats the value twice, once to
+measure it. Each wrapper holds its value as a returned `value` parameter does
+(design.md "Parameter semantics and ABI lowering"), so pad a view of a
+container rather than the container. They nest, as in `pad_left(fixed(x, 1), 8)`, and the call's
 `Options` reach the wrapped value.
 
 ## `core:strings`
@@ -1556,7 +1559,10 @@ fixed UTC offsets, and ISO 8601 text. Dates and times print in the ISO 8601
 extended format, in the RFC 3339 profile where one applies, and parse back. A
 duration prints in a short form, `1h30m` or `153ms`; its ISO 8601 form,
 `PT1H30M`, is one style away and parses too. There is no locale, no month or
-weekday name in text, and no pattern language.
+weekday name in text, and no pattern language. Other forms are built from the
+[accessors](#the-calendar) with [`fmt.zero_pad`](#corefmt), as in
+`fmt.concat_to(w, fmt.zero_pad(date.day(), 2), ".", fmt.zero_pad(int(date.month()), 2), ".", date.year())`
+for `15.10.2026`.
 
 Named time zones and the system's local zone are not here yet; see
 [Open questions in `core:time`](open-questions.md#open-questions-in-coretime).

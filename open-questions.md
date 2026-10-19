@@ -386,10 +386,6 @@ copyable, and nothing already in the package changes.
 - **The `µ` in `µs`.** It is U+00B5, two bytes of UTF-8, as Go prints it. A
   console whose code page is not UTF-8 shows it wrongly; `us` is the ASCII
   alternative, which the parser accepts either way.
-- **Zero-padded custom forms.** Other formats, such as `15.10.2026`, are built
-  from the accessors, but `fmt` cannot pad with zeros. A `fmt.zero_pad` wrapper
-  beside `pad_left` would serve every integer and is preferable to a pattern
-  language here.
 - **Calendar durations.** `P1Y2M3D` has no type; `add_months` and its siblings
   do the arithmetic. A `Period` type waits for a caller that stores or parses
   one.

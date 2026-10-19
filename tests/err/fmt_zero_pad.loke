@@ -1,0 +1,9 @@
+// standard-library.md "`core:fmt`": `zero_pad` pads an integer, so another
+// value is rejected at the call by its `interfaces.Integral` bound.
+package main;
+import "core:fmt";
+
+main :: proc() {
+	fmt.println(fmt.zero_pad("seven", 3));
+	fmt.println(fmt.zero_pad(1.5, 3));
+}
