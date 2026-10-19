@@ -54,3 +54,8 @@ grouped :: proc{helper, other};
 locates :: proc() {
 	_ = source_location(helper);
 }
+
+// A file-scope `when` is selected before the test's signature resolves.
+when (source_location(helper).line > 0) {
+	selected :: true;
+}

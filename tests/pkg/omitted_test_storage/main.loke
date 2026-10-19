@@ -1,7 +1,7 @@
 // design.md "Test procedures": an ordinary build omits a test's body, and with
-// it the `thread_local` and `static` storage and the local procedures written
-// inside it, in the root package and in an imported one. No test's cleanup
-// runs when the program's thread ends.
+// it the `thread_local` and `static` storage and the local procedures, generic
+// ones included, written inside it, in the root package and in an imported
+// one. No test's cleanup runs when the program's thread ends.
 package main;
 
 import "core:fmt";
@@ -16,6 +16,12 @@ owns_tls :: proc() {
 	};
 	inner();
 	_ = held.id;
+	tracked :: proc(value: $T) -> T {
+		seen: thread_local lib.Resource = {id = 10};
+		_ = seen.id;
+		return value;
+	}
+	assert(tracked(3) == 3);
 }
 
 main :: proc() {

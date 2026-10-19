@@ -2658,6 +2658,8 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 			span = v.span,
 			kind = .Proc,
 			pkg  = k.pkg,
+			// Which procedure it is written in (`omitted_with_test`).
+			def_scope = k.scope,
 		})
 	}
 	outer_impl := k.impl_type

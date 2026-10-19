@@ -56,8 +56,6 @@ Emitter :: struct {
 	literals: map[string]string,
 	simd_intrinsics: map[string]bool,
 	globals:  [dynamic]string,
-	// design.md "Test procedures": the spans of the tests this build omits.
-	omitted_tests: []Span,
 }
 
 // The only `Emitter` literal, so no map is left uninitialized.
@@ -97,7 +95,6 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 		module, ok = "", emission_contract_error(c, "emission added to the checked program")
 	}
 	e := make_emitter(c)
-	e.omitted_tests = omitted_test_spans(c)
 
 	emit_preamble(&e)
 	emit_struct_definitions(&e)
@@ -347,7 +344,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 		}
 	}
 	for literal, index in pkg.hoisted_procs {
-		if inside_omitted_test(e.omitted_tests, literal.span) {
+		if omitted_with_test(e.c, literal.symbol) {
 			continue
 		}
 		// The index keeps two bodies' same-named local procedures apart.
@@ -358,6 +355,9 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 		e.names[literal.symbol] = claim_name(e, llvm_proc_name(pkg, fmt.aprintf("%s.%d", written, index)))
 	}
 	for instance in pkg.instances {
+		if omitted_with_test(e.c, instance.symbol) {
+			continue
+		}
 		spelled: string
 		if instance.template == INVALID_SYMBOL {
 			spelled = qualified_member_name(e, symbol_of(e.c, instance.symbol))
@@ -523,13 +523,13 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 		}
 	}
 	for literal in pkg.hoisted_procs {
-		if !inside_omitted_test(e.omitted_tests, literal.span) {
+		if !omitted_with_test(e.c, literal.symbol) {
 			emit_proc(e, literal.symbol, literal)
 		}
 	}
 	for instance in pkg.instances {
 		// A generic method of an instantiated `impl` is still a template.
-		if symbol_is_template(e.c, instance.symbol) {
+		if symbol_is_template(e.c, instance.symbol) || omitted_with_test(e.c, instance.symbol) {
 			continue
 		}
 		if literal := decl_proc_literal(instance.decl); literal != nil {

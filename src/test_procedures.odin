@@ -68,11 +68,17 @@ reject_test_attribute :: proc(k: ^Checker, attributes: []Attribute, position: st
 // design.md "Test procedures": a use of the name is an error, so the test
 // build's entry is the only caller and other builds can leave the body out.
 reject_test_procedure_use :: proc(k: ^Checker, symbol: ^Symbol, name: string, span: Span) -> bool {
-	if !symbol.is_test {
+	if !symbol_is_test(symbol) {
 		return false
 	}
 	errorf(k.c, span, "L0616", "`%s` is a test procedure, which only a test build calls", name)
 	return true
+}
+
+// `is_test` is installed with the signature; a file-scope `when` condition is
+// selected before that, so it reads the attribute.
+symbol_is_test :: proc(symbol: ^Symbol) -> bool {
+	return symbol.is_test || (symbol.kind == .Proc && symbol.decl != nil && has_attribute(symbol.decl.attributes, "test"))
 }
 
 // The root package's tests, in file-name order and then source order, which
@@ -109,32 +115,23 @@ test_procedure_emitted :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
 	return symbol == nil || !symbol.is_test || (c.build_mode == .Test && symbol.pkg == c.root_package)
 }
 
-// design.md "Test procedures": the tests this build leaves out. Storage and
-// local procedures written inside one go with its body, so an omitted test's
-// `thread_local` adds no teardown to the program.
-omitted_test_spans :: proc(c: ^Compiler) -> []Span {
-	spans := make([dynamic]Span)
-	for pkg in c.packages {
-		for file in pkg.files {
-			for item in file.active_items {
-				d, is_decl := item.(^Decl)
-				if !is_decl || len(d.symbols) != 1 {
-					continue
-				}
-				if symbol := symbol_of(c, d.symbols[0]); symbol != nil && !test_procedure_emitted(c, symbol) {
-					append(&spans, d.span)
-				}
-			}
-		}
-	}
-	return spans[:]
-}
-
-inside_omitted_test :: proc(omitted: []Span, at: Span) -> bool {
-	for test in omitted {
-		if test.file == at.file && test.lo <= at.lo && at.hi <= test.hi {
+// design.md "Test procedures": whether the backend leaves this symbol out with
+// a test the build omits: the test itself, or anything written inside it, such
+// as a local procedure, an instance of a local generic, or a `static` or
+// `thread_local` local, however deeply nested.
+omitted_with_test :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> bool {
+	for symbol := symbol_of(c, symbol_id); symbol != nil; {
+		if !test_procedure_emitted(c, symbol) {
 			return true
 		}
+		owner: ^Expr_Proc
+		for scope := symbol.def_scope; scope != nil && owner == nil; scope = scope.parent {
+			owner = (^Expr_Proc)(scope.owner_proc)
+		}
+		if owner == nil {
+			return false
+		}
+		symbol = symbol_of(c, owner.symbol)
 	}
 	return false
 }

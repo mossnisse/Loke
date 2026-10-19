@@ -15,4 +15,10 @@ answer :: proc() -> int { return 42; }
 imported_owns_tls :: proc() {
 	held: thread_local Resource = {9};
 	_ = held.id;
+	tracked :: proc(value: $T) -> T {
+		seen: static Resource = {11};
+		_ = seen.id;
+		return value;
+	}
+	assert(tracked("x") == "x");
 }
