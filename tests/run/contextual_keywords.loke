@@ -1,0 +1,39 @@
+// grammar.md "Keywords": `dynamic`, `hook`, `operator`, `via`, and `where` are
+// keywords only in their own positions, so each also names a value here.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+dynamic :: 3;
+
+operator :: proc(x: int) -> int { return x * 2; }
+
+hook :: proc(x: int) -> int { return x + 1; }
+
+where :: proc($T: type) -> int where size_of(T) == 8 {
+	return 8;
+}
+
+Vec :: struct { x: int }
+
+Box_It :: struct { id: int }
+
+impl Vec {
+	add :: operator(+) proc(a: Vec, b: Vec) -> Vec { return Vec{x = a.x + b.x}; }
+}
+
+impl Box_It {
+	release :: hook(drop) proc(self: inout Box_It) { fmt.println("dropped", self.id); }
+}
+
+main :: proc() {
+	fixed: [(dynamic)]int = {};
+	grow := [dynamic]int{1, 2};
+	via: int = operator(hook(1));
+	arena := mem.Arena.init();
+	defer free_all(arena.allocator());
+	more: [dynamic]int via arena.allocator() = {4};
+	b := Box_It{id = 5};
+	fmt.println(fixed.len(), grow.len(), via, where(int), (Vec{x = 1} + Vec{x = 2}).x, more.len(), b.id);
+}

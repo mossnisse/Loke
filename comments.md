@@ -1294,6 +1294,43 @@ Switch has no competing traversal or header-binding form, so
 `switch (key in counts)` needs no extra parentheses. Payload bindings belong
 in its cases.
 
+### Keywords as member names, and five contextual keywords
+
+Loke is meant for general programs, whose data models and C bindings bring
+their own names: a JSON field `type` or `default`, a network type's
+`interface`, a set's `union`, a parser's `operator`. A reserved word costs
+most where it blocks such a name. A member is reached only through a value or
+a type, after `.` or as a keyed-literal field. In those positions a keyword
+means nothing else, so freeing them confuses no reader. The grammar already
+did this for `type`; it now does it for every reserved word.
+
+Of the words that begin a construct, `dynamic`, `hook`, `operator`, `via` and
+`where` each have one fixed position, decided by the tokens around it, much
+as `delegate` and `capture` are. Those five are contextual and otherwise
+ordinary names. Two of them need a rule that takes a meaning away from a name:
+- `[dynamic]` is always the dynamic array, so a length named `dynamic` is
+  parenthesised.
+- `hook(...)` begins a hook only when `proc` follows, since `hook(drop)` is
+  also a call.
+
+The rest stay reserved because both meanings fit the same position. That
+covers:
+- control flow;
+- `map`, since `map[k]` could index a variable;
+- `move`, since `move(x)` reads as a call;
+- `in`, an operator;
+- `default`, a case label;
+- the words that begin a type in an expression.
+
+A reserved word also never names a local, a parameter or a file-scope
+declaration, so code always reads a keyword in statement and expression
+position as the keyword.
+
+Each contextual word adds a disambiguation rule, and every tool that colours
+or formats Loke has to follow it. That cost is why the list stops at five.
+Raw identifiers, Rust's `r#type`, would free every word but make the freed
+names ugly at every use.
+
 ## Features kept close to Odin
 
 ### Standard output is binary

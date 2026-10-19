@@ -1,0 +1,13 @@
+// grammar.md "Keywords": a reserved word names a member, never a binding a
+// lookup reaches.
+package main;
+
+map := 1;
+
+f :: proc(in: int) {}
+
+main :: proc() {
+	default := 2;
+}
+
+sentinel :: proc() { }

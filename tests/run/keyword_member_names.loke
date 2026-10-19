@@ -1,0 +1,56 @@
+// grammar.md "Keywords": a reserved word is a member name, so a field, an enum
+// member, a variant, a record label, and an impl member may be one, and a
+// selector or keyed literal reaches it.
+package main;
+
+import "core:fmt";
+
+Kind :: enum { default, map, in, type }
+
+Token :: struct {
+	type: Kind,
+	in: int,
+	operator: string,
+	where: int,
+}
+
+Shape :: union { default, struct: int, proc: string }
+
+Set :: struct { bits: u32 }
+
+impl Set {
+	union :: proc(self: Set, other: Set) -> Set {
+		return Set{bits = self.bits | other.bits};
+	}
+	default :: 7;
+}
+
+Pair :: (map: int, if: bool);
+
+main :: proc() {
+	via := 1;
+	where := 2;
+	hook := 3;
+	operator := 4;
+	dynamic := 5;
+	values := [dynamic]int{};
+	values.append(via + where + hook + operator + dynamic);
+	t := Token{type = .map, in = 3, operator = "+", where = 9};
+	s := Shape.struct(4);
+	a := Set{bits = 1};
+	b := Set{bits = 2};
+	p: Pair = {map = 5, if = true};
+	switch (t.type) {
+	case .default:
+		fmt.println("default");
+	case .map:
+		fmt.println("map");
+	case:
+	}
+	switch (s) {
+	case .struct(n):
+		fmt.println(n);
+	case:
+	}
+	fmt.println(values[0], t.in, t.operator, t.where, a.union(b).bits, Set.default, p.map, p.if);
+}

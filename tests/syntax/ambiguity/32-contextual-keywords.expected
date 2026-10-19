@@ -1,0 +1,31 @@
+(file package="main"
+  (var names=["via"]
+    (binary Plus (call (ident "hook") (ident "drop")) (call (ident "operator") (int "1")))
+  )
+  (const names=["where"]
+    (binary Plus (ident "dynamic") (int "1"))
+  )
+  (var names=["fixed"] type=(array (ident "dynamic") (ident "int")))
+  (var names=["grown"] type=(dyn-array (ident "int")) via=(ident "where")
+    (composite _)
+  )
+  (const names=["add"]
+    (operator "+" (proc (proc-type (param ["a","b"] (ident "V")) (result (ident "V")))
+      (block
+        (return (ident "a"))
+      )
+    ))
+  )
+  (const names=["release"]
+    (hook drop (proc (proc-type (param inout ["self"] (ident "V")))
+      (block
+      )
+    ))
+  )
+  (const names=["pick"]
+    (proc (proc-type (param ["$T"] (type))) (where (binary Eq_Eq (call (ident "size_of") (ident "T")) (ident "where")))
+      (block
+      )
+    )
+  )
+)

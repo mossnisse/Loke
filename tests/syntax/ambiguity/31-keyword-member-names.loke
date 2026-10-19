@@ -1,0 +1,13 @@
+// A reserved word is a member name wherever one is written: a field, an enum
+// member, a variant, a record label, an impl member, a slot, and after `.`.
+package main;
+
+Token :: struct { type: Kind, in: int, map: int }
+Kind :: enum { default, union = 2 }
+Shape :: union { default, struct: int }
+Pair :: (if: int, else: bool);
+Choice :: (case: int | default:);
+impl Set { union :: proc(self: Set, other: Set) -> Set { return other; } }
+Named :: interface($S: type) { slot proc: proc(self: S); }
+keyed := Token{type = .default, in = 1, map = 2};
+selected := token.map + Kind.union + set.union(other).bits;

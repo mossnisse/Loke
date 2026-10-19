@@ -220,13 +220,39 @@ parse_error :: proc(
 	error_labelf(p.c, span, code, label, format, ..args)
 }
 
-// `type` is legal as a field, enum member, or selector name.
+// grammar.md "Keywords": a reserved word is a member name wherever one is
+// written, and is retagged as the name it is read as.
 @(private = "file")
 expect_member_name :: proc(p: ^Parser, code: string, what: string) -> (Token, bool) {
-	if at(p, .Type) {
-		return advance(p), true
+	if reserved_keyword(current(p).kind) {
+		return take_as(p, .Ident), true
 	}
 	return expect(p, .Ident, code, what)
+}
+
+@(private = "file")
+member_name_at :: proc(p: ^Parser, offset: int) -> bool {
+	kind := peek_token(p, offset).kind
+	return kind == .Ident || reserved_keyword(kind)
+}
+
+// Consumes the current token as `kind`. The formatter lays out these tokens,
+// so a contextual keyword the parser reads as one is spaced as a keyword, and a
+// reserved word read as a member name as a name.
+@(private = "file")
+take_as :: proc(p: ^Parser, kind: Token_Kind) -> Token {
+	if p.index < len(p.tokens) - 1 {
+		p.tokens[p.index].kind = kind
+	}
+	return advance(p)
+}
+
+// A contextual keyword is lexed as `Ident`; a probe the parser rolled back may
+// already have retagged it.
+@(private = "file")
+contextual_at :: proc(p: ^Parser, offset: int, kind: Token_Kind, word: string) -> bool {
+	t := peek_token(p, offset)
+	return t.kind == kind || t.kind == .Ident && text_of(p, t) == word
 }
 
 @(private = "file")
@@ -677,6 +703,12 @@ parse_member_list :: proc(p: ^Parser, kind: Member_Context) -> []Item {
 		start := current(p)
 		attributes := parse_attributes(p)
 
+		// grammar.md "Source files": an impl member is reached through its type, so its
+		// name is a `Member_Name`, and no keyword begins a member before `:`.
+		if kind == .Impl && reserved_keyword(current(p).kind) && peek_token(p, 1).kind == .Colon {
+			p.tokens[p.index].kind = .Ident
+		}
+
 		switch {
 		// `delegate` remains an identifier unless followed by `(`.
 		case kind == .Impl && is_contextual(p, "delegate") && peek_token(p, 1).kind == .Lparen:
@@ -791,9 +823,20 @@ starts_declaration :: proc(p: ^Parser) -> bool {
 
 @(private = "file")
 scans_name_list_colon :: proc(p: ^Parser, offset: int) -> bool {
+	return scans_list_colon(p, offset, false)
+}
+
+// A record type's labels are member names, so a reserved word may be one.
+@(private = "file")
+scans_label_list_colon :: proc(p: ^Parser, offset: int) -> bool {
+	return scans_list_colon(p, offset, true)
+}
+
+@(private = "file")
+scans_list_colon :: proc(p: ^Parser, offset: int, labels: bool) -> bool {
 	offset := offset
 	for {
-		if peek_token(p, offset).kind != .Ident {
+		if labels ? !member_name_at(p, offset) : peek_token(p, offset).kind != .Ident {
 			return false
 		}
 		offset += 1
@@ -866,16 +909,21 @@ starts_anon_record_type :: proc(p: ^Parser) -> bool {
 	if !at(p, .Lparen) {
 		return false
 	}
-	if scans_name_list_colon(p, 1) {
+	if scans_label_list_colon(p, 1) {
 		return true
 	}
 	depth := 0
 	in_where := false
 	for offset := 0; ; offset += 1 {
 		#partial switch peek_token(p, offset).kind {
-		case .Where:
-			if depth == 1 {
-				in_where = true
+		case .Ident, .Where:
+			// The clause's `where` follows the signature or generics it
+			// constrains; a name `where` cannot follow those.
+			#partial switch peek_token(p, offset - 1).kind {
+			case .Ident, .Rparen, .Rbracket, .Type, .Not:
+				if depth == 1 && contextual_at(p, offset, .Where, "where") {
+					in_where = true
+				}
 			}
 		case .Lbrace:
 			if depth == 1 {
@@ -941,8 +989,9 @@ parse_declaration :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> 
 		sync_to_item(p)
 		return nil, false
 	}
-	if at(p, .Via) {
-		advance(p)
+	// grammar.md "Resolved ambiguities": no name can follow a declared type.
+	if contextual_at(p, 0, .Via, "via") {
+		take_as(p, .Via)
 		d.via = parse_unary(p) // grammar.md: exactly one unary expression
 	}
 
@@ -976,7 +1025,7 @@ parse_storage_modifiers :: proc(p: ^Parser, d: ^Decl) {
 
 		next := peek_token(p, 1).kind
 		// A labelled `(` opens a record type; `static(int)` applies a type named `static`.
-		record := next == .Lparen && scans_name_list_colon(p, 2)
+		record := next == .Lparen && scans_label_list_colon(p, 2)
 		if next != .Assign && next != .Ident && !starts_type(next) && !record {
 			return // a type named `static`, not a modifier
 		}
@@ -1094,9 +1143,11 @@ parse_constant_value :: proc(p: ^Parser) -> Expr {
 	#partial switch current(p).kind {
 	case .Struct, .Union, .Enum, .Interface, .Proc, .Move_Only:
 		return parse_type(p) // the braced forms all live in the type grammar
-	case .Operator:
+	}
+	switch {
+	case starts_operator(p):
 		return parse_operator(p)
-	case .Hook:
+	case starts_hook(p):
 		return parse_hook(p)
 	}
 	// Allow `My_Int :: int` to use a type as its value.
@@ -2335,9 +2386,10 @@ parse_composite_body :: proc(p: ^Parser, type_expr: Expr, lo: u32) -> Expr {
 		start := current(p)
 		el: Element
 		first: Expr
-		if at(p, .Type) && peek_token(p, 1).kind == .Assign {
-			// `Member_Name` admits `type`, so a keyed literal must reach it too.
-			name := advance(p)
+		if reserved_keyword(current(p).kind) && peek_token(p, 1).kind == .Assign {
+			// A `Member_Name` may be a reserved word, so a keyed literal must
+			// reach it too; no expression begins with a keyword and `=`.
+			name := take_as(p, .Ident)
 			key := new_expr(p, Expr_Ident, name.lo)
 			key.name = text_of(p, name)
 			key.name_id = intern_identifier(p.c, key.name)
@@ -2749,7 +2801,7 @@ parse_type :: proc(p: ^Parser) -> Expr {
 parse_anon_record_type :: proc(p: ^Parser) -> Expr {
 	open := advance(p) // `(`
 	lo := open.lo
-	labelled := scans_name_list_colon(p, 0)
+	labelled := scans_label_list_colon(p, 0)
 	if labelled && scans_anon_union(p) {
 		return parse_anon_union_type(p, open)
 	}
@@ -2833,7 +2885,7 @@ parse_anon_union_type :: proc(p: ^Parser, open: Token) -> Expr {
 	for !at(p, .Rparen) && !at(p, .EOF) {
 		start := current(p)
 		variant: Variant
-		name, named := expect(p, .Ident, "L0254", "an alternative's label")
+		name, named := expect_member_name(p, "L0254", "an alternative's label")
 		if !named {
 			bad = true
 			for !at(p, .Pipe) && !at(p, .Rparen) && !at(p, .EOF) {
@@ -2886,7 +2938,7 @@ parse_anon_union_type :: proc(p: ^Parser, open: Token) -> Expr {
 parse_anon_record_field :: proc(p: ^Parser, labelled: bool) -> (Field, bool) {
 	start := current(p)
 	field: Field
-	if scans_name_list_colon(p, 0) != labelled {
+	if scans_label_list_colon(p, 0) != labelled {
 		what := "a record field is a type; every field of an unlabelled record type is unnamed"
 		if labelled {
 			what = "a record field is `name: Type`; every field of a labelled record type is named"
@@ -2902,7 +2954,7 @@ parse_anon_record_field :: proc(p: ^Parser, labelled: bool) -> (Field, bool) {
 	if labelled {
 		names := make([dynamic]Name, 0, 0, p.allocator)
 		for {
-			name, ok := expect(p, .Ident, "L0254", "a record field name")
+			name, ok := expect_member_name(p, "L0254", "a record field name")
 			if !ok {
 				break
 			}
@@ -2953,6 +3005,18 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 	open := advance(p) // `[`
 	lo := open.lo
 
+	// grammar.md "Resolved ambiguities": `[dynamic]` is the dynamic array even
+	// where a constant is named `dynamic`.
+	if contextual_at(p, 0, .Dynamic, "dynamic") && peek_token(p, 1).kind == .Rbracket {
+		take_as(p, .Dynamic)
+		advance(p) // `]`
+		elem := parse_type(p)
+		n := new_expr(p, Type_Dynamic_Array, lo)
+		n.elem = elem
+		n.has_error = expr_has_error(elem)
+		return n
+	}
+
 	#partial switch current(p).kind {
 	case .Caret:
 		advance(p)
@@ -2971,15 +3035,6 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 		n.mutable = mutable
 		n.elem = elem
 		n.has_error = expr_has_error(elem)
-		return n
-
-	case .Dynamic:
-		advance(p)
-		_, closed := expect(p, .Rbracket, "L0231", "`]` after `[dynamic`")
-		elem := parse_type(p)
-		n := new_expr(p, Type_Dynamic_Array, lo)
-		n.elem = elem
-		n.has_error = !closed || expr_has_error(elem)
 		return n
 
 	case .Question:
@@ -3046,7 +3101,7 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 	}
 
 	if at(p, .Lparen) {
-		if scans_name_list_colon(p, 1) {
+		if scans_label_list_colon(p, 1) {
 			// Diagnose `Foo(x: int)` as a misplaced record type.
 			parse_error(
 				p, span_of(p, current(p)), "L0254", "found a labelled field list",
@@ -3429,10 +3484,12 @@ parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 // A top-level `where` expression stops before the declaration body.
 @(private = "file")
 parse_where_clause :: proc(p: ^Parser) -> []Expr {
-	if !at(p, .Where) {
+	// No name can follow a signature, generics, or attributes, so `where`
+	// here is the keyword.
+	if !contextual_at(p, 0, .Where, "where") {
 		return nil
 	}
-	advance(p)
+	take_as(p, .Where)
 
 	outer := p.no_composite
 	p.no_composite = true
@@ -3523,7 +3580,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 		for !at(p, .Rbrace) && !at(p, .EOF) {
 			start := current(p)
 			entry: Variant
-			name, named := expect(p, .Ident, "L0239", "a variant name")
+			name, named := expect_member_name(p, "L0239", "a variant name")
 			if !named {
 				members_ok = false
 				more, _ := next_element(p, .Rbrace, true, "")
@@ -3575,13 +3632,13 @@ parse_field_list :: proc(p: ^Parser) -> ([]Field, bool) {
 
 		field: Field
 		field.attributes = parse_attributes(p)
-		if is_contextual(p, "using") && (peek_token(p, 1).kind == .Ident || peek_token(p, 1).kind == .Type) {
+		if is_contextual(p, "using") && member_name_at(p, 1) {
 			advance(p)
 			field.is_using = true
 		}
 
 		// One error is enough when no field can begin here.
-		if !at(p, .Ident) && !at(p, .Type) {
+		if !member_name_at(p, 0) {
 			expect_member_name(p, "L0241", "a field name")
 			bad = true
 			more, _ := next_element(p, .Rbrace, true, "")
@@ -3710,12 +3767,12 @@ parse_requirement :: proc(p: ^Parser) -> (Requirement, bool) {
 	requirement: Requirement
 
 	if is_contextual(p, "slot") &&
-	   peek_token(p, 1).kind == .Ident &&
+	   member_name_at(p, 1) &&
 	   peek_token(p, 2).kind == .Colon &&
 	   peek_token(p, 3).kind == .Proc {
 		advance(p) // `slot`
 		requirement.kind = .Slot
-		requirement.name = name_of(p, advance(p))
+		requirement.name = name_of(p, take_as(p, .Ident))
 		advance(p) // `:`
 		requirement.slot_type = parse_type(p)
 		_, terminated := expect(p, .Semicolon, "L0242", "`;` after the requirement")
@@ -3810,9 +3867,47 @@ parse_bindings :: proc(p: ^Parser) -> ([]Binding_Group, bool) {
 	return groups[:], closed && !bad
 }
 
+// grammar.md "Resolved ambiguities": `operator(+)` is never a call, since no
+// operator symbol is an expression by itself.
+@(private = "file")
+starts_operator :: proc(p: ^Parser) -> bool {
+	if !contextual_at(p, 0, .Operator, "operator") || peek_token(p, 1).kind != .Lparen {
+		return false
+	}
+	offset := 2
+	if peek_token(p, offset).kind == .Lbracket {
+		offset += 1
+		if peek_token(p, offset).kind == .Colon {
+			offset += 1
+		}
+		if peek_token(p, offset).kind != .Rbracket {
+			return false
+		}
+		offset += 1
+		if peek_token(p, offset).kind == .Assign {
+			offset += 1
+		}
+	} else if is_operator_symbol(peek_token(p, offset).kind) {
+		offset += 1
+	} else {
+		return false
+	}
+	return peek_token(p, offset).kind == .Rparen
+}
+
+// `hook(drop)` alone is a call; the `proc` after it makes the hook.
+@(private = "file")
+starts_hook :: proc(p: ^Parser) -> bool {
+	return contextual_at(p, 0, .Hook, "hook") &&
+	       peek_token(p, 1).kind == .Lparen &&
+	       peek_token(p, 2).kind == .Ident &&
+	       peek_token(p, 3).kind == .Rparen &&
+	       peek_token(p, 4).kind == .Proc
+}
+
 @(private = "file")
 parse_operator :: proc(p: ^Parser) -> Expr {
-	keyword := advance(p) // `operator`
+	keyword := take_as(p, .Operator)
 	lo := keyword.lo
 
 	_, opened := expect(p, .Lparen, "L0243", "`(` before the operator symbol")
@@ -3853,7 +3948,7 @@ parse_operator :: proc(p: ^Parser) -> Expr {
 // Hooks accept one procedure, not a procedure group.
 @(private = "file")
 parse_hook :: proc(p: ^Parser) -> Expr {
-	keyword := advance(p) // `hook`
+	keyword := take_as(p, .Hook)
 	lo := keyword.lo
 	_, opened := expect(p, .Lparen, "L0243", "`(` before the hook role")
 	role_token, has_role := expect(p, .Ident, "L0243", "one of `convert`, `copy`, or `drop`")

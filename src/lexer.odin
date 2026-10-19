@@ -24,14 +24,12 @@ Token_Kind :: enum {
 	Defer,
 	Distinct,
 	Dyn,
-	Dynamic,
 	Else,
 	Enum,
 	Errdefer,
 	For,
 	Foreach,
 	Foreign,
-	Hook,
 	If,
 	Impl,
 	Import,
@@ -42,7 +40,6 @@ Token_Kind :: enum {
 	Move,
 	Move_Only,
 	Mut,
-	Operator,
 	Or_Else,
 	Or_Return,
 	Package,
@@ -52,8 +49,15 @@ Token_Kind :: enum {
 	Switch,
 	Type,
 	Union,
-	Via,
 	When,
+
+	// Contextual keywords (grammar.md "Keywords"). The lexer produces them as
+	// `Ident`; the parser retags one it reads as the keyword, so a tool laying
+	// out the parsed tokens sees the keyword.
+	Dynamic,
+	Hook,
+	Operator,
+	Via,
 	Where,
 
 	// operators and punctuation
@@ -299,6 +303,12 @@ next_token :: proc(l: ^Lexer) -> Token {
 	return operator(l)
 }
 
+// A word reserved in every position (grammar.md "Keywords"), which is still a
+// member name.
+reserved_keyword :: proc(kind: Token_Kind) -> bool {
+	return kind >= .Break && kind <= .When
+}
+
 @(private = "file")
 ident_or_keyword :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
@@ -321,8 +331,6 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Distinct
 	case "dyn":
 		kind = .Dyn
-	case "dynamic":
-		kind = .Dynamic
 	case "else":
 		kind = .Else
 	case "enum":
@@ -335,8 +343,6 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Foreach
 	case "foreign":
 		kind = .Foreign
-	case "hook":
-		kind = .Hook
 	case "if":
 		kind = .If
 	case "impl":
@@ -357,8 +363,6 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Move_Only
 	case "mut":
 		kind = .Mut
-	case "operator":
-		kind = .Operator
 	case "or_else":
 		kind = .Or_Else
 	case "or_return":
@@ -377,12 +381,8 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Type
 	case "union":
 		kind = .Union
-	case "via":
-		kind = .Via
 	case "when":
 		kind = .When
-	case "where":
-		kind = .Where
 	}
 	return Token{kind = kind, lo = lo, hi = l.pos}
 }

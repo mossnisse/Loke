@@ -24,10 +24,9 @@ Kind :: enum {
 	EOF, Error,
 	Ident, Int, Float, String, Raw_String, Rune,
 	// keywords, reserved in every position
-	Break, Case, Continue, Default, Defer, Distinct, Dyn, Dynamic, Else, Enum, Errdefer, For,
-	Foreach, Foreign, Hook, If, Impl, Import, In, Inout, Interface, Map, Move, Move_Only,
-	Mut, Operator, Or_Else, Or_Return, Package, Proc, Return, Struct, Switch, Type,
-	Union, Via, When, Where,
+	Break, Case, Continue, Default, Defer, Distinct, Dyn, Else, Enum, Errdefer, For,
+	Foreach, Foreign, If, Impl, Import, In, Inout, Interface, Map, Move, Move_Only,
+	Mut, Or_Else, Or_Return, Package, Proc, Return, Struct, Switch, Type, Union, When,
 	// operators and punctuation
 	Plus, Minus, Star, Slash, Percent, Amp, Amp_Tilde, Pipe, Tilde, Shl, Shr, And_And,
 	Or_Or, Not, Eq_Eq, Not_Eq, Lt, Lt_Eq, Gt, Gt_Eq, Assign, Plus_Eq, Minus_Eq,
@@ -272,14 +271,12 @@ keyword :: proc(src: []u8, lo: int, hi: int) -> Kind {
 	case "defer":     return .Defer;
 	case "distinct":  return .Distinct;
 	case "dyn":       return .Dyn;
-	case "dynamic":   return .Dynamic;
 	case "else":      return .Else;
 	case "enum":      return .Enum;
 	case "errdefer":  return .Errdefer;
 	case "for":       return .For;
 	case "foreach":   return .Foreach;
 	case "foreign":   return .Foreign;
-	case "hook":      return .Hook;
 	case "if":        return .If;
 	case "impl":      return .Impl;
 	case "import":    return .Import;
@@ -290,7 +287,6 @@ keyword :: proc(src: []u8, lo: int, hi: int) -> Kind {
 	case "move":      return .Move;
 	case "move_only": return .Move_Only;
 	case "mut":       return .Mut;
-	case "operator":  return .Operator;
 	case "or_else":   return .Or_Else;
 	case "or_return": return .Or_Return;
 	case "package":   return .Package;
@@ -300,9 +296,7 @@ keyword :: proc(src: []u8, lo: int, hi: int) -> Kind {
 	case "switch":    return .Switch;
 	case "type":      return .Type;
 	case "union":     return .Union;
-	case "via":       return .Via;
 	case "when":      return .When;
-	case "where":     return .Where;
 	case:             return .Ident;
 	}
 }

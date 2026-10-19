@@ -73,6 +73,8 @@ format_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 	formatted := layout(text, tokens[:len(tokens) - 1], c.sources[file].comments[:])
 
 	// The guarantee, checked rather than assumed: the same tokens, in order.
+	// The parser retagged contextual keywords and keyword member names, so a
+	// token is compared by its text; the same text lexes to the same kind.
 	scratch: Compiler
 	defer destroy_compilation(&scratch)
 	append(&scratch.sources, Source{path = c.sources[file].path, text = formatted, line_starts = {}})
@@ -81,7 +83,7 @@ format_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 	same := len(again) == len(tokens)
 	for index := 0; same && index < len(tokens); index += 1 {
 		a, b := tokens[index], again[index]
-		same = a.kind == b.kind && text[a.lo:a.hi] == formatted[b.lo:b.hi]
+		same = text[a.lo:a.hi] == formatted[b.lo:b.hi]
 	}
 	if !same {
 		errorf(c, Span{file = file}, "L0405", "internal formatter error: formatting would change this file's tokens")

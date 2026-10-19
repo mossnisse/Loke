@@ -56,12 +56,18 @@ Reserved in every position:
 
 ```
 break       case       continue   default    defer      distinct   dyn
-dynamic     else       enum       errdefer   for        foreach    foreign
-hook        if         impl       import     in         inout      interface
-map         move       move_only  mut        operator   or_else    or_return
-package     proc       return     struct     switch     type       union
-via         when       where
+else        enum       errdefer   for        foreach    foreign    if
+impl        import     in         inout      interface  map        move
+move_only   mut        or_else    or_return  package    proc       return
+struct      switch     type       union      when
 ```
+
+A production writes any of them as `Keyword`. A reserved word is still a
+`Member_Name`: a field, an enum member, a union variant, a record type's label,
+an `impl` member, and an interface `slot` are reached through a value or a
+type, never by lookup, so any of them may be named `type`, `default`, `map`, or
+`union`, and `token.type`, `.default`, and `a.union(b)` select one. No reserved word names a binding a lookup reaches: a
+local, a parameter, a file-scope declaration, or a generic parameter.
 
 Contextual keywords, reserved only in the positions given:
 
@@ -74,6 +80,11 @@ Contextual keywords, reserved only in the positions given:
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
 | `capture` | directly after a procedure signature, followed by `(` |
 | `convert`, `copy`, `drop` | as the role inside `hook(...)` |
+| `dynamic` | between the `[` and `]` that begin a type |
+| `hook` | at the start of a constant's value, followed by `(`, an identifier, `)`, and `proc` |
+| `operator` | at the start of a constant's value, followed by `(`, an `Operator_Symbol`, and `)` |
+| `via` | directly after a variable's declared type |
+| `where` | directly after the signature, generic parameters, or attributes it constrains |
 
 `nil`, `true`, and `false` are predeclared identifiers, not keywords, but they
 are **reserved**: no name a lookup can reach may be one of them. A field or enum
@@ -194,6 +205,8 @@ Impl_Member   = Declaration | Delegate_Decl | ";"
 Delegate_Decl = "delegate" "(" Operator_Symbol ("," Operator_Symbol)* ","? ")" ";"
 ```
 
+An `Impl_Member` is reached through its type, so a `Declaration` there may be
+named with a reserved word: `union :: proc(self: Set, other: Set) -> Set`.
 Whether an `Impl_Block` is inherent or an extension follows from where its
 subject type is declared (see [design.md](design.md#methods-and-implementation-blocks)).
 An `Impl_Block` is also a `Statement`, when its subject is declared in the same
@@ -277,11 +290,13 @@ Type = "^" "mut"? Type                                   // pointer
      | Type_Name Type_Arguments?
 
 Record_Type    = "(" Record_Field ("," Record_Field)* ","? ")"
-Record_Field   = Identifier_List ":" Type                // labelled
+Record_Field   = Record_Label_List ":" Type              // labelled
                | Type                                    // unlabelled
 
+Record_Label_List = Member_Name ("," Member_Name)*
+
 Anon_Union_Type = "(" Alternative ("|" Alternative)+ "|"? ")"
-Alternative     = Identifier ":" Type?                   // `name:` carries nothing
+Alternative     = Member_Name ":" Type?                  // `name:` carries nothing
 
 Type_Name      = Identifier ("." Identifier)*            // qualified or associated
 Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ","? ")"
@@ -329,15 +344,15 @@ Enum_Type   = "enum" Type? "{" Enum_Field_List? "}"
 Enum_Field_List = Enum_Field ("," Enum_Field)* ","?
 Enum_Field  = Member_Name ("=" Expression)?
 
-// `type` is a member name too: no type can begin in this position, and the
-// reflection metadata spells a member `type` (`field.type`).
+// A member is reached through a value or a type, never by lookup, so a
+// reserved word names one too (see Keywords).
 Member_Name_List = Member_Name ("," Member_Name)*
-Member_Name = Identifier | "type"
+Member_Name = Identifier | Keyword
 
 Union_Type  = "union" Generic_Parameters? Attributes? Where_Clause? "{" Union_Variants? "}"
 Union_Variants = Union_Variant ("," Union_Variant)* ","?
 // A variant with no payload is a bare name; `name:` still means the same.
-Union_Variant  = Identifier (":" Type?)?
+Union_Variant  = Member_Name (":" Type?)?
 
 Generic_Parameters = "(" Generic_Parameter ("," Generic_Parameter)* ","? ")"
 Generic_Parameter  = Generic_Name ("," Generic_Name)* ":" Type
@@ -362,7 +377,7 @@ Interface_Definition = "interface" Generic_Parameters Where_Clause? "{" Requirem
 
 Requirement  = Bindings Expression "->" Requirement_Result ";"
              | Expression ("->" Requirement_Result)? ";"
-             | "slot" Identifier ":" Proc_Type ";"
+             | "slot" Member_Name ":" Proc_Type ";"
 
 Requirement_Result = "inout"? Type | "_"                // `_`: it need only compile
 Bindings           = "(" Binding_Group ("," Binding_Group)* ","? ")"
@@ -705,9 +720,9 @@ operations. This is how `make([dynamic]int)` and
 
 An `Element_Key` is an ordinary expression; which kind of key it is depends on
 the literal's type, so a bare identifier is a field name in a record literal and
-an ordinary value expression everywhere else. The keyword `type` directly before
-`=` is read the same way, as the field name `type`, since a `Member_Name` may be
-spelled `type`.
+an ordinary value expression everywhere else. A reserved word directly before
+`=` is read the same way, as a field name, since a `Member_Name` may be a
+reserved word and no expression begins with a keyword and `=`.
 
 A `Composite_Literal` with no `Composite_Type` takes its type from context. It
 may not begin an expression statement, because `{` at statement position starts
@@ -715,8 +730,8 @@ a block. A slice literal's type is the one written: `[]T{...}` is read-only and
 `[]mut T{...}` has mutable elements.
 
 A parenthesised group is a `Record_Type` when its first field group is
-labelled, found by the same bounded `Identifier_List ":"` scan a `Variable_Decl`
-uses, or when it holds a `,` at its own bracket depth. An expression holds such
+labelled, found by a bounded `Record_Label_List ":"` scan like the one a
+`Variable_Decl` uses, or when it holds a `,` at its own bracket depth. An expression holds such
 a comma only between a definition's `Where_Clause` conditions, and that one does
 not count: the clause ends at the definition's `{` (see
 [Resolved ambiguities](#resolved-ambiguities)).
@@ -779,9 +794,21 @@ The productions above use the following deterministic parsing rules:
   `where`, `{`, or `---`. A header with a clause is a `Proc_Definition`, never a
   `Proc_Declaration`. A captured path is named, `limit = self.limit`: an entry
   whose identifier is followed by `.`, `[`, or `^` is an error.
-- `via` in a declaration consumes one unary expression, so that
+- `via` directly after a declared type is the keyword, since no name can follow
+  a type there. It consumes one unary expression, so that
   `b: [dynamic]u8 via arena.allocator() = ...;` needs no backtracking. A larger
   allocator expression is parenthesised.
+- `where` directly after a signature, generic parameters, or a record's
+  attributes is the keyword, since no name can follow those.
+- In a type, `[dynamic]` is the dynamic array even where a constant is named
+  `dynamic`; an array whose length is that constant is written `[(dynamic)]T`.
+- At the start of a constant's value, `operator` followed by `(`, an
+  `Operator_Symbol`, and `)` begins an operator definition, since no operator
+  symbol is an expression by itself. `hook` followed by `(`, an identifier, and
+  `)` begins a hook only when `proc` follows, since `hook(drop)` alone is a
+  call. Anywhere else both are ordinary identifiers.
+- At the start of an `impl` member, a reserved word followed by `:` is the
+  member's name.
 - A `Where_Clause` is followed immediately by the declaration's `{`, so an
   expression in the clause may not have a `Composite_Literal` at its top level:
   in `where Additive(T) {` the brace opens the body. A bound that needs a

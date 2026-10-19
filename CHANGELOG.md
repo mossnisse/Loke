@@ -156,6 +156,15 @@ checklist.
 
 ### Changed
 
+- Any reserved word may name a member: a field, an enum member, a union
+  variant, a record type's label, an `impl` member, or an interface `slot`,
+  so `token.type`, `Kind.default`, `.map`, and `a.union(b)` are accepted; a
+  keyword still never names a local, a parameter, or a file-scope declaration.
+  `dynamic`, `hook`, `operator`, `via`, and `where` are contextual keywords,
+  ordinary names outside their own positions; `[dynamic]T` is always a dynamic
+  array, so a length named `dynamic` is written `[(dynamic)]T`. Rename in the
+  language server can now rename a member to or from a reserved word. See
+  grammar.md [Keywords](grammar.md#keywords).
 - An `impl` on an anonymous record or union, naming the shape or an alias of
   it, is specified as an extension: it reaches every spelling of the shape in
   its package and no other package's method lookup, and cannot add a hook. A

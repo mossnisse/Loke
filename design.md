@@ -179,7 +179,7 @@ Identifiers are case-sensitive, ASCII only, and match `[A-Za-z_][A-Za-z0-9_]*`. 
 
 `true`, `false`, and `nil` are **reserved**: no name a lookup can reach may be one of them. A declaration, parameter, loop binding, or pattern binding that takes one is rejected.
 
-A field or enum member is reached through a selector rather than by name lookup, so `S :: struct { true: int }` and `E :: enum { nil, other }` are legal and mean what they say.
+A field or enum member is reached through a selector rather than by name lookup, so `S :: struct { true: int }` and `E :: enum { nil, other }` are legal and mean what they say. For the same reason any word [grammar.md "Keywords"](grammar.md#keywords) reserves may name a field, an enum member, a union variant, a record type's label, an `impl` member, or an interface `slot`, as in `Token :: struct { type: Kind, in: int }`, `.default`, and `a.union(b)`; a keyword never names a binding a lookup reaches.
 
 Every other predeclared name may be shadowed by a declaration like any other name. They are:
 

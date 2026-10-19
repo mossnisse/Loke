@@ -150,12 +150,16 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	if !found { return "", "There is no binding at this position to rename." }
 	if failure = renameable(s, target); failure != "" { return }
 	old := target.symbol.name
-	if !is_identifier(new_name) { return "", fmt.tprintf("`%s` is not a name.", new_name) }
-	if new_name == old { return `{"changes":{}}`, "" }
 	// Fields, enum members, and `impl` or `extend` members are reached through
 	// a value or type, so scope cannot capture them; their type's other
 	// members can.
 	member := target.symbol.kind == .Field || target.symbol.kind == .Enum_Member || target.symbol.owner.id != lokec.INVALID_TYPE
+	// grammar.md "Keywords": a reserved word is a member name too.
+	kind, single := single_token(new_name)
+	if !single || (kind != .Ident && !(member && lokec.reserved_keyword(kind))) {
+		return "", fmt.tprintf("`%s` is not a name.", new_name)
+	}
+	if new_name == old { return `{"changes":{}}`, "" }
 	// design.md "Receiver forms": a first parameter named `self` is what
 	// makes a procedure a method.
 	if target.symbol.kind == .Parameter && (old == "self" || new_name == "self") {
@@ -214,7 +218,9 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 				case .Lparen, .Lbracket, .Lbrace: append(&open, token.kind)
 				case .Rparen, .Rbracket, .Rbrace: if len(open) > 0 { pop(&open) }
 				}
-				if token.kind != .Ident { continue }
+				// A reserved word is a name only as a member's.
+				keyword := lokec.reserved_keyword(token.kind)
+				if token.kind != .Ident && !(member && keyword) { continue }
 				word := source.text[token.lo:token.hi]
 				qualified := index > 0 && tokens[index - 1].kind == .Period
 				// A member's new name matters where a selector could reach it.
@@ -226,10 +232,16 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 				resolved := recorded && at.symbol.id != lokec.INVALID_SYMBOL
 				where_written := fmt.tprintf("%s:%d", source.path, offset_to_position(source.text, source.line_starts, token.lo, true).line + 1)
 				if word == old {
+					if !resolved && keyword { continue }
 					if !resolved {
 						return "", fmt.tprintf("`%s` at %s has no binding the compiler recorded, as in an inactive `when` branch, a generic that is never instantiated, or an interface slot, so rename cannot tell what it names.", old, where_written)
 					}
 					if !same_binding(rs, at.symbol, target) { continue }
+					// grammar.md "Resolved ambiguities": `[dynamic]` is always
+					// the dynamic array, so a length cannot take that name.
+					if new_name == "dynamic" && index > 0 && index + 1 < len(tokens) && tokens[index - 1].kind == .Lbracket && tokens[index + 1].kind == .Rbracket {
+						return "", fmt.tprintf("At %s, `[dynamic]` would be a dynamic array rather than a length named `dynamic`.", where_written)
+					}
 					// `f(old = value)` names the callee's parameter, which the
 					// caller's scope cannot capture.
 					label := target.symbol.kind == .Parameter && index > 0 && index + 1 < len(tokens) && tokens[index + 1].kind == .Assign &&
@@ -304,15 +316,16 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	return strings.to_string(b), ""
 }
 
-// One identifier token and nothing else, other than the blank `_`.
+// The kind of the one token `name` lexes to, when it is exactly one token and
+// not the blank `_`.
 @(private = "file")
-is_identifier :: proc(name: string) -> bool {
-	if name == "" || name == "_" { return false }
+single_token :: proc(name: string) -> (lokec.Token_Kind, bool) {
+	if name == "" || name == "_" { return .EOF, false }
 	tokens := lex_text(name)
 	defer delete(tokens)
 	count := 0
 	for token in tokens { if token.kind != .EOF { count += 1 } }
-	return count == 1 && tokens[0].kind == .Ident && tokens[0].lo == 0 && int(tokens[0].hi) == len(name)
+	return tokens[0].kind, count == 1 && tokens[0].lo == 0 && int(tokens[0].hi) == len(name)
 }
 
 @(private = "file")

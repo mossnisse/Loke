@@ -1232,6 +1232,13 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 		{"self", "package main;\nPoint :: struct { x: int }\nimpl Point { read :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p.read(); }\n", "self) -> int", "receiver", "`self` marks a method's receiver"},
 		{"call", "package main;\nPoint :: struct { x: int }\nimpl Point { call :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p(); }\n", "call ::", "invoke", "`call` is a member name the compiler or an interface looks up by name"},
 		{"to-call", "package main;\nPoint :: struct { x: int }\nimpl Point { read :: proc(self) -> int { return self.x; } }\nmain :: proc() { p := Point{1}; _ = p.read(); }\n", "read ::", "call", "`call` is a member name"},
+		// grammar.md "Keywords": a member may be renamed to or from a reserved
+		// word, which still marks a keyword wherever no member is named.
+		{"to-keyword", "package main;\nKind :: enum { old, other }\nmain :: proc() { k := Kind.old; switch (k) { case .old: default: } }\n", "old, other", "default", "main.loke:3"},
+		{"from-keyword", "package main;\nKind :: enum { default, other }\nmain :: proc() { k := Kind.default; switch (k) { case .default: default: } }\n", "default, other", "plain", "main.loke:3"},
+		{"keyword-local", "package main;\nmain :: proc() { old := 1; _ = old; }\n", "old := 1", "map", "`map` is not a name."},
+		// `[dynamic]` is always the dynamic array.
+		{"dynamic-length", "package main;\nN :: 2;\nmain :: proc() { a: [N]int = {}; _ = a; }\n", "N ::", "dynamic", "would be a dynamic array"},
 	}
 	h: Harness
 	if !start(&h, t, "rename-rules") { finish(&h); return }

@@ -776,10 +776,12 @@ static self slot using delegate thread_local manual
 	defer delete(tokens)
 	expected := []Token_Kind {
 		.Ident, .Int, .Float, .String, .Raw_String, .Rune,
-		.Break, .Case, .Continue, .Default, .Defer, .Distinct, .Dyn, .Dynamic, .Else,
+		// `dynamic`, `operator`, `via`, and `where` are contextual: the parser
+		// retags them where it reads the keyword.
+		.Break, .Case, .Continue, .Default, .Defer, .Distinct, .Dyn, .Ident, .Else,
 		.Enum, .Errdefer, .For, .Foreach, .Foreign, .If, .Impl, .Import, .In,
-		.Inout, .Interface, .Map, .Move, .Mut, .Operator, .Or_Else, .Or_Return,
-		.Package, .Proc, .Return, .Struct, .Switch, .Type, .Union, .Via, .When, .Where,
+		.Inout, .Interface, .Map, .Move, .Mut, .Ident, .Or_Else, .Or_Return,
+		.Package, .Proc, .Return, .Struct, .Switch, .Type, .Union, .Ident, .When, .Ident,
 		.Ident, .Ident, .Ident, .Ident, .Ident, .Ident, .Ident,
 		.Plus, .Minus, .Star, .Slash, .Percent, .Amp, .Amp_Tilde, .Pipe, .Tilde,
 		.Shl, .Shr, .And_And, .Or_Or, .Not, .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq,

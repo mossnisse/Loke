@@ -139,9 +139,13 @@
     },
     "keywords": {
       "patterns": [
-        { "name": "keyword.control.loke", "match": "\\b(?:if|else|for|foreach|in|switch|case|default|break|continue|return|defer|errdefer|when|or_else|or_return)\\b" },
-        { "name": "storage.type.loke", "match": "\\b(?:proc|struct|enum|union|interface|map|dynamic|dyn|distinct|type|impl|operator|hook|foreign)\\b" },
-        { "name": "storage.modifier.loke", "match": "\\b(?:mut|inout|move|move_only|via|where)\\b" },
+        { "name": "keyword.control.loke", "match": "(?<!\\.)\\b(?:if|else|for|foreach|in|switch|case|default|break|continue|return|defer|errdefer|when|or_else|or_return)\\b" },
+        { "name": "storage.type.loke", "match": "(?<!\\.)\\b(?:proc|struct|enum|union|interface|map|dyn|distinct|type|impl|foreign)\\b" },
+        { "name": "storage.type.loke", "match": "(?<=\\[)dynamic(?=\\])" },
+        { "name": "storage.type.loke", "match": "(?<!\\.)\\boperator\\b(?=\\s*\\(\\s*[^\\w\\s(])" },
+        { "name": "storage.type.loke", "match": "(?<!\\.)\\bhook\\b(?=\\s*\\(\\s*\\w+\\s*\\)\\s*proc\\b)" },
+        { "name": "storage.modifier.loke", "match": "(?<!\\.)\\b(?:mut|inout|move|move_only)\\b" },
+        { "name": "storage.modifier.loke", "match": "(?<!\\.)\\b(?:via|where)\\b(?=\\s+[\\w&(!])" },
         { "name": "storage.modifier.loke", "match": "(?<=:)\\s*\\b(?:static|thread_local)\\b" },
         { "name": "storage.modifier.loke", "match": "\\busing\\b(?=\\s+[A-Za-z_])" },
         { "name": "variable.language.self.loke", "match": "\\bself\\b" }

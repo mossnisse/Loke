@@ -1,0 +1,35 @@
+(file package="main"
+  (const names=["Token"]
+    (struct (field ["type"] (ident "Kind")) (field ["in"] (ident "int")) (field ["map"] (ident "int")))
+  )
+  (const names=["Kind"]
+    (enum (member "default") (member "union" (int "2")))
+  )
+  (const names=["Shape"]
+    (union (variant "default") (variant "struct" (ident "int")))
+  )
+  (const names=["Pair"]
+    (record (field ["if"] (ident "int")) (field ["else"] (ident "bool")))
+  )
+  (const names=["Choice"]
+    (anonymous-union (variant "case" (ident "int")) (variant "default"))
+  )
+  (impl (ident "Set")
+    (const names=["union"]
+      (proc (proc-type (param ["self"] (ident "Set")) (param ["other"] (ident "Set")) (result (ident "Set")))
+        (block
+          (return (ident "other"))
+        )
+      )
+    )
+  )
+  (const names=["Named"]
+    (interface (generic ["S"] (type)) (slot "proc" (proc-type (param ["self"] (ident "S")))))
+  )
+  (var names=["keyed"]
+    (composite (ident "Token") (= (ident "type") (selector _ "default")) (= (ident "in") (int "1")) (= (ident "map") (int "2")))
+  )
+  (var names=["selected"]
+    (binary Plus (binary Plus (selector (ident "token") "map") (selector (ident "Kind") "union")) (selector (call (selector (ident "set") "union") (ident "other")) "bits"))
+  )
+)

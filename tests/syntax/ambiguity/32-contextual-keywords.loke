@@ -1,0 +1,11 @@
+// `dynamic`, `hook`, `operator`, `via`, and `where` are keywords only in their
+// own positions, and names everywhere else.
+package main;
+
+via := hook(drop) + operator(1);
+where :: dynamic + 1;
+fixed: [(dynamic)]int;
+grown: [dynamic]int via where = {};
+add :: operator(+) proc(a, b: V) -> V { return a; }
+release :: hook(drop) proc(self: inout V) {}
+pick :: proc($T: type) where size_of(T) == where {}
