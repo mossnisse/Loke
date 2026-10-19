@@ -24,4 +24,18 @@ main :: proc() {
 	);
 	fmt.println(math.checked_add(Word(3), Word(2)), math.checked_sub(Word(3), Word(5)));
 	fmt.println(math.checked_mul(Word(0x8000_0000), Word(2)), math.checked_mul(Word(7), Word(6)));
+
+	// A vector of distinct lanes wraps lane by lane through the representation.
+	lanes: Simd(Word, 4) = {Word(0xFFFF_FFFF), Word(0), Word(3), Word(0x8000_0001)};
+	ones: Simd(Word, 4) = {Word(1), Word(1), Word(5), Word(2)};
+	fmt.println(
+		Simd(u32, 4)(math.wrapping_add(lanes, ones)), Simd(u32, 4)(math.wrapping_sub(lanes, ones)),
+		Simd(u32, 4)(math.wrapping_mul(lanes, ones)), WRAPPED_LANES,
+	);
 }
+
+// The same at compile time.
+wrapped_lanes :: proc() -> Simd(u32, 2) {
+	return Simd(u32, 2)(math.wrapping_sub(Simd(Word, 2){Word(0), Word(7)}, Simd(Word, 2){Word(1), Word(9)}));
+}
+WRAPPED_LANES :: wrapped_lanes();

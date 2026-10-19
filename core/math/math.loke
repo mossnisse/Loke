@@ -204,10 +204,9 @@ to :: proc($To: type, value: $From) -> Option(To)
 // optimizer narrows the arithmetic again.
 //
 // SIMD lanes follow the scalar rule (design.md "Lane-wise operators"), so the
-// wrapping forms also take two vectors of integer lanes. A lane computes in
-// the unsigned type of its own width: `u128` is not a lane type, and a wider
-// one could exceed a vector's 64 bytes. The conversions change no bits, so the
-// operation is the plain vector instruction.
+// wrapping forms also take two vectors of integer lanes. A lane-wise operator
+// applies to a distinct lane type through its representation, so the vector
+// forms need no conversion.
 
 wrapping_add :: proc{wrapping_add_integer, wrapping_add_lanes};
 wrapping_sub :: proc{wrapping_sub_integer, wrapping_sub_lanes};
@@ -226,32 +225,15 @@ wrapping_mul_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
 }
 
 wrapping_add_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	U :: Unsigned_Lane(T);
-	return wrap(Simd(T, N), wrap(Simd(U, N), a) +% wrap(Simd(U, N), b));
+	return a +% b;
 }
 
 wrapping_sub_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	U :: Unsigned_Lane(T);
-	return wrap(Simd(T, N), wrap(Simd(U, N), a) -% wrap(Simd(U, N), b));
+	return a -% b;
 }
 
 wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
-	U :: Unsigned_Lane(T);
-	return wrap(Simd(T, N), wrap(Simd(U, N), a) *% wrap(Simd(U, N), b));
-}
-
-// The unsigned integer type of `T`'s width.
-@(private)
-Unsigned_Lane :: proc($T: type) -> type {
-	when (size_of(T) == 1) {
-		return u8;
-	} else when (size_of(T) == 2) {
-		return u16;
-	} else when (size_of(T) == 4) {
-		return u32;
-	} else {
-		return u64;
-	}
+	return a *% b;
 }
 
 // An overflowing sum wraps past the end that `b`'s sign points to, so it lands
