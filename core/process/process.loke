@@ -104,14 +104,14 @@ impl Pipe {
 	is_open :: proc(self) -> bool { return self.handle != NO_HANDLE; }
 
 	read :: proc(self: inout Pipe, destination: []mut u8) -> Result(int, io.Error) {
-		if (destination.len() == 0) { return .ok(0); }
+		if (destination.len() == 0) { return 0; }
 		if (self.handle == NO_HANDLE) { return .err(io.make_error(.Closed, .Read)); }
 		if (self.writes) { return .err(io.make_error(.Unsupported, .Read)); }
 		return read_native(self.handle, destination);
 	}
 
 	write :: proc(self: inout Pipe, source: []u8) -> Result(int, io.Error) {
-		if (source.len() == 0) { return .ok(0); }
+		if (source.len() == 0) { return 0; }
 		if (self.handle == NO_HANDLE) { return .err(io.make_error(.Closed, .Write)); }
 		if (!self.writes) { return .err(io.make_error(.Unsupported, .Write)); }
 		return write_native(self.handle, source);
@@ -187,7 +187,7 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 		}
 	}
 	result.status = child.wait() or_return;
-	return .ok(move(result));
+	return move(result);
 }
 
 @(private)
@@ -272,10 +272,10 @@ find_program :: proc(program: string_view) -> Result(string, io.Error) {
 		if (directory.len() == 0) { continue; }
 		separator: string_view = "" if strings.ends_with(directory, "\\") || strings.ends_with(directory, "/") else "\\";
 		candidate := scratch_join([]string_view{directory, separator, program}) or_return;
-		if (is_file(candidate) or_return) { return .ok(candidate); }
+		if (is_file(candidate) or_return) { return candidate; }
 		if (path.extension(program).len() == 0) {
 			with_extension := scratch_join([]string_view{candidate, ".exe"}) or_return;
-			if (is_file(with_extension) or_return) { return .ok(with_extension); }
+			if (is_file(with_extension) or_return) { return with_extension; }
 		}
 	}
 	return .err(io.make_error(.Not_Found, .Spawn));
@@ -293,7 +293,7 @@ command_line :: proc(command: Command) -> Result(string, io.Error) {
 	}
 	if (built) {
 		switch (line.try_finish()) {
-		case .ok(text): return .ok(text);
+		case .ok(text): return text;
 		case .err:
 		}
 	}
@@ -360,7 +360,7 @@ scratch_join :: proc(parts: []string_view) -> Result(string, io.Error) {
 		if (!put(inout line, part)) { return .err(io.from_allocator_error(.Spawn)); }
 	}
 	switch (line.try_finish()) {
-	case .ok(text): return .ok(text);
+	case .ok(text): return text;
 	case .err:      return .err(io.from_allocator_error(.Spawn));
 	}
 }
@@ -578,7 +578,7 @@ spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io
 		information.id,
 	};
 	handles.parent = {};
-	return .ok(move(child));
+	return move(child);
 }
 
 // The child's end and the parent's end of standard handle `index`, either of
@@ -590,7 +590,7 @@ standard_handle :: proc(mode: Stdio, index: int) -> Result([2]Handle, io.Error) 
 	case .Inherit:
 		own := rt_get_std_handle(STD_HANDLES[index]);
 		if (own == NO_HANDLE || own == INVALID_HANDLE) {
-			return .ok([2]Handle{NO_HANDLE, NO_HANDLE});
+			return [2]Handle{NO_HANDLE, NO_HANDLE};
 		}
 		// A copy marked inheritable, so the parent's own handle keeps its flags.
 		copy: Handle = NO_HANDLE;
@@ -598,7 +598,7 @@ standard_handle :: proc(mode: Stdio, index: int) -> Result([2]Handle, io.Error) 
 		if (rt_duplicate_handle(process, own, process, &mut copy, 0, 1, DUPLICATE_SAME_ACCESS) == 0) {
 			return .err(from_last_error(.Spawn));
 		}
-		return .ok([2]Handle{copy, NO_HANDLE});
+		return [2]Handle{copy, NO_HANDLE};
 	case .Null:
 		name := wide("NUL") or_return;
 		device := rt_create_file(
@@ -608,7 +608,7 @@ standard_handle :: proc(mode: Stdio, index: int) -> Result([2]Handle, io.Error) 
 		if (device == INVALID_HANDLE) {
 			return .err(from_last_error(.Spawn));
 		}
-		return .ok([2]Handle{device, NO_HANDLE});
+		return [2]Handle{device, NO_HANDLE};
 	case .Pipe:
 		read: Handle = NO_HANDLE;
 		write: Handle = NO_HANDLE;
@@ -624,7 +624,7 @@ standard_handle :: proc(mode: Stdio, index: int) -> Result([2]Handle, io.Error) 
 			close_handle(write);
 			return .err(error);
 		}
-		return .ok([2]Handle{child, parent});
+		return [2]Handle{child, parent};
 	}
 }
 
@@ -654,7 +654,7 @@ environment_block :: proc(variables: []Variable) -> Result([dynamic]u16, io.Erro
 	}
 	if (variables.len() == 0) { append_units(inout block, []u16{0}) or_return; }
 	append_units(inout block, []u16{0}) or_return;
-	return .ok(move(block));
+	return move(block);
 }
 
 @(private)
@@ -676,7 +676,7 @@ wait_native :: proc(handle: Handle) -> Result(i32, io.Error) {
 	}
 	// standard-library "`core:process`": the exit code is reinterpreted as
 	// `i32`, so a crash shows as its negative `NTSTATUS` rather than panicking.
-	return .ok(unsafe.transmute(i32, code));
+	return unsafe.transmute(i32, code);
 }
 
 @(private)
@@ -696,10 +696,10 @@ is_file :: proc(path: string_view) -> Result(bool, io.Error) {
 	switch (utf16.encode(path, mem.default_allocator())) {
 	case .ok(units):
 		attributes := rt_file_attributes(unsafe.raw_data(units));
-		return .ok(attributes != INVALID_FILE_ATTRIBUTES && (attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) == 0);
+		return attributes != INVALID_FILE_ATTRIBUTES && (attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) == 0;
 	case .err(error):
 		if (error == .Out_Of_Memory) { return .err(io.from_allocator_error(.Spawn)); }
-		return .ok(false);
+		return false;
 	}
 }
 
@@ -724,7 +724,7 @@ read_native :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Err
 	if (read == 0) {
 		return .err(io.make_error(.End_Of_Input, .Read));
 	}
-	return .ok(int(read));
+	return int(read);
 }
 
 @(private)
@@ -735,7 +735,7 @@ write_native :: proc(handle: Handle, source: []u8) -> Result(int, io.Error) {
 	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
 		return .err(from_last_error(.Write));
 	}
-	return .ok(int(written));
+	return int(written);
 }
 
 // One call moves at most this many bytes: the count is a `DWORD`.
@@ -747,7 +747,7 @@ write_native :: proc(handle: Handle, source: []u8) -> Result(int, io.Error) {
 wide :: proc(text: string_view) -> Result([dynamic]u16, io.Error) {
 	switch (utf16.encode(text, mem.default_allocator())) {
 	case .ok(units):
-		return .ok(move(units));
+		return move(units);
 	case .err(error):
 		code := io.Code.Invalid_Data if error == .Contains_Zero else io.Code.Out_Of_Memory;
 		return .err(io.make_error(code, .Spawn));

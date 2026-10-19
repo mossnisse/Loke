@@ -112,7 +112,7 @@ impl Enum_Array_Iterator($E, $T) {
 		if (self.at >= members.len()) { return .none; }
 		index := self.at;
 		self.at += 1;
-		return .some({members[index], &self.slots[index]});
+		return {members[index], &self.slots[index]};
 	}
 }
 
@@ -130,6 +130,6 @@ impl Enum_Array_Mut_Iterator($E, $T) {
 		if (self.at >= members.len()) { return .none; }
 		index := self.at;
 		self.at += 1;
-		return .some({members[index], &mut self.slots[index]});
+		return {members[index], &mut self.slots[index]};
 	}
 }

@@ -38,7 +38,7 @@ impl Input {
 	// UTF-8 console reader needs a buffer that survives between calls, which this
 	// deliberately non-owning value does not have.
 	read :: proc(self: inout Input, destination: []mut u8) -> Result(int, io.Error) {
-		if (destination.len() == 0) { return .ok(0); }
+		if (destination.len() == 0) { return 0; }
 		return read_handle(self.handle, destination);
 	}
 }
@@ -51,7 +51,7 @@ impl Output {
 	// `core:fmt` buffers standard output and this does not, so what `fmt` holds is
 	// flushed first; otherwise redirected output comes out of order.
 	write :: proc(self: inout Output, source: []u8) -> Result(int, io.Error) {
-		if (source.len() == 0) { return .ok(0); }
+		if (source.len() == 0) { return 0; }
 		rt_flush_stdout();
 		return write_handle(self.handle, source);
 	}
@@ -242,7 +242,7 @@ read_handle :: proc(handle: int, destination: []mut u8) -> Result(int, io.Error)
 	if (read == 0) {
 		return .err(io.make_error(.End_Of_Input, .Read));
 	}
-	return .ok(int(read));
+	return int(read);
 }
 
 @(private)
@@ -253,7 +253,7 @@ write_handle :: proc(handle: int, source: []u8) -> Result(int, io.Error) {
 	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
 		return .err(from_last_error(.Write));
 	}
-	return .ok(int(written));
+	return int(written);
 }
 
 // One call moves at most this many bytes: the count is a `DWORD`, and a caller's
@@ -304,7 +304,7 @@ read_console_line :: proc(
 	}
 	switch (utf16.decode(line[0:kept], allocator)) {
 	case .ok(text):
-		return .ok(text);
+		return text;
 	case .err(error):
 		code := io.Code.Out_Of_Memory if error == .Out_Of_Memory else io.Code.Invalid_Data;
 		return .err(io.make_error(code, .Read_Line));
@@ -399,7 +399,7 @@ begin_raw :: proc(
 		handler_handle.store(0);
 		return .err(from_last_error(.Terminal_Mode));
 	}
-	return .ok(Raw_Mode{input.handle, previous, true, 0, 0, Key_Event{}});
+	return Raw_Mode{input.handle, previous, true, 0, 0, Key_Event{}};
 }
 
 impl Raw_Mode {
@@ -441,7 +441,7 @@ impl Raw_Mode {
 		}
 		if (self.repeats > 0) {
 			self.repeats -= 1;
-			return .ok(self.repeated);
+			return self.repeated;
 		}
 		record: Input_Record = {};
 		for (;;) {
@@ -479,7 +479,7 @@ impl Raw_Mode {
 					if (!unmatched) { self.repeats -= 1; }
 					self.repeated = event;
 				}
-				if (!unmatched) { return .ok(event); }
+				if (!unmatched) { return event; }
 			case .none:
 			}
 			if (unmatched) {
@@ -507,7 +507,7 @@ decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> Option(Key_
 		combined := 0x10000 + ((int(high) - 0xD800) << 10) + (int(unit) - 0xDC00);
 		event.key = .Character;
 		event.value = rune(combined);
-		return .some(event);
+		return event;
 	}
 	if (unit >= 0xD800 && unit <= 0xDBFF) {
 		mode.pending = unit;
@@ -519,15 +519,15 @@ decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> Option(Key_
 	named := key_for(record.virtual_key);
 	if (named != .Unknown) {
 		event.key = named;
-		return .some(event);
+		return event;
 	}
 	if (unit != 0) {
 		event.key = .Character;
 		event.value = rune(int(unit));
-		return .some(event);
+		return event;
 	}
 	event.key = .Unknown;
-	return .some(event);
+	return event;
 }
 
 @(private)

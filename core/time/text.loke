@@ -268,7 +268,7 @@ parse_time :: proc(text: string_view) -> Result(Time, Parse_Error) {
 	offset := scanner.offset() or_return;
 	scanner.confirm_leap(date_time.time, offset) or_return;
 	scanner.end() or_return;
-	return .ok(date_time.at_offset(offset).to_time() or_return .Out_Of_Range);
+	return date_time.at_offset(offset).to_time() or_return .Out_Of_Range;
 }
 
 parse_offset_date_time :: proc(text: string_view) -> Result(Offset_Date_Time, Parse_Error) {
@@ -278,7 +278,7 @@ parse_offset_date_time :: proc(text: string_view) -> Result(Offset_Date_Time, Pa
 	offset := scanner.offset() or_return;
 	scanner.confirm_leap(date_time.time, offset) or_return;
 	scanner.end() or_return;
-	return .ok(date_time.at_offset(offset));
+	return date_time.at_offset(offset);
 }
 
 // An offset is rejected rather than dropped.
@@ -286,14 +286,14 @@ parse_date_time :: proc(text: string_view) -> Result(Date_Time, Parse_Error) {
 	scanner := Scanner{bytes = trim(text)};
 	date_time := scanner.date_time() or_return;
 	scanner.end() or_return;
-	return .ok(date_time);
+	return date_time;
 }
 
 parse_date :: proc(text: string_view) -> Result(Date, Parse_Error) {
 	scanner := Scanner{bytes = trim(text)};
 	date := scanner.date() or_return;
 	scanner.end() or_return;
-	return .ok(date);
+	return date;
 }
 
 parse_time_of_day :: proc(text: string_view) -> Result(Time_Of_Day, Parse_Error) {
@@ -302,7 +302,7 @@ parse_time_of_day :: proc(text: string_view) -> Result(Time_Of_Day, Parse_Error)
 	scanner.basic = scanner.bytes.len() > 2 && scanner.bytes[2] != u8(':');
 	time := scanner.time_of_day() or_return;
 	scanner.end() or_return;
-	return .ok(time);
+	return time;
 }
 
 parse_offset :: proc(text: string_view) -> Result(Offset, Parse_Error) {
@@ -310,7 +310,7 @@ parse_offset :: proc(text: string_view) -> Result(Offset, Parse_Error) {
 	scanner.basic = scanner.bytes.len() > 3 && scanner.bytes[3] != u8(':');
 	offset := scanner.offset() or_return;
 	scanner.end() or_return;
-	return .ok(offset);
+	return offset;
 }
 
 // The short form, `1h30m` or `-153ms`, or ISO 8601's, `PT1H30M`. In either the
@@ -327,11 +327,11 @@ parse_duration :: proc(text: string_view) -> Result(Duration, Parse_Error) {
 	}
 	if (negative) {
 		if (magnitude > 0x8000000000000000) { return .err(.Out_Of_Range); }
-		if (magnitude == 0x8000000000000000) { return .ok(Duration(-9223372036854775807 - 1)); }
-		return .ok(Duration(-i64(magnitude)));
+		if (magnitude == 0x8000000000000000) { return Duration(-9223372036854775807 - 1); }
+		return Duration(-i64(magnitude));
 	}
 	if (magnitude > 0x7FFFFFFFFFFFFFFF) { return .err(.Out_Of_Range); }
-	return .ok(Duration(i64(magnitude)));
+	return Duration(i64(magnitude));
 }
 
 // RFC 3339 and ISO 8601 allow nothing around a value; surrounding ASCII
@@ -418,15 +418,15 @@ impl Scanner {
 			value = value * 10 + int(byte - u8('0'));
 			self.at += 1;
 		}
-		return .ok(value);
+		return value;
 	}
 
 	// `.` or `,` and at least one digit, as nanoseconds; digits past the ninth
 	// are read and dropped. No separator is no fraction.
 	nanoseconds :: proc(self: inout) -> Result(i64, Parse_Error) {
-		if (!self.take(u8('.')) && !self.take(u8(','))) { return .ok(0); }
+		if (!self.take(u8('.')) && !self.take(u8(','))) { return 0; }
 		fraction := self.fraction() or_return;
-		return .ok(i64(fraction_of(fraction, u64(SECOND))));
+		return i64(fraction_of(fraction, u64(SECOND)));
 	}
 
 	// The digits after a decimal sign, at least one.
@@ -434,7 +434,7 @@ impl Scanner {
 		start := self.at;
 		for (; self.peek() >= u8('0') && self.peek() <= u8('9'); ) { self.at += 1; }
 		if (self.at == start) { return .err(.Invalid_Syntax); }
-		return .ok(self.bytes[start:self.at]);
+		return self.bytes[start:self.at];
 	}
 
 	// `2026-10-15` or `20261015`. The separator after the year decides the
@@ -447,7 +447,7 @@ impl Scanner {
 		self.separator(u8('-')) or_return;
 		day := self.digits(2) or_return;
 		month := Month.from_int(month_number) or_return .Invalid_Value;
-		return .ok(Date.from_components(year, month, day) or_return .Invalid_Value);
+		return Date.from_components(year, month, day) or_return .Invalid_Value;
 	}
 
 	// `14:34:56.789` or `143456.789`; seconds are required, as in RFC 3339.
@@ -465,7 +465,7 @@ impl Scanner {
 			second = 59;
 			self.leap = true;
 		}
-		return .ok(Time_Of_Day.from_components(hour, minute, second, int(nanosecond)) or_return .Invalid_Value);
+		return Time_Of_Day.from_components(hour, minute, second, int(nanosecond)) or_return .Invalid_Value;
 	}
 
 	date_time :: proc(self: inout) -> Result(Date_Time, Parse_Error) {
@@ -474,13 +474,13 @@ impl Scanner {
 			return .err(.Invalid_Syntax);
 		}
 		time := self.time_of_day() or_return;
-		return .ok(Date_Time{date, time});
+		return Date_Time{date, time};
 	}
 
 	// `Z`, or a sign and hours and minutes. `-00:00`, which RFC 3339 used for
 	// an unknown local offset, reads as `Z`, the spelling RFC 9557 gives it.
 	offset :: proc(self: inout) -> Result(Offset, Parse_Error) {
-		if (self.take(u8('Z')) || self.take(u8('z'))) { return .ok(UTC); }
+		if (self.take(u8('Z')) || self.take(u8('z'))) { return UTC; }
 		sign := 1;
 		if (self.take(u8('-'))) {
 			sign = -1;
@@ -491,7 +491,7 @@ impl Scanner {
 		self.separator(u8(':')) or_return;
 		minutes := self.digits(2) or_return;
 		if (hours > 23 || minutes > 59) { return .err(.Invalid_Value); }
-		return .ok(Offset{sign * (hours * 60 + minutes)});
+		return Offset{sign * (hours * 60 + minutes)};
 	}
 
 	// A leap second ends a UTC minute: local minute 59 at `Z`, 29 at +05:30,
@@ -517,7 +517,7 @@ impl Scanner {
 		if (self.take(u8('.')) || self.take(u8(','))) {
 			number.fraction = self.fraction() or_return;
 		}
-		return .ok(number);
+		return number;
 	}
 
 	// After the `P`: `T` and hours, minutes, and seconds, at least one of them.
@@ -557,7 +557,7 @@ impl Scanner {
 			components += 1;
 		}
 		if (!timed || components == 0) { return .err(.Invalid_Syntax); }
-		return .ok(total);
+		return total;
 	}
 
 	// `1h30m`, `2m0.5s`, `153ms`, `1.5µs`, `250ns`.
@@ -575,7 +575,7 @@ impl Scanner {
 			total = add_component(total, number, unit) or_return;
 			fractional = number.fraction.len() > 0;
 		}
-		return .ok(total);
+		return total;
 	}
 
 	unit :: proc(self: inout) -> Result(Unit, Parse_Error) {
@@ -604,7 +604,7 @@ add_component :: proc(total: u64, number: Number, unit: Unit) -> Result(u64, Par
 	length := unit_length(unit);
 	whole := math.checked_mul(number.whole, length) or_return .Out_Of_Range;
 	sum := math.checked_add(whole, fraction_of(number.fraction, length)) or_return .Out_Of_Range;
-	return .ok(math.checked_add(total, sum) or_return .Out_Of_Range);
+	return math.checked_add(total, sum) or_return .Out_Of_Range;
 }
 
 // `length` times the fraction `0.digits`, rounded down, exact for any number of

@@ -241,10 +241,10 @@ read_to_end :: proc(
 		switch (reader.read(&mut chunk[:])) {
 		case .ok(outcome): count = outcome;
 		case .err(outcome):
-			if (is(outcome, .End_Of_Input)) { return .ok(move(collected)); }
+			if (is(outcome, .End_Of_Input)) { return move(collected); }
 			return .err(outcome);
 		}
-		if (count == 0) { return .ok(move(collected)); }
+		if (count == 0) { return move(collected); }
 		if (limit > 0 && collected.len() + count > limit) {
 			return .err(make_error(.Limit_Exceeded, .Read_To_End));
 		}
@@ -274,10 +274,10 @@ copy :: proc(
 		switch (source.read(window)) {
 		case .ok(outcome): count = outcome;
 		case .err(outcome):
-			if (is(outcome, .End_Of_Input)) { return .ok(moved); }
+			if (is(outcome, .End_Of_Input)) { return moved; }
 			return .err(outcome);
 		}
-		if (count == 0) { return .ok(moved); }
+		if (count == 0) { return moved; }
 		write_all(inout destination, window[0:count]) or_return;
 		moved += u64(count);
 	}
@@ -338,7 +338,7 @@ read_line :: proc(
 		// them is a line: this converts the allocator failure instead of standing
 		// in an empty string for it.
 		switch (strings.try_copy(view, allocator)) {
-		case .ok(text):  return .ok(text);
+		case .ok(text):  return text;
 		case .err: return .err(from_allocator_error(.Read_Line));
 		}
 	case .none:

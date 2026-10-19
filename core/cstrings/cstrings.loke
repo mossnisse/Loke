@@ -43,7 +43,7 @@ from_string :: proc(
 		buffer.append(0);
 		// `move`, because a copy would clone the bytes into the *default*
 		// allocator and discard the one the caller chose.
-		return .ok(C_String{move(buffer)});
+		return C_String{move(buffer)};
 	case .err:
 		return .err(.Out_Of_Memory);
 	}

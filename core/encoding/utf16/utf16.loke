@@ -55,7 +55,7 @@ encode :: proc(
 			units.append(u16(0xD800 + (rest >> 10)), u16(0xDC00 + (rest & 0x3FF)));
 		}
 		units.append(0);
-		return .ok(move(units));
+		return move(units);
 	case .err:
 		return .err(.Out_Of_Memory);
 	}
@@ -86,7 +86,7 @@ decode :: proc(
 		}
 	}
 	switch (builder.try_finish()) {
-	case .ok(finished):  return .ok(finished);
+	case .ok(finished):  return finished;
 	case .err: return .err(.Out_Of_Memory);
 	}
 }

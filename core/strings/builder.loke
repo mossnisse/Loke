@@ -96,7 +96,7 @@ impl String_Builder {
 	try_finish :: proc(self: inout String_Builder) -> Result(string, Allocator_Error) {
 		text := self.try_copy_string(self.allocator) or_return;
 		self.data.clear();
-		return .ok(text);
+		return text;
 	}
 
 	// What is written so far, borrowed rather than copied. The view reads the

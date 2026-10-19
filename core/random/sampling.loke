@@ -43,7 +43,7 @@ impl Weighted {
 		alias := try_make([dynamic]int, count, count, allocator) or_return;
 		work := try_make([dynamic]int, count, count, allocator) or_return;
 		build_alias(weights, total, &mut keep[:], &mut alias[:], &mut work[:]);
-		return .ok(Weighted{move(keep), move(alias)});
+		return Weighted{move(keep), move(alias)};
 	}
 
 	// The number of indices, `weights.len()`.

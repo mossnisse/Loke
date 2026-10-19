@@ -84,25 +84,25 @@ matches_at :: proc(text: []u8, offset: int, needle: []u8) -> bool {
 // searches short needles in short lines; a two-way or Boyer-Moore search goes
 // here when a measurement asks for one, behind this same signature.
 index :: proc(text: string_view, needle: string_view) -> Option(int) {
-	if (needle.len() == 0) { return .some(0); }
+	if (needle.len() == 0) { return 0; }
 	if (needle.len() > text.len()) { return .none; }
 	haystack, wanted := text.bytes(), needle.bytes();
 	last := text.len() - needle.len();
 	for (offset := 0; offset <= last; offset += 1) {
 		if (matches_at(haystack, offset, wanted)) {
-			return .some(offset);
+			return offset;
 		}
 	}
 	return .none;
 }
 
 last_index :: proc(text: string_view, needle: string_view) -> Option(int) {
-	if (needle.len() == 0) { return .some(text.len()); }
+	if (needle.len() == 0) { return text.len(); }
 	if (needle.len() > text.len()) { return .none; }
 	haystack, wanted := text.bytes(), needle.bytes();
 	for (offset := text.len() - needle.len(); offset >= 0; offset -= 1) {
 		if (matches_at(haystack, offset, wanted)) {
-			return .some(offset);
+			return offset;
 		}
 	}
 	return .none;
@@ -111,7 +111,7 @@ last_index :: proc(text: string_view, needle: string_view) -> Option(int) {
 index_byte :: proc(text: string_view, value: u8) -> Option(int) {
 	bytes := text.bytes();
 	foreach (b, offset in bytes.indexed()) {
-		if (b == value) { return .some(offset); }
+		if (b == value) { return offset; }
 	}
 	return .none;
 }
@@ -120,7 +120,7 @@ index_byte :: proc(text: string_view, value: u8) -> Option(int) {
 // continuation byte of another one, because the loop only visits boundaries.
 index_rune :: proc(text: string_view, value: rune) -> Option(int) {
 	foreach (codepoint, offset in text.rune_offsets()) {
-		if (codepoint == value) { return .some(offset); }
+		if (codepoint == value) { return offset; }
 	}
 	return .none;
 }
@@ -218,7 +218,7 @@ Cut :: struct { before: string_view, after: string_view }
 
 cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
 	switch (index(text, separator)) {
-	case .some(at): return .some(Cut{text[0:at], text[at + separator.len():]});
+	case .some(at): return Cut{text[0:at], text[at + separator.len():]};
 	case .none: return .none;
 	}
 	return .none;
@@ -236,7 +236,7 @@ cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
 try_slice :: proc(text: string_view, low, high: int) -> Option(string_view) {
 	if (low < 0 || low > high || high > text.len()) { return .none; }
 	if (!is_boundary(text, low) || !is_boundary(text, high)) { return .none; }
-	return .some(text[low:high]);
+	return text[low:high];
 }
 
 // The nearest boundary at or before `offset`, so `text[:floor_boundary(text, n)]`

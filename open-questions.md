@@ -716,20 +716,6 @@ including why `Result`, `Option`, and `Status` remain the fallible boundaries
 ([Anonymous unions](comments.md#anonymous-unions)). What the proposal left
 open follows.
 
-### Migrating `core` to success returns
-
-`core` still writes 147 `return .ok(...)` and `return .some(...)` across 23
-files. Most can become `return value;`; a body whose result names a generic
-argument and whose failure carries a payload keeps its `.ok`. An example from
-[text.loke](core/time/text.loke):
-
-```text
-return .ok(Date.from_components(year, month, day) or_return .Invalid_Value);
-return Date.from_components(year, month, day) or_return .Invalid_Value;
-```
-
-This is planned as its own mechanical commit, separate from the feature.
-
 ### Bindings inside structural types
 
 `(some: $T | none:)` and a `$` inside an anonymous record are rejected today.

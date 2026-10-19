@@ -126,7 +126,7 @@ shuffle :: proc(source: inout $G, values: []mut $T) where Source(G) {
 choose :: proc(source: inout $G, values: []$T) -> Option(T)
 	where Source(G), is_copyable(T) {
 	if (values.len() == 0) { return .none; }
-	return .some(values[in_range(inout source, 0 ..< values.len())]);
+	return values[in_range(inout source, 0 ..< values.len())];
 }
 
 // 2^-53 and 2^-24, exact as unfixed constants and exactly representable.

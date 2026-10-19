@@ -170,7 +170,7 @@ impl Bit_Set_Iterator($E) {
 		for (self.at < members.len()) {
 			at := self.at;
 			self.at += 1;
-			if (self.held.has(at)) { return .some(members[at]); }
+			if (self.held.has(at)) { return members[at]; }
 		}
 		return .none;
 	}

@@ -293,6 +293,6 @@ impl Element_Iterator {
 			return .some(element) if element.len() > 0 else .none;
 		}
 		self.rest = self.rest[at + 1:];
-		return .some(element);
+		return element;
 	}
 }

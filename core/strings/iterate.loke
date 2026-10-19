@@ -34,14 +34,14 @@ impl Split_Iterator {
 		case .some(at):
 			if (self.separator.len() == 0) {
 				self.done = true;
-				return .some(self.rest);
+				return self.rest;
 			}
 			part := self.rest[0:at];
 			self.rest = self.rest[at + self.separator.len():];
-			return .some(part);
+			return part;
 		case .none:
 			self.done = true;
-			return .some(self.rest);
+			return self.rest;
 		}
 	}
 }
@@ -83,7 +83,7 @@ impl Fields_Iterator {
 			}
 		}
 		self.rest = rest[end:];
-		return .some(rest[0:end]);
+		return rest[0:end];
 	}
 }
 
@@ -112,7 +112,7 @@ impl Lines_Iterator {
 		case .none:
 			self.done = true;
 			if (self.rest.len() == 0) { return .none; }
-			return .some(self.rest);
+			return self.rest;
 		}
 		line := self.rest[0:at];
 		// A byte read, not a subrange: `line.len() - 1` is the middle of a code
@@ -121,6 +121,6 @@ impl Lines_Iterator {
 			line = line[0:line.len() - 1];
 		}
 		self.rest = self.rest[at + 1:];
-		return .some(line);
+		return line;
 	}
 }

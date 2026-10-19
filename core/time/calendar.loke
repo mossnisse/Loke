@@ -41,12 +41,12 @@ Date :: struct {
 impl Date {
 	from_components :: proc(year: int, month: Month, day: int) -> Option(Date) {
 		if (year < 0 || year > 9999 || day < 1 || day > days_in_month(year, month)) { return .none; }
-		return .some(Date{days_from_civil(year, int(month), day)});
+		return Date{days_from_civil(year, int(month), day)};
 	}
 
 	from_unix_days :: proc(days: i64) -> Option(Date) {
 		if (days < FIRST_DAY || days > LAST_DAY) { return .none; }
-		return .some(Date{days});
+		return Date{days};
 	}
 
 	unix_days :: proc(self) -> i64 { return self.days; }
@@ -125,9 +125,9 @@ impl Time_Of_Day {
 	from_components :: proc(hour, minute, second: int, nanosecond: int = 0) -> Option(Time_Of_Day) {
 		if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) { return .none; }
 		if (nanosecond < 0 || nanosecond > 999999999) { return .none; }
-		return .some(Time_Of_Day{
+		return Time_Of_Day{
 			i64(hour) * i64(HOUR) + i64(minute) * i64(MINUTE) + i64(second) * i64(SECOND) + i64(nanosecond),
-		});
+		};
 	}
 
 	hour :: proc(self) -> int { return int(self.nanoseconds / i64(HOUR)); }
@@ -215,7 +215,7 @@ UTC :: Offset{};
 impl Offset {
 	from_minutes :: proc(minutes: int) -> Option(Offset) {
 		if (minutes < -MAX_OFFSET_MINUTES || minutes > MAX_OFFSET_MINUTES) { return .none; }
-		return .some(Offset{minutes});
+		return Offset{minutes};
 	}
 
 	minutes :: proc(self) -> int { return self.east; }
@@ -242,7 +242,7 @@ impl Offset_Date_Time {
 		instant := i128(self.date_time.date.days) * i128(NANOSECONDS_PER_DAY) +
 			i128(self.date_time.time.nanoseconds) - i128(self.offset.east) * i128(MINUTE);
 		if (instant < i128(-9223372036854775807 - 1) || instant > i128(9223372036854775807)) { return .none; }
-		return .some(Time{i64(instant)});
+		return Time{i64(instant)};
 	}
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {

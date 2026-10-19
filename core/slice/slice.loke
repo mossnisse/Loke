@@ -129,7 +129,7 @@ fill :: proc(values: []mut $T, @(escape=stored) value: T) {
 
 index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.Equatable(T) {
 	foreach (value, i in values.indexed()) {
-		if (value == wanted) { return .some(i); }
+		if (value == wanted) { return i; }
 	}
 	return .none;
 }
@@ -138,7 +138,7 @@ last_index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.E
 	i := values.len();
 	for (i > 0) {
 		i -= 1;
-		if (values[i] == wanted) { return .some(i); }
+		if (values[i] == wanted) { return i; }
 	}
 	return .none;
 }
@@ -173,7 +173,7 @@ min :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 	foreach (i in 1 ..< values.len()) {
 		if (values[i] < values[best]) { best = i; }
 	}
-	return .some(values[best]);
+	return values[best];
 }
 
 max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
@@ -182,7 +182,7 @@ max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 	foreach (i in 1 ..< values.len()) {
 		if (values[best] < values[i]) { best = i; }
 	}
-	return .some(values[best]);
+	return values[best];
 }
 
 // --------------------------------------------------------------- ownership --

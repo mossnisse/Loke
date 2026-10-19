@@ -103,7 +103,7 @@ from_seconds_f64 :: proc(seconds: f64) -> Option(Duration) {
 	} else if (rest <= -0.5) {
 		whole -= 1;
 	}
-	return .some(Duration(whole));
+	return Duration(whole);
 }
 
 // ----------------------------------------------------------------- instants --
@@ -177,7 +177,7 @@ from_unix_nanoseconds :: proc(nanoseconds: i64) -> Time {
 // `.none` for a second outside the range of `Time`.
 from_unix_seconds :: proc(seconds: i64) -> Option(Time) {
 	nanoseconds := math.checked_mul(seconds, i64(SECOND)) or_return;
-	return .some(Time{nanoseconds});
+	return Time{nanoseconds};
 }
 
 // ------------------------------------------------------------------- clocks --
