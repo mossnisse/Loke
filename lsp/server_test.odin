@@ -1237,8 +1237,14 @@ rename_follows_lookup_rules_from_review :: proc(t: ^testing.T) {
 		{"to-keyword", "package main;\nKind :: enum { old, other }\nmain :: proc() { k := Kind.old; switch (k) { case .old: default: } }\n", "old, other", "default", "main.loke:3"},
 		{"from-keyword", "package main;\nKind :: enum { default, other }\nmain :: proc() { k := Kind.default; switch (k) { case .default: default: } }\n", "default, other", "plain", "main.loke:3"},
 		{"keyword-local", "package main;\nmain :: proc() { old := 1; _ = old; }\n", "old := 1", "map", "`map` is not a name."},
-		// `[dynamic]` is always the dynamic array.
-		{"dynamic-length", "package main;\nN :: 2;\nmain :: proc() { a: [N]int = {}; _ = a; }\n", "N ::", "dynamic", "would be a dynamic array"},
+		// A use rename cannot see stops it, whether or not the member's name
+		// is a reserved word.
+		{"keyword-generic", "package main;\nKind :: enum { default, other }\nunused :: proc(value: $T) { _ = Kind.default; }\nmain :: proc() { _ = Kind.default; }\n", "default, other", "plain", "has no binding the compiler recorded"},
+		{"keyword-when", "package main;\nKind :: enum { default, other }\nmain :: proc() { when (false) { _ = Kind.default; } _ = Kind.default; }\n", "default, other", "plain", "has no binding the compiler recorded"},
+		// `[dynamic]` is always the dynamic array; an index is not a type.
+		{"dynamic-length", "package main;\nN :: 2;\nmain :: proc() { a: [N]int = {}; _ = a; }\n", "N ::", "dynamic", "would be read as a keyword there"},
+		{"dynamic-length-parenthesised", "package main;\nN :: 2;\nmain :: proc() { a: [(N)]int = {}; _ = a; }\n", "N ::", "dynamic", "main.loke:2"},
+		{"dynamic-index", "package main;\nmain :: proc() {\n\tindex := 0;\n\tvalues: [1]int = {7};\n\t_ = values[index];\n}\n", "index := 0", "dynamic", "main.loke:2"},
 	}
 	h: Harness
 	if !start(&h, t, "rename-rules") { finish(&h); return }

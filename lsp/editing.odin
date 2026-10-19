@@ -340,6 +340,19 @@ lex_text :: proc(text: string, comments: ^[dynamic]lokec.Span = nil) -> []lokec.
 	return tokens
 }
 
+// The tokens of a text as the compiler's parser left them: a contextual
+// keyword it read as one carries the keyword's kind, and a reserved word it
+// read as a member name is an identifier (grammar.md "Keywords").
+parsed_tokens :: proc(text: string) -> []lokec.Token {
+	scratch: lokec.Compiler
+	defer lokec.destroy_compilation(&scratch)
+	append(&scratch.sources, lokec.Source{text = text})
+	tokens := lokec.lex(&scratch, 0)
+	file := lokec.parse(&scratch, 0, tokens)
+	lokec.destroy_ast(&file)
+	return tokens
+}
+
 // Whether the offset falls inside a string or rune literal, or a comment as
 // the lexer found it, nesting included. A literal the lexer rejected, for an
 // invalid escape or a missing close, is still one. The end of a `//` comment,

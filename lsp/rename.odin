@@ -210,17 +210,18 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 		for source_file := u32(0); ; source_file += 1 {
 			source := lokec.query_source(rs, root_snapshot, source_file) or_break
 			if source.bundled || !strings.has_suffix(source.path, ".loke") { continue }
-			tokens := lex_text(source.text)
+			// Parsed, so a reserved word written as a member name is an
+			// identifier here and one written as syntax stays a keyword.
+			tokens := parsed_tokens(source.text)
 			defer delete(tokens)
 			open := make([dynamic]lokec.Token_Kind, context.temp_allocator)
+			edited := make([dynamic]u32, context.temp_allocator)
 			for token, index in tokens {
 				#partial switch token.kind {
 				case .Lparen, .Lbracket, .Lbrace: append(&open, token.kind)
 				case .Rparen, .Rbracket, .Rbrace: if len(open) > 0 { pop(&open) }
 				}
-				// A reserved word is a name only as a member's.
-				keyword := lokec.reserved_keyword(token.kind)
-				if token.kind != .Ident && !(member && keyword) { continue }
+				if token.kind != .Ident { continue }
 				word := source.text[token.lo:token.hi]
 				qualified := index > 0 && tokens[index - 1].kind == .Period
 				// A member's new name matters where a selector could reach it.
@@ -232,16 +233,10 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 				resolved := recorded && at.symbol.id != lokec.INVALID_SYMBOL
 				where_written := fmt.tprintf("%s:%d", source.path, offset_to_position(source.text, source.line_starts, token.lo, true).line + 1)
 				if word == old {
-					if !resolved && keyword { continue }
 					if !resolved {
 						return "", fmt.tprintf("`%s` at %s has no binding the compiler recorded, as in an inactive `when` branch, a generic that is never instantiated, or an interface slot, so rename cannot tell what it names.", old, where_written)
 					}
 					if !same_binding(rs, at.symbol, target) { continue }
-					// grammar.md "Resolved ambiguities": `[dynamic]` is always
-					// the dynamic array, so a length cannot take that name.
-					if new_name == "dynamic" && index > 0 && index + 1 < len(tokens) && tokens[index - 1].kind == .Lbracket && tokens[index + 1].kind == .Rbracket {
-						return "", fmt.tprintf("At %s, `[dynamic]` would be a dynamic array rather than a length named `dynamic`.", where_written)
-					}
 					// `f(old = value)` names the callee's parameter, which the
 					// caller's scope cannot capture.
 					label := target.symbol.kind == .Parameter && index > 0 && index + 1 < len(tokens) && tokens[index + 1].kind == .Assign &&
@@ -279,6 +274,7 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 					seen[identity] = true
 					path, range, _ := place(s, rs, root_snapshot, at.location, context.temp_allocator)
 					append(&edits, Edit{path_key(path, context.temp_allocator), path, token.lo, range})
+					append(&edited, token.lo)
 				} else if member {
 					if same && index >= 2 && ends_operand(tokens[index - 2].kind) && promotes_target(rs, root_snapshot, source_file, token.lo, target, new_name) {
 						return "", fmt.tprintf("At %s, `.%s` could select the renamed `%s`, which its operand reaches through a `using` field.", where_written, new_name, old)
@@ -288,6 +284,10 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 						return "", fmt.tprintf("`%s` is declared at %s, %s.", new_name, where_written, conflict)
 					}
 				}
+			}
+			if at, keyword := reads_as_keyword(source.text, edited[:], old, new_name); keyword {
+				line := offset_to_position(source.text, source.line_starts, at, true).line + 1
+				return "", fmt.tprintf("At %s:%d, `%s` would be read as a keyword there, not as the renamed name.", source.path, line, new_name)
 			}
 		}
 	}
@@ -314,6 +314,31 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	if len(edits) > 0 { strings.write_byte(&b, ']') }
 	strings.write_string(&b, "}}")
 	return strings.to_string(b), ""
+}
+
+// grammar.md "Keywords": a contextual keyword is a name except in its own
+// position. The first edited offset at which the renamed text parses the new
+// name as the keyword, if any; `edited` is ascending, as the scan finds them.
+@(private = "file")
+reads_as_keyword :: proc(text: string, edited: []u32, old, new_name: string) -> (u32, bool) {
+	if len(edited) == 0 { return 0, false }
+	b := strings.builder_make(context.temp_allocator)
+	written := u32(0)
+	for lo in edited {
+		strings.write_string(&b, text[written:lo])
+		strings.write_string(&b, new_name)
+		written = lo + u32(len(old))
+	}
+	strings.write_string(&b, text[written:])
+	tokens := parsed_tokens(strings.to_string(b))
+	defer delete(tokens)
+	next := 0
+	for lo, k in edited {
+		shifted := u32(int(lo) + k * (len(new_name) - len(old)))
+		for next < len(tokens) && tokens[next].lo < shifted { next += 1 }
+		if next < len(tokens) && tokens[next].lo == shifted && tokens[next].kind != .Ident { return lo, true }
+	}
+	return 0, false
 }
 
 // The kind of the one token `name` lexes to, when it is exactly one token and

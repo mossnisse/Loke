@@ -1,6 +1,6 @@
 // grammar.md "Keywords": a reserved word is a member name, so a field, an enum
 // member, a variant, a record label, and an impl member may be one, and a
-// selector or keyed literal reaches it.
+// selector, keyed literal, or type annotation reaches it.
 package main;
 
 import "core:fmt";
@@ -23,6 +23,7 @@ impl Set {
 		return Set{bits = self.bits | other.bits};
 	}
 	default :: 7;
+	map :: int;
 }
 
 Pair :: (map: int, if: bool);
@@ -40,6 +41,7 @@ main :: proc() {
 	a := Set{bits = 1};
 	b := Set{bits = 2};
 	p: Pair = {map = 5, if = true};
+	counted: Set.map = 6;
 	switch (t.type) {
 	case .default:
 		fmt.println("default");
@@ -52,5 +54,5 @@ main :: proc() {
 		fmt.println(n);
 	case:
 	}
-	fmt.println(values[0], t.in, t.operator, t.where, a.union(b).bits, Set.default, p.map, p.if);
+	fmt.println(values[0], t.in, t.operator, t.where, a.union(b).bits, Set.default, p.map, p.if, counted);
 }

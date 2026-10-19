@@ -3086,14 +3086,15 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 	// does: later phases walk it recursively however it was parsed.
 	spine := 0
 	defer p.depth -= spine
-	for at(p, .Period) && peek_token(p, 1).kind == .Ident {
+	// An associated type is a member, so a reserved word may name it.
+	for at(p, .Period) && member_name_at(p, 1) {
 		if p.depth > MAX_NEST {
 			return depth_exceeded(p)
 		}
 		spine += 1
 		deepen(p, 1)
 		advance(p)
-		field := advance(p)
+		field := take_as(p, .Ident)
 		s := new_expr(p, Expr_Selector, start.lo)
 		s.operand = e
 		s.name = name_of(p, field)

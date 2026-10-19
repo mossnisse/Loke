@@ -313,6 +313,8 @@ that produced the diagnostics:
   - when the old name appears where the compiler recorded no binding for it,
     such as an inactive `when` branch, a generic that is never instantiated,
     an interface slot, or a named result;
+  - when the new name is a contextual keyword that would be read as the
+    keyword at a renamed use, as `[n]int` renamed to `[dynamic]int`;
   - when the binding is predeclared, or belongs to or is used by the bundled
     library.
 

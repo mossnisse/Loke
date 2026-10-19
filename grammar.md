@@ -298,7 +298,7 @@ Record_Label_List = Member_Name ("," Member_Name)*
 Anon_Union_Type = "(" Alternative ("|" Alternative)+ "|"? ")"
 Alternative     = Member_Name ":" Type?                  // `name:` carries nothing
 
-Type_Name      = Identifier ("." Identifier)*            // qualified or associated
+Type_Name      = Identifier ("." Member_Name)*           // qualified or associated
 Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ","? ")"
 Generic_Argument = Type | Expression                     // type or compile-time value
 
@@ -680,7 +680,7 @@ Primary_Expression =
      | "(" Type ")"                                    // parenthesised type, as in (^u32)(&f)
 
 Composite_Literal = Composite_Type? "{" Element_List? "}"
-Composite_Type    = Identifier ("." Identifier)? Type_Arguments?   // at most one selector
+Composite_Type    = Identifier ("." Member_Name)? Type_Arguments?  // at most one selector
                   | "[" "]" "mut"? Type
                   | "[" "?" "]" Type
                   | "[" "dynamic" "]" Type
