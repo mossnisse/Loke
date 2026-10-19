@@ -776,7 +776,8 @@ instance_key :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Bind
 	b := strings.builder_make(c.semantic_allocator)
 	fmt.sbprintf(&b, "%d", u32(template))
 	for binding in bindings {
-		strings.write_string(&b, "|")
+		// The name keeps two orders of the same arguments apart.
+		fmt.sbprintf(&b, "|%d=", u32(binding.name))
 		if binding.arg.is_type {
 			fmt.sbprintf(&b, "T%d", u32(binding.arg.type))
 		} else {
@@ -1429,12 +1430,49 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		}
 	}
 
-	result.bindings = bindings[:]
+	result.bindings = bindings_in_declaration_order(k, literal, bindings[:])
 	result.runtime_args = runtime[:]
 	result.compile_time = compile_time
 	result.compile_targets = compile_targets
 	result.ok = true
 	return result
+}
+
+// design.md "Generic argument identity": an instance is its declaration and its
+// ordered arguments, so bindings take the order their `$` names are written in
+// the signature. Matching order is not that order: a union pattern binds in the
+// argument's alternative order, and a name an absent alternative holds is
+// bound by a later parameter.
+@(private = "file")
+bindings_in_declaration_order :: proc(
+	k: ^Checker, literal: ^Expr_Proc, bindings: []Generic_Binding,
+) -> []Generic_Binding {
+	names := make([dynamic]Name, context.temp_allocator)
+	for parameter in literal.signature.params {
+		for entry in parameter.names {
+			if entry.is_poly {
+				append(&names, entry.name)
+			}
+		}
+		pattern_shape(parameter.type, &names)
+	}
+	ordered := make([dynamic]Generic_Binding, 0, len(bindings), k.c.semantic_allocator)
+	taken := make([]bool, len(bindings), context.temp_allocator)
+	for name in names {
+		id := name_identifier(k.c, name)
+		for binding, index in bindings {
+			if !taken[index] && binding.name == id {
+				taken[index] = true
+				append(&ordered, binding)
+			}
+		}
+	}
+	for binding, index in bindings {
+		if !taken[index] {
+			append(&ordered, binding)
+		}
+	}
+	return ordered[:]
 }
 
 // The argument a parameter takes: the one written with its name if any,

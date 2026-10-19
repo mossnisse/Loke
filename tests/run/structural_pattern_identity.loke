@@ -1,0 +1,45 @@
+// design.md "Generic argument identity": an instance is its declaration and
+// its bindings in the order the signature declares them. A union pattern binds
+// in the argument's alternative order, and a name an absent alternative holds
+// is bound by a later parameter; neither changes which instance a call reaches.
+package main;
+import "core:fmt";
+
+// Different bindings reached in the same order are different instances, so
+// the second call ranks `measure` by its own signature, not the first call's.
+measure :: proc(value: (left: $A | right: $B)) -> int {
+	return int(size_of(A));
+}
+fallback :: proc(value: (left: $T | right: int), unused: int = 0) -> int {
+	return 99;
+}
+pick :: proc{measure, fallback};
+
+// The same bindings reached in another order are one instance.
+counted :: proc(value: (left: $A | right: $B)) -> int {
+	calls: static int = 0;
+	calls += 1;
+	return calls;
+}
+
+// `E` comes from the union when it has `err`, and from `fallback` otherwise.
+late :: proc(outcome: (ok: $T | err: $E | none:), fallback: $E) -> int {
+	calls: static int = 0;
+	calls += 1;
+	return calls;
+}
+
+main :: proc() {
+	first: (left: int | right: bool) = .left(1);
+	second: (right: int | left: bool) = .right(2);
+	fmt.println(pick(first), pick(second));
+
+	in_order: (left: int | right: bool) = .left(1);
+	reordered: (right: bool | left: int) = .left(2);
+	fmt.println(counted(in_order), counted(reordered));
+
+	full: (ok: int | err: string_view | none:) = .none;
+	partial: (ok: int | none:) = .none;
+	note: string_view = "x";
+	fmt.println(late(full, note), late(partial, note));
+}
