@@ -1,0 +1,23 @@
+// design.md "Per-variant switch cases": `where is_union(E)` reports a
+// non-union argument at the call, not inside the instance.
+package main;
+import "core:fmt";
+
+report :: proc(error: $E) where is_union(E) {
+	switch (error) {
+	case $variant(e): fmt.println(variant.name, e);
+	}
+}
+
+show :: proc { show_left }
+show_left :: proc(left: int) {}
+
+forward :: proc(value: $E) where is_union(E) {
+	show(..value);
+}
+
+main :: proc() {
+	report(3);
+	forward("text");
+	missing := is_union();
+}

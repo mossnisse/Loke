@@ -163,7 +163,7 @@
     },
     "builtins": {
       "name": "support.function.builtin.loke",
-      "match": "\\b(?:assert|panic|static_assert|build_config|source_location|caller_location|size_of|align_of|offset_of|is_copyable|type_of|typeid_of|type_info_of|fields_of|enum_values_of|variants_of|make|free_all|drop|exchange|box|try_box|shared|try_shared)\\b(?=\\s*\\()"
+      "match": "\\b(?:assert|panic|static_assert|build_config|source_location|caller_location|size_of|align_of|offset_of|is_copyable|is_union|type_of|typeid_of|type_info_of|fields_of|enum_values_of|variants_of|make|free_all|drop|exchange|box|try_box|shared|try_shared)\\b(?=\\s*\\()"
     },
     "calls": {
       "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",

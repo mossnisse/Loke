@@ -23,8 +23,8 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_location(k, v, ident, sym.builtin)
 	case .Size_Of, .Align_Of, .Offset_Of:
 		check_layout_builtin(k, v, ident, sym.builtin)
-	case .Is_Copyable:
-		check_is_copyable_builtin(k, v, ident)
+	case .Is_Copyable, .Is_Union:
+		check_type_predicate_builtin(k, v, ident, sym.builtin)
 	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Variants_Of:
 		check_reflection_builtin(k, v, ident, sym.builtin)
 	case .Make, .Try_Make:
@@ -422,9 +422,10 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 }
 
 // design.md "Built-in procedures": `is_copyable(T)` is false exactly when `T` is
-// move-only, the same question the move-only diagnostics ask.
+// move-only, the same question the move-only diagnostics ask. `is_union(T)` asks
+// what per-variant expansion asks of its subject.
 @(private = "file")
-check_is_copyable_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+check_type_predicate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, builtin: Builtin_Kind) {
 	v.type = INVALID_TYPE
 	if len(v.args) != 1 {
 		errorf(k.c, v.span, "L0322", "`%s` takes 1 argument, found %d", ident.name, len(v.args))
@@ -439,7 +440,8 @@ check_is_copyable_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident
 	}
 	v.type = TYPE_BOOL
 	v.is_const = true
-	v.const_value = bool_const(!type_clone_disabled(k.c, operand))
+	holds := builtin == .Is_Union ? type_is_union(k.c, operand) : !type_clone_disabled(k.c, operand)
+	v.const_value = bool_const(holds)
 }
 
 // The type an operand denotes, checked once and never evaluated. Only

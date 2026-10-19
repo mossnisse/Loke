@@ -1,0 +1,45 @@
+package main;
+import "core:fmt";
+
+// design.md "Built-in procedures": `is_union(T)` is a compile-time `bool`, true
+// for a union named or anonymous. design.md "Per-variant switch cases": as a
+// `where` bound it admits exactly the subjects an expanded case accepts, so a
+// group can split unions from everything else.
+
+Shape :: union { circle: int, square: int, empty }
+Wrapped :: distinct Shape;
+
+report :: proc(error: $E) where is_union(E) {
+	switch (error) {
+	case $variant(e): fmt.println("union", variant.name, e);
+	}
+}
+report_plain :: proc(value: $T) where !is_union(T) { fmt.println("plain", value); }
+describe :: proc { report, report_plain }
+
+show :: proc { show_left, show_right }
+show_left :: proc(left: int) { fmt.println("left", left); }
+show_right :: proc(right: string_view) { fmt.println("right", right); }
+
+// design.md "Union argument expansion" over a bounded `$` parameter.
+forward :: proc(value: $E) where is_union(E) {
+	show(..value);
+}
+
+main :: proc() {
+	static_assert(is_union(Shape));
+	static_assert(is_union(Option(int)));
+	static_assert(is_union((ok: int | none:)));
+	static_assert(!is_union(int));
+	static_assert(!is_union((x: int, y: int)));
+	static_assert(!is_union(any_view));
+	// A distinct type is not its underlying union; an expanded case rejects it too.
+	static_assert(!is_union(Wrapped));
+
+	shape: Shape = .square(4);
+	fmt.println(is_union(shape));
+	describe(shape);
+	describe(7);
+	pair: (left: int | right: string_view) = .right("r");
+	forward(pair);
+}

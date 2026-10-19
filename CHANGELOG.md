@@ -87,6 +87,11 @@ checklist.
   pattern takes an argument whose alternatives it has, in any order, and binds
   each payload by its label. See design.md
   [Specialization](design.md#specialization).
+- `is_union(T)`: a compile-time `bool` built-in that is true for a union,
+  named or anonymous. A generic procedure with an expanded case or a union
+  argument expansion can bound `where is_union(E)`, so a non-union argument is
+  reported at the call instead of inside the instance. See design.md
+  [Built-in procedures](design.md#built-in-procedures).
 - `examples/orders.loke` checks orders against a stock list with anonymous
   unions: an error set per helper, widened by label into the caller's, and a
   labeled layer kept with `or_return .order`.

@@ -389,6 +389,9 @@ Builtin_Kind :: enum {
 	// design.md "Built-in procedures": whether a copy exists at all. No member can
 	// answer it — a scalar is copyable and has no clone to name.
 	Is_Copyable,
+	// design.md "Built-in procedures": whether a type is a union, the subject
+	// per-variant expansion needs, so a `where` bound can ask it at the call.
+	Is_Union,
 	// Compile-time reflection (design.md "`type` and `typeid`", "Compile-time
 	// reflection").
 	Type_Of,

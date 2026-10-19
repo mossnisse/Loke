@@ -789,9 +789,6 @@ before deciding.
 [union argument expansion](design.md#union-argument-expansion) are
 implemented; comments.md records why. What is still open:
 
-- **A union constraint.** `report :: proc(error: $E)` with an expanded case
-  instantiates for any `E` and is rejected inside the instance when `E` is not
-  a union. A constraint meaning "`E` is a union" would report it at the call.
 - **Constructing from a descriptor.** A `meta.Variant` describes a variant but
   cannot build one, so generic code cannot yet map one union onto another by
   label.

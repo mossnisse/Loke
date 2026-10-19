@@ -1,0 +1,12 @@
+L0434
+@20:2
+`report(int)` does not satisfy the bound `is_union(E)`
+the bound is written here
+!an expanded case needs a union subject
+L0434
+@21:2
+`forward(string)` does not satisfy the bound `is_union(E)`
+!`..` spreads into a variadic parameter
+L0322
+@22:13
+`is_union` takes 1 argument, found 0

@@ -185,7 +185,7 @@ Every other predeclared name may be shadowed by a declaration like any other nam
 
 - types: `bool`, `int`, `i8`, `i16`, `i32`, `i64`, `i128`, `uint`, `u8`, `u16`, `u32`, `u64`, `u128`, `uintptr`, `byte`, `f16`, `f32`, `f64`, `rune`, `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `any_view`, `Allocator`, and `Allocator_Error`;
 - generic and marker types: `Unit`, `Option`, `Result`, `Range`, `Simd`, `Box`, `Shared`, and `Weak`;
-- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `variants_of`, `make`, `free_all`, `drop`, `exchange`, `box`, `try_box`, `shared`, and `try_shared`;
+- operations: `assert`, `panic`, `static_assert`, `build_config`, `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`, `is_copyable`, `is_union`, `type_of`, `typeid_of`, `type_info_of`, `fields_of`, `enum_values_of`, `variants_of`, `make`, `free_all`, `drop`, `exchange`, `box`, `try_box`, `shared`, and `try_shared`;
 - [build constants](#build-constants): `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`, `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_LOG_LEVEL`, `LOKE_VENDOR`, and `LOKE_VERSION`.
 
 `type` and `move` are keywords, not predeclared names.
@@ -1754,12 +1754,14 @@ area :: proc(shape: ^Shape) -> f64 {
 In a generic procedure the subject's type decides the copies, so one procedure reports any union however its alternatives were [widened](#widening-by-label):
 
 ```odin
-report :: proc(error: $E) {
+report :: proc(error: $E) where is_union(E) {
 	switch (error) {
 	case $variant(e): fmt.println("failed:", variant.name, e);
 	}
 }
 ```
+
+The [`where`](#where-clauses) bound [`is_union(E)`](#built-in-procedures) reports `report(3)` at the call. Without it, `report(int)` is instantiated and its expanded case is rejected there. A [union argument expansion](#union-argument-expansion) over a `$` parameter takes the same bound.
 
 #### Union argument expansion
 
@@ -5750,6 +5752,7 @@ The predeclared operations used by this document are:
 | `size_of(T)`, `align_of(T)` | Size and alignment in bytes; compile-time constants. Accept a type or an expression |
 | `offset_of(T, field)` | Byte offset of a field; a compile-time constant |
 | `is_copyable(T)` | Whether a copy of `T` exists at all; a compile-time `bool`, false for a [move-only](#lifecycle-hooks-and-resource-types) type |
+| `is_union(T)` | Whether `T` is a union, named or anonymous; a compile-time `bool`, true exactly for a subject that [per-variant switch cases](#per-variant-switch-cases) and [union argument expansion](#union-argument-expansion) accept |
 | `type_of(expr)` | The compile-time [`type`](#type-and-typeid) of an expression |
 | `typeid_of(T)` | The runtime [`typeid`](#type-and-typeid) constant for a compile-time type |
 | `type_info_of(id)` | read-only `^runtime.Type_Info` for a `typeid`; the table is shared static storage |

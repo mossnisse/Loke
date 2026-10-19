@@ -675,6 +675,15 @@ label, since static expansion never synthesizes identifiers. `when` over
 is the same descriptor as an array, for generic code that walks a union's
 shape the way `fields_of` walks a record's.
 
+A generic subject can require a union with the bound `where is_union(E)`, so a
+wrong argument is reported at the call rather than inside the instance.
+Whether a type is a union is a fact about its kind, not something it can do, so
+it is a built-in predicate like `is_copyable` instead of an interface. An
+interface for it would have no slots, and the compiler would have to supply
+its satisfaction. A kind annotation such as `$E: union` was declined too: it
+would add parameter syntax for one kind, while the existing `where` clause
+already carries the bound and its diagnostics.
+
 ### Union argument expansion
 
 A handler set dispatched from several places, such as an event loop's

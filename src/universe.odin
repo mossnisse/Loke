@@ -86,6 +86,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"align_of", .Align_Of},
 		{"offset_of", .Offset_Of},
 		{"is_copyable", .Is_Copyable},
+		{"is_union", .Is_Union},
 		{"type_of", .Type_Of},
 		{"typeid_of", .Typeid_Of},
 		{"fields_of", .Fields_Of},
