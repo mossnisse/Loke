@@ -1467,11 +1467,8 @@ bindings_in_declaration_order :: proc(
 			}
 		}
 	}
-	for binding, index in bindings {
-		if !taken[index] {
-			append(&ordered, binding)
-		}
-	}
+	// Every binding comes from a name written in the signature.
+	assert(len(ordered) == len(bindings))
 	return ordered[:]
 }
 

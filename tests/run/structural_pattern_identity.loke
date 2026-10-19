@@ -22,8 +22,9 @@ counted :: proc(value: (left: $A | right: $B)) -> int {
 	return calls;
 }
 
-// `E` comes from the union when it has `err`, and from `fallback` otherwise.
-late :: proc(outcome: (ok: $T | err: $E | none:), fallback: $E) -> int {
+// The full union binds `T` before `E`; the partial one binds `E`, and its
+// fallback then `T`. Both reach one instance.
+late :: proc(outcome: (ok: $T | err: $E | none:), fallback: $T) -> int {
 	calls: static int = 0;
 	calls += 1;
 	return calls;
@@ -39,7 +40,7 @@ main :: proc() {
 	fmt.println(counted(in_order), counted(reordered));
 
 	full: (ok: int | err: string_view | none:) = .none;
-	partial: (ok: int | none:) = .none;
-	note: string_view = "x";
-	fmt.println(late(full, note), late(partial, note));
+	partial: (err: string_view | none:) = .none;
+	zero: int = 0;
+	fmt.println(late(full, zero), late(partial, zero));
 }
