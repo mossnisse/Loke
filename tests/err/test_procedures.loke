@@ -1,0 +1,51 @@
+// design.md "Test procedures": where `@(test)` may appear, the signatures it
+// accepts, and that nothing may name a test.
+package main;
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+foreign libc {
+	@(test) puts :: proc "c" (text: cstring_view) -> i32 ---;
+}
+
+@(test)
+helper :: proc() {}
+
+@(test)
+takes :: proc(n: int) {}
+
+@(test)
+counts :: proc() -> int { return 1; }
+
+@(test)
+generic :: proc(x: $T) {}
+
+@(test=1)
+valued :: proc() {}
+
+@(test)
+c_side :: proc "c" () {}
+
+@(test, export)
+exported :: proc "c" () {}
+
+@(test)
+LIMIT :: 3;
+
+Box :: struct { n: int }
+impl Box {
+	@(test)
+	inside :: proc() {}
+}
+
+main :: proc() {
+	helper();
+	held := helper;
+	@(test)
+	local :: proc() {}
+	_ = held;
+}
+
+other :: proc(n: int) {}
+
+// A group would make the test callable too.
+grouped :: proc{helper, other};

@@ -1,0 +1,35 @@
+L0607
+@7:4
+`@(test)` cannot appear on a foreign declaration
+L0615
+@14:1
+a test procedure takes no parameters and returns nothing or a fallible union
+L0615
+@17:1
+L0615
+@19:3
+a test procedure cannot be generic
+L0608
+@22:3
+`@(test)` takes no value
+L0615
+@26:1
+a test procedure is an ordinary `loke` procedure
+L0615
+@29:1
+L0607
+@31:3
+`@(test)` cannot appear on a constant declaration
+L0607
+@36:4
+`@(test)` cannot appear on an `impl` member
+L0616
+@41:2
+`helper` is a test procedure, which only a test build calls
+L0616
+@42:10
+L0607
+@43:4
+`@(test)` cannot appear on a local declaration
+L0616
+@51:17

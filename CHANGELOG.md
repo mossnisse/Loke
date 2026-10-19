@@ -41,7 +41,25 @@ checklist.
   if (Span.same(a, b)) { ... }
   ```
 
+- `LOKE_BUILD_MODE` has a third value, `.Test`, for a test build, so a switch
+  over it that names every value without a `case:` is not exhaustive
+  (`L0366`). Upgrade by adding `case .Test:`, or `case:` for the builds the
+  switch does not care about.
+
 ### Added
+
+- Test procedures: `@(test)` marks a file-scope procedure that takes no
+  parameters and returns nothing or a fallible union such as `Status(E)`, so
+  `or_return` works in a test. `lokec <package> -test` builds the root
+  package's tests into `<input>.test.exe` and runs each in a process of its
+  own, so a panic or failed `assert` ends only its test. It prints `ok` or
+  `FAIL` for each, with a failing test's output and location, and exits 1 when
+  one fails. The executable also runs one test by name. A test is checked in
+  every build but emitted only in a test build, and no code may call it
+  (`L0616`); its signature rules are `L0615`. `-build-mode=test` builds the
+  executable without running it. See design.md
+  [Test procedures](design.md#test-procedures) and compiler-guide.md
+  [Running tests](compiler-guide.md#running-tests).
 
 - Success returns: in a procedure returning a fallible union, `return value;`
   builds the success variant when `value` is not the whole result, so

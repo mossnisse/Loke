@@ -11,6 +11,7 @@ examples under `tests/` require a source checkout.
 - [Build configuration](#build-configuration)
 - [Import collections](#import-collections)
 - [Projects](#projects)
+- [Running tests](#running-tests)
 - [Default allocator and logger](#default-allocator-and-logger)
 - [Inspecting a compilation](#inspecting-a-compilation)
 - [Building an object for a C host](#building-an-object-for-a-c-host)
@@ -53,13 +54,14 @@ if ($LASTEXITCODE -eq 0) { .\args.exe first "two words" }
 
 | Option | Purpose and default |
 | --- | --- |
-| `-o <path>` | Set the executable or object output path. Defaults to the input path with `.exe` or `.obj`. |
+| `-o <path>` | Set the executable or object output path. Defaults to the input path with `.exe`, `.obj`, or, for a test build, `.test.exe`. |
+| `-test` | Build the root package's tests and run each in its own process; see [Running tests](#running-tests). |
 | `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`. |
 | `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
 | `-define:NAME=VALUE` | Supply a project-wide `build_config` value. Repeat for different names. |
 | `-collection name=path` | Map an import prefix to a directory. Repeat for different prefixes. |
 | `-copy-cost=N` | Warn about copies that may allocate, and about copies of at least `N` inline bytes. Default: `512`; use `-copy-cost=off` to disable both. |
-| `-build-mode=exe\|obj` | Produce an executable (default) or one relocatable object. |
+| `-build-mode=exe\|obj\|test` | Produce an executable (default), one relocatable object, or a test executable without running it. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
 | `-fmt`, `-fmt-check` | Rewrite a file, or a directory's `.loke` files, in the canonical layout (comments.md "Formatting"); `-fmt-check` only lists the files that would change and exits 1 if there are any. Only whitespace changes. |
@@ -129,6 +131,39 @@ project's directory for it, which is how a dependency is patched or vendored.
 library, but an explicit `-collection` can override either. Dependencies are
 local directories for now ([open-questions.md "Package and import versioning"](open-questions.md#package-and-import-versioning)).
 
+## Running tests
+
+`-test` builds the root package's [test procedures](design.md#test-procedures)
+into a test executable, then runs each test in a process of its own, so a panic
+ends only its test. The package need not be `main`:
+
+```powershell
+.\lokec.exe tests\test\outcomes.loke -test
+```
+
+```text
+ok   parses_a_digit
+FAIL returns_its_failure (tests/test/outcomes.loke:21:1)
+     error: Not_A_Digit
+ok   prints_and_passes
+FAIL fails_an_assert (tests/test/outcomes.loke:31:1)
+     shown before the assert
+     loke: panic: assertion failed
+     loke: panicked
+...
+3 passed, 3 failed
+```
+
+A passing test's output is hidden; a failing one's standard output and then
+standard error follow its name and declaration. `lokec` exits 1 when a test
+fails, and 2 when the executable cannot be run. Only the root package's tests
+run; to test an imported package, pass its directory.
+
+The executable is written to `-o`, by default the input path with `.test.exe`,
+and stays there. Run it with a test's name to repeat that test alone, under a
+debugger or with `-g` for a panic's call stack, or with no argument to run every
+test until the first failure. `-build-mode=test` builds it without running it.
+
 ## Default allocator and logger
 
 The root package keeps its allocator and logger choices in source. The value
@@ -173,9 +208,10 @@ The parsing modes take a **file**, not a package directory:
 
 `.\lokec.exe -h` prints the built-in usage summary and `-version` the compiler
 version.
-Compiler exit codes are `0` for success, `1` for source/configuration diagnostics,
-and `2` for invalid command-line usage or backend/toolchain failure. In
-PowerShell, inspect `$LASTEXITCODE` immediately after the command.
+Compiler exit codes are `0` for success, `1` for source/configuration diagnostics
+or a failing test under `-test`, and `2` for invalid command-line usage or
+backend/toolchain failure. In PowerShell, inspect `$LASTEXITCODE` immediately
+after the command.
 
 ## Building an object for a C host
 

@@ -5663,6 +5663,39 @@ An [object build](#build-configuration) has no entry or argument conversion, so 
 
 Indexing copies an owning string; iteration borrows runtime-owned bytes valid for the process lifetime. For immediate termination without cleanup, see [`os.exit`](#program-entry-and-exit).
 
+### Test procedures
+
+`@(test)` marks a **test procedure**:
+
+```odin
+package digits;
+
+Parse_Error :: enum { Not_A_Digit }
+
+parse_digit :: proc(c: u8) -> Result(int, Parse_Error) {
+	if (c < '0' || c > '9') { return .err(.Not_A_Digit); }
+	return .ok(int(c - '0'));
+}
+
+@(test)
+parses_seven :: proc() -> Status(Parse_Error) {
+	value := parse_digit('7') or_return;
+	assert(value == 7);
+}
+```
+
+A test procedure is declared at file scope, not in an `impl` block or a foreign block. It takes no parameters and returns nothing or a [fallible union](#typed-fallibility) whose success variant carries nothing or carries `Unit`, as [`main`](#program-entry-and-exit) may. It is not generic, has the `loke` calling convention, and is not `@(export)`. No code names it: a call or any other use of its name, in its package or in an importer, is a compile-time error, so only a test build calls it.
+
+A test procedure is checked in every build, like any other declaration, so what it names must exist in every build. Only a [test build](#build-modes) emits its body, and only for tests of the root package: a package's test build does not run the tests of the packages it imports.
+
+A test build accepts any root package. Its executable entry runs tests in place of `main`, which, if the package has one, is an ordinary procedure. The executable takes at most one argument, the name of a test:
+
+- With a name, it runs that test alone. The test fails when it panics, which includes a failed `assert`, or when it returns its failure, which the startup code prints and drops as it does for a failing `main`, and then exits with status 1. A test that returns otherwise passes, with exit status 0. The name is not part of `os.args`, which holds only the executable path.
+- With no argument, it runs every test, in the order of the package's file names and then in source order, and stops at the first that fails.
+- A name no test has, or a second argument, ends the process with status 2 after a message on standard error.
+
+A [panic](#panics-and-unwinding) cannot be caught, so a runner that reports every test runs each in a process of its own; `lokec -test` does, as [Running tests](compiler-guide.md#running-tests) describes.
+
 ### Import statement
 
 The following program imports the fmt and os packages from the core library collection.
@@ -6375,7 +6408,7 @@ The compiler provides a small set of constants in every compilation:
 | `LOKE_ARCH` | Target CPU architecture: `.Amd64`, `.Arm64`. |
 | `LOKE_OS` | Target operating system: `.Windows`, `.Linux`, `.Darwin`. |
 | `LOKE_ENDIAN` | Target endianness: `.Little`, `.Big`. |
-| `LOKE_BUILD_MODE` | Requested output kind: `.Exe`, `.Obj`. |
+| `LOKE_BUILD_MODE` | Requested output kind: `.Exe`, `.Obj`, `.Test`. |
 | `LOKE_DEBUG` | Build-provided debug flag: `true` when the build asks for it, `false` otherwise. It is independent of the optimization mode and of whether debug information is emitted. |
 | `LOKE_OPTIMIZATION_MODE` | Selected optimization mode: `.None`, `.Minimal`, `.Size`, `.Speed`, `.Aggressive`. |
 | `LOKE_LOG_LEVEL` | The [compiled log level](#compiled-log-level); `core:log` suppresses everything below it. |
@@ -6410,6 +6443,8 @@ Configuration values are immutable constants.
 `.Exe` requires a package named `main` and emits the [executable entry](#executable-startup-abi).
 
 `.Obj` accepts any root package, requires no `main`, and emits no executable entry. Its consumer supplies the runtime, foreign libraries, and process startup.
+
+`.Test` accepts any root package and emits an executable whose entry runs the root package's [test procedures](#test-procedures) in place of `main`.
 
 A [foreign thread](#threads) that calls into an object build must attach and detach through the documented runtime API, exactly as any other non-Loke thread does.
 
@@ -6497,6 +6532,7 @@ An attribute specifies a property of a declaration, parameter, statement, block,
 | `@(link_name=<string>)` | procedure and variable declarations, including foreign ones | [sets the symbol name](#link_namestring) |
 | `@(deprecated=<string>)` | procedure declarations | [reports the message at each use](#deprecatedstring) |
 | `@(require_results)` | procedure declarations, procedure groups, foreign blocks, and type declarations | [results must be used or discarded](#require_results) |
+| `@(test)` | file-scope procedure declarations | [a test, which only a test build calls](#test) |
 | `@(default_calling_convention=<string>)` | foreign blocks | [the block's default calling convention](#default_calling_conventionstring) |
 | `@(default_allocator=<string>)`, `@(default_logger=<string>)` | the root package clause | [select the program's providers](#default_allocatorstring-and-default_loggerstring) |
 | `@(zero=<variant>)`, `@(failure=<variant>)` | union types | [designate the zero and failure variants](#zerovariant-and-failurevariant) |
@@ -6624,6 +6660,10 @@ main :: proc() {
 	_ = saved;
 }
 ```
+
+#### `@(test)`
+
+Marks a file-scope procedure as a test, which a test build runs and no code may name. It takes no value. See [Test procedures](#test-procedures).
 
 #### `@(zero=<variant>)` and `@(failure=<variant>)`
 

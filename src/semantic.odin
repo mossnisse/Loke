@@ -688,6 +688,9 @@ Symbol :: struct {
 	// design.md "@(require_results)": each call must use or explicitly discard the
 	// results. Applied to a procedure group after overload selection.
 	require_results:    bool,
+	// design.md "Test procedures": `@(test)`, which only a test build calls, so
+	// no code may name it.
+	is_test:            bool,
 	// design.md "Foreign system": no body, so the backend emits a
 	// `declare`/`external global` under `link_name`. The source library isn't
 	// recorded — every foreign block links against the one image.
@@ -861,6 +864,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.proc_contract_checks = make([dynamic]Proc_Contract_Check, 0, 4, c.semantic_allocator)
 	c.contract_joins = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)
 	c.static_locals = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)
+	c.tests = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits

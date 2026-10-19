@@ -69,7 +69,8 @@ document_decl :: proc(c: ^Compiler, b: ^strings.Builder, d: ^Decl, owner: string
 	if len(d.names) == 0 || len(d.symbols) == 0 {
 		return
 	}
-	if symbol := symbol_of(c, d.symbols[0]); symbol == nil || !symbol.public {
+	// design.md "Test procedures": no importer can call a test.
+	if symbol := symbol_of(c, d.symbols[0]); symbol == nil || !symbol.public || symbol.is_test {
 		return
 	}
 	text := c.sources[d.span.file].text

@@ -1,0 +1,9 @@
+@(public) package lib;
+
+double :: proc(n: int) -> int { return n * 2; }
+
+// Only the root package's tests run.
+@(test)
+imported :: proc() {
+	panic("an imported package's test ran");
+}

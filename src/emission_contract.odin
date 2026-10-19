@@ -34,6 +34,11 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 	if c.build_mode == .Exe && !emission_procedure_available(c, c.entry_point) {
 		return emission_contract_error(c, "an executable has no validated entry procedure")
 	}
+	for test in c.tests {
+		if !emission_procedure_available(c, test) {
+			return emission_contract_error(c, "a test build has an unchecked test procedure")
+		}
+	}
 	if !c.typeid_frozen {
 		return emission_contract_error(c, "typeids must be frozen before emission")
 	}

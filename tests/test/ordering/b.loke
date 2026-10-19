@@ -1,0 +1,13 @@
+package main;
+
+import "lib";
+
+@(test)
+second_file_first :: proc() {
+	assert(lib.double(4) == 8);
+}
+
+@(test)
+second_file_second :: proc() {
+	assert(build_name() == "test");
+}

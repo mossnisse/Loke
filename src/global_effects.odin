@@ -203,18 +203,33 @@ prov_equality_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) {
 
 // design.md "Program entry and exit": a fallible `main`'s failure is printed
 // after its cleanup, while what the result borrows is still in use, so each
-// return from it reaches every `format` printing does.
+// return from it reaches every `format` printing does. design.md "Test
+// procedures": so does a test build's from a fallible test.
 prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
 	c := graph.k.c
-	if c.build_mode != .Exe || graph.literal == nil {
+	if graph.literal == nil {
 		return
 	}
-	// The entry point is validated after this pass, so it is found by name.
 	sym := symbol_of(c, graph.literal.symbol)
-	if sym == nil || sym.has_receiver || identifier_text(c, sym.name) != "main" {
+	if sym == nil {
 		return
 	}
-	if pkg := package_of(c, sym.pkg); pkg == nil || identifier_text(c, pkg.name) != "main" {
+	described := "modified by printing a failure `main` returns"
+	switch c.build_mode {
+	case .Exe:
+		// The entry point is validated after this pass, so it is found by name.
+		if sym.has_receiver || identifier_text(c, sym.name) != "main" {
+			return
+		}
+		if pkg := package_of(c, sym.pkg); pkg == nil || identifier_text(c, pkg.name) != "main" {
+			return
+		}
+	case .Test:
+		if !sym.is_test || sym.pkg != c.root_package {
+			return
+		}
+		described = "modified by printing a failure a test returns"
+	case .Obj:
 		return
 	}
 	if _, fallible := entry_failure_type(c, sym.result); !fallible {
@@ -226,7 +241,7 @@ prov_entry_report_effects :: proc(graph: ^Flow_Graph, span: Span) {
 	}
 	prov_effect_call(
 		graph, Effect_Call{dyn_interface = underlying_info(c, view).dyn_interface}, span,
-		described = "modified by printing a failure `main` returns",
+		described = described,
 	)
 }
 

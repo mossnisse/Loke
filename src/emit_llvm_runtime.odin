@@ -56,6 +56,7 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_flush_stdout()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_args_init(i32, ptr)")
+	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_test_select(ptr, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
 	fmt.sbprintln(&e.b, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")

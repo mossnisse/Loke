@@ -590,6 +590,11 @@ int64_t loke_rt_v1_args_count(void);
 const char *loke_rt_v1_args_at(int64_t index);
 int64_t loke_rt_v1_args_len(int64_t index);
 
+/* design.md "Test procedures": the generated test entry's choice of test, from
+ * the first argument: -1 for every test, or the named test's index. An unknown
+ * name exits with status 2. */
+int64_t loke_rt_v1_test_select(const char *const *names, int64_t count);
+
 #if defined(__cplusplus)
 }
 #endif

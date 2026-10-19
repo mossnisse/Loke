@@ -121,6 +121,8 @@ Compiler :: struct {
 	root_package:   Package_Id,
 	// Validated by the session for executable builds; never resolved by emission.
 	entry_point:    Symbol_Id,
+	// design.md "Test procedures": a test build's tests, in the order it runs them.
+	tests:          [dynamic]Symbol_Id,
 	// Every parsed file, so one `destroy_compilation` frees the lot.
 	parsed_files:   [dynamic]^File,
 

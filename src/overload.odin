@@ -89,6 +89,10 @@ resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Pro
 		if reject_direct_hook_call(k, name.span, member) {
 			continue
 		}
+		// design.md "Test procedures": nor may a group make a test callable.
+		if reject_test_procedure_use(k, sym, name.text, name.span) {
+			continue
+		}
 		if slice.contains(members[:], member) {
 			errorf(k.c, name.span, "L0394", "`%s` is already a member of this group", name.text)
 			continue

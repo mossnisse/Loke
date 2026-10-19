@@ -1,0 +1,9 @@
+// design.md "Test procedures": a public test is still not callable from the
+// package that imports it.
+package main;
+
+import "lib";
+
+main :: proc() {
+	lib.checks();
+}

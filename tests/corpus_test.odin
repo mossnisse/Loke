@@ -23,6 +23,8 @@
 //   tests/syntax_err/*.loke        the same, for parser diagnostics, and assert
 //     with .expected               the file's trailing sentinel survived recovery
 //   tests/doc/*.loke + .expected   document with -doc, compare stdout exactly
+//   tests/test/*.loke or <case>/   build with -test and compare the runner's
+//     with <case>.expected         report; a `FAIL` line in it expects exit 1
 //
 // Two cases are one-off rather than a corpus, because each needs something the
 // glob-and-compare shape cannot express:
@@ -357,6 +359,18 @@ driver_rejects_invalid_modes :: proc(t: ^testing.T) {
 		t,
 		strings.contains(string(directory_stderr), "needs a file input"),
 		"missing directory diagnostic",
+	)
+
+	conflict, _, conflict_stderr, conflict_err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-test", "-build-mode=obj"}},
+		context.allocator,
+	)
+	testing.expect(t, conflict_err == nil, "cannot run the conflicting test build")
+	testing.expect(t, conflict.exit_code == 2, "-test with another build mode did not exit 2")
+	testing.expect(
+		t,
+		strings.contains(string(conflict_stderr), "takes no other -build-mode"),
+		"missing build-mode conflict diagnostic",
 	)
 
 	for collection in ([]string{"-collection:foo=", "-collection:foo:bar=tests"}) {
@@ -876,6 +890,92 @@ programs_trap :: proc(t: ^testing.T) {
 		cases[i] = {path, expected_path(path), fmt.tprintf("%s/trap-%s.exe", TMP, filepath.stem(path))}
 	}
 	run_programs(t, cases, trap = true)
+}
+
+// design.md "Test procedures": `-test` builds the root package's tests and runs
+// each in a process of its own, so the report names every outcome.
+@(test)
+test_builds_report_each_test :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	entries, _ := filepath.glob("tests/test/*")
+	cases := make([dynamic]string, context.temp_allocator)
+	for entry in entries {
+		if os.is_dir(entry) || strings.has_suffix(entry, ".loke") {
+			append(&cases, entry)
+		}
+	}
+	testing.expect(t, len(cases) > 0, "no test-build cases found")
+	jobs := make([]Exec, len(cases), context.temp_allocator)
+	for path, i in cases {
+		command := make([dynamic]string, context.temp_allocator)
+		exe := fmt.tprintf("%s/test-%s.test.exe", TMP, filepath.stem(path))
+		append(&command, compiler_path(), path, "-test", "-o", exe)
+		append(&command, ..env_flags())
+		append(&command, ..extra_flags(path))
+		jobs[i].command = command[:]
+	}
+	exec_all(jobs)
+	for path, i in cases {
+		job := jobs[i]
+		if !testing.expectf(t, job.err == nil, "%s: cannot run %s", path, compiler_path()) {
+			continue
+		}
+		expected, expected_err := os.read_entire_file(expected_path(path), context.temp_allocator)
+		if !testing.expectf(t, expected_err == nil, "%s: missing .expected file", path) {
+			continue
+		}
+		report := normalise(string(expected))
+		failing := strings.has_prefix(report, "FAIL ") || strings.contains(report, "\nFAIL ")
+		testing.expectf(
+			t, job.state.exit_code == (failing ? 1 : 0),
+			"%s: exited with %d\n%s", path, job.state.exit_code, string(job.stderr),
+		)
+		testing.expectf(
+			t, normalise(string(job.stdout)) == report,
+			"%s: expected\n%s\ngot\n%s", path, report, normalise(string(job.stdout)),
+		)
+	}
+}
+
+// A test executable runs one test by name, as the runner calls it, and exits
+// with status 2 on a name no test has or on a second argument.
+@(test)
+a_test_executable_runs_one_test_by_name :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/test-by-name.test.exe", TMP)
+	build, _, build_stderr, build_err := exec(
+		os.Process_Desc{command = []string{compiler_path(), "tests/test/outcomes.loke", "-build-mode=test", "-o", exe}},
+		context.allocator,
+	)
+	if !testing.expectf(t, build_err == nil && build.exit_code == 0, "test build failed\n%s", string(build_stderr)) {
+		return
+	}
+	Run :: struct {
+		args:   []string,
+		exit:   int,
+		stdout: string,
+		stderr: string,
+	}
+	runs := []Run {
+		{{"prints_and_passes"}, 0, "not shown", ""},
+		{{"returns_its_failure"}, 1, "", "error: Not_A_Digit"},
+		{{"absent"}, 2, "", "loke: no test is named `absent`"},
+		{{"parses_a_digit", "absent"}, 2, "", "loke: a test executable takes at most one test name"},
+		// With no name, every test in order, stopping at the first failure.
+		{{}, 1, "", "error: Not_A_Digit"},
+	}
+	for run in runs {
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, launch_path(exe))
+		append(&command, ..run.args)
+		state, stdout, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+		if !testing.expectf(t, err == nil, "cannot run %v", run.args) {
+			continue
+		}
+		testing.expectf(t, state.exit_code == run.exit, "%v: exited with %d", run.args, state.exit_code)
+		testing.expectf(t, normalise(string(stdout)) == run.stdout, "%v: stdout %q", run.args, string(stdout))
+		testing.expectf(t, normalise(string(stderr)) == run.stderr, "%v: stderr %q", run.args, string(stderr))
+	}
 }
 
 // The generated IR is not compared whole — that would break on every temporary

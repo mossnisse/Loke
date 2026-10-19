@@ -429,6 +429,7 @@ reclamation. The integration harness is in `tests/`:
 | `ll/`, `layout/` | Required/forbidden LLVM shapes and LLVM acceptance; compiler/LLVM layout agreement. |
 | `pkg/`, `obj/`, `os/` | Multi-package programs, C-host linking, process arguments, and environment. |
 | `doc/`, `examples/` | Generated documentation and classified real example programs with expected output. |
+| `test/` | Test builds: the `-test` runner's report against `.expected`, exiting 1 when it lists a failure. |
 | `tutorial_test.odin` | Programs, auxiliary files, outputs, panics, and diagnostics extracted from tutorial fences. |
 | `runtime_test.odin` | Runtime-header ABI agreement and concurrent runtime-cache creation/reuse. |
 | `checker_fuzz_test.odin` | Deterministic source mutation; failures reduced and saved under `tests/tmp/fuzz/`. |

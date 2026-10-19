@@ -1,0 +1,4 @@
+// A package with no tests builds a test executable that runs none.
+package quiet;
+
+answer :: proc() -> int { return 42; }

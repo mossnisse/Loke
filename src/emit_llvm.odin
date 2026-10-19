@@ -124,6 +124,8 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	// design.md "Build modes": an object build's host owns the entry.
 	if c.build_mode == .Exe {
 		emit_entry(&e)
+	} else if c.build_mode == .Test {
+		emit_test_entry(&e)
 	}
 	emit_type_info_tables(&e)
 	emit_format_thunks(&e)
@@ -493,7 +495,9 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 				if len(v.symbols) == 0 || symbol_is_template(e.c, v.symbols[0]) {
 					continue
 				}
-				if literal := decl_proc_literal(v); literal != nil {
+				// design.md "Test procedures": only a test build calls one.
+				if literal := decl_proc_literal(v); literal != nil &&
+				   test_procedure_emitted(e.c, symbol_of(e.c, v.symbols[0])) {
 					emit_proc(e, v.symbols[0], literal)
 				}
 			case ^Item_Impl:
@@ -697,6 +701,99 @@ emit_entry :: proc(e: ^Emitter) {
 	if fallible {
 		end_generated_frame(e, header)
 	}
+}
+
+// design.md "Test procedures": with no argument, run every test in order and
+// stop at the first failure; with a test's name, run that one alone. The
+// runtime matches the name and exits 2 on one no test has.
+@(private = "file")
+emit_test_entry :: proc(e: ^Emitter) {
+	attributes := e.c.debug_info ? " noinline" : ""
+	// A fallible test is printed and dropped in a frame of its own, as `main` is.
+	runners := make([]string, len(e.c.tests))
+	reported := make([]bool, len(e.c.tests))
+	for test, index in e.c.tests {
+		name, found := e.names[test]
+		if !found || name == "" {
+			backend_fail(e, "a test procedure has no emitted name")
+			return
+		}
+		runners[index] = name
+		symbol := symbol_of(e.c, test)
+		if failure, fallible := entry_failure_type(e.c, symbol.result); fallible {
+			runners[index] = emit_test_report(e, index, name, symbol.result, failure, attributes)
+			reported[index] = true
+		}
+	}
+	names := "null"
+	if len(e.c.tests) > 0 {
+		b := strings.builder_make()
+		fmt.sbprintf(&b, "@loke.tests = private unnamed_addr constant [%d x ptr] [", len(e.c.tests))
+		for test, index in e.c.tests {
+			text := identifier_text(e.c, symbol_of(e.c, test).name)
+			fmt.sbprintf(&b, "%sptr %s", index == 0 ? "" : ", ", text_literal_global(e, text))
+		}
+		strings.write_string(&b, "]\n")
+		append(&e.globals, strings.to_string(b))
+		names = "@loke.tests"
+	}
+
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	open_function(e, "define i32 @wmain(i32 %%argc, ptr %%argv)")
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
+	if e.c.debug_info {
+		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_enable_panic_trace()")
+	}
+	if any_provider_selected(e.c) {
+		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_program_init()")
+	}
+	selected, every := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_test_select(ptr %s, i64 %d)", selected, names, len(e.c.tests))
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, -1", every, selected)
+	failed := new_label(e, "test.failed")
+	for runner, index in runners {
+		picked, run := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", picked, selected, index)
+		fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", run, every, picked)
+		body, next := new_label(e, "test.run"), new_label(e, "test.next")
+		branch_if(e, run, body, next)
+		place_label(e, body)
+		if !reported[index] {
+			fmt.sbprintfln(&e.b, "  call void %s()%s", runner, attributes)
+			branch(e, next)
+		} else {
+			status, bad := temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = call i32 %s()", status, runner)
+			fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", bad, status)
+			branch_if(e, bad, failed, next)
+		}
+		place_label(e, next)
+	}
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
+	fmt.sbprintln(&e.b, "  ret i32 0")
+	e.terminated = true
+	place_label(e, failed)
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
+	fmt.sbprintln(&e.b, "  ret i32 1")
+	fmt.sbprintln(&e.b, "}")
+}
+
+// One fallible test's call, failure report, and drop, returning its status.
+@(private = "file")
+emit_test_report :: proc(e: ^Emitter, index: int, test: string, result, failure: Type_Id, attributes: string) -> string {
+	name := fmt.aprintf("@loke.test.%d", index)
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	open_function(e, "define private i32 %s()", name)
+	header := begin_generated_frame(e, name)
+	status := emit_entry_failure_report(e, test, result, failure, attributes)
+	emit_unwind_pop(e)
+	fmt.sbprintfln(&e.b, "  ret i32 %s", status)
+	fmt.sbprintln(&e.b, "}")
+	end_generated_frame(e, header)
+	return name
 }
 
 // design.md "Build-selected providers": run once, allocator first so the logger

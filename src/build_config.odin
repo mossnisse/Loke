@@ -15,6 +15,9 @@ Opt_Mode :: enum {
 Build_Mode :: enum {
 	Exe,
 	Obj,
+	// design.md "Test procedures": an executable whose entry runs the root
+	// package's tests.
+	Test,
 }
 
 // `-Ofast` is deliberately absent: it changes floating-point semantics.

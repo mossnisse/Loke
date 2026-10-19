@@ -1,0 +1,13 @@
+ok   parses_a_digit
+FAIL returns_its_failure (tests/test/outcomes.loke:21:1)
+     error: Not_A_Digit
+ok   prints_and_passes
+FAIL fails_an_assert (tests/test/outcomes.loke:31:1)
+     shown before the assert
+     loke: panic: assertion failed
+     loke: panicked
+FAIL panics_with_a_message (tests/test/outcomes.loke:37:1)
+     loke: panic: gave up at 3
+     loke: panicked
+ok   runs_after_the_failures
+3 passed, 3 failed

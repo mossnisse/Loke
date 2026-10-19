@@ -25,7 +25,10 @@ options:
     -print-toolchain
                   print the clang, MSVC toolset, and flags a link would use
                   here, and whether one could run at all, then stop
-    -o <path>     output executable (default: input name with .exe)
+    -o <path>     output executable (default: input name with .exe, or with
+                  .test.exe for a test build)
+    -test         build the root package's @(test) procedures into a test
+                  executable, run each in its own process, and report them
     -emit-ll      write the LLVM IR next to the output and stop
     -keep-temps   keep the generated .ll, and any object assembled from a .asm
                   import, after linking
@@ -62,8 +65,9 @@ options:
     -g            emit debug information, at any -opt level: an executable
                   gets a .pdb beside it
     -debug        set LOKE_DEBUG to true
-    -build-mode=exe|obj
-                  build an executable, or a relocatable object (default: exe)
+    -build-mode=exe|obj|test
+                  build an executable, a relocatable object, or a test
+                  executable that -test would run (default: exe)
     -log-level=debug|info|warning|error|off
                   the compiled LOKE_LOG_LEVEL; core:log suppresses every call
                   below it (default: debug)
@@ -84,6 +88,7 @@ Options :: struct {
 	doc:        bool,
 	fmt:        bool,
 	fmt_check:  bool,
+	run_tests:  bool,
 	defines:    [dynamic]string,
 	collections: [dynamic]string,
 	copy_cost:         u64,
@@ -121,8 +126,8 @@ main :: proc() {
 	os.exit(code)
 }
 
-// Exit status: 0 success, 1 source or configuration diagnostics, 2 invalid
-// command-line usage or a backend/toolchain failure.
+// Exit status: 0 success, 1 source or configuration diagnostics or a failing
+// test, 2 invalid command-line usage or a backend/toolchain failure.
 @(private = "file")
 run :: proc() -> int {
 	opts, args_ok := parse_args(os.args[1:])
@@ -222,6 +227,9 @@ run :: proc() -> int {
 
 	code := emit_session(&s, emission)
 	report(c) // warnings may have been produced with no error
+	if code == 0 && opts.run_tests && !opts.emit_ll {
+		code = run_tests(c, opts.output)
+	}
 	return code
 }
 
@@ -229,6 +237,7 @@ run :: proc() -> int {
 parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 	opts.copy_cost, opts.copy_cost_enabled = DEFAULT_COMPILATION_CONFIG.copy_cost, DEFAULT_COMPILATION_CONFIG.copy_cost_enabled
 	opts.panic_unwind = DEFAULT_COMPILATION_CONFIG.panic_unwind
+	build_mode_written := false
 	for i := 0; i < len(args); i += 1 {
 		arg := args[i]
 		switch {
@@ -257,6 +266,8 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.dump_ast = true
 		case arg == "-dump-tokens":
 			opts.dump_tokens = true
+		case arg == "-test":
+			opts.run_tests = true
 		case arg == "-check-layout":
 			opts.check_layout = true
 		case arg == "-doc":
@@ -316,10 +327,12 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			switch arg[len("-build-mode="):] {
 			case "exe": opts.build_mode = .Exe
 			case "obj": opts.build_mode = .Obj
+			case "test": opts.build_mode = .Test
 			case:
-				fmt.eprintln("error: -build-mode needs `exe` or `obj`")
+				fmt.eprintln("error: -build-mode needs `exe`, `obj`, or `test`")
 				return opts, false
 			}
+			build_mode_written = true
 		case strings.has_prefix(arg, "-runtime="):
 			opts.runtime_dir = arg[len("-runtime="):]
 			if opts.runtime_dir == "" {
@@ -349,6 +362,13 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 		}
 	}
 
+	if opts.run_tests {
+		if build_mode_written && opts.build_mode != .Test {
+			fmt.eprintln("error: -test builds a test executable, so it takes no other -build-mode")
+			return opts, false
+		}
+		opts.build_mode = .Test
+	}
 	if opts.print_toolchain {
 		return opts, true
 	}
@@ -386,5 +406,10 @@ default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 	} else {
 		stem = strings.trim_suffix(input, filepath.ext(input))
 	}
-	return strings.concatenate({stem, mode == .Obj ? ".obj" : ".exe"}, context.temp_allocator)
+	extension := ".exe"
+	#partial switch mode {
+	case .Obj:  extension = ".obj"
+	case .Test: extension = ".test.exe"
+	}
+	return strings.concatenate({stem, extension}, context.temp_allocator)
 }

@@ -217,6 +217,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	// design.md "Attributes": after signatures, so a procedure group's symbol
 	// kind is known.
 	validate_attributes(k, pkg)
+	check_test_procedures(k, pkg)
 
 	// Every record has its fields now.
 	check_deferred_foreign_signatures(k)

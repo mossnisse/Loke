@@ -1213,6 +1213,41 @@ A hidden sticky error flag would not identify which implicit operation failed.
 An explicit result or termination is preferable to continuing with a silently
 truncated value. The policies are defined under [Allocation failure](design.md#allocation-failure).
 
+### Test procedures
+
+A unit test has to reach package-private code, which only code in the package
+can, so tests are declarations in the package and not a separate program. Odin
+marks them `@(test)` too, but they take a `^testing.T` that a library runner
+passes in. Loke's take nothing. A failed `assert` or a panic is the failure,
+and a fallible result is one too, so `or_return` works in a test as it does in
+`main`. An attribute needs no new syntax, where Zig's `test "name" { ... }`
+blocks would, and a test's name is its procedure's, which the runner passes to
+the executable to run it alone.
+
+A test is checked in every build, unlike Go's `_test.go` files, Rust's
+`#[cfg(test)]`, or Zig's tests, which only test builds analyze. A test that
+only a test build sees goes stale without anyone noticing, and the editor would
+need a second configuration to report its errors. The cost is that whatever a
+test names exists in every build. A helper behind
+`when (LOKE_BUILD_MODE == .Test)` is not visible to a test in other builds, so
+helpers are ordinary procedures, which optimized builds drop when nothing calls
+them. Because no code may name a test, checking it everywhere does not mean
+emitting it everywhere. Only a test build includes a test's body.
+
+A panic cannot be caught ([Recoverable panics](open-questions.md#recoverable-panics)),
+so one process cannot report several failing tests. The executable runs one
+test when it is given that test's name, and `lokec -test` starts it once per
+test. This isolates the tests' globals as well as their panics, and keeps the
+runner out of the language runtime. With no name, the executable runs every
+test until the first failure, which is still useful under a debugger. Tests run
+one after another, in declaration order, so their output is deterministic.
+Running them in parallel is something the runner can add later without
+changing the executable.
+
+Only the root package's tests run. A package's test build is a statement about
+that package. Running the tests of everything it imports, `core` included,
+would repeat the same tests in every package's report.
+
 ## Changed syntax
 
 ### Statement termination

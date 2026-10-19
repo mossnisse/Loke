@@ -620,6 +620,10 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.type = sym.proc_type
 		// A member a probe synthesized is emitted once a value use commits it.
 		enroll_synth(k.c, symbol_id)
+		if reject_test_procedure_use(k, sym, name, v.span) {
+			v.type = INVALID_TYPE
+			return
+		}
 		// design.md "`@(deprecated=<string>)`": a warning at each use.
 		if sym.deprecated {
 			if sym.deprecated_message != "" {

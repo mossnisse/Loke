@@ -36,7 +36,7 @@ emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 		return 2
 	}
 	natvis_path := ""
-	if c.natvis != "" && c.build_mode == .Exe {
+	if c.natvis != "" && c.build_mode != .Obj {
 		natvis_path = replace_ext(opts.output, ".natvis")
 		// The linker reads the rules while it writes the executable, and MSVC
 		// 14.51's cannot open one file as both (LNK1104): `-o x.natvis` moves

@@ -617,7 +617,7 @@ read design.md and grammar.md in full, checked each idea against comments.md
 and the questions above, and confirmed every behavior it cites with the
 shipped compiler at `1ba3c84`. Backward compatibility is not a constraint; a
 proposal that reverses a recorded decision says so. The proposals adopted since
-are defined in design.md, with their reasoning in comments.md; three remain.
+are defined in design.md, with their reasoning in comments.md; two remain.
 
 The structural concern is that more checking depends on inferred,
 whole-program facts than a library's signatures show; see
@@ -630,7 +630,6 @@ whole-program facts than a library's signatures show; see
 | --- | --- | --- |
 | Later | Checked unsigned arithmetic | Wraps become panics; reverses a decision |
 | Later | No public mutable globals | Effects stop crossing packages invisibly |
-| Later | Test procedures | Unit tests for package-private code |
 
 ### Checked unsigned arithmetic
 
@@ -664,18 +663,6 @@ whose result contract already shows static provenance. Effects then cross a
 package boundary only for statics a package visibly lends. `core` pays almost
 nothing: its one public mutable global, `os.args`, is a zero-sized view that
 could be a constant.
-
-### Test procedures
-
-The roadmap's parser and self-hosted compiler need unit tests, and
-`core:testing` is an [optional gap](future-plans.md#standard-library-maturity).
-A unit test reaches package-private code, which only code in the package can.
-Mark zero-argument procedures `@(test)` and compile them only in a test build
-that runs each and reports a failed `assert` or `panic` by location. A panic
-cannot be caught, so the runner either runs each test in its own process or
-stops at the first failure; see [Recoverable panics](#recoverable-panics). Zig's
-`test` blocks and Go's `_test.go` files are the precedents; an attribute needs
-no new syntax.
 
 ## Error handling (2026-10-13)
 

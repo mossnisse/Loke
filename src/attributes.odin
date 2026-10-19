@@ -59,6 +59,9 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None, false}, true
 	case "deprecated":
 		return {{.Proc_Decl}, .Value_Required, false}, true
+	case "test":
+		// Its other rules are `check_test_procedures`'.
+		return {{.Proc_Decl}, .None, true}, true
 	case "export":
 		return {{.Proc_Decl, .Var_Decl}, .None, true}, true
 	case "link_name":
@@ -302,8 +305,8 @@ decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 	return d.kind == .Const ? .Const_Decl : .Var_Decl
 }
 
-// Records `@(deprecated)` and `@(require_results)` on the symbol while its
-// signature resolves, so a use in another package already sees them.
+// Records `@(deprecated)`, `@(require_results)`, and `@(test)` on the symbol
+// while its signature resolves, so a use in another package already sees them.
 apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 	sym := symbol_of(k.c, symbol_id)
 	if sym == nil {
@@ -323,6 +326,8 @@ apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 			}
 		case "require_results":
 			sym.require_results = true
+		case "test":
+			sym.is_test = sym.kind == .Proc
 		}
 	}
 }

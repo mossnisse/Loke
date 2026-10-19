@@ -105,3 +105,27 @@ int64_t loke_rt_v1_args_len(int64_t index) {
 	}
 	return (int64_t)strlen(arg_values[index]);
 }
+
+/* design.md "Test procedures": which test a test executable runs. With no
+ * argument, every one: -1. With one, the index of the test of that name, whose
+ * argument is then consumed so `os.args` holds only the executable path. A
+ * name no test has, or a second argument, ends the process with status 2. */
+int64_t loke_rt_v1_test_select(const char *const *names, int64_t count) {
+	int64_t index;
+	if (arg_count < 2) {
+		return -1;
+	}
+	if (arg_count == 2) {
+		for (index = 0; index < count; index += 1) {
+			if (strcmp(arg_values[1], names[index]) == 0) {
+				arg_count = 1;
+				return index;
+			}
+		}
+		fprintf(stderr, "loke: no test is named `%s`\n", arg_values[1]);
+	} else {
+		fputs("loke: a test executable takes at most one test name\n", stderr);
+	}
+	fflush(stderr);
+	exit(2);
+}
