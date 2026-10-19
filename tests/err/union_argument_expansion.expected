@@ -23,3 +23,9 @@ its call for `.left` returns a place
 L0612
 @53:2
 the result of `kept_left` must be used
+L0392
+@56:2
+`take_empty_none` does not apply: argument 1 is `Unit` where `int` is wanted
+L0392
+@58:2
+`take_empty_none` does not apply: argument 1 is `Unit` where `int` is wanted

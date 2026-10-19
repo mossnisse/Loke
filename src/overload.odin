@@ -396,18 +396,21 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		}
 		rank := argument_rank(k, arg, want, mode)
 		if rank == RANK_NONE {
-			if _, moved := arg.expr.(^Expr_Move); moved != (mode == .Move) {
+			// design.md "Union argument expansion": a place lends its payload,
+			// and moving the operand is what gives it up. The `Unit{}` of a
+			// payloadless variant is owned, so only its type can fail.
+			payload, expanded := arg.expr.(^Expr_Ident)
+			if expanded && payload.name == DISPATCH_PAYLOAD {
+				if mode == .Move && !expression_is_owned_argument(arg.expr) {
+					cand.reason = "it takes the payload by `move`, and a place lends it; this is written `..move(...)`"
+					return cand
+				}
+			} else if _, moved := arg.expr.(^Expr_Move); moved != (mode == .Move) {
 				if arg.is_receiver {
 					cand.reason = "it borrows its receiver, so `move(...)` gives away more than it takes"
 					if mode == .Move {
 						cand.reason = "it consumes its receiver, which is written `move(...)`"
 					}
-					return cand
-				}
-				// design.md "Union argument expansion": a place lends its
-				// payload, and moving the operand is what gives it up.
-				if payload, ok := arg.expr.(^Expr_Ident); ok && mode == .Move && payload.name == DISPATCH_PAYLOAD {
-					cand.reason = "it takes the payload by `move`, and a place lends it; this is written `..move(...)`"
 					return cand
 				}
 				if mode == .Move {

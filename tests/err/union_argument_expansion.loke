@@ -52,4 +52,14 @@ main :: proc() {
 	partial(step);
 	kept(..step);
 	_ = kept(..step);
+	empty: Empty = .none;
+	take_empty(..move(empty));
+	other: Empty = .none;
+	take_empty(..other);
 }
+
+// A payloadless variant passes an owned `Unit{}`, so a member wanting another
+// type fails on its type, not on ownership.
+Empty :: union { none }
+take_empty :: proc { take_empty_none }
+take_empty_none :: proc(none: move int) {}
